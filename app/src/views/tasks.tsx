@@ -22,12 +22,15 @@ type Item = { kind: 'group'; key: string; label: string; count: number } | { kin
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 
+// System presets (P5): fixed, shown before the person's saved views. Running: every non-terminal state.
+const SYSTEM_VIEWS = [{ name: 'Needs me', view: { view: 'tasks' as const, state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'tasks' as const, state: ['queued', 'in_progress', 'waiting', 'held', 'paused'] } }];
+
 export function Tasks({ id }: { id?: string }) {
   const { view, set, href } = useUrlView('tasks');
   const [closed, setClosed] = useState<string[]>([]);
   const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
   const pins = usePins('tasks');
-  const views = useViews('tasks', [{ name: 'Needs me', view: { view: 'tasks', state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'tasks', state: ['in_progress', 'queued'], group: 'agent' } }]);
+  const views = useViews('tasks', SYSTEM_VIEWS);
   const list = useList('tasks', view);
   const group = view.group ?? 'priority', states = (view.state ?? []) as StateOf<'task'>[];
   // Rows on screen may still be the previous list (pending): headers and chips follow that list's own grouping.

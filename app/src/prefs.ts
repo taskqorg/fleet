@@ -1,24 +1,64 @@
-// Per-person conveniences kept in the browser until people exist (Phase 6): pinned rows and saved views (pinned sections are a person setting).
-import { useState } from 'preact/hooks';
+// Per-person preferences, stored server-side in the person's settings (person_settings_get / person_settings_set,
+// docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus and focus
+// presets, column widths. Agents read and write the same fields through the same operations.
+import { signal } from '@preact/signals';
+import { op, type Ops } from './api.ts';
 import type { View } from '../../packages/view-url/view-url.ts';
 
-const read = <T>(k: string, d: T): T => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
-const write = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } };
+type Settings = Ops['person_settings_get']['reply'];
+type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {} };
+export const prefs = signal<Settings>(empty);
 
-export function usePins(list: string) {
-  const key = 'fleet-pins:' + list;
-  const [ids, setIds] = useState<string[]>(() => read(key, []));
-  const set = new Set(ids);
-  return { has: (id: string) => set.has(id), toggle: (id: string) => { const n = set.has(id) ? ids.filter(x => x !== id) : [...ids, id]; setIds(n); write(key, n); } };
+// ponytail: last write wins; seq drops a stale get reply or a rollback after a newer change.
+let seq = 0;
+export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { if (seq === n) prefs.value = s; }).catch(() => {}); }
+/** Show the change at once, send it, and roll back if the write fails and nothing newer was sent meanwhile. */
+export function savePrefs(local: Partial<Settings>, patch: Patch = local as Patch) {
+  const prev = prefs.value, n = ++seq;
+  prefs.value = { ...prev, ...local };
+  op('person_settings_set', patch).then(s => { if (seq === n) prefs.value = s; }, () => { if (seq === n) prefs.value = prev; });
 }
 
-/** A saved preset: a name and the view keys it sets (docs/designs/fleet-view-urls-and-list-path.md §1). */
-export type SavedView = { name: string; view: View };
-// Before view URLs a preset was { name, states, group }; it is read as a tasks view and written back in the new form.
-const upgrade = (v: any): SavedView => v && v.view ? v : { name: v.name, view: { view: 'tasks', state: v.states ?? [], group: v.group } };
-export function useViews(list: string, defaults: SavedView[]) {
-  const key = 'fleet-views:' + list;
-  const [views, setViews] = useState<SavedView[]>(() => { const raw: any[] = read(key, defaults); const up = raw.map(upgrade); if (raw.some(v => !v.view)) write(key, up); return up; });
-  const keep = (v: SavedView[]) => { setViews(v); write(key, v); };
-  return { list: views, save: (v: SavedView) => keep([...views.filter(x => x.name !== v.name), v]), remove: (n: string) => keep(views.filter(x => x.name !== n)) };
+export function usePins(list: string) {
+  const ids = prefs.value.rowPins[list] ?? [], set = new Set(ids);
+  return { has: (id: string) => set.has(id), toggle: (id: string) => {
+    const n = set.has(id) ? ids.filter(x => x !== id) : [...ids, id];
+    savePrefs({ rowPins: { ...prefs.value.rowPins, [list]: n } }, { rowPins: { [list]: n } });
+  } };
+}
+
+/** A saved view: a name and the view keys it sets (docs/designs/fleet-view-urls-and-list-path.md §1). */
+export type SavedView = { name: string; view: View; system?: boolean };
+/** System presets (fixed, from the app) come first, then the person's own views of this list. */
+export function useViews(list: string, system: SavedView[]) {
+  const all = prefs.value.views;
+  const mine: SavedView[] = all.filter(v => v.list === list).map(v => ({ name: v.name, view: v.view as unknown as View }));
+  const keep = (v: SavedView[]) => savePrefs({ views: [...all.filter(x => x.list !== list), ...v.map(x => ({ list, name: x.name, view: x.view as unknown as Record<string, unknown> }))] });
+  const isSystem = (n: string) => system.some(s => s.name === n);
+  return {
+    list: [...system.map(s => ({ ...s, system: true })), ...mine.filter(v => !isSystem(v.name))],
+    save: (v: SavedView) => { if (!isSystem(v.name)) keep([...mine.filter(x => x.name !== v.name), v]); },
+    remove: (n: string) => keep(mine.filter(x => x.name !== n)),
+  };
+}
+
+/** The focused projects ('-' is no project); empty: every project. */
+export const setFocus = (projects: string[]) => savePrefs({ focus: projects });
+/** A view with the focus as its project filter when the view names no project itself (lists and feeds app-wide). */
+export function withFocus(v: View): View {
+  const f = prefs.value.focus;
+  return v.project?.length || !f.length ? v : { ...v, project: f.map(p => p === '-' ? null : p) };
+}
+export function saveFocusPreset(name: string, projects = prefs.value.focus) {
+  savePrefs({ focusPresets: [...prefs.value.focusPresets.filter(p => p.name !== name), { name, projects }] });
+}
+export const removeFocusPreset = (name: string) => savePrefs({ focusPresets: prefs.value.focusPresets.filter(p => p.name !== name) });
+
+/** A column width in px by key (nav, control); 0 resets to the default. */
+export function useWidth(key: string, fallback: number): [number, (px: number) => void] {
+  return [prefs.value.widths[key] || fallback, px => {
+    const w = { ...prefs.value.widths }; if (px) w[key] = Math.round(px); else delete w[key];
+    savePrefs({ widths: w }, { widths: { [key]: Math.round(px) } });
+  }];
 }
