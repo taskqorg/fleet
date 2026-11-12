@@ -238,25 +238,36 @@ func askQuestion(q *Request, v doc) (string, error) {
 }
 
 // settleIdleTask: no task stays in progress with nothing that can move it (no open execution, no open question).
-// Its last open execution ended: if a run succeeded, its result goes to the operator for acceptance; if none did, the
-// task fails, so the failure shows (task 2273393d: its only run failed before it started and the task stayed in
-// progress, with no problem, question or failed count to show it). Data foundation §3 task states. Delivery tasks are
-// skipped: their pipeline moves them. Child agent rows are not counted as open: no writer ends them.
+// When its last open execution ends: if its latest run succeeded, its result goes to the operator for acceptance;
+// otherwise the operator gets a decision (retry in the session, or fail the task), which blocks the task so it shows in
+// Needs you. Task 2273393d: its only run failed before it started and the task sat in progress with nothing to show it.
+// A new run withdraws that decision (withdrawIdleDecision). Data foundation §3 task states. Delivery tasks are skipped:
+// their pipeline moves them. Child agent rows do not count: no writer ends them.
 func settleIdleTask(q *Request, id string) error {
-	t, err := first(q, `SELECT t.*, EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded') AS succeeded
+	t, err := first(q, `SELECT t.*, (SELECT x.state::text FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' ORDER BY x.seq DESC LIMIT 1) AS latest
 		FROM task t WHERE t.id=$1 AND t.state='in_progress' AND t.delivery_method IS NULL
-		AND EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id)
 		AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
 		AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')`, id)
-	if err != nil || t == nil {
+	if err != nil || t == nil || t["latest"] == nil {
 		return err
 	}
-	if t["succeeded"] == true {
+	if astr(t["latest"]) == "succeeded" {
 		_, err = requestAcceptance(q, t, nil, nil, "fleet")
 		return err
 	}
-	_, err = taskTransition(q, id, "operator_fail", "")
+	if _, err := askQuestion(q, doc{"kind": "operator_decision", "taskId": id, "projectId": t["project_id"], "askedBy": "fleet", "options": []string{idleFail, "keep open"}, "data": doc{"idle": true},
+		"text": "The last run of " + astr(t["title"]) + " " + astr(t["latest"]) + ". Retry it with a new message in its session, or fail the task."}); err != nil {
+		return err
+	}
+	_, err = settleTask(q, id, "")
 	return err
+}
+
+const idleFail = "fail task"
+
+// withdrawIdleDecision: a new run of the task answers settleIdleTask's decision by itself.
+func withdrawIdleDecision(q *Request, id string) error {
+	return exec(q, "UPDATE question SET state='withdrawn' WHERE task_id=$1 AND state='open' AND data->>'idle'='true'", id)
 }
 
 // requestAcceptance asks the task's acceptance question with the given artifacts (default: its stored originals). An open
@@ -363,8 +374,14 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 			} else if _, err := taskTransition(q, t, "rejected", ""); err != nil {
 				return nil, err
 			}
-		} else if _, err := settleTask(q, t, ""); err != nil {
-			return nil, err
+		} else {
+			target := ""
+			if mapOf(qu["data"])["idle"] == true && answer == idleFail {
+				target = "failed"
+			}
+			if _, err := settleTask(q, t, target); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return first(q, "SELECT * FROM question WHERE id=$1", id)
