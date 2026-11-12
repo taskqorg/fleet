@@ -32,6 +32,7 @@ jobs:
       recent: ${{ steps.check.outputs.recent }}
       digests: ${{ steps.check.outputs.digests }}
       ui: ${{ steps.check.outputs.ui }}
+      ui_run: ${{ steps.qualify.outputs.ui_run }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -81,9 +82,11 @@ jobs:
         with:
           node-version: 22
       - name: Wait for exact-candidate qualification
+        id: qualify
         if: steps.check.outputs.release == 'true'
         env:
           SHA: ${{ steps.check.outputs.sha }}
+          UI: ${{ steps.check.outputs.ui }}
         run: |
           # The merge queue run tested this exact commit; the push run covers an admin bypass.
           id=$(gh run list --workflow ci --commit "$SHA" --event merge_group --json databaseId -q '.[0].databaseId')
@@ -108,9 +111,16 @@ jobs:
           gh run download "$id" --name test-qualification --dir "$RUNNER_TEMP/qualification"
           git show "$SHA:scripts/test-selection.ts" > "$RUNNER_TEMP/verify-selection.ts"
           GITHUB_SHA="$SHA" node "$RUNNER_TEMP/verify-selection.ts" --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
+          # UI-only: the browser checks of this exact commit ran against a coordinator built from the Go sources of the
+          # released backend (the UI-only diff leaves them unchanged), so they are the pair check; publish signs the tree
+          # they served. The gate accepts merge_group and push runs only, never a pull_request context.
+          if [ "$UI" = true ]; then
+            jq -e '.executed | index("browser")' "$RUNNER_TEMP/qualification/test-selection.json" >/dev/null || { echo "::error::browser checks omitted for $SHA"; exit 1; }
+            echo "ui_run=$id" >> "$GITHUB_OUTPUT"
+          fi
   build:
     needs: gate
-    if: needs.gate.outputs.release == 'true'
+    if: needs.gate.outputs.release == 'true' && needs.gate.outputs.ui != 'true'
     # Signing/publishing and native qualification remain on GitHub-hosted runners.
     runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
@@ -140,13 +150,8 @@ jobs:
           SHA: ${{ needs.gate.outputs.sha }}
         run: |
           mkdir out
-          if [ "${{ needs.gate.outputs.ui }}" = true ]; then
-            deploy/build-ui-release.sh "$SHA" out "$VERSION" "$PREVIOUS"
-          else
-            deploy/build-release.sh "$SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
-          fi
+          deploy/build-release.sh "$SHA" out "$VERSION" "$PREVIOUS" linux/amd64 darwin/arm64
       - name: Selftest linux binaries
-        if: needs.gate.outputs.ui != 'true'
         run: |
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
           for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/new/$b" selftest); done
@@ -156,7 +161,7 @@ jobs:
       # build: the runner's disk is capped at 20 MB/s, so no artifact round trip, the recent coordinators stay extracted
       # under ~/fleet-releases/v between runs (one download per new release) and the throwaway PostgreSQL skips fsync.
       - name: New coordinator migrates, each recent one still serves
-        if: needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
+        if: needs.gate.outputs.recent != ''
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -224,7 +229,6 @@ jobs:
           if-no-files-found: error
   selftest-macos:
     needs: [gate, build]
-    if: needs.gate.outputs.ui != 'true'
     runs-on: macos-latest
     permissions:
       contents: read
@@ -235,53 +239,16 @@ jobs:
       - run: |
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
           for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
-  ui-check:
-    needs: [gate, build]
-    if: needs.gate.outputs.ui == 'true'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      VERSION: ${{ needs.gate.outputs.version }}
-      PREVIOUS: ${{ needs.gate.outputs.previous }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-          persist-credentials: false
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      - uses: actions/download-artifact@v4
-        with:
-          name: release
-          path: out
-      - name: Exact UI archive with released backend
-        run: |
-          mkdir -p dist/app "$RUNNER_TEMP/previous"
-          tar -xzf "out/fleet-ui-$VERSION.tgz" -C dist/app
-          gh release download "v$PREVIOUS" -p "fleet-$PREVIOUS-linux-amd64.tgz" -D "$RUNNER_TEMP/previous"
-          tar -xzf "$RUNNER_TEMP/previous/fleet-$PREVIOUS-linux-amd64.tgz" -C "$RUNNER_TEMP/previous"
-          export CI=true FLEET_TRIAL_SERVER="$RUNNER_TEMP/previous/fleet-coordinator" FLEET_APP_DIR="$PWD/dist/app" FLEET_TRIAL_PGDATA="$RUNNER_TEMP/ui-pg"
-          export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH"
-          node tests/ui/filter.check.ts --assert
-          node tests/ui/conversations.check.ts
-          node tests/ui/lab-create.check.ts
   publish:
-    needs: [gate, build, selftest-macos, ui-check]
-    if: always() && needs.build.result == 'success' && (needs.gate.outputs.ui != 'true' || needs.ui-check.result == 'success') && needs.gate.outputs.release == 'true' && (needs.selftest-macos.result == 'success' || (needs.gate.outputs.ui == 'true' && needs.selftest-macos.result == 'skipped'))
+    needs: [gate, build, selftest-macos]
+    if: always() && needs.gate.result == 'success' && needs.gate.outputs.release == 'true' && (needs.gate.outputs.ui == 'true' || (needs.build.result == 'success' && needs.selftest-macos.result == 'success'))
     runs-on: ubuntu-24.04
     environment: release
     permissions:
       contents: write
       id-token: write
       attestations: write
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -290,10 +257,22 @@ jobs:
       RECENT: ${{ needs.gate.outputs.recent }}
       UI: ${{ needs.gate.outputs.ui }}
       BACKEND: ${{ needs.gate.outputs.previous }}
+      UI_RUN: ${{ needs.gate.outputs.ui_run }}
     steps:
       - uses: actions/download-artifact@v4
+        if: env.UI != 'true'
         with:
           name: release
+      # The tree the qualifying ci run browser-checked (gate); release.json binds it to version, backend and source.
+      - name: UI archive
+        if: env.UI == 'true'
+        run: |
+          gh run download "$UI_RUN" --name fleet-ui --dir "$RUNNER_TEMP/ui"
+          test -f "$RUNNER_TEMP/ui/index.html"
+          jq -nc --arg v "$VERSION" --arg b "$BACKEND" --arg c "$SHA" '{kind:"ui",version:$v,backendVersion:$b,commit:$c}' > "$RUNNER_TEMP/ui/release.json"
+          file="fleet-ui-$VERSION.tgz"
+          tar --owner=0 --group=0 -czf "$file" -C "$RUNNER_TEMP/ui" .
+          sha256sum "$file" > SHA256SUMS
       # A re-run after a later release published must not reuse its version or move latest backwards.
       - name: Version still free and newest
         run: |

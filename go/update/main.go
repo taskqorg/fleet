@@ -1,5 +1,5 @@
 // fleet-update: installs a newer Fleet release on this host by itself, one run per call; a systemd timer or a launchd
-// agent repeats it, every minute on PDS18 and every 5 minutes on executors (docs/designs/fleet-self-update.md, section 3).
+// agent repeats it, every 10 seconds on PDS18 and every 5 minutes on executors (docs/designs/fleet-self-update.md, section 3).
 //
 //	fleet-update pds18      root on PDS18: coordinator side, then the PDS18 executor
 //	fleet-update executor   the executor service user on every other host
