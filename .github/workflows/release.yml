@@ -135,10 +135,11 @@ jobs:
           # The merge queue run's speculative build of this exact commit and version (ci.yml release-build): when both of
           # its jobs passed, publish signs those bytes; stale: a release published since, so its migration check window
           # moved and migrate runs it again on the same bytes. Anything else: build here, as before.
-          # At most 10 minutes: a slow or queued speculative job falls back to building here, not to a timed-out gate.
-          deadline=$((SECONDS + 600))
+          # At most 10 minutes and never past 25 minutes of this step: a slow or queued speculative job, or an API error,
+          # falls back to building here, not to a failed gate.
+          deadline=$((SECONDS + 600)); [ "$deadline" -le 1500 ] || deadline=1500
           while :; do
-            jobs=$(gh run view "$id" --json jobs)
+            jobs=$(gh run view "$id" --json jobs) || { [ "$SECONDS" -lt "$deadline" ] || { b=timeout; break; }; sleep 10; continue; }
             b=$(jq -r '[.jobs[] | select(.name == "release-build")][0].conclusion // "missing"' <<< "$jobs")
             m=$(jq -r '[.jobs[] | select(.name == "release-macos")][0].conclusion // "missing"' <<< "$jobs")
             [ "$b" = missing ] && break
@@ -153,7 +154,7 @@ jobs:
           announced=
           if [ "$b/$m" = success/success ]; then
             job=$(jq -r '[.jobs[] | select(.name == "release-build")][0].databaseId' <<< "$jobs")
-            announced=$(gh api --paginate "repos/$GH_REPO/check-runs/$job/annotations" --jq '.[] | select(.title == "release SHA256SUMS") | .message' | head -1)
+            announced=$(gh api --paginate "repos/$GH_REPO/check-runs/$job/annotations" --jq '.[] | select(.title == "release SHA256SUMS") | .message' | awk 'NR == 1') || announced=
           fi
           if [ -n "$RECENT" ] && [ "$b/$m" = success/success ] && [ -f "$spec" ] && [ -n "$announced" ] \
             && [ "$(sha256sum < "$RUNNER_TEMP/spec/SHA256SUMS" | cut -d' ' -f1)" = "$announced" ] && jq -e --arg v "$VERSION" --arg c "$SHA" '.version == $v and .commit == $c' "$spec" >/dev/null; then
@@ -257,12 +258,18 @@ jobs:
         with:
           ref: ${{ needs.gate.outputs.sha }}
           persist-credentials: false
+      # The same check script as the fallback build: this workflow's commit.
+      - uses: actions/checkout@v4
+        with:
+          path: .release
+          sparse-checkout: deploy
+          persist-credentials: false
       - run: |
           gh run download "${{ needs.gate.outputs.spec_run }}" --name release --dir out
           [ -n "$SUMS" ] && [ "$(sha256sum < out/SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] || { echo "::error::SHA256SUMS changed since the gate"; exit 1; }
           (cd out && sha256sum -c --quiet SHA256SUMS)
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
-          deploy/migrate-check.sh new out
+          .release/deploy/migrate-check.sh new out
   selftest-macos:
     needs: [gate, build]
     runs-on: macos-latest
