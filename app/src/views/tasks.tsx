@@ -8,7 +8,7 @@ import {
   keyConnection,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online, addRequestedKey } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { listKey, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
@@ -103,6 +103,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const { data: t, error, state } = useDoc<any>(`task:${id}`, () => op('task_get', { taskId: id }), c => c.taskId === id || c.id === id);
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const alive = useAlive();
   const [confirming, setConfirming] = useState(false);
   const now = Date.now(), off = !online.value;
   const act = async (action: string) => { setBusy(action); setFailure(null); try { await op('task_update', { taskId: id, action }); } catch (e: any) { setFailure(e.message); } finally { setBusy(null); setConfirming(false); } };
@@ -138,8 +139,8 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     ]} />
     {open.map((q: any) => <DecisionBlock key={q.id} question={q.text} askedBy={q.askedBy ?? q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
       options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-      onAnswer={a => { if (!off) op('questions_answer', { questionId: q.id, answer: a }).catch(e => setFailure(e.message)); }}
-      onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v) : undefined} />)}
+      onAnswer={a => { if (!off) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}
+      onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined} />)}
     <h3 class="sub-h">Executions</h3>
     {nodes.length ? <ExecTree nodes={nodes} now={now} label="Executions" /> : <Empty text="No executions yet." />}
   </article>;

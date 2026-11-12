@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField } from '../../../packages/ui/src/index.ts';
-import { op, type OpName, type Ops } from '../api.ts';
+import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { LabCreate } from './lab-create.tsx';
 
@@ -79,6 +79,7 @@ function Rating({ r, now }: { r: any; now: number }) {
   const opts = r.form === 'pick_best' ? r.items.map((i: any) => ({ label: i.label, kbd: i.label.toLowerCase() }))
     : r.form === 'scale' ? [1, 2, 3, 4, 5].map(n => ({ label: String(n), kbd: String(n) }))
     : [{ label: 'Pass', kbd: 'p', primary: true }, { label: 'Fail', kbd: 'f' }];
+  const alive = useAlive();
   const toAnswer = (a: string) => r.form === 'pick_best' ? (r.items.find((i: any) => i.label === a.toUpperCase())?.trialId ?? a) : /^(pass|fail)\b/i.test(a) ? a.replace(/^(pass|fail)/i, m => m.toLowerCase()) : a;
   const shown = (a: string) => r.form === 'pick_best' ? (r.items.find((i: any) => i.trialId === a)?.label ?? a) : a;
   const files = r.items.length > 0 && <div class="stack">{r.items.map((i: any) => <div key={i.label}><b>{i.label}</b>{' '}
@@ -86,7 +87,7 @@ function Rating({ r, now }: { r: any; now: number }) {
   if (r.state === 'withdrawn') return <div id={`rating-${r.id}`}><DetailSection title="Withdrawn rating"><KvRow icon="circle-slash" label={r.text} meta={r.withdrawal?.reason ?? 'No answer or score recorded'} />{files}</DetailSection></div>;
   return <div id={`rating-${r.id}`}><DecisionBlock question={r.text} askedBy="lab" addressedTo="you" since={now} now={now} waits={busy ? 'saving' : 'never blocks'} context={files || undefined} options={opts}
     answered={r.state === 'answered' ? { by: 'you', answer: shown(r.answer), at: now, delivered: true } : undefined}
-    onAnswer={a => { setBusy(true); op('questions_answer', { questionId: r.id, answer: toAnswer(a) }).finally(() => setBusy(false)); }} /></div>;
+    onAnswer={a => { setBusy(true); writeOnce('questions_answer', { questionId: r.id, answer: toAnswer(a) }, () => {}, { signal: alive }).catch(() => { /* the rating stays open */ }).finally(() => setBusy(false)); }} /></div>;
 }
 
 const scoreText = (s: any) => s.form === 'pick_best' ? `${s.wins ?? 0} of ${s.n} picks` : s.form === 'pass_fail' ? `${s.passed}/${s.n} pass` : s.mean === undefined ? '' : s.min === s.max ? s.mean.toFixed(2) : `${s.mean.toFixed(2)} (${s.min}–${s.max})`;

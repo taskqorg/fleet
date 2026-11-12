@@ -241,6 +241,8 @@ test('PM10 key request: an agent asks for a key and gets only its fingerprint; n
   assert.equal((await op('questions_answer', {questionId: asked.id, answer: 'decline'}, MEMBER)).status, 403);
   assert.equal((await op('connections_key_add', {connection: 'no-such', value, questionId: asked.id})).status, 404);
   const k = ok(await op('connections_key_add', {connection: conn, value, questionId: asked.id}));
+  // A client retry after a cut reply (app writeOnce) sends the same add again: the held key answers it, no second key.
+  assert.equal(ok(await op('connections_key_add', {connection: conn, value, questionId: asked.id})).fingerprint, k.fingerprint, 'a retried add is the same write');
   const h = ok(await pm.tool('question_history', {projectId: PROJECT})).questions.find((x: any) => x.id === asked.id);
   assert.deepEqual([h.state, JSON.parse(h.answer), h.answeredBy], ['answered', {connection: conn, fingerprint: k.fingerprint, state: 'active'}, OWNER]);
   assert.equal(k.addedBy, OWNER, 'who added it is recorded');
@@ -252,4 +254,8 @@ test('PM10 key request: an agent asks for a key and gets only its fingerprint; n
   const third = ok(await pm.tool('connections_key_request', {projectId: PROJECT, requestId: randomUUID(), connection: conn}));
   assert.equal((await op('questions_answer', {questionId: third.id, answer: JSON.stringify({connection: conn, fingerprint: k.fingerprint, state: 'active'})})).status, 400);
   ok(await op('questions_answer', {questionId: third.id, answer: 'decline'}));
+  // A client retry of the same answer (app writeOnce) succeeds without a second answer; another answer is a conflict.
+  assert.equal(ok(await op('questions_answer', {questionId: third.id, answer: 'decline'})).state, 'answered');
+  assert.equal((await op('questions_answer', {questionId: third.id, answer: 'yes'})).status, 409);
+  assert.equal((await op('questions_answer', {questionId: third.id, answer: 'decline'}, MEMBER)).status, 403, 'a replay keeps the owner-only rule');
 });

@@ -251,6 +251,10 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 		if astr(qu["answer"]) != answer {
 			return nil, fail(409, "Question already answered differently")
 		}
+		// A replay (a client retry) keeps the owner-only rule of a key request; the answer itself was checked when given.
+		if qu["kind"] == "secret" && (q.agent != "" || q.person == nil || !fullAccess(q.person)) {
+			return nil, fail(403, "Only the owner answers a key request")
+		}
 		return qu, nil
 	}
 	if astr(qu["state"]) != "open" {

@@ -1,7 +1,7 @@
 // Overview (docs/design-system/pages/overview.md): what needs the operator, operational counts, workers per host, projects.
 import { useLocation } from 'wouter-preact';
 import { OpsSummary, NeedsYou, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection } from '../../../packages/ui/src/index.ts';
-import { op, online, addRequestedKey } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; counts: Record<string, number> }[] };
@@ -13,6 +13,7 @@ async function fetchOverview(): Promise<Overview> {
 }
 
 export function Overview() {
+  const alive = useAlive();
   const [, go] = useLocation();
   const { data, state, error } = useDoc<Overview>('overview', fetchOverview, c => ['task', 'question', 'execution'].includes(c.kind));
   const hostsRec = useDoc<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
@@ -33,8 +34,8 @@ export function Overview() {
           {data.questions.map(q => <DecisionBlock key={q.id} question={q.text} askedBy={q.askedBy ?? q.kind} addressedTo="you" since={Date.parse(q.askedAt) || now} now={now}
             waits={q.taskId ? `task ${String(q.taskId).slice(0, 8)}` : undefined}
             options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-            onAnswer={a => { if (online.value) op('questions_answer', { questionId: q.id, answer: a }); }}
-            onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v) : undefined} />)}
+            onAnswer={a => { if (online.value) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => {}, { signal: alive }).catch(() => { /* the question stays open in the list */ }); }}
+            onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined} />)}
           {data.problems.map(e => <ProblemRow key={e.id} severity="warning" title={e.problem} facts={`execution ${String(e.id).slice(0, 8)}${e.taskId ? ` · task ${String(e.taskId).slice(0, 8)}` : ''}`}
             actions={e.taskId ? [{ label: 'Open task' }] : []} />)}
         </NeedsYou>
