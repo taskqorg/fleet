@@ -6,6 +6,53 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// CiJob: runner: the self-hosted runner's name, else the hosted label (ubuntu-latest). Times in ms.
+type CiJob struct {
+	CreatedAt  *float64 `json:"createdAt"`
+	Hosted     bool     `json:"hosted"`
+	Id         int64    `json:"id"`
+	Name       string   `json:"name"`
+	RunId      int64    `json:"runId"`
+	Runner     string   `json:"runner"`
+	RunnerName *string  `json:"runnerName"`
+	StartedAt  *float64 `json:"startedAt"`
+	Status     string   `json:"status"`
+	Url        string   `json:"url"`
+	Workflow   string   `json:"workflow"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CiJob) Validate() error {
+	return nil
+}
+
+type CiMinutes struct {
+	Hosted  bool    `json:"hosted"`
+	Jobs    int64   `json:"jobs"`
+	Minutes float64 `json:"minutes"`
+	Runner  string  `json:"runner"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CiMinutes) Validate() error {
+	return nil
+}
+
+type CiRunner struct {
+	Busy   bool     `json:"busy"`
+	Labels []string `json:"labels"`
+	Name   string   `json:"name"`
+	Status string   `json:"status"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CiRunner) Validate() error {
+	if v.Labels == nil {
+		return Missing("labels")
+	}
+	return nil
+}
+
 // DeliveryItem: One pull request in its current delivery stage; since: when it entered it (RFC 3339). installed and merged are the last 24 hours only.
 type DeliveryItem struct {
 	Number    int64         `json:"number"`
@@ -274,6 +321,48 @@ type ExecutionStopRequest struct {
 func (v *ExecutionStopRequest) Validate() error {
 	return nil
 }
+
+// ExecutionsCiReply: The Runners screen's CI half for taskqorg/fleet, read through githubRead (cached; keyed through the github connection, else unauthenticated). jobs: in progress and queued. minutesToday: job wall minutes since 00:00 UTC per runner type; runsUncounted: today's runs whose jobs are not read yet (minutes are a lower bound while above 0). runners: self-hosted runners, null without a key (state unknown).
+type ExecutionsCiReply struct {
+	Jobs          []CiJob     `json:"jobs"`
+	Keyed         bool        `json:"keyed"`
+	MinutesToday  []CiMinutes `json:"minutesToday"`
+	Problems      []string    `json:"problems"`
+	Runners       []CiRunner  `json:"runners"`
+	RunsUncounted int64       `json:"runsUncounted"`
+	ServerNow     int64       `json:"serverNow"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionsCiReply) Validate() error {
+	if v.Jobs == nil {
+		return Missing("jobs")
+	}
+	for i := range v.Jobs {
+		if err := Check(&v.Jobs[i], "jobs"); err != nil {
+			return err
+		}
+	}
+	if v.MinutesToday == nil {
+		return Missing("minutesToday")
+	}
+	for i := range v.MinutesToday {
+		if err := Check(&v.MinutesToday[i], "minutesToday"); err != nil {
+			return err
+		}
+	}
+	if v.Problems == nil {
+		return Missing("problems")
+	}
+	for i := range v.Runners {
+		if err := Check(&v.Runners[i], "runners"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ExecutionsCiRequest = map[string]json.RawMessage
 
 type ExecutionsListReply struct {
 	Executions []ExecutionRow `json:"executions"`
@@ -925,6 +1014,7 @@ func init() {
 		"execution_events":      {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"execution_status":      {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"execution_stop":        {Read: false, Long: false, Errors: []int{409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
+		"executions_ci":         {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"executions_list":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem.\",\"additionalProperties\":true,\"properties\":{\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_runners":    {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"hosts_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"includeRemoved: also hosts removed by hosts_remove (state removed).\",\"additionalProperties\":true,\"properties\":{\"includeRemoved\":{\"type\":\"boolean\"}},\"type\":\"object\"}")},
