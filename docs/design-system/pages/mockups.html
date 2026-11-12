@@ -285,10 +285,12 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 /* The hit zone is wider than the line it shows: 8 px with a pointer, 44 px on touch (owner-rules exception). It lies over the
    column it resizes, so the next column's row edge still opens its row (OR-26); the line stays centred on the edge. */
 .divider::after{content:"";position:absolute;top:0;bottom:0;right:0;width:var(--space-2)}
+/* The list's divider lies over the work area's padding instead: the list head and rows end in buttons at their right edge. */
+.divider-ctl{margin-left:calc(-1 * var(--space-1))}.divider-ctl::after{right:auto;left:0}
 .divider-rail{left:0}.divider-ctl{left:min(var(--size-ctl),50%)}
 .divider:hover::after,.divider:active::after{background:var(--accent);opacity:.5}
 .divider:focus-visible::after{background:var(--accent)}
-@media (pointer:coarse){.divider{width:var(--size-hit-phone);margin-left:calc(var(--space-1) - var(--size-hit-phone))}}
+@media (pointer:coarse){.divider{width:var(--size-hit-phone);margin-left:calc(var(--space-1) - var(--size-hit-phone))}.divider-ctl{margin-left:calc(-1 * var(--space-1))}}
 /* Until the person's settings are first read (at most 1.5 s) the shell is laid out but not shown, so a stored width or collapsed rail never jumps in (OR-23). */
 .shell.pending{visibility:hidden}
 .rail.mini .nav-i a{padding:0 var(--space-2);position:relative}
