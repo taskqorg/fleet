@@ -82,6 +82,3 @@ export const removeFocusPreset = (name: string) => savePrefs(s => ({ focusPreset
 /** A column width in px by key (nav, control); 0 resets to the default. */
 export const setWidth = (key: string, px: number) =>
   savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, { widths: { [key]: Math.round(px) } });
-export function useWidth(key: string, fallback: number): [number, (px: number) => void] {
-  return [prefs.value.widths[key] || fallback, px => setWidth(key, px)];
-}

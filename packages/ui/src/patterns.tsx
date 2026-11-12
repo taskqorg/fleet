@@ -133,7 +133,8 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   const pinned = pins ?? own, setPinned = onPins ?? setOwn;
   const [ownMini, setOwnMini] = useState(false), [ownWidths, setOwnWidths] = useState<Record<string, number>>({});
   const mini = collapsed ?? ownMini, widths = stored ?? ownWidths;
-  const setWidth = onWidth ?? ((k: string, px: number) => setOwnWidths(w => { const n = { ...w }; if (px) n[k] = px; else delete n[k]; return n; }));
+  const ownSet = useRef((k: string, px: number) => setOwnWidths(w => { const n = { ...w }; if (px) n[k] = px; else delete n[k]; return n; })).current;
+  const setWidth = onWidth ?? ownSet;
   const [spot, setSpot] = useState(false);
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (e.key.toLowerCase() === 'k' || (e.code === 'KeyK' && !/^[a-z]$/i.test(e.key)))) { e.preventDefault(); setSpot(s => !s); } };
@@ -173,21 +174,25 @@ const Widths = createContext<(key: string, px: number) => void>(() => {});
 /** A column's drag divider (OR-41): drag or arrow keys resize the column on its left, double-click resets it. */
 function Divider({ name }: { name: 'rail' | 'ctl' }) {
   const prop = `--size-${name}`, { key, lo, hi } = COLS[name], save = useContext(Widths);
-  const clamp = (w: number) => Math.round(Math.max(lo, Math.min(hi, w)));
+  // The upper limit is also what CSS shows (min(width, 25vw) for the rail, half the split for the list), so nothing unseen is saved.
+  const clamp = (el: HTMLElement, w: number) => Math.round(Math.max(lo, Math.min(hi, name === 'rail' ? innerWidth / 4 : el.parentElement!.getBoundingClientRect().width / 2, w)));
   const width = (el: HTMLElement) => (el.previousElementSibling ?? el.parentElement!.previousElementSibling)!.getBoundingClientRect().width;
+  const live = (el: HTMLElement, w: number) => el.closest<HTMLElement>('.shell')?.style.setProperty(prop, w + 'px');
   return <div class={`divider divider-${name}`} role="separator" aria-orientation="vertical" aria-label={name === 'rail' ? 'Resize navigation' : 'Resize list'} tabIndex={0}
     onPointerDown={e => {
       if (e.button !== 0) return;
-      const el = e.currentTarget as HTMLElement, s = el.closest<HTMLElement>('.shell'), x0 = e.clientX, w0 = width(el), start = clamp(w0);
+      const el = e.currentTarget as HTMLElement, x0 = e.clientX, w0 = width(el), start = clamp(el, w0);
       let w = start;
       el.setPointerCapture(e.pointerId); e.preventDefault();
       // The drag moves the column live; only its end is saved.
-      el.onpointermove = m => { w = clamp(w0 + m.clientX - x0); s?.style.setProperty(prop, w + 'px'); };
+      el.onpointermove = m => { w = clamp(el, w0 + m.clientX - x0); live(el, w); };
       // A press without a move keeps the default width; a cancelled drag keeps where it got to.
       el.onpointerup = el.onpointercancel = () => { el.onpointermove = el.onpointerup = el.onpointercancel = null; if (w !== start) save(key, w); };
     }}
     onDblClick={e => { (e.currentTarget as HTMLElement).closest<HTMLElement>('.shell')?.style.removeProperty(prop); save(key, 0); }}
-    onKeyDown={e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault(); save(key, clamp(width(e.currentTarget as HTMLElement) + (e.key === 'ArrowLeft' ? -16 : 16))); }} />;
+    // Arrow keys move it live; the release saves, so a held key writes once.
+    onKeyDown={e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault(); const el = e.currentTarget as HTMLElement; live(el, clamp(el, width(el) + (e.key === 'ArrowLeft' ? -16 : 16))); }}
+    onKeyUp={e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; const el = e.currentTarget as HTMLElement; save(key, clamp(el, width(el))); }} />;
 }
 
 /** The signed-in person at the bottom of the navigation: avatar and name (avatar only when collapsed); a click opens Logout. */
@@ -202,10 +207,11 @@ function UserBlock({ name, onLogout }: { name: string; onLogout: () => void }) {
       else if (ref.current?.contains(e.target as Node)) return;
       setOpen(null);
     };
-    // The menu is fixed where it opened, so a scroll or resize closes it.
-    const gone = () => setOpen(null);
-    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close); addEventListener('scroll', gone, true); addEventListener('resize', gone);
-    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); removeEventListener('scroll', gone, true); removeEventListener('resize', gone); };
+    // The menu is fixed where it opened, so a rail scroll or a resize closes it.
+    // Only the rail's own scroll moves the button; lists scrolling elsewhere (a live feed keeping its anchor) leave it open.
+    const gone = () => setOpen(null), rail = ref.current?.closest('.rail');
+    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close); rail?.addEventListener('scroll', gone); addEventListener('resize', gone);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); rail?.removeEventListener('scroll', gone); removeEventListener('resize', gone); };
   }, [!!open]);
   // Fixed, so the scrolling rail never clips it (the collapsed rail is narrower than the menu).
   const toggle = (e: Event) => { e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setOpen(open ? null : { left: r.left, bottom: innerHeight - r.top + 4 }); };

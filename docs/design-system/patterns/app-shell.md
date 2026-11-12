@@ -14,7 +14,7 @@ There is no top bar. Global search goes into the navigation.
 
 **Collapse toggle (OR-42).** The shell places it once, at the top left of the column right after the navigation: the control column, or the work area on a page without one (Overview). The first heading or filter bar there leaves room for it.
 
-**Dividers (OR-41).** The navigation and the control column each have a drag divider on their right edge (`role=separator`, Left and Right arrows by 16 px, double-click resets). Widths are the `--size-rail` and `--size-ctl` variables on the shell. Limits: navigation 160 to 400 px, control column 280 to 720 px. Widths are person settings (`widths.nav`, `widths.control`; `0` resets), clamped to these limits when read; a drag saves once, at its end.
+**Dividers (OR-41).** The navigation and the control column each have a drag divider on their right edge (`role=separator`, Left and Right arrows by 16 px, double-click resets). Widths are the `--size-rail` and `--size-ctl` variables on the shell. Limits: navigation 160 to 400 px, control column 280 to 720 px. Widths are person settings (`widths.nav`, `widths.control`; `0` resets), clamped to these limits when read; a drag saves once, at its end, and an arrow key on release; the upper limit also follows the window (a quarter for the navigation, half the split for the list).
 
 **Rules.**
 * A "Skip to content" link comes first. The "N need you" chip is hidden on the Overview, where the needs-you panel is already shown (OR-17, D14).
