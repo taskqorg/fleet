@@ -67,9 +67,12 @@ export function select(paths: string[]): {selected: Family[]; reasons: string[]}
 }
 
 export function execution(paths: string[] | null, previousGreen: boolean, forced: boolean): Family[] {
-  // shortcut: only the inspected Lab-create boundary is qualified; broaden after consumer review.
-  return paths?.length && previousGreen && !forced && paths.every(p => prose(p) || p === 'app/src/views/lab-create.tsx')
-    ? select(paths).selected : [...families];
+  if (!paths?.length || !previousGreen || forced) return [...families];
+  if (!paths.every(p => prose(p) || /^(go\/(coordinator|executor|gateway|update)\/|app\/src\/|packages\/ui\/)/.test(p))) return [...families];
+  const chosen = new Set(select(paths).selected);
+  // Go candidates retain the app family's clean native archive builds and selftests.
+  if (paths.some(p => /^go\//.test(p))) chosen.add('app');
+  return families.filter(f => chosen.has(f));
 }
 
 export function makePlan(event: string, payload: Event, candidate: string, git: (args: string[]) => string, previousGreen = false, forced = false): Plan {

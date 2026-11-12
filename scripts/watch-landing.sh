@@ -36,7 +36,7 @@ echo "merged $sha"
 while :; do
   # A failed fetch (network) is retried like a missing tag.
   git fetch -q origin main --tags 2>/dev/null || true
-  tag=$(git tag --contains "$sha" --sort=v:refname 'v1.*' 2>/dev/null | head -1 || true)
+  tag=$(git tag --contains "$sha" 'v1.*' 'ui-*-v1.*' | awk '{ n=$0; sub(/^.*v/,"",n); print n, $0 }' | sort -k1,1V | cut -d' ' -f2- 2>/dev/null | head -1 || true)
   [ -n "$tag" ] && break
   wait_step "release"
 done
@@ -50,6 +50,26 @@ env_file=~/.config/ufobe-agents/site-access.env
 # The token goes into a 0600 header file read by curl (-H @file): never in ps, never printed (agent-access-smoke.sh).
 hdr=$(mktemp); chmod 600 "$hdr"; trap 'rm -f "$hdr"' EXIT
 ( . "$env_file"; printf 'CF-Access-Client-Id: %s\nCF-Access-Client-Secret: %s\n' "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" ) >"$hdr"
+if [[ "$tag" == ui-*-v* ]]; then
+  backend=${tag#ui-}; backend=${backend%-v*}; want=${tag##*-v}
+  commit=$(git rev-parse "$tag^{commit}")
+  while :; do
+    if curl -sf --max-time 3 -H @"$hdr" https://fleet.ufobe.com/ui-release.json | WANT="$want" BACKEND="$backend" COMMIT="$commit" python3 -I -c '
+import json,os,sys
+try: m=json.load(sys.stdin)
+except ValueError: sys.exit(1)
+sys.exit(0 if m.get("kind")=="ui" and m.get("version")==os.environ["WANT"] and m.get("backendVersion")==os.environ["BACKEND"] and m.get("commit")==os.environ["COMMIT"] else 1)
+'; then
+      if curl -sf --max-time 3 -H @"$hdr" https://fleet.ufobe.com/api/health | BACKEND="$backend" python3 -I -c '
+import json,os,sys
+try: h=json.load(sys.stdin)
+except ValueError: sys.exit(1)
+sys.exit(0 if h.get("database")=="ok" and h.get("version")==os.environ["BACKEND"] else 1)
+'; then observed "ui_ready version=$want backend=$backend commit=$commit"; echo "on site $tag"; exit 0; fi
+    fi
+    wait_step "UI site"
+  done
+fi
 want=${tag#v}
 site_seen=false
 while :; do

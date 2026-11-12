@@ -11,14 +11,16 @@ test('landing observations retain authoritative publication, optional site evide
   try {
     const bin = join(dir, 'bin'); mkdirSync(bin);
     const put = (name: string, text: string) => writeFileSync(join(bin, name), '#!/bin/sh\nset -eu\n' + text, {mode: 0o700});
-    put('git', 'case "$1" in fetch) exit 0;; tag) echo v1.2.3;; *) exit 1;; esac\n');
+    put('sleep', 'exit 0\n');
+    put('git', 'case "$1" in fetch) exit 0;; tag) if [ "${WATCH_FIXTURE_UI:-0}" = 1 ]; then printf "%s\\n" v1.2.10 ui-1.2.3-v1.2.9; else echo v1.2.3; fi;; rev-parse) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; *) exit 1;; esac\n');
     put('gh', `case "$1" in
       api) echo 'MERGED CLEAN 0123456789 - auto-merge off';;
       release) [ "\${WATCH_FIXTURE_PUBLICATION_UNKNOWN:-0}" != 1 ] || exit 1; echo '2026-11-11T12:00:00Z';;
       *) exit 1;; esac\n`);
     put('curl', `case "$*" in
-      *'/api/health'*) [ "\${WATCH_FIXTURE_SITE_DOWN:-0}" != 1 ] || exit 22; echo '{"version":"1.2.3","database":"ok"}';;
-      *'/api/ops/hosts_list'*) echo '{"serverNow":1000,"staleAfterMs":30000,"hosts":[{"id":"fixture","lastSeenAt":999,"version":"1.2.3","autoUpdate":"on"}]}';;
+      *'/ui-release.json'*) if [ -n "\${WATCH_FIXTURE_BAD_UI:-}" ]; then echo "\${WATCH_FIXTURE_BAD_UI}"; exit 0; fi; echo '{"kind":"ui","version":"1.2.9","backendVersion":"1.2.3","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}';;
+      *'/api/health'*) if [ -n "\${WATCH_FIXTURE_BAD_HEALTH:-}" ]; then echo "\${WATCH_FIXTURE_BAD_HEALTH}"; exit 0; fi; [ "\${WATCH_FIXTURE_SITE_DOWN:-0}" != 1 ] || exit 22; echo '{"version":"1.2.3","database":"ok"}';;
+      *'/api/ops/hosts_list'*) [ "\${WATCH_FIXTURE_UI:-0}" != 1 ] || exit 99; echo '{"serverNow":1000,"staleAfterMs":30000,"hosts":[{"id":"fixture","lastSeenAt":999,"version":"1.2.3","autoUpdate":"on"}]}';;
       *) exit 1;; esac\n`);
     const envFile = join(dir, 'access.env');
     writeFileSync(envFile, 'CF_ACCESS_CLIENT_ID=fixture-id-not-a-secret\nCF_ACCESS_CLIENT_SECRET=fixture-value-must-not-appear\n', {mode: 0o600});
@@ -27,10 +29,10 @@ test('landing observations retain authoritative publication, optional site evide
     assert.equal(source.split(original).length, 2);
     // Change only the external credential-file location in this disposable copy; never read the real host file.
     const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
-    const run = (extra: Record<string, string> = {}, missing = false) => {
+    const run = (extra: Record<string, string> = {}, missing = false, minutes = '45') => {
       const script = join(dir, 'watch.sh');
       writeFileSync(script, source.replace(original, 'env_file=' + quote(missing ? join(dir, 'missing') : envFile)));
-      return spawnSync('bash', [script, '7'], {encoding: 'utf8', timeout: 5000, env: {...process.env, PATH: bin + ':' + process.env.PATH, ...extra}});
+      return spawnSync('bash', [script, '7', minutes], {encoding: 'utf8', timeout: 5000, env: {...process.env, PATH: bin + ':' + process.env.PATH, ...extra}});
     };
     for (const [extra, publication, site] of [
       [{}, '2026-11-11T12:00:00Z', 'site_healthy version=1.2.3'],
@@ -44,6 +46,18 @@ test('landing observations retain authoritative publication, optional site evide
       assert.ok(r.stderr.includes(site));
       assert.ok(!r.stderr.includes('fixture-value-must-not-appear'));
       assert.ok(!r.stdout.includes('fixture-value-must-not-appear'));
+    }
+    const ui = run({WATCH_FIXTURE_UI:'1'});
+    assert.equal(ui.status,0,ui.stderr);
+    assert.equal(ui.stdout,'merged 0123456789\nreleased ui-1.2.3-v1.2.9\non site ui-1.2.3-v1.2.9\n');
+    const good={kind:'ui',version:'1.2.9',backendVersion:'1.2.3',commit:'a'.repeat(40)};
+    for (const patch of [{kind:'native'},{version:'1.2.8'},{backendVersion:'1.2.2'},{commit:'b'.repeat(40)}]) {
+      const bad=run({WATCH_FIXTURE_UI:'1',WATCH_FIXTURE_BAD_UI:JSON.stringify({...good,...patch})},false,'0');
+      assert.equal(bad.status,2,bad.stderr); assert.ok(!bad.stdout.includes('on site'));
+    }
+    for (const health of [{version:'1.2.2',database:'ok'},{version:'1.2.3',database:'down'}]) {
+      const bad=run({WATCH_FIXTURE_UI:'1',WATCH_FIXTURE_BAD_HEALTH:JSON.stringify(health)},false,'0');
+      assert.equal(bad.status,2,bad.stderr); assert.ok(!bad.stdout.includes('on site'));
     }
     const absent = run({}, true); assert.equal(absent.status, 3); assert.match(absent.stdout, /no site access: check hosts_list yourself\n$/);
   } finally { rmSync(dir, {recursive: true, force: true}); }

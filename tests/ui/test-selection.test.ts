@@ -51,10 +51,10 @@ test('release rejects missing, failed or mismatched candidate evidence', () => {
   assert.throws(() => verifyEvidence(plan, head, missing));
 });
 
-test('only qualified prose and Lab-create can omit suites, and prior failure or rollback restores full', () => {
+test('qualified module unions preserve archive gates and prior failure or rollback restores full', () => {
   assert.deepEqual(execution(['docs/example.md'], true, false), []);
   assert.deepEqual(execution(['app/src/views/lab-create.tsx'], true, false), ['app', 'browser']);
-  for (const paths of [['app/src/views/lab.tsx'], ['packages/view-url/view-url.ts'], ['app/src/views/lab-create.tsx', 'go/coordinator/access.go']])
+  for (const paths of [['go/obs/obs.go'], ['packages/view-url/view-url.ts'], ['app/src/views/lab-create.tsx', 'go/coordinator/access.go']])
     assert.deepEqual(execution(paths, true, false), [...families]);
   assert.deepEqual(execution(['docs/example.md'], false, false), [...families]);
   assert.deepEqual(execution(['docs/example.md'], true, true), [...families]);
@@ -96,4 +96,12 @@ test('actual Git comparison accepts a qualified plan and rejects a corrupted omi
 
     writeFileSync(path, JSON.stringify({...plan, paths: ['docs/unrelated.md']})); assert.throws(verify);
   } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('known module execution retains native archives, HTTP consumers and shared fallback', () => {
+  for (const module of ['executor','gateway','update']) assert.deepEqual(execution([`go/${module}/main.go`],true,false),['go','app']);
+  assert.deepEqual(execution(['go/coordinator/main.go'],true,false),[...families]);
+  for (const path of ['app/src/views/hosts.tsx','packages/ui/src/button.tsx']) assert.deepEqual(execution([path],true,false),['app','browser']);
+  for (const path of ['go/obs/obs.go','go/contract/base.go','go/go.mod','tests/ui/new.test.ts']) assert.deepEqual(execution([path],true,false),[...families]);
+  assert.deepEqual(execution(['go/executor/main.go','app/src/views/hosts.tsx'],true,false),[...families]);
 });
