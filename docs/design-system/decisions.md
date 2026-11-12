@@ -316,6 +316,12 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * **Not shown to the owner as options:** the layout follows §12 as written; the chart drawing is the only new choice and has one reasonable answer under OR-8.
 * **Not done:** a per-member line in the chart (the pool line only), pin on the cards.
 
+## 2026-11-12 D25: Owner review of lists, navigation and codes
+
+* **Source:** owner review decisions P1 to P14 of 2026-11-12, given to the UI workers.
+* **Rules:** OR-29 to OR-42 in [owner rules](owner-rules.md). OR-32 makes the Cmd+K palette the one exception to OR-14. OR-38 extends [D17](#2026-11-10-d17-human-entity-codes): a UUID is never shown, only copied.
+* **Stored per person on the server:** saved views (OR-33), focus and its presets (OR-34), column widths (OR-41). Agents get saved views through MCP first (fleet.md R7, [agentic first](../../fleet.md)).
+* **Checks:** none yet; the rules are in "Reading only" until the workers who build them add checks.
 
 ## 2026-11-12 Lab draft creation
 
