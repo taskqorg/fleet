@@ -78,7 +78,8 @@ test('landing observations retain authoritative publication, optional site evide
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: null}]), 'not merged: OPEN, unknown'],
       [pr({mergeStateStatus: 'DIRTY'}), 'not merged: OPEN, merge_conflict'],
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'merge_conflict'}]), 'not merged: OPEN, merge_conflict'],
-      [pr({mergeStateStatus: 'BLOCKED', mergeQueueEntry: {state: 'UNMERGEABLE'}}), 'not merged: OPEN, merge_conflict'],
+      // A veto on a DIRTY pull request is a veto, not a conflict.
+      [pr({mergeStateStatus: 'DIRTY', autoMergeRequest: null}, [], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
       [pr({autoMergeRequest: null}, [red], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
       [pr({state: 'CLOSED', autoMergeRequest: null}, [red]), 'not merged: CLOSED, auto-merge off'],
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}); assert.equal(r.status, 1, r.stderr); assert.equal(r.stdout, out + '\n'); }
@@ -100,7 +101,7 @@ test('landing observations retain authoritative publication, optional site evide
       const r = run({WATCH_FIXTURE_GRAPHQL_STEPS: steps.join('\n'), WATCH_FIXTURE_COUNT: join(dir, 'count-' + i), WATCH_FIXTURE_GRAPHQL: merged});
       assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout, /^merged 0123456789$/m); assert.doesNotMatch(r.stdout, /merge_conflict/);
     }
-    // A DIRTY first seen at the deadline is named, not a timeout.
-    const late = run({WATCH_FIXTURE_GRAPHQL: dirty()}, false, '0'); assert.equal(late.status, 1); assert.equal(late.stdout, 'not merged: OPEN, merge_conflict\n');
+    // A DIRTY seen once at the deadline may be stale: a timeout, not a conflict.
+    const late = run({WATCH_FIXTURE_GRAPHQL: dirty()}, false, '0'); assert.equal(late.status, 2); assert.equal(late.stdout, 'timeout at: queue\n');
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });

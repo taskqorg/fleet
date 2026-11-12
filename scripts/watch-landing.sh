@@ -26,12 +26,12 @@ while :; do
     || { dirty=0; wait_step "queue (gh failed)"; continue; }
   read -r state merge_state sha waiting queued checks reason <<<"$line"
   [ "$state" = MERGED ] && break
-  # A conflict with main. In the queue, the queue decides: an UNMERGEABLE entry is one; a DIRTY beside a healthy entry is
-  # GitHub's stale answer for the old head after an enqueue (PR #451: DIRTY one second after joining the queue, merged five
-  # minutes later), and a real one ends in a removal with reason merge_conflict (named below). Before the queue (auto-merge
-  # on, nothing removed) a DIRTY counts when seen on two polls in a row, since it may also be stale right after a push.
-  if [ "$state" = OPEN ] && { [ "$queued" = UNMERGEABLE ] || { [ "$merge_state" = DIRTY ] && [ "$queued" = "-" ]; }; }; then
-    [ "$dirty" = 1 ] || [ "$queued" = UNMERGEABLE ] || [ "$(date +%s)" -ge "$deadline" ] && { echo "not merged: $state, merge_conflict"; exit 1; }
+  # A conflict with main before the queue takes the entry: auto-merge stays on and nothing is removed, so name it here. It
+  # counts when DIRTY on two polls in a row: right after a push GitHub may still report the old head's DIRTY. Inside the queue
+  # the queue decides (PR #451: DIRTY one second after joining the queue, merged five minutes later); a real conflict there
+  # ends in a removal with reason merge_conflict, named below.
+  if [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ] && [ "$waiting" = waiting ] && [ "$queued" = "-" ]; then
+    [ "$dirty" = 1 ] && { echo "not merged: $state, merge_conflict"; exit 1; }
     dirty=1; wait_step "queue"; continue
   fi
   dirty=0
