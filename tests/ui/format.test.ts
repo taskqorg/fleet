@@ -53,3 +53,12 @@ test('actor: an agent run reads as agent, never its UUID (OR-38)', () => {
   assert.equal(actor('owner@x.test'), 'owner@x.test');
   assert.equal(actor(null), '');
 });
+
+// OR-38; risk: a UUID or hash shows as a file's name.
+test('fileLabel drops UUIDs and long hashes, keeps the extension', async () => {
+  const { fileLabel } = await import('../../packages/ui/src/format.ts');
+  assert.equal(fileLabel('out/mcp-lifecycle-5eb2ce291c7d227dd684ec83f9ddc05776e2fe9a0c4e62927b4592383e66fb28-16e7c862-68a7-44c7-b5cc-77d2dfb9a588.jsonl'), 'mcp-lifecycle.jsonl');
+  assert.equal(fileLabel('report.md'), 'report.md');
+  assert.equal(fileLabel('16e7c862-68a7-44c7-b5cc-77d2dfb9a588'), '');
+  assert.equal(fileLabel('build-2026.log'), 'build-2026.log');
+});

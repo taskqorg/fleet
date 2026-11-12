@@ -131,3 +131,15 @@ export const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** An actor as people read it (OR-38): an agent run (`execution:<uuid>`) is "agent", a person is their email. */
 export const actor = (a: string | null | undefined): string => !a ? '' : a.startsWith('execution:') ? 'agent' : a;
+
+/**
+ * A file's human name (OR-38): the last path segment without UUIDs or long hex hashes, extension kept; '' when nothing
+ * readable is left (the caller then names the kind). `mcp-lifecycle-5eb2…-16e7c862-….jsonl` reads `mcp-lifecycle.jsonl`.
+ */
+export function fileLabel(path: string): string {
+  const base = path.split('/').pop() ?? '', dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base, ext = dot > 0 ? base.slice(dot) : '';
+  const s = stem.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '').replace(/(^|[-_.])[0-9a-f]{12,}(?=$|[-_.])/gi, '$1')
+    .replace(/[-_.]{2,}/g, '-').replace(/^[-_.]+|[-_.]+$/g, '');
+  return s ? s + ext : '';
+}
