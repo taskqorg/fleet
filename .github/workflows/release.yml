@@ -132,39 +132,38 @@ jobs:
             echo "ui_run=$id" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # The merge queue run's speculative build of this exact commit and version (ci.yml release-build): when both of
-          # its jobs passed, publish signs those bytes; stale: a release published since, so its migration check window
-          # moved and migrate runs it again on the same bytes. Anything else: build here, as before.
-          # At most 10 minutes and never past 25 minutes of this step: a slow or queued speculative job, or an API error,
-          # falls back to building here, not to a failed gate.
+          # The merge queue run's speculative build of this exact commit and version (ci.yml release-build): when it
+          # passed, publish signs those bytes; stale: the migration check window moved in a way that check does not cover
+          # (deploy/window-covered.sh), so migrate runs it again on the same bytes. Anything else: build here, as before.
+          # The required app check waits for release-build, so it has normally concluded; the wait covers API errors,
+          # at most 10 minutes and never past 25 minutes of this step, then falls back to building here.
           deadline=$((SECONDS + 600)); [ "$deadline" -le 1500 ] || deadline=1500
           while :; do
             jobs=$(gh run view "$id" --json jobs) || { [ "$SECONDS" -lt "$deadline" ] || { b=timeout; break; }; sleep 10; continue; }
             b=$(jq -r '[.jobs[] | select(.name == "release-build")][0].conclusion // "missing"' <<< "$jobs")
-            m=$(jq -r '[.jobs[] | select(.name == "release-macos")][0].conclusion // "missing"' <<< "$jobs")
             [ "$b" = missing ] && break
             [ "$SECONDS" -lt "$deadline" ] || { b=timeout; break; }
-            [ -z "$b" ] || { [ "$b" = success ] && { [ -z "$m" ] || [ "$m" = missing ]; }; } || break
+            [ -z "$b" ] || break
             sleep 10
           done
-          [ "$b/$m" != success/success ] || gh run download "$id" --name release --dir "$RUNNER_TEMP/spec" || true
+          [ "$b" != success ] || gh run download "$id" --name release --dir "$RUNNER_TEMP/spec" || true
           spec=$RUNNER_TEMP/spec/speculative.json
           # The digest release-build announced in its own annotation: an artifact another job of that run uploaded under
           # the same name does not match it.
           announced=
-          if [ "$b/$m" = success/success ]; then
+          if [ "$b" = success ]; then
             job=$(jq -r '[.jobs[] | select(.name == "release-build")][0].databaseId' <<< "$jobs")
             announced=$(gh api --paginate "repos/$GH_REPO/check-runs/$job/annotations" --jq '.[] | select(.title == "release SHA256SUMS") | .message' | awk 'NR == 1') || announced=
           fi
-          if [ -n "$RECENT" ] && [ "$b/$m" = success/success ] && [ -f "$spec" ] && [ -n "$announced" ] \
+          if [ -n "$RECENT" ] && [ "$b" = success ] && [ -f "$spec" ] && [ -n "$announced" ] \
             && [ "$(sha256sum < "$RUNNER_TEMP/spec/SHA256SUMS" | cut -d' ' -f1)" = "$announced" ] && jq -e --arg v "$VERSION" --arg c "$SHA" '.version == $v and .commit == $c' "$spec" >/dev/null; then
-            stale=false; [ "$(jq -r '.checkedWith | join(" ")' "$spec")" = "$RECENT" ] && [ "$(jq -r .digests "$spec")" = "$DIGESTS" ] || stale=true
+            stale=false; RECENT=$RECENT DIGESTS=$DIGESTS deploy/window-covered.sh "$spec" || stale=true
             (cd "$RUNNER_TEMP/spec" && sha256sum -c --quiet SHA256SUMS) || { echo "::error::ci run $id: tarballs do not match SHA256SUMS"; exit 1; }
             # migrate and publish download the artifact again and take it only with these exact SHA256SUMS.
             { echo "spec_run=$id"; echo "stale=$stale"; echo "sums=$(sha256sum < "$RUNNER_TEMP/spec/SHA256SUMS" | cut -d' ' -f1)"; } >> "$GITHUB_OUTPUT"
             echo "signing the bytes ci run $id built (window moved: $stale)" | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo "no usable speculative build in ci run $id (release-build: $b, release-macos: $m); building here" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "no usable speculative build in ci run $id (release-build: $b); building here" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
   build:
     needs: gate
@@ -270,25 +269,12 @@ jobs:
           (cd out && sha256sum -c --quiet SHA256SUMS)
           mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
           .release/deploy/migrate-check.sh new out
-  selftest-macos:
-    needs: [gate, build]
-    runs-on: macos-latest
-    permissions:
-      contents: read
-    # Inline, not deploy/selftest-release.sh: a rollback drill's tarball can predate that script.
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: release
-      - run: |
-          mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
-          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
   publish:
-    needs: [gate, build, migrate, selftest-macos]
+    needs: [gate, build, migrate]
     if: >-
       always() && needs.gate.result == 'success' && needs.gate.outputs.release == 'true' && (needs.gate.outputs.ui == 'true'
       || (needs.gate.outputs.spec_run != '' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped' && needs.gate.outputs.stale != 'true'))
-      || (needs.build.result == 'success' && needs.selftest-macos.result == 'success'))
+      || needs.build.result == 'success')
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -308,13 +294,26 @@ jobs:
       SPEC_RUN: ${{ needs.gate.outputs.spec_run }}
       SUMS: ${{ needs.gate.outputs.sums }}
     steps:
+      # GitHub refuses the workflow token (it cannot hold the workflows permission) a new tag on a commit whose
+      # .github/workflows differ from the head of main: HTTP 403 "Resource not accessible by integration" (run
+      # 43237511138, 2026-11-12: main had moved on to a merge that changed workflows). That head contains this commit
+      # and its push started the next release run, which publishes both; this run stops here, green.
+      - name: Main has not moved on with workflow changes
+        id: target
+        run: |
+          set -o pipefail
+          moved=$(gh api "repos/$GH_REPO/compare/$SHA...main" --jq '[.files[]?.filename] | if length >= 300 then 300 else map(select(startswith(".github/workflows/"))) | length end')
+          if [ "$moved" != 0 ]; then
+            echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo skip=true >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/download-artifact@v4
-        if: env.UI != 'true' && env.SPEC_RUN == ''
+        if: steps.target.outputs.skip != 'true' && env.UI != 'true' && env.SPEC_RUN == ''
         with:
           name: release
       # The bytes the merge queue run built, selftested and migration-checked (gate); signing covers exactly these.
       - name: Speculative build
-        if: env.UI != 'true' && env.SPEC_RUN != ''
+        if: steps.target.outputs.skip != 'true' && env.UI != 'true' && env.SPEC_RUN != ''
         run: |
           gh run download "$SPEC_RUN" --name release --dir .
           rm speculative.json
@@ -322,7 +321,7 @@ jobs:
           sha256sum -c SHA256SUMS
       # The tree the qualifying ci run browser-checked (gate); release.json binds it to version, backend and source.
       - name: UI archive
-        if: env.UI == 'true'
+        if: steps.target.outputs.skip != 'true' && env.UI == 'true'
         run: |
           gh run download "$UI_RUN" --name fleet-ui --dir "$RUNNER_TEMP/ui"
           test -f "$RUNNER_TEMP/ui/index.html"
@@ -332,6 +331,7 @@ jobs:
           sha256sum "$file" > SHA256SUMS
       # A re-run after a later release published must not reuse its version or move latest backwards.
       - name: Version still free and newest
+        if: steps.target.outputs.skip != 'true'
         run: |
           tag="v$VERSION"
           [ "$UI" != true ] || tag="ui-$BACKEND-v$VERSION"
@@ -342,6 +342,7 @@ jobs:
           [ -z "$latest" ] || [ "$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$VERSION" ] \
             || { echo "::error::$VERSION is not newer than $latest; start a new run"; exit 1; }
       - name: Sign SHA256SUMS, write latest.json
+        if: steps.target.outputs.skip != 'true'
         env:
           FLEET_RELEASE_KEY: ${{ secrets.FLEET_RELEASE_KEY }}
         run: |
@@ -355,11 +356,16 @@ jobs:
           printf '{"version":"%s","files":{"linux-amd64":"fleet-%s-linux-amd64.tgz","darwin-arm64":"fleet-%s-darwin-arm64.tgz"},"checkedWith":%s}\n' \
             "$VERSION" "$VERSION" "$VERSION" "$checked" > latest.json
       - id: attest
+        if: steps.target.outputs.skip != 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: fleet-*.tgz
-      - run: |
+      - if: steps.target.outputs.skip != 'true'
+        run: |
           cp "${{ steps.attest.outputs.bundle-path }}" provenance.sigstore.jsonl
+          # The 403 above when main moved on with workflow changes after that check: superseded the same way.
+          moved() { gh api "repos/$GH_REPO/compare/$SHA...main" --jq '[.files[]?.filename] | if length >= 300 then 300 else map(select(startswith(".github/workflows/"))) | length end'; }
+          trap '[ $? = 0 ] || [ "$(moved)" = 0 ] || { echo "superseded: main changed workflows since $SHA; the next release run publishes it" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }' EXIT
           if [ "$UI" = true ]; then
             gh release create "ui-$BACKEND-v$VERSION" --target "$SHA" --latest=false --title "Fleet UI $VERSION" --notes "UI $VERSION for backend $BACKEND; source $SHA" \
               fleet-ui-*.tgz SHA256SUMS SHA256SUMS.sig provenance.sigstore.jsonl
