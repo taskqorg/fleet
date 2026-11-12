@@ -56,15 +56,17 @@ func run(args []string) error {
 		if secret == "" {
 			return errors.New("guard: FLEET_BROWSER_SECRET is required")
 		}
-		listener, err := net.Listen("tcp", address)
+		listener, err := listen(address) // fleet-access-guard.socket holds the port across restarts
 		if err != nil {
 			return err
 		}
-		if !listener.Addr().(*net.TCPAddr).IP.IsLoopback() {
-			return fmt.Errorf("guard binds only to loopback, not %s", listener.Addr())
-		}
 		server := &http.Server{Handler: newGuard(secret, accessIssuer+"/cdn-cgi/access/certs"), ReadHeaderTimeout: 10 * time.Second}
-		go func() { <-terminated(); server.Shutdown(context.Background()) }()
+		go func() {
+			<-terminated()
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // a stream outlasting this reconnects
+			defer cancel()
+			server.Shutdown(ctx)
+		}()
 		if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}

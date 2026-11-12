@@ -2076,6 +2076,7 @@ func runExecutor() error {
 		return err
 	}
 	status("working", "")
+	var failingSince time.Time
 	for {
 		if shutdown.Load() {
 			for _, l := range e.live {
@@ -2103,12 +2104,19 @@ func runExecutor() error {
 			// A redirected poll is already signalled once by the edge state; other failures log here.
 			var r redirected
 			if !errors.As(err, &r) {
-				fmt.Fprintf(os.Stderr, "executor exchange failed; retained journal, retry pending: %v\n", err)
-				status("error", "")
+				// A coordinator restart is a few seconds of refused or reset polls: retried silently, logged once it lasts.
+				if failingSince.IsZero() {
+					failingSince = time.Now()
+				}
+				if time.Since(failingSince) >= exchangeQuiet {
+					fmt.Fprintf(os.Stderr, "executor exchange failed for %s; retained journal, retry pending: %v\n", time.Since(failingSince).Round(time.Second), err)
+					status("error", "")
+				}
 			} else {
 				status("blocked", "auth") // edge login page or host token not accepted
 			}
 		} else {
+			failingSince = time.Time{}
 			status("working", "")
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -2178,6 +2186,9 @@ func (e *executor) poll() (*pollReply, error) {
 
 // exchange keeps command order and the single owner of live/process/journal state. Slow preparation must not
 // stop host liveness; extra polls leave returned commands pending for the next exchange, never execute them twice.
+// exchangeQuiet: how long exchange failures stay unlogged; a coordinator restart behind its held socket takes less.
+const exchangeQuiet = 30 * time.Second
+
 func (e *executor) exchange() (err error) {
 	// Retain the edge backoff for both ordinary polls and liveness polls.
 	if edgeWait(pollRoute) {

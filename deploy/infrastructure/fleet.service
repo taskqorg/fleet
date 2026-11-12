@@ -1,13 +1,16 @@
 [Unit]
+Requires=fleet.socket
+After=fleet.socket
 Description=Fleet coordinator
 After=network.target
 [Service]
+TimeoutStopSec=30
 WorkingDirectory=/home/fleet/releases/current
 EnvironmentFile=/home/fleet/.config/fleet/coordinator.env
 Environment=FLEET_UI_ROOT=/home/fleet/ui
 ExecStart=/home/fleet/releases/current/fleet-coordinator
-Restart=on-failure
-RestartSec=3
+Restart=always
+RestartSec=1
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
