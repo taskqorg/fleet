@@ -67,8 +67,8 @@ GitHub merge queue ── merge_group run of ci (go, app, browser) on main+ahead
         ▼
 push to main ──► release.yml (on: push main; concurrency: release, no cancel)
         gate: FLEET_RELEASE_PAUSE unset; sha = head of main; ci green for sha
-        version 1.<UTC yymmdd of the run>.<next M>; build sha; selftest-macos;
-        migrate-check against the last 5 releases; publish (signed SHA256SUMS, latest.json, tag by API)
+        version 1.<UTC yymmdd of the run>.<next M>; build sha + migration check against the last 5 releases
+        (one job on the PDS18 runner); selftest-macos; publish (signed SHA256SUMS, latest.json, tag by API)
         ▼
 PDS18 fleet-update (timer 1 min, conditional GET of latest.json) ── install, health, smoke,
         3 starts ─► rollback; healthy ─► coordinator healthyTarget = new version
@@ -107,7 +107,7 @@ executor poll reply carries target ─► executor rewrites update.json
 
 ### 4. Automatic release
 
-Replaces [fleet-self-update.md section 1](fleet-self-update.md#1-release-workflow) trigger and gate. Build, `selftest-macos`, signing and publishing stay as they are.
+Replaces [fleet-self-update.md section 1](fleet-self-update.md#1-release-workflow) trigger and gate. `selftest-macos`, signing and publishing stay as they are. `build` runs on the self-hosted PDS18 runner (`deploy/infrastructure/pds18-ci`), whose disk is capped at 20 MB/s, so the job avoids writes: it restores no GitHub pnpm or Go cache (the runner keeps its own stores between runs; the hosted fallback still restores them), and it runs the migration check of section 5 in the same job on the tarball it just built instead of a second job with its own checkout and artifact download.
 
 * **Trigger**: `on: push: branches: [main]`, plus `workflow_dispatch` with an optional `sha` input (a commit on `main` newer than the latest release; empty means the head of `main`).
 * **Batching**: `concurrency: {group: release, cancel-in-progress: false}`. GitHub keeps at most one running and one pending run in a group; a newer pending run replaces the older pending one. While a release runs (about 2 minutes), every merge that lands is collected into the next release. No quiet-window logic.
@@ -119,9 +119,9 @@ Replaces [fleet-self-update.md section 1](fleet-self-update.md#1-release-workflo
 
 ### 5. Compatibility across skipped versions
 
-Today `migrate-check` proves only "release N's migrations, then release N-1's coordinator on that database". With a release per batch, PDS18 can be several releases behind when it installs (it was paused or down), and a rollback returns to that older version.
+Before this change the `migrate-check` job proved only "release N's migrations, then release N-1's coordinator on that database". With a release per batch, PDS18 can be several releases behind when it installs (it was paused or down), and a rollback returns to that older version.
 
-* **`migrate-check` covers the last 5 published releases.** The newest published release builds the database first, as PDS18's was built; N then applies only its new migrations on top (2026-11-11: a fresh database alone hid a new migration that relied on an edited, already released one), and each of the 5 newest published releases' coordinators then starts on it in turn; each must answer `/api/health` 200. A released migration is never edited. `release.json` records them as `checkedWith`. Each start takes seconds, so the job stays near its current minute. Why 5: PDS18 checks every minute and a release takes at least 3 minutes from merge, so in normal running PDS18 is at most one release behind; 5 covers an outage of about 15 minutes at the peak rate. It is a setting, not a limit on releases.
+* **The migration check covers the last 5 published releases.** The newest published release builds the database first, as PDS18's was built; N then applies only its new migrations on top (2026-11-11: a fresh database alone hid a new migration that relied on an edited, already released one), and each of the 5 newest published releases' coordinators then starts on it in turn; each must answer `/api/health` 200. A released migration is never edited. `latest.json` records them as `checkedWith`. Each start takes seconds. The check is a step of `build` (section 4): the recent releases' coordinators (`fleet-coordinator`, `config/` and `release.json`, with the sha256 digest of the asset they came from) stay extracted under `~/fleet-releases/v/<version>` on the runner, so a release is downloaded once, when it first enters the window or when its asset digest changed (the gate passes the digests with `recent`), checked against that digest (an asset GitHub reports no digest for is fetched every run, unchecked, as before), and entries that left the window are removed; the throwaway PostgreSQL runs with `fsync` off (`initdb --no-sync`), which changes durability only, not what the migrations do. Why 5: PDS18 checks every minute and a release takes at least 3 minutes from merge, so in normal running PDS18 is at most one release behind; 5 covers an outage of about 15 minutes at the peak rate. It is a setting, not a limit on releases.
 * **PDS18 beyond the checked window.** When PDS18 runs a version not in the candidate's `checkedWith`, `fleet-update pds18` still installs (fix forward; the pre-install dump is taken as always) and opens one needs-you question: "pds18: <running> to <candidate> rollback pair unchecked". Rollback, if needed, is then a manual decision with the dump.
 * **A refused release** is skipped as today (`cycle` skips refused candidates). PDS18 installs the next release once one is published; its `checkedWith` includes the version PDS18 still runs, as long as that is within the last 5.
 * **Executors** do not touch the database. The existing rule stands: the coordinator serves N-1 and N, older executors show `version-behind` and keep working, and every host protocol change is expand-then-contract. New here: the contract step (removing a field) merges only when `hosts_list` shows no host older than the release that added the replacement. The worker checks that before enabling auto-merge on such a pull request.
@@ -198,7 +198,7 @@ Amendment of 2026-11-11, decided by the owner. Data from pull requests #171 to #
 * **Release on a schedule.** Rejected by author: adds up to one interval of delay; the concurrency group already batches.
 * **Workflow notifies the coordinator after publish.** Rejected by author: needs the `fleet-machines` Access token as an Actions secret in a public repository to save about a minute.
 * **Coordinator polls GitHub releases.** Rejected by author: the coordinator cannot install itself, and executors already get the target through the poll reply.
-* **`migrate-check` against the version running on PDS18 and the oldest host** (requested by the orchestrator). Rejected by author: CI would need a credential to read host state. Checking the last 5 releases covers PDS18 in normal running, and a needs-you question covers the rest.
+* **The migration check against the version running on PDS18 and the oldest host** (requested by the orchestrator). Rejected by author: CI would need a credential to read host state. Checking the last 5 releases covers PDS18 in normal running, and a needs-you question covers the rest.
 * **PDS18 installs every intermediate release in sequence.** Rejected by author: needs a release list beyond `latest.json`, stalls on a refused release, and slows catch-up.
 * **Smoke and rollback from a GitHub runner.** Rejected: runners cannot reach the Mac or WSL, and rollback already lives in `fleet-update`.
 * **`.gitattributes` `merge=union` for shared indexes** (section 8). Rejected by author: GitHub's merge queue ignores merge drivers, and a union of JSON or Go lines produces invalid files.
@@ -229,7 +229,7 @@ One pull request per item, in this order. Items 1 and 2 wait for #191: the rules
     * Coordinator merge script: deleted (it lives outside this repository).
     * Check: two pull requests enabled together land after one queue run each, with no manual update.
 2. **Release**:
-    * `.github/workflows/release.yml`: trigger, dispatch `sha` input, concurrency, pause variable, gate with `sha` output, computed version, `migrate-check` over 5 releases with `checkedWith`, tag by `gh release create --target`.
+    * `.github/workflows/release.yml`: trigger, dispatch `sha` input, concurrency, pause variable, gate with `sha` output, computed version, the migration check in `build` over 5 releases with `checkedWith`, tag by `gh release create --target`.
     * Environment `release`: deployment branch `main`, no reviewers (settings, no file).
     * `.github/workflows/ci.yml`: the header comment about tag releases.
     * `docs/designs/fleet-self-update.md`: CUJ 1 rewritten as "a merge releases"; section 1 points here.

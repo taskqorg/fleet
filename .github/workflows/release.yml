@@ -30,6 +30,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       previous: ${{ steps.check.outputs.previous }}
       recent: ${{ steps.check.outputs.recent }}
+      digests: ${{ steps.check.outputs.digests }}
       ui: ${{ steps.check.outputs.ui }}
     env:
       GH_TOKEN: ${{ github.token }}
@@ -44,6 +45,7 @@ jobs:
       - id: check
         name: Pause, commit, version
         run: |
+          set -o pipefail
           [ -z "$PAUSE" ] || { echo "paused (FLEET_RELEASE_PAUSE)" | tee -a "$GITHUB_STEP_SUMMARY"; echo release=false >> "$GITHUB_OUTPUT"; exit 0; }
           git fetch --force --tags origin main
           sha=$(git rev-parse "${INPUT_SHA:-origin/main}^{commit}")
@@ -68,9 +70,12 @@ jobs:
           day=$(date -u +%y%m%d)
           m=$(git tag -l "v1.$day.*" "ui-*-v1.$day.*" | sed "s/^.*v1\.$day\.//" | sort -n | tail -1)
           version=1.$day.$(( ${m:--1} + 1 ))
-          # migrate-check pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
-          recent=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' | awk '/^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ { if (n++ < 5) { printf "%s%s", sep, substr($0,2); sep=" " } } END { print "" }')
-          { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; } >> "$GITHUB_OUTPUT"
+          # The migration check in build pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
+          # digests: "<version>=sha256:<hex>" of each one's linux tarball, so build verifies and caches them without more lookups.
+          releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name as $t | "\($t) \([.assets[] | select(.name == "fleet-\($t | ltrimstr("v"))-linux-amd64.tgz") | .digest // empty] | first // "")"' | awk '$1 ~ /^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ && n++ < 5 { print substr($1,2), $2 }')
+          recent=$(awk 'NF { printf "%s%s", sep, $1; sep=" " } END { print "" }' <<< "$releases")
+          digests=$(awk 'NF { printf "%s%s=%s", sep, $1, $2; sep=" " } END { print "" }' <<< "$releases")
+          { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; echo "digests=$digests"; } >> "$GITHUB_OUTPUT"
           echo "release $version from $sha, checked with: ${recent:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
         with:
@@ -108,22 +113,25 @@ jobs:
     if: needs.gate.outputs.release == 'true'
     # Signing/publishing and native qualification remain on GitHub-hosted runners.
     runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.gate.outputs.sha }}
-          fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@v4
+      # The self-hosted runner keeps the pnpm store and the Go caches on its disk (20 MB/s); restoring GitHub's copies
+      # over them only costs writes. The hosted fallback has nothing on disk and uses them.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
+          cache: ${{ runner.environment == 'github-hosted' }}
           cache-dependency-path: go/go.sum
       - name: Build
         env:
@@ -140,8 +148,73 @@ jobs:
       - name: Selftest linux binaries
         if: needs.gate.outputs.ui != 'true'
         run: |
-          mkdir t && tar -xzf out/fleet-*-linux-amd64.tgz -C t
-          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
+          mkdir new && tar -xzf out/fleet-*-linux-amd64.tgz -C new
+          for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/new/$b" selftest); done
+      # Upgrade, then expand and contract: the new coordinator migrates a database the latest release built, and each of
+      # the last 5 releases' coordinators must still serve on the database the new one migrated, so a rollback on PDS18
+      # from up to 5 releases behind returns to a checked pair (fleet-delivery-pipeline.md section 5). Same job as the
+      # build: the runner's disk is capped at 20 MB/s, so no artifact round trip, the recent coordinators stay extracted
+      # under ~/fleet-releases/v between runs (one download per new release) and the throwaway PostgreSQL skips fsync.
+      - name: New coordinator migrates, each recent one still serves
+        if: needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.gate.outputs.version }}
+          RECENT: ${{ needs.gate.outputs.recent }}
+          DIGESTS: ${{ needs.gate.outputs.digests }}
+        run: |
+          set -o pipefail
+          export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
+          # The runner is persistent: a failed step must not leave a coordinator on the port or a PostgreSQL behind, and a
+          # cancelled one (killed before the trap) is cleared here.
+          stale() { "$@" -u "$(id -u)" -f '(^|/)fleet-coordinator$|postgres .*-p 54329'; }
+          stale pkill || true
+          i=0; while stale pgrep >/dev/null && [ $i -lt 10 ]; do i=$((i+1)); sleep 1; done
+          stale pkill -KILL || true
+          stop() { kill "$1" || return 0; for _ in 1 2 3 4 5; do kill -0 "$1" || return 0; sleep 1; done; kill -KILL "$1"; wait "$1"; }
+          pid=; trap '{ [ -z "$pid" ] || stop $pid; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
+          initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
+          pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
+          psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
+          # Each entry holds the release's fleet-coordinator, config/ and release.json and the sha256 digest of the asset it
+          # came from; a replaced asset (new digest) is fetched again, and the download is checked against that digest.
+          # An asset GitHub reports no digest for is fetched every run, unchecked, as before the cache.
+          # One extra level: a coordinator's repoRoot() probes two directories above its binary for config/, never $HOME.
+          cache=${HOME:?}/fleet-releases/v; mkdir -p "$cache"
+          for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) rm -rf "${d:?}/var";; *) rm -rf "$d";; esac; done
+          members="./fleet-coordinator ./config ./release.json"
+          for v in $RECENT; do
+            file=fleet-$v-linux-amd64.tgz
+            digest=$(printf '%s\n' $DIGESTS | awk -F= -v v="$v" '$1 == v { print $2 }')
+            [ -n "$digest" ] && [ -x "$cache/$v/fleet-coordinator" ] && [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest $members" ] && continue
+            rm -rf "$cache/$v.tmp"; mkdir "$cache/$v.tmp"
+            gh release download "v$v" -p "$file" -D "$RUNNER_TEMP" --clobber || { echo "::error::v$v: download failed"; exit 1; }
+            [ -z "$digest" ] || echo "${digest#sha256:}  $RUNNER_TEMP/$file" | sha256sum -c --quiet || { echo "::error::v$v: $file does not match its digest"; exit 1; }
+            tar -xzf "$RUNNER_TEMP/$file" -C "$cache/$v.tmp" $members || { echo "::error::v$v: extraction failed"; exit 1; }
+            rm -f "$RUNNER_TEMP/$file"; echo "$digest $members" > "$cache/$v.tmp/.digest"
+            rm -rf "${cache:?}/$v"; mv "$cache/$v.tmp" "$cache/$v"
+          done
+          url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
+          export PORT=9470 FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
+            FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
+          # exec: kill stops the coordinator itself; a leftover one on the port shows as the fresh process exiting.
+          # The latest release builds the database first, as PDS18's is: the new coordinator then applies only its new
+          # migrations on top (a fresh database alone hides a migration that depends on an edited released one).
+          for v in "${RECENT%% *}" "$VERSION" $RECENT; do
+            dir=$cache/$v; [ "$v" = "$VERSION" ] && dir=$PWD/new
+            (cd "$dir" && FLEET_PROJECT_CONFIG_DIRECTORY=$dir/config FLEET_PROFILES_DIRECTORY=$dir/config/agents FLEET_LAB_DIRECTORY=$dir/config/lab exec ./fleet-coordinator) & pid=$!
+            t=$SECONDS; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
+              kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }
+              [ $((SECONDS - t)) -lt 120 ] || { echo "::error::$dir coordinator not healthy after 120 s"; exit 1; }; sleep 1; done
+            echo; kill -0 $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; stop $pid || true; pid=
+          done
+          # Seed the cache with this release (GitHub's asset digest is the sha256 of the uploaded bytes), so the next run
+          # downloads nothing; an entry for a version that never publishes is pruned by the sweep above. Best effort.
+          file=fleet-$VERSION-linux-amd64.tgz sum=$(awk -v f="$file" '$2 == f { print $1 }' out/SHA256SUMS)
+          [ -n "$sum" ] && rm -rf "$cache/$VERSION.tmp" && mkdir "$cache/$VERSION.tmp" \
+            && tar -xzf "out/$file" -C "$cache/$VERSION.tmp" $members && echo "sha256:$sum $members" > "$cache/$VERSION.tmp/.digest" \
+            && rm -rf "${cache:?}/$VERSION" && mv "$cache/$VERSION.tmp" "$cache/$VERSION" || echo "::warning::cache seed of $VERSION skipped"
       - uses: actions/upload-artifact@v4
         with:
           name: release
@@ -162,54 +235,6 @@ jobs:
       - run: |
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
           for b in fleet-coordinator fleet-gateway fleet-executor fleet-update; do (cd /tmp && env -i "$GITHUB_WORKSPACE/t/$b" selftest); done
-  # Upgrade, then expand and contract: the new coordinator migrates a database the latest release built, and each of the
-  # last 5 releases' coordinators must still serve on the database the new one migrated,
-  # so a rollback on PDS18 from up to 5 releases behind returns to a checked pair (fleet-delivery-pipeline.md section 5).
-  migrate-check:
-    needs: [gate, build]
-    if: needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
-    # Signing/publishing and native qualification remain on GitHub-hosted runners.
-    runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
-    permissions:
-      contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      VERSION: ${{ needs.gate.outputs.version }}
-      RECENT: ${{ needs.gate.outputs.recent }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: release
-          path: out
-      - name: New coordinator migrates, each recent one still serves
-        run: |
-          export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
-          initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions >/dev/null
-          pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses=" start
-          psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql
-          mkdir new && tar -xzf "out/fleet-$VERSION-linux-amd64.tgz" -C new
-          for v in $RECENT; do
-            gh release download "v$v" -p "fleet-$v-linux-amd64.tgz" -D "prev-$v" || { echo "::error::download v$v failed"; exit 1; }
-            mkdir "old-$v"; tar -xzf "prev-$v/fleet-$v-linux-amd64.tgz" -C "old-$v"
-          done
-          url() { echo "postgresql://$1@/fleet?host=$pg&port=54329"; }
-          export PORT=9470 FLEET_DATABASE_URL=$(url fleet_app) FLEET_MIGRATION_DATABASE_URL=$(url fleet) \
-            FLEET_PEOPLE_FILE=$PWD/tests/trial/people.json FLEET_BROWSER_SECRET=migrate-check FLEET_HOST_ID=pds18
-          # exec: kill stops the coordinator itself; the version check catches a leftover one still on the port.
-          # The latest release builds the database first, as PDS18's is: the new coordinator then applies only its new
-          # migrations on top (a fresh database alone hides a migration that depends on an edited released one).
-          for v in "${RECENT%% *}" "$VERSION" $RECENT; do
-            dir=old-$v; [ "$v" = "$VERSION" ] && dir=new
-            (cd "$dir" && exec ./fleet-coordinator) & pid=$!
-            i=0; until curl -fsS -m 3 http://127.0.0.1:9470/api/health | grep -q "\"version\":\"$v\""; do
-              i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
-            echo; kill $pid; wait $pid || true
-          done
   ui-check:
     needs: [gate, build]
     if: needs.gate.outputs.ui == 'true'
@@ -249,8 +274,8 @@ jobs:
           node tests/ui/conversations.check.ts
           node tests/ui/lab-create.check.ts
   publish:
-    needs: [gate, build, selftest-macos, migrate-check, ui-check]
-    if: always() && needs.build.result == 'success' && (needs.gate.outputs.ui != 'true' || needs.ui-check.result == 'success') && needs.gate.outputs.release == 'true' && (needs.selftest-macos.result == 'success' || (needs.gate.outputs.ui == 'true' && needs.selftest-macos.result == 'skipped')) && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
+    needs: [gate, build, selftest-macos, ui-check]
+    if: always() && needs.build.result == 'success' && (needs.gate.outputs.ui != 'true' || needs.ui-check.result == 'success') && needs.gate.outputs.release == 'true' && (needs.selftest-macos.result == 'success' || (needs.gate.outputs.ui == 'true' && needs.selftest-macos.result == 'skipped'))
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -289,7 +314,7 @@ jobs:
           printf '%s\n' "$FLEET_RELEASE_KEY" > "$key"
           openssl pkeyutl -sign -inkey "$key" -rawin -in SHA256SUMS -out SHA256SUMS.sig
           rm -f "$key"
-          # checkedWith: the releases migrate-check paired with this one; fleet-update pds18 asks when it runs another.
+          # checkedWith: the releases the migration check paired with this one; fleet-update pds18 asks when it runs another.
           checked=$(jq -nc '$ARGS.positional' --args $RECENT)
           printf '{"version":"%s","files":{"linux-amd64":"fleet-%s-linux-amd64.tgz","darwin-arm64":"fleet-%s-darwin-arm64.tgz"},"checkedWith":%s}\n' \
             "$VERSION" "$VERSION" "$VERSION" "$checked" > latest.json

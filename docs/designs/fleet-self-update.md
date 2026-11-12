@@ -120,7 +120,7 @@ Target: replaced by a merge that releases by itself ([delivery pipeline](fleet-d
 
 ### 1. Release workflow
 
-Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery-pipeline.md#4-automatic-release) (push to `main`, computed version, no tag); build, selftest, `migrate-check` and publish stay as below. Originally: `.github/workflows/release.yml`, `on: push: tags: ['v*']`. Permissions per job, only what each writes (COREQ-R7).
+Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery-pipeline.md#4-automatic-release) (push to `main`, computed version, no tag); build, selftest and publish stay as below; `migrate-check` is now a step of `build` over the last 5 releases ([section 5](fleet-delivery-pipeline.md#5-compatibility-across-skipped-versions)). Originally: `.github/workflows/release.yml`, `on: push: tags: ['v*']`. Permissions per job, only what each writes (COREQ-R7).
 
 *   **Job `gate`** (`contents: read`, `actions: read`, checkout with `fetch-depth: 0`):
     *   Refuse a tag whose name is not `v<N>.<yymmdd>.<M>` (strict regex `^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$`) with `yymmdd` the UTC date of the annotated tag's tagger date (lightweight tag: the commit date), or whose commit is not an ancestor of `origin/main`, or whose version is not newer than the current latest release.
@@ -128,8 +128,8 @@ Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery
     *   Output `previous`: the version of the latest published release (empty for the first release); a tag whose release never published is skipped.
 *   **Job `build`** (`needs: gate`, `contents: read`): `deploy/build-release.sh <commit> out <version> <previous> linux/amd64 darwin/arm64`, the one build script for releases and local trials. Each tarball `fleet-<ver>-<os>-<arch>.tgz` holds `fleet-coordinator`, `fleet-gateway`, `fleet-executor`, `fleet-update`, `dist/app/`, `config/`, `deploy/` (unit files, `install-release.sh`, `status.sh`) and `release.json` `{version, previous, commit, target, builtAt}`. Runs every linux binary's `selftest`. Uploads the tarballs with `actions/upload-artifact`.
 *   **Job `selftest-macos`** (`needs: build`, `runs-on: macos-latest`, `contents: read`): downloads the darwin tarball, runs each binary's `selftest` (COREQ-R25).
-*   **Job `migrate-check`** (`needs: build`, `contents: read`): on the runner's PostgreSQL, start the new coordinator (migrates), stop it, start the `previous` release's coordinator on that database and require `/api/health` 200. Skipped when `previous` is empty. This enforces "expand in N, contract in N+1".
-*   **Job `publish`** (`needs: [selftest-macos, migrate-check]`, environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
+*   **Migration check** (originally a job `migrate-check` with `needs: build`; now a step of `build`, see above): on the runner's PostgreSQL, the newest published release's coordinator builds the database, the new coordinator migrates it, and each of the last 5 published releases' coordinators then starts on it and must answer `/api/health` 200 ([delivery pipeline, section 5](fleet-delivery-pipeline.md#5-compatibility-across-skipped-versions)). Skipped when there is no published release. This enforces "expand in N, contract in N+1": a migration that breaks a checked release's coordinator never publishes.
+*   **Job `publish`** (`needs: [build, selftest-macos]`, and `ui-check` for a UI release; environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
 
 `ci.yml` job `app` packs the same tarballs with the same script (version `0.0.0-<sha>`, unsigned) as the artifact `fleet-release-<sha>` (kept 1 day), so pull request trials carry every binary.
 
@@ -202,7 +202,7 @@ One run does all three starts (COREQ-R16 counts starts; Fleet has no launcher, s
 *   **Executor**: within 30 s, the unit is active and the executor's `update.json` shows `running` = candidate with `pollOk: true` (written after its first poll answered 200). The executor sets `pollError` instead when a poll fails: `network` (connection error, timeout, 3xx from the Access edge) or `http-<status>` for 5xx. Those two do not count as an unhealthy start: the run leaves the new version current, records `state: pending`, and the next run checks again. Unit not active, or a 401/403/4xx answer to the new executor, counts.
 *   **Healthy**: write `R/<ver>/healthy` (on PDS18 root writes it into `/home/fleet/releases/<ver>/`, readable by `fleet`).
 *   **Unhealthy**: increment `starts`, restart. At the third, `current` back to `previous`, restart, refuse the version. No `previous`: keep `current`, `state: failed`. systemd `Restart=on-failure` restarts inside one start window do not count separately.
-*   Migrations run when the coordinator starts. A rollback runs the previous coordinator on the migrated database; the release `migrate-check` job proves that works. The dump is for manual recovery only.
+*   Migrations run when the coordinator starts. A rollback runs the previous coordinator on the migrated database; the migration check step of the release `build` job proves that works. The dump is for manual recovery only.
 
 #### 3.5 Units
 
@@ -313,7 +313,7 @@ The three current hosts do this once: their env files are reduced to `FLEET_HOST
 *   **Disk full**: `pg_dump` or unpack fails as `error`; dumps and releases are pruned to `current` and `previous`.
 *   **Coordinator down while an executor updates**: the start does not count; no refusal.
 *   **Host clock skew**: only affects when a hold ends.
-*   **Migration that breaks the previous coordinator**: stopped by `migrate-check` before publish.
+*   **Migration that breaks the previous coordinator**: stopped by the migration check in `build` before publish.
 *   **`fleet-update` itself broken in a release**: its selftest stops it before install; if it passes selftest but fails later, the previous `fleet-update` stays in `/opt/fleet/update` on PDS18; elsewhere the holder runs `install-release.sh --rollback`.
 
 --------------------------------------------------------------------------------
