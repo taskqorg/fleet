@@ -495,6 +495,11 @@ func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, 
 	}
 	direct := policy == "owned-command"
 	if !direct {
+		home, err := os.MkdirTemp(filepath.Dir(socket), "mcp-home-")
+		if err != nil {
+			return err
+		}
+		jObj(spec)["childHome"] = home
 		path, err := mcpPrivatePath(jObj(spec, "dependencies"), filepath.Dir(socket), jArr(spec, "ownedDependencies"))
 		if err != nil {
 			return err

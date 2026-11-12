@@ -159,6 +159,14 @@ func mcpBoundCommand(spec any) (*exec.Cmd, func(), error) {
 	}
 	cmd := exec.Command(command, args...)
 	cmd.Env = mcpChildEnv(jStr(spec, "childPath"))
+	if home := jStr(spec, "childHome"); home != "" {
+		st, err := os.Lstat(home)
+		if err != nil || !filepath.IsAbs(home) || !st.IsDir() || st.Mode().Perm() != 0700 || owner(st) != os.Geteuid() {
+			return nil, nil, errors.New("MCP child HOME must be a private execution-owned directory")
+		}
+		setEnv(cmd, "HOME", home)
+	}
+
 	if generation := jStr(spec, "generation"); generation != "" {
 		cmd.Env = append(cmd.Env, "FLEET_MCP_GENERATION="+generation, "FLEET_MCP_OWNER="+jStr(spec, "ownerSocket"))
 	}

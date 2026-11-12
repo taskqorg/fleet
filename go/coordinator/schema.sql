@@ -794,3 +794,6 @@ CREATE TABLE agent_tool_receipt(
  id text PRIMARY KEY, execution_id text NOT NULL, directing_email text NOT NULL,
  operation text NOT NULL, payload_sha text NOT NULL, result jsonb NOT NULL, authority jsonb NOT NULL
 );
+
+-- migration 37: Lab retains its authenticated requester; legacy provenance remains unknown.
+ALTER TABLE experiment ADD COLUMN requested_by text, ADD COLUMN requester_removed_at timestamptz;

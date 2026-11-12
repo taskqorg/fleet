@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -848,7 +849,7 @@ func expView(r doc) doc {
 		"repeats": r["repeats"], "evaluators": r["evaluators"], "primaryEvaluator": r["primary_evaluator"], "strategy": r["strategy"], "budgets": r["budgets"], "state": r["state"],
 		"stopReason": r["stop_reason"], "createdAt": r["created_at"], "goal": r["goal"], "hypothesis": r["hypothesis"], "decisionRule": r["decision_rule"],
 		"labGroup": r["lab_group"], "decision": r["decision"], "decisionReason": r["decision_reason"], "decidedBy": r["decided_by"], "decidedAt": r["decided_at"],
-		"launchedAt": r["launched_at"]}
+		"launchedAt": r["launched_at"], "requestedBy": r["requested_by"], "requesterRemovedAt": r["requester_removed_at"]}
 }
 
 // recordFields: the experiment record fields of a create request, frozen at launch (fleet-lab.md, Experiment record).
@@ -973,6 +974,20 @@ func expDecide(q *Request, b doc) (doc, error) {
 }
 
 func expCreate(q *Request, b doc) (doc, error) {
+	// Serialize creator validation with the existing people projection/removal transaction.
+	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", GLOBAL); err != nil {
+		return nil, err
+	}
+	if q.person == nil {
+		return nil, fail(403, "Lab creation needs an authenticated requester")
+	}
+	if err := refreshRequestAccess(q); err != nil {
+		return nil, err
+	}
+	if err := q.app.guardOp(q, "lab_experiment_create", jsonBytes(b)); err != nil {
+		return nil, err
+	}
+
 	if !keysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy", "goal", "hypothesis", "decisionRule", "labGroup") {
 		return nil, fail(400, "Expected kind, projectId, pipelineId, examples, variants, repeats, evaluators, budgets, primaryEvaluator, strategy, goal, hypothesis, decisionRule, labGroup")
 	}
@@ -1185,9 +1200,9 @@ func expCreate(q *Request, b doc) (doc, error) {
 		budgets = append(budgets, doc{"unit": u, "limit": l, "action": act})
 	}
 	id := newID()
-	if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+	if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy,requested_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
 		id, projectID, kind, pipelineID, jsonBytes(examples), jsonBytes(variants), repeats, jsonBytes(evaluators), b["primaryEvaluator"], jsonBytes(budgets),
-		b["goal"], b["hypothesis"], b["decisionRule"], b["labGroup"], jsonBytes(strategy)); err != nil {
+		b["goal"], b["hypothesis"], b["decisionRule"], b["labGroup"], jsonBytes(strategy), q.person.Email); err != nil {
 		return nil, err
 	}
 	return expGet(q, id)
@@ -1272,6 +1287,11 @@ func expInsertRun(q *Request, exp doc, requestID, file string, example any, vari
 
 // expInsertRunReuse reserves exactly once; an existing request never reinitializes a run.
 func expInsertRunReuse(q *Request, exp doc, requestID, file string, example any, variant doc, extra, reuseOptions doc) (string, error) {
+	requester, err := labRequester(q, astr(exp["id"]))
+	if err != nil {
+		return "", err
+	}
+
 	id := newID()
 	var label, cfg any
 	if variant != nil {
@@ -1287,10 +1307,11 @@ func expInsertRunReuse(q *Request, exp doc, requestID, file string, example any,
 	}
 	extra["priority"] = "background"
 	opts := doc{"id": id, "file": file, "projectId": exp["project_id"], "requestId": requestID, "example": example, "overrides": ov,
-		"experimentId": exp["id"], "variant": label, "requestedBy": doc{"kind": "lab", "experimentId": exp["id"]}, "extra": extra}
+		"experimentId": exp["id"], "variant": label, "requestedBy": doc{"kind": "lab", "experimentId": exp["id"], "email": requester.Email}, "extra": extra}
 	for k, v := range reuseOptions {
 		opts[k] = v
 	}
+	opts["requestedBy"] = doc{"kind": "lab", "experimentId": exp["id"], "email": requester.Email}
 	_, err = pipelineStart(q, opts)
 	return id, err
 }
@@ -1629,6 +1650,22 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		if exp["state"] != "running" {
 			_, err := expEvaluate(q, exp, trials, runs, cur, &launched, checked)
 			return err
+		}
+		if _, err := labRequester(q, id); err != nil {
+			var reason *codedError
+			if errors.As(err, &reason) && strings.HasPrefix(reason.code, "requester:") {
+				state := "stopped"
+				if reason.code == "requester:access-revoked" {
+					state = "paused"
+				}
+				return exec(q, "UPDATE experiment SET state=$2,stop_reason=$3 WHERE id=$1", id, state, reason.code)
+			}
+			return err
+		}
+		if strings.HasPrefix(astr(exp["stop_reason"]), "requester:") {
+			if err := exec(q, "UPDATE experiment SET stop_reason=NULL WHERE id=$1", id); err != nil {
+				return err
+			}
 		}
 		order, last := expLatest(trials)
 		repeats, _ := intOK(exp["repeats"])
@@ -2960,4 +2997,34 @@ func labRatingWithdraw(q *Request, b doc) (doc, error) {
 		}
 	}
 	return labRating(q, id)
+}
+
+// The existing GLOBAL lock serializes this check/enqueue with people replacement; no owner fallback for Lab.
+func labRequester(q *Request, id string) (*Person, error) {
+	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", GLOBAL); err != nil {
+		return nil, err
+	}
+	exp, err := expRow(q, id)
+	if err != nil {
+		return nil, err
+	}
+	email := astr(exp["requested_by"])
+	if email == "" {
+		return nil, failCode(409, "Lab requester is unknown; retained history cannot authorize new work", "requester:unknown")
+	}
+	if exp["requester_removed_at"] != nil {
+		return nil, failCode(409, "Lab requester was removed; this experiment cannot transfer identity", "requester:removed")
+	}
+	p, err := resolveAccessTx(q.ctx(), q.tx, email)
+	if err != nil {
+		var denied *HTTPError
+		if errors.As(err, &denied) && denied.Code == 403 {
+			return nil, failCode(409, "Lab requester is no longer present", "requester:removed")
+		}
+		return nil, err
+	}
+	if (!fullAccess(p) && !hasRole(p, "architect")) || !mayAccessProjectID(p, astr(exp["project_id"])) {
+		return nil, failCode(403, "Lab requester lacks current role or project access", "requester:access-revoked")
+	}
+	return p, nil
 }

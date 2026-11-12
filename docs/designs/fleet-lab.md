@@ -88,6 +88,9 @@ Variant `config_ref` = SHA-256 of canonical `{pipeline, overrides}`. Trial `requ
 
 ## Experiment record
 
+Authenticated creation records the initiating person, not a caller-supplied actor. Background reconciliation and each new agent-step enqueue recheck that creator’s current architect role and project grant. Revocation pauses progression with `requester:access-revoked`; regrant permits explicit resume. Confirmed people removal durably marks the experiment, so deleting and re-adding the same email cannot transfer it. Removed or historical unknown requesters stop new work with `requester:removed` or `requester:unknown`; retained runs and history remain accessible under ordinary history permissions. Already-started effects are not rolled back.
+
+
 The record turns an experiment into a decision. Columns on `experiment`: `goal`, `hypothesis`, `primary_evaluator`, `decision_rule`, `lab_group`, `decision` (`adopt <variant> | keep baseline | inconclusive | pending`), `decision_reason`, `decided_by`, `decided_at`.
 
 - **Frozen at launch.** Launch is refused (400) without `goal` and `hypothesis` (`lab_experiment_create` takes them with `decisionRule` and `labGroup`; `primary_evaluator` and `decision_rule` become required at launch with the statistics function, stage 4). From launch on (`launched_at`), these fields, the variants and the suite are fixed.
