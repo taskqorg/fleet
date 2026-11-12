@@ -77,7 +77,7 @@ func TestUIDiscoveryTags(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	sha := strings.Repeat("a", 40)
-	body = pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.1\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.3\n") +
+	body = pkt(sha+" HEAD\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.1\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.3\n") +
 		pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.2\n") + pkt(sha+" refs/tags/ui-1.261111.9-v1.261112.4\n") +
 		pkt(sha+" refs/tags/v1.261112.5\n") + "0000" // other refs: a server may answer beyond ref-prefix
 	got, err := u.latestUI("1.261112.0")

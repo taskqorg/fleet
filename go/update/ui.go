@@ -71,11 +71,11 @@ func (u *updater) latestUI(backend string) (string, error) {
 			return "", fmt.Errorf("ls-refs: %s", line)
 		}
 		f := strings.Fields(line) // <object id> <ref>; the id is not used
-		if len(f) != 2 || !strings.HasPrefix(f[1], "refs/") {
+		if len(f) != 2 {
 			return "", fmt.Errorf("ls-refs: unexpected line %q", line)
 		}
 		if !strings.HasPrefix(f[1], prefix) {
-			continue // ref-prefix is a hint; a server may answer more broadly
+			continue // ref-prefix is a hint; a server may answer more broadly (HEAD, other refs)
 		}
 		if v := strings.TrimPrefix(f[1], prefix); newer(v, latest) {
 			latest = v
