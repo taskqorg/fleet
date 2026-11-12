@@ -73,6 +73,7 @@ test('landing observations retain authoritative publication, optional site evide
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'failed_checks'}]), 'not merged: OPEN, failed_checks'],
       [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: null}]), 'not merged: OPEN, unknown'],
       [pr({mergeStateStatus: 'DIRTY'}), 'not merged: OPEN, merge_conflict'],
+      [pr({autoMergeRequest: null, mergeStateStatus: 'DIRTY'}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'merge_conflict'}]), 'not merged: OPEN, merge_conflict'],
       [pr({autoMergeRequest: null}, [red], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
       [pr({state: 'CLOSED', autoMergeRequest: null}, [red]), 'not merged: CLOSED, auto-merge off'],
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}); assert.equal(r.status, 1, r.stderr); assert.equal(r.stdout, out + '\n'); }
@@ -85,6 +86,8 @@ test('landing observations retain authoritative publication, optional site evide
       pr({}, [red, check('go', null, null)]),
       pr({}, [check('go', 'CANCELLED', null), check('go', 'SUCCESS', '2026-11-12T10:10:00Z')]),
       pr({mergeQueueEntry: {state: 'QUEUED'}}, [red]),
+      // PR #451: DIRTY reported one second after joining the queue, merged by the queue five minutes later.
+      pr({mergeStateStatus: 'DIRTY', mergeQueueEntry: {state: 'AWAITING_CHECKS'}}),
     ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}, false, '0'); assert.equal(r.status, 2, r.stderr); assert.equal(r.stdout, 'timeout at: queue\n'); }
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
