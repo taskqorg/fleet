@@ -66,7 +66,7 @@ for h in hosts:
     if u.get("state") == "ok" and u.get("version") and u.get("at"): installed["coordinator", u["version"]] = ts(u["at"])
 part = {}  # version -> part named by its arrow line
 for line in open(os.path.join(d, "journal.txt")):
-    m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S+ -> (\S+)|(\S+) ok:)", line)
+    m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S* -> (\S+)|(\S+) ok:)", line)
     if not m: continue
     if m.group(3): part.setdefault(m.group(4), m.group(3))
     else: installed.setdefault((part.get(m.group(5), "ui"), m.group(5)), jts(m.group(1)))
