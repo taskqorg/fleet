@@ -1,6 +1,6 @@
 // Overview (docs/design-system/pages/overview.md): what needs the operator, operational counts, workers per host, projects.
 import { useLocation } from 'wouter-preact';
-import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection } from '../../../packages/ui/src/index.ts';
+import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection, actor } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
@@ -33,7 +33,7 @@ export function Overview() {
       <div class="cols">
         <NeedsYou>
           {!data.questions.length && !data.problems.length && <Empty text="Nothing is waiting for you." />}
-          <Latest items={needsYou(data, now).map(x => x.q ? <DecisionBlock key={x.q.id} question={x.q.text} askedBy={x.q.askedBy ?? x.q.kind} addressedTo="you" since={x.at} now={now}
+          <Latest items={needsYou(data, now).map(x => x.q ? <DecisionBlock key={x.q.id} question={x.q.text} askedBy={actor(x.q.askedBy) || x.q.kind} addressedTo="you" since={x.at} now={now}
             waits={x.q.taskId ? <a class="row-link" href={`/tasks/${encodeURIComponent(x.q.taskId)}`} aria-label="Open task" data-tip="Open task" onClick={ev => { ev.preventDefault(); go(`/tasks/${encodeURIComponent(x.q.taskId)}`); }}><Icon name="external-link" /></a> : undefined}
             options={(Array.isArray(x.q.options) ? x.q.options : x.q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(x.q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
             onAnswer={a => { if (online.value) writeOnce('questions_answer', { questionId: x.q.id, answer: a }, () => {}, { signal: alive }).catch(() => { /* the question stays open in the list */ }); }}

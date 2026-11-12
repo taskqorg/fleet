@@ -4,7 +4,7 @@
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, IdCopy, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { LabCreate } from './lab-create.tsx';
@@ -38,7 +38,7 @@ export function Lab({ id }: { id?: string }) {
         rowClass={(e: any) => e.id === id ? 'sel' : ''}
         render={(e: any) => <>
           <span class="lead"><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} compact /></span>
-          <span class="tt"><a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }}>{title(e)}</a><span class="id">{e.id.slice(0, 8)}</span></span>
+          <span class="tt"><a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }}>{title(e)}</a></span>
           <AgeChip t={ms(e.createdAt)} now={now} />
         </>} />
         : <Empty text="No experiments yet. Choose New experiment to create a draft." />}
@@ -116,7 +116,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const note = (unit: string) => { const b = budgetOf(unit); return b ? `of ${b.limit} · ${b.action}${b.firedAt ? ' · reached' : ''}` : undefined; };
   const cols = `minmax(8rem,14rem) ${e.variants.map(() => 'minmax(12rem,1fr)').join(' ')}`;
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={title(e)}>
-    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} /><span class="id">{e.id.slice(0, 8)}</span><span class="grow" />
+    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} /><IdCopy id={e.id} what="Experiment" /><span class="grow" />
       {e.state === 'draft' && <Button label="Launch" icon="play" kind="primary" disabledReason={savingRecord ? 'Saving experiment record' : Object.values(recordErrors).some(Boolean) || Object.entries(recordDraft).some(([field, value]) => value !== String(savedRecord[field] ?? e[field] ?? '')) ? 'Save the experiment record successfully before launch' : !String(savedRecord.goal ?? e.goal ?? '').trim() || !String(savedRecord.hypothesis ?? e.hypothesis ?? '').trim() ? 'Save a goal and hypothesis before launch' : undefined} onClick={() => act('lab_experiment_action', { experimentId: id, action: 'launch' })} />}
       {e.state === 'paused' && <Button label="Resume" icon="play" kind="primary" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'resume' })} />}
       {(e.state === 'running' || e.state === 'paused') && <Button label="Stop" icon="square" kind="danger" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'stop' })} />}
@@ -155,7 +155,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
                   <Num m={{ value: t.spend.credits, basis: 'measured', partial: t.spend.basis === 'partial' ? 'some calls without usage' : undefined }} kind="count" />
                   <a class="muted" href={`/api/pipeline-runs/${t.id}`} target="_blank" rel="noopener">Run and definitions</a>
                   {t.recovery && <a class="muted" href={`/api/pipeline-runs/${t.recovery.sourceRunId}`} target="_blank" rel="noopener" data-tip={`Reuses ${t.recovery.reusedStepIds.join(', ')}; original spend remains in source history`}>source</a>}
-                  {(t.cost ?? []).map((c: any, i: number) => <Num key={i} m={{ value: c.value, basis: c.basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `price ${c.prices.map((p: any) => p.id.slice(0, 8)).join(', ')}` }} kind="money" />)}
+                  {(t.cost ?? []).map((c: any, i: number) => <Num key={i} m={{ value: c.value, basis: c.basis, currency: c.currency ?? undefined, reason: c.value === null ? c.reason : `${c.prices.length} price${c.prices.length === 1 ? '' : 's'}` }} kind="money" />)}
                   {t.scores.filter((s: any) => s.trialIds.length === 1).map((s: any) => s.form === 'typed'
                     ? <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ": " + s.rationale : ""}`}><Icon name={typedIcon(s.value)} label={`${evaluatorLabel(s.evaluator)} ${s.value.answer}, label ${s.value.label ?? 'none'}`} />{s.value.answer}</span>
                     : <span key={s.id} data-tip={`${evaluatorLabel(s.evaluator)}${s.rationale ? ': ' + s.rationale : ''}`}><Icon name={s.form === 'pass_fail' ? (s.value ? 'circle-check' : 'circle-x') : 'sliders-horizontal'} label={`${evaluatorLabel(s.evaluator)} ${String(s.value)}`} />{s.form === 'pass_fail' ? '' : String(s.form === 'metric' ? Number(s.value).toFixed(2) : s.value)}</span>)}
@@ -186,7 +186,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
           value={c.reason ? <span class="muted">{c.reason}</span> : undefined} />
       </DetailSection>)}
       {(e.strategies ?? []).length > 0 && <DetailSection title="Loop strategies"><VirtualList items={e.strategies} getKey={(v: any) => v.id} rowHeight={ROW2} follow="top" label="Strategy runs" columns="1.25rem minmax(0,1fr) auto"
-        render={(v: any) => <><span class="lead"><StateBadge family="execution" state={v.state} compact /></span><span class="tt">Iteration {v.iteration} · {v.output?.reason ?? v.problem ?? 'pending'}</span><span class="id">{v.id.slice(0, 8)}</span></>} /></DetailSection>}
+        render={(v: any) => <><span class="lead"><StateBadge family="execution" state={v.state} compact /></span><span class="tt">Iteration {v.iteration} · {v.output?.reason ?? v.problem ?? 'pending'}</span></>} /></DetailSection>}
       <DetailSection title="Decision gate">
         <KvRow icon="check-check" label="Judge agrees with you" meta={e.agreement.compared ? `${e.agreement.matched} of ${e.agreement.compared} (${e.agreement.percent}%)` : 'no trial rated by both yet'} />
         {(e.agreement.byVersion ?? []).length > 0 && <VirtualList items={e.agreement.byVersion} getKey={(v: any) => v.version} rowHeight={ROW2} follow="top" label="Agreement by rubric version" columns="1.25rem minmax(0,1fr) auto"

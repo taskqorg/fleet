@@ -446,6 +446,12 @@ export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefre
 /** Writes text to the clipboard; the caller shows a failure (status line with retry). */
 export const copyText = (text: string) => navigator.clipboard.writeText(text);
 
+/** An id with no human code (session, execution, experiment): never shown as text (OR-38); a copy icon whose tooltip
+ *  holds the UUID, for the places where the id is really needed. The click does not open the row (OR-26). */
+export function IdCopy({ id, what }: { id: string; what: string }) {
+  return <span class="id-copy" onClick={e => e.stopPropagation()}><Button label={`${what} ${id} · copy`} icon={actions.copy} iconOnly kind="quiet" onClick={() => { copyText(id).catch(() => {}); }} /></span>;
+}
+
 /** The one formatter of a human entity code (D17, OR-38): `T-FLT-42` in mono after the name. The UUID is never shown:
  *  it is the tooltip, and a click or Enter copies it without opening the row (OR-26). No code yet: nothing is shown. */
 export function EntityCode({ code, id, cls }: { code?: string | null; id: string; cls?: string }) {
@@ -527,7 +533,7 @@ export function ResultRow({ artifacts, onOpen }: { artifacts: ArtifactMeta[]; on
 /** An execution start: state, agent mark, duration chip, and Stop while it runs (CUJ 5). */
 export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
   const secs = startedAt != null ? ((endedAt ?? now) - startedAt) / 1000 : null;
-  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <span class="id" data-tip="Session">{session.slice(0, 8)}</span>}<span class="id">{executionId.slice(0, 8)}</span><span class="grow" />
+  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <IdCopy id={session} what="Session" />}<IdCopy id={executionId} what="Run" /><span class="grow" />
     <span class="th-svc"><AgentMark {...mark} />{secs !== null && <span class="chip-age">{duration(secs).text}</span>}{onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}</span></div>;
 }
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { age, duration, bytes, count, money, measured, agentLabel } from '../../packages/ui/src/format.ts';
+import { age, duration, bytes, count, money, measured, agentLabel, actor } from '../../packages/ui/src/format.ts';
 
 const now = new Date(2026, 10, 9, 12, 0, 0).getTime();
 const ago = (s: number) => now - s * 1000;
@@ -46,4 +46,10 @@ test('agent label: short model id and effort for codex, claude and antigravity',
   assert.equal(agentLabel('gpt-6.1-sol', 'low'), 'gpt-6.1-sol · low');
   assert.equal(agentLabel('gemini-3.8-flash-low', undefined), 'gemini-3.8-flash-low');
   assert.equal(agentLabel(null, null), '');
+});
+
+test('actor: an agent run reads as agent, never its UUID (OR-38)', () => {
+  assert.equal(actor('execution:ddfea63c-0e5d-40f8-a9d7-d1ca65fb6334'), 'agent');
+  assert.equal(actor('owner@x.test'), 'owner@x.test');
+  assert.equal(actor(null), '');
 });
