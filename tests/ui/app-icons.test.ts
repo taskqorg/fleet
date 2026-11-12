@@ -1,11 +1,13 @@
 // Requirement: browser tabs and installed workspaces use the existing Fleet F.
 // Risk: build emits missing assets, wrong PNG sizes, or divergent workspace branding.
 import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 
 const root = new URL('../../dist/app/', import.meta.url);
 test('built manifests and HTML reference the shared Fleet icons', () => {
+  execFileSync(process.execPath, ['app/build.mjs'], { cwd: new URL('../../', import.meta.url), stdio: 'pipe' });
   const html = readFileSync(new URL('index.html', root), 'utf8');
   const manifests = readdirSync(new URL('manifests/', root));
   assert.ok(manifests.length > 0);
