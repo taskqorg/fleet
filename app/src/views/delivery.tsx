@@ -37,6 +37,9 @@ function Trend({ now }: { now: number }) {
   const { data, error } = useDoc<any>('delivery-trend', () => Promise.all([op('delivery_baseline', { days: 14 }), op('delivery_regressions', {})]).then(([b, r]) => ({ b, r })), () => false, 300000);
   const head = <header class="panel-h"><h2><Icon name="activity" /> Trend, 14 days</h2><span class="grow" />
     {data?.r?.checkedAt && <AgeChip t={Date.parse(data.r.checkedAt)} now={now} alertAfter={26 * 3600} alertLabel="regression check is stale" />}</header>;
+  // The history is the fleet repository's: hidden for a person without the fleet project or focused away from it.
+  const focus = focusIds();
+  if (error?.includes('404') || error?.includes('Unknown project') || focus && focus.length && !focus.includes('fleet')) return null;
   if (!data) return <section class="panel delivery-trend" aria-label="Delivery trend">{head}{error ? <ErrorBanner text={`Trend did not load: ${error}`} /> : <Empty text="Loading…" />}</section>;
   const days: any[] = data.b.trend;
   const from = days.length ? Date.parse(days[0].day + 'T00:00:00Z') : now - 14 * DAY;
@@ -51,7 +54,7 @@ function Trend({ now }: { now: number }) {
       {regs.map(r => <li key={r.key + r.metric} class="t-danger">
         <Icon name="triangle-alert" label="regression" />
         <span class="grow">{label(r.key)} {r.metric.toUpperCase()} <Num m={sec(r.currentMs)} kind="duration" />, baseline <Num m={sec(r.baselineMs)} kind="duration" /></span>
-        {r.firstPr && <a class="id" href={`https://github.com/taskqorg/fleet/pull/${r.firstPr}`} target="_blank" rel="noopener">#{r.firstPr}</a>}
+        {r.firstPr && <a class="id" href={r.links.find((l: string) => l.endsWith(`/pull/${r.firstPr}`)) ?? r.links[0]} target="_blank" rel="noopener">#{r.firstPr}</a>}
         {r.compareUrl && <a href={r.compareUrl} target="_blank" rel="noopener" data-tip="Changes since the last pull request under the threshold"><Icon name="git-merge" label="compare" /></a>}
       </li>)}
     </ul>}

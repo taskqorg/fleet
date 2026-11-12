@@ -268,18 +268,26 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	var skipped []string // single reads that failed; the pass keeps the rest
 	// A run listed while still in progress is listed again: the window holds yesterday, so at least 24 hours.
 	tries := map[int64]int{}
+	old := now.AddDate(0, 0, -3).Format(time.RFC3339)
 	for _, x := range st.RetryRuns {
 		tries[x.Run.ID] = x.Tries
-		if !slices.ContainsFunc(runs, func(r dhRun) bool { return r.ID == x.Run.ID }) {
+		if x.Tries < dhRetries && !slices.ContainsFunc(runs, func(r dhRun) bool { return r.ID == x.Run.ID }) {
 			runs = append(runs, x.Run)
 		}
 	}
-	st.RetryRuns = nil
+	// Given-up runs stay listed until they leave the window, so a re-listed one is not read again from zero tries.
+	var keep []dhRetry
+	for _, x := range st.RetryRuns {
+		if x.Tries >= dhRetries && x.Run.CreatedAt >= old {
+			keep = append(keep, x)
+		}
+	}
+	st.RetryRuns = keep
 	for _, r := range runs {
 		if r.Status != "completed" {
 			continue
 		}
-		if o, ok := have[r.ID]; ok && o.Attempt == r.Attempt {
+		if o, ok := have[r.ID]; ok && o.Attempt == r.Attempt || tries[r.ID] >= dhRetries {
 			continue
 		}
 		var js struct {
@@ -287,9 +295,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 		if err := read(&js, "run_jobs", "run_id", strconv.FormatInt(r.ID, 10)); err != nil {
 			skipped = append(skipped, err.Error())
-			if tries[r.ID]+1 < dhRetries {
-				st.RetryRuns = append(st.RetryRuns, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
-			}
+			st.RetryRuns = append(st.RetryRuns, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
 			continue
 		}
 		dr := deliveryRunOf(r, js.Jobs)
@@ -336,7 +342,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		p := &prs[i]
 		num := strconv.FormatInt(p.Number, 10)
 		// Read once in the backfill, then at most hourly for two days: a head without a green run stays without one.
-		retry := st.CiRetry[num] > 0 && st.CiRetry[num] < dhRetries
+		retry := st.CiRetry[num] > 0
 		if p.PrCiDone != nil || p.HeadSha == "" || !backfill && !retry && (p.Merged < recent || tried[num] >= hour) {
 			continue
 		}
@@ -348,7 +354,9 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			if st.CiRetry == nil {
 				st.CiRetry = map[string]int{}
 			}
-			st.CiRetry[num]++ // read again next pass, past the two days too
+			if st.CiRetry[num]++; st.CiRetry[num] >= dhRetries {
+				delete(st.CiRetry, num) // given up: the pull request keeps no PR CI time
+			}
 			continue
 		}
 		delete(st.CiRetry, num)
@@ -571,7 +579,9 @@ func deliveryDerive(prs []contract.DeliveryPr, runs []contract.DeliveryRun, rele
 	}
 	var vs []rel
 	for _, r := range releases {
-		if c := mergedAt[r.Target]; strings.HasPrefix(r.Tag, "v") && c != "" {
+		// A ui-* release is the release of the merges it covers too: release.yml cuts one instead of a v* release when
+		// only the web app changed since the last release.
+		if c := mergedAt[r.Target]; (strings.HasPrefix(r.Tag, "v") || strings.HasPrefix(r.Tag, "ui-")) && c != "" {
 			vs = append(vs, rel{r, c})
 		}
 	}
@@ -706,7 +716,7 @@ func deliveryPending(s deliverySeries, prs []contract.DeliveryPr, from, now, ins
 		switch {
 		case p.Released == nil:
 			add("release", p, p.Merged)
-		case installsFrom != "" && *p.Released >= installsFrom && p.Installed["coordinator"] == "":
+		case installsFrom != "" && *p.Released >= installsFrom && p.Installed["coordinator"] == "" && strings.HasPrefix(deref(p.Release), "v"):
 			add("install", p, *p.Released)
 		}
 	}
@@ -889,7 +899,7 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 	}
 	// A held question shows the latest numbers and range, not those of the check that opened it.
 	for _, p := range ps {
-		if err := exec(q, "UPDATE question SET text=$2,data=data||$3::jsonb WHERE cause=$1 AND state='open' AND text<>$2", p.Cause, p.Text, jsonBytes(p.Data)); err != nil {
+		if err := exec(q, "UPDATE question SET text=$2,data=data||$3::jsonb WHERE cause=$1 AND state IN ('open','answered') AND text<>$2", p.Cause, p.Text, jsonBytes(p.Data)); err != nil {
 			return contract.DeliveryRegressionsReply{}, err
 		}
 	}
