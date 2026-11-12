@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"sync"
@@ -84,8 +85,10 @@ func ciMs(s string) any {
 
 // ciLast: the last pass (ciPass), which executions_ci serves; nil before the first one ends.
 var (
-	ciLastMu sync.Mutex
-	ciLast   *contract.ExecutionsCiReply
+	ciLastMu   sync.Mutex
+	ciLast     *contract.ExecutionsCiReply
+	ciViewedAt time.Time // the pass reads GitHub only while someone looks (keyed reads mint a token and record a call)
+	ciOff      bool
 )
 
 func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.ExecutionsCiReply, error) {
@@ -95,21 +98,38 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 	}
 	ciLastMu.Lock()
 	defer ciLastMu.Unlock()
+	ciViewedAt = time.Now()
 	if ciLast == nil {
-		return contract.ExecutionsCiReply{ServerNow: time.Now().UnixMilli(), Jobs: []contract.CiJob{}, MinutesToday: []contract.CiMinutes{}, Problems: []string{"first CI read still running"}}, nil
+		p := "first CI read still running"
+		if ciOff {
+			p = "CI reads are off (FLEET_RUNNERS_CI_TICK_MS=0)"
+		}
+		return contract.ExecutionsCiReply{ServerNow: time.Now().UnixMilli(), Jobs: []contract.CiJob{}, MinutesToday: []contract.CiMinutes{}, Problems: []string{p}}, nil
 	}
 	return *ciLast, nil
 }
 
 // ciPass reads GitHub once (background, every FLEET_RUNNERS_CI_TICK_MS) and keeps the reply for executions_ci.
-func ciPass(ctx context.Context, a *App) error {
+func ciPass(ctx context.Context, a *App, first bool) error {
+	ciLastMu.Lock()
+	idle := !first && time.Since(ciViewedAt) > 10*time.Minute
+	ciLastMu.Unlock()
+	if idle {
+		return nil
+	}
 	r, err := ciRead(ctx, a)
+	ciLastMu.Lock()
+	defer ciLastMu.Unlock()
 	if err != nil {
+		// The last good pass stays, marked: jobs shown as running may have ended since.
+		if ciLast != nil {
+			stale := *ciLast
+			stale.Problems = append(append([]string{}, stale.Problems...), "CI read failed, showing the pass of "+time.UnixMilli(stale.ServerNow).UTC().Format("15:04")+" UTC: "+err.Error())
+			ciLast = &stale
+		}
 		return err
 	}
-	ciLastMu.Lock()
 	ciLast = &r
-	ciLastMu.Unlock()
 	return nil
 }
 
@@ -352,9 +372,17 @@ func init() {
 	onStart(func(ctx context.Context, a *App) {
 		d := envMs("FLEET_RUNNERS_CI_TICK_MS", 60*1000)
 		if d > 0 {
-			go ciPass(ctx, a) // the first read at start, so a deploy does not leave the panel empty for a tick
+			go func() { // the first read at start, so a deploy does not leave the panel empty for a tick
+				if err := ciPass(ctx, a, true); err != nil {
+					log.Printf("runners-ci: %v", err)
+				}
+			}()
+		} else {
+			ciLastMu.Lock()
+			ciOff = true
+			ciLastMu.Unlock()
 		}
-		every(ctx, "runners-ci", d, func(ctx context.Context) error { return ciPass(ctx, a) })
+		every(ctx, "runners-ci", d, func(ctx context.Context) error { return ciPass(ctx, a, false) })
 	})
 	operation("executions_ci", true, typedOp(executionsCI))
 }

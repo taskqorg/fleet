@@ -599,7 +599,7 @@ func init() {
 				 (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
 				  WHERE c.kind='command' AND c.data->>'executionId'=execution.id AND c.data->>'kind'='stop' AND c.data->>'status' IN ('pending','unknown'))))
 				  AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1))
-				 OR (kind='host_job' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => $1)
+				 OR (kind='host_job' AND state='running' AND observation='confirmed' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => $1)
 				  AND EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=execution.host_id
 				   AND (h.data->>'lastSeenAt')::float8 > (extract(epoch FROM now()) - 300) * 1000))
 				 OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1)

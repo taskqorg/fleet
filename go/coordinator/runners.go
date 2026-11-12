@@ -55,7 +55,7 @@ func runnerUsages(r doc) []usage {
 func toolCallGroups(calls []doc) []doc {
 	groups, order := map[string]doc{}, []string{}
 	for _, c := range calls {
-		key := firstString(c["parent_execution_id"], c["session_id"], "host:"+astr(c["host_id"]))
+		key := astr(c["host_id"]) + "/" + firstString(c["parent_execution_id"], c["session_id"], "host") // per host: the screen lists runs by host
 		g := groups[key]
 		if g == nil {
 			g = doc{"id": "calls:" + key, "kind": "tool_run", "state": "succeeded", "host_id": c["host_id"], "session_id": c["session_id"], "task_id": c["task_id"], "title": c["title"],
@@ -82,7 +82,7 @@ func toolCallGroups(calls []doc) []doc {
 			w, _ := numOK(g["wall_ms"])
 			g["wall_ms"] = w + v
 		}
-		if c["problem"] != nil {
+		if c["problem"] != nil && g["problem"] == nil { // calls come newest first: the latest cause
 			g["problem"] = c["problem"]
 		}
 		g["usages"] = append(g["usages"].([]usage), runnerUsages(c)...)

@@ -18,8 +18,8 @@ test('R1 executions_runners lists active and recent runs with their totals, leav
     const r = await fetch(c.base + '/api/ops/executions_runners', {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: '{}'});
     const b: any = await r.json();
     assert.equal(r.status, 200, JSON.stringify(b));
-    assert.deepEqual(b.runs.map((x: any) => x.id).sort(), ['calls:host:h1', 'r-done', 'r-live']);
-    const calls = b.runs.find((x: any) => x.id === 'calls:host:h1');
+    assert.deepEqual(b.runs.map((x: any) => x.id).sort(), ['calls:h1/host', 'r-done', 'r-live']);
+    const calls = b.runs.find((x: any) => x.id === 'calls:h1/host');
     assert.deepEqual([calls.calls, calls.failedCalls, calls.state, calls.wallMs], [1, 0, 'succeeded', 40], 'tool calls summed per caller, not a row each');
     const done = b.runs.find((x: any) => x.id === 'r-done');
     assert.deepEqual([done.hostId, done.tokens, done.wallMs, done.cpuMs], ['h1', 150, 3600000, 1200]);
@@ -44,7 +44,7 @@ test('R2 executions_runners shows a person only the runs and spend of projects t
     assert.deepEqual(member.runs.map((r: any) => r.id), ['s-mine'], JSON.stringify(member.runs));
     assert.deepEqual(member.spend.filter((s: any) => s.period === 'month').map((s: any) => [s.hostId, s.runs, s.tokens]), [['h1', 1, 5]]);
     assert.deepEqual((await as('outsider@trial.test')).runs, []);
-    assert.deepEqual((await as('owner@trial.test')).runs.map((r: any) => r.id).sort(), ['calls:host:', 's-mine', 's-other']);
+    assert.deepEqual((await as('owner@trial.test')).runs.map((r: any) => r.id).sort(), ['calls:/host', 's-mine', 's-other']);
   } finally { await c.stop(); }
 });
 
@@ -68,16 +68,18 @@ test('R4 agent-run tokens come from the harness usage report: the last result of
   const c = await startCoordinator({name: 'runners4'});
   try {
     const ev = (id: string, eid: string, seq: number, lifecycle: string, u: unknown) => `('event','${id}',jsonb_build_object('id','${id}','executionId','${eid}','seq',${seq},'data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','${lifecycle}','nativeUsage','${JSON.stringify(u)}'::jsonb))))`;
-    c.sql(`INSERT INTO execution(id,kind,state) VALUES ('t-claude','agent_run','succeeded'),('t-codex','agent_run','succeeded'),('t-none','agent_run','succeeded');
-      INSERT INTO execution_totals(execution_id) VALUES ('t-claude'),('t-codex'),('t-none');
+    c.sql(`INSERT INTO execution(id,kind,state) VALUES ('t-claude','agent_run','succeeded'),('t-codex','agent_run','succeeded'),('t-none','agent_run','succeeded'),('t-bad','agent_run','succeeded');
+      INSERT INTO execution_totals(execution_id) VALUES ('t-claude'),('t-codex'),('t-none'),('t-bad');
       INSERT INTO document(kind,id,data) VALUES
       ${ev('e1', 't-claude', 1, 'result', {input_tokens: 1, output_tokens: 1})},
       ${ev('e2', 't-claude', 2, 'result', {input_tokens: 4, output_tokens: 489, cache_read_input_tokens: 17492, cache_creation_input_tokens: 2015})},
-      ${ev('e3', 't-codex', 1, 'turn.completed', {input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50})};
+      ${ev('e3', 't-codex', 1, 'turn.completed', {input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50})},
+      ${ev('e4', 't-bad', 1, 'result', {input_tokens: 'x', output_tokens: 4.5})};
       SELECT fleet_write_tokens(id) FROM execution;`);
     const row = (id: string) => c.sql(`SELECT concat_ws(',',tokens_input,tokens_output,tokens_cache_read,tokens_cache_write,tokens_input_basis) FROM execution_totals WHERE execution_id='${id}'`).trim();
     assert.equal(row('t-claude'), '4,489,17492,2015,measured', 'the last report, not a sum');
     assert.equal(row('t-codex'), '200,50,800,measured', 'cached input counted once');
     assert.equal(row('t-none'), 'unavailable', 'no report: unknown, never 0');
+    assert.equal(row('t-bad'), 'unavailable', 'a malformed count is unknown and never blocks the end');
   } finally { await c.stop(); }
 });
