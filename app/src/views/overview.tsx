@@ -3,20 +3,24 @@ import { useLocation } from 'wouter-preact';
 import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection, actor } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
+import { focusIds } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
-async function fetchOverview(): Promise<Overview> {
-  const [q, p, page] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { needsYou: true }), op('task_page', { group: 'project', groupCounts: true, limit: 1 })]);
+// The focus (OR-34) narrows every part: questions, problems, counts and project rows.
+async function fetchOverview(projectIds?: string[]): Promise<Overview> {
+  const [q, p, page] = await Promise.all([op('questions_list', { state: 'open', projectIds }), op('executions_list', { needsYou: true, projectIds }),
+    op('task_page', { group: 'project', groupCounts: true, limit: 1, filter: projectIds ? { projectId: projectIds.map(x => x === '-' ? null : x) } : {} })]);
   // One grouped call: each project's per-state counts (groupCounts); tasks without a project are their own group.
   const projects = (page.groups as any[]).map(g => ({ id: g.label ?? 'no project', project: g.label ?? null, counts: g.counts }));
   return { questions: q.questions, problems: p.executions, counts: page.counts, hosts: null, projects };
 }
 
 export function Overview() {
+  const focus = focusIds();
   const alive = useAlive();
   const [, go] = useLocation();
-  const { data, state, error } = useDoc<Overview>('overview', fetchOverview, c => ['task', 'question', 'execution'].includes(c.kind));
+  const { data, state, error } = useDoc<Overview>('overview:' + (focus ?? []).join(','), () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
   const hostsRec = useDoc<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = Date.now();
   const hosts = hostsRec.data, hostNow = hosts ? hosts.serverNow + (now - hosts.fetchedAt) : now;
@@ -32,7 +36,7 @@ export function Overview() {
       {ops.length > 0 && <StatStrip label="Operations" stats={ops} />}
       <div class="cols">
         <NeedsYou>
-          {!data.questions.length && !data.problems.length && <Empty text="Nothing is waiting for you." />}
+          {!data.questions.length && !data.problems.length && <Empty text={focus ? 'Nothing is waiting for you in the focused projects.' : 'Nothing is waiting for you.'} />}
           <Latest items={needsYou(data, now).map(x => x.q ? <DecisionBlock key={x.q.id} question={x.q.text} askedBy={actor(x.q.askedBy) || x.q.kind} addressedTo="you" since={x.at} now={now}
             waits={x.q.taskId ? <a class="row-link" href={`/tasks/${encodeURIComponent(x.q.taskId)}`} aria-label="Open task" data-tip="Open task" onClick={ev => { ev.preventDefault(); go(`/tasks/${encodeURIComponent(x.q.taskId)}`); }}><Icon name="external-link" /></a> : undefined}
             options={(Array.isArray(x.q.options) ? x.q.options : x.q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(x.q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}

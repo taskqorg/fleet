@@ -12,6 +12,7 @@ import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, sendingId, OpError, useAlive } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
+import { focusIds } from '../prefs.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
 
@@ -30,7 +31,9 @@ export function Conversations({ id }: { id?: string }) {
   const rows = list.rows as SessionRow[];
   const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
   const now = Date.now();
-  const [newConversation,setNewConversation]=useState(!!new URLSearchParams(location.search).get('project'));
+  // ?new=<project> opens the form once; the key leaves the URL so a reload does not open it again.
+  const [newConversation,setNewConversation]=useState(()=>!!new URLSearchParams(location.search).get('new'));
+  useEffect(()=>{const u=new URL(location.href);if(u.searchParams.has('new')){u.searchParams.delete('new');history.replaceState(history.state,'',u.pathname+u.search);}},[]);
   const create=()=>setNewConversation(true);
   const pane = <>
     <header class="page-h"><h1>Conversations</h1><OfflineMarker state={list.state} now={now} /><span class="grow" />
@@ -44,7 +47,7 @@ export function Conversations({ id }: { id?: string }) {
           onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>
         {list.error && !rows.length ? <ErrorBanner text={`Conversations did not load: ${list.error}`} onRetry={list.reload} />
           : list.shownKey === null || (!rows.length && list.pending) ? <Skeleton rows={8} />
-          : !rows.length ? <Empty text="No conversations yet." action={<Button label="New conversation" onClick={create} />} />
+          : !rows.length ? <Empty text={focusIds() && !view.project?.length ? 'No conversations in the focused projects.' : 'No conversations yet.'} action={<Button label="New conversation" onClick={create} />} />
           : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Conversations" onEnd={list.more}
             columns="1.25rem minmax(0,1fr) 2rem 1.25rem" rowClass={r => r.id === id ? 'sel' : ''}
             render={r => <>
@@ -180,7 +183,7 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
 function NewConversation({onDone}:{onDone:(sessionId:string)=>void}){
  const alive=useAlive();
  const projects=useDoc<any>('conversation-projects',()=>op('project_list',{}),c=>c.kind==='definition');
- const [project,setProject]=useState(new URLSearchParams(location.search).get('project')??''),[role,setRole]=useState('pm'),[error,setError]=useState('');
+ const [project,setProject]=useState(new URLSearchParams(location.search).get('new')??''),[role,setRole]=useState('pm'),[error,setError]=useState('');
  const selected=(projects.data?.projects??[]).find((p:any)=>p.id===project);
  const roles=Object.entries(selected?.roles??{}).map(([id,profile])=>({id,label:`${id} · ${String(profile)}`}));
  return <DetailSection title="New conversation"><Choice label="Project" value={project} onChange={p=>{setProject(p);setRole('pm');}} options={(projects.data?.projects??[]).map((p:any)=>({id:p.id,label:p.name}))}/>

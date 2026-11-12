@@ -298,9 +298,10 @@ func (v *QuestionsListReply) Validate() error {
 }
 
 type QuestionsListRequest struct {
-	Kind   *string `json:"kind,omitempty"`
-	State  *string `json:"state,omitempty"`
-	TaskId *string `json:"taskId,omitempty"`
+	Kind       *string  `json:"kind,omitempty"`
+	ProjectIds []string `json:"projectIds,omitempty"`
+	State      *string  `json:"state,omitempty"`
+	TaskId     *string  `json:"taskId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -783,7 +784,7 @@ func init() {
 		"question_history":        {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"questions":               {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"questions_answer":        {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},
-		"questions_list":          {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"kind\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"questions_list":          {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"kind\":{\"type\":\"string\"},\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"state\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"questions_withdraw":      {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: withdraws open questions that no longer need anyone; one setting-change audit row per question.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
 		"task_cancel":             {Read: false, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_create":             {Read: false, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"held: the task waits for task_release (always for an agent).\",\"additionalProperties\":true,\"properties\":{\"completionRequirements\":{},\"dependsOn\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"expectedOutcome\":{\"type\":\"string\"},\"held\":{\"type\":\"boolean\"},\"priority\":{\"type\":\"string\"},\"projectId\":{\"type\":[\"string\",\"null\"]},\"resultDestination\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}")},

@@ -61,12 +61,16 @@ func init() {
 	operation("delivery_status", true, typedOp(deliveryStatus))
 }
 
-func deliveryStatus(q *Request, _ *contract.DeliveryStatusRequest) (contract.DeliveryStatusReply, error) {
+func deliveryStatus(q *Request, r *contract.DeliveryStatusRequest) (contract.DeliveryStatusReply, error) {
 	deliveryMu.Lock()
 	last := deliveryLast
 	deliveryMu.Unlock()
 	full := fullAccess(q.person)
-	return deliveryReply(last, func(p string) bool { return full || mayAccessProjectID(q.person, p) }), nil
+	in := func(p string) bool {
+		return len(r.ProjectIds) == 0 || slices.Contains(r.ProjectIds, p) || p == "" && slices.Contains(r.ProjectIds, "-")
+	}
+	// The focus works like access: a repository shows when a focused project lists it (items carry only its first project).
+	return deliveryReply(last, func(p string) bool { return (full || mayAccessProjectID(q.person, p)) && in(p) }), nil
 }
 
 // deliveryReply: the part of the last pass a caller may see. A repository (its items, landing count, error and

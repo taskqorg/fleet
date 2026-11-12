@@ -170,8 +170,15 @@ func (v *DeliveryStatusReply) Validate() error {
 	return nil
 }
 
-// DeliveryStatusRequest: All projects the caller may see. A project focus later adds projectId here.
-type DeliveryStatusRequest = map[string]json.RawMessage
+// DeliveryStatusRequest: All projects the caller may see, narrowed to projectIds when given.
+type DeliveryStatusRequest struct {
+	ProjectIds []string `json:"projectIds,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryStatusRequest) Validate() error {
+	return nil
+}
 
 // DiffFile: state added, removed, unchanged or modified; textChange only for small html and css files.
 type DiffFile struct {
@@ -464,12 +471,13 @@ func (v *ExecutionsListReply) Validate() error {
 
 // ExecutionsListRequest: Filters; problem true keeps executions with a problem; needsYou true keeps the problems that still need someone (Needs you): not dismissed, not abandoned or cancelled, no tool calls or steps of a listed run, project still defined.
 type ExecutionsListRequest struct {
-	NeedsYou          *bool   `json:"needsYou,omitempty"`
-	ParentExecutionId *string `json:"parentExecutionId,omitempty"`
-	Problem           *bool   `json:"problem,omitempty"`
-	ProjectId         *string `json:"projectId,omitempty"`
-	SessionId         *string `json:"sessionId,omitempty"`
-	TaskId            *string `json:"taskId,omitempty"`
+	NeedsYou          *bool    `json:"needsYou,omitempty"`
+	ParentExecutionId *string  `json:"parentExecutionId,omitempty"`
+	Problem           *bool    `json:"problem,omitempty"`
+	ProjectId         *string  `json:"projectId,omitempty"`
+	ProjectIds        []string `json:"projectIds,omitempty"`
+	SessionId         *string  `json:"sessionId,omitempty"`
+	TaskId            *string  `json:"taskId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1094,7 +1102,7 @@ func (v *TextChange) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"delivery_status":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"All projects the caller may see. A project focus later adds projectId here.\",\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
+		"delivery_status":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"All projects the caller may see, narrowed to projectIds when given.\",\"additionalProperties\":true,\"properties\":{\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"execution_differences": {Read: true, Long: false, Errors: []int{403, 409, 503}, InputSchema: json.RawMessage("{\"$comment\":\"previous: the earlier execution of the same session.\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"previous\":{\"type\":\"string\"}},\"required\":[\"executionId\",\"previous\"],\"type\":\"object\"}")},
 		"execution_events":      {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"execution_status":      {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
@@ -1102,7 +1110,7 @@ func init() {
 		"executions_abandon":    {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: ends unfinished agent runs and host jobs that no host will finish (failed, problem unknown:abandoned); one setting-change audit row each.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
 		"executions_ci":         {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"executions_dismiss":    {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: takes execution problems off Needs you (a problem-dismissal record); the problem stays on the record; one setting-change audit row each. An open execution is skipped: abandon it instead.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
-		"executions_list":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem; needsYou true keeps the problems that still need someone (Needs you): not dismissed, not abandoned or cancelled, no tool calls or steps of a listed run, project still defined.\",\"additionalProperties\":true,\"properties\":{\"needsYou\":{\"type\":\"boolean\"},\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"executions_list":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem; needsYou true keeps the problems that still need someone (Needs you): not dismissed, not abandoned or cancelled, no tool calls or steps of a listed run, project still defined.\",\"additionalProperties\":true,\"properties\":{\"needsYou\":{\"type\":\"boolean\"},\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_runners":    {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"hosts_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"includeRemoved: also hosts removed by hosts_remove (state removed).\",\"additionalProperties\":true,\"properties\":{\"includeRemoved\":{\"type\":\"boolean\"}},\"type\":\"object\"}")},
 		"hosts_register":        {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.\",\"additionalProperties\":true,\"properties\":{\"harnesses\":{},\"holder\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"platform\":{\"type\":\"string\"},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},

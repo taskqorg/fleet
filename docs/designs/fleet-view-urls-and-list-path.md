@@ -105,7 +105,7 @@ The earlier TypeScript/PGlite measurements explained this design choice; they do
   | `sel` | comma list of checked rows | empty | not sent |
   | `state` | comma list of task states | all | `filter.state` |
 
-* **Keys, conversations view:** `archived` (`1` or omitted → `filter.archived`), `preset`, `q` (→ `filter.search`), `sel`, `state` (→ `filter.state`).
+* **Keys, conversations view:** `archived` (`1` or omitted → `filter.archived`), `preset`, `project` (as in the tasks view → `filter.projectId`), `q` (→ `filter.search`), `sel`, `state` (→ `filter.state`).
 * **Keys, results view:** `project`, `q` and artifact `state` (`stored`, `pending`, `failed`, `deleted`). Additional Results filters (`task`, `execution`, `media`, `since`) travel in `extra`, per the [Results contract](fleet-conversations.md). The codec does not grant artifact access.
 * **Lists:** comma-separated. A comma, `%` or `&` inside a value is percent-encoded (`%2C`, `%25`, `%26`). List values are sorted and de-duplicated.
 * **Canonical form:** keys in alphabetical order, list values sorted, defaults and empty lists omitted, no trailing `?`. Two equal views produce byte-identical URLs.

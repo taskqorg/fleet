@@ -22,7 +22,7 @@ var (
 	artifactState = []string{"stored", "pending", "failed", "deleted"}
 	viewGroups    = slices.Sorted(maps.Keys(taskGroups)) // task_page's groups
 	viewKeys      = map[string][]string{"tasks": {"group", "preset", "project", "q", "sel", "state"},
-		"conversations": {"archived", "preset", "q", "sel", "state"}, "results": {"project", "q", "state"}}
+		"conversations": {"archived", "preset", "project", "q", "sel", "state"}, "results": {"project", "q", "state"}}
 	schemeURL = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
 )
 
