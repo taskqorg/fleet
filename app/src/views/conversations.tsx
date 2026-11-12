@@ -160,7 +160,7 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
   const named: any[] = (accounts?.accounts ?? []).filter((a: any) => a.enabled);
   const go = () => run(async () => { const r = await op('session_transition', { sessionId, profileId: profile ?? undefined, ...(account ? { account } : {}) }); setDone(`${r.transition}${r.sessionId && r.sessionId !== sessionId ? ` · new session ${String(r.sessionId).slice(0, 8)}` : ''}`); });
   return <DetailSection title={handoff ? 'Hand off to another agent' : 'Switch profile or model'}>
-    <div class="answers" role="group" aria-label="Profile">{list.map(p => <Button key={p.id} label={`${p.id} · ${p.harness ?? 'codex'} ${p.model ?? ''}`} pressed={profile === p.id} kind={p.id === current ? 'quiet' : 'default'} onClick={() => setProfile(p.id)} />)}</div>
+    <div class="answers" role="group" aria-label="Profile">{list.map(p => <Button key={p.id} label={`${p.id} · ${p.harness ?? 'codex'}${p.model ? ` ${p.model}` : ''}`} pressed={profile === p.id} kind={p.id === current ? 'quiet' : 'default'} onClick={() => setProfile(p.id)} />)}</div>
     {handoff && <div class="answers" role="group" aria-label="Account">{named.map(a => <Button key={a.id} label={`${a.name} · ${a.harness ?? 'codex'}`} pressed={account === a.name} onClick={() => setAccount(account === a.name ? null : a.name)} />)}</div>}
     <div class="answers"><Button label={handoff ? 'Hand off' : 'Switch'} kind="primary" disabledReason={profile ? undefined : 'pick a profile'} onClick={go} /><Button label="Close" kind="quiet" onClick={() => onDone(done ?? undefined)} />{done && <span class="muted" role="status">{done}</span>}</div>
   </DetailSection>;
