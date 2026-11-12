@@ -73,11 +73,12 @@ func (v *DeliveryItem) Validate() error {
 	return nil
 }
 
-// DeliverySample: Pull requests per stage at one read, the last 24 hours.
+// DeliverySample: Pull requests per stage of one repository (repo, owner/name) at one read, the last 24 hours; a repository in several projects has one sample per project.
 type DeliverySample struct {
 	At        string           `json:"at"`
 	Counts    map[string]int64 `json:"counts"`
 	ProjectId string           `json:"projectId"`
+	Repo      *string          `json:"repo,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

@@ -29,15 +29,20 @@ export function Delivery() {
     {data?.refreshedAt && <AgeChip t={Date.parse(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}
   </header>;
   if (!data) return <>{head}{error ? <ErrorBanner text={`Delivery did not load: ${error}`} /> : <Empty text="Loading…" />}</>;
-  const items: any[] = data.items;
+  // A repository listed by several projects comes once per project: show each pull request and sample once.
+  const items: any[] = [...new Map(data.items.map((i: any) => [`${i.repo}#${i.number}`, i])).values()];
+  const samples: any[] = [...new Map(data.samples.map((s: any) => [`${s.at} ${s.repo ?? s.projectId}`, s])).values()];
   const used = STAGES.filter(s => s.id !== 'merged' || items.some(i => i.stage === 'merged'));
   const of = (id: string) => items.filter(i => i.stage === id).sort((a, b) => a.since.localeCompare(b.since));
   // One line per stage: the sum over projects at each read.
   const sums = new Map<string, Record<string, number>>();
-  for (const s of data.samples) { const m = sums.get(s.at) ?? {}; for (const k in s.counts) m[k] = (m[k] ?? 0) + s.counts[k]; sums.set(s.at, m); }
+  for (const s of samples) { const m = sums.get(s.at) ?? {}; for (const k in s.counts) m[k] = (m[k] ?? 0) + s.counts[k]; sums.set(s.at, m); }
   const at = [...sums.keys()].sort();
   const lines = Object.fromEntries(used.map(s => [s.id, at.map(t => ({ at: Date.parse(t), v: sums.get(t)![s.id] ?? 0 }))]));
-  const max = Math.max(1, ...Object.values(lines).flat().map(p => p.v));
+  // The 24-hour totals (installed, merged) grow all day: they get their own scale, so the waiting stages stay readable.
+  const done = (id: string) => id === 'installed' || id === 'merged';
+  const scale = (d: boolean) => Math.max(1, ...used.filter(s => done(s.id) === d).flatMap(s => lines[s.id].map(p => p.v)));
+  const max = scale(false), doneMax = scale(true);
   const late = (s: typeof STAGES[number]) => { const o = of(s.id)[0]; return !!(s.alert && o && now - Date.parse(o.since) >= s.alert * 1000); };
   const first = used.find(late);
   return <section class="delivery" aria-label="Delivery">
@@ -53,7 +58,7 @@ export function Delivery() {
         <header class="panel-h"><h2><Icon name={s.icon} /> {s.label}</h2><span class="grow" />
           {list[0] && s.alert && <AgeChip t={Date.parse(list[0].since)} now={now} alertAfter={s.alert} alertLabel="waits too long" />}
           <Num m={{ value: list.length, basis: 'measured' }} kind="count" /></header>
-        <AreaChart label={`${s.label} over 24 hours`} series={[{ label: s.label, points: lines[s.id], tone: 'd1', step: true }]} from={now - 24 * HOUR} to={now} now={now} max={max} value={v => String(Math.round(v))} />
+        <AreaChart label={`${s.label} over 24 hours`} series={[{ label: s.label, points: lines[s.id], tone: 'd1', step: true }]} from={now - 24 * HOUR} to={now} now={now} max={done(s.id) ? doneMax : max} value={v => String(Math.round(v))} />
         {list.length === 0 ? <Empty text="None." /> : <ul class="kv">
           {list.slice(0, SHOWN).map(i => <li key={i.repo + i.number}>
             <Icon name={s.icon} label={s.label} />

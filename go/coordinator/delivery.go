@@ -205,10 +205,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		for _, it := range its {
 			c[string(it.Stage)]++
 		}
-		counts[t.project] = sumCounts(counts[t.project], c)
-	}
-	for k := range failed {
-		delete(counts, strings.SplitN(k, " ", 2)[0])
+		counts[t.project+" "+name] = c
 	}
 	samples, err := deliverySamples(ctx, a, counts, now)
 	if err != nil {
@@ -225,16 +222,6 @@ func deliveryPass(ctx context.Context, a *App) error {
 	deliveryLast = next
 	deliveryMu.Unlock()
 	return nil
-}
-
-func sumCounts(a, b map[string]int64) map[string]int64 {
-	if a == nil {
-		return b
-	}
-	for k, v := range b {
-		a[k] += v
-	}
-	return a
 }
 
 // deliveryStages: each pull request's current stage. landing counts the pull requests a worker waits on (auto-merge on
@@ -368,11 +355,12 @@ func deliverySamples(ctx context.Context, a *App, counts map[string]map[string]i
 	out := []contract.DeliverySample{}
 	at, from := now.Format(time.RFC3339), now.Add(-24*time.Hour).Format(time.RFC3339)
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		for p, c := range counts {
-			id := "delivery-samples:" + p + ":" + now.Format("2006-01-02")
+		for k, c := range counts { // per "<project> <owner/repo>": a repository in two projects is counted once on the page
+			p, repo, _ := strings.Cut(k, " ")
+			id := "delivery-samples:" + p + ":" + repo + ":" + now.Format("2006-01-02")
 			if err := exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES('delivery-samples',$1,$2,jsonb_build_object('samples',jsonb_build_array($3::jsonb)))
 				ON CONFLICT (id) DO UPDATE SET data=jsonb_set(document.data,'{samples}',document.data->'samples' || $3::jsonb),updated_at=now()`,
-				id, p, jsonBytes(contract.DeliverySample{At: at, ProjectId: p, Counts: c})); err != nil {
+				id, p, jsonBytes(contract.DeliverySample{At: at, ProjectId: p, Repo: &repo, Counts: c})); err != nil {
 				return err
 			}
 		}
