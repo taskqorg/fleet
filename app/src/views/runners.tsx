@@ -102,7 +102,7 @@ function Ci({ now }: { now: number }) {
         const r = (data.runners ?? []).find((y: any) => y.name === x.runner);
         return <div key={x.runner} role="row" class="vl-row static">
           <span class="lead">{x.hosted ? <Icon name="github" label="GitHub-hosted" /> : <Icon name="panels-top-left" label="Self-hosted" />}</span>
-          <span class="tt"><span class="title">{x.runner}</span>{!x.hosted && <span class="muted">{r ? `${r.status}${r.busy ? ', busy' : ''}` : 'state unknown'}</span>}</span>
+          <span class="tt"><span class="title">{x.runner}</span>{!x.hosted && <span class="muted">{r ? `${r.status}${r.busy ? ', busy' : ''}` : data.runners ? 'removed runner' : 'state unknown'}</span>}</span>
           <span data-tip="Jobs"><Num m={m(x.jobs)} kind="count" /></span>
           <span data-tip="Minutes"><Num m={{ ...m(x.minutes * 60), partial }} kind="duration" /></span>
         </div>;
@@ -112,7 +112,7 @@ function Ci({ now }: { now: number }) {
       {data.jobs.map((j: any) => { const start = j.startedAt ?? j.createdAt ?? now, st = JOB_STATE[j.status] ?? 'waiting';
         return <div key={j.id} role="row" class="vl-row static">
           <span class="lead"><StateBadge family="execution" state={st} compact /></span>
-          <span class="tt"><a class="title row-link" href={j.url} target="_blank" rel="noopener">{j.name}</a><span class="id">{j.workflow}</span><span class="muted">{j.runner}</span></span>
+          <span class="tt"><a class="title row-link" href={j.url} target="_blank" rel="noopener">{j.name}</a><span class="id">{j.workflow}</span><span class="muted">{j.status === 'in_progress' ? j.runner : `not started · ${j.runner}`}</span></span>
           <TimeStrip from={from} to={now} start={start} end={null} now={now} state={st} label={`${j.status}, since ${new Date(start).toISOString()}`} />
           <span data-tip={j.status === 'queued' ? 'Queued for' : 'Running for'}><AgeChip t={start} now={now} alertAfter={3600} tone="attention" alertLabel="long" /></span>
         </div>; })}
