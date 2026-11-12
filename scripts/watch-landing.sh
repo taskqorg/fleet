@@ -15,22 +15,23 @@ observed "watch_start pr=$pr"
 wait_step() { [ "$(date +%s)" -lt "$deadline" ] || { echo "timeout at: $1"; exit 2; }; sleep 30; }
 
 q='query($n:Int!){repository(owner:"taskqorg",name:"fleet"){pullRequest(number:$n){state mergeStateStatus mergeCommit{oid} autoMergeRequest{enabledAt} mergeQueueEntry{state}
-  commits(last:1){nodes{commit{statusCheckRollup{state}}}}
+  commits(last:1){nodes{commit{statusCheckRollup{contexts(last:100){nodes{... on CheckRun{conclusion isRequired(pullRequestNumber:$n)} ... on StatusContext{state isRequired(pullRequestNumber:$n)}}}}}}}
   timelineItems(last:1,itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT,AUTO_MERGE_DISABLED_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{reason}}}}}}'
 while :; do
   # A failed gh call (network, rate limit) is retried, never read as "not merged".
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
-    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (.commits.nodes[0].commit.statusCheckRollup.state // "-"),
+    (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (if .mergeQueueEntry then "queued" else "-" end), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired) | (.conclusion // .state)] | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED") then "red" else "-" end),
     (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then (if .timelineItems.nodes[0].reason == "CI_FAILURE" then "failed_checks" else .timelineItems.nodes[0].reason end) else "auto-merge off" end)] | join(" ")') \
     || { wait_step "queue (gh failed)"; continue; }
-  read -r state merge_state sha waiting checks reason <<<"$line"
+  read -r state merge_state sha waiting queued checks reason <<<"$line"
   [ "$state" = MERGED ] && break
   # A conflict with main before the queue takes the entry: auto-merge stays on and nothing is removed, so name it here.
   [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ] && { echo "not merged: $state, merge_conflict"; exit 1; }
-  # A red check on the head before the queue: auto-merge stays on and the entry is never created, so GitHub names nothing.
-  [ "$state" = OPEN ] && { [ "$checks" = FAILURE ] || [ "$checks" = ERROR ]; } && { echo "not merged: $state, failed_checks"; exit 1; }
   # Out of the queue: the newest of "removed from the queue" (its reason) and "auto-merge disabled" (a veto) names why.
   [ "$state" = OPEN ] && [ "$waiting" = waiting ] || { echo "not merged: $state, $reason"; exit 1; }
+  # A required check red on the head while auto-merge waits for the queue: GitHub never creates the entry and names nothing.
+  # Inside the queue the queue's own run decides (a removal above); a late red pull_request rerun does not.
+  [ "$checks" = red ] && [ "$queued" = "-" ] && { echo "not merged: $state, failed_checks"; exit 1; }
   wait_step "queue"
 done
 observed "merged sha=$sha"

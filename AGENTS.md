@@ -24,7 +24,7 @@ Rules: [delivery pipeline, section 8](docs/designs/fleet-delivery-pipeline.md#8-
 4. Run `scripts/watch-landing.sh <n>` (in the background) and act on its last line:
     * `not merged: ..., merge_conflict`: `git fetch origin && git rebase origin/main`, `git push --force-with-lease`, step 2 again, then step 3. Never `git merge main`; CI fails a branch with a merge commit.
     * a conflict in `go/contract/*_gen.go`: take either side, `cd go && go generate ./contract`, `git add`, continue the rebase.
-    * `not merged: ..., failed_checks`: read the failed test. The first time, enqueue once more; if that run is green, add the test and both run links to the open `flaky` issue (section 3). A second failure is yours to fix.
+    * `not merged: ..., failed_checks`: read the failed test. The first time, run it once more (`gh pr merge <n> --auto` after a queue removal; `gh run rerun --failed <run>` for a red required check on the head, auto-merge is still on); if that run is green, add the test and both run links to the open `flaky` issue (section 3). A second failure is yours to fix.
     * `not merged: ..., auto-merge off` or `CLOSED`: the orchestrator used its veto or closed it; ask it before doing anything.
     * `no site access` (exit 3): check `hosts_list` in the app yourself.
     * `on hosts v<version>`: run the live check your task names, then report done.
