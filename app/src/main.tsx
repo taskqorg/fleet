@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
 import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
 import { op, signedOut, type Ops } from './api.ts';
-import { prefs, loadPrefs, savePrefs, setWidth } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth } from './prefs.ts';
 import { startFeed } from './feed.ts';
 import { startStore } from './store.ts';
 import { checkGrants, clearAll } from './offline.ts';
@@ -87,7 +87,7 @@ function App() {
     return () => { removeEventListener('focus', me); removeEventListener('focus', loadPrefs); };
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search}
+  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search} ready={prefsRead.value}
     widths={prefs.value.widths} onWidth={setWidth} collapsed={prefs.value.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); } } : undefined}>

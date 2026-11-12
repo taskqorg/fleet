@@ -273,9 +273,15 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .shell-main:has(>.split-view)>:not(.split-view){margin-left:calc(var(--size-control) + var(--space-3))}
 .split-list>.page-h:first-child{padding-left:calc(var(--size-control) + var(--space-4))}
 .split-view{position:relative}
-.divider{position:absolute;top:0;bottom:0;z-index:4;width:var(--space-2);margin-left:calc(-1 * var(--space-1));cursor:col-resize;touch-action:none}
+.divider{position:absolute;top:0;bottom:0;z-index:4;width:var(--space-4);margin-left:calc(var(--space-1) - var(--space-4));cursor:col-resize;touch-action:none;outline:none}
+/* The hit zone is wider than the line it shows: 12 px with a pointer, 44 px on touch (owner-rules exception). It lies over the
+   column it resizes, so the next column's row edge still opens its row (OR-26); the line stays centred on the edge. */
+.divider::after{content:"";position:absolute;top:0;bottom:0;right:0;width:var(--space-2)}
 .divider-rail{left:0}.divider-ctl{left:min(var(--size-ctl),50%)}
-.divider:hover,.divider:focus-visible,.divider:active{background:var(--accent);opacity:.5;outline:none}
+.divider:hover::after,.divider:focus-visible::after,.divider:active::after{background:var(--accent);opacity:.5}
+@media (pointer:coarse){.divider{width:var(--size-hit-phone);margin-left:calc(var(--space-1) - var(--size-hit-phone))}}
+/* Until the person's settings are read the shell is laid out but not shown, so a stored width or collapsed rail never jumps in (OR-23). */
+.shell.pending{visibility:hidden}
 .rail.mini .nav-i a{padding:0 var(--space-2);position:relative}
 .rail.mini .nav-count{position:absolute;top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1));padding:0 var(--space-1)}
 .rail-g{list-style:none;margin:0;padding:0}

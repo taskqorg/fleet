@@ -45,6 +45,7 @@ export async function layoutFindings(p: Page): Promise<string[]> {
         const r = e.getBoundingClientRect();
         if (r.width && !e.closest('.nav-toggle') && r.left < tb.right && r.right > tb.left && r.top < tb.bottom && r.bottom > tb.top) { o.push(`OR-42 collapse toggle covers ${e.tagName.toLowerCase()} "${(e.textContent ?? "").trim().slice(0, 30)}"`); break; }
       }
+      for (const d of document.querySelectorAll('[role=separator]')) { const w = d.getBoundingClientRect().width; if (w && w < 8) o.push(`OR-41 divider hit zone ${Math.round(w)} px, under 8`); }
       if (!rail.classList.contains('mini') && !document.querySelector('.shell-col > [role=separator]')) o.push('OR-41 navigation has no divider');
       if (innerWidth >= 1100 && document.querySelector('[data-ui=list-detail]:not(:has(> [role=separator]))')) o.push('OR-41 control column has no divider');
       if (!rail.querySelector(':scope > .rail-foot:last-child [aria-haspopup=menu]')) o.push('OR-42 no current user block at the bottom of the navigation');
