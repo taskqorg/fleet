@@ -1078,3 +1078,31 @@ ALTER TABLE document ENABLE TRIGGER document_change;
 -- migration 43: an abandoned run's wall time is unknown (it ended when given up, often days after it stopped).
 SELECT set_config('fleet.project_ids', '*', true);
 UPDATE execution_totals t SET wall_ms=NULL, wall_ms_basis='unavailable' FROM execution e WHERE e.id=t.execution_id AND e.problem='unknown:abandoned';
+
+-- migration 44: the Codex app server reports usage per model call (usage.observation with {last, total}, total spanning
+-- the whole thread) and its turn.completed carries none, so migration 40 found nothing. A run's tokens are now the sum
+-- of its calls' last when it has such reports, else its last result or turn.completed report as before.
+CREATE OR REPLACE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sql AS $$
+ WITH evs AS (SELECT data->'data'->'fleetNormalized'->>'lifecycle' AS lc, data->'data'->'fleetNormalized'->'nativeUsage' AS u, seq FROM document
+  WHERE kind='event' AND data->>'executionId'=eid AND jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object'),
+ calls AS (SELECT u->'last' AS u FROM evs WHERE lc='usage.observation' AND jsonb_typeof(u->'last')='object'),
+ rep AS (SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE lc IN ('result','turn.completed') AND NOT EXISTS (SELECT 1 FROM calls) ORDER BY seq DESC LIMIT 1),
+ rows AS (SELECT
+  fleet_token_count(coalesce(u->'input_tokens',u->'inputTokens')) AS input,
+  fleet_token_count(coalesce(u->'output_tokens',u->'outputTokens')) AS output,
+  fleet_token_count(coalesce(u->'cache_read_input_tokens',u->'cached_input_tokens',u->'cachedInputTokens')) AS cache_read,
+  fleet_token_count(coalesce(u->'cache_creation_input_tokens',u->'cacheWriteInputTokens')) AS cache_write,
+  (u ? 'cached_input_tokens' OR u ? 'cachedInputTokens') AS input_has_cache
+  FROM (SELECT u FROM calls UNION ALL SELECT u FROM rep) x),
+ n AS (SELECT sum(CASE WHEN input_has_cache THEN input-coalesce(cache_read,0) ELSE input END) AS input, sum(output) AS output,
+  sum(cache_read) AS cache_read, sum(cache_write) AS cache_write FROM rows)
+ UPDATE execution_totals SET
+  tokens_input=n.input, tokens_input_basis=CASE WHEN n.input IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_output=n.output, tokens_output_basis=CASE WHEN n.output IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_cache_read=n.cache_read, tokens_cache_read_basis=CASE WHEN n.cache_read IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_cache_write=n.cache_write, tokens_cache_write_basis=CASE WHEN n.cache_write IS NULL THEN 'unavailable' ELSE 'measured' END
+ FROM n WHERE execution_id=eid
+$$;
+SELECT set_config('fleet.project_ids', '*', true);
+SELECT fleet_write_tokens(execution_id) FROM execution_totals t JOIN execution e ON e.id=t.execution_id WHERE e.kind='agent_run';

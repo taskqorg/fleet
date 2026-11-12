@@ -70,18 +70,21 @@ test('R4 agent-run tokens come from the harness usage report: the last result of
   const c = await startCoordinator({name: 'runners4'});
   try {
     const ev = (id: string, eid: string, seq: number, lifecycle: string, u: unknown) => `('event','${id}',jsonb_build_object('id','${id}','executionId','${eid}','seq',${seq},'data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','${lifecycle}','nativeUsage','${JSON.stringify(u)}'::jsonb))))`;
-    c.sql(`INSERT INTO execution(id,kind,state) VALUES ('t-claude','agent_run','succeeded'),('t-codex','agent_run','succeeded'),('t-none','agent_run','succeeded'),('t-bad','agent_run','succeeded');
-      INSERT INTO execution_totals(execution_id) VALUES ('t-claude'),('t-codex'),('t-none'),('t-bad');
+    c.sql(`INSERT INTO execution(id,kind,state) VALUES ('t-claude','agent_run','succeeded'),('t-codex','agent_run','succeeded'),('t-none','agent_run','succeeded'),('t-bad','agent_run','succeeded'),('t-app','agent_run','succeeded');
+      INSERT INTO execution_totals(execution_id) VALUES ('t-claude'),('t-codex'),('t-none'),('t-bad'),('t-app');
       INSERT INTO document(kind,id,data) VALUES
       ${ev('e1', 't-claude', 1, 'result', {input_tokens: 1, output_tokens: 1})},
       ${ev('e2', 't-claude', 2, 'result', {input_tokens: 4, output_tokens: 489, cache_read_input_tokens: 17492, cache_creation_input_tokens: 2015})},
       ${ev('e3', 't-codex', 1, 'turn.completed', {input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50})},
-      ${ev('e4', 't-bad', 1, 'result', {input_tokens: 'x', output_tokens: 4.5})};
+      ${ev('e4', 't-bad', 1, 'result', {input_tokens: 'x', output_tokens: 4.5})},
+      ${ev('e5', 't-app', 1, 'usage.observation', {last: {inputTokens: 300, cachedInputTokens: 200, outputTokens: 5, cacheWriteInputTokens: 0}, total: {inputTokens: 9000}})},
+      ${ev('e6', 't-app', 2, 'usage.observation', {last: {inputTokens: 400, cachedInputTokens: 300, outputTokens: 7, cacheWriteInputTokens: 0}, total: {inputTokens: 9400}})};
       SELECT fleet_write_tokens(id) FROM execution;`);
     const row = (id: string) => c.sql(`SELECT concat_ws(',',tokens_input,tokens_output,tokens_cache_read,tokens_cache_write,tokens_input_basis) FROM execution_totals WHERE execution_id='${id}'`).trim();
     assert.equal(row('t-claude'), '4,489,17492,2015,measured', 'the last report, not a sum');
     assert.equal(row('t-codex'), '200,50,800,measured', 'cached input counted once');
     assert.equal(row('t-none'), 'unavailable', 'no report: unknown, never 0');
+    assert.equal(row('t-app'), '200,12,500,0,measured', 'app server: the sum of each call\'s last, never the thread total');
     assert.equal(row('t-bad'), 'unavailable', 'a malformed count is unknown and never blocks the end');
   } finally { await c.stop(); }
 });

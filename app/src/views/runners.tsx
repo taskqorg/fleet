@@ -59,7 +59,8 @@ export function Runners() {
             const href = open(r), start = r.startedAt ?? r.endedAt ?? now, cost = costOf(r.cost), title = r.taskTitle ?? KINDS[r.kind] ?? r.kind;
             // A finished run with no recorded end (a gateway call) ends at start plus its wall time, else at its start.
             const active = isActive(r), end = active ? null : r.endedAt ?? start + (r.wallMs ?? 0);
-            const secs = r.wallMs != null ? r.wallMs / 1000 : r.endedAt != null ? (r.endedAt - start) / 1000 : null;
+            // An abandoned run ended when given up: its length is unknown (the core leaves its wall time unavailable).
+            const secs = r.wallMs != null ? r.wallMs / 1000 : r.endedAt != null && r.problem !== 'unknown:abandoned' ? (r.endedAt - start) / 1000 : null;
             return <div key={r.id} role="row" class="vl-row static">
               <span class="lead"><StateBadge family="execution" state={r.state} compact /></span>
               <span class="tt">{href ? <a class="title row-link" href={href} onClick={e => { e.preventDefault(); go(href); }}>{title}</a> : <span class="title">{title}</span>}
