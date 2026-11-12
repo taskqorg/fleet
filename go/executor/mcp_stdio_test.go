@@ -38,6 +38,18 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(m.Run())
 }
+
+// Readers treat marker existence as readiness; publish only complete contents.
+func fixtureMarker(path string, data []byte, mode os.FileMode) {
+	tmp := path + ".tmp-" + strconv.Itoa(os.Getpid())
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		panic(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		panic(err)
+	}
+}
+
 func mcpFixture() {
 	tool := os.Args[2]
 	if tool == "home" {
@@ -47,7 +59,7 @@ func mcpFixture() {
 			os.Exit(4)
 		}
 		os.WriteFile(filepath.Join(h, "cache-proof"), []byte("owned"), 0600)
-		os.WriteFile(os.Args[3], []byte(enc(M{"home": h, "mode": int(st.Mode().Perm()), "ambientConfig": exists(filepath.Join(h, ".serena", "serena_config.yml")), "serenaHomeEnv": os.Getenv("SERENA_HOME") != ""})), 0600)
+		fixtureMarker(os.Args[3], []byte(enc(M{"home": h, "mode": int(st.Mode().Perm()), "ambientConfig": exists(filepath.Join(h, ".serena", "serena_config.yml")), "serenaHomeEnv": os.Getenv("SERENA_HOME") != ""})), 0600)
 	}
 
 	if strings.HasPrefix(tool, "diagnostic-") {
@@ -70,13 +82,13 @@ func mcpFixture() {
 	}
 
 	if tool == "version" {
-		os.WriteFile(os.Args[3], []byte(enc(M{"home": os.Getenv("HOME")})), 0600)
+		fixtureMarker(os.Args[3], []byte(enc(M{"home": os.Getenv("HOME")})), 0600)
 		fmt.Fprintln(os.Stdout, "gopls-fixture v1")
 		return
 	}
 	if tool == "dependency" {
 		payload := M{"pid": os.Getpid(), "argv": os.Args[4:], "home": os.Getenv("HOME")}
-		os.WriteFile(os.Args[3], []byte(enc(payload)), 0600)
+		fixtureMarker(os.Args[3], []byte(enc(payload)), 0600)
 		io.Copy(io.Discard, os.Stdin)
 		time.Sleep(60 * time.Second)
 		return
@@ -121,7 +133,7 @@ func mcpFixture() {
 		if c != nil {
 			c.Close()
 		}
-		os.WriteFile(os.Args[3], []byte(enc(M{"accepted": err == nil, "answer": answer})), 0600)
+		fixtureMarker(os.Args[3], []byte(enc(M{"accepted": err == nil, "answer": answer})), 0600)
 		return
 	}
 
@@ -129,7 +141,7 @@ func mcpFixture() {
 		var req M
 		json.NewDecoder(os.Stdin).Decode(&req)
 		json.NewEncoder(os.Stdout).Encode(M{"id": req["id"], "result": M{"text": strings.Repeat("x", 2*1024*1024)}})
-		os.WriteFile(os.Args[3], []byte(strconv.Itoa(os.Getpid())), 0600)
+		fixtureMarker(os.Args[3], []byte(strconv.Itoa(os.Getpid())), 0600)
 		for !exists(os.Args[3] + "-exit") {
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -143,11 +155,11 @@ func mcpFixture() {
 		if cmd.Start() != nil {
 			os.Exit(2)
 		}
-		os.WriteFile(os.Args[3], []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
+		fixtureMarker(os.Args[3], []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
 		return
 	}
 	if tool == "hold" {
-		os.WriteFile(os.Args[3], []byte(strconv.Itoa(os.Getpid())), 0600)
+		fixtureMarker(os.Args[3], []byte(strconv.Itoa(os.Getpid())), 0600)
 		io.Copy(io.Discard, os.Stdin)
 		return
 	}
@@ -159,7 +171,7 @@ func mcpFixture() {
 				os.Exit(3)
 			}
 		}
-		os.WriteFile(os.Args[4], []byte(strconv.Itoa(os.Getpid())), 0600)
+		fixtureMarker(os.Args[4], []byte(strconv.Itoa(os.Getpid())), 0600)
 		tool = "witness"
 	}
 	scanner := bufio.NewScanner(os.Stdin)
