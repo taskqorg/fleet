@@ -206,8 +206,8 @@ One run does all three starts (COREQ-R16 counts starts; Fleet has no launcher, s
 
 #### 3.5 Units
 
-*   PDS18: `deploy/infrastructure/fleet-update.service` (root, `Type=oneshot`, `ExecStart=/opt/fleet/update/fleet-update pds18`) and `fleet-update.timer` (`OnBootSec=2min`, `OnUnitActiveSec=5min`).
-*   Linux/WSL executor: `deploy/hosts/linux/fleet-update.service` and `.timer`, user units, same timing, `ExecStart=%h/releases/current/fleet-update executor`.
+*   PDS18: `deploy/infrastructure/fleet-update.service` (root, `Type=oneshot`, `ExecStart=/opt/fleet/update/fleet-update pds18`) and `fleet-update.timer` (`OnBootSec=2min`, `OnUnitActiveSec=1min`, `AccuracySec=1s`).
+*   Linux/WSL executor: `deploy/hosts/linux/fleet-update.service` and `.timer`, user units, `OnUnitActiveSec=5min` (the `fleet-update.path` trigger does the fast pickup), `ExecStart=%h/releases/current/fleet-update executor`.
 *   Mac: `deploy/hosts/macos/fleet-update.plist`, `StartInterval` 300, `RunAtLoad`, log `~/Library/Logs/fleet-update.log`.
 
 ### 4. Coordinator and executor changes
