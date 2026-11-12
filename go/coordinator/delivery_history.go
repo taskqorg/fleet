@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -22,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fleet/contract"
@@ -121,6 +123,26 @@ type dhRetry struct {
 
 const dhRetries = 5
 
+// dhBatch reads run at a time, dhWorkers of them at once: each gateway call mints and revokes a token (seconds), so
+// the backfill's hundreds of reads run side by side, and each batch is stored before the next.
+const dhBatch, dhWorkers = 32, 8
+
+// dhParallel runs fn for 0..n-1, dhWorkers at a time, and returns the results and errors by index.
+func dhParallel[T any](n int, fn func(i int) (T, error)) ([]T, []error) {
+	out, errs := make([]T, n), make([]error, n)
+	sem, wg := make(chan struct{}, dhWorkers), sync.WaitGroup{}
+	for i := range n {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			out[i], errs[i] = fn(i)
+		}()
+	}
+	wg.Wait()
+	return out, errs
+}
+
 type dhRun struct {
 	ID         int64   `json:"id"`
 	Attempt    int64   `json:"run_attempt"`
@@ -189,7 +211,12 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	// A refused read (the tool not granted, the key gone) says nothing about the item: stop instead of giving it up.
 	// GitHub's own replies arrive as http-<status> codes; any other failure is the connection's or the gateway's.
-	refused := func(err error) bool { return !strings.Contains(err.Error(), ": http-") }
+	// GitHub's 429 says nothing about the item either: the pass stops and the next one goes on. A 403 may be the item's
+	// own (not accessible), so it uses up a retry like any other GitHub error.
+	refused := func(err error) bool {
+		m := err.Error()
+		return !strings.Contains(m, ": http-") || strings.Contains(m, ": http-429")
+	}
 	backfill := !st.Backfilled
 	// Pull requests: the most recently updated first; after the backfill, until a page older than the last pass.
 	var pulls []dhPull
@@ -312,30 +339,38 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 	}
 	retryNext := keep // st.RetryRuns stays whole until the loop ends, so a flush keeps the runs still to retry
+	var todo []dhRun
+	queued := map[int64]bool{} // a run on two pages (the list moved between reads) is read once
 	for _, r := range runs {
-		if r.Status != "completed" {
+		if o, ok := have[r.ID]; r.Status != "completed" || ok && o.Attempt == r.Attempt || tries[r.ID] >= dhRetries || queued[r.ID] {
 			continue
 		}
-		if o, ok := have[r.ID]; ok && o.Attempt == r.Attempt || tries[r.ID] >= dhRetries {
-			continue
-		}
-		var js struct {
+		queued[r.ID] = true
+		todo = append(todo, r)
+	}
+	for c := range slices.Chunk(todo, dhBatch) {
+		type jobs struct {
 			Jobs []ciJob `json:"jobs"`
 		}
-		if err := read(&js, "run_jobs", "run_id", strconv.FormatInt(r.ID, 10)); err != nil {
-			if refused(err) {
-				return fail(err)
+		got, errs := dhParallel(len(c), func(i int) (jobs, error) {
+			var js jobs
+			return js, read(&js, "run_jobs", "run_id", strconv.FormatInt(c[i].ID, 10))
+		})
+		for i, r := range c {
+			if err := errs[i]; err != nil {
+				if refused(err) {
+					return fail(errors.Join(err, flush())) // what this batch read before it stays stored
+				}
+				skipped = append(skipped, err.Error())
+				retryNext = append(retryNext, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
+				continue
 			}
-			skipped = append(skipped, err.Error())
-			retryNext = append(retryNext, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
-			continue
+			dr := deliveryRunOf(r, got[i].Jobs)
+			have[r.ID] = dr
+			changedRuns = append(changedRuns, dr)
 		}
-		dr := deliveryRunOf(r, js.Jobs)
-		have[r.ID] = dr
-		if changedRuns = append(changedRuns, dr); len(changedRuns) >= 25 {
-			if err := flush(); err != nil {
-				return fail(err)
-			}
+		if err := flush(); err != nil {
+			return fail(err)
 		}
 	}
 	st.RetryRuns = retryNext
@@ -376,44 +411,53 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 	}
 	st.CiTried = tried
-	looked := 0
+	var look []int
 	for i := range prs {
 		p := &prs[i]
 		num := strconv.FormatInt(p.Number, 10)
-		// Read once in the backfill, then at most hourly for two days: a head without a green run stays without one.
-		// A backfill resumed after a restart skips what it already looked up.
+		// Read once in the backfill (a resumed one skips what it looked up), then at most hourly for two days: a head
+		// without a green run stays without one.
 		retry := st.CiRetry[num] > 0
 		if p.PrCiDone != nil || p.HeadSha == "" || backfill && tried[num] != "" && !retry || !backfill && !retry && (p.Merged < recent || tried[num] >= hour) {
 			continue
 		}
-		if looked++; looked%25 == 0 {
-			if err := flush(); err != nil {
-				return fail(err)
-			}
-		}
-		var r struct {
+		look = append(look, i)
+	}
+	for c := range slices.Chunk(look, dhBatch) {
+		type ci struct {
 			Runs []dhRun `json:"workflow_runs"`
 		}
-		if err := read(&r, "workflow_runs_sha", "workflow", deliveryWorkflow, "event", "pull_request", "sha", p.HeadSha); err != nil {
-			if refused(err) {
-				return fail(err)
+		got, errs := dhParallel(len(c), func(k int) (ci, error) {
+			var r ci
+			return r, read(&r, "workflow_runs_sha", "workflow", deliveryWorkflow, "event", "pull_request", "sha", prs[c[k]].HeadSha)
+		})
+		for k, i := range c {
+			p := &prs[i]
+			num := strconv.FormatInt(p.Number, 10)
+			if err := errs[k]; err != nil {
+				if refused(err) {
+					return fail(errors.Join(err, flush())) // what this batch read before it stays stored
+				}
+				skipped = append(skipped, err.Error())
+				if st.CiRetry == nil {
+					st.CiRetry = map[string]int{}
+				}
+				if st.CiRetry[num]++; st.CiRetry[num] >= dhRetries {
+					delete(st.CiRetry, num) // given up: the pull request keeps no PR CI time
+					tried[num] = now.Format(time.RFC3339)
+				}
+				continue
 			}
-			skipped = append(skipped, err.Error())
-			if st.CiRetry == nil {
-				st.CiRetry = map[string]int{}
+			delete(st.CiRetry, num)
+			tried[num] = now.Format(time.RFC3339)
+			for _, x := range got[k].Runs {
+				if x.Conclusion != nil && *x.Conclusion == "success" && (p.PrCiDone == nil || x.UpdatedAt < *p.PrCiDone) {
+					p.PrCiDone = ptr(x.UpdatedAt)
+				}
 			}
-			if st.CiRetry[num]++; st.CiRetry[num] >= dhRetries {
-				delete(st.CiRetry, num) // given up: the pull request keeps no PR CI time
-				tried[num] = now.Format(time.RFC3339)
-			}
-			continue
 		}
-		delete(st.CiRetry, num)
-		tried[num] = now.Format(time.RFC3339)
-		for _, x := range r.Runs {
-			if x.Conclusion != nil && *x.Conclusion == "success" && (p.PrCiDone == nil || x.UpdatedAt < *p.PrCiDone) {
-				p.PrCiDone = ptr(x.UpdatedAt)
-			}
+		if err := flush(); err != nil {
+			return fail(err)
 		}
 	}
 	// Releases: new ones are added; installs and the UI on site are recorded for those published since installsFrom.
