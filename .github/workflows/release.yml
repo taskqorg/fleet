@@ -140,7 +140,7 @@ jobs:
           deadline=$((SECONDS + 600)); [ "$deadline" -le 1500 ] || deadline=1500
           while :; do
             jobs=$(gh run view "$id" --json jobs) || { [ "$SECONDS" -lt "$deadline" ] || { b=timeout; break; }; sleep 10; continue; }
-            b=$(jq -r '[.jobs[] | select(.name == "release-build")][0].conclusion // "missing"' <<< "$jobs")
+            b=$(jq -r '[.jobs[] | select(.name == "release-build" or .name == "release-build-pds18 / run") | select(.conclusion != "skipped")][0].conclusion // "missing"' <<< "$jobs")
             [ "$b" = missing ] && break
             [ "$SECONDS" -lt "$deadline" ] || { b=timeout; break; }
             [ -z "$b" ] || break
@@ -152,7 +152,7 @@ jobs:
           # the same name does not match it.
           announced=
           if [ "$b" = success ]; then
-            job=$(jq -r '[.jobs[] | select(.name == "release-build")][0].databaseId' <<< "$jobs")
+            job=$(jq -r '[.jobs[] | select(.name == "release-build" or .name == "release-build-pds18 / run") | select(.conclusion != "skipped")][0].databaseId' <<< "$jobs")
             announced=$(gh api --paginate "repos/$GH_REPO/check-runs/$job/annotations" --jq '.[] | select(.title == "release SHA256SUMS") | .message' | awk 'NR == 1') || announced=
           fi
           if [ -n "$RECENT" ] && [ "$b" = success ] && [ -f "$spec" ] && [ -n "$announced" ] \

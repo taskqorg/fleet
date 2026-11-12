@@ -2,7 +2,7 @@
 # @main: the runner group admits only jobs defined in workflows at refs/heads/main, and a merge queue ref never is one.
 # Callers pass the job's commands; the definition here (where it runs, what it may reach) stays main's.
 # Admission is the event, which no caller can change: a merge queue group of main or a push to main. Any other caller,
-# a fork's pull request included, gets a skipped job, never a PDS18 runner.
+# a fork's pull request included, gets a failed hosted job, never a PDS18 runner and never a skipped (passing) one.
 # The runners keep the Go build and module caches, the toolchains, the pnpm store and the Playwright browsers on the
 # guest (shared by the pool), so there is no Actions cache here; every job starts in a clean checkout.
 name: pds18
@@ -50,11 +50,12 @@ on:
         default: 1
 permissions: {}
 jobs:
+  # release.yml's gate finds the speculative build by this job's check name, "release-build-pds18 / run".
   run:
-    if: >-
-      (github.event_name == 'merge_group' && startsWith(github.ref, 'refs/heads/gh-readonly-queue/main/'))
-      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: [self-hosted, linux, x64, fleet-pds18]
+    runs-on: >-
+      ${{ ((github.event_name == 'merge_group' && startsWith(github.ref, 'refs/heads/gh-readonly-queue/main/'))
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+      && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -71,6 +72,11 @@ jobs:
           --health-cmd "clickhouse client --user t --password t -q 'SELECT 1'"
           --health-interval 2s --health-retries 30
     steps:
+      - name: Admitted to the PDS18 pool
+        if: runner.environment == 'github-hosted'
+        run: |
+          echo "::error::$GITHUB_EVENT_NAME on $GITHUB_REF is not admitted to the PDS18 pool; route this job hosted"
+          exit 1
       # The runner service is no login session: with logind's RemoveIPC on, a job's PostgreSQL loses its shared memory
       # when the last SSH login of the runner user ends (README, logins on the guest).
       - name: Runner keeps IPC across logins

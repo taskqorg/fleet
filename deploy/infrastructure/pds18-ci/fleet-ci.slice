@@ -1,0 +1,8 @@
+[Unit]
+Description=Fleet CI guest, below production at the top of the cgroup tree
+# A top-level slice: production runs in system.slice (PostgreSQL) and user.slice (the Fleet services), each weight 100.
+# Inside system.slice a low CPUWeight on the VM unit alone would still win half the host from user.slice.
+
+[Slice]
+CPUWeight=10
+IOWeight=10
