@@ -380,7 +380,7 @@ func TestLatestConditionalGet(t *testing.T) {
 	etag, body, served, matched := `"one"`, `{"version":"1.261112.1"}`, 0, 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		served++
-		if r.Header.Get("If-None-Match") == etag {
+		if etag != "" && r.Header.Get("If-None-Match") == etag {
 			matched++
 			w.WriteHeader(http.StatusNotModified)
 			return
