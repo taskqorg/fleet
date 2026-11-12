@@ -145,3 +145,12 @@ func gitApply(c *exec.Cmd, vars []string) {
 	setEnvKV(c, "GIT_TERMINAL_PROMPT=0")
 	setEnvKV(c, vars...)
 }
+
+// removeConnection deletes <dir>/<name> (deploy key and its files) after the last project using it was archived. The
+// name is one plain path segment; an absent directory counts as removed.
+func removeConnection(dir, name string) bool {
+	if dir == "" || name == "" || name == "." || name == ".." || !onlyBytes(name, func(b byte) bool { return alnum(b) || b == '-' || b == '_' || b == '.' }) {
+		return false
+	}
+	return os.RemoveAll(filepath.Join(dir, name)) == nil
+}

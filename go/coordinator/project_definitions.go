@@ -213,14 +213,38 @@ func projectArchive(q *Request) (any, error) {
 		}
 		return nil, fail(409, "Close first: "+strings.Join(open, ", "))
 	}
-	tag, err := q.tx.Exec(q.ctx(), "UPDATE definition SET retired_at=now() WHERE kind='project' AND id=$1 AND retired_at IS NULL", id)
+	// The head stays readable after retirement, so archiving again (idempotent) cleans keys a first run left behind.
+	var raw []byte
+	err = q.tx.QueryRow(q.ctx(), `SELECT r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+	  WHERE d.kind='project' AND d.id=$1`, id).Scan(&raw)
+	if err == pgx.ErrNoRows {
+		return nil, fail(404, "Unknown project")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, fail(404, "Unknown project")
+	var bundle struct {
+		Settings struct {
+			Repos []struct {
+				Connection string `json:"connection"`
+			} `json:"repos"`
+		} `json:"settings"`
 	}
-	return doc{"projectId": id, "archived": true}, nil
+	_ = json.Unmarshal(raw, &bundle) // a head without repos names no connection
+	conns := []string{}
+	for _, r := range bundle.Settings.Repos {
+		if r.Connection != "" {
+			conns = append(conns, r.Connection)
+		}
+	}
+	if err := exec(q, "UPDATE definition SET retired_at=coalesce(retired_at,now()) WHERE kind='project' AND id=$1", id); err != nil {
+		return nil, err
+	}
+	removed, err := removeUnusedConnections(q, conns)
+	if err != nil {
+		return nil, err
+	}
+	return doc{"projectId": id, "archived": true, "connectionRemovals": removed}, nil
 }
 
 // projectRetired: the id belongs to an archived project (its definition row stays, so the id is never reused).
@@ -309,6 +333,53 @@ func projectIDs(q *Request) ([]string, error) {
 	for _, r := range rows {
 		if q.person == nil || mayAccessProjectID(q.person, r.id) {
 			out = append(out, r.id)
+		}
+	}
+	return out, nil
+}
+
+// removeUnusedConnections: a git connection no live project names any more leaves every host that holds it
+// (connection-remove deletes the deploy key directory). Returns "host/connection" for each command queued.
+func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
+	out := []string{}
+	if len(conns) == 0 {
+		return out, nil
+	}
+	ids, err := projectIDs(q)
+	if err != nil {
+		return nil, err
+	}
+	used := map[string]bool{}
+	for _, p := range ids {
+		for _, r := range anys(projectSettingsOf(q, p)["repos"]) {
+			used[astr(mapOf(r)["connection"])] = true
+		}
+	}
+	obs, err := all(q, "host-observation", nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range conns {
+		if used[c] {
+			continue
+		}
+		for _, o := range obs {
+			host := astr(o["id"])
+			if !slices.Contains(strs(o["gitConnections"]), c) {
+				continue
+			}
+			sid, xid := newID(), newID()
+			if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
+				return nil, err
+			}
+			if err := put(q, "execution", doc{"id": xid, "executionId": xid, "sessionId": sid, "hostId": host, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
+				return nil, err
+			}
+			if err := put(q, "command", doc{"id": newID(), "executionId": xid, "sessionId": sid, "hostId": host, "kind": string(contract.CommandKindConnectionRemove), "status": "pending",
+				"payload": contract.ConnectionRemovePayload{Connection: c}}); err != nil {
+				return nil, err
+			}
+			out = append(out, host+"/"+c)
 		}
 	}
 	return out, nil
