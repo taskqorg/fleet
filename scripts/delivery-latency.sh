@@ -10,8 +10,10 @@ set -euo pipefail
 n=${1:-20}
 repo=taskqorg/fleet
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-# gh orders by creation; fetch more and keep the n most recently merged below.
-gh pr list -R "$repo" -s merged -L $(( n * 3 )) --json number,createdAt,mergedAt,headRefOid,mergeCommit >"$tmp/prs.json"
+# gh orders by creation (search cannot sort by merge time; "updated" moves with labels): take 3n and keep the n most recently
+# merged. ponytail: a branch older than 3n newer pull requests is missed; page further if that ever matters.
+gh pr list -R "$repo" -s merged -L $(( n * 3 )) --json number,createdAt,mergedAt,headRefOid,mergeCommit \
+  | jq --argjson n "$n" 'sort_by(.mergedAt) | .[-$n:]' >"$tmp/prs.json"
 gh api --paginate "repos/$repo/releases?per_page=100" -q '.[]|[.tag_name,.published_at]|@tsv' >"$tmp/releases.tsv"
 # A release carries every merge since the previous one: match by the first release tag containing the merge commit (as watch-landing.sh).
 git fetch -q origin main --tags
@@ -28,10 +30,10 @@ if [ -f "$env_file" ]; then
     https://fleet.ufobe.com/api/ops/hosts_list -d '{}' >"$tmp/hosts.json" || echo '{"hosts":[]}' >"$tmp/hosts.json"
 else echo '{"hosts":[]}' >"$tmp/hosts.json"; fi
 journal="journalctl -u fleet-update --no-pager -o short-iso --since '60 days ago'"
-if [ "$(hostname -s 2>/dev/null)" = pds18 ]; then sh -c "$journal" >"$tmp/journal.txt" 2>/dev/null || :
-else ssh -o BatchMode=yes -o ConnectTimeout=5 pds18 "$journal" >"$tmp/journal.txt" 2>/dev/null || :; fi
+if [ "$(hostname -s 2>/dev/null)" = pds18 ]; then sh -c "$journal" >"$tmp/journal.txt" 2>/dev/null || echo "journal unavailable: on PDS18 column from hosts_list only" >&2
+else ssh -o BatchMode=yes -o ConnectTimeout=5 pds18 "$journal" >"$tmp/journal.txt" 2>/dev/null || echo "journal unavailable (ssh pds18): on PDS18 column from hosts_list only" >&2; fi
 
-D="$tmp" N="$n" python3 -I - <<'PY'
+D="$tmp" python3 -I - <<'PY'
 import json, os, re
 from datetime import datetime
 d = os.environ["D"]
@@ -53,7 +55,8 @@ def ci(sha, event):
 installed = {}
 for h in hosts:
     u = h.get("update") or {}
-    if h["id"].startswith("pds18") and u.get("state") == "ok" and u.get("version") and u.get("at"): installed[u["version"]] = ts(u["at"])
+    # The coordinator's own host is the one row whose update carries the merged parts (coordinator and executor).
+    if "parts" in u and u.get("state") == "ok" and u.get("version") and u.get("at"): installed[u["version"]] = ts(u["at"])
 pending = None
 for line in open(os.path.join(d, "journal.txt")):
     m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: (coordinator: \S+ -> (\S+)|(\S+) ok:)", line)
@@ -62,7 +65,7 @@ for line in open(os.path.join(d, "journal.txt")):
     elif m.group(4) == pending: installed.setdefault(pending, jts(m.group(1))); pending = None
 stages = ["pr_ci", "mq_ci", "merged", "released", "on_host"]
 rows = []
-for p in sorted(prs, key=lambda p: p["mergedAt"])[-int(os.environ["N"]):]:
+for p in prs:
     t0 = ts(p["createdAt"]); merge = (p["mergeCommit"] or {}).get("oid")
     tag = tag_of.get(merge) or None; pub = published.get(tag) if tag else None
     t = {"pr_ci": ci(p["headRefOid"], "pull_request"), "mq_ci": ci(merge, "merge_group"), "merged": ts(p["mergedAt"]),
