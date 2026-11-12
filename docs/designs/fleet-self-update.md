@@ -131,7 +131,7 @@ Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery
 *   **Job `migrate-check`** (`needs: build`, `contents: read`): on the runner's PostgreSQL, start the new coordinator (migrates), stop it, start the `previous` release's coordinator on that database and require `/api/health` 200. Skipped when `previous` is empty. This enforces "expand in N, contract in N+1".
 *   **Job `publish`** (`needs: [selftest-macos, migrate-check]`, environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
 
-`ci.yml` job `app` packs the same tarballs with the same script (version `0.0.0-<sha>`, unsigned) as the artifact `fleet-release-<sha>`, so pull request trials carry every binary.
+`ci.yml` job `app` packs the same tarballs with the same script (version `0.0.0-<sha>`, unsigned) as the artifact `fleet-release-<sha>` (kept 1 day), so pull request trials carry every binary.
 
 ### 2. Versions in binaries
 
