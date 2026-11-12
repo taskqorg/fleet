@@ -8,7 +8,7 @@ import {pathToFileURL} from 'node:url';
 export const families = ['go', 'app', 'browser'] as const;
 type Family = typeof families[number];
 type Event = {pull_request?: {base: {sha: string}}; merge_group?: {base_sha: string; head_sha: string}; before?: string; after?: string};
-export type Plan = {version: 1; mode: 'selected'; paths: string[] | null; previousGreen: boolean; forced: boolean; policy: string; candidate: string; base: string | null; event: string; selected: Family[]; executed: readonly Family[]; reasons: string[]};
+export type Plan = {version: 1; mode: 'selected'; paths: string[] | null; previousGreen: boolean; forced: boolean; policy: string; candidate: string; base: string | null; event: string; selected: Family[]; executed: readonly Family[]; deferred: readonly Family[]; reasons: string[]};
 const policy = () => createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
 const prose = (path: string) => /^docs\/.*\.md$/.test(path) || path === 'README.md';
 const sha = (s: unknown): s is string => typeof s === 'string' && /^[a-f0-9]{40}$/.test(s) && !/^0+$/.test(s);
@@ -88,7 +88,12 @@ export function makePlan(event: string, payload: Event, candidate: string, git: 
     decision = {selected: [...families], reasons: [`full fallback: ${String(error)}`]};
   }
   return {version: 1, mode: 'selected', policy: policy(), candidate, base, event, paths, previousGreen, forced,
-    ...decision, executed: execution(paths, previousGreen, forced)};
+    ...decision, ...run(event, execution(paths, previousGreen, forced))};
+}
+
+// A pull request runs only the thin check; its heavy families are deferred to the merge queue, which qualifies the candidate.
+export function run(event: string, families: readonly Family[]): {executed: readonly Family[]; deferred: readonly Family[]} {
+  return event === 'pull_request' ? {executed: [], deferred: families} : {executed: families, deferred: []};
 }
 
 type Run = {databaseId: number; status: string; conclusion: string};
@@ -125,8 +130,11 @@ export function verifyEvidence(plan: Plan, candidate: string, jobs: Record<strin
   assert.equal(typeof plan.forced, 'boolean');
   assert.ok(plan.paths === null || (Array.isArray(plan.paths) && plan.paths.length > 0 && plan.paths.every(p => typeof p === 'string' && p.length > 0)));
   assert.deepEqual(plan.selected, plan.paths ? select(plan.paths).selected : [...families]);
-  assert.deepEqual(plan.executed, execution(plan.paths, plan.previousGreen, plan.forced));
+  const expected = run(plan.event, execution(plan.paths, plan.previousGreen, plan.forced));
+  assert.deepEqual(plan.executed, expected.executed);
+  assert.deepEqual(plan.deferred, expected.deferred);
   assert.equal(jobs.selection?.result, 'success', 'selection: failed or missing');
+  assert.equal(jobs.thin?.result, plan.event === 'pull_request' ? 'success' : 'skipped', 'thin: unexpected or missing execution');
   for (const family of families) assert.equal(jobs[family]?.result, plan.executed.includes(family) ? 'success' : 'skipped', `${family}: unexpected or missing execution`);
 }
 

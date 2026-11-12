@@ -41,7 +41,7 @@ test('unqualified history executes full suites even when impact selection propos
 
 test('release rejects missing, failed or mismatched candidate evidence', () => {
   const plan = makePlan('push', {before: base, after: head}, head, args => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0docs/example.md\0' : '');
-  const jobs = Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}]));
+  const jobs = {...Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}])), thin: {result: 'skipped'}};
   assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
   assert.throws(() => verifyEvidence(plan, base, jobs));
   assert.throws(() => verifyEvidence({...plan, policy: 'unknown'}, head, jobs));
@@ -65,7 +65,7 @@ test('qualified module unions preserve archive gates and prior failure or rollba
 });
 test('qualified omitted families require actual skipped results and cannot hide selected failure', () => {
   const plan = makePlan('push', {before: base, after: head}, head, args => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0docs/example.md\0' : '', true);
-  const jobs = {selection: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
+  const jobs = {selection: {result: 'success'}, thin: {result: 'skipped'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
   assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
   assert.throws(() => verifyEvidence({...plan, previousGreen: false}, head, jobs));
   assert.throws(() => verifyEvidence({...plan, paths: ['go/coordinator/access.go']}, head, jobs));
@@ -81,7 +81,7 @@ test('actual Git comparison accepts a qualified plan and rejects a corrupted omi
     mkdirSync(join(root, 'docs')); writeFileSync(join(root, 'docs/example.md'), 'prose'); const after = commit();
     const plan = makePlan('push', {before, after}, after, git, true);
     const path = join(root, 'plan.json'), results = join(root, 'results.json');
-    writeFileSync(results, JSON.stringify({selection: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))}));
+    writeFileSync(results, JSON.stringify({selection: {result: 'success'}, thin: {result: 'skipped'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))}));
     const verify = () => execFileSync(process.execPath, [fileURLToPath(new URL('../../scripts/test-selection.ts', import.meta.url)), '--verify', path, results],
       {cwd: root, env: {...process.env, GITHUB_SHA: after}, stdio: 'pipe'});
     writeFileSync(path, JSON.stringify(plan)); assert.match(verify().toString(), /PASS/);
@@ -104,4 +104,19 @@ test('known module execution retains native archives, HTTP consumers and shared 
   for (const path of ['app/src/views/hosts.tsx','packages/ui/src/button.tsx']) assert.deepEqual(execution([path],true,false),['app','browser']);
   for (const path of ['go/obs/obs.go','go/contract/base.go','go/go.mod','tests/ui/new.test.ts']) assert.deepEqual(execution([path],true,false),[...families]);
   assert.deepEqual(execution(['go/executor/main.go','app/src/views/hosts.tsx'],true,false),[...families]);
+});
+
+test('pull request runs the thin check only and defers its heavy families to the merge queue', () => {
+  const git = (args: string[]) => args[0] === 'rev-parse' ? head : args[0] === 'diff' ? 'M\0go/coordinator/access.go\0' : '';
+  const plan = makePlan('pull_request', {pull_request: {base: {sha: base}}}, head, git);
+  assert.deepEqual(plan.executed, []);
+  assert.deepEqual(plan.deferred, [...families]);
+  const jobs = {selection: {result: 'success'}, thin: {result: 'success'}, ...Object.fromEntries(families.map(f => [f, {result: 'skipped'}]))};
+  assert.doesNotThrow(() => verifyEvidence(plan, head, jobs));
+  assert.throws(() => verifyEvidence(plan, head, {...jobs, thin: {result: 'failure'}}));
+  assert.throws(() => verifyEvidence({...plan, deferred: []}, head, jobs));
+  const group = makePlan('merge_group', {merge_group: {base_sha: base, head_sha: head}}, head, git);
+  assert.deepEqual(group.executed, [...families]);
+  assert.deepEqual(group.deferred, []);
+  assert.throws(() => verifyEvidence(group, head, {...jobs, thin: {result: 'skipped'}}));
 });
