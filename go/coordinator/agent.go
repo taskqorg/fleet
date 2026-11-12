@@ -991,7 +991,14 @@ func executionStatus(q *Request, r *contract.ExecutionStatusRequest) (contract.E
 	if err != nil {
 		return rep, err
 	}
-	rep = contract.ExecutionStatusReply{ExecutionId: eid, SessionId: strPtr(e["sessionId"]), State: astr(e["state"]), Report: jsonBytes(e["report"]), Next: next}
+	observation := "confirmed"
+	var reason *string
+	if unconfirmed(e) {
+		observation = "unconfirmed"
+		text := firstString(e["error"], e["problem"], "Execution outcome is unconfirmed; the host has not established its current state")
+		reason = &text
+	}
+	rep = contract.ExecutionStatusReply{ExecutionId: eid, SessionId: strPtr(e["sessionId"]), State: astr(e["state"]), Observation: observation, Reason: reason, Report: jsonBytes(e["report"]), Next: next}
 	if e["stopRequested"] == true {
 		stop, err := stopOutcome(q, e)
 		if err != nil {

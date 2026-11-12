@@ -3,6 +3,7 @@ package main
 // Local MCP ownership extends the existing execution journal, never the task scheduler.
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"modernc.org/sqlite"
 )
 
 type mcpOwner struct {
@@ -113,6 +116,13 @@ func (o *mcpOwner) accept() {
 			answer["executionId"] = o.execution
 			if err != nil {
 				answer["error"] = err.Error()
+				var sqliteErr *sqlite.Error
+				var errno syscall.Errno
+				if errors.As(err, &sqliteErr) {
+					answer["errorKind"], answer["errorCode"] = "sqlite", sqliteErr.Code()
+				} else if errors.As(err, &errno) {
+					answer["errorKind"], answer["errorCode"] = "system", int(errno)
+				}
 			}
 			writeErr := json.NewEncoder(c).Encode(answer)
 			o.mu.Unlock()
@@ -149,15 +159,21 @@ func descendant(pid, root int) bool {
 	return false
 }
 func (o *mcpOwner) register(pid int, id string) error {
-	tx, err := o.db.Begin()
+	ctx := context.Background()
+	tx, err := o.db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Close()
+	// Reserve the writer before reading ownership; a later upgrade can fail with SQLITE_BUSY_SNAPSHOT.
+	if _, err := tx.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer tx.ExecContext(ctx, "ROLLBACK")
 	var root int
 	var rootID string
 	var fenced int
-	err = tx.QueryRow(`SELECT l.grp,p.identity,l.mcp_fenced FROM launches l JOIN owned p ON p.execution=l.execution AND p.pid=l.grp JOIN commands c ON c.id=l.command WHERE l.execution=? AND c.terminal=0`, o.execution).Scan(&root, &rootID, &fenced)
+	err = tx.QueryRowContext(ctx, `SELECT l.grp,p.identity,l.mcp_fenced FROM launches l JOIN owned p ON p.execution=l.execution AND p.pid=l.grp JOIN commands c ON c.id=l.command WHERE l.execution=? AND c.terminal=0`, o.execution).Scan(&root, &rootID, &fenced)
 	if err != nil || fenced != 0 {
 		return errors.New("MCP execution launch is not open")
 	}
@@ -184,7 +200,7 @@ func (o *mcpOwner) register(pid int, id string) error {
 	if err = verify(); err != nil {
 		return err
 	}
-	res, err := tx.Exec(`INSERT INTO mcp_groups(execution,pid,identity) VALUES(?,?,?) ON CONFLICT(execution,pid) DO UPDATE SET identity=excluded.identity WHERE identity=excluded.identity`, o.execution, pid, id)
+	res, err := tx.ExecContext(ctx, `INSERT INTO mcp_groups(execution,pid,identity) VALUES(?,?,?) ON CONFLICT(execution,pid) DO UPDATE SET identity=excluded.identity WHERE identity=excluded.identity`, o.execution, pid, id)
 	if err != nil {
 		return err
 	}
@@ -194,7 +210,7 @@ func (o *mcpOwner) register(pid int, id string) error {
 	if err = verify(); err != nil {
 		return err
 	}
-	if err = tx.Commit(); err != nil {
+	if _, err = tx.ExecContext(ctx, "COMMIT"); err != nil {
 		return err
 	}
 	return verify() // lost ack never releases useful work
@@ -288,6 +304,7 @@ func mcpGuardian(args []string) error {
 	if !jBoolOr(false, answer, "registered") {
 		report["registration"] = "refused"
 		report["refusalReason"] = jStr(answer, "error")
+		report["errorKind"], report["errorCode"] = answer["errorKind"], answer["errorCode"]
 		return errors.New("MCP ownership refused: " + jStr(answer, "error"))
 	}
 	report["registration"] = "acknowledged"
@@ -733,7 +750,7 @@ func (e *mcpLifecycleError) Error() string {
 }
 func safeMCPStatus(raw M) M {
 	out := M{"stage": "unknown", "registration": "unknown", "outcome": "unknown", "provenance": "status-unavailable"}
-	for key, values := range map[string][]string{"stage": {"ownership", "binding", "spawn", "server-exit"}, "registration": {"unknown", "refused", "acknowledged"}, "outcome": {"unknown", "exited", "signaled"}, "provenance": {"guardian-private-status"}, "refusalReason": {"MCP peer owner differs", "MCP execution launch is not open", "MCP guardian identity differs", "MCP guardian belongs to another execution", "MCP guardian is not its group leader", "MCP guardian executable differs", "MCP execution is fenced", "MCP peer belongs to another execution", "MCP peer executable differs", "MCP generation is stale or unknown", "MCP dependency generation lost its parent", "dependency was not selected by the binding", "MCP dependency target changed", "MCP fixed dependency identity differs", "MCP generation preparer changed", "MCP generation already has a guardian"}} {
+	for key, values := range map[string][]string{"stage": {"ownership", "binding", "spawn", "server-exit"}, "registration": {"unknown", "refused", "acknowledged"}, "outcome": {"unknown", "exited", "signaled"}, "provenance": {"guardian-private-status"}, "errorKind": {"sqlite", "system"}, "refusalReason": {"MCP peer owner differs", "MCP execution launch is not open", "MCP guardian identity differs", "MCP guardian belongs to another execution", "MCP guardian is not its group leader", "MCP guardian executable differs", "MCP group registration conflicts with retained identity", "MCP execution is fenced", "MCP peer belongs to another execution", "MCP peer executable differs", "MCP generation is stale or unknown", "MCP dependency generation lost its parent", "dependency was not selected by the binding", "MCP dependency target changed", "MCP fixed dependency identity differs", "MCP generation preparer changed", "MCP generation already has a guardian"}} {
 		for _, allowed := range values {
 			if jStr(raw, key) == allowed {
 				out[key] = allowed
@@ -752,7 +769,7 @@ func safeMCPStatus(raw M) M {
 		}
 	}
 
-	for key, max := range map[string]float64{"guardianPid": 2147483647, "exitCode": 255, "signal": 127} {
+	for key, max := range map[string]float64{"guardianPid": 2147483647, "exitCode": 255, "signal": 127, "errorCode": 2147483647} {
 		if n, ok := jAt(raw, key).(float64); ok && n >= 0 && n <= max && n == float64(int64(n)) {
 			out[key] = n
 		}
