@@ -3,7 +3,7 @@
 # a worker stops after enabling auto-merge, so nobody else sees a landing fail. This runs scripts/watch-landing.sh for
 # every open pull request with auto-merge on or in the merge queue (gh pr merge --auto on a clean pull request enqueues it at once and clears autoMergeRequest), and every one merged in the last <minutes> (default 60), all at once.
 # Usage: scripts/watch-landings.sh [minutes] [timeout-minutes, default 45]
-# Prints "#<n> <last line of watch-landing.sh>" per pull request as each finishes; exit 1 if any did not end on hosts/site.
+# Prints "#<n> <last line of watch-landing.sh>" per pull request as each finishes; exit 1 if any did not end on hosts/site or as nothing to ship.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 since=$(date -u -v-"${1:-60}"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "-${1:-60} min" +%Y-%m-%dT%H:%M:%SZ)
@@ -17,4 +17,5 @@ for n in $prs; do
   ( scripts/watch-landing.sh "$n" "${2:-45}" 2>/dev/null | tail -1 | sed "s/^/#$n /" | tee "$out/$n" ) &
 done
 wait
-[ -z "$(grep -L -E ' on (hosts|site) ' "$out"/*)" ]
+# Every line must be a success; anything else (timeout, not merged, no output) fails the run.
+[ -z "$(grep -L -E '^#[0-9]+ (on (hosts|site) |merged [0-9a-f]+, nothing to ship$)' "$out"/*)" ]
