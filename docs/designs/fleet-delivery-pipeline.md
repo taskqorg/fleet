@@ -295,7 +295,7 @@ The landing watcher recognizes native and backend-scoped UI tags ordered by thei
 
 Delivery is measured, compared with a baseline, and a worsening reaches the orchestrator without anyone looking (`go/coordinator/delivery_history.go`).
 
-**What is measured.** The coordinator reads the fleet repository through the `github` connection every 10 minutes; its first pass backfills from the repository start (2026-11-08). It keeps one record per merged pull request, per release and per merge-queue run of the `ci` workflow:
+**What is measured.** The coordinator reads the fleet repository through the `github` connection every 10 minutes; its first pass backfills from the repository start (2026-11-08). The connection grants the read tools `pulls_closed_page`, `releases_page`, `workflow_runs_day`, `workflow_runs_sha` and `run_jobs` (`connections_set_tools`); these reads never fall back to the keyless API, and a refused one shows as the problem in `delivery_history`. The backfill stores runs and PR CI lookups as it reads, so after a deploy restarts the coordinator it lists the pages again but does not repeat those reads. It keeps one record per merged pull request, per release and per merge-queue run of the `ci` workflow:
 
 | Record | Fields |
 |---|---|

@@ -160,6 +160,36 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 	return body, true, err
 }
 
+// githubReadKeyed: through the connection only, never the public fallback: the delivery history makes hundreds of
+// reads, which must not spend the shared keyless budget. A tool the connection does not grant fails with the
+// gateway's error (unknown-tool: connections_set_tools).
+func githubReadKeyed(ctx context.Context, a *App, project, tool string, args map[string]string) ([]byte, error) {
+	var connection string
+	var keyed bool
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+		connection, _, keyed, err = githubConnectionOf(q, args["owner"])
+		return
+	}); err != nil {
+		return nil, fmt.Errorf("github connection of %s: %w", args["owner"], err)
+	}
+	if !keyed {
+		return nil, fmt.Errorf("no github key on connection %s", connection)
+	}
+	path := astr(mapOf(providerTools("github")[tool])["path"])
+	if path == "" {
+		return nil, fmt.Errorf("github has no tool %s", tool)
+	}
+	pairs := []string{}
+	for k, v := range args {
+		pairs = append(pairs, "{"+k+"}", v)
+	}
+	path = strings.NewReplacer(pairs...).Replace(path)
+	if strings.Contains(path, "{") {
+		return nil, fmt.Errorf("github %s: a path field is missing", tool)
+	}
+	return githubOnce("key "+connection+" "+project+" "+path, 30*time.Second, func() ([]byte, error) { return githubGateway(ctx, a, connection, project, tool, args) }, func(err error) bool { return err == nil })
+}
+
 func githubPublic(ctx context.Context, path string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com"+path, nil)
 	if err != nil {

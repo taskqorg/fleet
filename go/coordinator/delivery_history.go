@@ -171,7 +171,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		for i := 0; i+1 < len(kv); i += 2 {
 			args[kv[i]] = kv[i+1]
 		}
-		b, _, err := githubRead(ctx, a, ciProject, tool, args)
+		b, err := githubReadKeyed(ctx, a, ciProject, tool, args)
 		if err == nil {
 			err = json.Unmarshal(b, into)
 		}
@@ -187,6 +187,9 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		}
 		return err
 	}
+	// A refused read (the tool not granted, the key gone) says nothing about the item: stop instead of giving it up.
+	// GitHub's own replies arrive as http-<status> codes; any other failure is the connection's or the gateway's.
+	refused := func(err error) bool { return !strings.Contains(err.Error(), ": http-") }
 	backfill := !st.Backfilled
 	// Pull requests: the most recently updated first; after the backfill, until a page older than the last pass.
 	var pulls []dhPull
@@ -259,12 +262,38 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		before["delivery-release:"+r.Tag] = string(jsonBytes(r))
 	}
 	changed := func(id string, v any) bool { return before[id] != string(jsonBytes(v)) }
+	var changedRuns []contract.DeliveryRun
+	// flush stores what was read so far: a deploy restarts the coordinator every few minutes, and the backfill's
+	// hundreds of reads must survive it (stored runs and PR CI times are not read again).
+	flush := func() error {
+		err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			for _, r := range changedRuns {
+				if err := dhPut(q, "delivery-run", "delivery-run:"+strconv.FormatInt(r.Id, 10), r); err != nil {
+					return err
+				}
+			}
+			for _, p := range prs {
+				if id := "delivery-pr:" + strconv.FormatInt(p.Number, 10); changed(id, p) {
+					if err := dhPut(q, "delivery-pr", id, p); err != nil {
+						return err
+					}
+				}
+			}
+			return dhPut(q, "delivery-history", "delivery-history", st)
+		})
+		if err == nil {
+			changedRuns = nil
+			for _, p := range prs {
+				before["delivery-pr:"+strconv.FormatInt(p.Number, 10)] = string(jsonBytes(p))
+			}
+		}
+		return err
+	}
 	// Jobs of each finished run not stored yet (or re-run since).
 	have := map[int64]contract.DeliveryRun{}
 	for _, r := range stored {
 		have[r.Id] = r
 	}
-	var changedRuns []contract.DeliveryRun
 	var skipped []string // single reads that failed; the pass keeps the rest
 	// A run listed while still in progress is listed again: the window holds yesterday, so at least 24 hours.
 	tries := map[int64]int{}
@@ -282,7 +311,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			keep = append(keep, x)
 		}
 	}
-	st.RetryRuns = keep
+	retryNext := keep // st.RetryRuns stays whole until the loop ends, so a flush keeps the runs still to retry
 	for _, r := range runs {
 		if r.Status != "completed" {
 			continue
@@ -294,18 +323,27 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			Jobs []ciJob `json:"jobs"`
 		}
 		if err := read(&js, "run_jobs", "run_id", strconv.FormatInt(r.ID, 10)); err != nil {
+			if refused(err) {
+				return fail(err)
+			}
 			skipped = append(skipped, err.Error())
-			st.RetryRuns = append(st.RetryRuns, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
+			retryNext = append(retryNext, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
 			continue
 		}
 		dr := deliveryRunOf(r, js.Jobs)
 		have[r.ID] = dr
-		changedRuns = append(changedRuns, dr)
+		if changedRuns = append(changedRuns, dr); len(changedRuns) >= 25 {
+			if err := flush(); err != nil {
+				return fail(err)
+			}
+		}
 	}
+	st.RetryRuns = retryNext
 	byNum := map[int64]*contract.DeliveryPr{}
 	for i := range prs {
 		byNum[prs[i].Number] = &prs[i]
 	}
+	pullsUpdated := st.PullsUpdated
 	for _, p := range pulls {
 		if p.MergedAt == nil {
 			continue
@@ -324,8 +362,8 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		if p.User.Login != "" {
 			r.Author = ptr(p.User.Login)
 		}
-		if p.UpdatedAt > st.PullsUpdated {
-			st.PullsUpdated = p.UpdatedAt
+		if p.UpdatedAt > pullsUpdated {
+			pullsUpdated = p.UpdatedAt // stored at the end: a flush mid-pass must not skip these pages next time
 		}
 	}
 	// PR CI done: the first green pull_request run of the ci workflow on the merged head, read once per pull request
@@ -333,29 +371,40 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	recent, hour := now.Add(-48*time.Hour).Format(time.RFC3339), now.Add(-time.Hour).Format(time.RFC3339)
 	tried := map[string]string{}
 	for k, v := range st.CiTried {
-		if v >= recent {
+		if v >= recent || backfill { // a resumed backfill keeps every marker
 			tried[k] = v
 		}
 	}
 	st.CiTried = tried
+	looked := 0
 	for i := range prs {
 		p := &prs[i]
 		num := strconv.FormatInt(p.Number, 10)
 		// Read once in the backfill, then at most hourly for two days: a head without a green run stays without one.
+		// A backfill resumed after a restart skips what it already looked up.
 		retry := st.CiRetry[num] > 0
-		if p.PrCiDone != nil || p.HeadSha == "" || !backfill && !retry && (p.Merged < recent || tried[num] >= hour) {
+		if p.PrCiDone != nil || p.HeadSha == "" || backfill && tried[num] != "" && !retry || !backfill && !retry && (p.Merged < recent || tried[num] >= hour) {
 			continue
+		}
+		if looked++; looked%25 == 0 {
+			if err := flush(); err != nil {
+				return fail(err)
+			}
 		}
 		var r struct {
 			Runs []dhRun `json:"workflow_runs"`
 		}
 		if err := read(&r, "workflow_runs_sha", "workflow", deliveryWorkflow, "event", "pull_request", "sha", p.HeadSha); err != nil {
+			if refused(err) {
+				return fail(err)
+			}
 			skipped = append(skipped, err.Error())
 			if st.CiRetry == nil {
 				st.CiRetry = map[string]int{}
 			}
 			if st.CiRetry[num]++; st.CiRetry[num] >= dhRetries {
 				delete(st.CiRetry, num) // given up: the pull request keeps no PR CI time
+				tried[num] = now.Format(time.RFC3339)
 			}
 			continue
 		}
@@ -409,7 +458,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	if backfill {
 		st.Backfilled, st.BackfilledFrom = true, deliveryRepoStart
 	}
-	st.Through, st.RefreshedAt, st.Problem = now.Format("2006-01-02"), now.Format(time.RFC3339), ""
+	st.Through, st.RefreshedAt, st.Problem, st.PullsUpdated = now.Format("2006-01-02"), now.Format(time.RFC3339), "", pullsUpdated
 	if len(skipped) > 0 {
 		st.Problem = fmt.Sprintf("%d reads failed, first: %s", len(skipped), skipped[0])
 	}
