@@ -338,3 +338,25 @@ test('PM provenance: internal timer/change/wake inputs keep Fleet sender through
   const agentMessage = await eventually(async () => (await view(pm.sessionId)).messages.find((m: any) => m.requestId === agentRequestId));
   assert.equal(agentMessage.sentBy, MEMBER); assert.equal(agentMessage.source, undefined);
 });
+
+test('PM managed-account guards accept canonical id/name with intake all and reject paused/unknown accounts (requirement: fleet.md host-owned account delegation; risk: obsolete enabled field blocks native PM dispatch or missing intake widens it)', {timeout:30000}, async()=>{
+ const pm=await agent(OWNER,{projectId:PROJECT,role:'pm'});
+ const account=ok(await op('account_create',{name:'pm-native-'+randomUUID(),harness:'codex'}));
+ assert.equal(account.enabled,undefined);
+ for(const selection of [account.id,account.name]){
+  const child=ok(await pm.tool('session_start',{requestId:randomUUID(),role:'worker',account:selection}));
+  assert.ok(child.sessionId,JSON.stringify(child));
+ }
+ for(const method of ['session_start','session_transition']){
+  const args={requestId:randomUUID(),role:'worker',profileId:'pm',account:'unknown-'+randomUUID()};
+  assert.equal((await pm.tool(method,args)).status,403);
+ }
+ ok(await op('account_update',{accountId:account.id,intake:'paused'}));
+ for(const method of ['session_start','session_transition']){
+  assert.equal((await pm.tool(method,{requestId:randomUUID(),role:'worker',profileId:'pm',account:account.id})).status,403);
+ }
+ ok(await op('account_update',{accountId:account.id,intake:'all'}));
+ const transition=await pm.tool('session_transition',{profileId:'pm',account:account.name});
+ assert.equal(transition.status,409,JSON.stringify(transition.body));
+ assert.equal(transition.body.message,'Execution active','canonical account reaches the existing lifecycle guard');
+});
