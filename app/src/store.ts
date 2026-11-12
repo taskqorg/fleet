@@ -175,8 +175,8 @@ export function startStore() {
  * yet the previous list stays on screen and `pending` is true. `shownView` is the view those rows belong to (headers use it).
  * The skeleton is only for a view that never showed anything.
  */
-export function useList(kind: Kind, shownView: View) {
-  const view = withFocus(shownView), key = listKey(view), e = entry(kind, key, view);
+export function useList(kind: Kind, urlView: View) {
+  const view = withFocus(urlView), key = listKey(view), e = entry(kind, key, view);
   const [last, setLast] = useState<string | null>(() => e.state.value ? key : null);
   const ctrl = useRef<AbortController | null>(null);
   const shown = e.state.value ? key : last; // derived during render: no stale frame when the wanted list is in memory

@@ -115,10 +115,6 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if err != nil {
 		return contract.PersonSettings{}, err
 	}
-	// section 8: an agent may propose order soonest_reset, never set it; the other preferences are open to agents (R7).
-	if r.Order != nil && q.agent != "" {
-		return contract.PersonSettings{}, fail(403, "Only a person may set the dispatch order")
-	}
 	if r.Order != nil && !slices.Contains(contract.DispatchOrderValues, *r.Order) {
 		return contract.PersonSettings{}, fail(400, "order: list or soonest_reset")
 	}
@@ -132,6 +128,10 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	prev, err := personSettings(q, email)
 	if err != nil {
 		return contract.PersonSettings{}, err
+	}
+	// section 8: an agent may propose order soonest_reset, never change it; the other preferences are open to agents (R7).
+	if r.Order != nil && *r.Order != prev.Order && q.agent != "" {
+		return contract.PersonSettings{}, fail(403, "Only a person may change the dispatch order")
 	}
 	next := prev
 	if r.Order != nil {

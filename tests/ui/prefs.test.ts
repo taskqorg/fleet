@@ -6,7 +6,24 @@ import { readFileSync } from 'node:fs';
 import { prefs, savePrefs, withFocus, useViews, useWidth } from '../../app/src/prefs.ts';
 
 const sent: any[] = [];
-(globalThis as any).fetch = async (url: string, init: any) => { sent.push([url, JSON.parse(init.body)]); return { type: 'basic', status: 200, ok: true, json: async () => ({ ...prefs.value, ...JSON.parse(init.body) }) }; };
+let stored = { email: 'o@x', order: 'list', pins: [], views: [{ list: 'hosts', name: 'Mine', view: { view: 'hosts' } }], focus: [], focusPresets: [], widths: {}, rowPins: {} };
+(globalThis as any).fetch = async (url: string, init: any) => {
+  const body = JSON.parse(init.body); if (url.endsWith('_set')) { sent.push([url, body]); stored = { ...stored, ...body }; }
+  await new Promise(r => setTimeout(r, 5)); return { type: 'basic', status: 200, ok: true, json: async () => stored };
+};
+
+test('a save made before the server copy arrives waits for it and keeps the stored lists', async () => {
+  useViews('tasks', []).save({ name: 'Early', view: { view: 'tasks' } });
+  assert.equal(sent.length, 0);
+  await new Promise(r => setTimeout(r, 30));
+  assert.deepEqual(sent[0][1].views.map((v: any) => v.list + ':' + v.name), ['hosts:Mine', 'tasks:Early']);
+});
+
+test('OR-34 focus applies only to lists whose list key carries the project (tasks, results)', () => {
+  prefs.value = { ...prefs.value, focus: ['fleet'] };
+  assert.equal(withFocus({ view: 'conversations' }).project, undefined);
+  prefs.value = { ...prefs.value, focus: [] };
+});
 
 test('OR-34 focus is the project filter of a view that names no project; an explicit project wins', () => {
   prefs.value = { ...prefs.value, focus: ['fleet', '-'] };
@@ -22,13 +39,13 @@ test('OR-33 system presets come first and cannot be overwritten; personal views 
   v.save({ name: 'Running', view: { view: 'tasks' } });
   assert.equal(sent.length, 0);
   v.save({ name: 'Mine', view: { view: 'tasks', state: ['failed'] } });
-  assert.deepEqual(sent[0], ['/api/ops/person_settings_set', { views: [{ list: 'tasks', name: 'Mine', view: { view: 'tasks', state: ['failed'] } }] }]);
-  assert.deepEqual(useViews('tasks', [{ name: 'Running', view: { view: 'tasks' } }]).list.map(x => x.name), ['Running', 'Mine']);
+  assert.deepEqual(sent[0][1].views.at(-1), { list: 'tasks', name: 'Mine', view: { view: 'tasks', state: ['failed'] } });
+  assert.deepEqual(useViews('tasks', [{ name: 'Running', view: { view: 'tasks' } }]).list.map(x => x.name), ['Running', 'Early', 'Mine']);
 });
 
 test('OR-41 a width is sent by key only; 0 resets it', () => {
   sent.length = 0;
-  savePrefs({ widths: { nav: 200 } });
+  savePrefs(() => ({ widths: { nav: 200 } }));
   const [w, set] = useWidth('nav', 240); assert.equal(w, 200);
   set(0); assert.deepEqual(sent.at(-1)[1], { widths: { nav: 0 } }); assert.equal(useWidth('nav', 240)[0], 240);
 });

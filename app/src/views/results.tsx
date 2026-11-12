@@ -23,7 +23,7 @@ export function Results({ id }: { id?: string }) {
   const { view, set, href } = useUrlView('results');
   const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
   const states = (view.state ?? []) as StateOf<'artifact'>[], extra = view.extra ?? {};
-  const filter = { q: view.q, states: states.length ? states : undefined, projectIds: withFocus(view).project?.length ? withFocus(view).project : undefined, taskId: extra.task, executionId: extra.execution,
+  const filter = { q: view.q, states: states.length ? states : undefined, projectIds: withFocus(view).project || undefined, taskId: extra.task, executionId: extra.execution,
     mediaType: extra.media ? MEDIA[extra.media] : undefined, since: extra.since && SINCE[extra.since] ? Date.now() - SINCE[extra.since] : undefined };
   const fkey = JSON.stringify({ ...filter, since: extra.since });
   const [rows, setRows] = useState<Row[] | null>(null), [next, setNext] = useState<number | null>(null), [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);

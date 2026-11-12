@@ -10,21 +10,25 @@ type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
 const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {} };
 export const prefs = signal<Settings>(empty);
 
-// ponytail: last write wins; seq drops a stale get reply or a rollback after a newer change.
-let seq = 0;
-export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { if (seq === n) prefs.value = s; }).catch(() => {}); }
-/** Show the change at once, send it, and roll back if the write fails and nothing newer was sent meanwhile. */
-export function savePrefs(local: Partial<Settings>, patch: Patch = local as Patch) {
-  const prev = prefs.value, n = ++seq;
-  prefs.value = { ...prev, ...local };
-  op('person_settings_set', patch).then(s => { if (seq === n) prefs.value = s; }, () => { if (seq === n) prefs.value = prev; });
+// ponytail: last write wins; seq drops a stale get reply. A failed write re-reads the server copy instead of guessing.
+let seq = 0, loaded = false;
+export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { loaded = true; if (seq === n) prefs.value = s; }).catch(() => {}); }
+/**
+ * Show the change at once and send it. Whole lists (views, pins, focus presets) are built from the server copy, so a change
+ * made before that copy arrived waits for it: an empty local list must never replace the stored one.
+ */
+export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: (s: Settings) => Patch = s => change(s) as Patch) {
+  if (!loaded) { loadPrefs().then(() => { if (loaded) savePrefs(change, patch); }); return; }
+  const n = ++seq, cur = prefs.value;
+  prefs.value = { ...cur, ...change(cur) };
+  op('person_settings_set', patch(cur)).then(s => { if (seq === n) prefs.value = s; }, () => { if (seq === n) loadPrefs(); });
 }
 
 export function usePins(list: string) {
   const ids = prefs.value.rowPins[list] ?? [], set = new Set(ids);
   return { has: (id: string) => set.has(id), toggle: (id: string) => {
-    const n = set.has(id) ? ids.filter(x => x !== id) : [...ids, id];
-    savePrefs({ rowPins: { ...prefs.value.rowPins, [list]: n } }, { rowPins: { [list]: n } });
+    const next = (s: Settings) => { const xs = s.rowPins[list] ?? []; return xs.includes(id) ? xs.filter(x => x !== id) : [...xs, id]; };
+    savePrefs(s => ({ rowPins: { ...s.rowPins, [list]: next(s) } }), s => ({ rowPins: { [list]: next(s) } }));
   } };
 }
 
@@ -32,33 +36,33 @@ export function usePins(list: string) {
 export type SavedView = { name: string; view: View; system?: boolean };
 /** System presets (fixed, from the app) come first, then the person's own views of this list. */
 export function useViews(list: string, system: SavedView[]) {
-  const all = prefs.value.views;
-  const mine: SavedView[] = all.filter(v => v.list === list).map(v => ({ name: v.name, view: v.view as unknown as View }));
-  const keep = (v: SavedView[]) => savePrefs({ views: [...all.filter(x => x.list !== list), ...v.map(x => ({ list, name: x.name, view: x.view as unknown as Record<string, unknown> }))] });
+  const mine: SavedView[] = prefs.value.views.filter(v => v.list === list).map(v => ({ name: v.name, view: v.view as unknown as View }));
+  type Stored = Settings['views'][number];
+  const keep = (edit: (own: Stored[]) => Stored[]) => savePrefs(s => ({ views: [...s.views.filter(x => x.list !== list), ...edit(s.views.filter(x => x.list === list))] }));
   const isSystem = (n: string) => system.some(s => s.name === n);
   return {
     list: [...system.map(s => ({ ...s, system: true })), ...mine.filter(v => !isSystem(v.name))],
-    save: (v: SavedView) => { if (!isSystem(v.name)) keep([...mine.filter(x => x.name !== v.name), v]); },
-    remove: (n: string) => keep(mine.filter(x => x.name !== n)),
+    save: (v: SavedView) => { if (!isSystem(v.name)) keep(own => [...own.filter(x => x.name !== v.name), { list, name: v.name, view: v.view as unknown as Record<string, unknown> }]); },
+    remove: (n: string) => keep(own => own.filter(x => x.name !== n)),
   };
 }
 
 /** The focused projects ('-' is no project); empty: every project. */
-export const setFocus = (projects: string[]) => savePrefs({ focus: projects });
-/** A view with the focus as its project filter when the view names no project itself (lists and feeds app-wide). */
+export const setFocus = (projects: string[]) => savePrefs(() => ({ focus: projects }));
+// Views whose URL codec has a project key, so the focus is part of the list key (store and IndexedDB identity).
+const FOCUSED = ['tasks', 'results'];
+/** A view with the focus as its project filter when the view names no project itself. */
 export function withFocus(v: View): View {
   const f = prefs.value.focus;
-  return v.project?.length || !f.length ? v : { ...v, project: f.map(p => p === '-' ? null : p) };
+  return v.project?.length || !f.length || !FOCUSED.includes(v.view) ? v : { ...v, project: f.map(p => p === '-' ? null : p) };
 }
-export function saveFocusPreset(name: string, projects = prefs.value.focus) {
-  savePrefs({ focusPresets: [...prefs.value.focusPresets.filter(p => p.name !== name), { name, projects }] });
-}
-export const removeFocusPreset = (name: string) => savePrefs({ focusPresets: prefs.value.focusPresets.filter(p => p.name !== name) });
+export const saveFocusPreset = (name: string, projects?: string[]) =>
+  savePrefs(s => ({ focusPresets: [...s.focusPresets.filter(p => p.name !== name), { name, projects: projects ?? s.focus }] }));
+export const removeFocusPreset = (name: string) => savePrefs(s => ({ focusPresets: s.focusPresets.filter(p => p.name !== name) }));
 
 /** A column width in px by key (nav, control); 0 resets to the default. */
 export function useWidth(key: string, fallback: number): [number, (px: number) => void] {
   return [prefs.value.widths[key] || fallback, px => {
-    const w = { ...prefs.value.widths }; if (px) w[key] = Math.round(px); else delete w[key];
-    savePrefs({ widths: w }, { widths: { [key]: Math.round(px) } });
+    savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, () => ({ widths: { [key]: Math.round(px) } }));
   }];
 }
