@@ -15,13 +15,15 @@ export function Keys({ id }: { id?: string }) {
   const now = Date.now();
   if (!data) return <><header class="page-h"><h1>API keys</h1></header><Empty text="Loading…" /></>;
   const run = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then(() => { setError(null); }, e => setError(String(e.message ?? e)));
-  const sel = data.connections.find((c: any) => c.name === id);
+  // The reply omits empty lists (keys, tools, access lists): a connection without keys yet must still render.
+  const conns = data.connections.map((c: any) => ({ ...c, keys: c.keys ?? [], tools: c.tools ?? [], access: { people: [], projects: [], experiments: [], ...c.access } }));
+  const sel = conns.find((c: any) => c.name === id);
   const list = <>
     <header class="page-h"><h1>API keys</h1></header>
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
-        {data.connections.length === 0 && <Empty text="No API keys yet" />}
-        {data.connections.map((c: any) => <div key={c.name} role="row" class={`vl-row static${c.name === id ? ' sel' : ''}`}>
+        {conns.length === 0 && <Empty text="No API keys yet" />}
+        {conns.map((c: any) => <div key={c.name} role="row" class={`vl-row static${c.name === id ? ' sel' : ''}`}>
           <span class="lead"><StateBadge family="intake" state={c.intake} compact /></span>
           <span class="tt"><a class="title row-link" href={`/keys/${c.name}`} onClick={e => { e.preventDefault(); go(`/keys/${c.name}`); }}>{c.name}</a><span class="id">{c.provider}</span><span class="muted">{c.holder}</span></span>
           <span class="r mono" data-tip="Active keys of all keys in use">{c.keys.filter((k: any) => k.state === 'active').length}/{c.keys.filter((k: any) => k.state !== 'retired').length}</span>
