@@ -5,6 +5,7 @@ Description=Fleet self-update timer
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=5min
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target

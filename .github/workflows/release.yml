@@ -146,6 +146,8 @@ jobs:
         with:
           name: release
           path: out/
+          retention-days: 1
+          overwrite: true
           if-no-files-found: error
   selftest-macos:
     needs: [gate, build]

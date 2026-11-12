@@ -9,7 +9,7 @@
 
 ## Overview
 
-Every Fleet host installs a new release by itself. A release workflow, started by a tag `v<version>` on a green `main` commit (target: by every green `main` batch, [delivery pipeline](fleet-delivery-pipeline.md)), publishes one tarball per target on GitHub Releases with checksums signed by the release key and build provenance. On each host a one-shot `fleet-update` command, started every 5 minutes by a systemd timer or a launchd agent, decides whether a newer release should run there, verifies it, installs it into `releases/<version>/`, switches `current`, restarts that host's Fleet services and rolls back by itself when the new version does not come up healthy.
+Every Fleet host installs a new release by itself. A release workflow, started by a tag `v<version>` on a green `main` commit (target: by every green `main` batch, [delivery pipeline](fleet-delivery-pipeline.md)), publishes one tarball per target on GitHub Releases with checksums signed by the release key and build provenance. On each host a one-shot `fleet-update` command, started by a systemd timer or a launchd agent (every minute on PDS18, every 5 minutes on executors), decides whether a newer release should run there, verifies it, installs it into `releases/<version>/`, switches `current`, restarts that host's Fleet services and rolls back by itself when the new version does not come up healthy.
 
 The design copies the CoreQ update model ([coreq.md](https://github.com/taskqorg/coreq/blob/main/coreq.md), sections Release artifacts, Update, Launcher) into Go; Fleet does not link the Rust crate ([stack](fleet-stack.md)). `COREQ-R<n>` names the CoreQ rule a step copies; [deviations](#deviations-from-coreq) are listed. `R2` and `R5` are principles of the [Fleet contract](../../fleet.md#principles).
 
@@ -71,7 +71,7 @@ Target: replaced by a merge that releases by itself ([delivery pipeline](fleet-d
 
 *   **Given**: commit C on `main`; its `ci` run may still be running. Every host has `autoUpdate: "on"`.
 *   **When**: the owner runs `git tag v1.261111.0 C && git push origin v1.261111.0`.
-*   **Then**: the release workflow waits for C's `go`, `app` and `browser` jobs, builds, publishes. Within 5 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
+*   **Then**: the release workflow waits for C's `go`, `app` and `browser` jobs, builds, publishes. Within about 2 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
 
 ### CUJ 2: Bad release on PDS18
 
@@ -131,7 +131,7 @@ Trigger, gate and version are replaced by the [delivery pipeline](fleet-delivery
 *   **Job `migrate-check`** (`needs: build`, `contents: read`): on the runner's PostgreSQL, start the new coordinator (migrates), stop it, start the `previous` release's coordinator on that database and require `/api/health` 200. Skipped when `previous` is empty. This enforces "expand in N, contract in N+1".
 *   **Job `publish`** (`needs: [selftest-macos, migrate-check]`, environment `release`, `contents: write`, `id-token: write`, `attestations: write`): signs `SHA256SUMS` (written by the build) into `SHA256SUMS.sig` with `openssl pkeyutl -sign -rawin` and the secret `FLEET_RELEASE_KEY`, writes `latest.json` `{"version", "files": {"linux-amd64": "<file>", "darwin-arm64": "<file>"}}`; `actions/attest-build-provenance` over both tarballs, its bundle saved as `provenance.sigstore.jsonl`; `gh release create v<ver> --latest` with the six files.
 
-`ci.yml` job `app` packs the same tarballs with the same script (version `0.0.0-<sha>`, unsigned) as the artifact `fleet-release-<sha>`, so pull request trials carry every binary.
+`ci.yml` job `app` packs the same tarballs with the same script (version `0.0.0-<sha>`, unsigned) as the artifact `fleet-release-<sha>` (kept 1 day), so pull request trials carry every binary.
 
 ### 2. Versions in binaries
 
@@ -206,8 +206,8 @@ One run does all three starts (COREQ-R16 counts starts; Fleet has no launcher, s
 
 #### 3.5 Units
 
-*   PDS18: `deploy/infrastructure/fleet-update.service` (root, `Type=oneshot`, `ExecStart=/opt/fleet/update/fleet-update pds18`) and `fleet-update.timer` (`OnBootSec=2min`, `OnUnitActiveSec=5min`).
-*   Linux/WSL executor: `deploy/hosts/linux/fleet-update.service` and `.timer`, user units, same timing, `ExecStart=%h/releases/current/fleet-update executor`.
+*   PDS18: `deploy/infrastructure/fleet-update.service` (root, `Type=oneshot`, `ExecStart=/opt/fleet/update/fleet-update pds18`) and `fleet-update.timer` (`OnBootSec=2min`, `OnUnitActiveSec=1min`, `AccuracySec=1s`).
+*   Linux/WSL executor: `deploy/hosts/linux/fleet-update.service` and `.timer`, user units, `OnUnitActiveSec=5min` (the `fleet-update.path` trigger does the fast pickup), `ExecStart=%h/releases/current/fleet-update executor`.
 *   Mac: `deploy/hosts/macos/fleet-update.plist`, `StartInterval` 300, `RunAtLoad`, log `~/Library/Logs/fleet-update.log`.
 
 ### 4. Coordinator and executor changes

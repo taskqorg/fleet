@@ -129,7 +129,7 @@ Today `migrate-check` proves only "release N's migrations, then release N-1's co
 
 ### 6. Faster pickup on hosts
 
-* **PDS18**: `fleet-update.timer` `OnUnitActiveSec` 1 minute (was 5). The fetch of `latest.json` sends `If-None-Match` with the last ETag, so an unchanged file is a 304 with no body.
+* **PDS18**: `fleet-update.timer` `OnUnitActiveSec` 1 minute (was 5) with `AccuracySec=1s` (systemd's default accuracy of 1 minute let it fire up to 60 s late). The fetch of `latest.json` sends `If-None-Match` with the last ETag, so an unchanged file is a 304 with no body.
 * **Executors**: the poll reply already carries `target` (`go/coordinator/host_poll.go`), and the executor rewrites `update.json` (temp file, then rename) only when a value changes. A new trigger starts `fleet-update executor` when that file changes:
     * Each `fleet-update executor` run writes the trigger for the real data dir (`FLEET_DATA_DIR` or the default) and reloads it only when its content changed (`go/update/trigger.go`); no host edits a path.
     * Linux and WSL: `~/.config/systemd/user/fleet-update.path`, `PathChanged=<data dir>/update/update.json`, `Unit=fleet-update.service`, enabled with `systemctl --user enable --now`.
@@ -236,7 +236,7 @@ One pull request per item, in this order. Items 1 and 2 wait for #191: the rules
     * Check: two merges inside one release run produce one release that contains both.
 3. **Hosts** (`fleet-update` code):
     * `go/update/update.go`: ETag fetch, `checkedWith` check and its needs-you question, dump retention, poll smoke step.
-    * `deploy/infrastructure/fleet-update.timer`: 1 minute.
+    * `deploy/infrastructure/fleet-update.timer`: 1 minute, `AccuracySec=1s`.
     * `go/update/trigger.go`: the `.path` unit and the watch LaunchAgent, written by each executor-mode run.
     * `deploy/README.md` first-install steps: no trigger to copy; `fleet-update` writes it.
     * Check: a release reaches all hosts within 15 minutes; a release whose coordinator refuses the executor poll rolls back on PDS18 and opens the needs-you question.
@@ -257,7 +257,7 @@ A comparison uses the pull request's event base and tested checkout candidate, t
 
 Selection reads the most recent other CI run on the same branch. A failed or unfinished run forces full execution, keeping previously failing checks. A successful push CI for the exact base is always required, even when a previous branch run is green; missing state or an API error also forces full. This uses existing GitHub run records, not a failure ledger. Only successful prior evidence permits the narrow path. Nonempty repository variable `FLEET_TEST_FULL` restores full execution immediately on subsequent candidates, including after a missed failure; clearing it requires resolved protection and exact-candidate evidence.
 
-Plans retain event/base/candidate, selector hash, changed paths, history confidence, proposed and actual families, fallback reasons and full-override state. Existing required go/app/browser names remain. App validates the plan against actual family results: selected families must succeed and omitted families must be skipped. Required go/browser wrappers succeed only after that validation. The verifier rechecks the candidate's actual Git diff, so a corrupted omission manifest fails. Missing/failed evidence blocks publication. Release uses the candidate's own verifier and exact-SHA immutable qualification artifact; it waits for required conclusions rather than diagnostic workflow completion. Main bypass candidates use the same evidence requirements.
+Plans retain event/base/candidate, selector hash, changed paths, history confidence, proposed and actual families, fallback reasons and full-override state. Existing required go/app/browser names remain. App validates the plan against actual family results: selected families must succeed and omitted families must be skipped. Required go/browser wrappers succeed only after that validation. The verifier rechecks the candidate's actual Git diff, so a corrupted omission manifest fails. Missing/failed evidence blocks publication. Release uses the candidate's own verifier and exact-SHA qualification artifact (kept 7 days); it waits for required conclusions rather than diagnostic workflow completion. Main bypass candidates use the same evidence requirements.
 
 The rollout follows shadow execution and independent source review. Further selection changes require inspecting named retained checks and comparing proposed omissions with actual full-run results before widening the qualified boundary. A missing relevant scenario remains a protection gap. Scheduled reports alone enforce no release veto: known material failures use existing release pause and prohibit manual publication until exact-candidate proof or an explicit owner protection decision. Native archive startup, migration compatibility, signing, provenance and rollback remain prepublication requirements. No scheduler, dependency service or general failure ledger is added.
 
