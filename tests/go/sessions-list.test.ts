@@ -46,6 +46,8 @@ test('sessions_list and membership with production-shaped RLS history retain tit
   assert.deepEqual((await op('sessions_list', {filter: {projectId: [null]}}, owner)).sessions.map((s: any) => s.id).sort(), [mine, theirs].sort());
   assert.equal(await raw('sessions_list', {filter: {project: ['hidden-project']}}), 400);
   assert.equal(await raw('task_page', {filter: {archived: true}}), 400);
+  assert.equal(await raw('sessions_list', {filter: {projectId: []}}), 400);
+  assert.equal(await raw('sessions_list', {filter: {state: 'running'}}), 400);
   assert.equal(await raw('session_unarchive', {sessionId: 'list-1599', reason: 'test'}, member), 403);
   assert.equal(await raw('session_unarchive', {sessionId: 'list-1599'}), 400);
   await op('session_unarchive', {sessionId: 'list-1599', reason: 'restore a wrong archive'}, owner);

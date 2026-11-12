@@ -473,10 +473,26 @@ func likePattern(s string) string {
 }
 
 // filterFields: a list filter field the list does not implement is an error, never a silent "all rows".
+// Each known field has one type; a wrong type is a 400 too, so no condition silently drops out.
 func filterFields(f doc, known ...string) error {
-	for k := range f {
+	for k, v := range f {
 		if !slices.Contains(known, k) {
 			return fail(400, "Unknown filter field "+k)
+		}
+		ok := false
+		switch k {
+		case "state":
+			_, ok = v.([]any)
+		case "projectId":
+			l, isList := v.([]any)
+			ok = isList && len(l) > 0
+		case "search":
+			_, ok = v.(string)
+		case "archived":
+			_, ok = v.(bool)
+		}
+		if !ok {
+			return fail(400, "Invalid filter field "+k)
 		}
 	}
 	return nil
@@ -512,10 +528,7 @@ func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
 // projectWhere: the projectId filter (a list; null is work outside projects) as a condition on col.
 func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 	if pv, ok := f["projectId"]; ok {
-		ps, isList := pv.([]any)
-		if !isList {
-			ps = []any{pv}
-		}
+		ps, _ := pv.([]any)
 		ids, o, null := []string{}, []string{}, false
 		for _, x := range ps {
 			switch v := x.(type) {

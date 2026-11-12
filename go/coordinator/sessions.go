@@ -101,7 +101,10 @@ func sessionsPage(q *Request, b doc) (doc, error) {
 		return nil, err
 	}
 	cp := []any{}
-	cc, _ := sessionWhere(f, &cp, false)
+	cc, err := sessionWhere(f, &cp, false)
+	if err != nil {
+		return nil, err
+	}
 	counts := zeroCounts(sessionStates)
 	cr, err := rowsOf(q, sessionBase+" SELECT x.state,count(*) AS n FROM x WHERE "+strings.Join(cc, " AND ")+" GROUP BY 1", cp...)
 	if err != nil {
@@ -261,6 +264,9 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	}
 	s["archivedAt"] = nowMs()
 	if err := put(q, "session", s); err != nil {
+		return nil, err
+	}
+	if err := put(q, "setting-change", doc{"id": newID(), "target": "session:" + sid, "field": "archivedAt", "previous": nil, "value": s["archivedAt"], "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
 		return nil, err
 	}
 	if last == nil {
@@ -507,8 +513,19 @@ func sessionUnarchive(q *Request) (any, error) {
 	if err := put(q, "session", s); err != nil {
 		return nil, err
 	}
+	// A teardown no host has fetched yet would remove the worktree of a live session again.
+	pending, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"})
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range pending {
+		x["status"] = "stopped"
+		if err := put(q, "command", x); err != nil {
+			return nil, err
+		}
+	}
 	if err := put(q, "setting-change", doc{"id": newID(), "target": "session:" + sid, "field": "archivedAt", "previous": at, "value": nil, "reason": reason, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
 		return nil, err
 	}
-	return doc{"sessionId": sid, "archivedAt": nil}, nil
+	return doc{"sessionId": sid, "teardownsWithdrawn": len(pending)}, nil
 }
