@@ -1,6 +1,6 @@
-# Chromium's system packages for cached Playwright browsers. The hosted image already carries most of them: apt runs
-# only when a package Playwright's own install-deps would install (libraries and fonts) is missing, or when its
-# list cannot be read.
+# Chromium's system packages for cached Playwright browsers. The hosted image already carries most of them: apt installs
+# only the packages of Playwright's own install-deps list (libraries and fonts) that are missing; the full install-deps
+# runs when the list cannot be read.
 name: Chromium dependencies
 description: playwright install-deps chromium, skipped when every package is installed
 runs:
@@ -11,4 +11,8 @@ runs:
         pkgs=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/.*--no-install-recommends \([^"]*\).*/\1/p')
         missing=$(for p in $pkgs; do dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null | grep -qx installed || echo "$p"; done)
         if [ -n "$pkgs" ] && [ -z "$missing" ]; then echo "all $(wc -w <<< "$pkgs") Chromium packages installed"
-        else echo "missing: ${missing:-package list unreadable}"; pnpm exec playwright install-deps chromium; fi
+        elif [ -n "$pkgs" ]; then
+          # Only the missing ones (the image lacks fonts-unifont); the apt index refresh only when the image's is stale.
+          echo "missing: $missing"
+          sudo apt-get install -y --no-install-recommends $missing || { sudo apt-get update && sudo apt-get install -y --no-install-recommends $missing; }
+        else pnpm exec playwright install-deps chromium; fi
