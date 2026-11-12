@@ -1,5 +1,6 @@
 # Go from go/go.mod, its toolchain restored from the Actions cache: hosted runners do not ship the pinned version and
-# setup-go would download and extract it in every job. No build cache here; each job keys its own.
+# setup-go would download and extract it in every job. No build cache here; each job keys its own. Assumes go.mod
+# names a full x.y.z version without a toolchain line (setup-go installs under that name); otherwise the cache misses.
 name: Go toolchain
 description: setup-go with a cached toolchain
 runs:
