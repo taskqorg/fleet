@@ -79,6 +79,8 @@ test('G3 a task whose last execution succeeds asks for acceptance (requirement: 
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
     const asked = () => c.sql(`SELECT count(*) FROM question WHERE task_id='${taskId}' AND kind='acceptance' AND state='open'`).trim();
     assert.equal(asked(), '1', 'one acceptance question, also after a repeated receipt');
+    await call('/api/ops/task_request_acceptance', {taskId, text: 'Accept the answer'});
+    assert.equal(asked(), '1', 'an explicit request reuses the open question');
     const t = await call('/api/ops/task_get', {taskId});
     const q = t.questions.find((x: any) => x.kind === 'acceptance');
     await call('/api/ops/questions_answer', {questionId: q.id, answer: 'accepted'});

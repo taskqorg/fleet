@@ -233,7 +233,7 @@ export function ExecTree({ nodes, now, label }: { nodes: TreeNode[]; now: number
 /* ---------- Decision block (§6) ---------- */
 
 type DecisionProps = {
-  question: string; askedBy: string; addressedTo: string; since: number; now: number; waits?: string;
+  question: string; askedBy: string; addressedTo: string; since: number; now: number; waits?: ComponentChildren;
   context?: ComponentChildren; options: { label: string; kbd?: string; primary?: boolean }[];
   answered?: { by: string; answer: string; at: number; delivered: boolean };
   onAnswer?: (answer: string) => void;

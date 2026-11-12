@@ -1,6 +1,7 @@
 // Tasks list and detail (docs/design-system/pages/tasks.md). Server-ordered list with views, state counters, grouping and
 // search (list-view pattern); the detail shows outcome, totals, open decisions and the execution tree.
 import { useState } from 'preact/hooks';
+import { useLocation } from 'wouter-preact';
 import {
   ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, RowCheck, Totals, Icon, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
@@ -100,6 +101,7 @@ const EXEC_STATE: Record<string, StateOf<'execution'>> = { completed: 'succeeded
 const execState = (s: string): StateOf<'execution'> => (EXEC_STATE[s] ?? (['preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'].includes(s) ? s : 'running')) as StateOf<'execution'>;
 
 function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
+  const [, go] = useLocation();
   const { data: t, error, state } = useDoc<any>(`task:${id}`, () => op('task_get', { taskId: id }), c => c.taskId === id || c.id === id);
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -121,10 +123,10 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const wall = t.cost?.wall_ms === null || t.cost?.wall_ms === undefined ? null : Number(t.cost.wall_ms) / 1000;
   const totals = [
     ...(t.progress?.executions ? [{ label: 'Executions', m: { value: t.progress.executions, basis: 'measured' as const }, kind: 'count' as const }] : []),
-    ...(wall !== null ? [{ label: 'Time', m: { value: wall, basis: 'measured' as const }, kind: 'duration' as const }] : []),
+    ...(wall !== null ? [{ label: 'Time', m: { value: wall, basis: 'measured' as const, partial: Number(t.cost.measured_wall) < Number(t.cost.executions_with_totals) ? 'some runs not measured' : undefined }, kind: 'duration' as const }] : []),
     ...(tok !== null ? [{ label: 'Tokens', m: { value: tok, basis: 'measured' as const }, kind: 'count' as const }] : []),
   ];
-  const decided = (t.questions ?? []).filter((q: any) => q.state === 'answered').slice(-3);
+  const decided = (t.questions ?? []).filter((q: any) => q.state === 'answered').sort((a: any, b: any) => (ms(b.answeredAt) ?? 0) - (ms(a.answeredAt) ?? 0)).slice(0, 3);
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
@@ -141,7 +143,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted mono">by {t.createdBy}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} now={now} />}</div>
     {t.expectedOutcome && <OutcomeBlock outcome={t.expectedOutcome} requirements={req} inputs={[]} depends={t.dependencies?.length ? `Depends on ${t.dependencies.map((d: any) => d.id.slice(0, 8)).join(', ')}` : undefined} />}
     {totals.length > 0 && <Totals items={totals} />}
-    {t.latestResult?.id && <p class="state-line"><Icon name="file-text" /><a class="row-link" href={`/results/${t.latestResult.id}`}>{t.latestResult.path ?? 'Result'}</a></p>}
+    {t.latestResult?.id && <p class="state-line"><Icon name="file-text" /><a class="row-link" href={`/results/${encodeURIComponent(t.latestResult.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(t.latestResult.id)}`); }}>{t.latestResult.path ?? 'Result'}</a></p>}
     {decided.map((q: any) => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />
       <span>{q.kind === 'acceptance' ? q.answer : `${q.text}: ${q.answer}`}</span>{q.answeredBy && <span class="muted">by {q.answeredBy}</span>}{ms(q.answeredAt) && <AgeChip t={ms(q.answeredAt)!} now={now} />}</p>)}
     {open.map((q: any) => <DecisionBlock key={q.id} question={q.text} askedBy={q.askedBy ?? q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}

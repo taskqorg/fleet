@@ -70,7 +70,7 @@ try {
   const ov = await page.evaluate(() => {
     const blocks = [...document.querySelectorAll('[data-ui=ops-summary] [data-ui=state-counters]')];
     const shown = document.querySelectorAll('[data-ui=needs-you] [data-ui=decision-block], [data-ui=needs-you] [data-ui=problem-row]').length;
-    return { zero: blocks.some(b => [...b.querySelectorAll('.num')].some(n => n.textContent === '0')), sigma: blocks.every(b => b.firstElementChild?.classList.contains('sigma')),
+    return { zero: blocks.some(b => [...b.querySelectorAll('.counter')].some(n => /: 0$/.test(n.getAttribute('aria-label') ?? ''))), sigma: blocks.length > 0 && blocks.every(b => b.firstElementChild?.classList.contains('sigma')),
       shown, more: [...document.querySelectorAll('[data-ui=needs-you] button')].some(x => /^\+\d+$/.test(x.textContent ?? '')), host0: [...document.querySelectorAll('[data-ui=ops-summary] .kv .num')].some(n => /^≥/.test(n.textContent ?? '')) };
   });
   out.push(`overview counters (OR-29): ${ov.zero ? 'ZERO CHIP SHOWN' : 'no zero chip'}, ${ov.sigma ? 'total first' : 'TOTAL NOT FIRST'}, ${ov.host0 ? 'HOST LOWER BOUND SHOWN' : 'no host lower bound'}`);

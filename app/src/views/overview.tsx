@@ -34,11 +34,12 @@ export function Overview() {
         <NeedsYou>
           {!data.questions.length && !data.problems.length && <Empty text="Nothing is waiting for you." />}
           <Latest items={needsYou(data, now).map(x => x.q ? <DecisionBlock key={x.q.id} question={x.q.text} askedBy={x.q.askedBy ?? x.q.kind} addressedTo="you" since={x.at} now={now}
+            waits={x.q.taskId ? <a class="row-link" href={`/tasks/${encodeURIComponent(x.q.taskId)}`} aria-label="Open task" data-tip="Open task" onClick={ev => { ev.preventDefault(); go(`/tasks/${encodeURIComponent(x.q.taskId)}`); }}><Icon name="external-link" /></a> : undefined}
             options={(Array.isArray(x.q.options) ? x.q.options : x.q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(x.q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
             onAnswer={a => { if (online.value) writeOnce('questions_answer', { questionId: x.q.id, answer: a }, () => {}, { signal: alive }).catch(() => { /* the question stays open in the list */ }); }}
             onSecret={keyConnection(x.q.options) ? v => addRequestedKey(x.q.id, keyConnection(x.q.options)!, v, alive) : undefined} />
             : <ProblemRow key={x.e.id} severity="warning" title={x.e.problem} facts={[x.e.hostId, x.e.harness].filter(Boolean).join(' · ')}
-              actions={x.e.taskId ? [{ label: 'Open task', onClick: () => go(`/tasks/${x.e.taskId}`) }] : []} />)} />
+              actions={x.e.taskId ? [{ label: 'Open task', onClick: () => go(`/tasks/${encodeURIComponent(x.e.taskId)}`) }] : []} />)} />
         </NeedsYou>
         <div class="stack">
           <section class="panel"><header class="panel-h"><h2>Workers per host</h2></header>
