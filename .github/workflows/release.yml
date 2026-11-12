@@ -57,6 +57,13 @@ jobs:
             paths=$(git diff --name-only "$latest^{commit}" "$sha")
             if [ -n "$paths" ] && ! printf '%s\n' "$paths" | grep -Ev '^(app/src/|packages/ui/src/|packages/ui/icons.json$)'; then ui=true; fi
           fi
+          if [ "$ui" = true ]; then
+            for tag in $(git tag -l "ui-${latest#v}-v*"); do
+              if [ "$(git rev-parse "$tag^{commit}")" = "$sha" ]; then
+                echo "already published UI $sha as $tag"; echo release=false >> "$GITHUB_OUTPUT"; exit 0
+              fi
+            done
+          fi
           echo "ui=$ui" >> "$GITHUB_OUTPUT"
           day=$(date -u +%y%m%d)
           m=$(git tag -l "v1.$day.*" "ui-*-v1.$day.*" | sed "s/^.*v1\.$day\.//" | sort -n | tail -1)
@@ -201,9 +208,47 @@ jobs:
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
             echo; kill $pid; wait $pid || true
           done
+  ui-check:
+    needs: [gate, build]
+    if: needs.gate.outputs.ui == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.gate.outputs.version }}
+      PREVIOUS: ${{ needs.gate.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: out
+      - name: Exact UI archive with released backend
+        run: |
+          mkdir -p dist/app "$RUNNER_TEMP/previous"
+          tar -xzf "out/fleet-ui-$VERSION.tgz" -C dist/app
+          gh release download "v$PREVIOUS" -p "fleet-$PREVIOUS-linux-amd64.tgz" -D "$RUNNER_TEMP/previous"
+          tar -xzf "$RUNNER_TEMP/previous/fleet-$PREVIOUS-linux-amd64.tgz" -C "$RUNNER_TEMP/previous"
+          export CI=true FLEET_TRIAL_SERVER="$RUNNER_TEMP/previous/fleet-coordinator" FLEET_APP_DIR="$PWD/dist/app" FLEET_TRIAL_PGDATA="$RUNNER_TEMP/ui-pg"
+          export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH"
+          node tests/ui/filter.check.ts --assert
+          node tests/ui/conversations.check.ts
+          node tests/ui/lab-create.check.ts
   publish:
-    needs: [gate, build, selftest-macos, migrate-check]
-    if: always() && needs.build.result == 'success' && needs.gate.outputs.release == 'true' && (needs.selftest-macos.result == 'success' || (needs.gate.outputs.ui == 'true' && needs.selftest-macos.result == 'skipped')) && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
+    needs: [gate, build, selftest-macos, migrate-check, ui-check]
+    if: always() && needs.build.result == 'success' && (needs.gate.outputs.ui != 'true' || needs.ui-check.result == 'success') && needs.gate.outputs.release == 'true' && (needs.selftest-macos.result == 'success' || (needs.gate.outputs.ui == 'true' && needs.selftest-macos.result == 'skipped')) && (needs.migrate-check.result == 'success' || needs.migrate-check.result == 'skipped')
     runs-on: ubuntu-24.04
     environment: release
     permissions:
