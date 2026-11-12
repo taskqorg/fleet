@@ -9,6 +9,6 @@ runs:
     - shell: bash
       run: |
         pkgs=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/.*--no-install-recommends \([^"]*\).*/\1/p')
-        installed=$(dpkg-query -W -f='${db:Status-Status}\n' $pkgs 2>/dev/null | grep -cx installed || true)
-        if [ -n "$pkgs" ] && [ "$installed" -eq "$(wc -w <<< "$pkgs")" ]; then echo "all $installed Chromium packages installed"
-        else pnpm exec playwright install-deps chromium; fi
+        missing=$(for p in $pkgs; do dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null | grep -qx installed || echo "$p"; done)
+        if [ -n "$pkgs" ] && [ -z "$missing" ]; then echo "all $(wc -w <<< "$pkgs") Chromium packages installed"
+        else echo "missing: ${missing:-package list unreadable}"; pnpm exec playwright install-deps chromium; fi
