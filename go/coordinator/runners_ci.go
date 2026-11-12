@@ -214,8 +214,8 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 	}
 	minutes := map[string]*acc{}
 	count := func(j ciJob) {
-		if j.Status != "in_progress" && j.Status != "completed" || j.Conclusion != nil && *j.Conclusion == "skipped" {
-			return // queued (waiting is not runner time) or skipped (never ran on a runner)
+		if j.Status != "in_progress" && j.Status != "completed" || j.RunnerName == nil || *j.RunnerName == "" {
+			return // queued (waiting is not runner time), or skipped or cancelled before a runner took it: no runner, no minutes
 		}
 		start, _ := time.Parse(time.RFC3339, j.StartedAt)
 		if start.IsZero() || start.Before(now.Truncate(24*time.Hour)) {
