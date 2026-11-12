@@ -172,8 +172,34 @@ test('C4 spool line naming a disabled key disables its row and asks the owner on
   const secret = ok(await op('hosts_register', {id: name('h')})).secret;
   assert.equal((await fetch(BASE + '/api/hosts/poll', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + secret}, body: JSON.stringify({platform: 'linux', capabilities: [], stores: [], problems: []})})).status, 200);
   assert.ok(ok(await op('questions_list', {state: 'open'})).questions.some((x: any) => x.cause === cause), 'key question still open after dispatch');
-  // A disabled key comes back only through the owner.
+  // A disabled key comes back only through the owner; its question then withdraws itself (live stand, 2026-11-12).
   ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'active'}));
+  assert.ok(!ok(await op('questions_list', {state: 'open'})).questions.some((x: any) => x.cause === cause), 'key question withdrawn after re-enable');
+});
+
+test('C4b questions_withdraw: owner only, withdraws open questions with one audit row each and skips the rest (requirement: needs-you shows only what still needs the owner; risk: stale questions bury a needed one)', async () => {
+  const c = name('tavily');
+  ok(await op('connections_create', {name: c, provider: 'tavily'}));
+  ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
+  const k = ok(await op('connections_key_add', {connection: c, value: 'tvly-' + randomUUID()}));
+  const m = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  const day = new Date().toISOString().slice(0, 10), dir = join(GATEWAY_DIR, 'state', 'spool');
+  mkdirSync(dir, {recursive: true});
+  writeFileSync(join(dir, day + '.jsonl'), JSON.stringify({callId: randomUUID(), tokenSha256: sha(m.token), executionId: 'token:x', tool: 'web_search', connection: c, outcome: 'error', errorCode: 'http-401', status: 401, keyFingerprint: k.fingerprint, startedAt: Date.now(), ms: 5, disabled: {key: k.fingerprint, status: 401}}) + '\n', {flag: 'a'});
+  const cause = `key:${k.fingerprint}:disabled`;
+  const qu = await until(async () => ok(await op('questions_list', {state: 'open'})).questions.find((x: any) => x.cause === cause), 'key question');
+  assert.equal((await op('questions_withdraw', {ids: [qu.id], reason: 'stale'}, OUTSIDER)).status, 403);
+  assert.equal((await op('questions_withdraw', {ids: [qu.id], reason: ' '})).status, 400);
+  const missing = randomUUID();
+  const r = ok(await op('questions_withdraw', {ids: [qu.id, missing], reason: 'test: no longer needs the owner'}));
+  assert.deepEqual(r.withdrawn, [qu.id]);
+  assert.deepEqual(r.skipped, [{id: missing, state: 'unknown'}]);
+  assert.deepEqual(ok(await op('questions_withdraw', {ids: [qu.id], reason: 'again'})).skipped, [{id: qu.id, state: 'withdrawn'}]);
+  assert.ok(!ok(await op('questions_list', {state: 'open'})).questions.some((x: any) => x.id === qu.id));
+  const audit = ok(await op('setting_changes', {target: 'question:' + qu.id})).changes;
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].value, 'withdrawn'); assert.equal(audit[0].reason, 'test: no longer needs the owner');
+  ok(await op('connections_key_state', {keyId: k.fingerprint, state: 'retired'}));
 });
 
 test('C7 a finished Meshy job counts its credits once however often it is polled (requirement: docs/designs/fleet-asset-pipelines.md §1, a csgo Meshy charge lands as connection_cost; risk: each poll of one job charged again)', async () => {

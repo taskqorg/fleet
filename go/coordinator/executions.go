@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"fleet/contract"
 
@@ -506,4 +507,107 @@ func init() {
 			return err
 		}), nil
 	})
+}
+
+// lostAfter: an unfinished run whose host lost track of it (observation unconfirmed) or that has not answered its
+// stop is ended after this long without a receipt; no host will finish it and its questions cannot be acted on.
+var lostAfter = envMs("FLEET_LOST_AFTER_MS", int(time.Hour/time.Millisecond))
+
+func init() {
+	gatedObjOp("executions_abandon", false, typedOp(func(q *Request, r *contract.ExecutionsAbandonRequest) (contract.ExecutionsAbandonReply, error) {
+		out := contract.ExecutionsAbandonReply{Abandoned: []string{}, Skipped: []contract.ExecutionSkipped{}}
+		if q.person != nil && !fullAccess(q.person) {
+			return out, fail(403, "Only the owner abandons executions")
+		}
+		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
+			return out, fail(400, "Expected reason")
+		}
+		if len(r.Ids) == 0 || len(r.Ids) > 1000 {
+			return out, fail(400, "Expected 1 to 1000 ids")
+		}
+		for _, id := range r.Ids {
+			if !idOK(id) {
+				return out, fail(400, "Expected execution ids")
+			}
+			state, err := executionAbandon(q, id, r.Reason, actor(q, "operator"))
+			if err != nil {
+				return out, err
+			}
+			if state != "" {
+				out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: id, State: state})
+				continue
+			}
+			out.Abandoned = append(out.Abandoned, id)
+		}
+		publish(q)
+		return out, agentPromote(q)
+	}))
+	onStart(func(ctx context.Context, a *App) {
+		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
+			return runTx(ctx, a, nil, true, "", func(q *Request) error {
+				rs, err := queryRows(q, `SELECT id FROM execution WHERE `+execKinds+` AND state IN ('preparing','running','waiting')
+				AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
+				  WHERE c.kind='command' AND c.data->>'executionId'=execution.id AND c.data->>'kind'='stop' AND c.data->>'status' IN ('pending','unknown'))))
+				AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1)
+				FOR UPDATE OF execution SKIP LOCKED`, lostAfter.Seconds())
+				if err != nil {
+					return err
+				}
+				for _, x := range rs {
+					if _, err := executionAbandon(q, astr(x["id"]), "no host receipt for "+lostAfter.String()+" after the host lost track or the stop went unanswered", "fleet"); err != nil {
+						return err
+					}
+				}
+				if len(rs) == 0 {
+					return nil
+				}
+				publish(q)
+				return agentPromote(q)
+			})
+		})
+	})
+}
+
+// executionAbandon ends an unfinished agent run or host job no host will finish: failed with problem unknown:abandoned
+// (the outcome is unknown), pending commands settled, the parent woken, its open questions withdrawn, one audit row;
+// the caller promotes queued work once after its batch. It returns the state of an
+// execution it leaves alone ("unknown": not an agent run or host job), "" when it ended it.
+func executionAbandon(q *Request, id, reason, by string) (string, error) {
+	row, err := first(q, "SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+" FOR UPDATE", id)
+	if err != nil || row == nil {
+		return "unknown", err
+	}
+	e, err := get(q, id, "execution")
+	if err != nil {
+		return "", err
+	}
+	if terminal(e) {
+		return astr(e["state"]), nil
+	}
+	if err := exec(q, `UPDATE document SET data=data||'{"status":"stopped","stopDetail":"abandoned"}', updated_at=now() WHERE kind='command' AND data->>'executionId'=$1 AND data->>'status' IN ('pending','unknown')`, id); err != nil {
+		return "", err
+	}
+	prev := astr(e["state"])
+	now := nowMs()
+	e["state"], e["stopRequested"], e["stopDetail"], e["error"], e["updatedAt"], e["finishedAt"] = "failed", true, "abandoned", "abandoned: "+reason, now, now
+	if err := put(q, "execution", e); err != nil {
+		return "", err
+	}
+	if err := exec(q, "UPDATE execution SET problem='unknown:abandoned' WHERE id=$1", id); err != nil {
+		return "", err
+	}
+	if err := put(q, "setting-change", doc{"id": newID(), "target": "execution:" + id, "projectId": e["projectId"], "field": "state", "previous": prev, "value": "failed", "reason": reason, "actor": by, "at": now}); err != nil {
+		return "", err
+	}
+	starts, err := all(q, "command", doc{"executionId": id, "kind": "start"})
+	if err != nil {
+		return "", err
+	}
+	if len(starts) > 0 {
+		if err := agentOnReceipt(q, starts[0], e, "failed"); err != nil {
+			return "", err
+		}
+	}
+	// Its open questions have no living asker any more.
+	return "", exec(q, "UPDATE question SET state='withdrawn',cause=NULL WHERE execution_id=$1 AND state='open'", id)
 }

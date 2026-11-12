@@ -182,6 +182,16 @@ func (v *QuestionRow) Validate() error {
 	return nil
 }
 
+type QuestionSkipped struct {
+	Id    string `json:"id"`
+	State string `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionSkipped) Validate() error {
+	return nil
+}
+
 type QuestionsAnswerReply = QuestionRow
 
 type QuestionsAnswerRequest struct {
@@ -242,6 +252,41 @@ type QuestionsRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *QuestionsRequest) Validate() error {
+	return nil
+}
+
+type QuestionsWithdrawReply struct {
+	Skipped   []QuestionSkipped `json:"skipped"`
+	Withdrawn []string          `json:"withdrawn"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionsWithdrawReply) Validate() error {
+	if v.Skipped == nil {
+		return Missing("skipped")
+	}
+	for i := range v.Skipped {
+		if err := Check(&v.Skipped[i], "skipped"); err != nil {
+			return err
+		}
+	}
+	if v.Withdrawn == nil {
+		return Missing("withdrawn")
+	}
+	return nil
+}
+
+// QuestionsWithdrawRequest: Owner or full access: withdraws open questions that no longer need anyone; one setting-change audit row per question.
+type QuestionsWithdrawRequest struct {
+	Ids    []string `json:"ids"`
+	Reason string   `json:"reason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *QuestionsWithdrawRequest) Validate() error {
+	if v.Ids == nil {
+		return Missing("ids")
+	}
 	return nil
 }
 
@@ -658,6 +703,7 @@ func init() {
 		"questions":               {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"questions_answer":        {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},
 		"questions_list":          {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"kind\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"questions_withdraw":      {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: withdraws open questions that no longer need anyone; one setting-change audit row per question.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
 		"task_cancel":             {Read: false, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"taskId\":{\"type\":\"string\"}},\"required\":[\"taskId\"],\"type\":\"object\"}")},
 		"task_create":             {Read: false, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"held: the task waits for task_release (always for an agent).\",\"additionalProperties\":true,\"properties\":{\"completionRequirements\":{},\"dependsOn\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"expectedOutcome\":{\"type\":\"string\"},\"held\":{\"type\":\"boolean\"},\"priority\":{\"type\":\"string\"},\"projectId\":{\"type\":[\"string\",\"null\"]},\"resultDestination\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}")},
 		"task_derived_check":      {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},

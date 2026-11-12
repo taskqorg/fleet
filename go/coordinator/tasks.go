@@ -851,6 +851,47 @@ func init() {
 		rows, err := asT[[]contract.QuestionRow](qs)
 		return contract.QuestionsListReply{Questions: rows}, err
 	}))
+	// questions_withdraw: the owner (or full access) withdraws open questions that no longer need anyone, with one
+	// setting-change audit row each. A cause is let go, so a problem still present is asked again by its source.
+	gatedObjOp("questions_withdraw", false, typedOp(func(q *Request, r *contract.QuestionsWithdrawRequest) (contract.QuestionsWithdrawReply, error) {
+		out := contract.QuestionsWithdrawReply{Withdrawn: []string{}, Skipped: []contract.QuestionSkipped{}}
+		if q.person != nil && !fullAccess(q.person) {
+			return out, fail(403, "Only the owner withdraws questions")
+		}
+		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
+			return out, fail(400, "Expected reason")
+		}
+		if len(r.Ids) == 0 || len(r.Ids) > 1000 {
+			return out, fail(400, "Expected 1 to 1000 ids")
+		}
+		for _, id := range r.Ids {
+			if !idOK(id) {
+				return out, fail(400, "Expected question ids")
+			}
+			row, err := first(q, "SELECT project_id,state::text FROM question WHERE id=$1 FOR UPDATE", id)
+			if err != nil {
+				return out, err
+			}
+			if row == nil || row["state"] != "open" {
+				state := "unknown"
+				if row != nil {
+					state = astr(row["state"])
+				}
+				out.Skipped = append(out.Skipped, contract.QuestionSkipped{Id: id, State: state})
+				continue
+			}
+			w := doc{"reason": r.Reason, "actor": actor(q, "operator"), "at": nowMs()} // as lab_rating_withdraw records it
+			if err := exec(q, "UPDATE question SET state='withdrawn',cause=NULL,data=coalesce(data,'{}'::jsonb)||jsonb_build_object('withdrawal',$2::jsonb) WHERE id=$1", id, jsonBytes(w)); err != nil {
+				return out, err
+			}
+			if err := put(q, "setting-change", doc{"id": newID(), "target": "question:" + id, "projectId": row["project_id"], "field": "state", "previous": "open", "value": "withdrawn", "reason": r.Reason, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+				return out, err
+			}
+			out.Withdrawn = append(out.Withdrawn, id)
+		}
+		publish(q)
+		return out, nil
+	}))
 	gatedObjOp("questions_answer", false, typedOp(func(q *Request, r *contract.QuestionsAnswerRequest) (contract.QuestionRow, error) {
 		var none contract.QuestionRow
 		id, answer := r.QuestionId, r.Answer

@@ -596,6 +596,10 @@ func init() {
 		if err := put(q, "connection-key", k); err != nil {
 			return nil, err
 		}
+		// The key left disabled (enabled again or retired): its refused-key question no longer needs the owner.
+		if err := problemClose(q, "key:"+astr(k["fingerprint"])+":disabled"); err != nil {
+			return nil, err
+		}
 		if to == "retired" {
 			if dir, err := connDir(astr(c["name"])); err == nil {
 				// The value goes only once the retirement committed; connSync removes it if a crash came in between.
@@ -835,15 +839,19 @@ func every(ctx context.Context, name string, d time.Duration, fn func(context.Co
 	}
 	passIntervals.Store(name, d)
 	go func() {
-		t := time.NewTicker(d)
+		// The first run is at most a minute after start: a deploy more often than d restarts the timer, so a pass that
+		// waited a full interval first would never run (absence-pass, 2026-11-12: reconcile and delivery starved by
+		// deploys); the minute lets hosts poll before the rules judge them silent.
+		t := time.NewTimer(min(d, time.Minute))
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				obs.Pass(ctx, name, func(ctx context.Context) (int, error) { return 0, fn(ctx) })
 			}
+			obs.Pass(ctx, name, func(ctx context.Context) (int, error) { return 0, fn(ctx) })
+			t.Reset(d)
 		}
 	}()
 }
