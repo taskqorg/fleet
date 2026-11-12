@@ -74,7 +74,7 @@ try {
   const ctx = await b.newContext({ viewport: { width: 1440, height: 900 } });
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
   const p = await ctx.newPage();
-  const errors: string[] = []; p.on('pageerror', e => errors.push(e.message));
+  const errors: string[] = []; p.on('pageerror', e => errors.push(e.stack || e.message));
   const rtt: number[] = []; const started = new Map<any, number>();
   p.on('request', r => { if (r.url().includes('/api/ops/thread_entries')) started.set(r, performance.now()); });
   p.on('requestfinished', r => { const s = started.get(r); if (s !== undefined) rtt.push(performance.now() - s); });
