@@ -102,11 +102,12 @@ func searchWhere(raw string, p *[]any, text []string, fields map[string]string, 
 }
 
 // Task columns of the search syntax; agent and host are subqueries, so every task query can use them without a join.
+// agent: the harness of the task's latest execution (task_derived.agent is set only while one runs).
 var taskSearchText = []string{"t.title", "t.id", "t.code"}
-var taskSearchFields = map[string]string{"agent": "(SELECT agent FROM task_derived WHERE task_id=t.id)", "host": "(SELECT host FROM task_derived WHERE task_id=t.id)",
+var taskSearchFields = map[string]string{"agent": "(SELECT e.harness FROM execution e WHERE e.task_id=t.id ORDER BY e.seq DESC LIMIT 1)", "host": "(SELECT host FROM task_derived WHERE task_id=t.id)",
 	"project": "t.project_id", "state": stateSQL}
 
-const taskHitCols = "SELECT t.id,t.code,t.title," + stateSQL + " AS state,t.project_id,d.agent,d.host FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"
+const taskHitCols = "SELECT t.id,t.code,t.title," + stateSQL + " AS state,t.project_id,coalesce(d.agent,(SELECT e.harness FROM execution e WHERE e.task_id=t.id ORDER BY e.seq DESC LIMIT 1)) AS agent,d.host FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"
 
 func taskHits(rs []doc) []contract.Found {
 	out := []contract.Found{}
