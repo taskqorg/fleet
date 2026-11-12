@@ -6,6 +6,7 @@ import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 
 const DAY = 864e5;
+const isActive = (r: any) => r.state === 'preparing' || r.state === 'running' || r.state === 'waiting';
 const runsOf = (s: any) => s.runs;
 const KINDS: Record<string, string> = { agent_run: 'Agent runs', child_agent: 'Child agents', host_job: 'Host jobs', tool_run: 'Tool calls' };
 const m = (v: number | null | undefined, basis: Measured['basis'] = 'measured'): Measured => ({ value: v ?? null, basis: v == null ? 'unavailable' : basis });
@@ -49,14 +50,16 @@ export function Runners() {
     {hosts.map(h => {
       const runs = data.runs.filter((r: any) => r.hostId === h);
       if (!runs.length) return null;
-      const live = runs.filter((r: any) => !r.endedAt).length;
+      const live = runs.filter(isActive).length;
       return <section key={hostName(h)} class="panel" aria-label={hostName(h)}>
         <header class="panel-h"><h2>{h ? <a class="row-link" href={`/hosts/${h}`} onClick={e => { e.preventDefault(); go(`/hosts/${h}`); }}>{h}</a> : hostName(h)}</h2>
           {live > 0 && <span class="hc" data-tip="Running"><Icon name="activity" label="Running" /><Num m={m(live)} kind="count" /></span>}<span class="grow" /><span class="muted">24h</span></header>
         <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,14rem) auto' }}>
           {runs.map((r: any) => {
             const href = open(r), start = r.startedAt ?? r.endedAt ?? now, cost = costOf(r.cost), title = r.taskTitle ?? KINDS[r.kind] ?? r.kind;
-            const secs = r.wallMs != null ? r.wallMs / 1000 : ((r.endedAt ?? now) - start) / 1000;
+            // A finished run with no recorded end (a gateway call) ends at start plus its wall time, else at its start.
+            const active = isActive(r), end = active ? null : r.endedAt ?? start + (r.wallMs ?? 0);
+            const secs = r.wallMs != null ? r.wallMs / 1000 : r.endedAt != null ? (r.endedAt - start) / 1000 : null;
             return <div key={r.id} role="row" class="vl-row static">
               <span class="lead"><StateBadge family="execution" state={r.state} compact /></span>
               <span class="tt">{href ? <a class="title row-link" href={href} onClick={e => { e.preventDefault(); go(href); }}>{title}</a> : <span class="title">{title}</span>}
@@ -67,8 +70,8 @@ export function Runners() {
                 {r.cpuMs != null && <span class="hc" data-tip="CPU"><Icon name="gauge" label="CPU" /><Num m={m(r.cpuMs / 1000)} kind="duration" /></span>}
                 {r.peakMemoryBytes != null && <span class="hc" data-tip="Peak memory"><Num m={m(r.peakMemoryBytes)} kind="bytes" /></span>}
                 {cost?.value != null && <span class="hc"><Num m={cost} kind="money" /></span>}</span>
-              <TimeStrip from={from} to={now} start={start} end={r.endedAt} now={now} state={r.state} label={`${r.state}, started ${new Date(start).toISOString()}`} />
-              <span data-tip={r.endedAt ? 'Duration' : 'Running for'}>{r.endedAt ? <Num m={m(secs)} kind="duration" /> : <AgeChip t={start} now={now} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}</span>
+              <TimeStrip from={from} to={now} start={start} end={end} now={now} state={r.state} label={`${r.state}, started ${new Date(start).toISOString()}`} />
+              <span data-tip={active ? 'Running for' : 'Duration'}>{!active ? <Num m={m(secs)} kind="duration" /> : <AgeChip t={start} now={now} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}</span>
             </div>;
           })}
         </div>
