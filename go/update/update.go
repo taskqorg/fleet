@@ -88,6 +88,7 @@ type part struct {
 	name, root, stage string
 	bins              []string
 	dump              bool
+	uiBackend         string // nonempty selects the independently signed UI archive
 	restart           func() error
 	health            func(ver string) probe
 	st                *State
@@ -179,13 +180,28 @@ func (r refusal) Error() string { return string(r) }
 
 // fetch downloads, verifies and selftests release ver into <stage>/<ver>.tmp and returns that directory.
 func (u *updater) fetch(p *part, ver string) (string, error) {
-	dir := filepath.Join(p.stage, ver+".tmp")
+	stageName := ver + ".tmp"
+	if p.uiBackend != "" {
+		stageName = "ui-" + stageName
+	}
+	dir := filepath.Join(p.stage, stageName)
 	if releaseVersion(dir) == ver && p.stage != p.root {
+		if p.uiBackend != "" {
+			if err := validateUI(dir, ver, p.uiBackend); err != nil {
+				return "", err
+			}
+		}
 		return dir, nil // staged and verified earlier in this run (PDS18 coordinator side)
 	}
 	os.RemoveAll(dir)
 	file := "fleet-" + ver + "-" + u.target + ".tgz"
+	if p.uiBackend != "" {
+		file = "fleet-ui-" + ver + ".tgz"
+	}
 	at := u.base + "/download/v" + ver + "/"
+	if p.uiBackend != "" {
+		at = u.base + "/download/ui-" + p.uiBackend + "-v" + ver + "/"
+	}
 	sums, err := u.get(at + "SHA256SUMS")
 	if err != nil {
 		return "", err
@@ -225,6 +241,11 @@ func (u *updater) fetch(p *part, ver string) (string, error) {
 	}
 	if v := releaseVersion(dir); v != ver {
 		return "", fmt.Errorf("%w: release.json version %q", refusal("checksum"), v)
+	}
+	if p.uiBackend != "" {
+		if err := validateUI(dir, ver, p.uiBackend); err != nil {
+			return "", err
+		}
 	}
 	for _, b := range p.bins {
 		if out, err := exec.Command(filepath.Join(dir, b), "selftest").CombinedOutput(); err != nil {
@@ -354,6 +375,20 @@ func (u *updater) install(p *part, ver, staged string) error {
 		return p.r.Chmod(path, info.Mode().Perm()&^0o222)
 	}); err != nil {
 		return err
+	}
+	if p.uiBackend != "" {
+		if err := fs.WalkDir(p.r.FS(), tmp, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			mode := os.FileMode(0444)
+			if d.IsDir() {
+				mode = 0755
+			}
+			return p.r.Chmod(path, mode)
+		}); err != nil {
+			return err
+		}
 	}
 	p.r.RemoveAll(ver)
 	if err := p.r.Rename(tmp, ver); err != nil {
