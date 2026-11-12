@@ -142,14 +142,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [vet, unit, mcp, outside-0, outside-1, outside-2, outside-3]
+        # ClickHouse only where a test talks to it: go/obs unit tests and tests/go/telemetry.test.ts (some outside shard).
+        include:
+          - {part: vet, clickhouse: false}
+          - {part: unit, clickhouse: true}
+          - {part: mcp, clickhouse: false}
+          - {part: outside-0, clickhouse: true}
+          - {part: outside-1, clickhouse: true}
+          - {part: outside-2, clickhouse: true}
+          - {part: outside-3, clickhouse: true}
     env:
       GOFLAGS: -mod=readonly
+      # Matrix entries outside-0..3 are the shards; run.sh fails on an index outside the total or an empty shard.
+      OUTSIDE_SHARDS: 4
       # The span store for go/obs and tests/go/telemetry.test.ts live tests (docs/designs/fleet-telemetry.md); same LTS as deploy/infrastructure/fleet-clickhouse.container.
       FLEET_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
     services:
       clickhouse:
-        image: clickhouse/clickhouse-server:26.8
+        # An empty image skips the service.
+        image: ${{ matrix.clickhouse && 'clickhouse/clickhouse-server:26.8' || '' }}
         env:
           CLICKHOUSE_DB: fleet
           CLICKHOUSE_USER: t
@@ -166,17 +177,15 @@ jobs:
         with:
           go-version-file: go/go.mod
           cache: false
-      # One build cache per part (unit: -race tests and vet; mcp: the executor; outside: the -race coordinator), saved on
-      # every run and restored from the newest same-part entry, so -race artifacts are reused instead of rebuilt.
+      # One build cache per part (vet, -race unit tests, the executor, each -race coordinator shard): a new entry when
+      # Go sources change, restored from the newest same-part entry otherwise, so -race artifacts are reused, not rebuilt.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: go-${{ startsWith(matrix.part, 'outside-') && 'outside' || matrix.part }}-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            go-${{ startsWith(matrix.part, 'outside-') && 'outside' || matrix.part }}-${{ hashFiles('go/go.sum') }}-
-            go-${{ startsWith(matrix.part, 'outside-') && 'outside' || matrix.part }}-
+          key: go-${{ matrix.part }}-${{ hashFiles('go/**') }}
+          restore-keys: go-${{ matrix.part }}-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -199,7 +208,7 @@ jobs:
         run: |
           cd go && CGO_ENABLED=1 go build -race -o bin/fleet-coordinator ./coordinator && cd ..
           go version -m go/bin/fleet-coordinator | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
-          PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh "${PART#outside-}" 4
+          PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh "${PART#outside-}" "$OUTSIDE_SHARDS"
         env:
           PART: ${{ matrix.part }}
   # App and release: contract lint, test-rule report, typecheck and bundle, UI unit tests, then the release tarballs of
