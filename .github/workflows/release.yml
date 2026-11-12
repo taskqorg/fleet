@@ -182,7 +182,7 @@ jobs:
           # An asset GitHub reports no digest for is fetched every run, unchecked, as before the cache.
           # One extra level: a coordinator's repoRoot() probes two directories above its binary for config/, never $HOME.
           cache=${HOME:?}/fleet-releases/v; mkdir -p "$cache"
-          for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) rm -rf "$d/var";; *) rm -rf "$d";; esac; done
+          for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) rm -rf "${d:?}/var";; *) rm -rf "$d";; esac; done
           members="./fleet-coordinator ./config ./release.json"
           for v in $RECENT; do
             file=fleet-$v-linux-amd64.tgz
