@@ -12,9 +12,9 @@ let stored = { email: 'o@x', order: 'list', pins: [], views: [{ list: 'hosts', n
   await new Promise(r => setTimeout(r, 5)); return { type: 'basic', status: 200, ok: true, json: async () => stored };
 };
 
-test('a save made before the server copy arrives waits for it and keeps the stored lists', async () => {
+test('a save builds whole lists from a fresh server copy, so views stored elsewhere (an agent, another device) survive', async () => {
   useViews('tasks', []).save({ name: 'Early', view: { view: 'tasks' } });
-  assert.equal(sent.length, 0);
+  assert.deepEqual(prefs.value.views.map(v => v.name), ['Early']); // shown at once
   await new Promise(r => setTimeout(r, 30));
   assert.deepEqual(sent[0][1].views.map((v: any) => v.list + ':' + v.name), ['hosts:Mine', 'tasks:Early']);
 });
@@ -33,21 +33,25 @@ test('OR-34 focus is the project filter of a view that names no project; an expl
   assert.equal(withFocus({ view: 'tasks' }).project, undefined);
 });
 
-test('OR-33 system presets come first and cannot be overwritten; personal views are written to the server', () => {
+test('OR-33 system presets come first and cannot be overwritten; personal views are written to the server', async () => {
   sent.length = 0;
   const v = useViews('tasks', [{ name: 'Running', view: { view: 'tasks', state: ['queued'] } }]);
   v.save({ name: 'Running', view: { view: 'tasks' } });
   assert.equal(sent.length, 0);
   v.save({ name: 'Mine', view: { view: 'tasks', state: ['failed'] } });
+  await new Promise(r => setTimeout(r, 30));
   assert.deepEqual(sent[0][1].views.at(-1), { list: 'tasks', name: 'Mine', view: { view: 'tasks', state: ['failed'] } });
   assert.deepEqual(useViews('tasks', [{ name: 'Running', view: { view: 'tasks' } }]).list.map(x => x.name), ['Running', 'Early', 'Mine']);
 });
 
-test('OR-41 a width is sent by key only; 0 resets it', () => {
+test('OR-41 a width is sent by key only; 0 resets it', async () => {
   sent.length = 0;
   savePrefs(() => ({ widths: { nav: 200 } }));
   const [w, set] = useWidth('nav', 240); assert.equal(w, 200);
-  set(0); assert.deepEqual(sent.at(-1)[1], { widths: { nav: 0 } }); assert.equal(useWidth('nav', 240)[0], 240);
+  await new Promise(r => setTimeout(r, 30));
+  set(0); assert.equal(useWidth('nav', 240)[0], 240);
+  await new Promise(r => setTimeout(r, 30));
+  assert.deepEqual(sent.at(-1)[1], { widths: { nav: 0 } });
 });
 
 test('OR-33 OR-34 OR-41 preferences never use browser storage', () => {

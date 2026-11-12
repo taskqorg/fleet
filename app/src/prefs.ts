@@ -3,6 +3,7 @@
 // presets, column widths. Agents read and write the same fields through the same operations.
 import { signal } from '@preact/signals';
 import { op, type Ops } from './api.ts';
+import { onClear } from './offline.ts';
 import type { View } from '../../packages/view-url/view-url.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
@@ -10,18 +11,20 @@ type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
 const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {} };
 export const prefs = signal<Settings>(empty);
 
-// ponytail: last write wins; seq drops a stale get reply. A failed write re-reads the server copy instead of guessing.
-let seq = 0, loaded = false;
-export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { loaded = true; if (seq === n) prefs.value = s; }).catch(() => {}); }
-/**
- * Show the change at once and send it. Whole lists (views, pins, focus presets) are built from the server copy, so a change
- * made before that copy arrived waits for it: an empty local list must never replace the stored one.
- */
+// A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
+onClear.add(() => { seq++; prefs.value = empty; });
+
+// ponytail: last write wins; seq drops a stale reply. A save re-reads the server copy first and builds whole lists (views,
+// pins, focus presets) from it, so changes made meanwhile by an agent or another device survive; the gap between that read
+// and the write is one round trip. A failed save shows the server copy again (or the state before it, when unreachable).
+let seq = 0;
+export function loadPrefs() { const n = seq; return op('person_settings_get', {}).then(s => { if (seq === n) prefs.value = s; }).catch(() => {}); }
+/** Show the change at once, then send it built from a fresh server copy. */
 export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: (s: Settings) => Patch = s => change(s) as Patch) {
-  if (!loaded) { loadPrefs().then(() => { if (loaded) savePrefs(change, patch); }); return; }
-  const n = ++seq, cur = prefs.value;
-  prefs.value = { ...cur, ...change(cur) };
-  op('person_settings_set', patch(cur)).then(s => { if (seq === n) prefs.value = s; }, () => { if (seq === n) loadPrefs(); });
+  const n = ++seq, before = prefs.value;
+  prefs.value = { ...before, ...change(before) };
+  op('person_settings_get', {}).then(fresh => op('person_settings_set', patch(fresh)))
+    .then(s => { if (seq === n) prefs.value = s; }, () => { if (seq === n) { prefs.value = before; loadPrefs(); } });
 }
 
 export function usePins(list: string) {

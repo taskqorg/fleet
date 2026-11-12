@@ -13,7 +13,7 @@ import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { listKey, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
-import { usePins, useViews, withFocus, setFocus, prefs } from '../prefs.ts';
+import { usePins, useViews, withFocus } from '../prefs.ts';
 
 const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
@@ -49,7 +49,7 @@ export function Tasks({ id }: { id?: string }) {
   }
   const shown = states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
   const now = Date.now();
-  const filtered = !!(states.length || view.q || withFocus(view).project?.length);
+  const filtered = !!(states.length || view.q || view.project?.length), focused = !view.project?.length && !!withFocus(view).project?.length;
   const presetKey = (v: View) => listKey({ ...v, view: 'tasks' });
   const activePreset = views.list.find(v => presetKey(v.view) === listKey(view))?.name ?? null;
   const listPane = <>
@@ -69,7 +69,7 @@ export function Tasks({ id }: { id?: string }) {
         </>} />}>
         {list.error && !rows.length ? <ErrorBanner text={`Tasks did not load: ${list.error}`} onRetry={list.reload} />
           : list.shownKey === null ? <Skeleton rows={8} />
-          : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); if (prefs.value.focus.length) setFocus([]); }} /> : undefined} />)
+          : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : undefined} />)
           : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.t.id} rowHeight={ROW} follow="top" label="Tasks" onEnd={list.more}
             columns="1.25rem minmax(0,1fr) 2.75rem 1.75rem 1.25rem" rowClass={i => i.kind === 'group' ? 'grp' : i.t.id === id ? 'sel' : ''}
             render={i => i.kind === 'group'

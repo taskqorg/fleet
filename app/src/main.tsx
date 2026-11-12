@@ -45,17 +45,17 @@ function App() {
   const [update, setUpdate] = useState(false);
   const current = loc.split('/')[1] || 'overview';
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
-  useEffect(() => { loadPrefs(); }, []);
+  useEffect(() => { loadPrefs(); }, []); // and again on window focus (below): agents and other devices change them too
   const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }));
   useEffect(() => {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
     const me = () => op('me', {}).then(m => checkGrants(m.grantsVersion ?? '')) // no person: '' still clears another person's data.catch(() => {});
-    me(); addEventListener('focus', me);
+    me(); addEventListener('focus', me); addEventListener('focus', loadPrefs);
     // The feed starts at the server head: every mounted list loads a fresh page (restored rows only fill the first frame),
     // and lists shown from storage or after a failed load reload when the feed comes back (store.ts).
     startStore(); startFeed(null);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
-    return () => removeEventListener('focus', me);
+    return () => { removeEventListener('focus', me); removeEventListener('focus', loadPrefs); };
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
   return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins}>

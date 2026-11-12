@@ -54,7 +54,9 @@ func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 	if d != nil {
 		// ponytail: the document holds the settings fields as written; a JSON round trip reads them back typed.
 		raw, _ := json.Marshal(d)
-		_ = json.Unmarshal(raw, &ps)
+		if err := json.Unmarshal(raw, &ps); err != nil { // a partly read document would be written back without its fields
+			return ps, err
+		}
 		ps.Email = email
 		if !slices.Contains(contract.DispatchOrderValues, ps.Order) {
 			ps.Order = contract.DispatchOrderList
