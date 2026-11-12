@@ -71,6 +71,9 @@ test('S2b questions_withdraw, executions_abandon and executions_dismiss: owner o
   const {commands} = ok(await h('/api/hosts/poll', poll));
   const command = commands.find((c: any) => c.executionId === s.executionId && c.kind === 'start');
   assert.ok(command, 'the host claims the member run');
+  // Taken work: the run takes the owner's subscription, so dispatch makes the owner its director (takenFrom: the member).
+  const taken = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
+  assert.deepEqual([taken.directedBy, taken.takenFrom], [OWNER, MEMBER]);
   const calls: [string, object][] = [
     ['questions_withdraw', {ids: [randomUUID()], reason: 'x'}],
     ['executions_abandon', {ids: [s.executionId], reason: 'x'}],
@@ -78,7 +81,8 @@ test('S2b questions_withdraw, executions_abandon and executions_dismiss: owner o
   for (const [name, args] of calls) {
     for (const who of [MEMBER, OUTSIDER]) assert.equal((await op(name, args, who)).status, 403, `${name} as ${who}`);
     const agent = await h('/api/hosts/agent-tools', {executionId: s.executionId, commandId: command.id, request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name, arguments: args}}});
-    assert.ok(agent.status === 403 || agent.body?.result?.isError === true || agent.body?.error, `${name} as the member's agent: ${JSON.stringify(agent.body)}`);
+    assert.equal(agent.status, 403, `${name} as the member's agent: ${JSON.stringify(agent.body)}`);
+    assert.match(agent.body.message, /Only the owner/);
   }
   const e = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
   assert.notEqual(e.state, 'failed', 'the run was not abandoned');
