@@ -717,6 +717,46 @@ const providersJSON = `
     "inputSchema": {"type": "object", "required": ["owner", "repo", "run_id"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "run_id": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "run_id": "^[0-9]+$"}
    },
+   "pulls_closed_page": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page={page}",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Closed pull requests, most recently updated first, one page of 100.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "page"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "page": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "page": "^[0-9]{1,3}$"}
+   },
+   "releases_page": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/releases?per_page=100&page={page}",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Releases, newest first, one page of 100.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "page"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "page": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "page": "^[0-9]{1,3}$"}
+   },
+   "workflow_runs_day": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/actions/workflows/{workflow}/runs?event={event}&created={date}&per_page=100&page={page}",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Runs of one workflow for one event created on one day (YYYY-MM-DD), one page of 100.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "workflow", "event", "date", "page"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "workflow": {"type": "string"}, "event": {"type": "string"}, "date": {"type": "string"}, "page": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "workflow": "^[A-Za-z0-9_.-]+$", "event": "^[a-z_]+$", "date": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "page": "^[0-9]{1,3}$"}
+   },
+   "workflow_runs_sha": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/actions/workflows/{workflow}/runs?head_sha={sha}&event={event}&per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "Runs of one workflow for one event on one head commit.",
+    "inputSchema": {"type": "object", "required": ["owner", "repo", "workflow", "event", "sha"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}, "workflow": {"type": "string"}, "event": {"type": "string"}, "sha": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$", "workflow": "^[A-Za-z0-9_.-]+$", "event": "^[a-z_]+$", "sha": "^[0-9a-f]{40}$"}
+   },
    "org_runners": {
     "method": "GET",
     "path": "/orgs/{owner}/actions/runners?per_page=100",

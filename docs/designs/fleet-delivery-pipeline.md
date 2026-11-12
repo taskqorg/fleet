@@ -290,3 +290,23 @@ Qualification distinguishes the one-time native bootstrap, subsequent UI archive
 ## UI landing observations
 
 The landing watcher recognizes native and backend-scoped UI tags ordered by their trailing numeric release version. Native releases retain hosts_list uptake and `on hosts <tag>`. UI releases require exact deployed kind/version/backendVersion/source commit plus healthy exact backend, then report `on site <UI tag>`; native host versions do not advance. Missing or mismatched metadata remains waiting, never success.
+
+## Delivery health
+
+Delivery is measured, compared with a baseline, and a worsening reaches the orchestrator without anyone looking (`go/coordinator/delivery_history.go`).
+
+**What is measured.** The coordinator reads the fleet repository through the `github` connection every 10 minutes; its first pass backfills from the repository start (2026-11-08). It keeps one record per merged pull request, per release and per merge-queue run of the `ci` workflow:
+
+| Record | Fields |
+|---|---|
+| Pull request | opened, PR CI done (first green `pull_request` run on the merged head), enqueued (first merge-queue run), queue CI done (green run on the merge commit), merged, release published (first `v*` release whose target is merged no earlier), installed per host and on the PDS18 coordinator, UI on site; queue runs, removals (failed runs) and flakes (removals the pull request landed after without a new commit) |
+| Merge-queue run | wall time, each job's duration, runner wait (created to started) and runner (GitHub-hosted or the PDS18 runner) |
+| Release | published, target commit, installed per host, UI on site |
+
+Stage durations are `pr_ci` (opened to PR CI done), `enqueue`, `queue`, `merge`, `release`, `install` (to the PDS18 coordinator), `ui`, `lead` (opened to merged) and `total` (opened to installed). GitHub keeps no install record, so host installs and the UI on site are recorded from the first pass on (`installsFrom`).
+
+**Baseline.** P50 and P90 (nearest rank) per stage, per merge-queue run and per job over the last 7 days, and per UTC day for the trend. A named snapshot stores the rolling baseline under a name (the first: `2026-11-13 after delivery speed-up`) so a later window can be compared with it.
+
+**Check.** After each new release and at least daily, the last 24 hours are compared with the baseline: the 7 days before them, or the snapshot named in the settings. A stage or job whose P50 or P90 exceeds the baseline by the ratio (default 1.5) and by at least the minimum difference (default 1 minute), with at least 5 values in both windows, opens one needs-you question `problem:delivery:<key>:<metric>`. The question names the numbers, the first pull request over the threshold, the one merged before it, the compare link and the run. It withdraws itself after two clean checks, like every rule cause (`problemsSync`).
+
+**Who acts.** The question goes to the owner's needs-you list, where the orchestrator picks it up: it reads `delivery_history` for the range, finds the change that made the stage slower, and dispatches the fix or names the cause and dismisses. Agents use the MCP tools `delivery_history`, `delivery_baseline` (rolling, snapshots, trend, settings), `delivery_regressions` (the last check; `check: true` runs one) and `delivery_baseline_set` (snapshot, remove, settings; owner or full access). People see the trend on the Delivery screen.

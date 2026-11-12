@@ -1,7 +1,9 @@
 // Delivery (docs/design-system/pages/delivery.md): pull requests of every connected project by delivery stage, from
 // open to installed on hosts. One card per stage in pipeline order: the count now, the oldest age (red past the stage's
 // limit), the count over the last 24 hours, and the pull requests in it. Data: delivery_status (cached GitHub reads and
-// recorded counts in the coordinator). The project focus (OR-34) filters items and samples by project.
+// recorded counts in the coordinator). The project focus (OR-34) filters items and samples by project. The trend panel:
+// P50/P90 per stage per day against the rolling 7-day baseline, and the open regressions (delivery_baseline,
+// delivery_regressions; docs/designs/fleet-delivery-pipeline.md, Delivery health).
 import { AreaChart, type ChartSeries, AgeChip, Empty, ErrorBanner, Icon, Num, StatStrip, type IconName, type Tone } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
@@ -20,6 +22,57 @@ const STAGES: { id: string; label: string; icon: IconName; alert?: number }[] = 
   { id: 'merged', label: 'Merged 24h', icon: 'check-check' },
 ];
 const SHOWN = 6;
+const DAY = 864e5;
+// Trend stages (DeliveryPr durations), in pipeline order.
+const TREND: { key: string; label: string; icon: IconName }[] = [
+  { key: 'pr_ci', label: 'PR CI', icon: 'circle-dashed' }, { key: 'queue', label: 'Queue', icon: 'git-merge' },
+  { key: 'release', label: 'Release', icon: 'rotate-cw' }, { key: 'install', label: 'Install', icon: 'download' },
+  { key: 'lead', label: 'Lead', icon: 'git-pull-request' },
+];
+const sec = (ms: number) => ({ value: Math.round(ms / 1000), basis: 'measured' as const });
+
+// Trend: one card per stage, P90 and P50 per day as areas over the rolling baseline's P50 (striped); the numbers of the
+// last day with values and the baseline stay in the head (OR-19). Regressions of the last check list above the cards.
+function Trend({ now }: { now: number }) {
+  const { data, error } = useDoc<any>('delivery-trend', () => Promise.all([op('delivery_baseline', { days: 14 }), op('delivery_regressions', {})]).then(([b, r]) => ({ b, r })), () => false, 300000);
+  const head = <header class="panel-h"><h2><Icon name="activity" /> Trend, 14 days</h2><span class="grow" />
+    {data?.r?.checkedAt && <AgeChip t={Date.parse(data.r.checkedAt)} now={now} alertAfter={26 * 3600} alertLabel="regression check is stale" />}</header>;
+  if (!data) return <section class="panel delivery-trend" aria-label="Delivery trend">{head}{error ? <ErrorBanner text={`Trend did not load: ${error}`} /> : <Empty text="Loading…" />}</section>;
+  const days: any[] = data.b.trend;
+  const from = days.length ? Date.parse(days[0].day + 'T00:00:00Z') : now - 14 * DAY;
+  const base = new Map<string, any>(data.b.rolling.stats.map((s: any) => [s.key, s]));
+  const regs: any[] = data.r.regressions;
+  const label = (k: string) => TREND.find(t => t.key === k)?.label ?? k;
+  return <section class="panel delivery-trend" aria-label="Delivery trend">
+    {head}
+    {regs.length === 0 ? <p class="muted">No regression against the baseline.</p> : <ul class="kv">
+      {regs.map(r => <li key={r.key + r.metric} class="t-danger">
+        <Icon name="triangle-alert" label="regression" />
+        <span class="grow">{label(r.key)} {r.metric.toUpperCase()} <Num m={sec(r.currentMs)} kind="duration" />, baseline <Num m={sec(r.baselineMs)} kind="duration" /></span>
+        {r.firstPr && <a class="id" href={`https://github.com/taskqorg/fleet/pull/${r.firstPr}`} target="_blank" rel="noopener">#{r.firstPr}</a>}
+        {r.compareUrl && <a href={r.compareUrl} target="_blank" rel="noopener" data-tip="Changes since the last pull request under the threshold"><Icon name="git-merge" label="compare" /></a>}
+      </li>)}
+    </ul>}
+    <div class="limit-cards">
+      {TREND.map(t => {
+        const pts = (q: 'p50Ms' | 'p90Ms') => { const xs = days.map(d => ({ at: Date.parse(d.day + 'T00:00:00Z'), v: (d.stats.find((s: any) => s.key === t.key)?.[q] ?? 0) / 6e4 })); return xs.length ? [...xs, { at: now, v: xs[xs.length - 1].v }] : xs; };
+        const b = base.get(t.key);
+        const last = [...days].reverse().map(d => d.stats.find((s: any) => s.key === t.key)).find(Boolean);
+        const p50 = pts('p50Ms'), p90 = pts('p90Ms');
+        const bl = b ? [{ at: from, v: b.p50Ms / 6e4 }, { at: now, v: b.p50Ms / 6e4 }] : [];
+        const slow = regs.some(r => r.key === t.key);
+        return <article key={t.key} class="panel limit-card" aria-label={t.label}>
+          <header class="panel-h"><h2><Icon name={t.icon} /> {t.label}</h2><span class="grow" />
+            {last && <span class={slow ? 't-danger' : undefined} data-tip="P50 and P90, the last day with values">P50 <Num m={sec(last.p50Ms)} kind="duration" /> P90 <Num m={sec(last.p90Ms)} kind="duration" /></span>}
+            {b && <span class="muted" data-tip="Rolling 7-day baseline P50">base <Num m={sec(b.p50Ms)} kind="duration" /></span>}</header>
+          <AreaChart label={`${t.label} per day in minutes`} from={from} to={now} now={now} value={v => `${Math.round(v)}m`}
+            max={Math.max(1, ...p90.map(p => p.v), ...bl.map(p => p.v))}
+            series={[{ label: 'P90', points: p90, tone: 'd2', step: true }, { label: 'P50', points: p50, tone: 'd1', step: true }, { label: 'baseline P50', points: bl, tone: 'd4', pattern: true, projected: true }]} />
+        </article>;
+      })}
+    </div>
+  </section>;
+}
 // The stacked chart's layers, bottom up in pipeline order: PR stages in the two greys, the merge queue in amber, the
 // release tail in green; the queue's and the tail's second stage striped (tokens.md: four data hues, never new ones).
 const LAYERS: Record<string, Pick<ChartSeries, 'tone' | 'pattern'>> = {
@@ -66,6 +119,7 @@ export function Delivery() {
         max={Math.max(1, ...at.map((_, j) => used.filter(s => LAYERS[s.id]).reduce((n, s) => n + lines[s.id][j].v, 0)))}
         series={used.filter(s => LAYERS[s.id]).map(s => ({ label: s.label, points: lines[s.id], step: true, ...LAYERS[s.id] }))} />
     </section>
+    <Trend now={now} />
     <div class="limit-cards">
       {used.map(s => { const list = of(s.id); return <article key={s.id} class="panel limit-card" aria-label={s.label}>
         <header class="panel-h"><h2><Icon name={s.icon} /> {s.label}</h2><span class="grow" />

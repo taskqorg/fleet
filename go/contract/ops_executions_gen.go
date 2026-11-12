@@ -53,6 +53,158 @@ func (v *CiRunner) Validate() error {
 	return nil
 }
 
+// DeliveryBaseline: P50/P90 over a window (nearest rank); a named one is a stored snapshot.
+type DeliveryBaseline struct {
+	At     *string        `json:"at,omitempty"`
+	Counts DeliveryCounts `json:"counts"`
+	From   string         `json:"from"`
+	Name   *string        `json:"name,omitempty"`
+	Stats  []DeliveryStat `json:"stats"`
+	Until  string         `json:"until"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryBaseline) Validate() error {
+	if err := Check(&v.Counts, "counts"); err != nil {
+		return err
+	}
+	if v.Stats == nil {
+		return Missing("stats")
+	}
+	for i := range v.Stats {
+		if err := Check(&v.Stats[i], "stats"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DeliveryBaselineReply struct {
+	Rolling   DeliveryBaseline   `json:"rolling"`
+	Settings  DeliverySettings   `json:"settings"`
+	Snapshots []DeliveryBaseline `json:"snapshots"`
+	Trend     []DeliveryTrendDay `json:"trend"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryBaselineReply) Validate() error {
+	if err := Check(&v.Rolling, "rolling"); err != nil {
+		return err
+	}
+	if err := Check(&v.Settings, "settings"); err != nil {
+		return err
+	}
+	if v.Snapshots == nil {
+		return Missing("snapshots")
+	}
+	for i := range v.Snapshots {
+		if err := Check(&v.Snapshots[i], "snapshots"); err != nil {
+			return err
+		}
+	}
+	if v.Trend == nil {
+		return Missing("trend")
+	}
+	for i := range v.Trend {
+		if err := Check(&v.Trend[i], "trend"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DeliveryBaselineRequest struct {
+	Days *int64 `json:"days,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryBaselineRequest) Validate() error {
+	return nil
+}
+
+type DeliveryBaselineSetReply = DeliveryBaselineReply
+
+// DeliveryBaselineSetRequest: Owner or full access.
+type DeliveryBaselineSetRequest struct {
+	Remove   *string           `json:"remove,omitempty"`
+	Settings *DeliverySettings `json:"settings,omitempty"`
+	Snapshot *string           `json:"snapshot,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryBaselineSetRequest) Validate() error {
+	if v.Settings != nil {
+		if err := Check(v.Settings, "settings"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DeliveryCounts struct {
+	Flakes   int64 `json:"flakes"`
+	Prs      int64 `json:"prs"`
+	Removals int64 `json:"removals"`
+	Runs     int64 `json:"runs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryCounts) Validate() error {
+	return nil
+}
+
+// DeliveryHistoryReply: The recorded delivery history of the fleet repository (go/coordinator/delivery_history.go), oldest first.
+type DeliveryHistoryReply struct {
+	BackfilledFrom *string           `json:"backfilledFrom,omitempty"`
+	InstallsFrom   *string           `json:"installsFrom,omitempty"`
+	Problem        *string           `json:"problem,omitempty"`
+	Prs            []DeliveryPr      `json:"prs"`
+	RefreshedAt    *string           `json:"refreshedAt,omitempty"`
+	Releases       []DeliveryRelease `json:"releases"`
+	Repo           string            `json:"repo"`
+	Runs           []DeliveryRun     `json:"runs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryHistoryReply) Validate() error {
+	if v.Prs == nil {
+		return Missing("prs")
+	}
+	for i := range v.Prs {
+		if err := Check(&v.Prs[i], "prs"); err != nil {
+			return err
+		}
+	}
+	if v.Releases == nil {
+		return Missing("releases")
+	}
+	for i := range v.Releases {
+		if err := Check(&v.Releases[i], "releases"); err != nil {
+			return err
+		}
+	}
+	if v.Runs == nil {
+		return Missing("runs")
+	}
+	for i := range v.Runs {
+		if err := Check(&v.Runs[i], "runs"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type DeliveryHistoryRequest struct {
+	Number *int64  `json:"number,omitempty"`
+	Since  *string `json:"since,omitempty"`
+	Until  *string `json:"until,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryHistoryRequest) Validate() error {
+	return nil
+}
+
 // DeliveryItem: One pull request in its current delivery stage; since: when it entered it (RFC 3339). installed and merged are the last 24 hours only.
 type DeliveryItem struct {
 	Number    int64         `json:"number"`
@@ -73,6 +225,185 @@ func (v *DeliveryItem) Validate() error {
 	return nil
 }
 
+type DeliveryJob struct {
+	Conclusion string `json:"conclusion"`
+	DurationMs int64  `json:"durationMs"`
+	Hosted     bool   `json:"hosted"`
+	Name       string `json:"name"`
+	Runner     string `json:"runner"`
+	WaitMs     int64  `json:"waitMs"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryJob) Validate() error {
+	return nil
+}
+
+type DeliveryMetric string
+
+const (
+	DeliveryMetricP50 DeliveryMetric = "p50"
+	DeliveryMetricP90 DeliveryMetric = "p90"
+)
+
+// DeliveryMetricValues lists every DeliveryMetric in schema order.
+var DeliveryMetricValues = []DeliveryMetric{DeliveryMetricP50, DeliveryMetricP90}
+
+// Valid: v is one of the schema's values.
+func (v DeliveryMetric) Valid() bool {
+	for _, x := range DeliveryMetricValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type DeliveryPr struct {
+	Author        *string           `json:"author,omitempty"`
+	Durations     map[string]int64  `json:"durations"`
+	Enqueued      *string           `json:"enqueued,omitempty"`
+	Flakes        int64             `json:"flakes"`
+	HeadSha       string            `json:"headSha"`
+	Installed     map[string]string `json:"installed"`
+	MergeSha      string            `json:"mergeSha"`
+	Merged        string            `json:"merged"`
+	MqCiDone      *string           `json:"mqCiDone,omitempty"`
+	Number        int64             `json:"number"`
+	Opened        string            `json:"opened"`
+	PrCiDone      *string           `json:"prCiDone,omitempty"`
+	QueueRemovals int64             `json:"queueRemovals"`
+	QueueRuns     int64             `json:"queueRuns"`
+	Release       *string           `json:"release,omitempty"`
+	Released      *string           `json:"released,omitempty"`
+	Title         string            `json:"title"`
+	UiOnSite      *string           `json:"uiOnSite,omitempty"`
+	Url           string            `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryPr) Validate() error {
+	if v.Durations == nil {
+		return Missing("durations")
+	}
+	if v.Installed == nil {
+		return Missing("installed")
+	}
+	return nil
+}
+
+type DeliveryRegression struct {
+	BaselineMs int64          `json:"baselineMs"`
+	CompareUrl *string        `json:"compareUrl,omitempty"`
+	CurrentMs  int64          `json:"currentMs"`
+	FirstPr    *int64         `json:"firstPr,omitempty"`
+	Key        string         `json:"key"`
+	LastGoodPr *int64         `json:"lastGoodPr,omitempty"`
+	Links      []string       `json:"links"`
+	Metric     DeliveryMetric `json:"metric"`
+	N          int64          `json:"n"`
+	Ratio      float64        `json:"ratio"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryRegression) Validate() error {
+	if v.Links == nil {
+		return Missing("links")
+	}
+	if err := Check(&v.Metric, "metric"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeliveryRegressionsReply: The last regression check (daily and after each release): the last 24 h against the baseline. Each regression holds one needs-you question (cause problem:delivery:<key>:<metric>) that withdraws itself when the value is back.
+type DeliveryRegressionsReply struct {
+	Baseline    *DeliveryBaseline    `json:"baseline,omitempty"`
+	CheckedAt   *string              `json:"checkedAt,omitempty"`
+	Current     *DeliveryBaseline    `json:"current,omitempty"`
+	Regressions []DeliveryRegression `json:"regressions"`
+	Settings    DeliverySettings     `json:"settings"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryRegressionsReply) Validate() error {
+	if v.Baseline != nil {
+		if err := Check(v.Baseline, "baseline"); err != nil {
+			return err
+		}
+	}
+	if v.Current != nil {
+		if err := Check(v.Current, "current"); err != nil {
+			return err
+		}
+	}
+	if v.Regressions == nil {
+		return Missing("regressions")
+	}
+	for i := range v.Regressions {
+		if err := Check(&v.Regressions[i], "regressions"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Settings, "settings"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type DeliveryRegressionsRequest struct {
+	Check *bool `json:"check,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryRegressionsRequest) Validate() error {
+	return nil
+}
+
+type DeliveryRelease struct {
+	Installed map[string]string `json:"installed"`
+	Published string            `json:"published"`
+	Tag       string            `json:"tag"`
+	Target    string            `json:"target"`
+	UiOnSite  *string           `json:"uiOnSite,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryRelease) Validate() error {
+	if v.Installed == nil {
+		return Missing("installed")
+	}
+	return nil
+}
+
+// DeliveryRun: One merge_group run of the ci workflow; skipped jobs are left out.
+type DeliveryRun struct {
+	Attempt    int64         `json:"attempt"`
+	Completed  *string       `json:"completed,omitempty"`
+	Conclusion string        `json:"conclusion"`
+	Created    string        `json:"created"`
+	Id         int64         `json:"id"`
+	Jobs       []DeliveryJob `json:"jobs"`
+	Pr         *int64        `json:"pr,omitempty"`
+	Sha        string        `json:"sha"`
+	Started    *string       `json:"started,omitempty"`
+	Url        string        `json:"url"`
+	WallMs     *int64        `json:"wallMs,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryRun) Validate() error {
+	if v.Jobs == nil {
+		return Missing("jobs")
+	}
+	for i := range v.Jobs {
+		if err := Check(&v.Jobs[i], "jobs"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeliverySample: Pull requests per stage of one repository (repo, owner/name) at one read, the last 24 hours; a repository in several projects has one sample per project.
 type DeliverySample struct {
 	At        string           `json:"at"`
@@ -86,6 +417,18 @@ func (v *DeliverySample) Validate() error {
 	if v.Counts == nil {
 		return Missing("counts")
 	}
+	return nil
+}
+
+type DeliverySettings struct {
+	Baseline   string  `json:"baseline"`
+	MinDeltaMs int64   `json:"minDeltaMs"`
+	MinSamples int64   `json:"minSamples"`
+	Ratio      float64 `json:"ratio"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliverySettings) Validate() error {
 	return nil
 }
 
@@ -136,6 +479,18 @@ func (v DeliveryStage) Valid() bool {
 	return false
 }
 
+type DeliveryStat struct {
+	Key   string `json:"key"`
+	N     int64  `json:"n"`
+	P50Ms int64  `json:"p50Ms"`
+	P90Ms int64  `json:"p90Ms"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryStat) Validate() error {
+	return nil
+}
+
 // DeliveryStatusReply: The last GitHub read (go/coordinator/delivery.go). source key: through the github connection; public: unauthenticated REST, the fleet repository only; none: no read yet. landing: pull requests with auto-merge on or in the merge queue, one waiting worker each.
 type DeliveryStatusReply struct {
 	Error       *string          `json:"error,omitempty"`
@@ -177,6 +532,24 @@ type DeliveryStatusRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *DeliveryStatusRequest) Validate() error {
+	return nil
+}
+
+type DeliveryTrendDay struct {
+	Day   string         `json:"day"`
+	Stats []DeliveryStat `json:"stats"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DeliveryTrendDay) Validate() error {
+	if v.Stats == nil {
+		return Missing("stats")
+	}
+	for i := range v.Stats {
+		if err := Check(&v.Stats[i], "stats"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1102,6 +1475,10 @@ func (v *TextChange) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"delivery_baseline":     {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"days\":{\"$comment\":\"rolling window and trend length, default 7, at most 60\",\"type\":\"integer\"}},\"type\":\"object\"}")},
+		"delivery_baseline_set": {Read: false, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access.\",\"additionalProperties\":true,\"properties\":{\"remove\":{\"$comment\":\"delete the snapshot of this name\",\"type\":\"string\"},\"settings\":{\"properties\":{\"baseline\":{\"$comment\":\"the snapshot name compared with; empty: the 7 days before the last 24 h\",\"type\":\"string\"},\"minDeltaMs\":{\"$comment\":\"and the difference at least this (default 60000)\",\"type\":\"integer\"},\"minSamples\":{\"$comment\":\"both windows need this many values (default 5)\",\"type\":\"integer\"},\"ratio\":{\"$comment\":\"a P50 or P90 of the last 24 h this many times the baseline's is a regression (default 1.5)\",\"type\":\"number\"}},\"required\":[\"ratio\",\"minSamples\",\"minDeltaMs\",\"baseline\"],\"type\":\"object\"},\"snapshot\":{\"$comment\":\"store the rolling 7-day baseline now under this name (replaces one of the same name)\",\"type\":\"string\"}},\"type\":\"object\"}")},
+		"delivery_history":      {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"number\":{\"$comment\":\"one pull request and its merge-queue runs\",\"type\":\"integer\"},\"since\":{\"$comment\":\"RFC 3339 time or YYYY-MM-DD; default 7 days ago. Pull requests by merge time, runs by creation, releases by publication\",\"type\":\"string\"},\"until\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"delivery_regressions":  {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"check\":{\"$comment\":\"run the check now (full access) instead of returning the last one\",\"type\":\"boolean\"}},\"type\":\"object\"}")},
 		"delivery_status":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"All projects the caller may see, narrowed to projectIds when given.\",\"additionalProperties\":true,\"properties\":{\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"execution_differences": {Read: true, Long: false, Errors: []int{403, 409, 503}, InputSchema: json.RawMessage("{\"$comment\":\"previous: the earlier execution of the same session.\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"previous\":{\"type\":\"string\"}},\"required\":[\"executionId\",\"previous\"],\"type\":\"object\"}")},
 		"execution_events":      {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
