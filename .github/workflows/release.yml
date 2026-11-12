@@ -146,6 +146,7 @@ jobs:
         with:
           name: release
           path: out/
+          retention-days: 1
           if-no-files-found: error
   selftest-macos:
     needs: [gate, build]

@@ -73,6 +73,7 @@ jobs:
         with:
           name: test-selection
           path: ${{ runner.temp }}/test-selection.json
+          retention-days: 7
           if-no-files-found: error
   # Keep the required app status as the exact-candidate qualification boundary.
   app:
@@ -103,6 +104,7 @@ jobs:
         with:
           name: test-qualification
           path: ${{ runner.temp }}/qualification/
+          retention-days: 7
           if-no-files-found: error
   go:
     needs: app
@@ -217,6 +219,7 @@ jobs:
         with:
           name: fleet-release-${{ github.sha }}
           path: release/
+          retention-days: 1
           if-no-files-found: error
   # Browser: one build, Chromium from a cache keyed on the Playwright version, then every browser check in sequence:
   # filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md "Browser check"), the
@@ -377,6 +380,7 @@ jobs:
             design-report/
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
+          retention-days: 7
           if-no-files-found: warn
   comment:
     needs: reports

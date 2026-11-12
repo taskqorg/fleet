@@ -9,7 +9,7 @@
 
 ## Overview
 
-Every Fleet host installs a new release by itself. A release workflow, started by a tag `v<version>` on a green `main` commit (target: by every green `main` batch, [delivery pipeline](fleet-delivery-pipeline.md)), publishes one tarball per target on GitHub Releases with checksums signed by the release key and build provenance. On each host a one-shot `fleet-update` command, started every 5 minutes by a systemd timer or a launchd agent, decides whether a newer release should run there, verifies it, installs it into `releases/<version>/`, switches `current`, restarts that host's Fleet services and rolls back by itself when the new version does not come up healthy.
+Every Fleet host installs a new release by itself. A release workflow, started by a tag `v<version>` on a green `main` commit (target: by every green `main` batch, [delivery pipeline](fleet-delivery-pipeline.md)), publishes one tarball per target on GitHub Releases with checksums signed by the release key and build provenance. On each host a one-shot `fleet-update` command, started by a systemd timer or a launchd agent (every minute on PDS18, every 5 minutes on executors), decides whether a newer release should run there, verifies it, installs it into `releases/<version>/`, switches `current`, restarts that host's Fleet services and rolls back by itself when the new version does not come up healthy.
 
 The design copies the CoreQ update model ([coreq.md](https://github.com/taskqorg/coreq/blob/main/coreq.md), sections Release artifacts, Update, Launcher) into Go; Fleet does not link the Rust crate ([stack](fleet-stack.md)). `COREQ-R<n>` names the CoreQ rule a step copies; [deviations](#deviations-from-coreq) are listed. `R2` and `R5` are principles of the [Fleet contract](../../fleet.md#principles).
 
@@ -71,7 +71,7 @@ Target: replaced by a merge that releases by itself ([delivery pipeline](fleet-d
 
 *   **Given**: commit C on `main`; its `ci` run may still be running. Every host has `autoUpdate: "on"`.
 *   **When**: the owner runs `git tag v1.261111.0 C && git push origin v1.261111.0`.
-*   **Then**: the release workflow waits for C's `go`, `app` and `browser` jobs, builds, publishes. Within 5 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
+*   **Then**: the release workflow waits for C's `go`, `app` and `browser` jobs, builds, publishes. Within about 2 minutes PDS18's run installs the coordinator, gateway, guard and the PDS18 executor. Each other executor installs on its next run after the coordinator is healthy. `hosts_list` shows `version: 1.261111.0`, `update.state: ok` for every host.
 
 ### CUJ 2: Bad release on PDS18
 
