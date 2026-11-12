@@ -62,12 +62,13 @@ func (u *updater) latestUI(backend string) (string, error) {
 		return "", err
 	}
 	// Each line is a pkt-line "<4 hex length><sha> <ref>\n"; the answer ends with the flush "0000".
-	if !strings.HasSuffix(string(b), "\n0000") && string(b) != "0000" {
-		return "", fmt.Errorf("ls-refs: not a pkt-line answer: %.80q", b)
+	body = string(b)
+	if !strings.HasSuffix(body, "0000") {
+		return "", fmt.Errorf("ls-refs: not a pkt-line answer: %.80q", body)
 	}
-	lines := strings.Split(strings.TrimSuffix(strings.TrimSuffix(string(b), "0000"), "\n"), "\n")
-	if string(b) == "0000" {
-		lines = nil
+	var lines []string
+	if body = strings.TrimSuffix(strings.TrimSuffix(body, "0000"), "\n"); body != "" {
+		lines = strings.Split(body, "\n")
 	}
 	latest := ""
 	for _, line := range lines {

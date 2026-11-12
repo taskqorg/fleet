@@ -430,7 +430,6 @@ func relink(r *os.Root, name, target string) error {
 // probes the running release without a restart (resume of an earlier run).
 func (u *updater) settle(p *part, ver string, restart bool) *Result {
 	startsFile, healthyFile := ver+"/starts", ver+"/healthy"
-	installed := restart
 	for {
 		if restart {
 			if err := p.restart(); err != nil {
@@ -444,13 +443,11 @@ func (u *updater) settle(p *part, ver string, restart bool) *Result {
 			if err := p.r.WriteFile(healthyFile, []byte(u.now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 				return u.result(ver, "error", err.Error())
 			}
-			if installed {
-				since := ""
-				if t, ok := u.published[ver]; ok && u.now().After(t) { // skewed clocks: no negative delta
-					since = " " + u.now().Sub(t).Round(time.Second).String() + " after publish"
-				}
-				log.Printf("%s %s: installed%s", p.name, ver, since)
+			since := "" // the first healthy marker of this release: one install line, with the publish delta when known
+			if t, ok := u.published[ver]; ok && u.now().After(t) { // skewed clocks: no negative delta
+				since = " " + u.now().Sub(t).Round(time.Second).String() + " after publish"
 			}
+			log.Printf("%s %s: installed%s", p.name, ver, since)
 			return u.result(ver, "ok", "")
 		case waiting:
 			return u.result(ver, "pending", "coordinator not reachable from the executor")
