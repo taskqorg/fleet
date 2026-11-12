@@ -38,7 +38,7 @@ export function Results({ id }: { id?: string }) {
     catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
   const ready = prefsRead.value; // the filter carries the focus
-  useEffect(() => { if (!ready) return; load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey, ready]);
+  useEffect(() => { if (!ready) { gen.current++; setRows(null); return; } load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey, ready]);
   const chips: Chip[] = Object.entries(extra).filter(([k]) => ['media', 'since', 'task', 'execution'].includes(k)).map(([field, value]) => ({ field, value }));
   const now = Date.now();
   const list = <>

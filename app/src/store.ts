@@ -195,7 +195,7 @@ export function useList(kind: Kind, urlView: View) {
   return {
     rows, counts: cur?.counts ?? {}, total: cur?.total ?? 0, groups: cur?.groups ?? [], at: cur?.at ?? 0, error: cur?.error ?? null,
     pending: !ready || shown !== key || e.busy.value, shownKey: shown, shownView: se?.view ?? view,
-    more: () => shown ? nextPage(shown) : Promise.resolve(), reload: () => loadList(kind, key, view),
+    more: () => ready && shown ? nextPage(shown) : Promise.resolve(), reload: () => ready ? loadList(kind, key, view) : Promise.resolve(),
     state: freshness(!!cur?.restored),
   };
 }
