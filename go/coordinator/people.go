@@ -109,6 +109,33 @@ func director(q *Request) string {
 	return ownerEmail(q)
 }
 
+// ownerOnly fails closed for every caller kind: a person needs full access, and an agent tool call acts for its director
+// only when every person behind the run has it. Taken work runs as the subscription holder (dispatch takenFrom), so the
+// requester it was taken from must have full access too; otherwise a member's agent would borrow the owner's rights.
+func ownerOnly(q *Request, msg string) error {
+	if q.person == nil || !fullAccess(q.person) {
+		return fail(403, msg)
+	}
+	if id, ok := strings.CutPrefix(q.agent, "execution:"); ok {
+		if q.tx == nil {
+			return fail(403, msg) // fail closed: the run cannot be read here
+		}
+		e, err := maybe(q, id, "execution")
+		if err != nil {
+			return err
+		}
+		if e == nil {
+			return fail(403, msg)
+		}
+		if tf := astr(e["takenFrom"]); tf != "" {
+			if p := q.peopleSnapshot().person(tf); p == nil || !fullAccess(p) {
+				return fail(403, msg)
+			}
+		}
+	}
+	return nil
+}
+
 // actor: the calling agent execution, else the request person, else the fallback (an execution, 'operator').
 func actor(q *Request, fallback string) string {
 	if q.agent != "" {

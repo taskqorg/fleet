@@ -65,6 +65,26 @@ test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule
   assert.equal((await op('project_readiness', {projectId: OTHER}, MEMBER)).status, 404);
 });
 
+test('S2b questions_withdraw, executions_abandon and executions_dismiss: owner only for every caller kind; a member (granted another project), an outsider and an agent acting for a member get 403 and change nothing (requirement: owner-only bulk clean-up ops; risk: a non-owner or its agent withdraws questions or ends runs)', async () => {
+  const h = await host();
+  const s = ok(await start(MEMBER, MINE, {hostId: 'trial-host'}));
+  const {commands} = ok(await h('/api/hosts/poll', poll));
+  const command = commands.find((c: any) => c.executionId === s.executionId && c.kind === 'start');
+  assert.ok(command, 'the host claims the member run');
+  const calls: [string, object][] = [
+    ['questions_withdraw', {ids: [randomUUID()], reason: 'x'}],
+    ['executions_abandon', {ids: [s.executionId], reason: 'x'}],
+    ['executions_dismiss', {ids: [s.executionId], reason: 'x'}]];
+  for (const [name, args] of calls) {
+    for (const who of [MEMBER, OUTSIDER]) assert.equal((await op(name, args, who)).status, 403, `${name} as ${who}`);
+    const agent = await h('/api/hosts/agent-tools', {executionId: s.executionId, commandId: command.id, request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name, arguments: args}}});
+    assert.ok(agent.status === 403 || agent.body?.result?.isError === true || agent.body?.error, `${name} as the member's agent: ${JSON.stringify(agent.body)}`);
+  }
+  const e = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
+  assert.notEqual(e.state, 'failed', 'the run was not abandoned');
+  assert.deepEqual(ok(await op('executions_abandon', {ids: [s.executionId], reason: 'owner'})).abandoned, [s.executionId]);
+});
+
 test('S3a questions: a person cannot answer an agent question of a project they are not granted, and changes nothing (requirement: docs/designs/fleet-people-access.md grants; risk: questions_answer replies to another project\'s session)', async () => {
   const s = ok(await start(MEMBER, MINE));
   const q = ok(await op('ask', {executionId: s.executionId, requestId: 'scope-qa', question: 'Which colour?'}));

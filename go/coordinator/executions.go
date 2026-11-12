@@ -516,8 +516,8 @@ var lostAfter = envMs("FLEET_LOST_AFTER_MS", int(time.Hour/time.Millisecond))
 func init() {
 	gatedObjOp("executions_abandon", false, typedOp(func(q *Request, r *contract.ExecutionsAbandonRequest) (contract.ExecutionsAbandonReply, error) {
 		out := contract.ExecutionsAbandonReply{Abandoned: []string{}, Skipped: []contract.ExecutionSkipped{}}
-		if q.person != nil && !fullAccess(q.person) {
-			return out, fail(403, "Only the owner abandons executions")
+		if err := ownerOnly(q, "Only the owner abandons executions"); err != nil {
+			return out, err
 		}
 		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
 			return out, fail(400, "Expected reason")
@@ -544,8 +544,8 @@ func init() {
 	}))
 	gatedObjOp("executions_dismiss", false, typedOp(func(q *Request, r *contract.ExecutionsDismissRequest) (contract.ExecutionsDismissReply, error) {
 		out := contract.ExecutionsDismissReply{Dismissed: []string{}, Skipped: []contract.ExecutionSkipped{}}
-		if q.person != nil && !fullAccess(q.person) {
-			return out, fail(403, "Only the owner dismisses execution problems")
+		if err := ownerOnly(q, "Only the owner dismisses execution problems"); err != nil {
+			return out, err
 		}
 		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
 			return out, fail(400, "Expected reason")
