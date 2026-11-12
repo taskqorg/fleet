@@ -1133,8 +1133,9 @@ CREATE TRIGGER task_state_at BEFORE UPDATE OF state, pause_reason, wait_reason O
 
 -- migration 47: task row facts live in task_derived (migration 10), not in per-row subqueries: executions counts every
 -- execution of the task, last_agent is the harness of its latest one (the row's agent mark and the agent: search term).
+-- A new execution changes the count, so it writes one task change, as the row shows the new count.
 -- The functions are recreated with the new columns; the backfill writes no change row per task. Sort keys of task_page
--- (fleet_ms of updated_at, seq) get indexes for the default grouping (priority) and for no grouping, both directions.
+-- (updated_at as epoch ms, seq) get indexes for the default grouping (priority) and for no grouping, both directions.
 ALTER TABLE task_derived ADD COLUMN executions integer NOT NULL DEFAULT 0, ADD COLUMN last_agent text NULL;
 DROP FUNCTION task_derived_drift();
 DROP FUNCTION fleet_task_derived(text);
@@ -1150,13 +1151,15 @@ SELECT set_config('fleet.project_ids', '*', true);
 ALTER TABLE task_derived DISABLE TRIGGER task_derived_change;
 UPDATE task_derived d SET executions = x.n, last_agent = x.h FROM (SELECT e.task_id, count(*)::int AS n, (array_agg(e.harness ORDER BY e.seq DESC))[1] AS h FROM execution e WHERE e.task_id IS NOT NULL GROUP BY e.task_id) x WHERE x.task_id = d.task_id;
 ALTER TABLE task_derived ENABLE TRIGGER task_derived_change;
--- fleet_ms: a timestamp as epoch milliseconds; IMMUTABLE (epoch does not depend on the time zone), so it can be indexed.
-CREATE FUNCTION fleet_ms(t timestamptz) RETURNS float8 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT (extract(epoch FROM t) * 1000)::float8 $$;
-CREATE INDEX task_sort_priority_changed_desc ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), (-fleet_ms(updated_at)), id);
-CREATE INDEX task_sort_priority_changed ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), fleet_ms(updated_at), id);
-CREATE INDEX task_sort_priority_created_desc ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), (-seq::float8), id);
+-- The changed sort reads updated_at as UTC epoch ms, an immutable expression, so it is indexed directly. Every task write
+-- moves updated_at, so these indexes cost HOT updates; the list's default order needs them. task_priority_order (seq DESC)
+-- has no reader left: the created sort is (-(seq::float8)).
+DROP INDEX task_priority_order;
+CREATE INDEX task_sort_priority_changed_desc ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), (-((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8)), id);
+CREATE INDEX task_sort_priority_changed ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), ((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8), id);
+CREATE INDEX task_sort_priority_created_desc ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), (-(seq::float8)), id);
 CREATE INDEX task_sort_priority_created ON task((CASE priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END), (seq::float8), id);
-CREATE INDEX task_sort_changed_desc ON task((-fleet_ms(updated_at)), id);
-CREATE INDEX task_sort_changed ON task(fleet_ms(updated_at), id);
-CREATE INDEX task_sort_created_desc ON task((-seq::float8), id);
+CREATE INDEX task_sort_changed_desc ON task((-((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8)), id);
+CREATE INDEX task_sort_changed ON task(((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8), id);
+CREATE INDEX task_sort_created_desc ON task((-(seq::float8)), id);
 CREATE INDEX task_sort_created ON task((seq::float8), id);
