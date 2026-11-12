@@ -12,7 +12,7 @@ const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: 
 export const prefs = signal<Settings>(empty);
 
 // A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
-onClear.add(() => { seq++; epoch++; prefs.value = empty; loadPrefs(); });
+onClear.add(() => { seq++; epoch++; pending = 0; prefs.value = empty; loadPrefs(); });
 
 // ponytail: last write wins; seq drops a stale reply. A save re-reads the server copy first and builds whole lists (views,
 // pins, focus presets) from it, so changes made meanwhile by an agent or another device survive; the gap between that read
@@ -27,7 +27,7 @@ export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: (s:
   prefs.value = { ...before, ...change(before) };
   pending++;
   chain = chain.then(() => e !== epoch ? null : op('person_settings_get', {}).then(fresh => e !== epoch ? null : op('person_settings_set', patch(fresh))))
-    .then(s => { pending--; if (s && seq === n) prefs.value = s; }, () => { pending--; if (seq === n) { prefs.value = before; loadPrefs(); } });
+    .then(s => { if (e !== epoch) return; pending--; if (s && seq === n) prefs.value = s; }, () => { if (e !== epoch) return; pending--; if (seq === n) { prefs.value = before; loadPrefs(); } });
 }
 
 export function usePins(list: string) {

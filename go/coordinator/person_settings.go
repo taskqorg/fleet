@@ -24,6 +24,9 @@ func settingsEmail(q *Request, email *string) (string, error) {
 	if q.person != nil {
 		me = q.person.Email
 	}
+	if q.agent != "" && me == "" {
+		return "", fail(403, "An agent without a director has no settings")
+	}
 	if email == nil || strings.ToLower(*email) == me {
 		if me == "" {
 			return ownerEmail(q), nil
