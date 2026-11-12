@@ -26,6 +26,10 @@ test('search resolves codes and aliases, finds questions; task_page and sessions
   const q = (await hits('colour badge')).find((h: any) => h.kind === 'question');
   assert.equal(q?.id, 'q-search'); assert.equal(q.taskId, a.id); assert.match(q.code, /^Q-/);
   assert.equal((await hits(q.code))[0].id, 'q-search');
+  const sess = (await op('session_create', {})).sessionId;
+  const sc = (await op('sessions_list', {})).sessions.find((x: any) => x.id === sess).code;
+  const conv = await hits(sc);
+  assert.equal(conv[0]?.kind, 'conversation'); assert.equal(conv[0].id, sess);
   // An old code after a project rename resolves to the entity with its current code.
   await op('project_code_set', {projectId: 'hello-world', code: 'HWX'});
   const old = await hits(a.code);
