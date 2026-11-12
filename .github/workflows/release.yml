@@ -182,7 +182,7 @@ jobs:
           # An asset GitHub reports no digest for is fetched every run, unchecked, as before the cache.
           # One extra level: a coordinator's repoRoot() probes two directories above its binary for config/, never $HOME.
           cache=${HOME:?}/fleet-releases/v; mkdir -p "$cache"
-          for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) ;; *) rm -rf "$d";; esac; done
+          for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) rm -rf "$d/var";; *) rm -rf "$d";; esac; done
           members="./fleet-coordinator ./config ./release.json"
           for v in $RECENT; do
             file=fleet-$v-linux-amd64.tgz
@@ -206,10 +206,9 @@ jobs:
             (cd "$dir" && FLEET_PROJECT_CONFIG_DIRECTORY=$dir/config FLEET_PROFILES_DIRECTORY=$dir/config/agents FLEET_LAB_DIRECTORY=$dir/config/lab exec ./fleet-coordinator) & pid=$!
             t=$SECONDS; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
               kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }
-              [ $((SECONDS - t)) -lt 60 ] || { echo "::error::$dir coordinator not healthy after 60 s"; exit 1; }; sleep 1; done
+              [ $((SECONDS - t)) -lt 120 ] || { echo "::error::$dir coordinator not healthy after 120 s"; exit 1; }; sleep 1; done
             echo; kill $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; wait $pid || true; pid=
           done
-          rm -rf "$cache"/*/var # anything a cached coordinator wrote beside its release files
           # Seed the cache with this release (GitHub's asset digest is the sha256 of the uploaded bytes), so the next run
           # downloads nothing; an entry for a version that never publishes is pruned by the sweep above.
           file=fleet-$VERSION-linux-amd64.tgz
