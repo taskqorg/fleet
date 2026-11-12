@@ -13,7 +13,7 @@ One way to show each kind of value, everywhere ([OR-28](owner-rules.md)). The fo
 
 | Kind | Shown as | Long form (tooltip, accessible name) | Helper |
 |---|---|---|---|
-| Entity code | `T-FLT-42` mono, directly after the name (OR-22); short UUID until a code exists | UUID, with a copy action | D17 formatter |
+| Entity code | `T-FLT-42` mono, directly after the name (OR-22); never a UUID or hash (OR-38) | UUID in the tooltip, click to copy | D17 formatter |
 | Moment, in a list | Age: `now`, `40s`, `4m`, `2h`, `3d`, `12 Nov`, `12 Nov 2025`; plain, boxed only when it needs a look (OR-18) | `4 minutes ago`; exact time on hover | `age`, `AgeChip` |
 | Moment, in copied text | `11 Nov 14:03`, year added when not this year | — | `stamp` |
 | Duration | `120ms` (under a second), `40s`, `14m`, `1h 02m`, `3d 4h` | words | `duration` |
@@ -28,6 +28,7 @@ One way to show each kind of value, everywhere ([OR-28](owner-rules.md)). The fo
 | Agent | Harness mark, short model, effort: `opus-5.5 · high` | full model id | `AgentMark`, `agentLabel` |
 | Path | The file's stem (`web-research`) where the kind is known; scope and full path in the detail head | full path | — |
 | Hash, revision | First 7 characters, mono | full hash | — |
+| Counter block | Bold total `Σ 12`, then the breakdown; zero chips and all-zero blocks hidden (OR-29) | value per part | — |
 | Unknown | `—` and the reason on hover; never `0`, never empty | reason | `Num` |
 
 ## Rows and columns
