@@ -7,7 +7,7 @@
 **Anatomy.** First a Σ capsule with the total count, then one capsule per state, in the fixed registry order. Each capsule has the state's icon and its count in monospace, tinted by tone. The state name is in a tooltip only (B1, OR-20).
 
 **States.**
-* *Count zero:* neutral, no fill.
+* *Count zero:* neutral, no fill, icon only with no `0` (OR-29). A counter block (not a quick filter, for example an Overview project row) passes `hideZero`: zero capsules are hidden and the caller hides a block whose values are all zero.
 * *Count unknown:* shows `?`, never `0` ([principles §2](../principles.md#2-measurement-basis)).
 * *Active:* outlined in the tone colour, `aria-pressed`.
 

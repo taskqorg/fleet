@@ -370,7 +370,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .vl-row .tt .id{margin:0;flex:none}
 .vl-row .p0{color:var(--danger-fg);font-family:var(--font-mono);font-size:var(--font-size-sm);font-weight:var(--font-weight-bold)}
 .stack-pad{padding:0 var(--space-4) var(--space-2)}
-.counter.sigma .sig{font-weight:var(--font-weight-bold)}
+.counter.sigma .sig,.counter.sigma .num{font-weight:var(--font-weight-bold)}
 .counter.sigma{margin-right:var(--space-1)}
 
 /* D14 review fixes */

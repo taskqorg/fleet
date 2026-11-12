@@ -56,3 +56,34 @@ test('G2 a completed run whose declared outputs are not stored yet waits, unrese
     assert.equal(state(), 'waiting', 'a reserved output still uploading keeps it waiting');
   } finally { await c.stop(); }
 });
+
+test('G3 a task whose last execution succeeds asks for acceptance (requirement: data foundation §3, completed after an acceptance; risk: task 353a0d2d stayed in progress for days after its only run finished in 15 s)', async () => {
+  const c = await startCoordinator({name: 'completion-accept'});
+  const call = async (path: string, body: unknown, auth = c.secret, person: string | null = 'owner@trial.test') => {
+    const r = await fetch(c.base + path, {method: 'POST', headers: {authorization: 'Bearer ' + auth, ...(person ? {'x-fleet-person': person} : {}), 'content-type': 'application/json'}, body: JSON.stringify(body)});
+    const text = await r.text(); let parsed: any = text; try { parsed = JSON.parse(text); } catch {}
+    assert.equal(r.status, 200, `${path}: ${text}`);
+    return parsed;
+  };
+  try {
+    const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
+    const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'answer only'});
+    const taskId = task.id ?? task.taskId;
+    const {sessionId} = await call('/api/sessions', {});
+    const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+    c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'; UPDATE task SET state='in_progress' WHERE id='${taskId}'`);
+    const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
+    const command = commands.find((x: any) => x.executionId === e.id);
+    await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
+    await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
+    await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
+    const asked = () => c.sql(`SELECT count(*) FROM question WHERE task_id='${taskId}' AND kind='acceptance' AND state='open'`).trim();
+    assert.equal(asked(), '1', 'one acceptance question, also after a repeated receipt');
+    await call('/api/ops/task_request_acceptance', {taskId, text: 'Accept the answer'});
+    assert.equal(asked(), '1', 'an explicit request reuses the open question');
+    const t = await call('/api/ops/task_get', {taskId});
+    const q = t.questions.find((x: any) => x.kind === 'acceptance');
+    await call('/api/ops/questions_answer', {questionId: q.id, answer: 'accepted'});
+    assert.equal((await call('/api/ops/task_get', {taskId})).state, 'completed');
+  } finally { await c.stop(); }
+});

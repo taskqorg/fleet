@@ -233,7 +233,7 @@ export function ExecTree({ nodes, now, label }: { nodes: TreeNode[]; now: number
 /* ---------- Decision block (§6) ---------- */
 
 type DecisionProps = {
-  question: string; askedBy: string; addressedTo: string; since: number; now: number; waits?: string;
+  question: string; askedBy: string; addressedTo: string; since: number; now: number; waits?: ComponentChildren;
   context?: ComponentChildren; options: { label: string; kbd?: string; primary?: boolean }[];
   answered?: { by: string; answer: string; at: number; delivered: boolean };
   onAnswer?: (answer: string) => void;
@@ -417,13 +417,13 @@ export function SettingField(p: SettingProps) {
 
 export function ProblemRow({ title, facts, severity, actions: acts }: {
   title: string; facts: ComponentChildren; severity: 'warning' | 'failure';
-  actions: { label: string; icon?: IconName; primary?: boolean }[];
+  actions: { label: string; icon?: IconName; primary?: boolean; onClick?: () => void }[];
 }) {
   return (
     <div data-ui="problem-row" class={`problem ${severity}`} role="group" aria-label={`${severity === 'failure' ? 'Failure' : 'Warning'}: ${title}`}>
       <Icon name={severity === 'failure' ? 'octagon-x' : 'triangle-alert'} />
       <b>{title}</b><span class="facts" data-important="">{facts}</span>
-      <span class="acts">{acts.map(a => <Button key={a.label} label={a.label} icon={a.icon} kind={a.primary ? 'primary' : 'default'} />)}</span>
+      <span class="acts">{acts.map(a => <Button key={a.label} label={a.label} icon={a.icon} kind={a.primary ? 'primary' : 'default'} onClick={a.onClick} />)}</span>
     </div>
   );
 }
@@ -606,12 +606,14 @@ export function ActionMenu({ label, items, disabledReason }: { label: string; it
 
 /* ---------- State counters: quick filter by state with totals (state-counters.md) ---------- */
 
-export function StateCounters<F extends Family>({ family, counts, active, onToggle, onAll, label, pending }: {
+export function StateCounters<F extends Family>({ family, counts, active, onToggle, onAll, label, pending, hideZero }: {
   family: F; counts: Partial<Record<StateOf<F>, number | null>>; active: StateOf<F>[]; onToggle: (s: StateOf<F>) => void;
   /** Σ button: show all (clear the state filter). Omit to hide the Σ button. */
   onAll?: () => void; label: string;
   /** A newer answer is loading: the last counts stay, dimmed (docs/designs/fleet-view-urls-and-list-path.md §2). */
   pending?: boolean;
+  /** A counter block, not a quick filter (OR-29): zero chips are hidden, and the caller hides an all-zero block. */
+  hideZero?: boolean;
 }) {
   const all = Object.keys(states[family]) as StateOf<F>[];
   const values = all.map(s => counts[s]).filter(n => n !== undefined) as (number | null)[];
@@ -622,11 +624,11 @@ export function StateCounters<F extends Family>({ family, counts, active, onTogg
         aria-label={`All: ${total === null ? 'unknown' : total}`} onClick={onAll}><span class="sig" aria-hidden="true">Σ</span><span class="num">{total === null ? '?' : total.toLocaleString('en')}</span></button>}
       {all.map(s => {
         const d = states[family][s] as StateDef, n = counts[s];
-        if (n === undefined) return null;
+        if (n === undefined || (hideZero && n === 0)) return null;
         const on = active.includes(s);
         const name = `${d.label}: ${n === null ? 'unknown' : n}`;
         return <button type="button" key={String(s)} class={`counter t-${d.tone}${on ? ' on' : ''}${n === 0 ? ' zero' : ''}`} aria-pressed={on} aria-label={name} data-tip={d.label} onClick={() => onToggle(s)}>
-          <Icon name={d.icon} /><span class="num">{n === null ? '?' : n.toLocaleString('en')}</span></button>;
+          <Icon name={d.icon} />{n !== 0 && <span class="num">{n === null ? '?' : n.toLocaleString('en')}</span>}</button>;
       })}
     </div>
   );
@@ -780,8 +782,8 @@ export function OutcomeBlock({ outcome, requirements, inputs, depends }: {
     <button type="button" class="tw" aria-expanded={open} aria-label={open ? 'Collapse outcome' : 'Expand outcome'} onClick={() => setOpen(!open)}><span class={open ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span></button>
     <div class="outcome-b">
       <p class={open ? '' : 'clamp'}>{outcome}</p>
-      <div class="outcome-meta"><span class={`chip-age${met < requirements.length ? '' : ' t-success alert'}`} aria-label={`${met} of ${requirements.length} requirements met`}>{met}/{requirements.length}</span>
-        {inputs.map(i => <span key={i.label} class="chip in"><Icon name={i.icon} />{i.label}</span>)}</div>
+      {(requirements.length > 0 || inputs.length > 0) && <div class="outcome-meta">{requirements.length > 0 && <span class={`chip-age${met < requirements.length ? '' : ' t-success alert'}`} aria-label={`${met} of ${requirements.length} requirements met`}>{met}/{requirements.length}</span>}
+        {inputs.map(i => <span key={i.label} class="chip in"><Icon name={i.icon} />{i.label}</span>)}</div>}
       {open && <ul class="reqs">{requirements.map(r => <li key={r.text}><Icon name={r.met ? 'circle-check' : 'square'} />{r.text}</li>)}</ul>}
       {open && depends && <p class="muted">{depends}</p>}
     </div>

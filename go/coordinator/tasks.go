@@ -237,6 +237,55 @@ func askQuestion(q *Request, v doc) (string, error) {
 	return id, nil
 }
 
+// askAcceptanceWhenIdle: a task's last open execution ended, one of its runs succeeded and nothing else will move it,
+// so its result goes to the operator for acceptance (data foundation §3 task states). Without this the task stayed in
+// progress forever. Delivery tasks are skipped: their pipeline asks acceptance once per delivery state. Child agent rows
+// are not counted as open: no writer ends them (detectProblems skips them for the same reason).
+func askAcceptanceWhenIdle(q *Request, id string) error {
+	t, err := first(q, `SELECT t.* FROM task t WHERE t.id=$1 AND t.state='in_progress' AND t.delivery_method IS NULL
+		AND EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded')
+		AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
+		AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')`, id)
+	if err != nil || t == nil {
+		return err
+	}
+	_, err = requestAcceptance(q, t, nil, nil, "fleet")
+	return err
+}
+
+// requestAcceptance asks the task's acceptance question with the given artifacts (default: its stored originals). An open
+// acceptance question is reused and updated, so an explicit request after the automatic one never leaves a second open.
+func requestAcceptance(q *Request, t doc, artifactIDs []string, text *string, askedBy string) (string, error) {
+	id := astr(t["id"])
+	ids := []any{}
+	if artifactIDs != nil {
+		for _, x := range artifactIDs {
+			ids = append(ids, x)
+		}
+	} else {
+		rs, err := rowsOf(q, "SELECT coalesce(legacy_id,id) AS id FROM artifact WHERE task_id=$1 AND state='stored' AND role='original' ORDER BY seq", id)
+		if err != nil {
+			return "", err
+		}
+		for _, x := range rs {
+			ids = append(ids, x["id"])
+		}
+	}
+	body := "Accept the result of: " + astr(t["title"])
+	if text != nil {
+		body = string([]rune(*text)[:min(len([]rune(*text)), 2000)])
+	}
+	open, err := first(q, "SELECT id FROM question WHERE task_id=$1 AND kind='acceptance' AND state='open' ORDER BY asked_at DESC LIMIT 1", id)
+	if err != nil {
+		return "", err
+	}
+	if open != nil {
+		qid := astr(open["id"])
+		return qid, exec(q, "UPDATE question SET text=$2,asked_by=$4,asked_at=now(),data=coalesce(data,'{}'::jsonb)||jsonb_build_object('artifactIds',$3::jsonb) WHERE id=$1", qid, body, js(ids), askedBy)
+	}
+	return askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": body, "options": []string{"accepted", "rejected"}, "askedBy": askedBy, "data": doc{"artifactIds": ids}})
+}
+
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
 // runAnswerChecks and runAnswerAfter apply the Lab and budget rules of the question.
 func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, error) {
@@ -822,25 +871,7 @@ func init() {
 		if astr(t["state"]) != "in_progress" {
 			return none, fail(409, "Task is not in progress")
 		}
-		ids := []any{}
-		if r.ArtifactIds != nil {
-			for _, x := range r.ArtifactIds {
-				ids = append(ids, x)
-			}
-		} else {
-			rs, err := rowsOf(q, "SELECT coalesce(legacy_id,id) AS id FROM artifact WHERE task_id=$1 AND state='stored' AND role='original' ORDER BY seq", id)
-			if err != nil {
-				return none, err
-			}
-			for _, x := range rs {
-				ids = append(ids, x["id"])
-			}
-		}
-		text := "Accept the result of: " + astr(t["title"])
-		if r.Text != nil {
-			text = string([]rune(*r.Text)[:min(len([]rune(*r.Text)), 2000)])
-		}
-		qid, err := askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": text, "options": []string{"accepted", "rejected"}, "askedBy": actor(q, "operator"), "data": doc{"artifactIds": ids}})
+		qid, err := requestAcceptance(q, t, r.ArtifactIds, r.Text, actor(q, "operator"))
 		if err != nil {
 			return none, err
 		}
