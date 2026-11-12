@@ -23,14 +23,14 @@ while :; do
   line=$(gh api graphql -f query="$q" -F n="$pr" -q '.data.repository.pullRequest | [.state, .mergeStateStatus, (.mergeCommit.oid // "-"),
     (if .autoMergeRequest or .mergeQueueEntry then "waiting" else "-" end), (.mergeQueueEntry.state // "-"), (if [.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]? | select(.isRequired)] | group_by(.name) | map(max_by(.at // (if .conclusion == null then "~" else "" end)) | (.conclusion // .state)) | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "CANCELLED" or . == "STALE" or . == "ACTION_REQUIRED") then "red" else "-" end),
     (if .timelineItems.nodes[0].__typename == "RemovedFromMergeQueueEvent" then (.timelineItems.nodes[0].reason // "unknown") else "auto-merge off" end)] | join(" ")') \
-    || { dirty=0; wait_step "queue (gh failed)"; continue; }
-  read -r state merge_state sha waiting queued checks reason <<<"$line"
+    || { wait_step "queue (gh failed)"; continue; }  # observes nothing: the DIRTY count stays
+  read -r state merge_state sha waiting queue_state checks reason <<<"$line"
   [ "$state" = MERGED ] && break
   # A conflict with main before the queue takes the entry: auto-merge stays on and nothing is removed, so name it here. It
   # counts when DIRTY on two polls in a row: right after a push GitHub may still report the old head's DIRTY. Inside the queue
   # the queue decides (PR #451: DIRTY one second after joining the queue, merged five minutes later); a real conflict there
   # ends in a removal with reason merge_conflict, named below.
-  if [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ] && [ "$waiting" = waiting ] && [ "$queued" = "-" ]; then
+  if [ "$state" = OPEN ] && [ "$merge_state" = DIRTY ] && [ "$waiting" = waiting ] && [ "$queue_state" = "-" ]; then
     [ "$dirty" = 1 ] && { echo "not merged: $state, merge_conflict"; exit 1; }
     dirty=1; wait_step "queue"; continue
   fi
@@ -42,7 +42,7 @@ while :; do
   # start time yet, sorts newest; a run that ended without starting sorts oldest). A cancelled run does not pass either:
   # naming it beats a silent 45-minute wait.
   # Inside the queue the queue's own run decides (a removal above); a late red pull_request rerun does not.
-  [ "$checks" = red ] && [ "$queued" = "-" ] && { echo "not merged: $state, failed_checks (head)"; exit 1; }
+  [ "$checks" = red ] && [ "$queue_state" = "-" ] && { echo "not merged: $state, failed_checks (head)"; exit 1; }
   wait_step "queue"
 done
 observed "merged sha=$sha"
