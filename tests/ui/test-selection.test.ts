@@ -98,9 +98,9 @@ test('actual Git comparison accepts a qualified plan and rejects a corrupted omi
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
-test('known module execution retains native archives, HTTP consumers and shared fallback', () => {
-  for (const module of ['executor','gateway','update']) assert.deepEqual(execution([`go/${module}/main.go`],true,false),['go','app']);
-  assert.deepEqual(execution(['go/coordinator/main.go'],true,false),[...families]);
+test('known module execution retains HTTP consumers and shared fallback; archives are release-build\'s', () => {
+  for (const module of ['executor','gateway','update']) assert.deepEqual(execution([`go/${module}/main.go`],true,false),['go']);
+  assert.deepEqual(execution(['go/coordinator/main.go'],true,false),['go','browser']);
   for (const path of ['app/src/views/hosts.tsx','packages/ui/src/button.tsx']) assert.deepEqual(execution([path],true,false),['app','browser']);
   for (const path of ['go/obs/obs.go','go/contract/base.go','go/go.mod','tests/ui/new.test.ts']) assert.deepEqual(execution([path],true,false),[...families]);
   assert.deepEqual(execution(['go/executor/main.go','app/src/views/hosts.tsx'],true,false),[...families]);

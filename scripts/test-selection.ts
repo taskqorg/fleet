@@ -69,9 +69,9 @@ export function select(paths: string[]): {selected: Family[]; reasons: string[]}
 export function execution(paths: string[] | null, previousGreen: boolean, forced: boolean): Family[] {
   if (!paths?.length || !previousGreen || forced) return [...families];
   if (!paths.every(p => prose(p) || /^(go\/(coordinator|executor|gateway|update)\/|app\/src\/|packages\/ui\/)/.test(p))) return [...families];
+  // No family for the release archives: the merge queue's release-build builds and selftests them for every candidate,
+  // and the app check of a merge group requires it (docs/designs/fleet-delivery-pipeline.md#4-automatic-release).
   const chosen = new Set(select(paths).selected);
-  // Go candidates retain the app family's clean native archive builds and selftests.
-  if (paths.some(p => /^go\//.test(p))) chosen.add('app');
   return families.filter(f => chosen.has(f));
 }
 
