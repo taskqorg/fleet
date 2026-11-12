@@ -72,7 +72,7 @@ jobs:
           version=1.$day.$(( ${m:--1} + 1 ))
           # The migration check in build pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
           # digests: "<version>=sha256:<hex>" of each one's linux tarball, so build verifies and caches them without more lookups.
-          releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name as $t | "\($t) \([.assets[] | select(.name == "fleet-\($t | ltrimstr("v"))-linux-amd64.tgz") | .digest // empty] | first // "")"' | awk '$1 ~ /^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ && n++ < 5 { print substr($1,2), $2 }')
+          releases=$(gh api "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name as $t | "\($t) \([.assets[] | select(.name == "fleet-\($t | ltrimstr("v"))-linux-amd64.tgz") | .digest // empty] | first // "")"' | awk '$1 ~ /^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ && n++ < 5 { print substr($1,2), $2 }')
           recent=$(awk 'NF { printf "%s%s", sep, $1; sep=" " } END { print "" }' <<< "$releases")
           digests=$(awk 'NF { printf "%s%s=%s", sep, $1, $2; sep=" " } END { print "" }' <<< "$releases")
           { echo release=true; echo "sha=$sha"; echo "version=$version"; echo "previous=${latest#v}"; echo "recent=$recent"; echo "digests=$digests"; } >> "$GITHUB_OUTPUT"
@@ -155,7 +155,7 @@ jobs:
       # the last 5 releases' coordinators must still serve on the database the new one migrated, so a rollback on PDS18
       # from up to 5 releases behind returns to a checked pair (fleet-delivery-pipeline.md section 5). Same job as the
       # build: the runner's disk is capped at 20 MB/s, so no artifact round trip, the recent coordinators stay extracted
-      # under ~/fleet-releases between runs (one download per new release) and the throwaway PostgreSQL skips fsync.
+      # under ~/fleet-releases/v between runs (one download per new release) and the throwaway PostgreSQL skips fsync.
       - name: New coordinator migrates, each recent one still serves
         if: needs.gate.outputs.recent != '' && needs.gate.outputs.ui != 'true'
         env:
@@ -169,9 +169,10 @@ jobs:
           export PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" pg=$RUNNER_TEMP/pg
           # The runner is persistent: a failed step must not leave a coordinator on the port or a PostgreSQL behind, and a
           # cancelled one (killed before the trap) is cleared here.
-          pkill -f '(^|/)fleet-coordinator$' || true; pkill -QUIT -f 'postgres .*-p 54329' || true
-          i=0; while pgrep -f '(^|/)fleet-coordinator$|postgres .*-p 54329' >/dev/null && [ $i -lt 10 ]; do i=$((i+1)); sleep 1; done
-          pkill -KILL -f '(^|/)fleet-coordinator$|postgres .*-p 54329' || true
+          stale() { "$@" -u "$(id -u)" -f '(^|/)fleet-coordinator$|postgres .*-p 54329'; }
+          stale pkill || true
+          i=0; while stale pgrep >/dev/null && [ $i -lt 10 ]; do i=$((i+1)); sleep 1; done
+          stale pkill -KILL || true
           pid=; trap '{ [ -z "$pid" ] || { kill $pid; wait $pid; }; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
@@ -179,12 +180,13 @@ jobs:
           # Each entry holds the release's fleet-coordinator, config/ and release.json and the sha256 digest of the asset it
           # came from; a replaced asset (new digest) is fetched again, and the download is checked against that digest.
           # An asset GitHub reports no digest for is fetched every run, unchecked, as before the cache.
-          cache=${HOME:?}/fleet-releases; mkdir -p "$cache"
+          # One extra level: a coordinator's repoRoot() probes two directories above its binary for config/, never $HOME.
+          cache=${HOME:?}/fleet-releases/v; mkdir -p "$cache"
           for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) ;; *) rm -rf "$d";; esac; done
           members="./fleet-coordinator ./config ./release.json"
           for v in $RECENT; do
             file=fleet-$v-linux-amd64.tgz
-            digest=$(printf '%s\n' $DIGESTS | sed -n "s/^$v=//p")
+            digest=$(printf '%s\n' $DIGESTS | awk -F= -v v="$v" '$1 == v { print $2 }')
             [ -n "$digest" ] && [ -x "$cache/$v/fleet-coordinator" ] && [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest $members" ] && continue
             rm -rf "$cache/$v.tmp"; mkdir "$cache/$v.tmp"
             gh release download "v$v" -p "$file" -D "$RUNNER_TEMP" --clobber || { echo "::error::v$v: download failed"; exit 1; }
@@ -202,9 +204,9 @@ jobs:
           for v in "${RECENT%% *}" "$VERSION" $RECENT; do
             dir=$cache/$v; [ "$v" = "$VERSION" ] && dir=$PWD/new
             (cd "$dir" && FLEET_PROJECT_CONFIG_DIRECTORY=$dir/config FLEET_PROFILES_DIRECTORY=$dir/config/agents FLEET_LAB_DIRECTORY=$dir/config/lab exec ./fleet-coordinator) & pid=$!
-            i=0; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
+            t=$SECONDS; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
               kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }
-              i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
+              [ $((SECONDS - t)) -lt 60 ] || { echo "::error::$dir coordinator not healthy after 60 s"; exit 1; }; sleep 1; done
             echo; kill $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; wait $pid || true; pid=
           done
           # Seed the cache with this release (GitHub's asset digest is the sha256 of the uploaded bytes), so the next run
