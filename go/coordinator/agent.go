@@ -1469,7 +1469,8 @@ func init() {
 		// The director's rights, the execution as actor (docs/designs/fleet-pm-agent.md §1).
 		q.agent = "execution:" + executionID
 		q.r = q.r.WithContext(context.WithValue(q.ctx(), actorKey{}, q.agent))
-		var focus []string // nil: no focus or "*"
+		var focus []string        // nil: no focus or "*"
+		var sessionProject string // the calling session's own project
 		prove := func() error {
 			e := doc{}
 			if executionID != "" {
@@ -1492,7 +1493,7 @@ func init() {
 				if s, err := maybe(q, sid, "session"); err != nil {
 					return err
 				} else if s != nil {
-					focus = focusIDs(s)
+					focus, sessionProject = focusIDs(s), astr(s["projectId"])
 				}
 			}
 			// A call without an execution (initialize, tools/list) acts for the host's holder; never an implicit owner.
@@ -1544,8 +1545,14 @@ func init() {
 				}
 				f["projectId"], a["filter"] = focus, f // focus filters reads without a project (§2)
 			}
-			if name == "task_create" && a["projectId"] == nil && len(focus) == 1 {
-				a["projectId"] = focus[0] // one focus project is the default (§2)
+			// Every operation that takes projectId defaults it to the one focus project, else the session's project (§2);
+			// the operation's own gates refuse a project the director cannot reach.
+			if a["projectId"] == nil && takesProject(name) {
+				if len(focus) == 1 {
+					a["projectId"] = focus[0]
+				} else if len(focus) == 0 && sessionProject != "" {
+					a["projectId"] = sessionProject
+				}
 			}
 			if name == "project_update" || name == "project_context" || name == "project_readiness" {
 				var err error
@@ -1872,4 +1879,14 @@ func fleetOperations(p *Person) []doc {
 	}
 	slices.SortFunc(out, func(a, b doc) int { return strings.Compare(astr(a["name"]), astr(b["name"])) })
 	return out
+}
+
+// takesProject: the operation's input schema names a projectId argument.
+func takesProject(name string) bool {
+	var sc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	json.Unmarshal(contract.Operations[name].InputSchema, &sc)
+	_, ok := sc.Properties["projectId"]
+	return ok
 }

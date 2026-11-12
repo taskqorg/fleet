@@ -259,3 +259,15 @@ test('PM10 key request: an agent asks for a key and gets only its fingerprint; n
   assert.equal((await op('questions_answer', {questionId: third.id, answer: 'yes'})).status, 409);
   assert.equal((await op('questions_answer', {questionId: third.id, answer: 'decline'}, MEMBER)).status, 403, 'a replay keeps the owner-only rule');
 });
+
+test('PM11 an agent call without projectId gets its session project, for any operation that takes one (requirement: fleet-pm-agent.md §2 default project; risk: an agent tool fails 400 Expected projectId inside its own project session, live 2026-11-12)', {timeout: 30_000}, async () => {
+  const conn = 'kr-' + randomUUID().slice(0, 8);
+  ok(await op('connections_create', {name: conn, provider: 'tavily'}));
+  const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
+  const asked = ok(await pm.tool('connections_key_request', {requestId: randomUUID(), connection: conn}));
+  assert.equal(asked.projectId, PROJECT);
+  assert.ok(ok(await pm.tool('question_history', {})).questions.some((x: any) => x.id === asked.id), 'question_history defaults too');
+  ok(await op('questions_answer', {questionId: asked.id, answer: 'decline'}));
+  const member = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
+  assert.notEqual((await member.tool('question_history', {projectId: OTHER})).status, 200, 'another project stays refused');
+});
