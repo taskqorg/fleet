@@ -236,7 +236,7 @@ One pull request per item, in this order. Items 1 and 2 wait for #191: the rules
     * Check: two merges inside one release run produce one release that contains both.
 3. **Hosts** (`fleet-update` code):
     * `go/update/update.go`: ETag fetch, `checkedWith` check and its needs-you question, dump retention, poll smoke step.
-    * `deploy/infrastructure/fleet-update.timer`: 1 minute.
+    * `deploy/infrastructure/fleet-update.timer`: 1 minute, `AccuracySec=1s`.
     * `go/update/trigger.go`: the `.path` unit and the watch LaunchAgent, written by each executor-mode run.
     * `deploy/README.md` first-install steps: no trigger to copy; `fleet-update` writes it.
     * Check: a release reaches all hosts within 15 minutes; a release whose coordinator refuses the executor poll rolls back on PDS18 and opens the needs-you question.
