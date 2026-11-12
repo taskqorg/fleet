@@ -129,7 +129,7 @@ jobs:
           [ "$RESULT" = success ] || exit 1
           echo 'Qualified by app; test-qualification records executed and omitted families.'
   # Go (docs/designs/fleet-go-code.md), split into parallel parts so the family is never the critical path:
-  # unit: generated-code drift, vet, a Windows compile of the coordinator, unit tests with -race;
+  # vet: generated-code drift, vet, a Windows compile of the coordinator; unit: the unit tests with -race;
   # mcp: the executor's MCP adapter tests; outside-N: the outside tests against a -race coordinator on the runner's
   # PostgreSQL, sharded by file (tests/go/run.sh). The go wrapper sees the matrix as one result.
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
@@ -142,7 +142,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [unit, mcp, outside-0, outside-1, outside-2, outside-3]
+        part: [vet, unit, mcp, outside-0, outside-1, outside-2, outside-3]
     env:
       GOFLAGS: -mod=readonly
       # The span store for go/obs and tests/go/telemetry.test.ts live tests (docs/designs/fleet-telemetry.md); same LTS as deploy/infrastructure/fleet-clickhouse.container.
@@ -181,9 +181,9 @@ jobs:
         with:
           node-version: 22
       # Generated code is committed (go/contract): regenerating must not change it.
-      - if: matrix.part == 'unit'
+      - if: matrix.part == 'vet'
         run: cd go && go generate ./... && { test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }; }
-      - if: matrix.part == 'unit'
+      - if: matrix.part == 'vet'
         run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator
       # -race needs cgo on Linux; release binaries stay CGO_ENABLED=0 (deploy/build-release.sh, app job).
       - if: matrix.part == 'unit'
