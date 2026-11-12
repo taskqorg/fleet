@@ -211,10 +211,11 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	// A refused read (the tool not granted, the key gone) says nothing about the item: stop instead of giving it up.
 	// GitHub's own replies arrive as http-<status> codes; any other failure is the connection's or the gateway's.
-	// GitHub's rate limits (403, 429) say nothing about the item either: the pass stops and the next one goes on.
+	// GitHub's 429 says nothing about the item either: the pass stops and the next one goes on. A 403 may be the item's
+	// own (not accessible), so it uses up a retry like any other GitHub error.
 	refused := func(err error) bool {
 		m := err.Error()
-		return !strings.Contains(m, ": http-") || strings.Contains(m, ": http-403") || strings.Contains(m, ": http-429")
+		return !strings.Contains(m, ": http-") || strings.Contains(m, ": http-429")
 	}
 	backfill := !st.Backfilled
 	// Pull requests: the most recently updated first; after the backfill, until a page older than the last pass.
