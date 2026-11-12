@@ -22,6 +22,15 @@ test('Q1 a project execution queued before project snapshots starts with the pro
     const start = ok(await poll()).commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
     assert.ok(start, 'the legacy execution starts');
     assert.equal(start.payload.projectId, 'hello-world');
+
+    // A start the coordinator refuses cancels that execution only.
+    const bad = ok(await post('/api/ops/session_start', {requestId: randomUUID(), text: 'hi', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host'}, owner));
+    c.sql(`UPDATE execution SET data = data - 'projectSnapshot' WHERE id=${lit(bad.executionId)};
+      UPDATE document SET data = jsonb_set(data, '{projectId}', '"no-such-project"') WHERE id=${lit(bad.sessionId)} AND kind='session';`);
+    assert.ok(!ok(await poll()).commands.some((x: any) => x.executionId === bad.executionId), 'no start for the refused execution');
+    const row = c.sql(`SELECT state || ' ' || (data->>'stopDetail') FROM execution WHERE id=${lit(bad.executionId)};`).trim();
+    assert.equal(row, 'cancelled start refused: Unknown project');
+    ok(await poll());
   } finally {
     await c.stop();
   }

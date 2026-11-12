@@ -7,7 +7,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fleet/contract"
 	"fmt"
 	"regexp"
@@ -480,6 +479,10 @@ func jsText(v any) string {
 }
 
 func asHTTP(err error, he **HTTPError) bool {
+	if c, ok := err.(*codedError); ok {
+		*he = &c.HTTPError
+		return true
+	}
 	h, ok := err.(*HTTPError)
 	*he = h
 	return ok
@@ -538,18 +541,31 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 			delete(e, "waitReason")
 			delete(e, "waitDetail")
+			// A refused start ends this execution only: returning would fail the whole poll, and every later poll of this
+			// host, while the execution stays queued (PDS18 outage, 2026-11-12). Its partial writes roll back first.
+			queued := mapOf(clone(e))
+			if err := exec(q, "SAVEPOINT start_command"); err != nil {
+				return err
+			}
 			if _, err := a.startCommand(q, e, best.Host, best.binding); err != nil {
-				// A refused start ends this execution only: returning would fail the whole poll, and every later poll of
-				// this host, while the execution stays queued (PDS18 outage, 2026-11-12).
 				var he *HTTPError
-				if !errors.As(err, &he) || he.Code >= 500 {
+				if !asHTTP(err, &he) {
+					return err // database or transport: retried by the next poll
+				}
+				if err := exec(q, "ROLLBACK TO SAVEPOINT start_command"); err != nil {
 					return err
 				}
-				e["hostId"], e["state"], e["stopDetail"] = nil, "cancelled", "start refused: "+he.Msg
-				if err := put(q, "execution", e); err != nil {
+				queued["state"], queued["stopDetail"] = "cancelled", "start refused: "+he.Msg
+				if err := put(q, "execution", queued); err != nil {
+					return err
+				}
+				if err := exec(q, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"]); err != nil {
 					return err
 				}
 				continue
+			}
+			if err := exec(q, "RELEASE SAVEPOINT start_command"); err != nil {
+				return err
 			}
 			if err := recordDecision(q, e, polling, cs, best); err != nil {
 				return err
@@ -707,7 +723,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	extra := mapOf(d["payload"])
 	if v, ok := extra["inputs"]; ok {
 		if err := json.Unmarshal(jsonBytes(v), &p.Inputs); err != nil {
-			return nil, fmt.Errorf("execution %v: pipeline inputs are not [{artifactId, path}]: %w", e["id"], err)
+			return nil, failf(400, "execution %v: pipeline inputs are not [{artifactId, path}]: %v", e["id"], err)
 		}
 	}
 	p.Skills, p.WebRoute = rawList(extra["skills"]), strPtr(extra["webRoute"])
