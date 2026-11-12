@@ -1896,8 +1896,8 @@ var projectRequired = func() map[string]bool {
 		var sc struct {
 			Required []string `json:"required"`
 		}
-		// a revoke must name its project: an agent never revokes access by omission.
-		if json.Unmarshal(o.InputSchema, &sc) == nil && slices.Contains(sc.Required, "projectId") && n != "project_initial_access_revoke" {
+		// a revoke or an archive must name its project: an agent never does either by omission.
+		if json.Unmarshal(o.InputSchema, &sc) == nil && slices.Contains(sc.Required, "projectId") && n != "project_initial_access_revoke" && n != "project_archive" {
 			out[n] = true
 		}
 	}

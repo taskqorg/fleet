@@ -1,5 +1,5 @@
 // Outside tests of project scope for people who are not the owner (docs/designs/fleet-people-access.md): a member granted
-// one project (fleet-hello-world) and an outsider with no grant, against the real binary and Postgres. The owner returns
+// one project (desiign) and an outsider with no grant, against the real binary and Postgres. The owner returns
 // from unscoped() and row-level security before any check, so owner-only tests never exercise these paths.
 //   FLEET_TRIAL_TESTS=tests/go/scope.test.ts node tests/trial/run.ts   (or tests/go/run.sh, which sets the store env)
 // Each test names its requirement and the risk it guards. Allowing a member more is not a defect; reading another
@@ -11,7 +11,7 @@ import {fakeS3} from '../s3-fake.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test', MEMBER = 'member@trial.test', OUTSIDER = 'outsider@trial.test', ARCHITECT = 'architect@trial.test';
-const MINE = 'fleet-hello-world', OTHER = 'hello-world';
+const MINE = 'desiign', OTHER = 'hello-world';
 const test = (name: string, fn: () => Promise<void>, o: {todo?: string} = {}) => nodeTest(name, {timeout: 30_000, ...o}, fn);
 type Reply = {status: number, body: any, headers: Headers};
 async function call(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Reply> {
@@ -57,7 +57,7 @@ test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule
   assert.equal(s.account, 'scope-sub', JSON.stringify(s));
   const {commands} = ok(await h('/api/hosts/poll', poll));
   assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'the host claims the member\'s start');
-  // Readiness runs on the project's configured hosts (owner-mac in config/projects/fleet-hello-world).
+  // Readiness runs on the project's configured hosts (owner-mac in config/projects/desiign).
   const mac = ok(await op('hosts_register', {id: 'owner-mac'})).secret;
   ok(await call('POST', '/api/hosts/poll', poll, {authorization: 'Bearer ' + mac}));
   const r = ok(await op('project_readiness', {projectId: MINE}, MEMBER));

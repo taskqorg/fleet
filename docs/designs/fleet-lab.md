@@ -14,7 +14,7 @@ Lab adds no run machinery of its own. A trial is a `pipeline_run` execution with
 | Profile | A trusted JSON file in `config/agents` naming harness, model, skills and granted connections (`listProfiles` in `go/coordinator/projects.go`; one validator, `contract.ParseProfile` in `go/contract/profile.go`, schema `contracts/profile.schema.json`). |
 | Connection | Fleet's record of one outside provider endpoint, owned by [fleet-connections.md](fleet-connections.md). Example: `tavily`. |
 | Catalogue / recommendation | `config/catalogue.json` lists methods per project; `recommendation_set` records the chosen method as a `project-recommendation`. |
-| Use case | A registry entry pointing at a use case written in an org repo. Current sources: Fleet, csgo, desiign; replaced prototypes (taskq, pilotq, agentq, dashq, assetq) keep their entries marked with `status` and `maps_to` ([asset pipelines](fleet-asset-pipelines.md#3-registry-s3)). |
+| Use case | A registry entry pointing at a use case written in an org repo. Current sources: Fleet, csgo, desiign; replaced prototypes (taskq, pilotq, agentq, assetq) keep their entries marked with `status` and `maps_to` ([asset pipelines](fleet-asset-pipelines.md#3-registry-s3)). |
 | Example | One runnable Lab input drawn from a use case. Never a task. |
 | Experiment | One whole comparison: examples × variants × repeats. Kind `single`, `ab` or `loop`. |
 | Variant | A label plus overrides of the pipeline; hashed into `config_ref`. |

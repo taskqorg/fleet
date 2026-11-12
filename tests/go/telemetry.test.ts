@@ -77,7 +77,7 @@ test('T2 a host span batch keeps only rows of its own host and executions, with 
     const secret = (await call(c, '/api/ops/hosts_register', {id})).body.secret;
     const span = (host: string, extra = {}) => ({trace_id: 'a'.repeat(32), span_id: 'b'.repeat(16), parent_span_id: '', service: 'executor', host_id: host, name: 'host.heartbeat', kind: 'check',
       start: '2026-11-11 10:00:00.000000', duration_ns: 1, outcome: 'ok', error_class: '', actor: 'fleet', attrs: {}, ...extra});
-    const r = await call(c, '/api/hosts/spans', {batchId: 'b1', spans: [span(id, {project_id: 'fleet-hello-world', attrs: {prompt: 'x', 'fleet.process': 'executor'}}), span('other-host'), span(id, {execution_id: 'not-mine'}),
+    const r = await call(c, '/api/hosts/spans', {batchId: 'b1', spans: [span(id, {project_id: 'desiign', attrs: {prompt: 'x', 'fleet.process': 'executor'}}), span('other-host'), span(id, {execution_id: 'not-mine'}),
       span(id, {kind: 'producer'}), span(id, {trace_id: 'short'}), span(id, {service: 'coordinator'})]}, {bearer: secret, person: null});
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.deepEqual(r.body, {accepted: 1, skipped: 5});
@@ -103,7 +103,7 @@ test('T3 a non-owner telemetry read is limited to granted projects and gets no h
     assert.equal(reads.length, 2, 'operations and runs only, no host or process reading');
     for (const x of reads) {
       assert.match(x.query, /project_id IN \{scope:Array\(String\)\}/);
-      assert.equal(x.params.get('param_scope'), "['fleet-hello-world']");
+      assert.equal(x.params.get('param_scope'), "['desiign']");
     }
     assert.equal((await call(c, '/api/ops/telemetry_trace', {traceId: 'nope'})).status, 400);
   } finally { await c.stop(); ch.close(); }

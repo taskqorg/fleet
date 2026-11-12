@@ -32,7 +32,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
   let t = performance.now();
   seed.bulk(() => {
     for (let i = 0; i < N; i++) {
-      const p = ['dashq', 'game', 'fleet'][i % 3];
+      const p = ['cs', 'game', 'fleet'][i % 3];
       const id = seed.task({ title: ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Write release notes', 'Compare 3D methods'][i % 5] + ' ' + i, projectId: p, priority: ['urgent', 'normal', 'background'][i % 3], ...(i % 5 === 0 ? { state: 'in_progress' } : {}) });
       if (i % 5 === 0) seed.execution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: p, hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' });
     }

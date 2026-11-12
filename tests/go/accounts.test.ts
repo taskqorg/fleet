@@ -6,7 +6,7 @@ import {startCoordinator, lit} from '../harness.ts';
 
 test('Account inspections retain legacy host work without widening actor/project access (requirement: fleet-people-access subscriptions and data-foundation typed execution history; risk: account reads 404 on retained tool_run or disclose a foreign execution)', {timeout: 30000}, async () => {
   const c = await startCoordinator({name:'account-read'});
-  const owner='owner@trial.test', architect='architect@trial.test', mine='fleet-hello-world', other='hello-world';
+  const owner='owner@trial.test', architect='architect@trial.test', mine='desiign', other='hello-world';
   const call=async(method:string,path:string,body?:unknown,person=owner)=>{
     const r=await fetch(c.base+path,{method,headers:{authorization:'Bearer '+c.secret,'x-fleet-person':person,...(body===undefined?{}:{'content-type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)});
     return {status:r.status,body:await r.json()};

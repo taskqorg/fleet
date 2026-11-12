@@ -91,3 +91,20 @@ test('Pinned context descriptors round-trip and freeze at real session enqueue a
  const foreign=structuredClone(content);foreign.settings.contextSources[0].repo='unknown';assert.equal((await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:2,content:foreign})).status,400);
  assert.equal((await op('project_context',{projectId:id},'outsider@trial.test')).status,404);
 });
+// R2, R7; owner decision 2026-11-12, archived repositories leave Fleet; risk: a dropped project keeps running work or stays listed.
+test('Owner archives a project only after its open work is closed; it leaves every list',async()=>{
+ const owner='owner@trial.test',id='project-'+randomUUID();
+ ok(await op('project_create',{id,requestId:randomUUID(),content:bundle(id)}));
+ const task=ok(await op('task_create',{projectId:id,title:'open work'},owner));
+ assert.equal((await op('project_archive',{projectId:id})).status,403);
+ const busy=await op('project_archive',{projectId:id},owner);assert.equal(busy.status,409);assert.match(JSON.stringify(busy.body),/task /);
+ ok(await op('task_cancel',{taskId:task.id??task.taskId},owner));
+ ok(await op('project_archive',{projectId:id},owner));
+ assert.ok(!ok(await op('project_list',{},owner)).projects.some((p:any)=>p.id===id));
+ assert.equal((await op('project_context',{projectId:id},owner)).status,404);
+ assert.equal((await op('project_archive',{projectId:id},owner)).status,404);
+ assert.equal((await op('task_create',{projectId:id,title:'late work'},owner)).status,404);
+ assert.equal((await op('session_start',{requestId:randomUUID(),text:'late',projectId:id,profileId:'pm'},owner)).status,404);
+ assert.equal((await op('project_update',{projectId:id,requestId:randomUUID(),baseRevision:1,content:bundle(id,'back')},owner)).status,404);
+ assert.equal((await op('project_create',{id,requestId:randomUUID(),content:bundle(id)},owner)).status,409);
+});

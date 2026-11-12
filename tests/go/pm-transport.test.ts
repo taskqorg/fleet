@@ -9,16 +9,16 @@ async function op(name:string,args:object={},who=person){const r=await fetch(bas
 test('PM transport: lost committed create, concurrent replay, native uncertainty readback and explicit Held attachment',{timeout:90_000},async()=>{
  const hostId='pm-transport-host',host=await op('hosts_register',{id:hostId,holder:person},'owner@trial.test');
  const poll=async()=>{const r=await fetch(base+'/api/hosts/poll',{method:'POST',headers:{authorization:'Bearer '+host.secret,'content-type':'application/json'},body:JSON.stringify({platform:'darwin',capabilities:[],stores:[],problems:[]})});assert.equal(r.status,200);return r.json() as Promise<any>;};
- await poll();const startId=randomUUID();const session=await op('session_start',{projectId:'fleet-hello-world',role:'pm',requestId:startId,text:'Propose a Held task only'});
+ await poll();const startId=randomUUID();const session=await op('session_start',{projectId:'desiign',role:'pm',requestId:startId,text:'Propose a Held task only'});
  // A client retry after a cut reply (app writeOnce) sends the same requestId: the same session, no second one.
- const again=await op('session_start',{projectId:'fleet-hello-world',role:'pm',requestId:startId,text:'Propose a Held task only'});assert.equal(again.sessionId,session.sessionId);assert.equal(again.existing,true);
+ const again=await op('session_start',{projectId:'desiign',role:'pm',requestId:startId,text:'Propose a Held task only'});assert.equal(again.sessionId,session.sessionId);assert.equal(again.existing,true);
  const command=(await poll()).commands.find((c:any)=>c.executionId===session.executionId&&c.kind==='start');assert.ok(command);
  const create=command.payload.fleetOperations.find((o:any)=>o.name==='task_create');assert.ok(create.inputSchema.properties.title,'canonical mutation schema is retained');
  const attach=command.payload.fleetOperations.find((o:any)=>o.name==='session_task_attach');assert.ok(attach.inputSchema.properties.taskId);
  const title='PM lost reply '+randomUUID();
- const code=await new Promise<number>(resolve=>spawn('go',['test','./executor','-run','^TestPMTransportAgainstCoordinator$','-count=1','-timeout=75s'],{cwd:new URL('../../go',import.meta.url),stdio:'inherit',env:{...process.env,FLEET_PM_TEST_URL:base,FLEET_PM_TEST_TOKEN:host.secret,FLEET_PM_TEST_TITLE:title,FLEET_PM_TEST_CONTEXT:JSON.stringify({hostId,commandId:command.id,executionId:session.executionId,projectId:'fleet-hello-world',operations:command.payload.fleetOperations})}}).on('exit',c=>resolve(c??1)));
+ const code=await new Promise<number>(resolve=>spawn('go',['test','./executor','-run','^TestPMTransportAgainstCoordinator$','-count=1','-timeout=75s'],{cwd:new URL('../../go',import.meta.url),stdio:'inherit',env:{...process.env,FLEET_PM_TEST_URL:base,FLEET_PM_TEST_TOKEN:host.secret,FLEET_PM_TEST_TITLE:title,FLEET_PM_TEST_CONTEXT:JSON.stringify({hostId,commandId:command.id,executionId:session.executionId,projectId:'desiign',operations:command.payload.fleetOperations})}}).on('exit',c=>resolve(c??1)));
  assert.equal(code,0);
- const tasks=(await op('task_list',{projectId:'fleet-hello-world'})).tasks.filter((t:any)=>t.title===title);assert.equal(tasks.length,1,'one task after a lost response and concurrent retransmissions');
+ const tasks=(await op('task_list',{projectId:'desiign'})).tasks.filter((t:any)=>t.title===title);assert.equal(tasks.length,1,'one task after a lost response and concurrent retransmissions');
  assert.equal(tasks[0].state,'paused');assert.equal(tasks[0].pauseReason,'held');
  assert.equal((await op('session_get',{sessionId:session.sessionId})).taskId,tasks[0].id,'explicit native attachment retained');
  const target='receipt-'+randomUUID(),createId=randomUUID(),created={id:target,requestId:createId,content:{settings:{id:target,name:'Receipt scope',contextFiles:[]},contextFiles:[]}};const made=await op('project_create',created);

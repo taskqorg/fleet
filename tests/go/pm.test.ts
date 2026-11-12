@@ -9,7 +9,7 @@ import {randomUUID} from 'node:crypto';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test', MEMBER = 'member@trial.test';
-const PROJECT = 'fleet-hello-world', OTHER = 'hello-world';
+const PROJECT = 'desiign', OTHER = 'hello-world';
 type Reply = {status: number, body: any};
 async function call(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Reply> {
   const r = await fetch(BASE + path, {method, headers: {...(body === undefined ? {} : {'content-type': 'application/json'}), ...headers}, body: body === undefined ? undefined : JSON.stringify(body)});

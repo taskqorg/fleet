@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fleet/contract"
+	"fmt"
 	"github.com/jackc/pgx/v5"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -59,6 +62,12 @@ func projectWrite(q *Request, create bool) (any, error) {
 	head, err := headOf(q, "project", id, true)
 	if err != nil {
 		return nil, err
+	}
+	if head != nil && head.Retired != nil {
+		if create {
+			return nil, fail(409, "Project id belongs to an archived project")
+		}
+		return nil, fail(404, "Unknown project")
 	}
 	if create {
 		if head != nil {
@@ -179,7 +188,47 @@ func projectInitialRevoke(q *Request) (any, error) {
 	}
 	return doc{"projectId": id, "accessVersion": version, "revoked": true}, nil
 }
+
+// projectArchive: retire a project definition (owner decision to drop a project). Its tasks, sessions and executions
+// must be closed first (task_cancel, session_archive, execution_stop), so nothing runs under a project no list shows.
+// The GLOBAL write lock of every operation serializes this check with task_create and session_start; afterwards
+// task_create, project_update and project_create refuse the id.
+func projectArchive(q *Request) (any, error) {
+	if err := ownerOnly(q, "Only the owner archives projects"); err != nil {
+		return nil, err
+	}
+	id := astr(body(q)["projectId"])
+	rows, err := queryRows(q, `SELECT kind,count(*) AS n,min(id) AS example FROM (
+	  SELECT 'task' AS kind,id FROM task WHERE project_id=$1 AND state::text=ANY($2)
+	  UNION ALL SELECT 'session',id FROM document WHERE project_id=$1 AND kind='session' AND NOT data ? 'archivedAt'
+	  UNION ALL SELECT 'execution',id FROM execution WHERE project_id=$1 AND state IN ('preparing','running','waiting')) o GROUP BY kind ORDER BY kind`, id, slices.Collect(maps.Keys(openTask)))
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > 0 {
+		open := []string{}
+		for _, r := range rows {
+			open = append(open, fmt.Sprintf("%v %s (e.g. %s)", r["n"], astr(r["kind"]), astr(r["example"])))
+		}
+		return nil, fail(409, "Close first: "+strings.Join(open, ", "))
+	}
+	tag, err := q.tx.Exec(q.ctx(), "UPDATE definition SET retired_at=now() WHERE kind='project' AND id=$1 AND retired_at IS NULL", id)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, fail(404, "Unknown project")
+	}
+	return doc{"projectId": id, "archived": true}, nil
+}
+
+// projectRetired: the id belongs to an archived project (its definition row stays, so the id is never reused).
+func projectRetired(q *Request, id string) (bool, error) {
+	return has(q, "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NOT NULL", id)
+}
+
 func init() {
+	gatedObjOp("project_archive", false, shaped[contract.ProjectArchiveRequest, contract.ProjectArchiveReply](projectArchive))
 	gatedObjOp("project_create", false, shaped[contract.ProjectCreateRequest, contract.ProjectCreateReply](func(q *Request) (any, error) { return projectWrite(q, true) }))
 	gatedObjOp("project_update", false, shaped[contract.ProjectUpdateRequest, contract.ProjectUpdateReply](func(q *Request) (any, error) { return projectWrite(q, false) }))
 	gatedObjOp("project_initial_access_revoke", false, shaped[contract.ProjectInitialAccessRevokeRequest, contract.ProjectInitialAccessRevokeReply](projectInitialRevoke))

@@ -34,10 +34,10 @@ test('R2 executions_runners shows a person only the runs and spend of projects t
   const c = await startCoordinator({name: 'runners2'});
   try {
     c.sql(`INSERT INTO execution(id,kind,state,host_id,project_id,started_at,ended_at) VALUES
-      ('s-mine','agent_run','succeeded','h1','fleet-hello-world',now()-interval '2 minutes',now()-interval '1 minute'),
+      ('s-mine','agent_run','succeeded','h1','desiign',now()-interval '2 minutes',now()-interval '1 minute'),
       ('s-other','agent_run','succeeded','h1','other',now()-interval '2 minutes',now()-interval '1 minute'),
       ('s-none','tool_run','succeeded',NULL,NULL,now()-interval '2 minutes',now()-interval '1 minute');
-      INSERT INTO execution_totals(execution_id,project_id,tokens_input) VALUES ('s-mine','fleet-hello-world',5),('s-other','other',7);`);
+      INSERT INTO execution_totals(execution_id,project_id,tokens_input) VALUES ('s-mine','desiign',5),('s-other','other',7);`);
     const as = async (person: string) => (await (await fetch(c.base + '/api/ops/executions_runners', {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': person, 'content-type': 'application/json'}, body: '{}'})).json()) as any;
     const member = await as('member@trial.test');
     assert.deepEqual(member.runs.map((r: any) => r.id), ['s-mine'], JSON.stringify(member.runs));

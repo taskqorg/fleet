@@ -285,7 +285,7 @@ function Laboratory() {
     {tab === 'Trials' && <Panel><TaskListView items={ALL.slice(0, 300)} now={NOW} onPin={() => {}} height="420px" /></Panel>}
     {tab === 'Assessments' && <Empty text="No assessments yet. Write one from the comparison." />}
     <Panel>
-      <DecisionBlock question="Use B new skill for hero copy in dashq?" askedBy="lab agent" addressedTo="architect" since={NOW - 3 * hr} now={NOW}
+      <DecisionBlock question="Use B new skill for hero copy in cs?" askedBy="lab agent" addressedTo="architect" since={NOW - 3 * hr} now={NOW}
         context="B scores 0.83 against 0.71 with fewer tokens; 2 failed trials kept for review." options={[{ label: 'Yes', kbd: 'a', primary: true }, { label: 'Keep current' }]}
         answered={note ? { by: 'you', answer: note, at: NOW, delivered: true } : undefined} onAnswer={setNote} />
     </Panel>
@@ -382,7 +382,7 @@ function Agents() {
       <DetailSection title="Used by">
         <KvRow icon="network" label="issue-to-pr" meta="pipeline · step review-code" />
         <KvRow icon="network" label="website-page" meta="pipeline · step review" />
-        <KvRow icon="rows-3" label="code-review" meta="catalogue method · recommended for dashq, fleet" />
+        <KvRow icon="rows-3" label="code-review" meta="catalogue method · recommended for cs, fleet" />
       </DetailSection>
       <Totals items={[{ label: 'Executions, 30 days', m: m(58), kind: 'count', note: '3 failed' }, { label: 'Median time', m: m(250), kind: 'duration' }, { label: 'Cost', m: m(41.2, 'estimated', 'tokens'), kind: 'money' }]} />
     </>}
@@ -509,14 +509,14 @@ function Catalogue() {
           <div role="row" class="vl-row static"><StateBadge family="definition" state="ready" compact /><span class="title">Source discovery</span><span class="muted">shared</span><span class="mono" data-tip="config/pipelines/search-basic.json">search-basic</span>
             <span class="r"><Num m={m(0.82)} kind="score" /></span><span class="r"><Num m={m(8)} kind="duration" /></span><span class="r"><Num m={m(0.02)} kind="money" /></span><span>everyone</span></div>
           <div role="row" class="vl-row static"><StateBadge family="definition" state="ready" compact /><span class="title">Summary with sources</span><span class="muted">shared</span><span class="mono" data-tip="config/pipelines/web-research.json">web-research</span>
-            <span class="r"><Num m={m(0.91)} kind="score" /></span><span class="r"><Num m={m(130)} kind="duration" /></span><span class="r"><Num m={m(0.38, 'estimated', 'tokens')} kind="money" /></span><span>dashq, fleet</span></div>
+            <span class="r"><Num m={m(0.91)} kind="score" /></span><span class="r"><Num m={m(130)} kind="duration" /></span><span class="r"><Num m={m(0.38, 'estimated', 'tokens')} kind="money" /></span><span>cs, fleet</span></div>
           <div role="row" class="vl-row static"><StateBadge family="definition" state="unchecked" compact /><span class="title">Guided delivery</span><span class="muted">csgo</span><span class="mono" data-tip="config/pipelines/prop-search.json">prop-search</span>
             <span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="score" /></span><span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="duration" /></span><span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="money" /></span><span class="muted">nobody yet</span></div>
         </div>
       </DetailSection>
       <DetailSection title="Which method a call uses">
         <KvRow icon="list" label="The task names one" meta="that method, never replaced without permission" />
-        <KvRow icon="folder-open" label="Else the project recommends one" meta="dashq, fleet: Summary with sources" />
+        <KvRow icon="folder-open" label="Else the project recommends one" meta="cs, fleet: Summary with sources" />
         <KvRow icon="rows-3" label="Else the shared default" meta="Source discovery" />
       </DetailSection>
       <div class="state-line"><Button label="Recommend for a project" icon="check-check" /><Button label="Compare in Lab" icon="chart-no-axes-column" /></div>

@@ -5,8 +5,7 @@
   "known_hosts": "pinned host keys (StrictHostKeyChecking=yes)"
  },
  "connections": {
-  "fleet-hello-world": "<dir>/fleet-hello-world/id_ed25519",
-  "fleet-hello-world-alt": "<dir>/fleet-hello-world-alt/id_ed25519"
+  "cs-gitlab": "<dir>/cs-gitlab/id_ed25519"
  },
  "gateway": {
   "FLEET_GATEWAY_URL": "executor and coordinator: http://127.0.0.1:8742 on PDS18, https://fleet.ufobe.com elsewhere (Access service token from FLEET_CF_ACCESS_FILE)",

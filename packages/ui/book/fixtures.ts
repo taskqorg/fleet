@@ -11,7 +11,7 @@ export type Task = {
 };
 export const AGENTS: Harness[] = ['codex', 'claude', 'antigravity'];
 export const HOSTS = ['pds18', 'windows', 'mac'];
-export const PROJECTS = ['dashq', 'game', 'fleet', 'design'];
+export const PROJECTS = ['cs', 'game', 'fleet', 'design'];
 export const TASK_STATES = Object.keys(states.task) as StateOf<'task'>[];
 const WORDS = ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Compare 3D methods', 'Investigate disk alert', 'Write release notes', 'Character hands rework', 'Migrate store layout'];
 const REASONS: Partial<Record<StateOf<'task'>, string>> = { waiting: 'acceptance by you', failed: 'render step exit 1', queued: 'no free Windows slot', paused: 'by Alex' };
@@ -60,7 +60,7 @@ export type Host = {
 const G = 1e9;
 export const hosts: Host[] = [
   { id: 'pds18', platform: 'linux', online: true, lastSeen: NOW - 5e3, harnesses: 4, running: 6, slots: 8, queued: 2, byHarness: { codex: 4, claude: 2 },
-    store: { total: 1000 * G, segments: [{ label: 'dashq', bytes: 400 * G }, { label: 'fleet', bytes: 220 * G }], warnAt: 50 * G }, capacity: { value: '1 TB', status: { kind: 'applied', at: NOW - 18 * min } } },
+    store: { total: 1000 * G, segments: [{ label: 'cs', bytes: 400 * G }, { label: 'fleet', bytes: 220 * G }], warnAt: 50 * G }, capacity: { value: '1 TB', status: { kind: 'applied', at: NOW - 18 * min } } },
   { id: 'windows', platform: 'windows', online: true, lastSeen: NOW - 40e3, harnesses: 3, running: 3, slots: 3, queued: 5, byHarness: { codex: 1, claude: 1, antigravity: 1 },
     store: { total: 200 * G, segments: [{ label: 'game', bytes: 156 * G }, { label: 'design', bytes: 26 * G }], warnAt: 25 * G }, capacity: { value: '200 GB', status: { kind: 'apply_error', error: 'Garage admin timeout' } } },
   { id: 'mac', platform: 'macos', online: false, lastSeen: NOW - 2 * hr, harnesses: 3, running: 1, slots: 2, queued: 0, byHarness: { claude: 1 },
