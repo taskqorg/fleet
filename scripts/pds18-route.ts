@@ -39,11 +39,9 @@ export const FAMILIES = {
 type Family = keyof typeof FAMILIES;
 // Warm 2026-11-12 merge queue runs, pool against hosted: release-build 69-106 s against 68-125 s (its recent coordinators
 // stay extracted on the guest), browser shard 0 106 s against 49-80 s, go outside 275-290 s against 184 s. OVERFLOW is
-// the order once hosted is busy, the jobs the pool slows least first. Go unit stays hosted: the executor's MCP
-// owned-dependency tests fail on the guest and pass on the hosted image (TestMCPOwnedDependencyNewSession,
-// TestMCPOwnedDependencyJournalRecovery: "owned dependency did not start"); route it once they pass there.
+// the order once hosted is busy, the jobs the pool slows least first.
 const PREFER: [Family, number][] = [['release', 0]];
-const OVERFLOW: [Family, number][] = [['app', 0], ['go', 2], ['browser', 1], ['browser', 0], ['go', 1]];
+const OVERFLOW: [Family, number][] = [['app', 0], ['go', 2], ['browser', 1], ['browser', 0], ['go', 1], ['go', 0]];
 export type Job = {status: string, labels: string[], created_at: string, started_at?: string | null, run_id?: number};
 
 export function plan(o: {trusted: boolean, now: number, beat: string | null, jobs: Job[], run: string[], self?: number}) {
