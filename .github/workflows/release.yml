@@ -127,6 +127,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The persistent runner must keep its user's IPC across SSH logins, or the migration check's PostgreSQL loses its
+      # shared memory (deploy/infrastructure/pds18-ci/README.md). Checked first, before any build work.
+      - name: Runner keeps IPC across logins
+        if: runner.environment != 'github-hosted'
+        run: |
+          out=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC 2>&1) \
+            || { echo "::error::cannot read logind RemoveIPC: $out"; exit 1; }
+          [ "$out" = "b false" ] || { echo "::error::logind RemoveIPC is on ($out): set RemoveIPC=no on the runner guest"; exit 1; }
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.gate.outputs.sha }}
@@ -179,9 +187,6 @@ jobs:
           stale pkill -KILL || true
           stop() { kill "$1" || return 0; for _ in 1 2 3 4 5; do kill -0 "$1" || return 0; sleep 1; done; kill -KILL "$1"; wait "$1"; }
           pid=; trap '{ [ -z "$pid" ] || stop $pid; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
-          # The persistent runner must keep its user's IPC across SSH logins (deploy/infrastructure/pds18-ci/README.md).
-          [ "$RUNNER_ENVIRONMENT" = github-hosted ] || [ "$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC)" = "b false" ] \
-            || { echo "::error::logind RemoveIPC is on: an SSH logout would delete this PostgreSQL's shared memory"; exit 1; }
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
           psql -h "$pg" -p 54329 -U postgres -v ON_ERROR_STOP=1 -q -d postgres -f deploy/infrastructure/fleet-postgres.sql

@@ -26,7 +26,7 @@ As guest user `ci`, configure URL `https://github.com/taskqorg`, group `fleet-pd
 
 ## Logins on the guest
 
-logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf`, written by cloud-init. With the default, the runner service, which is no login session, loses its shared memory when the last SSH session of `ci` ends, and the release job's PostgreSQL fails. Linger is not used.
+logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf`, written by cloud-init. With the default, the runner service, which is no login session, loses its shared memory when the last SSH session of `ci` ends, and the release job's PostgreSQL fails. It is host-wide rather than linger for `ci` because the guest exists only for this runner. On an existing guest, write the same drop-in and run `systemctl restart systemd-logind`. The release `build` job fails first thing when the readback is not `b false`.
 
 ## Guest state the release job keeps
 
