@@ -443,7 +443,8 @@ func (u *updater) settle(p *part, ver string, restart bool) *Result {
 			if err := p.r.WriteFile(healthyFile, []byte(u.now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 				return u.result(ver, "error", err.Error())
 			}
-			since := ""                                            // the first healthy marker of this release: one install line, with the publish delta when known
+			// The first healthy marker of this release: one install line, with the publish delta when known.
+			since := ""
 			if t, ok := u.published[ver]; ok && u.now().After(t) { // skewed clocks: no negative delta
 				since = " " + u.now().Sub(t).Round(time.Second).String() + " after publish"
 			}
