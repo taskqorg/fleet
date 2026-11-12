@@ -239,62 +239,65 @@ func askQuestion(q *Request, v doc) (string, error) {
 	return id, nil
 }
 
-// settleIdleTask: no task stays in progress with nothing that can move it (no open execution, no open question).
-// When its last open execution ends: if the run that ended last succeeded, its result goes to the operator for
-// acceptance; otherwise the operator gets a decision that blocks the task, so it shows in Needs you: fail the task, or
-// (when an earlier run succeeded) accept that result. A retry is a new run, which withdraws the decision
-// (withdrawIdleDecision). Task 2273393d: its only run failed before it started and the task sat in progress with nothing
-// to show it. Data foundation §3 task states. Legacy delivery tasks are included: nothing moves them any more. Child agent rows do
-// not count: no writer ends them.
-func settleIdleTask(q *Request, id string) error {
+// idleTaskSQL: tasks in progress with nothing that can move them: no open execution (child agent rows do not count: no
+// writer ends them), no open question, and no rejected acceptance since the run that ended last (a rejection waits for a
+// new run, data foundation §3). l is the run that ended last; null when the task has no run at all.
+const idleTaskSQL = `FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id, x.ended_at FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent'
+	  ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
+	WHERE t.state='in_progress'
+	AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
+	AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
+	AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance' AND qq.answer='rejected' AND qq.answered_at >= coalesce(l.ended_at, '-infinity'))`
+
+// settleIdleTask: no task stays in progress with nothing that can move it. When it is idle (idleTaskSQL): if the run that
+// ended last succeeded, its result goes to the operator for acceptance; otherwise the operator gets a decision that
+// blocks the task, so it shows in Needs you: fail the task, or (when an earlier run succeeded) accept that result. A
+// retry is a new run, which withdraws the decision (withdrawIdleDecision). Task 2273393d: its only run failed before it
+// started and the task sat in progress with nothing to show it. Data foundation §3 task states. Legacy delivery tasks
+// are included: nothing writes or reads delivery_method any more. Runs on every execution end, after an answer, on
+// resume, and for every task at coordinator start (settleIdleTasks). Reports whether it asked.
+func settleIdleTask(q *Request, id string) (bool, error) {
 	t, err := first(q, `SELECT t.*, l.id AS latest_id, l.state::text AS latest, l.session_id AS latest_session,
-		EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded') AS succeeded
-		FROM task t JOIN LATERAL (SELECT x.id, x.state, x.session_id FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent'
-		  ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
-		WHERE t.id=$1 AND t.state='in_progress'
-		AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
-		AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')`, id)
+		EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded') AS succeeded `+idleTaskSQL+` AND t.id=$1`, id)
 	if err != nil || t == nil {
-		return err
+		return false, err
 	}
 	if astr(t["latest"]) == "succeeded" {
 		_, err = requestAcceptance(q, t, nil, nil, "fleet")
-		return err
+		return err == nil, err
 	}
 	options := []string{idleFail}
 	if t["succeeded"] == true {
 		options = append(options, idleAccept)
 	}
+	what := "The last run of " + astr(t["title"]) + " " + astr(t["latest"])
+	if t["latest"] == nil {
+		what = astr(t["title"]) + " is in progress with no run"
+	}
 	_, err = askQuestion(q, doc{"kind": "operator_decision", "taskId": id, "projectId": t["project_id"], "executionId": t["latest_id"], "sessionId": t["latest_session"],
 		"askedBy": "fleet", "options": options, "data": doc{"idle": true},
-		"text": "The last run of " + astr(t["title"]) + " " + astr(t["latest"]) + ". Retry it with a new message in its session, or answer."})
-	return err
-}
-
-// settleIdleTasks: settleIdleTask for every task in progress, once at coordinator start. It settles tasks that were
-// left idle before the guard existed, or by a transition that does not settle (the guard runs on execution ends).
-func settleIdleTasks(q *Request) (int, error) {
-	ids, err := rowsOf(q, "SELECT id FROM task WHERE state='in_progress' ORDER BY created_at")
-	if err != nil {
-		return 0, err
-	}
-	for _, r := range ids {
-		if err := settleIdleTask(q, astr(r["id"])); err != nil {
-			return 0, err
-		}
-	}
-	// One transaction, so now() is one instant: the questions asked here.
-	n := 0
-	err = q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE asked_by='fleet' AND asked_at=now()").Scan(&n)
-	return n, err
+		"text": what + ". Retry it with a new message in its session, or answer."})
+	return err == nil, err
 }
 
 func init() {
+	// At start: every idle task, one transaction each, so one bad task neither rolls back nor blocks the others.
 	onStart(func(ctx context.Context, a *App) {
-		n := 0
-		if err := runTx(ctx, a, nil, true, "", func(q *Request) (err error) { n, err = settleIdleTasks(q); return }); err != nil {
+		var ids []doc
+		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { ids, err = rowsOf(q, "SELECT t.id "+idleTaskSQL+" ORDER BY t.created_at"); return }); err != nil {
 			log.Printf("settle idle tasks: %v", err)
-		} else if n > 0 {
+			return
+		}
+		n := 0
+		for _, r := range ids {
+			asked := false
+			if err := runTx(ctx, a, nil, true, "", func(q *Request) (err error) { asked, err = settleIdleTask(q, astr(r["id"])); return }); err != nil {
+				log.Printf("settle idle task %s: %v", astr(r["id"]), err)
+			} else if asked {
+				n++
+			}
+		}
+		if n > 0 {
 			log.Printf("settle idle tasks: %d tasks settled", n)
 		}
 	})
@@ -431,6 +434,9 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 				if _, err := requestAcceptance(q, task, nil, nil, by); err != nil {
 					return nil, err
 				}
+			}
+			if _, err := settleIdleTask(q, t); err != nil { // an answered decision may leave the task with nothing to move it
+				return nil, err
 			}
 		}
 	}
@@ -895,7 +901,7 @@ func init() {
 				if _, err := settleTask(q, id, ""); err != nil {
 					return none, err
 				}
-				if err := settleIdleTask(q, id); err != nil {
+				if _, err := settleIdleTask(q, id); err != nil {
 					return none, err
 				}
 			}

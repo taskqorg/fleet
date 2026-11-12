@@ -144,5 +144,11 @@ test('G5 a task left idle before the guard settles when the coordinator starts (
     assert.equal(open(ids.bad), 'operator_decision');
     assert.equal(open(ids.live), '', 'a task with a live run is left alone');
     assert.equal(c.sql(`SELECT state::text FROM task WHERE id='${ids.bad}'`).trim(), 'waiting');
+    // A rejection waits for a new run: a second start asks nothing again.
+    c.sql(`UPDATE question SET state='answered', answer='rejected', answered_at=now() WHERE task_id='${ids.ok}'`);
+    await c.restart();
+    assert.equal(open(ids.ok), '', 'a rejected result is not asked again on the next start');
+    assert.equal(open(ids.bad), 'operator_decision', 'the decision is not asked twice');
+    assert.equal(c.sql(`SELECT count(*) FROM question WHERE task_id='${ids.bad}'`).trim(), '1');
   } finally { await c.stop(); }
 });

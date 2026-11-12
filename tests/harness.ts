@@ -45,17 +45,18 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
   const people = join(mkdtempSync(join(tmpdir(), 'fleet-people-')), 'people.json');
   copyFileSync(o.people ?? join(root, 'tests/trial/people.json'), people);
   const port = await freePort(), secret = randomBytes(24).toString('hex'), base = `http://127.0.0.1:${port}`;
-  let server: ReturnType<typeof spawn>, exited = false;
+  let server: ReturnType<typeof spawn>, exited = false, gone: Promise<void> = Promise.resolve();
   const launch = async () => {
     exited = false;
-    server = spawn(process.env.FLEET_TRIAL_SERVER || 'go/bin/fleet-coordinator', {cwd: root, shell: true, detached: true, stdio: ['ignore', 'inherit', 'inherit'], env: {...process.env,
+    const child = server = spawn(process.env.FLEET_TRIAL_SERVER || 'go/bin/fleet-coordinator', {cwd: root, shell: true, detached: true, stdio: ['ignore', 'inherit', 'inherit'], env: {...process.env,
       PORT: String(port), FLEET_DATABASE_URL: url('fleet_app'), FLEET_MIGRATION_DATABASE_URL: url('fleet'),
       FLEET_PEOPLE_FILE: people, FLEET_BROWSER_SECRET: secret, FLEET_HOST_ID: 'trial-host',
       // Never the host's own span store (~/.config/fleet/clickhouse.env): a test names its ClickHouse.
       FLEET_CLICKHOUSE_URL: 'off', FLEET_CLICKHOUSE_ENV: '/nonexistent',
       // Never GitHub from tests: the Runners CI pass would spend the runner's keyless 60 requests an hour.
       FLEET_RUNNERS_CI_TICK_MS: '0', ...o.env}});
-    server.on('exit', () => { exited = true; });
+    // Each process reports only its own exit: a late exit of the previous one never marks this one exited.
+    gone = new Promise(r => child.on('exit', () => { if (server === child) exited = true; r(); }));
     for (let i = 0; ; i++) {
       if (exited) { dropDb(); throw Error('coordinator exited before it served requests'); }
       try { await fetch(base + '/api/profiles'); break; } catch { if (i > 600) { await stop(); throw Error('coordinator did not start in 60 s'); } await new Promise(r => setTimeout(r, 100)); }
@@ -63,7 +64,7 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
   };
   // A crashed caller must not leave the coordinator running (it holds the caller's stdout open).
   process.on('exit', () => { if (!exited) try { process.kill(-server.pid!, 'SIGKILL'); } catch {} });
-  const kill = async () => { if (!exited) { try { process.kill(-server.pid!, 'SIGTERM'); } catch {} for (let i = 0; i < 50 && !exited; i++) await new Promise(r => setTimeout(r, 100)); if (!exited) try { process.kill(-server.pid!, 'SIGKILL'); } catch {} } };
+  const kill = async () => { if (!exited) { try { process.kill(-server.pid!, 'SIGTERM'); } catch {} for (let i = 0; i < 50 && !exited; i++) await new Promise(r => setTimeout(r, 100)); if (!exited) try { process.kill(-server.pid!, 'SIGKILL'); } catch {} await gone; } };
   const stop = async () => { await kill(); dropDb(); };
   // restart: a new coordinator process on the same database (what a deploy does).
   const restart = async () => { await kill(); await launch(); };
