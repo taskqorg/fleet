@@ -349,6 +349,8 @@ jobs:
           if-no-files-found: error
       - id: playwright
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      # No apt: the hosted image carries Chromium's libraries; of Playwright's install-deps list it lacks only fallback
+      # fonts (fonts-unifont, xfonts-cyrillic, xfonts-scalable), and no check compares pixels.
       - id: chromium
         uses: actions/cache@v4
         with:
@@ -383,9 +385,7 @@ jobs:
             getent ahostsv4 "$host"
           done
       - if: steps.chromium.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
-      - if: steps.chromium.outputs.cache-hit == 'true'
-        uses: ./.github/actions/chromium-deps
+        run: pnpm exec playwright install chromium
       - if: matrix.shard == 0
         run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert --sizes 20000
       - if: matrix.shard == 1
@@ -512,7 +512,6 @@ jobs:
           key: playwright-${{ steps.playwright.outputs.version }}-chromium
       - if: steps.chromium.outputs.cache-hit != 'true'
         run: pnpm exec playwright install chromium
-      - uses: ./.github/actions/chromium-deps
   reports:
     if: github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
@@ -542,6 +541,8 @@ jobs:
       - run: pnpm run build
       - id: playwright
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      # No apt: the hosted image carries Chromium's libraries; of Playwright's install-deps list it lacks only fallback
+      # fonts (fonts-unifont, xfonts-cyrillic, xfonts-scalable), and no check compares pixels.
       - id: chromium
         uses: actions/cache@v4
         with:
@@ -576,9 +577,7 @@ jobs:
             getent ahostsv4 "$host"
           done
       - if: steps.chromium.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
-      - if: steps.chromium.outputs.cache-hit == 'true'
-        uses: ./.github/actions/chromium-deps
+        run: pnpm exec playwright install chromium
       - name: Docs report (warning only)
         if: always()
         continue-on-error: true
