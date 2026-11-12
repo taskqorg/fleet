@@ -3,6 +3,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Button, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type FilterField, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
+import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
 import tokens from '../tokens.json';
 
@@ -39,9 +40,8 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   const [closed, setClosed] = useState<string[]>(['completed', 'cancelled']);
   const edit = (v: Partial<View>) => { setView({ ...view, ...v }); setActive(null); };
 
-  const q = query.toLowerCase();
   const byChips = items.filter(t => view.chips.every(c => c.field === 'Project' ? t.project === c.value : c.field === 'Agent' ? t.agent === c.value : t.host === c.value)
-    && (!q || t.title.toLowerCase().includes(q) || `t-${t.id}`.includes(q)));
+    && matchSearch(query, `${t.title} T-FLT-${t.id}`, { agent: t.agent, host: t.host, project: t.project, state: t.state }));
   // ponytail: counts and grouping computed client-side over loaded rows; server aggregates when lists are paged.
   const counts = useMemo(() => { const c: Partial<Record<StateOf<'task'>, number>> = {}; for (const s of Object.keys(states.task) as StateOf<'task'>[]) c[s] = 0; for (const t of byChips) c[t.state]!++; return c; }, [byChips]);
   const shown = view.states.length ? byChips.filter(t => view.states.includes(t.state)) : byChips;

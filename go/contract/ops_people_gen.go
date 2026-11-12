@@ -79,14 +79,17 @@ func (v *FocusSetRequest) Validate() error {
 	return nil
 }
 
-// Found: One found entity; the app opens /<kind>s/<id>.
+// Found: One found entity; the app opens /<kind>s/<id>, a question its task.
 type Found struct {
 	Agent     *string   `json:"agent,omitempty"`
+	Code      *string   `json:"code,omitempty"`
 	Host      *string   `json:"host,omitempty"`
 	Id        string    `json:"id"`
 	Kind      FoundKind `json:"kind"`
 	ProjectId *string   `json:"projectId,omitempty"`
+	SessionId *string   `json:"sessionId,omitempty"`
 	State     *string   `json:"state,omitempty"`
+	TaskId    *string   `json:"taskId,omitempty"`
 	Title     string    `json:"title"`
 }
 
@@ -101,13 +104,15 @@ func (v *Found) Validate() error {
 type FoundKind string
 
 const (
-	FoundKindTask    FoundKind = "task"
-	FoundKindProject FoundKind = "project"
-	FoundKindHost    FoundKind = "host"
+	FoundKindTask         FoundKind = "task"
+	FoundKindQuestion     FoundKind = "question"
+	FoundKindConversation FoundKind = "conversation"
+	FoundKindProject      FoundKind = "project"
+	FoundKindHost         FoundKind = "host"
 )
 
 // FoundKindValues lists every FoundKind in schema order.
-var FoundKindValues = []FoundKind{FoundKindTask, FoundKindProject, FoundKindHost}
+var FoundKindValues = []FoundKind{FoundKindTask, FoundKindQuestion, FoundKindConversation, FoundKindProject, FoundKindHost}
 
 // Valid: v is one of the schema's values.
 func (v FoundKind) Valid() bool {
@@ -403,7 +408,7 @@ func (v *SavedView) Validate() error {
 	return nil
 }
 
-// SearchReply: Hits of every provider in registry order: tasks (an id starting with the text first, then recently changed first), projects, hosts. Each word of the text narrows the hits.
+// SearchReply: Hits of every provider in registry order: a query of only T-, Q- and C- codes resolved (old codes too, with the current code), then tasks (an id or code starting with the text first, then recently changed), questions (open first), projects, hosts. Each word of the text narrows the hits.
 type SearchReply struct {
 	Hits []Found `json:"hits"`
 }

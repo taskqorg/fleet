@@ -1,7 +1,7 @@
 // Lab draft creation uses the existing operation, never launch (laboratory.md, Create experiment).
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { Button, Choice, CodeEditor, DetailSection, Empty, ListDetail, ProblemRow, RowCheck, SearchField, StateBadge, TextField, VirtualList, ROW2 } from '../../../packages/ui/src/index.ts';
+import { matchSearch, Button, Choice, CodeEditor, DetailSection, Empty, ListDetail, ProblemRow, RowCheck, SearchField, StateBadge, TextField, VirtualList, ROW2 } from '../../../packages/ui/src/index.ts';
 import { op, online, signedOut, OpError, type Ops } from '../api.ts';
 import { checkGrants, onClear } from '../offline.ts';
 
@@ -144,7 +144,7 @@ export function LabCreate() {
       <CodeEditor label={label} value={value} onChange={change} problems={error ? [{ path: '', message: error }] : []} disabledReason={disabled} /></details>;
   };
   const available = !picker ? [] : picker.label === 'Projects' ? projects : picker.label === 'Approved examples' ? examples : picker.label === 'Primary evaluators' ? [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))] : picker.label === 'Variant pipelines' ? [{ id: '', name: 'Base pipeline' }, ...pipelines] : pipelines;
-  const matching = available.filter(x => (x.name + x.id).toLowerCase().includes(query.toLowerCase()));
+  const matching = available.filter(x => matchSearch(query, `${x.name} ${x.id}`));
   // Focus after the DOM commit re-enables the form; no deferred picker autofocus can outlive it.
   useLayoutEffect(() => {
     if (picker) document.querySelector<HTMLInputElement>('.split-list .search input')?.focus();

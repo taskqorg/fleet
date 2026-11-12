@@ -2,7 +2,7 @@
 // the coordinator's store. The control column lists one kind; the work area edits one as a draft and saves revisions.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, SearchField, type StepItem } from '../../../packages/ui/src/index.ts';
+import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, matchSearch, SearchField, type StepItem } from '../../../packages/ui/src/index.ts';
 import { op, OpError, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
@@ -233,7 +233,7 @@ function CatalogueMethods() {
     {catalogueError && <div class="error" role="alert">Catalogue unavailable: {catalogueError}. No current evidence loaded for {project}.<Button label="Retry Catalogue" icon="rotate-cw" onClick={() => setRevision(r=>r+1)} /></div>}
     {c && <p class="muted">Evidence project: {c.projectId}{restored ? ' · restored, read-only until current confirmation' : ''}</p>}
     <DetailSection title="Methods"><SearchField label="Find method" value={search} onInput={setSearch} onSearch={() => {}} />
-      {methods.filter(m => `${m.name} ${m.id}`.toLowerCase().includes(search.toLowerCase())).map(m => {
+      {methods.filter(m => matchSearch(search, `${m.name} ${m.id}`)).map(m => {
         const a = m.assessment;
         return <div key={m.id}>
           <KvRow icon="circle-check" label={`${m.name} · ${m.id}`} meta={`${m.scope} · ${m.pipeline}`} value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} disabledReason={restored ? 'Await current scoped Catalogue read' : undefined} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});setRevision(r=>r+1);})} /></>} />
@@ -252,7 +252,7 @@ function CatalogueMethods() {
     <DetailSection title="Compare methods in Lab">
       <Choice label="Baseline" value={baseline} options={methods.filter(m=>selected.includes(m.id)).map(m=>({id:m.id,label:m.name}))} onChange={setBaseline} />
       <SearchField label="Find use case" value={useSearch} onInput={setUseSearch} onSearch={() => {}} />
-      <Choice label="Use case" value={useCase} options={useCases.filter(u=>`${u.id} ${u.goal}`.toLowerCase().includes(useSearch.toLowerCase())).map(u=>({id:u.id,label:u.id}))} onChange={setUseCase} />
+      <Choice label="Use case" value={useCase} options={useCases.filter(u=>matchSearch(useSearch, `${u.id} ${u.goal}`)).map(u=>({id:u.id,label:u.id}))} onChange={setUseCase} />
       <Button label="Create comparison" icon="play" busy={busy} disabledReason={catalogueError || restored || !c ? 'Await current scoped Catalogue read' : !project || selected.length<2 || !baseline || !selected.includes(baseline) || selected.some(id => !methods.some(m => m.id === id)) || !useCase ? 'Select two methods, a baseline and use case' : undefined} onClick={() => act(async () => {const r = await op('lab_compare_methods', {projectId:project,capability:String(c?.capability),methods:selected,baseline,useCase});go(`/lab/${r.experimentId}`);})} />
     </DetailSection>
   </>;

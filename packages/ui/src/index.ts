@@ -5,3 +5,4 @@ export * from './format.ts';
 export * from './patterns.tsx';
 export * from '../../view-url/view-url.ts';
 export * from './clip.ts';
+export * from './search.ts';

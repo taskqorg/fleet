@@ -3,6 +3,7 @@ import { Fragment, type ComponentChildren, type TargetedMouseEvent } from 'preac
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
 import { type Measured, type Kind, measured, age, bytes, exact, stamp, percent, duration, agentLabel, actor } from './format.ts';
+import { matchSearch } from './search.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import { parse, renderBlocks } from './markdown.tsx';
 import { author, clipMessage, writeClip } from './clip.ts';
@@ -819,12 +820,10 @@ export function Spotlight({ providers, onClose }: { providers: SpotlightProvider
   </div>;
 }
 
-/** A field:value term of the search syntax (go/coordinator/search.go searchFields); keep the two lists equal. */
-export const searchTerm = /(^|\s)(agent|host|state|project):\S/i;
 /** Sections as a palette provider: the navigation items whose label holds the text. A field term (agent:x) finds none. */
 export const sectionProvider = (items: NavItem[], onGo: (id: string) => void): SpotlightProvider => ({
   id: 'sections', label: 'Sections',
-  find: q => searchTerm.test(q) ? [] : items.filter(i => i.label.toLowerCase().includes(q.toLowerCase())).map(i => ({ key: 's:' + i.id, icon: i.icon, label: i.label, run: () => onGo(i.id) })),
+  find: q => items.filter(i => matchSearch(q, i.label)).map(i => ({ key: 's:' + i.id, icon: i.icon, label: i.label, run: () => onGo(i.id) })),
 });
 
 /* ---------- Stat strip: operational counts (stat-strip.md) ---------- */
