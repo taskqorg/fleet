@@ -245,7 +245,7 @@ One rules pass in the coordinator runs every minute (`pass.rules`). Each rule is
 | Rule | Stage | Fires when | Subject | Cause key |
 |---|---|---|---|---|
 | `absence-host` | 1 | no `host.heartbeat` for 3 minutes from a host not `removed` and with `intake` not `paused` | host | `problem:host:<id>:silent` |
-| `absence-pass` | 1 | a coordinator pass has no span for 3 of its intervals (each pass runs once at coordinator start, so deploys cannot starve it) | pass name | `problem:absence:pass.<name>` |
+| `absence-pass` | 1 | a coordinator pass has no span for 3 of its intervals (each pass first runs at most a minute after coordinator start, so deploys cannot starve it) | pass name | `problem:absence:pass.<name>` |
 | `absence-store` | 1 | no store `check` span reports a store reachable for 3 heartbeats | store | `problem:store:<id>:offline` |
 | `store-fill` | 1 | latest `store_free` or `disk_free` below the store's `free_space_warning` | store or host disk | `problem:store:<id>:fill` |
 | `stuck` | 1 | a running execution its host still confirms, with no stop requested, no span, no `event` and no CPU progress in its `execution.alive` readings for 30 minutes | execution | `problem:execution:<id>:stuck` |

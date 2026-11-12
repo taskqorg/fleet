@@ -597,7 +597,7 @@ func init() {
 			return nil, err
 		}
 		// The key left disabled (enabled again or retired): its refused-key question no longer needs the owner.
-		if err := exec(q, "UPDATE question SET state='withdrawn',cause=NULL WHERE cause=$1 AND state='open'", "key:"+astr(k["fingerprint"])+":disabled"); err != nil {
+		if err := problemClose(q, "key:"+astr(k["fingerprint"])+":disabled"); err != nil {
 			return nil, err
 		}
 		if to == "retired" {
@@ -839,17 +839,19 @@ func every(ctx context.Context, name string, d time.Duration, fn func(context.Co
 	}
 	passIntervals.Store(name, d)
 	go func() {
-		// The first run is at start: a deploy more often than d restarts the ticker, so a pass that waited a full
-		// interval first would never run (absence-pass, 2026-11-12: reconcile and delivery starved by deploys).
-		t := time.NewTicker(d)
+		// The first run is at most a minute after start: a deploy more often than d restarts the timer, so a pass that
+		// waited a full interval first would never run (absence-pass, 2026-11-12: reconcile and delivery starved by
+		// deploys); the minute lets hosts poll before the rules judge them silent.
+		t := time.NewTimer(min(d, time.Minute))
 		defer t.Stop()
 		for {
-			obs.Pass(ctx, name, func(ctx context.Context) (int, error) { return 0, fn(ctx) })
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
 			}
+			obs.Pass(ctx, name, func(ctx context.Context) (int, error) { return 0, fn(ctx) })
+			t.Reset(d)
 		}
 	}()
 }

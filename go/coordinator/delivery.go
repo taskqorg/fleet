@@ -52,8 +52,10 @@ func init() {
 		// Keyless the five reads each pass use 50 of the 60 an hour; with a key the period can be much shorter.
 		// ponytail: the cache is in memory, so each start reads once more; keep the last pass in a row if deploys
 		// exhaust the keyless budget.
-		// every runs the first read at start: a deploy every few minutes must not blank the page.
 		d := envMs("FLEET_DELIVERY_TICK_MS", 6*60*1000)
+		if d > 0 {
+			go deliveryPass(ctx, a) // the first read at start: a deploy every few minutes must not blank the page
+		}
 		every(ctx, "delivery", d, func(ctx context.Context) error { return deliveryPass(ctx, a) })
 	})
 	operation("delivery_status", true, typedOp(deliveryStatus))

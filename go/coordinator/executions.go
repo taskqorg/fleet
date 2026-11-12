@@ -540,14 +540,16 @@ func init() {
 			out.Abandoned = append(out.Abandoned, id)
 		}
 		publish(q)
-		return out, nil
+		return out, agentPromote(q)
 	}))
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
 			return runTx(ctx, a, nil, true, "", func(q *Request) error {
 				rs, err := queryRows(q, `SELECT id FROM execution WHERE `+execKinds+` AND state IN ('preparing','running','waiting')
-				AND (observation='unconfirmed' OR coalesce((data->>'stopRequested')::boolean,false))
-				AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1)`, lostAfter.Seconds())
+				AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
+				  WHERE c.kind='command' AND c.data->>'executionId'=execution.id AND c.data->>'kind'='stop' AND c.data->>'status' IN ('pending','unknown'))))
+				AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1)
+				FOR UPDATE OF execution SKIP LOCKED`, lostAfter.Seconds())
 				if err != nil {
 					return err
 				}
@@ -556,17 +558,19 @@ func init() {
 						return err
 					}
 				}
-				if len(rs) > 0 {
-					publish(q)
+				if len(rs) == 0 {
+					return nil
 				}
-				return nil
+				publish(q)
+				return agentPromote(q)
 			})
 		})
 	})
 }
 
 // executionAbandon ends an unfinished agent run or host job no host will finish: failed with problem unknown:abandoned
-// (the outcome is unknown), pending commands settled, the parent woken, one audit row. It returns the state of an
+// (the outcome is unknown), pending commands settled, the parent woken, its open questions withdrawn, one audit row;
+// the caller promotes queued work once after its batch. It returns the state of an
 // execution it leaves alone ("unknown": not an agent run or host job), "" when it ended it.
 func executionAbandon(q *Request, id, reason, by string) (string, error) {
 	row, err := first(q, "SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+" FOR UPDATE", id)
@@ -604,5 +608,6 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 			return "", err
 		}
 	}
-	return "", agentPromote(q)
+	// Its open questions have no living asker any more.
+	return "", exec(q, "UPDATE question SET state='withdrawn',cause=NULL WHERE execution_id=$1 AND state='open'", id)
 }

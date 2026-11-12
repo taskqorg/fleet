@@ -880,7 +880,8 @@ func init() {
 				out.Skipped = append(out.Skipped, contract.QuestionSkipped{Id: id, State: state})
 				continue
 			}
-			if err := exec(q, "UPDATE question SET state='withdrawn',cause=NULL WHERE id=$1", id); err != nil {
+			w := doc{"reason": r.Reason, "actor": actor(q, "operator"), "at": nowMs()} // as lab_rating_withdraw records it
+			if err := exec(q, "UPDATE question SET state='withdrawn',cause=NULL,data=coalesce(data,'{}'::jsonb)||jsonb_build_object('withdrawal',$2::jsonb) WHERE id=$1", id, jsonBytes(w)); err != nil {
 				return out, err
 			}
 			if err := put(q, "setting-change", doc{"id": newID(), "target": "question:" + id, "projectId": row["project_id"], "field": "state", "previous": "open", "value": "withdrawn", "reason": r.Reason, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
