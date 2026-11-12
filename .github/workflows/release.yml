@@ -70,7 +70,7 @@ jobs:
           day=$(date -u +%y%m%d)
           m=$(git tag -l "v1.$day.*" "ui-*-v1.$day.*" | sed "s/^.*v1\.$day\.//" | sort -n | tail -1)
           version=1.$day.$(( ${m:--1} + 1 ))
-          # migrate-check pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
+          # The migration check in build pairs the new coordinator with each of these (fleet-delivery-pipeline.md section 5).
           # digests: "<version>=sha256:<hex>" of each one's linux tarball, so build verifies and caches them without more lookups.
           releases=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name as $t | "\($t) \([.assets[] | select(.name == "fleet-\($t | ltrimstr("v"))-linux-amd64.tgz") | .digest // empty] | first // "")"' | awk '$1 ~ /^v1\.[0-9][0-9][0-9][0-9][0-9][0-9]\.[0-9]+$/ && n++ < 5 { print substr($1,2), $2 }')
           recent=$(awk 'NF { printf "%s%s", sep, $1; sep=" " } END { print "" }' <<< "$releases")
@@ -113,6 +113,7 @@ jobs:
     if: needs.gate.outputs.release == 'true'
     # Signing/publishing and native qualification remain on GitHub-hosted runners.
     runs-on: ${{ github.ref == 'refs/heads/main' && fromJSON('["self-hosted","linux","x64","fleet-pds18"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -127,11 +128,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: ${{ github.ref != 'refs/heads/main' && 'pnpm' || '' }}
+          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
-          cache: ${{ github.ref != 'refs/heads/main' }}
+          cache: ${{ runner.environment == 'github-hosted' }}
           cache-dependency-path: go/go.sum
       - name: Build
         env:
@@ -170,6 +171,7 @@ jobs:
           # cancelled one (killed before the trap) is cleared here.
           pkill -f '(^|/)fleet-coordinator$' || true; pkill -QUIT -f 'postgres .*-p 54329' || true
           i=0; while pgrep -f '(^|/)fleet-coordinator$|postgres .*-p 54329' >/dev/null && [ $i -lt 10 ]; do i=$((i+1)); sleep 1; done
+          pkill -KILL -f '(^|/)fleet-coordinator$|postgres .*-p 54329' || true
           pid=; trap '{ [ -z "$pid" ] || { kill $pid; wait $pid; }; pg_ctl -D "$pg" -m immediate -w stop; } >/dev/null 2>&1 || true' EXIT
           initdb -D "$pg" -U postgres -A trust -E UTF8 --no-instructions --no-sync >/dev/null
           pg_ctl -D "$pg" -l "$pg/log" -w -o "-k $pg -p 54329 -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off" start
@@ -179,10 +181,10 @@ jobs:
           # An asset GitHub reports no digest for is fetched every run, unchecked, as before the cache.
           cache=${HOME:?}/fleet-releases; mkdir -p "$cache"
           for d in "$cache"/*/; do d=${d%/}; [ -d "$d" ] || continue; case " $RECENT " in *" ${d##*/} "*) ;; *) rm -rf "$d";; esac; done
+          members="./fleet-coordinator ./config ./release.json"
           for v in $RECENT; do
             file=fleet-$v-linux-amd64.tgz
             digest=$(printf '%s\n' $DIGESTS | sed -n "s/^$v=//p")
-            members="./fleet-coordinator ./config ./release.json"
             [ -n "$digest" ] && [ -x "$cache/$v/fleet-coordinator" ] && [ "$(cat "$cache/$v/.digest" 2>/dev/null)" = "$digest $members" ] && continue
             rm -rf "$cache/$v.tmp"; mkdir "$cache/$v.tmp"
             gh release download "v$v" -p "$file" -D "$RUNNER_TEMP" --clobber || { echo "::error::v$v: download failed"; exit 1; }
@@ -205,6 +207,13 @@ jobs:
               i=$((i+1)); [ $i -lt 60 ] || { echo "::error::$dir coordinator not healthy"; exit 1; }; sleep 1; done
             echo; kill $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; wait $pid || true; pid=
           done
+          # Seed the cache with this release (GitHub's asset digest is the sha256 of the uploaded bytes), so the next run
+          # downloads nothing; an entry for a version that never publishes is pruned by the sweep above.
+          file=fleet-$VERSION-linux-amd64.tgz
+          rm -rf "$cache/$VERSION.tmp"; mkdir "$cache/$VERSION.tmp"
+          tar -xzf "out/$file" -C "$cache/$VERSION.tmp" $members
+          echo "sha256:$(awk -v f="$file" '$2 == f { print $1 }' out/SHA256SUMS) $members" > "$cache/$VERSION.tmp/.digest"
+          rm -rf "${cache:?}/$VERSION"; mv "$cache/$VERSION.tmp" "$cache/$VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: release
@@ -302,7 +311,7 @@ jobs:
           printf '%s\n' "$FLEET_RELEASE_KEY" > "$key"
           openssl pkeyutl -sign -inkey "$key" -rawin -in SHA256SUMS -out SHA256SUMS.sig
           rm -f "$key"
-          # checkedWith: the releases migrate-check paired with this one; fleet-update pds18 asks when it runs another.
+          # checkedWith: the releases the migration check paired with this one; fleet-update pds18 asks when it runs another.
           checked=$(jq -nc '$ARGS.positional' --args $RECENT)
           printf '{"version":"%s","files":{"linux-amd64":"fleet-%s-linux-amd64.tgz","darwin-arm64":"fleet-%s-darwin-arm64.tgz"},"checkedWith":%s}\n' \
             "$VERSION" "$VERSION" "$VERSION" "$checked" > latest.json

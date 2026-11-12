@@ -228,7 +228,7 @@ One pull request per item, in this order. Items 1 and 2 wait for #191: the rules
     * Coordinator merge script: deleted (it lives outside this repository).
     * Check: two pull requests enabled together land after one queue run each, with no manual update.
 2. **Release**:
-    * `.github/workflows/release.yml`: trigger, dispatch `sha` input, concurrency, pause variable, gate with `sha` output, computed version, `migrate-check` over 5 releases with `checkedWith`, tag by `gh release create --target`.
+    * `.github/workflows/release.yml`: trigger, dispatch `sha` input, concurrency, pause variable, gate with `sha` output, computed version, the migration check in `build` over 5 releases with `checkedWith`, tag by `gh release create --target`.
     * Environment `release`: deployment branch `main`, no reviewers (settings, no file).
     * `.github/workflows/ci.yml`: the header comment about tag releases.
     * `docs/designs/fleet-self-update.md`: CUJ 1 rewritten as "a merge releases"; section 1 points here.
