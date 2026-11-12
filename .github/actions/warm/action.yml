@@ -1,0 +1,45 @@
+# One Go build cache entry of a CI part, saved from main so merge_group runs (which see only main's caches) restore it.
+# Same path and key scheme as the part's own job: go-<part>-<hash of go/**>. Nothing to do when that key exists.
+name: Warm a Go build cache
+description: restore, build, save one part's Go build cache, then clear it for the next part
+inputs:
+  part:
+    required: true
+  hash:
+    description: hashFiles('go/**') taken before any part built (a build output under go/ would change it)
+    required: true
+  run:
+    description: commands that compile what the part compiles; outputs go outside go/
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: exact
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: go-${{ inputs.part }}-${{ inputs.hash }}
+        lookup-only: true
+    - if: steps.exact.outputs.cache-hit != 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: go-${{ inputs.part }}-${{ inputs.hash }}
+        restore-keys: go-${{ inputs.part }}-
+    - if: steps.exact.outputs.cache-hit != 'true'
+      shell: bash
+      run: ${{ inputs.run }}
+    - if: steps.exact.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: go-${{ inputs.part }}-${{ inputs.hash }}
+    - if: steps.exact.outputs.cache-hit != 'true'
+      shell: bash
+      run: go clean -cache -modcache

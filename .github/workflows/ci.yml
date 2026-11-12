@@ -349,6 +349,8 @@ jobs:
           if-no-files-found: error
       - id: playwright
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      # No apt: the hosted image carries Chromium's libraries; of Playwright's install-deps list it lacks only fallback
+      # fonts (fonts-unifont, xfonts-cyrillic, xfonts-scalable), and no check compares pixels.
       - id: chromium
         uses: actions/cache@v4
         with:
@@ -383,9 +385,7 @@ jobs:
             getent ahostsv4 "$host"
           done
       - if: steps.chromium.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
-      - if: steps.chromium.outputs.cache-hit == 'true'
-        uses: ./.github/actions/chromium-deps
+        run: pnpm exec playwright install chromium
       - if: matrix.shard == 0
         run: PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" node tests/ui/filter.check.ts --assert --sizes 20000
       - if: matrix.shard == 1
@@ -460,6 +460,70 @@ jobs:
       - run: |
           mkdir t && tar -xzf fleet-*-darwin-arm64.tgz -C t
           t/deploy/selftest-release.sh t
+  # Caches saved on pull request and merge queue refs are invisible to other merge queue runs; only main's are shared,
+  # and main's push run skips the heavy families. This job saves every part's cache from main when its key is new,
+  # so each merge queue run starts warm. One job, parts in sequence: no runner slot of a queue run.
+  cache-warm:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      GOFLAGS: -mod=readonly
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: ./.github/actions/go
+      - run: pnpm install --frozen-lockfile
+      # The parts' own jobs key on go/** before they build; outputs here go to $RUNNER_TEMP so the key stays theirs.
+      # The commands mirror those jobs' builds (go-tests, browser-tests, deploy/build-release.sh); keep them in step.
+      - id: go
+        run: echo "hash=${{ hashFiles('go/**') }}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/warm
+        with:
+          part: vet
+          hash: ${{ steps.go.outputs.hash }}
+          run: cd go && go vet ./... && GOOS=windows GOARCH=amd64 go vet ./coordinator && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/fleet-executor" ./executor
+      - uses: ./.github/actions/warm
+        with:
+          part: unit
+          hash: ${{ steps.go.outputs.hash }}
+          run: cd go && CGO_ENABLED=1 go test -race -count=1 -run '^$' ./...
+      - uses: ./.github/actions/warm
+        with:
+          part: outside-0
+          hash: ${{ steps.go.outputs.hash }}
+          run: cd go && CGO_ENABLED=1 go build -race -o "$RUNNER_TEMP/fleet-coordinator" ./coordinator
+      - uses: ./.github/actions/warm
+        with:
+          part: browser
+          hash: ${{ steps.go.outputs.hash }}
+          run: cd go && CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/fleet-coordinator" ./coordinator
+      - uses: ./.github/actions/warm
+        with:
+          part: release
+          hash: ${{ steps.go.outputs.hash }}
+          run: |
+            cd go
+            for t in linux/amd64 darwin/arm64; do for c in coordinator gateway executor update; do
+              CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -trimpath -ldflags "-X main.version=0.0.0" -o "$RUNNER_TEMP/rel/$t/fleet-$c" "./$c"
+            done; done
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: chromium
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ steps.playwright.outputs.version }}-chromium
+      - if: steps.chromium.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install chromium
   # Diagnostics only: pull requests (comment) and main pushes (docs-order); never a merge queue run's runner slot.
   reports:
     if: github.event_name != 'merge_group'
@@ -490,6 +554,8 @@ jobs:
       - run: pnpm run build
       - id: playwright
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      # No apt: the hosted image carries Chromium's libraries; of Playwright's install-deps list it lacks only fallback
+      # fonts (fonts-unifont, xfonts-cyrillic, xfonts-scalable), and no check compares pixels.
       - id: chromium
         uses: actions/cache@v4
         with:
@@ -524,9 +590,7 @@ jobs:
             getent ahostsv4 "$host"
           done
       - if: steps.chromium.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
-      - if: steps.chromium.outputs.cache-hit == 'true'
-        uses: ./.github/actions/chromium-deps
+        run: pnpm exec playwright install chromium
       - name: Docs report (warning only)
         if: always()
         continue-on-error: true
