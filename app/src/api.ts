@@ -37,3 +37,33 @@ export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opt
 // question with the fingerprint only; the value never reaches questions_answer or the asking agent.
 export const addRequestedKey = (questionId: string, connection: string, value: string) =>
   online.value ? op('connections_key_add', { connection, value, questionId }) : Promise.reject(Error('Offline: the key was not sent'));
+
+/**
+ * The outcome of a write is unknown: its reply was cut, the connection dropped before it, or a gateway in front of the
+ * coordinator gave up (502/503/504, Cloudflare 520-524) after the coordinator may have committed.
+ */
+export const unknownOutcome = (e: unknown) => e instanceof OpError && (e.message === 'incomplete reply' || e.message === 'offline' || [502, 503, 504, 520, 521, 522, 523, 524].includes(e.status));
+/**
+ * A write that carries a requestId, sent again with the same body until its outcome is known: the coordinator returns the
+ * first write's result for a known requestId (message_send, session_fork), so a retry never duplicates it. onUnknown runs
+ * before each wait. A definite error stops it, and so does `signal` (the caller unmounting): that rejects as aborted.
+ */
+// ponytail: fixed wait and no attempt cap; the caller ends it with the signal.
+export async function writeOnce<K extends OpName>(name: K, body: Ops[K]['request'], onUnknown: () => void, opts: { signal?: AbortSignal; wait?: number } = {}): Promise<Ops[K]['reply']> {
+  for (;;) {
+    if (opts.signal?.aborted) throw new OpError('aborted', 0);
+    try { return await op(name, body, { signal: opts.signal }); }
+    catch (e) { if (!unknownOutcome(e)) throw e; onUnknown(); await new Promise(r => setTimeout(r, opts.wait ?? 1000)); }
+  }
+}
+
+/** The requestId of the draft being sent in a session: the stored one while the text is unchanged, else a new one; null clears it. */
+export function sendingId(session: string, text: string | null): string {
+  const k = 'sending:' + session;
+  try {
+    if (text === null) { localStorage.removeItem(k); return ''; }
+    const p = JSON.parse(localStorage.getItem(k) ?? 'null');
+    if (p?.text === text) return p.requestId;
+    const requestId = crypto.randomUUID(); localStorage.setItem(k, JSON.stringify({ text, requestId })); return requestId;
+  } catch { return text === null ? '' : crypto.randomUUID(); /* storage unavailable: one id per attempt */ }
+}

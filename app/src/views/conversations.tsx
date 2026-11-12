@@ -9,7 +9,7 @@ import {
   keyConnection,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online, addRequestedKey } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, sendingId, OpError } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
@@ -91,6 +91,9 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     addEventListener('keydown', on); return () => removeEventListener('keydown', on);
   }, []);
   const [failure, setFailure] = useState<{ text: string; retry?: () => void } | null>(null);
+  // Writes in flight stop when the conversation closes.
+  const alive = useRef(new AbortController()); useEffect(() => () => alive.current.abort(), []);
+  const unknown = () => setFailure({ text: 'unknown, retrying' });
   const [panel, setPanel] = useState<'switch' | 'handoff' | null>(null);
   const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
   const handle = useRef<VirtualListHandle | null>(null);
@@ -123,10 +126,10 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <Button label="Copy thread as markdown" icon="file-text" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => copySel(all()!)} />
       {/* Menu actions (design "Controls"): each calls the existing operation; the result shows as a new boundary in this thread. */}
       <ActionMenu label="Actions" disabledReason={off ? 'offline' : undefined} items={[
-        { label: 'Retry last message', icon: 'rotate-ccw', disabledReason: lastMessage ? undefined : 'no message yet', onClick: () => run(() => op('message_send', { sessionId: id, requestId: reqId(), text: lastMessage })) },
+        { label: 'Retry last message', icon: 'rotate-ccw', disabledReason: lastMessage ? undefined : 'no message yet', onClick: () => { const requestId = reqId(); run(() => writeOnce('message_send', { sessionId: id, requestId, text: lastMessage }, unknown, { signal: alive.current.signal })); } },
         { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel('switch') },
         { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel('handoff') },
-        { label: 'Fork', icon: 'git-merge', onClick: () => { const requestId = reqId(); run(async () => { const f = await op('session_fork', { sessionId: id, requestId }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); } },
+        { label: 'Fork', icon: 'git-merge', onClick: () => { const requestId = reqId(); run(async () => { const f = await writeOnce('session_fork', { sessionId: id, requestId }, unknown, { signal: alive.current.signal }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); } },
       ]} />
     </header>
     {panel && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
@@ -146,7 +149,13 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
       </div>
       <Composer draftKey={id} disabledReason={off ? 'offline' : undefined} placeholder={active ? 'Steer' : 'Message'}
-        onSend={async text => { setFailure(null); try { await op('message_send', { sessionId: id, requestId: reqId(), text, ...(active ? { delivery: 'steer' } : {}) }); } catch (e: any) { setFailure({ text: e.message }); throw e; } }} /></div>
+        onSend={async text => {
+          // One requestId per draft text until it is sent, kept next to the draft: a resend after a failure or a reload is the
+          // same write, never a second one. A definite error (nothing stored) clears it.
+          const requestId = sendingId(id, text);
+          setFailure(null);
+          try { await writeOnce('message_send', { sessionId: id, requestId, text, ...(active ? { delivery: 'steer' } : {}) }, unknown, { signal: alive.current.signal }); sendingId(id, null); setFailure(null); }
+          catch (e: any) { if (!(e instanceof OpError && e.message === 'aborted')) { sendingId(id, null); setFailure({ text: e.message }); } throw e; } }} /></div>
   </article>;
 }
 
