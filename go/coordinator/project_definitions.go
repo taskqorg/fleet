@@ -202,7 +202,7 @@ func projectArchive(q *Request) (any, error) {
 	rows, err := queryRows(q, `SELECT kind,count(*) AS n,min(id) AS example FROM (
 	  SELECT 'task' AS kind,id FROM task WHERE project_id=$1 AND state::text=ANY($2)
 	  UNION ALL SELECT 'session',id FROM document WHERE project_id=$1 AND kind='session' AND NOT data ? 'archivedAt'
-	  UNION ALL SELECT 'execution',id FROM execution WHERE project_id=$1 AND kind IN ('agent_run','host_job','pipeline_run') AND state IN ('preparing','running','waiting')) o GROUP BY kind ORDER BY kind`, id, slices.Collect(maps.Keys(openTask)))
+	  UNION ALL SELECT 'execution',id FROM execution WHERE project_id=$1 AND kind::text<>'pipeline_step' AND state IN ('preparing','running','waiting')) o GROUP BY kind ORDER BY kind`, id, slices.Collect(maps.Keys(openTask)))
 	if err != nil {
 		return nil, err
 	}
