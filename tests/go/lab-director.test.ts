@@ -86,6 +86,13 @@ test('Lab retains authenticated requester through background enqueue, revocation
    await until(async()=>{const x=await get(legacy.id);return x.state==='stopped'&&x.stopReason==='requester:unknown'});assert.equal(agentRows(legacy.id).length,0);
    const own=await create(owner);await launch(own.id);assert.equal((await until(async()=>agentRows(own.id)[0])).directedBy,owner,'authenticated owner remains intentional owner');
   });
+  await t.test('another scoped architect can act without hiding the stored requester or borrowing its authority',async()=>{
+   const e=await create(owner);
+   await op('lab_experiment_action',{experimentId:e.id,action:'launch'},creator);
+   assert.equal((await until(async()=>agentRows(e.id)[0])).directedBy,owner);
+   const foreign=await op('lab_experiment_create',{...body,projectId:'hello-world'});
+   assert.equal((await request('/api/ops/lab_experiment_action',{experimentId:foreign.id,action:'launch'},creator)).status,404,'temporary internal authority lookup does not expose foreign experiment');
+  });
   await t.test('create/remove race serializes creator validation and deletion tombstone',async()=>{
    const [made,removed]=await Promise.all([request('/api/ops/lab_experiment_create',body,creator),request('/api/ops/people_set',{people:people.filter((p:any)=>p.email!==creator)})]);ok(removed);
    if(made.status===200){const x=await get(made.body.id);assert.ok(x.requesterRemovedAt);await op('people_set',{people});const stopped=await launch(x.id);assert.equal(stopped.stopReason,'requester:removed');assert.equal(agentRows(x.id).length,0)}

@@ -3015,7 +3015,7 @@ func labRequester(q *Request, id string) (*Person, error) {
 	if exp["requester_removed_at"] != nil {
 		return nil, failCode(409, "Lab requester was removed; this experiment cannot transfer identity", "requester:removed")
 	}
-	p, err := resolveAccessTx(q.ctx(), q.tx, email)
+	p, err := unscoped(q, func() (*Person, error) { return resolveAccessTx(q.ctx(), q.tx, email) })
 	if err != nil {
 		var denied *HTTPError
 		if errors.As(err, &denied) && denied.Code == 403 {
