@@ -118,5 +118,7 @@ test('pull request runs the thin check only and defers its heavy families to the
   const group = makePlan('merge_group', {merge_group: {base_sha: base, head_sha: head}}, head, git);
   assert.deepEqual(group.executed, [...families]);
   assert.deepEqual(group.deferred, []);
-  assert.throws(() => verifyEvidence(group, head, {...jobs, thin: {result: 'skipped'}}));
+  const full = Object.fromEntries(['selection', ...families].map(f => [f, {result: 'success'}]));
+  assert.doesNotThrow(() => verifyEvidence(group, head, {...full, thin: {result: 'skipped'}}));
+  assert.throws(() => verifyEvidence(group, head, {...full, thin: {result: 'success'}}));
 });

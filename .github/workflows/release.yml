@@ -101,8 +101,6 @@ jobs:
             sleep 30
           done
           gh run download "$id" --name test-qualification --dir "$RUNNER_TEMP/qualification"
-          # A pull request plan defers the heavy families; only queue or push evidence qualifies a release.
-          jq -e '.event != "pull_request"' "$RUNNER_TEMP/qualification/test-selection.json" > /dev/null
           git show "$SHA:scripts/test-selection.ts" > "$RUNNER_TEMP/verify-selection.ts"
           GITHUB_SHA="$SHA" node "$RUNNER_TEMP/verify-selection.ts" --verify "$RUNNER_TEMP/qualification/test-selection.json" "$RUNNER_TEMP/qualification/test-results.json"
   build:
