@@ -79,6 +79,46 @@ func (v *FocusSetRequest) Validate() error {
 	return nil
 }
 
+// Found: One found entity; the app opens /<kind>s/<id>.
+type Found struct {
+	Agent     *string   `json:"agent,omitempty"`
+	Host      *string   `json:"host,omitempty"`
+	Id        string    `json:"id"`
+	Kind      FoundKind `json:"kind"`
+	ProjectId *string   `json:"projectId,omitempty"`
+	State     *string   `json:"state,omitempty"`
+	Title     string    `json:"title"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *Found) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type FoundKind string
+
+const (
+	FoundKindTask    FoundKind = "task"
+	FoundKindProject FoundKind = "project"
+	FoundKindHost    FoundKind = "host"
+)
+
+// FoundKindValues lists every FoundKind in schema order.
+var FoundKindValues = []FoundKind{FoundKindTask, FoundKindProject, FoundKindHost}
+
+// Valid: v is one of the schema's values.
+func (v FoundKind) Valid() bool {
+	for _, x := range FoundKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ListMembershipReply struct {
 	Lists []MembershipAnswer `json:"lists"`
 }
@@ -327,6 +367,34 @@ func (v *SavedView) Validate() error {
 	return nil
 }
 
+// SearchReply: Hits of every provider in registry order: tasks (an id starting with the text first, then recently changed first), projects, hosts. Each word of the text narrows the hits.
+type SearchReply struct {
+	Hits []Found `json:"hits"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SearchReply) Validate() error {
+	if v.Hits == nil {
+		return Missing("hits")
+	}
+	for i := range v.Hits {
+		if err := Check(&v.Hits[i], "hits"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SearchRequest struct {
+	Limit *int64 `json:"limit,omitempty"`
+	Query string `json:"query"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SearchRequest) Validate() error {
+	return nil
+}
+
 // ViewLinkReply: For view: url and path; for url: the parsed view.
 type ViewLinkReply struct {
 	Path *string         `json:"path,omitempty"`
@@ -359,6 +427,7 @@ func init() {
 		"people_set":          {Read: false, Long: true, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only: the whole people.json list, written atomically and reloaded.\",\"additionalProperties\":true,\"properties\":{\"people\":{}},\"required\":[\"people\"],\"type\":\"object\"}")},
 		"person_settings_get": {Read: true, Long: false, Errors: []int{403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"person_settings_set": {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"},\"focus\":{\"$comment\":\"omitted: unchanged; [] clears the focus\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"focusPresets\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one\",\"items\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"type\":\"array\"},\"order\":{\"$comment\":\"list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)\",\"enum\":[\"list\",\"soonest_reset\"],\"type\":\"string\"},\"pins\":{\"$comment\":\"omitted: unchanged; the full ordered list replaces the previous one\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"rowPins\":{\"$comment\":\"omitted: unchanged; merged by list name; [] clears that list\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"views\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one; names are unique per list\",\"items\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"type\":\"array\"},\"widths\":{\"$comment\":\"omitted: unchanged; merged by key; a value of 0 removes the key (double-click reset)\",\"additionalProperties\":{\"type\":\"integer\"},\"type\":\"object\"}},\"type\":\"object\"}")},
+		"search":              {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"limit\":{\"$comment\":\"Per provider; default 8, at most 50.\",\"minimum\":1,\"type\":\"integer\"},\"query\":{\"$comment\":\"Free text plus field:value terms (agent, host, state, project), the list search syntax; a provider that cannot apply a term finds nothing.\",\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")},
 		"view_link":           {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of view (a view state to link) or url (a Fleet URL to read back).\",\"additionalProperties\":true,\"properties\":{\"url\":{},\"view\":{}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

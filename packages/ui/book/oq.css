@@ -34,7 +34,7 @@
 .phone-list{flex:1;overflow:auto;min-width:0}
 .phone-row{display:flex;flex-direction:column;gap:var(--space-1);padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--line-soft);min-height:var(--size-row-phone)}
 .force-narrow .rail{width:auto;padding:var(--space-2) var(--space-1)}
-.force-narrow .rail .nm,.force-narrow .rail .rail-h,.force-narrow .rail-search,.force-narrow .rail .nav-pin{display:none}
+.force-narrow .rail .nm,.force-narrow .rail .rail-h,.force-narrow .rail .nav-pin{display:none}
 .force-narrow .rail .nav-i a{padding:0 var(--space-2);position:relative;height:var(--size-hit-phone)}
 .force-narrow .rail .nav-count{position:absolute;top:var(--space-1);right:0;padding:0 var(--space-1)}
 .bottom-bar{display:flex;border-top:1px solid var(--line);background:var(--surface)}

@@ -42,9 +42,15 @@ for (const f of files) {
   }
 }
 // OR-14: interactive elements inside floating layers (markup heuristic on tsx). Sticky or fixed panels are caught on the rendered page (tests/ui/layout.check.ts).
+// OR-32: the Spotlight palette (data-ui="spotlight", packages/ui/src/controls.tsx) is the one allowed floating working tool; a second one warns.
+let palettes = 0;
 for (const f of files.filter(f => /\.tsx$/.test(f))) {
   const t = readFileSync(f, 'utf8');
-  for (const m of t.matchAll(/role="dialog"|popover=/g)) warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information`);
+  for (const m of t.matchAll(/role="dialog"|popover=/g)) {
+    const line = t.split('\n')[t.slice(0, m.index).split('\n').length - 1];
+    if (/data-ui="spotlight"/.test(line) && /packages\/ui\/src\/controls\.tsx$/.test(f) && ++palettes === 1) continue;
+    warn.push(`${relative(root, f)}  OR-14  floating layer found; it may hold only information (OR-32: Spotlight is the only exception)`);
+  }
 }
 // Icons must take the theme colour (currentColor), never a fixed fill or stroke (D12).
 for (const [name, svg] of Object.entries(JSON.parse(readFileSync(join(root, 'packages/ui/icons.json'), 'utf8')))) {

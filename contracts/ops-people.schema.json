@@ -7,6 +7,7 @@
     "me": {"read": true, "errors": []},
     "people_list": {"read": true, "errors": []},
     "people_set": {"read": false, "long": true, "errors": [400, 403, 409]},
+    "search": {"read": true, "errors": [400]},
     "person_settings_get": {"read": true, "errors": [403]},
     "person_settings_set": {"read": false, "errors": [400, 403]},
     "view_link": {"read": true, "errors": [400]}
@@ -33,6 +34,10 @@
     "PersonSettingsGetRequest": {"type": "object", "additionalProperties": false, "properties": {"email": {"$comment": "default: the caller; another person: the owner only", "type": "string"}}},
     "PersonSettingsSetReply": {"$ref": "#/$defs/PersonSettings"},
     "PersonSettingsSetRequest": {"type": "object", "additionalProperties": false, "properties": {"email": {"$comment": "default: the caller; another person: the owner only", "type": "string"}, "order": {"$comment": "omitted: unchanged", "$ref": "#/$defs/DispatchOrder"}, "pins": {"$comment": "omitted: unchanged; the full ordered list replaces the previous one", "type": "array", "items": {"type": "string"}}, "views": {"$comment": "omitted: unchanged; the full list replaces the previous one; names are unique per list", "type": "array", "items": {"$ref": "#/$defs/SavedView"}}, "focus": {"$comment": "omitted: unchanged; [] clears the focus", "type": "array", "items": {"type": "string"}}, "focusPresets": {"$comment": "omitted: unchanged; the full list replaces the previous one", "type": "array", "items": {"$ref": "#/$defs/FocusPreset"}}, "widths": {"$comment": "omitted: unchanged; merged by key; a value of 0 removes the key (double-click reset)", "type": "object", "additionalProperties": {"type": "integer"}}, "rowPins": {"$comment": "omitted: unchanged; merged by list name; [] clears that list", "type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}}}},
+    "FoundKind": {"type": "string", "enum": ["task", "project", "host"]},
+    "Found": {"type": "object", "required": ["kind", "id", "title"], "properties": {"kind": {"$ref": "#/$defs/FoundKind"}, "id": {"type": "string"}, "title": {"type": "string"}, "state": {"type": ["string", "null"]}, "projectId": {"type": ["string", "null"]}, "agent": {"type": ["string", "null"]}, "host": {"type": ["string", "null"]}}, "$comment": "One found entity; the app opens /<kind>s/<id>."},
+    "SearchReply": {"type": "object", "required": ["hits"], "properties": {"hits": {"type": "array", "items": {"$ref": "#/$defs/Found"}}}, "$comment": "Hits of every provider in registry order: tasks (an id starting with the text first, then recently changed first), projects, hosts. Each word of the text narrows the hits."},
+    "SearchRequest": {"type": "object", "required": ["query"], "properties": {"query": {"type": "string", "$comment": "Free text plus field:value terms (agent, host, state, project), the list search syntax; a provider that cannot apply a term finds nothing."}, "limit": {"type": "integer", "minimum": 1, "$comment": "Per provider; default 8, at most 50."}}, "additionalProperties": false},
     "ViewLinkReply": {"type": "object", "properties": {"view": {}, "url": {"type": "string"}, "path": {"type": "string"}}, "$comment": "For view: url and path; for url: the parsed view."},
     "ViewLinkRequest": {"type": "object", "properties": {"view": {}, "url": {}}, "additionalProperties": true, "$comment": "Exactly one of view (a view state to link) or url (a Fleet URL to read back)."}
   }

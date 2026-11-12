@@ -8,6 +8,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [data-list](data-list.md) | Long lists that scroll well |
 | [filter-bar](filter-bar.md) | Filters and grouping, saved and shared |
 | [search](search.md) | Fast search |
+| [spotlight](spotlight.md) | Cmd+K palette: find and open anything |
 | [state-badge](state-badge.md) | States with reason and release condition |
 | [number](number.md) | Measurement basis |
 | [fill-bar](fill-bar.md) | Store fill per project, quota use |

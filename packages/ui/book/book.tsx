@@ -3,7 +3,7 @@ import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
-  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
+  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
   Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type Family, type Stage,
@@ -181,7 +181,9 @@ function TranscriptDemo() {
 function RailDemo() {
   const [cur, setCur] = useState('tasks');
   const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
-  return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPins={setPinned} /></div>;
+  const [spot, setSpot] = useState(false);
+  return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPins={setPinned} onSearch={() => setSpot(true)} />
+    {spot && <Spotlight providers={[sectionProvider(NAV, setCur)]} onClose={() => setSpot(false)} />}</div>;
 }
 
 function SplitDemo() {

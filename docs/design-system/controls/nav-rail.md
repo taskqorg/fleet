@@ -7,7 +7,7 @@
 **Anatomy.** A left column of width `size-rail`, from top to bottom:
 0. The head: the Fleet mark and name ([D23](../decisions.md#2026-11-11-d23-name-and-mark)), the "N need you" chip and the collapse button. Collapsed, the head keeps the mark above the button ([app shell](../patterns/app-shell.md), OR-24).
 1. The pinned group, in the order the person set.
-2. A "Sections" search field.
+2. The Search item: opens the [Spotlight palette](spotlight.md) (OR-31, OR-32). The rail has no search field of its own.
 3. All other sections, grouped (Operator, Architect) under small group headings.
 
 Each item has a registry icon (OR-3), a name, an optional counter chip in a tone (for example `3` in attention for "need you"), and a pin button.
@@ -18,7 +18,6 @@ Each item has a registry icon (OR-3), a name, an optional counter chip in a tone
 * Drag a pinned item to reorder the pinned group.
 * Pins and their order are a person setting (`pins` in `person_settings_get`/`person_settings_set`) and are restored on every device.
 * Counters show only when they are not zero and link to the filtered list. A counter's tone follows the [state badge](state-badge.md) mapping.
-* Search filters the items by name as you type.
 * The current section has the `selected` background.
 * The collapse button shrinks the rail to icons, and below 760 px it is always collapsed: pins first and counters on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears.
 
