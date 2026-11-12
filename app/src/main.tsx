@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
 import { AppShell, Empty, Button, workspaces, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
 import { op, signedOut, type Ops } from './api.ts';
-import { prefs, loadPrefs, savePrefs } from './prefs.ts';
+import { prefs, loadPrefs, savePrefs, setWidth } from './prefs.ts';
 import { startFeed } from './feed.ts';
 import { startStore } from './store.ts';
 import { checkGrants, clearAll } from './offline.ts';
@@ -74,10 +74,11 @@ function App() {
   const search = useRef((['task', 'question', 'conversation', 'project', 'host'] as const).map(k => found(k, go))).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   useEffect(() => { loadPrefs(); }, []); // and again on window focus (below): agents and other devices change them too
+  const [user, setUser] = useState<string | null>(null);
   const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }), { pins: ids });
   useEffect(() => {
     // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
-    const me = () => op('me', {}).then(m => checkGrants(m.grantsVersion ?? '')) // no person: '' still clears another person's data.catch(() => {});
+    const me = () => op('me', {}).then(m => { setUser(m.name || m.email); return checkGrants(m.grantsVersion ?? ''); }).catch(() => {}); // no person: '' still clears another person's data.
     me(); addEventListener('focus', me); addEventListener('focus', loadPrefs);
     // The feed starts at the server head: every mounted list loads a fresh page (restored rows only fill the first frame),
     // and lists shown from storage or after a failed load reload when the feed comes back (store.ts).
@@ -86,7 +87,10 @@ function App() {
     return () => { removeEventListener('focus', me); removeEventListener('focus', loadPrefs); };
   }, []);
   useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search}>
+  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search}
+    widths={prefs.value.widths} onWidth={setWidth} collapsed={prefs.value.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
+    // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
+    user={user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); } } : undefined}>
     {update && <div class="problem warning" role="status"><b>Update available</b><span class="facts">A new version of the app is ready.</span><span class="acts"><Button label="Reload" onClick={() => location.reload()} /></span></div>}
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
     <Switch>

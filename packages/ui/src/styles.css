@@ -246,13 +246,36 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .naming input{width:var(--size-input);height:var(--size-chip);padding:0 var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface)}
 
 /* Navigation rail */
-.rail{display:flex;flex-direction:column;gap:var(--space-3);width:var(--size-rail);min-height:0;overflow-y:auto;padding:var(--space-3) var(--space-2);border-right:1px solid var(--line);background:var(--rail)}
+.rail{display:flex;flex-direction:column;gap:var(--space-3);width:min(var(--size-rail),25vw);min-height:0;overflow-y:auto;padding:var(--space-3) var(--space-2);border-right:1px solid var(--line);background:var(--rail)}
 .rail>*{flex:none}
 .rail-head{display:flex;align-items:center;gap:var(--space-2);padding-left:var(--space-3)}
-.rail-head .btn{border-color:transparent;background:none}
-.rail.mini{width:auto;padding:var(--space-2) var(--space-1)}
-.rail.mini .nm,.rail.mini .rail-h,.rail.mini .nav-pin,.rail.mini .rail-menu,.rail.mini .rail-g:not(.pinned) .nav-i.pinned,.rail.mini .brand,.rail.mini .waiting{display:none}
-.rail.mini .rail-head{padding:0;justify-content:center;flex-direction:column}
+.rail-head{height:var(--size-control)}
+/* OR-42: collapsed and expanded map 1:1. Same items, same heights; only labels go. */
+.rail.mini{width:auto;min-width:calc(2 * var(--size-control))}
+.rail.mini .nm,.rail.mini .nav-pin,.rail.mini .rail-menu:not(.up),.rail.mini .brand,.rail.mini .waiting{display:none}
+.rail.mini .rail-h{visibility:hidden;width:0;padding:var(--space-1) 0;overflow:hidden;white-space:nowrap}
+.rail.mini .rail-head{padding-left:var(--space-2)}
+.rail-user{position:relative;display:flex}
+.rail-foot{margin-top:auto;padding-top:var(--space-3);border-top:1px solid var(--line)}
+.rail-user-b{flex:1;display:flex;align-items:center;gap:var(--space-2);min-width:0;height:var(--size-control);padding:0 var(--space-3);border:0;border-radius:var(--radius-md);background:none;color:var(--fg-muted);cursor:pointer;text-align:left}
+.rail-user-b:hover,.rail-user-b[aria-expanded=true]{background:var(--hover);color:var(--fg)}
+.rail-user-b .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.avatar{flex:none;display:inline-grid;place-items:center;width:var(--size-icon);height:var(--size-icon);border-radius:50%;background:var(--selected);color:var(--fg);font-size:var(--font-size-xs);font-weight:var(--font-weight-bold)}
+.rail.mini .rail-user-b{padding:0 var(--space-2)}
+.rail-menu.up{position:fixed;top:auto;right:auto}
+/* OR-41 dividers and OR-42 toggle */
+.shell-col{position:relative;display:flex;min-width:0;min-height:0}
+.shell-col>.shell-main{flex:1}
+.nav-toggle{position:absolute;top:var(--space-2);left:var(--space-2);z-index:3}
+.nav-toggle .btn{border-color:transparent;background:none}
+/* The toggle's corner: a left gutter on a page without a control column, the head's indent in a control column, and banners above one. */
+.shell-main:not(:has(>.split-view)){padding-left:calc(var(--size-control) + var(--space-3))}
+.shell-main:has(>.split-view)>:not(.split-view){margin-left:calc(var(--size-control) + var(--space-3))}
+.split-list>.page-h:first-child{padding-left:calc(var(--size-control) + var(--space-4))}
+.split-view{position:relative}
+.divider{position:absolute;top:0;bottom:0;z-index:4;width:var(--space-2);margin-left:calc(-1 * var(--space-1));cursor:col-resize;touch-action:none}
+.divider-rail{left:0}.divider-ctl{left:min(var(--size-ctl),50%)}
+.divider:hover,.divider:focus-visible,.divider:active{background:var(--accent);opacity:.5;outline:none}
 .rail.mini .nav-i a{padding:0 var(--space-2);position:relative}
 .rail.mini .nav-count{position:absolute;top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1));padding:0 var(--space-1)}
 .rail-g{list-style:none;margin:0;padding:0}
@@ -314,7 +337,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .kv .k{min-width:var(--size-clock);font-weight:var(--font-weight-medium)}
 .kv .v{font-family:var(--font-mono)}
 /* Control column and work area (patterns/list-detail.md) */
-.split-view{display:grid;grid-template-columns:var(--size-ctl) minmax(0,1fr)}
+.split-view{display:grid;grid-template-columns:min(var(--size-ctl),50%) minmax(0,1fr)}
 .split-list{display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;border-right:1px solid var(--line);background:var(--bg)}
 .split-list>*{flex:none}
 .split-list>.page-h{padding:var(--space-4) var(--space-4) var(--space-2)}
@@ -335,14 +358,18 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .list-view .vl{height:var(--list-height,var(--size-list))}
 @media (max-width:1100px){
   .cols,.split-view{grid-template-columns:minmax(0,1fr)}
-  .split-view.has-detail>.split-list,.split-view:not(.has-detail)>.work-idle{display:none}
+  .split-view.has-detail>.split-list,.split-view:not(.has-detail)>.work-idle,.divider-ctl{display:none}
+  .split-view.has-detail>:not(.split-list){padding-left:calc(var(--size-control) + var(--space-4))}
 }
 @media (max-width:760px){
   .rail{width:auto;padding:var(--space-2) var(--space-1)}
-  .rail .nm,.rail .rail-h,.rail .nav-pin,.rail .rail-menu,.rail .rail-g:not(.pinned) .nav-i.pinned,.rail .brand,.rail .waiting,.rail-head{display:none}
+  .shell-main:has(>.split-view)>:not(.split-view){margin-left:0}
+  .nav-toggle,.divider{display:none}
+  .split-list>.page-h:first-child{padding-left:var(--space-4)}
+  .rail .nm,.rail .rail-h,.rail .nav-pin,.rail .rail-menu:not(.up),.rail .rail-g:not(.pinned) .nav-i.pinned,.rail .brand,.rail .waiting,.rail-head{display:none}
   .rail .nav-i a{padding:0 var(--space-2);position:relative}
   .rail .nav-count{position:absolute;top:0;right:0;padding:0 var(--space-1)}
-  .shell-main{padding:var(--space-3)}
+  .shell-main,.shell-main:not(:has(>.split-view)){padding:var(--space-3)}
 }
 .vl-head .r{text-align:right}
 
@@ -385,7 +412,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 @media (max-width:760px){.rail .nav-count{top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1))}}
 /* M2: 44 px targets on touch for row pins, row links, nav links (owner exception) */
 @media (pointer:coarse){
-  .vl-row .btn.icon-only,.nav-i a,.nav-pin,.counter,.seg,.preset button,.saved-chip,.tabs button,.menu button{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}
+  .vl-row .btn.icon-only,.nav-i a,.rail-user-b,.nav-pin,.counter,.seg,.preset button,.saved-chip,.tabs button,.menu button{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}
   .row-link{display:inline-flex;align-items:center;min-height:var(--size-hit-phone)}
   .vl-row.static,.vl-head{height:auto;min-height:var(--size-row-phone)}
 }

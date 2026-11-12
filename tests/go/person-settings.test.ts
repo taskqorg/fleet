@@ -32,6 +32,9 @@ test('P2 preferences (saved views, focus, focus presets, widths, row pins) are s
   s = await op('person_settings_set', {widths: {nav: 240, control: 320}, rowPins: {tasks: ['t1', 't2', 't1']}});
   s = await op('person_settings_set', {widths: {nav: 0, control: 300}, rowPins: {sessions: ['s1']}});
   assert.deepEqual(s.widths, {control: 300}); assert.deepEqual(s.rowPins, {tasks: ['t1', 't2'], sessions: ['s1']});
+  assert.equal(s.navCollapsed, false);
+  s = await op('person_settings_set', {navCollapsed: true}); assert.equal(s.navCollapsed, true); assert.deepEqual(s.widths, {control: 300});
+  assert.equal((await op('person_settings_get', {})).navCollapsed, true);
   s = await op('person_settings_set', {rowPins: {tasks: []}, focus: []});
   assert.deepEqual(s.rowPins, {sessions: ['s1']}); assert.deepEqual(s.focus, []); assert.deepEqual(s.views, [view]);
   assert.deepEqual(await op('person_settings_get'), s);
