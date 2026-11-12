@@ -237,6 +237,21 @@ func askQuestion(q *Request, v doc) (string, error) {
 	return id, nil
 }
 
+// askAcceptanceWhenIdle: a task's last open execution succeeded and nothing else will move it, so its result goes to
+// the operator for acceptance (data foundation §3 task states). Without this the task stayed in progress forever.
+// Delivery tasks are skipped: their pipeline asks acceptance once per delivery state.
+func askAcceptanceWhenIdle(q *Request, id, executionID string) error {
+	t, err := first(q, `SELECT t.title, t.project_id FROM task t WHERE t.id=$1 AND t.state='in_progress' AND t.delivery_method IS NULL
+		AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state NOT IN ('succeeded','failed','cancelled'))
+		AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')`, id)
+	if err != nil || t == nil {
+		return err
+	}
+	_, err = askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": "Accept the result of: " + astr(t["title"]),
+		"options": []string{"accepted", "rejected"}, "askedBy": "fleet", "executionId": executionID, "data": doc{"artifactIds": []any{}}})
+	return err
+}
+
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
 // runAnswerChecks and runAnswerAfter apply the Lab and budget rules of the question.
 func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, error) {
