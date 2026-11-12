@@ -16,6 +16,8 @@ After reviewing `/etc/fleet-ci-network.nft` and `systemctl cat fleet-ci-vm`, sta
 
 Run `check-network.py` inside the guest before registration. Check the host nft reject counter increased for actual probes to the known listening host SSH port; connection failure alone could mean an unused port. Verify public GitHub/artifact HTTPS and DNS. Also check the VM process UID, cgroup limits and absence of guest production mounts/host sockets. No browser launch is part of provisioning.
 
+Before registering, read back `busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC`: it must print `b false` ([logins on the guest](#logins-on-the-guest)).
+
 ## Register once
 
 Use the supported GitHub organization runner registration endpoint, only after the group readback and network checks above. Download official `actions/runner` Linux x64 v2.338.2 into the guest and verify SHA256 `baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40` before extracting. This digest is the release asset digest returned by GitHub API. Run its dependency installer inside the guest if required, not on PDS18.
@@ -24,7 +26,7 @@ As guest user `ci`, configure URL `https://github.com/taskqorg`, group `fleet-pd
 
 ## Logins on the guest
 
-logind keeps users' IPC (`RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf`, from cloud-init; set by hand on the running guest on 2026-11-12). With the default, the runner service, which is no login session, loses its shared memory when the last SSH session of `ci` ends: a release job's PostgreSQL failed that way. Read it back with `busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager RemoveIPC` (expected `b false`) after provisioning and when qualifying a restored guest.
+logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-keep-ipc.conf`, written by cloud-init. With the default, the runner service, which is no login session, loses its shared memory when the last SSH session of `ci` ends, and the release job's PostgreSQL fails. Linger is not used.
 
 ## Guest state the release job keeps
 
