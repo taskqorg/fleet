@@ -4,7 +4,7 @@
 // Staleness is decided on the client from lastSeenAt (no write happens when a host stops polling), re-evaluated every 5 s.
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow } from '../../../packages/ui/src/index.ts';
+import { EntityCode, ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { Limits } from './limits.tsx';
@@ -110,8 +110,8 @@ function SystemPanels({ tele, found, now }: { tele: any; found: any; now: number
       <KvRow icon="circle-alert" label="Spans dropped" value={<Num m={{ value: tele.droppedSpans, basis: 'measured' }} kind="count" />} />
     </DetailSection>
     <DetailSection title="Recent runs">
-      {tele.runs.length ? tele.runs.slice(0, 20).map((r: any) => <KvRow key={r.executionId} icon="activity" label={r.executionId}
-        meta={r.hostId} value={<><Num m={m(r.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(r.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span> <AgeChip t={ms(r.at)} now={now} /></>} />) : <span class="muted">none in the last hour</span>}
+      {tele.runs.length ? tele.runs.slice(0, 20).map((r: any) => <KvRow key={r.executionId} icon="activity" label="Run"
+        meta={r.hostId} value={<><EntityCode id={r.executionId} what="Run" /> <Num m={m(r.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(r.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span> <AgeChip t={ms(r.at)} now={now} /></>} />) : <span class="muted">none in the last hour</span>}
     </DetailSection>
     <DetailSection title="Purge">
       {purgeErr && <ProblemRow title="Not purged" facts={purgeErr} severity="failure" actions={[]} />}

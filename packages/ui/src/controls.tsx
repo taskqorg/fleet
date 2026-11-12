@@ -2,7 +2,7 @@
 import type { ComponentChildren, TargetedMouseEvent } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
-import { type Measured, type Kind, measured, age, bytes, exact, stamp, percent, duration, agentLabel } from './format.ts';
+import { type Measured, type Kind, measured, age, bytes, exact, stamp, percent, duration, agentLabel, actor } from './format.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import { parse, renderBlocks } from './markdown.tsx';
 import { author, clipMessage, writeClip } from './clip.ts';
@@ -446,22 +446,23 @@ export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefre
 /** Writes text to the clipboard; the caller shows a failure (status line with retry). */
 export const copyText = (text: string) => navigator.clipboard.writeText(text);
 
-/** An id with no human code (session, execution, experiment): never shown as text (OR-38); a copy icon whose tooltip
- *  holds the UUID, for the places where the id is really needed. The click does not open the row (OR-26). */
-export function IdCopy({ id, what }: { id: string; what: string }) {
-  return <span class="id-copy" onClick={e => e.stopPropagation()}><Button label={`${what} ${id} · copy`} icon={actions.copy} iconOnly kind="quiet" onClick={() => { copyText(id).catch(() => {}); }} /></span>;
-}
-
-/** The one formatter of a human entity code (D17, OR-38): `T-FLT-42` in mono after the name. The UUID is never shown:
- *  it is the tooltip, and a click or Enter copies it without opening the row (OR-26). No code yet: nothing is shown. */
-export function EntityCode({ code, id, cls }: { code?: string | null; id: string; cls?: string }) {
-  const [copied, setCopied] = useState(false);
+/** The one formatter of an entity id (D17, OR-38). With a human code: `T-FLT-42` in mono after the name. Without one
+ *  (conversation, run, experiment) and with `what`: a copy icon; otherwise nothing. The UUID is never shown as text:
+ *  it is the tooltip, and a click or Enter copies it without opening the row (OR-26). */
+export function EntityCode({ code, id, cls, what }: { code?: string | null; id: string; cls?: string; what?: string }) {
+  const [tip, setTip] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
-  useEffect(() => setCopied(false), [id]);
-  if (!code) return null;
-  const copy = (e: Event) => { e.preventDefault(); e.stopPropagation(); copyText(id).then(() => { setCopied(true); clearTimeout(timer.current); timer.current = setTimeout(() => setCopied(false), 1500); }).catch(() => {}); };
-  return <span class={`id code${cls ? ' ' + cls : ''}`} data-ui="entity-code" role="button" tabIndex={0} aria-label={`${code}, copy UUID`} data-tip={copied ? 'UUID copied' : `${id} · click to copy`}
+  useEffect(() => setTip(null), [id]);
+  if (!code && !what) return null;
+  const copy = (e: Event) => {
+    e.preventDefault(); e.stopPropagation();
+    const show = (t: string) => { setTip(t); clearTimeout(timer.current); timer.current = setTimeout(() => setTip(null), 1500); };
+    copyText(id).then(() => show('UUID copied'), () => show('Copy failed'));
+  };
+  const label = `${code ?? what}, copy UUID`, dataTip = tip ?? `${what ? what + ' ' : ''}${id} · click to copy`;
+  if (!code) return <button type="button" class={`btn quiet icon-only${cls ? ' ' + cls : ''}`} data-ui="entity-code" aria-label={label} data-tip={dataTip} onClick={copy}><Icon name={actions.copy} /></button>;
+  return <span class={`id code${cls ? ' ' + cls : ''}`} data-ui="entity-code" role="button" tabIndex={0} aria-label={label} data-tip={dataTip}
     onClick={copy} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') copy(e); }}>{code}</span>;
 }
 
@@ -518,7 +519,7 @@ export function ReasoningRow({ markdown, open, onToggle, onCopyFail }: { markdow
 export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer, onSecret }: { text: string; options: unknown[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void; onSecret?: (value: string) => Promise<unknown> }) {
   return <div class="th-row th-q" data-ui="thread-row"><DecisionBlock question={text} askedBy="agent" addressedTo="you" since={askedAt ?? now} now={now}
     options={options.map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-    answered={state === 'answered' && answer !== undefined ? { by: answeredBy ?? 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} onSecret={onSecret} /></div>;
+    answered={state === 'answered' && answer !== undefined ? { by: actor(answeredBy) || 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} onSecret={onSecret} /></div>;
 }
 /** The connection a key request (a secret question) asks a key for: its options are {connection}. */
 export const keyConnection = (options: unknown): string | undefined => {
@@ -533,7 +534,7 @@ export function ResultRow({ artifacts, onOpen }: { artifacts: ArtifactMeta[]; on
 /** An execution start: state, agent mark, duration chip, and Stop while it runs (CUJ 5). */
 export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
   const secs = startedAt != null ? ((endedAt ?? now) - startedAt) / 1000 : null;
-  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <IdCopy id={session} what="Session" />}<IdCopy id={executionId} what="Run" /><span class="grow" />
+  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <EntityCode id={session} what="Conversation" />}<EntityCode id={executionId} what="Run" /><span class="grow" />
     <span class="th-svc"><AgentMark {...mark} />{secs !== null && <span class="chip-age">{duration(secs).text}</span>}{onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}</span></div>;
 }
 
