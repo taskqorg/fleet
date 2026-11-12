@@ -34,11 +34,6 @@ func projectWrite(q *Request, create bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cs, err := headConnections(jsonBytes(bundle)); err != nil {
-		return nil, err
-	} else if err := withdrawConnectionRemovals(q, cs); err != nil {
-		return nil, err
-	}
 	text, err := canonicalText(bundle)
 	if err != nil {
 		return nil, err
@@ -159,6 +154,15 @@ func projectWrite(q *Request, create bool) (any, error) {
 			if err := put(q, "session", session); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// Saved: an owner or full-access person naming a connection again keeps its key on the hosts. Anyone else
+	// cannot cancel the owner's key removal by naming the connection.
+	if fullAccess(q.person) {
+		if cs, err := headConnections(jsonBytes(bundle)); err != nil {
+			return nil, err
+		} else if err := withdrawConnectionRemovals(q, cs); err != nil {
+			return nil, err
 		}
 	}
 	out := doc{"projectId": id, "revision": rev.Revision, "contentSha": rev.ContentSha, "configured": true}
