@@ -6,7 +6,7 @@ import {
   ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, RowCheck, Totals, Icon, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   type TreeNode, type Harness, type StateOf,
-  keyConnection, copyText, actions, EntityCode,
+  keyConnection, EntityCode,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
