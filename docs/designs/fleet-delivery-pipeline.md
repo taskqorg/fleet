@@ -129,7 +129,7 @@ Today `migrate-check` proves only "release N's migrations, then release N-1's co
 
 ### 6. Faster pickup on hosts
 
-* **PDS18**: `fleet-update.timer` `OnUnitActiveSec` 1 minute (was 5). The fetch of `latest.json` sends `If-None-Match` with the last ETag, so an unchanged file is a 304 with no body.
+* **PDS18**: `fleet-update.timer` `OnUnitActiveSec` 1 minute (was 5) with `AccuracySec=1s` (systemd's default accuracy of 1 minute let it fire up to 60 s late). The fetch of `latest.json` sends `If-None-Match` with the last ETag, so an unchanged file is a 304 with no body.
 * **Executors**: the poll reply already carries `target` (`go/coordinator/host_poll.go`), and the executor rewrites `update.json` (temp file, then rename) only when a value changes. A new trigger starts `fleet-update executor` when that file changes:
     * Each `fleet-update executor` run writes the trigger for the real data dir (`FLEET_DATA_DIR` or the default) and reloads it only when its content changed (`go/update/trigger.go`); no host edits a path.
     * Linux and WSL: `~/.config/systemd/user/fleet-update.path`, `PathChanged=<data dir>/update/update.json`, `Unit=fleet-update.service`, enabled with `systemctl --user enable --now`.
