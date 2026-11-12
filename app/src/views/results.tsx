@@ -2,7 +2,7 @@
 // newest first, state icon first (OR-22); the focused one opens in the result viewer beside the list (OR-14).
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
-  ListDetail, ListFrame, FilterBar, StateCounters, VirtualList, StateBadge, Button, ResultViewer, ArtifactView, Empty, ErrorBanner, Skeleton,
+  EntityCode, ListDetail, ListFrame, FilterBar, StateCounters, VirtualList, StateBadge, Button, ResultViewer, ArtifactView, Empty, ErrorBanner, Skeleton,
   AgeChip, bytes, type StateOf, type Chip,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
@@ -14,7 +14,7 @@ import { useUrlView, useSearchBox } from '../url.ts';
 
 const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const PAGE = 100;
-type Row = { id: string; name: string; mediaType: string; size: number; state: StateOf<'artifact'>; taskId: string | null; executionId: string | null; projectId: string | null; createdAt: number; seq: number };
+type Row = { id: string; name: string; mediaType: string; size: number; state: StateOf<'artifact'>; taskId: string | null; taskCode?: string | null; executionId: string | null; projectId: string | null; createdAt: number; seq: number };
 // Filter fields beyond search and state ride in the URL's extra keys.
 const MEDIA: Record<string, string> = { Images: 'image/', Video: 'video/', Text: 'text/', JSON: 'application/json' };
 const SINCE: Record<string, number> = { '1d': 864e5, '7d': 7 * 864e5, '30d': 30 * 864e5 };
@@ -56,7 +56,7 @@ export function Results({ id }: { id?: string }) {
             header={<><span /><span>Result</span><span class="r">Size</span><span class="r">Age</span></>}
             render={r => <>
               <span class="lead"><StateBadge family="artifact" state={r.state} compact /></span>
-              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.name}</a>{r.projectId && <span class="id">{r.projectId}</span>}</span>
+              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.name}</a>{r.taskId && <EntityCode code={r.taskCode} id={r.taskId} />}{r.projectId && <span class="id">{r.projectId}</span>}</span>
               <span class="r svc">{bytes(r.size).text}</span><span class="r"><AgeChip t={r.createdAt} now={now} /></span>
             </>} />}
       </ListFrame>
