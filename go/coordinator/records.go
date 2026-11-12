@@ -237,6 +237,9 @@ func writeTotals(q *Request, id string) error {
 	 ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,wall_ms=excluded.wall_ms,wall_ms_basis=excluded.wall_ms_basis,computed_at=excluded.computed_at`, id); err != nil {
 		return err
 	}
+	if err := exec(q, "SELECT fleet_write_tokens($1)", id); err != nil { // tokens from the harness's usage report (migration 40)
+		return err
+	}
 	return exec(q, `UPDATE execution_totals SET rate_limit_last=r.data->'data',rate_limit_last_basis='measured' FROM (SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id=$1`, id)
 }
 

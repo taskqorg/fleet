@@ -3,8 +3,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"sync"
@@ -64,6 +66,12 @@ func ciRunner(j ciJob) (string, bool) {
 	if len(j.Labels) > 0 {
 		return j.Labels[0], true
 	}
+	if hosted { // no labels: GitHub names each hosted machine ("GitHub Actions 7"), so group them
+		return "GitHub-hosted", true
+	}
+	if j.RunnerGroup != nil && *j.RunnerGroup != "" {
+		return *j.RunnerGroup, hosted
+	}
 	return "unknown", true
 }
 
@@ -75,12 +83,57 @@ func ciMs(s string) any {
 	return t.UnixMilli()
 }
 
+// ciLast: the last pass (ciPass), which executions_ci serves; nil before the first one ends.
+var (
+	ciLastMu   sync.Mutex
+	ciLast     *contract.ExecutionsCiReply
+	ciViewedAt time.Time // the pass reads GitHub only while someone looks (keyed reads mint a token and record a call)
+	ciOff      bool
+)
+
 func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.ExecutionsCiReply, error) {
 	// Keyed reads are made for ciProject: only a caller who may see that project gets them.
 	if !mayAccessProjectID(q.person, ciProject) && q.person != nil {
 		return contract.ExecutionsCiReply{}, fail(404, "Unknown project")
 	}
-	ctx, a := q.ctx(), q.app
+	ciLastMu.Lock()
+	defer ciLastMu.Unlock()
+	ciViewedAt = time.Now()
+	if ciLast == nil {
+		p := "first CI read still running"
+		if ciOff {
+			p = "CI reads are off (FLEET_RUNNERS_CI_TICK_MS=0)"
+		}
+		return contract.ExecutionsCiReply{ServerNow: time.Now().UnixMilli(), Jobs: []contract.CiJob{}, MinutesToday: []contract.CiMinutes{}, Problems: []string{p}}, nil
+	}
+	return *ciLast, nil
+}
+
+// ciPass reads GitHub once (background, every FLEET_RUNNERS_CI_TICK_MS) and keeps the reply for executions_ci.
+func ciPass(ctx context.Context, a *App, first bool) error {
+	ciLastMu.Lock()
+	idle := !first && time.Since(ciViewedAt) > 10*time.Minute
+	ciLastMu.Unlock()
+	if idle {
+		return nil
+	}
+	r, err := ciRead(ctx, a)
+	ciLastMu.Lock()
+	defer ciLastMu.Unlock()
+	if err != nil {
+		// The last good pass stays, marked: jobs shown as running may have ended since.
+		if ciLast != nil {
+			stale := *ciLast
+			stale.Problems = append(append([]string{}, stale.Problems...), "CI read failed, showing the pass of "+time.UnixMilli(stale.ServerNow).UTC().Format("15:04")+" UTC: "+err.Error())
+			ciLast = &stale
+		}
+		return err
+	}
+	ciLast = &r
+	return nil
+}
+
+func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 	args := func(kv ...string) map[string]string {
 		m := map[string]string{"owner": ciOwner, "repo": ciRepo}
 		for i := 0; i+1 < len(kv); i += 2 {
@@ -161,8 +214,8 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 	}
 	minutes := map[string]*acc{}
 	count := func(j ciJob) {
-		if j.Status != "in_progress" && j.Status != "completed" {
-			return // queued: waiting is not runner time
+		if j.Status != "in_progress" && j.Status != "completed" || j.Conclusion != nil && *j.Conclusion == "skipped" {
+			return // queued (waiting is not runner time) or skipped (never ran on a runner)
 		}
 		start, _ := time.Parse(time.RFC3339, j.StartedAt)
 		if start.IsZero() || start.Before(now.Truncate(24*time.Hour)) {
@@ -316,5 +369,20 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 }
 
 func init() {
-	longOp("executions_ci", typedOp(executionsCI))
+	onStart(func(ctx context.Context, a *App) {
+		d := envMs("FLEET_RUNNERS_CI_TICK_MS", 60*1000)
+		if d > 0 {
+			go func() { // the first read at start, so a deploy does not leave the panel empty for a tick
+				if err := ciPass(ctx, a, true); err != nil {
+					log.Printf("runners-ci: %v", err)
+				}
+			}()
+		} else {
+			ciLastMu.Lock()
+			ciOff = true
+			ciLastMu.Unlock()
+		}
+		every(ctx, "runners-ci", d, func(ctx context.Context) error { return ciPass(ctx, a, false) })
+	})
+	operation("executions_ci", true, typedOp(executionsCI))
 }

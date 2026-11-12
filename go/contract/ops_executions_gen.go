@@ -368,7 +368,7 @@ func (v *ExecutionsAbandonRequest) Validate() error {
 	return nil
 }
 
-// ExecutionsCiReply: The Runners screen's CI half for taskqorg/fleet, read through githubRead (cached; keyed through the github connection, else unauthenticated). jobs: in progress and queued. minutesToday: job wall minutes since 00:00 UTC per runner type; runsUncounted: today's runs whose jobs are not read yet (minutes are a lower bound while above 0). runners: self-hosted runners, null without a key (state unknown).
+// ExecutionsCiReply: The Runners screen's CI half for taskqorg/fleet, the last background pass (every FLEET_RUNNERS_CI_TICK_MS, default 1 min, first at start) read through githubRead (cached; keyed through the github connection, else unauthenticated). jobs: in progress and queued. minutesToday: job wall minutes since 00:00 UTC per runner type; runsUncounted: today's runs whose jobs are not read yet (minutes are a lower bound while above 0). runners: self-hosted runners, null without a key (state unknown).
 type ExecutionsCiReply struct {
 	Jobs          []CiJob     `json:"jobs"`
 	Keyed         bool        `json:"keyed"`
@@ -949,26 +949,29 @@ func (v *RouteDecisionsRequest) Validate() error {
 	return nil
 }
 
-// RunnerRun: Times in ms since epoch; resource fields null when not measured. tokens: input + output + cache. cost: estimateCost figures (prices table), empty when nothing was used.
+// RunnerRun: Tool calls come as one row per caller (id calls:<parent, session or host:id>) with calls and failedCalls; other runs have them null. Times in ms since epoch; resource fields null when not measured. tokens: input + output + cache. cost: estimateCost figures (prices table), empty when nothing was used.
 type RunnerRun struct {
-	Cost            []json.RawMessage `json:"cost"`
-	CpuMs           *float64          `json:"cpuMs"`
-	EndedAt         *float64          `json:"endedAt"`
-	Harness         *string           `json:"harness"`
-	HostId          *string           `json:"hostId"`
-	Id              string            `json:"id"`
-	Kind            string            `json:"kind"`
-	LastSeenAt      *float64          `json:"lastSeenAt"`
-	Model           *string           `json:"model"`
-	PeakMemoryBytes *float64          `json:"peakMemoryBytes"`
-	Problem         *string           `json:"problem"`
-	SessionId       *string           `json:"sessionId"`
-	StartedAt       *float64          `json:"startedAt"`
-	State           ExecutionState    `json:"state"`
-	TaskId          *string           `json:"taskId"`
-	TaskTitle       *string           `json:"taskTitle"`
-	Tokens          *float64          `json:"tokens"`
-	WallMs          *float64          `json:"wallMs"`
+	Calls             *int64            `json:"calls,omitempty"`
+	Cost              []json.RawMessage `json:"cost"`
+	CpuMs             *float64          `json:"cpuMs"`
+	EndedAt           *float64          `json:"endedAt"`
+	FailedCalls       *int64            `json:"failedCalls,omitempty"`
+	Harness           *string           `json:"harness"`
+	HostId            *string           `json:"hostId"`
+	Id                string            `json:"id"`
+	Kind              string            `json:"kind"`
+	LastSeenAt        *float64          `json:"lastSeenAt"`
+	Model             *string           `json:"model"`
+	ParentExecutionId *string           `json:"parentExecutionId,omitempty"`
+	PeakMemoryBytes   *float64          `json:"peakMemoryBytes"`
+	Problem           *string           `json:"problem"`
+	SessionId         *string           `json:"sessionId"`
+	StartedAt         *float64          `json:"startedAt"`
+	State             ExecutionState    `json:"state"`
+	TaskId            *string           `json:"taskId"`
+	TaskTitle         *string           `json:"taskTitle"`
+	Tokens            *float64          `json:"tokens"`
+	WallMs            *float64          `json:"wallMs"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1097,7 +1100,7 @@ func init() {
 		"execution_status":      {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"execution_stop":        {Read: false, Long: false, Errors: []int{409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"executions_abandon":    {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: ends unfinished agent runs and host jobs that no host will finish (failed, problem unknown:abandoned); one setting-change audit row each.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
-		"executions_ci":         {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
+		"executions_ci":         {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"executions_dismiss":    {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: takes execution problems off Needs you (a problem-dismissal record); the problem stays on the record; one setting-change audit row each. An open execution is skipped: abandon it instead.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
 		"executions_list":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem; needsYou true keeps the problems that still need someone (Needs you): not dismissed, not abandoned or cancelled, no tool calls or steps of a listed run, project still defined.\",\"additionalProperties\":true,\"properties\":{\"needsYou\":{\"type\":\"boolean\"},\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_runners":    {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},

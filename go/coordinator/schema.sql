@@ -927,3 +927,35 @@ END $$;
 ALTER TABLE task ENABLE TRIGGER task_change;
 ALTER TABLE question ENABLE TRIGGER question_change;
 UPDATE task SET title='Deliver session' WHERE title ~* '^Deliver session [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
+-- migration 40: agent-run tokens from the harness's own usage report (the last result or turn.completed event with
+-- nativeUsage; the scope is the run, so the last report is taken, never a sum). Claude reports input, output,
+-- cache_read_input_tokens and cache_creation_input_tokens; Codex reports input_tokens including cached_input_tokens
+-- (input is stored without them) and, from the app server, {total, last}: total spans the whole thread (earlier runs
+-- too), so last is taken; a run of several turns then counts its last turn only (ponytail: diff total against the
+-- previous run of the thread when steered runs matter). Backfills every
+-- finished run; writeTotals calls it on each end.
+-- A count only from a whole JSON number; anything else a host sent is unknown, never an error that blocks the run's end.
+CREATE FUNCTION fleet_token_count(v jsonb) RETURNS bigint LANGUAGE sql IMMUTABLE AS $$
+ SELECT CASE WHEN jsonb_typeof(v)='number' AND v::text ~ '^[0-9]{1,18}$' THEN v::text::bigint END
+$$;
+CREATE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sql AS $$
+ WITH ev AS (SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM (
+  SELECT data->'data'->'fleetNormalized'->'nativeUsage' AS u FROM document
+  WHERE kind='event' AND data->>'executionId'=eid AND data->'data'->'fleetNormalized'->>'lifecycle' IN ('result','turn.completed')
+   AND jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object' ORDER BY seq DESC LIMIT 1) r),
+ n AS (SELECT
+  fleet_token_count(coalesce(u->'input_tokens',u->'inputTokens')) AS input,
+  fleet_token_count(coalesce(u->'output_tokens',u->'outputTokens')) AS output,
+  fleet_token_count(coalesce(u->'cache_read_input_tokens',u->'cached_input_tokens',u->'cachedInputTokens')) AS cache_read,
+  fleet_token_count(u->'cache_creation_input_tokens') AS cache_write,
+  (u ? 'cached_input_tokens' OR u ? 'cachedInputTokens') AS input_has_cache FROM ev)
+ UPDATE execution_totals SET
+  tokens_input=CASE WHEN n.input_has_cache THEN n.input-coalesce(n.cache_read,0) ELSE n.input END,
+  tokens_input_basis=CASE WHEN n.input IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_output=n.output, tokens_output_basis=CASE WHEN n.output IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_cache_read=n.cache_read, tokens_cache_read_basis=CASE WHEN n.cache_read IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_cache_write=n.cache_write, tokens_cache_write_basis=CASE WHEN n.cache_write IS NULL THEN 'unavailable' ELSE 'measured' END
+ FROM n WHERE execution_id=eid
+$$;
+SELECT fleet_write_tokens(execution_id) FROM execution_totals t JOIN execution e ON e.id=t.execution_id WHERE e.kind='agent_run';
