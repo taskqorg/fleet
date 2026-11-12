@@ -21,7 +21,14 @@ import (
 
 // Test children run the real guardian/stdio entrypoints, not a mocked ownership protocol.
 func TestMain(m *testing.M) {
-
+	// The fixtures run this binary as a trusted MCP executable, which must not be group/other writable. Under umask 002
+	// (a login shell, a runner with UMask=0002) or a build cache with a group-write default ACL, go test leaves it
+	// group-writable and every owned-dependency fixture is refused ("MCP executable must be trusted").
+	if self, err := os.Executable(); err == nil {
+		if st, err := os.Stat(self); err == nil && st.Mode().Perm()&0022 != 0 {
+			os.Chmod(self, st.Mode().Perm()&^0022)
+		}
+	}
 	if mcpDependencyInvocation() {
 		main()
 		os.Exit(0)
@@ -114,7 +121,7 @@ func mcpFixture() {
 		if cmd.Start() != nil {
 			os.Exit(6)
 		}
-		for i := 0; i < 150; i++ {
+		for i := 0; i < 1500; i++ { // 30 s: a -race process chain on a slow CPU starts in about 4 s
 			if exists(os.Args[3]) {
 				if tool == "escape-hold" {
 					io.Copy(io.Discard, os.Stdin)
@@ -751,7 +758,7 @@ func TestMCPOwnedDependencyNewSession(t *testing.T) {
 			stdin.Write([]byte(`{"id":1,"method":"initialize"}` + "\n"))
 			defer func() { cmd.Process.Kill(); cmd.Wait() }()
 			var receipt M
-			for i := 0; i < 200; i++ {
+			for i := 0; i < 1500; i++ { // 30 s: its six -race process starts took 3.2-4.2 s on PDS18's 2014 Xeon
 				if raw, err := os.ReadFile(marker); err == nil {
 					json.Unmarshal(raw, &receipt)
 					break
@@ -952,7 +959,7 @@ func TestMCPOwnedDependencyJournalRecovery(t *testing.T) {
 	defer func() { cmd.Process.Kill(); <-done }()
 	stdin.Write([]byte(`{"id":1,"method":"initialize"}` + "\n"))
 	var receipt M
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 1500; i++ { // 30 s, as in TestMCPOwnedDependencyNewSession
 		if raw, err := os.ReadFile(marker); err == nil {
 			json.Unmarshal(raw, &receipt)
 			break
