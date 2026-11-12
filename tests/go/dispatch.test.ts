@@ -137,6 +137,13 @@ test('A9b a run no host will finish ends: executions_abandon fails it with one a
   assert.deepEqual(ok(await op('executions_abandon', {ids: [a.executionId], reason: 'again'})).skipped, [{id: a.executionId, state: 'failed'}]);
   const audit = ok(await op('setting_changes', {target: 'execution:' + a.executionId})).changes;
   assert.deepEqual([audit.length, audit[0].previous, audit[0].reason], [1, 'running', 'test: host lost track']);
+  // Needs you: an abandoned run needs no one; executions_dismiss takes a finished problem off and keeps it on the record.
+  assert.ok(!ok(await op('executions_list', {needsYou: true})).executions.some((x: any) => x.id === a.executionId));
+  assert.equal((await op('executions_dismiss', {ids: [a.executionId], reason: ' '})).status, 400);
+  const d = ok(await op('executions_dismiss', {ids: [a.executionId, randomUUID()], reason: 'test: seen'}));
+  assert.deepEqual(d.dismissed, [a.executionId]); assert.equal(d.skipped[0].state, 'unknown');
+  assert.ok(ok(await op('executions_list', {problem: true})).executions.some((x: any) => x.id === a.executionId), 'the problem stays on the record');
+  assert.equal(ok(await op('setting_changes', {target: 'execution:' + a.executionId})).changes[0].value, 'dismissed');
   const b = await lost();
   for (let i = 0; i < 100 && (await execution(b.sessionId, b.executionId)).state !== 'failed'; i++) await new Promise(r => setTimeout(r, 200));
   assert.equal((await execution(b.sessionId, b.executionId)).stopDetail, 'abandoned');

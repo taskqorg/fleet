@@ -408,6 +408,11 @@ func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.Ex
 	if f.Problem != nil && *f.Problem {
 		c = append(c, "problem IS NOT NULL")
 	}
+	if f.NeedsYou != nil && *f.NeedsYou {
+		c = append(c, `problem IS NOT NULL AND NOT data ? 'problemDismissed' AND problem NOT IN ('unknown:abandoned','cancelled') AND kind<>'tool_run'
+		AND NOT (kind='pipeline_step' AND EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=split_part(execution.id,':step:',1)))
+		AND (project_id IS NULL OR EXISTS (SELECT 1 FROM definition d WHERE d.kind='project' AND d.id=execution.project_id))`)
+	}
 	rs, err := rowsOf(q, "SELECT "+executionCols+" FROM execution"+where(c)+" ORDER BY seq", p...)
 	if err != nil {
 		return nil, err

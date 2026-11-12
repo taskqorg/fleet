@@ -132,12 +132,17 @@ func transition(q *Request, id, state string) (doc, error) {
 
 // detectProblems marks open executions bound to a host, account or environment nothing registered.
 func detectProblems(q *Request, hosts []string, environments map[string][]string) error {
-	return exec(q, `WITH found AS (SELECT e.id,CASE
+	if err := exec(q, `WITH found AS (SELECT e.id,CASE
     WHEN e.host_id IS NOT NULL AND NOT (e.host_id=ANY($1) OR EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=e.host_id)) THEN 'unregistered host '||e.host_id
     WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind='managed-account' AND a.id=e.account_id) THEN 'unregistered account '||e.account_id
     WHEN e.project_id IS NOT NULL AND e.host_id IS NOT NULL AND jsonb_array_length(coalesce($2::jsonb->e.project_id,'[]'))>0 AND NOT ($2::jsonb->e.project_id) ? e.host_id THEN 'no registered environment of project '||e.project_id||' on host '||e.host_id
    END AS problem FROM execution e WHERE e.state NOT IN ('succeeded','failed','cancelled') AND e.kind<>'child_agent')
-   UPDATE execution x SET problem=found.problem FROM found WHERE x.id=found.id AND x.problem IS DISTINCT FROM found.problem`, hosts, js(environments))
+   UPDATE execution x SET problem=found.problem FROM found WHERE x.id=found.id AND x.problem IS DISTINCT FROM found.problem`, hosts, js(environments)); err != nil {
+		return err
+	}
+	// A binding problem holds only while the execution is open: once it ended, nothing waits on the binding.
+	return exec(q, `UPDATE execution SET problem=NULL WHERE state IN ('succeeded','failed','cancelled')
+	AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %')`)
 }
 
 func openDelegations(q *Request) ([]doc, error) {
@@ -542,23 +547,76 @@ func init() {
 		publish(q)
 		return out, agentPromote(q)
 	}))
+	gatedObjOp("executions_dismiss", false, typedOp(func(q *Request, r *contract.ExecutionsDismissRequest) (contract.ExecutionsDismissReply, error) {
+		out := contract.ExecutionsDismissReply{Dismissed: []string{}, Skipped: []contract.ExecutionSkipped{}}
+		if q.person != nil && !fullAccess(q.person) {
+			return out, fail(403, "Only the owner dismisses execution problems")
+		}
+		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
+			return out, fail(400, "Expected reason")
+		}
+		if len(r.Ids) == 0 || len(r.Ids) > 1000 {
+			return out, fail(400, "Expected 1 to 1000 ids")
+		}
+		for _, id := range r.Ids {
+			if !idOK(id) {
+				return out, fail(400, "Expected execution ids")
+			}
+		}
+		by := actor(q, "operator")
+		for _, id := range r.Ids {
+			row, err := first(q, "SELECT state::text AS state,project_id,problem FROM execution WHERE id=$1 FOR UPDATE", id)
+			if err != nil {
+				return out, err
+			}
+			if row == nil || !terminalTyped[astr(row["state"])] || row["problem"] == nil {
+				state := "unknown"
+				if row != nil {
+					state = astr(row["state"])
+				}
+				out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: id, State: state})
+				continue
+			}
+			d := doc{"reason": r.Reason, "actor": by, "at": nowMs()}
+			if err := exec(q, "UPDATE execution SET data=data||jsonb_build_object('problemDismissed',$2::jsonb) WHERE id=$1", id, jsonBytes(d)); err != nil {
+				return out, err
+			}
+			if err := put(q, "setting-change", doc{"id": newID(), "target": "execution:" + id, "projectId": row["project_id"], "field": "problem", "previous": row["problem"], "value": "dismissed", "reason": r.Reason, "actor": by, "at": d["at"]}); err != nil {
+				return out, err
+			}
+			out.Dismissed = append(out.Dismissed, id)
+		}
+		publish(q)
+		return out, nil
+	}))
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
 			return runTx(ctx, a, nil, true, "", func(q *Request) error {
-				rs, err := queryRows(q, `SELECT id FROM execution WHERE `+execKinds+` AND state IN ('preparing','running','waiting')
-				AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
+				// lostCond: still lost, re-checked under the row lock so a receipt that just arrived wins.
+				const lostCond = `state IN ('preparing','running','waiting') AND (
+				 (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
 				  WHERE c.kind='command' AND c.data->>'executionId'=execution.id AND c.data->>'kind'='stop' AND c.data->>'status' IN ('pending','unknown'))))
-				AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1)
-				FOR UPDATE OF execution SKIP LOCKED`, lostAfter.Seconds())
+				  AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1))
+				 OR (kind IN ('pipeline_run','pipeline_step','tool_run') AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1)))`
+				rs, err := queryRows(q, "SELECT id FROM execution WHERE "+lostCond, lostAfter.Seconds())
 				if err != nil {
 					return err
 				}
+				n := 0
 				for _, x := range rs {
+					still, err := has(q, "SELECT 1 FROM execution WHERE id=$2 AND "+lostCond+" FOR UPDATE SKIP LOCKED", lostAfter.Seconds(), x["id"])
+					if err != nil {
+						return err
+					}
+					if !still {
+						continue
+					}
 					if _, err := executionAbandon(q, astr(x["id"]), "no host receipt for "+lostAfter.String()+" after the host lost track or the stop went unanswered", "fleet"); err != nil {
 						return err
 					}
+					n++
 				}
-				if len(rs) == 0 {
+				if n == 0 {
 					return nil
 				}
 				publish(q)
@@ -573,9 +631,22 @@ func init() {
 // the caller promotes queued work once after its batch. It returns the state of an
 // execution it leaves alone ("unknown": not an agent run or host job), "" when it ended it.
 func executionAbandon(q *Request, id, reason, by string) (string, error) {
-	row, err := first(q, "SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+" FOR UPDATE", id)
+	row, err := first(q, "SELECT state::text AS state,kind::text AS kind,project_id FROM execution WHERE id=$1 FOR UPDATE", id)
 	if err != nil || row == nil {
 		return "unknown", err
+	}
+	if k := astr(row["kind"]); k != "agent_run" && k != "host_job" {
+		// A pipeline row or tool call no engine will finish (its run is gone or lost): failed through the typed transition.
+		if terminalTyped[astr(row["state"])] {
+			return astr(row["state"]), nil
+		}
+		if _, err := transition(q, id, "failed"); err != nil {
+			return "", err
+		}
+		if err := exec(q, `UPDATE execution SET problem='unknown:abandoned',observation='unconfirmed',data=data||jsonb_build_object('stopDetail','abandoned','error','abandoned: '||$2::text) WHERE id=$1`, id, reason); err != nil {
+			return "", err
+		}
+		return "", put(q, "setting-change", doc{"id": newID(), "target": "execution:" + id, "projectId": row["project_id"], "field": "state", "previous": row["state"], "value": "failed", "reason": reason, "actor": by, "at": nowMs()})
 	}
 	e, err := get(q, id, "execution")
 	if err != nil {

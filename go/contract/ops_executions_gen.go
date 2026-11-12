@@ -410,6 +410,41 @@ func (v *ExecutionsCiReply) Validate() error {
 
 type ExecutionsCiRequest = map[string]json.RawMessage
 
+type ExecutionsDismissReply struct {
+	Dismissed []string           `json:"dismissed"`
+	Skipped   []ExecutionSkipped `json:"skipped"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionsDismissReply) Validate() error {
+	if v.Dismissed == nil {
+		return Missing("dismissed")
+	}
+	if v.Skipped == nil {
+		return Missing("skipped")
+	}
+	for i := range v.Skipped {
+		if err := Check(&v.Skipped[i], "skipped"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExecutionsDismissRequest: Owner or full access: takes execution problems off Needs you (data.problemDismissed); the problem stays on the record; one setting-change audit row each. An open execution is skipped: abandon it instead.
+type ExecutionsDismissRequest struct {
+	Ids    []string `json:"ids"`
+	Reason string   `json:"reason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionsDismissRequest) Validate() error {
+	if v.Ids == nil {
+		return Missing("ids")
+	}
+	return nil
+}
+
 type ExecutionsListReply struct {
 	Executions []ExecutionRow `json:"executions"`
 }
@@ -427,8 +462,9 @@ func (v *ExecutionsListReply) Validate() error {
 	return nil
 }
 
-// ExecutionsListRequest: Filters; problem true keeps executions with a problem.
+// ExecutionsListRequest: Filters; problem true keeps executions with a problem; needsYou true keeps the problems that still need someone (Needs you): not dismissed, not abandoned or cancelled, no tool calls or steps of a listed run, project still defined.
 type ExecutionsListRequest struct {
+	NeedsYou          *bool   `json:"needsYou,omitempty"`
 	ParentExecutionId *string `json:"parentExecutionId,omitempty"`
 	Problem           *bool   `json:"problem,omitempty"`
 	ProjectId         *string `json:"projectId,omitempty"`
@@ -1062,7 +1098,8 @@ func init() {
 		"execution_stop":        {Read: false, Long: false, Errors: []int{409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"executions_abandon":    {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: ends unfinished agent runs and host jobs that no host will finish (failed, problem unknown:abandoned); one setting-change audit row each.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
 		"executions_ci":         {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
-		"executions_list":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem.\",\"additionalProperties\":true,\"properties\":{\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"executions_dismiss":    {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access: takes execution problems off Needs you (data.problemDismissed); the problem stays on the record; one setting-change audit row each. An open execution is skipped: abandon it instead.\",\"additionalProperties\":false,\"properties\":{\"ids\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"ids\",\"reason\"],\"type\":\"object\"}")},
+		"executions_list":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Filters; problem true keeps executions with a problem; needsYou true keeps the problems that still need someone (Needs you): not dismissed, not abandoned or cancelled, no tool calls or steps of a listed run, project still defined.\",\"additionalProperties\":true,\"properties\":{\"needsYou\":{\"type\":\"boolean\"},\"parentExecutionId\":{\"type\":\"string\"},\"problem\":{\"type\":\"boolean\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"executions_runners":    {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{},\"type\":\"object\"}")},
 		"hosts_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"includeRemoved: also hosts removed by hosts_remove (state removed).\",\"additionalProperties\":true,\"properties\":{\"includeRemoved\":{\"type\":\"boolean\"}},\"type\":\"object\"}")},
 		"hosts_register":        {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. secretSha256: the sha256 of a secret the host already holds; absent: Fleet mints one.\",\"additionalProperties\":true,\"properties\":{\"harnesses\":{},\"holder\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"platform\":{\"type\":\"string\"},\"roles\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
