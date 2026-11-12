@@ -40,4 +40,15 @@ test('sessions_list and membership with production-shaped RLS history retain tit
   assert.equal((await op('sessions_list', {filter: {search: 'Foreign title canary'}})).total, 0);
   const foreign = await op('sessions_list', {}, outsider); assert.deepEqual(foreign.sessions.map((s: any) => s.id), [theirs]);
   const all = await op('sessions_list', {}, owner); assert.equal(all.total, 1602);
+  // Incident 2026-11-12: an ignored projectId filter listed every session and a cleanup archived them all.
+  const raw = async (name: string, body: object, who = owner) => (await fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': who, 'content-type': 'application/json'}, body: JSON.stringify(body)})).status;
+  assert.equal((await op('sessions_list', {filter: {projectId: ['hidden-project']}}, owner)).total, 1);
+  assert.deepEqual((await op('sessions_list', {filter: {projectId: [null]}}, owner)).sessions.map((s: any) => s.id).sort(), [mine, theirs].sort());
+  assert.equal(await raw('sessions_list', {filter: {project: ['hidden-project']}}), 400);
+  assert.equal(await raw('task_page', {filter: {archived: true}}), 400);
+  assert.equal(await raw('session_unarchive', {sessionId: 'list-1599', reason: 'test'}, member), 403);
+  assert.equal(await raw('session_unarchive', {sessionId: 'list-1599'}), 400);
+  await op('session_unarchive', {sessionId: 'list-1599', reason: 'restore a wrong archive'}, owner);
+  assert.equal((await op('sessions_list', {filter: {archived: true}}, owner)).total, 0);
+  assert.equal(await raw('session_unarchive', {sessionId: 'list-1599', reason: 'again'}), 409);
 });

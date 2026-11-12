@@ -503,6 +503,19 @@ func (v *SessionTransitionRequest) Validate() error {
 	return nil
 }
 
+type SessionUnarchiveReply = map[string]json.RawMessage
+
+// SessionUnarchiveRequest: Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A torn-down worktree is not restored; the next start prepares a new one.
+type SessionUnarchiveRequest struct {
+	Reason    string `json:"reason"`
+	SessionId string `json:"sessionId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionUnarchiveRequest) Validate() error {
+	return nil
+}
+
 // SessionsListReply: nextAfter: null on the last page, else the sort key to pass as after.
 type SessionsListReply struct {
 	Counts    map[string]int64 `json:"counts"`
@@ -914,6 +927,7 @@ func init() {
 		"session_start":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"callerExecutionId\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"role\":{\"type\":\"string\"},\"setup\":{},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_task_attach": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"boundProject\":{},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_transition":  {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"session_unarchive":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A torn-down worktree is not restored; the next start prepares a new one.\",\"additionalProperties\":false,\"properties\":{\"reason\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"reason\"],\"type\":\"object\"}")},
 		"sessions_list":       {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"after: the nextAfter of the previous page.\",\"additionalProperties\":true,\"properties\":{\"after\":{\"items\":{},\"type\":\"array\"},\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects.\",\"additionalProperties\":true,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"thread_blocks":       {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"rows: changed records; the reply has their current blocks.\",\"properties\":{\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema.sql); a go test checks the triggers against this list.\",\"enum\":[\"api-connection\",\"artifact\",\"command\",\"connection-key\",\"definition\",\"event\",\"execution\",\"experiment\",\"host\",\"managed-account\",\"project-recommendation\",\"question\",\"score\",\"session\",\"setting-change\",\"task\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"key\",\"rows\"],\"type\":\"object\"}")},
 		"thread_entries":      {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"after\":{\"type\":\"string\"},\"around\":{\"type\":\"string\"},\"before\":{\"type\":\"string\"},\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"resolve\":{\"type\":\"boolean\"}},\"required\":[\"key\"],\"type\":\"object\"}")},

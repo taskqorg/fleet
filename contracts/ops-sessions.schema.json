@@ -2,97 +2,1643 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations of the sessions domain; the rules are in ops.schema.json $comment and contracts/README.md.",
   "operations": {
-    "ask": {"read": false, "errors": [400, 403, 409]},
-    "changes_since": {"read": true, "errors": [400]},
-    "direct_search": {"read": false, "long": true, "errors": []},
-    "message_send": {"read": false, "errors": [400, 409]},
-    "recommendation_set": {"read": false, "errors": [400, 404, 409]},
-    "reply": {"read": false, "errors": [400, 409]},
-    "session_archive": {"read": false, "errors": [400, 404, 409]},
-    "session_create": {"read": false, "errors": [409]},
-    "session_fork": {"read": false, "errors": [400, 409]},
-    "session_get": {"read": true, "errors": [400]},
-    "session_handoffs": {"read": true, "errors": [400]},
-    "session_profile": {"read": false, "errors": [400, 409]},
-    "session_resume": {"read": false, "errors": [400]},
-    "session_start": {"read": false, "errors": [400, 404, 409]},
-    "session_task_attach": {"read": false, "errors": [400, 403, 404, 409]},
-    "session_transition": {"read": false, "errors": [400, 409]},
-    "sessions_list": {"read": true, "errors": [400]},
-    "thread_blocks": {"read": true, "errors": [400]},
-    "thread_entries": {"read": true, "errors": [400]},
-    "thread_export": {"read": true, "errors": [400]},
-    "thread_search": {"read": true, "errors": [400]},
-    "watch_get": {"read": true, "errors": [400]},
-    "watch_set": {"read": false, "errors": [400, 403, 409]},
-    "watch_stop": {"read": false, "errors": [400, 403]},
-    "worker_done": {"read": false, "errors": [400, 409]}
+    "ask": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        409
+      ]
+    },
+    "changes_since": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "direct_search": {
+      "read": false,
+      "long": true,
+      "errors": []
+    },
+    "message_send": {
+      "read": false,
+      "errors": [
+        400,
+        409
+      ]
+    },
+    "recommendation_set": {
+      "read": false,
+      "errors": [
+        400,
+        404,
+        409
+      ]
+    },
+    "reply": {
+      "read": false,
+      "errors": [
+        400,
+        409
+      ]
+    },
+    "session_archive": {
+      "read": false,
+      "errors": [
+        400,
+        404,
+        409
+      ]
+    },
+    "session_create": {
+      "read": false,
+      "errors": [
+        409
+      ]
+    },
+    "session_fork": {
+      "read": false,
+      "errors": [
+        400,
+        409
+      ]
+    },
+    "session_get": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "session_handoffs": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "session_profile": {
+      "read": false,
+      "errors": [
+        400,
+        409
+      ]
+    },
+    "session_resume": {
+      "read": false,
+      "errors": [
+        400
+      ]
+    },
+    "session_start": {
+      "read": false,
+      "errors": [
+        400,
+        404,
+        409
+      ]
+    },
+    "session_task_attach": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404,
+        409
+      ]
+    },
+    "session_transition": {
+      "read": false,
+      "errors": [
+        400,
+        409
+      ]
+    },
+    "sessions_list": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "thread_blocks": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "thread_entries": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "thread_export": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "thread_search": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "watch_get": {
+      "read": true,
+      "errors": [
+        400
+      ]
+    },
+    "watch_set": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        409
+      ]
+    },
+    "watch_stop": {
+      "read": false,
+      "errors": [
+        400,
+        403
+      ]
+    },
+    "worker_done": {
+      "read": false,
+      "errors": [
+        400,
+        409
+      ]
+    },
+    "session_unarchive": {
+      "read": false,
+      "errors": [
+        400,
+        403,
+        404,
+        409
+      ]
+    }
   },
   "$defs": {
-    "AskReply": {"type": "object", "additionalProperties": true, "$comment": "The agent question record."},
-    "AskRequest": {"type": "object", "additionalProperties": true, "properties": {"executionId": {"type": "string"}, "question": {}, "requestId": {"type": "string"}, "resume": {}}},
-    "Block": {"oneOf": [{"$ref": "#/$defs/TextBlock"}, {"$ref": "#/$defs/ReasoningBlock"}, {"$ref": "#/$defs/ToolBlock"}, {"$ref": "#/$defs/QuestionBlock"}, {"$ref": "#/$defs/ResultBlock"}, {"$ref": "#/$defs/BoundaryBlock"}], "$comment": "One thread entry (docs/designs/fleet-conversations.md), told apart by kind. key is its position seq:part. Fleet's own projection: closed."},
-    "BoundaryBlock": {"type": "object", "required": ["kind", "key", "executionId", "state"], "properties": {"kind": {"const": "boundary"}, "key": {"type": "string"}, "sessionId": {"type": ["string", "null"]}, "executionId": {"type": "string"}, "state": {"$ref": "ops.schema.json#/$defs/ExecutionState"}, "startedAt": {"type": ["integer", "null"]}, "endedAt": {"type": ["integer", "null"]}, "harness": {"type": ["string", "null"]}, "model": {"type": ["string", "null"]}, "effort": {"type": ["string", "null"]}}, "$comment": "Start of an execution in the thread."},
-    "Change": {"type": "object", "required": ["seq", "kind", "id", "taskId", "sessionId", "hostId", "op"], "properties": {"seq": {"type": "integer"}, "kind": {"$ref": "ops.schema.json#/$defs/ChangeKind"}, "id": {"type": "string"}, "taskId": {"type": ["string", "null"]}, "sessionId": {"type": ["string", "null"]}, "hostId": {"type": ["string", "null"]}, "op": {"type": "string"}}, "$comment": "One committed change (the change table), as GET /api/stream and changes_since deliver it."},
-    "ChangeRef": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"$ref": "ops.schema.json#/$defs/ChangeKind"}, "id": {"type": "string"}}},
-    "ChangesSinceReply": {"type": "object", "required": ["changes", "cursor"], "properties": {"changes": {"type": "array", "items": {"$ref": "#/$defs/Change"}}, "cursor": {"type": "integer"}, "resync": {"type": "boolean"}, "held": {"type": "boolean"}}, "$comment": "resync: the cursor fell out of retention, reload everything. held: a writer still holds older changes; read again."},
-    "ChangesSinceRequest": {"type": "object", "properties": {"cursor": {"type": "integer"}, "limit": {"type": "integer", "minimum": 1}}, "additionalProperties": true, "$comment": "No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500)."},
-    "DirectSearchReply": {"type": "object", "additionalProperties": true, "$comment": "A pipeline run with its steps, state and results (pipelineRun)."},
-    "DirectSearchRequest": {"type": "object", "required": ["projectId", "requestId", "query"], "properties": {"projectId": {"type": "string"}, "requestId": {"type": "string"}, "methodId": {"type": "string"}, "query": {"type": "string"}}, "additionalProperties": true, "$comment": "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId."},
-    "MessageSendReply": {"type": "object", "additionalProperties": true, "$comment": "The execution the message started, or the queued message with queued: true and its position."},
-    "MessageSendRequest": {"type": "object", "additionalProperties": true, "properties": {"delivery": {"type": "string"}, "requestId": {"type": "string"}, "sessionId": {"type": "string"}, "setup": {}, "source": {}, "text": {"type": "string"}}},
-    "QuestionBlock": {"type": "object", "required": ["kind", "key", "questionId", "text", "options", "state"], "properties": {"kind": {"const": "question"}, "key": {"type": "string"}, "executionId": {"type": ["string", "null"]}, "questionId": {"type": "string"}, "text": {"type": "string"}, "options": {}, "state": {"type": "string"}, "askedAt": {"type": ["integer", "null"]}, "answeredAt": {"type": ["integer", "null"]}, "answer": {}, "answeredBy": {"type": "string"}}, "$comment": "options: the stored options as they are (a list of labels for agent questions)."},
-    "ReasoningBlock": {"type": "object", "required": ["kind", "key", "markdown"], "properties": {"kind": {"const": "reasoning"}, "key": {"type": "string"}, "executionId": {"type": ["string", "null"]}, "markdown": {"type": "string"}, "plain": {"type": "string"}, "at": {"type": ["integer", "null"]}, "stream": {"type": "string"}}},
-    "RecommendationSetReply": {"type": "object", "required": ["id", "projectId", "methodId", "selectedAt", "actor"], "properties": {"id": {"type": "string"}, "projectId": {"type": "string"}, "methodId": {"type": "string"}, "selectedAt": {"type": "integer"}, "actor": {"type": "string"}}},
-    "RecommendationSetRequest": {"type": "object", "required": ["projectId", "methodId"], "properties": {"projectId": {"type": "string"}, "methodId": {"type": "string"}}, "additionalProperties": true},
-    "ReplyReply": {"type": "object", "additionalProperties": true, "$comment": "The answered agent question record with its delivery."},
-    "ReplyRequest": {"type": "object", "additionalProperties": true, "properties": {"answer": {}, "questionId": {"type": "string"}}},
-    "ResultArtifact": {"type": "object", "required": ["id", "name", "mediaType", "size"], "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "mediaType": {"type": "string"}, "size": {"type": "integer"}}},
-    "ResultBlock": {"type": "object", "required": ["kind", "key", "artifactIds", "artifacts"], "properties": {"kind": {"const": "result"}, "key": {"type": "string"}, "executionId": {"type": ["string", "null"]}, "artifactIds": {"type": "array", "items": {"type": "string"}}, "artifacts": {"type": "array", "items": {"$ref": "#/$defs/ResultArtifact"}}}, "$comment": "The stored artifacts of an ended execution."},
-    "SearchHit": {"type": "object", "required": ["key", "snippet"], "properties": {"key": {"type": "string"}, "snippet": {"type": "string"}}},
-    "SessionArchiveReply": {"type": "object", "additionalProperties": true, "$comment": "{sessionId, archivedAt, teardown: null} when no execution is left to tear down, else the teardown command it queued (id, executionId, hostId, kind teardown, payload, status)."},
-    "SessionArchiveRequest": {"type": "object", "required": ["sessionId"], "properties": {"sessionId": {"type": "string"}}, "additionalProperties": true},
-    "SessionCreateReply": {"type": "object", "required": ["sessionId", "id", "createdAt"], "properties": {"sessionId": {"type": "string"}, "id": {"type": "string"}, "createdAt": {"type": "integer"}, "directedBy": {}}, "$comment": "The new session row, plus sessionId."},
-    "SessionCreateRequest": {"type": "object", "additionalProperties": true},
-    "SessionForkReply": {"type": "object", "required": ["id", "requestId", "sourceSessionId", "sessionId"], "properties": {"id": {"type": "string"}, "requestId": {"type": "string"}, "sourceSessionId": {"type": "string"}, "sessionId": {"type": "string"}, "strategy": {"type": "string"}, "handoffId": {"type": ["string", "null"]}, "at": {"type": "number"}}, "$comment": "sessionId: the new session."},
-    "SessionForkRequest": {"type": "object", "properties": {"sessionId": {"type": "string"}, "requestId": {"type": "string"}, "strategy": {"type": "string"}, "text": {"type": "string"}, "callerSessionId": {"type": "string"}}, "additionalProperties": true, "required": ["requestId"]},
-    "SessionGetReply": {"type": "object", "additionalProperties": true, "$comment": "The session view: the session row with its executions, questions, focus and handoffs."},
-    "SessionGetRequest": {"type": "object", "required": ["sessionId"], "properties": {"sessionId": {"type": "string"}}, "additionalProperties": true},
-    "SessionHandoffsReply": {"type": "object", "required": ["handoffs"], "properties": {"handoffs": {"type": "array", "items": {"type": "object", "additionalProperties": true, "$comment": "A handoff record."}}}},
-    "SessionHandoffsRequest": {"type": "object", "required": ["sessionId"], "properties": {"sessionId": {"type": "string"}}, "additionalProperties": true},
-    "SessionProfileReply": {"type": "object", "required": ["sessionId", "profileId", "account"], "properties": {"sessionId": {"type": "string"}, "profileId": {"type": "string"}, "account": {"type": ["string", "null"]}, "transition": {"type": "string"}, "handoffId": {"type": ["string", "null"]}, "nativeSessionId": {"type": ["string", "null"]}}, "$comment": "transition, handoffId and nativeSessionId only when the session has a native session to move."},
-    "SessionProfileRequest": {"type": "object", "required": ["sessionId", "profileId"], "properties": {"sessionId": {"type": "string"}, "profileId": {"type": "string"}, "account": {"type": "string"}, "workingDirectory": {"type": "string"}}, "additionalProperties": true},
-    "SessionResumeReply": {"type": "object", "required": ["sessionId", "harness", "account", "native", "nativeSessions", "forkOf"], "properties": {"sessionId": {"type": "string"}, "harness": {}, "account": {}, "native": {}, "nativeSessions": {}, "forkOf": {}}, "$comment": "How the session continues: its harness, account and native session ids."},
-    "SessionResumeRequest": {"type": "object", "properties": {"sessionId": {"type": "string"}}, "additionalProperties": true},
-    "SessionStartReply": {"type": "object", "required": ["sessionId"], "properties": {"sessionId": {"type": "string"}, "profileId": {}, "projectId": {}, "taskId": {}, "role": {}, "account": {}, "executionId": {}, "hostId": {}, "existing": {"type": "boolean"}}, "$comment": "existing: the requestId already started this session."},
-    "SessionStartRequest": {"type": "object", "additionalProperties": true, "properties": {"account": {"type": "string"}, "callerExecutionId": {"type": "string"}, "callerSessionId": {"type": "string"}, "hostId": {"type": "string"}, "profileId": {"type": "string"}, "projectId": {"type": "string"}, "requestId": {"type": "string"}, "role": {"type": "string"}, "setup": {}, "taskId": {"type": "string"}, "text": {"type": "string"}}},
-    "SessionTaskAttachReply": {"type": "object", "required": ["sessionId", "taskId"], "properties": {"sessionId": {"type": "string"}, "taskId": {"type": "string"}, "existing": {"type": "boolean"}}},
-    "SessionTaskAttachRequest": {"type": "object", "additionalProperties": true, "properties": {"boundProject": {}, "sessionId": {"type": "string"}, "taskId": {"type": "string"}}},
-    "SessionTransitionReply": {"type": "object", "required": ["sessionId", "profileId", "transition"], "properties": {"sessionId": {"type": "string"}, "profileId": {"type": "string"}, "account": {"type": ["string", "null"]}, "transition": {"type": "string"}, "handoffId": {"type": ["string", "null"]}, "nativeSessionId": {"type": ["string", "null"]}}},
-    "SessionTransitionRequest": {"type": "object", "additionalProperties": true, "properties": {"account": {"type": "string"}, "profileId": {"type": "string"}, "sessionId": {"type": "string"}}},
-    "SessionsListReply": {"type": "object", "required": ["sessions", "nextAfter", "counts", "total"], "properties": {"sessions": {"type": "array", "items": {"$ref": "ops.schema.json#/$defs/ListRow"}}, "nextAfter": {}, "counts": {"type": "object", "additionalProperties": {"type": "integer"}}, "total": {"type": "integer"}}, "$comment": "nextAfter: null on the last page, else the sort key to pass as after."},
-    "SessionsListRequest": {"type": "object", "properties": {"filter": {"$ref": "ops.schema.json#/$defs/ListFilter"}, "group": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "after": {"type": "array", "items": {}}}, "additionalProperties": true, "$comment": "after: the nextAfter of the previous page."},
-    "TextBlock": {"type": "object", "required": ["kind", "key", "role", "markdown"], "properties": {"kind": {"const": "text"}, "key": {"type": "string"}, "executionId": {"type": ["string", "null"]}, "role": {"type": "string"}, "markdown": {"type": "string"}, "plain": {"type": "string"}, "at": {"type": ["integer", "null"]}, "by": {"type": ["string", "null"]}, "stream": {"type": "string"}, "harness": {"type": ["string", "null"]}, "model": {"type": ["string", "null"]}, "effort": {"type": ["string", "null"]}}, "$comment": "role agent or operator; by: the sender of an operator message; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text."},
-    "ThreadBlocksReply": {"type": "object", "required": ["entries", "removed"], "properties": {"entries": {"type": "array", "items": {"$ref": "#/$defs/Block"}}, "removed": {"type": "array", "items": {"type": "string"}}}, "$comment": "removed: block keys that no longer exist."},
-    "ThreadBlocksRequest": {"type": "object", "required": ["key", "rows"], "properties": {"key": {"$ref": "#/$defs/ThreadKey"}, "rows": {"type": "array", "items": {"$ref": "#/$defs/ChangeRef"}}}, "$comment": "rows: changed records; the reply has their current blocks."},
-    "ThreadEntriesReply": {"type": "object", "required": ["key", "entries", "first", "last", "hasBefore", "hasAfter", "feedCursor", "sessionIds"], "properties": {"key": {"$ref": "#/$defs/ThreadKey"}, "entries": {"type": "array", "items": {"$ref": "#/$defs/Block"}}, "first": {"type": ["string", "null"]}, "last": {"type": ["string", "null"]}, "hasBefore": {"type": "boolean"}, "hasAfter": {"type": "boolean"}, "total": {"type": "integer"}, "feedCursor": {"type": "integer"}, "sessionIds": {"type": "array", "items": {"type": "string"}}}, "$comment": "total: only with around. feedCursor: the change cursor of this read, to catch up from."},
-    "ThreadEntriesRequest": {"type": "object", "required": ["key"], "properties": {"key": {"$ref": "#/$defs/ThreadKey"}, "resolve": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 1}, "before": {"type": "string"}, "after": {"type": "string"}, "around": {"type": "string"}}, "additionalProperties": true},
-    "ThreadExportReply": {"type": "object", "required": ["markdown"], "properties": {"markdown": {"type": "string"}}},
-    "ThreadExportRequest": {"type": "object", "required": ["key"], "properties": {"key": {"$ref": "#/$defs/ThreadKey"}, "from": {"$ref": "#/$defs/ThreadPoint"}, "to": {"$ref": "#/$defs/ThreadPoint"}, "tz": {"type": "string"}}},
-    "ThreadKey": {"type": "object", "properties": {"task": {"type": "string"}, "session": {"type": "string"}}, "$comment": "Exactly one of task or session."},
-    "ThreadPoint": {"type": "object", "required": ["key"], "properties": {"key": {"type": "string"}, "offset": {"type": "integer"}}},
-    "ThreadSearchReply": {"type": "object", "required": ["hits", "hasMore"], "properties": {"hits": {"type": "array", "items": {"$ref": "#/$defs/SearchHit"}}, "hasMore": {"type": "boolean"}}},
-    "ThreadSearchRequest": {"type": "object", "required": ["key", "q"], "properties": {"key": {"$ref": "#/$defs/ThreadKey"}, "q": {"type": "string"}, "limit": {"type": "integer", "minimum": 1}, "before": {"type": "string"}}},
-    "ToolBlock": {"type": "object", "required": ["kind", "key", "name", "state"], "properties": {"kind": {"const": "tool"}, "key": {"type": "string"}, "executionId": {"type": ["string", "null"]}, "at": {"type": ["integer", "null"]}, "name": {"type": "string"}, "input": {}, "output": {}, "state": {"type": "string"}, "startedAt": {"type": ["integer", "null"]}, "endedAt": {"type": ["integer", "null"]}}, "$comment": "input and output are the harness's own values; times in ms."},
-    "WatchGetReply": {"type": "object", "properties": {"watch": {"$ref": "#/$defs/WatchRecord"}}, "$comment": "No watch: watch is absent."},
-    "WatchGetRequest": {"type": "object", "required": ["sessionId"], "properties": {"sessionId": {"type": "string"}}, "additionalProperties": true},
-    "WatchRecord": {"type": "object", "required": ["id", "sessionId", "kinds", "wakes", "cursor"], "properties": {"id": {"type": "string"}, "sessionId": {"type": "string"}, "kinds": {"type": "array", "items": {"type": "string"}}, "wakes": {"type": "integer"}, "lastWakeAt": {}, "cursor": {"type": "integer"}, "timerMs": {"type": "number"}, "nextWakeAt": {"type": "integer"}, "lastError": {"type": ["string", "null"]}}, "$comment": "A session's watch: kinds of foreign changes that wake it, an optional timer, and its wake count."},
-    "WatchSetReply": {"$ref": "#/$defs/WatchRecord"},
-    "WatchSetRequest": {"type": "object", "required": ["sessionId", "kinds"], "properties": {"sessionId": {"type": "string"}, "kinds": {"type": "array", "items": {"type": "string"}}, "timerMs": {"type": ["number", "null"]}}, "additionalProperties": true, "$comment": "kinds: task, question, execution, host."},
-    "WatchStopReply": {"type": "object", "required": ["sessionId", "stopped"], "properties": {"sessionId": {"type": "string"}, "stopped": {"type": "boolean"}}},
-    "WatchStopRequest": {"type": "object", "required": ["sessionId"], "properties": {"sessionId": {"type": "string"}}, "additionalProperties": true},
-    "WorkerDoneReply": {"type": "object", "required": ["executionId", "action"], "properties": {"id": {"type": "string"}, "executionId": {"type": "string"}, "action": {"type": "string"}, "code": {"type": "string"}, "reason": {"type": "string"}, "report": {"$ref": "#/$defs/WorkerReport"}, "duplicate": {"type": "boolean"}, "at": {"type": "integer"}}, "$comment": "action accepted (with the report) or rejected (with code: invalid_outcome, stale_dispatch, already_reported, native_identity_conflict, and reason)."},
-    "WorkerDoneRequest": {"type": "object", "required": ["executionId"], "properties": {"executionId": {"type": "string"}, "outcome": {}, "summary": {}, "nativeSessionId": {"type": "string"}}, "additionalProperties": true, "$comment": "outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null."},
-    "WorkerReport": {"type": "object", "required": ["outcome", "summary", "at"], "properties": {"outcome": {"type": "string"}, "summary": {"type": ["string", "null"]}, "at": {"type": "integer"}}}
+    "AskReply": {
+      "type": "object",
+      "additionalProperties": true,
+      "$comment": "The agent question record."
+    },
+    "AskRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "question": {},
+        "requestId": {
+          "type": "string"
+        },
+        "resume": {}
+      }
+    },
+    "Block": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextBlock"
+        },
+        {
+          "$ref": "#/$defs/ReasoningBlock"
+        },
+        {
+          "$ref": "#/$defs/ToolBlock"
+        },
+        {
+          "$ref": "#/$defs/QuestionBlock"
+        },
+        {
+          "$ref": "#/$defs/ResultBlock"
+        },
+        {
+          "$ref": "#/$defs/BoundaryBlock"
+        }
+      ],
+      "$comment": "One thread entry (docs/designs/fleet-conversations.md), told apart by kind. key is its position seq:part. Fleet's own projection: closed."
+    },
+    "BoundaryBlock": {
+      "type": "object",
+      "required": [
+        "kind",
+        "key",
+        "executionId",
+        "state"
+      ],
+      "properties": {
+        "kind": {
+          "const": "boundary"
+        },
+        "key": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "ops.schema.json#/$defs/ExecutionState"
+        },
+        "startedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "endedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "harness": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "$comment": "Start of an execution in the thread."
+    },
+    "Change": {
+      "type": "object",
+      "required": [
+        "seq",
+        "kind",
+        "id",
+        "taskId",
+        "sessionId",
+        "hostId",
+        "op"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "ops.schema.json#/$defs/ChangeKind"
+        },
+        "id": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "type": "string"
+        }
+      },
+      "$comment": "One committed change (the change table), as GET /api/stream and changes_since deliver it."
+    },
+    "ChangeRef": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "ops.schema.json#/$defs/ChangeKind"
+        },
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "ChangesSinceReply": {
+      "type": "object",
+      "required": [
+        "changes",
+        "cursor"
+      ],
+      "properties": {
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Change"
+          }
+        },
+        "cursor": {
+          "type": "integer"
+        },
+        "resync": {
+          "type": "boolean"
+        },
+        "held": {
+          "type": "boolean"
+        }
+      },
+      "$comment": "resync: the cursor fell out of retention, reload everything. held: a writer still holds older changes; read again."
+    },
+    "ChangesSinceRequest": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true,
+      "$comment": "No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500)."
+    },
+    "DirectSearchReply": {
+      "type": "object",
+      "additionalProperties": true,
+      "$comment": "A pipeline run with its steps, state and results (pipelineRun)."
+    },
+    "DirectSearchRequest": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "requestId",
+        "query"
+      ],
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "methodId": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "$comment": "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId."
+    },
+    "MessageSendReply": {
+      "type": "object",
+      "additionalProperties": true,
+      "$comment": "The execution the message started, or the queued message with queued: true and its position."
+    },
+    "MessageSendRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "delivery": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "setup": {},
+        "source": {},
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "QuestionBlock": {
+      "type": "object",
+      "required": [
+        "kind",
+        "key",
+        "questionId",
+        "text",
+        "options",
+        "state"
+      ],
+      "properties": {
+        "kind": {
+          "const": "question"
+        },
+        "key": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "questionId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "options": {},
+        "state": {
+          "type": "string"
+        },
+        "askedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "answeredAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "answer": {},
+        "answeredBy": {
+          "type": "string"
+        }
+      },
+      "$comment": "options: the stored options as they are (a list of labels for agent questions)."
+    },
+    "ReasoningBlock": {
+      "type": "object",
+      "required": [
+        "kind",
+        "key",
+        "markdown"
+      ],
+      "properties": {
+        "kind": {
+          "const": "reasoning"
+        },
+        "key": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "markdown": {
+          "type": "string"
+        },
+        "plain": {
+          "type": "string"
+        },
+        "at": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stream": {
+          "type": "string"
+        }
+      }
+    },
+    "RecommendationSetReply": {
+      "type": "object",
+      "required": [
+        "id",
+        "projectId",
+        "methodId",
+        "selectedAt",
+        "actor"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "methodId": {
+          "type": "string"
+        },
+        "selectedAt": {
+          "type": "integer"
+        },
+        "actor": {
+          "type": "string"
+        }
+      }
+    },
+    "RecommendationSetRequest": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "methodId"
+      ],
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "methodId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "ReplyReply": {
+      "type": "object",
+      "additionalProperties": true,
+      "$comment": "The answered agent question record with its delivery."
+    },
+    "ReplyRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "answer": {},
+        "questionId": {
+          "type": "string"
+        }
+      }
+    },
+    "ResultArtifact": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "mediaType",
+        "size"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      }
+    },
+    "ResultBlock": {
+      "type": "object",
+      "required": [
+        "kind",
+        "key",
+        "artifactIds",
+        "artifacts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "result"
+        },
+        "key": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "artifactIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResultArtifact"
+          }
+        }
+      },
+      "$comment": "The stored artifacts of an ended execution."
+    },
+    "SearchHit": {
+      "type": "object",
+      "required": [
+        "key",
+        "snippet"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": "string"
+        }
+      }
+    },
+    "SessionArchiveReply": {
+      "type": "object",
+      "additionalProperties": true,
+      "$comment": "{sessionId, archivedAt, teardown: null} when no execution is left to tear down, else the teardown command it queued (id, executionId, hostId, kind teardown, payload, status)."
+    },
+    "SessionArchiveRequest": {
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "SessionCreateReply": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "id",
+        "createdAt"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "directedBy": {}
+      },
+      "$comment": "The new session row, plus sessionId."
+    },
+    "SessionCreateRequest": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "SessionForkReply": {
+      "type": "object",
+      "required": [
+        "id",
+        "requestId",
+        "sourceSessionId",
+        "sessionId"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "sourceSessionId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "handoffId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "type": "number"
+        }
+      },
+      "$comment": "sessionId: the new session."
+    },
+    "SessionForkRequest": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "callerSessionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "requestId"
+      ]
+    },
+    "SessionGetReply": {
+      "type": "object",
+      "additionalProperties": true,
+      "$comment": "The session view: the session row with its executions, questions, focus and handoffs."
+    },
+    "SessionGetRequest": {
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "SessionHandoffsReply": {
+      "type": "object",
+      "required": [
+        "handoffs"
+      ],
+      "properties": {
+        "handoffs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "$comment": "A handoff record."
+          }
+        }
+      }
+    },
+    "SessionHandoffsRequest": {
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "SessionProfileReply": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "profileId",
+        "account"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "account": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transition": {
+          "type": "string"
+        },
+        "handoffId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nativeSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "$comment": "transition, handoffId and nativeSessionId only when the session has a native session to move."
+    },
+    "SessionProfileRequest": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "profileId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "workingDirectory": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "SessionResumeReply": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "harness",
+        "account",
+        "native",
+        "nativeSessions",
+        "forkOf"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "harness": {},
+        "account": {},
+        "native": {},
+        "nativeSessions": {},
+        "forkOf": {}
+      },
+      "$comment": "How the session continues: its harness, account and native session ids."
+    },
+    "SessionResumeRequest": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "SessionStartReply": {
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "profileId": {},
+        "projectId": {},
+        "taskId": {},
+        "role": {},
+        "account": {},
+        "executionId": {},
+        "hostId": {},
+        "existing": {
+          "type": "boolean"
+        }
+      },
+      "$comment": "existing: the requestId already started this session."
+    },
+    "SessionStartRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "callerExecutionId": {
+          "type": "string"
+        },
+        "callerSessionId": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "setup": {},
+        "taskId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "SessionTaskAttachReply": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "taskId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "existing": {
+          "type": "boolean"
+        }
+      }
+    },
+    "SessionTaskAttachRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "boundProject": {},
+        "sessionId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      }
+    },
+    "SessionTransitionReply": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "profileId",
+        "transition"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "account": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transition": {
+          "type": "string"
+        },
+        "handoffId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nativeSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "SessionTransitionRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "profileId": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      }
+    },
+    "SessionsListReply": {
+      "type": "object",
+      "required": [
+        "sessions",
+        "nextAfter",
+        "counts",
+        "total"
+      ],
+      "properties": {
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "ops.schema.json#/$defs/ListRow"
+          }
+        },
+        "nextAfter": {},
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "total": {
+          "type": "integer"
+        }
+      },
+      "$comment": "nextAfter: null on the last page, else the sort key to pass as after."
+    },
+    "SessionsListRequest": {
+      "type": "object",
+      "properties": {
+        "filter": {
+          "$ref": "ops.schema.json#/$defs/ListFilter"
+        },
+        "group": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "after": {
+          "type": "array",
+          "items": {}
+        }
+      },
+      "additionalProperties": true,
+      "$comment": "after: the nextAfter of the previous page."
+    },
+    "TextBlock": {
+      "type": "object",
+      "required": [
+        "kind",
+        "key",
+        "role",
+        "markdown"
+      ],
+      "properties": {
+        "kind": {
+          "const": "text"
+        },
+        "key": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "type": "string"
+        },
+        "markdown": {
+          "type": "string"
+        },
+        "plain": {
+          "type": "string"
+        },
+        "at": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stream": {
+          "type": "string"
+        },
+        "harness": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "$comment": "role agent or operator; by: the sender of an operator message; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text."
+    },
+    "ThreadBlocksReply": {
+      "type": "object",
+      "required": [
+        "entries",
+        "removed"
+      ],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "$comment": "removed: block keys that no longer exist."
+    },
+    "ThreadBlocksRequest": {
+      "type": "object",
+      "required": [
+        "key",
+        "rows"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/ThreadKey"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChangeRef"
+          }
+        }
+      },
+      "$comment": "rows: changed records; the reply has their current blocks."
+    },
+    "ThreadEntriesReply": {
+      "type": "object",
+      "required": [
+        "key",
+        "entries",
+        "first",
+        "last",
+        "hasBefore",
+        "hasAfter",
+        "feedCursor",
+        "sessionIds"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/ThreadKey"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "first": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hasBefore": {
+          "type": "boolean"
+        },
+        "hasAfter": {
+          "type": "boolean"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "feedCursor": {
+          "type": "integer"
+        },
+        "sessionIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "$comment": "total: only with around. feedCursor: the change cursor of this read, to catch up from."
+    },
+    "ThreadEntriesRequest": {
+      "type": "object",
+      "required": [
+        "key"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/ThreadKey"
+        },
+        "resolve": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "before": {
+          "type": "string"
+        },
+        "after": {
+          "type": "string"
+        },
+        "around": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "ThreadExportReply": {
+      "type": "object",
+      "required": [
+        "markdown"
+      ],
+      "properties": {
+        "markdown": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadExportRequest": {
+      "type": "object",
+      "required": [
+        "key"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/ThreadKey"
+        },
+        "from": {
+          "$ref": "#/$defs/ThreadPoint"
+        },
+        "to": {
+          "$ref": "#/$defs/ThreadPoint"
+        },
+        "tz": {
+          "type": "string"
+        }
+      }
+    },
+    "ThreadKey": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "$comment": "Exactly one of task or session."
+    },
+    "ThreadPoint": {
+      "type": "object",
+      "required": [
+        "key"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        }
+      }
+    },
+    "ThreadSearchReply": {
+      "type": "object",
+      "required": [
+        "hits",
+        "hasMore"
+      ],
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SearchHit"
+          }
+        },
+        "hasMore": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ThreadSearchRequest": {
+      "type": "object",
+      "required": [
+        "key",
+        "q"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/ThreadKey"
+        },
+        "q": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "before": {
+          "type": "string"
+        }
+      }
+    },
+    "ToolBlock": {
+      "type": "object",
+      "required": [
+        "kind",
+        "key",
+        "name",
+        "state"
+      ],
+      "properties": {
+        "kind": {
+          "const": "tool"
+        },
+        "key": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "input": {},
+        "output": {},
+        "state": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "endedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "$comment": "input and output are the harness's own values; times in ms."
+    },
+    "WatchGetReply": {
+      "type": "object",
+      "properties": {
+        "watch": {
+          "$ref": "#/$defs/WatchRecord"
+        }
+      },
+      "$comment": "No watch: watch is absent."
+    },
+    "WatchGetRequest": {
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "WatchRecord": {
+      "type": "object",
+      "required": [
+        "id",
+        "sessionId",
+        "kinds",
+        "wakes",
+        "cursor"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wakes": {
+          "type": "integer"
+        },
+        "lastWakeAt": {},
+        "cursor": {
+          "type": "integer"
+        },
+        "timerMs": {
+          "type": "number"
+        },
+        "nextWakeAt": {
+          "type": "integer"
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "$comment": "A session's watch: kinds of foreign changes that wake it, an optional timer, and its wake count."
+    },
+    "WatchSetReply": {
+      "$ref": "#/$defs/WatchRecord"
+    },
+    "WatchSetRequest": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "kinds"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timerMs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true,
+      "$comment": "kinds: task, question, execution, host."
+    },
+    "WatchStopReply": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "stopped"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "stopped": {
+          "type": "boolean"
+        }
+      }
+    },
+    "WatchStopRequest": {
+      "type": "object",
+      "required": [
+        "sessionId"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "WorkerDoneReply": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "action"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "report": {
+          "$ref": "#/$defs/WorkerReport"
+        },
+        "duplicate": {
+          "type": "boolean"
+        },
+        "at": {
+          "type": "integer"
+        }
+      },
+      "$comment": "action accepted (with the report) or rejected (with code: invalid_outcome, stale_dispatch, already_reported, native_identity_conflict, and reason)."
+    },
+    "WorkerDoneRequest": {
+      "type": "object",
+      "required": [
+        "executionId"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "outcome": {},
+        "summary": {},
+        "nativeSessionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "$comment": "outcome succeeded or failed; anything else is recorded as rejected (invalid_outcome). summary: a string; any other value is stored as null."
+    },
+    "WorkerReport": {
+      "type": "object",
+      "required": [
+        "outcome",
+        "summary",
+        "at"
+      ],
+      "properties": {
+        "outcome": {
+          "type": "string"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "type": "integer"
+        }
+      }
+    },
+    "SessionUnarchiveRequest": {
+      "type": "object",
+      "$comment": "Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A torn-down worktree is not restored; the next start prepares a new one.",
+      "required": [
+        "sessionId",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "SessionUnarchiveReply": {
+      "type": "object",
+      "additionalProperties": true
+    }
   }
 }

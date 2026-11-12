@@ -472,8 +472,45 @@ func likePattern(s string) string {
 	return "%" + r.Replace(strings.ToLower(strings.TrimSpace(s))) + "%"
 }
 
+// filterFields: a list filter field the list does not implement is an error, never a silent "all rows".
+func filterFields(f doc, known ...string) error {
+	for k := range f {
+		if !slices.Contains(known, k) {
+			return fail(400, "Unknown filter field "+k)
+		}
+	}
+	return nil
+}
+
 func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
-	c := []string{}
+	if err := filterFields(f, "projectId", "state", "search"); err != nil {
+		return nil, err
+	}
+	c, err := projectWhere(f, p, "t.project_id", []string{})
+	if err != nil {
+		return nil, err
+	}
+	if st, ok := f["state"].([]any); withState && ok && len(st) > 0 {
+		ss := []string{}
+		for _, x := range st {
+			v, ok := x.(string)
+			if !ok || !slices.Contains(listStates, v) {
+				return nil, fail(400, "Invalid state")
+			}
+			ss = append(ss, v)
+		}
+		*p = append(*p, ss)
+		c = append(c, fmt.Sprintf(stateSQL+"=ANY($%d)", len(*p)))
+	}
+	if s, ok := f["search"].(string); ok && strings.TrimSpace(s) != "" {
+		*p = append(*p, likePattern(s))
+		c = append(c, fmt.Sprintf("(lower(t.title) LIKE $%d OR lower(t.id) LIKE $%d)", len(*p), len(*p)))
+	}
+	return c, nil
+}
+
+// projectWhere: the projectId filter (a list; null is work outside projects) as a condition on col.
+func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 	if pv, ok := f["projectId"]; ok {
 		ps, isList := pv.([]any)
 		if !isList {
@@ -492,30 +529,14 @@ func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
 		}
 		if len(ids) > 0 {
 			*p = append(*p, ids)
-			o = append(o, fmt.Sprintf("t.project_id=ANY($%d)", len(*p)))
+			o = append(o, fmt.Sprintf("%s=ANY($%d)", col, len(*p)))
 		}
 		if null {
-			o = append(o, "t.project_id IS NULL")
+			o = append(o, col+" IS NULL")
 		}
 		if len(o) > 0 {
 			c = append(c, "("+strings.Join(o, " OR ")+")")
 		}
-	}
-	if st, ok := f["state"].([]any); withState && ok && len(st) > 0 {
-		ss := []string{}
-		for _, x := range st {
-			v, ok := x.(string)
-			if !ok || !slices.Contains(listStates, v) {
-				return nil, fail(400, "Invalid state")
-			}
-			ss = append(ss, v)
-		}
-		*p = append(*p, ss)
-		c = append(c, fmt.Sprintf(stateSQL+"=ANY($%d)", len(*p)))
-	}
-	if s, ok := f["search"].(string); ok && strings.TrimSpace(s) != "" {
-		*p = append(*p, likePattern(s))
-		c = append(c, fmt.Sprintf("(lower(t.title) LIKE $%d OR lower(t.id) LIKE $%d)", len(*p), len(*p)))
 	}
 	return c, nil
 }
