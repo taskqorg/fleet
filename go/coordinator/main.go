@@ -424,3 +424,5 @@ func pgCode(err error) string {
 }
 
 var _ = fmt.Sprint
+
+// Disposable delivery timing path control; never merge.
