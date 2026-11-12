@@ -842,6 +842,23 @@ func (s deliverySeries) stats() []contract.DeliveryStat {
 	return out
 }
 
+// deliveryAutomated: the first day of automatic releases and the merge queue as they run now; earlier days (manual
+// releases, no queue) are history but never part of a baseline.
+var deliveryAutomated = time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+
+func init() {
+	if t, err := time.Parse("2006-01-02", os.Getenv("FLEET_DELIVERY_BASELINE_FROM")); err == nil {
+		deliveryAutomated = t // tests seed history days before the real start
+	}
+}
+
+func baselineFrom(t time.Time) time.Time {
+	if t.Before(deliveryAutomated) {
+		return deliveryAutomated
+	}
+	return t
+}
+
 func deliveryWindow(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from, until time.Time) contract.DeliveryBaseline {
 	f, u := from.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339)
 	b := contract.DeliveryBaseline{From: f, Until: u, Stats: deliveryValues(prs, runs, f, u).stats()}
@@ -949,7 +966,7 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 		return contract.DeliveryRegressionsReply{}, err
 	}
 	day := now.Add(-24 * time.Hour)
-	base := deliveryWindow(prs, runs, day.AddDate(0, 0, -7), day)
+	base := deliveryWindow(prs, runs, baselineFrom(day.AddDate(0, 0, -7)), day)
 	if s.Baseline != "" {
 		snaps, err := dhLoad[contract.DeliveryBaseline](q, "delivery-baseline")
 		if err != nil {
@@ -1089,7 +1106,7 @@ func deliveryBaselineReply(q *Request, days int64) (contract.DeliveryBaselineRep
 		return out, err
 	}
 	now := time.Now().UTC()
-	out.Rolling = deliveryWindow(prs, runs, now.AddDate(0, 0, -7), now) // the baseline is 7 days whatever the trend's length
+	out.Rolling = deliveryWindow(prs, runs, baselineFrom(now.AddDate(0, 0, -7)), now) // the baseline is 7 days whatever the trend's length
 	if out.Snapshots, err = dhLoad[contract.DeliveryBaseline](q, "delivery-baseline"); err != nil {
 		return out, err
 	}

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {startCoordinator} from '../harness.ts';
 
 test('DH1 a stage slower over the last 24 h than its 7-day baseline opens one question naming the first pull request, and the question withdraws once the stage is back (requirement: Delivery health; risk: delivery gets slower unnoticed, or a stale question stays)', {timeout: 60_000}, async () => {
-  const c = await startCoordinator({name: 'delhealth'});
+  const c = await startCoordinator({name: 'delhealth', env: {FLEET_DELIVERY_BASELINE_FROM: '2026-01-01'}});
   const call = async (name: string, body: unknown, person = 'owner@trial.test') => {
     const r = await fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': person, 'content-type': 'application/json'}, body: JSON.stringify(body)});
     const text = await r.text(); let parsed: any = text; try { parsed = JSON.parse(text); } catch {}
