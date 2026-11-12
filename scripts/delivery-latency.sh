@@ -20,8 +20,9 @@ git fetch -q origin main --tags
 for sha in $(jq -r '.[].mergeCommit.oid // empty' "$tmp/prs.json"); do
   printf '%s\t%s\n' "$sha" "$(git tag --contains "$sha" 'v1.*' 'ui-*-v1.*' | awk '{ n=$0; sub(/^.*v/,"",n); print n, $0 }' | sort -k1,1V | cut -d' ' -f2- | head -1)"
 done >"$tmp/tags.tsv"
-# Workflow runs of the ci workflow: one query, matched by commit and event below.
-gh run list -R "$repo" --workflow ci -L $(( n * 20 )) --json headSha,event,updatedAt,status,conclusion >"$tmp/runs.json"
+# Workflow runs of the ci workflow since the oldest pull request was opened: one query, matched by commit and event below.
+since=$(jq -r 'map(.createdAt) | min' "$tmp/prs.json")
+gh run list -R "$repo" --workflow ci --created ">=$since" -L 2000 --json headSha,event,updatedAt,status,conclusion,attempt >"$tmp/runs.json"
 # Host evidence. hosts_list: every host's current update time. Journal: every coordinator update on PDS18 with its time.
 env_file=~/.config/ufobe-agents/site-access.env
 # The token reaches curl on stdin (-H @-): never a file, never an argument.
@@ -47,18 +48,20 @@ tsv = lambda f: [l.split("\t") for l in open(os.path.join(d, f)).read().splitlin
 published = dict(tsv("releases.tsv")); tag_of = dict(tsv("tags.tsv"))
 # journalctl short-iso prints +0000 on older systemd; fromisoformat before 3.11 wants +00:00.
 jts = lambda s: datetime.fromisoformat(re.sub(r"([+-]\d\d)(\d\d)$", r"\1:\2", s)).timestamp()
-# First successful ci run of an event on a commit (a red run adds nothing; an "edited" rerun after green adds nothing either).
+# First successful ci run of an event on a commit (a red run adds nothing; an "edited" rerun after green adds nothing either;
+# a re-run attempt of the same run moves updatedAt, so only first attempts count).
 def ci(sha, event):
-    done = [ts(r["updatedAt"]) for r in runs if r["headSha"] == sha and r["event"] == event and r["conclusion"] == "success"]
+    done = [ts(r["updatedAt"]) for r in runs if r["headSha"] == sha and r["event"] == event and r["conclusion"] == "success" and r.get("attempt", 1) == 1]
     return min(done) if done else None
 # PDS18 install time per (part, version): hosts_list for the version the coordinator's host runs now (a healthy "ok" update
 # only), else the journal's "Y ok:" line after "<part>: X -> Y" (the update start; a refused, errored or rolled-back candidate
 # never gets its "ok"). The UI part logs no arrow line: an "ok" that follows no arrow is a UI install.
 installed = {}
 for h in hosts:
-    u = h.get("update") or {}
-    # The coordinator's own host is the one row whose update carries the merged parts (coordinator and executor).
-    if "parts" in u and u.get("state") == "ok" and u.get("version") and u.get("at"): installed["coordinator", u["version"]] = ts(u["at"])
+    # The coordinator's own host is the one row whose update carries the parts; its coordinator part is the install, whatever
+    # the executor or the merged row says.
+    u = ((h.get("update") or {}).get("parts") or {}).get("coordinator") or {}
+    if u.get("state") == "ok" and u.get("version") and u.get("at"): installed["coordinator", u["version"]] = ts(u["at"])
 pending = None
 for line in open(os.path.join(d, "journal.txt")):
     m = re.match(r"(\S+) \S+ fleet-update\[\d+\]: ((\S+): \S+ -> (\S+)|(\S+) ok:)", line)

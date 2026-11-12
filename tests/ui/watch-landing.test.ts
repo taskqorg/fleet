@@ -14,7 +14,7 @@ test('landing observations retain authoritative publication, optional site evide
     put('sleep', 'exit 0\n');
     put('git', 'case "$1" in fetch) exit 0;; tag) if [ "${WATCH_FIXTURE_UI:-0}" = 1 ]; then printf "%s\\n" v1.2.10 ui-1.2.3-v1.2.9; else echo v1.2.3; fi;; rev-parse) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;; *) exit 1;; esac\n');
     put('gh', `case "$1" in
-      api) if [ -n "\${WATCH_FIXTURE_QUEUE:-}" ]; then echo "\${WATCH_FIXTURE_QUEUE}"; else echo 'MERGED CLEAN 0123456789 - - - auto-merge off'; fi;;
+      api) if [ -n "\${WATCH_FIXTURE_GRAPHQL:-}" ]; then eval "filter=\\\${$#}"; printf '%s' "\${WATCH_FIXTURE_GRAPHQL}" | jq -r "\$filter"; else echo 'MERGED CLEAN 0123456789 - - - auto-merge off'; fi;;
       release) [ "\${WATCH_FIXTURE_PUBLICATION_UNKNOWN:-0}" != 1 ] || exit 1; echo '2026-11-11T12:00:00Z';;
       *) exit 1;; esac\n`);
     put('curl', `case "$*" in
@@ -60,16 +60,30 @@ test('landing observations retain authoritative publication, optional site evide
       assert.equal(bad.status,2,bad.stderr); assert.ok(!bad.stdout.includes('on site'));
     }
     const absent = run({}, true); assert.equal(absent.status, 3); assert.match(absent.stdout, /no site access: check hosts_list yourself\n$/);
-    // The queue line's exit cases (AGENTS.md step 4): the jq filter's output columns are state, merge state, sha, waiting, queued, checks, reason.
-    for (const [line, out] of [
-      ['OPEN BLOCKED - waiting - red auto-merge off', 'not merged: OPEN, failed_checks'],
-      ['OPEN BLOCKED - - - - failed_checks', 'not merged: OPEN, failed_checks'],
-      ['OPEN DIRTY - waiting - - auto-merge off', 'not merged: OPEN, merge_conflict'],
-      ['OPEN BLOCKED - - - red auto-merge off', 'not merged: OPEN, auto-merge off'],
-      ['CLOSED BLOCKED - - - - auto-merge off', 'not merged: CLOSED, auto-merge off'],
-    ]) { const r = run({WATCH_FIXTURE_QUEUE: line}); assert.equal(r.status, 1, r.stderr); assert.equal(r.stdout, out + '\n'); }
-    // Red but already in the queue: the queue decides, the watcher keeps waiting.
-    const queued = run({WATCH_FIXTURE_QUEUE: 'OPEN BLOCKED - waiting queued red auto-merge off'}, false, '0');
-    assert.equal(queued.status, 2, queued.stderr); assert.equal(queued.stdout, 'timeout at: queue\n');
+    // The queue line's exit cases (AGENTS.md step 4), each GraphQL answer through the script's own jq filter (the stub's last argument).
+    const check = (name: string, conclusion: string | null, at: string | null, isRequired = true) => ({name, conclusion, at, isRequired});
+    const pr = (o: Record<string, unknown>, checks: object[] = [], events: object[] = []) => JSON.stringify({data: {repository: {pullRequest: {
+      state: 'OPEN', mergeStateStatus: 'BLOCKED', mergeCommit: null, autoMergeRequest: {enabledAt: 'x'}, mergeQueueEntry: null, ...o,
+      commits: {nodes: [{commit: {statusCheckRollup: {contexts: {nodes: checks}}}}]}, timelineItems: {nodes: events}}}}});
+    const red = check('go', 'FAILURE', '2026-11-12T10:00:00Z');
+    for (const [graphql, out] of [
+      [pr({}, [red, check('app', 'SUCCESS', '2026-11-12T10:00:00Z')]), 'not merged: OPEN, failed_checks (head)'],
+      [pr({}, [red, check('go', 'FAILURE', '2026-11-12T10:10:00Z')]), 'not merged: OPEN, failed_checks (head)'],
+      [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: 'failed_checks'}]), 'not merged: OPEN, failed_checks'],
+      [pr({autoMergeRequest: null}, [], [{__typename: 'RemovedFromMergeQueueEvent', reason: null}]), 'not merged: OPEN, unknown'],
+      [pr({mergeStateStatus: 'DIRTY'}), 'not merged: OPEN, merge_conflict'],
+      [pr({autoMergeRequest: null}, [red], [{__typename: 'AutoMergeDisabledEvent'}]), 'not merged: OPEN, auto-merge off'],
+      [pr({state: 'CLOSED', autoMergeRequest: null}, [red]), 'not merged: CLOSED, auto-merge off'],
+    ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}); assert.equal(r.status, 1, r.stderr); assert.equal(r.stdout, out + '\n'); }
+    // Still waiting: a non-required red, a rerun after red (newer success, running, or queued without a start time), a cancelled
+    // run, and a red head already in the queue (the queue decides).
+    for (const graphql of [
+      pr({}, [check('reports', 'FAILURE', '2026-11-12T10:00:00Z', false), check('go', 'SUCCESS', '2026-11-12T10:00:00Z')]),
+      pr({}, [red, check('go', 'SUCCESS', '2026-11-12T10:10:00Z')]),
+      pr({}, [red, check('go', null, '2026-11-12T10:10:00Z')]),
+      pr({}, [red, check('go', null, null)]),
+      pr({}, [check('go', 'CANCELLED', '2026-11-12T10:00:00Z')]),
+      pr({mergeQueueEntry: {state: 'QUEUED'}}, [red]),
+    ]) { const r = run({WATCH_FIXTURE_GRAPHQL: graphql}, false, '0'); assert.equal(r.status, 2, r.stderr); assert.equal(r.stdout, 'timeout at: queue\n'); }
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
