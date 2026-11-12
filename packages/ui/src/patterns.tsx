@@ -164,6 +164,12 @@ export function ListDetail({ list, detail, detailKey, idle }: {
 export const NeedsYou = ({ children }: { children: ComponentChildren }) => (
   <section data-ui="needs-you" class="panel wide"><header class="panel-h"><h2>Needs you</h2></header><div class="stack">{children}</div></section>
 );
+/** A long feed (OR-30): the first `n` items, then a `+K` button that shows the rest in place. Items arrive already ordered. */
+export function Latest({ items, n = 3 }: { items: ComponentChildren[]; n?: number }) {
+  const [all, setAll] = useState(false);
+  const k = items.length - n;
+  return <>{all || k <= 0 ? items : items.slice(0, n)}{k > 0 && <Button label={all ? 'Show less' : `+${k}`} kind="quiet" onClick={() => setAll(!all)} />}</>;
+}
 /** Operational counts and capacity (patterns/ops-summary.md): a stat strip plus side panels. */
 export const OpsSummary = ({ children }: { children: ComponentChildren }) => <div data-ui="ops-summary" class="stack">{children}</div>;
 /** Generic list frame: filter bar over a virtual list (patterns/list-view.md), for lists other than tasks. */

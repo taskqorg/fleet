@@ -22,6 +22,7 @@ seed.bulk(() => {
     if (i % 7 === 0) { seed.execution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: p, hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' }); if (!running) running = id; }
     if (i === 3) { waiting = id; seed.question({ kind: 'acceptance', taskId: id, text: 'Accept this result?', options: ['accepted', 'rejected'] }); }
   }
+  for (let i = 0; i < 4; i++) seed.question({ kind: 'operator_decision', text: 'Pick a release slot ' + i, options: ['today', 'tomorrow'] });
   for (const [id, platform, ago] of [['pds18', 'linux', 2000], ['mac', 'darwin', 120000], ['windows', 'win32', 5000]] as const) seed.put('host-observation', { id, platform, lastSeenAt: Date.now() - ago, capabilities: ['codex'] });
   seed.put('session', { id: 'sess-1', createdAt: Date.now() - 600000, agentConfig: { id: 'baseline', harness: 'codex' } });
   seed.execution({ id: 'sx-1', kind: 'agent_run', sessionId: 'sess-1', hostId: 'pds18', harness: 'codex', state: 'succeeded' });
@@ -64,6 +65,20 @@ try {
     await page.emulateMedia({ colorScheme: 'light' });
     for (const f of await layoutFindings(page)) out.push(`  ${f}`);
   }
+  // OR-29, OR-30, OR-40: Overview counters show no zero chip and start with the bold total; Needs you shows 3 and +K.
+  await page.goto(origin + '/overview'); await page.waitForSelector('[data-ui=needs-you] [data-ui=decision-block]');
+  const ov = await page.evaluate(() => {
+    const blocks = [...document.querySelectorAll('[data-ui=ops-summary] [data-ui=state-counters]')];
+    const shown = document.querySelectorAll('[data-ui=needs-you] [data-ui=decision-block], [data-ui=needs-you] [data-ui=problem-row]').length;
+    return { zero: blocks.some(b => [...b.querySelectorAll('.num')].some(n => n.textContent === '0')), sigma: blocks.every(b => b.firstElementChild?.classList.contains('sigma')),
+      shown, more: [...document.querySelectorAll('[data-ui=needs-you] button')].some(x => /^\+\d+$/.test(x.textContent ?? '')), host0: [...document.querySelectorAll('[data-ui=ops-summary] .kv .num')].some(n => /^≥/.test(n.textContent ?? '')) };
+  });
+  out.push(`overview counters (OR-29): ${ov.zero ? 'ZERO CHIP SHOWN' : 'no zero chip'}, ${ov.sigma ? 'total first' : 'TOTAL NOT FIRST'}, ${ov.host0 ? 'HOST LOWER BOUND SHOWN' : 'no host lower bound'}`);
+  out.push(`needs you (OR-30, OR-40): ${ov.shown} shown${ov.shown > 3 ? '  OVER 3' : ''}, ${ov.more ? '+K expander' : 'NO +K EXPANDER'}`);
+  // OR-39: the task detail shows no total that is unknown (no empty tokens or cost fields).
+  await page.goto(origin + `/tasks/${running}`); await page.waitForSelector('[data-ui=detail] .detail-title');
+  const empty = await page.$$eval('[data-ui=detail] .totals .b-unavailable', els => els.length);
+  out.push(`task detail (OR-39): ${empty ? empty + ' EMPTY TOTALS' : 'no empty totals'}`);
   // Narrow width: the rail stays, the opened item takes the place of the catalogue.
   const narrow = await b.newPage({ viewport: { width: 600, height: 900 } });
   await narrow.goto(origin + `/tasks/${waiting}`); await narrow.waitForTimeout(700);

@@ -3,9 +3,9 @@
 import { useState } from 'preact/hooks';
 import {
   ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
-  SplitButton, RowCheck, Totals, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
+  SplitButton, RowCheck, Totals, Icon, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   type TreeNode, type Harness, type StateOf,
-  keyConnection,
+  keyConnection, copyText, actions,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
@@ -117,10 +117,18 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     lastSeen: e.observation === 'unconfirmed' ? ms(e.lastSeenAt) ?? undefined : undefined,
     time: e.startedAt && (e.endedAt ?? e.finishedAt) ? { value: (ms(e.endedAt ?? e.finishedAt)! - ms(e.startedAt)!) / 1000, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'not finished' } }));
   const disabled = off ? 'offline' : undefined;
+  // OR-39: statement, lifecycle, result, decision; a total is shown only when it is known (no empty token or cost fields).
+  const wall = t.cost?.wall_ms === null || t.cost?.wall_ms === undefined ? null : Number(t.cost.wall_ms) / 1000;
+  const totals = [
+    ...(t.progress?.executions ? [{ label: 'Executions', m: { value: t.progress.executions, basis: 'measured' as const }, kind: 'count' as const }] : []),
+    ...(wall !== null ? [{ label: 'Time', m: { value: wall, basis: 'measured' as const }, kind: 'duration' as const }] : []),
+    ...(tok !== null ? [{ label: 'Tokens', m: { value: tok, basis: 'measured' as const }, kind: 'count' as const }] : []),
+  ];
+  const decided = (t.questions ?? []).filter((q: any) => q.state === 'answered').slice(-3);
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
-      <span class="muted mono">{t.projectId ?? 'no project'} · {t.id.slice(0, 8)}</span><span class="grow" />
+      <span class="muted mono">{t.projectId ?? 'no project'}</span><Button label={`Copy id ${t.id}`} icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(t.id).catch(e => setFailure(e.message))} /><span class="grow" />
       <OfflineMarker state={state} now={now} />
       {t.state === 'paused'
         ? <Button label={t.pauseReason === 'held' ? 'Release' : 'Continue'} icon="rotate-cw" busy={busy === 'resume'} disabledReason={disabled} onClick={() => act('resume')} />
@@ -132,11 +140,10 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     <h2 class="detail-title">{t.title}</h2>
     <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted mono">by {t.createdBy}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} now={now} />}</div>
     {t.expectedOutcome && <OutcomeBlock outcome={t.expectedOutcome} requirements={req} inputs={[]} depends={t.dependencies?.length ? `Depends on ${t.dependencies.map((d: any) => d.id.slice(0, 8)).join(', ')}` : undefined} />}
-    <Totals items={[
-      { label: 'Executions', m: { value: t.progress?.executions ?? 0, basis: 'measured' }, kind: 'count' },
-      { label: 'Tokens', m: tok === null ? { value: null, basis: 'unavailable', reason: 'no meter yet' } : { value: tok, basis: 'measured' }, kind: 'count' },
-      { label: 'Cost', m: { value: null, basis: 'unavailable', reason: 'no cost meter yet' }, kind: 'money', note: 'no cost meter yet' },
-    ]} />
+    {totals.length > 0 && <Totals items={totals} />}
+    {t.latestResult?.id && <p class="state-line"><Icon name="file-text" /><a class="row-link" href={`/results/${t.latestResult.id}`}>{t.latestResult.path ?? 'Result'}</a></p>}
+    {decided.map((q: any) => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />
+      <span>{q.kind === 'acceptance' ? q.answer : `${q.text}: ${q.answer}`}</span>{q.answeredBy && <span class="muted">by {q.answeredBy}</span>}{ms(q.answeredAt) && <AgeChip t={ms(q.answeredAt)!} now={now} />}</p>)}
     {open.map((q: any) => <DecisionBlock key={q.id} question={q.text} askedBy={q.askedBy ?? q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
       options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
       onAnswer={a => { if (!off) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}

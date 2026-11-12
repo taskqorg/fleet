@@ -16,6 +16,8 @@
 | Accept, request rework, pause, continue, cancel, retry, change account, hand off | [Decision block](../controls/decision-block.md) (accept or rework); [split button](../controls/split-button.md) Pause with Cancel, Change account and Hand off; [problem row](../controls/problem-row.md) Retry |
 | Share the task or a result | Share icon in the detail head |
 
+**Detail (OR-39):** the statement (title and [outcome block](../controls/outcome-block.md), with no requirement chip when there are no requirements), the lifecycle (state badge, author, age, known totals only: executions, time, tokens; never an empty token or cost field, and the [execution tree](../controls/execution-tree.md)), the result (latest result, linked to Results) and the decision (open decision blocks, then the last answered ones with who and when). The task UUID is a copy icon with the UUID in its tooltip, never shown as text.
+
 **Catalogue row (OR-22, D19):** state icon; title, and on the second line its ID, the [harness mark](../controls/harness-counts.md) while running and the [delivery stage](../controls/stage-chip.md); then age, cost and pin on the right. There are no column heads. Priority is a grouping (D11).
 
 **Open.** None from stage 3. Phone navigation (d) is still open.
