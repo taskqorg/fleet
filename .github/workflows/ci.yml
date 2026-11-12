@@ -222,6 +222,7 @@ jobs:
           name: fleet-release-${{ github.sha }}
           path: release/
           retention-days: 1
+          overwrite: true
           if-no-files-found: error
   # Browser: one build, Chromium from a cache keyed on the Playwright version, then every browser check in sequence:
   # filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md "Browser check"), the
@@ -383,6 +384,7 @@ jobs:
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
           retention-days: 7
+          overwrite: true
           if-no-files-found: warn
   comment:
     needs: reports
