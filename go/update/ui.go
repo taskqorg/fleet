@@ -61,13 +61,16 @@ func (u *updater) latestUI(backend string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Each line is a pkt-line "<4 hex length><sha> <ref>"; the answer ends with the flush "0000".
-	lines := strings.Split(strings.TrimSuffix(string(b), "0000"), "\n")
-	if !strings.HasSuffix(string(b), "0000") || lines[len(lines)-1] != "" {
+	// Each line is a pkt-line "<4 hex length><sha> <ref>\n"; the answer ends with the flush "0000".
+	if !strings.HasSuffix(string(b), "\n0000") && string(b) != "0000" {
 		return "", fmt.Errorf("ls-refs: not a pkt-line answer: %.80q", b)
 	}
+	lines := strings.Split(strings.TrimSuffix(strings.TrimSuffix(string(b), "0000"), "\n"), "\n")
+	if string(b) == "0000" {
+		lines = nil
+	}
 	latest := ""
-	for _, line := range lines[:len(lines)-1] {
+	for _, line := range lines {
 		f := strings.Fields(line)
 		n, err := strconv.ParseUint(line[:min(4, len(line))], 16, 16)
 		if err != nil || int(n) != len(line)+1 || len(f) != 2 || len(f[0]) != 44 || !strings.HasPrefix(f[1], prefix) {

@@ -378,7 +378,7 @@ func TestLoadTrigger(t *testing.T) {
 // runs, an unchanged file is answered from the cache on 304, and a changed ETag replaces it.
 func TestLatestConditionalGet(t *testing.T) {
 	etag, body, served, matched := `"one"`, `{"version":"1.261112.1"}`, 0, 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	asset := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		served++
 		if etag != "" && r.Header.Get("If-None-Match") == etag {
 			matched++
@@ -390,6 +390,11 @@ func TestLatestConditionalGet(t *testing.T) {
 		}
 		w.Header().Set("Last-Modified", "Thu, 12 Nov 2026 09:28:29 GMT")
 		w.Write([]byte(body))
+	}))
+	defer asset.Close()
+	// As on GitHub: latest.json is a redirect to another host, which holds the ETag and answers the conditional GET.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, asset.URL+"/asset", http.StatusFound)
 	}))
 	defer srv.Close()
 	dir := t.TempDir()

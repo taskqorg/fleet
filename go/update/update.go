@@ -446,7 +446,7 @@ func (u *updater) settle(p *part, ver string, restart bool) *Result {
 			}
 			if installed {
 				since := ""
-				if t, ok := u.published[ver]; ok {
+				if t, ok := u.published[ver]; ok && u.now().After(t) { // skewed clocks: no negative delta
 					since = " " + u.now().Sub(t).Round(time.Second).String() + " after publish"
 				}
 				log.Printf("%s %s: installed%s", p.name, ver, since)
@@ -600,49 +600,46 @@ func (u *updater) getCached(url string, check func([]byte) error) (cached, error
 		file = filepath.Join(u.cacheDir, "etag-"+hex.EncodeToString(sum[:8])+".json")
 		readJSON(file, &c)
 	}
-	return u.getConditional(url, file, c, check, true)
-}
-
-// getConditional sends the request once with If-None-Match (when conditional and c has an ETag) and once more in
-// full if the cached body turns out bad.
-func (u *updater) getConditional(url, file string, c cached, check func([]byte) error, conditional bool) (cached, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return cached{}, err
-	}
-	conditional = conditional && c.ETag != ""
-	if conditional {
-		req.Header.Set("If-None-Match", c.ETag)
-	}
-	resp, err := u.client.Do(req)
-	if err != nil {
-		return cached{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotModified && conditional {
-		if err := check(c.Body); err == nil {
-			return c, nil
+	for conditional := c.ETag != ""; ; conditional = false { // at most twice: a bad cached body is fetched in full
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return cached{}, err
 		}
-		os.Remove(file) // a bad cache file: fetch in full now
-		return u.getConditional(url, file, c, check, false)
-	}
-	c = cached{ETag: resp.Header.Get("ETag")}
-	if c.Body, err = readOK("GET", url, resp); err != nil {
-		return cached{}, err
-	}
-	c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
-	if file != "" {
-		os.Remove(file) // never keep an ETag the server did not just send
-	}
-	if err := check(c.Body); err != nil {
-		return cached{}, fmt.Errorf("GET %s: %w", url, err)
-	}
-	if c.ETag != "" && file != "" {
-		if err := writeJSON(file, c, 0o600); err != nil {
-			log.Print("etag cache: ", err)
+		if conditional {
+			req.Header.Set("If-None-Match", c.ETag)
 		}
+		resp, err := u.client.Do(req)
+		if err != nil {
+			return cached{}, err
+		}
+		if resp.StatusCode == http.StatusNotModified && conditional {
+			resp.Body.Close()
+			if err := check(c.Body); err == nil {
+				return c, nil
+			}
+			os.Remove(file)
+			continue
+		}
+		c = cached{ETag: resp.Header.Get("ETag")}
+		c.Body, err = readOK("GET", url, resp)
+		resp.Body.Close()
+		if err != nil {
+			return cached{}, err
+		}
+		c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
+		if file != "" {
+			os.Remove(file) // never keep an ETag the server did not just send
+		}
+		if err := check(c.Body); err != nil {
+			return cached{}, fmt.Errorf("GET %s: %w", url, err)
+		}
+		if c.ETag != "" && file != "" {
+			if err := writeJSON(file, c, 0o600); err != nil {
+				log.Print("etag cache: ", err)
+			}
+		}
+		return c, nil
 	}
-	return c, nil
 }
 
 // pgDump runs pg_dump as postgres; root writes the file (postgres cannot write /backup/fleet/pre-deploy).
