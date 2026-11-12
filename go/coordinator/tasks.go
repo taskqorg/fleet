@@ -237,19 +237,25 @@ func askQuestion(q *Request, v doc) (string, error) {
 	return id, nil
 }
 
-// askAcceptanceWhenIdle: a task's last open execution ended, one of its runs succeeded and nothing else will move it,
-// so its result goes to the operator for acceptance (data foundation §3 task states). Without this the task stayed in
-// progress forever. Delivery tasks are skipped: their pipeline asks acceptance once per delivery state. Child agent rows
-// are not counted as open: no writer ends them (detectProblems skips them for the same reason).
-func askAcceptanceWhenIdle(q *Request, id string) error {
-	t, err := first(q, `SELECT t.* FROM task t WHERE t.id=$1 AND t.state='in_progress' AND t.delivery_method IS NULL
-		AND EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded')
+// settleIdleTask: no task stays in progress with nothing that can move it (no open execution, no open question).
+// Its last open execution ended: if a run succeeded, its result goes to the operator for acceptance; if none did, the
+// task fails, so the failure shows (task 2273393d: its only run failed before it started and the task stayed in
+// progress, with no problem, question or failed count to show it). Data foundation §3 task states. Delivery tasks are
+// skipped: their pipeline moves them. Child agent rows are not counted as open: no writer ends them.
+func settleIdleTask(q *Request, id string) error {
+	t, err := first(q, `SELECT t.*, EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded') AS succeeded
+		FROM task t WHERE t.id=$1 AND t.state='in_progress' AND t.delivery_method IS NULL
+		AND EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id)
 		AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
 		AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')`, id)
 	if err != nil || t == nil {
 		return err
 	}
-	_, err = requestAcceptance(q, t, nil, nil, "fleet")
+	if t["succeeded"] == true {
+		_, err = requestAcceptance(q, t, nil, nil, "fleet")
+		return err
+	}
+	_, err = taskTransition(q, id, "operator_fail", "")
 	return err
 }
 

@@ -346,6 +346,7 @@ The principle behind FD4 is that the layer between Fleet and the harnesses belon
     | `in_progress` | the completion requirements are met and an `acceptance` question is answered `accepted` | `completed` |
     | `in_progress` | an `acceptance` question is answered `rejected` | `in_progress`, with a new execution expected |
     | `in_progress` or `waiting` | the operator stops the task, or its last execution fails and the operator marks it failed | `failed` |
+    | `in_progress` | its last open execution ends, none of its executions succeeded, it has no delivery method and no open question | `failed`, so no task sits in progress with nothing that can move it |
     | any open state | the operator pauses or resumes it | `paused`, or back to the state before |
     | any open state | the operator cancels it | `cancelled` |
 

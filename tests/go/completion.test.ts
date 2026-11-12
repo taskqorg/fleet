@@ -87,3 +87,25 @@ test('G3 a task whose last execution succeeds asks for acceptance (requirement: 
     assert.equal((await call('/api/ops/task_get', {taskId})).state, 'completed');
   } finally { await c.stop(); }
 });
+
+test('G4 a task whose only run fails before it starts fails (requirement: no task stays in progress without an open execution or question; risk: task 2273393d stayed in progress with a failed run and nothing showed it)', async () => {
+  const c = await startCoordinator({name: 'completion-fail'});
+  const call = async (path: string, body: unknown, auth = c.secret, person: string | null = 'owner@trial.test') => {
+    const r = await fetch(c.base + path, {method: 'POST', headers: {authorization: 'Bearer ' + auth, ...(person ? {'x-fleet-person': person} : {}), 'content-type': 'application/json'}, body: JSON.stringify(body)});
+    const text = await r.text(); let parsed: any = text; try { parsed = JSON.parse(text); } catch {}
+    assert.equal(r.status, 200, `${path}: ${text}`);
+    return parsed;
+  };
+  try {
+    const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
+    const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'answer only'});
+    const taskId = task.id ?? task.taskId;
+    const {sessionId} = await call('/api/sessions', {});
+    const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+    c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'; UPDATE task SET state='in_progress' WHERE id='${taskId}'`);
+    const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
+    const command = commands.find((x: any) => x.executionId === e.id);
+    await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'failed', error: 'harness did not start'}, secret, null);
+    assert.equal((await call('/api/ops/task_get', {taskId})).state, 'failed');
+  } finally { await c.stop(); }
+});

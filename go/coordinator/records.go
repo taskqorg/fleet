@@ -220,7 +220,7 @@ func putExecution(q *Request, e doc) error {
 	q.tx.QueryRow(q.ctx(), "SELECT e.task_id FROM execution e JOIN task k ON k.id=e.task_id WHERE e.id=$1", id).Scan(&t)
 	if t != nil {
 		if _, err = settleTask(q, *t, ""); err == nil && terminalTyped[state] && !terminalTyped[prev] {
-			err = askAcceptanceWhenIdle(q, *t)
+			err = settleIdleTask(q, *t)
 		}
 	}
 	return err
