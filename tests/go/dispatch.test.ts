@@ -178,3 +178,65 @@ test('A9 a host without the project repository\'s git connection takes no run of
   const {commands} = ok(await h('/api/hosts/poll', {...poll, gitConnections: ['fleet-hello-world']}));
   assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'starts once the host holds the connection');
 });
+
+
+test('A14 control acknowledgement does not confirm an uncertain execution; only a proven stop settles it (requirement: execution observation is process evidence, not control delivery; risk: accepted then unknown falsely clears uncertainty)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  const foreign = await host('foreign-stop-host');
+  for (const initiallyUnknown of [true, false]) {
+    const {sessionId, executionId} = await queued();
+    const start = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+    const receipt = (commandId: string, status: string, id = executionId) => h('/api/hosts/receipts', {commandId, executionId: id, status});
+    ok(await receipt(start.id, 'started'));
+    if (initiallyUnknown) ok(await receipt(start.id, 'unknown'));
+    const stop = ok(await call('POST', `/api/executions/${executionId}/stop`, {}, owner));
+    ok(await receipt(stop.id, 'accepted'));
+    assert.deepEqual([(await execution(sessionId, executionId)).state, (await execution(sessionId, executionId)).observation], ['running', initiallyUnknown ? 'unconfirmed' : 'confirmed']);
+    ok(await receipt(stop.id, 'unknown'));
+    ok(await receipt(stop.id, 'unknown'));
+    assert.equal((await receipt(stop.id, 'accepted')).status, 409, 'late acknowledgement cannot regress unknown');
+    const e = await execution(sessionId, executionId);
+    assert.deepEqual([e.state, e.observation, e.finishedAt ?? null], ['running', 'unconfirmed', null]);
+    const status = ok(await op('execution_status', {executionId}));
+    assert.equal(status.stop.outcome, 'unknown'); assert.equal(status.next, 'session_fork');
+    const other = await queued();
+    assert.equal((await receipt(stop.id, 'stopped', other.executionId)).status, 403, 'another execution cannot use this command');
+    assert.equal((await foreign('/api/hosts/receipts', {commandId: stop.id, executionId, status: 'stopped'})).status, 403, 'another host cannot confirm cleanup');
+    ok(await receipt(stop.id, 'stopped'));
+    const ended = await execution(sessionId, executionId);
+    assert.deepEqual([ended.state, ended.observation], ['cancelled', 'confirmed']);
+    assert.equal(ok(await op('execution_status', {executionId})).stop.outcome, 'proven');
+    ok(await receipt(stop.id, 'stopped'));
+    assert.equal((await receipt(stop.id, 'unknown')).status, 409);
+    assert.equal((await receipt(stop.id, 'accepted')).status, 409);
+    assert.equal((await execution(sessionId, executionId)).finishedAt, ended.finishedAt, 'duplicate terminal receipt preserves history');
+  }
+});
+
+
+test('A15 control receipts preserve completed execution history and do not confirm an uncertain steered run (requirement: command delivery and execution observation are distinct; risk: late control ACK clears a fence or rewrites completion)', {timeout: 30_000}, async () => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', {...poll, capabilities: ['steer']}));
+  const {sessionId, executionId} = await queued();
+  const start = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+  const receipt = (id: string, status: string) => h('/api/hosts/receipts', {commandId: id, executionId, status});
+  ok(await receipt(start.id, 'started'));
+  ok(await h('/api/hosts/poll', {...poll, capabilities: ['steer']}));
+  ok(await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'steer without proof of process health', delivery: 'steer'}, owner));
+  const steer = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId && c.kind === 'steer');
+  assert.ok(steer);
+  ok(await receipt(start.id, 'unknown'));
+  for (const status of ['accepted', 'unknown', 'completed']) {
+    ok(await receipt(steer.id, status));
+    assert.deepEqual([(await execution(sessionId, executionId)).state, (await execution(sessionId, executionId)).observation], ['running', 'unconfirmed']);
+  }
+  const stop = ok(await call('POST', `/api/executions/${executionId}/stop`, {}, owner));
+  ok(await receipt(start.id, 'completed'));
+  const ended = await execution(sessionId, executionId);
+  for (const status of ['accepted', 'unknown']) {
+    ok(await receipt(stop.id, status));
+    const current = await execution(sessionId, executionId);
+    assert.deepEqual([current.state, current.observation, current.finishedAt], ['succeeded', 'confirmed', ended.finishedAt]);
+    assert.equal(ok(await op('execution_status', {executionId})).stop.detail, 'already_finished');
+  }
+});
