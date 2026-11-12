@@ -428,14 +428,22 @@ func TestLatestConditionalGet(t *testing.T) {
 	if v := u.latest(); v != "1.261112.4" || matched != 2 {
 		t.Fatalf("after bad body: %q matched=%d", v, matched)
 	}
-	// Without an ETag nothing is cached and the next request is unconditional.
-	etag, body = "", `{"version":"1.261112.5"}`
+	// A corrupt cache file is replaced within the same run: one conditional request, one full one.
 	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("cache files: %d", len(entries))
+	}
+	os.WriteFile(filepath.Join(dir, entries[0].Name()), []byte(`{"etag":"\"four\"","body":"bm9wZQ=="}`), 0o600)
+	if v := u.latest(); v != "1.261112.4" || matched != 3 || served != 8 {
+		t.Fatalf("corrupt cache: %q matched=%d served=%d", v, matched, served)
+	}
+	// Without an ETag nothing is cached, the stale entry goes and the next request is unconditional.
+	etag, body = "", `{"version":"1.261112.5"}`
 	u.latest()
-	if v := u.latest(); v != "1.261112.5" || matched != 2 {
+	if v := u.latest(); v != "1.261112.5" || matched != 3 {
 		t.Fatalf("no etag: %q matched=%d", v, matched)
 	}
-	if after, _ := os.ReadDir(dir); len(after) != len(entries) {
-		t.Fatalf("cache written without an ETag: %d -> %d files", len(entries), len(after))
+	if after, _ := os.ReadDir(dir); len(after) != 0 {
+		t.Fatalf("stale cache kept: %v", after)
 	}
 }

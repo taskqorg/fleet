@@ -570,9 +570,6 @@ func (u *updater) latest() string {
 		return ""
 	}
 	if !c.LastModified.IsZero() { // the asset upload time: cheap publish time for the install log line
-		if u.published == nil {
-			u.published = map[string]time.Time{}
-		}
 		u.published[l.Version] = c.LastModified
 	}
 	return l.Version
@@ -608,20 +605,25 @@ func (u *updater) getCached(url string, check func([]byte) error) (cached, error
 		return cached{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotModified || c.ETag == "" {
-		c = cached{ETag: resp.Header.Get("ETag")}
-		if c.Body, err = readOK(url, resp); err != nil {
-			return cached{}, err
+	if resp.StatusCode == http.StatusNotModified && c.ETag != "" {
+		if err := check(c.Body); err == nil {
+			return c, nil
 		}
-		c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
+		os.Remove(file) // a bad cache file: fetch in full now
+		return u.getCached(url, check)
+	}
+	c = cached{ETag: resp.Header.Get("ETag")}
+	if c.Body, err = readOK(url, resp); err != nil {
+		return cached{}, err
+	}
+	c.LastModified, _ = http.ParseTime(resp.Header.Get("Last-Modified"))
+	if file != "" {
+		os.Remove(file) // never keep an ETag the server did not just send
 	}
 	if err := check(c.Body); err != nil {
-		if file != "" {
-			os.Remove(file)
-		}
 		return cached{}, fmt.Errorf("GET %s: %w", url, err)
 	}
-	if resp.StatusCode != http.StatusNotModified && c.ETag != "" && file != "" {
+	if c.ETag != "" && file != "" {
 		if err := writeJSON(file, c, 0o600); err != nil {
 			log.Print("etag cache: ", err)
 		}

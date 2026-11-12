@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -58,13 +59,19 @@ func (u *updater) latestUI(backend string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Each line is a pkt-line "<4 hex length><sha> <ref>"; the answer ends with the flush "0000".
+	lines := strings.Split(strings.TrimSuffix(string(b), "0000"), "\n")
+	if !strings.HasSuffix(string(b), "0000") || lines[len(lines)-1] != "" {
+		return "", fmt.Errorf("ls-refs: not a pkt-line answer: %.80q", b)
+	}
 	latest := ""
-	for _, line := range strings.Split(string(b), "\n") {
-		f := strings.Fields(line) // <pkt-len><sha> refs/tags/<tag>
-		if len(f) == 2 && strings.HasPrefix(f[1], prefix) {
-			if v := strings.TrimPrefix(f[1], prefix); newer(v, latest) {
-				latest = v
-			}
+	for _, line := range lines[:len(lines)-1] {
+		f := strings.Fields(line)
+		if len(f) != 2 || len(f[0]) != 44 || !strings.HasPrefix(f[1], prefix) {
+			return "", fmt.Errorf("ls-refs: unexpected line %q", line)
+		}
+		if v := strings.TrimPrefix(f[1], prefix); newer(v, latest) {
+			latest = v
 		}
 	}
 	return latest, nil
@@ -125,6 +132,11 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 		return nil
 	}
 	dir, err := u.fetch(p, candidate)
+	var ref refusal
+	if errors.As(err, &ref) { // recorded, so the next run does not download and refuse it again
+		st.Last = u.refuse(p, candidate, string(ref), err.Error())
+		return writeJSON(stateFile, st, 0600)
+	}
 	if err != nil {
 		return err
 	}

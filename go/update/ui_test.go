@@ -65,6 +65,7 @@ func (f uiTransport) RoundTrip(r *http.Request) (*http.Response, error) { return
 // (60 unauthenticated requests per hour, 304 included, which a 1 minute timer alone exhausts), and keeps the newest.
 func TestUIDiscoveryTags(t *testing.T) {
 	u := newUpdater(nil)
+	body := ""
 	u.client = &http.Client{Transport: uiTransport(func(r *http.Request) (*http.Response, error) {
 		if r.Method != "POST" || r.URL.String() != "https://github.com/taskqorg/fleet.git/git-upload-pack" || r.Header.Get("Git-Protocol") != "version=2" {
 			t.Fatal("wrong discovery request", r.Method, r.URL)
@@ -73,13 +74,23 @@ func TestUIDiscoveryTags(t *testing.T) {
 		if want := "0014command=ls-refs\n00010029ref-prefix refs/tags/ui-1.261112.0-v\n0000"; string(req) != want {
 			t.Fatalf("request body %q", req)
 		}
-		body := pkt("aaaa refs/tags/ui-1.261112.0-v1.261112.1\n") + pkt("aaaa refs/tags/ui-1.261112.0-v1.261112.3\n") +
-			pkt("aaaa refs/tags/ui-1.261112.0-v1.261112.2\n") + "0000"
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
+	sha := strings.Repeat("a", 40)
+	body = pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.1\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.3\n") +
+		pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.2\n") + "0000"
 	got, err := u.latestUI("1.261112.0")
 	if err != nil || got != "1.261112.3" {
 		t.Fatalf("%q %v", got, err)
+	}
+	body = "0000" // no tag for this backend yet
+	if got, err := u.latestUI("1.261112.0"); err != nil || got != "" {
+		t.Fatalf("%q %v", got, err)
+	}
+	for _, body = range []string{pkt("ERR upload-pack: nope\n") + "0000", "<html>", pkt(sha+" refs/tags/v1.261112.9\n") + "0000"} {
+		if got, err := u.latestUI("1.261112.0"); err == nil {
+			t.Fatalf("%q accepted as %q", body, got)
+		}
 	}
 	u.client.Transport = uiTransport(func(*http.Request) (*http.Response, error) { return nil, fmt.Errorf("fixture unavailable") })
 	if _, err := u.latestUI("1.261112.0"); err == nil {
