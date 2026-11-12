@@ -882,7 +882,8 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 	}
 	writeSnapshot(ctx, a) // the gateway must see the token before the call
 	line := gatewayCall(ctx, token, connection, tool, args)
-	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+	// Revoked even when the caller left: a live token would keep the key reachable until the next start.
+	if err := runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error {
 		if err := revokeTokens(q, executionID); err != nil {
 			return err
 		}

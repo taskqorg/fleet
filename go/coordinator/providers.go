@@ -704,7 +704,8 @@ const providersJSON = `
     "idempotent": true,
     "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
     "description": "Open pull requests of a repository (100 newest).",
-    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
    },
    "pulls_closed": {
     "method": "GET",
@@ -713,7 +714,8 @@ const providersJSON = `
     "idempotent": true,
     "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
     "description": "Recently closed pull requests of a repository, with merged_at.",
-    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
    },
    "runs_in_progress": {
     "method": "GET",
@@ -722,7 +724,8 @@ const providersJSON = `
     "idempotent": true,
     "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
     "description": "Workflow runs in progress.",
-    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
    },
    "runs_queued": {
     "method": "GET",
@@ -731,7 +734,8 @@ const providersJSON = `
     "idempotent": true,
     "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
     "description": "Workflow runs waiting for a runner.",
-    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
    },
    "releases": {
     "method": "GET",
@@ -740,7 +744,8 @@ const providersJSON = `
     "idempotent": true,
     "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
     "description": "The 30 newest releases.",
-    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}}
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
    }
   }
  }

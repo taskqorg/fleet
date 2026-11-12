@@ -28,16 +28,28 @@ var (
 type githubCached struct {
 	at   time.Time
 	body []byte
+	err  error
 }
 
-// githubKeyed: the github connection exists (its key is the owner's to add; a call without one fails with no-usable-key).
+// githubKeyed: the gateway can serve github: it is configured, the connection takes calls and holds an active key.
 func githubKeyed(ctx context.Context, a *App) bool {
+	if gatewayURL() == "" {
+		return false
+	}
 	var keyed bool
-	runTx(ctx, a, nil, false, "", func(q *Request) error {
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		c, err := maybe(q, "connection:github", "api-connection")
-		keyed = c != nil
+		if err != nil || c == nil || c["intake"] != "all" {
+			return err
+		}
+		ks, err := connKeys(q, "github")
+		for _, k := range ks {
+			keyed = keyed || k["state"] == "active"
+		}
 		return err
-	})
+	}); err != nil {
+		log.Printf("github keyed: %v", err)
+	}
 	return keyed
 }
 
@@ -64,22 +76,25 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 			return nil, false, fmt.Errorf("no github key: only %s is read", githubPublicRepo)
 		}
 	}
-	cacheKey := fmt.Sprint(keyed, " ", project, " ", path) // a keyed reply is served only to the project its token was minted for
+	// A keyed reply is served only to the project its token was minted for; the public reply is the same for all.
+	cacheKey := "public " + path
+	if keyed {
+		cacheKey = "key " + project + " " + path
+	}
 	githubMu.Lock()
+	defer githubMu.Unlock() // ponytail: one read at a time (concurrent misses never both reach GitHub); per-path locks if reads queue
 	c, ok := githubCache[cacheKey]
-	githubMu.Unlock()
 	if ok && time.Since(c.at) < ttl {
-		return c.body, keyed, nil
+		return c.body, keyed, c.err
 	}
 	if keyed {
 		body, err = githubGateway(ctx, a, project, tool, args)
 	} else {
 		body, err = githubPublic(ctx, path)
 	}
-	if err == nil {
-		githubMu.Lock()
-		githubCache[cacheKey] = githubCached{time.Now(), body}
-		githubMu.Unlock()
+	if err == nil || !keyed {
+		// A failed public read is kept too: a rate-limited address must not ask again before the cache expires.
+		githubCache[cacheKey] = githubCached{time.Now(), body, err}
 	}
 	return body, keyed, err
 }
@@ -96,34 +111,19 @@ func githubPublic(ctx context.Context, path string) ([]byte, error) {
 		return nil, err
 	}
 	defer res.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(res.Body, 16<<20))
+	b, err := io.ReadAll(io.LimitReader(res.Body, 16<<20+1))
+	if err == nil && len(b) > 16<<20 {
+		err = fmt.Errorf("GitHub reply over 16 MiB on %s", strings.SplitN(path, "?", 2)[0])
+	}
 	if err == nil && res.StatusCode != 200 {
 		err = fmt.Errorf("GitHub %d on %s", res.StatusCode, strings.SplitN(path, "?", 2)[0])
 	}
 	return b, err
 }
 
+// githubGateway: one call with a token minted for it and revoked after (connCallFor), recorded as a tool_run.
 func githubGateway(ctx context.Context, a *App, project, tool string, args map[string]string) ([]byte, error) {
-	id := "github-read:" + newID()
-	var token string
-	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		m, err := mint(q, doc{"executionId": id, "projectId": project, "personal": "github-read", "step": true}, []string{"github"})
-		token, _ = m["token"].(string)
-		return err
-	}); err != nil || token == "" {
-		return nil, fmt.Errorf("github connection refused for project %s", project)
-	}
-	writeSnapshot(ctx, a) // the gateway must see the token before the call
-	line := gatewayCall(ctx, token, "github", tool, args)
-	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		if err := revokeTokens(q, id); err != nil {
-			return err
-		}
-		_, err := connIngest(q)
-		return err
-	}); err != nil {
-		log.Printf("github read revoke %s: %v", id, err)
-	}
+	line := connCallFor(ctx, a, doc{"projectId": project}, "github", "github-read:"+newID(), tool, args)
 	if line.Outcome != contract.CallOutcomeOk {
 		return nil, fmt.Errorf("github %s: %s %d", tool, deref(line.ErrorCode), line.Status)
 	}
