@@ -58,5 +58,6 @@ The most important value comes first in a row and in a detail head; anything tha
 | Agents | Which agent does what, on what, and whether it works | State, name, harness and model with effort, role; runs in 30 days and recent success; skills, tools, where it may run | Definition read and write, effective layers, usage and success per agent (see the review in the PR) |
 | Pipelines | Change the flow; see why the last run failed | Last run state and age, steps; the failed step with its error and the rerun choice | Definition read and write, draft runs, revision history |
 | Catalogue | Which method a call uses and which is best | Recommended method, quality, time and cost per method with their basis, who it is recommended for | Per-method assessments from Lab; definition write |
+| Delivery | Where delivery waits and since when | Count per stage, oldest age in stage (red past its limit), count over 24 hours, pull request title and number | The waiting worker itself (counted by pull request) |
 | Results | Find and open what work produced | State, name, kind and size, task, age | — |
 | API keys | Which keys are active and whether intake is open | Intake state, name, provider, active of in-use keys, holder | — |

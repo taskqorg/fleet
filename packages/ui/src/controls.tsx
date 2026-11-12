@@ -929,7 +929,7 @@ export function AreaChart(p: AreaChartProps) {
   const days = (from: number, to: number) => { const out: number[] = []; const d = new Date(from); d.setHours(24, 0, 0, 0); for (let t = d.getTime(); t < to && out.length < 31; t += 864e5) out.push(t); return out; };
   return <div data-ui="area-chart" class="area-chart" role="img" aria-label={`${p.label}: ${summary}`}>
     <div class="ac-plot">
-      {p.series.map(s => <i key={s.label + (s.projected ? '-p' : '')} class={`ac-area ${s.tone}${s.projected ? ' projected' : ''}`} style={{ clipPath: shape(s) }} />)}
+      {p.series.filter(s => shape(s)).map(s => <i key={s.label + (s.projected ? '-p' : '')} class={`ac-area ${s.tone}${s.projected ? ' projected' : ''}`} style={{ clipPath: shape(s) }} />)}
       {days(p.from, p.to).map(t => <b key={t} class="ac-day" style={{ left: `${x(t)}%` }} />)}
       {p.now >= p.from && p.now <= p.to && <b class="ac-now" style={{ left: `${x(p.now)}%` }} data-tip={exact(p.now)} />}
       <span class="ac-max">{p.value(p.max)}</span>
