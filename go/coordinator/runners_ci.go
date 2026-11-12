@@ -154,7 +154,7 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 		if minutes[name] == nil {
 			minutes[name] = &acc{hosted: hosted}
 		}
-		minutes[name].minutes += end.Sub(start).Minutes()
+		minutes[name].minutes += max(0, end.Sub(start).Minutes()) // a skipped job can end a second before its recorded start
 		minutes[name].jobs++
 	}
 	seen := map[int64]bool{}
