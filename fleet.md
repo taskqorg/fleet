@@ -10,6 +10,7 @@ A system for performing work through agents across projects. This specification 
 - **R4 Design depth.** Agree on each level's parts, responsibilities and relationships before detailing any part. Revisit earlier levels when needed. Existing product implementations and contracts are evidence to assess, not a template for Fleet's structure.
 - **R5 Observability.** Instrument every system component and operation, including agents, tools and infrastructure. Retain queryable history for diagnosis, resource attribution and improvement under [observation and evaluation](#observation-and-evaluation).
 - **R6 Minimal mechanisms.** Agents act through supplied instructions, context and tools, invoking pipelines when useful. Fleet provides execution control, data access and observable history for improvement. Structure only what it must coordinate and recover; domain workflows and methodologies remain configurable, not mandatory system stages.
+- **R7 Agentic first.** Every new capability reaches agents first, as tools, data and queries over the shared core (R2). Its human interface follows, designed for convenience. When an agent path and a UI path compete, build the agent path first.
 
 ## Operator interface
 
