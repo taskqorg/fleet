@@ -4,7 +4,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startCoordinator} from '../harness.ts';
-import {formatView, parseView, type View} from '../../packages/view-url/view-url.ts';
+import {formatView, parseView, TASK_SORTS, type View} from '../../packages/view-url/view-url.ts';
 
 const ORIGIN = 'https://fleet.trial.test';
 
@@ -20,6 +20,7 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
     const views: View[] = [
       {view: 'tasks', state: ['held', 'failed', 'failed'], project: [null, 'b', 'a', '-'], group: 'state', q: 'hero name, 100% & more', sel: ['t2', 't1'], preset: 'mine', focus: 'a/b:c@d'},
       {view: 'tasks', group: 'priority'},
+      {view: 'tasks', sort: 'created'}, {view: 'tasks', sort: '-changed'},
       {view: 'conversations', archived: true, state: ['running'], q: 'x+y', extra: {tab: 'log', 'odd key': 'é'}},
       {view: 'results', state: ['stored'], project: ['p1']},
       {view: 'hosts', focus: 'pds18'},
@@ -36,6 +37,7 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
     for (const [body, message] of [
       [{view: {view: 'tasks', state: ['nope']}}, /state must be a list of/],
       [{view: {view: 'hosts', q: 'x'}}, /q is not a key of the hosts view/],
+      [{view: {view: 'tasks', sort: 'title'}}, new RegExp('sort must be one of ' + [...TASK_SORTS].sort().join(', ') + '$')],
       [{url: 'https://elsewhere.test/tasks'}, /Not a Fleet view URL/],
       [{url: '/settings'}, /Not a Fleet view URL/],
       [{}, /exactly one of view or url/],

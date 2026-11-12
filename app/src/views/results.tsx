@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   EntityCode, ListDetail, ListFrame, FilterBar, StateCounters, VirtualList, StateBadge, Button, ResultViewer, ArtifactView, Empty, ErrorBanner, Skeleton,
-  AgeChip, bytes, type StateOf, type Chip,
+  AgeChip, bytes, splitTerms, type StateOf, type Chip,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op } from '../api.ts';
@@ -15,16 +15,21 @@ import { useUrlView, useSearchBox } from '../url.ts';
 const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const PAGE = 100;
 type Row = { id: string; name: string; mediaType: string; size: number; state: StateOf<'artifact'>; taskId: string | null; taskCode?: string | null; executionId: string | null; projectId: string | null; createdAt: number; seq: number };
-// Filter fields beyond search and state ride in the URL's extra keys.
-const MEDIA: Record<string, string> = { Images: 'image/', Video: 'video/', Text: 'text/', JSON: 'application/json' };
+// Filters beyond state are typed in search (OR-36: media:image since:7d) or come in a link's extra keys.
+const MEDIA: Record<string, string> = { image: 'image/', images: 'image/', video: 'video/', text: 'text/', json: 'application/json' };
 const SINCE: Record<string, number> = { '1d': 864e5, '7d': 7 * 864e5, '30d': 30 * 864e5 };
 
 export function Results({ id }: { id?: string }) {
   const { view, set, href } = useUrlView('results');
   const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
-  const states = (view.state ?? []) as StateOf<'artifact'>[], extra = view.extra ?? {};
-  const filter = { q: view.q, states: states.length ? states : undefined, projectIds: withFocus(view).project?.length ? withFocus(view).project : undefined, taskId: extra.task, executionId: extra.execution,
-    mediaType: extra.media ? MEDIA[extra.media] : undefined, since: extra.since && SINCE[extra.since] ? Date.now() - SINCE[extra.since] : undefined };
+  const states = (view.state ?? []) as StateOf<'artifact'>[];
+  // A media: or since: value the list does not know stays search text, so the list never empties silently.
+  const raw = splitTerms(view.q ?? '', ['media', 'since']), known = Object.fromEntries(Object.entries(raw.terms).filter(([k, v]) => k === 'media' ? Object.hasOwn(MEDIA, v.toLowerCase()) : Object.hasOwn(SINCE, v)));
+  const typed = { terms: known, text: [raw.text, ...Object.entries(raw.terms).filter(([k]) => !(k in known)).map(([k, v]) => `${k}:${v}`)].filter(Boolean).join(' ') };
+  const extra = { ...view.extra, ...typed.terms };
+  const media = extra.media?.toLowerCase();
+  const filter = { q: typed.text || undefined, states: states.length ? states : undefined, projectIds: withFocus(view).project?.length ? withFocus(view).project : undefined, taskId: extra.task, executionId: extra.execution,
+    mediaType: media ? MEDIA[media] : undefined, since: extra.since && SINCE[extra.since] ? Date.now() - SINCE[extra.since] : undefined };
   const fkey = JSON.stringify({ ...filter, since: extra.since });
   const [rows, setRows] = useState<Row[] | null>(null), [next, setNext] = useState<number | null>(null), [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
   // gen: a newer load (filter change, refresh) wins; an older answer is dropped.
@@ -39,15 +44,14 @@ export function Results({ id }: { id?: string }) {
   };
   const ready = prefsRead.value; // the filter carries the focus
   useEffect(() => { if (!ready) { gen.current++; setRows(null); return; } load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey, ready]);
-  const chips: Chip[] = Object.entries(extra).filter(([k]) => ['media', 'since', 'task', 'execution'].includes(k)).map(([field, value]) => ({ field, value }));
+  const chips: Chip[] = Object.entries(view.extra ?? {}).filter(([k]) => !(k in typed.terms)).filter(([k]) => ['media', 'since', 'task', 'execution'].includes(k)).map(([field, value]) => ({ field, value }));
   const now = Date.now();
   const list = <>
     <header class="page-h"><h1>Results</h1></header>
     {error && <ErrorBanner text={`Results did not load: ${error}`} onRetry={() => load()} />}
     <section class="panel">
-      <ListFrame pending={busy} bar={<FilterBar query={query} placeholder="Search results" onQuery={setQuery} chips={chips}
-        fields={[{ field: 'media', values: Object.keys(MEDIA).map(value => ({ value, count: 0 })) }, { field: 'since', values: Object.keys(SINCE).map(value => ({ value, count: 0 })) }]}
-        onAdd={c => set({ extra: { ...extra, [c.field]: c.value } })} onRemove={c => { const { [c.field]: _, ...rest } = extra; set({ extra: rest }); }}
+      <ListFrame pending={busy} bar={<FilterBar query={query} placeholder="Search results, media:image since:7d" onQuery={setQuery} chips={chips}
+        onRemove={c => { const { [c.field]: _, ...rest } = view.extra ?? {}; set({ extra: rest }); }}
         onClear={() => { setQuery(''); set({ q: undefined, state: [], extra: {} }); }} shown={rows?.length ?? 0} total={rows?.length ?? 0}
         extra={<StateCounters family="artifact" label="Results by state" counts={{ stored: null, pending: null, failed: null, deleted: null }} active={states}
           onAll={() => set({ state: [] })} onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>

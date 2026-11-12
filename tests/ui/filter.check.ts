@@ -80,9 +80,10 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
       return r;
     };
     await step('click state counter', `document.querySelector('[data-ui=state-counters] .counter:not(.sigma)').click()`);
-    await step('click group Agent', `[...document.querySelectorAll('.seg')].find(b=>b.textContent==='Agent').click()`);
+    await step('open group choices', `document.querySelector('[data-ui=group-control] button').click()`, false);
+    await step('click group Agent', `[...document.querySelectorAll('[data-ui=group-control] .seg')].find(b=>b.textContent==='Agent').click()`);
     await step('click All', `document.querySelector('.counter.sigma').click()`);
-    await step('pick preset', `[...document.querySelectorAll('[data-ui=filter-bar].presets button')].find(b=>/Running/.test(b.textContent)).click()`);
+    await step('pick preset', `[...document.querySelectorAll('[data-ui=saved-views] button')].find(b=>/Running/.test(b.textContent)).click()`);
     const beforeFocus = await url();
     await step('focus first row', `document.querySelector('.vl-row .row-link').click()`, false);
     const focused = await url();
@@ -104,6 +105,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     rule(N, back > 0, 'Back: no rows in the first frame');
     // Search: one request per typing pause, one Back leaves the search.
     await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
+    await page.locator('.fbar button[aria-label^="Search"]').first().click(); // search is an icon until used (OR-31)
     reqs.length = 0; await page.locator('.fbar input').first().pressSequentially('hero', { delay: 60 }); await page.waitForTimeout(800);
     const pages = reqs.filter(r => r === 'task_page').length;
     console.log(`type "hero": requests=${reqs.length} [${reqs.join(',')}] url=${await url()}`);
@@ -111,6 +113,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.goBack(); await page.waitForTimeout(300);
     rule(N, (await url()) === '/tasks', `one Back after a search should return to /tasks, got ${await url()}`);
     // After Back, a new search starts a new history entry instead of replacing the one Back returned to.
+    if (!await page.locator('.fbar input').count()) await page.locator('.fbar button[aria-label^="Search"]').first().click();
     await page.locator('.fbar input').first().fill(''); await page.locator('.fbar input').first().pressSequentially('copy', { delay: 60 }); await page.waitForTimeout(800);
     await page.goBack(); await page.waitForTimeout(300);
     rule(N, (await url()) === '/tasks', `a search after Back replaced the entry Back returned to (Back now at ${await url()})`);

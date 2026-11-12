@@ -1,7 +1,9 @@
 // UX checks on the built mockups (D14). Warnings only; never fails. Run after `pnpm run book`.
 // Catches: repeated words in one region (OR-17), touch targets under 44 px with a coarse pointer,
 // status shown by colour only (WCAG 1.4.1, OR-18), truncated important text (OR-19), detail/outcome
-// outside the viewport at 600 and 1100 px (OR-19), JS size and interaction latency against targets.
+// outside the viewport at 600 and 1100 px (OR-19), JS size and interaction latency against targets, zero in a state chip
+// (OR-29), an unfocused empty search field (OR-31), Group as a word (OR-35), a Filter button (OR-36), row affordances
+// shown without hover (OR-37).
 // Proof mode: UX_INJECT=repeat|touch|colour|truncate|offscreen|latency|size injects one defect into the page.
 // Screenshots of each route go to design-report/shots/ (for CI artifacts).
 import { chromium } from 'playwright';
@@ -51,6 +53,15 @@ try {
         const dup = words.find((w, i) => words.indexOf(w) !== i);
         if (dup) out.push(`OR-17 repeated word "${dup}" in ${el.className.split(' ')[0] || el.tagName.toLowerCase()}: "${el.innerText.replace(/\s+/g, ' ').slice(0, 60)}"`);
       }
+      // OR-29: a status quick-filter chip with 0 shows only its icon.
+      for (const el of document.querySelectorAll('.counter:not(.sigma) .num')) if (visible(el) && el.textContent.trim() === '0') out.push(`OR-29 zero shown in a state chip: "${el.parentElement.getAttribute('aria-label')}"`);
+      // OR-31: an empty search field shows only while focused; otherwise it is an icon.
+      for (const el of document.querySelectorAll('input[type=search]')) if (visible(el) && !el.value && el !== document.activeElement) out.push(`OR-31 empty search field shown unfocused: "${el.getAttribute('aria-label')}"`);
+      // OR-35, OR-36: Group is an icon, not a word; there is no Filter button.
+      for (const el of document.querySelectorAll('.seg-label')) if (visible(el) && /\bgroup\b/i.test(el.innerText)) out.push('OR-35 "Group" written as a word; use the registry icon with a tooltip');
+      for (const el of document.querySelectorAll('button')) if (visible(el) && /^filter$/i.test((el.getAttribute('aria-label') || el.innerText).trim())) out.push('OR-36 Filter button; filters are typed in search');
+      // OR-37: pin and checkbox of a row that is not hovered and not set stay hidden.
+      for (const el of document.querySelectorAll('.vl-row .row-acts:not(.set)')) if (!el.closest('.vl-row').matches(':hover') && getComputedStyle(el).opacity !== '0' && matchMedia('(hover:hover)').matches) { out.push('OR-37 row affordances visible without hover'); break; }
       // WCAG 1.4.1 / OR-18: attention or danger tone with no icon and no meaning in text or name.
       const MEANING = /fail|error|warn|alert|long|full|low|exhaust|unavailable|offline|need|attention|look|unconfirmed/i;
       for (const el of document.querySelectorAll('[class*="t-danger"], [class*="t-attention"]')) {

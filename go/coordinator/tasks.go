@@ -284,7 +284,10 @@ func init() {
 	// At start: every idle task, one transaction each, so one bad task neither rolls back nor blocks the others.
 	onStart(func(ctx context.Context, a *App) {
 		var ids []doc
-		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { ids, err = rowsOf(q, "SELECT t.id "+idleTaskSQL+" ORDER BY t.created_at"); return }); err != nil {
+		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+			ids, err = rowsOf(q, "SELECT t.id "+idleTaskSQL+" ORDER BY t.created_at")
+			return
+		}); err != nil {
 			log.Printf("settle idle tasks: %v", err)
 			return
 		}
@@ -617,6 +620,32 @@ var taskGroups = map[string]taskGroup{
 	"state":    {"(CASE " + stateSQL + " WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'held' THEN '5' WHEN 'paused' THEN '6' WHEN 'completed' THEN '7' ELSE '8' END)", false},
 }
 
+// taskSorts: the second sort key inside a group (owner review P7), ascending numbers; "-" before a name is descending.
+// The default is recently changed first. ponytail: every sort is an expression no index serves (and the row facts are
+// correlated subqueries, not task_derived columns), so a page scans and sorts the filtered tasks; add expression indexes and
+// task_derived columns when task lists outgrow a scan.
+var taskSorts = map[string]string{"changed": "(extract(epoch FROM t.updated_at)*1000)::float8", "created": "t.seq::float8"}
+
+const defaultTaskSort = "-changed"
+
+func taskSortOf(v any) (string, error) {
+	s, ok := v.(string)
+	if v != nil && !ok {
+		return "", fail(400, "sort must be a string")
+	}
+	if s == "" {
+		s = defaultTaskSort
+	}
+	expr, ok := taskSorts[strings.TrimPrefix(s, "-")]
+	if !ok {
+		return "", fail(400, "sort must be changed, created, -changed or -created")
+	}
+	if strings.HasPrefix(s, "-") {
+		return "(-" + expr + ")", nil
+	}
+	return expr, nil
+}
+
 var taskLabels = map[string]string{"priority": "t.priority", "state": stateSQL, "project": "t.project_id", "agent": "d.agent", "host": "d.host"}
 
 func groupOf(g any) (string, taskGroup, error) {
@@ -717,11 +746,15 @@ func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 	return c, nil
 }
 
-const taskListCols = "t.id,t.code,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions"
+const taskListCols = "t.id,t.code,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions,t.state_at,(SELECT count(*) FROM execution e WHERE e.task_id=t.id) AS executions," + lastAgentSQL + " AS last_agent"
+
+// lastAgentSQL: the harness of the task's latest execution (a row fact; the agent: search term is the running one, task_derived.agent).
+const lastAgentSQL = "(SELECT e.harness FROM execution e WHERE e.task_id=t.id ORDER BY e.seq DESC LIMIT 1)"
 
 func taskListRow(x doc) doc {
 	return doc{"id": x["id"], "code": x["code"], "projectId": x["project_id"], "title": x["title"], "state": x["state"], "pauseReason": x["pause_reason"], "waitReason": x["wait_reason"], "priority": x["priority"], "agent": x["agent"], "host": x["host"],
-		"startedAt": x["started_at"], "createdAt": x["created_at"], "updatedAt": x["updated_at"], "openQuestions": x["open_questions"], "sortKey": []any{x["g"], -num(x["seq"]), x["id"]}}
+		"startedAt": x["started_at"], "createdAt": x["created_at"], "updatedAt": x["updated_at"], "openQuestions": x["open_questions"],
+		"stateAt": x["state_at"], "executions": x["executions"], "lastAgent": x["last_agent"], "sortKey": []any{x["g"], num(x["sk"]), x["id"]}}
 }
 
 func pageLimit(v any, def int) int {
@@ -813,6 +846,10 @@ func taskPage(q *Request, b doc) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	S, err := taskSortOf(b["sort"])
+	if err != nil {
+		return nil, err
+	}
 	limit := pageLimit(b["limit"], 100)
 	p := []any{}
 	c, err := taskWhere(f, &p, true)
@@ -825,14 +862,14 @@ func taskPage(q *Request, b doc) (any, error) {
 			return nil, fail(400, "Invalid after")
 		}
 		p = append(p, fmt.Sprint(a[0]), num(a[1]), fmt.Sprint(a[2]))
-		c = append(c, fmt.Sprintf("(%s,-t.seq,t.id) > ($%d,$%d::float8,$%d)", G.sql, len(p)-2, len(p)-1, len(p)))
+		c = append(c, fmt.Sprintf("(%s,%s,t.id) > ($%d,$%d::float8,$%d)", G.sql, S, len(p)-2, len(p)-1, len(p)))
 	}
 	g, lim := G.sql, strconv.Itoa(limit+1)
 	var sql string
 	if G.derived {
-		sql = "SELECT " + taskListCols + "," + g + " AS g FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c) + " ORDER BY " + g + ",t.seq DESC,t.id LIMIT " + lim
+		sql = "SELECT " + taskListCols + "," + g + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c) + " ORDER BY " + g + "," + S + ",t.id LIMIT " + lim
 	} else {
-		sql = "SELECT " + taskListCols + ",t.g FROM (SELECT t.*," + g + " AS g FROM task t" + where(c) + " ORDER BY " + g + ",t.seq DESC,t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY t.g,t.seq DESC,t.id"
+		sql = "SELECT " + taskListCols + ",t.g," + S + " AS sk FROM (SELECT t.*," + g + " AS g FROM task t" + where(c) + " ORDER BY " + g + "," + S + ",t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY t.g," + S + ",t.id"
 	}
 	rs, err := rowsOf(q, sql, p...)
 	if err != nil {
@@ -855,8 +892,12 @@ func taskPage(q *Request, b doc) (any, error) {
 	return doc{"tasks": page, "nextAfter": next, "counts": counts, "total": total(counts), "groups": groups}, nil
 }
 
-func taskMembership(q *Request, f doc, group any, ids []string) ([]doc, error) {
+func taskMembership(q *Request, f doc, group, sort any, ids []string) ([]doc, error) {
 	_, G, err := groupOf(group)
+	if err != nil {
+		return nil, err
+	}
+	S, err := taskSortOf(sort)
 	if err != nil {
 		return nil, err
 	}
@@ -867,7 +908,7 @@ func taskMembership(q *Request, f doc, group any, ids []string) ([]doc, error) {
 	}
 	p = append(p, ids)
 	c = append(c, fmt.Sprintf("t.id=ANY($%d)", len(p)))
-	rs, err := rowsOf(q, "SELECT "+taskListCols+","+G.sql+" AS g FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"+where(c), p...)
+	rs, err := rowsOf(q, "SELECT "+taskListCols+","+G.sql+" AS g,"+S+" AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"+where(c), p...)
 	out := []doc{}
 	for _, r := range rs {
 		out = append(out, taskListRow(r))

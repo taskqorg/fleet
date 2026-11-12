@@ -3,9 +3,9 @@
 export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results';
 export type View = {
   view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
-  q?: string; sel?: string[]; state?: string[]; archived?: boolean; extra?: Record<string, string>;
+  q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean; extra?: Record<string, string>;
 };
-export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string };
+export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string; sort?: string };
 
 // The one source of these lists: the coordinator's task_page and sessions_list import them.
 export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'held', 'paused', 'completed', 'failed', 'cancelled'] as const;
@@ -13,9 +13,25 @@ export type TaskState = typeof TASK_STATES[number];
 export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
 export type SessionState = typeof SESSION_STATES[number];
 export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'none'] as const;
+/** Order inside a group (task_page sort): '-' is descending; the default is recently changed first. */
+export const TASK_SORTS = ['-changed', '-created', 'changed', 'created'] as const;
+export const DEFAULT_TASK_SORT = '-changed';
 export const ARTIFACT_STATES = ['stored', 'pending', 'failed', 'deleted'] as const;
 export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview', 'results'];
 const NO_PROJECT = '-';
+
+/**
+ * Query syntax shared by list search and the palette (OR-32, OR-36): `key:value` words for the given keys, the rest free
+ * text. The Go task_page reads the same syntax (searchTerms); a key a list does not know stays text ("http://x").
+ */
+export function splitTerms(q: string, keys: readonly string[]): { terms: Record<string, string>; text: string } {
+  const terms: Record<string, string> = {}, text: string[] = [];
+  for (const w of q.split(/\s+/).filter(Boolean)) {
+    const i = w.indexOf(':'), k = w.slice(0, i).toLowerCase();
+    if (i > 0 && i < w.length - 1 && keys.includes(k)) terms[k] = w.slice(i + 1); else text.push(w);
+  }
+  return { terms, text: text.join(' ') };
+}
 
 // Values: encodeURIComponent, so ',', '%', '&', '/', '+' and '#' inside a value are always percent-encoded; then ':' and '@'
 // are put back for readability (both are legal in a path segment and in a query value).
@@ -60,6 +76,7 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
   tasks: {
     group: { parse: (v, raw) => { const g = dec(raw, true); if ((TASK_GROUPS as readonly string[]).includes(g)) v.group = g; }, format: v => v.group && v.group !== 'priority' ? v.group : undefined, list: true },
     preset: text('preset', false), project, q: text('q', true), sel: listKey_('sel'), state: listKey_('state', TASK_STATES),
+    sort: { parse: (v, raw) => { const x = dec(raw, true); if ((TASK_SORTS as readonly string[]).includes(x)) v.sort = x; }, format: v => v.sort && v.sort !== DEFAULT_TASK_SORT ? enc(v.sort) : undefined, list: true },
   },
   conversations: {
     archived: { parse: (v, raw) => { if (raw === '1') v.archived = true; }, format: v => v.archived ? '1' : undefined, list: true },
@@ -89,6 +106,7 @@ export function viewProblem(v: unknown): string | null {
     if (!Object.hasOwn(table, k)) return `${k} is not a key of the ${name} view`;
     if (k === 'state') { if (!strs(x) || !(x as string[]).every(i => states.includes(i))) return 'state must be a list of: ' + states.join(', '); }
     else if (k === 'group') { if (!(TASK_GROUPS as readonly unknown[]).includes(x)) return 'group must be one of ' + TASK_GROUPS.join(', '); }
+    else if (k === 'sort') { if (!(TASK_SORTS as readonly unknown[]).includes(x)) return 'sort must be one of ' + TASK_SORTS.join(', '); }
     else if (k === 'project') { if (!Array.isArray(x) || !x.every(i => i === null || (typeof i === 'string' && i !== ''))) return 'project must be a list of project ids or null'; }
     else if (k === 'sel') { if (!strs(x)) return 'sel must be a list of ids'; }
     else if (k === 'q' || k === 'preset') { if (typeof x !== 'string') return k + ' must be a string'; }
@@ -151,5 +169,5 @@ export function toPageParams(v: View): PageParams {
   if (v.q) filter.search = v.q;
   if (v.project?.length) filter.projectId = sortProjects(v.project);
   if (v.view === 'conversations') filter.archived = !!v.archived;
-  return v.view === 'tasks' ? { filter, group: v.group ?? DEFAULT_GROUP.tasks } : { filter };
+  return v.view === 'tasks' ? { filter, group: v.group ?? DEFAULT_GROUP.tasks, sort: v.sort ?? DEFAULT_TASK_SORT } : { filter };
 }

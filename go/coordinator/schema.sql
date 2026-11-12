@@ -1116,3 +1116,17 @@ CREATE FUNCTION fleet_write_model(eid text) RETURNS void LANGUAGE sql AS $$
 $$;
 SELECT set_config('fleet.project_ids', '*', true);
 SELECT fleet_write_model(execution_id) FROM execution_totals t JOIN execution e ON e.id=t.execution_id WHERE e.kind='agent_run';
+
+-- migration 46: task row facts (owner review P9): when the task entered its current state. A trigger sets it on every state
+-- change, whatever the writer; existing tasks start from their last update. The backfill runs with the table's user triggers
+-- off, so task_touch keeps updated_at (the default sort) and no change row is written per task, and with every project
+-- visible (FORCE row-level security applies to the migration role too).
+ALTER TABLE task ADD COLUMN state_at timestamptz;
+ALTER TABLE task DISABLE TRIGGER USER;
+SELECT set_config('fleet.project_ids', '*', true);
+UPDATE task SET state_at = updated_at;
+ALTER TABLE task ENABLE TRIGGER USER;
+ALTER TABLE task ALTER COLUMN state_at SET DEFAULT now(), ALTER COLUMN state_at SET NOT NULL;
+-- Held and paused, and each wait reason, show as their own state in the list, so a change of reason restarts the time too.
+CREATE FUNCTION fleet_task_state_at() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF (NEW.state, NEW.pause_reason, NEW.wait_reason) IS DISTINCT FROM (OLD.state, OLD.pause_reason, OLD.wait_reason) THEN NEW.state_at := now(); END IF; RETURN NEW; END $$;
+CREATE TRIGGER task_state_at BEFORE UPDATE OF state, pause_reason, wait_reason ON task FOR EACH ROW EXECUTE FUNCTION fleet_task_state_at();

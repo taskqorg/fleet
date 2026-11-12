@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type FilterField, type NavItem } from './controls.tsx';
+import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -68,17 +68,10 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
     return out;
   }, [pinnedFirst, view.group, closed]);
 
-  const fields: FilterField[] = [
-    { field: 'Project', values: [...new Set(items.map(t => t.project))].map(v => ({ value: v, count: items.filter(t => t.project === v).length })) },
-    { field: 'Agent', values: [...new Set(items.map(t => t.agent))].map(v => ({ value: v, count: items.filter(t => t.agent === v).length })) },
-    { field: 'Host', values: [...new Set(items.map(t => t.host))].map(v => ({ value: v, count: items.filter(t => t.host === v).length })) },
-  ];
-
   return (
     <div class="list-view" data-ui="list-view" style={height ? { '--list-height': height } : undefined}>
-      <FilterBar query={query} onQuery={setQuery} placeholder="Search tasks" chips={view.chips} fields={fields}
-        onRemove={c => edit({ chips: view.chips.filter(x => x.field !== c.field || x.value !== c.value) })}
-        onAdd={c => edit({ chips: [...view.chips, c] })} onClear={() => edit({ chips: [], states: [] })}
+      <FilterBar query={query} onQuery={setQuery} placeholder="Search tasks" chips={view.chips}
+        onRemove={c => edit({ chips: view.chips.filter(x => x.field !== c.field || x.value !== c.value) })} onClear={() => edit({ chips: [], states: [] })}
         shown={shown.length} total={items.length}
         extra={<>
           <Presets presets={views.map(v => v.name)} active={active}
@@ -88,9 +81,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
           <span class="grow" />
           <StateCounters family="task" label="Tasks by state" counts={counts} active={view.states} onAll={() => edit({ states: [] })}
             onToggle={s => edit({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />
-          <span class="seg-group" role="group" aria-label="Group by"><span class="seg-label">Group</span>
-            {GROUPS.map(g => <button type="button" key={g.id} class={`seg${view.group === g.id ? ' on' : ''}`} aria-pressed={view.group === g.id} onClick={() => edit({ group: g.id })}>{g.label}</button>)}
-          </span>
+          <GroupControl value={view.group} options={GROUPS.map(g => [g.id, g.label] as const)} onChange={g => edit({ group: g })} />
         </>} />
       <VirtualList items={rows} getKey={r => r.kind === 'group' ? r.key : String(r.t.id)} rowHeight={row} follow="top" label="Tasks"
         columns={row === ROW ? '1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem 1.75rem' : '1.25rem minmax(0,1fr) 2.75rem 4.5rem 1.75rem'}
@@ -120,9 +111,10 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two }: { t: TaskRow; n
 
 /* ---------- App shell (patterns/app-shell.md) ---------- */
 
-export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed, ready = true }: {
+export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
   /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
+  /** The project focus control (OR-34); it gets the collapsed state. */ focus?: (mini: boolean) => ComponentChildren;
   /** The person's pinned sections (person settings); without them the shell keeps its own demo pins. */ pins?: string[]; onPins?: (ids: string[]) => void;
   /** The signed-in person, shown at the bottom of the navigation with a Logout menu. */ user?: { name: string; onLogout: () => void };
   /** Column widths in px by key (`nav`, `control`) and the collapsed navigation: person settings (OR-41, OR-42). onWidth(key, 0) resets.
@@ -153,7 +145,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   return (
     <Widths.Provider value={setWidth}><div class={`shell${ready ? '' : ' pending'}`} data-ui="app-shell" onClick={openRow} style={vars}>
       <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
-      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned} onSearch={() => setSpot(true)}
+      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned} onSearch={() => setSpot(true)} tools={focus?.(mini)}
         head={<><span class="brand-mark" role="img" aria-label="Fleet" /><b class="brand">Fleet</b><span class="grow" />
           {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}</>}
         foot={user && <UserBlock {...user} />} />

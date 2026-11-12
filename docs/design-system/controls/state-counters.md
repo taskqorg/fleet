@@ -4,7 +4,7 @@
 
 **Purpose.** Shows how many items are in each state and filters by state with one click. This is the quick state filter in every list, and the per-project summary on the Overview ([D9](../decisions.md)).
 
-**Anatomy.** First a Σ capsule with the total count, then one capsule per state, in the fixed registry order. Each capsule has the state's icon and its count in monospace, tinted by tone. The state name is in a tooltip only (B1, OR-20).
+**Anatomy.** First a Σ capsule with the bold total count (OR-29), then one capsule per state, in the fixed registry order. Each capsule has the state's icon and its count in monospace, tinted by tone. The state name is in a tooltip only (B1, OR-20).
 
 **States.**
 * *Count zero:* neutral, no fill, icon only with no `0` (OR-29). A counter block (not a quick filter, for example an Overview project row) passes `hideZero`: zero capsules are hidden and the caller hides a block whose values are all zero.

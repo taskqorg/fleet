@@ -450,7 +450,7 @@ func init() {
 			}
 			switch astr(l["name"]) {
 			case "tasks":
-				rs, err := taskMembership(q, f, l["group"], ids)
+				rs, err := taskMembership(q, f, l["group"], l["sort"], ids)
 				if err != nil {
 					return nil, err
 				}

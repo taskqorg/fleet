@@ -148,8 +148,7 @@ function Results() {
   return <ListDetail
     list={<>
       <PageHead title="Results" />
-      <Panel><ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search results" chips={[]} onRemove={() => {}} onAdd={() => {}} onClear={() => setCopies([])}
-          fields={[{ field: 'Type', values: TYPES.map(t => ({ value: t, count: 400 })) }, { field: 'Project', values: PROJECTS.map(p => ({ value: p, count: 500 })) }]}
+      <Panel><ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search results"
           shown={shown.length} total={RESULTS.length}
           extra={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies} onAll={() => setCopies([])} onToggle={c => setCopies(copies.includes(c) ? copies.filter(x => x !== c) : [...copies, c])} />} />}>
         <VirtualList items={shown} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" rowClass={r => r.id === sel.id ? 'sel' : ''}
