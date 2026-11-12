@@ -144,15 +144,16 @@ export function LabCreate() {
       <CodeEditor label={label} value={value} onChange={change} problems={error ? [{ path: '', message: error }] : []} disabledReason={disabled} /></details>;
   };
   const available = !picker ? [] : picker.label === 'Projects' ? projects : picker.label === 'Approved examples' ? examples : picker.label === 'Primary evaluators' ? [{ id: '', name: 'None' }, ...d.evaluators.map(e => ({ id: nameOf(e), name: nameOf(e) }))] : picker.label === 'Variant pipelines' ? [{ id: '', name: 'Base pipeline' }, ...pipelines] : pipelines;
+  const matching = available.filter(x => (x.name + x.id).toLowerCase().includes(query.toLowerCase()));
   // Focus after the DOM commit re-enables the form; no deferred picker autofocus can outlive it.
   useLayoutEffect(() => {
     if (picker) document.querySelector<HTMLInputElement>('.split-list .search input')?.focus();
     else { const trigger = invoker.current; invoker.current = null; if (trigger) (trigger.isConnected ? trigger : startPanel.current?.querySelector<HTMLButtonElement>('button'))?.focus(); }
   }, [picker?.label]);
   const list = <><header class="page-h" data-ui={picker ? 'lab-picker' : undefined}><h1>{picker?.label ?? 'New experiment'}</h1><span class="grow" /><Button label={picker ? 'Done choosing' : 'Experiments'} icon="x" iconOnly onClick={() => picker ? closePicker() : go('/lab')} /></header>
-    {picker ? <><SearchField label={`Search ${picker.label}`} value={query} onInput={setQuery} onSearch={() => {}} /><VirtualList items={available.filter(x => (x.name + x.id).toLowerCase().includes(query.toLowerCase()))} getKey={x => x.id} rowHeight={ROW2} follow="top" label={picker.label} columns="1.25rem minmax(0,1fr) auto"
+    {picker ? <><SearchField label={`Search ${picker.label}`} value={query} onInput={setQuery} onSearch={() => {}} /><VirtualList items={matching} getKey={x => x.id} rowHeight={ROW2} follow="top" label={picker.label} columns="1.25rem minmax(0,1fr) auto"
       render={x => <><StateBadge family="source" state="current" compact /><span class="tt"><Button label={x.name} rowLink kind="quiet" onClick={() => choose(x.id)} /><span class="id">{x.id}</span></span>{picker.multiple && <RowCheck label={`Choose ${x.name}`} checked={picker.selected.includes(x.id)} onToggle={() => choose(x.id)} />}</>} />
-      {available.length === 0 && <Empty text="No available choices. Check access and the required definitions or approved examples." />}</>
+      {matching.length === 0 && <Empty text={available.length === 0 ? "No available choices. Check access and the required definitions or approved examples." : "No choices match this search. Clear the search to see available choices."} />}</>
       : <section class="panel" ref={startPanel}><p>Create a draft, inspect it, then use its separate Launch control.</p><Button label="Choose project" onClick={event => pick(event.currentTarget, 'Projects', projects, [d.projectId], id => edit({ projectId: id }))} disabledReason={disabled} /></section>}</>;
   const detail = <article class="detail" data-ui="detail" aria-label="Create experiment" tabIndex={-1}><header class="detail-h"><h2>New experiment</h2><span class="grow" /><Button label="Create draft" icon="plus" kind="primary" busy={receipt.state === 'pending'} disabledReason={disabled || invalid || undefined} onClick={create} /></header>
     <div class="status-line" role="status">{receipt.state === 'pending' ? 'Creating draft…' : invalid && !error ? invalid : ''}</div>
