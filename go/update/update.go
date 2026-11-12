@@ -440,16 +440,17 @@ func (u *updater) settle(p *part, ver string, restart bool) *Result {
 		switch u.probe(p, ver) {
 		case up:
 			p.r.Remove(startsFile)
-			if err := p.r.WriteFile(healthyFile, []byte(u.now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+			now := u.now()
+			if err := p.r.WriteFile(healthyFile, []byte(now.UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 				return u.result(ver, "error", err.Error())
 			}
 			// The first healthy marker of this release: one log line, with the publish delta when known.
 			since := ""
-			if t, ok := u.published[ver]; ok && u.now().After(t) { // skewed clocks: no negative delta
-				since = " " + u.now().Sub(t).Round(time.Second).String() + " after publish"
+			if t, ok := u.published[ver]; ok && now.After(t) { // skewed clocks: no negative delta
+				since = " " + now.Sub(t).Round(time.Second).String() + " after publish"
 			}
 			log.Printf("%s %s: installed%s", p.name, ver, since)
-			return &Result{Version: ver, State: "ok", At: u.now().UTC().Format(time.RFC3339)}
+			return &Result{Version: ver, State: "ok", At: now.UTC().Format(time.RFC3339)}
 		case waiting:
 			return u.result(ver, "pending", "coordinator not reachable from the executor")
 		}

@@ -58,8 +58,10 @@ func (u *updater) latestUI(backend string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	resp.Body = io.NopCloser(io.LimitReader(resp.Body, 1<<20)) // the prefix keeps it to a few lines; never the whole advertisement
-	b, err := readOK("POST", req.URL.String(), resp)
+	if err := okStatus("POST", req.URL.String(), resp); err != nil {
+		return "", err
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // the prefix keeps it to a few lines; never a whole advertisement
 	if err != nil {
 		return "", err
 	}
