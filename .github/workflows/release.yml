@@ -205,7 +205,7 @@ jobs:
             dir=$cache/$v; [ "$v" = "$VERSION" ] && dir=$PWD/new
             (cd "$dir" && FLEET_PROJECT_CONFIG_DIRECTORY=$dir/config FLEET_PROFILES_DIRECTORY=$dir/config/agents FLEET_LAB_DIRECTORY=$dir/config/lab exec ./fleet-coordinator) & pid=$!
             t=$SECONDS; until kill -0 $pid 2>/dev/null && curl -fsS -m 3 -o "$RUNNER_TEMP/health" http://127.0.0.1:9470/api/health && grep -q "\"version\":\"$v\"" "$RUNNER_TEMP/health"; do
-              kill -0 $pid 2>/dev/null || { [ "$dir" = "$PWD/new" ] || rm -rf "$dir"; echo "::error::$dir coordinator exited (cache entry dropped)"; exit 1; }
+              kill -0 $pid 2>/dev/null || { echo "::error::$dir coordinator exited"; exit 1; }
               [ $((SECONDS - t)) -lt 120 ] || { echo "::error::$dir coordinator not healthy after 120 s"; exit 1; }; sleep 1; done
             echo; kill -0 $pid || { echo "::error::$dir coordinator exited after health"; exit 1; }; stop $pid || true; pid=
           done
