@@ -77,7 +77,7 @@ func TestUIDiscoveryTags(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})}
 	sha := strings.Repeat("a", 40)
-	body = pkt(sha+" HEAD\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.1\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.3\n") +
+	body = pkt(sha+" HEAD symref-target:refs/heads/main\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.1\n") + pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.3\n") +
 		pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.2\n") + pkt(sha+" refs/tags/ui-1.261111.9-v1.261112.4\n") +
 		pkt(sha+" refs/tags/v1.261112.5\n") + "0000" // other refs: a server may answer beyond ref-prefix
 	got, err := u.latestUI("1.261112.0")
@@ -91,9 +91,6 @@ func TestUIDiscoveryTags(t *testing.T) {
 	body = pkt(sha+" refs/tags/ui-1.261112.0-v1.261112.6") + "0000" // the trailing LF is optional
 	if got, err := u.latestUI("1.261112.0"); err != nil || got != "1.261112.6" {
 		t.Fatalf("%q %v", got, err)
-	}
-	if _, err := u.latestUI("1.261112.0"); err != nil {
-		t.Fatal(err)
 	}
 	body = pkt("ERR upload-pack: nope") + "0000" // git writes ERR packets without LF
 	if _, err := u.latestUI("1.261112.0"); err == nil || !strings.Contains(err.Error(), "ERR upload-pack: nope") {

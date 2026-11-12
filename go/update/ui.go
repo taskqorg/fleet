@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -57,6 +58,7 @@ func (u *updater) latestUI(backend string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	resp.Body = io.NopCloser(io.LimitReader(resp.Body, 1<<20)) // the prefix keeps it to a few lines; never the whole advertisement
 	b, err := readOK("POST", req.URL.String(), resp)
 	if err != nil {
 		return "", err
@@ -70,8 +72,8 @@ func (u *updater) latestUI(backend string) (string, error) {
 		if strings.HasPrefix(line, "ERR ") {
 			return "", fmt.Errorf("ls-refs: %s", line)
 		}
-		f := strings.Fields(line) // <object id> <ref>; the id is not used
-		if len(f) != 2 {
+		f := strings.Fields(line) // <object id> <ref> [attributes]; only the ref is used
+		if len(f) < 2 {
 			return "", fmt.Errorf("ls-refs: unexpected line %q", line)
 		}
 		if !strings.HasPrefix(f[1], prefix) {
