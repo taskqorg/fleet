@@ -104,9 +104,12 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 		}
 		return r.Runs
 	}
+	var keyedMu sync.Mutex
 	jobsOf := func(id int64) ([]ciJob, error) {
 		b, k, err := githubRead(ctx, a, ciProject, "run_jobs", args("run_id", strconv.FormatInt(id, 10)))
+		keyedMu.Lock()
 		keyed = keyed || k
+		keyedMu.Unlock()
 		var r struct {
 			Jobs []ciJob `json:"jobs"`
 		}
@@ -114,6 +117,27 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 			err = json.Unmarshal(b, &r)
 		}
 		return r.Jobs, err
+	}
+	// prefetch: the jobs of several runs read at once (githubRead locks per path), so a busy queue costs one round
+	// trip, not one per run.
+	type jobsReply struct {
+		jobs []ciJob
+		err  error
+	}
+	prefetch := func(ids []int64) map[int64]jobsReply {
+		out, mu, wg := map[int64]jobsReply{}, sync.Mutex{}, sync.WaitGroup{}
+		for _, id := range ids {
+			wg.Add(1)
+			go func(id int64) {
+				defer wg.Done()
+				js, err := jobsOf(id)
+				mu.Lock()
+				out[id] = jobsReply{js, err}
+				mu.Unlock()
+			}(id)
+		}
+		wg.Wait()
+		return out
 	}
 	now := time.Now().UTC()
 	today := now.Format("2006-01-02")
@@ -158,12 +182,16 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 		minutes[name].jobs++
 	}
 	seen := map[int64]bool{}
+	uniq := []int64{}
 	for _, id := range active {
-		if seen[id] {
-			continue
+		if !seen[id] {
+			seen[id] = true
+			uniq = append(uniq, id)
 		}
-		seen[id] = true
-		js, err := jobsOf(id)
+	}
+	got := prefetch(uniq)
+	for _, id := range uniq {
+		js, err := got[id].jobs, got[id].err
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue
@@ -187,6 +215,17 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 		budget = 0
 	}
 	ciMu.Unlock()
+	need := []int64{}
+	for _, run := range recent {
+		id := num(run["id"])
+		ciMu.Lock()
+		_, ok := ciDone[ciRunKey{id, num(run["run_attempt"])}]
+		ciMu.Unlock()
+		if !ok && !seen[id] && run["status"] == "completed" && len(need) < budget {
+			need = append(need, id)
+		}
+	}
+	read := prefetch(need)
 	fresh, missing, listed := 0, 0, map[ciRunKey]bool{}
 	for _, run := range recent {
 		id := num(run["id"])
@@ -205,11 +244,12 @@ func executionsCI(q *Request, _ *contract.ExecutionsCiRequest) (contract.Executi
 				continue
 			}
 			fresh++
-			var err error
-			if js, err = jobsOf(id); err != nil {
+			got, ok := read[id]
+			if !ok || got.err != nil {
 				missing++
 				continue
 			}
+			js = got.jobs
 			ciMu.Lock()
 			ciDone[k] = js
 			ciMu.Unlock()
