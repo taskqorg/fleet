@@ -132,17 +132,12 @@ func transition(q *Request, id, state string) (doc, error) {
 
 // detectProblems marks open executions bound to a host, account or environment nothing registered.
 func detectProblems(q *Request, hosts []string, environments map[string][]string) error {
-	if err := exec(q, `WITH found AS (SELECT e.id,CASE
+	return exec(q, `WITH found AS (SELECT e.id,CASE
     WHEN e.host_id IS NOT NULL AND NOT (e.host_id=ANY($1) OR EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=e.host_id)) THEN 'unregistered host '||e.host_id
     WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind='managed-account' AND a.id=e.account_id) THEN 'unregistered account '||e.account_id
     WHEN e.project_id IS NOT NULL AND e.host_id IS NOT NULL AND jsonb_array_length(coalesce($2::jsonb->e.project_id,'[]'))>0 AND NOT ($2::jsonb->e.project_id) ? e.host_id THEN 'no registered environment of project '||e.project_id||' on host '||e.host_id
    END AS problem FROM execution e WHERE e.state NOT IN ('succeeded','failed','cancelled') AND e.kind<>'child_agent')
-   UPDATE execution x SET problem=found.problem FROM found WHERE x.id=found.id AND x.problem IS DISTINCT FROM found.problem`, hosts, js(environments)); err != nil {
-		return err
-	}
-	// A binding problem holds only while the execution is open: once it ended, nothing waits on the binding.
-	return exec(q, `UPDATE execution SET problem=NULL WHERE state IN ('succeeded','failed','cancelled')
-	AND (problem LIKE 'unregistered host %' OR problem LIKE 'unregistered account %' OR problem LIKE 'no registered environment of project %')`)
+   UPDATE execution x SET problem=found.problem FROM found WHERE x.id=found.id AND x.problem IS DISTINCT FROM found.problem`, hosts, js(environments))
 }
 
 func openDelegations(q *Request) ([]doc, error) {
@@ -565,20 +560,24 @@ func init() {
 		}
 		by := actor(q, "operator")
 		for _, id := range r.Ids {
-			row, err := first(q, "SELECT state::text AS state,project_id,problem FROM execution WHERE id=$1 FOR UPDATE", id)
+			row, err := first(q, "SELECT state::text AS state,project_id,problem,EXISTS (SELECT 1 FROM document d WHERE d.kind='problem-dismissal' AND d.id=execution.id) AS dismissed FROM execution WHERE id=$1 FOR UPDATE", id)
 			if err != nil {
 				return out, err
 			}
-			if row == nil || !terminalTyped[astr(row["state"])] || row["problem"] == nil {
+			if row == nil || !terminalTyped[astr(row["state"])] || row["problem"] == nil || row["dismissed"] == true {
 				state := "unknown"
 				if row != nil {
 					state = astr(row["state"])
 				}
+				if row != nil && row["dismissed"] == true {
+					state = "dismissed"
+				}
 				out.Skipped = append(out.Skipped, contract.ExecutionSkipped{Id: id, State: state})
 				continue
 			}
-			d := doc{"reason": r.Reason, "actor": by, "at": nowMs()}
-			if err := exec(q, "UPDATE execution SET data=data||jsonb_build_object('problemDismissed',$2::jsonb) WHERE id=$1", id, jsonBytes(d)); err != nil {
+			// Its own record: engines put execution data wholesale, which would drop a field there.
+			d := doc{"id": id, "problem": row["problem"], "reason": r.Reason, "actor": by, "at": nowMs()}
+			if err := put(q, "problem-dismissal", d); err != nil {
 				return out, err
 			}
 			if err := put(q, "setting-change", doc{"id": newID(), "target": "execution:" + id, "projectId": row["project_id"], "field": "problem", "previous": row["problem"], "value": "dismissed", "reason": r.Reason, "actor": by, "at": d["at"]}); err != nil {
@@ -597,7 +596,8 @@ func init() {
 				 (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
 				  WHERE c.kind='command' AND c.data->>'executionId'=execution.id AND c.data->>'kind'='stop' AND c.data->>'status' IN ('pending','unknown'))))
 				  AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1))
-				 OR (kind IN ('pipeline_run','pipeline_step','tool_run') AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1)))`
+				 OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1)
+				  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))`
 				rs, err := queryRows(q, "SELECT id FROM execution WHERE "+lostCond, lostAfter.Seconds())
 				if err != nil {
 					return err
@@ -636,7 +636,15 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 		return "unknown", err
 	}
 	if k := astr(row["kind"]); k != "agent_run" && k != "host_job" {
-		// A pipeline row or tool call no engine will finish (its run is gone or lost): failed through the typed transition.
+		// Only a pipeline step whose run row is gone: no engine will put it again, so the typed transition holds.
+		// Other kinds belong to their engine (a run's steps, child agents, tool calls) and are left alone.
+		orphan, err := has(q, "SELECT 1 FROM execution s WHERE s.id=$1 AND s.kind='pipeline_step' AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(s.parent_execution_id,split_part(s.id,':step:',1)))", id)
+		if err != nil {
+			return "", err
+		}
+		if !orphan {
+			return "unknown", nil
+		}
 		if terminalTyped[astr(row["state"])] {
 			return astr(row["state"]), nil
 		}
