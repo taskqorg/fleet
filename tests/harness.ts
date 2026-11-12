@@ -49,7 +49,9 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
     PORT: String(port), FLEET_DATABASE_URL: url('fleet_app'), FLEET_MIGRATION_DATABASE_URL: url('fleet'),
     FLEET_PEOPLE_FILE: people, FLEET_BROWSER_SECRET: secret, FLEET_HOST_ID: 'trial-host',
     // Never the host's own span store (~/.config/fleet/clickhouse.env): a test names its ClickHouse.
-    FLEET_CLICKHOUSE_URL: 'off', FLEET_CLICKHOUSE_ENV: '/nonexistent', ...o.env}});
+    FLEET_CLICKHOUSE_URL: 'off', FLEET_CLICKHOUSE_ENV: '/nonexistent',
+    // Never GitHub from tests: the Runners CI pass would spend the runner's keyless 60 requests an hour.
+    FLEET_RUNNERS_CI_TICK_MS: '0', ...o.env}});
   let exited = false; server.on('exit', () => { exited = true; });
   // A crashed caller must not leave the coordinator running (it holds the caller's stdout open).
   process.on('exit', () => { if (!exited) try { process.kill(-server.pid!, 'SIGKILL'); } catch {} });

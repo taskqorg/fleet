@@ -591,11 +591,17 @@ func init() {
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
 			return runTx(ctx, a, nil, true, "", func(q *Request) error {
-				// lostCond: still lost, re-checked under the row lock so a receipt that just arrived wins.
+				// lostCond: still lost, re-checked under the row lock so a receipt that just arrived wins. A host job is also
+				// lost when its host keeps polling but sent no receipt for it in lostAfter: host jobs last minutes (p99 5 min),
+				// so a confirmed one that went silent was dropped by an executor restart. ponytail: a host job meant to run
+				// longer than lostAfter needs a progress receipt or its own limit.
 				const lostCond = `state IN ('preparing','running','waiting') AND (
 				 (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
 				  WHERE c.kind='command' AND c.data->>'executionId'=execution.id AND c.data->>'kind'='stop' AND c.data->>'status' IN ('pending','unknown'))))
 				  AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1))
+				 OR (kind='host_job' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => $1)
+				  AND EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=execution.host_id
+				   AND (h.data->>'lastSeenAt')::float8 > (extract(epoch FROM now()) - 300) * 1000))
 				 OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1)
 				  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))`
 				rs, err := queryRows(q, "SELECT id FROM execution WHERE "+lostCond, lostAfter.Seconds())
@@ -611,7 +617,7 @@ func init() {
 					if !still {
 						continue
 					}
-					if _, err := executionAbandon(q, astr(x["id"]), "no host receipt for "+lostAfter.String()+" after the host lost track or the stop went unanswered", "fleet"); err != nil {
+					if _, err := executionAbandon(q, astr(x["id"]), "no host receipt for "+lostAfter.String()+" after the host lost track, the stop went unanswered, or the host kept polling without it", "fleet"); err != nil {
 						return err
 					}
 					n++

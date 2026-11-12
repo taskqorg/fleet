@@ -18,8 +18,9 @@ test('R1 executions_runners lists active and recent runs with their totals, leav
     const r = await fetch(c.base + '/api/ops/executions_runners', {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: '{}'});
     const b: any = await r.json();
     assert.equal(r.status, 200, JSON.stringify(b));
-    assert.deepEqual(b.runs.map((x: any) => x.id).sort(), ['r-call', 'r-done', 'r-live']);
-    assert.equal(b.runs.find((x: any) => x.id === 'r-call').tokens, null, 'no token measurement: unknown, never 0');
+    assert.deepEqual(b.runs.map((x: any) => x.id).sort(), ['calls:host:h1', 'r-done', 'r-live']);
+    const calls = b.runs.find((x: any) => x.id === 'calls:host:h1');
+    assert.deepEqual([calls.calls, calls.failedCalls, calls.state, calls.wallMs], [1, 0, 'succeeded', 40], 'tool calls summed per caller, not a row each');
     const done = b.runs.find((x: any) => x.id === 'r-done');
     assert.deepEqual([done.hostId, done.tokens, done.wallMs, done.cpuMs], ['h1', 150, 3600000, 1200]);
     assert.ok(done.endedAt > done.startedAt);
@@ -43,6 +44,40 @@ test('R2 executions_runners shows a person only the runs and spend of projects t
     assert.deepEqual(member.runs.map((r: any) => r.id), ['s-mine'], JSON.stringify(member.runs));
     assert.deepEqual(member.spend.filter((s: any) => s.period === 'month').map((s: any) => [s.hostId, s.runs, s.tokens]), [['h1', 1, 5]]);
     assert.deepEqual((await as('outsider@trial.test')).runs, []);
-    assert.deepEqual((await as('owner@trial.test')).runs.map((r: any) => r.id).sort(), ['s-mine', 's-none', 's-other']);
+    assert.deepEqual((await as('owner@trial.test')).runs.map((r: any) => r.id).sort(), ['calls:host:', 's-mine', 's-other']);
+  } finally { await c.stop(); }
+});
+
+test('R3 the lost sweep ends a host job its host stopped reporting while the host keeps polling, and leaves one on a silent host (requirement: Runners shows only live work; risk: an executor restart leaves host jobs running forever)', {timeout: 30_000}, async () => {
+  const c = await startCoordinator({name: 'runners3', env: {FLEET_LOST_AFTER_MS: '1200'}});
+  try {
+    const call = async (path: string, body: unknown, bearer = c.secret) => (await fetch(c.base + path, {method: 'POST', headers: {authorization: 'Bearer ' + bearer, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: JSON.stringify(body)})).json() as any;
+    const secret = (await call('/api/ops/hosts_register', {id: 'h-live'})).secret;
+    c.sql(`INSERT INTO execution(id,kind,state,host_id,started_at,last_seen_at,data) VALUES
+      ('j-lost','host_job','running','h-live',now()-interval '1 hour',now()-interval '1 hour','{"id":"j-lost","state":"running","actor":"program-worker"}'),
+      ('j-silent','host_job','running','h-gone',now()-interval '1 hour',now()-interval '1 hour','{"id":"j-silent","state":"running","actor":"program-worker"}')`);
+    const poll = () => fetch(c.base + '/api/hosts/poll', {method: 'POST', headers: {authorization: 'Bearer ' + secret, 'content-type': 'application/json'}, body: JSON.stringify({platform: 'linux', capabilities: [], stores: [], problems: [], gitConnections: [], projectRoots: []})});
+    const state = (id: string) => c.sql(`SELECT state||' '||coalesce(problem,'') FROM execution WHERE id='${id}'`).trim();
+    for (let i = 0; i < 50 && state('j-lost') !== 'failed unknown:abandoned'; i++) { await poll(); await new Promise(r => setTimeout(r, 200)); }
+    assert.equal(state('j-lost'), 'failed unknown:abandoned', c.sql(`SELECT state,observation,data::text FROM execution WHERE id='j-lost'`));
+    assert.match(state('j-silent'), /^running/, 'a host that stopped polling may still finish its job');
+  } finally { await c.stop(); }
+});
+
+test('R4 agent-run tokens come from the harness usage report: the last result of a Claude run, a Codex turn without its cached input counted twice (requirement: Runners shows agent tokens; risk: token totals stay empty or double-count cached input)', async () => {
+  const c = await startCoordinator({name: 'runners4'});
+  try {
+    const ev = (id: string, eid: string, seq: number, lifecycle: string, u: unknown) => `('event','${id}',jsonb_build_object('id','${id}','executionId','${eid}','seq',${seq},'data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','${lifecycle}','nativeUsage','${JSON.stringify(u)}'::jsonb))))`;
+    c.sql(`INSERT INTO execution(id,kind,state) VALUES ('t-claude','agent_run','succeeded'),('t-codex','agent_run','succeeded'),('t-none','agent_run','succeeded');
+      INSERT INTO execution_totals(execution_id) VALUES ('t-claude'),('t-codex'),('t-none');
+      INSERT INTO document(kind,id,data) VALUES
+      ${ev('e1', 't-claude', 1, 'result', {input_tokens: 1, output_tokens: 1})},
+      ${ev('e2', 't-claude', 2, 'result', {input_tokens: 4, output_tokens: 489, cache_read_input_tokens: 17492, cache_creation_input_tokens: 2015})},
+      ${ev('e3', 't-codex', 1, 'turn.completed', {input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50})};
+      SELECT fleet_write_tokens(id) FROM execution;`);
+    const row = (id: string) => c.sql(`SELECT concat_ws(',',tokens_input,tokens_output,tokens_cache_read,tokens_cache_write,tokens_input_basis) FROM execution_totals WHERE execution_id='${id}'`).trim();
+    assert.equal(row('t-claude'), '4,489,17492,2015,measured', 'the last report, not a sum');
+    assert.equal(row('t-codex'), '200,50,800,measured', 'cached input counted once');
+    assert.equal(row('t-none'), 'unavailable', 'no report: unknown, never 0');
   } finally { await c.stop(); }
 });

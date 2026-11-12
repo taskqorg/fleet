@@ -13,6 +13,7 @@ func TestCiRunner(t *testing.T) {
 		{ciJob{RunnerGroup: s("fleet-pds18-trusted-main"), RunnerName: s("fleet-pds18-kvm-1"), Labels: []string{"self-hosted", "fleet-pds18"}}, "fleet-pds18-kvm-1", false},
 		{ciJob{Labels: []string{"ubuntu-latest"}}, "ubuntu-latest", true}, // queued: no runner yet
 		{ciJob{Labels: []string{"self-hosted", "fleet-pds18"}}, "fleet-pds18", false},
+		{ciJob{RunnerGroup: s("GitHub Actions"), RunnerName: s("GitHub Actions 7")}, "GitHub-hosted", true}, // no labels
 		{ciJob{}, "unknown", true},
 	} {
 		if n, h := ciRunner(c.j); n != c.name || h != c.hosted {
