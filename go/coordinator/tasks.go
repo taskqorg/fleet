@@ -987,8 +987,8 @@ func init() {
 	// setting-change audit row each. A cause is let go, so a problem still present is asked again by its source.
 	gatedObjOp("questions_withdraw", false, typedOp(func(q *Request, r *contract.QuestionsWithdrawRequest) (contract.QuestionsWithdrawReply, error) {
 		out := contract.QuestionsWithdrawReply{Withdrawn: []string{}, Skipped: []contract.QuestionSkipped{}}
-		if q.person != nil && !fullAccess(q.person) {
-			return out, fail(403, "Only the owner withdraws questions")
+		if err := ownerOnly(q, "Only the owner withdraws questions"); err != nil {
+			return out, err
 		}
 		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
 			return out, fail(400, "Expected reason")

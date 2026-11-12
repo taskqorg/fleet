@@ -109,6 +109,15 @@ func director(q *Request) string {
 	return ownerEmail(q)
 }
 
+// ownerOnly fails closed for every caller kind: a browser person or an agent tool call (which acts as its run's
+// director, or as the requester of taken work) needs full access; a call with no person is refused.
+func ownerOnly(q *Request, msg string) error {
+	if q.person == nil || !fullAccess(q.person) {
+		return fail(403, msg)
+	}
+	return nil
+}
+
 // actor: the calling agent execution, else the request person, else the fallback (an execution, 'operator').
 func actor(q *Request, fallback string) string {
 	if q.agent != "" {

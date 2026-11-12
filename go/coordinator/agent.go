@@ -1511,6 +1511,14 @@ func init() {
 			if hp := q.peopleSnapshot().person(holder); d != holder && (hp == nil || !hp.Owner) {
 				return fail(403, "Host "+b.HostId+" is held by "+holder+", not the director "+d)
 			}
+			// Taken work runs on the holder's subscription (dispatch sets directedBy to the holder), but its agent acts
+			// with the rights of the person it was taken from: otherwise a member's run would borrow the owner's rights,
+			// and its child sessions (director(q)) would inherit them.
+			if tf := astr(e["takenFrom"]); tf != "" {
+				if q.person = q.peopleSnapshot().person(tf); q.person == nil {
+					return fail(403, "Requester "+tf+" is not a person of this Fleet")
+				}
+			}
 			return nil
 		}
 		wrap := func(r any) doc {

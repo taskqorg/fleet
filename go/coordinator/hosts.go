@@ -178,13 +178,6 @@ func (q *Request) obj() doc {
 	return b
 }
 
-func ownerOnly(q *Request, msg string) error {
-	if q.person == nil || !fullAccess(q.person) {
-		return fail(403, msg)
-	}
-	return nil
-}
-
 // secretOf: the hash to store, and the minted secret when the host did not bring its own hash.
 func secretOf(q *Request, b doc, self string) (hash, secret string, err error) {
 	if v, ok := b["secretSha256"]; ok && v != nil {
