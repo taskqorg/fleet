@@ -70,8 +70,8 @@ func (u *updater) latestUI(backend string) (string, error) {
 		if strings.HasPrefix(line, "ERR ") {
 			return "", fmt.Errorf("ls-refs: %s", line)
 		}
-		f := strings.Fields(line) // <sha> <ref>
-		if len(f) != 2 || len(f[0]) != 40 {
+		f := strings.Fields(line) // <object id> <ref>; the id is not used
+		if len(f) != 2 || !strings.HasPrefix(f[1], "refs/") {
 			return "", fmt.Errorf("ls-refs: unexpected line %q", line)
 		}
 		if !strings.HasPrefix(f[1], prefix) {

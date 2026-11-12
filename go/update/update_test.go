@@ -7,10 +7,12 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -454,5 +456,27 @@ func TestLatestConditionalGet(t *testing.T) {
 	}
 	if after, _ := os.ReadDir(dir); len(after) != 0 {
 		t.Fatalf("stale cache kept: %v", after)
+	}
+}
+
+// Requirement: one install line per first healthy marker, with the publish delta when known and never negative.
+func TestInstallLogLine(t *testing.T) {
+	f := newFixture(t)
+	f.release("1.261111.0", 0)
+	f.release("1.261111.1", 0)
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+	f.u.published = map[string]time.Time{"1.261111.0": f.u.now().Add(-90 * time.Second), "1.261111.1": f.u.now().Add(time.Hour)}
+	f.run("1.261111.0")
+	f.run("1.261111.1")
+	want := []string{"executor 1.261111.0: installed 1m30s after publish\n", "executor 1.261111.1: installed\n"}
+	for _, w := range want {
+		if !strings.Contains(logs.String(), w) {
+			t.Fatalf("missing %q in\n%s", w, logs.String())
+		}
+	}
+	if strings.Count(logs.String(), "installed") != 2 {
+		t.Fatalf("install lines:\n%s", logs.String())
 	}
 }
