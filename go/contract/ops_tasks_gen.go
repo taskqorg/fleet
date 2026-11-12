@@ -6,6 +6,80 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// EntityCode: A human code (D17) and the entity it names; superseded: an alias of currentCode (a moved entity or a renamed project).
+type EntityCode struct {
+	Code        string `json:"code"`
+	CurrentCode string `json:"currentCode"`
+	Id          string `json:"id"`
+	Superseded  bool   `json:"superseded"`
+	Type        string `json:"type"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityCode) Validate() error {
+	return nil
+}
+
+// EntityResolveManyReply: Every known code in the text, in order of first appearance; unknown and forbidden codes are left out.
+type EntityResolveManyReply struct {
+	Codes []EntityCode `json:"codes"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityResolveManyReply) Validate() error {
+	if v.Codes == nil {
+		return Missing("codes")
+	}
+	for i := range v.Codes {
+		if err := Check(&v.Codes[i], "codes"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type EntityResolveManyRequest struct {
+	Text string `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityResolveManyRequest) Validate() error {
+	return nil
+}
+
+type EntityResolveReply = EntityCode
+
+// EntityResolveRequest: Case-insensitive; unknown and forbidden codes both answer 404.
+type EntityResolveRequest struct {
+	Code string `json:"code"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityResolveRequest) Validate() error {
+	return nil
+}
+
+type ProjectCodeSetReply struct {
+	Code      string `json:"code"`
+	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectCodeSetReply) Validate() error {
+	return nil
+}
+
+// ProjectCodeSetRequest: 2 to 5 characters, a letter first, not hex-only, no I, O, S, Z or B, never used before. The project's tasks and questions get new codes; old codes stay aliases.
+type ProjectCodeSetRequest struct {
+	Code      string `json:"code"`
+	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectCodeSetRequest) Validate() error {
+	return nil
+}
+
 // ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules.
 type ProjectContextReply = map[string]json.RawMessage
 
@@ -160,6 +234,7 @@ type QuestionRow struct {
 	AskedAt     string          `json:"askedAt"`
 	AskedBy     *string         `json:"askedBy"`
 	Cause       json.RawMessage `json:"cause,omitempty"`
+	Code        *string         `json:"code"`
 	ExecutionId *string         `json:"executionId"`
 	Id          string          `json:"id"`
 	Kind        QuestionKind    `json:"kind"`
@@ -322,8 +397,9 @@ func (v *TaskCreateRequest) Validate() error {
 
 // TaskDependency: kind blocks or revision_of.
 type TaskDependency struct {
-	Id   string `json:"id"`
-	Kind string `json:"kind"`
+	Code *string `json:"code,omitempty"`
+	Id   string  `json:"id"`
+	Kind string  `json:"kind"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -373,6 +449,7 @@ type TaskDetail struct {
 	AcceptedArtifactIds    []string         `json:"acceptedArtifactIds"`
 	AcceptedAt             *string          `json:"acceptedAt"`
 	AcceptedBy             *string          `json:"acceptedBy"`
+	Code                   *string          `json:"code"`
 	CompletionRequirements json.RawMessage  `json:"completionRequirements"`
 	Cost                   json.RawMessage  `json:"cost"`
 	CreatedAt              string           `json:"createdAt"`
@@ -475,6 +552,7 @@ type TaskListItem struct {
 	AcceptedArtifactIds    []string        `json:"acceptedArtifactIds"`
 	AcceptedAt             *string         `json:"acceptedAt"`
 	AcceptedBy             *string         `json:"acceptedBy"`
+	Code                   *string         `json:"code"`
 	CompletionRequirements json.RawMessage `json:"completionRequirements"`
 	CreatedAt              string          `json:"createdAt"`
 	CreatedBy              *string         `json:"createdBy"`
@@ -694,6 +772,9 @@ func (v *TaskUpdateRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"entity_resolve":          {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Case-insensitive; unknown and forbidden codes both answer 404.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}")},
+		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
+		"project_code_set":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"2 to 5 characters, a letter first, not hex-only, no I, O, S, Z or B, never used before. The project's tasks and questions get new codes; old codes stay aliases.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"code\"],\"type\":\"object\"}")},
 		"project_context":         {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_list":            {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"project_readiness":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},

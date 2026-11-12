@@ -242,7 +242,7 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * **Question:** how operators read and recognise entities without UUIDs.
 * **Options:** `T-FLT-A-42` (optional section), `T-FLT-42`, `FLT-42`, `T-4217`, host plus base32.
 * **Choice:** `T-FLT-42` for tasks (`T`), questions (`Q`) and experiments (`E`); spec rules carry a mandatory section letter, `S-FLT-D3`. Scope `ALL` for general rules. Regex: `\b(?:([TQE])-([A-Z][A-Z0-9]{1,4})-([1-9][0-9]*)|S-([A-Z][A-Z0-9]{1,4})-([A-DF-PRU-Z])([1-9][0-9]*))\b`. Grammar and allocation: [data foundation §2](../designs/fleet-data-foundation.md#2-task-production-work-item).
-* **Display:** one formatter in `packages/ui` renders the code. The code sits directly after the title (OR-22), in monospace. The UUID is shown only in a tooltip and a "copy UUID" action, never as a second visible ID (OR-17). An entity without a code yet shows the short UUID. A section or area of a task is a chip, not part of the code. `packages/ui/book/open-questions.tsx` renders `T-{t.id}` today and moves to the formatter.
+* **Display:** one formatter in `packages/ui` renders the code. The code sits directly after the title (OR-22), in monospace. The UUID is shown only in a tooltip and a "copy UUID" action, never as a second visible ID (OR-17). An entity without a code shows no ID (OR-38: a UUID is never shown). The formatter is `EntityCode`; a click or Enter copies the UUID without opening the row. A section or area of a task is a chip, not part of the code. `packages/ui/book/open-questions.tsx` renders `T-{t.id}` today and moves to the formatter.
 * **Reason:** the type and project are visible outside the app (messengers, branches, prompts); hyphens and a leading letter keep codes apart from short SHAs and GitHub `#N`; no dots or slashes, so messengers do not auto-link them. Brief: [entity-ids-brief.md](../designs/entity-ids-brief.md).
 
 ## 2026-11-10 D18: Lab screen, first build (Lab Stage 3)
@@ -316,12 +316,6 @@ Each check was proven once with `UX_INJECT=<defect>`, which produced its warning
 * **Not shown to the owner as options:** the layout follows §12 as written; the chart drawing is the only new choice and has one reasonable answer under OR-8.
 * **Not done:** a per-member line in the chart (the pool line only), pin on the cards.
 
-## 2026-11-12 D25: Owner review of lists, navigation and codes
-
-* **Source:** owner review decisions P1 to P14 of 2026-11-12, given to the UI workers.
-* **Rules:** OR-29 to OR-42 in [owner rules](owner-rules.md). OR-32 makes the Cmd+K palette the one exception to OR-14. OR-38 extends [D17](#2026-11-10-d17-human-entity-codes): a UUID is never shown, only copied.
-* **Stored per person on the server:** saved views (OR-33), focus and its presets (OR-34), column widths (OR-41). Agents get saved views through MCP first (fleet.md R7, [agentic first](../../fleet.md)).
-* **Checks:** none yet; the rules are in "Reading only" until the workers who build them add checks.
 
 ## 2026-11-12 Lab draft creation
 

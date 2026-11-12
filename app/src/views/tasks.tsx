@@ -6,7 +6,7 @@ import {
   ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, VirtualList, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, RowCheck, Totals, Icon, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   type TreeNode, type Harness, type StateOf,
-  keyConnection, copyText, actions,
+  keyConnection, copyText, actions, EntityCode,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
@@ -17,7 +17,7 @@ import { usePins, useViews } from '../prefs.ts';
 
 const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
-type TaskRow = { id: string; title: string; state: StateOf<'task'>; pauseReason?: string | null; waitReason: string | null; priority: 'urgent' | 'normal' | 'background'; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number; sortKey: (string | number)[] };
+type TaskRow = { id: string; code?: string | null; title: string; state: StateOf<'task'>; pauseReason?: string | null; waitReason: string | null; priority: 'urgent' | 'normal' | 'background'; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number; sortKey: (string | number)[] };
 type Item = { kind: 'group'; key: string; label: string; count: number } | { kind: 'task'; t: TaskRow };
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
@@ -73,7 +73,7 @@ export function Tasks({ id }: { id?: string }) {
               ? <GroupHeader icon={rowsGroup === 'priority' ? 'list-ordered' : 'folder-open'} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
                 <span class="lead"><StateBadge family="task" state={i.t.pauseReason === 'held' ? 'held' : i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
-                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><span class="id">{i.t.id.slice(0, 8)}</span>{i.t.state === 'in_progress' && isHarness(i.t.agent) && <HarnessMark h={i.t.agent} />}</span>
+                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} onClick={e => { e.preventDefault(); set({ focus: i.t.id }); }}>{i.t.title}</a><EntityCode code={i.t.code} id={i.t.id} />{i.t.state === 'in_progress' && isHarness(i.t.agent) && <HarnessMark h={i.t.agent} />}</span>
                 <span class="r">{ms(i.t.startedAt ?? i.t.createdAt) && <AgeChip t={ms(i.t.startedAt ?? i.t.createdAt)!} now={now} alertAfter={i.t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" />}</span>
                 <Button label={pins.has(i.t.id) ? 'Unpin' : 'Pin'} icon={pins.has(i.t.id) ? 'pin-off' : 'pin'} iconOnly pressed={pins.has(i.t.id)} onClick={() => pins.toggle(i.t.id)} />
                 <RowCheck checked={sel.includes(i.t.id)} label={'Select ' + i.t.title} onToggle={() => toggleSel(i.t.id)} />
@@ -130,7 +130,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
-      <span class="muted mono">{t.projectId ?? 'no project'}</span><Button label={`Copy id ${t.id}`} icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(t.id).catch(e => setFailure(e.message))} /><span class="grow" />
+      <span class="muted mono">{t.projectId ?? 'no project'}</span><span class="grow" />
       <OfflineMarker state={state} now={now} />
       {t.state === 'paused'
         ? <Button label={t.pauseReason === 'held' ? 'Release' : 'Continue'} icon="rotate-cw" busy={busy === 'resume'} disabledReason={disabled} onClick={() => act('resume')} />
@@ -139,9 +139,9 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     {confirming && <div class="problem warning" role="group" aria-label="Confirm cancel"><b>Cancel this task?</b><span class="facts">Running work is asked to stop; finished external effects stay.</span>
       <span class="acts"><Button label="Yes, cancel" kind="danger" busy={busy === 'cancel'} disabledReason={off ? 'offline' : undefined} onClick={() => act('cancel')} /><Button label="Keep" onClick={() => setConfirming(false)} /></span></div>}
     {failure && <ErrorBanner text={failure} />}
-    <h2 class="detail-title">{t.title}</h2>
+    <h2 class="detail-title">{t.title}<EntityCode code={t.code} id={t.id} /></h2>
     <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted mono">by {t.createdBy}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} now={now} />}</div>
-    {t.expectedOutcome && <OutcomeBlock outcome={t.expectedOutcome} requirements={req} inputs={[]} depends={t.dependencies?.length ? `Depends on ${t.dependencies.map((d: any) => d.id.slice(0, 8)).join(', ')}` : undefined} />}
+    {t.expectedOutcome && <OutcomeBlock outcome={t.expectedOutcome} requirements={req} inputs={[]} depends={t.dependencies?.length ? `Depends on ${t.dependencies.map((d: any) => d.code ?? 'a task without a code').join(', ')}` : undefined} />}
     {totals.length > 0 && <Totals items={totals} />}
     {t.latestResult?.id && <p class="state-line"><Icon name="file-text" /><a class="row-link" href={`/results/${encodeURIComponent(t.latestResult.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(t.latestResult.id)}`); }}>{t.latestResult.path ?? 'Result'}</a></p>}
     {decided.map((q: any) => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />

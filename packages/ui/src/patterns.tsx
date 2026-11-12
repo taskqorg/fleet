@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls.tsx';
+import { Button, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, NavRail, TooltipLayer, HarnessMark, StageChip, type Chip, type FilterField, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
 import tokens from '../tokens.json';
@@ -110,7 +110,7 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two }: { t: TaskRow; n
   const marks = <>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}{t.stage && <StageChip stage={t.stage} />}</>;
   return <>
     <span class="lead"><StateBadge family="task" state={t.state} reason={t.reason} compact /></span>
-    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} onClick={e => { if (onOpen) { e.preventDefault(); onOpen(t); } }}>{t.title}</a><span class="id">T-{t.id}</span>{two && marks}</span>
+    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} onClick={e => { if (onOpen) { e.preventDefault(); onOpen(t); } }}>{t.title}</a><EntityCode code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} />{two && marks}</span>
     {!two && <><span>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}</span><span>{t.stage && <StageChip stage={t.stage} />}</span></>}
     <span class="r"><AgeChip t={t.started} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></span>
     <span class="r"><Num m={t.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: t.cost, basis: t.est ? 'estimated' : 'measured' }} kind="money" rise="bad" /></span>
