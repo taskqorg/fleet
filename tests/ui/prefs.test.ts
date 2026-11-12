@@ -66,3 +66,14 @@ test('OR-41 a width is sent by key only; 0 resets it', async () => {
 test('OR-33 OR-34 OR-41 preferences never use browser storage', () => {
   assert.doesNotMatch(readFileSync(new URL('../../app/src/prefs.ts', import.meta.url), 'utf8'), /localStorage|sessionStorage|indexedDB/);
 });
+
+test('the preferences gate opens on the current person\'s read, also with a save in flight, and a store clear closes it until the next read', async () => {
+  const { prefsRead, loadPrefs } = await import('../../app/src/prefs.ts');
+  prefsRead.value = false;
+  const read = loadPrefs(); savePrefs(() => ({ widths: { a: 1 } }), { widths: { a: 1 } });
+  await read; assert.equal(prefsRead.value, true);
+  const { onClear } = await import('../../app/src/offline.ts');
+  for (const f of onClear) f(); // a store clear: another person or new grants
+  assert.equal(prefsRead.value, false);
+  await loadPrefs(); assert.equal(prefsRead.value, true);
+});

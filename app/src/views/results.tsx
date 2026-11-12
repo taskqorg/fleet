@@ -7,7 +7,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op } from '../api.ts';
-import { withFocus } from '../prefs.ts';
+import { withFocus, prefsRead } from '../prefs.ts';
 import { subscribe } from '../feed.ts';
 import { useDoc } from '../store.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
@@ -37,7 +37,8 @@ export function Results({ id }: { id?: string }) {
       setRows(x => before && x ? [...x, ...(r.artifacts as Row[]).filter(a => !x.some(y => y.id === a.id))] : r.artifacts as Row[]); setNext(r.nextBefore ?? null); setError(null); }
     catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
-  useEffect(() => { load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey]);
+  const ready = prefsRead.value; // the filter carries the focus
+  useEffect(() => { if (!ready) { gen.current++; setRows(null); return; } load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey, ready]);
   const chips: Chip[] = Object.entries(extra).filter(([k]) => ['media', 'since', 'task', 'execution'].includes(k)).map(([field, value]) => ({ field, value }));
   const now = Date.now();
   const list = <>

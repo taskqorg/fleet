@@ -5,7 +5,7 @@
 import { AreaChart, type ChartSeries, AgeChip, Empty, ErrorBanner, Icon, Num, StatStrip, type IconName, type Tone } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { focusIds } from '../prefs.ts';
+import { focusIds, prefsRead } from '../prefs.ts';
 
 const HOUR = 36e5;
 // alert: seconds in the stage after which the oldest pull request needs a look; none for stages people work in.
@@ -29,7 +29,7 @@ const LAYERS: Record<string, Pick<ChartSeries, 'tone' | 'pattern'>> = {
 
 export function Delivery() {
   // GitHub reads run every few minutes on the coordinator, not on change rows: re-read every 60 s.
-  const { data, error } = useDoc<any>('delivery:' + (focusIds() ?? []).join(','), () => op('delivery_status', { projectIds: focusIds() }), () => false, 60000);
+  const { data, error } = useDoc<any>(prefsRead.value ? 'delivery:' + (focusIds() ?? []).join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), () => false, 60000);
   const now = Date.now();
   const head = <header class="page-h"><h1><Icon name="git-merge" /> Delivery</h1><span class="grow" />
     {data?.source === 'public' && <span class="chip-age t-attention" data-tip="No github key in API keys: unauthenticated reads, the fleet repository only">public GitHub</span>}

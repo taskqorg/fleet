@@ -13,7 +13,7 @@ import { subscribe, currentCursor, feedState, type Change } from './feed.ts';
 import { applyMembership, chunks, touched, type Row, type SortKey } from './lists.ts';
 import { save, load, onClear, pruneKeys } from './offline.ts';
 import { listKey, toPageParams, type View } from '../../packages/view-url/view-url.ts';
-import { withFocus } from './prefs.ts';
+import { withFocus, prefsRead } from './prefs.ts';
 
 export type Freshness = 'current' | 'updating' | 'offline' | 'signed-out';
 export const freshness = (restored: boolean): Freshness => signedOut.value ? 'signed-out' : !online.value ? 'offline' : restored ? 'updating' : 'current';
@@ -181,18 +181,21 @@ export function useList(kind: Kind, urlView: View) {
   const ctrl = useRef<AbortController | null>(null);
   const shown = e.state.value ? key : last; // derived during render: no stale frame when the wanted list is in memory
   useEffect(() => { if (shown !== last) setLast(shown); }, [shown]);
+  // The key carries the focus, so nothing restores or loads before the person's preferences are known.
+  const ready = prefsRead.value;
   useEffect(() => {
+    if (!ready) return;
     e.mounted++;
     ctrl.current?.abort(); const c = ctrl.current = new AbortController();
     restore(key, e); loadList(kind, key, view, c.signal);
     return () => { e.mounted--; };
-  }, [key]);
+  }, [key, ready]);
   const se = shown ? lists.get(shown) : undefined, cur = se?.state.value ?? null;
   const rows = cur ? cur.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) : [];
   return {
     rows, counts: cur?.counts ?? {}, total: cur?.total ?? 0, groups: cur?.groups ?? [], at: cur?.at ?? 0, error: cur?.error ?? null,
-    pending: shown !== key || e.busy.value, shownKey: shown, shownView: se?.view ?? view,
-    more: () => shown ? nextPage(shown) : Promise.resolve(), reload: () => loadList(kind, key, view),
+    pending: !ready || shown !== key || e.busy.value, shownKey: shown, shownView: se?.view ?? view,
+    more: () => ready && shown ? nextPage(shown) : Promise.resolve(), reload: () => ready ? loadList(kind, key, view) : Promise.resolve(),
     state: freshness(!!cur?.restored),
   };
 }
