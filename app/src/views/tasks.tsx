@@ -9,7 +9,7 @@ import {
   keyConnection, EntityCode, actor, fileLabel, viewOf,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { listKey, DEFAULT_TASK_SORT, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
@@ -140,18 +140,21 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   if (!t) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
   const req = t.completionRequirements && typeof t.completionRequirements === 'object' ? Object.entries(t.completionRequirements).map(([k, v]) => ({ text: typeof v === 'string' ? `${k}: ${v}` : k, met: false })) : [];
   const open = (t.questions ?? []).filter((q: any) => q.state === 'open');
-  const tokensIn = t.cost?.tokens_input, tokensOut = t.cost?.tokens_output;
-  const tok = tokensIn === null || tokensIn === undefined ? null : Number(tokensIn) + Number(tokensOut ?? 0);
+  const resTot = (t as Ops['task_get']['reply']).resources?.total;
+  const tok = resTot?.tokens.total ?? null;
   const nodes: TreeNode[] = (t.executions ?? []).map((e: any) => ({ id: e.id, name: [e.kind ?? 'run', e.harness ?? e.agentConfig?.harness, e.hostId].filter(Boolean).join(' · '), state: execState(e.state),
     lastSeen: e.observation === 'unconfirmed' ? ms(e.lastSeenAt) ?? undefined : undefined,
     time: e.startedAt && (e.endedAt ?? e.finishedAt) ? { value: (ms(e.endedAt ?? e.finishedAt)! - ms(e.startedAt)!) / 1000, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'not finished' } }));
   const disabled = off ? 'offline' : undefined;
   // OR-39: statement, lifecycle, result, decision; a total is shown only when it is known (no empty token or cost fields).
   // The execution count is the tree below (OR-17: no second 'Executions').
-  const wall = t.cost?.wall_ms === null || t.cost?.wall_ms === undefined ? null : Number(t.cost.wall_ms) / 1000;
+  const wallMs = resTot?.durations.executionWallMs ?? null;
+  const wall = wallMs === null ? null : wallMs / 1000;
+  const wallBasis = resTot?.durations.basis;
+  const tokBasis = resTot?.tokens.basis;
   const totals = [
-    ...(wall !== null ? [{ label: 'Time', m: { value: wall, basis: 'measured' as const, partial: Number(t.cost.measured_wall) < Number(t.cost.executions_with_totals) ? 'some runs not measured' : undefined }, kind: 'duration' as const }] : []),
-    ...(tok !== null ? [{ label: 'Tokens', m: { value: tok, basis: 'measured' as const }, kind: 'count' as const }] : []),
+    ...(wall !== null ? [{ label: 'Time', m: { value: wall, basis: wallBasis === 'estimated' ? ('estimated' as const) : ('measured' as const), partial: wallBasis === 'unavailable' ? 'some runs not measured' : undefined }, kind: 'duration' as const }] : []),
+    ...(tok !== null ? [{ label: 'Tokens', m: { value: tok, basis: tokBasis === 'estimated' ? ('estimated' as const) : ('measured' as const), partial: tokBasis === 'unavailable' ? 'some runs not measured' : undefined }, kind: 'count' as const }] : []),
   ];
   const latestExecution = t.executions?.at(-1); // task_get preserves execution sequence.
   const reported = (t.executions ?? []).filter((e: any) => e.report).sort((a: any, b: any) => b.report.at - a.report.at)[0];

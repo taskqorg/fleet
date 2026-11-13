@@ -25,6 +25,8 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
       {view: 'results', state: ['stored'], project: ['p1']},
       {view: 'hosts', focus: 'pds18'},
       {view: 'hosts', focus: '..'},
+      {view: 'projects'},
+      {view: 'projects', focus: 'hello-world'},
     ];
     for (const v of views) {
       const r = await op({view: v});

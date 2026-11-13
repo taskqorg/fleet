@@ -58,7 +58,7 @@ Section numbers §1-§12 are cited by code; keep them.
 
 ### 2. Visibility
 
-- **Scope per transaction.** `Store.Tx` (`go/coordinator/store.go`) takes the scope of the current request person (`scopeOf`), read per transaction. The owner, hosts, timers and program workers keep the connection's `*` scope and run no extra statement. Any other person gets `SET LOCAL fleet.project_ids` (their project grants; an architect also gets `''`, rows without a project) and `SET LOCAL fleet.person`. A scoped query outside a transaction runs in one. Host and account choice inside a person's request runs unscoped (`unscoped`, `go/coordinator/store.go`). The change stream reads each wake in its viewer's scope.
+- **Scope per transaction.** `Store.Tx` (`go/coordinator/store.go`) takes the scope of the current request person (`scopeOf`), read per transaction. The owner, hosts, timers and program workers keep the connection's `*` scope and run no extra statement. Any other person gets `SET LOCAL fleet.project_ids` (their project grants; an architect also gets `''`, rows without a project) and `SET LOCAL fleet.person`. A scoped query outside a transaction runs in one; `analytics_query` never escalates `fleet.project_ids` to `'*'`, and projectless `directed_totals` RLS excludes executions whose parent session carries `directorAccessRevokedAt`. Host and account choice inside a person's request runs unscoped (`unscoped`, `go/coordinator/store.go`). The change stream reads each wake in its viewer's scope.
 - **Holder rows.** Row-level security on `document` also shows `host`, `managed-account` and `api-connection` rows whose `holder` is `fleet.person`; `store` rows carry a `holder` column with the same clause. `host-observation` rows carry the host's holder. A holder sees their own host and store without the architect role.
 - **Operations per role.** Architect operations: `account_*`, `lab_*`, `connection*`, `recovery*`, `reconcil*`, `transport_*`, `artifact_rule*`, `profiles_list`, and routes `/api/lab`, `/api/accounts`, `/api/recovery*`, `/api/reconciliation`, `/api/profiles`. An operator call is 403. `hosts_list` and `stores_list` are operator operations; row-level security filters them.
 - A write outside the scope (row-level security error 42501) is 403.
@@ -204,7 +204,7 @@ budget { id, scope: person | project | experiment | connection, scopeId,
 ```
 
 - Units: `usd`, provider `credits`, `tokens`, `trials`, `wall_ms`. Lab `pipe_calls` and `pipe_credits` become `calls` and `credits` with the connection in `scopeId`.
-- Spend: sum of `connection_cost` measurements and token totals over scope and period, each with basis (`measured`, `estimated`, `unavailable`) and age. An unmeasurable unit shows "unverifiable".
+- Spend: sum of `connection_cost` measurements and token totals over scope and period, each with basis (`measured`, `estimated`, `subscription`, `unavailable`) and age. An unmeasurable unit shows "unverifiable".
 - Default action: `warn` for person, project and connection scopes; Lab experiments keep `pause`; `stop` only when the owner sets it.
 - Storage: a `budget` table; Lab's experiment `budgets` move into it with `scope = experiment`.
 - Enforcement: the coordinator computes reached budgets; dispatch applies them to agent runs; the gateway applies them to API calls from a flag in its snapshot ([fleet-connections.md](fleet-connections.md) §6) and keeps the last flags while the coordinator is down.

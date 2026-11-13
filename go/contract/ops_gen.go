@@ -125,6 +125,40 @@ func (v ConflictReason) Valid() bool {
 	return false
 }
 
+// CostFigure: Unified spend or subscription list-price equivalent grouped by (currency, basis).
+type CostFigure struct {
+	Basis    ResourceBasis  `json:"basis"`
+	Currency *string        `json:"currency"`
+	Note     *string        `json:"note,omitempty"`
+	Prices   []CostPriceRef `json:"prices,omitempty"`
+	Reason   *string        `json:"reason,omitempty"`
+	Usages   *int64         `json:"usages,omitempty"`
+	Value    *float64       `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CostFigure) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	for i := range v.Prices {
+		if err := Check(&v.Prices[i], "prices"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type CostPriceRef struct {
+	Id         string `json:"id"`
+	ObservedAt int64  `json:"observedAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CostPriceRef) Validate() error {
+	return nil
+}
+
 // DefinitionConflict: Body of a 409 from definition_save and definition_create.
 type DefinitionConflict struct {
 	Head    int64          `json:"head"`
@@ -193,6 +227,25 @@ type DefinitionRef struct {
 // Validate: the schema's required fields and enums (see Check).
 func (v *DefinitionRef) Validate() error {
 	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type DurationBreakdown struct {
+	ActiveMs        *int64        `json:"activeMs"`
+	ApiMs           *int64        `json:"apiMs"`
+	Basis           ResourceBasis `json:"basis"`
+	CpuMs           *int64        `json:"cpuMs"`
+	ElapsedMs       *int64        `json:"elapsedMs"`
+	ExecutionWallMs *int64        `json:"executionWallMs"`
+	MeasuredCpuRuns int64         `json:"measuredCpuRuns"`
+	TotalRuns       int64         `json:"totalRuns"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DurationBreakdown) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
 		return err
 	}
 	return nil
@@ -332,6 +385,38 @@ func (v *ListRow) Validate() error {
 	return nil
 }
 
+type MeasuredInt struct {
+	Basis   ResourceBasis `json:"basis"`
+	Note    *string       `json:"note,omitempty"`
+	Partial *string       `json:"partial,omitempty"`
+	Reason  *string       `json:"reason,omitempty"`
+	Value   *int64        `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *MeasuredInt) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type MeasuredNumber struct {
+	Basis   ResourceBasis `json:"basis"`
+	Note    *string       `json:"note,omitempty"`
+	Partial *string       `json:"partial,omitempty"`
+	Reason  *string       `json:"reason,omitempty"`
+	Value   *float64      `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *MeasuredNumber) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type MethodAssessment struct {
 	At                  *string                    `json:"at,omitempty"`
 	Basis               AssessmentBasis            `json:"basis"`
@@ -384,6 +469,114 @@ func (v *OpError) Validate() error {
 	return nil
 }
 
+type ResourceBasis string
+
+const (
+	ResourceBasisMeasured     ResourceBasis = "measured"
+	ResourceBasisEstimated    ResourceBasis = "estimated"
+	ResourceBasisSubscription ResourceBasis = "subscription"
+	ResourceBasisUnavailable  ResourceBasis = "unavailable"
+)
+
+// ResourceBasisValues lists every ResourceBasis in schema order.
+var ResourceBasisValues = []ResourceBasis{ResourceBasisMeasured, ResourceBasisEstimated, ResourceBasisSubscription, ResourceBasisUnavailable}
+
+// Valid: v is one of the schema's values.
+func (v ResourceBasis) Valid() bool {
+	for _, x := range ResourceBasisValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ResourceSummary struct {
+	Cost            []CostFigure      `json:"cost"`
+	Credits         *float64          `json:"credits,omitempty"`
+	Durations       DurationBreakdown `json:"durations"`
+	Executions      int64             `json:"executions"`
+	PeakMemoryBytes MeasuredInt       `json:"peakMemoryBytes"`
+	Tokens          TokenBreakdown    `json:"tokens"`
+	Tools           ToolUsageSummary  `json:"tools"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceSummary) Validate() error {
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Durations, "durations"); err != nil {
+		return err
+	}
+	if err := Check(&v.PeakMemoryBytes, "peakMemoryBytes"); err != nil {
+		return err
+	}
+	if err := Check(&v.Tokens, "tokens"); err != nil {
+		return err
+	}
+	if err := Check(&v.Tools, "tools"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ScopedResourceRollup struct {
+	Delegated    ResourceSummary  `json:"delegated"`
+	Hidden       int64            `json:"hidden"`
+	Own          ResourceSummary  `json:"own"`
+	Spawned      ResourceSummary  `json:"spawned"`
+	SpawnedTasks []SpawnedTaskRef `json:"spawnedTasks"`
+	Total        ResourceSummary  `json:"total"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ScopedResourceRollup) Validate() error {
+	if err := Check(&v.Delegated, "delegated"); err != nil {
+		return err
+	}
+	if err := Check(&v.Own, "own"); err != nil {
+		return err
+	}
+	if err := Check(&v.Spawned, "spawned"); err != nil {
+		return err
+	}
+	if v.SpawnedTasks == nil {
+		return Missing("spawnedTasks")
+	}
+	for i := range v.SpawnedTasks {
+		if err := Check(&v.SpawnedTasks[i], "spawnedTasks"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Total, "total"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type SpawnedTaskRef struct {
+	Code      *string         `json:"code,omitempty"`
+	ProjectId *string         `json:"projectId,omitempty"`
+	Resources ResourceSummary `json:"resources"`
+	State     string          `json:"state"`
+	TaskId    string          `json:"taskId"`
+	Title     string          `json:"title"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SpawnedTaskRef) Validate() error {
+	if err := Check(&v.Resources, "resources"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // StreamCursor: Body of the GET /api/stream events ready (the cursor the stream starts after) and resync (reload everything, then continue after cursor).
 type StreamCursor struct {
 	Cursor int64 `json:"cursor"`
@@ -391,6 +584,61 @@ type StreamCursor struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *StreamCursor) Validate() error {
+	return nil
+}
+
+type TokenBreakdown struct {
+	Basis      ResourceBasis `json:"basis"`
+	CacheRead  *int64        `json:"cacheRead"`
+	CacheWrite *int64        `json:"cacheWrite"`
+	Input      *int64        `json:"input"`
+	Output     *int64        `json:"output"`
+	Reasoning  *int64        `json:"reasoning"`
+	Total      *int64        `json:"total"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TokenBreakdown) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ToolUsageCount struct {
+	Calls      int64   `json:"calls"`
+	Connection *string `json:"connection,omitempty"`
+	Errors     int64   `json:"errors"`
+	Name       string  `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ToolUsageCount) Validate() error {
+	return nil
+}
+
+type ToolUsageSummary struct {
+	Basis       ResourceBasis    `json:"basis"`
+	ByTool      []ToolUsageCount `json:"byTool"`
+	FailedCalls int64            `json:"failedCalls"`
+	Other       *int64           `json:"other,omitempty"`
+	TotalCalls  int64            `json:"totalCalls"`
+	Turns       int64            `json:"turns"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ToolUsageSummary) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	if v.ByTool == nil {
+		return Missing("byTool")
+	}
+	for i := range v.ByTool {
+		if err := Check(&v.ByTool[i], "byTool"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

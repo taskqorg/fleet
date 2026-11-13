@@ -163,6 +163,33 @@ func boundary(e member) doc {
 	return blockDoc(b)
 }
 
+func attachBoundaryResources(q *Request, bs []doc) error {
+	ids, seen := []string{}, map[string]bool{}
+	for _, b := range bs {
+		if b["kind"] == "boundary" {
+			if eid := astr(b["executionId"]); eid != "" && !seen[eid] {
+				seen[eid] = true
+				ids = append(ids, eid)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	resMap, err := boundaryResourcesMap(q, ids)
+	if err != nil {
+		return err
+	}
+	for _, b := range bs {
+		if b["kind"] == "boundary" {
+			if res, ok := resMap[astr(b["executionId"])]; ok {
+				b["resources"] = res
+			}
+		}
+	}
+	return nil
+}
+
 func questionBlock(qu doc, seq int64) doc {
 	b := contract.QuestionBlock{Kind: "question", Key: bkey{seq, 0}.String(), ExecutionId: strPtr(qu["execution_id"]), QuestionId: astr(qu["id"]), Text: astr(qu["text"]),
 		Options: json.RawMessage("[]"), State: astr(qu["state"]), AskedAt: msPtr(qu["asked_at"]), AnsweredAt: msPtr(qu["answered_at"]), AnsweredBy: strPtr(qu["answered_by"])}
@@ -489,6 +516,9 @@ func threadEntries(q *Request, b doc) (doc, error) {
 		}
 		withTotal = true
 	}
+	if err := attachBoundaryResources(q, entries); err != nil {
+		return nil, err
+	}
 	sessions, seen := []any{}, map[string]bool{}
 	for _, id := range ids {
 		if s := astr(m[id].doc["session_id"]); s != "" && !seen[s] {
@@ -618,6 +648,9 @@ func threadBlocks(q *Request, b doc) (doc, error) {
 		entries = append(entries, x)
 	}
 	sort.Slice(entries, func(i, j int) bool { return cmpKey(mustKey(entries[i]["key"]), mustKey(entries[j]["key"])) < 0 })
+	if err := attachBoundaryResources(q, entries); err != nil {
+		return nil, err
+	}
 	return doc{"removed": removed, "entries": entries}, nil
 }
 

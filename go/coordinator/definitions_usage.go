@@ -11,12 +11,13 @@ import (
 	"fleet/contract"
 )
 
-const usageSQL = `SELECT d->>'id' AS id, (d->>'revision')::int AS rev, GROUPING((d->>'revision')::int) AS total, count(*), count(*) FILTER (WHERE e.state='succeeded'),
-   (percentile_disc(0.5) WITHIN GROUP (ORDER BY t.wall_ms))::bigint, coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint
+const usageSQL = `SELECT d->>'id' AS id, CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::int END AS rev, GROUPING(CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::int END) AS total, count(*), count(*) FILTER (WHERE e.state='succeeded'),
+   (percentile_disc(0.5) WITHIN GROUP (ORDER BY coalesce(t.wall_ms, CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0, (extract(epoch FROM e.ended_at - e.started_at)*1000)::bigint) END)))::bigint,
+   coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint
  FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d LEFT JOIN execution_totals t ON t.execution_id=e.id
- WHERE e.definitions @> $1 AND d->>'kind'=$2 AND ($3='' OR d->>'id'=$3) AND coalesce((d->>'draft')::boolean,false)=false
+ WHERE e.definitions @> $1 AND d->>'kind'=$2 AND ($3='' OR d->>'id'=$3) AND coalesce((d->>'draft')::boolean,false)=false AND coalesce(d->>'revision','') ~ '^[0-9]+$'
    AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
- GROUP BY d->>'id', ROLLUP ((d->>'revision')::int)`
+ GROUP BY d->>'id', ROLLUP (CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::int END)`
 
 // usageWindows: runs, successes, median wall time and tokens of the executions that pinned a saved revision of kind/id
 // (id "" for every definition of the kind) in the last days, per definition and per revision; draft runs are not a
@@ -26,12 +27,31 @@ func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.
 	if id != "" {
 		pin["id"] = id
 	}
+	totRes, revRes, err := definitionUsageResources(q, kind, id, days)
+	if err != nil {
+		return nil, nil, err
+	}
 	totals, byRev := map[string]contract.Window{}, map[string][]contract.RevisionWindow{}
 	rows, err := q.tx.Query(q.ctx(), usageSQL, jsonBytes([]map[string]string{pin}), kind, id, days)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
+	attach := func(w *contract.Window, res contract.ResourceSummary, ok bool) {
+		if !ok {
+			res = emptyResourceSummary()
+		}
+		resCopy := res
+		w.Resources = &resCopy
+		if res.Tokens.Total != nil {
+			w.Tokens = *res.Tokens.Total
+		}
+		if res.Cost != nil {
+			w.Cost = res.Cost
+		} else {
+			w.Cost = []contract.CostFigure{}
+		}
+	}
 	for rows.Next() {
 		var did string
 		var rev, median *int64
@@ -42,8 +62,12 @@ func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.
 		}
 		w.WallMsMedian = median
 		if grouping == 1 {
+			res, ok := totRes[did]
+			attach(&w, res, ok)
 			totals[did] = w
 		} else if rev != nil {
+			res, ok := revRes[did][*rev]
+			attach(&w, res, ok)
 			byRev[did] = append(byRev[did], contract.RevisionWindow{Revision: *rev, Window: w})
 		}
 	}
@@ -120,6 +144,13 @@ func definitionUsage(q *Request, r *contract.DefinitionUsageRequest) (contract.D
 	out.Total, out.ByRevision = totals[r.Id], byRev[r.Id]
 	if out.Total.CostBasis == nil {
 		out.Total.CostBasis = ptr("tokens")
+	}
+	if out.Total.Cost == nil {
+		out.Total.Cost = []contract.CostFigure{}
+	}
+	if out.Total.Resources == nil {
+		empty := emptyResourceSummary()
+		out.Total.Resources = &empty
 	}
 	if out.ByRevision == nil {
 		out.ByRevision = []contract.RevisionWindow{}

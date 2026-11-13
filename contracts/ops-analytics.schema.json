@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Coordinator operations of the analytics domain (docs/designs/fleet-analytics.md); the rules are in ops.schema.json $comment and contracts/README.md.",
+  "operations": {
+    "analytics_query": {"read": true, "errors": [400]}
+  },
+  "$defs": {
+    "AnalyticsBucketRow": {
+      "type": "object",
+      "required": ["dimensions", "measures", "cost"],
+      "properties": {
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "$comment": "Requested dimension keys to non-null string values; SQL NULLs encode as 'unknown'."
+        },
+        "measures": {
+          "type": "object",
+          "additionalProperties": {"$ref": "ops.schema.json#/$defs/MeasuredNumber"}
+        },
+        "cost": {
+          "type": "array",
+          "items": {"$ref": "ops.schema.json#/$defs/CostFigure"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "AnalyticsDimension": {
+      "type": "string",
+      "enum": [
+        "day",
+        "hour",
+        "week",
+        "project",
+        "kind",
+        "parent",
+        "pipeline",
+        "pipeline_revision",
+        "step",
+        "profile_id",
+        "profile_revision",
+        "harness",
+        "model",
+        "provider",
+        "account",
+        "host",
+        "connection",
+        "experiment",
+        "variant",
+        "state",
+        "outcome",
+        "person"
+      ]
+    },
+    "AnalyticsFilter": {
+      "type": "object",
+      "properties": {
+        "project": {"type": "array", "items": {"type": "string"}},
+        "projectId": {"type": "array", "items": {"type": "string"}},
+        "kind": {"type": "array", "items": {"type": "string"}},
+        "parent": {"type": "array", "items": {"type": "string"}},
+        "pipeline": {"type": "array", "items": {"type": "string"}},
+        "pipeline_revision": {"type": "array", "items": {}},
+        "step": {"type": "array", "items": {"type": "string"}},
+        "profile_id": {"type": "array", "items": {"type": "string"}},
+        "profile_revision": {"type": "array", "items": {}},
+        "harness": {"type": "array", "items": {"type": "string"}},
+        "model": {"type": "array", "items": {"type": "string"}},
+        "provider": {"type": "array", "items": {"type": "string"}},
+        "account": {"type": "array", "items": {"type": "string"}},
+        "host": {"type": "array", "items": {"type": "string"}},
+        "connection": {"type": "array", "items": {"type": "string"}},
+        "experiment": {"type": "array", "items": {"type": "string"}},
+        "variant": {"type": "array", "items": {"type": "string"}},
+        "state": {"type": "array", "items": {"type": "string"}},
+        "outcome": {"type": "array", "items": {"type": "string"}},
+        "person": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "AnalyticsMeasure": {
+      "type": "string",
+      "enum": [
+        "executions",
+        "count",
+        "failed",
+        "tokens_input",
+        "tokens_output",
+        "tokens_cache_read",
+        "tokens_cache_write",
+        "tokens_reasoning",
+        "wall_ms",
+        "wall_ms_p50",
+        "wall_ms_p95",
+        "active_ms",
+        "api_ms",
+        "cpu_ms",
+        "peak_memory_bytes",
+        "calls",
+        "credits",
+        "cost"
+      ]
+    },
+    "AnalyticsQueryReply": {
+      "type": "object",
+      "required": ["rows", "totals", "hidden", "unknown"],
+      "properties": {
+        "rows": {"type": "array", "items": {"$ref": "#/$defs/AnalyticsBucketRow"}},
+        "totals": {"$ref": "#/$defs/AnalyticsTotals"},
+        "hidden": {"type": "integer", "$comment": "Unfiltered count of leaf executions in the window outside caller RLS."},
+        "unknown": {"type": "integer", "$comment": "Count of visible leaf executions with >= 1 requested dimension encoded as 'unknown'."}
+      },
+      "additionalProperties": false
+    },
+    "AnalyticsQueryRequest": {
+      "type": "object",
+      "required": ["window"],
+      "properties": {
+        "window": {"$ref": "#/$defs/AnalyticsWindow"},
+        "dimensions": {"type": "array", "items": {"$ref": "#/$defs/AnalyticsDimension"}},
+        "measures": {"type": "array", "items": {"$ref": "#/$defs/AnalyticsMeasure"}},
+        "filters": {"$ref": "#/$defs/AnalyticsFilter"},
+        "projectId": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "AnalyticsTotals": {
+      "type": "object",
+      "required": ["measures", "cost"],
+      "properties": {
+        "measures": {
+          "type": "object",
+          "additionalProperties": {"$ref": "ops.schema.json#/$defs/MeasuredNumber"}
+        },
+        "cost": {
+          "type": "array",
+          "items": {"$ref": "ops.schema.json#/$defs/CostFigure"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "AnalyticsWindow": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "from": {},
+        "to": {}
+      },
+      "additionalProperties": false,
+      "$comment": "Required [from, to) bounds: epoch milliseconds (integer) or RFC 3339 / YYYY-MM-DD strings."
+    }
+  }
+}

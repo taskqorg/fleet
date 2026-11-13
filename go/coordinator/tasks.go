@@ -658,10 +658,23 @@ func taskGet(q *Request, id string) (doc, error) {
 		return nil, err
 	}
 	t["progress"] = doc{"executions": d["execution_count"], "byState": d["executions_by_state"]}
-	t["cost"], t["latestResult"], t["openQuestions"] = d["totals"], d["latest_result"], d["open_questions"]
-	if t["executions"], err = executionsList(q, contract.ExecutionsListRequest{TaskId: &id}); err != nil {
+	t["latestResult"], t["openQuestions"] = d["latest_result"], d["open_questions"]
+	rollup, err := taskResourceRollup(q, id)
+	if err != nil {
 		return nil, err
 	}
+	t["cost"], t["resources"] = rollup.Total.Cost, rollup
+	execs, err := executionsList(q, contract.ExecutionsListRequest{TaskId: &id})
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]contract.ExecutionRow, 0, len(execs))
+	for _, ex := range execs {
+		if ex.Kind != "tool_run" {
+			filtered = append(filtered, ex)
+		}
+	}
+	t["executions"] = filtered
 	if t["dependencies"], err = rowsOf(q, "SELECT d.depends_on_task_id AS id,d.kind,t.code FROM task_dependency d LEFT JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1", id); err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import "encoding/json"
 //go:generate go run ../gen ../../contracts/gateway.schema.json contract gateway_gen.go
 //go:generate go run ../gen ../../contracts/ops.schema.json contract ops_gen.go
 //go:generate go run ../gen ../../contracts/ops-accounts.schema.json contract ops_accounts_gen.go
+//go:generate go run ../gen ../../contracts/ops-analytics.schema.json contract ops_analytics_gen.go
 //go:generate go run ../gen ../../contracts/ops-artifacts.schema.json contract ops_artifacts_gen.go
 //go:generate go run ../gen ../../contracts/ops-definitions.schema.json contract ops_definitions_gen.go
 //go:generate go run ../gen ../../contracts/ops-executions.schema.json contract ops_executions_gen.go

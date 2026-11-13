@@ -2318,7 +2318,7 @@ func expGet(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	trialCost := map[any][]any{}
+	trialCost := map[any][]contract.CostFigure{}
 	for run, us := range costs {
 		trialCost[run] = estimateCost(prices, us)
 	}
@@ -2365,7 +2365,7 @@ func expGet(q *Request, id string) (doc, error) {
 			}
 		}
 		v := doc{"id": t["id"], "cell": t["cell"], "state": t["state"], "observation": t["observation"], "problem": t["problem"], "comparable": comparable(t), "startedAt": t["startedAt"], "finishedAt": t["finishedAt"],
-			"durationMs": t["durationMs"], "spend": spend, "cost": append([]any{}, trialCost[t["id"]]...), "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
+			"durationMs": t["durationMs"], "spend": spend, "cost": append([]contract.CostFigure{}, trialCost[t["id"]]...), "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
 		if recovery := mapOf(t["recovery"]); recovery != nil {
 			v["recovery"] = doc{"sourceRunId": mapOf(recovery["identity"])["sourceRunId"], "reusedStepIds": recovery["reusedStepIds"]}
 		}

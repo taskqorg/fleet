@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	viewNames     = []string{"tasks", "conversations", "hosts", "overview", "results"}
+	viewNames     = []string{"tasks", "conversations", "hosts", "overview", "results", "projects"}
 	artifactState = []string{"stored", "pending", "failed", "deleted"}
 	viewGroups    = slices.Sorted(maps.Keys(taskGroups)) // task_page's groups
 	viewSorts     = func() []string {                    // task_page's sorts, each also descending

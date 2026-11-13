@@ -2,37 +2,42 @@
 
 Fleet's analytics is not a subsystem. Experiments, their records, statistics and the comparison screen belong to [Lab](fleet-lab.md#experiment-record); spans belong to [telemetry](fleet-telemetry.md#5-query-surface). This file owns two things only: `analytics_query`, one typed query over work history, and the price table that turns usage into estimated money.
 
-Status: accepted design, not built. Order: the first decided Lab experiment comes first; this query comes after it ([Lab staging](fleet-lab.md#analytics-staging)).
+Status: accepted design; schema, coordinator `analytics_query`, entity resource rollups, and price table built (UI views tracked in [design system](../design-system/README.md)).
 
 ## Terms
 
 | Term | Meaning |
 |---|---|
-| Work record | An `execution` row with its `execution_totals` row; provider calls are `tool_run` child rows. |
-| Grouping columns | Typed columns written once when an `execution` row is created: `pipeline_id`, `pipeline_revision`, `step_id`, `profile_revision`. |
+| Work record | A leaf `execution` row (`agent_run`, `script`, `tool_run`, or measured `child_agent`) with its `execution_totals` row; container kinds (`pipeline_run`, `pipeline_step`) and placeholder `child_agent` rows without totals are excluded from primary sums. |
+| Grouping columns | Typed columns written once when an `execution` row is created: `pipeline_id`, `pipeline_revision`, `step_id`, `profile_id`, `profile_revision`, alongside `project_id`, `kind`, `parent_execution_id`, `harness`, `model`, `host_id`, `experiment_id`, `variant`, `state`, and `started_at`. |
 | Basis | How a figure was obtained: `measured`, `estimated`, `subscription` or `unavailable`. |
+| Time spans | `elapsed_ms = MAX(ended_at) - MIN(started_at)` across participating leaf executions (turnaround wall span); `execution_wall_ms = SUM(wall_ms)` (parallel effort sum); `cpu_ms = SUM(cpu_ms)` (measured OS CPU time). |
 | Price entry | One row of the price table: what one unit of one model or connection tool costs, from one source, on one date. |
 
 ## `analytics_query`
 
-One operation under the [data foundation §6](fleet-data-foundation.md#6-operations-for-people-and-agents) permission model, for people, the PM agent and the Lab screen. No raw SQL.
+One operation under the [data foundation §6](fleet-data-foundation.md#6-operations-for-people-and-agents) permission model, for people, the PM agent and the Lab screen (`contracts/ops-analytics.schema.json`). No raw SQL.
 
-**Request.** `{window: {from, to}, dimensions[], measures[], filters{}}`. The window is required; there is no default window and no cap on its length.
+**Request.** `{window: {from, to}, dimensions[], measures[], filters{}}`. The window `[from, to)` (timestamps as epoch milliseconds, RFC 3339, or `YYYY-MM-DD`) is required; there is no default window and no cap on its length.
 
 | Dimensions (fixed list) | Measures (fixed list) |
 |---|---|
-| `project`, `kind` (execution kind), `parent`, `pipeline`, `pipeline_revision`, `step`, `profile_revision`, `harness`, `model`, `host`, `connection`, `experiment`, `variant`, `state` (final execution state), `day` (UTC) | `count`, `failed` (count in state `failed`), `wall_ms` (sum, p50, p95), `active_ms` (sum), `tokens_input`, `tokens_output`, `tokens_cache_read`, `tokens_cache_write`, `calls`, `credits`, `cost` |
+| `day`, `hour`, `week` (UTC), `project`, `kind` (execution kind), `parent`, `pipeline`, `pipeline_revision`, `step`, `profile_id`, `profile_revision`, `harness`, `model`, `provider`, `account`, `host`, `connection`, `experiment`, `variant`, `state` (final execution state), `outcome`, `person` | `executions` (alias `count`), `count`, `failed` (count in state `failed`), `tokens_input`, `tokens_output`, `tokens_cache_read`, `tokens_cache_write`, `tokens_reasoning`, `wall_ms` (sum), `wall_ms_p50`, `wall_ms_p95`, `active_ms`, `api_ms`, `cpu_ms`, `peak_memory_bytes`, `calls`, `credits`, `cost` |
 
-**Reply.** One row per group: dimension values, each measure as `{value, basis}`, plus, once per reply, `hidden` (rows in the window the caller may not see) and `unknown` (rows with no value for a requested dimension, grouped as `unknown`, never dropped). A measure that mixes bases reports the weakest one (`unavailable` < `subscription` < `estimated` < `measured`); `subscription` rows add no money. `cost` is summed per currency; `currency` is part of each cost value, and two currencies give two values. A missing price gives `cost: {value: null, basis: unavailable}`, never 0.
+**Reply.** `{rows, totals, hidden, unknown}`. Each bucket row carries `dimensions` (map from requested dimension name to non-null string, encoding SQL `NULL` / absent dimension values as `"unknown"`), numeric/integer measure structs `{value, basis}` (plus optional `note` / `reason` / `partial` when relevant), and `cost: CostFigure[]` (`{value, currency, basis, prices: [{id, observedAt}], note?, reason?, usages?}`). Reply-level `totals` gives the ungrouped `{measures, cost}` across visible matching rows; `hidden` counts leaf rows inside the unfiltered `[from, to)` window excluded by the caller's row-level security scope (never leaking inaccessible project names, IDs, or spend); `unknown` counts visible matching leaf rows where any requested dimension resolved to `"unknown"` (never dropped).
+
+- A numeric measure that mixes bases reports the weakest one (`unavailable` < `subscription` < `estimated` < `measured`), with `value: null` when completely unmeasured; `peak_memory_bytes` uses `MAX`.
+- Cost figures group strictly by `(currency, basis)`: metered charges (`measured` provider cost and `estimated` token tariffs) sum per currency and never combine with `subscription` figures or downgrade metered `basis`; subscription runs keep their own `(currency, "subscription")` list-price equivalent entry (`note: "subscription (list-price equivalent)"`); missing usage or missing prices produce `{value: null, currency: null, basis: "unavailable"}` (never `0`).
 
 **Rules.**
 
-- It runs under the caller's row-level security (`fleet.project_ids`) and never sets the project setting to `'*'`. A test proves that project A sees nothing from project B, including through `score` joins and `tool_run` children.
-- Grouping uses the typed columns only, never JSON extraction from `execution.data`. The columns are added to `execution` in the [coordinator rewrite](fleet-go-code.md#coordinator-rewrite) and filled at row creation; rows without them read as `unknown`.
-- Nested usage is not counted again: each measure is summed from the row that recorded it (a `tool_run` for calls and credits, the run for tokens), never from a parent's rolled-up totals. Grouping by `parent` attributes children to their parent.
-- A new index `execution(project_id, started_at)` serves the window; rows with null `started_at` fall outside every window.
-- Sources: `calls` and `connection` from `tool_run` rows, `credits` and money from `execution_totals.connection_cost`, tokens and times from `execution_totals`.
-- `usage_summary` is not an implemented operation; cost totals come from this query.
+- It runs inside a normal `read: true` transaction under the caller's row-level security (`fleet.project_ids`, `fleet.person`) and never sets `fleet.project_ids` to `'*'` from handler code; non-secret connection provider metadata and aggregate RLS-excluded `hidden` counts (`fleet_exec_conn_meta`, `fleet_window_leaf_count`, `fleet_task_hidden_lineage_count`, `fleet_session_hidden_lineage_count`) execute through narrow SQL `SECURITY DEFINER` helpers. Projectless `directed_totals` access also enforces parent session non-revocation (`NOT (data ? 'directorAccessRevokedAt')`). Agent callers omitting an explicit project filter remain restricted to their bound project(s). A test proves project A sees nothing from project B, including through `score` joins and `tool_run` children.
+- Grouping uses the typed columns on `execution` and indexed joins (`project`, `session`, `task`, `account` / `connection`, `price_entry`), never ad-hoc JSON extraction on `execution.data` for grouping columns.
+- Nested usage is not counted twice: only leaf executions (`kind NOT IN ('pipeline_run', 'pipeline_step')` and measured `child_agent` rows carrying `execution_totals`) contribute tokens, durations, compute, tools, calls, and cost. Pre-attachment session turns resolve to a task deterministically via `session.data->>'taskId'`. Entity detail views (`task_get`, `session_get`) partition attributed leaf executions into non-overlapping `own`, `delegated`, and `spawned` scopes.
+- Per-leaf `LATERAL` price lookup (`FROM price_entry /* served by index price_entry_subject */ WHERE subject = ... AND unit = ... AND effective_from <= leaf_at ORDER BY effective_from DESC, seq DESC LIMIT 1`, where `leaf_at = coalesce(started_at, data->>'startedAt', ended_at, last_seen_at)`) runs inside the leaf CTE **before** outer `GROUP BY` and percentiles, preserving mid-bucket `effective_from` rate changes and exact `(id, observedAt)` provenance.
+- `execution(project_id, started_at)` serves the window; rows with null `started_at` fall outside every window.
+- Sources: `calls`, `connection`, `credits`, and money `measured` spend from `tool_run` / `execution_totals.connection_cost`; tokens, durations (`wall_ms`, `active_ms`, `api_ms`, `cpu_ms`), `peak_memory_bytes`, and gateway/harness metrics from `execution_totals`.
+- `usage_summary` is not an implemented operation; cost totals come from `analytics_query` and shared `CostFigure[]` rollups.
 
 **Lab use.** The Lab comparison reads trials through the same contract with `experiment` and `variant` as dimensions; the statistics on top are Lab's ([statistics](fleet-lab.md#statistics)).
 
@@ -60,4 +65,4 @@ The table belongs to connections and data, beside the provider catalogue in [con
 
 The first experiment may use one `owner` entry with basis `estimated`; nothing else is needed before it.
 
-Built (stage 3): the table `price_entry` (migration 27, append-only), `price_add {subject, unit, price, currency, source, sourceRef?, observedAt?, effectiveFrom?}` (a tool subject must use its catalogue unit; a model subject a token unit, never an alias) and `prices_list {subject?}`; each Lab trial in `lab_experiment_get` carries `cost: [{value, currency, basis, prices: [{id, observedAt}]}]`, one figure per currency plus `{value: null, basis: unavailable}` for usage no entry prices, shown in the `/lab` matrix. Not built: the snapshot pipeline, the grouping columns, the operation.
+Built: `price_entry`, `price_add`, `prices_list`, typed `CostFigure[]` / `ResourceSummary` / `ScopedResourceRollup` contracts, `analytics_query` with per-leaf `LATERAL` `price_entry_subject` pricing and RLS `hidden`/`unknown` counters, entity rollups in `task_get` / `session_get` / `definition_usage` / `executions_runners` / `lab_experiment_get`. Remaining: public vendor snapshot fetch pipeline and Analytics UI views.

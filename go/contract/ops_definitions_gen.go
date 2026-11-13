@@ -1183,16 +1183,28 @@ func (v *SettingChangesRequest) Validate() error {
 }
 
 type Window struct {
-	CostBasis    *string  `json:"costBasis,omitempty"`
-	CostUsd      *float64 `json:"costUsd,omitempty"`
-	Runs         int64    `json:"runs"`
-	Succeeded    int64    `json:"succeeded"`
-	Tokens       int64    `json:"tokens"`
-	WallMsMedian *int64   `json:"wallMsMedian"`
+	Cost         []CostFigure     `json:"cost,omitempty"`
+	CostBasis    *string          `json:"costBasis,omitempty"`
+	CostUsd      *float64         `json:"costUsd,omitempty"`
+	Resources    *ResourceSummary `json:"resources,omitempty"`
+	Runs         int64            `json:"runs"`
+	Succeeded    int64            `json:"succeeded"`
+	Tokens       int64            `json:"tokens"`
+	WallMsMedian *int64           `json:"wallMsMedian"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Window) Validate() error {
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
+	}
+	if v.Resources != nil {
+		if err := Check(v.Resources, "resources"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

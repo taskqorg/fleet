@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"fleet/contract"
 )
 
 // priceCols reads price as text: exact for the estimate (numeric), a number in the view.
@@ -127,13 +129,13 @@ type usage struct {
 
 // estimateCost: the cost of a set of usages against the price entries, one figure per currency, each with basis estimated and the price entries
 // used; usages with no price give one figure {value: null, basis: unavailable} (never 0). No usage gives none.
-func estimateCost(rs []doc, us []usage) []any {
+func estimateCost(rs []doc, us []usage) []contract.CostFigure {
 	if len(us) == 0 {
-		return []any{}
+		return []contract.CostFigure{}
 	}
 	type sum struct {
 		value  *big.Float
-		prices map[string]any
+		prices map[string]int64
 	}
 	byCurrency, unpriced := map[string]*sum{}, 0
 	for _, u := range us {
@@ -155,7 +157,7 @@ func estimateCost(rs []doc, us []usage) []any {
 		}
 		c := astr(hit["currency"])
 		if byCurrency[c] == nil {
-			byCurrency[c] = &sum{new(big.Float), map[string]any{}}
+			byCurrency[c] = &sum{new(big.Float), map[string]int64{}}
 		}
 		p, _ := new(big.Float).SetString(astr(hit["price"]))
 		if p == nil {
@@ -163,9 +165,13 @@ func estimateCost(rs []doc, us []usage) []any {
 			continue
 		}
 		byCurrency[c].value.Add(byCurrency[c].value, new(big.Float).Mul(p, big.NewFloat(*u.amount)))
-		byCurrency[c].prices[astr(hit["id"])] = msOf(hit["observed_at"])
+		var obs int64
+		if ms, ok := msOf(hit["observed_at"]).(int64); ok {
+			obs = ms
+		}
+		byCurrency[c].prices[astr(hit["id"])] = obs
 	}
-	out := []any{}
+	out := []contract.CostFigure{}
 	currencies := make([]string, 0, len(byCurrency))
 	for c := range byCurrency {
 		currencies = append(currencies, c)
@@ -173,15 +179,35 @@ func estimateCost(rs []doc, us []usage) []any {
 	sort.Strings(currencies)
 	for _, c := range currencies {
 		v, _ := byCurrency[c].value.Float64()
-		prices := []any{}
-		for _, id := range sortedKeysOf(byCurrency[c].prices) {
-			prices = append(prices, doc{"id": id, "observedAt": byCurrency[c].prices[id]})
+		ids := make([]string, 0, len(byCurrency[c].prices))
+		for id := range byCurrency[c].prices {
+			ids = append(ids, id)
 		}
-		out = append(out, doc{"value": v, "currency": c, "basis": "estimated", "prices": prices})
+		sort.Strings(ids)
+		prices := make([]contract.CostPriceRef, 0, len(ids))
+		for _, id := range ids {
+			prices = append(prices, contract.CostPriceRef{Id: id, ObservedAt: byCurrency[c].prices[id]})
+		}
+		curr, val := c, v
+		out = append(out, contract.CostFigure{
+			Value:    &val,
+			Currency: &curr,
+			Basis:    contract.ResourceBasisEstimated,
+			Prices:   prices,
+		})
 	}
 	if unpriced > 0 {
-		out = append(out, doc{"value": nil, "currency": nil, "basis": "unavailable", "reason": "no usage amount or price entry", "usages": unpriced})
+		uCount := int64(unpriced)
+		reason := unavailableCostReason
+		out = append(out, contract.CostFigure{
+			Value:    nil,
+			Currency: nil,
+			Basis:    contract.ResourceBasisUnavailable,
+			Reason:   &reason,
+			Usages:   &uCount,
+		})
 	}
+	sortCostFigures(out)
 	return out
 }
 
