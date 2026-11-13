@@ -194,6 +194,24 @@ func readiness(project any, host, registry string, forbidden ...[]string) contra
 		pl, perr := claudePlacementHere()
 		checks = append(checks, claudeChecks(host, pl, perr, homes)...)
 	}
+	if len(jArr(project, "execution", "tools")) > 0 && len(accounts) == 0 {
+		checks = append(checks, check("coding-tools", host, "managed-account-unavailable"))
+	}
+	if jAt(project, "execution", "forge") == true {
+		checks = append(checks, check("forge", host, forgeReadiness(project)))
+	}
+	for _, name := range sortedKeys(accounts) {
+		if !has(jAt(accounts[name], "harness")) || (jIsStr(accounts[name], "readiness") && jStr(accounts[name], "readiness") != "ready") {
+			continue
+		}
+		for _, tool := range jArr(project, "execution", "tools") {
+			failed := ""
+			if codingTool(jStr(tool), jStr(accounts[name], "home")) != nil {
+				failed = "coding-tool-unready"
+			}
+			checks = append(checks, check("tool:"+jStr(tool), name, failed))
+		}
+	}
 	ok := true
 	for _, c := range checks {
 		if c.Status != contract.CheckStatusOk {

@@ -326,6 +326,21 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
+			if mapOf(settings["execution"])["forge"] == true && (len(anys(settings["repos"])) == 0 || !inList(k.caps[id], "forge:"+strings.TrimSuffix(strings.TrimPrefix(astr(mapOf(anys(settings["repos"])[0])["remote"]), "https://github.com/"), ".git"))) {
+				skip("project forge connection unavailable on "+id, "host:"+id+":forge")
+				continue
+			}
+			missingTool := ""
+			for _, tool := range strs(mapOf(settings["execution"])["tools"]) {
+				if !inList(k.caps[id], "tool:"+tool) {
+					missingTool = tool
+					break
+				}
+			}
+			if missingTool != "" {
+				skip("coding tool unavailable: "+missingTool+" on "+id, "host:"+id+":tool:"+missingTool)
+				continue
+			}
 			if astr(x["workspaceKey"]) != "" && !inList(k.caps[id], "workspace-key-v1") {
 				skip(id+" executor lacks workspace-key-v1; update required", "host:"+id+":workspace-version")
 				continue

@@ -454,8 +454,8 @@ func mcpRun(args []string) error {
 	var ctx any
 	var db *sql.DB
 	switch server {
-	case "design-rules":
-		s, err := arg(1, "rules")
+	case "design-rules", "project-forge":
+		s, err := arg(1, "context")
 		if err != nil {
 			return err
 		}
@@ -525,6 +525,8 @@ func mcpRun(args []string) error {
 		var result any
 		if db != nil {
 			result, err = delegation(req, ctx, db)
+		} else if server == "project-forge" {
+			result, err = forge(req, ctx)
 		} else {
 			result, err = designRules(req, ctx)
 		}
