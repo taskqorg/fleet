@@ -3,11 +3,12 @@
 //   FLEET_TRIAL_TESTS=tests/go/resource-totals.test.ts node tests/trial/run.ts
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createHash, randomUUID} from 'node:crypto';
-import {appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {execFileSync, spawn} from 'node:child_process';
+import {createHash, randomBytes, randomUUID} from 'node:crypto';
+import {appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {startCoordinator} from '../harness.ts';
+import {freePort, root, startCoordinator} from '../harness.ts';
 
 const OWNER = 'owner@trial.test';
 const MEMBER = 'member@trial.test';
@@ -364,5 +365,163 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
   } finally {
     await c.stop();
     rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('Migration 50 upgrades a populated migration-49 database with deferred task foreign keys, multi-hop lineage, and GIN index rebuild without trigger errors (requirement: migration 50 upgrade on populated database; risk: deferred FK trigger queue blocks ALTER TABLE or GIN re-indexing stalls startup)', async () => {
+  const pgdata = process.env.FLEET_TRIAL_PGDATA || join(homedir(), '.cache/fleet-trial/pg');
+  const pgport = process.env.FLEET_TRIAL_PGPORT || '54329';
+  const pgArgs = ['-h', pgdata, '-p', pgport, '-U', 'postgres'];
+  const psql = (args: string[], input?: string) =>
+    execFileSync('psql', [...pgArgs, '-v', 'ON_ERROR_STOP=1', '-q', ...args], {
+      input,
+      encoding: 'utf8',
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    });
+
+  // Ensure the shared local trial cluster is initialized/running even if this test runs alone.
+  try {
+    execFileSync('pg_isready', pgArgs, {stdio: 'ignore'});
+  } catch {
+    const boot = await startCoordinator({name: 'mig50-boot'});
+    await boot.stop();
+  }
+
+  const db = 'fleet_trial_mig50_' + randomBytes(4).toString('hex');
+  const workDir = mkdtempSync(join(tmpdir(), 'fleet-mig50-'));
+  const peopleFile = join(workDir, 'people.json');
+  copyFileSync(join(root, 'tests/trial/people.json'), peopleFile);
+
+  let child: ReturnType<typeof spawn> | undefined;
+  let exited = false;
+  let gone: Promise<void> = Promise.resolve();
+  try {
+    const roles = readFileSync(join(root, 'deploy/infrastructure/fleet-postgres.sql'), 'utf8')
+      .replace(/DATABASE fleet\b/g, `DATABASE ${db}`)
+      .replace(/datname = 'fleet'/, `datname = '${db}'`)
+      .replace(/^\\connect fleet$/m, `\\connect ${db}`);
+    psql(['-d', 'postgres'], roles);
+
+    const schemaText = readFileSync(join(root, 'go/coordinator/schema.sql'), 'utf8');
+    const matches = [...schemaText.matchAll(/^-- migration (\d+)/gm)];
+    const pre50Chunks: string[] = [
+      'CREATE TABLE IF NOT EXISTS schema_migration(version int PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());',
+    ];
+    for (let i = 0; i < matches.length; i++) {
+      const ver = Number(matches[i][1]);
+      if (ver >= 50) break;
+      const start = matches[i].index!;
+      const end = i + 1 < matches.length ? matches[i + 1].index! : schemaText.length;
+      const body = schemaText.slice(start, end);
+      pre50Chunks.push(`BEGIN;\n${body}\n;\nINSERT INTO schema_migration(version) VALUES (${ver});\nCOMMIT;`);
+    }
+    psql(['-d', db, '-U', 'fleet'], pre50Chunks.join('\n'));
+
+    psql(
+      ['-d', db, '-U', 'fleet'],
+      `SET fleet.project_ids = '*';
+      INSERT INTO document(kind, id, project_id, data) VALUES
+        ('session', 'sess-creator', 'alpha', '{"id":"sess-creator","projectId":"alpha"}'::jsonb);
+      INSERT INTO execution(id, kind, state, observation, project_id, session_id, harness, data) VALUES
+        ('ex-creator', 'agent_run', 'succeeded', 'confirmed', 'alpha', 'sess-creator', 'claude', '{"id":"ex-creator"}'::jsonb);
+      INSERT INTO task(id, project_id, title, created_by, updated_at) VALUES
+        ('t-mig50', 'alpha', 'Mig 50 task', 'execution:ex-creator', '2026-01-01T00:00:00Z');
+      INSERT INTO execution(id, kind, state, observation, project_id, task_id, parent_execution_id, session_id, account_id, harness, definitions, directed_by, updated_at, data) VALUES
+        ('ex-pr', 'pipeline_run', 'succeeded', 'confirmed', 'alpha', 't-mig50', NULL, NULL, NULL, NULL, '[{"kind":"pipeline","id":"pipe-m50","revision":4}]'::jsonb, '${OWNER}', '2026-01-01T00:00:00Z', '{"id":"ex-pr"}'::jsonb),
+        ('ex-ps', 'pipeline_step', 'succeeded', 'confirmed', 'alpha', 't-mig50', 'ex-pr', NULL, NULL, NULL, '[]'::jsonb, '${OWNER}', '2026-01-01T00:00:00Z', '{"id":"step-m50"}'::jsonb),
+        ('ex-ar-null', 'agent_run', 'succeeded', 'confirmed', 'alpha', 't-mig50', NULL, 'sess-creator', 'sub-acct', 'claude', '[{"kind":"agent","id":"prof-m50","revision":9}]'::jsonb, '${OWNER}', '2026-01-01T00:00:00Z', '{"id":"ex-ar-null","pipelineStepId":"ex-ps"}'::jsonb),
+        ('ex-ar-kept', 'agent_run', 'succeeded', 'confirmed', 'alpha', 't-mig50', NULL, 'sess-creator', NULL, 'claude', '[]'::jsonb, '${OWNER}', '2026-01-01T00:00:00Z', '{"id":"ex-ar-kept"}'::jsonb),
+        ('ex-tr', 'tool_run', 'succeeded', 'confirmed', 'alpha', 't-mig50', 'ex-ar-null', 'sess-creator', NULL, NULL, '[]'::jsonb, '${OWNER}', '2026-01-01T00:00:00Z', '{"id":"ex-tr"}'::jsonb);
+      INSERT INTO execution_totals(execution_id, project_id, tokens_input, tokens_input_basis, wall_ms, wall_ms_basis) VALUES
+        ('ex-pr', 'alpha', NULL, 'unavailable', 100, 'measured'),
+        ('ex-ps', 'alpha', NULL, 'unavailable', 50, 'measured'),
+        ('ex-ar-null', 'alpha', NULL, 'unavailable', 40, 'measured'),
+        ('ex-ar-kept', 'alpha', 500, 'measured', 25, 'measured'),
+        ('ex-tr', 'alpha', NULL, 'unavailable', 10, 'measured');
+      INSERT INTO document(kind, id, project_id, data) VALUES
+        ('event', 'ev-mig50-1', 'alpha', '{"executionId":"ex-ar-null","data":{"type":"assistant","message":{"id":"msg_m50","usage":{"input_tokens":120,"output_tokens":30}}}}'::jsonb),
+        ('event', 'ev-mig50-kept', 'alpha', '{"executionId":"ex-ar-kept","data":{"type":"assistant","message":{"id":"msg_kept","usage":{"input_tokens":999,"output_tokens":11}}}}'::jsonb);
+      TRUNCATE change;`,
+    );
+
+    const url = (user: string) => `postgresql://${user}@/${db}?host=${encodeURIComponent(pgdata)}&port=${pgport}`;
+    const port = await freePort();
+    const secret = randomBytes(16).toString('hex');
+    const serverCmd = process.env.FLEET_TRIAL_SERVER || 'go/bin/fleet-coordinator';
+    child = spawn(serverCmd, {
+      cwd: root,
+      shell: true,
+      detached: true,
+      stdio: ['ignore', 'inherit', 'inherit'],
+      env: {
+        ...process.env,
+        PORT: String(port),
+        FLEET_DATABASE_URL: url('fleet_app'),
+        FLEET_MIGRATION_DATABASE_URL: url('fleet'),
+        FLEET_PEOPLE_FILE: peopleFile,
+        FLEET_BROWSER_SECRET: secret,
+        FLEET_HOST_ID: 'trial-host',
+        FLEET_CLICKHOUSE_URL: 'off',
+        FLEET_CLICKHOUSE_ENV: '/nonexistent',
+        FLEET_RUNNERS_CI_TICK_MS: '0',
+      },
+    });
+    const proc = child;
+    gone = new Promise(r => proc.on('exit', () => { exited = true; r(); }));
+
+    let health: any = null;
+    for (let i = 0; ; i++) {
+      if (exited) throw new Error('coordinator exited during migration 50 upgrade');
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+        if (res.status === 200) {
+          health = await res.json();
+          if (health.database === 'ok') break;
+        }
+      } catch {}
+      if (i > 300) throw new Error('coordinator did not become healthy in 30 s');
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    const sqlAt = (q: string) => psql(['-d', db, '-U', 'fleet', '-At'], `SET fleet.project_ids = '*';\n${q}`).trim();
+    assert.equal(sqlAt(`SELECT max(version) FROM schema_migration`), '50');
+    assert.equal(sqlAt(`SELECT count(*) FROM execution_totals WHERE execution_id IN ('ex-pr','ex-ps')`), '0');
+    assert.equal(
+      sqlAt(`SELECT coalesce(pipeline_id,'')||'|'||coalesce(pipeline_revision::text,'')||'|'||coalesce(step_id,'')||'|'||coalesce(profile_id,'')||'|'||coalesce(profile_revision::text,'') FROM execution WHERE id='ex-tr'`),
+      'pipe-m50|4|step-m50|prof-m50|9',
+    );
+    assert.equal(
+      sqlAt(`SELECT (e.updated_at AT TIME ZONE 'UTC')::text||'|'||coalesce(t.tokens_input::text,'')||'|'||coalesce(t.tokens_output::text,'')||'|'||t.billing_basis||'|'||coalesce(t.directed_by,'') FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.id='ex-ar-null'`),
+      `2026-01-01 00:00:00|120|30|subscription|${OWNER}`,
+    );
+    assert.equal(sqlAt(`SELECT tokens_input FROM execution_totals WHERE execution_id='ex-ar-kept'`), '500');
+    assert.equal(
+      sqlAt(`SELECT (updated_at AT TIME ZONE 'UTC')::text||'|'||coalesce(created_by_execution_id,'')||'|'||coalesce(created_by_session_id,'') FROM task WHERE id='t-mig50'`),
+      '2026-01-01 00:00:00|ex-creator|sess-creator',
+    );
+    assert.equal(sqlAt(`SELECT count(*) FROM change WHERE kind IN ('execution','task')`), '0');
+    const idxDefs = sqlAt(`SELECT string_agg(indexname||':'||indexdef, E'\n' ORDER BY indexname) FROM pg_indexes WHERE tablename IN ('execution','execution_totals','task')`);
+    for (const idx of [
+      'execution_data',
+      'execution_definitions',
+      'execution_project_started',
+      'execution_pipeline_rev',
+      'execution_profile_rev',
+      'execution_totals_directed',
+      'task_created_by_session',
+      'task_created_by_execution',
+    ]) {
+      assert.ok(idxDefs.includes(idx), `missing index ${idx}`);
+    }
+    assert.ok(idxDefs.includes('fastupdate=off'), 'execution_data must preserve fastupdate=off');
+  } finally {
+    if (child && !exited && child.pid) {
+      try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+      for (let i = 0; i < 50 && !exited; i++) await new Promise(r => setTimeout(r, 100));
+      if (!exited) try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+      await gone;
+    }
+    try { psql(['-d', 'postgres'], `DROP DATABASE IF EXISTS ${db} WITH (FORCE);`); } catch {}
+    rmSync(workDir, {recursive: true, force: true});
   }
 });
