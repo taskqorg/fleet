@@ -695,7 +695,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	p := &contract.StartPayload{Harness: ptr(harnessOf(s)), Text: strPtr(d["input"]), Setup: strPtr(nonNil(s["setup"], "run")),
 		WorkspaceKey: strPtr(s["workspaceKey"]), WorkingDirectory: strPtr(s["workingDirectory"]), Model: strPtr(e["model"]), Effort: strPtr(e["effort"]),
 		Instructions: ptr(defaultInstructions), NativeSessionId: strp(s, "nativeSessionId")} // "" still reaches the executor's check
-	if s["account"] != nil || (binding != nil && s["nativeSessionId"] == nil) {
+	if s["account"] != nil || binding != nil {
 		if binding != nil {
 			p.Account = strPtr(binding["binding"])
 		} else {
