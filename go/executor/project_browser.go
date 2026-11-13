@@ -13,6 +13,10 @@ import (
 var projectBrowserScript string
 
 func browserConfig(payload any) (M, error) {
+	projectID := jStr(payload, "projectId")
+	if projectID == "" {
+		return nil, errors.New("browser-project-not-granted")
+	}
 	path := os.Getenv("FLEET_BROWSER_BINDINGS")
 	if !filepath.IsAbs(path) || private(path) != nil {
 		return nil, errors.New("browser-binding-unready")
@@ -30,7 +34,7 @@ func browserConfig(payload any) (M, error) {
 		return nil, err
 	}
 	// The coordinator supplies identity separately from normalized project settings.
-	binding := jObj(bindings, jStr(payload, "projectId"))
+	binding := jObj(bindings, projectID)
 	if binding == nil {
 		return nil, errors.New("browser-project-not-granted")
 	}
