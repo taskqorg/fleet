@@ -1,21 +1,25 @@
-# app
+# Operator app
 
-The Fleet operator app: a Preact single-page app served by the coordinator at `/overview`, `/tasks`, `/conversations` and `/hosts`. Design: [docs/designs/fleet-operator-app.md](../docs/designs/fleet-operator-app.md); design-system decision D15.
+## Overview
 
-## Key files
+`app/` builds Fleet's Preact operator application into `dist/app`. The coordinator serves its routes; this package does not define a separate API.
 
-| File | Purpose |
-|---|---|
-| `build.mjs` | esbuild build into `dist/app`: hashed chunks per view, `index.html`, `sw.js`, per-view manifests and icons, size report. Run by `pnpm run build` and `pnpm run app:build`. |
-| `tsconfig.json` | Type-checks `app/` and `packages/ui` with Preact JSX. |
-| `src/main.tsx` | Entry: `AppShell`, Wouter routes, identity check (`me`), feed start, service worker and the "Update available" and "Session expired" notices. |
-| `src/api.ts` | `op(name, args)` against `/api/ops/:name`; signed-out detection. |
-| `src/feed.ts` | SSE client for `/api/stream?cursor=`, with backoff, `changes_since` polling fallback and `resync`. |
-| `src/live.ts`, `src/lists.ts` | Entity rows and server-decided list membership (`list_membership`), applied in batches. |
-| `src/offline.ts` | IndexedDB mirror of open views, cleared on sign-out or a grants change. |
-| `src/prefs.ts` | Per-browser pins and saved views (localStorage) until people exist. |
-| `src/views/*.tsx` | The four views. List and detail share one route component (`Tasks` with an `id`, and so on). |
+## Interface
 
-## Connections
+- [`build.mjs`](build.mjs) bundles [`src/main.tsx`](src/main.tsx), emits hashed assets, per-workspace web manifests, `screens.json`, `sw.js`, and a size report.
+- [`src`](src/README.md) contains the application shell, typed operation client, live-state store, and route views.
+- `tsconfig.json` type-checks the app, UI package, URL package, and UI tests with Preact JSX.
 
-Builds only from `packages/ui` (OR-13). Reads and writes only through coordinator ops; the coordinator (`go/coordinator/artifact_routes.go`, `stream.go`) serves the built files. Checked by `tests/ui/app.check.ts` through `pnpm run check:design`.
+## Invariants
+
+- `build.mjs` removes and recreates only `dist/app`; its service worker never caches `/api/` requests.
+- Installable manifests come from registry workspaces whose `app` flag is true (`build.mjs`, `packages/ui/src/registry.ts`).
+
+## Side Effects
+
+- `build.mjs` deletes and writes generated files under `dist/app`.
+
+## Verification
+
+- Run: `pnpm run app:build`
+- Design warnings: `pnpm run check:design`

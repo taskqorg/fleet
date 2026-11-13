@@ -15,7 +15,7 @@ Design: [data foundation](../docs/designs/fleet-data-foundation.md) Phase 0 and 
 
 ## Releases
 
-Every push to `main` starts the release workflow ([delivery pipeline](../docs/designs/fleet-delivery-pipeline.md#4-automatic-release)); nobody tags. It runs one at a time (group `release`); merges that land meanwhile form the next batch. It waits for the commit's CI job `app`, whose validation also posts the required `go` and `browser` statuses (the merge queue run, else the push run), computes the version `1.<yymmdd>.<M>` (`yymmdd` the UTC date of the run, `M` one more than the highest tag that day, from 0), builds, checks migrations against each of the last 5 releases and publishes on GitHub Releases: the tarballs, `SHA256SUMS`, `SHA256SUMS.sig` (Ed25519, key in environment `release`), `latest.json` (with `checkedWith`) and `provenance.sigstore.jsonl`, tagging the commit by API. Pause: `gh variable set FLEET_RELEASE_PAUSE --body on` stops releases from pushes; `gh variable delete FLEET_RELEASE_PAUSE`, then `gh workflow run release`, releases everything merged meanwhile. `gh workflow run release -f sha=<commit on main>` releases one chosen commit, paused or not; the gate needs that commit's `test-qualification` artifact, kept 7 days; for an older commit (or after a pause longer than that) re-run all jobs of its `ci` run first (the merge-queue run; the gate takes that one), which uploads the artifact again. A failed run is re-run from the Actions page. Every host then installs the release by itself ([self-update](../docs/designs/fleet-self-update.md)): PDS18 within about 2 minutes, each other executor on its next timer run after the coordinator is healthy.
+Every push to `main` starts the release workflow ([delivery pipeline](../docs/designs/fleet-delivery-pipeline.md#4-automatic-release)); nobody tags. It runs one at a time (group `release`); merges that land meanwhile form the next batch. It waits for the commit's CI job `app`, whose validation also posts the required `go` and `browser` statuses (the merge queue run, else the push run), computes the version with `release-version.sh`: `1.<yymmdd>.<M>` (`yymmdd` the commit’s UTC date, `M` its zero-based position in that day’s first-parent history), builds, checks migrations against each of the last 5 releases and publishes on GitHub Releases: the tarballs, `SHA256SUMS`, `SHA256SUMS.sig` (Ed25519, key in environment `release`), `latest.json` (with `checkedWith`) and `provenance.sigstore.jsonl`, tagging the commit by API. Pause: `gh variable set FLEET_RELEASE_PAUSE --body on` stops releases from pushes; `gh variable delete FLEET_RELEASE_PAUSE`, then `gh workflow run release`, releases everything merged meanwhile. `gh workflow run release -f sha=<commit on main>` releases one chosen commit, paused or not; the gate needs that commit's `test-qualification` artifact, kept 7 days; for an older commit (or after a pause longer than that) re-run all jobs of its `ci` run first (the merge-queue run; the gate takes that one), which uploads the artifact again. A failed run is re-run from the Actions page. Every host then installs the release by itself ([self-update](../docs/designs/fleet-self-update.md)): PDS18 within about 2 minutes, each other executor on its next timer run after the coordinator is healthy.
 
 ## Check
 
@@ -61,3 +61,26 @@ Proves the three-start rollback on the live hosts. It needs a breakage on `main`
 3. Revert that pull request on `main` right after `D` is published; release the revert as `E` only after the drill.
 4. Expect on PDS18 within 5 minutes (one timer tick, then three 30 s health windows before the rollback; `journalctl -u fleet-update`): three `unhealthy start` lines, `rolled back to N`, coordinator back on `N`; `hosts_list` for `pds18` shows `update.state: refused`, `error: unhealthy`, `version: D`; one needs-you question "pds18: update to D rolled back (unhealthy)."; no executor moves (the coordinator never marked `D` healthy). Later runs log nothing for `D`.
 5. `gh workflow run release -f sha=<revert commit>` publishes `E`, then `gh variable delete FLEET_RELEASE_PAUSE`: every host installs `E`; the `pds18` `ok` withdraws the question.
+
+## Interface
+
+- [build-release.sh](build-release.sh), [install-release.sh](install-release.sh), [status.sh](status.sh): archive construction, first installation/manual rollback and terminal progress, described above.
+- [release-version.sh](release-version.sh): deterministic version from a commit's first-parent history.
+- [release-recent.sh](release-recent.sh): the five newest published native release versions and Linux asset digests.
+- [verify-release.sh](verify-release.sh): extracts archives, checks static build metadata and runs Linux binary selftests.
+- [migrate-check.sh](migrate-check.sh): starts a temporary PostgreSQL database, upgrades from the latest release and checks recent coordinators against the new schema.
+- [window-covered.sh](window-covered.sh): verifies whether speculative migration evidence still covers current release digests and source trees.
+- [workflows-moved.sh](workflows-moved.sh): reports workflow changes between a candidate and main for tag publication.
+- [Infrastructure](infrastructure/README.md): service definitions, access checks and backup scripts. Linux and macOS host service files remain under `hosts/`.
+
+## Invariants
+
+`build-release.sh` builds an exact `git archive` with `CGO_ENABLED=0` and rejects AppleDouble entries. `install-release.sh` requires adjacent checksums and uses relative current/previous links; it is not the automatic updater's signature/provenance boundary. `window-covered.sh` preserves digest identity and requires equivalent Go/config/deploy trees for newly entered versions. Candidate infrastructure files are not evidence of installation.
+
+## Side Effects
+
+Release construction writes archives and downloads build dependencies. Installation changes release directories and symlinks and restarts installed local services. Migration checks download old releases, prune their private cache, start/stop test databases and coordinators, and remove stale test processes owned by the CI user. These commands are not read-only checks of a production host.
+
+## Verification
+
+README-only changes use `git diff --check`. The release CI runs `verify-release.sh` and `migrate-check.sh` on its candidate archives. Running those scripts locally requires their archive, Linux toolchain and disposable CI environment; this bootstrap does not install or deploy services.

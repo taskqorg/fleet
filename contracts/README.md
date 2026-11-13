@@ -47,7 +47,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
 * Go: `go/gen` writes the same types into the shared package `go/contract` on `go generate` (`go/contract/<name>_gen.go`).
   The files are committed; CI fails when `go generate` changes them. The executor uses them for the poll reply, status receipts, event batches and the data of its own event types (`FleetEventType`); native harness records stay raw JSON (`HostEvent.data`).
 
-Every `*.schema.json` file here is generated; each `$defs` entry becomes one type with the same name.
+Every `*.schema.json` file here is an input to generation; each `$defs` entry becomes one type with the same name.
 
 ## Supported subset
 
@@ -67,3 +67,19 @@ An object without properties whose `additionalProperties` is a schema is a map (
   property with `"null"` in its type is always written, as `null` when absent.
 
 Catalogue method reads add scoped assessment and recommendation evidence without wrapping existing method fields. `lab_compare_methods` creates an unlaunched Lab experiment with per-variant pipeline snapshots and separate catalogue linkage; `config_ref` remains the actual pipeline/overrides digest. Missing numeric assessment values are explicit nulls; partial observed means retain populations and evaluator/version basis. See [definition editors](../docs/designs/fleet-definition-editors.md) for authority, selection and recovery rules.
+
+## Interface
+
+[gen-ts.mjs](gen-ts.mjs) reads the schema `$defs`, `operations` and `planned` maps, emits domain types, and joins built operations into `generated/ops.ts`. [Go contracts](../go/contract/README.md) consume the same schemas through [go/gen](../go/gen/README.md).
+
+## Invariants
+
+`gen-ts.mjs:type` rejects unsupported keywords and invalid nested enum/object/union forms. The top-level `seen` map rejects an operation name shared by built or planned entries across files. Planned operations need request/reply types but are excluded from the callable `Ops` map. Required nullable values remain distinct from optional fields.
+
+## Side Effects
+
+Generation creates or overwrites TypeScript files under `generated/`. It reads no credentials and makes no network requests. Go generation writes committed files in `go/contract/`; do not hand-edit generated output.
+
+## Verification
+
+From the repository root: `pnpm run contracts` checks TypeScript generation; `pnpm run typecheck` also checks its consumers. In CI, `cd go && go generate ./...` must leave the committed generated Go types unchanged. For README-only changes, use `git diff --check` and link validation.
