@@ -4,6 +4,8 @@ package main
 
 import (
 	"encoding/json"
+	"fleet/contract"
+	"fmt"
 	"os"
 	"os/exec"
 	"slices"
@@ -256,5 +258,147 @@ func TestClaudeNativeToolDelivery(t *testing.T) {
 		if c.Args[len(c.Args)-1] != tc.want {
 			t.Fatalf("permission grant differs: %v", c.Args)
 		}
+	}
+}
+
+// Requirement: non-gateway harness tool calls, turn counts, active duration, and bounded overflow metrics are extracted accurately per harness.
+// Risk: gateway connection tools, synthetic wire frames, ID-less tool collisions, or >32 distinct tools distort analytics or bloat event payloads.
+func TestRunMetricsPerHarnessAndOverflow(t *testing.T) {
+	// Codex: codexSession fallback durationMs (int64), usage steps, non-gateway + gateway + synthetic filtering.
+	cs := &codexSession{stage: 2, thread: "th-1"}
+	cs.Receive(j(`{"id":3,"result":{"turn":{"id":"turn-1"}}}`))
+	_, ev, done, err := cs.Receive(j(`{"method":"turn/completed","params":{"threadId":"th-1","turn":{"id":"turn-1","status":"completed"}}}`))
+	if err != nil || !done {
+		t.Fatalf("codex Receive unexpected done=%v err=%v", done, err)
+	}
+	if _, ok := ev["durationMs"].(int64); !ok {
+		t.Fatalf("expected int64 fallback durationMs, got %T (%v)", ev["durationMs"], ev["durationMs"])
+	}
+	cm := newRunMetrics(map[string]bool{"linear": true})
+	cm.observeEvent("codex", ev, 100)
+	cm.observeEvent("codex", j(`{"type":"usage.observation"}`), 110)
+	cm.observeEvent("codex", j(`{"type":"usage.observation"}`), 120)
+	cm.observeEvent("codex", j(`{"type":"item.completed","item":{"id":"i1","type":"mcpToolCall","server":"git","tool":"status","status":"completed"}}`), 130)
+	cm.observeEvent("codex", j(`{"type":"item.completed","item":{"id":"i2","type":"commandExecution","exitCode":1}}`), 140)
+	cm.observeEvent("codex", j(`{"type":"item.completed","item":{"id":"i3","type":"mcpToolCall","server":"linear","tool":"issue_list","status":"completed"}}`), 150)
+	cm.observeEvent("codex", j(`{"type":"item.completed","item":{"id":"i4","type":"function_call","name":"mcp__linear__issue_create"}}`), 160)
+	cm.observeEvent("codex", j(`{"type":"unparsed"}`), 170)
+	cm.observeEvent("codex", j(`{"type":"protocol.write"}`), 180)
+	cm.observeEvent("codex", j(`{"type":"stream.failed"}`), 190)
+
+	var cout contract.ExecutionResourceSummary
+	cm.applyTo("codex", &cout)
+	if cout.ActiveMs == nil {
+		t.Fatal("codex ActiveMs expected non-nil")
+	}
+	if cout.TurnCount == nil || *cout.TurnCount != 2 {
+		t.Fatalf("codex TurnCount got %v want 2", cout.TurnCount)
+	}
+	if got := cout.ToolCalls["git/status"]; got != (contract.ToolCallCounter{Calls: 1, Errors: 0}) {
+		t.Fatalf("codex git/status got %+v", got)
+	}
+	if got := cout.ToolCalls["commandExecution"]; got != (contract.ToolCallCounter{Calls: 1, Errors: 1}) {
+		t.Fatalf("codex commandExecution got %+v", got)
+	}
+	for k := range cout.ToolCalls {
+		if strings.HasPrefix(k, "linear/") {
+			t.Fatalf("gateway connection tool leaked into Codex ToolCalls: %q", k)
+		}
+	}
+
+	// Claude: ID-less tool_use calls must not collide, named tool_use error tracking, gateway exclusion, num_turns + duration_ms.
+	clm := newRunMetrics(map[string]bool{"github": true})
+	clm.observeEvent("claude", j(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"},{"type":"tool_use","name":"Bash"},{"type":"tool_use","id":"t1","name":"Edit"},{"type":"tool_use","id":"t2","name":"mcp__github__pr_view"}]}}`), 200)
+	clm.observeEvent("claude", j(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true},{"type":"tool_result","tool_use_id":"t2","is_error":true}]}}`), 250)
+	clm.observeEvent("claude", j(`{"type":"result","num_turns":3,"duration_ms":450}`), 300)
+
+	var clout contract.ExecutionResourceSummary
+	clm.applyTo("claude", &clout)
+	if clout.TurnCount == nil || *clout.TurnCount != 3 {
+		t.Fatalf("claude TurnCount got %v want 3", clout.TurnCount)
+	}
+	if clout.ActiveMs == nil || *clout.ActiveMs != 450 {
+		t.Fatalf("claude ActiveMs got %v want 450", clout.ActiveMs)
+	}
+	if got := clout.ToolCalls["Bash"]; got != (contract.ToolCallCounter{Calls: 2, Errors: 0}) {
+		t.Fatalf("claude Bash got %+v", got)
+	}
+	if got := clout.ToolCalls["Edit"]; got != (contract.ToolCallCounter{Calls: 1, Errors: 1}) {
+		t.Fatalf("claude Edit got %+v", got)
+	}
+	for k := range clout.ToolCalls {
+		if strings.HasPrefix(k, "github/") {
+			t.Fatalf("gateway connection tool leaked into Claude ToolCalls: %q", k)
+		}
+	}
+
+	// ACP: acpSession prompt durationMs (int64), acp.update + PLANNER_RESPONSE + TOOL_RESPONSE, gateway exclusion.
+	as := &acpSession{session: "s1", profile: M{"text": "hi"}}
+	as.prompt()
+	_, aev, adone, aerr := as.Receive(j(`{"id":5,"result":{"stopReason":"end_turn"}}`))
+	if aerr != nil || !adone {
+		t.Fatalf("acp Receive unexpected done=%v err=%v", adone, aerr)
+	}
+	if _, ok := aev["durationMs"].(int64); !ok {
+		t.Fatalf("expected int64 acp durationMs, got %T (%v)", aev["durationMs"], aev["durationMs"])
+	}
+	am := newRunMetrics(map[string]bool{"github": true})
+	am.observeEvent("acp", aev, 400)
+	am.observeEvent("acp", j(`{"type":"acp.update","update":{"sessionUpdate":"tool_call","toolCallId":"tc1","name":"Read"}}`), 410)
+	am.observeEvent("acp", j(`{"type":"acp.update","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc1","status":"failed"}}`), 420)
+	am.observeEvent("antigravity", j(`{"type":"PLANNER_RESPONSE","tool_calls":[{"id":"c1","name":"github/issues"},{"id":"c2","name":"grep"}]}`), 430)
+	am.observeEvent("antigravity", j(`{"type":"TOOL_RESPONSE","tool_call_id":"c1","status":"ERROR"}`), 440)
+	am.observeEvent("antigravity", j(`{"type":"TOOL_RESPONSE","tool_call_id":"c2","status":"ERROR"}`), 450)
+
+	var aout contract.ExecutionResourceSummary
+	am.applyTo("acp", &aout)
+	if aout.ActiveMs == nil {
+		t.Fatal("acp ActiveMs expected non-nil")
+	}
+	if got := aout.ToolCalls["Read"]; got != (contract.ToolCallCounter{Calls: 1, Errors: 1}) {
+		t.Fatalf("acp Read got %+v", got)
+	}
+	if got := aout.ToolCalls["grep"]; got != (contract.ToolCallCounter{Calls: 1, Errors: 1}) {
+		t.Fatalf("acp grep got %+v", got)
+	}
+	if _, ok := aout.ToolCalls["github/issues"]; ok {
+		t.Fatal("gateway connection tool github/issues leaked into ACP ToolCalls")
+	}
+
+	// Overflow (>32 distinct tools): keep top 32 by (-Errors, -Calls, name) and aggregate rest into ToolCallsOther.
+	om := newRunMetrics(nil)
+	for i := 0; i < 35; i++ {
+		name := fmt.Sprintf("t%02d", i)
+		calls := 40 - i // t00..t34 strictly decreasing calls
+		for c := 0; c < calls; c++ {
+			id := fmt.Sprintf("id-%d-%d", i, c)
+			ev := M{
+				"type":    "assistant",
+				"message": M{"content": []any{M{"type": "tool_use", "id": id, "name": name}}},
+			}
+			om.observeEvent("claude", ev, int64(500+i))
+			// Give t34 one error so error-bearing tools sort first and remain retained.
+			if i == 34 && c == 0 {
+				om.observeEvent("claude", M{
+					"type":    "user",
+					"message": M{"content": []any{M{"type": "tool_result", "tool_use_id": id, "is_error": true}}},
+				}, 600)
+			}
+		}
+	}
+	var oout contract.ExecutionResourceSummary
+	om.applyTo("claude", &oout)
+	if err := contract.Check(&oout, "ExecutionResourceSummary"); err != nil {
+		t.Fatal(err)
+	}
+	if len(oout.ToolCalls) != maxToolEntries {
+		t.Fatalf("expected %d kept tool entries, got %d", maxToolEntries, len(oout.ToolCalls))
+	}
+	if _, ok := oout.ToolCalls["t34"]; !ok {
+		t.Fatal("expected error-bearing tool t34 to be retained in top 32")
+	}
+	// Retained: t34 (1 error, 6 calls) + t00..t30 (0 errors, 40..10 calls). Overflow: t31 (9), t32 (8), t33 (7) => 24 calls, 0 errors.
+	if oout.ToolCallsOther == nil || *oout.ToolCallsOther != (contract.ToolCallCounter{Calls: 24, Errors: 0}) {
+		t.Fatalf("unexpected ToolCallsOther: %+v want {Calls:24 Errors:0}", oout.ToolCallsOther)
 	}
 }

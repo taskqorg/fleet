@@ -421,3 +421,366 @@ func (b *blocks) own(h string, v M, at uint64) []any {
 	}
 	return out
 }
+
+const maxToolEntries = 32
+
+// runMetrics accumulates non-gateway tool calls, turn counts, and active duration from normalized harness events.
+type runMetrics struct {
+	gatewayConns     map[string]bool
+	tools            map[string]*contract.ToolCallCounter
+	toolNameByID     map[string]string
+	seenToolIDs      map[string]bool
+	erroredToolIDs   map[string]bool
+	ignoredToolIDs   map[string]bool
+	usageSteps       int64
+	assistantSteps   int64
+	completedTurns   int64
+	reportedTurns    int64
+	hasAssistantItem  bool
+	inAssistantStep   bool
+	hasReportedActive bool
+	reportedActiveMs  int64
+	firstActivityMs   int64
+	lastActivityMs    int64
+}
+
+func newRunMetrics(gatewayConns map[string]bool) *runMetrics {
+	return &runMetrics{
+		gatewayConns:   gatewayConns,
+		tools:          map[string]*contract.ToolCallCounter{},
+		toolNameByID:   map[string]string{},
+		seenToolIDs:    map[string]bool{},
+		erroredToolIDs: map[string]bool{},
+		ignoredToolIDs: map[string]bool{},
+	}
+}
+
+func (m *runMetrics) isGatewayTool(server, rawName string) bool {
+	if len(m.gatewayConns) == 0 {
+		return false
+	}
+	if server != "" && m.gatewayConns[server] {
+		return true
+	}
+	if strings.HasPrefix(rawName, "mcp__") {
+		if srv, tool, ok := strings.Cut(rawName[5:], "__"); ok && srv != "" && tool != "" && m.gatewayConns[srv] {
+			return true
+		}
+	}
+	for conn := range m.gatewayConns {
+		if conn != "" && (strings.HasPrefix(rawName, conn+"/") || strings.HasPrefix(rawName, conn+":")) {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalToolName(server, rawName string) string {
+	if strings.HasPrefix(rawName, "mcp__") {
+		if srv, tool, ok := strings.Cut(rawName[5:], "__"); ok && srv != "" && tool != "" {
+			return srv + "/" + tool
+		}
+	}
+	trimmed := strings.TrimSpace(rawName)
+	if server != "" && trimmed != "" && !strings.Contains(trimmed, "/") {
+		return server + "/" + trimmed
+	}
+	return trimmed
+}
+
+func (m *runMetrics) touch(atMs int64) {
+	if atMs <= 0 {
+		return
+	}
+	if m.firstActivityMs == 0 || atMs < m.firstActivityMs {
+		m.firstActivityMs = atMs
+	}
+	if atMs > m.lastActivityMs {
+		m.lastActivityMs = atMs
+	}
+}
+
+func (m *runMetrics) recordCall(id, server, rawName string) (string, bool) {
+	if m.isGatewayTool(server, rawName) {
+		if id != "" {
+			m.ignoredToolIDs[id] = true
+		}
+		return "", false
+	}
+	if id != "" && (m.seenToolIDs[id] || m.ignoredToolIDs[id]) {
+		return m.toolNameByID[id], false
+	}
+	tname := canonicalToolName(server, rawName)
+	if tname == "" {
+		tname = "tool"
+	}
+	if id != "" {
+		m.seenToolIDs[id] = true
+		m.toolNameByID[id] = tname
+	}
+	c := m.tools[tname]
+	if c == nil {
+		c = &contract.ToolCallCounter{}
+		m.tools[tname] = c
+	}
+	c.Calls++
+	return tname, true
+}
+
+func toolID(prefix string, v any) string {
+	if v == nil {
+		return ""
+	}
+	k := blockKey(v)
+	if k == "" || k == "null" {
+		return ""
+	}
+	return prefix + ":" + k
+}
+
+func (m *runMetrics) recordErrorByID(id string) {
+	if id == "" || m.ignoredToolIDs[id] || m.erroredToolIDs[id] {
+		return
+	}
+	tname := m.toolNameByID[id]
+	if tname == "" {
+		return
+	}
+	if id != "" {
+		m.erroredToolIDs[id] = true
+	}
+	c := m.tools[tname]
+	if c == nil {
+		c = &contract.ToolCallCounter{}
+		m.tools[tname] = c
+	}
+	c.Errors++
+}
+
+func (m *runMetrics) observeEvent(h string, v M, atMs int64) {
+	t := jStr(v, "type")
+	if t == "unparsed" ||
+		t == string(contract.FleetEventTypeProtocolWrite) ||
+		t == string(contract.FleetEventTypeProtocolFailed) ||
+		t == string(contract.FleetEventTypeLimitReading) ||
+		t == "steer.result" ||
+		(strings.HasSuffix(t, ".failed") && t != "turn.failed") {
+		return
+	}
+	switch {
+	case h == "codex":
+		m.observeCodex(t, v, atMs)
+	case h == "claude":
+		m.observeClaude(t, v, atMs)
+	case isACP(h):
+		m.observeACP(t, v, atMs)
+	}
+}
+
+func (m *runMetrics) observeCodex(t string, v M, atMs int64) {
+	switch t {
+	case "thread.started", "item.completed", "usage.observation", "turn.completed", "turn.failed":
+		m.touch(atMs)
+	}
+	switch t {
+	case "usage.observation":
+		m.usageSteps++
+	case "turn.completed", "turn.failed":
+		m.completedTurns++
+		if d, ok := num(first(v, "durationMs")); ok && d >= 0 {
+			m.hasReportedActive = true
+			m.reportedActiveMs += int64(math.Round(d))
+		} else if d, ok := num(jAt(v, "native", "params", "turn", "durationMs")); ok && d >= 0 {
+			m.hasReportedActive = true
+			m.reportedActiveMs += int64(math.Round(d))
+		}
+	case "item.completed":
+		i := jAt(v, "item")
+		kind := jStr(jAt(i, "type"))
+		switch kind {
+		case "agent_message", "agentMessage", "reasoning", "plan":
+			m.hasAssistantItem = true
+		case "command_execution", "commandExecution", "mcp_tool_call", "mcpToolCall", "function_call", "collabAgentToolCall":
+			srv := jStr(jAt(i, "server"))
+			rawName := label(first(i, "tool", "name"), kind)
+			id := toolID("codex", jAt(i, "id"))
+			tname, counted := m.recordCall(id, srv, rawName)
+			if !counted || tname == "" {
+				return
+			}
+			failed := jStr(jAt(i, "status")) == "failed" || jAt(i, "error") != nil
+			if !failed && (kind == "command_execution" || kind == "commandExecution") {
+				if ec, ok := num(first(i, "exitCode", "exit_code")); ok && ec != 0 {
+					failed = true
+				}
+			}
+			if failed {
+				if id != "" {
+					m.erroredToolIDs[id] = true
+				}
+				m.tools[tname].Errors++
+			}
+		}
+	}
+}
+
+func (m *runMetrics) observeClaude(t string, v M, atMs int64) {
+	if t == "assistant" || t == "user" || t == "result" {
+		m.touch(atMs)
+	}
+	switch t {
+	case "assistant":
+		m.assistantSteps++
+	case "result":
+		if n, ok := num(v["num_turns"]); ok && n > 0 {
+			m.reportedTurns = max(m.reportedTurns, int64(math.Round(n)))
+		}
+		if d, ok := num(v["duration_ms"]); ok && d >= 0 {
+			m.hasReportedActive = true
+			m.reportedActiveMs += int64(math.Round(d))
+		}
+		return
+	}
+	if t != "assistant" && t != "user" {
+		return
+	}
+	content, _ := jAt(v, "message", "content").([]any)
+	for _, c := range content {
+		switch jAt(c, "type") {
+		case "tool_use":
+			id := toolID("claude", jAt(c, "id"))
+			rawName := label(jAt(c, "name"), "tool")
+			m.recordCall(id, "", rawName)
+		case "tool_result":
+			if jAt(c, "is_error") == true {
+				id := toolID("claude", jAt(c, "tool_use_id"))
+				m.recordErrorByID(id)
+			}
+		}
+	}
+}
+
+func (m *runMetrics) observeACP(t string, v M, atMs int64) {
+	if t == "session.started" || t == "configuration.applied" || t == "acp.update" ||
+		t == "turn.completed" || t == "turn.failed" || t == "PLANNER_RESPONSE" ||
+		t == "TOOL_RESPONSE" || has(v, "step_update") || v["event"] == "result" {
+		m.touch(atMs)
+	}
+	switch {
+	case t == "PLANNER_RESPONSE":
+		m.assistantSteps++
+		m.inAssistantStep = false
+		for _, tc := range jArr(v, "tool_calls") {
+			id := toolID("call", jAt(tc, "id"))
+			rawName := label(jAt(tc, "name"), "tool")
+			m.recordCall(id, "", rawName)
+		}
+	case t == "TOOL_RESPONSE":
+		st := jStr(v, "status")
+		if st == "ERROR" || st == "failed" {
+			id := toolID("call", jAt(v, "tool_call_id"))
+			m.recordErrorByID(id)
+		}
+	case t == "acp.update":
+		u := jAt(v, "update")
+		su := jStr(jAt(u, "sessionUpdate"))
+		if (su == "agent_message_chunk" || su == "agent_thought_chunk" || su == "tool_call") && !m.inAssistantStep {
+			m.inAssistantStep = true
+			m.assistantSteps++
+		}
+		if su == "tool_call" || su == "tool_call_update" {
+			id := toolID("acp", jAt(u, "toolCallId"))
+			rawName := jStr(first(u, "name", "title"))
+			if su == "tool_call" || rawName != "" || id != "" {
+				m.recordCall(id, "", rawName)
+			}
+			st := jStr(jAt(u, "status"))
+			if st == "completed" || st == "failed" {
+				m.inAssistantStep = false
+			}
+			if st == "failed" {
+				m.recordErrorByID(id)
+			}
+		}
+	case has(v, "step_update"):
+		su := jAt(v, "step_update")
+		if _, ok := str(jAt(su, "text_delta")); ok && !m.inAssistantStep {
+			m.inAssistantStep = true
+			m.assistantSteps++
+		}
+		if jAt(su, "step_type") == "tool" {
+			m.inAssistantStep = false
+			id := toolID("step", jAt(su, "step_index"))
+			rawName := label(jAt(su, "tool_name"), "tool")
+			m.recordCall(id, "", rawName)
+			st := jStr(jAt(su, "state"))
+			if st == "failed" || st == "ERROR" {
+				m.recordErrorByID(id)
+			}
+		}
+	case t == "turn.completed" || t == "turn.failed" || v["event"] == "result":
+		m.completedTurns++
+		m.inAssistantStep = false
+		if d, ok := num(v["durationMs"]); ok && d >= 0 {
+			m.hasReportedActive = true
+			m.reportedActiveMs += int64(math.Round(d))
+		}
+	}
+}
+
+func (m *runMetrics) applyTo(h string, out *contract.ExecutionResourceSummary) {
+	var turns int64
+	if h == "codex" {
+		switch {
+		case m.usageSteps > 0:
+			turns = m.usageSteps
+		case m.completedTurns > 0:
+			turns = m.completedTurns
+		case m.hasAssistantItem || len(m.tools) > 0:
+			turns = 1
+		}
+	} else {
+		turns = max(m.reportedTurns, max(m.assistantSteps, m.completedTurns))
+	}
+	if turns > 0 {
+		out.TurnCount = &turns
+	}
+	if m.hasReportedActive {
+		active := m.reportedActiveMs
+		out.ActiveMs = &active
+	} else if m.firstActivityMs > 0 && m.lastActivityMs >= m.firstActivityMs {
+		active := m.lastActivityMs - m.firstActivityMs
+		out.ActiveMs = &active
+	}
+	if len(m.tools) == 0 {
+		return
+	}
+	names := make([]string, 0, len(m.tools))
+	for name := range m.tools {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		a, b := m.tools[names[i]], m.tools[names[j]]
+		if a.Errors != b.Errors {
+			return a.Errors > b.Errors
+		}
+		if a.Calls != b.Calls {
+			return a.Calls > b.Calls
+		}
+		return names[i] < names[j]
+	})
+	keep := min(len(names), maxToolEntries)
+	out.ToolCalls = make(map[string]contract.ToolCallCounter, keep)
+	for _, name := range names[:keep] {
+		out.ToolCalls[name] = *m.tools[name]
+	}
+	if len(names) > maxToolEntries {
+		var other contract.ToolCallCounter
+		for _, name := range names[maxToolEntries:] {
+			c := m.tools[name]
+			other.Calls += c.Calls
+			other.Errors += c.Errors
+		}
+		out.ToolCallsOther = &other
+	}
+}

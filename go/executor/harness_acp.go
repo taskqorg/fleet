@@ -15,6 +15,7 @@ type acpSession struct {
 	mode                  string
 	profile               M
 	servers               M
+	promptStartedAtMs     int64
 }
 
 func newACPSession(root, resume string, profile, servers M) *acpSession {
@@ -42,6 +43,7 @@ func acpRequest(id int, method string, params M) M {
 
 func (s *acpSession) prompt() M {
 	s.stage = 5
+	s.promptStartedAtMs = nowMs()
 	text := jStr(s.profile["text"])
 	if instructions := jStr(jAt(s.config(), "instructions")); instructions != "" {
 		text = fmt.Sprintf("Explicit Fleet instructions (user role):\n%s\n\nTask:\n%s", instructions, text)
@@ -140,7 +142,12 @@ func (s *acpSession) Receive(v map[string]any) ([]map[string]any, map[string]any
 		if stop == "end_turn" {
 			t = "turn.completed"
 		}
-		return nil, M{"type": t, "usage": jAt(r, "usage"), "stopReason": stop, "native": v}, true, nil
+		ev := M{"type": t, "usage": jAt(r, "usage"), "stopReason": stop, "native": v}
+		if s.promptStartedAtMs > 0 {
+			ev["durationMs"] = max(nowMs()-s.promptStartedAtMs, int64(0))
+			s.promptStartedAtMs = 0
+		}
+		return nil, ev, true, nil
 	case v["method"] == "session/update" && s.session != "" && jAt(v, "params", "sessionId") == s.session:
 		return nil, M{"type": "acp.update", "update": jAt(v, "params", "update"), "native": v}, false, nil
 	}
