@@ -22,6 +22,14 @@ Measure preparation and cleanup duration, disk consumption and failures. Include
 
 Account for aggregate resource use across simultaneous preparation, execution and laboratory runs. Expose capacity, consumption and contention so concurrency respects configured resource limits.
 
+## Session project selection
+
+An ordinary session may explicitly select a granted project with `session_transition`. An omitted project may resolve only a single focused project; observation focus alone never changes execution authority. Multiple focused projects require explicit selection. A task-bound session cannot select a different project.
+
+A selection during an execution is retained for the next execution, after the current execution ends. Preserve running and already queued execution snapshots. At application, recheck grants, prepare normal project checkout and rules, and carry the conversation through a handoff when project or working directory changes; incompatible native state is not resumed. Existing explicit holds remain in force.
+
+Release old owned areas through cleanup using their original execution, project settings and directory. Retain dirty or unknown areas with a visible cleanup outcome. Workspace identity includes the project, host and workspace generation. Start and teardown carry the same immutable `workspaceKey`; absent keys preserve legacy directories. Each project change allocates an isolated directory and branch, so cleanup can run without racing the new checkout. Returning to a project uses a fresh generation and transcript handoff, while retained old work remains visible through its cleanup command and outcome. An active selection queues one internal continuation so the user request proceeds without another human message.
+
 ## Continuation and handoff
 
 Distinguish exhausted account limits, lost connectivity, process failure and incompatibility. Show the cause, preserved state and available continuation actions.

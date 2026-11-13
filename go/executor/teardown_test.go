@@ -50,3 +50,43 @@ func TestTeardownUnpushedAndDelivered(t *testing.T) {
 		t.Fatalf("delivered: removed with its branch: %+v", r)
 	}
 }
+
+// Requirement: execution-continuity.md session project selection. Risk: cleaning an old workspace removes the new
+// project's checkout, or returning to a dirty project reuses its branch and native cwd.
+func TestTransitionWorkspacesPreserveDirtyOldCheckout(t *testing.T) {
+	top, root := t.TempDir(), t.TempDir()
+	top, _ = filepath.EvalSymlinks(top)
+	root, _ = filepath.EvalSymlinks(root)
+	git := func(d string, args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", d, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...)
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatal(err, string(out))
+		}
+	}
+	git(top, "init", "-q", "-b", "main")
+	git(top, "commit", "-q", "--allow-empty", "-m", "base")
+	e := &executor{root: root, sessions: filepath.Join(root, "sessions")}
+	old, newer := M{"workspaceKey": "old"}, M{"workspaceKey": "new"}
+	oldDir, newDir := e.commandDir("session", old), e.commandDir("session", newer)
+	os.MkdirAll(oldDir, 0o755)
+	os.MkdirAll(newDir, 0o755)
+	w, _, _, ok, err := worktree(oldDir, workspaceSession("session", old), top, true, []string{top}, nil, M{})
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(w, "dirty"), []byte("keep"), 0o600)
+	fresh, _, _, ok, err := worktree(newDir, workspaceSession("session", newer), top, true, []string{top}, nil, M{})
+	if err != nil || !ok || fresh == w {
+		t.Fatal(err, fresh, w)
+	}
+	if result := teardown(oldDir, workspaceSession("session", old), top, M{}, false); result.Removed || str0(result.Reason) != "uncommitted" {
+		t.Fatal(result)
+	}
+	if !exists(filepath.Join(fresh, ".git")) || !exists(filepath.Join(w, "dirty")) {
+		t.Fatal("cleanup crossed workspace identity")
+	}
+	if e.commandDir("session", M{}) != e.sessionDir("session") {
+		t.Fatal("legacy directory changed")
+	}
+}

@@ -719,6 +719,7 @@
           "additionalProperties": true
         },
         "turn": {},
+        "workspaceKey": {"type": "string"},
         "workingDirectory": {
           "type": "string"
         }

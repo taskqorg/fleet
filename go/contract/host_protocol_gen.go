@@ -1218,6 +1218,7 @@ type StartPayload struct {
 	Turn             json.RawMessage            `json:"turn,omitempty"`
 	WebRoute         *string                    `json:"webRoute,omitempty"`
 	WorkingDirectory *string                    `json:"workingDirectory,omitempty"`
+	WorkspaceKey     *string                    `json:"workspaceKey,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
