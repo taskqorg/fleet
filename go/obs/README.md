@@ -8,7 +8,7 @@
 
 - `Start`, `StartAt`, `From`, `WithRun`, `RunOf`, `WithRemote`, and `Traceparent` create and propagate execution context.
 - `Span.Set`, `Fail`, and `End` record attributes, error class, timing, and completion.
-- `Handler` and `Transport` wrap HTTP server and client paths. `Recorder` captures response status and byte count; `MarkRefused` marks an access refusal.
+- `Handler` and `Transport` wrap HTTP server and client paths. `Recorder` captures response status and access-refusal state; `MarkRefused` marks an access refusal.
 - `ClickHouse` migrates, inserts, and queries over HTTP. `Writer` buffers spans, exposes dropped count, and flushes in `Run`.
 
 ## Invariants
