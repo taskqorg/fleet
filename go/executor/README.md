@@ -19,6 +19,8 @@
 - Source resolution does not fetch, read working-tree rules, or execute Git hooks or filters. It requires the declared commit, exact blobs, digests, origin identity, and allowed owned storage ([attempt_context.go: `resolveAttemptContext`](attempt_context.go)).
 - Worktree cleanup keeps work when configured reasons such as uncommitted changes, unpushed commits, or teardown failure apply ([worktree.go: `teardown`](worktree.go)).
 
+- Update drain retains the activity lease for live ownership, unfinished commands, queued transport, retryable archived status 401 and active transfers; nonretryable archived rejection history remains preserved without blocking idle replacement ([update_drain.go](update_drain.go), [outbox.go](outbox.go)).
+
 ## Side effects
 
 - Starts and stops native processes, creates and removes worktrees and MCP-owner directories, writes session files and a SQLite journal, and uploads artifacts ([executor.go: `run`, `release`](executor.go), [worktree.go: `teardown`](worktree.go), [upload.go: `sendParts`, `spawnTransfers`](upload.go)).

@@ -53,7 +53,7 @@ func (e *executor) drainUpdate() error {
 		return nil
 	}
 	var n int
-	if err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches)+(SELECT count(*) FROM owned)+(SELECT count(*) FROM mcp_groups)+(SELECT count(*) FROM commands WHERE terminal=0)+(SELECT count(*) FROM outbox)+(SELECT count(*) FROM outbox_failed)+(SELECT count(*) FROM transfers WHERE state IN ('queued','running'))`).Scan(&n); err != nil {
+	if err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches)+(SELECT count(*) FROM owned)+(SELECT count(*) FROM mcp_groups)+(SELECT count(*) FROM commands WHERE terminal=0)+(SELECT count(*) FROM outbox)+(SELECT count(*) FROM outbox_failed WHERE status=401)+(SELECT count(*) FROM transfers WHERE state IN ('queued','running'))`).Scan(&n); err != nil {
 		return err
 	}
 	if len(e.live) > 0 || n > 0 {
