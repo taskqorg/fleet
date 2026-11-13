@@ -732,7 +732,7 @@ func (e *executor) run(c M) error {
 		}
 		return e.finish(c, "failed", "")
 	case "readiness":
-		data := readiness(jAt(p, "project"), e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
+		data := readiness(p, e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
 		ok := data.Ok
 		if err := e.event(c, 0, contract.FleetEventTypeReadiness, data); err != nil {
 			return err
@@ -975,7 +975,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	for _, tool := range jArr(requirements, "tools") {
 		var err error
 		if jStr(tool) == "browser" {
-			err = browserReady(jAt(p, "project"), commandHome(cmd))
+			err = browserReady(p, commandHome(cmd))
 		} else {
 			err = codingTool(jStr(tool), commandHome(cmd))
 		}
@@ -987,7 +987,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	servers := mcpAtRoot(selectedMCP, work)
 	for _, tool := range jArr(requirements, "tools") {
 		if jStr(tool) == "browser" {
-			cfg, err := browserConfig(jAt(p, "project"))
+			cfg, err := browserConfig(p)
 			if err != nil {
 				return fail(1, "browser-binding-unready")
 			}

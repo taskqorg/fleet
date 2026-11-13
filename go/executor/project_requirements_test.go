@@ -20,7 +20,7 @@ func TestProjectRequirements(t *testing.T) {
 func TestReadinessProfileRequirements(t *testing.T) {
 	for _, ids := range [][]any{nil, {}, {"coding-worker"}, {"pm"}} {
 		p := M{"roles": M{"pm": "codex"}, "profileIds": M{"pm": "pm"}, "execution": M{"profiles": ids, "tools": []any{"pnpm"}, "forge": true}}
-		r := readiness(p, "pds", "")
+		r := readiness(M{"projectId": "fixture", "project": p}, "pds", "")
 		coding := false
 		for _, c := range r.Checks {
 			if c.Check == "forge" || c.Check == "coding-tools" {

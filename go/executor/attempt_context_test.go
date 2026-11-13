@@ -234,7 +234,7 @@ func assertAttemptSourceStartBlocked(t *testing.T, p M, source string) {
 	if !found {
 		t.Fatal("missing actionable source failure")
 	}
-	ready := readiness(p, "h", registry, e.forbidden())
+	ready := readiness(M{"projectId": "fixture", "project": p}, "h", registry, e.forbidden())
 	found = false
 	for _, check := range ready.Checks {
 		if check.Check == "instruction-sources" && check.Reason != nil && strings.Contains(*check.Reason, "instruction-source-unavailable") {
