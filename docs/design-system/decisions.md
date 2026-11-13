@@ -332,3 +332,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** which mark identifies browser tabs and installed web apps?
 * **Choice:** reuse the existing block F from the navigation for every workspace, on the dark background with light foreground. Keep workspace-specific launch URLs.
 * **Reason:** the owner requested the existing application mark as both favicon and installed web app icon.
+
+## 2026-11-14: Unified resource accounting and analytics UI primitives
+
+* **Question:** how should metered vs subscription cost, multi-currency totals, scoped execution rollups, interactive CSS charts, and host vs execution telemetry be surfaced across `packages/ui` and the operator app without violating `OR-8`, `OR-17`, `OR-20`, `OR-25`, or `OR-39`?
+* **Choice:** extend `Basis` with `'subscription'` (shown with `≈` plus a subscription mark when list-price equivalent exists, or `—` when unpriced), add `CostFigures` and `splitCostFigures()` so metered and subscription amounts are never summed across bases or currencies, make `ExecTree` recursively render `parentExecutionId` hierarchies with collapsed-by-default `tool_run` summaries per parent, extend CSS-only `AreaChart` with bucket selector `<button>` controls placed outside `.ac-plot` (`role="img"`), and add optional `BoundaryRow` resource summaries inside `Thread`.
+* **Applied across screens:** Projects integrates `analytics_query` trend chart (`AreaChart`), `Totals`/`CostFigures`, dimension breakdowns, `unknown`/`hidden` indicators, and drill-down links; Tasks and Conversations show `own`/`delegated`/`spawned` rollups (`ScopedResourceRollup`) and distinct `elapsedMs` vs `executionWallMs`; Agents and Pipelines show 30-day usage and per-revision windows; Runners renders all currencies cleanly; Hosts keeps daemon health visually separate from active execution runs.
+* **Reason:** preserves owner typography/minimalism rules (`no <svg>` in `OR-8`, known totals in `OR-39`, non-nested scroll in `OR-25`) while faithfully reflecting server resource accounting semantics.

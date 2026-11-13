@@ -1,9 +1,9 @@
 // The only place that formats time, numbers, sizes and money for the UI (OR-2).
 // Each formatter returns the short text and the long form for tooltips and accessible names.
 
-export type Basis = 'measured' | 'estimated' | 'unavailable';
+export type Basis = 'measured' | 'estimated' | 'subscription' | 'unavailable';
 /** A number with its measurement basis. `partial` marks a lower bound ("≥"). Unknown is never 0. */
-export type Measured = { value: number | null; basis: Basis; reason?: string; partial?: string; currency?: string };
+export type Measured = { value: number | null; basis: Basis; reason?: string; partial?: string; currency?: string; note?: string };
 export type Formatted = { text: string; long: string };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -97,15 +97,61 @@ export function score(n: number): Formatted { return { text: n.toFixed(2), long:
 export type Kind = 'money' | 'count' | 'duration' | 'bytes' | 'score';
 const BY_KIND: Record<Kind, (n: number) => Formatted> = { money, count, duration, bytes, score };
 
-/** A measured, estimated, partial or unavailable number (principles §2). */
+/** A measured, estimated, subscription, partial or unavailable number (principles §2). */
 export function measured(m: Measured, kind: Kind): Formatted {
   if (m.basis === 'unavailable' || m.value === null) {
+    if (m.basis === 'subscription') {
+      const why = m.reason ?? m.note;
+      return { text: '—', long: why ? `included in subscription: ${why}` : 'included in subscription' };
+    }
     return { text: '—', long: `unavailable${m.reason ? `: ${m.reason}` : ''}` };
   }
   const f = kind === 'money' ? money(m.value, m.currency) : BY_KIND[kind](m.value);
-  if (m.basis === 'estimated') return { text: `≈ ${f.text}`, long: `about ${f.long}, estimated${m.reason ? ` from ${m.reason}` : ''}` };
+  if (m.basis === 'subscription') {
+    return {
+      text: `≈ ${f.text}`,
+      long: `about ${f.long}, subscription list-price equivalent${m.partial ? `, ${m.partial}` : ''}${m.reason ? ` (${m.reason})` : ''}${m.note ? ` · ${m.note}` : ''}`,
+    };
+  }
+  if (m.basis === 'estimated') return { text: `≈ ${f.text}`, long: `about ${f.long}, estimated${m.reason ? ` from ${m.reason}` : ''}${m.partial ? `, ${m.partial}` : ''}` };
   if (m.partial) return { text: `≥ ${f.text}`, long: `at least ${f.long}, ${m.partial}` };
   return f;
+}
+
+export type CostFigureLike = {
+  value: number | null;
+  currency: string | null;
+  basis: Basis;
+  reason?: string;
+  note?: string;
+  usages?: number;
+};
+
+/** Converts one CostFigure into a money Measured entry without altering currency or basis. */
+export function costMeasured(c: CostFigureLike): Measured {
+  return { value: c.value, basis: c.basis, currency: c.currency ?? 'USD', reason: c.reason, note: c.note };
+}
+
+/** Separates metered/unavailable figures from subscription list-price equivalents, preserving every currency. */
+export function splitCostFigures(all: readonly CostFigureLike[] | null | undefined): { metered: CostFigureLike[]; subscription: CostFigureLike[] } {
+  const metered: CostFigureLike[] = [];
+  const subscription: CostFigureLike[] = [];
+  for (const c of all ?? []) {
+    if (c.basis === 'subscription') subscription.push(c);
+    else metered.push(c);
+  }
+  return { metered, subscription };
+}
+
+/** Adapts a contract MeasuredNumber/MeasuredInt into UI Measured with optional unit scaling (e.g. 0.001 for ms to seconds). */
+export function numMeasured(n: { value: number | null; basis: Basis; reason?: string; partial?: string; note?: string } | null | undefined, scale = 1): Measured {
+  if (!n) return { value: null, basis: 'unavailable' };
+  return { value: n.value === null ? null : n.value * scale, basis: n.basis, reason: n.reason, partial: n.partial, note: n.note };
+}
+
+/** Adapts millisecond durations into UI second Measured values. */
+export function msMeasured(ms: number | null | undefined, basis: Basis = 'measured', reason?: string): Measured {
+  return ms == null ? { value: null, basis: 'unavailable', reason } : { value: ms / 1000, basis, reason };
 }
 
 /** Clock time for transcripts: 10:31:05. */

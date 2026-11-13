@@ -2,9 +2,9 @@
 
 **Code.** `StatStrip`. Demo: [book](../book/index.html#stat-strip).
 
-**Purpose.** Shows a few operational counts at a glance and links each one to its source: things that need you, failures, workers running against slots per host, queued work and spend.
+**Purpose.** Shows a few operational counts or multi-currency resource summary metrics at a glance and links each one to its source: things that need you, failures, workers running against slots per host, queued work, and spend.
 
-**Anatomy.** A row of compact tiles. Each tile has an icon, a [number with basis](number.md), an optional `/slots` part, a short label, and an optional link.
+**Anatomy.** A row of compact tiles (`StatStrip`, paired with `Totals` and `CostFigures` for resource summaries). Each tile has an icon, a [number with basis](number.md), an optional `/slots` part, a short label, and an optional link.
 
 **Behaviour.**
 * A tile takes a tone only when it needs attention, for example when all slots are full or something failed (OR-18).

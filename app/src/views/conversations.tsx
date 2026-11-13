@@ -15,6 +15,7 @@ import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { focusIds } from '../prefs.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
+import { ScopedRollupBar } from './resources.tsx';
 
 const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 type SessionRow = { id: string; code?: string | null; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; sortKey: (string | number)[] };
@@ -142,6 +143,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       ]} />
     </header>
     {panel && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
+    <ScopedRollupBar rollup={s.resources} cost={s.cost} />
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
     <div class="pane">
       {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks.map(b => b.kind === 'question' && answers[b.questionId] ? { ...b, state: answers[b.questionId].state, answer: answers[b.questionId].answer, answeredBy: answers[b.questionId].answeredBy ?? undefined, answeredAt: answers[b.questionId].answeredAt ? new Date(answers[b.questionId].answeredAt!).getTime() : null } : b)} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} handle={handle} onStart={thread.older} onEnd={thread.newer}

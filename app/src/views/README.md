@@ -7,6 +7,8 @@ Each file exports one routed Preact screen. `main.tsx:SCREENS` maps the registry
 ## Interface
 
 - [`projects.tsx`](projects.tsx), [`overview.tsx`](overview.tsx), [`tasks.tsx`](tasks.tsx), [`conversations.tsx`](conversations.tsx), [`results.tsx`](results.tsx), [`delivery.tsx`](delivery.tsx), [`hosts.tsx`](hosts.tsx), [`runners.tsx`](runners.tsx), [`lab.tsx`](lab.tsx), and [`keys.tsx`](keys.tsx) export their like-named screens.
+- [`resources.tsx`](resources.tsx) provides shared `Totals`, `CostFigures`, scoped rollup (`own` / `delegated` / `spawned`), and recursive execution tree builders used by Tasks, Conversations, Projects, Definitions, and Runners.
+- [`projects.tsx`](projects.tsx) integrates `analytics_query` (`window`, `dimensions`, `measures`, `filters`) with interactive `AreaChart` time-bucket filtering and dimension breakdown beside project settings and PM chat.
 - [`definitions.tsx`](definitions.tsx) exports `Definitions` for the `agent`, `pipeline`, and `catalogue` routes.
 - [`lab-create.tsx`](lab-create.tsx) exports `LabCreate` for experiment-draft creation; [`lab.tsx`](lab.tsx) opens it.
 - [`limits.tsx`](limits.tsx) exports `Limits`, rendered from the Hosts screen.

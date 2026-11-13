@@ -10,9 +10,11 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [search](search.md) | Fast search |
 | [spotlight](spotlight.md) | Cmd+K palette: find and open anything |
 | [state-badge](state-badge.md) | States with reason and release condition |
-| [number](number.md) | Measurement basis |
+| [number](number.md) | Measurement basis, `CostFigures`, and `Totals` |
 | [fill-bar](fill-bar.md) | Store fill per project, quota use |
 | [time-strip](time-strip.md) | Where a run sits in a time window |
+| [area-chart](area-chart.md) | Quota and resource usage trends (CSS only) |
+| [code-editor](code-editor.md) | Definition text and unified revision diffs |
 | [execution-tree](execution-tree.md) | Executions and steps as a tree |
 | [step-list](step-list.md) | A pipeline's steps and a run of them; the read-only flow picture |
 | [draft-bar](draft-bar.md) | A definition that differs from its saved revision |

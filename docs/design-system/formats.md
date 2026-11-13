@@ -16,10 +16,10 @@ One way to show each kind of value, everywhere ([OR-28](owner-rules.md)). The fo
 | Entity code | `T-FLT-42` mono, directly after the name (OR-22); never a UUID or hash (OR-38) | UUID in the tooltip, click to copy | D17 formatter |
 | Moment, in a list | Age: `now`, `40s`, `4m`, `2h`, `3d`, `12 Nov`, `12 Nov 2025`; plain, boxed only when it needs a look (OR-18) | `4 minutes ago`; exact time on hover | `age`, `AgeChip` |
 | Moment, in copied text | `11 Nov 14:03`, year added when not this year | — | `stamp` |
-| Duration | `120ms` (under a second), `40s`, `14m`, `1h 02m`, `3d 4h` | words | `duration` |
+| Duration | `120ms` (under a second), `40s`, `14m`, `1h 02m`, `3d 4h`; elapsed span (`elapsedMs`) and active execution wall time (`executionWallMs`) use the same formatter and carry distinct labels | words | `duration` |
 | Count | `412`, `1,204`, `182k`; a lower bound as `≥ 182k` | exact | `count`, `Num` |
 | Ratio | `6/8` (in use of total); never a sentence | `6 of 8 workers busy` | — |
-| Money | `$0.02`, `$10.90`; estimated `≈ $0.38`; unknown `—` with its reason | basis and source | `money`, `Num` |
+| Money | `$0.02`, `$10.90`; estimated `≈ $0.38`; subscription list-price `≈ $0.38` + subscription mark; unpriced subscription `—` ("included in subscription"); unavailable `—` with reason; multi-currency `(currency, basis)` figures never summed | basis, currency and source | `money`, `Num`, `CostFigures` |
 | Score | `0.82`; spread as `0.82 (0.74–0.90)` | evaluator and count | `score`, `Num kind="score"` |
 | Share | `40%` | `40 percent` | `percent` |
 | Size | `4.2 GB` | bytes | `bytes` |
@@ -52,12 +52,13 @@ The most important value comes first in a row and in a detail head; anything tha
 
 | Screen | The owner comes to | Values that matter, in order | Missing coordinator data |
 |---|---|---|---|
-| Conversations | Read and steer a conversation; copy part of it | Who wrote each message and when; open questions; state of the running execution; cost | Person names (only emails exist) |
-| Tasks | See what needs a decision, what runs too long, what it costs | State, title and code, open question, age (red when too long), cost, delivery stage | — |
-| Hosts | Is each host online and able to take work | Online and last seen, busy of total workers, queue, free store space, subscription limits; versions in the detail | Harness versions per host in the list API |
+| Projects | Configure project context and inspect project resource trends | Readiness, spend by currency and basis (`Totals` / `CostFigures`), usage trend over time (`AreaChart`), breakdown by dimension (`model`, `harness`, `pipeline_revision`, etc.), unknown/hidden counts | — |
+| Conversations | Read and steer a conversation; inspect own, delegated, and spawned resources; copy messages | Who wrote each message and when; open questions; state of the running execution; own/delegated/spawned resources and per-boundary cost | Person names (only emails exist) |
+| Tasks | See what needs a decision, what runs too long, what it costs and how execution rolled up | State, title and code, open question, age (red when too long), known resource totals (`elapsed` vs active wall, tokens, multi-currency/subscription cost), execution tree, delivery stage | — |
+| Hosts | Is each host online and able to take work | Online and last seen, busy of total workers, queue, free store space, subscription limits; host daemon health strictly separated from active execution resources; telemetry findings in detail | Harness versions per host in the list API |
 | Lab | Which variant is better and at what price | Score per variant against the baseline, spread, cost, time, trials done of planned, open ratings | Baseline marker and per-variant cost in `lab_experiment_get` |
-| Agents | Which agent does what, on what, and whether it works | State, name, harness and model with effort, role; runs in 30 days and recent success; skills, tools, where it may run | Definition read and write, effective layers, usage and success per agent (see the review in the PR) |
-| Pipelines | Change the flow; see why the last run failed | Last run state and age, steps; the failed step with its error and the rerun choice | Definition read and write, draft runs, revision history |
+| Agents | Which agent does what, on what, and whether it works | State, name, harness and model with effort, role; 30-day runs and cost; skills, tools, where it may run; per-revision usage | Definition write |
+| Pipelines | Change the flow; see why the last run failed and what revisions cost | Last run state and age, steps; 30-day runs and per-revision usage/cost; the failed step with its error and rerun choice | Definition write |
 | Catalogue | Which method a call uses and which is best | Recommended method, quality, time and cost per method with their basis, who it is recommended for | Per-method assessments from Lab; definition write |
 | Delivery | Where delivery waits and since when | Count per stage, oldest age in stage (red past its limit), count over 24 hours, pull request title and number | The waiting worker itself (counted by pull request) |
 | Results | Find and open what work produced | State, name, kind and size, task, age | — |

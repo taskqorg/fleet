@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { age, duration, bytes, count, money, measured, agentLabel, actor } from '../../packages/ui/src/format.ts';
+import {
+  age, duration, bytes, count, money, measured, agentLabel, actor,
+  costMeasured, splitCostFigures, numMeasured, msMeasured,
+} from '../../packages/ui/src/format.ts';
 
 const now = new Date(2026, 10, 9, 12, 0, 0).getTime();
 const ago = (s: number) => now - s * 1000;
@@ -61,4 +64,52 @@ test('fileLabel drops UUIDs and long hashes, keeps the extension', async () => {
   assert.equal(fileLabel('report.md'), 'report.md');
   assert.equal(fileLabel('16e7c862-68a7-44c7-b5cc-77d2dfb9a588'), '');
   assert.equal(fileLabel('build-2026.log'), 'build-2026.log');
+});
+
+// Requirement: subscription basis stays visibly distinct from metered spend and unavailable never renders zero (CA-01, CA-05).
+// Risk: subscription list-price equivalents are summed into metered USD totals or unpriced subscriptions render $0.00.
+test('subscription basis formatting keeps list-price equivalents distinct and null unpriced', () => {
+  const priced = measured({ value: 0.42, currency: 'USD', basis: 'subscription', note: 'Claude Max' }, 'money');
+  assert.equal(priced.text, '≈ $0.42');
+  assert.match(priced.long, /subscription list-price equivalent/);
+  assert.match(priced.long, /Claude Max/);
+
+  const unpriced = measured({ value: null, currency: 'USD', basis: 'subscription', note: 'Claude Max' }, 'money');
+  assert.equal(unpriced.text, '—');
+  assert.equal(unpriced.long, 'included in subscription: Claude Max');
+
+  const noWhy = measured({ value: null, currency: 'EUR', basis: 'subscription' }, 'money');
+  assert.equal(noWhy.text, '—');
+  assert.equal(noWhy.long, 'included in subscription');
+});
+
+// Requirement: multi-currency CostFigure[] splits metered spend from subscription equivalents without merging currencies.
+// Risk: non-USD currencies or subscription rows are dropped or summed together in UI totals.
+test('costMeasured and splitCostFigures preserve every currency and basis boundary', () => {
+  const mixed = [
+    { value: 1.25, currency: 'USD', basis: 'measured' as const, note: 'api' },
+    { value: 0.8, currency: 'EUR', basis: 'estimated' as const, reason: 'tokens' },
+    { value: 2.5, currency: 'USD', basis: 'subscription' as const, note: 'Codex Pro' },
+    { value: null, currency: null, basis: 'unavailable' as const, reason: 'no meter' },
+  ];
+  const split = splitCostFigures(mixed);
+  assert.equal(split.metered.length, 3);
+  assert.equal(split.subscription.length, 1);
+  assert.equal(measured(costMeasured(split.metered[0]), 'money').text, '$1.25');
+  assert.equal(measured(costMeasured(split.metered[1]), 'money').text, '≈ 0.80 EUR');
+  assert.equal(measured(costMeasured(split.subscription[0]), 'money').text, '≈ $2.50');
+  assert.equal(measured(costMeasured(split.metered[2]), 'money').text, '—');
+  assert.deepEqual(splitCostFigures(null), { metered: [], subscription: [] });
+});
+
+// Requirement: msMeasured and numMeasured preserve basis, partial lower bounds, and unavailable states.
+// Risk: elapsed_ms vs execution_wall_ms or null resource readings collapse into 0s or lose attribution.
+test('msMeasured and numMeasured adapt contract measurements accurately', () => {
+  assert.deepEqual(msMeasured(null, 'measured', 'still running'), { value: null, basis: 'unavailable', reason: 'still running' });
+  assert.equal(measured(msMeasured(12500, 'estimated'), 'duration').text, '≈ 13s');
+  assert.equal(measured(numMeasured({ value: 4500, basis: 'measured', partial: '2 of 3 measured' }, 0.001), 'duration').text, '≥ 5s');
+  assert.deepEqual(numMeasured(undefined), { value: null, basis: 'unavailable' });
+  assert.deepEqual(numMeasured({ value: null, basis: 'unavailable', reason: 'not recorded' }, 0.001), {
+    value: null, basis: 'unavailable', reason: 'not recorded', partial: undefined, note: undefined,
+  });
 });

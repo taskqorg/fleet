@@ -46,5 +46,58 @@ export async function checkTaskStory(browser: Browser, origin: string) {
       assert.equal(await detail.getByRole('button', {name: 'Collapse outcome'}).count(), 1);
       await page.unroute('**/api/ops/task_get');
     }
+    // Verify unified resource accounting rollups (elapsed vs executionWall, own/delegated/spawned, multi-currency/subscription, recursive ExecTree).
+    const resSummary = (wallMs: number, tok: number, cost: any[]) => ({
+      executions: 2,
+      tokens: { input: tok, output: 1000, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: tok + 1000, basis: 'measured' },
+      durations: { elapsedMs: 120000, executionWallMs: wallMs, activeMs: wallMs, apiMs: 20000, cpuMs: 9200, measuredCpuRuns: 2, totalRuns: 2, basis: 'measured' },
+      peakMemoryBytes: { value: 536870912, basis: 'measured' },
+      tools: { totalCalls: 4, failedCalls: 1, turns: 3, byTool: [{ name: 'Bash', calls: 4, errors: 1 }], basis: 'measured' },
+      cost,
+    });
+    const costs = [
+      { value: 1.5, currency: 'USD', basis: 'measured' },
+      { value: 0.75, currency: 'EUR', basis: 'estimated', reason: 'tokens' },
+      { value: 0.4, currency: 'USD', basis: 'subscription', note: 'Claude Max' },
+    ];
+    await page.route('**/api/ops/task_get', route => route.fulfill({
+      json: {
+        id: 'story-resources',
+        title: 'Unified resources story',
+        state: 'completed',
+        questions: [],
+        cost: costs,
+        resources: {
+          own: resSummary(30000, 10000, [costs[0]]),
+          delegated: resSummary(15000, 5000, [costs[1]]),
+          spawned: resSummary(10000, 4000, [costs[2]]),
+          total: resSummary(45000, 19000, costs),
+          spawnedTasks: [{ taskId: 'spawn-1', code: 'T-99', title: 'Child spawned task', state: 'completed', resources: resSummary(10000, 4000, [costs[2]]) }],
+          hidden: 2,
+        },
+        executions: [
+          { id: 'exec-root', kind: 'agent_run', state: 'succeeded', harness: 'claude', model: 'opus', hostId: 'mac', startedAt: Date.now() - 60000, endedAt: Date.now() - 15000 },
+          { id: 'exec-child', parentExecutionId: 'exec-root', kind: 'child_agent', state: 'succeeded', harness: 'codex', model: 'gpt', hostId: 'mac', startedAt: Date.now() - 50000, endedAt: Date.now() - 25000 },
+          { id: 'exec-tool-1', parentExecutionId: 'exec-root', kind: 'tool_run', state: 'succeeded', hostId: 'mac', startedAt: Date.now() - 45000, endedAt: Date.now() - 40000 },
+          { id: 'exec-tool-2', parentExecutionId: 'exec-root', kind: 'tool_run', state: 'failed', problem: 'exit 1', hostId: 'mac', startedAt: Date.now() - 35000, endedAt: Date.now() - 33000 },
+        ],
+      },
+    }));
+    await page.goto(origin + '/tasks/story-resources');
+    const rDetail = page.locator('[data-ui=detail]');
+    await rDetail.getByRole('heading', { name: 'Unified resources story' }).waitFor();
+    assert.equal(await rDetail.locator('.totals .b-unavailable').count(), 0, 'OR-39: zero unavailable totals in task detail');
+    await rDetail.locator('.totals').getByText('Elapsed', { exact: true }).waitFor();
+    await rDetail.locator('.totals').getByText('Execution wall', { exact: true }).waitFor();
+    await rDetail.locator('.totals').getByText('2m', { exact: true }).waitFor();
+    await rDetail.locator('.totals').getByText('45s', { exact: true }).waitFor();
+    await rDetail.locator('.totals').getByText('$1.50', { exact: true }).waitFor();
+    await rDetail.locator('.totals').getByText('≈ 0.75 EUR', { exact: true }).waitFor();
+    await rDetail.locator('.totals').getByText('≈ $0.40', { exact: true }).waitFor();
+    await rDetail.getByRole('heading', { name: 'Resource breakdown' }).waitFor();
+    await rDetail.getByRole('link', { name: 'Child spawned task' }).waitFor();
+    await rDetail.getByText('2 hidden (restricted project)', { exact: true }).waitFor();
+    await rDetail.locator('[data-ui="execution-tree"]').getByText('Tool calls', { exact: true }).waitFor();
+    await page.unroute('**/api/ops/task_get');
   } finally { await context.close(); }
 }

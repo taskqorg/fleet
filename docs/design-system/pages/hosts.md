@@ -24,8 +24,8 @@ Not built in the app, shown in the mockup: slots and the store fill in the row, 
 | Store capacity, memory and CPU bounds, free-space warning | Setting fields with applied, pending or apply error |
 | Low space: raise capacity, change locations, add retention rule | Problem row actions |
 | Workers running per host (owner, D9, D11) | Catalogue row: running/slots plus [harness counts](../controls/harness-counts.md) |
-| Host and process readings: load, memory, disk, CPU and memory per Fleet process | Catalogue row: load and memory free; host detail: Readings and Processes sections (`telemetry_summary`) |
-| Run resources: CPU seconds and peak memory per execution | Work area with no host open: Recent runs (`telemetry_summary.runs`) |
+| Host and process readings (Daemon health): load, memory, disk, CPU and memory per Fleet process | Strictly separated from active execution consumption: catalogue row shows host load and memory free; host detail separates Daemon Readings and Processes sections (`telemetry_summary`) from Active Executions (linking to `/runners` and `/tasks`) |
+| Run resources (Active Executions): CPU seconds and peak memory per execution | Work area with no host open: dedicated Executions / Recent runs section (`telemetry_summary.runs`) kept strictly separate from host daemon health; links into Tasks and Runners |
 | Services: calls, errors, latency; findings of the rules pass | Work area with no host open: Services and Findings (`telemetry_summary`, `telemetry_findings`) |
 | Remove a host, purge removed hosts | Host detail: Remove; work area: Purge (`hosts_remove`, `system_purge`, preview first) |
 

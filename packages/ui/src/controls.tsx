@@ -2,7 +2,8 @@
 import { Fragment, type ComponentChildren, type TargetedMouseEvent } from 'preact';
 import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
-import { type Measured, type Kind, measured, age, bytes, exact, stamp, percent, duration, agentLabel, actor } from './format.ts';
+import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, bytes, exact, stamp, percent, duration, agentLabel, actor } from './format.ts';
+import type { Block as ThreadBlock, ResourceSummary } from '../../../contracts/generated/ops.ts';
 import { matchSearch } from './search.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import { parse, renderBlocks } from './markdown.tsx';
@@ -108,20 +109,43 @@ export function Num({ m, kind, rise = 'neutral' }: NumProps) {
     const t = setTimeout(() => setTint(''), 2000);
     return () => clearTimeout(t);
   }, [m.value]);
-  return <span data-ui="number" class={`num b-${m.basis}${m.partial ? ' partial' : ''} ${tint}`} data-tip={m.basis === 'measured' && !m.partial ? undefined : f.long} aria-label={f.long} tabIndex={m.basis === 'measured' && !m.partial ? undefined : 0}>{f.text}</span>;
+  const tip = m.basis === 'measured' && !m.partial ? undefined : f.long;
+  return <span data-ui="number" class={`num b-${m.basis}${m.value === null ? ' null' : ''}${m.partial ? ' partial' : ''} ${tint}`} data-tip={tip} aria-label={f.long} tabIndex={tip ? 0 : undefined}>
+    {m.basis === 'subscription' && <Icon name="rotate-cw" />}{f.text}</span>;
 }
 
-export function Totals({ items }: { items: { label: string; m: Measured; kind: Kind; note?: string }[] }) {
+export type TotalItem =
+  | { label: string; m: Measured; kind: Kind; note?: string; cost?: never }
+  | { label: string; cost: readonly CostFigureLike[]; note?: string; showUnavailable?: boolean; m?: never; kind?: never };
+
+export function Totals({ items }: { items: TotalItem[] }) {
   return (
     <dl class="totals" data-ui="number">
       {items.map(i => (
         <div key={i.label}>
           <dt>{i.label}</dt>
-          <dd><Num m={i.m} kind={i.kind} /></dd>
+          <dd>{i.cost !== undefined ? <CostFigures cost={i.cost} showUnavailable={i.showUnavailable} empty="—" /> : <Num m={i.m} kind={i.kind} />}</dd>
           {i.note && <dd class="note">{i.note}</dd>}
         </div>
       ))}
     </dl>
+  );
+}
+
+/** Renders multi-currency CostFigure[] while keeping metered spend and subscription equivalents separate. */
+export function CostFigures({ cost, showUnavailable = false, empty }: { cost: readonly CostFigureLike[] | null | undefined; showUnavailable?: boolean; empty?: string }) {
+  const { metered, subscription } = splitCostFigures(cost);
+  const visMetered = showUnavailable ? metered : metered.filter(c => c.value !== null);
+  const visSub = showUnavailable ? subscription : subscription.filter(c => c.value !== null);
+  if (!visMetered.length && !visSub.length) {
+    if (showUnavailable && (metered.length || subscription.length)) return <Num m={costMeasured((metered[0] ?? subscription[0])!)} kind="money" />;
+    return empty ? <span class="muted">{empty}</span> : null;
+  }
+  return (
+    <span class="cost-figs" data-ui="number">
+      {visMetered.map((c, i) => <Num key={`m:${c.currency ?? i}:${i}`} m={costMeasured(c)} kind="money" />)}
+      {visSub.map((c, i) => <Num key={`s:${c.currency ?? i}:${i}`} m={costMeasured(c)} kind="money" />)}
+    </span>
   );
 }
 
@@ -208,24 +232,25 @@ export function SearchBox({ label, value, onInput, onEnter, always }: { label: s
 
 export type TreeNode = {
   id: string; name: string; state: StateOf<'execution'>; lastSeen?: number; note?: string;
-  time?: Measured; tokens?: Measured; cost?: Measured; children?: TreeNode[];
+  time?: Measured; tokens?: Measured; cost?: Measured; costFigures?: readonly CostFigureLike[]; children?: TreeNode[];
 };
-export function ExecTree({ nodes, now, label }: { nodes: TreeNode[]; now: number; label: string }) {
+export function ExecTree({ nodes, now, label, selectedId, onSelect }: { nodes: TreeNode[]; now: number; label: string; selectedId?: string | null; onSelect?: (id: string) => void }) {
   const openByDefault = (n: TreeNode): boolean => n.state !== 'succeeded' && n.state !== 'cancelled' || !!n.children?.some(openByDefault);
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [sel, setSel] = useState<string | null>(null);
+  const [selState, setSelState] = useState<string | null>(null);
+  const sel = selectedId !== undefined ? selectedId : selState;
   const row = (n: TreeNode, level: number): ComponentChildren => {
     const isOpen = open[n.id] ?? openByDefault(n);
     return (
-      <li key={n.id} role="treeitem" aria-level={level} aria-expanded={n.children ? isOpen : undefined} aria-selected={sel === n.id}>
-        <div class="ti" onClick={() => setSel(n.id)}>
-          {n.children ? <button type="button" class="tw" aria-label={isOpen ? 'Collapse' : 'Expand'} onClick={e => { e.stopPropagation(); setOpen({ ...open, [n.id]: !isOpen }); }}>
+      <li key={n.id} role="treeitem" aria-level={level} aria-expanded={n.children?.length ? isOpen : undefined} aria-selected={sel === n.id}>
+        <div class="ti" onClick={() => { setSelState(n.id); onSelect?.(n.id); }}>
+          {n.children?.length ? <button type="button" class="tw" aria-label={isOpen ? 'Collapse' : 'Expand'} onClick={e => { e.stopPropagation(); setOpen({ ...open, [n.id]: !isOpen }); }}>
             <span class={isOpen ? 'chev open' : 'chev'}><Icon name={actions.expand} /></span></button> : <span class="tw" />}
           <StateBadge family="execution" state={n.state} lastSeen={n.lastSeen} now={now} compact />
           <span class="nm">{n.name}{n.note && <span class="muted"> · {n.note}</span>}</span>
-          <span class="m">{n.time && <Num m={n.time} kind="duration" />}{n.tokens && <Num m={n.tokens} kind="count" />}{n.cost && <Num m={n.cost} kind="money" />}</span>
+          <span class="m">{n.time && <Num m={n.time} kind="duration" />}{n.tokens && <Num m={n.tokens} kind="count" />}{n.costFigures?.length ? <CostFigures cost={n.costFigures} /> : n.cost && <Num m={n.cost} kind="money" />}</span>
         </div>
-        {n.children && isOpen && <ul role="group">{n.children.map(c => row(c, level + 1))}</ul>}
+        {n.children?.length && isOpen ? <ul role="group">{n.children.map(c => row(c, level + 1))}</ul> : null}
       </li>
     );
   };
@@ -533,17 +558,26 @@ export function ResultRow({ artifacts, onOpen }: { artifacts: ArtifactMeta[]; on
   return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifacts.map(a =>
     <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.mediaType} · ${bytes(a.size).text}`} onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>{a.name}</a>)}</span></div>;
 }
-/** An execution start: state, agent mark, duration chip, and Stop while it runs (CUJ 5). */
-export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; onStop?: () => void; stopReason?: string }) {
-  const secs = startedAt != null ? ((endedAt ?? now) - startedAt) / 1000 : null;
+/** An execution start: state, agent mark, duration chip, resource stats, and Stop while it runs (CUJ 5). */
+export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, resources, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; resources?: ResourceSummary; onStop?: () => void; stopReason?: string }) {
+  const secs = resources?.durations?.executionWallMs != null ? resources.durations.executionWallMs / 1000 : startedAt != null ? ((endedAt ?? now) - startedAt) / 1000 : null;
+  const elapsedSecs = resources?.durations?.elapsedMs != null ? resources.durations.elapsedMs / 1000 : null;
+  const durTip = elapsedSecs != null && secs != null && Math.abs(elapsedSecs - secs) >= 1 ? `Active wall ${duration(secs).long}; elapsed ${duration(elapsedSecs).long}` : undefined;
   return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <EntityCode id={session} what="Conversation" />}<EntityCode id={executionId} what="Run" /><span class="grow" />
-    <span class="th-svc"><AgentMark {...mark} />{secs !== null && <span class="chip-age">{duration(secs).text}</span>}{onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}</span></div>;
+    <span class="th-svc">
+      <AgentMark {...mark} />
+      {secs !== null && <span class="chip-age" data-tip={durTip}>{duration(secs).text}</span>}
+      {resources?.tokens?.total != null && <span class="hc" data-tip="Tokens"><Num m={{ value: resources.tokens.total, basis: resources.tokens.basis }} kind="count" /></span>}
+      {resources && resources.tools.totalCalls > 0 && <span class="hc" data-tip={`${resources.tools.totalCalls} tool invocations${resources.tools.failedCalls ? `, ${resources.tools.failedCalls} failed` : ''}`}><Icon name="terminal" label="Tools" /><Num m={{ value: resources.tools.totalCalls, basis: resources.tools.basis }} kind="count" /></span>}
+      {resources && resources.tools.failedCalls > 0 && <span class="chip t-danger" data-tip={`${resources.tools.failedCalls} failed tool calls`}><Icon name="octagon-x" label="Failed tools" />{resources.tools.failedCalls}</span>}
+      {resources?.cost?.length ? <CostFigures cost={resources.cost} /> : null}
+      {onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}
+    </span></div>;
 }
 
 /** A search field for one scope (a thread): Enter searches; an icon until used (OR-31). */
 export const SearchField = ({ label, value, onInput, onSearch, always }: { label: string; value: string; onInput: (v: string) => void; onSearch: () => void; always?: boolean }) =>
   <SearchBox label={label} value={value} onInput={onInput} onEnter={onSearch} always={always} />;
-import type { Block as ThreadBlock } from '../../../contracts/generated/ops.ts';
 export type { ThreadBlock };
 /**
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
@@ -568,7 +602,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'question': { const conn = keyConnection(b.options); return <QuestionRow text={b.text} options={Array.isArray(b.options) ? b.options : conn ? ['decline'] : []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} onSecret={conn && onSecret ? v => onSecret(b.questionId, conn, v) : undefined} />; }
       case 'result': return <ResultRow artifacts={b.artifacts} onOpen={onOpenResult} />;
-      case 'boundary': return <BoundaryRow session={showSession ? b.sessionId ?? undefined : undefined} executionId={b.executionId} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} stopReason={stopReason}
+      case 'boundary': return <BoundaryRow session={showSession ? b.sessionId ?? undefined : undefined} executionId={b.executionId} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} resources={b.resources} stopReason={stopReason}
         onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId) : undefined} />;
       default: return null;
     }
@@ -1089,13 +1123,18 @@ export function FlowStrip({ nodes, label }: { nodes: FlowNode[]; label: string }
 /* ---------- Area chart (controls/area-chart.md): recorded and projected lines over a time range, CSS only (OR-8) ---------- */
 
 export type ChartPoint = { at: number; v: number };
+export type ChartBucket = { key: string; label: string; tip?: string; valueLabel?: string };
 /** pattern: stripes over the tone, for a fifth and later series (tokens.md: never new hues). */
 export type ChartSeries = { label: string; points: ChartPoint[]; tone: 'd1' | 'd2' | 'd3' | 'd4'; projected?: boolean; step?: boolean; pattern?: boolean };
 type AreaChartProps = { label: string; series: ChartSeries[]; from: number; to: number; now: number; max: number;
   /** Layers on top of each other, first series at the bottom (points share their times); with a legend of last values. */
   stacked?: boolean;
   /** Text of a value for the summary and the axis, e.g. `40%` or `12/h`. */
-  value: (v: number) => string };
+  value: (v: number) => string;
+  /** Interactive bucket selectors rendered outside role="img" (CA-09). */
+  buckets?: readonly ChartBucket[];
+  selectedBucket?: string | null;
+  onSelectBucket?: (key: string) => void };
 export function AreaChart(p: AreaChartProps) {
   // Stacked: each layer is drawn as the sum of itself and the layers under it, top layer first, all opaque.
   const drawn = p.stacked ? p.series.map((s, i) => ({ ...s, points: s.points.map((q, j) => ({ at: q.at, v: p.series.slice(0, i + 1).reduce((n, t) => n + (t.points[j]?.v ?? 0), 0) })) })).reverse() : p.series;
@@ -1115,14 +1154,17 @@ export function AreaChart(p: AreaChartProps) {
   const last = (s: ChartSeries) => s.points.length ? p.value(s.points[s.points.length - 1].v) : 'none';
   const summary = p.series.map(s => `${s.label}${s.projected && !s.label.includes('projected') ? ' projected' : ''}: ${last(s)}`).join('; ');
   const days = (from: number, to: number) => { const out: number[] = []; const d = new Date(from); d.setHours(24, 0, 0, 0); for (let t = d.getTime(); t < to && out.length < 31; t += 864e5) out.push(t); return out; };
-  return <div data-ui="area-chart" class="area-chart" role="img" aria-label={`${p.label}: ${summary}`}>
-    <div class="ac-plot">
+  return <div data-ui="area-chart" class="area-chart">
+    <div class="ac-plot" role="img" aria-label={`${p.label}: ${summary}`}>
       {drawn.filter(s => shape(s)).map(s => <i key={s.label + (s.projected ? '-p' : '')} class={`ac-area ${s.tone}${s.projected ? ' projected' : ''}${p.stacked ? ' stacked' : ''}${s.pattern ? ' pattern' : ''}`} style={{ clipPath: shape(s) }} />)}
       {days(p.from, p.to).map(t => <b key={t} class="ac-day" style={{ left: `${x(t)}%` }} />)}
       {p.now >= p.from && p.now <= p.to && <b class="ac-now" style={{ left: `${x(p.now)}%` }} data-tip={exact(p.now)} />}
       <span class="ac-max">{p.value(p.max)}</span>
     </div>
     <div class="ac-axis"><time>{stamp(p.from, p.now)}</time><span class="grow" /><time>{stamp(p.to, p.now)}</time></div>
+    {p.buckets?.length ? <div class="ac-buckets" role="group" aria-label={`${p.label} buckets`}>
+      {p.buckets.map(b => <button key={b.key} type="button" class={`ac-bucket${p.selectedBucket === b.key ? ' on' : ''}`} aria-pressed={p.selectedBucket === b.key} data-tip={b.tip ?? (b.valueLabel ? `${b.label}: ${b.valueLabel}` : b.label)} onClick={() => p.onSelectBucket?.(b.key)}>{b.label}</button>)}
+    </div> : null}
     {p.stacked && <ul class="ac-legend" aria-hidden="true">{p.series.map(s => <li key={s.label}><i class={`ac-key ${s.tone}${s.pattern ? ' pattern' : ''}`} />{s.label} <span class="num">{last(s)}</span></li>)}</ul>}
   </div>;
 }

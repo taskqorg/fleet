@@ -9,4 +9,4 @@ Compositions of controls for recurring jobs. Code: `packages/ui/src/patterns.tsx
 | [list-detail](list-detail.md) | Read one item beside its list without losing the list |
 | [definition-editor](definition-editor.md) | Read and change a definition kept in git: agent, pipeline, skill, catalogue entry (mockups only) |
 | [needs-you](needs-you.md) | Everything waiting for a person, answered in place |
-| [ops-summary](ops-summary.md) | Operational counts and capacity at a glance |
+| [ops-summary](ops-summary.md) | Operational counts, capacity, and multi-currency/subscription resource totals (`Totals`, `CostFigures`, `AreaChart`) at a glance |

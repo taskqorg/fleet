@@ -12,7 +12,7 @@
 |---|---|
 | Harness, model, instructions, skills, tools, environment requirements | Configuration tab: Identity (purpose, role, harness, model, effort), Instructions, Skills, Tools (harness tools, connections, environment needs) |
 | Effective instructions and settings | Effective tab: ordered layers with source and revision |
-| Diff between revisions; where a configuration is used | Diff tab; Usage tab (pipelines, catalogue methods, 30-day executions, time, cost) |
+| Diff between revisions; 30-day usage and per-revision resources | Diff tab; Usage tab (`definition_usage`: 30-day total and `byRevision` executions, wall/CPU time, memory, tokens, multi-currency/subscription `CostFigures`, and link to `/projects` analytics) |
 | Harness facts and limitations per version | Compatibility tab |
 
 **Open.** The skill editor; roles as their own definitions.

@@ -2,9 +2,10 @@
 // the coordinator's store. The control column lists one kind; the work area edits one as a draft and saves revisions.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, matchSearch, SearchField, type StepItem } from '../../../packages/ui/src/index.ts';
+import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, Totals, CostFigures, Num, Icon, msMeasured, matchSearch, SearchField, type CostFigureLike, type StepItem, type TotalItem } from '../../../packages/ui/src/index.ts';
 import { op, OpError, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
+import { resourceTotals } from './resources.tsx';
 
 type Kind = 'agent' | 'pipeline' | 'catalogue';
 type Get = Ops['definition_get']['reply'];
@@ -29,7 +30,11 @@ export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
           <div key={x.id} role="row" class={`vl-row static${x.id === id ? ' sel' : ''}`} onClick={() => go(`${route}/${x.id}`)}>
             <span class="lead"><StateBadge family="definition" state={x.draft ? 'draft' : 'ready'} compact /></span>
             <span class="tt"><a class="title row-link" href={`${route}/${x.id}`} onClick={e => { e.preventDefault(); go(`${route}/${x.id}`); }}>{x.name}</a>
-              {x.name !== x.id && <span class="id">{x.id}</span>}{x.agent && <span class="muted">{x.agent.harness} · {x.agent.model}</span>}</span>
+              {x.name !== x.id && <span class="id">{x.id}</span>}{x.agent && <span class="muted">{x.agent.harness} · {x.agent.model}</span>}
+              {kind !== 'catalogue' && x.last30?.runs > 0 && <>
+                <span class="hc" data-tip="Runs in last 30 days"><Icon name="activity" label="Runs" /><Num m={{ value: x.last30.runs, basis: 'measured' }} kind="count" /></span>
+                {x.last30.cost?.length ? <CostFigures cost={x.last30.cost} /> : x.last30.costUsd != null && <Num m={{ value: x.last30.costUsd, currency: 'USD', basis: (x.last30.costBasis as any) ?? 'estimated' }} kind="money" />}
+              </>}</span>
             <span class="r mono" data-tip={x.state}>r{x.revision}{x.state !== 'synced' ? ` · ${x.state}` : ''}</span>
           </div>)}
       </div>
@@ -96,7 +101,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
   const alive = useAlive();
   const runDraft = () => run(async () => { await flush(); const requestId = crypto.randomUUID(); await writeOnce('pipeline_run_create', { pipelineId: id, requestId, draft: true }, () => setError('unknown, retrying'), { signal: alive }); });
   if (!def) return <article class="detail" data-ui="detail" tabIndex={-1}>{error ? <div class="error" role="alert">{error}</div> : <Empty text="Loading…" />}</article>;
-  const tabs = kind === 'agent' ? ['Configuration', 'Effective', 'Diff', 'Compatibility', 'History'] : kind === 'catalogue' ? ['Methods', 'Configuration', 'Diff', 'History'] : ['Configuration', 'Diff', 'History'];
+  const tabs = kind === 'agent' ? ['Configuration', 'Effective', 'Diff', 'Compatibility', 'Usage', 'History'] : kind === 'catalogue' ? ['Methods', 'Configuration', 'Diff', 'History'] : ['Configuration', 'Usage', 'Diff', 'History'];
   return <DefinitionEditor label={id} crumb={`shared · ${def.path} · r${def.head}${def.state !== 'synced' ? ` · ${def.state}` : ''}`} title={def.id}
     tabs={tabs} tab={tab} onTab={setTab} onClose={onClose}>
     {error && <div class="error" role="alert">{error}</div>}
@@ -118,6 +123,7 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
     {tab === 'Methods' && kind === 'catalogue' && <CatalogueMethods />}
     {tab === 'Diff' && <DiffTab kind={kind} id={id} hasDraft={!!draft} head={def.head} />}
     {tab === 'History' && <HistoryTab kind={kind} id={id} />}
+    {tab === 'Usage' && (kind === 'agent' || kind === 'pipeline') && <UsageTab kind={kind} id={id} />}
     {tab === 'Effective' && <EffectiveTab id={id} draft={!!draft} version={draft?.text ?? ''} />}
     {tab === 'Compatibility' && <CompatibilityTab id={id} />}
   </DefinitionEditor>;
@@ -255,5 +261,66 @@ function CatalogueMethods() {
       <Choice label="Use case" value={useCase} options={useCases.filter(u=>matchSearch(useSearch, `${u.id} ${u.goal}`)).map(u=>({id:u.id,label:u.id}))} onChange={setUseCase} />
       <Button label="Create comparison" icon="play" busy={busy} disabledReason={catalogueError || restored || !c ? 'Await current scoped Catalogue read' : !project || selected.length<2 || !baseline || !selected.includes(baseline) || selected.some(id => !methods.some(m => m.id === id)) || !useCase ? 'Select two methods, a baseline and use case' : undefined} onClick={() => act(async () => {const r = await op('lab_compare_methods', {projectId:project,capability:String(c?.capability),methods:selected,baseline,useCase});go(`/lab/${r.experimentId}`);})} />
     </DetailSection>
+  </>;
+}
+
+function UsageTab({ kind, id }: { kind: 'agent' | 'pipeline'; id: string }) {
+  const [, go] = useLocation();
+  const [days, setDays] = useState<'7' | '30'>('30');
+  const [u, setU] = useState<Ops['definition_usage']['reply'] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    op('definition_usage', { kind, id, days: Number(days) }).then(r => { if (live) { setU(r); setError(null); } }, e => { if (live) setError(e.message); });
+    return () => { live = false; };
+  }, [kind, id, days]);
+  if (error) return <DetailSection title="Usage"><div class="error" role="alert">{error}</div></DetailSection>;
+  if (!u) return <DetailSection title="Usage"><Empty text="Loading…" /></DetailSection>;
+  const windowCost = (w: Ops['definition_usage']['reply']['total']): readonly CostFigureLike[] =>
+    w.cost?.length ? w.cost : w.costUsd != null ? [{ value: w.costUsd, currency: 'USD', basis: (w.costBasis as CostFigureLike['basis']) ?? 'estimated' }] : [];
+  const totalCost = windowCost(u.total);
+  const totalItems: TotalItem[] = [
+    { label: 'Runs', m: { value: u.total.runs, basis: 'measured' }, kind: 'count', note: u.total.runs > 0 ? `${u.total.succeeded} succeeded` : undefined },
+    ...(u.total.resources ? resourceTotals(u.total.resources, { extraCost: totalCost, hideUnavailable: true }) : [
+      ...(u.total.wallMsMedian != null ? [{ label: 'Median wall', m: msMeasured(u.total.wallMsMedian, 'measured'), kind: 'duration' as const }] : []),
+      { label: 'Tokens', m: { value: u.total.tokens, basis: 'measured' as const }, kind: 'count' as const },
+      ...(totalCost.length ? [{ label: 'Cost', cost: totalCost, showUnavailable: false }] : []),
+    ]),
+  ];
+  if (u.total.resources && u.total.wallMsMedian != null) {
+    totalItems.splice(1, 0, { label: 'Median wall', m: msMeasured(u.total.wallMsMedian, u.total.resources.durations.basis), kind: 'duration' });
+  }
+  const routeFor = (k: string) => k === 'agent' ? '/agents' : k === 'pipeline' ? '/pipelines' : '/catalogue';
+  return <>
+    <div class="res-bar">
+      <Choice label="Usage window" value={days} onChange={v => setDays(v as '7' | '30')} options={[{ id: '7', label: '7 days' }, { id: '30', label: '30 days' }]} />
+      <span class="grow" />
+      <Button label="Projects analytics" icon="external-link" kind="quiet" onClick={() => go('/projects')} />
+    </div>
+    <DetailSection title={`Summary (${days} days)`}><Totals items={totalItems} /></DetailSection>
+    <DetailSection title="Used by">
+      {u.usedBy.length ? u.usedBy.map(x => <KvRow key={`${x.kind}:${x.id}`} icon={x.kind === 'pipeline' ? 'network' : x.kind === 'agent' ? 'bot' : 'rows-3'}
+        label={x.kind} meta={<a class="row-link" href={`${routeFor(x.kind)}/${x.id}`} onClick={e => { e.preventDefault(); go(`${routeFor(x.kind)}/${x.id}`); }}>{x.id}</a>} />)
+        : <span class="muted">not referenced by other definitions</span>}
+    </DetailSection>
+    {u.byRevision.length > 0 && <DetailSection title="By revision">
+      <div class="table-frame"><table class="limit-table">
+        <thead><tr><th scope="col">Revision</th><th scope="col">Runs</th><th scope="col">Succeeded</th><th scope="col">Median wall</th><th scope="col">Tokens</th><th scope="col">Cost</th></tr></thead>
+        <tbody>{u.byRevision.map(rv => {
+          const w = rv.window;
+          const cost = windowCost(w);
+          const tok = w.resources?.tokens?.total ?? w.tokens;
+          const tokBasis = w.resources?.tokens?.basis ?? 'measured';
+          return <tr key={rv.revision}>
+            <th scope="row" class="mono">r{rv.revision}</th>
+            <td class="num"><Num m={{ value: w.runs, basis: 'measured' }} kind="count" /></td>
+            <td class="num"><Num m={{ value: w.succeeded, basis: 'measured' }} kind="count" /></td>
+            <td class="num">{w.wallMsMedian != null ? <Num m={msMeasured(w.wallMsMedian, w.resources?.durations.basis ?? 'measured')} kind="duration" /> : <span class="muted">—</span>}</td>
+            <td class="num"><Num m={{ value: tok, basis: tokBasis }} kind="count" /></td>
+            <td class="num"><CostFigures cost={cost} showUnavailable={false} empty="—" /></td>
+          </tr>;
+        })}</tbody>
+      </table></div>
+    </DetailSection>}
   </>;
 }

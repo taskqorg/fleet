@@ -3,13 +3,33 @@ import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
-  Icon, Button, StateBadge, Num, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, StatStrip,
+  Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions,
   Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
-  type ThreadBlock, type Family, type Stage,
+  type ThreadBlock, type TreeNode, type Family, type Stage,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
 import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures.ts';
+
+const BOOK_TREE: TreeNode[] = [
+  { ...TREE[0], cost: undefined, costFigures: [{ value: 0.3, currency: 'USD', basis: 'measured' }, { value: 0.18, currency: 'USD', basis: 'subscription' }], children: [
+    ...(TREE[0].children ?? []),
+    { id: 'wt', name: 'Tool calls', note: '14 calls', state: 'succeeded', time: { value: 18, basis: 'measured' }, children: [
+      { id: 'wt1', name: 'web.search', note: '14×', state: 'succeeded', time: { value: 18, basis: 'measured' }, costFigures: [{ value: 0.04, currency: 'USD', basis: 'estimated' }] }] }] },
+  ...TREE.slice(1),
+];
+
+const bookTranscript = (): ThreadBlock[] => {
+  const [head, ...rest] = transcript();
+  return [
+    head.kind === 'boundary' ? { ...head, resources: { executions: 1, tokens: { input: 14000, output: 4200, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 18200, basis: 'measured' },
+      durations: { elapsedMs: 600000, executionWallMs: 540000, activeMs: 420000, apiMs: 280000, cpuMs: 9200, measuredCpuRuns: 1, totalRuns: 1, basis: 'measured' },
+      peakMemoryBytes: { value: 268435456, basis: 'measured' },
+      tools: { totalCalls: 6, failedCalls: 0, turns: 4, byTool: [{ name: 'Bash', calls: 4, errors: 0 }], basis: 'measured' },
+      cost: [{ value: 0.42, currency: 'USD', basis: 'subscription', note: 'Claude Max' }] } } : head,
+    ...rest,
+  ];
+};
 
 
 function Frames({ children }: { children: () => ComponentChildren }) {
@@ -77,14 +97,16 @@ function NumbersDemo() {
     <div class="row">
       <Num m={{ value: cost, basis: 'measured' }} kind="money" rise="bad" />
       <Num m={{ value: 0.42, basis: 'estimated', reason: 'tokens' }} kind="money" />
+      <Num m={{ value: 0.42, basis: 'subscription', reason: 'Claude Max' }} kind="money" />
       <Num m={{ value: null, basis: 'unavailable', reason: 'no gateway' }} kind="money" />
       <Num m={{ value: tok, basis: 'measured', partial: '2 of 3 measured' }} kind="count" rise="neutral" />
+      <CostFigures cost={[{ value: 1.2, currency: 'USD', basis: 'measured' }, { value: 0.42, currency: 'USD', basis: 'subscription', note: 'Claude Max' }]} />
       <Button label="Change values" onClick={() => { setCost(c => +(c + 0.37).toFixed(2)); setTok(t => t + 4100); }} />
     </div>
     <Totals items={[
       { label: 'Time', m: { value: 860, basis: 'measured' }, kind: 'duration' },
       { label: 'Tokens', m: { value: tok, basis: 'measured', partial: '2 of 3 measured' }, kind: 'count', note: '2 of 3 measured' },
-      { label: 'Cost', m: { value: 0.42, basis: 'estimated', reason: 'tokens' }, kind: 'money', note: 'from tokens' },
+      { label: 'Cost', cost: [{ value: 0.42, currency: 'USD', basis: 'estimated', reason: 'tokens' }, { value: 0.38, currency: 'USD', basis: 'subscription' }], note: 'metered + subscription' },
       { label: 'API calls', m: { value: null, basis: 'unavailable', reason: 'no gateway' }, kind: 'count', note: 'no gateway' },
     ]} />
     <div class="row">
@@ -97,12 +119,19 @@ function NumbersDemo() {
 
 /** A pool's left over two weeks: recorded to now, projected after it with a step at a member's reset. */
 function AreaDemo() {
+  const [bucket, setBucket] = useState<string | null>('d2');
   const d = 24 * hr, from = NOW - 7 * d, to = NOW + 7 * d;
   const rec = [{ at: from, v: 180 }, { at: NOW - 5 * d, v: 120 }, { at: NOW - 4 * d, v: 200 }, { at: NOW - d, v: 110 }, { at: NOW, v: 90 }];
   const proj = [{ at: NOW, v: 90 }, { at: NOW + 2 * d, v: 20 }, { at: NOW + 2 * d, v: 120 }, { at: NOW + 6 * d, v: 40 }];
+  const buckets = [
+    { key: 'd1', label: 'D-2', valueLabel: '120k tokens' },
+    { key: 'd2', label: 'D-1', valueLabel: '182k tokens' },
+    { key: 'd3', label: 'Today', valueLabel: '90k tokens' },
+  ];
   return <div class="col">
     <AreaChart label="codex weekly left" from={from} to={to} now={NOW} max={200} value={v => `${Math.round(v / 2)}%`}
-      series={[{ label: 'recorded', points: rec, tone: 'd1' }, { label: 'projected', points: proj, tone: 'd1', projected: true }]} />
+      series={[{ label: 'recorded', points: rec, tone: 'd1' }, { label: 'projected', points: proj, tone: 'd1', projected: true }]}
+      buckets={buckets} selectedBucket={bucket} onSelectBucket={k => setBucket(b => b === k ? null : k)} />
     <AreaChart label="codex weekly burn" from={from} to={to} now={NOW} max={4} value={v => `${v.toFixed(1)}/h`}
       series={[{ label: 'burn', points: [{ at: from, v: 1.2 }, { at: NOW - 3 * d, v: 3.1 }, { at: NOW, v: 2.0 }], tone: 'd2', step: true },
         { label: 'burn', points: [{ at: NOW, v: 2.0 }, { at: to, v: 2.0 }], tone: 'd2', projected: true, step: true }]} />
@@ -167,7 +196,7 @@ function ListDemo() {
 }
 
 function TranscriptDemo() {
-  const [blocks, setBlocks] = useState<ThreadBlock[]>(transcript);
+  const [blocks, setBlocks] = useState<ThreadBlock[]>(bookTranscript);
   const [on, setOn] = useState(false);
   useEffect(() => {
     if (!on) return;
@@ -336,7 +365,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['stat-strip', 'Stat strip', 'stat-strip', () => <StatsDemo />, <>Operational counts: what needs you, failures, running against slots, workers per host. An offline host shows its last known count as a lower bound.</>],
   ['list-pending', 'Updating list: pending counters and rows, row checks', 'row-check', () => <PendingDemo />, <>A filter change keeps the last rows and counts on screen, dimmed under a thin bar, until the new answer replaces them in place. Checked rows are the view URL's sel.</>],
   ['data-list', 'Task list view: views, state counters, grouping, filters, virtual list', 'data-list', () => <ListDemo />, <>Saved views per person (pin, unpin, Save view). State counters show totals and filter on click. Group by state or project; groups collapse. Filters expand inline (OR-14). Title takes the space; service fields sit on the right (OR-21). State is an icon with a delayed tooltip (B1, OR-20).</>],
-  ['execution-tree', 'Execution tree', 'execution-tree', () => <ExecTree nodes={TREE} now={NOW} label="Executions" />],
+  ['execution-tree', 'Execution tree', 'execution-tree', () => <ExecTree nodes={BOOK_TREE} now={NOW} label="Executions" />],
   ['step-list', 'Step list and flow strip', 'step-list', () => <StepsDemo />, <>D20: a pipeline is edited in the list; the picture above is drawn from it and is read-only. Click a step to open it in place. The second list shows a run on top of the same rows.</>],
   ['draft-bar', 'Draft bar and choice', 'draft-bar', () => <DraftDemo />, <>A definition that differs from its saved revision says so, and saving is a commit. A choice picks one or several of a few fixed options.</>],
   ['transcript-viewer', 'Live transcript', 'transcript-viewer', () => <TranscriptDemo />],
