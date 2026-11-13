@@ -70,19 +70,21 @@ func storeEndpointHosts() []string {
 
 // updateSignal is update.json; written only when a value other than at changes, durably (temp file, then rename).
 type updateSignal struct {
-	HostID     string  `json:"hostId"`
-	Target     *string `json:"target"`
-	AutoUpdate string  `json:"autoUpdate"`
-	Running    string  `json:"running"`
-	PollOk     bool    `json:"pollOk"`
-	PollError  string  `json:"pollError,omitempty"`
-	At         string  `json:"at"`
+	RestartTarget *string `json:"restartTarget,omitempty"`
+	HostID        string  `json:"hostId"`
+	Target        *string `json:"target"`
+	AutoUpdate    string  `json:"autoUpdate"`
+	Running       string  `json:"running"`
+	PollOk        bool    `json:"pollOk"`
+	PollError     string  `json:"pollError,omitempty"`
+	At            string  `json:"at"`
 }
 
 var lastSignal *updateSignal
+var signalMu sync.Mutex
 
 func writeUpdateSignal(root string, s updateSignal) error {
-	if l := lastSignal; l != nil && l.HostID == s.HostID && l.AutoUpdate == s.AutoUpdate && l.Running == s.Running && l.PollOk == s.PollOk && l.PollError == s.PollError &&
+	if l := lastSignal; l != nil && l.HostID == s.HostID && l.AutoUpdate == s.AutoUpdate && l.Running == s.Running && l.PollOk == s.PollOk && l.PollError == s.PollError && sameTarget(l.RestartTarget, s.RestartTarget) &&
 		(l.Target == nil) == (s.Target == nil) && (l.Target == nil || *l.Target == *s.Target) {
 		return nil
 	}
@@ -151,3 +153,5 @@ func selftest([]string) error {
 	fmt.Printf("fleet-executor %s: selftest ok\n", version)
 	return nil
 }
+
+func sameTarget(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }

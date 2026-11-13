@@ -105,7 +105,7 @@ func (u *updater) runExecutor() error {
 	}
 	defer r.Close()
 	p := &part{r: r, name: "executor", root: root, stage: root, bins: []string{"fleet-executor", "fleet-update"},
-		restart: command(restart...), health: u.executorHealth(signal), st: st}
+		activity: u.executorActivity(signal), restart: command(restart...), health: u.executorHealth(signal), st: st}
 	pruneReleases(r)
 	var in signalFile
 	if !readJSON(signal, &in) {
@@ -163,8 +163,8 @@ func (u *updater) runPDS18() error {
 		restart: command("systemctl", "--user", "-M", "fleet@", "restart", "fleet", "fleet-gateway", "fleet-access-guard"),
 		health:  u.coordinatorHealth, st: st.Coordinator}
 	exec := &part{r: execR, name: "executor", root: execRoot, stage: stage, bins: []string{"fleet-executor"},
-		restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
-		health:  u.executorHealth(execSignal), st: st.Executor}
+		activity: u.executorActivity(execSignal), restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
+		health: u.executorHealth(execSignal), st: st.Executor}
 	_, autoUpdate := u.coordinatorSelf()
 	save := func() error { return writeJSON(stateFile, st, 0o644) }
 	if r := u.cycle(coord, autoUpdate, u.latest); r != nil {

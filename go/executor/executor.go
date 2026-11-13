@@ -230,6 +230,8 @@ func (l *live) exitedNow() bool {
 }
 
 type executor struct {
+	activity     *os.File
+	updateReady  atomic.Pointer[string]
 	db           *sql.DB
 	ex           execer // db, or the open transaction
 	root         string
@@ -330,7 +332,7 @@ func (e *executor) nativeEvent(c M, seq uint64, kind string, data any) error {
 }
 
 func (e *executor) finish(c M, status, native string) error {
-	if l := e.live[jStr(c, "executionId")]; l != nil && l.mcp != nil {
+	if l := e.live[jStr(c, "executionId")]; l != nil && l.mcp != nil && jStr(l.command, "id") == jStr(c, "id") {
 		if err := l.mcp.close(); err != nil {
 			return err
 		}
@@ -343,7 +345,7 @@ func (e *executor) finish(c M, status, native string) error {
 		if err != nil {
 			return err
 		}
-		if _, err = e.ex.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=?", jStr(c, "executionId")); err != nil {
+		if _, err = e.ex.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=? AND command=?", jStr(c, "executionId"), cid); err != nil {
 			return err
 		}
 		_, err = e.ex.Exec("UPDATE commands SET terminal=1 WHERE id=?", cid)
@@ -668,6 +670,22 @@ func (e *executor) run(c M) error {
 	}
 	session, err := cmdID(c, "sessionId")
 	if err != nil {
+		return err
+	}
+	signalMu.Lock()
+	draining := updatePending(lastSignal)
+	signalMu.Unlock()
+	if draining && jStr(c, "kind") != "stop" && jStr(c, "kind") != "steer" {
+		return nil
+	}
+	leased, leaseErr := e.activityLease()
+	if leaseErr != nil {
+		return leaseErr
+	}
+	if !leased {
+		return nil
+	}
+	if err := e.withdrawUpdateReady(); err != nil {
 		return err
 	}
 	body := enc(c)
@@ -1551,7 +1569,7 @@ func (e *executor) tick() error {
 			delete(e.live, execution)
 		}
 	}
-	return nil
+	return e.drainUpdate()
 }
 
 func (e *executor) tickOne(execution string, l *live) (bool, error) {
@@ -2239,6 +2257,8 @@ func (e *executor) poll() (*pollReply, error) {
 	if a.status == 410 && strings.Contains(a.text, "host-removed") {
 		return nil, errHostRemoved
 	}
+	signalMu.Lock()
+	defer signalMu.Unlock()
 	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {
 		sig.Target, sig.AutoUpdate = lastSignal.Target, lastSignal.AutoUpdate
@@ -2257,6 +2277,9 @@ func (e *executor) poll() (*pollReply, error) {
 				sig.AutoUpdate = *reply.AutoUpdate
 			}
 		}
+	}
+	if ready := e.updateReady.Load(); ready != nil && sig.Target != nil && *ready == *sig.Target {
+		sig.RestartTarget = ready
 	}
 	if err := writeUpdateSignal(e.root, sig); err != nil {
 		fmt.Fprintln(os.Stderr, "executor: update.json:", err)
