@@ -108,6 +108,16 @@ An agent that needs an API key asks the owner with `connections_key_request` ins
 
 Not built: GitHub App tokens, fine-grained PAT helpers, `gh` keyring bindings, and package registry and cloud credentials per connection.
 
+### Coding execution
+
+Projects may set `execution.tools` to `node`, `pnpm` and `browser`, and `execution.forge` to `true`. Placement requires the host's corresponding tool capabilities and a repository-specific forge grant. Before starting the model, the executor runs tool checks with the selected managed HOME; a browser check launches headless Chromium and reads a local page. Missing prerequisites remain visible as `coding-tool-unready` or `project-forge-unready`.
+
+The host binds installed Playwright through `FLEET_PLAYWRIGHT_MODULE` and `FLEET_BROWSER_EXECUTABLE`. These are tool paths, not personal configuration. `project_readiness` checks every configured managed account HOME. The `coding-worker` profile is intended for ordinary repository work; projects select it through their configurable worker role. The Lab baseline remains unchanged.
+
+A host may connect its installed GitHub credential store through `FLEET_FORGE_CONFIG_DIR` and grant exact repository names through comma-separated `FLEET_FORGE_REPOSITORIES`. A project with forge enabled receives `project-forge.publish_draft`: push the frozen execution branch to its configured GitHub repository and open or reuse a draft pull request. Publication accepts title and body only; it cannot choose a repository, branch or API path. Its `delivery` tool reads the exact PR head/checks, marks that PR ready, or enables auto-merge when the project grants it. Required checks and independent review still apply; it never uses an admin bypass. A draft PR is an intermediate result. The worker watches PR status and the normal delivery view for merge/release/host landing before claiming the task delivery requirements are met. Credential lookup runs inside the mediator, and no credential reaches the native harness, tool arguments or result. A failed PR acknowledgement requires inspection before retry. Git credentials for ordinary native commands continue to use the project's existing Git connection.
+
+Configuration isolation shares the executor UID; it is not protection against hostile code running as that user. The host grants and project selection constrain the supplied tool. They do not turn the shared host into an OS security boundary.
+
 ### Readiness
 
 `project_readiness` sends one read-only `readiness` command to each environment host (`go/executor/readiness.go`). Each check is `ok | failed` with a reason code; no raw stderr or secret leaves the host.

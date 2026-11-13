@@ -93,6 +93,21 @@ func capabilities() []string {
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}
+	for _, tool := range []string{"node", "pnpm"} {
+		if _, err := exec.LookPath(tool); err == nil {
+			c = append(c, "tool:"+tool)
+		}
+	}
+	if store := os.Getenv("FLEET_FORGE_CONFIG_DIR"); filepath.IsAbs(store) && isFile(filepath.Join(store, "hosts.yml")) {
+		for _, repo := range strings.Split(os.Getenv("FLEET_FORGE_REPOSITORIES"), ",") {
+			if forgeRepo("https://github.com/"+repo) == repo && repo != "" {
+				c = append(c, "forge:"+repo)
+			}
+		}
+	}
+	if isFile(os.Getenv("FLEET_PLAYWRIGHT_MODULE")) && isFile(os.Getenv("FLEET_BROWSER_EXECUTABLE")) {
+		c = append(c, "tool:browser")
+	}
 	return c
 }
 
@@ -956,8 +971,32 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 		gitApply(cmd, access)
 	}
+	for _, key := range []string{"FLEET_PLAYWRIGHT_MODULE", "FLEET_BROWSER_EXECUTABLE"} {
+		if value := os.Getenv(key); value != "" {
+			setEnv(cmd, key, value)
+		}
+	}
+	for _, tool := range jArr(p, "project", "execution", "tools") {
+		if err := codingTool(jStr(tool), commandHome(cmd)); err != nil {
+			return fail(1, "coding-tool-unready: "+jStr(tool))
+		}
+	}
 	observed := e.observeHarness(cmd, name)
 	servers := mcpAtRoot(selectedMCP, work)
+	if jAt(p, "project", "execution", "forge") == true {
+		if reason := forgeReadiness(jAt(p, "project")); reason != "" {
+			return fail(1, reason)
+		}
+		repo := gitRepo(jAt(p, "project"), nil)
+		remote := forgeRepo(jStr(repo, "remote"))
+		store := os.Getenv("FLEET_FORGE_CONFIG_DIR")
+		branchBytes, err := exec.Command("git", "-C", work, "symbolic-ref", "--short", "HEAD").Output()
+		if err != nil || remote == "" || !forgeGranted(remote) || !filepath.IsAbs(store) {
+			return fail(1, "project-forge-unready")
+		}
+		context := M{"repositories": os.Getenv("FLEET_FORGE_REPOSITORIES"), "credentialHome": os.Getenv("HOME"), "repo": remote, "base": jStr(repo, "defaultBranch"), "branch": strings.TrimSpace(string(branchBytes)), "prefix": jStr(p, "project", "worktree", "branchPrefix"), "autoMerge": jAt(p, "project", "integration", "autoMerge"), "mergeMethod": jStr(p, "project", "integration", "mergeMethod"), "workdir": work, "home": commandHome(cmd), "store": store}
+		servers["project-forge"] = M{"command": exe(), "args": []any{"mcp", "project-forge", enc(context)}, "tools": []any{"publish_draft", "delivery"}}
+	}
 	profiles := jArr(p, "agentConfig", "delegationProfiles")
 	if profiles == nil {
 		profiles = []any{}

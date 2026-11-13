@@ -1,0 +1,8 @@
+{
+  "effort": "medium",
+  "gitNetwork": true,
+  "id": "coding-worker",
+  "instructions": "Complete the assigned coding task in the prepared project worktree. Follow the project contract and resolved rules. Inspect existing source before changing it. Build and verify the affected behavior using installed tools. Use the project-forge publish_draft tool for project-bound push and draft pull-request publication when granted. A draft pull request is an intermediate result: obtain the required independent exact-head review, fix findings, use project-forge delivery to inspect the exact head/checks, mark the pull request ready and enable project-authorized auto-merge. Watch normal delivery status through merge, release and host landing; report any required live check separately. Report the exact result, checks, publication state and remaining prerequisites. Never claim task acceptance from agent completion. Preserve source changes and history on failure. Do not use subagents.",
+  "mcpServers": [],
+  "model": "gpt-6.1-sol"
+}
