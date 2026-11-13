@@ -257,7 +257,7 @@ func writeEnded(q *Request, id string) error {
 }
 
 // agentQuestionJSON: an agent question record ('question') from its columns; data holds the open rest (delivery).
-const agentQuestionJSON = `data || jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'requestId',request_id,
+const agentQuestionJSON = `data || jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'taskId',task_id,'requestId',request_id,
  'question',text,'state',state,'answer',answer,'answeredBy',answered_by,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'createdAt',(extract(epoch FROM asked_at)*1000)::bigint))`
 
 // agentQuestionColumns: the record fields all() filters on, by column.
@@ -289,7 +289,7 @@ func putQuestion(q *Request, v doc) error {
 		if e := astr(v["executionId"]); e != "" {
 			askedBy = "execution:" + e
 		}
-		if _, err := askQuestion(q, doc{"id": id, "kind": "agent_question", "text": v["question"], "projectId": v["projectId"], "executionId": v["executionId"], "sessionId": v["sessionId"],
+		if _, err := askQuestion(q, doc{"id": id, "kind": "agent_question", "text": v["question"], "taskId": v["taskId"], "projectId": v["projectId"], "executionId": v["executionId"], "sessionId": v["sessionId"],
 			"askedBy": askedBy, "requestId": v["requestId"], "data": questionRest(v), "askedAt": v["createdAt"]}); err != nil {
 			return err
 		}
@@ -308,7 +308,7 @@ func putQuestion(q *Request, v doc) error {
 }
 
 // agentQuestionFields: the record fields agentQuestionJSON builds from columns (migration 32 strips the same from data).
-var agentQuestionFields = []string{"id", "executionId", "sessionId", "projectId", "requestId", "question", "state", "answer", "answeredBy", "answeredAt", "createdAt"}
+var agentQuestionFields = []string{"taskId", "id", "executionId", "sessionId", "projectId", "requestId", "question", "state", "answer", "answeredBy", "answeredAt", "createdAt"}
 
 // questionRest: the agent question fields without a column.
 func questionRest(v doc) doc {

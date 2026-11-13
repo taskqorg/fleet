@@ -130,14 +130,16 @@ func transition(q *Request, id, state string) (doc, error) {
 	return doc{"state": state}, nil
 }
 
-// detectProblems marks open executions bound to a host, account or environment nothing registered.
+// detectProblems refreshes registration problems on open executions without replacing retained runtime causes.
 func detectProblems(q *Request, hosts []string, environments map[string][]string) error {
 	return exec(q, `WITH found AS (SELECT e.id,CASE
     WHEN e.host_id IS NOT NULL AND NOT (e.host_id=ANY($1) OR EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=e.host_id)) THEN 'unregistered host '||e.host_id
     WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind='managed-account' AND a.id=e.account_id) THEN 'unregistered account '||e.account_id
     WHEN e.project_id IS NOT NULL AND e.host_id IS NOT NULL AND jsonb_array_length(coalesce($2::jsonb->e.project_id,'[]'))>0 AND NOT ($2::jsonb->e.project_id) ? e.host_id THEN 'no registered environment of project '||e.project_id||' on host '||e.host_id
    END AS problem FROM execution e WHERE e.state NOT IN ('succeeded','failed','cancelled') AND e.kind<>'child_agent')
-   UPDATE execution x SET problem=found.problem FROM found WHERE x.id=found.id AND x.problem IS DISTINCT FROM found.problem`, hosts, js(environments))
+   UPDATE execution x SET problem=found.problem FROM found WHERE x.id=found.id
+   AND (x.problem IS NULL OR x.problem LIKE 'unregistered host %' OR x.problem LIKE 'unregistered account %' OR x.problem LIKE 'no registered environment of project %')
+   AND x.problem IS DISTINCT FROM found.problem`, hosts, js(environments))
 }
 
 func openDelegations(q *Request) ([]doc, error) {
