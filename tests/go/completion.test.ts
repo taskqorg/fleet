@@ -235,3 +235,33 @@ test('Latest result selects newer deliverables before older required outputs and
     assert.equal(c.sql(`SELECT latest_result->>'path' FROM task_view WHERE task_id='${task}'`).trim(),'new.txt');
   } finally { await c.stop(); }
 });
+
+test('Late failed work report reconciles the canonical task bound through its session (requirement: process completion differs from work outcome; risk: optional record taskId skips withdrawal after exit zero)', async () => {
+  const c = await startCoordinator({name:'completion-late-report'});
+  const call = async (path: string, body: unknown, auth=c.secret, person: string|null='owner@trial.test') => {
+    const r=await fetch(c.base+path,{method:'POST',headers:{authorization:'Bearer '+auth,...(person?{'x-fleet-person':person}:{}),'content-type':'application/json'},body:JSON.stringify(body)});
+    const x=await r.json(); assert.equal(r.status,200,JSON.stringify(x)); return x;
+  };
+  try {
+    const {secret}=await call('/api/ops/hosts_register',{id:'trial-host'});
+    const task=await call('/api/ops/task_create',{projectId:'hello-world',title:'missing deliverable'});
+    const taskId=task.id??task.taskId;
+    const {sessionId}=await call('/api/sessions',{});
+    c.sql(`UPDATE document SET data=data||jsonb_build_object('taskId','${taskId}') WHERE id='${sessionId}'`);
+    const e=await call(`/api/sessions/${sessionId}/messages`,{requestId:randomUUID(),text:'finish process without required deliverable'});
+    assert.equal(c.sql(`SELECT task_id FROM execution WHERE id='${e.id}'`).trim(),taskId);
+    assert.equal(c.sql(`SELECT data ? 'taskId' FROM execution WHERE id='${e.id}'`).trim(),'f','the canonical session binding does not require a JSON taskId alias');
+    const {commands}=await call('/api/hosts/poll',{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
+    const command=commands.find((x:any)=>x.executionId===e.id);
+    await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'started'},secret,null);
+    await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'completed'},secret,null);
+    const before=await call('/api/ops/task_get',{taskId});
+    const acceptance=before.questions.find((q:any)=>q.kind==='acceptance'&&q.state==='open'); assert.ok(acceptance);
+    const report=await call('/api/ops/worker_done',{executionId:e.id,outcome:'failed',summary:'Required deliverable absent'}); assert.equal(report.action,'accepted');
+    const after=await call('/api/ops/task_get',{taskId});
+    assert.equal(after.state,'waiting'); assert.equal(after.waitReason,'question');
+    assert.equal(after.questions.find((q:any)=>q.id===acceptance.id).state,'withdrawn');
+    assert.deepEqual(after.openQuestions.map((q:any)=>q.kind),['operator_decision']);
+    assert.equal(after.executions[0].state,'succeeded'); assert.equal(after.executions[0].report.outcome,'failed');
+  } finally { await c.stop(); }
+});
