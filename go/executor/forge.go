@@ -95,8 +95,10 @@ func forge(req any, ctx any) (any, error) {
 			}
 			return mcpText(M{"action": jStr(a, "action"), "requested": true, "note": "Read status to establish the resulting state; required checks and independent review still apply."}, &no), nil
 		}
-		if rewrites, err := boundedOutput(forgeCommand(ctx, "git", "config", "--get-regexp", `^(url\.|http\.|https\.|core\.gitproxy$)`), probeWait); err == nil || len(rewrites) > 0 {
-			return nil, errors.New("repository transport overrides are not permitted for publication")
+		rewrites, err := boundedOutput(forgeCommand(ctx, "git", "config", "--get-regexp", `^(url\.|http\.|https\.|core\.gitproxy$)`), probeWait)
+		var absent *exec.ExitError
+		if err == nil || len(rewrites) > 0 || !errors.As(err, &absent) || absent.ExitCode() != 1 {
+			return nil, errors.New("repository transport overrides absent check failed")
 		}
 		// Only the frozen repository URL and branch reach Git. No hook or ambient credential helper runs.
 		c := forgeCommand(ctx, "git", "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "push", "https://github.com/"+repo+".git", "HEAD:refs/heads/"+branch)

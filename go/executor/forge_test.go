@@ -42,7 +42,7 @@ func TestCodingToolMissing(t *testing.T) {
 func TestForgePublishDraft(t *testing.T) {
 	dir := t.TempDir()
 	for name, script := range map[string]string{
-		"git": "#!/bin/sh\ncase \"$*\" in *symbolic-ref*) echo fleet/fixture;; *push*|*check-ref-format*) exit 0;; *) exit 1;; esac\n",
+		"git": "#!/bin/sh\ncase \"$*\" in *symbolic-ref*) echo fleet/fixture;; *push*|*check-ref-format*) exit 0;; *config*) if [ -f transport-error ]; then exit 2; else exit 1; fi;; *) exit 1;; esac\n",
 		"gh":  "#!/bin/sh\ncase \"$*\" in *'auth token'*) echo invented-token;; *'--method POST'*) echo '{\"html_url\":\"https://github.com/invented/project/pull/1\",\"number\":1}';; *api*) echo '[]';; *) exit 1;; esac\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0700); err != nil {
@@ -64,6 +64,13 @@ func TestForgePublishDraft(t *testing.T) {
 	if _, err := forge(M{"method": "tools/call", "params": M{"name": "delivery", "arguments": M{"action": "auto_merge"}}}, ctx); err == nil || !strings.Contains(err.Error(), "not granted") {
 		t.Fatal("auto-merge widened project authority")
 	}
+	if err := os.WriteFile(filepath.Join(dir, "transport-error"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := forge(M{"method": "tools/call", "params": M{"name": "publish_draft", "arguments": M{"title": "fixture", "body": "fixture"}}}, ctx); err == nil {
+		t.Fatal("unknown transport configuration accepted")
+	}
+	os.Remove(filepath.Join(dir, "transport-error"))
 	ctx["branch"] = "fleet/other"
 	if _, err = forge(M{"method": "tools/call", "params": M{"name": "publish_draft", "arguments": M{"title": "fixture", "body": "fixture"}}}, ctx); err == nil {
 		t.Fatal("changed branch accepted")
