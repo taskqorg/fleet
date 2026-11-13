@@ -232,7 +232,8 @@ test('Latest result selects newer deliverables before older required outputs and
       ('${randomUUID()}','prod','old',1,'text/plain','old.txt','${old}',true,'stored'),
       ('${randomUUID()}','prod','new',1,'text/plain','new.txt','${current}',false,'stored'),
       ('${randomUUID()}','prod','log',1,'application/x-ndjson','mcp-lifecycle-diagnostic.jsonl','${current}',true,'stored')`);
-    assert.equal(c.sql(`SELECT latest_result->>'path' FROM task_view WHERE task_id='${task}'`).trim(),'new.txt');
+    const response=await fetch(c.base+'/api/ops/task_get',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify({taskId:task})});
+    assert.equal(response.status,200);assert.equal((await response.json()).latestResult.path,'new.txt');
   } finally { await c.stop(); }
 });
 
