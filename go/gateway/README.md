@@ -2,7 +2,7 @@
 
 ## Overview
 
-`gateway` is the only runtime process that reads provider API-key values. It also provides the Cloudflare Access forward-auth guard used by the Fleet web origin.
+`gateway` reads provider API-key files to authenticate outbound provider calls. It also provides the Cloudflare Access forward-auth guard used by the Fleet web origin.
 
 ## Interface
 
