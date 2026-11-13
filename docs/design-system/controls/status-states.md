@@ -8,7 +8,7 @@
 
 **Empty.** Centred in the area, `fg-muted`: one sentence for why, one action. Kinds: *filtered empty* ("No tasks match these filters." + Clear filters); *first use* ("No results yet. Results appear when an execution stores one."); *all clear* ("Nothing is waiting for you.").
 
-**Error.** Inline banner at the top of the affected area: `danger-fg` icon and text "Host list did not update: timeout after 10 s", "Retry" button; existing data stays below. Whole-page errors only when nothing can be shown.
+**Error.** Inline banner at the top of the affected area: `danger-fg` icon and text "Host list did not update: timeout after 10 s", "Retry" button only when the caller supplies a retry callback; a read-only error has no action. Existing data stays below. Whole-page errors only when nothing can be shown.
 
 **Stale.** When data is older than the expected refresh, a `fg-muted` note "Updated 6 min ago" with "Refresh" appears in the area header; values from unconfirmed sources use the observation overlay of the [state badge](state-badge.md).
 

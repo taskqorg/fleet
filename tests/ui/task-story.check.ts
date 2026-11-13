@@ -1,9 +1,21 @@
 // Requirement: task detail tells current work, question and evidence (OR-39).
 // Risk: failed reports appear complete, obsolete acceptance remains actionable, or the statement buries the decision.
 import assert from 'node:assert/strict';
+import {build} from 'esbuild';
 import type {Browser} from 'playwright';
 export async function checkTaskStory(browser: Browser, origin: string) {
   const context = await browser.newContext(), page = await context.newPage();
+  // Shared error contract: read-only errors retain alert text without an inert action; supplied retries invoke the caller.
+  const fixture = await build({stdin: {contents: `import {render} from 'preact'; import {ErrorBanner} from './packages/ui/src/index.ts';
+    render(<><ErrorBanner text="Read-only problem"/><ErrorBanner text="Retriable problem" onRetry={()=>document.querySelector('output').textContent='retried'}/><output/></>,document.body);`, resolveDir: process.cwd(), loader: 'tsx'}, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact'});
+  await page.goto('about:blank');
+  await page.setContent('<body></body>');
+  await page.addScriptTag({content: fixture.outputFiles[0].text});
+  const alerts = page.getByRole('alert');
+  assert.equal(await alerts.count(), 2);
+  assert.equal(await alerts.filter({hasText: 'Read-only problem'}).getByRole('button').count(), 0);
+  await alerts.filter({hasText: 'Retriable problem'}).getByRole('button', {name: 'Retry'}).click();
+  assert.equal(await page.locator('output').textContent(), 'retried');
   const question = {id: 'current', kind: 'operator_decision', state: 'open', text: 'Retry installation? Retry starts another execution; fail ends this task.', options: ['retry', 'fail']};
   const cases = [
     {state: 'waiting', waitReason: 'Access unavailable; supply access to continue', questions: [question], executions: []},
@@ -28,6 +40,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
         await detail.getByText('Native session home mismatch; preparation stopped.', {exact: true}).waitFor();
         assert(await detail.locator('[role=alert]').evaluate(el => el.getBoundingClientRect().top < document.querySelector('[data-ui=outcome-block]')!.getBoundingClientRect().top));
         assert.equal(await detail.getByRole('button', {name: /accepted|rejected/}).count(), 0);
+        assert.equal(await detail.locator('[role=alert]').getByRole('button', {name: 'Retry'}).count(), 0);
       }
       await detail.getByRole('button', {name: 'Expand outcome'}).click();
       assert.equal(await detail.getByRole('button', {name: 'Collapse outcome'}).count(), 1);
