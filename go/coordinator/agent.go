@@ -1675,6 +1675,41 @@ func init() {
 				}
 				f["projectId"], a["filter"] = focus, f // focus filters reads without a project (§2)
 			}
+			if name == "analytics_query" {
+				var bound []string
+				if focused && focus != nil {
+					bound = focus
+				} else if !focused && sessionProject != "" {
+					bound = []string{sessionProject}
+				}
+				if bound != nil {
+					if len(bound) == 0 {
+						return nil, fail(403, "Project outside the session focus")
+					}
+					if a["projectId"] != nil {
+						pid, ok := a["projectId"].(string)
+						if !ok || !slices.Contains(bound, pid) {
+							return nil, fail(403, "Project outside the session focus")
+						}
+					}
+					f := mapOf(a["filters"])
+					for _, fk := range []string{"project", "projectId"} {
+						if raw, ok := f[fk]; ok && raw != nil {
+							for _, pid := range strList(raw) {
+								if !slices.Contains(bound, pid) {
+									return nil, fail(403, "Project outside the session focus")
+								}
+							}
+						}
+					}
+					if a["projectId"] == nil && len(strList(f["project"])) == 0 && len(strList(f["projectId"])) == 0 {
+						if f == nil {
+							f = doc{}
+						}
+						f["projectId"], a["filters"] = bound, f
+					}
+				}
+			}
 			// An operation that requires projectId, called without the key, gets the one focus project, or the session's
 			// own project when it has no focus (§2). Optional projectIds stay absent (scope-wide reads), an explicit null
 			// stays null, and the operation's own gates still refuse a project the director cannot reach.

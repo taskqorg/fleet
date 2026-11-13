@@ -27,20 +27,26 @@ type Block = json.RawMessage
 
 // BoundaryBlock: Start of an execution in the thread.
 type BoundaryBlock struct {
-	Effort      *string        `json:"effort,omitempty"`
-	EndedAt     *int64         `json:"endedAt,omitempty"`
-	ExecutionId string         `json:"executionId"`
-	Harness     *string        `json:"harness,omitempty"`
-	Key         string         `json:"key"`
-	Kind        string         `json:"kind"`
-	Model       *string        `json:"model,omitempty"`
-	SessionId   *string        `json:"sessionId,omitempty"`
-	StartedAt   *int64         `json:"startedAt,omitempty"`
-	State       ExecutionState `json:"state"`
+	Effort      *string          `json:"effort,omitempty"`
+	EndedAt     *int64           `json:"endedAt,omitempty"`
+	ExecutionId string           `json:"executionId"`
+	Harness     *string          `json:"harness,omitempty"`
+	Key         string           `json:"key"`
+	Kind        string           `json:"kind"`
+	Model       *string          `json:"model,omitempty"`
+	Resources   *ResourceSummary `json:"resources,omitempty"`
+	SessionId   *string          `json:"sessionId,omitempty"`
+	StartedAt   *int64           `json:"startedAt,omitempty"`
+	State       ExecutionState   `json:"state"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *BoundaryBlock) Validate() error {
+	if v.Resources != nil {
+		if err := Check(v.Resources, "resources"); err != nil {
+			return err
+		}
+	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
 	}
@@ -321,8 +327,93 @@ func (v *SessionForkRequest) Validate() error {
 	return nil
 }
 
-// SessionGetReply: The session view: the session row with its executions, questions, focus and handoffs.
-type SessionGetReply = map[string]json.RawMessage
+// SessionGetReply: The session view: the session row with its executions, questions, focus, handoffs, cost and scoped resources.
+type SessionGetReply struct {
+	Account                 *string                      `json:"account,omitempty"`
+	Actor                   *string                      `json:"actor,omitempty"`
+	AgentConfig             json.RawMessage              `json:"agentConfig,omitempty"`
+	ArchivedAt              *int64                       `json:"archivedAt,omitempty"`
+	Code                    *string                      `json:"code"`
+	Cost                    []CostFigure                 `json:"cost"`
+	CreatedAt               *int64                       `json:"createdAt,omitempty"`
+	CreatedByExecutionId    *string                      `json:"createdByExecutionId,omitempty"`
+	CreatedBySessionId      *string                      `json:"createdBySessionId,omitempty"`
+	Delegations             []map[string]json.RawMessage `json:"delegations"`
+	DeliveryId              *string                      `json:"deliveryId,omitempty"`
+	DirectedBy              *string                      `json:"directedBy,omitempty"`
+	DirectorAccessRevokedAt *int64                       `json:"directorAccessRevokedAt,omitempty"`
+	Executions              []map[string]json.RawMessage `json:"executions"`
+	ExperimentId            *string                      `json:"experimentId,omitempty"`
+	Focus                   json.RawMessage              `json:"focus,omitempty"`
+	ForkNativeSessionId     *string                      `json:"forkNativeSessionId,omitempty"`
+	ForkOf                  json.RawMessage              `json:"forkOf,omitempty"`
+	Forks                   []map[string]json.RawMessage `json:"forks"`
+	Handoffs                []map[string]json.RawMessage `json:"handoffs"`
+	HostId                  *string                      `json:"hostId,omitempty"`
+	Id                      string                       `json:"id"`
+	Messages                []map[string]json.RawMessage `json:"messages"`
+	NativeSessionId         *string                      `json:"nativeSessionId,omitempty"`
+	NativeSessions          json.RawMessage              `json:"nativeSessions,omitempty"`
+	ParentExecutionId       *string                      `json:"parentExecutionId,omitempty"`
+	PendingHandoffId        *string                      `json:"pendingHandoffId,omitempty"`
+	PendingTransition       json.RawMessage              `json:"pendingTransition,omitempty"`
+	PipelineRunId           *string                      `json:"pipelineRunId,omitempty"`
+	ProjectId               *string                      `json:"projectId,omitempty"`
+	Questions               []map[string]json.RawMessage `json:"questions"`
+	Queued                  []map[string]json.RawMessage `json:"queued"`
+	ReadinessOfSessionId    *string                      `json:"readinessOfSessionId,omitempty"`
+	Resources               ScopedResourceRollup         `json:"resources"`
+	Role                    *string                      `json:"role,omitempty"`
+	SessionId               string                       `json:"sessionId"`
+	Setup                   json.RawMessage              `json:"setup,omitempty"`
+	StartRequest            json.RawMessage              `json:"startRequest,omitempty"`
+	TaskId                  *string                      `json:"taskId,omitempty"`
+	Transitions             []map[string]json.RawMessage `json:"transitions"`
+	UpdatedAt               *int64                       `json:"updatedAt,omitempty"`
+	WorkingDirectory        *string                      `json:"workingDirectory,omitempty"`
+	WorkspaceKey            *string                      `json:"workspaceKey,omitempty"`
+	WorkspaceSnapshots      json.RawMessage              `json:"workspaceSnapshots,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionGetReply) Validate() error {
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
+	}
+	if v.Delegations == nil {
+		return Missing("delegations")
+	}
+	if v.Executions == nil {
+		return Missing("executions")
+	}
+	if v.Forks == nil {
+		return Missing("forks")
+	}
+	if v.Handoffs == nil {
+		return Missing("handoffs")
+	}
+	if v.Messages == nil {
+		return Missing("messages")
+	}
+	if v.Questions == nil {
+		return Missing("questions")
+	}
+	if v.Queued == nil {
+		return Missing("queued")
+	}
+	if err := Check(&v.Resources, "resources"); err != nil {
+		return err
+	}
+	if v.Transitions == nil {
+		return Missing("transitions")
+	}
+	return nil
+}
 
 type SessionGetRequest struct {
 	SessionId string `json:"sessionId"`

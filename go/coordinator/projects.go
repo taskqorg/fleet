@@ -481,7 +481,19 @@ func init() {
 		}
 		return doc{"projects": out}, nil
 	}))
-	projectOp("project_context", true, shaped[contract.ProjectContextRequest, contract.ProjectContextReply](func(q *Request) (any, error) { return projectContext(q, astr(body(q)["projectId"])) }))
+	projectOp("project_context", true, shaped[contract.ProjectContextRequest, contract.ProjectContextReply](func(q *Request) (any, error) {
+		id := astr(body(q)["projectId"])
+		p, err := projectContext(q, id)
+		if err != nil {
+			return nil, err
+		}
+		res, err := projectResources(q, id)
+		if err != nil {
+			return nil, err
+		}
+		p["resources"] = res
+		return p, nil
+	}))
 	projectOp("catalogue", true, shaped[contract.CatalogueRequest, contract.CatalogueReply](func(q *Request) (any, error) { return catalogue(q, astr(body(q)["projectId"])) }))
 	projectOp("recommendation_set", false, shaped[contract.RecommendationSetRequest, contract.RecommendationSetReply](func(q *Request) (any, error) {
 		b := body(q)

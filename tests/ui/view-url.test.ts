@@ -85,6 +85,12 @@ test("today's links still parse", () => {
   assert.equal(p('/tasks/0b6c1f2e-6f1d-4e0a-9d3b-1a2b3c4d5e6f').focus, '0b6c1f2e-6f1d-4e0a-9d3b-1a2b3c4d5e6f');
 });
 
+test('projects view and focus round-trip', () => {
+  assert.deepEqual(p('/projects'), { view: 'projects' });
+  assert.deepEqual(p('/projects/hello-world'), { view: 'projects', focus: 'hello-world' });
+  assert.equal(formatView({ view: 'projects', focus: 'hello-world' }), '/projects/hello-world');
+});
+
 // review 7 (every codec grouping is accepted by task_page) is an outside test now: tests/go/artifacts.test.ts.
 
 test("review #31-7: a project named '-' does not collide with the no-project marker", () => {

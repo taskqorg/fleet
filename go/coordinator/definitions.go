@@ -383,6 +383,13 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 		if last30.CostBasis == nil {
 			last30.CostBasis = ptr("tokens")
 		}
+		if last30.Cost == nil {
+			last30.Cost = []contract.CostFigure{}
+		}
+		if last30.Resources == nil {
+			empty := emptyResourceSummary()
+			last30.Resources = &empty
+		}
 		item := contract.DefinitionListItem{Kind: r.Kind, Id: x.ID, Name: definitionName(x), Scope: "shared", Path: x.Path, Revision: x.Head, State: x.state(),
 			Last30: last30}
 		if x.Kind == "agent" {

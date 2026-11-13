@@ -80,8 +80,81 @@ func (v *ProjectCodeSetRequest) Validate() error {
 	return nil
 }
 
-// ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules.
-type ProjectContextReply = map[string]json.RawMessage
+type ProjectContextEntry struct {
+	Path   string `json:"path"`
+	Sha256 string `json:"sha256"`
+	Text   string `json:"text"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectContextEntry) Validate() error {
+	return nil
+}
+
+// ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules, and optional resource summary.
+type ProjectContextReply struct {
+	ArtifactLocations json.RawMessage            `json:"artifact_locations,omitempty"`
+	ArtifactRules     json.RawMessage            `json:"artifact_rules,omitempty"`
+	Capability        *string                    `json:"capability,omitempty"`
+	Cleanup           json.RawMessage            `json:"cleanup,omitempty"`
+	Content           ProjectBundle              `json:"content"`
+	ContentSha        string                     `json:"contentSha"`
+	Context           []ProjectContextEntry      `json:"context"`
+	ContextFiles      json.RawMessage            `json:"contextFiles,omitempty"`
+	ContextSources    json.RawMessage            `json:"contextSources,omitempty"`
+	Environments      json.RawMessage            `json:"environments,omitempty"`
+	Execution         json.RawMessage            `json:"execution,omitempty"`
+	Id                *string                    `json:"id,omitempty"`
+	Identity          json.RawMessage            `json:"identity,omitempty"`
+	InitialAccess     *ProjectInitialAccess      `json:"initialAccess,omitempty"`
+	Integration       json.RawMessage            `json:"integration,omitempty"`
+	Name              *string                    `json:"name,omitempty"`
+	RecommendedMethod *string                    `json:"recommendedMethod,omitempty"`
+	RepoSha           *string                    `json:"repoSha,omitempty"`
+	Repos             json.RawMessage            `json:"repos,omitempty"`
+	Resources         *ResourceSummary           `json:"resources,omitempty"`
+	Revision          int64                      `json:"revision"`
+	Roles             json.RawMessage            `json:"roles,omitempty"`
+	Scripts           json.RawMessage            `json:"scripts,omitempty"`
+	Settings          map[string]json.RawMessage `json:"settings"`
+	SetupStart        *string                    `json:"setupStart,omitempty"`
+	SourceState       *string                    `json:"sourceState,omitempty"`
+	Subscriptions     json.RawMessage            `json:"subscriptions,omitempty"`
+	UnknownKeys       []string                   `json:"unknownKeys"`
+	Worktree          json.RawMessage            `json:"worktree,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectContextReply) Validate() error {
+	if err := Check(&v.Content, "content"); err != nil {
+		return err
+	}
+	if v.Context == nil {
+		return Missing("context")
+	}
+	for i := range v.Context {
+		if err := Check(&v.Context[i], "context"); err != nil {
+			return err
+		}
+	}
+	if v.InitialAccess != nil {
+		if err := Check(v.InitialAccess, "initialAccess"); err != nil {
+			return err
+		}
+	}
+	if v.Resources != nil {
+		if err := Check(v.Resources, "resources"); err != nil {
+			return err
+		}
+	}
+	if v.Settings == nil {
+		return Missing("settings")
+	}
+	if v.UnknownKeys == nil {
+		return Missing("unknownKeys")
+	}
+	return nil
+}
 
 type ProjectContextRequest struct {
 	ProjectId string `json:"projectId"`
@@ -89,6 +162,17 @@ type ProjectContextRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectContextRequest) Validate() error {
+	return nil
+}
+
+type ProjectInitialAccess struct {
+	Member  *string `json:"member"`
+	Revoked bool    `json:"revoked"`
+	Version int64   `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectInitialAccess) Validate() error {
 	return nil
 }
 
@@ -445,36 +529,37 @@ func (v *TaskDerivedDrift) Validate() error {
 	return nil
 }
 
-// TaskDetail: A task with its progress, totals, executions, dependencies and questions (taskGet).
+// TaskDetail: A task with its progress, cost, scoped resources, executions, dependencies and questions (taskGet).
 type TaskDetail struct {
-	AcceptedArtifactIds    []string         `json:"acceptedArtifactIds"`
-	AcceptedAt             *string          `json:"acceptedAt"`
-	AcceptedBy             *string          `json:"acceptedBy"`
-	Code                   *string          `json:"code"`
-	CompletionRequirements json.RawMessage  `json:"completionRequirements"`
-	Cost                   json.RawMessage  `json:"cost"`
-	CreatedAt              string           `json:"createdAt"`
-	CreatedBy              *string          `json:"createdBy"`
-	DeliveryMethod         json.RawMessage  `json:"deliveryMethod"`
-	Dependencies           []TaskDependency `json:"dependencies"`
-	DirectedBy             *string          `json:"directedBy"`
-	Executions             []ExecutionRow   `json:"executions"`
-	ExpectedOutcome        *string          `json:"expectedOutcome"`
-	Id                     string           `json:"id"`
-	LatestResult           json.RawMessage  `json:"latestResult"`
-	OpenQuestions          json.RawMessage  `json:"openQuestions"`
-	PauseReason            *string          `json:"pauseReason"`
-	Priority               string           `json:"priority"`
-	Progress               TaskProgress     `json:"progress"`
-	ProjectId              *string          `json:"projectId"`
-	Questions              []QuestionRow    `json:"questions"`
-	RequestedBy            *string          `json:"requestedBy"`
-	ResultDestination      *string          `json:"resultDestination"`
-	State                  TaskState        `json:"state"`
-	TakenFrom              *string          `json:"takenFrom"`
-	Title                  string           `json:"title"`
-	UpdatedAt              string           `json:"updatedAt"`
-	WaitReason             *string          `json:"waitReason"`
+	AcceptedArtifactIds    []string              `json:"acceptedArtifactIds"`
+	AcceptedAt             *string               `json:"acceptedAt"`
+	AcceptedBy             *string               `json:"acceptedBy"`
+	Code                   *string               `json:"code"`
+	CompletionRequirements json.RawMessage       `json:"completionRequirements"`
+	Cost                   []CostFigure          `json:"cost"`
+	CreatedAt              string                `json:"createdAt"`
+	CreatedBy              *string               `json:"createdBy"`
+	DeliveryMethod         json.RawMessage       `json:"deliveryMethod"`
+	Dependencies           []TaskDependency      `json:"dependencies"`
+	DirectedBy             *string               `json:"directedBy"`
+	Executions             []ExecutionRow        `json:"executions"`
+	ExpectedOutcome        *string               `json:"expectedOutcome"`
+	Id                     string                `json:"id"`
+	LatestResult           json.RawMessage       `json:"latestResult"`
+	OpenQuestions          json.RawMessage       `json:"openQuestions"`
+	PauseReason            *string               `json:"pauseReason"`
+	Priority               string                `json:"priority"`
+	Progress               TaskProgress          `json:"progress"`
+	ProjectId              *string               `json:"projectId"`
+	Questions              []QuestionRow         `json:"questions"`
+	RequestedBy            *string               `json:"requestedBy"`
+	Resources              *ScopedResourceRollup `json:"resources,omitempty"`
+	ResultDestination      *string               `json:"resultDestination"`
+	State                  TaskState             `json:"state"`
+	TakenFrom              *string               `json:"takenFrom"`
+	Title                  string                `json:"title"`
+	UpdatedAt              string                `json:"updatedAt"`
+	WaitReason             *string               `json:"waitReason"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -484,6 +569,11 @@ func (v *TaskDetail) Validate() error {
 	}
 	if v.Cost == nil {
 		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
 	}
 	if v.DeliveryMethod == nil {
 		return Missing("deliveryMethod")
@@ -518,6 +608,11 @@ func (v *TaskDetail) Validate() error {
 	}
 	for i := range v.Questions {
 		if err := Check(&v.Questions[i], "questions"); err != nil {
+			return err
+		}
+	}
+	if v.Resources != nil {
+		if err := Check(v.Resources, "resources"); err != nil {
 			return err
 		}
 	}

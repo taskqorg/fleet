@@ -20,17 +20,27 @@ const runnerTokens = `CASE WHEN coalesce(x.tokens_input,x.tokens_output,x.tokens
 // priced at the run's start (fleet-analytics.md, price table). A run on a subscription login (account_id) adds no money.
 const runnerUsage = `coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,x.connection_cost->>'unit' AS unit,
  coalesce(x.connection_cost->>'amount',x.connection_cost->>(x.connection_cost->>'unit'))::float8 AS amount,
- coalesce(x.model,e.model) AS model,e.account_id,x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,` + runnerAt + `) AS at`
+ x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,` + runnerAt + `) AS at`
 
-// runnerCost: the cost of one run's usages. A run on a subscription login (account_id) costs no metered money: its
+func isRunnerSubscription(r doc) bool {
+	switch astr(r["billing_basis"]) {
+	case string(contract.ResourceBasisSubscription):
+		return true
+	case "metered":
+		return false
+	}
+	return r["account_id"] != nil
+}
+
+// runnerCost: the cost of one run's usages. A run on a subscription login (account_id / subscription billing_basis) costs no metered money: its
 // figures say basis "subscription", the list-price equivalent of what it used (fleet-analytics.md bases).
-func runnerCost(prices []doc, subscription bool, us []usage) []any {
+func runnerCost(prices []doc, subscription bool, us []usage) []contract.CostFigure {
 	out := estimateCost(prices, us)
 	if subscription {
-		for _, x := range out {
-			if d, ok := x.(doc); ok { // unpriced too: a subscription run adds nothing to the metered side
-				d["basis"], d["note"] = "subscription", "subscription (list-price equivalent)"
-			}
+		note := subscriptionCostNote
+		for i := range out { // unpriced too: a subscription run adds nothing to the metered side
+			out[i].Basis = contract.ResourceBasisSubscription
+			out[i].Note = &note
 		}
 	}
 	return out
@@ -140,7 +150,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 		out["runs"] = append(out["runs"].([]any), doc{"id": r["id"], "kind": r["kind"], "state": r["state"], "hostId": r["host_id"], "harness": r["harness"], "model": r["model"],
 			"taskId": r["task_id"], "taskTitle": r["title"], "sessionId": r["session_id"], "problem": r["problem"], "startedAt": r["started"], "endedAt": r["ended"], "lastSeenAt": r["seen"],
 			"wallMs": r["wall_ms"], "cpuMs": r["cpu_ms"], "peakMemoryBytes": r["peak_memory_bytes"], "tokens": r["tokens"], "calls": r["calls"], "failedCalls": r["failed_calls"],
-			"parentExecutionId": r["parent_execution_id"], "cost": runnerCost(prices, r["account_id"] != nil, runnerUsages(r))})
+			"parentExecutionId": r["parent_execution_id"], "cost": runnerCost(prices, isRunnerSubscription(r), runnerUsages(r))})
 	}
 	// Spend: every execution this UTC month, by when it ran (end, else start), summed per host, kind and period in Go so
 	// costs are priced per usage. ponytail: a full-month scan per call; aggregate closed days in SQL when months grow large.
@@ -185,7 +195,7 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 			add(&a.wall, r["wall_ms"])
 			add(&a.cpu, r["cpu_ms"])
 			add(&a.tokens, r["tokens"])
-			if r["account_id"] != nil {
+			if isRunnerSubscription(r) {
 				a.subUs = append(a.subUs, runnerUsages(r)...)
 			} else {
 				a.us = append(a.us, runnerUsages(r)...)

@@ -26,12 +26,28 @@ func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.
 	if id != "" {
 		pin["id"] = id
 	}
+	totRes, revRes, err := definitionUsageResources(q, kind, id, days)
+	if err != nil {
+		return nil, nil, err
+	}
 	totals, byRev := map[string]contract.Window{}, map[string][]contract.RevisionWindow{}
 	rows, err := q.tx.Query(q.ctx(), usageSQL, jsonBytes([]map[string]string{pin}), kind, id, days)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
+	attach := func(w *contract.Window, res contract.ResourceSummary, ok bool) {
+		if !ok {
+			res = emptyResourceSummary()
+		}
+		resCopy := res
+		w.Resources = &resCopy
+		if res.Cost != nil {
+			w.Cost = res.Cost
+		} else {
+			w.Cost = []contract.CostFigure{}
+		}
+	}
 	for rows.Next() {
 		var did string
 		var rev, median *int64
@@ -42,8 +58,12 @@ func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.
 		}
 		w.WallMsMedian = median
 		if grouping == 1 {
+			res, ok := totRes[did]
+			attach(&w, res, ok)
 			totals[did] = w
 		} else if rev != nil {
+			res, ok := revRes[did][*rev]
+			attach(&w, res, ok)
 			byRev[did] = append(byRev[did], contract.RevisionWindow{Revision: *rev, Window: w})
 		}
 	}
@@ -120,6 +140,13 @@ func definitionUsage(q *Request, r *contract.DefinitionUsageRequest) (contract.D
 	out.Total, out.ByRevision = totals[r.Id], byRev[r.Id]
 	if out.Total.CostBasis == nil {
 		out.Total.CostBasis = ptr("tokens")
+	}
+	if out.Total.Cost == nil {
+		out.Total.Cost = []contract.CostFigure{}
+	}
+	if out.Total.Resources == nil {
+		empty := emptyResourceSummary()
+		out.Total.Resources = &empty
 	}
 	if out.ByRevision == nil {
 		out.ByRevision = []contract.RevisionWindow{}

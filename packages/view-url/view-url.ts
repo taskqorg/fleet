@@ -1,6 +1,6 @@
 // View URL codec (docs/designs/fleet-view-urls-and-list-path.md §1): one canonical URL per operator-app view state.
 // No imports: the root build compiles it for the coordinator (view_link, state lists) and esbuild bundles it into the app.
-export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results';
+export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results' | 'projects';
 export type View = {
   view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
   q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean; extra?: Record<string, string>;
@@ -17,7 +17,7 @@ export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'no
 export const TASK_SORTS = ['-changed', '-created', 'changed', 'created'] as const;
 export const DEFAULT_TASK_SORT = '-changed';
 export const ARTIFACT_STATES = ['stored', 'pending', 'failed', 'deleted'] as const;
-export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview', 'results'];
+export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview', 'results', 'projects'];
 const NO_PROJECT = '-';
 
 /**
@@ -84,7 +84,7 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
   },
   // Results (docs/designs/fleet-conversations.md Stage 4): task, execution, media and since ride in extra.
   results: { project, q: text('q', true), state: listKey_('state', ARTIFACT_STATES) },
-  hosts: {}, overview: {},
+  hosts: {}, overview: {}, projects: {},
 };
 const DEFAULT_GROUP: Partial<Record<ViewName, string>> = { tasks: 'priority' };
 

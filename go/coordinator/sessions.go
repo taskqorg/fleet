@@ -185,8 +185,15 @@ func sessionGet(q *Request, sid string) (doc, error) {
 	if s["messages"], err = all(q, "message", doc{"sessionId": sid}); err != nil {
 		return nil, err
 	}
-	s["executions"], err = sessionExecutions(q, sid)
-	return s, err
+	if s["executions"], err = sessionExecutions(q, sid); err != nil {
+		return nil, err
+	}
+	res, err := sessionResourceRollup(q, sid)
+	if err != nil {
+		return nil, err
+	}
+	s["cost"], s["resources"] = res.Total.Cost, res
+	return s, nil
 }
 
 func sessionProfile(q *Request, sid string, b doc) (doc, error) {

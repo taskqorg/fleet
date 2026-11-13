@@ -1332,35 +1332,40 @@ func (v *RouteDecisionsRequest) Validate() error {
 	return nil
 }
 
-// RunnerRun: Tool calls come as one row per caller (id calls:<parent, session or host:id>) with calls and failedCalls; other runs have them null. Times in ms since epoch; resource fields null when not measured. tokens: input + output + cache. cost: estimateCost figures (prices table), empty when nothing was used.
+// RunnerRun: Tool calls come as one row per caller (id calls:<parent, session or host:id>) with calls and failedCalls; other runs have them null. Times in ms since epoch; resource fields null when not measured. tokens: input + output + cache. cost: CostFigure figures (prices table), empty when nothing was used.
 type RunnerRun struct {
-	Calls             *int64            `json:"calls,omitempty"`
-	Cost              []json.RawMessage `json:"cost"`
-	CpuMs             *float64          `json:"cpuMs"`
-	EndedAt           *float64          `json:"endedAt"`
-	FailedCalls       *int64            `json:"failedCalls,omitempty"`
-	Harness           *string           `json:"harness"`
-	HostId            *string           `json:"hostId"`
-	Id                string            `json:"id"`
-	Kind              string            `json:"kind"`
-	LastSeenAt        *float64          `json:"lastSeenAt"`
-	Model             *string           `json:"model"`
-	ParentExecutionId *string           `json:"parentExecutionId,omitempty"`
-	PeakMemoryBytes   *float64          `json:"peakMemoryBytes"`
-	Problem           *string           `json:"problem"`
-	SessionId         *string           `json:"sessionId"`
-	StartedAt         *float64          `json:"startedAt"`
-	State             ExecutionState    `json:"state"`
-	TaskId            *string           `json:"taskId"`
-	TaskTitle         *string           `json:"taskTitle"`
-	Tokens            *float64          `json:"tokens"`
-	WallMs            *float64          `json:"wallMs"`
+	Calls             *int64         `json:"calls,omitempty"`
+	Cost              []CostFigure   `json:"cost"`
+	CpuMs             *float64       `json:"cpuMs"`
+	EndedAt           *float64       `json:"endedAt"`
+	FailedCalls       *int64         `json:"failedCalls,omitempty"`
+	Harness           *string        `json:"harness"`
+	HostId            *string        `json:"hostId"`
+	Id                string         `json:"id"`
+	Kind              string         `json:"kind"`
+	LastSeenAt        *float64       `json:"lastSeenAt"`
+	Model             *string        `json:"model"`
+	ParentExecutionId *string        `json:"parentExecutionId,omitempty"`
+	PeakMemoryBytes   *float64       `json:"peakMemoryBytes"`
+	Problem           *string        `json:"problem"`
+	SessionId         *string        `json:"sessionId"`
+	StartedAt         *float64       `json:"startedAt"`
+	State             ExecutionState `json:"state"`
+	TaskId            *string        `json:"taskId"`
+	TaskTitle         *string        `json:"taskTitle"`
+	Tokens            *float64       `json:"tokens"`
+	WallMs            *float64       `json:"wallMs"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *RunnerRun) Validate() error {
 	if v.Cost == nil {
 		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
 	}
 	if err := Check(&v.State, "state"); err != nil {
 		return err
@@ -1370,21 +1375,26 @@ func (v *RunnerRun) Validate() error {
 
 // RunnerSpend: One host and execution kind over a UTC period: today or month (month includes today), by when each run ran (end, else start). measured: runs with recorded totals; sums cover only those.
 type RunnerSpend struct {
-	Cost     []json.RawMessage `json:"cost"`
-	CpuMs    *float64          `json:"cpuMs"`
-	HostId   *string           `json:"hostId"`
-	Kind     string            `json:"kind"`
-	Measured int64             `json:"measured"`
-	Period   string            `json:"period"`
-	Runs     int64             `json:"runs"`
-	Tokens   *float64          `json:"tokens"`
-	WallMs   *float64          `json:"wallMs"`
+	Cost     []CostFigure `json:"cost"`
+	CpuMs    *float64     `json:"cpuMs"`
+	HostId   *string      `json:"hostId"`
+	Kind     string       `json:"kind"`
+	Measured int64        `json:"measured"`
+	Period   string       `json:"period"`
+	Runs     int64        `json:"runs"`
+	Tokens   *float64     `json:"tokens"`
+	WallMs   *float64     `json:"wallMs"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *RunnerSpend) Validate() error {
 	if v.Cost == nil {
 		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
