@@ -12,7 +12,8 @@ import (
 )
 
 const usageSQL = `SELECT d->>'id' AS id, (d->>'revision')::int AS rev, GROUPING((d->>'revision')::int) AS total, count(*), count(*) FILTER (WHERE e.state='succeeded'),
-   (percentile_disc(0.5) WITHIN GROUP (ORDER BY t.wall_ms))::bigint, coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint
+   (percentile_disc(0.5) WITHIN GROUP (ORDER BY coalesce(t.wall_ms, CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0, (extract(epoch FROM e.ended_at - e.started_at)*1000)::bigint) END)))::bigint,
+   coalesce(sum(coalesce(t.tokens_input,0)+coalesce(t.tokens_output,0)),0)::bigint
  FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d LEFT JOIN execution_totals t ON t.execution_id=e.id
  WHERE e.definitions @> $1 AND d->>'kind'=$2 AND ($3='' OR d->>'id'=$3) AND coalesce((d->>'draft')::boolean,false)=false
    AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
@@ -42,6 +43,9 @@ func usageWindows(q *Request, kind, id string, days int64) (map[string]contract.
 		}
 		resCopy := res
 		w.Resources = &resCopy
+		if res.Tokens.Total != nil {
+			w.Tokens = *res.Tokens.Total
+		}
 		if res.Cost != nil {
 			w.Cost = res.Cost
 		} else {

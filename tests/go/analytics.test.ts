@@ -368,3 +368,84 @@ test('R4 task_get, session_get, threads, definition_usage, executions_runners, p
     assert.deepEqual(vParsed.view, {view: 'projects'});
   } finally { await c.stop(); }
 });
+
+test('R5 empty-string dimensions normalize to unknown, api-connection metadata resolves without holder-RLS leak or sub flip, and hidden lineage counts exclude containers/double-counting (requirement: fleet-analytics.md RLS/CA-05/normalization; risk: non-owner api-connection flips to subscription, empty strings split unknown bucket, or container rows inflate hidden)', async () => {
+  const c = await startCoordinator({name: 'analytics-hardening'});
+  try {
+    await seedProject(c, 'desiign', 'Desiign');
+    await seedProject(c, 'secret-proj', 'Secret');
+
+    c.sql(`
+      INSERT INTO document(id, kind, data) VALUES
+        ('connection:priv', 'api-connection', '{"id":"connection:priv","provider":"openai","holder":"owner@trial.test","secret":"top-secret-key"}'::jsonb),
+        ('sess-own', 'session', '{"id":"sess-own","projectId":"desiign","taskId":"t-main"}'::jsonb),
+        ('sess-hid', 'session', '{"id":"sess-hid","projectId":"secret-proj","taskId":"t-spawn"}'::jsonb);
+      UPDATE document SET project_id = 'desiign' WHERE id = 'sess-own';
+      UPDATE document SET project_id = 'secret-proj' WHERE id = 'sess-hid';
+
+      INSERT INTO price_entry(id, subject, unit, price, currency, source, observed_at, effective_from, created_by) VALUES
+        ('p-gpt-in', 'gpt-5', 'input_tokens', 0.01, 'USD', 'owner', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'owner@trial.test'),
+        ('p-tool', 'priv/search', 'calls', 0.25, 'USD', 'owner', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'owner@trial.test');
+
+      INSERT INTO task(id, code, project_id, title, state, created_by_execution_id) VALUES
+        ('t-main', 'TASK-M', 'desiign', 'Visible Main Task', 'in_progress', NULL),
+        ('t-spawn', 'TASK-S', 'secret-proj', 'Hidden Spawned Task', 'completed', 'e-api');
+
+      INSERT INTO execution(id, kind, state, project_id, task_id, session_id, parent_execution_id, account_id, harness, model, started_at, ended_at, data, delegation) VALUES
+        ('e-api', 'agent_run', 'succeeded', 'desiign', 't-main', 'sess-own', NULL, 'connection:priv', '', 'gpt-5', '2026-11-10T02:00:00Z', '2026-11-10T02:01:00Z', '{}'::jsonb, NULL),
+        ('e-api-tool', 'tool_run', 'succeeded', 'desiign', 't-main', 'sess-own', 'e-api', 'connection:priv', NULL, NULL, '2026-11-10T02:00:10Z', '2026-11-10T02:00:12Z', '{"connection":"priv","tool":"search"}'::jsonb, NULL),
+        ('e-hid-pipe', 'pipeline_run', 'succeeded', 'secret-proj', NULL, NULL, 'e-api', NULL, NULL, NULL, '2026-11-10T02:02:00Z', '2026-11-10T02:03:00Z', '{}'::jsonb, '{"id":"del-1","parentExecutionId":"e-api"}'::jsonb),
+        ('e-hid-leaf', 'agent_run', 'succeeded', 'secret-proj', NULL, NULL, 'e-hid-pipe', NULL, 'claude', 'gpt-5', '2026-11-10T02:02:10Z', '2026-11-10T02:02:50Z', '{}'::jsonb, NULL),
+        ('e-spawn-leaf', 'agent_run', 'succeeded', 'secret-proj', 't-spawn', 'sess-hid', NULL, NULL, 'claude', 'gpt-5', '2026-11-10T02:04:00Z', '2026-11-10T02:05:00Z', '{}'::jsonb, NULL);
+
+      INSERT INTO execution_totals(execution_id, project_id, billing_basis, tokens_input, wall_ms, connection_cost, connection_cost_basis) VALUES
+        ('e-api', 'desiign', 'unavailable', 100, 60000, NULL, 'unavailable'),
+        ('e-api-tool', 'desiign', 'metered', NULL, 2000, '{"unit":"calls","amount":2}'::jsonb, 'measured'),
+        ('e-hid-leaf', 'secret-proj', 'metered', 500, 40000, NULL, 'unavailable'),
+        ('e-spawn-leaf', 'secret-proj', 'metered', 600, 60000, NULL, 'unavailable');
+    `);
+
+    // 1. Non-owner member sees provider='openai' and metered estimated cost (NOT downgraded to subscription!).
+    const q = await op(c, 'analytics_query', {
+      window: {from: '2026-11-10T00:00:00Z', to: '2026-11-11T00:00:00Z'},
+      dimensions: ['provider', 'harness'],
+      measures: ['executions', 'cost'],
+    }, member);
+    assert.equal(q.unknown, 2, 'empty-string harness on e-api and NULL harness on e-api-tool both count as unknown');
+    assert.equal(q.rows.length, 1, 'empty-string and NULL harness merge into single unknown bucket');
+    assert.equal(q.rows[0].dimensions.provider, 'openai', 'api-connection provider resolves for non-holder project member');
+    assert.equal(q.rows[0].dimensions.harness, 'unknown');
+    assert.equal(q.rows[0].cost.length, 1);
+    assert.equal(q.rows[0].cost[0].basis, 'estimated', 'legacy unavailable billing_basis + api-connection stays metered, not subscription');
+    assert.equal(q.rows[0].cost[0].value, 1.5, '100*0.01 (1.00) + 2*0.25 (0.50) = 1.50 USD');
+    assert.equal(q.hidden, 2, 'e-hid-leaf + e-spawn-leaf hidden; e-hid-pipe container excluded');
+
+    // Empty-string filter 'unknown' matches both NULL and '' harness.
+    const fUnknown = await op(c, 'analytics_query', {
+      window: {from: '2026-11-10T00:00:00Z', to: '2026-11-11T00:00:00Z'},
+      filters: {harness: ['unknown']},
+      measures: ['executions'],
+    }, member);
+    assert.equal(fUnknown.totals.measures.executions.value, 2);
+
+    // 2. task_get / session_get for non-owner member: hidden = 1 spawned task (t-spawn) + 1 delegated leaf (e-hid-leaf) = 2 (neither e-hid-pipe container nor e-spawn-leaf double-counts).
+    const tMem = await op(c, 'task_get', {taskId: 't-main'}, member);
+    assert.equal(tMem.resources.hidden, 2);
+    const sMem = await op(c, 'session_get', {sessionId: 'sess-own'}, member);
+    assert.equal(sMem.resources.hidden, 2);
+
+    // 3. fleet_write_tokens preserves existing non-measured tokens_*_basis when no token events exist (migration 51).
+    c.sql(`
+      INSERT INTO execution(id, kind, state, project_id, started_at, ended_at) VALUES ('e-est', 'agent_run', 'succeeded', 'desiign', '2026-11-10T02:30:00Z', '2026-11-10T02:31:00Z');
+      INSERT INTO execution_totals(execution_id, project_id, tokens_input, tokens_input_basis, tokens_output, tokens_output_basis) VALUES ('e-est', 'desiign', 42, 'estimated', 8, 'estimated');
+      SELECT fleet_write_tokens('e-est');
+    `);
+    const estBasis = await op(c, 'analytics_query', {
+      window: {from: '2026-11-10T00:00:00Z', to: '2026-11-11T00:00:00Z'},
+      filters: {model: ['unknown']},
+      measures: ['tokens_input', 'tokens_output'],
+    }, member);
+    assert.equal(estBasis.totals.measures.tokens_input.basis, 'estimated', 'fleet_write_tokens kept tokens_input_basis=estimated');
+    assert.equal(estBasis.totals.measures.tokens_output.basis, 'estimated', 'fleet_write_tokens kept tokens_output_basis=estimated');
+  } finally { await c.stop(); }
+});

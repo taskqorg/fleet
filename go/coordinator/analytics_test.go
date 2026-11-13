@@ -175,3 +175,34 @@ func TestSummarizeResourceLeaves(t *testing.T) {
 		t.Fatalf("Tools = %+v, want 1 github/read call", got.Tools)
 	}
 }
+
+// Requirement: CA-01/fleet-analytics.md tokens basis degrades to unavailable when any expected leaf lacks input or output, and tools basis preserves weakest leaf toolCalls basis; risk: partial output tokens or estimated tool calls masquerade as measured.
+func TestSummarizeResourceLeavesPartialTokensAndToolBasis(t *testing.T) {
+	in1, out1, in2 := int64(100), int64(40), int64(60)
+	gotPartial := summarizeResourceLeaves([]resourceLeafRow{
+		{
+			ID: "a1", Kind: "agent_run", State: "succeeded", HasTotals: true,
+			TokensInput: &in1, TokensInputBasis: contract.ResourceBasisMeasured,
+			TokensOutput: &out1, TokensOutputBasis: contract.ResourceBasisMeasured,
+			TokensCacheReadBasis: contract.ResourceBasisUnavailable, TokensCacheWriteBasis: contract.ResourceBasisUnavailable,
+			WallMsBasis: contract.ResourceBasisUnavailable, ActiveMsBasis: contract.ResourceBasisUnavailable,
+			CpuMsBasis: contract.ResourceBasisUnavailable, PeakMemoryBytesBasis: contract.ResourceBasisUnavailable,
+			ToolCallsRaw: []byte(`{"byTool":{"bash":{"calls":2,"errors":0}}}`), ToolCallsBasis: contract.ResourceBasisEstimated,
+		},
+		{
+			ID: "a2", Kind: "agent_run", State: "succeeded", HasTotals: true,
+			TokensInput: &in2, TokensInputBasis: contract.ResourceBasisMeasured,
+			TokensOutput: nil, TokensOutputBasis: contract.ResourceBasisUnavailable,
+			TokensCacheReadBasis: contract.ResourceBasisUnavailable, TokensCacheWriteBasis: contract.ResourceBasisUnavailable,
+			WallMsBasis: contract.ResourceBasisUnavailable, ActiveMsBasis: contract.ResourceBasisUnavailable,
+			CpuMsBasis: contract.ResourceBasisUnavailable, PeakMemoryBytesBasis: contract.ResourceBasisUnavailable,
+			ToolCallsRaw: []byte(`{"byTool":{"read":{"calls":1,"errors":0}}}`), ToolCallsBasis: contract.ResourceBasisMeasured,
+		},
+	})
+	if gotPartial.Tokens.Basis != contract.ResourceBasisUnavailable {
+		t.Fatalf("partial output token summary gave Basis=%q, want unavailable", gotPartial.Tokens.Basis)
+	}
+	if gotPartial.Tools.Basis != contract.ResourceBasisEstimated || gotPartial.Tools.TotalCalls != 3 {
+		t.Fatalf("estimated tool calls gave Tools=%+v, want basis=estimated totalCalls=3", gotPartial.Tools)
+	}
+}

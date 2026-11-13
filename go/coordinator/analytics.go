@@ -116,7 +116,7 @@ func sortCostFigures(cs []contract.CostFigure) {
 	})
 }
 
-// analyticsBaseLeavesSelect is the shared column projection over `execution e` + `execution_totals t` + `document conn`.
+// analyticsBaseLeavesSelect is the shared column projection over `execution e` + `execution_totals t` + `fleet_exec_conn_meta conn`.
 const analyticsBaseLeavesSelect = `
  SELECT
   e.id,
@@ -133,7 +133,7 @@ const analyticsBaseLeavesSelect = `
   e.profile_revision,
   e.harness,
   coalesce(t.model, e.model) AS model,
-  coalesce(conn.data->>'provider', nullif(e.data->>'provider', ''), CASE e.harness WHEN 'codex' THEN 'openai' WHEN 'claude' THEN 'anthropic' WHEN 'antigravity' THEN 'google' END) AS provider,
+  coalesce(conn.provider, nullif(e.data->>'provider', ''), CASE e.harness WHEN 'codex' THEN 'openai' WHEN 'claude' THEN 'anthropic' WHEN 'antigravity' THEN 'google' END) AS provider,
   e.account_id,
   e.host_id,
   nullif(e.data->>'connection', '') AS connection,
@@ -146,7 +146,7 @@ const analyticsBaseLeavesSelect = `
   e.ended_at,
   coalesce(e.started_at, CASE WHEN e.data->>'startedAt' ~ '^[0-9]{1,15}$' THEN to_timestamp((e.data->>'startedAt')::bigint / 1000.0) END, e.ended_at, e.last_seen_at) AS leaf_at,
   (t.execution_id IS NOT NULL) AS has_totals,
-  (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind = 'api-connection' AND a.id = e.account_id))) AS is_sub,
+  (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND NOT coalesce(conn.is_api_conn, false))) AS is_sub,
   t.tokens_input,
   coalesce(t.tokens_input_basis, 'unavailable') AS tokens_input_basis,
   t.tokens_output,
@@ -208,7 +208,11 @@ const analyticsBaseLeavesSelect = `
    END) AS leaf_call_errors
  FROM execution e
  LEFT JOIN execution_totals t ON t.execution_id = e.id
- LEFT JOIN document conn ON conn.kind = 'api-connection' AND (conn.id = 'connection:' || coalesce(e.data->>'connection', '') OR conn.id = e.account_id)`
+ LEFT JOIN LATERAL (
+  SELECT m.provider, m.is_api_conn
+  FROM fleet_exec_conn_meta(e.data->>'connection', e.account_id) m
+  WHERE e.data ? 'connection' OR e.account_id IS NOT NULL
+ ) conn ON true`
 
 // analyticsLeafCostCTEs assumes a `leaves` CTE is in scope and resolves every leaf's prices via LATERAL
 // lookups on `price_entry_subject` BEFORE any outer GROUP BY (`CA-04`).
@@ -354,7 +358,7 @@ func appendStringFilter(conds *[]string, params *[]any, expr string, vals []stri
 		return
 	}
 	*params = append(*params, vals)
-	*conds = append(*conds, fmt.Sprintf("coalesce(%s, 'unknown') = ANY($%d)", expr, len(*params)))
+	*conds = append(*conds, fmt.Sprintf("coalesce(nullif(%s, ''), 'unknown') = ANY($%d)", expr, len(*params)))
 }
 
 func rawFilterStrings(raws []json.RawMessage) ([]string, error) {
@@ -707,8 +711,8 @@ func analyticsQuery(q *Request, r *contract.AnalyticsQueryRequest) (contract.Ana
 	for i, d := range dims {
 		expr := analyticsDimExpr[d]
 		col := fmt.Sprintf("dim_%d", i)
-		dimCols[i] = fmt.Sprintf("coalesce(%s, 'unknown') AS %s", expr, col)
-		dimNullChecks[i] = fmt.Sprintf("(%s IS NULL)", expr)
+		dimCols[i] = fmt.Sprintf("coalesce(nullif(%s, ''), 'unknown') AS %s", expr, col)
+		dimNullChecks[i] = fmt.Sprintf("(nullif(%s, '') IS NULL)", expr)
 		dimGroupCols[i] = col
 	}
 	unknownExpr := "false"
@@ -887,18 +891,12 @@ ORDER BY is_total ASC, %s`, dimJSONBuild, sqlMeasureSelect, dimListSQL,
 
 	// Hidden: unfiltered count of leaf executions in [from, to) excluded by caller's RLS scope (CA-05).
 	if q.person != nil && !fullAccess(q.person) {
-		unscopedTotal, err := unscoped(q, func() (int64, error) {
-			var n int64
-			qErr := q.tx.QueryRow(q.ctx(),
-				`SELECT count(*)::bigint FROM execution e LEFT JOIN execution_totals t ON t.execution_id = e.id WHERE `+analyticsLeafFilter+` AND e.started_at >= $1 AND e.started_at < $2`,
-				from, to).Scan(&n)
-			return n, qErr
-		})
-		if err != nil {
+		var windowAll int64
+		if err := q.tx.QueryRow(q.ctx(), `SELECT fleet_window_leaf_count($1, $2)`, from, to).Scan(&windowAll); err != nil {
 			return rep, err
 		}
-		if unscopedTotal > windowVisible {
-			rep.Hidden = unscopedTotal - windowVisible
+		if windowAll > windowVisible {
+			rep.Hidden = windowAll - windowVisible
 		}
 	}
 
@@ -1142,6 +1140,7 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 	type toolStat struct{ calls, errors int64 }
 	toolStats := map[toolKey]*toolStat{}
 	var totalCalls, failedCalls, turns, otherCalls, toolMeasured, toolExpected int64
+	var toolBases []contract.ResourceBasis
 
 	for _, l := range leaves {
 		if l.StartedMs != nil && (minStart == nil || *l.StartedMs < *minStart) {
@@ -1216,6 +1215,11 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 		if l.Kind == "tool_run" {
 			toolExpected++
 			toolMeasured++
+			b := l.ToolCallsBasis
+			if b == "" || b == contract.ResourceBasisUnavailable {
+				b = contract.ResourceBasisMeasured
+			}
+			toolBases = append(toolBases, b)
 			conn := deref(l.ToolConnection)
 			name := deref(l.ToolName)
 			if name == "" {
@@ -1236,7 +1240,6 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 		} else if l.Kind == "agent_run" || l.Kind == "child_agent" {
 			toolExpected++
 			if len(l.ToolCallsRaw) > 0 && string(l.ToolCallsRaw) != "null" {
-				toolMeasured++
 				var tc struct {
 					ByTool map[string]struct {
 						Calls  int64 `json:"calls"`
@@ -1248,6 +1251,12 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 					} `json:"other"`
 				}
 				if err := json.Unmarshal(l.ToolCallsRaw, &tc); err == nil {
+					toolMeasured++
+					b := l.ToolCallsBasis
+					if b == "" {
+						b = contract.ResourceBasisUnavailable
+					}
+					toolBases = append(toolBases, b)
 					for name, c := range tc.ByTool {
 						tk := toolKey{name: name}
 						ts := toolStats[tk]
@@ -1286,7 +1295,7 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 		}
 		totalTok := inSum + outSum + crSum + cwSum
 		out.Tokens.Total = &totalTok
-		if inHave < tokExpected && outHave < tokExpected {
+		if inHave < tokExpected || outHave < tokExpected {
 			out.Tokens.Basis = contract.ResourceBasisUnavailable
 		} else {
 			out.Tokens.Basis = weakestBasis(tokBases...)
@@ -1373,8 +1382,8 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 	out.Tools.TotalCalls = totalCalls
 	out.Tools.FailedCalls = failedCalls
 	out.Tools.Turns = turns
-	if toolExpected > 0 && toolMeasured == toolExpected {
-		out.Tools.Basis = contract.ResourceBasisMeasured
+	if toolExpected > 0 && toolMeasured == toolExpected && len(toolBases) > 0 {
+		out.Tools.Basis = weakestBasis(toolBases...)
 	}
 
 	out.Cost = mergeCostFigures(leaves)
@@ -1382,11 +1391,14 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 }
 
 const taskLineageCTEs = `WITH RECURSIVE
+ candidate_sessions AS (
+  SELECT DISTINCT session_id FROM execution WHERE task_id = $1 AND session_id IS NOT NULL
+ ),
  first_task AS (
-  SELECT DISTINCT ON (session_id) session_id, task_id
-  FROM execution
-  WHERE task_id IS NOT NULL AND session_id IS NOT NULL
-  ORDER BY session_id, seq
+  SELECT DISTINCT ON (e.session_id) e.session_id, e.task_id
+  FROM execution e
+  WHERE e.task_id IS NOT NULL AND e.session_id IN (SELECT session_id FROM candidate_sessions)
+  ORDER BY e.session_id, e.seq
  ),
  direct_sessions AS (
   SELECT id AS session_id FROM document
@@ -1402,6 +1414,12 @@ const taskLineageCTEs = `WITH RECURSIVE
     AND (
       e.task_id = $1
       OR (e.task_id IS NULL AND e.session_id IN (SELECT session_id FROM direct_sessions))
+      OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
+         SELECT p.id FROM execution p
+         WHERE p.kind <> 'child_agent'
+           AND p.delegation IS NULL
+           AND (p.task_id = $1 OR (p.task_id IS NULL AND p.session_id IN (SELECT session_id FROM direct_sessions)))
+      ))
     )
  ),
  del_seed AS (
@@ -1446,6 +1464,13 @@ const taskLineageCTEs = `WITH RECURSIVE
    e.task_id = st.id
    OR (e.task_id IS NULL AND e.session_id IN (
      SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
+   ))
+   OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
+     SELECT p.id FROM execution p
+     WHERE p.task_id = st.id
+        OR (p.task_id IS NULL AND p.session_id IN (
+          SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
+        ))
    ))
   )
  )`
@@ -1501,14 +1526,12 @@ func taskResourceRollup(q *Request, taskID string) (contract.ScopedResourceRollu
 	if err != nil {
 		return out, err
 	}
-	var visibleSpawned, visibleDelegated int64
 	for taskRows.Next() {
 		var st contract.SpawnedTaskRef
 		if err := taskRows.Scan(&st.TaskId, &st.Code, &st.Title, &st.State, &st.ProjectId); err != nil {
 			taskRows.Close()
 			return out, err
 		}
-		visibleSpawned++
 		if s, ok := summaries["spawned_task\x00"+st.TaskId]; ok {
 			st.Resources = s
 		} else {
@@ -1522,23 +1545,10 @@ func taskResourceRollup(q *Request, taskID string) (contract.ScopedResourceRollu
 	}
 	taskRows.Close()
 
-	// Hidden direct lineage count under RLS (CA-05): compare visible vs unscoped downstream items.
+	// Hidden direct lineage count under RLS (CA-05): compare visible vs total downstream leaf delegations + spawned tasks via SECURITY DEFINER helper.
 	if q.person != nil && !fullAccess(q.person) {
-		if err := q.tx.QueryRow(q.ctx(), taskLineageCTEs+` SELECT count(DISTINCT id)::bigint FROM del_tree`, taskID).Scan(&visibleDelegated); err != nil {
+		if err := q.tx.QueryRow(q.ctx(), `SELECT fleet_task_hidden_lineage_count($1)`, taskID).Scan(&out.Hidden); err != nil {
 			return out, err
-		}
-		totalUnscoped, err := unscoped(q, func() (int64, error) {
-			var uSpawned, uDelegated int64
-			qErr := q.tx.QueryRow(q.ctx(), taskLineageCTEs+`
- SELECT (SELECT count(DISTINCT id)::bigint FROM spawned_tasks),
-        (SELECT count(DISTINCT id)::bigint FROM del_tree)`, taskID).Scan(&uSpawned, &uDelegated)
-			return uSpawned + uDelegated, qErr
-		})
-		if err != nil {
-			return out, err
-		}
-		if totalUnscoped > visibleSpawned+visibleDelegated {
-			out.Hidden = totalUnscoped - (visibleSpawned + visibleDelegated)
 		}
 	}
 
@@ -1599,6 +1609,13 @@ const sessionLineageCTEs = `WITH RECURSIVE
    OR (e.task_id IS NULL AND e.session_id IN (
      SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
    ))
+   OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
+     SELECT p.id FROM execution p
+     WHERE p.task_id = st.id
+        OR (p.task_id IS NULL AND p.session_id IN (
+          SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
+        ))
+   ))
   )
  )`
 
@@ -1652,14 +1669,12 @@ func sessionResourceRollup(q *Request, sessionID string) (contract.ScopedResourc
 	if err != nil {
 		return out, err
 	}
-	var visibleSpawned, visibleDelegated int64
 	for taskRows.Next() {
 		var st contract.SpawnedTaskRef
 		if err := taskRows.Scan(&st.TaskId, &st.Code, &st.Title, &st.State, &st.ProjectId); err != nil {
 			taskRows.Close()
 			return out, err
 		}
-		visibleSpawned++
 		if s, ok := summaries["spawned_task\x00"+st.TaskId]; ok {
 			st.Resources = s
 		} else {
@@ -1674,21 +1689,8 @@ func sessionResourceRollup(q *Request, sessionID string) (contract.ScopedResourc
 	taskRows.Close()
 
 	if q.person != nil && !fullAccess(q.person) {
-		if err := q.tx.QueryRow(q.ctx(), sessionLineageCTEs+` SELECT count(DISTINCT id)::bigint FROM del_tree`, sessionID).Scan(&visibleDelegated); err != nil {
+		if err := q.tx.QueryRow(q.ctx(), `SELECT fleet_session_hidden_lineage_count($1)`, sessionID).Scan(&out.Hidden); err != nil {
 			return out, err
-		}
-		totalUnscoped, err := unscoped(q, func() (int64, error) {
-			var uSpawned, uDelegated int64
-			qErr := q.tx.QueryRow(q.ctx(), sessionLineageCTEs+`
- SELECT (SELECT count(DISTINCT id)::bigint FROM spawned_tasks),
-        (SELECT count(DISTINCT id)::bigint FROM del_tree)`, sessionID).Scan(&uSpawned, &uDelegated)
-			return uSpawned + uDelegated, qErr
-		})
-		if err != nil {
-			return out, err
-		}
-		if totalUnscoped > visibleSpawned+visibleDelegated {
-			out.Hidden = totalUnscoped - (visibleSpawned + visibleDelegated)
 		}
 	}
 

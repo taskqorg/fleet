@@ -1451,3 +1451,352 @@ CREATE INDEX execution_profile_rev ON execution(profile_id, profile_revision) WH
 CREATE INDEX task_created_by_session ON task(created_by_session_id) WHERE created_by_session_id IS NOT NULL;
 CREATE INDEX task_created_by_execution ON task(created_by_execution_id) WHERE created_by_execution_id IS NOT NULL;
 CREATE INDEX execution_totals_directed ON execution_totals(directed_by) WHERE project_id IS NULL AND directed_by IS NOT NULL;
+
+-- migration 51: analytics RLS-safe metadata/hidden helpers and fleet_write_tokens basis preservation.
+CREATE FUNCTION fleet_exec_conn_meta(conn_name text, aid text)
+RETURNS TABLE(provider text, is_api_conn boolean)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+ prev text := current_setting('fleet.project_ids', true);
+ v_provider text;
+ v_is_api boolean := false;
+BEGIN
+ IF coalesce(conn_name, '') = '' AND coalesce(aid, '') = '' THEN
+  provider := NULL;
+  is_api_conn := false;
+  RETURN NEXT;
+  RETURN;
+ END IF;
+ PERFORM set_config('fleet.project_ids', '*', true);
+ BEGIN
+  SELECT coalesce(
+   CASE WHEN coalesce(conn_name, '') <> '' THEN (SELECT d.data->>'provider' FROM document d WHERE d.kind = 'api-connection' AND d.id = 'connection:' || conn_name LIMIT 1) END,
+   CASE WHEN coalesce(aid, '') <> '' THEN (SELECT d.data->>'provider' FROM document d WHERE d.kind = 'api-connection' AND d.id = aid LIMIT 1) END
+  ) INTO v_provider;
+  IF coalesce(aid, '') <> '' THEN
+   SELECT EXISTS(SELECT 1 FROM document a WHERE a.kind = 'api-connection' AND a.id = aid) INTO v_is_api;
+  END IF;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ provider := v_provider;
+ is_api_conn := coalesce(v_is_api, false);
+ RETURN NEXT;
+END $$;
+
+CREATE FUNCTION fleet_window_leaf_count(win_from timestamptz, win_to timestamptz)
+RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+ prev text := current_setting('fleet.project_ids', true);
+ total_n bigint := 0;
+BEGIN
+ IF win_from IS NULL OR win_to IS NULL OR NOT (win_from < win_to) THEN
+  RETURN 0;
+ END IF;
+ PERFORM set_config('fleet.project_ids', '*', true);
+ BEGIN
+  SELECT count(*)::bigint INTO total_n
+  FROM execution e
+  LEFT JOIN execution_totals t ON t.execution_id = e.id
+  WHERE e.kind NOT IN ('pipeline_run', 'pipeline_step')
+    AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL)
+    AND e.started_at >= win_from
+    AND e.started_at < win_to;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN coalesce(total_n, 0);
+END $$;
+
+CREATE FUNCTION fleet_task_hidden_lineage_count(tid text)
+RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+ prev text := current_setting('fleet.project_ids', true);
+ vis_n bigint := 0;
+ all_n bigint := 0;
+ pass_n int;
+ cur_n bigint;
+BEGIN
+ IF coalesce(tid, '') = '' OR NOT EXISTS (SELECT 1 FROM task WHERE id = tid) THEN
+  RETURN 0;
+ END IF;
+ BEGIN
+  FOR pass_n IN 0..1 LOOP
+   IF pass_n = 1 THEN
+    PERFORM set_config('fleet.project_ids', '*', true);
+   END IF;
+   WITH RECURSIVE
+    candidate_sessions AS (
+     SELECT DISTINCT session_id FROM execution WHERE task_id = tid AND session_id IS NOT NULL
+    ),
+    first_task AS (
+     SELECT DISTINCT ON (e.session_id) e.session_id, e.task_id
+     FROM execution e
+     WHERE e.task_id IS NOT NULL AND e.session_id IN (SELECT session_id FROM candidate_sessions)
+     ORDER BY e.session_id, e.seq
+    ),
+    direct_sessions AS (
+     SELECT id AS session_id FROM document
+     WHERE kind = 'session'
+       AND (data->>'taskId' = tid OR (coalesce(nullif(data->>'taskId', ''), '') = '' AND id IN (SELECT session_id FROM first_task WHERE task_id = tid)))
+       AND NOT (data ? 'parentExecutionId')
+    ),
+    own_execs AS (
+     SELECT e.id, e.session_id
+     FROM execution e
+     WHERE e.kind <> 'child_agent'
+       AND e.delegation IS NULL
+       AND (
+         e.task_id = tid
+         OR (e.task_id IS NULL AND e.session_id IN (SELECT session_id FROM direct_sessions))
+         OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
+            SELECT p.id FROM execution p
+            WHERE p.kind <> 'child_agent'
+              AND p.delegation IS NULL
+              AND (p.task_id = tid OR (p.task_id IS NULL AND p.session_id IN (SELECT session_id FROM direct_sessions)))
+         ))
+       )
+    ),
+    del_seed AS (
+     SELECT e.id, e.session_id, (e.delegation IS NOT NULL) AS follow_session
+     FROM execution e
+     WHERE (e.parent_execution_id IN (SELECT id FROM own_execs) AND (e.kind = 'child_agent' OR e.delegation IS NOT NULL))
+        OR (e.delegation IS NOT NULL AND (e.delegation->>'parentExecutionId' IN (SELECT id FROM own_execs) OR e.delegation->>'parentSessionId' IN (SELECT session_id FROM direct_sessions)))
+     UNION
+     SELECT e.id, e.session_id, true AS follow_session
+     FROM execution e
+     JOIN document s ON s.kind = 'session' AND s.id = e.session_id
+     WHERE s.data->>'parentExecutionId' IN (SELECT id FROM own_execs)
+        OR (s.data->>'createdByExecutionId' IN (SELECT id FROM own_execs) AND coalesce(nullif(s.data->>'taskId', ''), '') = '')
+        OR (s.data->>'createdBySessionId' IN (SELECT session_id FROM direct_sessions) AND coalesce(nullif(s.data->>'taskId', ''), '') = '')
+    ),
+    del_tree AS (
+     SELECT id, session_id, follow_session FROM del_seed
+     UNION
+     SELECT e.id, e.session_id, (dt.follow_session OR e.delegation IS NOT NULL) AS follow_session
+     FROM execution e
+     JOIN del_tree dt ON e.parent_execution_id = dt.id
+        OR (dt.follow_session AND e.session_id IS NOT NULL AND dt.session_id IS NOT NULL AND e.session_id = dt.session_id AND e.session_id NOT IN (SELECT session_id FROM direct_sessions) AND e.task_id IS NULL)
+        OR (e.delegation IS NOT NULL AND e.delegation->>'parentExecutionId' = dt.id)
+    ),
+    spawned_tasks AS (
+     SELECT t.id
+     FROM task t
+     WHERE t.id <> tid
+       AND (
+         t.created_by_execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
+         OR t.created_by_session_id IN (
+          SELECT session_id FROM direct_sessions
+          UNION SELECT session_id FROM own_execs WHERE session_id IS NOT NULL
+          UNION SELECT session_id FROM del_tree WHERE session_id IS NOT NULL
+         )
+       )
+    ),
+    spawned_execs AS (
+     SELECT e.id AS exec_id
+     FROM spawned_tasks st
+     JOIN execution e ON (
+      e.task_id = st.id
+      OR (e.task_id IS NULL AND e.session_id IN (
+        SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
+      ))
+      OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
+        SELECT p.id FROM execution p
+        WHERE p.task_id = st.id
+           OR (p.task_id IS NULL AND p.session_id IN (
+             SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
+           ))
+      ))
+     )
+    )
+   SELECT (SELECT count(DISTINCT id)::bigint FROM spawned_tasks)
+        + (SELECT count(DISTINCT d.id)::bigint
+           FROM del_tree d
+           JOIN execution e ON e.id = d.id
+           LEFT JOIN execution_totals t ON t.execution_id = e.id
+           WHERE d.id NOT IN (SELECT exec_id FROM spawned_execs)
+             AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+             AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL))
+   INTO cur_n;
+   IF pass_n = 0 THEN
+    vis_n := coalesce(cur_n, 0);
+   ELSE
+    all_n := coalesce(cur_n, 0);
+   END IF;
+  END LOOP;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN greatest(0::bigint, all_n - vis_n);
+END $$;
+
+CREATE FUNCTION fleet_session_hidden_lineage_count(sid text)
+RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+ prev text := current_setting('fleet.project_ids', true);
+ vis_n bigint := 0;
+ all_n bigint := 0;
+ pass_n int;
+ cur_n bigint;
+BEGIN
+ IF coalesce(sid, '') = '' OR NOT EXISTS (SELECT 1 FROM document WHERE kind = 'session' AND id = sid) THEN
+  RETURN 0;
+ END IF;
+ BEGIN
+  FOR pass_n IN 0..1 LOOP
+   IF pass_n = 1 THEN
+    PERFORM set_config('fleet.project_ids', '*', true);
+   END IF;
+   WITH RECURSIVE
+    own_execs AS (
+     SELECT e.id, e.session_id
+     FROM execution e
+     WHERE e.kind <> 'child_agent'
+       AND e.delegation IS NULL
+       AND (e.session_id = sid OR (e.kind = 'tool_run' AND e.parent_execution_id IN (SELECT id FROM execution WHERE session_id = sid AND kind <> 'child_agent' AND delegation IS NULL)))
+    ),
+    del_seed AS (
+     SELECT e.id, e.session_id, (e.delegation IS NOT NULL) AS follow_session
+     FROM execution e
+     WHERE (e.parent_execution_id IN (SELECT id FROM own_execs) AND (e.kind = 'child_agent' OR e.delegation IS NOT NULL))
+        OR (e.delegation IS NOT NULL AND (e.delegation->>'parentSessionId' = sid OR e.delegation->>'parentExecutionId' IN (SELECT id FROM own_execs)))
+     UNION
+     SELECT e.id, e.session_id, true AS follow_session
+     FROM execution e
+     JOIN document s ON s.kind = 'session' AND s.id = e.session_id
+     WHERE e.session_id <> sid
+       AND (
+         s.data->>'parentExecutionId' IN (SELECT id FROM own_execs)
+         OR (s.data->>'createdByExecutionId' IN (SELECT id FROM own_execs) AND coalesce(nullif(s.data->>'taskId', ''), '') = '')
+         OR (s.data->>'createdBySessionId' = sid AND coalesce(nullif(s.data->>'taskId', ''), '') = '')
+       )
+    ),
+    del_tree AS (
+     SELECT id, session_id, follow_session FROM del_seed
+     UNION
+     SELECT e.id, e.session_id, (dt.follow_session OR e.delegation IS NOT NULL) AS follow_session
+     FROM execution e
+     JOIN del_tree dt ON e.parent_execution_id = dt.id
+        OR (dt.follow_session AND e.session_id IS NOT NULL AND dt.session_id IS NOT NULL AND e.session_id = dt.session_id AND e.session_id <> sid AND e.task_id IS NULL)
+        OR (e.delegation IS NOT NULL AND e.delegation->>'parentExecutionId' = dt.id)
+    ),
+    primary_task AS (
+     SELECT nullif(data->>'taskId', '') AS task_id FROM document WHERE kind = 'session' AND id = sid
+    ),
+    spawned_tasks AS (
+     SELECT t.id
+     FROM task t
+     WHERE t.id IS DISTINCT FROM (SELECT task_id FROM primary_task)
+       AND (
+         t.created_by_session_id = sid
+         OR t.created_by_execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
+         OR t.created_by_session_id IN (SELECT session_id FROM del_tree WHERE session_id IS NOT NULL)
+       )
+    ),
+    spawned_execs AS (
+     SELECT e.id AS exec_id
+     FROM spawned_tasks st
+     JOIN execution e ON (
+      e.task_id = st.id
+      OR (e.task_id IS NULL AND e.session_id IN (
+        SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
+      ))
+      OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
+        SELECT p.id FROM execution p
+        WHERE p.task_id = st.id
+           OR (p.task_id IS NULL AND p.session_id IN (
+             SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
+           ))
+      ))
+     )
+    )
+   SELECT (SELECT count(DISTINCT id)::bigint FROM spawned_tasks)
+        + (SELECT count(DISTINCT d.id)::bigint
+           FROM del_tree d
+           JOIN execution e ON e.id = d.id
+           LEFT JOIN execution_totals t ON t.execution_id = e.id
+           WHERE d.id NOT IN (SELECT exec_id FROM spawned_execs)
+             AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+             AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL))
+   INTO cur_n;
+   IF pass_n = 0 THEN
+    vis_n := coalesce(cur_n, 0);
+   ELSE
+    all_n := coalesce(cur_n, 0);
+   END IF;
+  END LOOP;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN greatest(0::bigint, all_n - vis_n);
+END $$;
+
+CREATE OR REPLACE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sql AS $$
+ WITH doc_evs AS MATERIALIZED (
+  SELECT data, seq
+  FROM document
+  WHERE kind='event' AND data->>'executionId'=eid
+ ),
+ evs AS (
+  SELECT data->'data'->'fleetNormalized'->>'lifecycle' AS lc, data->'data'->'fleetNormalized'->'nativeUsage' AS u, seq
+  FROM doc_evs WHERE jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object'
+ ),
+ calls AS (SELECT u->'last' AS u FROM evs WHERE lc='usage.observation' AND jsonb_typeof(u->'last')='object'),
+ rep AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE lc IN ('result','turn.completed') AND NOT EXISTS (SELECT 1 FROM calls) ORDER BY seq DESC LIMIT 1
+ ),
+ inc_native AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE coalesce(lc,'') NOT IN ('usage.observation','result','turn.completed')
+   AND NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+ ),
+ inc_assistant AS (
+  SELECT DISTINCT ON (mid) mu AS u FROM (
+   SELECT
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->>'id', d.data->'data'->'message'->>'id', d.seq::text) AS mid,
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->'usage', d.data->'data'->'message'->'usage') AS mu,
+    d.seq
+   FROM doc_evs d
+   WHERE NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+    AND coalesce(d.data->'data'->'fleetNormalized'->>'lifecycle', d.data->'data'->>'type')='assistant'
+    AND jsonb_typeof(d.data->'data'->'fleetNormalized'->'nativeUsage') IS DISTINCT FROM 'object'
+  ) m WHERE jsonb_typeof(mu)='object' ORDER BY mid, seq DESC
+ ),
+ rows AS (
+  SELECT
+   fleet_token_count(coalesce(u->'input_tokens',u->'inputTokens')) AS input,
+   fleet_token_count(coalesce(u->'output_tokens',u->'outputTokens')) AS output,
+   fleet_token_count(coalesce(u->'cache_read_input_tokens',u->'cached_input_tokens',u->'cachedInputTokens',u->'cachedReadTokens',u->'cache_read_tokens')) AS cache_read,
+   fleet_token_count(coalesce(u->'cache_creation_input_tokens',u->'cacheWriteInputTokens',u->'cachedWriteTokens',u->'cache_write_tokens')) AS cache_write,
+   (u ? 'cached_input_tokens' OR u ? 'cachedInputTokens') AS input_has_cache
+  FROM (SELECT u FROM calls UNION ALL SELECT u FROM rep UNION ALL SELECT u FROM inc_native UNION ALL SELECT u FROM inc_assistant) x
+ ),
+ n AS (
+  SELECT
+   sum(CASE WHEN input_has_cache AND input IS NOT NULL THEN greatest(0, input - coalesce(cache_read,0)) ELSE input END) AS input,
+   sum(output) AS output, sum(cache_read) AS cache_read, sum(cache_write) AS cache_write
+  FROM rows
+ )
+ UPDATE execution_totals SET
+  tokens_input=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.input ELSE execution_totals.tokens_input END,
+  tokens_input_basis=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN CASE WHEN n.input IS NULL THEN 'unavailable' ELSE 'measured' END ELSE execution_totals.tokens_input_basis END,
+  tokens_output=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.output ELSE execution_totals.tokens_output END,
+  tokens_output_basis=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN CASE WHEN n.output IS NULL THEN 'unavailable' ELSE 'measured' END ELSE execution_totals.tokens_output_basis END,
+  tokens_cache_read=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.cache_read ELSE execution_totals.tokens_cache_read END,
+  tokens_cache_read_basis=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN CASE WHEN n.cache_read IS NULL THEN 'unavailable' ELSE 'measured' END ELSE execution_totals.tokens_cache_read_basis END,
+  tokens_cache_write=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.cache_write ELSE execution_totals.tokens_cache_write END,
+  tokens_cache_write_basis=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN CASE WHEN n.cache_write IS NULL THEN 'unavailable' ELSE 'measured' END ELSE execution_totals.tokens_cache_write_basis END
+ FROM n WHERE execution_id=eid
+$$;

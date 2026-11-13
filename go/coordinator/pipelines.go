@@ -930,11 +930,13 @@ func recordJob(q *Request, run doc, stepID, tool, jobID, connection string, usag
 	if pTask == nil {
 		taskID = nilIf(firstString(run["deliveryId"], run["taskId"]))
 	}
+	jobNow := nowMs()
 	if _, err := insertExecution(q, doc{
 		"id": id, "kind": "tool_run", "state": "succeeded", "projectId": run["projectId"], "parentExecutionId": stepID,
 		"experimentId": run["experimentId"], "variant": run["variant"],
 		"taskId": taskID, "sessionId": pSession, "directedBy": dir,
 		"pipelineId": pPipe, "pipelineRevision": pPipeRev, "stepId": pStep,
+		"startedAt": jobNow, "endedAt": jobNow,
 		"data": doc{"tool": tool, "requestId": jobID, "outcome": "ok", "errorCode": nil, "usage": usage, "connection": connection},
 	}); err != nil {
 		return err

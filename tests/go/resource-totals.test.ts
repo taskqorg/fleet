@@ -484,7 +484,8 @@ test('Migration 50 upgrades a populated migration-49 database with deferred task
     }
 
     const sqlAt = (q: string) => psql(['-d', db, '-U', 'fleet', '-At'], `SET fleet.project_ids = '*';\n${q}`).trim();
-    assert.equal(sqlAt(`SELECT max(version) FROM schema_migration`), '50');
+    assert.equal(sqlAt(`SELECT count(*) FROM schema_migration WHERE version = 50`), '1');
+    assert.ok(Number(sqlAt(`SELECT max(version) FROM schema_migration`)) >= 50);
     assert.equal(sqlAt(`SELECT count(*) FROM execution_totals WHERE execution_id IN ('ex-pr','ex-ps')`), '0');
     assert.equal(
       sqlAt(`SELECT coalesce(pipeline_id,'')||'|'||coalesce(pipeline_revision::text,'')||'|'||coalesce(step_id,'')||'|'||coalesce(profile_id,'')||'|'||coalesce(profile_revision::text,'') FROM execution WHERE id='ex-tr'`),
