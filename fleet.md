@@ -14,9 +14,9 @@ A system for performing work through agents across projects. This specification 
 
 ## Operator interface
 
-Deliver the operator and architect interfaces on the web first, across all projects. Later desktop applications for Windows, macOS and Linux reuse the web UI and shared operations. Follow the [delivery order](docs/designs/fleet-stack.md#delivery-order-and-change-cycles). 
+Deliver the operator and architect interfaces on the web first, across all projects. Later desktop applications for Windows, macOS and Linux reuse the web UI and shared operations. Follow the [delivery order](docs/designs/fleet-stack.md#delivery-order-and-change-cycles).
 
-Chromium must be able to install each built workspace with its Fleet name and shared Fleet icon, launch its start URL standalone, and keep navigation between built workspaces in the installed window (manifest scope `/`). 
+Chromium must be able to install each built workspace with its Fleet name and shared Fleet icon, launch its start URL standalone, and keep navigation between built workspaces in the installed window (manifest scope `/`).
 
 Manifest requests include the existing sign-in credentials through Cloudflare Access; installation does not grant access or cache authenticated API data.
 
