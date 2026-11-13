@@ -916,6 +916,9 @@ func agentAsk(q *Request, b doc) (doc, error) {
 		return nil, err
 	}
 	if r, ok := b["resume"]; ok && r != nil && r != "" {
+		if b["question"] != nil || b["requestId"] != nil {
+			return nil, fail(400, "Use question + requestId for a fresh ask, or resume=<questionId> alone to read an existing answer; resume is not continuation prose")
+		}
 		rid, err := strArg(b, "resume", "resume", 0)
 		if err != nil {
 			return nil, err
@@ -1050,6 +1053,11 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 	} else if len(ds) > 0 {
 		ds[0]["report"] = docOf(report)
 		if err := put(q, "delegation", ds[0]); err != nil {
+			return none, err
+		}
+	}
+	if terminal(e) && astr(e["taskId"]) != "" {
+		if _, err := settleIdleTask(q, astr(e["taskId"])); err != nil {
 			return none, err
 		}
 	}
@@ -1497,7 +1505,7 @@ var agentDescriptions = map[string]string{
 	"project_readiness":   "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status",
 	"message_send":        "Send a message; starts a turn, or queues/steers it while the session is busy",
 	"queue_list":          "Queued messages",
-	"ask":                 "Ask the coordinator a non-blocking question; pass resume=<questionId> to read the answer",
+	"ask":                 "Ask a fresh question with question + requestId, or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume",
 	"reply":               "Answer a question; delivered to the asker as its next message",
 	"questions":           "List questions",
 	"questions_withdraw":  "Owner or full access: withdraw open questions that no longer need anyone (ids up to 1000, reason); one audit row each; skipped lists ids not open",
