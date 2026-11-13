@@ -196,14 +196,12 @@ type live struct {
 	trial     *[2]string
 	blocks    Blocks
 	metrics   *runMetrics
-	// Resources of the owned process tree (fleet-telemetry.md, Process readings): start, peak resident bytes, each
-	// pid's last CPU seconds (a gone pid keeps its last reading), and process-table sampling state.
-	started   time.Time
-	peakRSS   uint64
-	cpu       map[int]float64
-	psSamples int
-	psFailed  bool
-	spanned   bool // the execution span is written
+	// Resources of the owned process tree (fleet-telemetry.md, Process readings): start, peak resident bytes, and each
+	// pid's last CPU seconds (a gone pid keeps its last reading).
+	started time.Time
+	peakRSS uint64
+	cpu     map[int]float64
+	spanned bool // the execution span is written
 }
 
 // account adds one snapshot of the owned tree to the run's peak memory and CPU.
@@ -213,7 +211,13 @@ func (l *live) account(table []proc) {
 	}
 	var rss uint64
 	for _, p := range table {
-		if _, ok := l.owned[p.pid]; ok {
+		if strings.HasPrefix(p.stat, "Z") {
+			continue
+		}
+		if expected, ok := l.owned[p.pid]; ok {
+			if id, err := identity(p.pid); err != nil || id != expected {
+				continue
+			}
 			rss += p.rssKB * 1024
 			l.cpu[p.pid] = max(l.cpu[p.pid], p.cpu)
 		}
@@ -1910,10 +1914,8 @@ func buildExecutionResourceSummary(l *live) *contract.ExecutionResourceSummary {
 func (l *live) observe() error {
 	table, err := processes()
 	if err != nil {
-		l.psFailed = true
 		return err
 	}
-	l.psSamples++
 	defer l.account(table)
 	for added := true; added; {
 		added = false

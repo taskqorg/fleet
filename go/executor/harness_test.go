@@ -369,7 +369,10 @@ func TestRunMetricsPerHarnessAndOverflow(t *testing.T) {
 	om := newRunMetrics(nil)
 	for i := 0; i < 35; i++ {
 		name := fmt.Sprintf("t%02d", i)
-		calls := 40 - i // t00..t34 strictly decreasing calls
+		calls := 40 - i // t00..t34 decreasing calls, with tie at t30 and t31 (both 10 calls) to verify lexicographical retention.
+		if i == 31 {
+			calls = 10
+		}
 		for c := 0; c < calls; c++ {
 			id := fmt.Sprintf("id-%d-%d", i, c)
 			ev := M{
@@ -397,8 +400,14 @@ func TestRunMetricsPerHarnessAndOverflow(t *testing.T) {
 	if _, ok := oout.ToolCalls["t34"]; !ok {
 		t.Fatal("expected error-bearing tool t34 to be retained in top 32")
 	}
-	// Retained: t34 (1 error, 6 calls) + t00..t30 (0 errors, 40..10 calls). Overflow: t31 (9), t32 (8), t33 (7) => 24 calls, 0 errors.
-	if oout.ToolCallsOther == nil || *oout.ToolCallsOther != (contract.ToolCallCounter{Calls: 24, Errors: 0}) {
-		t.Fatalf("unexpected ToolCallsOther: %+v want {Calls:24 Errors:0}", oout.ToolCallsOther)
+	if _, ok := oout.ToolCalls["t30"]; !ok {
+		t.Fatal("expected lexicographically earlier tied tool t30 to be retained over t31")
+	}
+	if _, ok := oout.ToolCalls["t31"]; ok {
+		t.Fatal("expected tied tool t31 to overflow into ToolCallsOther")
+	}
+	// Retained: t34 (1 error, 6 calls) + t00..t30 (0 errors, 40..10 calls). Overflow: t31 (10), t32 (8), t33 (7) => 25 calls, 0 errors.
+	if oout.ToolCallsOther == nil || *oout.ToolCallsOther != (contract.ToolCallCounter{Calls: 25, Errors: 0}) {
+		t.Fatalf("unexpected ToolCallsOther: %+v want {Calls:25 Errors:0}", oout.ToolCallsOther)
 	}
 }

@@ -342,4 +342,15 @@ func TestProcessClosedCarriesResourceSummaryWithoutObservationSpam(t *testing.T)
 	if interrupted.MemoryMissingReason == nil || *interrupted.MemoryMissingReason != contract.ExecutionResourceMissingReasonInterrupted {
 		t.Fatalf("expected memoryMissingReason=interrupted, got %v", interrupted.MemoryMissingReason)
 	}
+
+	timedOut := buildExecutionResourceSummary(&live{timedOut: true})
+	if err := contract.Check(timedOut, "ExecutionResourceSummary"); err != nil {
+		t.Fatal(err)
+	}
+	if timedOut.CpuMissingReason == nil || *timedOut.CpuMissingReason != contract.ExecutionResourceMissingReasonInterrupted {
+		t.Fatalf("expected timedOut cpuMissingReason=interrupted, got %v", timedOut.CpuMissingReason)
+	}
+	if timedOut.MemoryMissingReason == nil || *timedOut.MemoryMissingReason != contract.ExecutionResourceMissingReasonInterrupted {
+		t.Fatalf("expected timedOut memoryMissingReason=interrupted, got %v", timedOut.MemoryMissingReason)
+	}
 }

@@ -546,9 +546,7 @@ func (m *runMetrics) recordErrorByID(id string) {
 	if tname == "" {
 		return
 	}
-	if id != "" {
-		m.erroredToolIDs[id] = true
-	}
+	m.erroredToolIDs[id] = true
 	c := m.tools[tname]
 	if c == nil {
 		c = &contract.ToolCallCounter{}
