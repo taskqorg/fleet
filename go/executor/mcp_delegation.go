@@ -445,6 +445,19 @@ func mcpRun(args []string) error {
 		return mcpStdio(args[1], spec, os.Stdin, os.Stdout, args[3], jStr(spec, "pathPolicy"))
 	}
 
+	if server == "project-browser" {
+		if len(args) != 2 {
+			return errors.New("browser context required")
+		}
+		cfg, err := dec(args[1])
+		if err != nil {
+			return err
+		}
+		cmd := browserCommand(cfg, os.Getenv("HOME"), false)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		return cmd.Run()
+	}
+
 	arg := func(i int, what string) (string, error) {
 		if i >= len(args) {
 			return "", errors.New(what + " required")

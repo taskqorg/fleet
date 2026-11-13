@@ -217,7 +217,13 @@ func readiness(project any, host, registry string, forbidden ...[]string) contra
 		}
 		for _, tool := range jArr(project, "execution", "tools") {
 			failed := ""
-			if codingTool(jStr(tool), jStr(accounts[name], "home")) != nil {
+			var err error
+			if jStr(tool) == "browser" {
+				err = browserReady(project, jStr(accounts[name], "home"))
+			} else {
+				err = codingTool(jStr(tool), jStr(accounts[name], "home"))
+			}
+			if err != nil {
 				failed = "coding-tool-unready"
 			}
 			checks = append(checks, check("tool:"+jStr(tool), name, failed))

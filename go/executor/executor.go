@@ -105,7 +105,7 @@ func capabilities() []string {
 			}
 		}
 	}
-	if isFile(os.Getenv("FLEET_PLAYWRIGHT_MODULE")) && isFile(os.Getenv("FLEET_BROWSER_EXECUTABLE")) {
+	if isFile(os.Getenv("FLEET_PLAYWRIGHT_MODULE")) && isFile(os.Getenv("FLEET_BROWSER_EXECUTABLE")) && private(os.Getenv("FLEET_BROWSER_BINDINGS")) == nil {
 		c = append(c, "tool:browser")
 	}
 	return c
@@ -971,19 +971,29 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 		gitApply(cmd, access)
 	}
-	for _, key := range []string{"FLEET_PLAYWRIGHT_MODULE", "FLEET_BROWSER_EXECUTABLE"} {
-		if value := os.Getenv(key); value != "" {
-			setEnv(cmd, key, value)
-		}
-	}
 	requirements := projectRequirements(jAt(p, "project"), jStr(p, "agentConfig", "id"))
 	for _, tool := range jArr(requirements, "tools") {
-		if err := codingTool(jStr(tool), commandHome(cmd)); err != nil {
+		var err error
+		if jStr(tool) == "browser" {
+			err = browserReady(jAt(p, "project"), commandHome(cmd))
+		} else {
+			err = codingTool(jStr(tool), commandHome(cmd))
+		}
+		if err != nil {
 			return fail(1, "coding-tool-unready: "+jStr(tool))
 		}
 	}
 	observed := e.observeHarness(cmd, name)
 	servers := mcpAtRoot(selectedMCP, work)
+	for _, tool := range jArr(requirements, "tools") {
+		if jStr(tool) == "browser" {
+			cfg, err := browserConfig(jAt(p, "project"))
+			if err != nil {
+				return fail(1, "browser-binding-unready")
+			}
+			servers["project-browser"] = M{"command": exe(), "args": []any{"mcp", "project-browser", enc(cfg)}, "tools": []any{"navigate", "read", "evaluate", "click", "fill", "close"}, "dependencies": M{"fleet-browser-chromium": os.Getenv("FLEET_BROWSER_EXECUTABLE")}, "ownedDependencies": []any{"fleet-browser-chromium"}}
+		}
+	}
 	if jAt(requirements, "forge") == true {
 		if reason := forgeReadiness(jAt(p, "project")); reason != "" {
 			return fail(1, reason)
