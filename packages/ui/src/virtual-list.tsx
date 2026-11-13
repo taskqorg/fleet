@@ -104,6 +104,11 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (added) setUnseen(n => n + added);
   }, [p.items]);
 
+  // Viewport and measured heights can change without a new items array.
+  useLayoutEffect(() => {
+    if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) v.scrollToEnd();
+  });
+
   const jump = () => {
     setUnseen(0);
     if (p.follow === 'top') scroller.current?.scrollTo({ top: 0 });

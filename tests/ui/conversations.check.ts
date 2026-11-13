@@ -94,6 +94,9 @@ try {
   let t = performance.now();
   await p.goto(`${origin}/conversations/${S}`);
   check(await until(() => visible(p, `Reply ${N - 1}.`)), 'long thread opens at the newest entry');
+  await p.setViewportSize({ width: 1440, height: 740 });
+  check(await until(() => p.locator('.tr-body .vl').evaluate(e => e.scrollHeight - e.scrollTop - e.clientHeight < 2)), 'transcript stays at the tail when its viewport shrinks');
+  await p.setViewportSize({ width: 1440, height: 900 });
   const h = (await p.locator('.tr-body .vl').boundingBox())!.height; check(h > 500, `thread uses the available height (${Math.round(h)} px of a 900 px window)`);
   // Markdown renders as structure, never as raw HTML.
   await ingest('md-1', N + 50, '## Plan\n\n- one\n- **two**\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n> note\n\n[site](https://example.com) [bad](javascript:alert(1)) <b>raw</b>');
@@ -142,6 +145,9 @@ try {
   await ingest('live-2', N + 1, 'Live reply two');
   check(await until(async () => /^\d+ new$/.test((await p.locator('.pill').first().textContent().catch(() => '')) ?? '')), 'scrolled up: the pill counts the new entry');
   check(a2 !== null && Math.abs((await topOf(p, a2.key))! - a2.top) <= 1, 'scrolled up: the row being read does not move on append');
+
+  await p.locator('.pill').first().click();
+  check(await until(() => visible(p, 'Live reply two')), 'new-entry pill returns to the measured tail');
 
   // Copy one reply.
   await vl.evaluate(e => { e.scrollTop = e.scrollHeight; }); await p.waitForTimeout(200);
