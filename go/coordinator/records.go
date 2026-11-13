@@ -117,6 +117,46 @@ var terminalTyped = map[string]bool{"succeeded": true, "failed": true, "cancelle
 // execKinds: the execution kinds served as 'execution' records (host-dispatched agent runs and host jobs).
 const execKinds = "kind IN ('agent_run','host_job')"
 
+// definitionScalars extracts typed agent profile and pipeline definition identifiers for indexed columns.
+func definitionScalars(defs any, cfg doc) (profileID, profileRev, pipelineID, pipelineRev any) {
+	if defs != nil {
+		var items []map[string]any
+		if b := jsonBytes(defs); len(b) > 0 {
+			_ = json.Unmarshal(b, &items)
+		}
+		for _, d := range items {
+			k := astr(d["kind"])
+			id := astr(d["id"])
+			if id == "" {
+				continue
+			}
+			rev, hasRev := intOK(d["revision"])
+			switch k {
+			case "agent":
+				if profileID == nil {
+					profileID = id
+					if hasRev {
+						profileRev = rev
+					}
+				}
+			case "pipeline":
+				if pipelineID == nil {
+					pipelineID = id
+					if hasRev {
+						pipelineRev = rev
+					}
+				}
+			}
+		}
+	}
+	if profileID == nil {
+		if pid := astr(cfg["profileId"]); pid != "" {
+			profileID = pid
+		}
+	}
+	return profileID, profileRev, pipelineID, pipelineRev
+}
+
 // putExecution: the one writer of an execution record (kind agent_run or host_job). state is the typed execution state
 // (stateOrder); observation stays 'unconfirmed' only while the state does not move. kind is fixed by the first write. Both live in their columns only, then
 // the record's task settles.
@@ -180,24 +220,46 @@ func putExecution(q *Request, e doc) error {
 	}
 	account := firstString(mapOf(e["effectiveAccount"])["accountId"], e["accountId"])
 	cfg := js(doc{"profileId": nilIf(astr(ac["id"])), "profileSha256": e["profileSha256"], "effort": e["effort"]})
+	profileID, profileRev, pipelineID, pipelineRev := definitionScalars(e["definitions"], doc{"profileId": nilIf(astr(ac["id"]))})
+	stepID := nilIf(astr(e["stepId"]))
+	if stepRowID := firstString(e["pipelineStepId"], e["pipelineRunId"]); stepRowID != "" && (pipelineID == nil || stepID == nil) {
+		var pPipe, pStep *string
+		var pRev *int64
+		if err := q.tx.QueryRow(q.ctx(), "SELECT pipeline_id,pipeline_revision,step_id FROM execution WHERE id=$1", stepRowID).Scan(&pPipe, &pRev, &pStep); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if pipelineID == nil && pPipe != nil {
+			pipelineID = *pPipe
+			if pRev != nil {
+				pipelineRev = *pRev
+			}
+		}
+		if stepID == nil && pStep != nil {
+			stepID = *pStep
+		}
+	}
 	data := doc{}
 	for k, v := range e {
 		if k != "state" && k != "observation" {
 			data[k] = v
 		}
 	}
-	err = exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,harness,model,config_ref,started_at,ended_at,data,directed_by)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+	err = exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,task_id,experiment_id,variant,parent_execution_id,session_id,account_id,host_id,harness,model,config_ref,started_at,ended_at,data,directed_by,profile_id,profile_revision,pipeline_id,pipeline_revision,step_id)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),
 	  experiment_id=excluded.experiment_id,variant=excluded.variant,parent_execution_id=excluded.parent_execution_id,session_id=excluded.session_id,account_id=excluded.account_id,host_id=excluded.host_id,
 	  harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
+	  directed_by=coalesce(excluded.directed_by,execution.directed_by),profile_id=coalesce(excluded.profile_id,execution.profile_id),profile_revision=coalesce(excluded.profile_revision,execution.profile_revision),
+	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
 	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-		id, kind, state, observation, nilIf(project), nilIf(task), e["experimentId"], variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, msTime(e["startedAt"]), msTime(e["finishedAt"]), js(data), nilIf(firstString(e["directedBy"], sess["directedBy"])))
+		id, kind, state, observation, nilIf(project), nilIf(task), e["experimentId"], variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, msTime(e["startedAt"]), msTime(e["finishedAt"]), js(data), nilIf(firstString(e["directedBy"], sess["directedBy"])), profileID, profileRev, pipelineID, pipelineRev, stepID)
 	if err != nil {
 		return err
 	}
 	if e["definitions"] != nil {
-		if err := exec(q, "UPDATE execution SET definitions=$2 WHERE id=$1", id, jsonBytes(e["definitions"])); err != nil {
+		if err := exec(q, `UPDATE execution SET definitions=$2,profile_id=coalesce($3,profile_id),profile_revision=coalesce($4,profile_revision),
+		 pipeline_id=coalesce($5,pipeline_id),pipeline_revision=coalesce($6,pipeline_revision) WHERE id=$1`,
+			id, jsonBytes(e["definitions"]), profileID, profileRev, pipelineID, pipelineRev); err != nil {
 			return err
 		}
 	}
@@ -234,19 +296,87 @@ func putExecution(q *Request, e doc) error {
 // wallKnown: a run's wall time is measured when it has both ends, unless it was abandoned (it ended when given up).
 const wallKnown = `started_at IS NOT NULL AND ended_at IS NOT NULL AND problem IS DISTINCT FROM 'unknown:abandoned'`
 
+// writeTotals persists and merges leaf-execution totals so receipt and process.closed converge regardless of arrival order.
 func writeTotals(q *Request, id string) error {
-	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,wall_ms,wall_ms_basis,computed_at)
-	 SELECT id,project_id,CASE WHEN `+wallKnown+` THEN (extract(epoch FROM ended_at-started_at)*1000)::bigint END,CASE WHEN `+wallKnown+` THEN 'measured' ELSE 'unavailable' END,now() FROM execution WHERE id=$1
-	 ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,wall_ms=excluded.wall_ms,wall_ms_basis=excluded.wall_ms_basis,computed_at=excluded.computed_at`, id); err != nil {
+	var kind string
+	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT kind::text FROM execution WHERE id=$1),'')", id).Scan(&kind); err != nil || kind == "" || kind == "pipeline_run" || kind == "pipeline_step" {
+		return err
+	}
+	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,wall_ms,wall_ms_basis,computed_at)
+	 SELECT id,project_id,directed_by,
+	  CASE
+	   WHEN account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind='api-connection' AND a.id=account_id) THEN 'subscription'
+	   WHEN kind IN ('agent_run','child_agent','tool_run') THEN 'metered'
+	   ELSE 'unavailable'
+	  END,
+	  CASE WHEN `+wallKnown+` THEN greatest(0,(extract(epoch FROM ended_at-started_at)*1000)::bigint) END,
+	  CASE WHEN `+wallKnown+` THEN 'measured' ELSE 'unavailable' END,
+	  now()
+	 FROM execution WHERE id=$1
+	 ON CONFLICT(execution_id) DO UPDATE SET
+	  project_id=coalesce(excluded.project_id,execution_totals.project_id),
+	  directed_by=coalesce(excluded.directed_by,execution_totals.directed_by),
+	  billing_basis=CASE WHEN execution_totals.billing_basis='metered' AND execution_totals.connection_cost IS NOT NULL THEN 'metered' ELSE excluded.billing_basis END,
+	  wall_ms=CASE WHEN (SELECT problem FROM execution WHERE id=$1)='unknown:abandoned' THEN NULL ELSE coalesce(excluded.wall_ms,execution_totals.wall_ms) END,
+	  wall_ms_basis=CASE WHEN (SELECT problem FROM execution WHERE id=$1)='unknown:abandoned' THEN 'unavailable' WHEN coalesce(excluded.wall_ms,execution_totals.wall_ms) IS NOT NULL THEN 'measured' ELSE 'unavailable' END,
+	  computed_at=now()`, id); err != nil {
 		return err
 	}
 	if err := exec(q, "SELECT fleet_write_model($1)", id); err != nil { // the model the harness reports (migration 45)
 		return err
 	}
-	if err := exec(q, "SELECT fleet_write_tokens($1)", id); err != nil { // tokens from the harness's usage report (migration 40)
+	if err := exec(q, "SELECT fleet_write_tokens($1)", id); err != nil { // tokens from the harness's usage report (migration 40, 44, 50)
 		return err
 	}
-	return exec(q, `UPDATE execution_totals SET rate_limit_last=r.data->'data',rate_limit_last_basis='measured' FROM (SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id=$1`, id)
+	if err := exec(q, `UPDATE execution_totals SET rate_limit_last=r.data->'data',rate_limit_last_basis='measured' FROM (SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id=$1`, id); err != nil {
+		return err
+	}
+	return exec(q, `WITH pc AS (
+	 SELECT data->'data'->'resources' AS r
+	 FROM document
+	 WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='process.closed'
+	 ORDER BY seq DESC LIMIT 1
+	), parsed AS (
+	 SELECT
+	  jsonb_typeof(r)='object' AS has_obj,
+	  fleet_token_count(r->'cpuMs') AS cpu_ms,
+	  fleet_token_count(r->'peakMemoryBytes') AS peak_mem,
+	  fleet_token_count(r->'activeMs') AS active_ms,
+	  fleet_token_count(r->'turnCount') AS turn_count,
+	  CASE WHEN jsonb_typeof(r->'cpuMissingReason')='string' THEN r->>'cpuMissingReason' END AS cpu_reason,
+	  CASE WHEN jsonb_typeof(r->'memoryMissingReason')='string' THEN r->>'memoryMissingReason' END AS mem_reason,
+	  CASE WHEN $2='agent_run' AND jsonb_typeof(r)='object' THEN
+	   jsonb_strip_nulls(jsonb_build_object(
+	    'byTool', CASE WHEN jsonb_typeof(r->'toolCalls')='object' THEN r->'toolCalls' ELSE '{}'::jsonb END,
+	    'other', CASE WHEN jsonb_typeof(r->'toolCallsOther')='object' THEN r->'toolCallsOther' END
+	   ))
+	  END AS tool_calls
+	 FROM pc
+	)
+	UPDATE execution_totals t SET
+	 cpu_ms=coalesce(p.cpu_ms,t.cpu_ms),
+	 cpu_ms_basis=CASE WHEN coalesce(p.cpu_ms,t.cpu_ms) IS NOT NULL THEN 'measured' ELSE t.cpu_ms_basis END,
+	 cpu_missing_reason=CASE
+	  WHEN coalesce(p.cpu_ms,t.cpu_ms) IS NOT NULL THEN NULL
+	  WHEN p.has_obj THEN coalesce(p.cpu_reason,t.cpu_missing_reason)
+	  ELSE coalesce(t.cpu_missing_reason,'executor_version')
+	 END,
+	 peak_memory_bytes=coalesce(p.peak_mem,t.peak_memory_bytes),
+	 peak_memory_bytes_basis=CASE WHEN coalesce(p.peak_mem,t.peak_memory_bytes) IS NOT NULL THEN 'measured' ELSE t.peak_memory_bytes_basis END,
+	 memory_missing_reason=CASE
+	  WHEN coalesce(p.peak_mem,t.peak_memory_bytes) IS NOT NULL THEN NULL
+	  WHEN p.has_obj THEN coalesce(p.mem_reason,t.memory_missing_reason)
+	  ELSE coalesce(t.memory_missing_reason,'executor_version')
+	 END,
+	 active_ms=coalesce(p.active_ms,t.active_ms),
+	 active_ms_basis=CASE WHEN coalesce(p.active_ms,t.active_ms) IS NOT NULL THEN 'measured' ELSE t.active_ms_basis END,
+	 turn_count=coalesce(p.turn_count,t.turn_count),
+	 turn_count_basis=CASE WHEN coalesce(p.turn_count,t.turn_count) IS NOT NULL THEN 'measured' ELSE t.turn_count_basis END,
+	 tool_calls=coalesce(p.tool_calls,t.tool_calls),
+	 tool_calls_basis=CASE WHEN coalesce(p.tool_calls,t.tool_calls) IS NOT NULL THEN 'measured' ELSE t.tool_calls_basis END,
+	 computed_at=now()
+	FROM parsed p
+	WHERE t.execution_id=$1`, id, kind)
 }
 
 // writeEnded: the end of an agent run in its thread, one event with a fixed id.

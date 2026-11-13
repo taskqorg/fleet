@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"github.com/jackc/pgx/v5"
 )
 
 var (
@@ -1065,7 +1067,29 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	if t["personal"] != nil {
 		parent = nil
 	}
-	inserted, err := insertExecution(q, doc{"id": id, "kind": "tool_run", "state": state, "projectId": t["projectId"], "parentExecutionId": parent, "experimentId": t["experimentId"], "data": data})
+	var pTask, pSession, pDir, pPipe, pStep, pProf *string
+	var pPipeRev, pProfRev *int64
+	if pid := astr(parent); pid != "" {
+		if err := q.tx.QueryRow(q.ctx(), "SELECT task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision FROM execution WHERE id=$1", pid).
+			Scan(&pTask, &pSession, &pDir, &pPipe, &pPipeRev, &pStep, &pProf, &pProfRev); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return false, err
+		}
+	}
+	var startedAt, endedAt any
+	if l.StartedAt > 0 {
+		dur := l.Ms
+		if dur < 0 {
+			dur = 0
+		}
+		startedAt, endedAt = l.StartedAt, l.StartedAt+dur
+	}
+	inserted, err := insertExecution(q, doc{
+		"id": id, "kind": "tool_run", "state": state, "projectId": t["projectId"], "parentExecutionId": parent,
+		"experimentId": t["experimentId"], "taskId": pTask, "sessionId": pSession,
+		"directedBy": nilIf(firstString(t["directedBy"], deref(pDir))), "startedAt": startedAt, "endedAt": endedAt,
+		"pipelineId": pPipe, "pipelineRevision": pPipeRev, "stepId": pStep, "profileId": pProf, "profileRevision": pProfRev,
+		"data": data,
+	})
 	if err != nil || !inserted {
 		return false, err
 	}

@@ -189,8 +189,8 @@ Browser windows (one origin)                          Coordinator (Go)
 |---|---|---|---|---|
 | `task` | `task` | `id` | — | Row `task`; lists of tasks; counts |
 | `task_dependency` | `task` | `task_id` | `task_id` | Row `task` |
-| `execution` | `execution` | `id` | `task_id`, `session_id`, `host_id` | Rows `execution`; the parent `task` (harness mark), `session` and `host` (counts) |
-| `execution_totals` | `execution` | `execution_id` | `task_id`, `session_id`, `host_id` from the execution | Row `execution` (totals) |
+| `execution` | `execution` | `id` | `task_id`, `session_id`, `host_id` | Rows `execution`; the parent `task` (harness mark), `session` and `host` (counts); `kind = 'tool_run'` writes are skipped by `fleet_change()` so high-rate gateway calls do not flood the log |
+| `execution_totals` | `execution` | `execution_id` | `task_id`, `session_id`, `host_id` from the execution | Row `execution` (totals); `tool_run` rows are skipped in `fleet_change()` |
 | `question` | `question` | `id` | `task_id`, `session_id` | Rows `question`; the parent task (state, needs-you) and session |
 | `document` kind `session` | `session` | `id` | `session_id` = `id` | Row `session`; lists of sessions |
 | `document` kind `event`, `event-delta`, `message` | `event` | `id` | `session_id` from `data->>'sessionId'` | The open conversation fetches `/api/sessions/:id/events?after=` |
@@ -430,7 +430,7 @@ The objects below identify shared information and actions, not mandatory forms, 
 | Overview | Tasks by project, progress, results and situations needing attention; manage priorities and balance work across hosts and harnesses with visible load, quotas and placement reasons. |
 | Projects | Purpose, materials, workflow rules, connections and selected capabilities; open related tasks and results. |
 | Sessions | Ordinary conversations with a selected agent, including PM; related projects and tasks; continuation through another agent. |
-| Tasks | Expected result, requirements, executions, steps, questions, files, checks and costs; control work and accept results or return them for rework under project rules. |
+| Tasks | Expected result, requirements, executions, steps, questions, files, checks and costs; metered costs and subscription list-price equivalents stay separate by `(currency, basis)`, and unrecorded metrics show `unavailable` rather than zero; control work and accept results or return them for rework under project rules. |
 | Results | Find and inspect materials, code changes and checks; open the work that produced them. |
 
 Surface questions and problems in the overview while keeping answers and actions attached to the affected work. Show interruption causes and available actions: answer, change account, hand off, retry or cancel within permissions.

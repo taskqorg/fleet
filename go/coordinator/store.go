@@ -344,6 +344,14 @@ func askRow(q *Request, kind, text string, projectID any, options any, askedBy s
 	return id, err
 }
 
+// executionTime accepts a time.Time directly or converts millisecond epochs via msTime.
+func executionTime(v any) any {
+	if t, ok := v.(time.Time); ok {
+		return t.UTC()
+	}
+	return msTime(v)
+}
+
 // insertExecution inserts a typed execution row unless its id or request_id exists.
 func insertExecution(q *Request, v doc) (bool, error) {
 	state := astr(v["state"])
@@ -359,16 +367,17 @@ func insertExecution(q *Request, v doc) (bool, error) {
 		data = doc{}
 	}
 	var id string
-	err := q.tx.QueryRow(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,parent_execution_id,config_ref,data,experiment_id,variant,request_id)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING RETURNING id`,
-		v["id"], v["kind"], state, v["projectId"], v["parentExecutionId"], cfg, jsonBytes(data), v["experimentId"], v["variant"], v["requestId"]).Scan(&id)
+	err := q.tx.QueryRow(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,parent_execution_id,config_ref,data,experiment_id,variant,request_id,task_id,session_id,directed_by,started_at,ended_at,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) ON CONFLICT DO NOTHING RETURNING id`,
+		v["id"], v["kind"], state, v["projectId"], v["parentExecutionId"], cfg, jsonBytes(data), v["experimentId"], v["variant"], v["requestId"],
+		v["taskId"], v["sessionId"], v["directedBy"], executionTime(v["startedAt"]), executionTime(v["endedAt"]), v["pipelineId"], v["pipelineRevision"], v["stepId"], v["profileId"], v["profileRevision"]).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, err
 }
 
-// writeConnectionCost upserts the connection_cost total of one tool_run.
+// writeConnectionCost upserts the connection_cost total and measured duration of one tool_run.
 func writeConnectionCost(q *Request, id string, projectID any, cost any) error {
 	basis := "measured"
 	var c any
@@ -377,8 +386,25 @@ func writeConnectionCost(q *Request, id string, projectID any, cost any) error {
 	} else {
 		c = jsonBytes(cost)
 	}
-	return exec(q, `INSERT INTO execution_totals(execution_id,project_id,connection_cost,connection_cost_basis) VALUES($1,$2,$3,$4)
-	 ON CONFLICT(execution_id) DO UPDATE SET connection_cost=excluded.connection_cost,connection_cost_basis=excluded.connection_cost_basis,computed_at=now()`, id, projectID, c, basis)
+	return exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,connection_cost,connection_cost_basis,wall_ms,wall_ms_basis,active_ms,active_ms_basis,computed_at)
+	 SELECT e.id,coalesce($2,e.project_id),e.directed_by,'metered',$3,$4,
+	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0,(extract(epoch FROM e.ended_at-e.started_at)*1000)::bigint) END,
+	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN 'measured' ELSE 'unavailable' END,
+	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0,(extract(epoch FROM e.ended_at-e.started_at)*1000)::bigint) END,
+	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN 'measured' ELSE 'unavailable' END,
+	  now()
+	 FROM execution e WHERE e.id=$1
+	 ON CONFLICT(execution_id) DO UPDATE SET
+	  project_id=coalesce(excluded.project_id,execution_totals.project_id),
+	  directed_by=coalesce(excluded.directed_by,execution_totals.directed_by),
+	  billing_basis='metered',
+	  connection_cost=excluded.connection_cost,
+	  connection_cost_basis=excluded.connection_cost_basis,
+	  wall_ms=coalesce(excluded.wall_ms,execution_totals.wall_ms),
+	  wall_ms_basis=CASE WHEN coalesce(excluded.wall_ms,execution_totals.wall_ms) IS NOT NULL THEN 'measured' ELSE execution_totals.wall_ms_basis END,
+	  active_ms=coalesce(excluded.active_ms,execution_totals.active_ms),
+	  active_ms_basis=CASE WHEN coalesce(excluded.active_ms,execution_totals.active_ms) IS NOT NULL THEN 'measured' ELSE execution_totals.active_ms_basis END,
+	  computed_at=now()`, id, projectID, c, basis)
 }
 
 func sortedKeysOf(m map[string]any) []string {
