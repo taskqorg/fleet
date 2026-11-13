@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -157,5 +158,112 @@ func TestUpdateTargetAndStartSamePollRemainUnclaimed(t *testing.T) {
 	}
 	if signal.RestartTarget != nil {
 		t.Fatal("new command left durable stale readiness")
+	}
+}
+
+// Requirement: only pending delivery blocks update drain; risk: old rejections deadlock idle hosts or recoverable authentication/required transfers are lost.
+func TestUpdateDrainRetainsAuditButWaitsForRecoverableDelivery(t *testing.T) {
+	e, root := scriptExecutor(t)
+	lastSignal = nil
+	t.Cleanup(func() {
+		lastSignal = nil
+		if e.activity != nil {
+			e.activity.Close()
+		}
+	})
+	target := "1.261113.22"
+	lastSignal = &updateSignal{Target: &target, Running: "1.261113.21", AutoUpdate: "on"}
+	for _, status := range []int{400, 409} {
+		if _, err := e.db.Exec("INSERT INTO outbox_failed(route,body,status,reason,failed_at) VALUES(?,?,?,?,?)", "/api/hosts/receipts", enc(M{"commandId": "historical", "executionId": "historical", "status": "completed"}), status, "retained rejection", 123); err != nil {
+			t.Fatal(err)
+		}
+	}
+	audit := func() string {
+		t.Helper()
+		rows, err := e.db.Query("SELECT route,body,status,reason,failed_at FROM outbox_failed WHERE status<>401 ORDER BY rowid")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []any
+		for rows.Next() {
+			var route, body, reason string
+			var status, at int
+			if err := rows.Scan(&route, &body, &status, &reason, &at); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, []any{route, body, status, reason, at})
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return enc(out)
+	}
+	before := audit()
+	lease := func(wantReady bool) {
+		t.Helper()
+		if err := e.drainUpdate(); err != nil {
+			t.Fatal(err)
+		}
+		ready := e.updateReady.Load()
+		if (ready != nil) != wantReady {
+			t.Fatalf("restart readiness=%v want %v", ready, wantReady)
+		}
+		f, err := os.OpenFile(filepath.Join(root, "update", "activity.lock"), os.O_RDWR, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if wantReady {
+			if err != nil {
+				t.Fatal("idle exclusive lease denied", err)
+			}
+			syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		} else if !errors.Is(err, syscall.EWOULDBLOCK) {
+			t.Fatal("pending work did not hold shared activity lease", err)
+		}
+		if audit() != before {
+			t.Fatal("historical rejection audit changed")
+		}
+	}
+	lease(true)
+	receipt := M{"hostId": "fake", "commandId": "recoverable", "executionId": "recoverable", "status": "completed"}
+	if _, err := e.db.Exec("INSERT INTO outbox_failed(route,body,status,reason,failed_at) VALUES(?,?,?,?,?)", "/api/hosts/receipts", enc(receipt), 401, "host authentication", 456); err != nil {
+		t.Fatal(err)
+	}
+	lease(false)
+	// Use the existing startup recovery, then require the actual queued receipt acknowledgement.
+	if err := requeueUnauthorized(e.db); err != nil {
+		t.Fatal(err)
+	}
+	if count(e.db, "outbox") != 1 {
+		t.Fatal("recoverable receipt not requeued")
+	}
+	lease(false)
+	url, _ := serve(t, func(string, M) int { return 200 })
+	if err := flush(e.db, url, "fixture", "fake"); err != nil {
+		t.Fatal(err)
+	}
+	lease(true)
+	if err := queue(e.db, "/api/hosts/receipts", receipt); err != nil {
+		t.Fatal(err)
+	}
+	lease(false)
+	if err := flush(e.db, url, "fixture", "fake"); err != nil {
+		t.Fatal(err)
+	}
+	lease(true)
+	body := M{"required": true}
+	if _, err := e.db.Exec("INSERT INTO transfers(id,kind,body,state,created_at) VALUES('required','upload',?,'running',0)", enc(body)); err != nil {
+		t.Fatal(err)
+	}
+	lease(false)
+	if err := settleJob(e.db, "fake", "required", "upload", body, 0, M{"state": "stored"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	lease(true)
+	if count(e.db, "outbox_failed") != 2 {
+		t.Fatal("terminal rejection archive was erased")
 	}
 }
