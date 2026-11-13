@@ -204,7 +204,7 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 		key := jStr(q, "requestKey")
 		var body string
 		var raw sql.NullString
-		if !strings.HasPrefix(key, jStr(ctx, "commandId")+":agent:") {
+		if !strings.HasPrefix(key, jStr(ctx, "commandId")+":") {
 			return mcpText(M{"error": "Request belongs to another command"}, &yes), nil
 		}
 		err := db.QueryRow("SELECT body,response FROM delegation_requests WHERE id=?", key).Scan(&body, &raw)
@@ -218,6 +218,9 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 		if err != nil {
 			return nil, dbe(err)
 		}
+		if jStr(stored, "commandId") != jStr(ctx, "commandId") {
+			return mcpText(M{"error": "Request belongs to another command"}, &yes), nil
+		}
 		if jStr(stored, "executionId") != jStr(ctx, "executionId") {
 			return mcpText(M{"error": "Request belongs to another execution"}, &yes), nil
 		}
@@ -228,10 +231,14 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 		if err != nil {
 			return nil, dbe(err)
 		}
-		if has(result, "result") {
-			return jAt(result, "result"), nil
+		if has(stored, "request") {
+			if has(result, "result") {
+				return jAt(result, "result"), nil
+			}
+			return mcpText(result, &yes), nil
 		}
-		return mcpText(result, &yes), nil
+		isErr := has(result, "error")
+		return mcpText(result, &isErr), nil
 	}
 	if slices.Contains(artifactTools, name) && truth(jAt(ctx, "workdir")) {
 		return artifactCall(ctx, name, q, dbExec{db})
@@ -345,12 +352,12 @@ func delegation(req, ctx any, db *sql.DB) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if r == nil && name != "request_child" {
+		return mcpText(M{"status": "pending", "requestKey": key, "instruction": "Outcome unknown; use agent_tool_result with this requestKey. Do not repeat the mutation."}, &yes), nil
+	}
 	if agent {
 		if has(r, "result") {
 			return jAt(r, "result"), nil
-		}
-		if r == nil {
-			r = M{"status": "pending", "requestKey": key, "instruction": "Outcome unknown; use agent_tool_result with this requestKey. Do not repeat the mutation."}
 		}
 		return mcpText(r, &yes), nil
 	}

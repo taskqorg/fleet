@@ -23,7 +23,7 @@ func TestInternalMCPActualOuterSelection(t *testing.T) {
 	}
 	ctx := M{"commandId": "command", "executionId": "execution", "projectId": "fixture", "workdir": t.TempDir()}
 	key := "command:agent:receipt"
-	if _, err := o.db.Exec("INSERT INTO delegation_requests(id,body,response) VALUES(?,?,?)", key, enc(M{"executionId": "execution"}), enc(M{"result": M{"content": []any{M{"type": "text", "text": "original-ack"}}}})); err != nil {
+	if _, err := o.db.Exec("INSERT INTO delegation_requests(id,body,response) VALUES(?,?,?)", key, enc(M{"commandId": "command", "executionId": "execution", "request": M{}}), enc(M{"result": M{"content": []any{M{"type": "text", "text": "original-ack"}}}})); err != nil {
 		t.Fatal(err)
 	}
 	fleet := delegationServer(ctx, journal)
