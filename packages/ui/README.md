@@ -1,22 +1,27 @@
-# packages/ui
+# Shared UI
 
-Fleet's shared interface parts. Every app screen and the design book are built only from here (OR-13). Rules: [docs/design-system](../../docs/design-system/README.md).
+## Overview
 
-## Key files
+`packages/ui` is Fleet's shared Preact UI layer. App screens and the design book consume its exported controls, patterns, registry, formatting, URL helpers, and tokens.
 
-| File | Purpose |
-|---|---|
-| `tokens.json` | Source of truth for colour, type, space, size, radius, elevation and motion, light and dark. `scripts/tokens.mjs` turns it into CSS custom properties. |
-| `icons.json` | The icon registry (TaskQ Lucide set, OR-8). |
-| `src/registry.ts` | State families, workspaces, actions, harnesses and delivery stages, each with its icon. |
-| `src/format.ts` | The compact time and number formatter (OR-2). |
-| `src/controls.tsx` | Controls: buttons, badges, numbers, filter bar, decision block, transcript, composer, offline marker and others. |
-| `src/patterns.tsx` | Compositions: `TaskListView`, `AppShell`, `ListDetail` and others. |
-| `src/virtual-list.tsx` | `VirtualList` with anchor-keeping inserts and `onEnd` (OR-9, OR-11). |
-| `src/styles.css` | Shared styles, tokens only. |
-| `book/` | The live design book; `pnpm run book` builds it into `docs/design-system/book`. |
-| `scripts/check-design.mjs` | `pnpm run check:design`: the warning-only design report. |
+## Interface
 
-## Connections
+- [`src`](src/README.md) is the public source package; `src/index.ts` is its export barrel.
+- [`book`](book/README.md) is the interactive design-book source.
+- [`scripts`](scripts/README.md) builds the book, derives token CSS, and emits design warnings.
+- `tokens.json` is the token input for `scripts/tokens.mjs`; `icons.json` supplies the icon registry used by `src/registry.ts`.
 
-Used by `app/` and the book. Specs for each control and pattern are in `docs/design-system/controls` and `patterns`. Tests: `tests/ui`.
+## Invariants
+
+- `src/index.ts` is the shared import surface and re-exports the canonical view URL package.
+- `build-book.mjs` and `check-design.mjs` bundle with the project-installed dependencies; neither adds a runtime UI dependency.
+
+## Side Effects
+
+- The scripts write generated design-book/report outputs outside this directory as configured by their source.
+
+## Verification
+
+- Run: `pnpm run check:design`
+- Build the book: `pnpm run book`
+- Type-check: `pnpm run typecheck`

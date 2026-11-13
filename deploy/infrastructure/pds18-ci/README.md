@@ -57,3 +57,23 @@ logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-
 ## Rollback
 
 To take the pool out of routing without a pull request, stop the runner services (`systemctl stop 'actions.runner.*'` in the guest): the heartbeat goes stale and `ci.yml` routes hosted within 20 minutes, or at once for any run whose pool job waited 2 minutes. Drain before stopping; do not interrupt uncertain work. To remove it, restore hosted-only jobs through the normal reviewed PR, remove only the verified registrations with the supported GitHub API, stop/disable `fleet-ci-vm.service`, and remove only `table inet fleet_ci` after the VM is stopped. Leave existing firewall tables and production services alone. Keep guest disk/evidence for review; deletion is a separate explicit action.
+
+## Interface
+
+- [prepare.sh](prepare.sh): root-only host preparation; pinned signed Ubuntu image, package simulation, guest disk/seed and dedicated service/network definitions. The script creates a 64 GiB overlay; the operational guest profile described above is not a readback performed by this script.
+- [pool.sh](pool.sh): root-only guest runner registration with a requested slot count and token on stdin. Existing registrations are retained; only newly installed runner services are started.
+- [check-network.py](check-network.py): guest-side protected-endpoint rejection probes and a public GitHub DNS/TLS request.
+- [cloud-init.yaml](cloud-init.yaml), [network-config.yaml](network-config.yaml): guest initialization and fixed QEMU-user-network address.
+- [fleet-ci-vm.service](fleet-ci-vm.service), [fleet-ci.slice](fleet-ci.slice), [fleet-ci-network.service](fleet-ci-network.service): VM resource envelope and host-owned network boundary.
+
+## Invariants
+
+`prepare.sh` refuses existing guest state and does not start the VM. Its memory admission check is over 10 GiB available; the unit's configured memory limit is 18 GiB, so that check alone does not prove the entire configured envelope fits. `pool.sh` requires `RemoveIPC=false`, verifies the runner tarball hash before extraction, and keeps per-slot users and toolchains with explicitly shared caches. See Trust above for the accepted sharing boundary.
+
+## Side Effects
+
+Preparation installs packages, creates a service user, image/overlay/seed, management key and network/unit files, then reloads systemd. Registration creates guest users and registrations, changes cache ACLs and runner environments, may install Git/ACL packages, and starts new services. Network probes make actual outbound connections; they are not a static firewall proof.
+
+## Verification
+
+README edits: `git diff --check` and relative-link validation. Runner routing has `node scripts/pds18-route.ts --self-check` from the repository root. Provisioning and guest probes require the dedicated host/guest and the runbook's capacity, admission and network readbacks; do not run them on a developer machine as bootstrap checks.
