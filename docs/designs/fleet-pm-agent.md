@@ -121,6 +121,10 @@ Defaults below are used in this design. Each can be changed by the owner without
 *   Focus is a filter, not a right: writes check scope, not focus. Reads without an explicit project (`task_page`, `task_list`, `questions_list`) run in `scopeOf(director)`, so row-level security limits them to scope; `bound()` adds the focus as the project filter when the caller gives none (`task_page` gains `filter.projectIds`).
 *   **Children.** `sessionStart` already copies `directedBy` from `callerExecutionId` (Q1). In the focus branch the child's project must be in focus and in scope, and a `profileId` must be in that project's roles map.
 
+A PM resolves the user’s explicit or unambiguous project target against the projects available within the director’s grants. It configures its own focus and checkout when needed, then continues the original request. Missing focus or an unbound working directory is recoverable configuration, not evidence of denied project authority. Genuine grant denial, unavailable credentials, explicit holds and unknown external effects retain their respective boundaries; ambiguity requires a question.
+
+Repository questions require inspection of the selected repository. Task search alone cannot establish that repository knowledge is absent, and accepted specifications do not establish implemented behavior. Focus filters observation and operation defaults; checkout binding uses the [next-execution project transition](../execution-continuity.md#session-project-selection).
+
 ### 3. Task tools
 
 *   Task operations reach agents through the operation lookup (§1). `bound()` cannot special-case them (they do not pass through it), so the operations read `q.agent`:

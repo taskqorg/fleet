@@ -1488,7 +1488,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 
 var agentDescriptions = map[string]string{
 	"search":              "Find tasks, questions, projects and hosts by text, id or code (T-FLT-42, old codes too); field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). Hits list ids; tasks recently changed first",
-	"session_transition":  "Switch profile/harness/account/model; returns reuse|switch_model_in_session|restart_and_resume|create_with_handoff and hands context to a new native session",
+	"session_transition":  "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff",
 	"session_fork":        "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown",
 	"session_resume":      "Native resume/fork argv and captured native sessions for a session",
 	"session_handoffs":    "Context handoffs of a session with delivery state",
@@ -1505,7 +1505,7 @@ var agentDescriptions = map[string]string{
 	"executions_dismiss":  "Owner or full access: take problems of finished executions off Needs you (ids, reason); the problem stays on the record; one audit row each",
 	"worker_done":         "Report the current execution done (checked against the current execution; captures native session)",
 	"execution_status":    "Execution state (preparing, running, waiting, succeeded, failed, cancelled; observation unconfirmed when the host lost track), stop outcome proven|unknown, suggested next action and resume info",
-	"focus_set":           "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus",
+	"focus_set":           "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus. Focus does not bind a repository checkout; use session_transition with projectId for that. Configure focus for the user’s intended granted project before project context reads",
 	"reconcile":           "Settle coordinator-owned queue/handoff state and report unproven executions",
 }
 
