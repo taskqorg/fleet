@@ -200,8 +200,14 @@ export function ScopedRollupDetails({
               </a>
               <span class="grow" />
               <span class="res-bar">
-                {st.resources.durations.executionWallMs != null && <Num m={msMeasured(st.resources.durations.executionWallMs, st.resources.durations.basis)} kind="duration" />}
-                {st.resources.tokens.total != null && <Num m={{ value: st.resources.tokens.total, basis: st.resources.tokens.basis }} kind="count" />}
+                {(() => {
+                  const stWall = resNum(st.resources.durations.executionWallMs, st.resources.durations.basis, 0.001);
+                  const stTok = resNum(st.resources.tokens.total, st.resources.tokens.basis);
+                  return <>
+                    {stWall.basis !== 'unavailable' && <Num m={stWall} kind="duration" />}
+                    {stTok.basis !== 'unavailable' && <Num m={stTok} kind="count" />}
+                  </>;
+                })()}
                 <CostFigures cost={st.resources.cost} />
               </span>
             </div>

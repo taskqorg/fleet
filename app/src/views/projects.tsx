@@ -306,6 +306,9 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
   const from = now - WINDOW_MS[win];
   const filterKey = JSON.stringify(filters);
 
+  const dimsAvail = projectId ? DIMS.filter(d => d.id !== 'project') : DIMS;
+  const activeDim = dimsAvail.some(d => d.id === dim) ? dim : dimsAvail[0].id;
+
   useEffect(() => {
     let live = true;
     setTrendErr(null);
@@ -317,7 +320,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
       ...(projectId ? { projectId } : {}),
     }).then(
       r => { if (live) setTrend(r); },
-      e => { if (live) setTrendErr(String(e?.message ?? e)); },
+      e => { if (live) { setTrend(null); setTrendErr(String(e?.message ?? e)); } },
     );
     return () => { live = false; };
   }, [projectId, win, grain, filterKey, now, rev]);
@@ -326,19 +329,19 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
     let live = true;
     setBreakErr(null);
     const range = bucket ? parseBucketMs(bucket, grain) : null;
-    const bw = range ? { from: range[0], to: Math.min(range[1], now) } : { from, to: now };
+    const bw = range ? { from: range[0], to: Math.max(range[0] + 1, Math.min(range[1], now)) } : { from, to: now };
     op('analytics_query', {
       window: bw,
-      dimensions: [dim],
+      dimensions: [activeDim],
       measures: ANALYTICS_MEASURES,
       filters,
       ...(projectId ? { projectId } : {}),
     }).then(
       r => { if (live) setBreakdown(r); },
-      e => { if (live) setBreakErr(String(e?.message ?? e)); },
+      e => { if (live) { setBreakdown(null); setBreakErr(String(e?.message ?? e)); } },
     );
     return () => { live = false; };
-  }, [projectId, win, grain, dim, bucket, filterKey, now, rev]);
+  }, [projectId, win, grain, activeDim, bucket, filterKey, now, rev]);
 
   const changeWin = (w: WindowKey) => {
     setWin(w);
@@ -347,8 +350,6 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
     if (w !== '24h' && grain === 'hour') setGrain('day');
   };
 
-  const dimsAvail = projectId ? DIMS.filter(d => d.id !== 'project') : DIMS;
-  const activeDim = dimsAvail.some(d => d.id === dim) ? dim : dimsAvail[0].id;
   const allTrendRows = trend?.rows ?? [];
   const unkBucketRuns = allTrendRows.find(r => r.dimensions[grain] === 'unknown')?.measures.executions?.value ?? 0;
   const trendRows = allTrendRows
@@ -374,13 +375,14 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
 
   const buckets: ChartBucket[] = trendRows.map(r => {
     const k = r.dimensions[grain] ?? '';
-    const vTokens = sumTokens(r.measures).value ?? 0;
+    const tokM = sumTokens(r.measures);
+    const tokStr = tokM.value != null && tokM.basis !== 'unavailable' ? ` · ${tokM.partial ? '≥ ' : ''}${tokM.value.toLocaleString('en')} tokens` : '';
     const vRuns = r.measures.executions?.value ?? 0;
     const vCost = r.cost.filter(c => c.value != null).map(c => `${c.basis === 'subscription' ? '≈' : ''}${c.value!.toFixed(2)} ${c.currency ?? 'USD'}${c.basis === 'subscription' ? ' sub' : ''}`).join(', ');
     return {
       key: k,
       label: shortBucketLabel(k, grain),
-      tip: `${k}: ${vRuns} runs · ${vTokens.toLocaleString('en')} tokens${vCost ? ` · ${vCost}` : ''}`,
+      tip: `${k}: ${vRuns} runs${tokStr}${vCost ? ` · ${vCost}` : ''}`,
     };
   });
 
@@ -403,7 +405,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
       const hasSub = subPts.some(q => q.v > 0);
       const out: ChartSeries[] = [];
       if (hasMetered || !hasSub) out.push({ label: `${activeCur} metered`, points: meteredPts, tone: 'd1', step: true });
-      if (hasSub) out.push({ label: `${activeCur} subscription equiv.`, points: subPts, tone: hasMetered ? 'd2' : 'd1', projected: true, step: true });
+      if (hasSub) out.push({ label: `${activeCur} subscription equiv.`, points: subPts, tone: hasMetered ? 'd2' : 'd1', pattern: true, step: true });
       return out;
     }
     const pts = trendRows.flatMap(r => {
