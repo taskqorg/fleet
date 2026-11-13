@@ -1056,9 +1056,15 @@ func workerDone(q *Request, b *contract.WorkerDoneRequest) (contract.WorkerDoneR
 			return none, err
 		}
 	}
-	if terminal(e) && astr(e["taskId"]) != "" {
-		if _, err := settleIdleTask(q, astr(e["taskId"])); err != nil {
+	if terminal(e) {
+		t, err := first(q, "SELECT task_id FROM execution WHERE id=$1", eid)
+		if err != nil {
 			return none, err
+		}
+		if taskID := astr(t["task_id"]); taskID != "" {
+			if _, err := settleIdleTask(q, taskID); err != nil {
+				return none, err
+			}
 		}
 	}
 	id, at := newID(), nowMs()
