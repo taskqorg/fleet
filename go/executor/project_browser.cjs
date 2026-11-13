@@ -98,7 +98,8 @@ async function open() {
   profileDir=fs.mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'fleet-browser-'));
   const executable=process.env.FLEET_MCP_GENERATION ? process.env.PATH.split(require('node:path').delimiter).map(dir=>require('node:path').join(dir,'fleet-browser-chromium')).find(file=>fs.existsSync(file)) : cfg.executable;
   if(!executable)throw Error('browser-owned-dependency-unready');
-  launched=require('node:child_process').spawn(executable,['--headless','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--remote-debugging-address=127.0.0.1','--user-data-dir='+profileDir,'about:blank'],{stdio:'ignore'});
+  // Match Playwright's credential-store isolation; macOS must not open the user's Keychain.
+  launched=require('node:child_process').spawn(executable,['--headless','--password-store=basic','--use-mock-keychain','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--remote-debugging-address=127.0.0.1','--user-data-dir='+profileDir,'about:blank'],{stdio:'ignore'});
   launched.on('error',failClosed);
   const endpointFile=require('node:path').join(profileDir,'DevToolsActivePort');
   await bounded(new Promise((resolve,reject)=>{

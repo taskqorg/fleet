@@ -56,6 +56,7 @@ func TestProjectBrowserScope(t *testing.T) {
 
 // Requirement: production authority never follows a redirect or escapes the granted origin.
 // Risk: Access headers or browser cookie values leak through requests or MCP results.
+// Launch must also isolate the host credential store so Keychain cannot block CDP readiness.
 func TestProjectBrowserAuthority(t *testing.T) {
 	d := t.TempDir()
 	module := filepath.Join(d, "mock.cjs")
@@ -85,6 +86,7 @@ global.WebSocket=Socket;
 const page={url:()=>current,title:async()=>'invented-secret',locator:()=>({innerText:async()=>'invented-cookie'}),evaluate:()=>new Promise(()=>{}),goto:async url=>{current=url;await new Promise(resolve=>{finish=resolve;socket.message({sessionId:'page-session',method:'Fetch.requestPaused',params:{requestId:'sse',request:{url,headers:{'cf-access-client-secret':'untrusted-header',Accept:'text/event-stream'}}}});});}};
 const events=require('node:events');
 require('node:child_process').spawn=(_exe,args)=>{
+assert.ok(args.includes('--password-store=basic'));assert.ok(args.includes('--use-mock-keychain'));
 const dir=args.find(x=>x.startsWith('--user-data-dir=')).slice('--user-data-dir='.length);
 fs.writeFileSync(path.join(dir,'DevToolsActivePort'),'1\n/devtools/browser/fixture');
 const child=new events.EventEmitter();child.kill=()=>{queueMicrotask(()=>child.emit('exit',0));return true;};return child;
