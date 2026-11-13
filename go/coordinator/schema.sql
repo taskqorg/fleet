@@ -1239,13 +1239,6 @@ ALTER TABLE task
  ADD COLUMN created_by_session_id text NULL,
  ADD COLUMN created_by_execution_id text NULL;
 
-CREATE INDEX execution_project_started ON execution(project_id, started_at);
-CREATE INDEX execution_pipeline_rev ON execution(pipeline_id, pipeline_revision) WHERE pipeline_id IS NOT NULL;
-CREATE INDEX execution_profile_rev ON execution(profile_id, profile_revision) WHERE profile_id IS NOT NULL;
-CREATE INDEX task_created_by_session ON task(created_by_session_id) WHERE created_by_session_id IS NOT NULL;
-CREATE INDEX task_created_by_execution ON task(created_by_execution_id) WHERE created_by_execution_id IS NOT NULL;
-CREATE INDEX execution_totals_directed ON execution_totals(directed_by) WHERE project_id IS NULL AND directed_by IS NOT NULL;
-
 DROP POLICY directed_execution ON execution;
 CREATE POLICY directed_execution ON execution USING (
  project_id IS NULL AND directed_by = current_setting('fleet.person', true)
@@ -1359,28 +1352,42 @@ CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
   (SELECT coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'kind', q.kind, 'text', q.text, 'options', q.options) ORDER BY q.seq), '[]') FROM question q WHERE q.task_id = t.id AND q.state = 'open') AS open_questions
  FROM task t;
 
+SET CONSTRAINTS ALL IMMEDIATE;
 SELECT set_config('fleet.project_ids', '*', true);
 ALTER TABLE execution_totals DISABLE TRIGGER USER;
 ALTER TABLE execution DISABLE TRIGGER USER;
 ALTER TABLE task DISABLE TRIGGER USER;
+DROP INDEX execution_data;
+DROP INDEX execution_definitions;
 DELETE FROM execution_totals x USING execution e WHERE e.id = x.execution_id AND e.kind IN ('pipeline_run', 'pipeline_step');
 UPDATE execution_totals x SET
- directed_by = coalesce(x.directed_by, e.directed_by),
- billing_basis = CASE
-  WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind = 'api-connection' AND a.id = e.account_id) THEN 'subscription'
-  WHEN e.kind IN ('agent_run', 'child_agent', 'tool_run') OR x.connection_cost IS NOT NULL THEN 'metered'
-  ELSE 'unavailable'
- END
-FROM execution e WHERE e.id = x.execution_id;
-UPDATE execution e SET
- profile_id = coalesce((SELECT d->>'id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'agent' LIMIT 1), nullif(e.config_ref->>'profileId', '')),
- profile_revision = (SELECT CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'agent' LIMIT 1),
- pipeline_id = coalesce((SELECT d->>'id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'pipeline' LIMIT 1), nullif(e.data->>'pipelineId', '')),
- pipeline_revision = (SELECT CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'pipeline' LIMIT 1),
- step_id = CASE WHEN e.kind = 'pipeline_step' THEN nullif(e.data->>'id', '') ELSE e.step_id END;
-WITH RECURSIVE lineage AS (
+ directed_by = v.directed_by,
+ billing_basis = v.basis
+FROM (
+ SELECT xt.execution_id,
+  coalesce(xt.directed_by, e.directed_by) AS directed_by,
+  CASE
+   WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind = 'api-connection' AND a.id = e.account_id) THEN 'subscription'
+   WHEN e.kind IN ('agent_run', 'child_agent', 'tool_run') OR xt.connection_cost IS NOT NULL THEN 'metered'
+   ELSE 'unavailable'
+  END AS basis
+ FROM execution_totals xt
+ JOIN execution e ON e.id = xt.execution_id
+) v
+WHERE x.execution_id = v.execution_id
+ AND (x.directed_by IS DISTINCT FROM v.directed_by OR x.billing_basis IS DISTINCT FROM v.basis);
+WITH RECURSIVE base AS MATERIALIZED (
+ SELECT e.id, e.parent_execution_id, nullif(e.data->>'pipelineStepId', '') AS psid,
+  coalesce((SELECT d->>'id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'agent' LIMIT 1), nullif(e.config_ref->>'profileId', '')) AS profile_id,
+  (SELECT CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'agent' LIMIT 1) AS profile_revision,
+  coalesce((SELECT d->>'id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'pipeline' LIMIT 1), nullif(e.data->>'pipelineId', '')) AS pipeline_id,
+  (SELECT CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'pipeline' LIMIT 1) AS pipeline_revision,
+  CASE WHEN e.kind = 'pipeline_step' THEN nullif(e.data->>'id', '') ELSE e.step_id END AS step_id
+ FROM execution e
+),
+lineage AS (
  SELECT id, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision, ARRAY[id] AS seen
- FROM execution
+ FROM base
  WHERE pipeline_id IS NOT NULL OR step_id IS NOT NULL OR profile_id IS NOT NULL
  UNION ALL
  SELECT c.id,
@@ -1390,30 +1397,43 @@ WITH RECURSIVE lineage AS (
   CASE WHEN c.profile_id IS NOT NULL THEN c.profile_id ELSE p.profile_id END,
   CASE WHEN c.profile_id IS NOT NULL THEN c.profile_revision ELSE p.profile_revision END,
   p.seen || c.id
- FROM execution c
- JOIN lineage p ON p.id = coalesce(nullif(c.data->>'pipelineStepId', ''), c.parent_execution_id)
+ FROM base c
+ JOIN lineage p ON p.id = coalesce(c.psid, c.parent_execution_id)
  WHERE NOT (c.id = ANY(p.seen)) AND array_length(p.seen, 1) < 32
    AND ((c.pipeline_id IS NULL AND p.pipeline_id IS NOT NULL)
      OR (c.step_id IS NULL AND p.step_id IS NOT NULL)
      OR (c.profile_id IS NULL AND p.profile_id IS NOT NULL))
 )
 UPDATE execution c SET
- pipeline_id = CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_id ELSE l.pipeline_id END,
- pipeline_revision = CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_revision ELSE l.pipeline_revision END,
- step_id = coalesce(c.step_id, l.step_id),
- profile_id = CASE WHEN c.profile_id IS NOT NULL THEN c.profile_id ELSE l.profile_id END,
- profile_revision = CASE WHEN c.profile_id IS NOT NULL THEN c.profile_revision ELSE l.profile_revision END
+ pipeline_id = l.pipeline_id,
+ pipeline_revision = l.pipeline_revision,
+ step_id = l.step_id,
+ profile_id = l.profile_id,
+ profile_revision = l.profile_revision
 FROM (
  SELECT DISTINCT ON (id) id, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision
  FROM lineage
  ORDER BY id, array_length(seen, 1) DESC
 ) l
-WHERE c.id = l.id AND (c.pipeline_id IS NULL OR c.step_id IS NULL OR c.profile_id IS NULL);
+WHERE c.id = l.id
+ AND (c.pipeline_id, c.pipeline_revision, c.step_id, c.profile_id, c.profile_revision)
+  IS DISTINCT FROM (l.pipeline_id, l.pipeline_revision, l.step_id, l.profile_id, l.profile_revision);
 UPDATE task t SET
  created_by_execution_id = substr(t.created_by, 11),
  created_by_session_id = (SELECT e.session_id FROM execution e WHERE e.id = substr(t.created_by, 11))
 WHERE t.created_by LIKE 'execution:%' AND t.created_by_execution_id IS NULL;
-SELECT fleet_write_tokens(t.execution_id) FROM execution_totals t JOIN execution e ON e.id = t.execution_id WHERE e.kind = 'agent_run';
+SELECT fleet_write_tokens(t.execution_id)
+FROM execution_totals t JOIN execution e ON e.id = t.execution_id
+WHERE e.kind = 'agent_run' AND coalesce(t.tokens_input, t.tokens_output, t.tokens_cache_read, t.tokens_cache_write) IS NULL;
 ALTER TABLE task ENABLE TRIGGER USER;
 ALTER TABLE execution ENABLE TRIGGER USER;
 ALTER TABLE execution_totals ENABLE TRIGGER USER;
+SET CONSTRAINTS ALL DEFERRED;
+CREATE INDEX execution_data ON execution USING gin (data jsonb_path_ops) WITH (fastupdate = off);
+CREATE INDEX execution_definitions ON execution USING gin (definitions jsonb_path_ops);
+CREATE INDEX execution_project_started ON execution(project_id, started_at);
+CREATE INDEX execution_pipeline_rev ON execution(pipeline_id, pipeline_revision) WHERE pipeline_id IS NOT NULL;
+CREATE INDEX execution_profile_rev ON execution(profile_id, profile_revision) WHERE profile_id IS NOT NULL;
+CREATE INDEX task_created_by_session ON task(created_by_session_id) WHERE created_by_session_id IS NOT NULL;
+CREATE INDEX task_created_by_execution ON task(created_by_execution_id) WHERE created_by_execution_id IS NOT NULL;
+CREATE INDEX execution_totals_directed ON execution_totals(directed_by) WHERE project_id IS NULL AND directed_by IS NOT NULL;
