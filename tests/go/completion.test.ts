@@ -186,3 +186,52 @@ test('Ask rejects mixed modes and persists idempotent fresh questions (requireme
     await call('ask', {executionId, requestId, question:'A different question'}, 409);
   } finally { await c.stop(); }
 });
+
+test('Acceptance shared paths reject failed current work and retain deliberate earlier/external decisions (requirement: task outcome truth; risk: manual API bypass accepts obsolete or explicitly failed work)', async () => {
+  const c = await startCoordinator({name: 'completion-acceptance-guards'});
+  const call = async (op: string, body: unknown, status = 200) => {
+    const r = await fetch(c.base + '/api/ops/' + op, {method:'POST', headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify(body)});
+    const result = await r.json(); assert.equal(r.status,status,JSON.stringify(result)); return result;
+  };
+  try {
+    const task = randomUUID(), failed = randomUUID(), stale = randomUUID();
+    c.sql(`INSERT INTO task(id,project_id,title,state) VALUES('${task}','hello-world','failed result','in_progress');
+      INSERT INTO execution(id,kind,state,project_id,task_id,data) VALUES('${failed}','agent_run','succeeded','hello-world','${task}','{"report":{"outcome":"failed","summary":"incomplete","at":1}}');
+      INSERT INTO question(id,kind,task_id,text,asked_by) VALUES('${stale}','acceptance','${task}','stale','fleet')`);
+    await call('task_request_acceptance',{taskId:task},409);
+    await call('questions_answer',{questionId:stale,answer:'accepted'},409);
+    await c.restart();
+    assert.equal(c.sql(`SELECT count(*) FROM change WHERE kind='question' AND id='${stale}' AND op='U'`).trim(),'1','withdrawal emits the normal audited question change');
+    const external = await call('task_create',{projectId:'hello-world',title:'external result'});
+    const externalID = external.id ?? external.taskId;
+    c.sql(`UPDATE task SET state='in_progress' WHERE id='${externalID}'`);
+    const externalQuestion = await call('task_request_acceptance',{taskId:externalID});
+    await call('questions_answer',{questionId:externalQuestion.id,answer:'accepted'});
+    await call('questions_answer',{questionId:externalQuestion.id,answer:'accepted'});
+    const earlier = randomUUID(), success = randomUUID();
+    c.sql(`INSERT INTO task(id,project_id,title,state) VALUES('${earlier}','hello-world','earlier result','in_progress');
+      INSERT INTO execution(id,kind,state,project_id,task_id) VALUES('${success}','agent_run','succeeded','hello-world','${earlier}');
+      INSERT INTO execution(id,kind,state,project_id,task_id) VALUES('${randomUUID()}','agent_run','failed','hello-world','${earlier}')`);
+    await c.restart();
+    const decision = (await call('task_get',{taskId:earlier})).questions.find((q:any)=>q.state==='open');
+    await call('questions_answer',{questionId:decision.id,answer:'accept earlier result'});
+    const acceptance = (await call('task_get',{taskId:earlier})).questions.find((q:any)=>q.state==='open');
+    assert.equal(acceptance.executionId,success);
+    await call('questions_answer',{questionId:acceptance.id,answer:'accepted'});
+    assert.equal((await call('task_get',{taskId:earlier})).state,'completed');
+  } finally { await c.stop(); }
+});
+
+test('Latest result selects newer deliverables before older required outputs and lifecycle logs (requirement: task result relevance; risk: rework shows stale evidence)', async () => {
+  const c = await startCoordinator({name:'completion-result-order'});
+  try {
+    const task=randomUUID(), old=randomUUID(), current=randomUUID();
+    c.sql(`INSERT INTO task(id,project_id,title,state) VALUES('${task}','hello-world','rework','in_progress');
+      INSERT INTO execution(id,kind,state,project_id,task_id) VALUES('${old}','agent_run','succeeded','hello-world','${task}'),('${current}','agent_run','succeeded','hello-world','${task}');
+      INSERT INTO artifact(id,scope,content_hash,size,media_type,name,execution_id,required,state) VALUES
+      ('${randomUUID()}','prod','old',1,'text/plain','old.txt','${old}',true,'stored'),
+      ('${randomUUID()}','prod','new',1,'text/plain','new.txt','${current}',false,'stored'),
+      ('${randomUUID()}','prod','log',1,'application/x-ndjson','mcp-lifecycle-diagnostic.jsonl','${current}',true,'stored')`);
+    assert.equal(c.sql(`SELECT latest_result->>'path' FROM task_view WHERE task_id='${task}'`).trim(),'new.txt');
+  } finally { await c.stop(); }
+});

@@ -322,17 +322,43 @@ func withdrawIdleDecision(q *Request, id string) error {
 	return exec(q, "UPDATE question SET state='withdrawn' WHERE task_id=$1 AND state='open' AND data->>'idle'='true'", id)
 }
 
+// acceptanceExecution validates the selected work, independently of who requests or answers acceptance.
+func acceptanceExecution(q *Request, taskID string, earlier bool) (doc, error) {
+	filter := ""
+	if earlier {
+		filter = " AND state='succeeded' AND coalesce(data->'report'->>'outcome','succeeded')='succeeded'"
+	}
+	e, err := first(q, "SELECT id,state,data->'report'->>'outcome' AS outcome FROM execution WHERE task_id=$1 AND kind<>'child_agent'"+filter+" ORDER BY seq DESC LIMIT 1", taskID)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		if earlier {
+			return nil, fail(409, "No successful earlier work result is available")
+		}
+		return nil, nil // Results may be supplied without a Fleet execution.
+	}
+	if e["outcome"] == "failed" || e["state"] == "failed" || e["state"] == "cancelled" {
+		return nil, fail(409, "Latest work did not succeed; retry it or explicitly select an available earlier result")
+	}
+	return e, nil
+}
+
 // requestAcceptance asks the task's acceptance question with the given artifacts (default: its stored originals). An open
 // acceptance question is reused and updated, so an explicit request after the automatic one never leaves a second open.
 func requestAcceptance(q *Request, t doc, artifactIDs []string, text *string, askedBy string) (string, error) {
 	id := astr(t["id"])
+	selected, err := acceptanceExecution(q, id, t["earlierResult"] == true)
+	if err != nil {
+		return "", err
+	}
 	ids := []any{}
 	if artifactIDs != nil {
 		for _, x := range artifactIDs {
 			ids = append(ids, x)
 		}
 	} else {
-		rs, err := rowsOf(q, "SELECT coalesce(legacy_id,id) AS id FROM artifact WHERE task_id=$1 AND state='stored' AND role='original' ORDER BY seq", id)
+		rs, err := rowsOf(q, "SELECT coalesce(legacy_id,id) AS id FROM artifact WHERE task_id=$1 AND state='stored' AND role='original' AND ($2::text IS NULL OR execution_id=$2) AND name NOT LIKE 'mcp-lifecycle-%' ORDER BY seq", id, selected["id"])
 		if err != nil {
 			return "", err
 		}
@@ -352,7 +378,7 @@ func requestAcceptance(q *Request, t doc, artifactIDs []string, text *string, as
 		qid := astr(open["id"])
 		return qid, exec(q, "UPDATE question SET text=$2,asked_by=$4,asked_at=now(),data=coalesce(data,'{}'::jsonb)||jsonb_build_object('artifactIds',$3::jsonb) WHERE id=$1", qid, body, js(ids), askedBy)
 	}
-	return askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": body, "options": []string{"accepted", "rejected"}, "askedBy": askedBy, "executionId": t["latest_id"], "data": doc{"artifactIds": ids, "earlierResult": t["earlierResult"]}})
+	return askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": body, "options": []string{"accepted", "rejected"}, "askedBy": askedBy, "executionId": selected["id"], "data": doc{"artifactIds": ids, "earlierResult": t["earlierResult"]}})
 }
 
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
@@ -377,6 +403,11 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	}
 	if astr(qu["state"]) != "open" {
 		return nil, fail(409, "Question withdrawn")
+	}
+	if astr(qu["kind"]) == "acceptance" {
+		if _, err := acceptanceExecution(q, astr(qu["task_id"]), mapOf(qu["data"])["earlierResult"] == true); err != nil {
+			return nil, err
+		}
 	}
 	if astr(qu["kind"]) == "acceptance" && answer != "accepted" && answer != "rejected" {
 		return nil, fail(400, "Acceptance answer is accepted or rejected")
