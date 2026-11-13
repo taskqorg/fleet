@@ -266,6 +266,7 @@ test('Late failed work report reconciles the canonical task bound through its se
   } finally { await c.stop(); }
 });
 
+// Requirement: a retained task-linked continuation blocks idle acceptance across restart; risk: accepting unfinished self-delivery or losing its task authority.
 test('self-delivery queued continuation retains the canonical task and suppresses intermediate acceptance across restart', async () => {
   const c = await startCoordinator({name: 'completion-delivery-queue'});
   const call = async (path: string, body: unknown, auth = c.secret, person: string | null = 'owner@trial.test') => {

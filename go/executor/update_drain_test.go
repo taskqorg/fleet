@@ -12,6 +12,7 @@ import (
 )
 
 // A pending update must not claim a new command, but terminal delivery must drain first.
+// Requirement: executor replacement waits for owned work and retained delivery; risk: a race interrupts active work or admits a start during replacement.
 func TestUpdateDrainAdmissionAndAcknowledgement(t *testing.T) {
 	e, root := scriptExecutor(t)
 	lastSignal = nil
@@ -92,6 +93,7 @@ func TestUpdateDrainAdmissionAndAcknowledgement(t *testing.T) {
 	}
 }
 
+// Requirement: executor replacement waits for owned work and retained delivery; risk: a race interrupts active work or admits a start during replacement.
 func TestUpdateDrainTargetAndHold(t *testing.T) {
 	for _, x := range []struct {
 		target, running, auto string
@@ -105,6 +107,7 @@ func TestUpdateDrainTargetAndHold(t *testing.T) {
 	}
 }
 
+// Requirement: executor replacement waits for owned work and retained delivery; risk: a race interrupts active work or admits a start during replacement.
 func TestUpdateTargetAndStartSamePollRemainUnclaimed(t *testing.T) {
 	e, _ := scriptExecutor(t)
 	lastSignal = nil

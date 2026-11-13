@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// Requirement: executor replacement waits for owned work and retained delivery; risk: a race interrupts active work or admits a start during replacement.
 func TestExecutorActivityRequiresExactDrainAndLease(t *testing.T) {
 	d := t.TempDir()
 	signal := filepath.Join(d, "update.json")
@@ -44,6 +45,7 @@ func TestExecutorActivityRequiresExactDrainAndLease(t *testing.T) {
 	release()
 }
 
+// Requirement: executor replacement waits for owned work and retained delivery; risk: a race interrupts active work or admits a start during replacement.
 func TestExecutorBusyDefersSwitchAndRestart(t *testing.T) {
 	f := newFixture(t)
 	f.release("1.261113.19", 0)

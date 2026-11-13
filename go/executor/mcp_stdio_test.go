@@ -1486,7 +1486,7 @@ func TestMCPFreshHomePreservesInternalAdapters(t *testing.T) {
 	}
 }
 
-// Control-command completion must not close the active start's MCP owner or fence new dependencies.
+// Requirement: only owning start completion closes its MCP lifetime; risk: a steer acknowledgement destroys Fleet, forge and browser transport.
 func TestSteerCompletionPreservesOwningStartMCP(t *testing.T) {
 	for _, status := range []string{"completed", "failed"} {
 		t.Run(status, func(t *testing.T) {
