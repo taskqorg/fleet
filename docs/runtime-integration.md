@@ -15,6 +15,8 @@ Use the [shared execution contract](execution-contract.md) for inputs, observati
 
 Native session resume differs from handoff to another harness using retained context and artifacts. Native permission prompts differ from product questions; delegated product decisions do not grant native tool access. A native turn finishing does not establish task acceptance or publication.
 
+An absent Claude native `tools` selection preserves ordinary file, shell and internal delegation tools; an explicit list, including an empty list, restricts them. The same selection reaches tool availability and noninteractive permission grants. Codex retains its native tool mapping without a Claude tools array. Personal configuration and credentials are not inherited.
+
 Agents may organize their internal work. Retain available tool and child-agent observations without requiring each action to become a Fleet task. Delegated work needing Fleet lifecycle or budget control uses Fleet operations.
 
 Native token usage is one observation, not total assignment cost or infrastructure consumption. Missing observations remain unknown under [work analysis](designs/fleet-lab.md#work-analysis).

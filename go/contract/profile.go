@@ -163,11 +163,11 @@ func (p Profile) check() error {
 			return errors.New("unsupported Codex profile: effort, instruction role, tools or settings")
 		}
 	case ProfileHarnessClaude:
-		if p.Effort != nil || role != "system" || p.Tools == nil || p.Settings != nil {
+		if p.Effort != nil || role != "system" || p.Settings != nil {
 			return errors.New("unsupported Claude profile: effort, instruction role, tools or settings")
 		}
 		for _, t := range p.Tools {
-			if !slices.Contains([]ClaudeTool{ClaudeToolRead, ClaudeToolEdit, ClaudeToolWrite, ClaudeToolBash, ClaudeToolGlob, ClaudeToolGrep}, t) {
+			if !slices.Contains([]ClaudeTool{ClaudeToolRead, ClaudeToolEdit, ClaudeToolWrite, ClaudeToolBash, ClaudeToolGlob, ClaudeToolGrep, ClaudeToolTask, ClaudeToolTaskStop}, t) {
 				return errors.New("unsupported Claude tool grant")
 			}
 		}

@@ -40,6 +40,8 @@ func TestParseProfile(t *testing.T) {
 		}
 	}
 	for _, good := range []string{
+		`{"id":"p","harness":"claude","model":"m","instructionRole":"system","instructions":"x","mcpServers":[]}`,
+		`{"id":"p","harness":"claude","model":"m","instructionRole":"system","instructions":"x","mcpServers":[],"tools":["Task","TaskStop"]}`,
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"gitNetwork":true}`,
 		`{"id":"p","harness":"claude","model":"m","effort":null,"instructionRole":"system","instructions":"x","mcpServers":[],"tools":["Read","Bash"],"gitNetwork":true}`,
 	} {

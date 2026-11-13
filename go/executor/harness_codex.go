@@ -142,13 +142,7 @@ func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any
 
 // claudeMCP passes the servers as --mcp-config and grants their Fleet tools with --allowedTools.
 func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
-	var allowed []string
-	list, _ := jAt(profile, "tools").([]any)
-	for _, t := range list {
-		if s, ok := t.(string); ok {
-			allowed = append(allowed, s)
-		}
-	}
+	allowed, _ := claudeNativeTools(profile) // Command validates the selection before MCP wiring.
 	allowed = append(allowed, extra...)
 	if has(servers, "design-rules") {
 		allowed = append(allowed, "mcp__design-rules__get_design_rules")

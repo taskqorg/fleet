@@ -10,7 +10,7 @@
       "instructionRole": {"$comment": "codex: developer (or absent); claude: system; antigravity and acp: user.", "type": "string"},
       "instructions": {"type": "string"},
       "mcpServers": {"$comment": "Unique named MCP selections with explicit tool allowlists; legacy design-rules data retained.", "type": "array", "items": {"$ref": "#/$defs/ProfileMcpGrant"}},
-      "tools": {"$comment": "Claude only, required there: native tool grants.", "type": "array", "items": {"$ref": "#/$defs/ClaudeTool"}},
+      "tools": {"$comment": "Claude only: absent preserves ordinary native tools; an explicit list restricts them.", "type": "array", "items": {"$ref": "#/$defs/ClaudeTool"}},
       "settings": {"$comment": "Antigravity and acp only.", "$ref": "#/$defs/AntigravitySettings"},
       "delegationProfiles": {"$comment": "At most 8 profile ids this profile may delegate to.", "type": "array", "items": {"type": "string"}},
       "skills": {"$comment": "At most 32 skill ids.", "type": "array", "items": {"type": "string"}},
@@ -20,7 +20,7 @@
       "fleetOperations": {"type": "boolean"},
       "gitNetwork": {"$comment": "The agent may use the network for git.", "type": "boolean"}}},
     "ProfileHarness": {"type": "string", "enum": ["codex", "claude", "antigravity", "acp"]},
-    "ClaudeTool": {"type": "string", "enum": ["Read", "Edit", "Write", "Bash", "Glob", "Grep"]},
+    "ClaudeTool": {"type": "string", "enum": ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "TaskStop"]},
     "AntigravityMode": {"type": "string", "enum": ["plan", "accept-edits"]},
     "AntigravitySettings": {"type": "object", "additionalProperties": false, "properties": {
       "sandbox": {"type": "boolean"},

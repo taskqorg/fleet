@@ -45,16 +45,18 @@ func (v *AntigravitySettings) Validate() error {
 type ClaudeTool string
 
 const (
-	ClaudeToolRead  ClaudeTool = "Read"
-	ClaudeToolEdit  ClaudeTool = "Edit"
-	ClaudeToolWrite ClaudeTool = "Write"
-	ClaudeToolBash  ClaudeTool = "Bash"
-	ClaudeToolGlob  ClaudeTool = "Glob"
-	ClaudeToolGrep  ClaudeTool = "Grep"
+	ClaudeToolRead     ClaudeTool = "Read"
+	ClaudeToolEdit     ClaudeTool = "Edit"
+	ClaudeToolWrite    ClaudeTool = "Write"
+	ClaudeToolBash     ClaudeTool = "Bash"
+	ClaudeToolGlob     ClaudeTool = "Glob"
+	ClaudeToolGrep     ClaudeTool = "Grep"
+	ClaudeToolTask     ClaudeTool = "Task"
+	ClaudeToolTaskStop ClaudeTool = "TaskStop"
 )
 
 // ClaudeToolValues lists every ClaudeTool in schema order.
-var ClaudeToolValues = []ClaudeTool{ClaudeToolRead, ClaudeToolEdit, ClaudeToolWrite, ClaudeToolBash, ClaudeToolGlob, ClaudeToolGrep}
+var ClaudeToolValues = []ClaudeTool{ClaudeToolRead, ClaudeToolEdit, ClaudeToolWrite, ClaudeToolBash, ClaudeToolGlob, ClaudeToolGrep, ClaudeToolTask, ClaudeToolTaskStop}
 
 // Valid: v is one of the schema's values.
 func (v ClaudeTool) Valid() bool {
