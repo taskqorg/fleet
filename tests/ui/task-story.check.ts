@@ -97,7 +97,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
     await rDetail.getByRole('heading', { name: 'Resource breakdown' }).waitFor();
     await rDetail.getByRole('link', { name: 'Child spawned task' }).waitFor();
     await rDetail.getByText('2 hidden (restricted project)', { exact: true }).waitFor();
-    await rDetail.locator('[data-ui="execution-tree"]').getByText('Tool calls', { exact: true }).waitFor();
+    await rDetail.locator('[data-ui="execution-tree"]').getByText('Tool calls · 2 · 1 failed', { exact: true }).waitFor();
     await page.unroute('**/api/ops/task_get');
   } finally { await context.close(); }
 }

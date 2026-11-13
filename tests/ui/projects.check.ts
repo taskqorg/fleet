@@ -68,9 +68,9 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   assert.ok(await bucketBtns.count() >= 2, 'AreaChart renders bucket selector buttons');
   const detail = p.locator('[data-ui="detail"]');
   await detail.locator('.totals').getByText('25k', { exact: true }).waitFor();
-  await detail.getByText('$3.40', { exact: false }).waitFor();
-  await detail.getByText('≈ 1.20 EUR', { exact: false }).waitFor();
-  await detail.getByText('≈ $1.10', { exact: false }).waitFor();
+  await detail.locator('.totals').getByText('$3.40', { exact: true }).waitFor();
+  await detail.locator('.totals').getByText('≈ 1.20 EUR', { exact: true }).waitFor();
+  await detail.locator('.totals').getByText('≈ $1.10', { exact: true }).waitFor();
   await detail.getByRole('button', { name: 'Cost', exact: true }).click();
   const costAria = await chart.locator('[role="img"]').getAttribute('aria-label');
   assert.ok(costAria && costAria.includes('USD metered') && costAria.includes('USD subscription equiv.'), `Cost chart keeps metered USD & subscription separate: ${costAria}`);
@@ -82,8 +82,9 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await detail.getByRole('button', { name: 'Harness', exact: true }).click();
   await detail.getByText('harness-bucket', { exact: true }).waitFor();
   await detail.getByRole('button', { name: 'Pipeline rev', exact: true }).click();
+  const filterReq = p.waitForRequest(r => r.url().includes('/api/ops/analytics_query') && Array.isArray(r.postDataJSON()?.filters?.pipeline_revision) && r.postDataJSON().filters.pipeline_revision.includes('pipeline_revision-bucket'));
   await detail.getByRole('button', { name: 'pipeline_revision-bucket', exact: true }).click();
-  assert.ok(queries.some(q => Array.isArray(q.filters?.pipeline_revision) && q.filters.pipeline_revision.includes('pipeline_revision-bucket')), 'pipeline_revision breakdown row applies filter');
+  await filterReq;
   await p.unroute('**/api/ops/analytics_query');
   assert.deepEqual(errors,[]);console.log('ok Projects create/edit/readback/readiness, explicit PM selection, and analytics_query UI');
  }finally{await context.close();}
