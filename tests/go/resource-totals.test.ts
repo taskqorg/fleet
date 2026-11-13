@@ -514,6 +514,20 @@ test('Migration 50 upgrades a populated migration-49 database with deferred task
       assert.ok(idxDefs.includes(idx), `missing index ${idx}`);
     }
     assert.ok(idxDefs.includes('fastupdate=off'), 'execution_data must preserve fastupdate=off');
+    assert.equal(
+      sqlAt(`SELECT string_agg(relname||':'||relrowsecurity::text||':'||relforcerowsecurity::text, ',' ORDER BY relname) FROM pg_class WHERE relname IN ('document','execution','execution_totals','task')`),
+      'document:true:true,execution:true:true,execution_totals:true:true,task:true:true',
+    );
+    assert.equal(
+      psql(['-d', db, '-U', 'fleet_app', '-At'], 'SELECT (SELECT count(*) FROM document) + (SELECT count(*) FROM execution_totals)').trim(),
+      '0',
+      'unscoped fleet_app must see 0 rows after migration 50 restores RLS',
+    );
+    assert.equal(
+      psql(['-d', db, '-U', 'fleet', '-At'], 'SELECT (SELECT count(*) FROM document) + (SELECT count(*) FROM execution_totals)').trim(),
+      '0',
+      'unscoped owner role must see 0 rows after migration 50 restores FORCE ROW LEVEL SECURITY',
+    );
   } finally {
     if (child && !exited && child.pid) {
       try { process.kill(-child.pid, 'SIGTERM'); } catch {}

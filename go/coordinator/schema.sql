@@ -1256,9 +1256,14 @@ CREATE POLICY directed_totals ON execution_totals USING (
 CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'event-delta', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'command' THEN k := 'command'; h := r.data->>'hostId'; s := r.data->>'sessionId'; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSIF r.kind IN ('managed-account', 'api-connection', 'connection-key', 'setting-change', 'project-recommendation') THEN k := r.kind; w := r.data->>'holder'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
 
 CREATE OR REPLACE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sql AS $$
- WITH evs AS (
+ WITH doc_evs AS MATERIALIZED (
+  SELECT data, seq
+  FROM document
+  WHERE kind='event' AND data->>'executionId'=eid
+ ),
+ evs AS (
   SELECT data->'data'->'fleetNormalized'->>'lifecycle' AS lc, data->'data'->'fleetNormalized'->'nativeUsage' AS u, seq
-  FROM document WHERE kind='event' AND data->>'executionId'=eid AND jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object'
+  FROM doc_evs WHERE jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object'
  ),
  calls AS (SELECT u->'last' AS u FROM evs WHERE lc='usage.observation' AND jsonb_typeof(u->'last')='object'),
  rep AS (
@@ -1276,9 +1281,8 @@ CREATE OR REPLACE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sq
     coalesce(d.data->'data'->'fleetNormalized'->'message'->>'id', d.data->'data'->'message'->>'id', d.seq::text) AS mid,
     coalesce(d.data->'data'->'fleetNormalized'->'message'->'usage', d.data->'data'->'message'->'usage') AS mu,
     d.seq
-   FROM document d
-   WHERE d.kind='event' AND d.data->>'executionId'=eid
-    AND NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+   FROM doc_evs d
+   WHERE NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
     AND coalesce(d.data->'data'->'fleetNormalized'->>'lifecycle', d.data->'data'->>'type')='assistant'
     AND jsonb_typeof(d.data->'data'->'fleetNormalized'->'nativeUsage') IS DISTINCT FROM 'object'
   ) m WHERE jsonb_typeof(mu)='object' ORDER BY mid, seq DESC
@@ -1354,6 +1358,11 @@ CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
 
 SET CONSTRAINTS ALL IMMEDIATE;
 SELECT set_config('fleet.project_ids', '*', true);
+ALTER TABLE document NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE execution_totals NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE execution NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE task NO FORCE ROW LEVEL SECURITY;
+SET LOCAL row_security = off;
 ALTER TABLE execution_totals DISABLE TRIGGER USER;
 ALTER TABLE execution DISABLE TRIGGER USER;
 ALTER TABLE task DISABLE TRIGGER USER;
@@ -1422,9 +1431,14 @@ UPDATE task t SET
  created_by_execution_id = substr(t.created_by, 11),
  created_by_session_id = (SELECT e.session_id FROM execution e WHERE e.id = substr(t.created_by, 11))
 WHERE t.created_by LIKE 'execution:%' AND t.created_by_execution_id IS NULL;
-SELECT fleet_write_tokens(t.execution_id)
+SELECT count(fleet_write_tokens(t.execution_id))
 FROM execution_totals t JOIN execution e ON e.id = t.execution_id
 WHERE e.kind = 'agent_run' AND coalesce(t.tokens_input, t.tokens_output, t.tokens_cache_read, t.tokens_cache_write) IS NULL;
+RESET row_security;
+ALTER TABLE task FORCE ROW LEVEL SECURITY;
+ALTER TABLE execution FORCE ROW LEVEL SECURITY;
+ALTER TABLE execution_totals FORCE ROW LEVEL SECURITY;
+ALTER TABLE document FORCE ROW LEVEL SECURITY;
 ALTER TABLE task ENABLE TRIGGER USER;
 ALTER TABLE execution ENABLE TRIGGER USER;
 ALTER TABLE execution_totals ENABLE TRIGGER USER;
