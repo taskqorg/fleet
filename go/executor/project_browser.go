@@ -12,7 +12,11 @@ import (
 //go:embed project_browser.cjs
 var projectBrowserScript string
 
-func browserConfig(project any) (M, error) {
+func browserConfig(payload any) (M, error) {
+	projectID := jStr(payload, "projectId")
+	if projectID == "" {
+		return nil, errors.New("browser-project-not-granted")
+	}
 	path := os.Getenv("FLEET_BROWSER_BINDINGS")
 	if !filepath.IsAbs(path) || private(path) != nil {
 		return nil, errors.New("browser-binding-unready")
@@ -29,7 +33,8 @@ func browserConfig(project any) (M, error) {
 	if err != nil {
 		return nil, err
 	}
-	binding := jObj(bindings, jStr(project, "id"))
+	// The coordinator supplies identity separately from normalized project settings.
+	binding := jObj(bindings, projectID)
 	if binding == nil {
 		return nil, errors.New("browser-project-not-granted")
 	}
@@ -76,8 +81,8 @@ func browserCommand(config any, home string, check bool) *exec.Cmd {
 	}
 	return c
 }
-func browserReady(project any, home string) error {
-	config, err := browserConfig(project)
+func browserReady(payload any, home string) error {
+	config, err := browserConfig(payload)
 	if err != nil {
 		return err
 	}

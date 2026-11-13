@@ -245,7 +245,7 @@ func TestJournalVersioned(t *testing.T) {
 // Requirement: readiness data is the host-protocol Readiness, a missing checkout a failed check with its reason (W4).
 // Risk: a renamed check field reaches the coordinator as a missing key and a broken host looks ready.
 func TestReadinessTyped(t *testing.T) {
-	r := readiness(M{"environments": []any{M{"hostId": "h1", "checkoutPath": filepath.Join(t.TempDir(), "absent")}}}, "h1", "")
+	r := readiness(M{"projectId": "fixture", "project": M{"environments": []any{M{"hostId": "h1", "checkoutPath": filepath.Join(t.TempDir(), "absent")}}}}, "h1", "")
 	if r.Ok || r.HostId != "h1" || len(r.Checks) == 0 || r.Checks[0].Check != "checkout" || enc(r.Checks[0].Reason) != `"checkout-missing"` {
 		t.Fatal(enc(r))
 	}

@@ -14,16 +14,26 @@ func TestProjectBrowserScope(t *testing.T) {
 	binding := filepath.Join(d, "bindings.json")
 	module := filepath.Join(d, "mock.cjs")
 	os.WriteFile(module, []byte(`module.exports={chromium:{launch(){throw Error('must not launch')}}}`), 0600)
-	os.WriteFile(binding, []byte(`{"project":{"previewOrigins":["http://127.0.0.1:4173"]}}`), 0600)
+	os.WriteFile(binding, []byte(`{"":{"previewOrigins":["http://127.0.0.1:4173"]},"project":{"previewOrigins":["http://127.0.0.1:4173"]}}`), 0600)
 	t.Setenv("FLEET_BROWSER_BINDINGS", binding)
 	t.Setenv("FLEET_PLAYWRIGHT_MODULE", module)
 	t.Setenv("FLEET_BROWSER_EXECUTABLE", module)
-	if _, err := browserConfig(M{"id": "other"}); err == nil {
-		t.Fatal("ungranted project accepted")
-	}
-	cfg, err := browserConfig(M{"id": "project"})
+	// Normal signed StartPayload carries identity separately; normalized settings have no id.
+	payload := M{"projectId": "project", "project": M{"execution": M{"tools": []any{"browser"}}}}
+	cfg, err := browserConfig(payload)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := browserConfig(M{"projectId": "other", "project": M{"id": "project"}}); err == nil {
+		t.Fatal("foreign authoritative identity accepted")
+	}
+	if _, err := browserConfig(M{"project": M{"id": "project"}}); err == nil {
+		t.Fatal("settings identity granted browser without authoritative projectId")
+	}
+	for _, id := range []any{nil, "", false, 42, []any{"project"}, M{"id": "project"}} {
+		if _, err := browserConfig(M{"projectId": id, "project": M{"id": "project"}}); err == nil {
+			t.Fatalf("invalid authoritative identity accepted: %T", id)
+		}
 	}
 	c := browserCommand(cfg, d, false)
 	c.Stdin = strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"navigate\",\"arguments\":{\"url\":\"http://127.0.0.1:9999/admin\"}}}\n")
@@ -35,11 +45,11 @@ func TestProjectBrowserScope(t *testing.T) {
 		t.Fatalf("unsafe result: %s", out)
 	}
 	os.WriteFile(binding, []byte(`{"project":{"previewOrigins":["http://127.0.0.1:4173/admin"]}}`), 0600)
-	if _, err := browserConfig(M{"id": "project"}); err == nil {
+	if _, err := browserConfig(payload); err == nil {
 		t.Fatal("path accepted as origin")
 	}
 	os.WriteFile(binding, []byte(`{"project":{"production":{"origin":"https://other.invalid","accessFile":"/invented"}}}`), 0600)
-	if _, err := browserConfig(M{"id": "project"}); err == nil {
+	if _, err := browserConfig(payload); err == nil {
 		t.Fatal("unauthorized production accepted")
 	}
 }

@@ -79,7 +79,8 @@ func claudePlacementHere() (string, error) {
 	return claudePlacement(os.Getenv("FLEET_CLAUDE_PLACEMENT"), runtime.GOOS, string(r))
 }
 
-func readiness(project any, host, registry string, forbidden ...[]string) contract.Readiness {
+func readiness(payload any, host, registry string, forbidden ...[]string) contract.Readiness {
+	project := jAt(payload, "project")
 	checks := []contract.ReadinessCheck{}
 	var denied []string
 	if len(forbidden) > 0 {
@@ -219,7 +220,7 @@ func readiness(project any, host, registry string, forbidden ...[]string) contra
 			failed := ""
 			var err error
 			if jStr(tool) == "browser" {
-				err = browserReady(project, jStr(accounts[name], "home"))
+				err = browserReady(payload, jStr(accounts[name], "home"))
 			} else {
 				err = codingTool(jStr(tool), jStr(accounts[name], "home"))
 			}
