@@ -18,6 +18,6 @@
 
 **Step editor.** A click opens the step in place, under its row (OR-14). It holds: kind; executor with a link to its definition; when the step runs; the assignment; inputs, each bound to a named output of an earlier step; outputs with type and whether required; and "Then", one line per outcome: pass, changes requested (a review outcome, not a failure), the round limit, failure.
 
-**Runs tab.** The same step list with the run's state on top: state icon, time and cost per step, "reused" on steps taken from an earlier run, the error under a failed step, and what a waiting step waits for. A problem bar names the failed step and offers "Rerun failed" (saying what it repeats and what is kept), "Repeat all steps" and "Edit definition". A switch moves between the definition and recent runs.
+**Runs and Usage (`definition_usage`, operator app).** The Runs tab shows the step list with run state, time, and multi-currency/subscription cost per step, "reused" on steps taken from an earlier run, the error under a failed step, and rerun options. The Usage tab (`definition_usage`) summarises 30-day runs, elapsed/execution wall time, CPU/memory, tokens, and separated metered/subscription cost across all revisions and per revision (`byRevision`), linking to `/projects` resource analytics.
 
 **Not built in the system, shown only when the definition format carries it** ([configuration](../../configuration.md#review-and-rework)): review branches and rework loops, a step that runs on a condition, a model chosen by a rule, event triggers.

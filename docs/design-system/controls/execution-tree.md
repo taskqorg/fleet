@@ -4,7 +4,7 @@
 
 **Purpose.** Shows a task's executions and their steps, pipeline steps and tool calls as a tree, each with state, agent, host, account, time and cost with basis.
 
-**Anatomy.** Rows of `size-row` height. Each row: disclosure ▸/▾, compact [state badge](state-badge.md), name ("Reviewer · claude · mac"), then right-aligned [numbers](number.md): time, tokens, cost. Children indent by 16 px with a 1 px `line` guide.
+**Anatomy.** Recursive rows of `size-row` height ordered from `parentExecutionId` hierarchy. Each row: disclosure ▸/▾, compact [state badge](state-badge.md), name ("Reviewer · claude · mac"), then right-aligned [numbers](number.md): time, tokens, cost (`CostFigures` supporting multi-currency metered and subscription equivalents). Direct `tool_run` children of an execution group into one summarized node per parent (count, errors, and summed duration; collapsed unless running or failed, expanding to individual tool calls on demand). Children indent by 16 px with a 1 px `line` guide and expand cleanly in flow without nested scrollbars (OR-25).
 
 **States.** Collapsed, expanded, selected, live (running rows update in place), reused (a rerun step reused from an earlier run shows "reused from run 2" in `fg-muted`), unconfirmed (badge overlay).
 
@@ -20,4 +20,4 @@
 
 **Do.** Keep numbers aligned across levels. **Don't.** Draw a graph diagram for an ordinary run; hide failed steps.
 
-**Used in.** Task detail, Laboratory trial detail, History drill-down.
+**Used in.** Task detail, Conversations (when spawned executions exist), Laboratory trial detail, Runners drill-down.

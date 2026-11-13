@@ -1,15 +1,16 @@
 # Number with basis
 
-**Code.** `Num`, `Totals`, `AgeChip`; text from `format.ts` in `packages/ui`. Demo: [book](../book/index.html).
+**Code.** `Num`, `CostFigures`, `Totals`, `AgeChip`; text and `splitCostFigures` from `format.ts` in `packages/ui`. Demo: [book](../book/index.html).
 
-**Purpose.** Shows any count, time, size or cost with its measurement basis: measured, estimated or unavailable ([principles §2](../principles.md#2-measurement-basis)).
+**Purpose.** Shows any count, time, size or cost with its measurement basis: measured, estimated, subscription or unavailable ([principles §2](../principles.md#2-measurement-basis)). Multi-currency `(currency, basis)` `CostFigure[]` lists render via `CostFigures` so metered spend and subscription list-price equivalents never mix or sum into one figure.
 
-**Anatomy.** Value in `font-mono` with tabular figures; unit; basis marker.
+**Anatomy.** Value in `font-mono` with tabular figures; unit; basis marker. `Totals` renders a ruled strip of labelled figures alongside optional notes (`sub`), keeping multi-currency metered and subscription figures separate.
 
 | Basis | Look | Accessible name |
 |---|---|---|
 | Measured | `$3.10` in `fg` | "3.10 dollars" |
 | Estimated | `≈ $0.42` in `estimated-fg`, dotted underline | "about 0.42 dollars, estimated from tokens" |
+| Subscription | `≈ $0.42` + subscription indicator in `estimated-fg`, dotted underline (or `—` when unpriced) | "about 0.42 dollars, subscription list-price equivalent" (or "included in subscription") |
 | Unavailable | `—` in `fg-muted` | "unavailable: no gateway" |
 | Partial total | `≥ 182k` plus sub-label "2 of 3 measured" | "at least 182 thousand tokens, 2 of 3 executions measured" |
 
@@ -25,4 +26,4 @@
 
 **Do.** Show `—` for unknown. **Don't.** Show `0` or an empty cell for unknown; round an estimate into a measured-looking number.
 
-**Used in.** Task list, task totals, execution tree, quota, host stores, Laboratory comparison, History.
+**Used in.** Projects analytics, Task list and totals, Conversations boundaries/totals, Agents and Pipelines usage, Runners, Execution tree, Quota, Host stores, Laboratory comparison, History.

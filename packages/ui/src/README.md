@@ -17,7 +17,8 @@
 - `Icon` resolves names through `registry.ts:iconSvg`; state-bearing components use `registry.ts:states` families.
 - `markdown.ts:SAFE_LINK` permits only `http:`, `https:`, and `mailto:` links in rendered markdown.
 - `virtual-list.tsx:VirtualList` keeps item identity through its required key callback and exposes scrolling through `VirtualListHandle`.
-- Formatting exposes measured, estimated, and unavailable values distinctly (`format.ts:Measured`, `format.ts:measured`).
+- Formatting exposes measured, estimated, subscription, and unavailable values distinctly (`format.ts:Measured`, `format.ts:measured`, `format.ts:splitCostFigures`). `CostFigures` and `Totals` keep metered spend separate from subscription list-price equivalents across currencies.
+- Interactive `AreaChart` bucket buttons sit outside `.ac-plot[role="img"]` without `<svg>`, `ExecTree` supports recursive hierarchies (`onSelect`, `costFigures`), and `BoundaryRow` accepts per-execution `resources`.
 
 ## Side Effects
 

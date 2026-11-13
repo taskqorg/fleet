@@ -260,6 +260,55 @@ try {
   check(await p.evaluate(() => (window as any).x === undefined), 'the app page is untouched');
   const direct = await p.evaluate(async () => (await fetch('/api/results/page-1')).headers.get('content-security-policy'));
   check(!!direct && !/allow-scripts/.test(direct), '/api/results itself stays script-free');
+  // Resource bar & BoundaryRow resources: expandable without shrinking transcript viewport <= 500px (OR-25).
+  await p.route('**/api/ops/session_get', async route => {
+    const res = await route.fetch();
+    const json = await res.json();
+    const mkRes = {
+      executions: 1,
+      tokens: { input: 10000, output: 2000, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 12000, basis: 'measured' },
+      durations: { elapsedMs: 180000, executionWallMs: 65000, activeMs: 50000, apiMs: 25000, cpuMs: 4200, measuredCpuRuns: 1, totalRuns: 1, basis: 'measured' },
+      peakMemoryBytes: { value: 268435456, basis: 'measured' },
+      tools: { totalCalls: 5, failedCalls: 1, turns: 3, byTool: [{ name: 'Bash', calls: 5, errors: 1 }], basis: 'measured' },
+      cost: [{ value: 0.9, currency: 'USD', basis: 'measured' }, { value: 0.4, currency: 'USD', basis: 'subscription', note: 'Claude Max' }],
+    };
+    json.cost = mkRes.cost;
+    json.resources = { own: mkRes, delegated: { ...mkRes, executions: 0, tokens: { ...mkRes.tokens, total: 0 }, durations: { ...mkRes.durations, elapsedMs: null, executionWallMs: null }, tools: { ...mkRes.tools, totalCalls: 0, failedCalls: 0 }, cost: [] }, spawned: { ...mkRes, executions: 0, tokens: { ...mkRes.tokens, total: 0 }, durations: { ...mkRes.durations, elapsedMs: null, executionWallMs: null }, tools: { ...mkRes.tools, totalCalls: 0, failedCalls: 0 }, cost: [] }, total: mkRes, spawnedTasks: [], hidden: 1 };
+    await route.fulfill({ json });
+  });
+  await p.route('**/api/ops/thread_entries', async route => {
+    const res = await route.fetch();
+    const json = await res.json();
+    if (Array.isArray(json.entries)) {
+      json.entries = json.entries.map((b: any) => b.kind === 'boundary' ? {
+        ...b,
+        resources: {
+          executions: 1,
+          tokens: { input: 4000, output: 800, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 4800, basis: 'measured' },
+          durations: { elapsedMs: 90000, executionWallMs: 45000, activeMs: 35000, apiMs: 18000, cpuMs: 2100, measuredCpuRuns: 1, totalRuns: 1, basis: 'measured' },
+          peakMemoryBytes: { value: 134217728, basis: 'measured' },
+          tools: { totalCalls: 5, failedCalls: 1, turns: 2, byTool: [], basis: 'measured' },
+          cost: [{ value: 0.4, currency: 'USD', basis: 'subscription', note: 'Claude Max' }],
+        },
+      } : b);
+    }
+    await route.fulfill({ json });
+  });
+  await p.goto(`${origin}/conversations/${S}`);
+  check(await until(async () => await p.locator('[data-ui="resource-bar"]').count() === 1), 'conversation header renders ScopedRollupBar');
+  const hWithBar = (await p.locator('.tr-body .vl').boundingBox())!.height;
+  check(hWithBar > 500, `collapsed resource bar preserves thread height (${Math.round(hWithBar)} px > 500)`);
+  await p.locator('[data-ui="resource-bar"]').getByRole('button', { name: 'Resources' }).click();
+  check(await until(async () => await p.getByRole('heading', { name: 'Scoped resources' }).count() === 1), 'ScopedRollupBar expands scoped rollup details');
+  const compBox = await p.locator('.composer').boundingBox();
+  const vp = p.viewportSize();
+  check(!!compBox && !!vp && compBox.y + compBox.height <= vp.height + 1, 'expanded ScopedRollupBar keeps Composer visible inside viewport');
+  await p.locator('[data-ui="resource-bar"]').getByRole('button', { name: 'Hide breakdown' }).click();
+  await p.goto(`${origin}/conversations/task-a`);
+  check(await until(async () => await p.locator('.th-boundary').filter({ hasText: '≈ $0.40' }).count() >= 1), 'BoundaryRow shows subscription cost figure');
+  await p.unroute('**/api/ops/session_get');
+  await p.unroute('**/api/ops/thread_entries');
+
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
   await checkProjects(b, origin, host);

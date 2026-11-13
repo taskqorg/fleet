@@ -21,6 +21,9 @@ function PageHead({ title, children }: { title: string; children?: ComponentChil
 const Panel = ({ title, actions, children, class: c }: { title?: string; actions?: ComponentChildren; children: ComponentChildren; class?: string }) => (
   <section class={`panel ${c ?? ''}`}>{title && <header class="panel-h"><h2>{title}</h2><span class="grow" />{actions}</header>}{children}</section>
 );
+const m = (value: number | null, basis: 'measured' | 'estimated' | 'unavailable' = 'measured', reason?: string) => ({ value, basis, reason });
+const kvs = (rows: readonly [any, string, ComponentChildren?, ComponentChildren?][]) =>
+  rows.map(([icon, label, meta, value]) => <KvRow key={label} icon={icon} label={label} meta={meta} value={value} />);
 
 /* ---------- Overview ---------- */
 
@@ -32,10 +35,10 @@ function Overview() {
     <PageHead title="Overview"><Stale at={NOW - 20e3} now={NOW} /></PageHead>
     <OpsSummary>
     <StatStrip label="Operations" stats={[
-      { label: 'failed today', icon: 'octagon-x', value: { value: 2, basis: 'measured' }, tone: 'danger', href: '#/tasks' },
-      { label: 'running', icon: 'activity', value: { value: 10, basis: 'measured' }, of: 13, href: '#/hosts' },
-      { label: 'queued', icon: 'list-ordered', value: { value: 7, basis: 'measured' } },
-      { label: 'spent today', icon: 'chart-no-axes-column', value: { value: 41.2, basis: 'estimated', reason: 'tokens' }, kind: 'money' },
+      { label: 'failed today', icon: 'octagon-x', value: m(2), tone: 'danger', href: '#/tasks' },
+      { label: 'running', icon: 'activity', value: m(10), of: 13, href: '#/hosts' },
+      { label: 'queued', icon: 'list-ordered', value: m(7) },
+      { label: 'spent today', icon: 'chart-no-axes-column', value: m(41.2, 'estimated', 'tokens'), kind: 'money' },
     ]} />
     <div class="cols">
       <NeedsYou>
@@ -111,10 +114,10 @@ function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
       inputs={[{ icon: 'file-text', label: 'template.md' }, { icon: 'git-pull-request', label: '14 merged PRs' }, { icon: 'messages-square', label: 'PM session' }]}
       depends="Depends on T-9976 (completed)" />
     <Totals items={[
-      { label: 'Time', m: { value: 860, basis: 'measured' }, kind: 'duration' },
-      { label: 'Tokens', m: { value: 182000, basis: 'measured', partial: '2 of 3 measured' }, kind: 'count', note: '2 of 3 measured' },
-      { label: 'Cost', m: t.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: t.cost, basis: t.est ? 'estimated' : 'measured', reason: 'tokens' }, kind: 'money' },
-      { label: 'API calls', m: { value: null, basis: 'unavailable', reason: 'no gateway' }, kind: 'count', note: 'no gateway' },
+      { label: 'Time', m: m(860), kind: 'duration' },
+      { label: 'Tokens', m: { ...m(182000), partial: '2 of 3 measured' }, kind: 'count', note: '2 of 3 measured' },
+      { label: 'Cost', cost: t.cost === null ? [{ value: null, currency: 'USD', basis: 'unavailable', reason: 'no meter' }] : [{ value: t.cost, currency: 'USD', basis: t.est ? 'estimated' : 'measured', reason: 'tokens' }, { value: 0.45, currency: 'USD', basis: 'subscription', note: 'Claude Max' }], showUnavailable: true },
+      { label: 'API calls', m: m(null, 'unavailable', 'no gateway'), kind: 'count', note: 'no gateway' },
     ]} />
     {t.state === 'waiting' && <DecisionBlock question="Accept this result?" askedBy="reviewer (claude)" addressedTo="you" since={NOW - 12 * min} now={NOW}
       context={<>Checks passed: links, contrast, screenshots.</>} options={[{ label: 'Accept', kbd: 'a', primary: true }, { label: 'Request rework', kbd: 'r' }]}
@@ -190,15 +193,12 @@ function LimitsMock() {
     </div>
     <Panel title="Subscriptions"><div class="table-frame"><table class="limit-table">
       <thead><tr><th scope="col">Subscription</th><th scope="col">5h</th><th scope="col">weekly</th><th scope="col">weekly-opus</th><th scope="col"><span class="sr-only">Refresh</span></th></tr></thead>
-      <tbody><tr><th scope="row"><span class="title">alex-pro</span> <span class="id">codex</span></th>
-        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 62 }]} warnAt={20} unit="percent" /><time>3h</time><span class="chip t-attention">ahead</span><AgeChip t={NOW - 4 * min} now={NOW} /><span class="muted">execution</span></span></td>
-        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 55 }]} warnAt={20} unit="percent" /><time>2d</time><span class="chip">on</span><AgeChip t={NOW - 40 * min} now={NOW} /><span class="muted">probe</span></span></td>
-        <td class="muted">—</td><td><Button label="Refresh alex-pro" icon="rotate-cw" iconOnly /></td></tr>
-      <tr><th scope="row"><span class="title">team-max</span> <span class="id">claude</span><span class="num muted"> ×2.5</span></th>
-        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 91 }]} warnAt={20} unit="percent" /><time>1h</time><span class="chip t-danger"><Icon name="triangle-alert" />Low</span><AgeChip t={NOW - 2 * min} now={NOW} /><span class="muted">execution</span></span></td>
-        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 30 }]} warnAt={20} unit="percent" /><time>5d</time><span class="chip">under</span><AgeChip t={NOW - 2 * min} now={NOW} /><span class="muted">execution</span></span></td>
-        <td><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: 70 }]} warnAt={20} unit="percent" /><time>5d</time><span class="chip t-attention">ahead</span><AgeChip t={NOW - 2 * min} now={NOW} /><span class="muted">execution</span></span></td>
-        <td><Button label="Refresh team-max" icon="rotate-cw" iconOnly /></td></tr></tbody>
+      <tbody>{([
+        ['alex-pro', 'codex', '', [[62, '3h', 'ahead', 4, 'execution', ''], [55, '2d', 'on', 40, 'probe', ''], null]],
+        ['team-max', 'claude', '×2.5', [[91, '1h', 'Low', 2, 'execution', 't-danger'], [30, '5d', 'under', 2, 'execution', ''], [70, '5d', 'ahead', 2, 'execution', '']]],
+      ] as const).map(([sub, har, mul, cells]) => <tr key={sub}><th scope="row"><span class="title">{sub}</span> <span class="id">{har}</span>{mul && <span class="num muted"> {mul}</span>}</th>
+        {cells.map((c, i) => c ? <td key={i}><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: c[0] }]} warnAt={20} unit="percent" /><time>{c[1]}</time><span class={`chip ${c[5] || (c[2] === 'ahead' ? 't-attention' : '')}`}>{c[5] && <Icon name="triangle-alert" />}{c[2]}</span><AgeChip t={NOW - c[3] * min} now={NOW} /><span class="muted">{c[4]}</span></span></td> : <td key={i} class="muted">—</td>)}
+        <td><Button label={`Refresh ${sub}`} icon="rotate-cw" iconOnly /></td></tr>)}</tbody>
     </table></div></Panel>
   </section>;
 }
@@ -231,23 +231,23 @@ function Hosts({ limits }: { limits?: boolean }) {
     <h2 class="detail-title">{h.id}</h2>
 
       <div class="stack-pad">
-        <DetailSection title="Environments">
-          <KvRow icon="folder-open" label="game-worktree-3" meta="codex · T-9976" value={<Num m={{ value: 4.2e9, basis: 'measured' }} kind="bytes" />} />
-          <KvRow icon="folder-open" label="design-main" meta="idle" value={<Num m={{ value: 1.1e9, basis: 'measured' }} kind="bytes" />} />
-        </DetailSection>
-        <DetailSection title="Account users">
-          <KvRow icon="bot" label="fleet-codex" meta="codex-pro" /><KvRow icon="bot" label="fleet-claude" meta="claude-max" />
-        </DetailSection>
-        <DetailSection title="Harnesses">
-          <KvRow icon="openai" label="codex" meta={<span class="mono">0.48.1</span>} value={<span class="muted">ready</span>} />
-          <KvRow icon="claude" label="claude" meta={<span class="mono">2.1.0</span>} value={<span class="muted">ready</span>} />
-          <KvRow icon="antigravity" label="agy" meta={<span class="mono">0.9.2</span>} value={<span class="muted">unchecked</span>} />
-        </DetailSection>
+        <DetailSection title="Environments">{kvs([
+          ['folder-open', 'game-worktree-3', 'codex · T-9976', <Num m={{ value: 4.2e9, basis: 'measured' }} kind="bytes" />],
+          ['folder-open', 'design-main', 'idle', <Num m={{ value: 1.1e9, basis: 'measured' }} kind="bytes" />],
+        ])}</DetailSection>
+        <DetailSection title="Account users">{kvs([['bot', 'fleet-codex', 'codex-pro'], ['bot', 'fleet-claude', 'claude-max']])}</DetailSection>
+        <DetailSection title="Harnesses">{kvs([
+          ['openai', 'codex', <span class="mono">0.48.1</span>, <span class="muted">ready</span>],
+          ['claude', 'claude', <span class="mono">2.1.0</span>, <span class="muted">ready</span>],
+          ['antigravity', 'agy', <span class="mono">0.9.2</span>, <span class="muted">unchecked</span>],
+        ])}</DetailSection>
         <DetailSection title="Store and tunnel">
           <KvRow icon="shield" label="Tunnel" meta="connected" value={<AgeChip t={NOW - 12 * min} now={NOW} />} />
-          <SettingField label="Store capacity" value={h.capacity.value} help="Garage layout capacity." now={NOW} status={h.capacity.status} changed={{ by: 'Alex', at: NOW - 20 * min }} />
-          <SettingField label="Free-space warning" value="25 GB" help="Below this, the store shows a problem." now={NOW} status={{ kind: 'applied', at: NOW - 2 * hr }} />
-          <SettingField label="ClickHouse memory" value="4 GB" help="systemd MemoryMax for the Fleet unit." now={NOW} status={{ kind: 'applied', at: NOW - 5 * hr }} />
+          {([
+            ['Store capacity', h.capacity.value, 'Garage layout capacity.', h.capacity.status, { by: 'Alex', at: NOW - 20 * min }],
+            ['Free-space warning', '25 GB', 'Below this, the store shows a problem.', { kind: 'applied', at: NOW - 2 * hr }],
+            ['ClickHouse memory', '4 GB', 'systemd MemoryMax for the Fleet unit.', { kind: 'applied', at: NOW - 5 * hr }],
+          ] as const).map(([l, v, help, st, ch]) => <SettingField key={l} label={l} value={v} help={help} now={NOW} status={st} changed={ch} />)}
         </DetailSection>
       </div>
   </article>} />;
@@ -272,11 +272,11 @@ function Laboratory() {
         {VARIANTS.map((x, i) => <div key={x.v} role="row" class="vl-row static">
           <span class="lead"><StateBadge family="execution" state={i === 2 ? 'running' : 'succeeded'} reason={i === 2 ? 'trials still running' : 'all trials finished'} compact /></span>
           <span class="title">{x.v}</span>
-          <span class="r"><Num m={{ value: x.score, basis: 'measured' }} kind="score" /></span>
-          <span class="r"><Num m={{ value: x.judge, basis: x.judge === null ? 'unavailable' : 'measured', reason: 'judge not run' }} kind="score" /></span>
-          <span class="r"><Num m={{ value: x.tokens, basis: 'measured' }} kind="count" /></span>
-          <span class="r"><Num m={{ value: x.time, basis: 'measured' }} kind="duration" /></span>
-          <span class="r"><Num m={{ value: x.cost, basis: x.cost === null ? 'unavailable' : x.est ? 'estimated' : 'measured', reason: x.cost === null ? 'no meter' : 'tokens' }} kind="money" /></span>
+          <span class="r"><Num m={m(x.score)} kind="score" /></span>
+          <span class="r"><Num m={m(x.judge, x.judge === null ? 'unavailable' : 'measured', 'judge not run')} kind="score" /></span>
+          <span class="r"><Num m={m(x.tokens)} kind="count" /></span>
+          <span class="r"><Num m={m(x.time)} kind="duration" /></span>
+          <span class="r"><Num m={m(x.cost, x.cost === null ? 'unavailable' : x.est ? 'estimated' : 'measured', x.cost === null ? 'no meter' : 'tokens')} kind="money" /></span>
           <span class="r"><span class={`chip-age${x.failed > 5 ? ' t-danger alert' : ''}`} aria-label={`${x.failed} of ${x.trials} trials failed`}>{x.failed > 5 && <Icon name="triangle-alert" />}{x.failed}/{x.trials}</span></span>
         </div>)}
       </div>
@@ -293,7 +293,6 @@ function Laboratory() {
 
 /* ---------- Definitions kept in git: agents, pipelines, catalogue (patterns/definition-editor.md, D20) ---------- */
 
-const m = (value: number | null, basis: 'measured' | 'estimated' | 'unavailable' = 'measured', reason?: string) => ({ value, basis, reason });
 // A catalogue row built by hand: state, name with its second-line facts, one fact on the right.
 function CatRow({ id, sel, onOpen, state, children, right }: { id: string; sel: boolean; onOpen: () => void; state: ComponentChildren; children?: ComponentChildren; right?: ComponentChildren }) {
   return <div role="row" class={`vl-row static${sel ? ' sel' : ''}`}>
@@ -345,31 +344,30 @@ function Agents() {
         <pre class="diff block">{'Review the explicit supplied task and retained materials.\nDo not modify files or delegate work.\n'}<span class="add">Report each finding as: file, line, rule, severity (blocker | major | nit).</span><span class="add">Return "changes requested" when any blocker or major finding exists; otherwise "pass".</span></pre>
         <span class="muted">Three more layers reach the agent. The Effective tab lists all of them in order.</span>
       </DetailSection>
-      <DetailSection title="Skills">
-        <KvRow icon="file-text" label="source-citations" meta={<span class="mono">a41c9e0 · 4 agents</span>} value={<Button label="Remove" icon="x" iconOnly />} />
-        <KvRow icon="file-text" label="review-checklist" meta={<span class="mono">9d02f71 · 2 agents</span>} value={<Button label="Remove" icon="x" iconOnly />} />
-        <div><Button label="Add skill" icon="plus" /></div>
-      </DetailSection>
-      <DetailSection title="Tools">
-        <KvRow icon="terminal" label="Harness" value={<Choice label="Harness tools" value={tools} onChange={t => setTools(tools.includes(t) ? tools.filter(x => x !== t) : [...tools, t])} options={HARNESS_TOOLS.map(t => ({ id: t, label: t }))} />} />
-        <KvRow icon="link" label="Connections" meta="credentials stay in the connection" value={<Choice label="Connections" value={['fleet']} options={[{ id: 'fleet', label: 'fleet · questions, reply' }, { id: 'tavily', label: 'tavily · web_search' }, { id: 'github', label: 'github · pr_read' }]} />} />
-        <KvRow icon="panels-top-left" label="Environment" value={<Choice label="Environment needs" value={['checkout', 'os']} options={[{ id: 'checkout', label: 'checkout: read' }, { id: 'os', label: 'os: any' }, { id: 'gpu', label: 'gpu' }]} />} />
-      </DetailSection>
+      <DetailSection title="Skills">{kvs([
+        ['file-text', 'source-citations', <span class="mono">a41c9e0 · 4 agents</span>, <Button label="Remove" icon="x" iconOnly />],
+        ['file-text', 'review-checklist', <span class="mono">9d02f71 · 2 agents</span>, <Button label="Remove" icon="x" iconOnly />],
+      ])}<div><Button label="Add skill" icon="plus" /></div></DetailSection>
+      <DetailSection title="Tools">{kvs([
+        ['terminal', 'Harness', undefined, <Choice label="Harness tools" value={tools} onChange={t => setTools(tools.includes(t) ? tools.filter(x => x !== t) : [...tools, t])} options={HARNESS_TOOLS.map(t => ({ id: t, label: t }))} />],
+        ['link', 'Connections', 'credentials stay in the connection', <Choice label="Connections" value={['fleet']} options={[{ id: 'fleet', label: 'fleet · questions, reply' }, { id: 'tavily', label: 'tavily · web_search' }, { id: 'github', label: 'github · pr_read' }]} />],
+        ['panels-top-left', 'Environment', undefined, <Choice label="Environment needs" value={['checkout', 'os']} options={[{ id: 'checkout', label: 'checkout: read' }, { id: 'os', label: 'os: any' }, { id: 'gpu', label: 'gpu' }]} />],
+      ])}</DetailSection>
     </>}
     {tab === 'Effective' && <>
-      <DetailSection title="Instruction layers, in the order the agent receives them">
-        <KvRow icon="shield" label="Shared rules" meta={<span class="mono">specq @ 13772b7 · 3.1k tokens</span>} />
-        <KvRow icon="bot" label="Role" meta={<span class="mono">config/roles/reviewer.md @ 77ab102 · 420 tokens</span>} />
-        <KvRow icon="file-plus-2" label="This configuration" meta={<span class="mono">draft · 214 tokens</span>} />
-        <KvRow icon="folder-open" label="Project override" meta="resolved when an execution starts" />
-      </DetailSection>
-      <DetailSection title="Effective settings">
-        <KvRow icon="settings" label="Model" meta={<span class="mono">sonnet</span>} />
-        <KvRow icon="terminal" label="Tools" meta="what this file allows, within the project grant and the task's choice" />
-      </DetailSection>
+      <DetailSection title="Instruction layers, in the order the agent receives them">{kvs([
+        ['shield', 'Shared rules', <span class="mono">specq @ 13772b7 · 3.1k tokens</span>],
+        ['bot', 'Role', <span class="mono">config/roles/reviewer.md @ 77ab102 · 420 tokens</span>],
+        ['file-plus-2', 'This configuration', <span class="mono">draft · 214 tokens</span>],
+        ['folder-open', 'Project override', 'resolved when an execution starts'],
+      ])}</DetailSection>
+      <DetailSection title="Effective settings">{kvs([
+        ['settings', 'Model', <span class="mono">sonnet</span>],
+        ['terminal', 'Tools', "what this file allows, within the project grant and the task's choice"],
+      ])}</DetailSection>
     </>}
     {tab === 'Diff' && <>
-      <pre class="diff block">{'  "instructions": "Review the explicit supplied task and retained materials. Do not modify files or delegate work.'}<span class="add">{' Report each finding as: file, line, rule, severity (blocker | major | nit). Return \\"changes requested\\" when any blocker or major finding exists; otherwise \\"pass\\".'}</span>{'",\n  "tools": ["Read", "Glob", '}<span class="del">{'"Grep"]'}</span><span class="add">{'"Grep", "Bash(read-only)"]'}</span></pre>
+      <pre class="diff block">{'  "instructions": "Review supplied task and retained files.'}<span class="add">{' Report findings with file, line, severity (blocker|major|nit).'}</span>{'",\n  "tools": ["Read", "Glob", '}<span class="del">{'"Grep"]'}</span><span class="add">{'"Grep", "Bash(read-only)"]'}</span></pre>
       <div><Button label="Compare in Lab" icon="chart-no-axes-column" /></div>
     </>}
     {tab === 'Compatibility' && <DetailSection title="Checked combinations">
@@ -378,11 +376,11 @@ function Agents() {
       <div><Button label="Check now" icon="play" /></div>
     </DetailSection>}
     {tab === 'Usage' && <>
-      <DetailSection title="Used by">
-        <KvRow icon="network" label="issue-to-pr" meta="pipeline · step review-code" />
-        <KvRow icon="network" label="website-page" meta="pipeline · step review" />
-        <KvRow icon="rows-3" label="code-review" meta="catalogue method · recommended for cs, fleet" />
-      </DetailSection>
+      <DetailSection title="Used by">{kvs([
+        ['network', 'issue-to-pr', 'pipeline · step review-code'],
+        ['network', 'website-page', 'pipeline · step review'],
+        ['rows-3', 'code-review', 'catalogue method · recommended for cs, fleet'],
+      ])}</DetailSection>
       <Totals items={[{ label: 'Executions, 30 days', m: m(58), kind: 'count', note: '3 failed' }, { label: 'Median time', m: m(250), kind: 'duration' }, { label: 'Cost', m: m(41.2, 'estimated', 'tokens'), kind: 'money' }]} />
     </>}
   </DefinitionEditor>} />;
@@ -406,40 +404,40 @@ const FACTORY_FLOW = (cur?: string): FlowNode[] => [
   { loop: 'until all pass · max 3', nodes: [{ id: 'build', kind: 'agent' }, { id: 'gate', kind: 'program' }, { parallel: [{ id: 'review-code', kind: 'agent', current: cur === 'review-code' }, { id: 'review-ui', kind: 'agent', optional: true, current: cur === 'review-ui' }, { id: 'review-security', kind: 'agent', optional: true, current: cur === 'review-security' }] }] },
   { id: 'approve', kind: 'agent' }, { id: 'deliver', kind: 'tool' }];
 const RENDER_RUN: StepItem[] = [
-  { id: 'prepare', kind: 'program', executor: <b>prepare-inputs.sh</b>, reads: 'batch', writes: 'inputs/', run: { state: 'succeeded', note: 'reused', reason: 'taken from run 40: inputs and definition unchanged', time: m(0), cost: m(null, 'unavailable', 'no meter') } },
-  { band: 'parallel', label: 'In parallel, one per asset · 8 assets' },
-  { id: 'render', kind: 'tool', executor: <><b>render_asset</b> through the blender connection</>, reads: 'inputs/', writes: 'renders/', inset: true,
-    run: { state: 'failed', note: '7 of 8', reason: 'asset-07 failed', time: m(372), cost: m(3.4, 'estimated', 'tokens'), error: 'asset-07 · exit 1 after 2m 04s on windows · CUDA out of memory, tried to allocate 2.1 GB. The 7 finished renders are kept.' } },
-  { id: 'assemble', kind: 'agent', executor: <><b>codex-designer</b> builds the catalogue page</>, reads: 'renders/', writes: 'catalogue.html', run: { state: 'waiting', note: 'waits for render', time: m(null, 'unavailable', 'not started'), cost: m(null, 'unavailable', 'not started') } },
+  { id: 'prepare', kind: 'program', executor: <b>prepare-inputs.sh</b>, reads: 'batch', writes: 'inputs/', run: { state: 'succeeded', note: 'reused', reason: 'from run 40: unchanged', time: m(0), cost: m(null, 'unavailable', 'no meter') } },
+  { band: 'parallel', label: 'In parallel · 8 assets' },
+  { id: 'render', kind: 'tool', executor: <><b>render_asset</b> (blender)</>, reads: 'inputs/', writes: 'renders/', inset: true,
+    run: { state: 'failed', note: '7 of 8', reason: 'asset-07 failed', time: m(372), cost: m(3.4, 'estimated', 'tokens'), error: 'asset-07 · exit 1 after 2m 04s on windows · CUDA out of memory (2.1 GB). 7 finished renders kept.' } },
+  { id: 'assemble', kind: 'agent', executor: <><b>codex-designer</b></>, reads: 'renders/', writes: 'catalogue.html', run: { state: 'waiting', note: 'waits for render', time: m(null, 'unavailable', 'not started'), cost: m(null, 'unavailable', 'not started') } },
 ];
-type PipeDef = { id: string; state: ComponentChildren; facts: string; right: string };
-const PIPE_DEFS: PipeDef[] = [
-  { id: 'issue-to-pr', state: <StateBadge family="definition" state="draft" compact />, facts: '9 steps · 7 agents · shared', right: '2h' },
-  { id: 'render-props', state: <StateBadge family="execution" state="failed" compact />, facts: '3 steps · csgo', right: '4m' },
-  { id: 'web-research', state: <StateBadge family="execution" state="succeeded" compact />, facts: '4 steps · 1 agent · shared', right: '12m' },
-  { id: 'compare-3d-methods', state: <StateBadge family="execution" state="running" compact />, facts: '5 steps · 2 agents · csgo', right: 'now' },
-  { id: 'draft-examples', state: <StateBadge family="definition" state="never" compact />, facts: '2 steps · 1 agent · shared', right: 'never' },
+const PIPE_DEFS: readonly [string, boolean, StateOf<'definition'> | StateOf<'execution'>, string, string][] = [
+  ['issue-to-pr', true, 'draft', '9 steps · 7 agents · shared', '2h'],
+  ['render-props', false, 'failed', '3 steps · csgo', '4m'],
+  ['web-research', false, 'succeeded', '4 steps · 1 agent · shared', '12m'],
+  ['compare-3d-methods', false, 'running', '5 steps · 2 agents · csgo', 'now'],
+  ['draft-examples', true, 'never', '2 steps · 1 agent · shared', 'never'],
 ];
 
 function StepEditor({ onAgent }: { onAgent: () => void }) {
   return <>
-    <KvRow icon="settings" label="Kind" value={<Choice label="Kind" value="agent" options={[{ id: 'agent', label: 'Agent', icon: 'bot' }, { id: 'tool', label: 'Tool', icon: 'settings' }, { id: 'program', label: 'Program', icon: 'terminal' }, { id: 'pipeline', label: 'Pipeline', icon: 'network' }]} />} />
-    <KvRow icon="bot" label="Agent" meta="claude-reviewer" value={<Button label="Open configuration" icon="external-link" onClick={onAgent} />} />
-    <KvRow icon="play" label="Runs" value={<Choice label="Runs" value="always" options={[{ id: 'always', label: 'always' }, { id: 'when', label: 'when an earlier output says so' }]} />} />
-    <KvRow icon="sliders-horizontal" label="Model" meta="haiku when intake rates the risk low, otherwise sonnet" value={<Button label="Add rule" icon="plus" iconOnly />} />
-    <SettingField label="Assignment" value="Review the change against spec.md and the project rules. Write the review and a verdict." help="What the agent is asked to do. It chooses its own actions." now={NOW} status={{ kind: 'applied', at: NOW - 3 * hr }} />
-    <h3 class="sub-h">Inputs, each bound to an earlier output</h3>
-    <KvRow icon="link" label="change" meta="from build" value={<span class="muted">required</span>} />
-    <KvRow icon="link" label="spec.md" meta="from spec" value={<span class="muted">required</span>} />
-    <KvRow icon="file-plus-2" label="checks.md" meta="from gate · added in this draft" value={<span class="muted">optional</span>} />
-    <h3 class="sub-h">Outputs later steps may bind to</h3>
-    <KvRow icon="file-text" label="review" meta="markdown · findings by file and severity" />
-    <KvRow icon="check" label="verdict" meta="pass, or changes requested" />
+    {kvs([
+      ['settings', 'Kind', undefined, <Choice label="Kind" value="agent" options={[{ id: 'agent', label: 'Agent', icon: 'bot' }, { id: 'tool', label: 'Tool', icon: 'settings' }, { id: 'program', label: 'Program', icon: 'terminal' }, { id: 'pipeline', label: 'Pipeline', icon: 'network' }]} />],
+      ['bot', 'Agent', 'claude-reviewer', <Button label="Open configuration" icon="external-link" onClick={onAgent} />],
+      ['play', 'Runs', undefined, <Choice label="Runs" value="always" options={[{ id: 'always', label: 'always' }, { id: 'when', label: 'when an earlier output says so' }]} />],
+      ['sliders-horizontal', 'Model', 'haiku when intake rates the risk low, otherwise sonnet', <Button label="Add rule" icon="plus" iconOnly />],
+    ])}
+    <SettingField label="Assignment" value="Review the change against spec.md and project rules." help="Task goal." now={NOW} status={{ kind: 'applied', at: NOW - 3 * hr }} />
+    <h3 class="sub-h">Inputs</h3>
+    {kvs([['link', 'change', 'from build'], ['link', 'spec.md', 'from spec'], ['file-plus-2', 'checks.md', 'from gate · optional']])}
+    <h3 class="sub-h">Outputs</h3>
+    {kvs([['file-text', 'review', 'markdown findings'], ['check', 'verdict', 'pass | changes requested']])}
     <h3 class="sub-h">Then</h3>
-    <KvRow icon="circle-check" label="Pass" meta="counts once; when every reviewer passes, go on to approve" />
-    <KvRow icon="rotate-cw" label="Changes requested" meta="back to build with this round's reviews · an outcome, not a failure" />
-    <KvRow icon="clock" label="After 3 rounds" meta="stop, keep the change and its reviews, ask the operator" />
-    <KvRow icon="octagon-x" label="The step fails" meta="the run fails and outputs are kept · project rules decide a retry" />
+    {kvs([
+      ['circle-check', 'Pass', 'proceed to approve'],
+      ['rotate-cw', 'Changes requested', 'back to build with reviews'],
+      ['clock', 'After 3 rounds', 'stop and ask the operator'],
+      ['octagon-x', 'Fail', 'stop and keep outputs'],
+    ])}
     <div><Button label="Remove step" icon="trash-2" kind="danger" /></div>
   </>;
 }
@@ -452,7 +450,7 @@ function Pipelines({ id = 'issue-to-pr' }: { id?: string }) {
   const list = <>
     <PageHead title="Pipelines"><Button label="New pipeline" icon="plus" iconOnly kind="primary" /></PageHead>
     <Panel><div class="vl-wrap" style={CAT_COLS}>
-      {PIPE_DEFS.map(p => <CatRow key={p.id} id={p.id} sel={p.id === id} onOpen={() => go(p.id === 'render-props' ? '/pipelines/render-props' : '/pipelines')} state={p.state} right={p.right}><span class="facts">{p.facts}</span></CatRow>)}
+      {PIPE_DEFS.map(([pid, isDef, st, facts, right]) => <CatRow key={pid} id={pid} sel={pid === id} onOpen={() => go(pid === 'render-props' ? '/pipelines/render-props' : '/pipelines')} state={isDef ? <StateBadge family="definition" state={st as StateOf<'definition'>} compact /> : <StateBadge family="execution" state={st as StateOf<'execution'>} compact />} right={right}><span class="facts">{facts}</span></CatRow>)}
     </div></Panel>
   </>;
   return <ListDetail list={list} detailKey={id} detail={<DefinitionEditor key={id} label={id} crumb={failed ? 'csgo · config/pipelines/render-props.json · run 41 at 94e588a' : 'shared · config/pipelines/issue-to-pr.json · 5eefade'}
@@ -498,26 +496,27 @@ function Catalogue() {
   return <ListDetail list={list} detailKey={sel ?? undefined} detail={sel && <DefinitionEditor label={sel} crumb="shared · config/catalogue.json · 5eefade" title={sel}
     tabs={['Methods', 'Contract', 'Assessments']} tab={tab} onTab={setTab} onClose={() => setSel(null)} actions={<Button label="Add method" icon="plus" />}>
     {tab === 'Methods' && <>
-      <DetailSection title="What the caller gets">
-        <KvRow icon="arrow-down" label="Input" meta={<span class="mono">prompt · max sources</span>} />
-        <KvRow icon="arrow-up" label="Result" meta={<span class="mono">summary.md · sources · pages (optional)</span>} />
-      </DetailSection>
+      <DetailSection title="What the caller gets">{kvs([
+        ['arrow-down', 'Input', <span class="mono">prompt · max sources</span>],
+        ['arrow-up', 'Result', <span class="mono">summary.md · sources · pages (optional)</span>],
+      ])}</DetailSection>
       <DetailSection title="Methods">
         <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1.4fr) 4rem minmax(0,1fr) 4rem 4rem 4.5rem minmax(0,1.2fr)' }}>
           <div class="vl-head" role="row"><span /><span>Method</span><span>Scope</span><span>Runs</span><span class="r">Quality</span><span class="r">Time</span><span class="r">Cost</span><span>For</span></div>
-          <div role="row" class="vl-row static"><StateBadge family="definition" state="ready" compact /><span class="title">Source discovery</span><span class="muted">shared</span><span class="mono" data-tip="config/pipelines/search-basic.json">search-basic</span>
-            <span class="r"><Num m={m(0.82)} kind="score" /></span><span class="r"><Num m={m(8)} kind="duration" /></span><span class="r"><Num m={m(0.02)} kind="money" /></span><span>everyone</span></div>
-          <div role="row" class="vl-row static"><StateBadge family="definition" state="ready" compact /><span class="title">Summary with sources</span><span class="muted">shared</span><span class="mono" data-tip="config/pipelines/web-research.json">web-research</span>
-            <span class="r"><Num m={m(0.91)} kind="score" /></span><span class="r"><Num m={m(130)} kind="duration" /></span><span class="r"><Num m={m(0.38, 'estimated', 'tokens')} kind="money" /></span><span>cs, fleet</span></div>
-          <div role="row" class="vl-row static"><StateBadge family="definition" state="unchecked" compact /><span class="title">Guided delivery</span><span class="muted">csgo</span><span class="mono" data-tip="config/pipelines/prop-search.json">prop-search</span>
-            <span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="score" /></span><span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="duration" /></span><span class="r"><Num m={m(null, 'unavailable', 'not assessed')} kind="money" /></span><span class="muted">nobody yet</span></div>
+          {([
+            ['ready', 'Source discovery', 'shared', 'search-basic', m(0.82), m(8), m(0.02), 'everyone', false],
+            ['ready', 'Summary with sources', 'shared', 'web-research', m(0.91), m(130), m(0.38, 'estimated', 'tokens'), 'cs, fleet', false],
+            ['unchecked', 'Guided delivery', 'csgo', 'prop-search', m(null, 'unavailable', 'not assessed'), m(null, 'unavailable', 'not assessed'), m(null, 'unavailable', 'not assessed'), 'nobody yet', true],
+          ] as const).map(([st, title, scope, pipe, q, tm, c, forW, mute]) => <div key={pipe} role="row" class="vl-row static">
+            <StateBadge family="definition" state={st} compact /><span class="title">{title}</span><span class="muted">{scope}</span><span class="mono" data-tip={`config/pipelines/${pipe}.json`}>{pipe}</span>
+            <span class="r"><Num m={q} kind="score" /></span><span class="r"><Num m={tm} kind="duration" /></span><span class="r"><Num m={c} kind="money" /></span><span class={mute ? 'muted' : undefined}>{forW}</span></div>)}
         </div>
       </DetailSection>
-      <DetailSection title="Which method a call uses">
-        <KvRow icon="list" label="The task names one" meta="that method, never replaced without permission" />
-        <KvRow icon="folder-open" label="Else the project recommends one" meta="cs, fleet: Summary with sources" />
-        <KvRow icon="rows-3" label="Else the shared default" meta="Source discovery" />
-      </DetailSection>
+      <DetailSection title="Which method a call uses">{kvs([
+        ['list', 'The task names one', 'that method, never replaced without permission'],
+        ['folder-open', 'Else the project recommends one', 'cs, fleet: Summary with sources'],
+        ['rows-3', 'Else the shared default', 'Source discovery'],
+      ])}</DetailSection>
       <div class="state-line"><Button label="Recommend for a project" icon="check-check" /><Button label="Compare in Lab" icon="chart-no-axes-column" /></div>
     </>}
     {tab !== 'Methods' && <Empty text={`${tab} is not mocked up.`} />}

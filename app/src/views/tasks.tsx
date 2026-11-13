@@ -14,6 +14,7 @@ import { useList, useDoc } from '../store.ts';
 import { listKey, DEFAULT_TASK_SORT, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 import { usePins, useViews, withFocus, setFocus } from '../prefs.ts';
+import { ScopedRollupDetails, buildExecTree, resourceTotals } from './resources.tsx';
 
 const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
@@ -118,9 +119,6 @@ function groupLabel(group: string, label: string | null) {
   return label ?? 'None';
 }
 
-const EXEC_STATE: Record<string, StateOf<'execution'>> = { completed: 'succeeded', stopped: 'cancelled', unknown: 'running', started: 'running', accepted: 'preparing', pending: 'preparing' };
-const execState = (s: string): StateOf<'execution'> => (EXEC_STATE[s] ?? (['preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'].includes(s) ? s : 'running')) as StateOf<'execution'>;
-
 /** Dependencies by code (OR-38); ones the viewer cannot see are only counted. */
 function dependsOn(ds: { code?: string | null }[]) {
   const codes = ds.flatMap(d => d.code ? [d.code] : []), hidden = ds.length - codes.length;
@@ -140,22 +138,12 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   if (!t) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
   const req = t.completionRequirements && typeof t.completionRequirements === 'object' ? Object.entries(t.completionRequirements).map(([k, v]) => ({ text: typeof v === 'string' ? `${k}: ${v}` : k, met: false })) : [];
   const open = (t.questions ?? []).filter((q: any) => q.state === 'open');
-  const resTot = (t as Ops['task_get']['reply']).resources?.total;
-  const tok = resTot?.tokens.total ?? null;
-  const nodes: TreeNode[] = (t.executions ?? []).map((e: any) => ({ id: e.id, name: [e.kind ?? 'run', e.harness ?? e.agentConfig?.harness, e.hostId].filter(Boolean).join(' · '), state: execState(e.state),
-    lastSeen: e.observation === 'unconfirmed' ? ms(e.lastSeenAt) ?? undefined : undefined,
-    time: e.startedAt && (e.endedAt ?? e.finishedAt) ? { value: (ms(e.endedAt ?? e.finishedAt)! - ms(e.startedAt)!) / 1000, basis: 'measured' } : { value: null, basis: 'unavailable', reason: 'not finished' } }));
+  const rollup = (t as Ops['task_get']['reply']).resources;
+  const nodes: TreeNode[] = buildExecTree(t.executions ?? []);
   const disabled = off ? 'offline' : undefined;
   // OR-39: statement, lifecycle, result, decision; a total is shown only when it is known (no empty token or cost fields).
   // The execution count is the tree below (OR-17: no second 'Executions').
-  const wallMs = resTot?.durations.executionWallMs ?? null;
-  const wall = wallMs === null ? null : wallMs / 1000;
-  const wallBasis = resTot?.durations.basis;
-  const tokBasis = resTot?.tokens.basis;
-  const totals = [
-    ...(wall !== null ? [{ label: 'Time', m: { value: wall, basis: wallBasis === 'estimated' ? ('estimated' as const) : ('measured' as const), partial: wallBasis === 'unavailable' ? 'some runs not measured' : undefined }, kind: 'duration' as const }] : []),
-    ...(tok !== null ? [{ label: 'Tokens', m: { value: tok, basis: tokBasis === 'estimated' ? ('estimated' as const) : ('measured' as const), partial: tokBasis === 'unavailable' ? 'some runs not measured' : undefined }, kind: 'count' as const }] : []),
-  ];
+  const totals = resourceTotals(rollup?.total, { extraCost: t.cost, hideUnavailable: true });
   const latestExecution = t.executions?.at(-1); // task_get preserves execution sequence.
   const reported = (t.executions ?? []).filter((e: any) => e.report).sort((a: any, b: any) => b.report.at - a.report.at)[0];
   const decided = (t.questions ?? []).filter((q: any) => q.state === 'answered').sort((a: any, b: any) => (ms(b.answeredAt) ?? 0) - (ms(a.answeredAt) ?? 0)).slice(0, 3);
@@ -190,6 +178,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     </DetailSection>}
     {t.expectedOutcome && <OutcomeBlock outcome={t.expectedOutcome} requirements={req} inputs={[]} depends={t.dependencies?.length ? dependsOn(t.dependencies) : undefined} />}
     {totals.length > 0 && <Totals items={totals} />}
+    <ScopedRollupDetails rollup={rollup} cost={t.cost} title="Resource breakdown" />
     {decided.length > 0 && <DetailSection title="Previous answers">
     {decided.map((q: any) => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />
       <span>{q.kind === 'acceptance' ? q.answer : `${q.text}: ${q.answer}`}</span>{q.answeredBy && <span class="muted">by {actor(q.answeredBy)}</span>}{ms(q.answeredAt) && <AgeChip t={ms(q.answeredAt)!} now={now} />}</p>)}

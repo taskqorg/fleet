@@ -2,7 +2,7 @@
 
 **Code.** `Thread` in `packages/ui` (rows: `TextRow`, `ToolRow`, `ReasoningRow`, `QuestionRow`, `ResultRow`, `BoundaryRow`; agent mark `AgentMark`). Demo: [book](../book/index.html).
 
-**Purpose.** Reads a live or finished execution transcript: messages, tool calls, results and questions, with paging and search.
+**Purpose.** Reads a live or finished execution transcript: messages, tool calls, results, questions, and execution boundaries (`BoundaryRow` showing execution state, age, duration, tokens, tool call count/failures, and multi-currency/`subscription` `CostFigures`), with paging and search.
 
 **Anatomy.** Toolbar (search within transcript, filter by kind: messages, tool calls, errors; "Follow" toggle; jump to start/end); body on `surface-sunken`; entries with a relative time in `font-mono` `fg-muted` (`4m`, `2h`; OR-2, D9), with the exact time in the tooltip, author or tool name, and content. Tool calls are collapsed to one line ("Call: file_change · completed · 2s") and expand on click. Code and command output use `font-mono`.
 
@@ -23,4 +23,4 @@
 
 **Do.** Keep native harness detail (images, tool output). **Don't.** Auto-scroll when the person has scrolled up.
 
-**Used in.** Task detail, Sessions, Laboratory trials, History.
+**Used in.** Task detail, Conversations, Laboratory trials, History.
