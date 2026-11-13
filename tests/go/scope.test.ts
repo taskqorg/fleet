@@ -48,15 +48,17 @@ test('S1 lists: a member lists only granted projects and their sessions; an outs
   assert.equal((await call('GET', '/api/sessions/' + theirs, undefined, as(MEMBER))).status, 404);
 });
 
-test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule subscription, and the host claims it; readiness runs too (requirement: docs/designs/fleet-people-access.md grants; risk: knownHost, pickAccount or readiness rows run in the person\'s scope: 400 Unknown host, no account, 403)', async () => {
+test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule subscription, and the host claims it; readiness runs too (requirement: docs/designs/fleet-people-access.md grants; risk: knownHost, eligible account placement or readiness rows run in the person\'s scope: 400 Unknown host, no account, 403)', async () => {
   const h = await host();
   const a = ok(await op('account_create', {name: 'scope-sub', harness: 'codex'}));
   ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'scope-bind', platform: 'darwin', readiness: 'ready', nativeLoginObserved: null, quota: 'unknown', reason: 'ready'}));
   ok(await op('account_update', {accountId: a.id, take: {projects: [MINE]}}));
   const s = ok(await start(MEMBER, MINE, {hostId: 'trial-host'}));
-  assert.equal(s.account, 'scope-sub', JSON.stringify(s));
+  assert.equal(s.account, null, 'automatic account is selected at eligible placement');
   const {commands} = ok(await h('/api/hosts/poll', poll));
-  assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'the host claims the member\'s start');
+  const claimed = commands.find((c: any) => c.executionId === s.executionId && c.kind === 'start');
+  assert.ok(claimed, 'the host claims the member\'s start');
+  assert.equal(claimed.payload.account, 'scope-bind', 'the eligible take-rule account reaches the native start');
   // Readiness runs on the project's configured hosts (owner-mac in config/projects/desiign).
   const mac = ok(await op('hosts_register', {id: 'owner-mac'})).secret;
   ok(await call('POST', '/api/hosts/poll', poll, {authorization: 'Bearer ' + mac}));
