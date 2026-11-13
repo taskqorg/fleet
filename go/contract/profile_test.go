@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,28 @@ func TestMultipleNamedMCPSelections(t *testing.T) {
 	for _, bad := range []string{strings.Replace(raw, `"second"`, `"first"`, 1), strings.Replace(raw, `"first"`, `"fleet"`, 1), strings.Replace(raw, `"tools":["read"]`, `"tools":["read"],"env":{"TOKEN":"forbidden"}`, 1)} {
 		if _, err := ParseProfile([]byte(bad)); err == nil {
 			t.Fatal("unsafe selection accepted", bad)
+		}
+	}
+}
+
+// Requirement: explicit empty Claude grants stay empty; risk: typed definition_save drops tools:[] and restores native tools.
+func TestProfileEmptyToolRoundTrip(t *testing.T) {
+	for _, selection := range []string{"", `,"tools":[]`, `,"tools":["Read"]`} {
+		raw := `{"id":"p","harness":"claude","model":"m","instructionRole":"system","instructions":"x","mcpServers":[]` + selection + `}`
+		p, err := ParseProfile([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, err := ParseProfile(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (p.Tools == nil) != (next.Tools == nil) || len(p.Tools) != len(next.Tools) {
+			t.Fatalf("grant changed: %s", b)
 		}
 	}
 }

@@ -29,6 +29,19 @@ func ParseProfile(raw []byte) (Profile, error) {
 	return p, p.check()
 }
 
+// MarshalJSON preserves an explicit empty native tool grant across typed API round trips.
+func (p Profile) MarshalJSON() ([]byte, error) {
+	type plain Profile
+	var tools *[]ClaudeTool
+	if p.Tools != nil {
+		tools = &p.Tools
+	}
+	return json.Marshal(struct {
+		plain
+		Tools *[]ClaudeTool `json:"tools,omitempty"`
+	}{plain(p), tools})
+}
+
 // ParseAntigravitySettings decodes and checks a start command's Antigravity settings with the profile rules.
 func ParseAntigravitySettings(raw []byte) (AntigravitySettings, error) {
 	var s AntigravitySettings
