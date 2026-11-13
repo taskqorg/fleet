@@ -228,6 +228,10 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 	if settings == nil && projectID != nil {
 		settings = projectSettingsOf(q, astr(projectID))
 	}
+	requirements := mapOf(settings["execution"])
+	if ids := strs(requirements["profiles"]); len(ids) > 0 && !slices.Contains(ids, astr(mapOf(e["agentConfig"])["id"])) {
+		requirements = nil
+	}
 	cos := []map[string]any{}
 	for _, v := range anys(settings["environments"]) {
 		cos = append(cos, mapOf(v))
@@ -326,12 +330,12 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
-			if mapOf(settings["execution"])["forge"] == true && (len(anys(settings["repos"])) == 0 || !inList(k.caps[id], "forge:"+strings.TrimSuffix(strings.TrimPrefix(astr(mapOf(anys(settings["repos"])[0])["remote"]), "https://github.com/"), ".git"))) {
+			if requirements["forge"] == true && (len(anys(settings["repos"])) == 0 || !inList(k.caps[id], "forge:"+strings.TrimSuffix(strings.TrimPrefix(astr(mapOf(anys(settings["repos"])[0])["remote"]), "https://github.com/"), ".git"))) {
 				skip("project forge connection unavailable on "+id, "host:"+id+":forge")
 				continue
 			}
 			missingTool := ""
-			for _, tool := range strs(mapOf(settings["execution"])["tools"]) {
+			for _, tool := range strs(requirements["tools"]) {
 				if !inList(k.caps[id], "tool:"+tool) {
 					missingTool = tool
 					break

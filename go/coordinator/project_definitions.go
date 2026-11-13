@@ -126,6 +126,11 @@ func projectWrite(q *Request, create bool) (any, error) {
 			return nil, fail(400, "Unknown role configuration")
 		}
 	}
+	for _, profile := range anys(mapOf(mapOf(bundle["settings"])["execution"])["profiles"]) {
+		if _, err := readTrustedProfile(q, astr(profile)); err != nil {
+			return nil, fail(400, "Unknown execution profile")
+		}
+	}
 	base := int64(0)
 	var repo *string
 	if head != nil {

@@ -194,14 +194,25 @@ func readiness(project any, host, registry string, forbidden ...[]string) contra
 		pl, perr := claudePlacementHere()
 		checks = append(checks, claudeChecks(host, pl, perr, homes)...)
 	}
-	if len(jArr(project, "execution", "tools")) > 0 && len(accounts) == 0 {
+	codingHarnesses := map[string]bool{}
+	for role, profile := range jObj(project, "profileIds") {
+		if projectRequirements(project, jStr(profile)) != nil {
+			codingHarnesses[jStr(project, "roles", role)] = true
+		}
+	}
+	if len(jArr(project, "execution", "profiles")) == 0 {
+		for _, h := range harnesses {
+			codingHarnesses[jStr(h)] = true
+		}
+	}
+	if (len(jArr(project, "execution", "profiles")) == 0 || len(codingHarnesses) > 0) && len(jArr(project, "execution", "tools")) > 0 && len(accounts) == 0 {
 		checks = append(checks, check("coding-tools", host, "managed-account-unavailable"))
 	}
-	if jAt(project, "execution", "forge") == true {
+	if (len(jArr(project, "execution", "profiles")) == 0 || len(codingHarnesses) > 0) && jAt(project, "execution", "forge") == true {
 		checks = append(checks, check("forge", host, forgeReadiness(project)))
 	}
 	for _, name := range sortedKeys(accounts) {
-		if !has(jAt(accounts[name], "harness")) || (jIsStr(accounts[name], "readiness") && jStr(accounts[name], "readiness") != "ready") {
+		if !codingHarnesses[jStr(accounts[name], "harness")] || (jIsStr(accounts[name], "readiness") && jStr(accounts[name], "readiness") != "ready") {
 			continue
 		}
 		for _, tool := range jArr(project, "execution", "tools") {
@@ -241,4 +252,18 @@ func claudeChecks(host, placement string, perr error, homes []string) []contract
 		}
 	}
 	return out
+}
+
+// projectRequirements uses the execution's frozen project and profile.
+func projectRequirements(project any, profile string) any {
+	ids := jArr(project, "execution", "profiles")
+	for _, id := range ids {
+		if jStr(id) == profile {
+			return jAt(project, "execution")
+		}
+	}
+	if len(ids) == 0 {
+		return jAt(project, "execution")
+	}
+	return nil
 }
