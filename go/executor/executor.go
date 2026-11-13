@@ -89,7 +89,7 @@ func platform() string {
 }
 
 func capabilities() []string {
-	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script"}
+	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1"}
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}
@@ -1642,7 +1642,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	}
 	executionSpan(execution, l)
 	l.seq++
-	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, StderrTail: stderrTail(e.sessionDir(jStr(l.command, "sessionId")), execution, code)}); err != nil {
+	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, StderrTail: stderrTail(e.commandDir(jStr(l.command, "sessionId"), jAt(l.command, "payload")), execution, code)}); err != nil {
 		return false, err
 	}
 	sid, err := cmdID(l.command, "sessionId")

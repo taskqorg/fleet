@@ -119,6 +119,9 @@ func (a *App) poll(q *Request) (any, error) {
 	}
 	out := []doc{}
 	for _, c := range pending {
+		if astr(mapOf(c["payload"])["workspaceKey"]) != "" && !inList(b.Capabilities, "workspace-key-v1") {
+			continue
+		}
 		ok, err := agentReady(q, c)
 		if err != nil {
 			return nil, err

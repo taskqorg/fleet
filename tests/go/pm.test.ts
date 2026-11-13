@@ -19,7 +19,7 @@ async function call(method: string, path: string, body?: unknown, headers: Recor
 const as = (person: string) => ({authorization: 'Bearer ' + SECRET, 'x-fleet-person': person});
 const ok = (r: Reply) => { assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
 const op = (name: string, b: object = {}, person = OWNER) => call('POST', '/api/ops/' + name, b, as(person));
-const poll = {platform: 'darwin', capabilities: [], stores: [], problems: []};
+const poll = {platform: 'darwin', capabilities: ['workspace-key-v1'], stores: [], problems: []};
 // One host per director, held by that person: work directed by a person runs on a login they hold (people-access §6).
 const hosts = new Map<string, {id: string, secret: string}>();
 const hostCall = (person: string, path: string, body: object) => call('POST', path, body, {authorization: 'Bearer ' + hosts.get(person)!.secret});
@@ -372,6 +372,8 @@ test('PM project transition applies after the active turn with checkout rules an
  assert.equal(before.executions[0].dispatch.projectId,null);
  ok(await hostCall(OWNER,'/api/hosts/receipts',{executionId:pm.executionId,commandId:pm.commandId,status:'completed',nativeSessionId:'old-projectless-native'}));
 
+ const legacyPoll=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
+ assert.ok(!legacyPoll.commands.some((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId),'older executor must not claim keyed checkout');
  const {commands}=ok(await hostCall(OWNER,'/api/hosts/poll',poll));
  const next=commands.find((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId&&c.executionId!==pm.executionId);
  assert.ok(next,JSON.stringify(commands));
@@ -387,6 +389,8 @@ test('PM project transition applies after the active turn with checkout rules an
   const transition=ok(await op('session_transition',{sessionId:pm.sessionId,projectId}));
   assert.equal(transition.transition,'create_with_handoff');
   ok(await call('POST',`/api/sessions/${pm.sessionId}/messages`,{requestId:randomUUID(),text:'continue'},as(OWNER)));
+  const oldHost=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
+  assert.ok(!oldHost.commands.some((c:any)=>c.payload?.workspaceKey),'old hosts cannot claim keyed cleanup or start');
   const polled=ok(await hostCall(OWNER,'/api/hosts/poll',poll)).commands;
   const cleanup=polled.find((c:any)=>c.kind==='teardown'&&c.executionId===current.executionId);
   assert.ok(cleanup,JSON.stringify(polled));
