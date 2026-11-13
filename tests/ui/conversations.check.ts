@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { chromium, type Page } from 'playwright';
 import { checkServer } from './seed.ts';
 import { checkProjects } from './projects.check.ts';
+import { checkQuestionReplies } from './question-replies.check.ts';
 import { checkTaskStory } from './task-story.check.ts';
 import { checkSpotlight } from './spotlight.check.ts';
 
@@ -258,6 +259,7 @@ try {
   await checkProjects(b, origin, host);
   await checkSpotlight(b, origin);
   await checkTaskStory(b, origin);
+  await checkQuestionReplies(b, origin);
 } finally { await b.close(); await close(); }
 
 console.log('\nTimings (reported, not asserted):'); for (const l of timings) console.log('  ' + l);

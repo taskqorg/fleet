@@ -14,7 +14,7 @@
 
 **States.** Open; answering (buttons busy); answered ("Answered by Alex · Accept · delivered 10:42" in `success-fg`, block turns neutral and collapses to one line); delivery pending ("Answer saved, delivery pending" in `attention-fg`); not addressed to you (read only, shows the addressee); withdrawn (asker no longer needs it, neutral).
 
-**Behaviour.** One click or one key answers with an option. Typed answers need `Enter` (`Shift+Enter` for a new line). Answering in one place updates the other views of the same question at once. Destructive answers (cancel) confirm in place.
+**Behaviour.** One click or one key answers with an option. Typed answers need `Enter` (`Shift+Enter` for a new line). Answering in one place updates the other views of the same question at once. In a conversation, a confirmed reply immediately updates transcript history and removes the current answer controls even while live updates are delayed. Failed or unknown writes do not establish an answered state. Destructive answers (cancel) confirm in place.
 
 **Keyboard.** Within the focused block: option shortcuts shown in each button (`a`, `r`, digits `1`–`9` for numbered options); `t` focuses the text field.
 

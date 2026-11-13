@@ -9,7 +9,7 @@ import {
   keyConnection,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online, addRequestedKey, writeOnce, sendingId, OpError, useAlive } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, sendingId, OpError, useAlive, type Ops } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { focusIds } from '../prefs.ts';
@@ -93,6 +93,12 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     };
     addEventListener('keydown', on); return () => removeEventListener('keydown', on);
   }, []);
+  const [answers, setAnswers] = useState<Record<string, Ops['questions_answer']['reply']>>({});
+  async function answerQuestion(questionId: string, answer: string) {
+    const row = await writeOnce('questions_answer', { questionId, answer }, unknown, { signal: alive.current.signal });
+    setAnswers(current => ({ ...current, [row.id]: row }));
+    return row;
+  }
   const [failure, setFailure] = useState<{ text: string; retry?: () => void } | null>(null);
   // Writes in flight stop when the conversation closes.
   const alive = useRef(new AbortController()); useEffect(() => () => alive.current.abort(), []);
@@ -114,7 +120,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const running = (e: any) => !['succeeded', 'failed', 'cancelled'].includes(e.state) && e.observation !== 'unconfirmed';
   // Composer target: the newest running execution; with none, a new message starts one (design "Controls").
   const active = (s.executions ?? []).filter(running).at(-1);
-  const openQs = (s.questions ?? []).filter((q: any) => q.state === 'open');
+  const openQs = (s.questions ?? []).filter((q: any) => (answers[q.id] ?? q).state === 'open');
   const w = thread.win;
   const lastMessage: string | undefined = (s.messages ?? []).at(-1)?.text;
   return <article class="detail conversation" data-ui="detail" tabIndex={-1} aria-label="Conversation">
@@ -138,14 +144,14 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     {panel && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
     <div class="pane">
-      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} handle={handle} onStart={thread.older} onEnd={thread.newer}
+      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks.map(b => b.kind === 'question' && answers[b.questionId] ? { ...b, state: answers[b.questionId].state, answer: answers[b.questionId].answer, answeredBy: answers[b.questionId].answeredBy ?? undefined, answeredAt: answers[b.questionId].answeredAt ? new Date(answers[b.questionId].answeredAt!).getTime() : null } : b)} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} handle={handle} onStart={thread.older} onEnd={thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
-        onAnswer={(questionId, answer) => run(() => writeOnce('questions_answer', { questionId, answer }, unknown, { signal: alive.current.signal }))} onCopyFail={copyFail} onSecret={(q: string, c: string, v: string) => addRequestedKey(q, c, v, alive.current.signal)}
+        onAnswer={(questionId, answer) => run(() => answerQuestion(questionId, answer))} onCopyFail={copyFail} onSecret={(q: string, c: string, v: string) => addRequestedKey(q, c, v, alive.current.signal)}
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}
       {/* D3: steer goes to the execution and does not answer; the open question stays in sight above the composer. */}
       {openQs.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}
         options={(Array.isArray(q.options) ? q.options : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-        onAnswer={a => run(() => writeOnce('questions_answer', { questionId: q.id, answer: a }, unknown, { signal: alive.current.signal }))}
+        onAnswer={a => run(() => answerQuestion(q.id, a))}
         onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive.current.signal) : undefined} />)}
       <div class="composer-bar">
         {active && <EntityCode id={active.id} what="Run" />}
