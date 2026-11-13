@@ -1322,7 +1322,7 @@ CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
   coalesce((SELECT jsonb_object_agg(s.state, s.n) FROM (SELECT e.state, count(*) AS n FROM execution e WHERE e.task_id = t.id GROUP BY e.state) s), '{}') AS executions_by_state,
   (SELECT count(*) FROM execution e WHERE e.task_id = t.id) AS execution_count,
   (SELECT jsonb_build_object('tokens_input', sum(x.tokens_input), 'tokens_output', sum(x.tokens_output), 'tokens_cache_read', sum(x.tokens_cache_read), 'tokens_cache_write', sum(x.tokens_cache_write), 'wall_ms', sum(x.wall_ms), 'active_ms', sum(x.active_ms), 'cpu_ms', sum(x.cpu_ms), 'turn_count', sum(x.turn_count), 'peak_memory_bytes', max(x.peak_memory_bytes), 'measured_wall', count(*) FILTER (WHERE x.wall_ms_basis = 'measured'), 'measured_cpu', count(*) FILTER (WHERE x.cpu_ms_basis = 'measured'), 'executions_with_totals', count(*))
-   FROM execution_totals x JOIN execution e ON e.id = x.execution_id WHERE e.task_id = t.id AND e.kind NOT IN ('pipeline_run', 'pipeline_step')) AS totals,
+   FROM execution_totals x JOIN execution e ON e.id = x.execution_id WHERE e.task_id = t.id AND e.kind NOT IN ('pipeline_run', 'pipeline_step', 'tool_run')) AS totals,
   (WITH publications AS (
     SELECT 'artifact:'||a.id AS row_id, a.id, a.legacy_id, a.project_id, a.scope, a.content_hash, a.previous_artifact_id,
       a.seq, e.seq AS execution_seq, a.required, a.state='stored' AS stored, a.name NOT LIKE 'mcp-lifecycle-%' AS deliverable,
@@ -1378,11 +1378,37 @@ UPDATE execution e SET
  pipeline_id = coalesce((SELECT d->>'id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'pipeline' LIMIT 1), nullif(e.data->>'pipelineId', '')),
  pipeline_revision = (SELECT CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'pipeline' LIMIT 1),
  step_id = CASE WHEN e.kind = 'pipeline_step' THEN nullif(e.data->>'id', '') ELSE e.step_id END;
+WITH RECURSIVE lineage AS (
+ SELECT id, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision, ARRAY[id] AS seen
+ FROM execution
+ WHERE pipeline_id IS NOT NULL OR step_id IS NOT NULL OR profile_id IS NOT NULL
+ UNION ALL
+ SELECT c.id,
+  CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_id ELSE p.pipeline_id END,
+  CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_revision ELSE p.pipeline_revision END,
+  coalesce(c.step_id, p.step_id),
+  CASE WHEN c.profile_id IS NOT NULL THEN c.profile_id ELSE p.profile_id END,
+  CASE WHEN c.profile_id IS NOT NULL THEN c.profile_revision ELSE p.profile_revision END,
+  p.seen || c.id
+ FROM execution c
+ JOIN lineage p ON p.id = coalesce(nullif(c.data->>'pipelineStepId', ''), c.parent_execution_id)
+ WHERE NOT (c.id = ANY(p.seen)) AND array_length(p.seen, 1) < 32
+   AND ((c.pipeline_id IS NULL AND p.pipeline_id IS NOT NULL)
+     OR (c.step_id IS NULL AND p.step_id IS NOT NULL)
+     OR (c.profile_id IS NULL AND p.profile_id IS NOT NULL))
+)
 UPDATE execution c SET
- pipeline_id = coalesce(c.pipeline_id, p.pipeline_id),
- pipeline_revision = coalesce(c.pipeline_revision, p.pipeline_revision),
- step_id = coalesce(c.step_id, p.step_id)
-FROM execution p WHERE p.id = coalesce(nullif(c.data->>'pipelineStepId', ''), c.parent_execution_id) AND (p.pipeline_id IS NOT NULL OR p.step_id IS NOT NULL);
+ pipeline_id = CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_id ELSE l.pipeline_id END,
+ pipeline_revision = CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_revision ELSE l.pipeline_revision END,
+ step_id = coalesce(c.step_id, l.step_id),
+ profile_id = CASE WHEN c.profile_id IS NOT NULL THEN c.profile_id ELSE l.profile_id END,
+ profile_revision = CASE WHEN c.profile_id IS NOT NULL THEN c.profile_revision ELSE l.profile_revision END
+FROM (
+ SELECT DISTINCT ON (id) id, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision
+ FROM lineage
+ ORDER BY id, array_length(seen, 1) DESC
+) l
+WHERE c.id = l.id AND (c.pipeline_id IS NULL OR c.step_id IS NULL OR c.profile_id IS NULL);
 UPDATE task t SET
  created_by_execution_id = substr(t.created_by, 11),
  created_by_session_id = (SELECT e.session_id FROM execution e WHERE e.id = substr(t.created_by, 11))

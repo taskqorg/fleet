@@ -4,7 +4,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash, randomUUID} from 'node:crypto';
-import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startCoordinator} from '../harness.ts';
@@ -57,8 +57,8 @@ test('Out-of-order process.closed and terminal receipt converge on execution_tot
       peakMemoryBytes: 104857600,
       activeMs: 900,
       turnCount: 3,
-      toolCalls: {Bash: {ok: 2, error: 1}},
-      toolCallsOther: {ok: 1, error: 0},
+      toolCalls: {Bash: {calls: 2, errors: 1}},
+      toolCallsOther: {calls: 1, errors: 0},
     };
     const sendClosed = (exId: string, resources?: unknown) =>
       postJSON(
@@ -124,7 +124,7 @@ test('Out-of-order process.closed and terminal receipt converge on execution_tot
       [a.wall_ms_basis, a.active_ms, a.active_ms_basis, a.cpu_ms, a.cpu_ms_basis, a.peak_memory_bytes, a.turn_count, a.tool_calls_basis, a.billing_basis],
       ['measured', 900, 'measured', 420, 'measured', 104857600, 3, 'measured', 'metered'],
     );
-    assert.deepEqual(a.tool_calls, {byTool: {Bash: {ok: 2, error: 1}}, other: {ok: 1, error: 0}});
+    assert.deepEqual(a.tool_calls, {byTool: {Bash: {calls: 2, errors: 1}}, other: {calls: 1, errors: 0}});
     assert.equal(a.cpu_missing_reason, null);
     assert.equal(a.memory_missing_reason, null);
 
@@ -233,12 +233,42 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
       `execution:leaf-agent-1|leaf-agent-1|${memSessId}`,
     );
 
-    // Check task_view.totals excludes container rows and includes new fields.
+    // Spool a gateway tool_run under leaf-agent-1 (linked to taskId) and check task_view.totals excludes container & tool_run rows.
+    const spoolFile = join(gwDir, 'state', 'spool', new Date().toISOString().slice(0, 10) + '.jsonl');
+    const taskTokSha = createHash('sha256').update('tok-task-' + randomUUID()).digest('hex');
+    const taskCallId = 'call-task-' + randomUUID().slice(0, 8);
+    const taskCallStart = Date.now() - 250;
+    c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES
+      ('run-token','run-token:${taskTokSha}','desiign',jsonb_build_object('id','run-token:${taskTokSha}','tokenSha256','${taskTokSha}','executionId','leaf-agent-1','directedBy','${OWNER}','projectId','desiign'));`);
+    writeFileSync(
+      spoolFile,
+      JSON.stringify({
+        callId: taskCallId,
+        tokenSha256: taskTokSha,
+        executionId: 'leaf-agent-1',
+        connection: 'openai',
+        tool: 'responses',
+        status: 200,
+        outcome: 'ok',
+        keyFingerprint: 'fp-task',
+        usage: {unit: 'credits', amount: 1},
+        startedAt: taskCallStart,
+        ms: 210,
+      }) + '\n',
+    );
+    for (let i = 0; i < 40; i++) {
+      if (c.sql(`SELECT id FROM execution WHERE id='call:${taskCallId}'`).trim()) break;
+      await new Promise(r => setTimeout(r, 80));
+    }
+    assert.equal(c.sql(`SELECT wall_ms||','||active_ms FROM execution_totals WHERE execution_id='call:${taskCallId}'`).trim(), '210,210');
+
     assert.equal(c.sql(`SELECT count(*) FROM execution_totals WHERE execution_id IN ('p-run-1','p-step-1')`).trim(), '0');
     const tv = JSON.parse(c.sql(`SELECT totals::text FROM task_view WHERE task_id='${taskId}'`).trim());
     assert.equal(tv.tokens_input, 50);
+    assert.equal(tv.wall_ms, 1200);
     assert.equal(tv.turn_count, 2);
     assert.equal(tv.peak_memory_bytes, 2048);
+    assert.equal(tv.measured_wall, 1);
     assert.equal(tv.measured_cpu, 1);
     assert.equal(tv.executions_with_totals, 1);
 
@@ -249,8 +279,7 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
     c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES
       ('run-token','run-token:${tokenSha}',NULL,jsonb_build_object('id','run-token:${tokenSha}','tokenSha256','${tokenSha}','executionId','projless-agent','directedBy','${MEMBER}','projectId',NULL));`);
     const callId = 'call-' + randomUUID().slice(0, 8);
-    const spoolFile = join(gwDir, 'state', 'spool', new Date().toISOString().slice(0, 10) + '.jsonl');
-    writeFileSync(
+    appendFileSync(
       spoolFile,
       JSON.stringify({
         callId,
@@ -283,23 +312,55 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
     const changeRows = c.sql(`SELECT count(*) FROM change WHERE id='call:${callId}'`).trim();
     assert.equal(changeRows, '0', 'fleet_change() must suppress change rows for tool_run on execution and execution_totals');
 
-    // 3. Verify directed_totals RLS as MEMBER vs OUTSIDER, plus revocation via people_set removal & re-add.
-    c.sql(`INSERT INTO execution(id,kind,state,project_id,session_id,directed_by) VALUES ('personal-tr','tool_run','succeeded',NULL,NULL,'${MEMBER}');
+    // 3. Verify directed_totals RLS as MEMBER vs OUTSIDER, plus revocation via people_set removal & re-add (including personal run-token).
+    const personalSha = createHash('sha256').update('tok-personal-' + randomUUID()).digest('hex');
+    c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES
+      ('run-token','run-token:${personalSha}',NULL,jsonb_build_object('id','run-token:${personalSha}','tokenSha256','${personalSha}','personal','cli','executionId','personal-holder','directedBy','${MEMBER}','projectId',NULL));
+      INSERT INTO execution(id,kind,state,project_id,session_id,directed_by) VALUES ('personal-tr','tool_run','succeeded',NULL,NULL,'${MEMBER}');
       INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,wall_ms,wall_ms_basis) VALUES ('personal-tr',NULL,'${MEMBER}','metered',50,'measured');`);
 
+    const postRevokeCallId = 'call-post-revoke-' + randomUUID().slice(0, 8);
     const countAsApp = (person: string) => {
-      const out = c.sql(`BEGIN; SELECT set_config('fleet.project_ids','',true); SELECT set_config('fleet.person','${person}',true); SELECT count(*) AS n FROM execution_totals WHERE execution_id IN ('projless-agent','call:${callId}','personal-tr'); COMMIT;`).trim();
+      const out = c.sql(`BEGIN; SELECT set_config('fleet.project_ids','',true); SELECT set_config('fleet.person','${person}',true); SELECT count(*) AS n FROM execution_totals WHERE execution_id IN ('projless-agent','call:${callId}','personal-tr','call:${postRevokeCallId}'); COMMIT;`).trim();
       const lines = out.split('\n').filter(Boolean);
       return Number(lines[lines.length - 1]);
     };
     assert.equal(countAsApp(MEMBER), 3, 'member sees session-backed and personal-token projectless execution_totals');
     assert.equal(countAsApp(OUTSIDER), 0, 'outsider must see 0 projectless execution_totals');
 
-    // Remove MEMBER then re-add via people_set -> directorAccessRevokedAt revokes prior projectless executions and totals.
+    // Remove MEMBER then re-add via people_set -> revokes run-token and projectless executions/totals.
     const people = (await op('people_list', {}, OWNER)).body.people;
     assert.equal((await op('people_set', {people: people.filter((p: any) => p.email !== MEMBER)}, OWNER)).status, 200);
+    assert.equal(
+      c.sql(`SELECT ((data ? 'revokedAt') AND (data ? 'directorAccessRevokedAt'))::text FROM document WHERE id='run-token:${personalSha}'`).trim(),
+      'true',
+      'people_set removal must set revokedAt and directorAccessRevokedAt on personal run-token',
+    );
     assert.equal((await op('people_set', {people}, OWNER)).status, 200);
-    assert.equal(countAsApp(MEMBER), 0, 're-added member must not regain revoked prior projectless execution_totals');
+    appendFileSync(
+      spoolFile,
+      JSON.stringify({
+        callId: postRevokeCallId,
+        tokenSha256: personalSha,
+        executionId: 'personal-holder',
+        connection: 'openai',
+        tool: 'responses',
+        status: 200,
+        outcome: 'ok',
+        keyFingerprint: 'fp-personal',
+        usage: {unit: 'credits', amount: 1},
+        startedAt: Date.now() - 100,
+        ms: 60,
+      }) + '\n',
+    );
+    let postRevokeRow = '';
+    for (let i = 0; i < 40; i++) {
+      postRevokeRow = c.sql(`SELECT coalesce(data->>'directorAccessRevokedAt','') FROM execution WHERE id='call:${postRevokeCallId}'`).trim();
+      if (postRevokeRow) break;
+      await new Promise(r => setTimeout(r, 80));
+    }
+    assert.ok(postRevokeRow, 'post-removal spooled tool_run must be ingested with directorAccessRevokedAt');
+    assert.equal(countAsApp(MEMBER), 0, 're-added member must not regain revoked prior or post-removal personal execution_totals');
   } finally {
     await c.stop();
     rmSync(dir, {recursive: true, force: true});

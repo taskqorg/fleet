@@ -1083,6 +1083,19 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		}
 		startedAt, endedAt = l.StartedAt, l.StartedAt+dur
 	}
+	if astr(t["projectId"]) == "" && pSession == nil {
+		if t["directorAccessRevokedAt"] != nil {
+			data["directorAccessRevokedAt"] = t["directorAccessRevokedAt"]
+		} else if dir := firstString(t["directedBy"], deref(pDir)); dir != "" {
+			var active bool
+			if err := q.tx.QueryRow(q.ctx(), "SELECT EXISTS(SELECT 1 FROM person WHERE email=$1)", dir).Scan(&active); err != nil {
+				return false, err
+			}
+			if !active {
+				data["directorAccessRevokedAt"] = nowMs()
+			}
+		}
+	}
 	inserted, err := insertExecution(q, doc{
 		"id": id, "kind": "tool_run", "state": state, "projectId": t["projectId"], "parentExecutionId": parent,
 		"experimentId": t["experimentId"], "taskId": pTask, "sessionId": pSession,
