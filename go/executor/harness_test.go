@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -225,4 +226,35 @@ func TestClaudeUsageReading(t *testing.T) {
 		"model_scoped":[{"display_name":"Fable","utilization":14,"resets_at":"2026-11-16T05:00:00.015240+00:00"}]}}`)
 	eq(t, claudeUsageReading(answer, nil)["readings"],
 		`[{"period":"weekly","pct":74,"resetsAt":1794805200015},{"period":"weekly-fable","pct":14,"resetsAt":1794805200015,"model":"fable"}]`)
+}
+
+// Requirement: runtime-integration preserves native work and optional delegation; risk: Claude exposes tools but dontAsk denies them, or an explicit empty grant expands.
+func TestClaudeNativeToolDelivery(t *testing.T) {
+	for _, tc := range []struct {
+		profile M
+		want    string
+		invalid bool
+	}{
+		{M{}, "Read,Edit,Write,Bash,Glob,Grep,Task,TaskStop", false},
+		{M{"tools": []any{}}, "", false},
+		{M{"tools": []any{"Read", "Task"}}, "Read,Task", false},
+		{M{"tools": []any{"unknown"}}, "", true},
+		{M{"tools": "Read"}, "", true},
+	} {
+		tools, err := claudeNativeTools(tc.profile)
+		if (err != nil) != tc.invalid {
+			t.Fatalf("%v: %v", tc.profile, err)
+		}
+		if tc.invalid {
+			continue
+		}
+		if strings.Join(tools, ",") != tc.want {
+			t.Fatal(tools)
+		}
+		c := exec.Command("not-executed")
+		claudeMCP(c, tc.profile, M{}, nil)
+		if c.Args[len(c.Args)-1] != tc.want {
+			t.Fatalf("permission grant differs: %v", c.Args)
+		}
+	}
 }

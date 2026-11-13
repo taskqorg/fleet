@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 )
@@ -375,21 +376,9 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		setEnv(c, "CLAUDE_CONFIG_DIR", nh)
 		c.Args = append(c.Args, "-p", "--output-format", "stream-json", "--verbose", "--model", model, "--permission-mode", "dontAsk",
 			"--strict-mcp-config", "--setting-sources", "", "--system-prompt", instructions)
-		var tools []string
-		if has(p, "tools") {
-			list, ok := p["tools"].([]any)
-			if !ok {
-				return fail("unsupported Claude tool grant")
-			}
-			for _, t := range list {
-				s, _ := str(t)
-				switch s {
-				case "Read", "Edit", "Write", "Bash", "Glob", "Grep":
-					tools = append(tools, s)
-				default:
-					return fail("unsupported Claude tool grant")
-				}
-			}
+		tools, err := claudeNativeTools(p)
+		if err != nil {
+			return fail(err.Error())
 		}
 		tools = append(tools, claudeExtraTools(p)...)
 		c.Args = append(c.Args, "--tools", strings.Join(tools, ","))
@@ -506,4 +495,25 @@ func claudeExtraTools(p any) []string {
 		t = append(t, "Skill")
 	}
 	return t
+}
+
+// claudeNativeTools preserves ordinary harness work unless the profile selects a narrower grant.
+func claudeNativeTools(p any) ([]string, error) {
+	tools := []string{"Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "TaskStop"}
+	if !has(p, "tools") {
+		return tools, nil
+	}
+	list, ok := jAt(p, "tools").([]any)
+	if !ok {
+		return nil, errors.New("unsupported Claude tool grant")
+	}
+	var selected []string
+	for _, item := range list {
+		name, ok := item.(string)
+		if !ok || !slices.Contains(tools, name) {
+			return nil, errors.New("unsupported Claude tool grant")
+		}
+		selected = append(selected, name)
+	}
+	return selected, nil
 }
