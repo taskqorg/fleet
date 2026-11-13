@@ -265,3 +265,37 @@ test('Late failed work report reconciles the canonical task bound through its se
     assert.equal(after.executions[0].state,'succeeded'); assert.equal(after.executions[0].report.outcome,'failed');
   } finally { await c.stop(); }
 });
+
+test('self-delivery queued continuation retains the canonical task and suppresses intermediate acceptance across restart', async () => {
+  const c = await startCoordinator({name: 'completion-delivery-queue'});
+  const call = async (path: string, body: unknown, auth = c.secret, person: string | null = 'owner@trial.test') => {
+    const r = await fetch(c.base + path, {method:'POST',headers:{authorization:'Bearer '+auth,...(person?{'x-fleet-person':person}:{}),'content-type':'application/json'},body:JSON.stringify(body)});
+    const text=await r.text(); assert.equal(r.status,200,`${path}: ${text}`);return JSON.parse(text);
+  };
+  try {
+    const {secret}=await call('/api/ops/hosts_register',{id:'trial-host'});
+    const task=await call('/api/ops/task_create',{projectId:'hello-world',title:'self-delivery checkpoint'});
+    const tid=task.id??task.taskId;
+    const {sessionId}=await call('/api/sessions',{});
+    await call('/api/ops/session_task_attach',{sessionId,taskId:tid});
+    const e=await call(`/api/sessions/${sessionId}/messages`,{requestId:randomUUID(),text:'deliver'});
+    c.sql(`UPDATE task SET state='in_progress' WHERE id='${tid}'`);
+    const poll=()=>call('/api/hosts/poll',{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
+    const command=(await poll()).commands.find((x:any)=>x.executionId===e.id);
+    await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'started'},secret,null);
+    const request={requestId:randomUUID(),text:'Checkpoint stored; verify landing after executor replacement'};
+    const queue=await call(`/api/sessions/${sessionId}/messages`,request);
+    assert.equal(queue.queued,true);
+    const queuedTask=c.sql(`SELECT data->>'taskId' FROM document WHERE kind='queued-message' AND data->>'requestId'='${request.requestId}'`).trim();assert.equal(queuedTask,tid);
+    await c.restart();
+    assert.equal((await call(`/api/sessions/${sessionId}/messages`,request)).queued,true,'idempotent retained queue');
+    await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'completed'},secret,null);
+    const acceptance=()=>c.sql(`SELECT count(*) FROM question WHERE task_id='${tid}' AND kind='acceptance' AND state='open'`).trim();
+    assert.equal(acceptance(),'0','no intermediate acceptance before or after promotion');
+    const next=JSON.parse(c.sql(`SELECT json_build_object('id',id,'task',task_id,'state',state) FROM execution WHERE session_id='${sessionId}' AND id<>'${e.id}' ORDER BY seq DESC LIMIT 1`));
+    assert.equal(next.task,tid);assert.equal(next.state,'preparing');
+    const promoted=(await poll()).commands.find((x:any)=>x.executionId===next.id);assert.ok(promoted,'queued continuation eventually dispatched');
+    await call('/api/hosts/receipts',{commandId:promoted.id,executionId:next.id,status:'completed'},secret,null);
+    assert.equal(acceptance(),'1','acceptance only after the final continuation');
+  } finally {await c.stop();}
+});

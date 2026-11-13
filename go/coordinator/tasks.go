@@ -246,7 +246,9 @@ const idleTaskSQL = `FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.sess
 	  ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
 	WHERE t.state='in_progress'
 	AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
-	AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
+	AND NOT EXISTS (SELECT 1 FROM document qm JOIN document ss ON ss.kind='session' AND ss.id=qm.data->>'sessionId'
+ WHERE qm.kind='queued-message' AND qm.data->>'state' IN ('queued','steering') AND ss.data->>'taskId'=t.id::text)
+AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
 	AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance' AND qq.answer='rejected' AND qq.answered_at >= coalesce(l.ended_at, '-infinity'))`
 
 // settleIdleTask: no task stays in progress with nothing that can move it. When it is idle (idleTaskSQL): if the run that

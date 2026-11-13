@@ -276,6 +276,9 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 		return enqueue(q, s, text, requestID, nil, nil, "", provenance)
 	}
 	m := doc{"id": newID(), "sessionId": sid, "projectId": s["projectId"], "requestId": requestID, "text": text, "state": "queued", "createdAt": nowMs()}
+	if task := astr(s["taskId"]); task != "" {
+		m["taskId"] = task
+	}
 	for k, v := range provenance {
 		m[k] = v
 	}

@@ -145,7 +145,7 @@ Before this change the `migrate-check` job proved only "release N's migrations, 
     * The 5-minute timer stays as the fallback.
 * No coordinator change and no new credential. The coordinator offers a target only after PDS18 marked it healthy, as today.
 
-Worst case from enable-auto-merge to the last executor, PDS18 up: queue CI 4 min + waiting behind a running release 2 min + release 2 min + PDS18 timer 10 s + PDS18 settle up to 1.5 min + executor poll and settle under 1 min, about 12 minutes. An executor that was several releases behind jumps straight to the current target; it does not restart at each version in between.
+For idle executors, worst case from enable-auto-merge to the last executor, PDS18 up: queue CI 4 min + waiting behind a running release 2 min + release 2 min + PDS18 timer 10 s + PDS18 settle up to 1.5 min + executor poll and settle under 1 min, about 12 minutes. An executor that was several releases behind jumps straight to the current target; it does not restart at each version in between. Active executor work and retained completion delivery defer replacement under [the drain contract](fleet-self-update.md#33-restarts); this waiting time has no forced-stop deadline. A self-delivering worker queues a retained task-linked continuation and finishes its native turn before host replacement, then verifies landing in that continuation.
 
 ### 7. Smoke and rollback on the host
 
