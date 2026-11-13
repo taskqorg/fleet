@@ -72,6 +72,21 @@ test('Selected execution hosts inspect their own account through authenticated c
    const receipt={hostId:id,executionId:inspection.executionId,commandId:cmd.id,accountObservation:{accountId:a.id,binding:'fixture-codex',platform,readiness:'ready',reason:'ready',nativeLoginObserved:true,quota:'unknown'}};
    assert.equal((await call('/api/hosts/accounts/report',receipt)).status,401,'browser cannot forge host receipt');
    ok(await call('/api/hosts/accounts/report',receipt,secret));
+   if(platform==='linux') {
+    // Requirement: automatic account selection survives native continuation; risk: resume falls back to another HOME.
+    ok(await op('hosts_update',{id:'account-win32',intake:'paused'}));
+    const session=ok(await call('/api/sessions',{}));
+    const send=()=>call(`/api/sessions/${session.sessionId}/messages`,{requestId:randomUUID(),text:'continue'});
+    const first=ok(await send());
+    const start=ok(await call('/api/hosts/poll',poll,secret)).commands.find((x:any)=>x.executionId===first.id);
+    assert.equal(start.payload.account,'fixture-codex');
+    ok(await call('/api/hosts/receipts',{executionId:first.id,commandId:start.id,status:'started',nativeSessionId:'invented-native'},secret));
+    ok(await call('/api/hosts/receipts',{executionId:first.id,commandId:start.id,status:'completed',nativeSessionId:'invented-native'},secret));
+    const next=ok(await send());
+    const resumed=ok(await call('/api/hosts/poll',poll,secret)).commands.find((x:any)=>x.executionId===next.id);
+    assert.equal(resumed.payload.nativeSessionId,'invented-native');
+    assert.equal(resumed.payload.account,'fixture-codex');
+   }
   }
  }finally{await c.stop();}
 });
