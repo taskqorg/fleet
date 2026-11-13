@@ -332,7 +332,7 @@ func (e *executor) nativeEvent(c M, seq uint64, kind string, data any) error {
 }
 
 func (e *executor) finish(c M, status, native string) error {
-	if l := e.live[jStr(c, "executionId")]; l != nil && l.mcp != nil {
+	if l := e.live[jStr(c, "executionId")]; l != nil && l.mcp != nil && jStr(l.command, "id") == jStr(c, "id") {
 		if err := l.mcp.close(); err != nil {
 			return err
 		}
@@ -345,7 +345,7 @@ func (e *executor) finish(c M, status, native string) error {
 		if err != nil {
 			return err
 		}
-		if _, err = e.ex.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=?", jStr(c, "executionId")); err != nil {
+		if _, err = e.ex.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=? AND command=?", jStr(c, "executionId"), cid); err != nil {
 			return err
 		}
 		_, err = e.ex.Exec("UPDATE commands SET terminal=1 WHERE id=?", cid)

@@ -1485,3 +1485,88 @@ func TestMCPFreshHomePreservesInternalAdapters(t *testing.T) {
 		t.Fatal(result)
 	}
 }
+
+// Control-command completion must not close the active start's MCP owner or fence new dependencies.
+func TestSteerCompletionPreservesOwningStartMCP(t *testing.T) {
+	for _, status := range []string{"completed", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			o, e := testMCPOwner(t)
+			start := M{"id": "command", "executionId": "execution", "sessionId": "session", "kind": "start"}
+			e.live = map[string]*live{"execution": {command: start, mcp: o}}
+			type peer struct {
+				tool           string
+				writer, reader *os.File
+				encoder        *json.Encoder
+				decoder        *json.Decoder
+				done           chan error
+			}
+			var peers []peer
+			for _, tool := range []string{"execution_status", "delivery", "navigate"} {
+				input, writer, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				reader, output, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				done := make(chan error, 1)
+				home := t.TempDir()
+				go func() {
+					err := mcpStdio(o.socket, fixtureSpec(tool), input, output, home, "")
+					output.Close()
+					done <- err
+				}()
+				p := peer{tool, writer, reader, json.NewEncoder(writer), json.NewDecoder(reader), done}
+				peers = append(peers, p)
+				t.Cleanup(func() { writer.Close(); reader.Close() })
+				if err := p.encoder.Encode(M{"id": 1, "method": "initialize"}); err != nil {
+					t.Fatal(err)
+				}
+				var reply M
+				if err := p.decoder.Decode(&reply); err != nil {
+					t.Fatal(err)
+				}
+			}
+			steer := M{"id": "steer", "executionId": "execution", "sessionId": "session", "kind": "steer"}
+			if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", "steer", enc(steer)); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.finish(steer, status, ""); err != nil {
+				t.Fatal(err)
+			}
+			var fence, terminal int
+			e.db.QueryRow("SELECT mcp_fenced FROM launches WHERE execution='execution'").Scan(&fence)
+			e.db.QueryRow("SELECT terminal FROM commands WHERE id='steer'").Scan(&terminal)
+			if fence != 0 || terminal != 1 || o.closed {
+				t.Fatal("steer completed parent MCP lifetime", fence, terminal, o.closed)
+			}
+			for _, p := range peers {
+				p.reader.SetReadDeadline(time.Now().Add(3 * time.Second))
+				if err := p.encoder.Encode(M{"id": 2, "method": "tools/call", "params": M{"name": p.tool, "arguments": M{}}}); err != nil {
+					t.Fatal(err)
+				}
+				var reply M
+				if err := p.decoder.Decode(&reply); err != nil {
+					t.Fatal(p.tool, err)
+				}
+				if !strings.Contains(enc(reply), p.tool+"-observed") {
+					t.Fatal(p.tool, reply)
+				}
+			}
+			if err := e.finish(start, "completed", ""); err != nil {
+				t.Fatal(err)
+			}
+			if !o.closed {
+				t.Fatal("owning start did not close MCP owner")
+			}
+			for _, p := range peers {
+				select {
+				case <-p.done:
+				case <-time.After(3 * time.Second):
+					t.Fatal(p.tool, "transport survived owning start completion")
+				}
+			}
+		})
+	}
+}
