@@ -14,7 +14,7 @@ The component groups its implementation by domain: projects, tasks, sessions and
 - [`serveStream`](./stream.go) provides the server-sent event stream. [`Broadcast`](./stream.go) listens for PostgreSQL notifications and wakes local stream subscribers.
 - [`pipelineStart`](./pipelines.go), [`pipelineAdvance`](./pipelines.go) and [`pipelineCancel`](./pipelines.go) create, progress and cancel pipeline runs; [`labReconcile`](./lab.go) progresses Lab experiments under their scope lock.
 - [`artifactReserve`](./artifacts.go), [`artifactCommit`](./artifacts.go), [`artifactVerified`](./artifacts.go) and [`S3`](./s3.go) coordinate artifact upload, verification, replication and object-store access.
-- [`hostsRegister`](./hosts.go), [`ingest`](./host_events.go), [`executionStop`](./executions.go) and [`dispatch`](./dispatch.go) connect registered hosts to execution lifecycle and command delivery.
+- [`hostsRegister`](./hosts.go), [`ingest`](./host_events.go), [`executionStop`](./executions.go) and [`dispatch`](./dispatch.go) connect registered hosts to execution lifecycle and command delivery; [`writeTotals`](./records.go) persists leaf execution totals (`execution_totals`) on termination and `process.closed`, and `fleet_change()` skips `tool_run` change rows.
 
 ## Invariants
 

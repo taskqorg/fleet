@@ -216,6 +216,12 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 		if _, err := tx.Exec(ctx, `UPDATE document SET data=data||jsonb_build_object('directorAccessRevokedAt',extract(epoch from now())*1000) WHERE kind='session' AND project_id IS NULL AND data ? 'directedBy' AND NOT(data ? 'directorAccessRevokedAt') AND NOT(data->>'directedBy'=ANY($1))`, emails); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(ctx, `UPDATE execution SET data=data||jsonb_build_object('directorAccessRevokedAt',extract(epoch from now())*1000) WHERE project_id IS NULL AND session_id IS NULL AND directed_by IS NOT NULL AND NOT(data ? 'directorAccessRevokedAt') AND NOT(directed_by=ANY($1))`, emails); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE document SET data=data||jsonb_build_object('revokedAt',coalesce(data->'revokedAt',to_jsonb(extract(epoch from now())*1000)),'directorAccessRevokedAt',extract(epoch from now())*1000) WHERE kind='run-token' AND data ? 'directedBy' AND NOT(data ? 'directorAccessRevokedAt') AND NOT(data->>'directedBy'=ANY($1))`, emails); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE experiment SET requester_removed_at=now() WHERE requester_removed_at IS NULL AND requested_by IN (SELECT email FROM person WHERE NOT(email=ANY($1)))`, emails); err != nil {
 			return err
 		}
@@ -237,6 +243,7 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 	})
 	if err == nil {
 		a.publishPeople(people)
+		schedulePublish()
 	}
 	return skipped, err
 }

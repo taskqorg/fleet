@@ -1218,3 +1218,202 @@ CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
    ORDER BY deliverable DESC,version_execution_seq DESC,version_seq DESC,required DESC,seq DESC LIMIT 1) AS latest_result,
   (SELECT coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'kind', q.kind, 'text', q.text, 'options', q.options) ORDER BY q.seq), '[]') FROM question q WHERE q.task_id = t.id AND q.state = 'open') AS open_questions
  FROM task t;
+
+-- migration 50: leaf execution resource summaries, scalar lineage columns, 3-tier token precedence, tool_run change suppression, and directed_totals RLS.
+ALTER TABLE execution_totals
+ ADD COLUMN turn_count bigint NULL,
+ ADD COLUMN turn_count_basis text NOT NULL DEFAULT 'unavailable',
+ ADD COLUMN tool_calls jsonb NULL,
+ ADD COLUMN tool_calls_basis text NOT NULL DEFAULT 'unavailable',
+ ADD COLUMN cpu_missing_reason text NULL,
+ ADD COLUMN memory_missing_reason text NULL,
+ ADD COLUMN billing_basis text NOT NULL DEFAULT 'unavailable',
+ ADD COLUMN directed_by text NULL;
+ALTER TABLE execution
+ ADD COLUMN profile_id text NULL,
+ ADD COLUMN profile_revision bigint NULL,
+ ADD COLUMN pipeline_id text NULL,
+ ADD COLUMN pipeline_revision bigint NULL,
+ ADD COLUMN step_id text NULL;
+ALTER TABLE task
+ ADD COLUMN created_by_session_id text NULL,
+ ADD COLUMN created_by_execution_id text NULL;
+
+CREATE INDEX execution_project_started ON execution(project_id, started_at);
+CREATE INDEX execution_pipeline_rev ON execution(pipeline_id, pipeline_revision) WHERE pipeline_id IS NOT NULL;
+CREATE INDEX execution_profile_rev ON execution(profile_id, profile_revision) WHERE profile_id IS NOT NULL;
+CREATE INDEX task_created_by_session ON task(created_by_session_id) WHERE created_by_session_id IS NOT NULL;
+CREATE INDEX task_created_by_execution ON task(created_by_execution_id) WHERE created_by_execution_id IS NOT NULL;
+CREATE INDEX execution_totals_directed ON execution_totals(directed_by) WHERE project_id IS NULL AND directed_by IS NOT NULL;
+
+DROP POLICY directed_execution ON execution;
+CREATE POLICY directed_execution ON execution USING (
+ project_id IS NULL AND directed_by = current_setting('fleet.person', true)
+ AND (fleet_own_projectless_session(session_id) OR (session_id IS NULL AND NOT (data ? 'directorAccessRevokedAt')))
+);
+DROP POLICY directed_totals ON execution_totals;
+CREATE POLICY directed_totals ON execution_totals USING (
+ project_id IS NULL AND (directed_by IS NULL OR directed_by = current_setting('fleet.person', true))
+ AND (fleet_own_projectless_execution(execution_id) OR EXISTS (
+  SELECT 1 FROM execution e WHERE e.id = execution_id AND e.project_id IS NULL AND e.session_id IS NULL
+   AND e.directed_by = current_setting('fleet.person', true) AND NOT (e.data ? 'directorAccessRevokedAt')
+ ))
+);
+
+CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'event-delta', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'command' THEN k := 'command'; h := r.data->>'hostId'; s := r.data->>'sessionId'; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSIF r.kind IN ('managed-account', 'api-connection', 'connection-key', 'setting-change', 'project-recommendation') THEN k := r.kind; w := r.data->>'holder'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+
+CREATE OR REPLACE FUNCTION fleet_write_tokens(eid text) RETURNS void LANGUAGE sql AS $$
+ WITH evs AS (
+  SELECT data->'data'->'fleetNormalized'->>'lifecycle' AS lc, data->'data'->'fleetNormalized'->'nativeUsage' AS u, seq
+  FROM document WHERE kind='event' AND data->>'executionId'=eid AND jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object'
+ ),
+ calls AS (SELECT u->'last' AS u FROM evs WHERE lc='usage.observation' AND jsonb_typeof(u->'last')='object'),
+ rep AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE lc IN ('result','turn.completed') AND NOT EXISTS (SELECT 1 FROM calls) ORDER BY seq DESC LIMIT 1
+ ),
+ inc_native AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE coalesce(lc,'') NOT IN ('usage.observation','result','turn.completed')
+   AND NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+ ),
+ inc_assistant AS (
+  SELECT DISTINCT ON (mid) mu AS u FROM (
+   SELECT
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->>'id', d.data->'data'->'message'->>'id', d.seq::text) AS mid,
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->'usage', d.data->'data'->'message'->'usage') AS mu,
+    d.seq
+   FROM document d
+   WHERE d.kind='event' AND d.data->>'executionId'=eid
+    AND NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+    AND coalesce(d.data->'data'->'fleetNormalized'->>'lifecycle', d.data->'data'->>'type')='assistant'
+    AND jsonb_typeof(d.data->'data'->'fleetNormalized'->'nativeUsage') IS DISTINCT FROM 'object'
+  ) m WHERE jsonb_typeof(mu)='object' ORDER BY mid, seq DESC
+ ),
+ rows AS (
+  SELECT
+   fleet_token_count(coalesce(u->'input_tokens',u->'inputTokens')) AS input,
+   fleet_token_count(coalesce(u->'output_tokens',u->'outputTokens')) AS output,
+   fleet_token_count(coalesce(u->'cache_read_input_tokens',u->'cached_input_tokens',u->'cachedInputTokens',u->'cachedReadTokens',u->'cache_read_tokens')) AS cache_read,
+   fleet_token_count(coalesce(u->'cache_creation_input_tokens',u->'cacheWriteInputTokens',u->'cachedWriteTokens',u->'cache_write_tokens')) AS cache_write,
+   (u ? 'cached_input_tokens' OR u ? 'cachedInputTokens') AS input_has_cache
+  FROM (SELECT u FROM calls UNION ALL SELECT u FROM rep UNION ALL SELECT u FROM inc_native UNION ALL SELECT u FROM inc_assistant) x
+ ),
+ n AS (
+  SELECT
+   sum(CASE WHEN input_has_cache AND input IS NOT NULL THEN greatest(0, input - coalesce(cache_read,0)) ELSE input END) AS input,
+   sum(output) AS output, sum(cache_read) AS cache_read, sum(cache_write) AS cache_write
+  FROM rows
+ )
+ UPDATE execution_totals SET
+  tokens_input=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.input ELSE execution_totals.tokens_input END,
+  tokens_input_basis=CASE WHEN (CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.input ELSE execution_totals.tokens_input END) IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_output=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.output ELSE execution_totals.tokens_output END,
+  tokens_output_basis=CASE WHEN (CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.output ELSE execution_totals.tokens_output END) IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_cache_read=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.cache_read ELSE execution_totals.tokens_cache_read END,
+  tokens_cache_read_basis=CASE WHEN (CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.cache_read ELSE execution_totals.tokens_cache_read END) IS NULL THEN 'unavailable' ELSE 'measured' END,
+  tokens_cache_write=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.cache_write ELSE execution_totals.tokens_cache_write END,
+  tokens_cache_write_basis=CASE WHEN (CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.cache_write ELSE execution_totals.tokens_cache_write END) IS NULL THEN 'unavailable' ELSE 'measured' END
+ FROM n WHERE execution_id=eid
+$$;
+
+CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
+ SELECT t.id AS task_id, t.project_id, t.state, t.wait_reason,
+  coalesce((SELECT jsonb_object_agg(s.state, s.n) FROM (SELECT e.state, count(*) AS n FROM execution e WHERE e.task_id = t.id GROUP BY e.state) s), '{}') AS executions_by_state,
+  (SELECT count(*) FROM execution e WHERE e.task_id = t.id) AS execution_count,
+  (SELECT jsonb_build_object('tokens_input', sum(x.tokens_input), 'tokens_output', sum(x.tokens_output), 'tokens_cache_read', sum(x.tokens_cache_read), 'tokens_cache_write', sum(x.tokens_cache_write), 'wall_ms', sum(x.wall_ms), 'active_ms', sum(x.active_ms), 'cpu_ms', sum(x.cpu_ms), 'turn_count', sum(x.turn_count), 'peak_memory_bytes', max(x.peak_memory_bytes), 'measured_wall', count(*) FILTER (WHERE x.wall_ms_basis = 'measured'), 'measured_cpu', count(*) FILTER (WHERE x.cpu_ms_basis = 'measured'), 'executions_with_totals', count(*))
+   FROM execution_totals x JOIN execution e ON e.id = x.execution_id WHERE e.task_id = t.id AND e.kind NOT IN ('pipeline_run', 'pipeline_step', 'tool_run')) AS totals,
+  (WITH publications AS (
+    SELECT 'artifact:'||a.id AS row_id, a.id, a.legacy_id, a.project_id, a.scope, a.content_hash, a.previous_artifact_id,
+      a.seq, e.seq AS execution_seq, a.required, a.state='stored' AS stored, a.name NOT LIKE 'mcp-lifecycle-%' AS deliverable,
+      jsonb_build_object('id', coalesce(a.legacy_id,a.id), 'artifactId',a.id, 'executionId',a.execution_id, 'path',a.name, 'mediaType',a.media_type, 'size',a.size, 'sha256',a.content_hash) AS v
+    FROM artifact a JOIN execution e ON e.id=a.execution_id WHERE a.state IN ('stored','deleted') AND e.task_id=t.id
+    UNION ALL
+    SELECT 'document:'||d.id, d.id, NULL, coalesce(d.project_id,d.data->>'projectId'), d.data->>'scope', d.data->>'sha256', d.data->>'previousArtifactId',
+      d.seq, e.seq, coalesce((d.data->>'required')::boolean,false), true, coalesce(d.data->>'path','') NOT LIKE 'mcp-lifecycle-%', d.data-'contentBase64'
+    FROM document d JOIN execution e ON e.id=d.data->>'executionId' WHERE d.kind='artifact' AND e.task_id=t.id
+   ), predecessors AS (
+    SELECT a.id,a.legacy_id,a.project_id,a.scope,a.seq FROM artifact a JOIN execution e ON e.id=a.execution_id WHERE e.task_id=t.id
+    UNION ALL
+    SELECT d.id,NULL,coalesce(d.project_id,d.data->>'projectId'),d.data->>'scope',d.seq
+    FROM document d JOIN execution e ON e.id=d.data->>'executionId' WHERE d.kind='artifact' AND e.task_id=t.id
+   ), identities AS (
+    SELECT c.*, CASE WHEN nullif(project_id,'') IS NOT NULL AND scope IN ('prod','lab') AND content_hash ~ '^[0-9a-f]{64}$' THEN NULL ELSE row_id END AS unknown_identity,
+      CASE WHEN nullif(c.previous_artifact_id,'') IS NULL THEN false ELSE EXISTS (SELECT 1 FROM predecessors p WHERE (p.id=c.previous_artifact_id OR p.legacy_id=c.previous_artifact_id)
+        AND p.seq<c.seq AND p.project_id=c.project_id AND p.scope=c.scope) END AS explicit_version
+    FROM publications c
+   ), anchors AS (
+    SELECT i.*, max(seq) FILTER (WHERE explicit_version) OVER (
+      PARTITION BY project_id,scope,content_hash,unknown_identity ORDER BY seq ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS anchor
+    FROM identities i
+   ), versions AS (
+    SELECT a.*, CASE WHEN anchor IS NULL THEN min(execution_seq) OVER w
+      ELSE max(execution_seq) FILTER (WHERE seq=anchor) OVER w END AS version_execution_seq
+    FROM anchors a WINDOW w AS (PARTITION BY project_id,scope,content_hash,unknown_identity,anchor)
+   ), positions AS (
+    SELECT v.*, coalesce(anchor,min(seq) FILTER (WHERE execution_seq=version_execution_seq) OVER (
+      PARTITION BY project_id,scope,content_hash,unknown_identity,anchor)) AS version_seq
+    FROM versions v
+   ) SELECT v FROM positions WHERE stored
+   ORDER BY deliverable DESC,version_execution_seq DESC,version_seq DESC,required DESC,seq DESC LIMIT 1) AS latest_result,
+  (SELECT coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'kind', q.kind, 'text', q.text, 'options', q.options) ORDER BY q.seq), '[]') FROM question q WHERE q.task_id = t.id AND q.state = 'open') AS open_questions
+ FROM task t;
+
+SELECT set_config('fleet.project_ids', '*', true);
+ALTER TABLE execution_totals DISABLE TRIGGER USER;
+ALTER TABLE execution DISABLE TRIGGER USER;
+ALTER TABLE task DISABLE TRIGGER USER;
+DELETE FROM execution_totals x USING execution e WHERE e.id = x.execution_id AND e.kind IN ('pipeline_run', 'pipeline_step');
+UPDATE execution_totals x SET
+ directed_by = coalesce(x.directed_by, e.directed_by),
+ billing_basis = CASE
+  WHEN e.account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind = 'api-connection' AND a.id = e.account_id) THEN 'subscription'
+  WHEN e.kind IN ('agent_run', 'child_agent', 'tool_run') OR x.connection_cost IS NOT NULL THEN 'metered'
+  ELSE 'unavailable'
+ END
+FROM execution e WHERE e.id = x.execution_id;
+UPDATE execution e SET
+ profile_id = coalesce((SELECT d->>'id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'agent' LIMIT 1), nullif(e.config_ref->>'profileId', '')),
+ profile_revision = (SELECT CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'agent' LIMIT 1),
+ pipeline_id = coalesce((SELECT d->>'id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'pipeline' LIMIT 1), nullif(e.data->>'pipelineId', '')),
+ pipeline_revision = (SELECT CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::bigint END FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.definitions) = 'array' THEN e.definitions ELSE '[]'::jsonb END) d WHERE d->>'kind' = 'pipeline' LIMIT 1),
+ step_id = CASE WHEN e.kind = 'pipeline_step' THEN nullif(e.data->>'id', '') ELSE e.step_id END;
+WITH RECURSIVE lineage AS (
+ SELECT id, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision, ARRAY[id] AS seen
+ FROM execution
+ WHERE pipeline_id IS NOT NULL OR step_id IS NOT NULL OR profile_id IS NOT NULL
+ UNION ALL
+ SELECT c.id,
+  CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_id ELSE p.pipeline_id END,
+  CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_revision ELSE p.pipeline_revision END,
+  coalesce(c.step_id, p.step_id),
+  CASE WHEN c.profile_id IS NOT NULL THEN c.profile_id ELSE p.profile_id END,
+  CASE WHEN c.profile_id IS NOT NULL THEN c.profile_revision ELSE p.profile_revision END,
+  p.seen || c.id
+ FROM execution c
+ JOIN lineage p ON p.id = coalesce(nullif(c.data->>'pipelineStepId', ''), c.parent_execution_id)
+ WHERE NOT (c.id = ANY(p.seen)) AND array_length(p.seen, 1) < 32
+   AND ((c.pipeline_id IS NULL AND p.pipeline_id IS NOT NULL)
+     OR (c.step_id IS NULL AND p.step_id IS NOT NULL)
+     OR (c.profile_id IS NULL AND p.profile_id IS NOT NULL))
+)
+UPDATE execution c SET
+ pipeline_id = CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_id ELSE l.pipeline_id END,
+ pipeline_revision = CASE WHEN c.pipeline_id IS NOT NULL THEN c.pipeline_revision ELSE l.pipeline_revision END,
+ step_id = coalesce(c.step_id, l.step_id),
+ profile_id = CASE WHEN c.profile_id IS NOT NULL THEN c.profile_id ELSE l.profile_id END,
+ profile_revision = CASE WHEN c.profile_id IS NOT NULL THEN c.profile_revision ELSE l.profile_revision END
+FROM (
+ SELECT DISTINCT ON (id) id, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision
+ FROM lineage
+ ORDER BY id, array_length(seen, 1) DESC
+) l
+WHERE c.id = l.id AND (c.pipeline_id IS NULL OR c.step_id IS NULL OR c.profile_id IS NULL);
+UPDATE task t SET
+ created_by_execution_id = substr(t.created_by, 11),
+ created_by_session_id = (SELECT e.session_id FROM execution e WHERE e.id = substr(t.created_by, 11))
+WHERE t.created_by LIKE 'execution:%' AND t.created_by_execution_id IS NULL;
+SELECT fleet_write_tokens(t.execution_id) FROM execution_totals t JOIN execution e ON e.id = t.execution_id WHERE e.kind = 'agent_run';
+ALTER TABLE task ENABLE TRIGGER USER;
+ALTER TABLE execution ENABLE TRIGGER USER;
+ALTER TABLE execution_totals ENABLE TRIGGER USER;

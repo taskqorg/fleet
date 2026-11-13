@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -261,16 +262,26 @@ func putRun(q *Request, run doc) error {
 		return err
 	}
 	cfg := doc{"method": run["selectedMethod"], "definitionSha256": run["definitionSha256"]}
-	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant)
-	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10)
+	_, _, pipeID, pipeRev := definitionScalars(run["definitions"], nil)
+	if pipeID == nil {
+		pipeID = nilIf(astr(run["pipelineId"]))
+	}
+	dir := nilIf(firstString(run["directedBy"], mapOf(run["requestedBy"])["email"]))
+	taskID := nilIf(firstString(run["deliveryId"], run["taskId"]))
+	sessID := nilIf(astr(run["sessionId"]))
+	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant,task_id,session_id,directed_by,pipeline_id,pipeline_revision)
+	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,
-	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant)`,
-		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"]); err != nil {
+	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant),
+	  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
+	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision)`,
+		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"], taskID, sessID, dir, pipeID, pipeRev); err != nil {
 		return err
 	}
 	if run["definitions"] != nil {
-		if err := exec(q, "UPDATE execution SET definitions=$2 WHERE id=$1", run["id"], jsonBytes(run["definitions"])); err != nil {
+		if err := exec(q, `UPDATE execution SET definitions=$2,pipeline_id=coalesce($3,pipeline_id),pipeline_revision=coalesce($4,pipeline_revision) WHERE id=$1`,
+			run["id"], jsonBytes(run["definitions"]), pipeID, pipeRev); err != nil {
 			return err
 		}
 	}
@@ -286,10 +297,13 @@ func putRun(q *Request, run doc) error {
 				data[k] = v
 			}
 		}
-		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,data) VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7)
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,data,task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id)
+		 VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data,
+		  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
+		  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
 		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), jsonBytes(data)); err != nil {
+			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), jsonBytes(data), taskID, sessID, dir, pipeID, pipeRev, nilIf(astr(s["id"]))); err != nil {
 			return err
 		}
 	}
@@ -836,7 +850,11 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 // startScript: a script command for the executor, as its own session and execution.
 func startScript(q *Request, run doc, stepExecutionID, command string, timeout any, hostID string, inputs []any) (string, error) {
 	sid := newID()
+	dir := nilIf(firstString(run["directedBy"], mapOf(run["requestedBy"])["email"]))
 	s := doc{"id": sid, "createdAt": nowMs(), "pipelineRunId": run["id"]}
+	if dir != nil {
+		s["directedBy"] = dir
+	}
 	if run["projectId"] != nil {
 		s["projectId"] = run["projectId"]
 	}
@@ -848,6 +866,9 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 	}
 	id := newID()
 	e := doc{"id": id, "executionId": id, "sessionId": sid, "hostId": hostID, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "pipelineStepId": stepExecutionID, "pipelineRunId": run["id"], "projectSnapshot": run["projectSnapshot"]}
+	if dir != nil {
+		e["directedBy"] = dir
+	}
 	if run["experimentId"] != nil {
 		e["experimentId"] = run["experimentId"]
 	}
@@ -898,8 +919,24 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 // recordJob: a finished job's usage as one tool_run child of the step.
 func recordJob(q *Request, run doc, stepID, tool, jobID, connection string, usage doc) error {
 	id := stepID + ":job:0"
-	if _, err := insertExecution(q, doc{"id": id, "kind": "tool_run", "state": "succeeded", "projectId": run["projectId"], "parentExecutionId": stepID, "experimentId": run["experimentId"], "variant": run["variant"],
-		"data": doc{"tool": tool, "requestId": jobID, "outcome": "ok", "errorCode": nil, "usage": usage, "connection": connection}}); err != nil {
+	var pTask, pSession, pDir, pPipe, pStep *string
+	var pPipeRev *int64
+	if err := q.tx.QueryRow(q.ctx(), "SELECT task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id FROM execution WHERE id=$1", stepID).
+		Scan(&pTask, &pSession, &pDir, &pPipe, &pPipeRev, &pStep); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	dir := nilIf(firstString(deref(pDir), run["directedBy"], mapOf(run["requestedBy"])["email"]))
+	taskID := any(pTask)
+	if pTask == nil {
+		taskID = nilIf(firstString(run["deliveryId"], run["taskId"]))
+	}
+	if _, err := insertExecution(q, doc{
+		"id": id, "kind": "tool_run", "state": "succeeded", "projectId": run["projectId"], "parentExecutionId": stepID,
+		"experimentId": run["experimentId"], "variant": run["variant"],
+		"taskId": taskID, "sessionId": pSession, "directedBy": dir,
+		"pipelineId": pPipe, "pipelineRevision": pPipeRev, "stepId": pStep,
+		"data": doc{"tool": tool, "requestId": jobID, "outcome": "ok", "errorCode": nil, "usage": usage, "connection": connection},
+	}); err != nil {
 		return err
 	}
 	var cost any
@@ -1726,6 +1763,9 @@ func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, i
 		return "", err
 	}
 	s := doc{"id": newID(), "createdAt": nowMs(), "agentConfig": profile, "pipelineRunId": run["id"]}
+	if dir := nilIf(firstString(run["directedBy"], mapOf(run["requestedBy"])["email"])); dir != nil {
+		s["directedBy"] = dir
+	}
 	if overrides["account"] != nil {
 		s["account"] = overrides["account"]
 	}
@@ -1736,6 +1776,9 @@ func startAgentStep(q *Request, run, step doc, stepExecutionID, prompt string, i
 		return "", err
 	}
 	execution := doc{"pipelineStepId": stepExecutionID, "pipelineRunId": run["id"]}
+	if dir := nilIf(firstString(run["directedBy"], mapOf(run["requestedBy"])["email"])); dir != nil {
+		execution["directedBy"] = dir
+	}
 	if run["experimentId"] != nil {
 		execution["experimentId"] = run["experimentId"]
 	}

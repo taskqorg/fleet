@@ -261,7 +261,11 @@ func ingestIn(q *Request, b doc) (any, error) {
 	if err := markObservation(q, xid, "confirmed"); err != nil {
 		return nil, err
 	}
+	hasProcessClosed := false
 	for _, p := range prepared {
+		if astr(p.value["type"]) == string(contract.FleetEventTypeProcessClosed) {
+			hasProcessClosed = true
+		}
 		d := mapOf(p.value["data"])
 		if v, ok := d["harnessVersion"].(string); ok {
 			if err := setHarnessVersion(q, xid, v); err != nil {
@@ -280,7 +284,8 @@ func ingestIn(q *Request, b doc) (any, error) {
 			}
 		}
 	}
-	if ended, err := executionEnded(q, xid); err != nil || !ended {
+	ended, err := executionEnded(q, xid)
+	if err != nil || (!ended && !hasProcessClosed) {
 		return doc{"ok": true}, err
 	}
 	return doc{"ok": true}, writeTotals(q, xid)

@@ -46,8 +46,10 @@ func createExecution(q *Request, v doc) (bool, error) {
 	if data == nil {
 		data = doc{}
 	}
-	tag, err := q.tx.Exec(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,task_id,parent_execution_id,session_id,host_id,harness,model,config_ref,data,experiment_id,variant,account_id,request_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT DO NOTHING`,
-		v["id"], v["kind"], v["state"], v["projectId"], v["taskId"], v["parentExecutionId"], v["sessionId"], v["hostId"], v["harness"], v["model"], cfg, js(data), v["experimentId"], v["variant"], v["accountId"], v["requestId"])
+	tag, err := q.tx.Exec(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,task_id,parent_execution_id,session_id,host_id,harness,model,config_ref,data,experiment_id,variant,account_id,request_id,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) ON CONFLICT DO NOTHING`,
+		v["id"], v["kind"], v["state"], v["projectId"], v["taskId"], v["parentExecutionId"], v["sessionId"], v["hostId"], v["harness"], v["model"], cfg, js(data), v["experimentId"], v["variant"], v["accountId"], v["requestId"],
+		v["directedBy"], v["pipelineId"], v["pipelineRevision"], v["stepId"], v["profileId"], v["profileRevision"])
 	return err == nil && tag.RowsAffected() > 0, err
 }
 
@@ -61,7 +63,7 @@ func setHarnessVersion(q *Request, id any, version string) error {
 
 // recordChildren: one child_agent row per child thread a harness reports, under the parent.
 func recordChildren(q *Request, parentID string, children []any) error {
-	ms, err := queryRows(q, "SELECT project_id,task_id,session_id,host_id,harness FROM execution WHERE id=$1", parentID)
+	ms, err := queryRows(q, "SELECT project_id,task_id,session_id,host_id,harness,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision FROM execution WHERE id=$1", parentID)
 	if err != nil || len(ms) == 0 {
 		return err
 	}
@@ -83,6 +85,8 @@ func recordChildren(q *Request, parentID string, children []any) error {
 		}
 		if _, err := createExecution(q, doc{"id": parentID + ":child:" + thread, "kind": "child_agent", "state": "running", "projectId": p["project_id"], "taskId": p["task_id"],
 			"parentExecutionId": parentID, "sessionId": p["session_id"], "hostId": p["host_id"], "harness": p["harness"], "model": model, "configRef": cfg,
+			"directedBy": p["directed_by"], "pipelineId": p["pipeline_id"], "pipelineRevision": p["pipeline_revision"], "stepId": p["step_id"],
+			"profileId": p["profile_id"], "profileRevision": p["profile_revision"],
 			"data": doc{"threadId": thread, "parentThreadId": c["parentThreadId"], "tool": c["tool"]}}); err != nil {
 			return err
 		}

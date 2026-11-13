@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"fleet/contract"
+	"github.com/jackc/pgx/v5"
 )
 
 var taskStates = []string{"queued", "in_progress", "waiting", "paused", "completed", "failed", "cancelled"}
@@ -562,9 +563,28 @@ func createTask(q *Request, v doc) (string, error) {
 			return "", err
 		}
 	}
+	var createdByExec, createdBySess any
+	if cb := astr(v["createdBy"]); strings.HasPrefix(cb, "execution:") {
+		eid := strings.TrimPrefix(cb, "execution:")
+		if eid != "" {
+			createdByExec = eid
+			sid, err := unscoped(q, func() (string, error) {
+				var s *string
+				err := q.tx.QueryRow(q.ctx(), "SELECT session_id FROM execution WHERE id=$1", eid).Scan(&s)
+				if errors.Is(err, pgx.ErrNoRows) {
+					return "", nil
+				}
+				return deref(s), err
+			})
+			if err != nil {
+				return "", err
+			}
+			createdBySess = nilIf(firstString(sid, v["createdBySessionId"]))
+		}
+	}
 	held := v["held"] == true // a Held task: paused before its first queue (fleet-pm-agent.md §4)
-	if err := exec(q, "INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,created_by,data,state,state_before_pause,pause_reason) VALUES($1,$2,$3,$4,$5,$6,$7,'{}',CASE WHEN $8 THEN 'paused' ELSE 'queued' END::task_state,CASE WHEN $8 THEN 'queued' END::task_state,CASE WHEN $8 THEN 'held' END)",
-		id, v["projectId"], title, v["expectedOutcome"], js(cr), v["resultDestination"], v["createdBy"], held); err != nil {
+	if err := exec(q, "INSERT INTO task(id,project_id,title,expected_outcome,completion_requirements,result_destination,created_by,created_by_execution_id,created_by_session_id,data,state,state_before_pause,pause_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'{}',CASE WHEN $10 THEN 'paused' ELSE 'queued' END::task_state,CASE WHEN $10 THEN 'queued' END::task_state,CASE WHEN $10 THEN 'held' END)",
+		id, v["projectId"], title, v["expectedOutcome"], js(cr), v["resultDestination"], v["createdBy"], createdByExec, createdBySess, held); err != nil {
 		return "", err
 	}
 	if d := astr(v["directedBy"]); d != "" {
