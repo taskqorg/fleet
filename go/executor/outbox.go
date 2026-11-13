@@ -349,6 +349,10 @@ func flush(db *sql.DB, url, token, host string) error {
 		case answerOK:
 			response = a.value
 		case answerRetry:
+			if len(batch) > 1 {
+				single = true // A large idempotent event batch may exceed the transport deadline; let individual rows progress.
+				continue
+			}
 			return fmt.Errorf("%s", a.text)
 		case answerEdge:
 			hold()

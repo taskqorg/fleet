@@ -142,7 +142,9 @@ func indexByte(s string, b byte) int {
 
 func gitApply(c *exec.Cmd, vars []string) {
 	unsetEnv(c, "SSH_AUTH_SOCK")
-	setEnvKV(c, "GIT_TERMINAL_PROMPT=0")
+	setEnvKV(c, "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=core.hooksPath", "GIT_CONFIG_VALUE_0=/dev/null",
+		"GIT_CONFIG_KEY_1=core.fsmonitor", "GIT_CONFIG_VALUE_1=false")
 	setEnvKV(c, vars...)
 }
 

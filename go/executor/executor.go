@@ -1120,7 +1120,11 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if name == "codex" && sp.GitNetwork != nil && *sp.GitNetwork && checkoutTop != "" {
 		// gitNetwork: sandbox network on and the checkout's common .git writable.
 		pp = jObj(jClone(p))
-		pp["writableRoots"] = []any{filepath.Join(checkoutTop, ".git")}
+		roots, err := nativeGitRoots(checkoutTop, root)
+		if err != nil {
+			return fail(1, err.Error())
+		}
+		pp["writableRoots"] = roots
 	}
 	cmd, sess := h.Protocol(cmd, root, native, pp, servers)
 	protocol := sess != nil
