@@ -33,6 +33,7 @@ type dispatchContext struct {
 	hosts    []doc
 	byID     map[string]doc
 	seen     map[string]float64
+	caps     map[string][]string
 	roots    map[string][]string
 	conns    map[string][]string // git connection names each host reported; absent: unknown
 	accounts []doc
@@ -45,7 +46,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &dispatchContext{byID: map[string]doc{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
+	k := &dispatchContext{byID: map[string]doc{}, caps: map[string][]string{}, seen: map[string]float64{}, roots: map[string][]string{}, conns: map[string][]string{}, orders: map[string]contract.DispatchOrder{}}
 	for _, h := range hs {
 		if len(anys(h["roles"])) == 0 {
 			k.hosts = append(k.hosts, h)
@@ -57,6 +58,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 		return nil, err
 	}
 	for _, o := range obs {
+		k.caps[astr(o["id"])] = strs(o["capabilities"])
 		k.seen[astr(o["id"])] = num(o["lastSeenAt"])
 		if o["gitConnections"] != nil {
 			k.conns[astr(o["id"])] = strs(o["gitConnections"])
@@ -322,6 +324,10 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			skip := func(reason, cause string) { c.Skipped, c.Cause = reason, cause }
 			if h == nil {
 				skip(id+" is offline", "host:"+id+":offline")
+				continue
+			}
+			if astr(x["workspaceKey"]) != "" && !inList(k.caps[id], "workspace-key-v1") {
+				skip(id+" executor lacks workspace-key-v1; update required", "host:"+id+":workspace-version")
 				continue
 			}
 			if !a.hostMayRun(h, projectID, director) {
@@ -668,6 +674,9 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		return nil, err
 	}
 	d := mapOf(e["dispatch"])
+	liveSession := s
+	s = mapOf(clone(s))
+	s["projectId"], s["workingDirectory"], s["workspaceKey"] = d["projectId"], d["workingDirectory"], d["workspaceKey"]
 	e["hostId"] = host
 	if s["account"] != nil || binding != nil {
 		e["requestedAccount"] = s["account"]
@@ -684,7 +693,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	// The start payload is contract.StartPayload, field by field: the enqueue extras (inputs, skills, webRoute) are named
 	// fields, never a blind merge over the fields above (C7).
 	p := &contract.StartPayload{Harness: ptr(harnessOf(s)), Text: strPtr(d["input"]), Setup: strPtr(nonNil(s["setup"], "run")),
-		WorkingDirectory: strPtr(s["workingDirectory"]), Model: strPtr(e["model"]), Effort: strPtr(e["effort"]),
+		WorkspaceKey: strPtr(s["workspaceKey"]), WorkingDirectory: strPtr(s["workingDirectory"]), Model: strPtr(e["model"]), Effort: strPtr(e["effort"]),
 		Instructions: ptr(defaultInstructions), NativeSessionId: strp(s, "nativeSessionId")} // "" still reaches the executor's check
 	if s["account"] != nil || (binding != nil && s["nativeSessionId"] == nil) {
 		if binding != nil {
@@ -747,13 +756,15 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		if workspaces == nil {
 			workspaces = doc{}
 		}
-		if workspaces[host] == nil {
-			workspaces[host] = doc{"executionId": e["id"], "project": snapshot["settings"], "revision": snapshot["revision"], "contentSha": snapshot["contentSha"], "workingDirectory": s["workingDirectory"]}
-			s["workspaceSnapshots"] = workspaces
-			if err := put(q, "session", s); err != nil {
+		key := host + ":" + astr(d["projectId"]) + ":" + astr(d["workspaceKey"])
+		if workspaces[key] == nil {
+			workspaces[key] = doc{"executionId": e["id"], "projectId": d["projectId"], "workspaceKey": d["workspaceKey"], "project": snapshot["settings"], "revision": snapshot["revision"], "contentSha": snapshot["contentSha"], "workingDirectory": s["workingDirectory"]}
+			liveSession["workspaceSnapshots"] = workspaces
+			if err := put(q, "session", liveSession); err != nil {
 				return nil, err
 			}
 		}
+		e["workspaceSnapshot"] = workspaces[key]
 	}
 	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending"}
 	if err := agentDecorate(q, s, e, p); err != nil {

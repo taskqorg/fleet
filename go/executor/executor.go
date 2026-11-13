@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -88,7 +89,7 @@ func platform() string {
 }
 
 func capabilities() []string {
-	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script"}
+	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1"}
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}
@@ -251,6 +252,25 @@ func (e *executor) sessionDir(session string) string {
 		return legacy
 	}
 	return filepath.Join(e.sessions, session)
+}
+
+func workspaceSession(session string, payload any) string {
+	if key := jStr(payload, "workspaceKey"); key != "" {
+		sum := sha256.Sum256([]byte(key))
+		return session + "-" + fmt.Sprintf("%x", sum[:])
+	}
+	return session
+}
+
+// commandDir keeps transitioned workspaces isolated; legacy commands retain their original directory.
+func (e *executor) commandDir(session string, payload any) string {
+	dir := e.sessionDir(session)
+	if key := jStr(payload, "workspaceKey"); key != "" {
+		// Hash the untrusted key so it cannot escape the owned session directory.
+		sum := sha256.Sum256([]byte(key))
+		dir = filepath.Join(dir, "workspaces", fmt.Sprintf("%x", sum[:]))
+	}
+	return dir
 }
 
 func (e *executor) queue(route string, v any) error { return queue(e.ex, route, v) }
@@ -721,16 +741,16 @@ func (e *executor) run(c M) error {
 	case "teardown":
 		// Session finish: teardown script, keep on dirty/teardown failure, safe branch delete. Lookup only: never create a
 		// worktree; the session dir must be a real dir under the executor or session roots.
-		dir := e.sessionDir(session)
+		dir := e.commandDir(session, p)
 		repo, hasRepo := repoPath(p, e.host)
 		data := refusedTeardown("no-worktree")
 		if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
-			_, top, created, ok, err := worktree(dir, session, repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
+			_, top, created, ok, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
 			switch {
 			case err != nil:
 				data = refusedTeardown(err.Error())
 			case ok && !created:
-				data = teardown(dir, session, top, jAt(p, "project"), jIsTrue(p, "deleteBranch"))
+				data = teardown(dir, workspaceSession(session, p), top, jAt(p, "project"), jIsTrue(p, "deleteBranch"))
 			}
 		}
 		reason := str0(data.Reason)
@@ -827,7 +847,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		return e.finish(c, "failed", "")
 	}
 	name := harnessName(p)
-	dir := e.sessionDir(session)
+	dir := e.commandDir(session, p)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -883,7 +903,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	repo, hasRepo := repoPath(p, e.host)
 	checkoutTop := ""
-	w, top, created, hasW, err := worktree(dir, session, repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
+	w, top, created, hasW, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
 	if err != nil {
 		return fail(1, err.Error())
 	}
@@ -1622,14 +1642,14 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	}
 	executionSpan(execution, l)
 	l.seq++
-	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, StderrTail: stderrTail(e.sessionDir(jStr(l.command, "sessionId")), execution, code)}); err != nil {
+	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, StderrTail: stderrTail(e.commandDir(jStr(l.command, "sessionId"), jAt(l.command, "payload")), execution, code)}); err != nil {
 		return false, err
 	}
 	sid, err := cmdID(l.command, "sessionId")
 	if err != nil {
 		return false, err
 	}
-	dir := e.sessionDir(sid)
+	dir := e.commandDir(sid, jAt(l.command, "payload"))
 	// Project sessions run in their worktree, so the agent writes output/ there.
 	output := []string{"output"}
 	if st, err := os.Lstat(filepath.Join(dir, "worktree", "output")); err == nil && st.IsDir() {

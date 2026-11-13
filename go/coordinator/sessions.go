@@ -285,13 +285,23 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 	sid := astr(s["id"])
 	payload := doc{}
-	workingDirectory := s["workingDirectory"]
+	d := mapOf(last["dispatch"])
+	if d["workspaceKey"] != nil {
+		payload["workspaceKey"] = d["workspaceKey"]
+	}
+	workingDirectory := d["workingDirectory"]
 	if deleteBranch {
 		payload["deleteBranch"] = true
 	}
-	if p := astr(s["projectId"]); p != "" {
-		workspace := mapOf(mapOf(s["workspaceSnapshots"])[astr(last["hostId"])])
+	if p := astr(d["projectId"]); p != "" {
+		workspace := mapOf(last["workspaceSnapshot"])
 		if workspace == nil {
+			workspace = mapOf(mapOf(s["workspaceSnapshots"])[astr(last["hostId"])+":"+p+":"+astr(d["workspaceKey"])])
+		}
+		if workspace == nil {
+			workspace = mapOf(mapOf(s["workspaceSnapshots"])[astr(last["hostId"])])
+		}
+		if workspace == nil || (workspace["projectId"] != nil && workspace["projectId"] != p) {
 			return doc{"sessionId": sid, "cleanup": "unknown", "reason": "cleanup_context_unknown: original workspace settings unavailable"}, nil
 		}
 		payload["projectId"], payload["project"] = p, workspace["project"]

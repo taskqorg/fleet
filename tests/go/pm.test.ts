@@ -19,7 +19,7 @@ async function call(method: string, path: string, body?: unknown, headers: Recor
 const as = (person: string) => ({authorization: 'Bearer ' + SECRET, 'x-fleet-person': person});
 const ok = (r: Reply) => { assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
 const op = (name: string, b: object = {}, person = OWNER) => call('POST', '/api/ops/' + name, b, as(person));
-const poll = {platform: 'darwin', capabilities: [], stores: [], problems: []};
+const poll = {platform: 'darwin', capabilities: ['workspace-key-v1'], stores: [], problems: []};
 // One host per director, held by that person: work directed by a person runs on a login they hold (people-access §6).
 const hosts = new Map<string, {id: string, secret: string}>();
 const hostCall = (person: string, path: string, body: object) => call('POST', path, body, {authorization: 'Bearer ' + hosts.get(person)!.secret});
@@ -359,4 +359,52 @@ test('PM managed-account guards accept canonical id/name with intake all and rej
  const transition=await pm.tool('session_transition',{profileId:'pm',account:account.name});
  assert.equal(transition.status,409,JSON.stringify(transition.body));
  assert.equal(transition.body.message,'Execution active','canonical account reaches the existing lifecycle guard');
+});
+
+test('PM project transition applies after the active turn with checkout rules and handoff (requirement: docs/execution-continuity.md session project selection; risk: focus changes authority or a running snapshot is rewritten)', {timeout:30000}, async()=>{
+ const pm=await agent(OWNER,{});
+ ok(await pm.tool('focus_set',{projectIds:[PROJECT,OTHER]}));
+ assert.equal((await pm.tool('session_transition',{projectId:''})).status,400);
+ assert.equal((await pm.tool('session_transition',{projectId:'missing-project'})).status,403);
+ const selected=ok(await pm.tool('session_transition',{projectId:PROJECT}));
+ assert.equal(selected.transition,'queued');
+ const before=ok(await call('GET','/api/sessions/'+pm.sessionId,undefined,as(OWNER)));
+ assert.equal(before.executions[0].dispatch.projectId,null);
+ ok(await hostCall(OWNER,'/api/hosts/receipts',{executionId:pm.executionId,commandId:pm.commandId,status:'completed',nativeSessionId:'old-projectless-native'}));
+
+ const legacyPoll=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
+ assert.ok(!legacyPoll.commands.some((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId),'older executor must not claim keyed checkout');
+ const {commands}=ok(await hostCall(OWNER,'/api/hosts/poll',poll));
+ const next=commands.find((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId&&c.executionId!==pm.executionId);
+ assert.ok(next,JSON.stringify(commands));
+ assert.equal(next.payload.projectId,PROJECT);
+ assert.ok(next.payload.project);
+ assert.ok(!next.payload.nativeSessionId);
+ assert.match(next.payload.text,/Current request:/);
+ const after=ok(await call('GET','/api/sessions/'+pm.sessionId,undefined,as(OWNER)));
+ assert.deepEqual(after.executions.find((e:any)=>e.id===pm.executionId).dispatch,before.executions[0].dispatch);
+ let current=next;
+ for(const projectId of [OTHER,PROJECT]) {
+  ok(await hostCall(OWNER,'/api/hosts/receipts',{executionId:current.executionId,commandId:current.id,status:'completed',nativeSessionId:'native-'+projectId}));
+  const transition=ok(await op('session_transition',{sessionId:pm.sessionId,projectId}));
+  assert.equal(transition.transition,'create_with_handoff');
+  ok(await call('POST',`/api/sessions/${pm.sessionId}/messages`,{requestId:randomUUID(),text:'continue'},as(OWNER)));
+  const oldHost=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
+  assert.ok(!oldHost.commands.some((c:any)=>c.payload?.workspaceKey),'old hosts cannot claim keyed cleanup or start');
+  const polled=ok(await hostCall(OWNER,'/api/hosts/poll',poll)).commands;
+  const cleanup=polled.find((c:any)=>c.kind==='teardown'&&c.executionId===current.executionId);
+  assert.ok(cleanup,JSON.stringify(polled));
+  assert.equal(cleanup.payload.projectId,current.payload.projectId);
+  assert.equal(cleanup.payload.workspaceKey,current.payload.workspaceKey);
+  assert.deepEqual(cleanup.payload.project,current.payload.project);
+  const started=polled.find((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId);
+  assert.ok(started,JSON.stringify(polled));
+  assert.equal(started.payload.projectId,projectId);
+  assert.notEqual(started.payload.workspaceKey,current.payload.workspaceKey);
+  assert.ok(!started.payload.nativeSessionId);
+  current=started;
+ }
+ const denied=await agent(MEMBER,{});
+ assert.equal((await denied.tool('session_transition',{projectId:OTHER})).status,404);
+
 });

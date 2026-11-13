@@ -17,8 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func harnessOf(s doc) string         { return firstString(mapOf(s["agentConfig"])["harness"], "codex") }
-func continuationKeyOf(s doc) string { return harnessOf(s) + ":" + astr(s["account"]) }
+func harnessOf(s doc) string { return firstString(mapOf(s["agentConfig"])["harness"], "codex") }
+func continuationKeyOf(s doc) string {
+	return harnessOf(s) + ":" + astr(s["account"]) + ":" + astr(s["projectId"]) + ":" + astr(s["workingDirectory"]) + ":" + astr(s["workspaceKey"])
+}
 
 func sessionExecutions(q *Request, sid string) ([]doc, error) {
 	return all(q, "execution", doc{"sessionId": sid})
@@ -57,6 +59,24 @@ func knownHost(q *Request, id string) (bool, error) {
 
 // enqueue: a queued execution and its message. Late choice: host and subscription are picked at dispatch.
 func enqueue(q *Request, s doc, input, requestID string, payload, execution doc, host string, provenance ...doc) (doc, error) {
+	if pending := mapOf(s["pendingTransition"]); pending != nil {
+		priorPerson := q.person
+		q.person = q.peopleSnapshot().person(astr(s["directedBy"]))
+		if q.person == nil {
+			q.person = priorPerson
+			return nil, fail(403, "Session director unavailable")
+		}
+		_, transitionErr := sessionTransition(q, pending)
+		q.person = priorPerson
+		if transitionErr != nil {
+			return nil, transitionErr
+		}
+		fresh, err := get(q, s["id"], "session")
+		if err != nil {
+			return nil, err
+		}
+		s = fresh
+	}
 	if astr(s["directedBy"]) == "" {
 		d := ""
 		for _, src := range [][2]string{{"createdByExecutionId", "execution"}, {"parentExecutionId", "execution"}} {
@@ -110,7 +130,7 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	}
 	id := newID()
 	e := doc{"id": id, "executionId": id, "sessionId": s["id"], "hostId": nil, "state": "preparing", "createdAt": nowMs(), "directedBy": s["directedBy"], "model": "gpt-6.1-sol", "effort": "low",
-		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
+		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "workspaceKey": s["workspaceKey"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
 	if ac != nil {
 		e["agentConfig"], e["profileSha256"], e["model"], e["effort"] = ac, frameHash(ac), firstString(ac["model"], "gpt-6.1-sol"), ac["effort"]
 		ref, err := definitionRef(q, "agent", astr(ac["id"]), ac)
@@ -242,7 +262,7 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 		return nil, err
 	}
 	sender := director(q)
-	if source == "watch" || source == "wake" {
+	if source == "watch" || source == "wake" || source == "transition" {
 		sender = "Fleet"
 	}
 	provenance := doc{"sentBy": sender}
@@ -626,7 +646,7 @@ func sideOf(key string, cfg doc) [4]string {
 
 func sessionTransition(q *Request, b doc) (doc, error) {
 	for k := range b {
-		if !slices.Contains([]string{"sessionId", "profileId", "account", "callerSessionId"}, k) {
+		if !slices.Contains([]string{"sessionId", "profileId", "account", "callerSessionId", "projectId"}, k) {
 			return nil, fail(400, "Expected sessionId, profileId, account")
 		}
 	}
@@ -638,9 +658,36 @@ func sessionTransition(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	pid, err := strArg(b, "profileId", "profileId", 0)
-	if err != nil {
+	if err := directs(q, s); err != nil {
 		return nil, err
+	}
+	pid := firstString(b["profileId"], mapOf(s["agentConfig"])["id"])
+	project, selecting := b["projectId"]
+	if selecting {
+		selection := mapOf(clone(s))
+		if selection["focus"] == nil {
+			selection["focus"] = doc{"projectIds": "*"}
+		}
+		p, err := focusProject(q, selection, project)
+		if err != nil {
+			return nil, err
+		}
+		project = p
+		if dir := q.peopleSnapshot().person(firstString(s["directedBy"], director(q))); !mayAccessProjectID(dir, p) {
+			return nil, fail(403, "Project outside director grants")
+		}
+		if astr(s["taskId"]) != "" && s["projectId"] != p {
+			return nil, fail(409, "Task-bound session cannot change project")
+		}
+		es, err := sessionExecutions(q, sid)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range es {
+			if astr(e["taskId"]) != "" && astr(mapOf(e["dispatch"])["projectId"]) != p {
+				return nil, fail(409, "Task-bound session cannot change project")
+			}
+		}
 	}
 	acct, hasAcct := b["account"]
 	if hasAcct && acct != nil {
@@ -648,15 +695,31 @@ func sessionTransition(q *Request, b doc) (doc, error) {
 			return nil, fail(400, "Invalid named host account")
 		}
 	}
-	if a, err := activeOf(q, sid); err != nil || a != nil {
-		if err == nil {
-			err = fail(409, "Execution active")
-		}
-		return nil, err
-	}
 	profile, err := readTrustedProfile(q, pid)
 	if err != nil {
 		return nil, err
+	}
+	if a, err := activeOf(q, sid); err != nil || a != nil {
+		if err != nil {
+			return nil, err
+		}
+		if !selecting {
+			return nil, fail(409, "Execution active")
+		}
+		pending := doc{"sessionId": sid, "profileId": pid, "projectId": project}
+		if hasAcct {
+			pending["account"] = acct
+		}
+		if project != s["projectId"] {
+			if _, err := submitMessage(q, doc{"sessionId": sid, "requestId": "project-transition:" + astr(a["id"]), "text": "Continue the current user request in the explicitly selected project after applying the queued session transition."}, "transition"); err != nil {
+				return nil, err
+			}
+		}
+		s["pendingTransition"] = pending
+		if err := put(q, "session", s); err != nil {
+			return nil, err
+		}
+		return doc{"sessionId": sid, "profileId": pid, "projectId": project, "transition": "queued"}, nil
 	}
 	fromKey := continuationKeyOf(s)
 	ns := clone(s["nativeSessions"])
@@ -678,6 +741,38 @@ func sessionTransition(q *Request, b doc) (doc, error) {
 		next[k] = v
 	}
 	next["agentConfig"], next["nativeSessions"] = profile, nsd
+	delete(next, "pendingTransition")
+	if selecting && project != s["projectId"] {
+		es, err := sessionExecutions(q, sid)
+		if err != nil {
+			return nil, err
+		}
+		cleanups := []doc{}
+		seen := map[string]bool{}
+		for i := len(es) - 1; i >= 0; i-- {
+			old := es[i]
+			d := mapOf(old["dispatch"])
+			if d["projectId"] != s["projectId"] || astr(old["hostId"]) == "" {
+				continue
+			}
+			key := astr(old["hostId"]) + ":" + astr(d["workspaceKey"])
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			cleanup, err := teardownCommand(q, s, old, false)
+			if err != nil {
+				return nil, err
+			}
+			cleanups = append(cleanups, cleanup)
+		}
+		next["transitionCleanup"] = cleanups
+		next["projectId"] = project
+		next["workspaceKey"] = newID()
+		next["nativeSessions"] = doc{}
+		nsd = doc{}
+		delete(next, "workingDirectory")
+	}
 	if hasAcct {
 		if acct == nil {
 			delete(next, "account")
@@ -728,7 +823,7 @@ func sessionTransition(q *Request, b doc) (doc, error) {
 	if err := put(q, "session-transition", t); err != nil {
 		return nil, err
 	}
-	return doc{"sessionId": sid, "profileId": profile["id"], "account": next["account"], "transition": typ, "handoffId": hid, "nativeSessionId": next["nativeSessionId"]}, nil
+	return doc{"sessionId": sid, "profileId": profile["id"], "account": next["account"], "projectId": next["projectId"], "transition": typ, "handoffId": hid, "nativeSessionId": next["nativeSessionId"]}, nil
 }
 
 func sessionFork(q *Request, b doc) (doc, error) {
@@ -1894,7 +1989,11 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 		}
 	}
 	if name == "session_transition" {
-		pid, _ := a["profileId"].(string)
+		target, err := get(q, a["sessionId"], "session")
+		if err != nil {
+			return nil, err
+		}
+		pid := firstString(a["profileId"], mapOf(target["agentConfig"])["id"])
 		if _, err := readTrustedProfile(q, pid); err != nil || pid == "" {
 			return nil, fail(403, "Unknown profile")
 		}
