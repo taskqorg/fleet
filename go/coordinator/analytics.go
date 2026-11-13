@@ -1734,11 +1734,12 @@ func definitionUsageResources(q *Request, kind, id string, days int64) (map[stri
 	}
 	ctes := `WITH RECURSIVE
  pinned AS (
-  SELECT e.id AS root_id, d->>'id' AS def_id, (d->>'revision')::int AS rev
+  SELECT e.id AS root_id, d->>'id' AS def_id, CASE WHEN (d->>'revision') ~ '^[0-9]+$' THEN (d->>'revision')::int END AS rev
   FROM execution e
   CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
   WHERE e.definitions @> $1 AND d->>'kind' = $2 AND ($3 = '' OR d->>'id' = $3)
     AND coalesce((d->>'draft')::boolean, false) = false
+    AND coalesce(d->>'revision', '') ~ '^[0-9]+$'
     AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
  ),
  tree AS (

@@ -148,7 +148,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const disabled = off ? 'offline' : undefined;
   // OR-39: statement, lifecycle, result, decision; a total is shown only when it is known (no empty token or cost fields).
   // The execution count is the tree below (OR-17: no second 'Executions').
-  const wallMs = resTot?.durations.executionWallMs ?? resTot?.durations.elapsedMs ?? null;
+  const wallMs = resTot?.durations.executionWallMs ?? null;
   const wall = wallMs === null ? null : wallMs / 1000;
   const wallBasis = resTot?.durations.basis;
   const tokBasis = resTot?.tokens.basis;

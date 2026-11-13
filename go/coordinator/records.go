@@ -305,7 +305,7 @@ func writeTotals(q *Request, id string) error {
 	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,wall_ms,wall_ms_basis,computed_at)
 	 SELECT id,project_id,directed_by,
 	  CASE
-	   WHEN account_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM document a WHERE a.kind='api-connection' AND a.id=account_id) THEN 'subscription'
+	   WHEN account_id IS NOT NULL AND NOT coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('', account_id) m), false) THEN 'subscription'
 	   WHEN kind IN ('agent_run','child_agent','tool_run') THEN 'metered'
 	   ELSE 'unavailable'
 	  END,

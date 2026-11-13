@@ -20,7 +20,9 @@ const runnerTokens = `CASE WHEN coalesce(x.tokens_input,x.tokens_output,x.tokens
 // priced at the run's start (fleet-analytics.md, price table). A run on a subscription login (account_id) adds no money.
 const runnerUsage = `coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,x.connection_cost->>'unit' AS unit,
  coalesce(x.connection_cost->>'amount',x.connection_cost->>(x.connection_cost->>'unit'))::float8 AS amount,
- x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,` + runnerAt + `) AS at`
+ x.billing_basis,coalesce(x.model,e.model) AS model,e.account_id,
+ CASE WHEN coalesce(x.billing_basis,'') IN ('','unavailable') AND e.account_id IS NOT NULL THEN coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',e.account_id) m),false) ELSE false END AS is_api_conn,
+ x.tokens_input,x.tokens_output,x.tokens_cache_read,x.tokens_cache_write,coalesce(e.started_at,` + runnerAt + `) AS at`
 
 func isRunnerSubscription(r doc) bool {
 	switch astr(r["billing_basis"]) {
@@ -29,7 +31,7 @@ func isRunnerSubscription(r doc) bool {
 	case "metered":
 		return false
 	}
-	return r["account_id"] != nil
+	return r["account_id"] != nil && r["is_api_conn"] != true
 }
 
 // runnerCost: the cost of one run's usages. A run on a subscription login (account_id / subscription billing_basis) costs no metered money: its
