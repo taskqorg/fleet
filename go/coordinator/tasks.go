@@ -242,7 +242,7 @@ func askQuestion(q *Request, v doc) (string, error) {
 // idleTaskSQL: tasks in progress with nothing that can move them: no open execution (child agent rows do not count: no
 // writer ends them), no open question, and no rejected acceptance since the run that ended last (a rejection waits for a
 // new run, data foundation §3). l is the run that ended last; null when the task has no run at all.
-const idleTaskSQL = `FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id, x.ended_at FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent'
+const idleTaskSQL = `FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.session_id, x.ended_at, x.data FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent'
 	  ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
 	WHERE t.state='in_progress'
 	AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
@@ -257,12 +257,18 @@ const idleTaskSQL = `FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.sess
 // are included: nothing writes or reads delivery_method any more. Runs on every execution end, after an answer, on
 // resume, and for every task at coordinator start (settleIdleTasks). Reports whether it asked.
 func settleIdleTask(q *Request, id string) (bool, error) {
-	t, err := first(q, `SELECT t.*, l.id AS latest_id, l.state::text AS latest, l.session_id AS latest_session,
-		EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded') AS succeeded `+idleTaskSQL+` AND t.id=$1`, id)
+	// A newer failed run supersedes an unanswered success prompt; history remains queryable.
+	if err := exec(q, `UPDATE question qq SET state='withdrawn' WHERE qq.task_id=$1 AND qq.kind='acceptance' AND qq.state='open' AND coalesce(qq.data->>'earlierResult','false')<>'true'
+	 AND EXISTS (SELECT 1 FROM execution x WHERE x.id=(SELECT e.id FROM execution e WHERE e.task_id=$1 AND e.kind<>'child_agent' ORDER BY e.seq DESC LIMIT 1)
+	 AND (x.state IN ('failed','cancelled') OR x.data->'report'->>'outcome'='failed'))`, id); err != nil {
+		return false, err
+	}
+	t, err := first(q, `SELECT t.*, l.id AS latest_id, l.state::text AS latest, l.session_id AS latest_session, l.data->'report' AS report,
+		EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.state='succeeded' AND coalesce(x.data->'report'->>'outcome','succeeded')='succeeded') AS succeeded `+idleTaskSQL+` AND t.id=$1`, id)
 	if err != nil || t == nil {
 		return false, err
 	}
-	if astr(t["latest"]) == "succeeded" {
+	if astr(t["latest"]) == "succeeded" && astr(mapOf(t["report"])["outcome"]) != "failed" {
 		_, err = requestAcceptance(q, t, nil, nil, "fleet")
 		return err == nil, err
 	}
@@ -271,6 +277,9 @@ func settleIdleTask(q *Request, id string) (bool, error) {
 		options = append(options, idleAccept)
 	}
 	what := "The last run of " + astr(t["title"]) + " " + astr(t["latest"])
+	if r := mapOf(t["report"]); astr(r["outcome"]) == "failed" {
+		what = "Work was reported incomplete: " + astr(r["summary"])
+	}
 	if t["latest"] == nil {
 		what = astr(t["title"]) + " is in progress with no run"
 	}
@@ -285,7 +294,7 @@ func init() {
 	onStart(func(ctx context.Context, a *App) {
 		var ids []doc
 		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
-			ids, err = rowsOf(q, "SELECT t.id "+idleTaskSQL+" ORDER BY t.created_at")
+			ids, err = rowsOf(q, "SELECT id FROM task WHERE state IN ('in_progress','waiting') ORDER BY created_at")
 			return
 		}); err != nil {
 			log.Printf("settle idle tasks: %v", err)
@@ -343,7 +352,7 @@ func requestAcceptance(q *Request, t doc, artifactIDs []string, text *string, as
 		qid := astr(open["id"])
 		return qid, exec(q, "UPDATE question SET text=$2,asked_by=$4,asked_at=now(),data=coalesce(data,'{}'::jsonb)||jsonb_build_object('artifactIds',$3::jsonb) WHERE id=$1", qid, body, js(ids), askedBy)
 	}
-	return askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": body, "options": []string{"accepted", "rejected"}, "askedBy": askedBy, "data": doc{"artifactIds": ids}})
+	return askQuestion(q, doc{"kind": "acceptance", "taskId": id, "projectId": t["project_id"], "text": body, "options": []string{"accepted", "rejected"}, "askedBy": askedBy, "executionId": t["latest_id"], "data": doc{"artifactIds": ids, "earlierResult": t["earlierResult"]}})
 }
 
 // answerQuestion: one answer wins; an acceptance completes (or keeps in progress) its task, other answers unblock it.
@@ -434,6 +443,7 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 				if err != nil {
 					return nil, err
 				}
+				task["earlierResult"] = true
 				if _, err := requestAcceptance(q, task, nil, nil, by); err != nil {
 					return nil, err
 				}
@@ -549,7 +559,7 @@ const taskViewCols = `id,code,project_id AS "projectId",title,expected_outcome A
 
 const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",project_id AS "projectId",task_id AS "taskId",experiment_id AS "experimentId",variant,parent_execution_id AS "parentExecutionId",
  session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
- started_at AS "startedAt",ended_at AS "endedAt",definitions`
+ started_at AS "startedAt",ended_at AS "endedAt",definitions,data->'report' AS report`
 
 func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.ExecutionRow, error) {
 	c, p := []string{}, []any{}

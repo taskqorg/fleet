@@ -10,10 +10,10 @@ var _ json.RawMessage
 type AskReply = map[string]json.RawMessage
 
 type AskRequest struct {
-	ExecutionId *string         `json:"executionId,omitempty"`
-	Question    json.RawMessage `json:"question,omitempty"`
-	RequestId   *string         `json:"requestId,omitempty"`
-	Resume      json.RawMessage `json:"resume,omitempty"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	Question    *string `json:"question,omitempty"`
+	RequestId   *string `json:"requestId,omitempty"`
+	Resume      *string `json:"resume,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -922,7 +922,7 @@ func (v *WorkerReport) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"ask":                 {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"question\":{},\"requestId\":{\"type\":\"string\"},\"resume\":{}},\"type\":\"object\"}")},
+		"ask":                 {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"question\":{\"$comment\":\"Fresh ask text. Requires requestId; do not combine with resume.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"resume\":{\"$comment\":\"Existing question ID to read, never continuation prose. Do not combine with question or requestId.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"changes_since":       {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).\",\"additionalProperties\":true,\"properties\":{\"cursor\":{\"type\":\"integer\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"direct_search":       {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\"}")},
 		"message_send":        {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"delivery\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"setup\":{},\"source\":{},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},

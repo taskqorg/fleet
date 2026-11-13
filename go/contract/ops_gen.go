@@ -217,6 +217,7 @@ type ExecutionRow struct {
 	ParentExecutionId *string         `json:"parentExecutionId"`
 	Problem           *string         `json:"problem"`
 	ProjectId         *string         `json:"projectId"`
+	Report            *WorkerReport   `json:"report,omitempty"`
 	SessionId         *string         `json:"sessionId"`
 	StartedAt         *string         `json:"startedAt"`
 	State             ExecutionState  `json:"state"`
@@ -234,6 +235,11 @@ func (v *ExecutionRow) Validate() error {
 	}
 	for i := range v.Definitions {
 		if err := Check(&v.Definitions[i], "definitions"); err != nil {
+			return err
+		}
+	}
+	if v.Report != nil {
+		if err := Check(v.Report, "report"); err != nil {
 			return err
 		}
 	}

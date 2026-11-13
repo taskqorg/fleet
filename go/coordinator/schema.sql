@@ -1163,3 +1163,15 @@ CREATE INDEX task_sort_changed_desc ON task((-((extract(epoch FROM updated_at AT
 CREATE INDEX task_sort_changed ON task(((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8), id);
 CREATE INDEX task_sort_created_desc ON task((-(seq::float8)), id);
 CREATE INDEX task_sort_created ON task((seq::float8), id);
+
+-- migration 48: requested artifacts precede incidental MCP lifecycle diagnostics in the task result.
+CREATE OR REPLACE VIEW task_view WITH (security_invoker = true) AS
+ SELECT t.id AS task_id, t.project_id, t.state, t.wait_reason,
+  coalesce((SELECT jsonb_object_agg(s.state, s.n) FROM (SELECT e.state, count(*) AS n FROM execution e WHERE e.task_id = t.id GROUP BY e.state) s), '{}') AS executions_by_state,
+  (SELECT count(*) FROM execution e WHERE e.task_id = t.id) AS execution_count,
+  (SELECT jsonb_build_object('tokens_input', sum(x.tokens_input), 'tokens_output', sum(x.tokens_output), 'tokens_cache_read', sum(x.tokens_cache_read), 'tokens_cache_write', sum(x.tokens_cache_write), 'wall_ms', sum(x.wall_ms), 'active_ms', sum(x.active_ms), 'cpu_ms', sum(x.cpu_ms), 'measured_wall', count(*) FILTER (WHERE x.wall_ms_basis = 'measured'), 'executions_with_totals', count(*))
+   FROM execution_totals x WHERE x.execution_id IN (SELECT e.id FROM execution e WHERE e.task_id = t.id)) AS totals,
+  (SELECT r.v FROM (SELECT jsonb_build_object('id', coalesce(a.legacy_id, a.id), 'artifactId', a.id, 'executionId', a.execution_id, 'path', a.name, 'mediaType', a.media_type, 'size', a.size, 'sha256', a.content_hash) AS v, a.seq, (a.name NOT LIKE 'mcp-lifecycle-%') AS deliverable, a.required FROM artifact a WHERE a.state = 'stored' AND a.execution_id IN (SELECT e.id FROM execution e WHERE e.task_id = t.id)
+   UNION ALL SELECT d.data - 'contentBase64', d.seq, (coalesce(d.data->>'path','') NOT LIKE 'mcp-lifecycle-%'), coalesce((d.data->>'required')::boolean,false) FROM document d WHERE d.kind = 'artifact' AND d.data->>'executionId' IN (SELECT e.id FROM execution e WHERE e.task_id = t.id)) r ORDER BY r.deliverable DESC, r.required DESC, r.seq DESC LIMIT 1) AS latest_result,
+  (SELECT coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'kind', q.kind, 'text', q.text, 'options', q.options) ORDER BY q.seq), '[]') FROM question q WHERE q.task_id = t.id AND q.state = 'open') AS open_questions
+ FROM task t;

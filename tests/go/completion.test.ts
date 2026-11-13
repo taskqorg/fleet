@@ -152,3 +152,37 @@ test('G5 a task left idle before the guard settles when the coordinator starts (
     assert.equal(c.sql(`SELECT count(*) FROM question WHERE task_id='${ids.bad}'`).trim(), '1');
   } finally { await c.stop(); }
 });
+
+test('Failed work report cannot solicit acceptance despite successful process; restart retires stale acceptance (requirement: fleet.md task completion truth; risk: exit zero offers incomplete work for acceptance)', async () => {
+  const c = await startCoordinator({name: 'completion-report'});
+  try {
+    const task = randomUUID(), execution = randomUUID(), question = randomUUID();
+    c.sql(`INSERT INTO task(id,project_id,title,state) VALUES('${task}','hello-world','incomplete work','in_progress');
+      INSERT INTO execution(id,kind,state,project_id,task_id,data) VALUES('${execution}','agent_run','succeeded','hello-world','${task}','{"report":{"outcome":"failed","summary":"not delivered","at":1}}');
+      INSERT INTO question(id,kind,task_id,text,asked_by) VALUES('${question}','acceptance','${task}','obsolete acceptance','fleet')`);
+    await c.restart();
+    assert.equal(c.sql(`SELECT state FROM question WHERE id='${question}'`).trim(), 'withdrawn');
+    assert.equal(c.sql(`SELECT state FROM task WHERE id='${task}'`).trim(), 'waiting');
+    assert.equal(c.sql(`SELECT kind FROM question WHERE task_id='${task}' AND state='open'`).trim(), 'operator_decision');
+    assert.equal(c.sql(`SELECT state FROM execution WHERE id='${execution}'`).trim(), 'succeeded');
+  } finally { await c.stop(); }
+});
+
+test('Ask rejects mixed modes and persists idempotent fresh questions (requirement: agent question contract; risk: continuation prose is interpreted as an unknown question ID and loses the blocker)', async () => {
+  const c = await startCoordinator({name: 'completion-ask'});
+  const call = async (op: string, body: unknown, status = 200) => {
+    const r = await fetch(c.base + '/api/ops/' + op, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: JSON.stringify(body)});
+    const result = await r.json(); assert.equal(r.status, status, JSON.stringify(result)); return result;
+  };
+  try {
+    const {sessionId} = await (await fetch(c.base + '/api/sessions', {method:'POST', headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:'{}'})).json();
+    assert.ok(sessionId);
+    const executionId = randomUUID(), requestId = randomUUID();
+    c.sql(`INSERT INTO execution(id,kind,state,session_id,project_id,data) VALUES('${executionId}','agent_run','running','${sessionId}','hello-world','{"id":"${executionId}","sessionId":"${sessionId}"}')`);
+    await call('ask', {executionId, requestId, question:'Which result is required?', resume:'continue after answer'}, 400);
+    const q = await call('ask', {executionId, requestId, question:'Which result is required?'});
+    assert.equal((await call('ask', {executionId, requestId, question:'Which result is required?'})).id, q.id);
+    assert.equal((await call('ask', {executionId, resume:q.id})).id, q.id);
+    await call('ask', {executionId, requestId, question:'A different question'}, 409);
+  } finally { await c.stop(); }
+});
