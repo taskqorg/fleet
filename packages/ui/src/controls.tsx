@@ -437,7 +437,7 @@ export const Skeleton = ({ rows }: { rows: number }) => (
 );
 export const Empty = ({ text, action }: { text: string; action?: ComponentChildren }) => <div class="empty" data-ui="status-states"><p>{text}</p>{action}</div>;
 export const ErrorBanner = ({ text, onRetry }: { text: string; onRetry?: () => void }) => (
-  <div class="err-banner" data-ui="status-states" role="alert"><Icon name="circle-alert" /><span>{text}</span><span class="grow" /><Button label="Retry" icon={actions.retry} onClick={onRetry} /></div>
+  <div class="err-banner" data-ui="status-states" role="alert"><Icon name="circle-alert" /><span>{text}</span><span class="grow" />{onRetry && <Button label="Retry" icon={actions.retry} onClick={onRetry} />}</div>
 );
 export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefresh?: () => void }) => (
   <span class="stale" data-ui="status-states">updated {age(at, now).text} <Button label="Refresh" icon={actions.retry} iconOnly onClick={onRefresh} /></span>
