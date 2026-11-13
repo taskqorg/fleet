@@ -14,6 +14,14 @@ EGM artifact directory: .egm
 
 Docs work: before editing `docs/`, read the open `docs-order` issue (label `docs`) and fix its findings in the files you touch. Working papers (briefs, review reports, handoffs, screenshots) are never committed; their substance goes into the pull request description ([docs governance](docs/designs/fleet-docs-governance.md)).
 
+## EGM project context
+
+- After the required attempt bootstrap above, when exploring, explaining, reviewing, debugging, or modifying this repository, start with the root [README.md](README.md).
+- Read the `README.md` contracts along the directory path to the relevant component before examining its source code.
+- Follow links into relevant child contracts as you narrow the task. Read only the contracts needed for the current task.
+- Use the documented interfaces, invariants, and side effects as project context. Verify details against source code when needed; source code takes precedence if documentation disagrees.
+- Require delegated subagents to follow the same process.
+
 ## Pull request lifecycle
 
 Rules: [delivery pipeline, section 8](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests). One task, one branch from `origin/main`, one pull request; no stacks.
