@@ -243,6 +243,7 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 	})
 	if err == nil {
 		a.publishPeople(people)
+		schedulePublish()
 	}
 	return skipped, err
 }
