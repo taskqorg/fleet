@@ -40,7 +40,7 @@ const VIEWS = Object.fromEntries(workspaces.filter(w => w.app).map(w => [w.id, [
 writeFileSync(new URL('screens.json', out), JSON.stringify(Object.keys(VIEWS)));
 const accent = tokens.color.light.accent;
 for (const [view, [name]] of Object.entries(VIEWS)) {
-  writeFileSync(new URL(`manifests/${view}.webmanifest`, out), JSON.stringify({ id: `/${view}`, name, short_name: name.replace('Fleet ', ''), start_url: `/${view}`, scope: `/${view}`, display: 'standalone', background_color: tokens.color.light.bg, theme_color: accent, icons: [
+  writeFileSync(new URL(`manifests/${view}.webmanifest`, out), JSON.stringify({ id: `/${view}`, name, short_name: name.replace('Fleet ', ''), start_url: `/${view}`, scope: '/', display: 'standalone', background_color: tokens.color.light.bg, theme_color: accent, icons: [
     { src: brand['fleet.svg'], sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
     ...[192, 512].map(size => ({ src: brand[`fleet-${size}.png`], sizes: `${size}x${size}`, type: 'image/png', purpose: 'any' })),
   ] }, null, 1));
@@ -52,7 +52,7 @@ const html = `<!doctype html>
 <link rel="stylesheet" href="/${cssName}">
 <link rel="icon" type="image/svg+xml" href="${brand['fleet.svg']}">
 <link rel="apple-touch-icon" sizes="180x180" href="${brand['fleet-180.png']}">
-<script>(function(){var v=location.pathname.split('/')[1];if(!${JSON.stringify(Object.keys(VIEWS))}.includes(v))v='overview';var l=document.createElement('link');l.rel='manifest';l.href='/manifests/'+v+'.webmanifest';document.head.appendChild(l)})()</script>
+<script>(function(){var v=location.pathname.split('/')[1];if(!${JSON.stringify(Object.keys(VIEWS))}.includes(v))v='overview';var l=document.createElement('link');l.rel='manifest';l.crossOrigin='use-credentials';l.href='/manifests/'+v+'.webmanifest';document.head.appendChild(l)})()</script>
 <script type="module" src="/${main}"></script>
 </head><body><div id="app"></div><noscript>Fleet needs JavaScript.</noscript></body></html>
 `;
