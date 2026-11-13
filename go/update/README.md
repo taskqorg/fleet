@@ -22,7 +22,8 @@
 ## Side effects
 
 - Downloads release metadata and archives, writes cached metadata and update state, installs release trees and symlinks, restarts services, and prunes obsolete releases ([update.go: `fetch`, `install`, `pruneReleases`](update.go)).
-- On PDS18 it may run `pg_dump`, write a trigger unit, copy the verified updater to its root-owned path, and update UI release files ([main.go: `runPDS18`, `installUpdater`](main.go), [trigger.go: `triggerFor`](trigger.go), [ui.go: `cycleUI`](ui.go)).
+- Executor mode may write the target-file trigger unit through `runExecutor` and `ensureTrigger` ([main.go](main.go), [trigger.go: `triggerFor`](trigger.go)).
+- On PDS18 it may run `pg_dump`, copy the verified updater to its root-owned path, and update UI release files ([main.go: `runPDS18`, `installUpdater`](main.go), [ui.go: `cycleUI`](ui.go)).
 
 ## Verification
 
