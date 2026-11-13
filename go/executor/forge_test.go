@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Requirement: publication stays in the configured GitHub repository; risk: an input URL redirects credentials.
@@ -57,8 +61,23 @@ func TestForgePublishDraft(t *testing.T) {
 	if !strings.Contains(enc(result), "/pull/1") || strings.Contains(enc(result), "invented-token") {
 		t.Fatal("invalid or leaking result")
 	}
+	if _, err := forge(M{"method": "tools/call", "params": M{"name": "delivery", "arguments": M{"action": "auto_merge"}}}, ctx); err == nil || !strings.Contains(err.Error(), "not granted") {
+		t.Fatal("auto-merge widened project authority")
+	}
 	ctx["branch"] = "fleet/other"
 	if _, err = forge(M{"method": "tools/call", "params": M{"name": "publish_draft", "arguments": M{"title": "fixture", "body": "fixture"}}}, ctx); err == nil {
 		t.Fatal("changed branch accepted")
+	}
+}
+
+// Requirement: readiness must release a hung external command; risk: a probe blocks dispatch forever.
+func TestCodingProbeHung(t *testing.T) {
+	c := exec.Command("/bin/sh", "-c", "sleep 30 & wait")
+	started := time.Now()
+	if _, err := boundedOutput(c, 20*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline, got %v", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("hung probe did not release")
 	}
 }

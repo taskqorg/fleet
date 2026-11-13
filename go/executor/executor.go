@@ -994,8 +994,8 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if err != nil || remote == "" || !forgeGranted(remote) || !filepath.IsAbs(store) {
 			return fail(1, "project-forge-unready")
 		}
-		context := M{"repositories": os.Getenv("FLEET_FORGE_REPOSITORIES"), "credentialHome": os.Getenv("HOME"), "repo": remote, "base": jStr(repo, "defaultBranch"), "branch": strings.TrimSpace(string(branchBytes)), "prefix": jStr(p, "project", "worktree", "branchPrefix"), "workdir": work, "home": commandHome(cmd), "store": store}
-		servers["project-forge"] = M{"command": exe(), "args": []any{"mcp", "project-forge", enc(context)}, "tools": []any{"publish_draft"}}
+		context := M{"repositories": os.Getenv("FLEET_FORGE_REPOSITORIES"), "credentialHome": os.Getenv("HOME"), "repo": remote, "base": jStr(repo, "defaultBranch"), "branch": strings.TrimSpace(string(branchBytes)), "prefix": jStr(p, "project", "worktree", "branchPrefix"), "autoMerge": jAt(p, "project", "integration", "autoMerge"), "mergeMethod": jStr(p, "project", "integration", "mergeMethod"), "workdir": work, "home": commandHome(cmd), "store": store}
+		servers["project-forge"] = M{"command": exe(), "args": []any{"mcp", "project-forge", enc(context)}, "tools": []any{"publish_draft", "delivery"}}
 	}
 	profiles := jArr(p, "agentConfig", "delegationProfiles")
 	if profiles == nil {

@@ -23,7 +23,8 @@ func codingTool(tool, home string) error {
 		c.Env = append(c.Env, "FLEET_PLAYWRIGHT_MODULE="+os.Getenv("FLEET_PLAYWRIGHT_MODULE"), "FLEET_BROWSER_EXECUTABLE="+os.Getenv("FLEET_BROWSER_EXECUTABLE"))
 	}
 	c.Dir = filepath.Dir(home)
-	return c.Run()
+	_, err := boundedOutput(c, probeWait)
+	return err
 }
 
 func commandHome(c *exec.Cmd) string {
