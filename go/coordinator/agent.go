@@ -1311,6 +1311,7 @@ func projectReadiness(q *Request, b doc) (doc, error) {
 		for k, v := range project {
 			pr[k] = v
 		}
+		pr["profileIds"] = project["roles"]
 		pr["roles"] = roles
 		if err := put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": hid, "projectId": pid, "kind": "readiness", "status": "pending", "payload": doc{"projectId": pid, "project": pr}}); err != nil {
 			return nil, err
@@ -1371,56 +1372,6 @@ func sessionAttach(q *Request, b doc) (doc, error) {
 	return doc{"sessionId": sid, "taskId": tid}, put(q, "session", s)
 }
 
-// pickAccount: the director's subscriptions first, then take-rule ones, ordered by the project's subscriptions list.
-func pickAccount(q *Request, harness, projectID, hostID, directedBy string) (string, error) {
-	order := []string{}
-	if p := projectSettingsOf(q, projectID); p != nil {
-		order = strList(p["subscriptions"])
-	}
-	ms, err := unscoped(q, func() ([]doc, error) {
-		return rows(q, "SELECT data FROM document WHERE kind='managed-account' ORDER BY seq")
-	})
-	if err != nil {
-		return "", err
-	}
-	best, bestRank := "", 1e18
-	for _, a := range ms {
-		if astr(a["intake"]) == "paused" || firstString(a["harness"], "codex") != harness {
-			continue
-		}
-		takes := slices.Contains(strList(mapOf(a["take"])["projects"]), projectID)
-		if astr(a["holder"]) != directedBy && !takes {
-			continue
-		}
-		ready := false
-		bs, _ := a["bindings"].([]any)
-		for _, x := range bs {
-			b, _ := x.(map[string]any)
-			if astr(b["readiness"]) == "ready" && (hostID == "" || astr(b["hostId"]) == hostID) {
-				ready = true
-			}
-		}
-		if !ready {
-			continue
-		}
-		rank := 1e6
-		if astr(a["holder"]) == directedBy {
-			rank = 0
-		}
-		if i := slices.Index(order, astr(a["name"])); i >= 0 {
-			rank += float64(i)
-		} else if i := slices.Index(order, astr(a["id"])); i >= 0 {
-			rank += float64(i)
-		} else {
-			rank += 1e5
-		}
-		if rank < bestRank {
-			best, bestRank = astr(a["name"]), rank
-		}
-	}
-	return best, nil
-}
-
 func sessionStart(q *Request, b doc) (doc, error) {
 	pid, err := strArg(b, "projectId", "projectId", 0)
 	if err != nil {
@@ -1461,11 +1412,6 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		}
 	}
 	account := astr(b["account"])
-	if account == "" {
-		if account, err = pickAccount(q, firstString(profile["harness"], "codex"), pid, astr(b["hostId"]), firstString(directedBy, ownerEmail(q))); err != nil {
-			return nil, err
-		}
-	}
 	taskID := ""
 	if _, ok := b["taskId"]; ok {
 		if taskID, err = taskFor(q, b["taskId"], pid, true); err != nil {

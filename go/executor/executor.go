@@ -976,14 +976,15 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			setEnv(cmd, key, value)
 		}
 	}
-	for _, tool := range jArr(p, "project", "execution", "tools") {
+	requirements := projectRequirements(jAt(p, "project"), jStr(p, "agentConfig", "id"))
+	for _, tool := range jArr(requirements, "tools") {
 		if err := codingTool(jStr(tool), commandHome(cmd)); err != nil {
 			return fail(1, "coding-tool-unready: "+jStr(tool))
 		}
 	}
 	observed := e.observeHarness(cmd, name)
 	servers := mcpAtRoot(selectedMCP, work)
-	if jAt(p, "project", "execution", "forge") == true {
+	if jAt(requirements, "forge") == true {
 		if reason := forgeReadiness(jAt(p, "project")); reason != "" {
 			return fail(1, reason)
 		}

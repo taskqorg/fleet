@@ -117,7 +117,7 @@ func listProfiles(q *Request) ([]doc, error) {
 var settingsDefaults = map[string]any{"contextSources": []any{}, "repos": []any{}, "environments": []any{}, "roles": doc{},
 	"worktree": doc{"envMode": "worktree", "baseRef": nil, "startFromOrigin": true, "branchPrefix": "fleet", "linkPaths": []any{}, "sharedDirectories": []any{}},
 	"scripts":  doc{"setup": nil, "teardown": nil}, "setupStart": "wait",
-	"execution":   doc{"tools": []any{}, "forge": false},
+	"execution":   doc{"tools": []any{}, "forge": false, "profiles": []any{}},
 	"integration": doc{"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "syncCheckoutAfterMerge": true},
 	"cleanup":     doc{"keepWhen": []any{"uncommitted", "unpushed", "teardown-failed"}}, "identity": nil, "subscriptions": []any{}}
 
@@ -141,7 +141,12 @@ func jsType(v any) string {
 
 func projectSettings(p doc) (doc, []string, error) {
 	unknown := []string{}
-	bad := func(k string) error { return fail(500, "Invalid project setting "+k) }
+	bad := func(k string) error {
+		if k == "execution.profiles" {
+			return fail(400, "Invalid project setting "+k)
+		}
+		return fail(500, "Invalid project setting "+k)
+	}
 	isObj := func(v any) bool { _, ok := v.(map[string]any); return ok }
 	isArr := func(v any) bool { _, ok := v.([]any); return ok }
 	check := func(k string, v, d any) error {
@@ -259,6 +264,16 @@ func projectSettings(p doc) (doc, []string, error) {
 				}
 				if err := check(k+"."+x, y, dv); err != nil {
 					return nil, nil, err
+				}
+				if k == "execution" && x == "profiles" {
+					seen := map[string]bool{}
+					for _, value := range anys(y) {
+						id, ok := value.(string)
+						if !ok || strings.TrimSpace(id) == "" || seen[id] {
+							return nil, nil, bad("execution.profiles")
+						}
+						seen[id] = true
+					}
 				}
 				if k == "execution" && x == "tools" {
 					for _, tool := range anys(y) {
