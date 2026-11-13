@@ -20,6 +20,8 @@ func num(v any) (float64, bool) {
 		return x, true
 	case int:
 		return float64(x), true
+	case int64:
+		return float64(x), true
 	case interface{ Float64() (float64, error) }:
 		f, err := x.Float64()
 		return f, err == nil
@@ -219,6 +221,7 @@ type codexSession struct {
 	steers                           map[float64]string
 	nextID                           float64
 	version                          any
+	turnStartedAtMs                  int64
 }
 
 func (s *codexSession) Initialize() map[string]any {
@@ -308,6 +311,9 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 		return []M{s.turnRequest()}, nil, false, nil
 	case isID(v, 3) && s.stage == 2:
 		s.turn, _ = str(jAt(v, "result", "turn", "id"))
+		if s.turn != "" && s.turnStartedAtMs == 0 {
+			s.turnStartedAtMs = nowMs()
+		}
 		s.stage = 3
 		return nil, nil, false, nil
 	}
@@ -321,6 +327,9 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 	}
 	if v["method"] == "turn/started" && s.turn == "" {
 		s.turn, _ = str(jAt(p, "turn", "id"))
+		if s.turn != "" && s.turnStartedAtMs == 0 {
+			s.turnStartedAtMs = nowMs()
+		}
 	}
 	if t, ok := str(jAt(p, "turnId")); ok && t != s.turn {
 		return nil, nil, false, nil
@@ -363,7 +372,16 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 		if jAt(p, "turn", "status") == "completed" {
 			t = "turn.completed"
 		}
-		return nil, M{"type": t, "error": jAt(p, "turn", "error"), "native": v}, true, nil
+		ev := M{"type": t, "error": jAt(p, "turn", "error"), "native": v}
+		dur := jAt(p, "turn", "durationMs")
+		if dur == nil && s.turnStartedAtMs > 0 {
+			dur = max(nowMs()-s.turnStartedAtMs, int64(0))
+		}
+		s.turnStartedAtMs = 0
+		if dur != nil {
+			ev["durationMs"] = dur
+		}
+		return nil, ev, true, nil
 	}
 	return nil, nil, false, nil
 }

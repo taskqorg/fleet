@@ -841,6 +841,70 @@
         "unparsed"
       ]
     },
+    "ToolCallCounter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "calls",
+        "errors"
+      ]
+    },
+    "ExecutionResourceMissingReason": {
+      "type": "string",
+      "enum": [
+        "no_sample",
+        "executor_version",
+        "os_unsupported",
+        "interrupted"
+      ]
+    },
+    "ExecutionResourceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpuMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peakMemoryBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "activeMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turnCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cpuMissingReason": {
+          "$ref": "#/$defs/ExecutionResourceMissingReason"
+        },
+        "memoryMissingReason": {
+          "$ref": "#/$defs/ExecutionResourceMissingReason"
+        },
+        "toolCalls": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ToolCallCounter"
+          }
+        },
+        "toolCallsOther": {
+          "$ref": "#/$defs/ToolCallCounter"
+        }
+      }
+    },
     "ProcessClosed": {
       "type": "object",
       "additionalProperties": false,
@@ -863,6 +927,9 @@
         "stderrTail": {
           "$comment": "the last 2000 bytes of the harness stderr when it exited non-zero (the coordinator records its last line as the execution problem)",
           "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/ExecutionResourceSummary"
         }
       },
       "required": [

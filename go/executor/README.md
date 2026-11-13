@@ -24,6 +24,7 @@
 ## Side effects
 
 - Starts and stops native processes, creates and removes worktrees and MCP-owner directories, writes session files and a SQLite journal, and uploads artifacts ([executor.go: `run`, `release`](executor.go), [worktree.go: `teardown`](worktree.go), [upload.go: `sendParts`, `spawnTransfers`](upload.go)).
+- Samples owned process trees on a 100 ms loop via `observe()`, records harness tool/turn metrics, and emits `ExecutionResourceSummary` on `process.closed` without periodic `resource.observation` events ([executor.go: `tickOne`, `buildExecutionResourceSummary`](executor.go), [harness_blocks.go: `runMetrics`](harness_blocks.go)).
 - Runs approved local Git, harness, project-script, browser, and account-limit commands; it queues coordinator receipts and events ([executor.go: `event`, `receipt`](executor.go), [accounts.go: `readLimits`](accounts.go)).
 - Readiness and account observation read host configuration and native CLI state without sending tokens or credential contents ([readiness.go: `readiness`](readiness.go), [accounts.go: `accountInspect`](accounts.go)).
 

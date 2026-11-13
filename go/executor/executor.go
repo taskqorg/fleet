@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -188,7 +187,6 @@ type live struct {
 	cleanupUnknown bool
 	lines          chan string // closed at stdout EOF
 	eof            bool
-	lastSample     time.Time
 	wire           *wire
 	// Script commands: the process group stop and timeout kill, the deadline, and the trial worktree (top, path).
 	group     int
@@ -197,6 +195,7 @@ type live struct {
 	timeoutMs *int64 // the script payload's timeout_ms, for the script.timeout event
 	trial     *[2]string
 	blocks    Blocks
+	metrics   *runMetrics
 	// Resources of the owned process tree (fleet-telemetry.md, Process readings): start, peak resident bytes, and each
 	// pid's last CPU seconds (a gone pid keeps its last reading).
 	started time.Time
@@ -212,7 +211,13 @@ func (l *live) account(table []proc) {
 	}
 	var rss uint64
 	for _, p := range table {
-		if _, ok := l.owned[p.pid]; ok {
+		if strings.HasPrefix(p.stat, "Z") {
+			continue
+		}
+		if expected, ok := l.owned[p.pid]; ok {
+			if id, err := identity(p.pid); err != nil || id != expected {
+				continue
+			}
 			rss += p.rssKB * 1024
 			l.cpu[p.pid] = max(l.cpu[p.pid], p.cpu)
 		}
@@ -1074,6 +1079,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			return err
 		}
 	}
+	gatewayConns := map[string]bool{}
 	for _, spec := range granted {
 		conn := jStr(spec, "name")
 		if conn == "" || !onlyBytes(conn, func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' }) {
@@ -1090,6 +1096,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			return fail(1, "MCP server name collides with a granted connection")
 		}
 		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec), runFile}, "tools": tools, "env": []any{"HOME"}}
+		gatewayConns[conn] = true
 	}
 	// Built-in web for pipeline agent steps: off unless the step's run sets webRoute builtin.
 	if name == "codex" && sp.WebRoute != nil {
@@ -1204,7 +1211,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	pw.Close()
 	exited := make(chan struct{})
-	l := &live{mcp: mcp, cmd: cmd, exited: exited, command: c, native: native, seq: 2, owned: map[int]string{}, lastSample: time.Now(), started: time.Now()}
+	l := &live{mcp: mcp, cmd: cmd, exited: exited, command: c, native: native, seq: 2, owned: map[int]string{}, metrics: newRunMetrics(gatewayConns), started: time.Now()}
 	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
 	kill := func() { cmd.Process.Kill(); <-exited; closeAll(); e.release(execution) }
 	if nativeInput != nil && !protocol {
@@ -1221,6 +1228,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		return e.finish(c, "unknown", native)
 	}
 	l.owned[cmd.Process.Pid] = ident
+	_ = l.observe()
 	// Harness commands run in their own process group (newCmd): a restart can also kill descendants not yet observed.
 	if err := e.ownGroup(execution, cmd.Process.Pid, l); err != nil {
 		kill()
@@ -1460,7 +1468,7 @@ func (e *executor) script(c M, execution, session string) error {
 	}
 	pid := cmd.Process.Pid
 	exited := make(chan struct{})
-	l := &live{mcp: mcp, cmd: cmd, exited: exited, command: c, seq: 2, completed: true, owned: map[int]string{}, lastSample: time.Now(), started: time.Now(), group: pid, trial: trial}
+	l := &live{mcp: mcp, cmd: cmd, exited: exited, command: c, seq: 2, completed: true, owned: map[int]string{}, started: time.Now(), group: pid, trial: trial}
 	go func() { cmd.Wait(); l.state = cmd.ProcessState; close(exited) }()
 	ident, err := identity(pid)
 	if err != nil {
@@ -1471,6 +1479,7 @@ func (e *executor) script(c M, execution, session string) error {
 		return e.finish(c, "unknown", "")
 	}
 	l.owned[pid] = ident
+	_ = l.observe()
 	if err := e.ownGroup(execution, pid, l); err != nil {
 		syscall.Kill(-pid, syscall.SIGKILL)
 		<-exited
@@ -1630,9 +1639,13 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			if h != nil {
 				event = h.Normalize(event)
 			}
+			atMs := nowMs()
+			if l.metrics != nil {
+				l.metrics.observeEvent(name, event, atMs)
+			}
 			projection := M{}
 			if l.blocks != nil {
-				projection = l.blocks.Project(name, event, uint64(nowMs()))
+				projection = l.blocks.Project(name, event, uint64(atMs))
 			}
 			if n, ok := projection["session"].(string); ok {
 				sid, err := cmdID(l.command, "sessionId")
@@ -1674,13 +1687,6 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			drained = true
 		}
 	}
-	if time.Since(l.lastSample) >= 2*time.Second {
-		l.seq++
-		if err := e.event(l.command, l.seq, contract.FleetEventTypeResourceObservation, resources(l.cmd.Process.Pid, e.root)); err != nil {
-			return false, err
-		}
-		l.lastSample = time.Now()
-	}
 	if exited {
 		alive, err := l.aliveOwned()
 		var unknown identityUnknown
@@ -1712,9 +1718,11 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		c := int64(l.state.ExitCode())
 		code = &c
 	}
+	_ = l.observe()
+	res := buildExecutionResourceSummary(l)
 	executionSpan(execution, l)
 	l.seq++
-	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, StderrTail: stderrTail(e.commandDir(jStr(l.command, "sessionId"), jAt(l.command, "payload")), execution, code)}); err != nil {
+	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, Resources: res, StderrTail: stderrTail(e.commandDir(jStr(l.command, "sessionId"), jAt(l.command, "payload")), execution, code)}); err != nil {
 		return false, err
 	}
 	sid, err := cmdID(l.command, "sessionId")
@@ -1866,32 +1874,40 @@ func (e *executor) stores() []contract.StoreReport {
 	return e.storeLast
 }
 
-func resources(pid int, root string) M {
-	var fields []float64
-	if o, err := exec.Command("/bin/ps", "-p", strconv.Itoa(pid), "-o", "%cpu=,rss=").Output(); err == nil {
-		for _, s := range strings.Fields(string(o)) {
-			if f, err := strconv.ParseFloat(s, 64); err == nil {
-				fields = append(fields, f)
-			}
+func buildExecutionResourceSummary(l *live) *contract.ExecutionResourceSummary {
+	out := &contract.ExecutionResourceSummary{}
+	if l.metrics != nil {
+		l.metrics.applyTo(harnessName(jAt(l.command, "payload")), out)
+	} else if !l.started.IsZero() {
+		active := max(int64(0), time.Since(l.started).Milliseconds())
+		out.ActiveMs = &active
+	}
+	missingReason := func() *contract.ExecutionResourceMissingReason {
+		r := contract.ExecutionResourceMissingReasonNoSample
+		if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+			r = contract.ExecutionResourceMissingReasonOsUnsupported
+		} else if l.stopped || l.timedOut {
+			r = contract.ExecutionResourceMissingReasonInterrupted
 		}
+		return &r
 	}
-	var cpu, rss, disk any
-	if len(fields) > 0 {
-		cpu = fields[0]
-	}
-	if len(fields) > 1 {
-		rss = fields[1] * 1024
-	}
-	if o, err := exec.Command("/usr/bin/du", "-sk", root).Output(); err == nil {
-		if f := strings.Fields(string(o)); len(f) > 0 {
-			if v, err := strconv.ParseUint(f[0], 10, 64); err == nil {
-				disk = v * 1024
-			}
+	if len(l.cpu) > 0 {
+		var cpuSec float64
+		for _, sec := range l.cpu {
+			cpuSec += sec
 		}
+		cpuMs := int64(math.Round(cpuSec * 1000))
+		out.CpuMs = &cpuMs
+	} else {
+		out.CpuMissingReason = missingReason()
 	}
-	return M{"cpuPercent": cpu, "residentBytes": rss, "diskBytes": disk, "cost": nil, "ioBytes": nil, "coverage": M{
-		"cpu": "native leader ps lifetime average, excludes descendants", "ram": "native leader rss only",
-		"disk": "entire executor data directory allocated bytes; not per execution", "cost": "unknown subscription allocation", "io": "unknown"}}
+	if l.peakRSS > 0 {
+		peak := int64(l.peakRSS)
+		out.PeakMemoryBytes = &peak
+	} else {
+		out.MemoryMissingReason = missingReason()
+	}
+	return out
 }
 
 // observe adds descendants of owned processes, each with its incarnation, confirming the parent link after capture.

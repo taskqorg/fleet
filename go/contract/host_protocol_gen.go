@@ -537,6 +537,59 @@ func (v *EventData) Validate() error {
 	return nil
 }
 
+type ExecutionResourceMissingReason string
+
+const (
+	ExecutionResourceMissingReasonNoSample        ExecutionResourceMissingReason = "no_sample"
+	ExecutionResourceMissingReasonExecutorVersion ExecutionResourceMissingReason = "executor_version"
+	ExecutionResourceMissingReasonOsUnsupported   ExecutionResourceMissingReason = "os_unsupported"
+	ExecutionResourceMissingReasonInterrupted     ExecutionResourceMissingReason = "interrupted"
+)
+
+// ExecutionResourceMissingReasonValues lists every ExecutionResourceMissingReason in schema order.
+var ExecutionResourceMissingReasonValues = []ExecutionResourceMissingReason{ExecutionResourceMissingReasonNoSample, ExecutionResourceMissingReasonExecutorVersion, ExecutionResourceMissingReasonOsUnsupported, ExecutionResourceMissingReasonInterrupted}
+
+// Valid: v is one of the schema's values.
+func (v ExecutionResourceMissingReason) Valid() bool {
+	for _, x := range ExecutionResourceMissingReasonValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ExecutionResourceSummary struct {
+	ActiveMs            *int64                          `json:"activeMs,omitempty"`
+	CpuMissingReason    *ExecutionResourceMissingReason `json:"cpuMissingReason,omitempty"`
+	CpuMs               *int64                          `json:"cpuMs,omitempty"`
+	MemoryMissingReason *ExecutionResourceMissingReason `json:"memoryMissingReason,omitempty"`
+	PeakMemoryBytes     *int64                          `json:"peakMemoryBytes,omitempty"`
+	ToolCalls           map[string]ToolCallCounter      `json:"toolCalls,omitempty"`
+	ToolCallsOther      *ToolCallCounter                `json:"toolCallsOther,omitempty"`
+	TurnCount           *int64                          `json:"turnCount,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ExecutionResourceSummary) Validate() error {
+	if v.CpuMissingReason != nil {
+		if err := Check(v.CpuMissingReason, "cpuMissingReason"); err != nil {
+			return err
+		}
+	}
+	if v.MemoryMissingReason != nil {
+		if err := Check(v.MemoryMissingReason, "memoryMissingReason"); err != nil {
+			return err
+		}
+	}
+	if v.ToolCallsOther != nil {
+		if err := Check(v.ToolCallsOther, "toolCallsOther"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // FleetEventType: Event types the executor itself originates. Native harness records keep their own open type. Readers log an unknown type as a problem, never fail (hosts may run another release during self-update).
 type FleetEventType string
 
@@ -910,15 +963,21 @@ func (v ProblemKind) Valid() bool {
 }
 
 type ProcessClosed struct {
-	CleanupUnknown                  bool    `json:"cleanupUnknown"`
-	ExitCode                        *int64  `json:"exitCode"`
-	ObservedOwnedProcessesRemaining *bool   `json:"observedOwnedProcessesRemaining,omitempty"`
-	StderrTail                      *string `json:"stderrTail,omitempty"`
-	StdoutClosed                    bool    `json:"stdoutClosed"`
+	CleanupUnknown                  bool                      `json:"cleanupUnknown"`
+	ExitCode                        *int64                    `json:"exitCode"`
+	ObservedOwnedProcessesRemaining *bool                     `json:"observedOwnedProcessesRemaining,omitempty"`
+	Resources                       *ExecutionResourceSummary `json:"resources,omitempty"`
+	StderrTail                      *string                   `json:"stderrTail,omitempty"`
+	StdoutClosed                    bool                      `json:"stdoutClosed"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProcessClosed) Validate() error {
+	if v.Resources != nil {
+		if err := Check(v.Resources, "resources"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1311,6 +1370,16 @@ func (v *Teardown) Validate() error {
 			return err
 		}
 	}
+	return nil
+}
+
+type ToolCallCounter struct {
+	Calls  int64 `json:"calls"`
+	Errors int64 `json:"errors"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ToolCallCounter) Validate() error {
 	return nil
 }
 

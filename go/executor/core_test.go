@@ -257,3 +257,100 @@ func TestReadinessTyped(t *testing.T) {
 		t.Fatal(b)
 	}
 }
+
+// Requirement: executor resource summary rides process.closed with accurate active/CPU/memory metrics and missing reasons without periodic resource.observation spam.
+// Risk: 2s observation polling floods coordinator change logs, or missing ps samples/interrupted runs misreport or omit resource summary fields.
+func TestProcessClosedCarriesResourceSummaryWithoutObservationSpam(t *testing.T) {
+	e, _ := scriptExecutor(t)
+	if err := e.run(M{"id": "c1", "executionId": "x1", "sessionId": "s1", "kind": "script", "payload": M{"command": "sleep 2.1; echo ok"}}); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, e, "x1")
+
+	rs, err := e.db.Query("SELECT body FROM outbox WHERE route='/api/hosts/events'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Close()
+
+	var obsCount, closedCount int
+	var closedData json.RawMessage
+	for rs.Next() {
+		var body string
+		if err := rs.Scan(&body); err != nil {
+			t.Fatal(err)
+		}
+		var env contract.HostEvents
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range env.Events {
+			switch ev.Type {
+			case string(contract.FleetEventTypeResourceObservation):
+				obsCount++
+			case string(contract.FleetEventTypeProcessClosed):
+				closedCount++
+				closedData = ev.Data
+			}
+		}
+	}
+	if obsCount != 0 {
+		t.Fatalf("expected 0 resource.observation events, got %d", obsCount)
+	}
+	if closedCount != 1 {
+		t.Fatalf("expected 1 process.closed event, got %d", closedCount)
+	}
+
+	var pc contract.ProcessClosed
+	if err := json.Unmarshal(closedData, &pc); err != nil {
+		t.Fatal(err)
+	}
+	if err := contract.Check(&pc, "ProcessClosed"); err != nil {
+		t.Fatal(err)
+	}
+	if pc.Resources == nil {
+		t.Fatal("expected ProcessClosed.Resources to be populated")
+	}
+	if pc.Resources.ActiveMs == nil || *pc.Resources.ActiveMs < 2000 {
+		t.Fatalf("expected ActiveMs >= 2000, got %v", pc.Resources.ActiveMs)
+	}
+	if pc.Resources.CpuMs == nil || pc.Resources.CpuMissingReason != nil {
+		t.Fatalf("expected CpuMs populated and CpuMissingReason nil, got cpu=%v reason=%v", pc.Resources.CpuMs, pc.Resources.CpuMissingReason)
+	}
+	if pc.Resources.PeakMemoryBytes == nil || *pc.Resources.PeakMemoryBytes <= 0 || pc.Resources.MemoryMissingReason != nil {
+		t.Fatalf("expected PeakMemoryBytes > 0 and MemoryMissingReason nil, got rss=%v reason=%v", pc.Resources.PeakMemoryBytes, pc.Resources.MemoryMissingReason)
+	}
+
+	noSample := buildExecutionResourceSummary(&live{})
+	if err := contract.Check(noSample, "ExecutionResourceSummary"); err != nil {
+		t.Fatal(err)
+	}
+	if noSample.CpuMissingReason == nil || *noSample.CpuMissingReason != contract.ExecutionResourceMissingReasonNoSample {
+		t.Fatalf("expected cpuMissingReason=no_sample, got %v", noSample.CpuMissingReason)
+	}
+	if noSample.MemoryMissingReason == nil || *noSample.MemoryMissingReason != contract.ExecutionResourceMissingReasonNoSample {
+		t.Fatalf("expected memoryMissingReason=no_sample, got %v", noSample.MemoryMissingReason)
+	}
+
+	interrupted := buildExecutionResourceSummary(&live{stopped: true})
+	if err := contract.Check(interrupted, "ExecutionResourceSummary"); err != nil {
+		t.Fatal(err)
+	}
+	if interrupted.CpuMissingReason == nil || *interrupted.CpuMissingReason != contract.ExecutionResourceMissingReasonInterrupted {
+		t.Fatalf("expected cpuMissingReason=interrupted, got %v", interrupted.CpuMissingReason)
+	}
+	if interrupted.MemoryMissingReason == nil || *interrupted.MemoryMissingReason != contract.ExecutionResourceMissingReasonInterrupted {
+		t.Fatalf("expected memoryMissingReason=interrupted, got %v", interrupted.MemoryMissingReason)
+	}
+
+	timedOut := buildExecutionResourceSummary(&live{timedOut: true})
+	if err := contract.Check(timedOut, "ExecutionResourceSummary"); err != nil {
+		t.Fatal(err)
+	}
+	if timedOut.CpuMissingReason == nil || *timedOut.CpuMissingReason != contract.ExecutionResourceMissingReasonInterrupted {
+		t.Fatalf("expected timedOut cpuMissingReason=interrupted, got %v", timedOut.CpuMissingReason)
+	}
+	if timedOut.MemoryMissingReason == nil || *timedOut.MemoryMissingReason != contract.ExecutionResourceMissingReasonInterrupted {
+		t.Fatalf("expected timedOut memoryMissingReason=interrupted, got %v", timedOut.MemoryMissingReason)
+	}
+}
