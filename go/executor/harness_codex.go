@@ -246,8 +246,12 @@ func (s *codexSession) config() any {
 }
 
 func (s *codexSession) turnRequest() M {
-	return M{"id": 3, "method": "turn/start", "params": M{"threadId": s.thread, "model": s.profile["model"], "effort": s.profile["effort"],
-		"input": []any{M{"type": "text", "text": s.profile["text"], "text_elements": []any{}}}}}
+	params := M{"threadId": s.thread, "model": s.profile["model"], "effort": s.profile["effort"],
+		"input": []any{M{"type": "text", "text": s.profile["text"], "text_elements": []any{}}}}
+	if has(s.profile, "writableRoots") {
+		params["sandboxPolicy"] = M{"type": "workspaceWrite", "writableRoots": s.profile["writableRoots"], "networkAccess": s.profile["gitNetwork"] == true}
+	}
+	return M{"id": 3, "method": "turn/start", "params": params}
 }
 
 func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]any, bool, error) {

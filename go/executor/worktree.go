@@ -408,3 +408,34 @@ func teardown(dir, session, top string, project any, deleteBranch bool) contract
 func refusedTeardown(reason string) contract.Teardown {
 	return contract.Teardown{Removed: false, Reason: &reason}
 }
+
+// nativeGitRoots grants this checkout's common metadata and the linked worktree's more-specific admin directory.
+func nativeGitRoots(checkout, work string) ([]any, error) {
+	read := func(dir, arg string) (string, error) {
+		b, err := hardenedGit("-C", dir, "rev-parse", "--path-format=absolute", arg).Output()
+		if err != nil {
+			return "", err
+		}
+		return canon(strings.TrimSpace(string(b)))
+	}
+	common, err := read(checkout, "--git-common-dir")
+	if err != nil {
+		return nil, err
+	}
+	own, err := read(work, "--git-common-dir")
+	if err != nil {
+		return nil, err
+	}
+	admin, err := read(work, "--absolute-git-dir")
+	if err != nil {
+		return nil, err
+	}
+	if common != own || !under(admin, common) {
+		return nil, errors.New("native Git worktree ownership mismatch")
+	}
+	roots := []any{common}
+	if admin != common {
+		roots = append(roots, admin)
+	}
+	return roots, nil
+}
