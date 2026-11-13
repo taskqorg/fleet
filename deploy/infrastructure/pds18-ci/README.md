@@ -56,7 +56,7 @@ logind keeps users' IPC: `RemoveIPC=no` in `/etc/systemd/logind.conf.d/50-fleet-
 
 ## Rollback
 
-To take the pool out of routing without a pull request, stop the runner services (`systemctl stop 'actions.runner.*'` in the guest): the heartbeat goes stale and `ci.yml` routes hosted within 20 minutes, or at once for any run whose pool job waited 2 minutes. Drain before stopping; do not interrupt uncertain work. To remove it, restore hosted-only jobs through the normal reviewed PR, remove only the verified registrations with the supported GitHub API, stop/disable `fleet-ci-vm.service`, and remove only `table inet fleet_ci` after the VM is stopped. Leave existing firewall tables and production services alone. Keep guest disk/evidence for review; deletion is a separate explicit action.
+To take the pool out of routing without a pull request, stop the runner services (`systemctl stop 'actions.runner.*'` in the guest): the heartbeat goes stale and `ci.yml` routes hosted within 40 minutes, or at once for any run whose pool job waited 2 minutes. Drain before stopping; do not interrupt uncertain work. To remove it, restore hosted-only jobs through the normal reviewed PR, remove only the verified registrations with the supported GitHub API, stop/disable `fleet-ci-vm.service`, and remove only `table inet fleet_ci` after the VM is stopped. Leave existing firewall tables and production services alone. Keep guest disk/evidence for review; deletion is a separate explicit action.
 
 ## Interface
 
