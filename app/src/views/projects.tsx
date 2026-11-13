@@ -1,10 +1,10 @@
 // Projects configuration & resource analytics (docs/design-system/pages/projects.md).
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   AreaChart, Button, Choice, CodeEditor, CostFigures, DetailSection, Empty, ErrorBanner, Icon,
   KvRow, ListDetail, Num, SearchField, SettingField, Totals, VirtualList, matchSearch,
-  msMeasured, numMeasured, type ChartBucket, type ChartSeries, type TotalItem,
+  msMeasured, numMeasured, type ChartBucket, type ChartSeries, type Measured, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { op, useAlive, writeOnce, type Ops } from '../api.ts';
@@ -52,18 +52,25 @@ function shortBucketLabel(key: string, grain: GrainKey): string {
   return key.length >= 10 ? key.slice(5, 10) : key;
 }
 
-function sumTokens(m: AnalyticsReply['rows'][number]['measures']): { value: number | null; basis: 'measured' | 'estimated' | 'subscription' | 'unavailable' } {
-  const parts = [m.tokens_input, m.tokens_output, m.tokens_cache_read, m.tokens_cache_write, m.tokens_reasoning].filter(Boolean);
-  if (!parts.length) return { value: null, basis: 'unavailable' };
-  let sum = 0;
-  let known = false;
-  let basis: 'measured' | 'estimated' | 'subscription' | 'unavailable' = 'measured';
-  for (const p of parts) {
-    if (p.value != null) { sum += p.value; known = true; }
-    if (p.basis === 'estimated') basis = 'estimated';
-    else if (p.basis === 'unavailable' && !known) basis = 'unavailable';
+function sumTokens(m: AnalyticsReply['rows'][number]['measures']): Measured {
+  const req = [m.tokens_input, m.tokens_output, m.tokens_cache_read, m.tokens_cache_write].filter((p): p is NonNullable<typeof p> => !!p);
+  const all = m.tokens_reasoning ? [...req, m.tokens_reasoning] : req;
+  if (!all.length) return { value: null, basis: 'unavailable' };
+  let sum = 0, known = 0, sub = false, est = false, partial: string | undefined;
+  for (const p of all) {
+    if (p.value != null) {
+      sum += p.value;
+      known++;
+      if (p.basis === 'subscription') sub = true;
+      else if (p.basis === 'estimated') est = true;
+      if (p.partial && !partial) partial = p.partial;
+    } else if (p !== m.tokens_reasoning && p.basis === 'unavailable' && !partial) {
+      partial = 'incomplete telemetry';
+    }
   }
-  return { value: known ? sum : null, basis: known ? basis : 'unavailable' };
+  if (known === 0) return { value: null, basis: 'unavailable' };
+  const basis: Measured['basis'] = est ? 'estimated' : sub ? 'subscription' : 'measured';
+  return { value: sum, basis, ...(partial ? { partial } : {}) };
 }
 
 export function Projects({ id }: { id?: string }) {
@@ -285,19 +292,23 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
     const h = initialSearch?.get('harness'); if (h) out.harness = [h];
     const p = initialSearch?.get('pipeline'); if (p) out.pipeline = [p];
     const pr = initialSearch?.get('profile_id'); if (pr) out.profile_id = [pr];
+    const pv = initialSearch?.get('pipeline_revision'); if (pv) out.pipeline_revision = [pv];
     return out;
   });
   const [trend, setTrend] = useState<AnalyticsReply | null>(null);
   const [breakdown, setBreakdown] = useState<AnalyticsReply | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [trendErr, setTrendErr] = useState<string | null>(null);
+  const [breakErr, setBreakErr] = useState<string | null>(null);
+  const [costCur, setCostCur] = useState<string>('USD');
+  const [rev, setRev] = useState(0);
 
-  const now = Date.now();
+  const now = useMemo(() => Date.now(), [projectId, win, grain, rev]);
   const from = now - WINDOW_MS[win];
   const filterKey = JSON.stringify(filters);
 
   useEffect(() => {
     let live = true;
-    setError(null);
+    setTrendErr(null);
     op('analytics_query', {
       window: { from, to: now },
       dimensions: [grain],
@@ -306,15 +317,16 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
       ...(projectId ? { projectId } : {}),
     }).then(
       r => { if (live) setTrend(r); },
-      e => { if (live) setError(String(e?.message ?? e)); },
+      e => { if (live) setTrendErr(String(e?.message ?? e)); },
     );
     return () => { live = false; };
-  }, [projectId, win, grain, filterKey]);
+  }, [projectId, win, grain, filterKey, now, rev]);
 
   useEffect(() => {
     let live = true;
+    setBreakErr(null);
     const range = bucket ? parseBucketMs(bucket, grain) : null;
-    const bw = range ? { from: range[0], to: range[1] } : { from, to: now };
+    const bw = range ? { from: range[0], to: Math.min(range[1], now) } : { from, to: now };
     op('analytics_query', {
       window: bw,
       dimensions: [dim],
@@ -323,10 +335,10 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
       ...(projectId ? { projectId } : {}),
     }).then(
       r => { if (live) setBreakdown(r); },
-      e => { if (live) setError(String(e?.message ?? e)); },
+      e => { if (live) setBreakErr(String(e?.message ?? e)); },
     );
     return () => { live = false; };
-  }, [projectId, win, grain, dim, bucket, filterKey]);
+  }, [projectId, win, grain, dim, bucket, filterKey, now, rev]);
 
   const changeWin = (w: WindowKey) => {
     setWin(w);
@@ -337,17 +349,27 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
 
   const dimsAvail = projectId ? DIMS.filter(d => d.id !== 'project') : DIMS;
   const activeDim = dimsAvail.some(d => d.id === dim) ? dim : dimsAvail[0].id;
-  const trendRows = [...(trend?.rows ?? [])].sort((a, b) => (a.dimensions[grain] ?? '').localeCompare(b.dimensions[grain] ?? ''));
+  const allTrendRows = trend?.rows ?? [];
+  const unkBucketRuns = allTrendRows.find(r => r.dimensions[grain] === 'unknown')?.measures.executions?.value ?? 0;
+  const trendRows = allTrendRows
+    .filter(r => parseBucketMs(r.dimensions[grain] ?? '', grain) != null)
+    .sort((a, b) => (a.dimensions[grain] ?? '').localeCompare(b.dimensions[grain] ?? ''));
   const totalM = trend?.totals.measures;
+  const execM = numMeasured(totalM?.executions);
+  const wallM = numMeasured(totalM?.wall_ms, 0.001);
+  const cpuM = numMeasured(totalM?.cpu_ms, 0.001);
+  const peakM = numMeasured(totalM?.peak_memory_bytes);
   const totalTokens = totalM ? sumTokens(totalM) : null;
+  const callsM = numMeasured(totalM?.calls);
+  const hasTotalCost = !!trend?.totals.cost.some(c => (c.value !== null && c.basis !== 'unavailable') || c.basis === 'subscription');
   const totalItems: TotalItem[] = trend ? [
-    { label: 'Executions', m: numMeasured(totalM?.executions), kind: 'count', note: totalM?.failed?.value ? `${totalM.failed.value} failed` : undefined },
-    { label: 'Wall', m: numMeasured(totalM?.wall_ms, 0.001), kind: 'duration' },
-    ...(totalM?.cpu_ms?.value != null ? [{ label: 'CPU', m: numMeasured(totalM.cpu_ms, 0.001), kind: 'duration' } satisfies TotalItem] : []),
-    ...(totalM?.peak_memory_bytes?.value != null ? [{ label: 'Peak memory', m: numMeasured(totalM.peak_memory_bytes), kind: 'bytes' } satisfies TotalItem] : []),
-    ...(totalTokens && totalTokens.value != null ? [{ label: 'Tokens', m: totalTokens, kind: 'count' } satisfies TotalItem] : []),
-    ...(totalM?.calls?.value ? [{ label: 'Tools', m: numMeasured(totalM.calls), kind: 'count' } satisfies TotalItem] : []),
-    ...(trend.totals.cost.length ? [{ label: 'Cost', cost: trend.totals.cost, showUnavailable: true } satisfies TotalItem] : []),
+    ...(execM.basis !== 'unavailable' ? [{ label: 'Executions', m: execM, kind: 'count' as const, note: totalM?.failed?.value ? `${totalM.failed.value} failed` : undefined }] : []),
+    ...(wallM.basis !== 'unavailable' ? [{ label: 'Wall', m: wallM, kind: 'duration' as const }] : []),
+    ...(cpuM.basis !== 'unavailable' ? [{ label: 'CPU', m: cpuM, kind: 'duration' as const }] : []),
+    ...(peakM.basis !== 'unavailable' ? [{ label: 'Peak memory', m: peakM, kind: 'bytes' as const }] : []),
+    ...(totalTokens && totalTokens.basis !== 'unavailable' ? [{ label: 'Tokens', m: totalTokens, kind: 'count' as const }] : []),
+    ...(totalM?.calls?.value && callsM.basis !== 'unavailable' ? [{ label: 'Tools', m: callsM, kind: 'count' as const }] : []),
+    ...(hasTotalCost ? [{ label: 'Cost', cost: trend.totals.cost, showUnavailable: false }] : []),
   ] : [];
 
   const buckets: ChartBucket[] = trendRows.map(r => {
@@ -362,27 +384,46 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
     };
   });
 
-  const valOf = (r: AnalyticsReply['rows'][number]): number => {
-    if (metric === 'executions') return r.measures.executions?.value ?? 0;
-    if (metric === 'cost') return r.cost.reduce((n, c) => n + (c.value ?? 0), 0);
-    return sumTokens(r.measures).value ?? 0;
-  };
-  const points = trendRows.flatMap(r => {
-    const range = parseBucketMs(r.dimensions[grain] ?? '', grain);
-    return range ? [{ at: range[0], v: valOf(r) }] : [];
-  });
-  const chartMax = Math.max(1, ...points.map(p => p.v));
-  const series: ChartSeries[] = [{ label: metric === 'executions' ? 'executions' : metric === 'cost' ? 'cost equivalents' : 'tokens', points, tone: 'd1', step: true }];
-  const chartFormat = (v: number) => metric === 'cost' ? `$${v.toFixed(2)}` : metric === 'executions' ? String(Math.round(v)) : (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v)));
+  const costCurrencies = [...new Set(trendRows.flatMap(r => r.cost.filter(c => c.value != null).map(c => c.currency ?? 'USD')))]
+    .sort((a, b) => (a === 'USD' ? -1 : b === 'USD' ? 1 : a.localeCompare(b)));
+  const activeCur = costCurrencies.includes(costCur) ? costCur : (costCurrencies[0] ?? 'USD');
+  const sumCostKind = (r: AnalyticsReply['rows'][number], sub: boolean) =>
+    r.cost.reduce((n, c) => ((c.currency ?? 'USD') === activeCur && (c.basis === 'subscription') === sub && c.value != null ? n + c.value : n), 0);
+  const series: ChartSeries[] = (() => {
+    if (metric === 'cost') {
+      const meteredPts = trendRows.flatMap(r => {
+        const range = parseBucketMs(r.dimensions[grain] ?? '', grain);
+        return range ? [{ at: range[0], end: Math.min(range[1], now), v: sumCostKind(r, false) }] : [];
+      });
+      const subPts = trendRows.flatMap(r => {
+        const range = parseBucketMs(r.dimensions[grain] ?? '', grain);
+        return range ? [{ at: range[0], end: Math.min(range[1], now), v: sumCostKind(r, true) }] : [];
+      });
+      const hasMetered = meteredPts.some(q => q.v > 0);
+      const hasSub = subPts.some(q => q.v > 0);
+      const out: ChartSeries[] = [];
+      if (hasMetered || !hasSub) out.push({ label: `${activeCur} metered`, points: meteredPts, tone: 'd1', step: true });
+      if (hasSub) out.push({ label: `${activeCur} subscription equiv.`, points: subPts, tone: hasMetered ? 'd2' : 'd1', projected: true, step: true });
+      return out;
+    }
+    const pts = trendRows.flatMap(r => {
+      const range = parseBucketMs(r.dimensions[grain] ?? '', grain);
+      const v = metric === 'executions' ? (r.measures.executions?.value ?? 0) : (sumTokens(r.measures).value ?? 0);
+      return range ? [{ at: range[0], end: Math.min(range[1], now), v }] : [];
+    });
+    return [{ label: metric === 'executions' ? 'executions' : 'tokens', points: pts, tone: 'd1', step: true }];
+  })();
+  const chartMax = Math.max(1, ...series.flatMap(s => s.points.map(q => q.v)));
+  const chartFormat = (v: number) => metric === 'cost'
+    ? (activeCur === 'USD' ? `$${v.toFixed(2)}` : `${v.toFixed(2)} ${activeCur}`)
+    : metric === 'executions' ? String(Math.round(v)) : (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v)));
 
   const filterChips = Object.entries(filters).flatMap(([k, vals]) => Array.isArray(vals) ? vals.map(v => ({ k: k as keyof AnalyticsFilter, v: String(v) })) : []);
   const toggleFilter = (d: AnalyticsDim, val: string) => {
-    if (!val || val === '(none)' || d === 'pipeline_revision' || d === 'project') {
-      if (d === 'project' && val) onOpenProject(val);
-      return;
-    }
+    if (!val || val === '(none)') return;
+    if (d === 'project') { onOpenProject(val); return; }
     const key = d as keyof AnalyticsFilter;
-    const cur = (filters[key] as string[] | undefined) ?? [];
+    const cur = ((filters[key] as unknown[] | undefined) ?? []).map(String);
     setFilters({ ...filters, [key]: cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val] });
   };
 
@@ -399,7 +440,15 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
         <Choice label="Window" value={win} onChange={w => changeWin(w as WindowKey)} options={[{ id: '24h', label: '24h' }, { id: '7d', label: '7d' }, { id: '30d', label: '30d' }]} />
         <Choice label="Grain" value={grain} onChange={g => { setGrain(g as GrainKey); setBucket(null); }} options={[{ id: 'hour', label: 'Hour' }, { id: 'day', label: 'Day' }, { id: 'week', label: 'Week' }]} />
         <Choice label="Series" value={metric} onChange={m => setMetric(m as ChartMetric)} options={[{ id: 'tokens', label: 'Tokens' }, { id: 'executions', label: 'Executions' }, { id: 'cost', label: 'Cost' }]} />
+        {metric === 'cost' && costCurrencies.length > 1 && (
+          <Choice label="Currency" value={activeCur} onChange={setCostCur} options={costCurrencies.map(c => ({ id: c, label: c }))} />
+        )}
         <span class="grow" />
+        {unkBucketRuns > 0 && (
+          <span class="chip" data-tip="Executions missing start time are excluded from time buckets">
+            <Icon name="circle-alert" label="Unbucketed" /><Num m={{ value: unkBucketRuns, basis: 'measured' }} kind="count" /> unbucketed
+          </span>
+        )}
         {(trend?.unknown ?? 0) > 0 && (
           <span class="chip" data-tip="Executions missing usage or price telemetry in this window">
             <Icon name="circle-alert" label="Unknown telemetry" /><Num m={{ value: trend!.unknown, basis: 'measured' }} kind="count" /> unknown
@@ -417,14 +466,14 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
           {filterChips.map(f => (
             <span key={`${f.k}:${f.v}`} class="chip">
               {f.k}: {f.v}
-              <button type="button" aria-label={`Remove ${f.k} filter ${f.v}`} onClick={() => setFilters({ ...filters, [f.k]: ((filters[f.k] as string[]) ?? []).filter(x => x !== f.v) })}><Icon name="x" /></button>
+              <button type="button" aria-label={`Remove ${f.k} filter ${f.v}`} onClick={() => setFilters({ ...filters, [f.k]: ((filters[f.k] as unknown[]) ?? []).filter(x => String(x) !== f.v) })}><Icon name="x" /></button>
             </span>
           ))}
         </div>
       )}
 
-      {error && <ErrorBanner text={`Analytics failed: ${error}`} />}
-      {!trend && !error && <Empty text="Loading analytics…" />}
+      {trendErr && <ErrorBanner text={`Analytics failed: ${trendErr}`} onRetry={() => setRev(r => r + 1)} />}
+      {!trend && !trendErr && <Empty text="Loading analytics…" />}
       {totalItems.length > 0 && <Totals items={totalItems} />}
 
       {trend && (
@@ -456,6 +505,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
         <a class="row-link" href="/hosts" onClick={e => { e.preventDefault(); go('/hosts'); }}>Hosts</a>
       </div>
 
+      {breakErr && <ErrorBanner text={`Breakdown failed: ${breakErr}`} onRetry={() => setRev(r => r + 1)} />}
       {breakdown && (
         breakdown.rows.length === 0 ? <Empty text="No recorded analytics in this window." /> : (
           <div class="table-frame">
@@ -474,15 +524,19 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
               </thead>
               <tbody>
                 {breakdown.rows.map(r => {
-                  const keyVal = r.dimensions[activeDim] || '(none)';
+                  const rawVal = r.dimensions[activeDim];
+                  const keyVal = rawVal || '(none)';
                   const tok = sumTokens(r.measures);
-                  const active = activeDim !== 'project' && Array.isArray((filters as any)[activeDim]) && (filters as any)[activeDim].includes(keyVal);
+                  const curFilter = (filters as any)[activeDim] as unknown[] | undefined;
+                  const active = activeDim !== 'project' && Array.isArray(curFilter) && curFilter.some(x => String(x) === rawVal);
                   return (
                     <tr key={keyVal} class={active ? 'on' : undefined}>
                       <th scope="row">
-                        <button type="button" class="seg" onClick={() => toggleFilter(activeDim, keyVal)} data-tip={activeDim === 'project' ? `Open project ${keyVal}` : `Filter by ${keyVal}`}>
-                          <span class="mono">{keyVal}</span>
-                        </button>
+                        {rawVal ? (
+                          <button type="button" class="seg" onClick={() => toggleFilter(activeDim, rawVal)} data-tip={activeDim === 'project' ? `Open project ${rawVal}` : `Filter by ${rawVal}`}>
+                            <span class="mono">{rawVal}</span>
+                          </button>
+                        ) : <span class="muted">(none)</span>}
                       </th>
                       <td class="num"><Num m={numMeasured(r.measures.executions)} kind="count" />{r.measures.failed?.value ? <span class="chip t-danger">{r.measures.failed.value} fail</span> : null}</td>
                       <td class="num"><Num m={numMeasured(r.measures.wall_ms, 0.001)} kind="duration" /></td>

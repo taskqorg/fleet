@@ -135,16 +135,14 @@ export function Totals({ items }: { items: TotalItem[] }) {
 /** Renders multi-currency CostFigure[] while keeping metered spend and subscription equivalents separate. */
 export function CostFigures({ cost, showUnavailable = false, empty }: { cost: readonly CostFigureLike[] | null | undefined; showUnavailable?: boolean; empty?: string }) {
   const { metered, subscription } = splitCostFigures(cost);
-  const visMetered = showUnavailable ? metered : metered.filter(c => c.value !== null);
-  const visSub = showUnavailable ? subscription : subscription.filter(c => c.value !== null);
-  if (!visMetered.length && !visSub.length) {
-    if (showUnavailable && (metered.length || subscription.length)) return <Num m={costMeasured((metered[0] ?? subscription[0])!)} kind="money" />;
+  const visMetered = showUnavailable ? metered : metered.filter(c => c.value !== null && c.basis !== 'unavailable');
+  if (!visMetered.length && !subscription.length) {
     return empty ? <span class="muted">{empty}</span> : null;
   }
   return (
     <span class="cost-figs" data-ui="number">
       {visMetered.map((c, i) => <Num key={`m:${c.currency ?? i}:${i}`} m={costMeasured(c)} kind="money" />)}
-      {visSub.map((c, i) => <Num key={`s:${c.currency ?? i}:${i}`} m={costMeasured(c)} kind="money" />)}
+      {subscription.map((c, i) => <Num key={`s:${c.currency ?? i}:${i}`} m={costMeasured(c)} kind="money" />)}
     </span>
   );
 }
@@ -567,8 +565,8 @@ export function BoundaryRow({ session, executionId, state, mark, startedAt, ende
     <span class="th-svc">
       <AgentMark {...mark} />
       {secs !== null && <span class="chip-age" data-tip={durTip}>{duration(secs).text}</span>}
-      {resources?.tokens?.total != null && <span class="hc" data-tip="Tokens"><Num m={{ value: resources.tokens.total, basis: resources.tokens.basis }} kind="count" /></span>}
-      {resources && resources.tools.totalCalls > 0 && <span class="hc" data-tip={`${resources.tools.totalCalls} tool invocations${resources.tools.failedCalls ? `, ${resources.tools.failedCalls} failed` : ''}`}><Icon name="terminal" label="Tools" /><Num m={{ value: resources.tools.totalCalls, basis: resources.tools.basis }} kind="count" /></span>}
+      {resources?.tokens?.total != null && (resources.tokens.basis !== 'unavailable' || resources.tokens.total > 0) && <span class="hc" data-tip="Tokens"><Num m={{ value: resources.tokens.total, basis: resources.tokens.basis === 'unavailable' ? 'measured' : resources.tokens.basis, partial: resources.tokens.basis === 'unavailable' ? 'incomplete telemetry' : undefined }} kind="count" /></span>}
+      {resources && resources.tools.totalCalls > 0 && <span class="hc" data-tip={`${resources.tools.totalCalls} tool invocations${resources.tools.failedCalls ? `, ${resources.tools.failedCalls} failed` : ''}`}><Icon name="terminal" label="Tools" /><Num m={{ value: resources.tools.totalCalls, basis: resources.tools.basis === 'unavailable' ? 'measured' : resources.tools.basis, partial: resources.tools.basis === 'unavailable' ? 'incomplete telemetry' : undefined }} kind="count" /></span>}
       {resources && resources.tools.failedCalls > 0 && <span class="chip t-danger" data-tip={`${resources.tools.failedCalls} failed tool calls`}><Icon name="octagon-x" label="Failed tools" />{resources.tools.failedCalls}</span>}
       {resources?.cost?.length ? <CostFigures cost={resources.cost} /> : null}
       {onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}
@@ -1122,7 +1120,7 @@ export function FlowStrip({ nodes, label }: { nodes: FlowNode[]; label: string }
 
 /* ---------- Area chart (controls/area-chart.md): recorded and projected lines over a time range, CSS only (OR-8) ---------- */
 
-export type ChartPoint = { at: number; v: number };
+export type ChartPoint = { at: number; v: number; end?: number };
 export type ChartBucket = { key: string; label: string; tip?: string; valueLabel?: string };
 /** pattern: stripes over the tone, for a fifth and later series (tokens.md: never new hues). */
 export type ChartSeries = { label: string; points: ChartPoint[]; tone: 'd1' | 'd2' | 'd3' | 'd4'; projected?: boolean; step?: boolean; pattern?: boolean };
@@ -1142,14 +1140,21 @@ export function AreaChart(p: AreaChartProps) {
   const x = (t: number) => Math.min(100, Math.max(0, (t - p.from) / span * 100));
   const y = (v: number) => 100 - Math.min(100, Math.max(0, v / (p.max || 1) * 100));
   const shape = (s: ChartSeries) => {
-    const pts = s.points.filter(q => q.at <= p.to).map(q => ({ at: Math.max(q.at, p.from), v: q.v }));
+    const pts = s.points.filter(q => q.at <= p.to).map(q => ({ at: Math.max(q.at, p.from), end: q.end != null ? Math.min(q.end, p.to) : undefined, v: q.v }));
     if (pts.length === 0) return '';
     const xy: string[] = [];
     pts.forEach((q, i) => {
-      if (s.step && i > 0) xy.push(`${x(q.at)}% ${y(pts[i - 1].v)}%`);
+      if (s.step && i > 0) {
+        const pe = pts[i - 1].end;
+        if (pe && pe < q.at) xy.push(`${x(pe)}% ${y(pts[i - 1].v)}%`, `${x(pe)}% 100%`, `${x(q.at)}% 100%`);
+        else xy.push(`${x(q.at)}% ${y(pts[i - 1].v)}%`);
+      }
       xy.push(`${x(q.at)}% ${y(q.v)}%`);
     });
-    return `polygon(${x(pts[0].at)}% 100%, ${xy.join(', ')}, ${x(pts[pts.length - 1].at)}% 100%)`;
+    const lastPt = pts[pts.length - 1]!;
+    const endX = x(lastPt.end ?? (pts.length === 1 ? Math.min(p.to, lastPt.at + span / 24) : lastPt.at));
+    if (endX > x(lastPt.at)) xy.push(`${endX}% ${y(lastPt.v)}%`);
+    return `polygon(${x(pts[0].at)}% 100%, ${xy.join(', ')}, ${endX}% 100%)`;
   };
   const last = (s: ChartSeries) => s.points.length ? p.value(s.points[s.points.length - 1].v) : 'none';
   const summary = p.series.map(s => `${s.label}${s.projected && !s.label.includes('projected') ? ' projected' : ''}: ${last(s)}`).join('; ');

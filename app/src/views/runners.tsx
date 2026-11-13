@@ -21,12 +21,13 @@ function spendTotals(spend: any[]): TotalItem[] {
     if (!rows.length) return [];
     const runs = rows.reduce((n, r) => n + (r.runs ?? 0), 0);
     const measured = rows.reduce((n, r) => n + (r.measured ?? 0), 0);
-    const tokens = rows.reduce((n, r) => n + (r.tokens ?? 0), 0);
-    const partial = measured < runs ? `${runs - measured} runs without totals` : undefined;
+    const hasTok = rows.some((r: any) => r.tokens != null);
+    const tokens = hasTok ? rows.reduce((n, r) => n + (r.tokens ?? 0), 0) : null;
+    const partial = hasTok && measured < runs ? `${runs - measured} runs without totals` : undefined;
     const cost = mergeCosts(rows.map((r: any) => r.cost ?? []));
     return [
       { label: `${label} runs`, m: { value: runs, basis: 'measured' }, kind: 'count' },
-      { label: `${label} tokens`, m: { value: tokens, basis: 'measured', partial }, kind: 'count', note: partial },
+      { label: `${label} tokens`, m: { value: tokens, basis: tokens == null ? 'unavailable' : 'measured', partial }, kind: 'count', note: partial },
       ...(cost.length ? [{ label: `${label} cost`, cost, showUnavailable: false }] : []),
     ];
   };
@@ -66,7 +67,7 @@ export function Runners() {
       if (!runs.length) return null;
       const live = runs.filter(isActive).length;
       return <section key={hostName(h)} class="panel" aria-label={hostName(h)}>
-        <header class="panel-h"><h2>{h ? <a class="row-link" href={`/hosts/${h}`} onClick={e => { e.preventDefault(); go(`/hosts/${h}`); }}>{h}</a> : hostName(h)}</h2>
+        <header class="panel-h"><h2>{h ? <a class="row-link" href={`/hosts/${encodeURIComponent(h)}`} onClick={e => { e.preventDefault(); go(`/hosts/${encodeURIComponent(h)}`); }}>{h}</a> : hostName(h)}</h2>
           {live > 0 && <span class="hc" data-tip="Running"><Icon name="activity" label="Running" /><Num m={m(live)} kind="count" /></span>}<span class="grow" /><span class="muted">24h</span></header>
         <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,14rem) auto' }}>
           {runs.map((r: any) => {

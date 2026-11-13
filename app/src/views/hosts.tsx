@@ -71,12 +71,12 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, now, onGone,
     </> : <span class="muted">no heartbeat recorded</span>}</DetailSection>
     {processes.length > 0 && <DetailSection title="Fleet daemon processes">{processes.map(p => <KvRow key={p.process} icon="activity" label={p.process}
       value={<><Num m={m(p.cpuSeconds)} kind="duration" /> <span class="muted">CPU per beat</span> <Num m={m(p.rssBytes)} kind="bytes" /></>} />)}</DetailSection>}
-    <DetailSection title="Active executions">
+    <DetailSection title="Active & recent executions">
       <KvRow icon="activity" label="Running" value={<><HarnessCounts counts={sel.runningByHarness} label="by harness" /> <a class="row-link" href="/runners" onClick={e => { e.preventDefault(); onOpen('/runners'); }}>Runners</a></>} />
       <KvRow icon="list-ordered" label="Queued commands" value={<Num m={{ value: sel.queued, basis: 'measured' }} kind="count" />} />
       {runs.slice(0, 10).map((run: any) => <KvRow key={run.executionId} icon="terminal" label="Execution"
         meta={run.projectId ? <a class="row-link" href={`/projects/${encodeURIComponent(run.projectId)}`} onClick={e => { e.preventDefault(); onOpen(`/projects/${encodeURIComponent(run.projectId)}`); }}>{run.projectId}</a> : undefined}
-        value={<><EntityCode id={run.executionId} what="Execution" />{run.durationMs != null && <Num m={m(run.durationMs / 1000)} kind="duration" />} <Num m={m(run.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(run.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span> <AgeChip t={ms(run.at)} now={now} /></>} />)}
+        value={<><EntityCode id={run.executionId} what="Execution" />{run.durationMs != null && <Num m={m(run.durationMs / 1000)} kind="duration" />} <Num m={m(run.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(run.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{run.orphans > 0 && <span class="chip t-danger">{run.orphans} orphan</span>} <AgeChip t={ms(run.at)} now={now} /></>} />)}
     </DetailSection>
     {live && sel.problems?.length > 0 && <DetailSection title="Problems">{sel.problems.map((p: any) => <KvRow key={p.route} icon="activity" label={`Edge answers ${p.route} with ${p.status}`} meta={p.detail || p.location || undefined} />)}</DetailSection>}
     <DetailSection title="Capabilities">{sel.capabilities.length ? sel.capabilities.map((c: string) => <KvRow key={c} icon="check" label={c} />) : <span class="muted">none reported</span>}</DetailSection>

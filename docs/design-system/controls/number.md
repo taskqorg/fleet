@@ -10,7 +10,7 @@
 |---|---|---|
 | Measured | `$3.10` in `fg` | "3.10 dollars" |
 | Estimated | `≈ $0.42` in `estimated-fg`, dotted underline | "about 0.42 dollars, estimated from tokens" |
-| Subscription | `≈ $0.42` + subscription indicator in `estimated-fg`, dotted underline (or `—` when unpriced) | "about 0.42 dollars, subscription list-price equivalent" (or "unavailable: included in subscription") |
+| Subscription | `≈ $0.42` + subscription indicator in `estimated-fg`, dotted underline (or `—` when unpriced) | "about 0.42 dollars, subscription list-price equivalent" (or "included in subscription") |
 | Unavailable | `—` in `fg-muted` | "unavailable: no gateway" |
 | Partial total | `≥ 182k` plus sub-label "2 of 3 measured" | "at least 182 thousand tokens, 2 of 3 executions measured" |
 

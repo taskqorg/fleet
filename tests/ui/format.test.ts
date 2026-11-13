@@ -102,12 +102,13 @@ test('costMeasured and splitCostFigures preserve every currency and basis bounda
   assert.deepEqual(splitCostFigures(null), { metered: [], subscription: [] });
 });
 
-// Requirement: msMeasured and numMeasured preserve basis, partial lower bounds, and unavailable states.
-// Risk: elapsed_ms vs execution_wall_ms or null resource readings collapse into 0s or lose attribution.
+// Requirement: msMeasured and numMeasured preserve basis, partial lower bounds (including analytics_query partial aggregates), and unavailable states.
+// Risk: elapsed_ms vs execution_wall_ms or partial analytics aggregates collapse into 0s or '—' when lower bounds exist.
 test('msMeasured and numMeasured adapt contract measurements accurately', () => {
   assert.deepEqual(msMeasured(null, 'measured', 'still running'), { value: null, basis: 'unavailable', reason: 'still running' });
   assert.equal(measured(msMeasured(12500, 'estimated'), 'duration').text, '≈ 13s');
   assert.equal(measured(numMeasured({ value: 4500, basis: 'measured', partial: '2 of 3 measured' }, 0.001), 'duration').text, '≥ 5s');
+  assert.equal(measured(numMeasured({ value: 12000, basis: 'unavailable', partial: '2 of 3 measured' }), 'count').text, '≥ 12k');
   assert.deepEqual(numMeasured(undefined), { value: null, basis: 'unavailable' });
   assert.deepEqual(numMeasured({ value: null, basis: 'unavailable', reason: 'not recorded' }, 0.001), {
     value: null, basis: 'unavailable', reason: 'not recorded', partial: undefined, note: undefined,

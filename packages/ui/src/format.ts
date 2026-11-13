@@ -146,7 +146,8 @@ export function splitCostFigures(all: readonly CostFigureLike[] | null | undefin
 /** Adapts a contract MeasuredNumber/MeasuredInt into UI Measured with optional unit scaling (e.g. 0.001 for ms to seconds). */
 export function numMeasured(n: { value: number | null; basis: Basis; reason?: string; partial?: string; note?: string } | null | undefined, scale = 1): Measured {
   if (!n) return { value: null, basis: 'unavailable' };
-  return { value: n.value === null ? null : n.value * scale, basis: n.basis, reason: n.reason, partial: n.partial, note: n.note };
+  const basis: Basis = n.basis === 'unavailable' && n.partial && n.value != null ? 'measured' : n.basis;
+  return { value: n.value === null ? null : n.value * scale, basis, reason: n.reason, partial: n.partial, note: n.note };
 }
 
 /** Adapts millisecond durations into UI second Measured values. */

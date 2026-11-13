@@ -300,6 +300,9 @@ try {
   check(hWithBar > 500, `collapsed resource bar preserves thread height (${Math.round(hWithBar)} px > 500)`);
   await p.locator('[data-ui="resource-bar"]').getByRole('button', { name: 'Resources' }).click();
   check(await until(async () => await p.getByRole('heading', { name: 'Scoped resources' }).count() === 1), 'ScopedRollupBar expands scoped rollup details');
+  const compBox = await p.locator('.composer').boundingBox();
+  const vp = p.viewportSize();
+  check(!!compBox && !!vp && compBox.y + compBox.height <= vp.height + 1, 'expanded ScopedRollupBar keeps Composer visible inside viewport');
   await p.locator('[data-ui="resource-bar"]').getByRole('button', { name: 'Hide breakdown' }).click();
   await vl.evaluate(e => { e.scrollTop = 0; }); await p.waitForTimeout(300);
   check(await p.locator('.th-boundary').first().getByText('≈ $0.40').count() >= 1, 'BoundaryRow shows subscription cost figure');

@@ -33,7 +33,7 @@ export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
               {x.name !== x.id && <span class="id">{x.id}</span>}{x.agent && <span class="muted">{x.agent.harness} · {x.agent.model}</span>}
               {kind !== 'catalogue' && x.last30?.runs > 0 && <>
                 <span class="hc" data-tip="Runs in last 30 days"><Icon name="activity" label="Runs" /><Num m={{ value: x.last30.runs, basis: 'measured' }} kind="count" /></span>
-                {x.last30.cost?.length ? <CostFigures cost={x.last30.cost} /> : x.last30.costUsd != null && <Num m={{ value: x.last30.costUsd, currency: 'USD', basis: (x.last30.costBasis as any) ?? 'estimated' }} kind="money" />}
+                {x.last30.cost?.length ? <CostFigures cost={x.last30.cost} /> : x.last30.costUsd != null && <Num m={{ value: x.last30.costUsd, currency: 'USD', basis: costBasisOf(x.last30.costBasis), ...(x.last30.costBasis === 'tokens' ? { reason: 'tokens' } : {}) }} kind="money" />}
               </>}</span>
             <span class="r mono" data-tip={x.state}>r{x.revision}{x.state !== 'synced' ? ` · ${x.state}` : ''}</span>
           </div>)}
@@ -264,6 +264,10 @@ function CatalogueMethods() {
   </>;
 }
 
+function costBasisOf(b: string | null | undefined): CostFigureLike['basis'] {
+  return b === 'measured' || b === 'estimated' || b === 'subscription' || b === 'unavailable' ? b : 'estimated';
+}
+
 function UsageTab({ kind, id }: { kind: 'agent' | 'pipeline'; id: string }) {
   const [, go] = useLocation();
   const [days, setDays] = useState<'7' | '30'>('30');
@@ -277,18 +281,19 @@ function UsageTab({ kind, id }: { kind: 'agent' | 'pipeline'; id: string }) {
   if (error) return <DetailSection title="Usage"><div class="error" role="alert">{error}</div></DetailSection>;
   if (!u) return <DetailSection title="Usage"><Empty text="Loading…" /></DetailSection>;
   const windowCost = (w: Ops['definition_usage']['reply']['total']): readonly CostFigureLike[] =>
-    w.cost?.length ? w.cost : w.costUsd != null ? [{ value: w.costUsd, currency: 'USD', basis: (w.costBasis as CostFigureLike['basis']) ?? 'estimated' }] : [];
+    w.cost?.length ? w.cost : w.costUsd != null ? [{ value: w.costUsd, currency: 'USD', basis: costBasisOf(w.costBasis), ...(w.costBasis === 'tokens' ? { reason: 'tokens' } : {}) }] : [];
   const totalCost = windowCost(u.total);
+  const hasCost = totalCost.some(c => (c.value !== null && c.basis !== 'unavailable') || c.basis === 'subscription');
   const totalItems: TotalItem[] = [
     { label: 'Runs', m: { value: u.total.runs, basis: 'measured' }, kind: 'count', note: u.total.runs > 0 ? `${u.total.succeeded} succeeded` : undefined },
     ...(u.total.resources ? resourceTotals(u.total.resources, { extraCost: totalCost, hideUnavailable: true }) : [
       ...(u.total.wallMsMedian != null ? [{ label: 'Median wall', m: msMeasured(u.total.wallMsMedian, 'measured'), kind: 'duration' as const }] : []),
-      { label: 'Tokens', m: { value: u.total.tokens, basis: 'measured' as const }, kind: 'count' as const },
-      ...(totalCost.length ? [{ label: 'Cost', cost: totalCost, showUnavailable: false }] : []),
+      ...(u.total.tokens > 0 || u.total.runs === 0 ? [{ label: 'Tokens', m: { value: u.total.tokens, basis: 'measured' as const }, kind: 'count' as const }] : []),
+      ...(hasCost ? [{ label: 'Cost', cost: totalCost, showUnavailable: false }] : []),
     ]),
   ];
   if (u.total.resources && u.total.wallMsMedian != null) {
-    totalItems.splice(1, 0, { label: 'Median wall', m: msMeasured(u.total.wallMsMedian, u.total.resources.durations.basis), kind: 'duration' });
+    totalItems.splice(1, 0, { label: 'Median wall', m: msMeasured(u.total.wallMsMedian, u.total.resources.durations.basis === 'unavailable' && u.total.wallMsMedian > 0 ? 'measured' : u.total.resources.durations.basis), kind: 'duration' });
   }
   const routeFor = (k: string) => k === 'agent' ? '/agents' : k === 'pipeline' ? '/pipelines' : '/catalogue';
   return <>
@@ -309,14 +314,17 @@ function UsageTab({ kind, id }: { kind: 'agent' | 'pipeline'; id: string }) {
         <tbody>{u.byRevision.map(rv => {
           const w = rv.window;
           const cost = windowCost(w);
-          const tok = w.resources?.tokens?.total ?? w.tokens;
-          const tokBasis = w.resources?.tokens?.basis ?? 'measured';
+          const tokRes = w.resources?.tokens;
+          const tokM = tokRes
+            ? (tokRes.basis === 'unavailable' ? (tokRes.total && tokRes.total > 0 ? { value: tokRes.total, basis: 'measured' as const, partial: 'incomplete telemetry' } : { value: null, basis: 'unavailable' as const }) : { value: tokRes.total, basis: tokRes.basis })
+            : (w.tokens === 0 && w.runs > 0 ? { value: null, basis: 'unavailable' as const } : { value: w.tokens, basis: 'measured' as const });
+          const wallBasis = w.resources?.durations.basis === 'unavailable' && (w.wallMsMedian ?? 0) > 0 ? 'measured' : (w.resources?.durations.basis ?? 'measured');
           return <tr key={rv.revision}>
             <th scope="row" class="mono">r{rv.revision}</th>
             <td class="num"><Num m={{ value: w.runs, basis: 'measured' }} kind="count" /></td>
             <td class="num"><Num m={{ value: w.succeeded, basis: 'measured' }} kind="count" /></td>
-            <td class="num">{w.wallMsMedian != null ? <Num m={msMeasured(w.wallMsMedian, w.resources?.durations.basis ?? 'measured')} kind="duration" /> : <span class="muted">—</span>}</td>
-            <td class="num"><Num m={{ value: tok, basis: tokBasis }} kind="count" /></td>
+            <td class="num">{w.wallMsMedian != null ? <Num m={msMeasured(w.wallMsMedian, wallBasis)} kind="duration" /> : <span class="muted">—</span>}</td>
+            <td class="num"><Num m={tokM} kind="count" /></td>
             <td class="num"><CostFigures cost={cost} showUnavailable={false} empty="—" /></td>
           </tr>;
         })}</tbody>

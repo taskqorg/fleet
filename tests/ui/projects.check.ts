@@ -38,10 +38,10 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
   const queries: any[] = [];
   const mkMeasures = (runs: number, tok: number) => ({
-    executions: { value: runs, basis: 'measured' }, succeeded: { value: runs, basis: 'measured' }, failed: { value: 0, basis: 'measured' },
+    executions: { value: runs, basis: 'measured' }, failed: { value: 0, basis: 'measured' },
     wall_ms: { value: runs * 12000, basis: 'measured' }, active_ms: { value: runs * 9000, basis: 'measured' }, cpu_ms: { value: runs * 1200, basis: 'measured' },
-    peak_memory_bytes: { value: 268435456, basis: 'measured' }, input_tokens: { value: tok, basis: 'measured' }, output_tokens: { value: Math.round(tok / 4), basis: 'measured' },
-    cache_read_tokens: { value: 0, basis: 'measured' }, cache_write_tokens: { value: 0, basis: 'measured' }, reasoning_tokens: { value: 0, basis: 'measured' }, calls: { value: runs * 3, basis: 'measured' },
+    peak_memory_bytes: { value: 268435456, basis: 'measured' }, tokens_input: { value: tok, basis: 'measured' }, tokens_output: { value: Math.round(tok / 4), basis: 'measured' },
+    tokens_cache_read: { value: 0, basis: 'measured' }, tokens_cache_write: { value: 0, basis: 'measured' }, tokens_reasoning: { value: null, basis: 'unavailable' }, calls: { value: runs * 3, basis: 'measured' },
   });
   const costs = [
     { value: 3.4, currency: 'USD', basis: 'measured' },
@@ -67,9 +67,13 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   const bucketBtns = chart.locator('.ac-buckets button.ac-bucket');
   assert.ok(await bucketBtns.count() >= 2, 'AreaChart renders bucket selector buttons');
   const detail = p.locator('[data-ui="detail"]');
+  await detail.locator('.totals').getByText('25k', { exact: true }).waitFor();
   await detail.getByText('$3.40', { exact: false }).waitFor();
   await detail.getByText('≈ 1.20 EUR', { exact: false }).waitFor();
   await detail.getByText('≈ $1.10', { exact: false }).waitFor();
+  await detail.getByRole('button', { name: 'Cost', exact: true }).click();
+  const costAria = await chart.locator('[role="img"]').getAttribute('aria-label');
+  assert.ok(costAria && costAria.includes('USD metered') && costAria.includes('USD subscription equiv.'), `Cost chart keeps metered USD & subscription separate: ${costAria}`);
   assert.ok(await detail.getByText('unknown', { exact: false }).count() >= 1, 'unknown count badge shown when > 0');
   assert.ok(await detail.getByText('hidden', { exact: false }).count() >= 1, 'hidden count badge shown when > 0');
   await bucketBtns.first().click();
@@ -77,6 +81,9 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await detail.getByText('model-bucket', { exact: true }).waitFor();
   await detail.getByRole('button', { name: 'Harness', exact: true }).click();
   await detail.getByText('harness-bucket', { exact: true }).waitFor();
+  await detail.getByRole('button', { name: 'Pipeline rev', exact: true }).click();
+  await detail.getByRole('button', { name: 'pipeline_revision-bucket', exact: true }).click();
+  assert.ok(queries.some(q => Array.isArray(q.filters?.pipeline_revision) && q.filters.pipeline_revision.includes('pipeline_revision-bucket')), 'pipeline_revision breakdown row applies filter');
   await p.unroute('**/api/ops/analytics_query');
   assert.deepEqual(errors,[]);console.log('ok Projects create/edit/readback/readiness, explicit PM selection, and analytics_query UI');
  }finally{await context.close();}

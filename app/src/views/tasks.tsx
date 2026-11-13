@@ -119,9 +119,6 @@ function groupLabel(group: string, label: string | null) {
   return label ?? 'None';
 }
 
-const EXEC_STATE: Record<string, StateOf<'execution'>> = { completed: 'succeeded', stopped: 'cancelled', unknown: 'running', started: 'running', accepted: 'preparing', pending: 'preparing' };
-const execState = (s: string): StateOf<'execution'> => (EXEC_STATE[s] ?? (['preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'].includes(s) ? s : 'running')) as StateOf<'execution'>;
-
 /** Dependencies by code (OR-38); ones the viewer cannot see are only counted. */
 function dependsOn(ds: { code?: string | null }[]) {
   const codes = ds.flatMap(d => d.code ? [d.code] : []), hidden = ds.length - codes.length;

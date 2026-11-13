@@ -367,7 +367,7 @@ function Agents() {
       ])}</DetailSection>
     </>}
     {tab === 'Diff' && <>
-      <pre class="diff block">{'  "instructions": "Review the explicit supplied task and retained materials. Do not modify files or delegate work.'}<span class="add">{' Report each finding as: file, line, rule, severity (blocker | major | nit). Return \\"changes requested\\" when any blocker or major finding exists; otherwise \\"pass\\".'}</span>{'",\n  "tools": ["Read", "Glob", '}<span class="del">{'"Grep"]'}</span><span class="add">{'"Grep", "Bash(read-only)"]'}</span></pre>
+      <pre class="diff block">{'  "instructions": "Review supplied task and retained files.'}<span class="add">{' Report findings with file, line, severity (blocker|major|nit).'}</span>{'",\n  "tools": ["Read", "Glob", '}<span class="del">{'"Grep"]'}</span><span class="add">{'"Grep", "Bash(read-only)"]'}</span></pre>
       <div><Button label="Compare in Lab" icon="chart-no-axes-column" /></div>
     </>}
     {tab === 'Compatibility' && <DetailSection title="Checked combinations">
@@ -404,11 +404,11 @@ const FACTORY_FLOW = (cur?: string): FlowNode[] => [
   { loop: 'until all pass · max 3', nodes: [{ id: 'build', kind: 'agent' }, { id: 'gate', kind: 'program' }, { parallel: [{ id: 'review-code', kind: 'agent', current: cur === 'review-code' }, { id: 'review-ui', kind: 'agent', optional: true, current: cur === 'review-ui' }, { id: 'review-security', kind: 'agent', optional: true, current: cur === 'review-security' }] }] },
   { id: 'approve', kind: 'agent' }, { id: 'deliver', kind: 'tool' }];
 const RENDER_RUN: StepItem[] = [
-  { id: 'prepare', kind: 'program', executor: <b>prepare-inputs.sh</b>, reads: 'batch', writes: 'inputs/', run: { state: 'succeeded', note: 'reused', reason: 'taken from run 40: inputs and definition unchanged', time: m(0), cost: m(null, 'unavailable', 'no meter') } },
-  { band: 'parallel', label: 'In parallel, one per asset · 8 assets' },
-  { id: 'render', kind: 'tool', executor: <><b>render_asset</b> through the blender connection</>, reads: 'inputs/', writes: 'renders/', inset: true,
-    run: { state: 'failed', note: '7 of 8', reason: 'asset-07 failed', time: m(372), cost: m(3.4, 'estimated', 'tokens'), error: 'asset-07 · exit 1 after 2m 04s on windows · CUDA out of memory, tried to allocate 2.1 GB. The 7 finished renders are kept.' } },
-  { id: 'assemble', kind: 'agent', executor: <><b>codex-designer</b> builds the catalogue page</>, reads: 'renders/', writes: 'catalogue.html', run: { state: 'waiting', note: 'waits for render', time: m(null, 'unavailable', 'not started'), cost: m(null, 'unavailable', 'not started') } },
+  { id: 'prepare', kind: 'program', executor: <b>prepare-inputs.sh</b>, reads: 'batch', writes: 'inputs/', run: { state: 'succeeded', note: 'reused', reason: 'from run 40: unchanged', time: m(0), cost: m(null, 'unavailable', 'no meter') } },
+  { band: 'parallel', label: 'In parallel · 8 assets' },
+  { id: 'render', kind: 'tool', executor: <><b>render_asset</b> (blender)</>, reads: 'inputs/', writes: 'renders/', inset: true,
+    run: { state: 'failed', note: '7 of 8', reason: 'asset-07 failed', time: m(372), cost: m(3.4, 'estimated', 'tokens'), error: 'asset-07 · exit 1 after 2m 04s on windows · CUDA out of memory (2.1 GB). 7 finished renders kept.' } },
+  { id: 'assemble', kind: 'agent', executor: <><b>codex-designer</b></>, reads: 'renders/', writes: 'catalogue.html', run: { state: 'waiting', note: 'waits for render', time: m(null, 'unavailable', 'not started'), cost: m(null, 'unavailable', 'not started') } },
 ];
 const PIPE_DEFS: readonly [string, boolean, StateOf<'definition'> | StateOf<'execution'>, string, string][] = [
   ['issue-to-pr', true, 'draft', '9 steps · 7 agents · shared', '2h'],
@@ -426,17 +426,17 @@ function StepEditor({ onAgent }: { onAgent: () => void }) {
       ['play', 'Runs', undefined, <Choice label="Runs" value="always" options={[{ id: 'always', label: 'always' }, { id: 'when', label: 'when an earlier output says so' }]} />],
       ['sliders-horizontal', 'Model', 'haiku when intake rates the risk low, otherwise sonnet', <Button label="Add rule" icon="plus" iconOnly />],
     ])}
-    <SettingField label="Assignment" value="Review the change against spec.md and the project rules. Write the review and a verdict." help="What the agent is asked to do. It chooses its own actions." now={NOW} status={{ kind: 'applied', at: NOW - 3 * hr }} />
-    <h3 class="sub-h">Inputs, each bound to an earlier output</h3>
-    {kvs([['link', 'change', 'from build', <span class="muted">required</span>], ['link', 'spec.md', 'from spec', <span class="muted">required</span>], ['file-plus-2', 'checks.md', 'from gate · added in this draft', <span class="muted">optional</span>]])}
-    <h3 class="sub-h">Outputs later steps may bind to</h3>
-    {kvs([['file-text', 'review', 'markdown · findings by file and severity'], ['check', 'verdict', 'pass, or changes requested']])}
+    <SettingField label="Assignment" value="Review the change against spec.md and project rules." help="Task goal." now={NOW} status={{ kind: 'applied', at: NOW - 3 * hr }} />
+    <h3 class="sub-h">Inputs</h3>
+    {kvs([['link', 'change', 'from build'], ['link', 'spec.md', 'from spec'], ['file-plus-2', 'checks.md', 'from gate · optional']])}
+    <h3 class="sub-h">Outputs</h3>
+    {kvs([['file-text', 'review', 'markdown findings'], ['check', 'verdict', 'pass | changes requested']])}
     <h3 class="sub-h">Then</h3>
     {kvs([
-      ['circle-check', 'Pass', 'counts once; when every reviewer passes, go on to approve'],
-      ['rotate-cw', 'Changes requested', "back to build with this round's reviews · an outcome, not a failure"],
-      ['clock', 'After 3 rounds', 'stop, keep the change and its reviews, ask the operator'],
-      ['octagon-x', 'The step fails', 'the run fails and outputs are kept · project rules decide a retry'],
+      ['circle-check', 'Pass', 'proceed to approve'],
+      ['rotate-cw', 'Changes requested', 'back to build with reviews'],
+      ['clock', 'After 3 rounds', 'stop and ask the operator'],
+      ['octagon-x', 'Fail', 'stop and keep outputs'],
     ])}
     <div><Button label="Remove step" icon="trash-2" kind="danger" /></div>
   </>;

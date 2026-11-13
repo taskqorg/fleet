@@ -4,7 +4,7 @@ import { useLocation } from 'wouter-preact';
 import {
   Button, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals,
   msMeasured, numMeasured, splitCostFigures,
-  type CostFigureLike, type StateOf, type TotalItem, type TreeNode,
+  type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
 } from '../../../packages/ui/src/index.ts';
 import type { CostFigure, ExecutionRow, ResourceSummary, ScopedResourceRollup } from '../../../contracts/generated/ops.ts';
 
@@ -47,6 +47,12 @@ function costNote(cost: readonly CostFigureLike[]): string | undefined {
 }
 
 /** Converts a ResourceSummary into Totals items, optionally hiding unavailable fields (OR-39). */
+function resNum(v: number | null | undefined, basis: Measured['basis'], scale = 1): Measured {
+  if (v == null || (basis === 'unavailable' && v <= 0)) return { value: null, basis: 'unavailable' };
+  if (basis === 'unavailable') return { value: v * scale, basis: 'measured', partial: 'incomplete telemetry' };
+  return { value: v * scale, basis };
+}
+
 export function resourceTotals(
   r: ResourceSummary | null | undefined,
   opts?: { extraCost?: readonly CostFigure[]; hideUnavailable?: boolean },
@@ -55,9 +61,11 @@ export function resourceTotals(
   const items: TotalItem[] = [];
   if (r) {
     const { elapsedMs, executionWallMs, cpuMs, measuredCpuRuns, totalRuns, basis } = r.durations;
-    if (elapsedMs != null || !hide) items.push({ label: 'Elapsed', m: msMeasured(elapsedMs, basis), kind: 'duration' });
-    if (executionWallMs != null || (!hide && elapsedMs == null)) {
-      items.push({ label: 'Execution wall', m: msMeasured(executionWallMs, basis), kind: 'duration' });
+    const elapsedM = resNum(elapsedMs, basis, 0.001);
+    const wallM = resNum(executionWallMs, basis, 0.001);
+    if (elapsedM.basis !== 'unavailable' || !hide) items.push({ label: 'Elapsed', m: elapsedM, kind: 'duration' });
+    if (wallM.basis !== 'unavailable' || (!hide && elapsedM.basis === 'unavailable')) {
+      items.push({ label: 'Execution wall', m: wallM, kind: 'duration' });
     }
     if (cpuMs != null) {
       items.push({
@@ -67,10 +75,12 @@ export function resourceTotals(
         note: measuredCpuRuns > 0 && measuredCpuRuns < totalRuns ? `${measuredCpuRuns} of ${totalRuns} measured` : undefined,
       });
     }
-    if (r.peakMemoryBytes.value != null || !hide) {
-      items.push({ label: 'Peak memory', m: numMeasured(r.peakMemoryBytes), kind: 'bytes' });
+    const peakM = resNum(r.peakMemoryBytes.value, r.peakMemoryBytes.basis);
+    if (peakM.basis !== 'unavailable' || !hide) {
+      items.push({ label: 'Peak memory', m: { ...peakM, reason: r.peakMemoryBytes.reason }, kind: 'bytes' });
     }
-    if (r.tokens.total != null || !hide) {
+    const tokM = resNum(r.tokens.total, r.tokens.basis);
+    if (tokM.basis !== 'unavailable' || !hide) {
       const { input, output, cacheRead } = r.tokens;
       const parts = [
         input != null ? `${input.toLocaleString('en')} in` : '',
@@ -79,22 +89,23 @@ export function resourceTotals(
       ].filter(Boolean);
       items.push({
         label: 'Tokens',
-        m: { value: r.tokens.total, basis: r.tokens.basis },
+        m: tokM,
         kind: 'count',
-        note: parts.length ? parts.join(' · ') : undefined,
+        note: tokM.basis !== 'unavailable' && parts.length ? parts.join(' · ') : undefined,
       });
     }
-    if (r.tools.totalCalls > 0 || (!hide && r.tools.turns > 0)) {
+    const toolM = r.tools.totalCalls > 0 ? resNum(r.tools.totalCalls, r.tools.basis) : { value: 0, basis: r.tools.basis };
+    if (r.tools.totalCalls > 0 || (!hide && r.tools.turns > 0 && r.tools.basis !== 'unavailable')) {
       items.push({
         label: 'Tools',
-        m: { value: r.tools.totalCalls, basis: r.tools.basis },
+        m: toolM,
         kind: 'count',
         note: r.tools.failedCalls > 0 ? `${r.tools.failedCalls} failed` : r.tools.turns > 0 ? `${r.tools.turns} turns` : undefined,
       });
     }
   }
   const cost = r?.cost?.length ? r.cost : opts?.extraCost ?? [];
-  if (cost.length && (!hide || cost.some(c => c.value !== null))) {
+  if (cost.length && (!hide || cost.some(c => (c.value !== null && c.basis !== 'unavailable') || c.basis === 'subscription'))) {
     items.push({ label: 'Cost', cost, showUnavailable: !hide, note: costNote(cost) });
   }
   return items;
@@ -104,12 +115,12 @@ function ResourceCells({ s }: { s: ResourceSummary }) {
   return (
     <>
       <td class="num"><Num m={{ value: s.executions, basis: 'measured' }} kind="count" /></td>
-      <td class="num"><Num m={msMeasured(s.durations.elapsedMs, s.durations.basis)} kind="duration" /></td>
-      <td class="num"><Num m={msMeasured(s.durations.executionWallMs, s.durations.basis)} kind="duration" /></td>
+      <td class="num"><Num m={resNum(s.durations.elapsedMs, s.durations.basis, 0.001)} kind="duration" /></td>
+      <td class="num"><Num m={resNum(s.durations.executionWallMs, s.durations.basis, 0.001)} kind="duration" /></td>
       <td class="num">{s.durations.cpuMs != null ? <Num m={msMeasured(s.durations.cpuMs, 'measured')} kind="duration" /> : <span class="muted">—</span>}</td>
-      <td class="num">{s.peakMemoryBytes.value != null ? <Num m={numMeasured(s.peakMemoryBytes)} kind="bytes" /> : <span class="muted">—</span>}</td>
-      <td class="num"><Num m={{ value: s.tokens.total, basis: s.tokens.basis }} kind="count" /></td>
-      <td class="num">{s.tools.totalCalls > 0 ? <><Num m={{ value: s.tools.totalCalls, basis: s.tools.basis }} kind="count" />{s.tools.failedCalls > 0 && <span class="chip t-danger">{s.tools.failedCalls} err</span>}</> : <span class="muted">—</span>}</td>
+      <td class="num">{s.peakMemoryBytes.value != null ? <Num m={resNum(s.peakMemoryBytes.value, s.peakMemoryBytes.basis)} kind="bytes" /> : <span class="muted">—</span>}</td>
+      <td class="num"><Num m={resNum(s.tokens.total, s.tokens.basis)} kind="count" /></td>
+      <td class="num">{s.tools.totalCalls > 0 ? <><Num m={resNum(s.tools.totalCalls, s.tools.basis)} kind="count" />{s.tools.failedCalls > 0 && <span class="chip t-danger">{s.tools.failedCalls} err</span>}</> : <span class="muted">—</span>}</td>
       <td class="num"><CostFigures cost={s.cost} showUnavailable empty="—" /></td>
     </>
   );
@@ -126,18 +137,16 @@ export function ScopedRollupDetails({
   title?: string;
 }) {
   const [, go] = useLocation();
-  if (!rollup && !cost?.length) return null;
-  const total = rollup?.total;
-  const rows: { label: string; s: ResourceSummary }[] = rollup
-    ? [
-        { label: 'Own', s: rollup.own },
-        ...(rollup.delegated.executions > 0 ? [{ label: 'Delegated', s: rollup.delegated }] : []),
-        ...(rollup.spawned.executions > 0 || rollup.spawnedTasks.length > 0 ? [{ label: 'Spawned', s: rollup.spawned }] : []),
-        ...(rollup.delegated.executions > 0 || rollup.spawned.executions > 0 ? [{ label: 'Total', s: rollup.total }] : []),
-      ]
-    : [];
-  const hasDetail = !!total && (total.executions > 0 || total.tokens.total != null || (rollup?.spawnedTasks.length ?? 0) > 0 || (rollup?.hidden ?? 0) > 0);
-  if (!hasDetail && !cost?.length) return null;
+  if (!rollup) return null;
+  const total = rollup.total;
+  const rows: { label: string; s: ResourceSummary }[] = [
+    { label: 'Own', s: rollup.own },
+    ...(rollup.delegated.executions > 0 ? [{ label: 'Delegated', s: rollup.delegated }] : []),
+    ...(rollup.spawned.executions > 0 || rollup.spawnedTasks.length > 0 ? [{ label: 'Spawned', s: rollup.spawned }] : []),
+    ...(rollup.delegated.executions > 0 || rollup.spawned.executions > 0 ? [{ label: 'Total', s: rollup.total }] : []),
+  ];
+  const hasDetail = total.executions > 0 || total.tokens.total != null || rollup.spawnedTasks.length > 0 || rollup.hidden > 0;
+  if (!hasDetail) return null;
   const topTools = total?.tools.byTool.slice(0, 6) ?? [];
   return (
     <DetailSection title={title}>
@@ -216,34 +225,36 @@ export function ScopedRollupBar({ rollup, cost }: { rollup?: ScopedResourceRollu
   const [open, setOpen] = useState(false);
   const t = rollup?.total;
   const effCost = t?.cost?.length ? t.cost : cost ?? [];
-  const elapsed = t?.durations?.elapsedMs ?? null;
-  const wall = t?.durations?.executionWallMs ?? null;
-  const tok = t?.tokens?.total ?? null;
+  const elapsedM = t ? resNum(t.durations?.elapsedMs, t.durations?.basis ?? 'unavailable', 0.001) : null;
+  const wallM = t ? resNum(t.durations?.executionWallMs, t.durations?.basis ?? 'unavailable', 0.001) : null;
+  const tokM = t ? resNum(t.tokens?.total, t.tokens?.basis ?? 'unavailable') : null;
   const calls = t?.tools?.totalCalls ?? 0;
+  const callM = calls > 0 && t ? resNum(calls, t.tools.basis) : null;
   const hidden = rollup?.hidden ?? 0;
-  const hasAny = elapsed != null || wall != null || tok != null || calls > 0 || effCost.length > 0 || hidden > 0 || (rollup?.spawnedTasks.length ?? 0) > 0;
+  const hasCost = effCost.some(c => (c.value !== null && c.basis !== 'unavailable') || c.basis === 'subscription');
+  const hasAny = (elapsedM && elapsedM.basis !== 'unavailable') || (wallM && wallM.basis !== 'unavailable') || (tokM && tokM.basis !== 'unavailable') || !!callM || hasCost || hidden > 0 || (rollup?.spawnedTasks.length ?? 0) > 0;
   if (!hasAny) return null;
   return (
     <>
       <div class="res-bar" data-ui="resource-bar">
-        {elapsed != null && (
+        {elapsedM && elapsedM.basis !== 'unavailable' && (
           <span class="hc" data-tip="Elapsed span (first start to last end)">
-            <Icon name="clock" label="Elapsed" /><Num m={msMeasured(elapsed, t!.durations.basis)} kind="duration" />
+            <Icon name="clock" label="Elapsed" /><Num m={elapsedM} kind="duration" />
           </span>
         )}
-        {wall != null && (elapsed == null || Math.abs(wall - elapsed) >= 1000) && (
+        {wallM && wallM.basis !== 'unavailable' && (elapsedM?.value == null || Math.abs((wallM.value ?? 0) - elapsedM.value) >= 1) && (
           <span class="hc" data-tip="Active execution wall time">
-            <Icon name="activity" label="Execution wall" /><Num m={msMeasured(wall, t!.durations.basis)} kind="duration" />
+            <Icon name="activity" label="Execution wall" /><Num m={wallM} kind="duration" />
           </span>
         )}
-        {tok != null && (
+        {tokM && tokM.basis !== 'unavailable' && (
           <span class="hc" data-tip="Total tokens">
-            <Num m={{ value: tok, basis: t!.tokens.basis }} kind="count" /> tok
+            <Num m={tokM} kind="count" /> tok
           </span>
         )}
-        {calls > 0 && (
+        {callM && (
           <span class="hc" data-tip={`${calls} tool invocations${t!.tools.failedCalls ? `, ${t!.tools.failedCalls} failed` : ''}`}>
-            <Icon name="terminal" label="Tools" /><Num m={{ value: calls, basis: t!.tools.basis }} kind="count" />
+            <Icon name="terminal" label="Tools" /><Num m={callM} kind="count" />
           </span>
         )}
         {effCost.length > 0 && <CostFigures cost={effCost} showUnavailable={false} />}
@@ -262,7 +273,7 @@ export function ScopedRollupBar({ rollup, cost }: { rollup?: ScopedResourceRollu
         />
       </div>
       {open && (
-        <div>
+        <div class="res-drawer">
           <Totals items={resourceTotals(t, { extraCost: cost, hideUnavailable: false })} />
           <ScopedRollupDetails rollup={rollup} cost={cost} title="Scoped resources" />
         </div>
