@@ -7,7 +7,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
   const question = {id: 'current', kind: 'operator_decision', state: 'open', text: 'Retry installation? Retry starts another execution; fail ends this task.', options: ['retry', 'fail']};
   const cases = [
     {state: 'waiting', waitReason: 'Access unavailable; supply access to continue', questions: [question], executions: []},
-    {state: 'waiting', waitReason: 'question', questions: [{id: 'old', kind: 'acceptance', state: 'withdrawn', text: 'Accept obsolete result?', options: ['accepted', 'rejected']}, question], executions: [{id: 'run', state: 'succeeded', report: {outcome: 'failed', summary: 'Patch created. Android installation not verified or published.', at: 1}}]},
+    {state: 'waiting', waitReason: 'question', questions: [{id: 'old', kind: 'acceptance', state: 'withdrawn', text: 'Accept obsolete result?', options: ['accepted', 'rejected']}, question], executions: [{id: 'run', state: 'succeeded', report: {outcome: 'failed', summary: 'Patch created. Android installation not verified or published.', at: 1}}, {id: 'new-run', state: 'failed', problem: 'Native session home mismatch; preparation stopped.'}]},
     {state: 'completed', questions: [], executions: [{id: 'run', state: 'succeeded', report: {outcome: 'succeeded', summary: 'Installed and verified on Android; published result.', at: 2}}]},
   ];
   try {
@@ -24,6 +24,11 @@ export async function checkTaskStory(browser: Browser, origin: string) {
         assert(await detail.locator('[data-ui=decision-block]').evaluate(el => el.getBoundingClientRect().top < document.querySelector('[data-ui=outcome-block]')!.getBoundingClientRect().top));
       }
       if (fixture.executions.length) await detail.getByText(fixture.executions[0].report!.summary, {exact: true}).waitFor();
+      if (i === 1) {
+        await detail.getByText('Native session home mismatch; preparation stopped.', {exact: true}).waitFor();
+        assert(await detail.locator('[role=alert]').evaluate(el => el.getBoundingClientRect().top < document.querySelector('[data-ui=outcome-block]')!.getBoundingClientRect().top));
+        assert.equal(await detail.getByRole('button', {name: /accepted|rejected/}).count(), 0);
+      }
       await detail.getByRole('button', {name: 'Expand outcome'}).click();
       assert.equal(await detail.getByRole('button', {name: 'Collapse outcome'}).count(), 1);
       await page.unroute('**/api/ops/task_get');

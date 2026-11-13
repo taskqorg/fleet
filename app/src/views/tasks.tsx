@@ -153,6 +153,7 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     ...(wall !== null ? [{ label: 'Time', m: { value: wall, basis: 'measured' as const, partial: Number(t.cost.measured_wall) < Number(t.cost.executions_with_totals) ? 'some runs not measured' : undefined }, kind: 'duration' as const }] : []),
     ...(tok !== null ? [{ label: 'Tokens', m: { value: tok, basis: 'measured' as const }, kind: 'count' as const }] : []),
   ];
+  const latestExecution = t.executions?.at(-1); // task_get preserves execution sequence.
   const reported = (t.executions ?? []).filter((e: any) => e.report).sort((a: any, b: any) => b.report.at - a.report.at)[0];
   const decided = (t.questions ?? []).filter((q: any) => q.state === 'answered').sort((a: any, b: any) => (ms(b.answeredAt) ?? 0) - (ms(a.answeredAt) ?? 0)).slice(0, 3);
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
@@ -176,7 +177,11 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
       options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
       onAnswer={a => { if (!off) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}
       onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined} />)}
-    {reported && <DetailSection title="Latest execution report">
+    {latestExecution?.problem && <DetailSection title="Latest execution problem">
+      <ErrorBanner text={latestExecution.problem} />
+    </DetailSection>}
+    {reported && <DetailSection title="Latest available worker report">
+      <AgeChip t={reported.report.at} now={now} />
       <StateBadge family="execution" state={reported.report.outcome === 'succeeded' ? 'succeeded' : 'failed'} />
       {reported.report.summary ? <Markdown text={reported.report.summary} /> : <p class="muted">No report summary provided.</p>}
     </DetailSection>}
