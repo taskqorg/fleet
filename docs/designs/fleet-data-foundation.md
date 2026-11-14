@@ -493,7 +493,7 @@ People and agents use the same coordinator operations under the same permissions
 *   `questions.ask`, `questions.answer`.
 *   `usage.summary`: group by project, task, experiment, account, host, kind or configuration, with totals that count nothing twice.
 *   `transcript.read`: one execution, a range or a search, returning redacted text marked as data.
-*   `artifacts.get`: metadata plus a short-lived presigned GET.
+*   `artifact_get`: metadata plus an authenticated same-origin result URL for people and agent tools. Host transfers retain short-lived presigned store URLs.
 
 Permissions:
 *   The project grant is applied inside each operation.
