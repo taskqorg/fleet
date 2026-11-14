@@ -1475,26 +1475,22 @@ const taskLineageCTEs = `WITH RECURSIVE
   )
  )`
 
-// taskResourceRollup suppresses JIT only for this lineage calculation. On an
-// operation error the enclosing transaction rolls back, restoring LOCAL settings;
-// do not send another query into a canceled or aborted transaction.
-func taskResourceRollup(q *Request, taskID string) (out contract.ScopedResourceRollup, err error) {
+// resourceLineageQuery suppresses JIT only while computing a resource lineage.
+// On error, the enclosing transaction rolls back its LOCAL setting; do not
+// send a restore query into a canceled or aborted transaction.
+func resourceLineageQuery[T any](q *Request, run func() (T, error)) (out T, err error) {
 	var previous string
-	if err = q.tx.QueryRow(q.ctx(), "SELECT current_setting('jit')").Scan(&previous); err != nil {
-		return out, err
-	}
-	if previous == "off" {
-		return taskResourceRollupQuery(q, taskID)
-	}
-	if _, err = q.tx.Exec(q.ctx(), "SELECT set_config('jit', 'off', true)"); err != nil {
-		return out, err
-	}
-	out, err = taskResourceRollupQuery(q, taskID)
-	if err != nil {
-		return out, err
-	}
+	if err = q.tx.QueryRow(q.ctx(), "SELECT current_setting('jit')").Scan(&previous); err != nil { return out, err }
+	if previous == "off" { return run() }
+	if _, err = q.tx.Exec(q.ctx(), "SELECT set_config('jit', 'off', true)"); err != nil { return out, err }
+	out, err = run()
+	if err != nil { return out, err }
 	_, err = q.tx.Exec(q.ctx(), "SELECT set_config('jit', $1, true)", previous)
 	return out, err
+}
+
+func taskResourceRollup(q *Request, taskID string) (contract.ScopedResourceRollup, error) {
+	return resourceLineageQuery(q, func() (contract.ScopedResourceRollup, error) { return taskResourceRollupQuery(q, taskID) })
 }
 
 func taskResourceRollupQuery(q *Request, taskID string) (contract.ScopedResourceRollup, error) {
@@ -1642,6 +1638,10 @@ const sessionLineageCTEs = `WITH RECURSIVE
  )`
 
 func sessionResourceRollup(q *Request, sessionID string) (contract.ScopedResourceRollup, error) {
+	return resourceLineageQuery(q, func() (contract.ScopedResourceRollup, error) { return sessionResourceRollupQuery(q, sessionID) })
+}
+
+func sessionResourceRollupQuery(q *Request, sessionID string) (contract.ScopedResourceRollup, error) {
 	out := contract.ScopedResourceRollup{
 		Own:          emptyResourceSummary(),
 		Delegated:    emptyResourceSummary(),

@@ -26,6 +26,10 @@ test('resource lineage preserves JIT settings and accounting with realistic hist
   const claimed=await op('poll',poll,h.secret,true);
   const command=claimed.commands.find((x:any)=>x.executionId===start.executionId && x.kind==='start');
   assert.ok(command);
+  const detail=await op('session_get',{sessionId:start.sessionId});
+  assert.equal(detail.sessionId,start.sessionId);
+  assert.equal(detail.resources.own.executions,1);
+
   const envelope={hostId:'jit-host',commandId:command.id,executionId:start.executionId,agentToolKey:'jit-task-create-once',request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'task_create',arguments:{projectId:'desiign',title:'JIT replay qualification'}}}};
   const first=await op('agent-tools',envelope,h.secret,true);
   const replay=await op('agent-tools',envelope,h.secret,true);
