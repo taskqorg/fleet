@@ -218,7 +218,16 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 				break
 			}
 			if resync {
-				if err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) error { var err error; publicCursor, err = head(ctx, tx); return err }); err != nil {
+				if err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) error {
+					current := *q
+					current.tx = tx
+					if err := refreshRequestAccess(&current); err != nil {
+						return err
+					}
+					var err error
+					publicCursor, err = head(ctx, tx)
+					return err
+				}); err != nil {
 					return nil
 				}
 				send("resync", contract.StreamCursor{Cursor: publicCursor}, -1)
