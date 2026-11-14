@@ -55,12 +55,13 @@ func (v *CiRunner) Validate() error {
 
 // DeliveryBaseline: P50/P90 over a window (nearest rank); a named one is a stored snapshot.
 type DeliveryBaseline struct {
-	At     *string        `json:"at,omitempty"`
-	Counts DeliveryCounts `json:"counts"`
-	From   string         `json:"from"`
-	Name   *string        `json:"name,omitempty"`
-	Stats  []DeliveryStat `json:"stats"`
-	Until  string         `json:"until"`
+	At          *string        `json:"at,omitempty"`
+	Counts      DeliveryCounts `json:"counts"`
+	From        string         `json:"from"`
+	MetricBasis *string        `json:"metricBasis,omitempty"`
+	Name        *string        `json:"name,omitempty"`
+	Stats       []DeliveryStat `json:"stats"`
+	Until       string         `json:"until"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -260,25 +261,29 @@ func (v DeliveryMetric) Valid() bool {
 }
 
 type DeliveryPr struct {
-	Author        *string           `json:"author,omitempty"`
-	Durations     map[string]int64  `json:"durations"`
-	Enqueued      *string           `json:"enqueued,omitempty"`
-	Flakes        int64             `json:"flakes"`
-	HeadSha       string            `json:"headSha"`
-	Installed     map[string]string `json:"installed"`
-	MergeSha      string            `json:"mergeSha"`
-	Merged        string            `json:"merged"`
-	MqCiDone      *string           `json:"mqCiDone,omitempty"`
-	Number        int64             `json:"number"`
-	Opened        string            `json:"opened"`
-	PrCiDone      *string           `json:"prCiDone,omitempty"`
-	QueueRemovals int64             `json:"queueRemovals"`
-	QueueRuns     int64             `json:"queueRuns"`
-	Release       *string           `json:"release,omitempty"`
-	Released      *string           `json:"released,omitempty"`
-	Title         string            `json:"title"`
-	UiOnSite      *string           `json:"uiOnSite,omitempty"`
-	Url           string            `json:"url"`
+	Author               *string                 `json:"author,omitempty"`
+	AvailabilityVersions map[string]string       `json:"availabilityVersions,omitempty"`
+	Available            map[string]string       `json:"available,omitempty"`
+	Durations            map[string]int64        `json:"durations"`
+	Enqueued             *string                 `json:"enqueued,omitempty"`
+	Flakes               int64                   `json:"flakes"`
+	HeadSha              string                  `json:"headSha"`
+	Installed            map[string]string       `json:"installed"`
+	InstalledVersions    map[string]string       `json:"installedVersions,omitempty"`
+	MergeSha             string                  `json:"mergeSha"`
+	Merged               string                  `json:"merged"`
+	MqCiDone             *string                 `json:"mqCiDone,omitempty"`
+	Number               int64                   `json:"number"`
+	Opened               string                  `json:"opened"`
+	PrCiDone             *string                 `json:"prCiDone,omitempty"`
+	QueueRemovals        int64                   `json:"queueRemovals"`
+	QueueRuns            int64                   `json:"queueRuns"`
+	Release              *string                 `json:"release,omitempty"`
+	Released             *string                 `json:"released,omitempty"`
+	Title                string                  `json:"title"`
+	UiOnSite             *string                 `json:"uiOnSite,omitempty"`
+	UpdateObservations   map[string]UpdateResult `json:"updateObservations,omitempty"`
+	Url                  string                  `json:"url"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -361,11 +366,15 @@ func (v *DeliveryRegressionsRequest) Validate() error {
 }
 
 type DeliveryRelease struct {
-	Installed map[string]string `json:"installed"`
-	Published string            `json:"published"`
-	Tag       string            `json:"tag"`
-	Target    string            `json:"target"`
-	UiOnSite  *string           `json:"uiOnSite,omitempty"`
+	AvailabilityVersions map[string]string       `json:"availabilityVersions,omitempty"`
+	Available            map[string]string       `json:"available,omitempty"`
+	Installed            map[string]string       `json:"installed"`
+	InstalledVersions    map[string]string       `json:"installedVersions,omitempty"`
+	Published            string                  `json:"published"`
+	Tag                  string                  `json:"tag"`
+	Target               string                  `json:"target"`
+	UiOnSite             *string                 `json:"uiOnSite,omitempty"`
+	UpdateObservations   map[string]UpdateResult `json:"updateObservations,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

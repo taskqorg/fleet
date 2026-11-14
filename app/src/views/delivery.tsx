@@ -26,7 +26,9 @@ const DAY = 864e5;
 // Trend stages (DeliveryPr durations), in pipeline order.
 const TREND: { key: string; label: string; icon: IconName }[] = [
   { key: 'pr_ci', label: 'PR CI', icon: 'circle-dashed' }, { key: 'queue', label: 'Queue', icon: 'git-merge' },
-  { key: 'release', label: 'Release', icon: 'rotate-cw' }, { key: 'install', label: 'Install', icon: 'download' },
+  { key: 'release', label: 'Release', icon: 'rotate-cw' }, { key: 'install', label: 'Exact install', icon: 'download' },
+  { key: 'availability', label: 'Change available', icon: 'download' },
+  { key: 'time_to_available', label: 'Time to available', icon: 'clock' },
   { key: 'lead', label: 'Lead', icon: 'git-pull-request' },
 ];
 const sec = (ms: number) => ({ value: Math.round(ms / 1000), basis: 'measured' as const });
@@ -34,7 +36,7 @@ const sec = (ms: number) => ({ value: Math.round(ms / 1000), basis: 'measured' a
 // Trend: one card per stage, P90 and P50 per day as areas over the rolling baseline's P50 (striped); the numbers of the
 // last day with values and the baseline stay in the head (OR-19). Regressions of the last check list above the cards.
 function Trend({ now }: { now: number }) {
-  const { data, error } = useDoc<any>('delivery-trend', () => Promise.all([op('delivery_baseline', { days: 14 }), op('delivery_regressions', {})]).then(([b, r]) => ({ b, r })), () => false, 300000);
+  const { data, error } = useDoc<any>('delivery-trend', () => Promise.all([op('delivery_baseline', { days: 14 }), op('delivery_regressions', {}), op('delivery_history', {})]).then(([b, r, h]) => ({ b, r, h })), () => false, 300000);
   const head = <header class="panel-h"><h2><Icon name="activity" /> Trend, 14 days</h2><span class="grow" />
     {data?.r?.checkedAt && <AgeChip t={Date.parse(data.r.checkedAt)} now={now} alertAfter={26 * 3600} alertLabel="regression check is stale" />}</header>;
   // The history is the fleet repository's: hidden for a person without the fleet project or focused away from it.
@@ -44,12 +46,16 @@ function Trend({ now }: { now: number }) {
   const days: any[] = data.b.trend;
   const from = days.length ? Date.parse(days[0].day + 'T00:00:00Z') : now - 14 * DAY;
   // The baseline the last check compared with (the 7 days before it, or the named snapshot), else the rolling one.
-  const base = new Map<string, any>((data.r.baseline ?? data.b.rolling).stats.map((s: any) => [s.key, s]));
+  const baseline = data.r.baseline ?? data.b.rolling;
+  const incompatible = baseline.metricBasis !== 'exact-install-v1';
+  const base = new Map<string, any>(baseline.stats.filter((s: any) => !incompatible || !['install', 'total'].includes(s.key)).map((s: any) => [s.key, s]));
   const regs: any[] = data.r.regressions;
   // Keys without a card (enqueue, merge, ui, total, run, job:<name>, wait:<name>) show as the record names them.
   const label = (k: string) => TREND.find(t => t.key === k)?.label ?? k;
   return <section class="panel delivery-trend" aria-label="Delivery trend">
     {head}
+    <p class="muted">Exact install samples require healthy observations of that version. Superseded releases establish change availability; legacy install observations have unknown exact evidence.</p>
+    {incompatible && <p class="muted">Exact install and total baseline comparisons unavailable: incompatible historical basis.</p>}
     {regs.length === 0 ? <p class="muted">No regression against the baseline.</p> : <ul class="kv">
       {regs.map(r => <li key={r.key + r.metric} class="t-danger">
         <Icon name="triangle-alert" label="regression" />
@@ -58,6 +64,14 @@ function Trend({ now }: { now: number }) {
         {r.compareUrl && <a href={r.compareUrl} target="_blank" rel="noopener" data-tip="Changes since the last pull request under the threshold"><Icon name="git-merge" label="compare" /></a>}
       </li>)}
     </ul>}
+    <details><summary>Release observations</summary>
+      <ul class="kv">{[...(data.h?.releases ?? [])].reverse().slice(0, 20).map((r: any) => <li key={r.tag}>
+        <span class="id">{r.tag}</span>
+        <span class="grow">{Object.entries(r.installed ?? {}).map(([host, at]) => `${host}: ${r.installedVersions?.[host] ? 'exact healthy install' : 'legacy observation, exact install unknown'} at ${at}`).join('; ') || 'Exact install unknown'}</span>
+        <span>{Object.entries(r.available ?? {}).map(([host, at]) => `${host}: change available via ${r.availabilityVersions?.[host] ?? 'unknown version'} at ${at}`).join('; ')}</span>
+        <span>{Object.entries(r.updateObservations ?? {}).map(([host, u]: [string, any]) => `${host}: ${u.version} ${u.state} at ${u.at}${u.error ? `: ${u.error}` : ''}`).join('; ')}</span>
+      </li>)}</ul>
+    </details>
     <div class="limit-cards">
       {TREND.map(t => {
         const pts = (q: 'p50Ms' | 'p90Ms') => { const xs = days.flatMap(d => { const s = d.stats.find((x: any) => x.key === t.key); return s ? [{ at: Date.parse(d.day + 'T00:00:00Z'), v: s[q] / 6e4 }] : []; }); const today = days.length ? Date.parse(days[days.length - 1].day + 'T00:00:00Z') : 0; return xs.length && xs[xs.length - 1].at === today ? [...xs, { at: now, v: xs[xs.length - 1].v }] : xs; };
