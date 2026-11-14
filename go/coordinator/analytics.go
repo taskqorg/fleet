@@ -1475,7 +1475,29 @@ const taskLineageCTEs = `WITH RECURSIVE
   )
  )`
 
-func taskResourceRollup(q *Request, taskID string) (contract.ScopedResourceRollup, error) {
+// taskResourceRollup suppresses JIT only for this lineage calculation. On an
+// operation error the enclosing transaction rolls back, restoring LOCAL settings;
+// do not send another query into a canceled or aborted transaction.
+func taskResourceRollup(q *Request, taskID string) (out contract.ScopedResourceRollup, err error) {
+	var previous string
+	if err = q.tx.QueryRow(q.ctx(), "SELECT current_setting('jit')").Scan(&previous); err != nil {
+		return out, err
+	}
+	if previous == "off" {
+		return taskResourceRollupQuery(q, taskID)
+	}
+	if _, err = q.tx.Exec(q.ctx(), "SELECT set_config('jit', 'off', true)"); err != nil {
+		return out, err
+	}
+	out, err = taskResourceRollupQuery(q, taskID)
+	if err != nil {
+		return out, err
+	}
+	_, err = q.tx.Exec(q.ctx(), "SELECT set_config('jit', $1, true)", previous)
+	return out, err
+}
+
+func taskResourceRollupQuery(q *Request, taskID string) (contract.ScopedResourceRollup, error) {
 	out := contract.ScopedResourceRollup{
 		Own:          emptyResourceSummary(),
 		Delegated:    emptyResourceSummary(),
