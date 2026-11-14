@@ -198,6 +198,22 @@ func (a *App) childReceiptIn(q *Request, b *contract.ChildReceipt) (any, error) 
 
 // statusReceiptIn: POST /api/hosts/receipts (contract.Receipt), a command's status.
 func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, error) {
+	if txHasLock(q.tx, GLOBAL) {
+		rs, err := queryRows(q, `SELECT DISTINCT sid FROM (
+		 SELECT session_id AS sid FROM execution WHERE id=$1
+		 UNION SELECT s.data->>'createdBySessionId' FROM execution e JOIN document s ON s.id=e.session_id AND s.kind='session' WHERE e.id=$1
+		 ) x WHERE coalesce(sid,'')<>''`, b.ExecutionId)
+		if err != nil {
+			return nil, "", err
+		}
+		locks := []string{"execution:" + b.ExecutionId}
+		for _, r := range rs {
+			locks = append(locks, "session:"+astr(r["sid"]))
+		}
+		if err := acquireTxLock(q, locks...); err != nil {
+			return nil, "", err
+		}
+	}
 	c, err := commandOf(q, b.HostId, b.ExecutionId, b.CommandId, "Command rejected")
 	if err != nil {
 		return nil, "", err

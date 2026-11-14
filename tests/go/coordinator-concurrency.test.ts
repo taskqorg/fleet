@@ -97,14 +97,18 @@ test('C3 unchanged heartbeats debounce change emissions while genuine state chan
   nodeTest.after(() => ctrl.abort());
   const dec = new TextDecoder();
   let buf = '';
+  let pendingRead = reader.read();
   const readChunk = async (ms: number) => {
-    const timer = setTimeout(() => {}, ms);
+    let timer: ReturnType<typeof setTimeout>;
     const out = await Promise.race([
-      reader.read(),
-      new Promise<{done: true, value: undefined}>(r => setTimeout(() => r({done: true, value: undefined}), ms)),
+      pendingRead,
+      new Promise<null>(r => { timer = setTimeout(() => r(null), ms); }),
     ]);
-    clearTimeout(timer);
-    if (!out.done && out.value) buf += dec.decode(out.value, {stream: true});
+    clearTimeout(timer!);
+    if (out !== null) {
+      if (!out.done && out.value) buf += dec.decode(out.value, {stream: true});
+      pendingRead = reader.read();
+    }
     return buf;
   };
   await readChunk(300);
