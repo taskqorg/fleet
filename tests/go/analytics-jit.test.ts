@@ -13,7 +13,7 @@ test('resource lineage preserves JIT settings and accounting with realistic hist
   const socket=process.env.FLEET_TRIAL_PGDATA || join(homedir(),'.cache/fleet-trial/pg');
   const port=process.env.FLEET_TRIAL_PGPORT || '54329';
   const url=`postgresql://fleet@/${db}?host=${encodeURIComponent(socket)}&port=${port}`;
-  const output=execFileSync('go',['test','./coordinator','-run','^TestTaskResourceJITPostgres$','-count=1','-v'],{cwd:'go',env:{...process.env,FLEET_JIT_TEST_DATABASE_URL:url},encoding:'utf8'});
+  let output:string; try { output=execFileSync('go',['test','./coordinator','-run','^TestTaskResourceJITPostgres$','-count=1','-v'],{cwd:'go',env:{...process.env,FLEET_JIT_TEST_DATABASE_URL:url},encoding:'utf8'}); } catch (error:any) { console.error(error.stdout?.toString(),error.stderr?.toString()); throw error; }
   assert.match(output,/--- PASS: TestTaskResourceJITPostgres/);
   const op=async (name:string,body:object,token=c.secret,host=false) => {
    const r=await fetch(`${c.base}${host?'/api/hosts/':'/api/ops/'}${name}`,{method:'POST',headers:{authorization:`Bearer ${token}`,...(host?{}:{'x-fleet-person':'owner@trial.test'}),'content-type':'application/json'},body:JSON.stringify(body)});
