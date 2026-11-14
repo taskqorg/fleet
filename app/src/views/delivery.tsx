@@ -4,7 +4,7 @@
 // recorded counts in the coordinator). The project focus (OR-34) filters items and samples by project. The trend panel:
 // P50/P90 per stage per day against the rolling 7-day baseline, and the open regressions (delivery_baseline,
 // delivery_regressions; docs/designs/fleet-delivery-pipeline.md, Delivery health).
-import { AreaChart, type ChartSeries, AgeChip, Empty, ErrorBanner, Icon, Num, StatStrip, type IconName, type Tone } from '../../../packages/ui/src/index.ts';
+import { AreaChart, type ChartSeries, AgeChip, Empty, ErrorBanner, Icon, Num, StatStrip, type IconName, type Tone, type Measured } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { focusIds, prefsRead } from '../prefs.ts';
@@ -110,9 +110,15 @@ export function Delivery() {
   </header>;
   if (!data) return <>{head}{error ? <ErrorBanner text={`Delivery did not load: ${error}`} /> : <Empty text="Loading…" />}</>;
   const items: any[] = data.items;
+  const incomplete = !!data.error;
+  // A failed repo may retain stale items, so these are not lower bounds of current totals.
+  const count = (value: number): Measured => incomplete
+    ? { value: null, basis: 'unavailable', reason: 'GitHub data incomplete' }
+    : { value, basis: 'measured' };
+  const historyUnavailable = incomplete && data.samples.length === 0;
   // Samples recorded before per-repository samples (no repo) came once per project: one per read and key.
   const samples: any[] = [...new Map(data.samples.map((s: any) => [`${s.at} ${s.repo ?? s.projectId}`, s])).values()];
-  const used = STAGES.filter(s => s.id !== 'merged' || items.some(i => i.stage === 'merged'));
+  const used = STAGES.filter(s => s.id !== 'merged' || incomplete || items.some(i => i.stage === 'merged'));
   const of = (id: string) => items.filter(i => i.stage === id).sort((a, b) => a.since.localeCompare(b.since));
   // One line per stage: the sum over projects at each read.
   const sums = new Map<string, Record<string, number>>();
@@ -129,24 +135,26 @@ export function Delivery() {
     {head}
     {data.error && <ErrorBanner text={`GitHub: ${data.error}`} />}
     <StatStrip label="Pull requests by stage" stats={[
-      ...used.map(s => ({ label: s.label, icon: s.icon, value: { value: of(s.id).length, basis: 'measured' as const }, tone: (late(s) ? 'danger' : undefined) as Tone | undefined })),
-      { label: 'workers waiting to land', icon: 'clock', value: { value: data.landing, basis: 'measured' as const } },
+      ...used.map(s => ({ label: s.label, icon: s.icon, value: count(of(s.id).length), tone: (late(s) ? 'danger' : undefined) as Tone | undefined })),
+      { label: 'workers waiting to land', icon: 'clock', value: count(data.landing) },
     ]} />
-    <p class="muted" aria-live="polite">{first ? `Waiting starts at ${first.label}.` : 'Nothing waits past its limit.'}</p>
+    <p class="muted" aria-live="polite">{incomplete ? 'Some GitHub data is unavailable. Current totals and waiting status cannot be confirmed; retained observations are shown below.' : first ? `Waiting starts at ${first.label}.` : 'Nothing waits past its limit.'}</p>
+    {incomplete && data.landing > 0 && <p class="muted">Retained observations: <Num m={{ value: data.landing, basis: 'measured' }} kind="count" /> workers were waiting to land; the current total is unavailable.</p>}
     <section class="panel delivery-flow" aria-label="Pull requests in flight over 24 hours">
       <header class="panel-h"><h2>In flight, 24 hours</h2></header>
-      <AreaChart label="Pull requests in flight by stage over 24 hours" stacked from={now - 24 * HOUR} to={now} now={now} value={v => String(Math.round(v))}
+      {historyUnavailable ? <Empty text="History unavailable. GitHub data is incomplete." /> : <AreaChart label="Pull requests in flight by stage over 24 hours" stacked from={now - 24 * HOUR} to={now} now={now} value={v => String(Math.round(v))}
         max={Math.max(1, ...at.map((_, j) => used.filter(s => LAYERS[s.id]).reduce((n, s) => n + lines[s.id][j].v, 0)))}
-        series={used.filter(s => LAYERS[s.id]).map(s => ({ label: s.label, points: lines[s.id], step: true, ...LAYERS[s.id] }))} />
+        series={used.filter(s => LAYERS[s.id]).map(s => ({ label: s.label, points: lines[s.id], step: true, ...LAYERS[s.id] }))} />}
+      {incomplete && !historyUnavailable && <p class="muted">Retained historical observations; GitHub coverage is incomplete.</p>}
     </section>
     <Trend now={now} />
     <div class="limit-cards">
       {used.map(s => { const list = of(s.id); return <article key={s.id} class="panel limit-card" aria-label={s.label}>
         <header class="panel-h"><h2><Icon name={s.icon} /> {s.label}</h2><span class="grow" />
           {list[0] && s.alert && <AgeChip t={Date.parse(list[0].since)} now={now} alertAfter={s.alert} alertLabel="waits too long" />}
-          <Num m={{ value: list.length, basis: 'measured' }} kind="count" /></header>
-        <AreaChart label={`${s.label} over 24 hours`} series={[{ label: s.label, points: lines[s.id], tone: 'd1', step: true }]} from={now - 24 * HOUR} to={now} now={now} max={done(s.id) ? doneMax : max} value={v => String(Math.round(v))} />
-        {list.length === 0 ? <Empty text="None." /> : <ul class="kv">
+          {incomplete && list.length > 0 ? <span data-tip="Retained observations; current total unavailable"><Num m={{ value: list.length, basis: 'measured' }} kind="count" /> retained</span> : <Num m={count(list.length)} kind="count" />}</header>
+        {historyUnavailable ? null : <AreaChart label={`${s.label} over 24 hours`} series={[{ label: s.label, points: lines[s.id], tone: 'd1', step: true }]} from={now - 24 * HOUR} to={now} now={now} max={done(s.id) ? doneMax : max} value={v => String(Math.round(v))} />}
+        {list.length === 0 ? <Empty text={incomplete ? 'Unavailable. GitHub data is incomplete.' : 'None.'} /> : <ul class="kv">
           {list.slice(0, SHOWN).map(i => <li key={i.repo + i.number}>
             <Icon name={s.icon} label={s.label} />
             <a class="row-link grow" href={i.url} target="_blank" rel="noopener">{i.title || `#${i.number}`} <span class="id">#{i.number}</span></a>
