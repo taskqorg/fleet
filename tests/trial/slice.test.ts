@@ -36,8 +36,10 @@ async function host(id: string) {
 const session = async () => ok(await browser('POST', '/api/sessions', {})).sessionId as string;
 async function started() {
   const h = await host('trial-host');
-  const sessionId = await session();
-  const execution = ok(await browser('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'}));
+  // Receipt/event transport fixtures use explicit placement; asynchronous dispatch may choose either registered host.
+  const started = ok(await browser('POST', '/api/ops/session_start', {requestId: randomUUID(), text: 'hello', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host'}));
+  const sessionId = started.sessionId;
+  const execution = {id: started.executionId};
   const {commands} = ok(await h('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}));
   const command = commands.find((c: any) => c.executionId === execution.id);
   assert.ok(command, 'the poll delivers the start command');

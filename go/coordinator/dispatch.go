@@ -64,6 +64,11 @@ func (a *App) waitDispatchCaughtUp(ctx context.Context, target uint64) error {
 	}
 	for {
 		a.dispatchMu.Lock()
+		// A pass can defer a newly discovered session and enqueue another pass.
+		// Include that generation before returning an immediate-poll response.
+		if a.dispatchReqGen > target {
+			target = a.dispatchReqGen
+		}
 		done := a.dispatchDoneGen >= target
 		ch := a.dispatchDoneCh
 		a.dispatchMu.Unlock()

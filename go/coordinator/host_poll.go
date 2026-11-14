@@ -432,24 +432,18 @@ func (a *App) poll(q *Request) (any, error) {
 	out := []doc{}
 	var err error
 	if wait == 0 {
+		target := flushGen
+		if cur := a.currentDispatchReqGen(); cur > target {
+			target = cur
+		}
+		if target > 0 || !a.dispatchLoopStarted.Load() {
+			if err := a.waitDispatchCaughtUp(ctx, target); err != nil {
+				return nil, err
+			}
+		}
 		out, err = a.pollReadyCommands(ctx, host, b.Capabilities)
 		if err != nil {
 			return nil, err
-		}
-		if len(out) == 0 {
-			target := flushGen
-			if cur := a.currentDispatchReqGen(); cur > target {
-				target = cur
-			}
-			if target > 0 || !a.dispatchLoopStarted.Load() {
-				if err := a.waitDispatchCaughtUp(ctx, target); err != nil {
-					return nil, err
-				}
-				out, err = a.pollReadyCommands(ctx, host, b.Capabilities)
-				if err != nil {
-					return nil, err
-				}
-			}
 		}
 	} else {
 		deadline := time.NewTimer(wait)
