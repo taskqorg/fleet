@@ -1819,3 +1819,89 @@ CREATE TABLE closed_delta_identity (
 ALTER TABLE closed_delta_identity ENABLE ROW LEVEL SECURITY;
 ALTER TABLE closed_delta_identity FORCE ROW LEVEL SECURITY;
 CREATE POLICY execution_scope ON closed_delta_identity USING (EXISTS(SELECT 1 FROM execution WHERE execution.id=execution_id));
+
+
+-- migration 54: trial attribution and reported native reasoning/API observations, including retained runs.
+ALTER TABLE execution_totals
+ ADD COLUMN tokens_reasoning bigint NULL,
+ ADD COLUMN tokens_reasoning_basis text NOT NULL DEFAULT 'unavailable',
+ ADD COLUMN api_ms bigint NULL,
+ ADD COLUMN api_ms_basis text NOT NULL DEFAULT 'unavailable';
+
+CREATE OR REPLACE FUNCTION fleet_write_native_observations(eid text) RETURNS void LANGUAGE sql AS $$
+ WITH doc_evs AS MATERIALIZED (
+  SELECT data, seq
+  FROM document
+  WHERE kind='event' AND data->>'executionId'=eid
+ ),
+ evs AS (
+  SELECT data->'data'->'fleetNormalized'->>'lifecycle' AS lc, data->'data'->'fleetNormalized'->'nativeUsage' AS u, seq
+  FROM doc_evs WHERE jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object'
+ ),
+ calls AS (SELECT u->'last' AS u FROM evs WHERE lc='usage.observation' AND jsonb_typeof(u->'last')='object'),
+ rep AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE lc IN ('result','turn.completed') AND NOT EXISTS (SELECT 1 FROM calls) ORDER BY seq DESC LIMIT 1
+ ),
+ inc_native AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE coalesce(lc,'') NOT IN ('usage.observation','result','turn.completed')
+   AND NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+ ),
+ inc_assistant AS (
+  SELECT DISTINCT ON (mid) mu AS u FROM (
+   SELECT
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->>'id', d.data->'data'->'message'->>'id', d.seq::text) AS mid,
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->'usage', d.data->'data'->'message'->'usage') AS mu,
+    d.seq
+   FROM doc_evs d
+   WHERE NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+    AND coalesce(d.data->'data'->'fleetNormalized'->>'lifecycle', d.data->'data'->>'type')='assistant'
+    AND jsonb_typeof(d.data->'data'->'fleetNormalized'->'nativeUsage') IS DISTINCT FROM 'object'
+  ) m WHERE jsonb_typeof(mu)='object' ORDER BY mid, seq DESC
+ ),
+ rows AS (
+  SELECT fleet_token_count(coalesce(u->'reasoning_output_tokens',u->'reasoningOutputTokens',u->'thought_tokens',u->'thoughtTokens',u->'output_tokens_details'->'reasoning_tokens')) AS reasoning
+  FROM (SELECT u FROM calls UNION ALL SELECT u FROM rep UNION ALL SELECT u FROM inc_native UNION ALL SELECT u FROM inc_assistant) x
+ ), n AS (
+  SELECT CASE WHEN count(*)=count(reasoning) THEN sum(reasoning) END AS reasoning FROM rows
+ )
+ UPDATE execution_totals SET tokens_reasoning=n.reasoning,
+  tokens_reasoning_basis=CASE WHEN n.reasoning IS NULL THEN 'unavailable' ELSE 'measured' END
+ FROM n WHERE execution_id=eid;
+ WITH report AS (
+  SELECT fleet_token_count(coalesce(data#>'{data,fleetNormalized,native,duration_api_ms}',data#>'{data,duration_api_ms}',data#>'{data,native,duration_api_ms}')) AS ms
+  FROM document WHERE kind='event' AND data->>'executionId'=eid
+   AND coalesce(data#>>'{data,fleetNormalized,lifecycle}',data->>'type')='result'
+  ORDER BY seq DESC LIMIT 1
+ ) UPDATE execution_totals SET api_ms=report.ms,
+  api_ms_basis=CASE WHEN report.ms IS NULL THEN 'unavailable' ELSE 'measured' END
+ FROM report WHERE execution_id=eid
+$$;
+
+-- Owner-only upgrade includes projectless retained executions. Suppress live derived-state triggers
+-- for this attribution/observation repair; no work state or source event is changed.
+ALTER TABLE execution DISABLE TRIGGER USER;
+ALTER TABLE execution_totals DISABLE TRIGGER USER;
+ALTER TABLE execution NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE execution_totals NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE document NO FORCE ROW LEVEL SECURITY;
+SET LOCAL row_security=off;
+
+-- The trial's typed parent lineage is authoritative; profile names were incorrectly stored as variant labels.
+WITH RECURSIVE lab_lineage AS (
+ SELECT id,project_id,experiment_id,variant FROM execution WHERE kind='pipeline_run' AND experiment_id IS NOT NULL
+ UNION
+ SELECT e.id,e.project_id,p.experiment_id,p.variant FROM execution e JOIN lab_lineage p ON e.parent_execution_id=p.id
+ WHERE e.project_id IS NOT DISTINCT FROM p.project_id AND NOT (e.kind='pipeline_run' AND e.experiment_id IS NOT NULL)
+)
+UPDATE execution e SET experiment_id=l.experiment_id,variant=l.variant FROM lab_lineage l
+WHERE e.id=l.id AND (e.experiment_id IS DISTINCT FROM l.experiment_id OR e.variant IS DISTINCT FROM l.variant);
+SELECT count(fleet_write_native_observations(t.execution_id)) FROM execution_totals t JOIN execution e ON e.id=t.execution_id
+WHERE e.kind IN ('agent_run','child_agent');
+ALTER TABLE execution FORCE ROW LEVEL SECURITY;
+ALTER TABLE execution_totals FORCE ROW LEVEL SECURITY;
+ALTER TABLE document FORCE ROW LEVEL SECURITY;
+RESET row_security;
+ALTER TABLE execution ENABLE TRIGGER USER;
+ALTER TABLE execution_totals ENABLE TRIGGER USER;

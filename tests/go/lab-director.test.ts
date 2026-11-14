@@ -40,6 +40,9 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const session=await op('session_get',{sessionId:row.sessionId});assert.equal(session.directedBy,creator);
    const run=ok(await request('/api/pipeline-runs/'+row.pipelineRunId,undefined));assert.equal(run.requestedBy.email,creator);
    const commands=(await hostCall('/api/hosts/poll',poll)).commands;const command=commands.find((x:any)=>x.executionId===row.id);assert.ok(command,'fixture host claims native command without executing it');
+   const lineage=JSON.parse(c.sql(`SELECT json_agg(json_build_object('kind',kind,'experiment',experiment_id,'variant',variant)) FROM execution WHERE id IN ('${row.pipelineRunId}','${row.pipelineStepId}','${row.id}')`));
+   assert.equal(lineage.length,3);
+   for(const item of lineage) assert.deepEqual([item.experiment,item.variant],[e.id,'fixture'],'trial identity survives native enqueue and host assignment');
    const mine=await op('task_create',{projectId:project,title:'mine fixture'});
    const foreign=await op('task_create',{projectId:'hello-world',title:'foreign fixture'});
    const response=await request('/api/hosts/agent-tools',{executionId:row.id,commandId:command.id,request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'task_get',arguments:{taskId:foreign.id}}}},owner,host.secret);
@@ -48,6 +51,14 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const revoked=await request('/api/hosts/agent-tools',{executionId:row.id,commandId:command.id,request:{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'task_get',arguments:{taskId:mine.id}}}},owner,host.secret);
    assert.equal(revoked.status,404,'native bound request refreshes revoked authority');
    await op('people_set',{people});
+  });
+  // Requirement: Fleet Lab variant lineage; risk: script jobs cannot be attributed to their trial.
+  await t.test('script steps retain the trial variant independently of an agent profile',async()=>{
+   await hostCall('/api/hosts/poll',{...poll,capabilities:['script']});
+   await op('definition_create',{kind:'pipeline',id:'lab-script-lineage',content:{pipeline:{id:'lab-script-lineage',version:2,steps:[{id:'script',kind:'script',host:'trial-host',command:'true'}]}},message:'fixture'});
+   const e=await op('lab_experiment_create',{...body,pipelineId:'lab-script-lineage',variants:[{label:'reviewed'}]});await launch(e.id);
+   const job=await until(async()=>JSON.parse(c.sql(`SELECT coalesce(json_agg(json_build_object('id',id,'variant',variant,'experiment',experiment_id)),'[]') FROM execution WHERE kind='host_job' AND experiment_id='${e.id}'`))[0]);
+   assert.equal(job.variant,'reviewed');assert.equal(job.experiment,e.id);
   });
   // R1, R2, R3; risk: a background pipeline drops or refreshes frozen source pins after project Save.
   await t.test('background Lab enqueue retains the pipeline frozen project source descriptor',async()=>{
