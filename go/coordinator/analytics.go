@@ -1749,6 +1749,9 @@ func boundaryResourcesMap(q *Request, ids []string) (map[string]contract.Resourc
 
 // definitionUsageResources computes ResourceSummary overall per definition ID and per (id, revision)
 // across non-draft pinned executions in the last `days`, resolving container descendants to leaves without double-counting.
+// definitionUsageResources materializes visible child/parent edges once. An OR
+// join inside the recursive term rescans every execution for every tree row and
+// spills wide session rows; the narrow edge relation preserves all four links.
 func definitionUsageResources(q *Request, kind, id string, days int64) (map[string]contract.ResourceSummary, map[string]map[int64]contract.ResourceSummary, error) {
 	pin := map[string]string{"kind": kind}
 	if id != "" {
@@ -1764,16 +1767,23 @@ func definitionUsageResources(q *Request, kind, id string, days int64) (map[stri
     AND coalesce(d->>'revision', '') ~ '^[0-9]+$'
     AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
  ),
+ edges AS MATERIALIZED (
+  SELECT DISTINCT c.id AS child_id, p.parent_id
+  FROM execution c
+  LEFT JOIN document s ON s.kind = 'session' AND s.id = c.session_id
+  CROSS JOIN LATERAL (VALUES
+   (c.parent_execution_id),
+   (CASE WHEN c.delegation IS NOT NULL THEN c.delegation->>'parentExecutionId' END),
+   (s.data->>'parentExecutionId'),
+   (CASE WHEN c.kind = 'tool_run' THEN c.data->>'pipelineRunId' END)
+  ) p(parent_id)
+  WHERE p.parent_id IS NOT NULL
+ ),
  tree AS (
   SELECT root_id AS exec_id, def_id, rev FROM pinned
   UNION
-  SELECT c.id AS exec_id, t.def_id, t.rev
-  FROM execution c
-  LEFT JOIN document s ON s.kind = 'session' AND s.id = c.session_id
-  JOIN tree t ON c.parent_execution_id = t.exec_id
-     OR (c.delegation IS NOT NULL AND c.delegation->>'parentExecutionId' = t.exec_id)
-     OR s.data->>'parentExecutionId' = t.exec_id
-     OR (c.kind = 'tool_run' AND c.data->>'pipelineRunId' = t.exec_id)
+  SELECT c.child_id AS exec_id, t.def_id, t.rev
+  FROM edges c JOIN tree t ON c.parent_id = t.exec_id
  ),
  leaf_hits AS (
   SELECT DISTINCT tr.def_id, tr.rev, e.id AS leaf_id
