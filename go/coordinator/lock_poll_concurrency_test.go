@@ -932,3 +932,20 @@ func TestNoOpStoreTriggerSuppression(t *testing.T) {
 		t.Fatalf("expected storesObserve unchanged within 30s to skip UPDATE (observed_at %v -> %v)", obsMid, obsAfter)
 	}
 }
+
+// Requirement: PR5 immediate polls complete for their captured dispatch generation.
+// Risk: unrelated dispatch requests force a poll to wait for global quiescence indefinitely.
+func TestDispatchWaitIgnoresLaterRequests(t *testing.T) {
+	a := &App{}
+	a.ensureRuntime()
+	a.dispatchLoopStarted.Store(true)
+	a.dispatchMu.Lock()
+	a.dispatchReqGen = 2
+	a.dispatchDoneGen = 1
+	a.dispatchMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := a.waitDispatchCaughtUp(ctx, 1); err != nil {
+		t.Fatalf("captured generation already completed despite later requests: %v", err)
+	}
+}
