@@ -178,13 +178,13 @@ func openTestCoordinator(t *testing.T, withDispatchLoop bool) *testCoordEnv {
 		t.Fatalf("open owner store: %v", err)
 	}
 	if err := migrate(ctx, ownerURL); err != nil {
-		ownerStore.pool.Close()
+		ownerStore.Close()
 		cancel()
 		t.Fatalf("migrate: %v", err)
 	}
 	appStore, err := openStore(ctx, appURL)
 	if err != nil {
-		ownerStore.pool.Close()
+		ownerStore.Close()
 		cancel()
 		t.Fatalf("open app store: %v", err)
 	}
@@ -202,8 +202,8 @@ func openTestCoordinator(t *testing.T, withDispatchLoop bool) *testCoordEnv {
 	a := &App{store: appStore, browserSecret: "test-browser-secret", hostID: "test-coord"}
 	a.ensureRuntime()
 	if err := a.loadPeople(ctx, peoplePath); err != nil {
-		appStore.pool.Close()
-		ownerStore.pool.Close()
+		appStore.Close()
+		ownerStore.Close()
 		cancel()
 		t.Fatalf("loadPeople: %v", err)
 	}
@@ -235,8 +235,8 @@ func openTestCoordinator(t *testing.T, withDispatchLoop bool) *testCoordEnv {
 		a.closeLongPolls()
 		cancel()
 		srv.Close()
-		appStore.pool.Close()
-		ownerStore.pool.Close()
+		appStore.Close()
+		ownerStore.Close()
 		_, _ = osexec.Command(filepath.Join(binDir, "psql"), "-h", sockDir, "-p", fmt.Sprintf("%d", pgPort), "-U", "postgres", "-d", "postgres", "-c", fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", db)).CombinedOutput()
 	})
 	return env
@@ -846,7 +846,7 @@ func TestNoOpStoreTriggerSuppression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.pool.Close()
+	defer s.Close()
 
 	mig52At := strings.Index(schemaSQL, "-- migration 52")
 	if mig52At < 0 {

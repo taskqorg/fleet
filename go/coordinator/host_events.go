@@ -135,6 +135,10 @@ func ingestIn(q *Request, b doc) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	byID, bySeq, closedHashes, err := eventBatchSnapshot(q, xid, evs)
+	if err != nil {
+		return nil, err
+	}
 	prepared := []preparedEvent{}
 	for _, raw := range evs {
 		// Identity from the stored object itself, never from the struct: encoding/json matches keys case-insensitively,
@@ -151,26 +155,16 @@ func ingestIn(q *Request, b doc) (any, error) {
 			value[k] = v
 		}
 		value["id"], value["executionId"], value["sessionId"] = key, xid, execution["sessionId"]
-		prevs, err := eventsWhere(q, doc{"id": key})
-		if err != nil {
-			return nil, err
-		}
-		var previous doc
-		for _, p := range prevs {
-			if p["id"] == key {
-				previous = p
+		if digest, closed := closedHashes[key]; closed {
+			if digest != frameHash(value) {
+				return nil, fail(409, "Event conflict")
 			}
+			continue
 		}
-		at, err := rows(q, "SELECT data FROM document WHERE kind IN ('event','event-delta') AND data->>'executionId'=$1 AND data->'seq'=to_jsonb($2::bigint)", xid, seq)
-		if err != nil {
-			return nil, err
-		}
+		previous := byID[key]
 		var collision doc
-		for _, x := range at {
-			if x["id"] != key {
-				collision = x
-				break
-			}
+		if at := bySeq[seq]; at != nil && at["id"] != key {
+			collision = at
 		}
 		if previous != nil && !same(previous, value) {
 			return nil, fail(409, "Event conflict")
@@ -244,10 +238,10 @@ func ingestIn(q *Request, b doc) (any, error) {
 		}
 		seen[s] = k
 	}
+	if err := putEventBatch(q, prepared); err != nil {
+		return nil, err
+	}
 	for _, p := range prepared {
-		if err := put(q, eventKind(p.value), p.value); err != nil {
-			return nil, err
-		}
 		if c := p.conflict; c != nil && c["state"] != "delivered" {
 			c["state"], c["deliveredAt"] = "delivered", nowMs()
 			if err := put(q, "transport-conflict", c); err != nil {
@@ -257,6 +251,9 @@ func ingestIn(q *Request, b doc) (any, error) {
 				return nil, err
 			}
 		}
+	}
+	if err := cleanupClosedDeltas(q, xid); err != nil {
+		return nil, err
 	}
 	if err := markObservation(q, xid, "confirmed"); err != nil {
 		return nil, err

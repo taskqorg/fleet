@@ -8,8 +8,32 @@ import (
 
 // resolveAccess never mutates the file projection or borrows the owner's identity.
 func (a *App) resolveAccess(ctx context.Context, email string) (*Person, error) {
+	s := a.store
+	s.authMu.Lock()
+	generation := s.authGeneration
+	if s.authWrites == 0 {
+		if cached := s.authPeople[email]; cached != nil {
+			out := copyPerson(cached)
+			s.authMu.Unlock()
+			return out, nil
+		}
+	}
+	s.authMu.Unlock()
 	var out *Person
-	err := a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error { var err error; out, err = resolveAccessTx(ctx, tx, email); return err })
+	err := s.Tx(ctx, nil, false, "", func(tx pgx.Tx) error { var err error; out, err = resolveAccessTx(ctx, tx, email); return err })
+	if err == nil {
+		s.authMu.Lock()
+		if s.authWrites == 0 && s.authGeneration == generation {
+			if len(s.authPeople) >= 1024 {
+				s.authPeople = nil
+			}
+			if s.authPeople == nil {
+				s.authPeople = map[string]*Person{}
+			}
+			s.authPeople[email] = copyPerson(out)
+		}
+		s.authMu.Unlock()
+	}
 	return out, err
 }
 func resolveAccessTx(ctx context.Context, tx pgx.Tx, email string) (*Person, error) {

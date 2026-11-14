@@ -23,7 +23,13 @@ import (
 // Store: one pool of the coordinator role with the operator scope '*' as a startup option (docs/designs/fleet-data-foundation.md §12).
 // A transaction of a person other than the owner sets fleet.project_ids and fleet.person for itself (SET LOCAL).
 type Store struct {
-	pool *pgxpool.Pool
+	pool           *pgxpool.Pool
+	readPool       *pgxpool.Pool
+	authMu         sync.Mutex
+	authWrites     int
+	authGeneration uint64
+	authPeople     map[string]*Person
+	authHosts      map[string][]byte
 }
 
 // Scope: nil is the coordinator's own '*' scope (the owner, hosts).
@@ -224,12 +230,29 @@ func openStore(ctx context.Context, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.MaxConns = 16
 	cfg.ConnConfig.RuntimeParams["options"] = "-c fleet.project_ids=*"
 	p, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &Store{pool: p}, nil
+	readCfg := cfg.Copy()
+	readCfg.MaxConns = 16
+	r, err := pgxpool.NewWithConfig(ctx, readCfg)
+	if err != nil {
+		p.Close()
+		return nil, err
+	}
+	return &Store{pool: p, readPool: r}, nil
+}
+
+func (s *Store) Close() {
+	if s.readPool != nil {
+		s.readPool.Close()
+	}
+	if s.pool != nil {
+		s.pool.Close()
+	}
 }
 
 func retryable(err error) bool {
@@ -254,6 +277,22 @@ func (s *Store) Tx(ctx context.Context, sc *Scope, write bool, lock string, fn f
 // TxLocks runs fn in one transaction acquiring the canonical sorted union of locks (64-bit hashtextextended).
 // When write is true and locks is empty, no initial advisory lock is acquired (equivalent to NOLOCK).
 func (s *Store) TxLocks(ctx context.Context, sc *Scope, write bool, locks []string, fn func(pgx.Tx) error) error {
+	if write {
+		s.authMu.Lock()
+		s.authWrites++
+		s.authGeneration++
+		s.authPeople = nil
+		s.authHosts = nil
+		s.authMu.Unlock()
+		defer func() {
+			s.authMu.Lock()
+			s.authGeneration++
+			s.authPeople = nil
+			s.authHosts = nil
+			s.authWrites--
+			s.authMu.Unlock()
+		}()
+	}
 	var sorted []string
 	if write {
 		var err error
@@ -267,7 +306,13 @@ func (s *Store) TxLocks(ctx context.Context, sc *Scope, write bool, locks []stri
 		if err == nil || !retryable(err) {
 			return err
 		}
-		time.Sleep(time.Duration(rand.Float64() * float64(min(200, 5<<min(attempt, 6))) * float64(time.Millisecond)))
+		delay := time.NewTimer(time.Duration(rand.Float64() * float64(min(200, 5<<min(attempt, 6))) * float64(time.Millisecond)))
+		select {
+		case <-ctx.Done():
+			delay.Stop()
+			return ctx.Err()
+		case <-delay.C:
+		}
 	}
 }
 
@@ -277,7 +322,11 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, sortedLocks []s
 		opts = pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
 	}
 	var t pgx.Tx
-	err := pgx.BeginTxFunc(ctx, s.pool, opts, func(tx pgx.Tx) error {
+	pool := s.pool
+	if !write && s.readPool != nil {
+		pool = s.readPool
+	}
+	err := pgx.BeginTxFunc(ctx, pool, opts, func(tx pgx.Tx) error {
 		t = tx
 		txLockStates.Store(tx, &txLockState{write: write, held: map[string]bool{}})
 		if a, _ := ctx.Value(actorKey{}).(string); a != "" {

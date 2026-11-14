@@ -119,6 +119,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer store.Close()
 	a := &App{store: store, browserSecret: os.Getenv("FLEET_BROWSER_SECRET"), hostID: os.Getenv("FLEET_HOST_ID")}
 	a.ensureRuntime()
 	if a.hostID == "" {
@@ -127,14 +128,14 @@ func main() {
 	if err := a.loadPeople(ctx, peopleFile); err != nil {
 		log.Fatal(err)
 	}
-	a.stream = listen(ctx, database)
+	a.stream = listen(ctx, database, store)
 	startTelemetry(ctx, a)
 	startAll(ctx, a)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8787"
 	}
-	srv := &http.Server{Addr: "127.0.0.1:" + port, Handler: obs.Handler(a.routes(), spanName)}
+	srv := &http.Server{Addr: "127.0.0.1:" + port, Handler: obs.Handler(a.routes(), spanName), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second}
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
@@ -452,7 +453,7 @@ func (a *App) removedHostSecret(ctx context.Context, secret string) (bool, error
 		return false, nil
 	}
 	var n int
-	err := a.store.pool.QueryRow(ctx, "SELECT count(*) FROM document WHERE kind='host' AND data @> jsonb_build_object('removedSecretHash', $1::text)", secretHash(secret)).Scan(&n)
+	err := a.store.readPool.QueryRow(ctx, "SELECT count(*) FROM document WHERE kind='host' AND data @> jsonb_build_object('removedSecretHash', $1::text)", secretHash(secret)).Scan(&n)
 	return n > 0, err
 }
 
@@ -461,13 +462,34 @@ func (a *App) hostFromSecret(ctx context.Context, secret string) (map[string]any
 	if secret == "" {
 		return nil, nil
 	}
+	s := a.store
+	key := secretHash(secret)
+	s.authMu.Lock()
+	generation := s.authGeneration
 	var data []byte
-	err := a.store.pool.QueryRow(ctx, "SELECT data FROM document WHERE kind='host' AND data->>'secretHash'=$1", secretHash(secret)).Scan(&data)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+	if s.authWrites == 0 {
+		data = s.authHosts[key]
 	}
-	if err != nil {
-		return nil, err
+	s.authMu.Unlock()
+	if data == nil {
+		err := s.readPool.QueryRow(ctx, "SELECT d.data FROM document d JOIN person p ON p.email=d.data->>'holder' WHERE d.kind='host' AND d.data->>'secretHash'=$1", key).Scan(&data)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		s.authMu.Lock()
+		if s.authWrites == 0 && s.authGeneration == generation {
+			if len(s.authHosts) >= 1024 {
+				s.authHosts = nil
+			}
+			if s.authHosts == nil {
+				s.authHosts = map[string][]byte{}
+			}
+			s.authHosts[key] = append([]byte(nil), data...)
+		}
+		s.authMu.Unlock()
 	}
 	var host map[string]any
 	json.Unmarshal(data, &host)
