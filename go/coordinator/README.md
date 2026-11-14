@@ -19,6 +19,8 @@ The component groups its implementation by domain: projects, tasks, sessions and
 
 ## Invariants
 
+- [`execution_trace.go`](execution_trace.go) retains originating trace metadata in execution/queued-message records, records one durable dispatch edge per command, and supplies optional command run attribution; `telemetry_trace` resolves execution IDs under PostgreSQL RLS before querying spans.
+
 - The service requires `FLEET_PEOPLE_FILE` and `FLEET_DATABASE_URL`; [`setPeople`](./main.go) requires exactly one owner and rejects duplicate people or conflicting service-token common names.
 - HTTP request headers, bodies and idle connections have 10 s, 30 s and 90 s timeouts; streaming responses have no global write timeout.
 - [`readBody`](./main.go) limits JSON request bodies to 1 MiB and host calls cannot name another `hostId`. Host requests carry no person identity.

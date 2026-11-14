@@ -282,8 +282,9 @@ func (v *TelemetrySummaryRequest) Validate() error {
 
 // TelemetryTraceReply: spans ordered by start; the app builds the tree by parentSpanId. hidden counts spans of the trace the caller may not see.
 type TelemetryTraceReply struct {
-	Hidden int64  `json:"hidden"`
-	Spans  []Span `json:"spans"`
+	Hidden  int64   `json:"hidden"`
+	Spans   []Span  `json:"spans"`
+	TraceId *string `json:"traceId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -299,8 +300,10 @@ func (v *TelemetryTraceReply) Validate() error {
 	return nil
 }
 
+// TelemetryTraceRequest: Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.
 type TelemetryTraceRequest struct {
-	TraceId string `json:"traceId"`
+	ExecutionId *string `json:"executionId,omitempty"`
+	TraceId     *string `json:"traceId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -334,7 +337,7 @@ func init() {
 	for n, o := range map[string]Operation{
 		"telemetry_findings": {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400}, InputSchema: json.RawMessage("{\"properties\":{\"traceId\":{\"type\":\"string\"}},\"required\":[\"traceId\"],\"type\":\"object\"}")},
+		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

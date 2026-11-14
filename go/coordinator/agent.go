@@ -163,6 +163,9 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 		refs = append(refs, doc{"kind": "project", "id": pid, "revision": snap["revision"], "contentSha": snap["contentSha"]})
 		e["definitions"] = refs
 	}
+	if len(provenance) > 0 && validTraceparent(provenance[0]["traceparent"]) {
+		e["traceparent"], e["traceActor"] = provenance[0]["traceparent"], provenance[0]["traceActor"]
+	}
 	if err := put(q, "execution", e); err != nil {
 		return nil, err
 	}

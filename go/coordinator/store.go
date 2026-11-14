@@ -608,9 +608,9 @@ func insertExecution(q *Request, v doc) (bool, error) {
 	if v["configRef"] != nil {
 		cfg = jsonBytes(v["configRef"])
 	}
-	data := v["data"]
-	if data == nil {
-		data = doc{}
+	data, traceErr := executionTraceData(q, v, v["data"])
+	if traceErr != nil {
+		return false, traceErr
 	}
 	var id string
 	err := q.tx.QueryRow(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,parent_execution_id,config_ref,data,experiment_id,variant,request_id,task_id,session_id,directed_by,started_at,ended_at,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision)

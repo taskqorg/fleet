@@ -13,6 +13,8 @@
 
 ## Invariants
 
+- Command trace context and run attribution are optional for mixed-version hosts. [`spans.go`](spans.go) restores the journaled command parent for a distinct terminal execution span; absent or invalid context starts a root with `missing.parent`. Harness/provider span ingestion remains a separate capability.
+
 - Host secrets, account registries, credential homes, workspaces, Git metadata, and staged instruction sources are ownership-, path-, and symlink-checked before use ([executor.go: `hostSecret`](executor.go), [accounts.go: `runnable`](accounts.go), [attempt_context.go: `resolveAttemptContext`](attempt_context.go)).
 - A launch is journaled before its process exists; owned process identities are journaled before reconciliation. After a restart, surviving recorded processes are fenced and cleaned up rather than reattached ([executor.go: `launch`, `own`, `reconcileProcesses`](executor.go)).
 - A process or provider action with uncertain external outcome stays `unknown`; it is not silently retried as a known failure ([executor.go: `reconcile`](executor.go), [mcp_connection.go: `connectionCall`](mcp_connection.go)).

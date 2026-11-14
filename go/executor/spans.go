@@ -217,8 +217,12 @@ func executionSpan(execution string, l *live) {
 		return // a later step of the finish failed and the run is finished again next tick
 	}
 	l.spanned = true
-	ctx := obs.WithRun(context.Background(), obs.Run{ExecutionID: execution})
+	run := jAt(l.command, "run")
+	ctx := obs.WithRun(obs.WithRemote(context.Background(), jStr(l.command, "traceparent")), obs.Run{ExecutionID: execution, ProjectID: jStr(run, "projectId"), TaskID: jStr(run, "taskId"), ExperimentID: jStr(run, "experimentId"), AccountID: jStr(run, "accountId"), Actor: jStr(run, "actor")})
 	_, s := obs.StartAt(ctx, "execution", obs.KindInternal, l.started)
+	if _, _, ok := obs.ParseTraceparent(jStr(l.command, "traceparent")); !ok {
+		s.Set("missing.parent", "command trace context unavailable")
+	}
 	if jStr(l.command, "kind") == "script" {
 		s.Set("fleet.harness", "script")
 	} else {

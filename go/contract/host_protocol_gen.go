@@ -447,13 +447,20 @@ type Command struct {
 	Id          string          `json:"id"`
 	Kind        CommandKind     `json:"kind"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
+	Run         *CommandRun     `json:"run,omitempty"`
 	SessionId   *string         `json:"sessionId,omitempty"`
+	Traceparent *string         `json:"traceparent,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Command) Validate() error {
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -486,6 +493,21 @@ func (v CommandKind) Valid() bool {
 		}
 	}
 	return false
+}
+
+// CommandRun: Coordinator-owned observation identity only; no credentials or permission grants.
+type CommandRun struct {
+	AccountId    *string `json:"accountId,omitempty"`
+	Actor        *string `json:"actor,omitempty"`
+	ExecutionId  *string `json:"executionId,omitempty"`
+	ExperimentId *string `json:"experimentId,omitempty"`
+	ProjectId    *string `json:"projectId,omitempty"`
+	TaskId       *string `json:"taskId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CommandRun) Validate() error {
+	return nil
 }
 
 // ConnectionRemovePayload: Delete <FLEET_CONNECTIONS_DIR>/<connection> (its deploy key) on the host; sent when the last live project using the connection is archived.
