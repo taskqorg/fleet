@@ -17,17 +17,24 @@ test('Q1 a project execution queued before project snapshots starts with the pro
     const secret = ok(await post('/api/ops/hosts_register', {id: 'trial-host'}, owner)).secret;
     const poll = () => post('/api/hosts/poll', {platform: 'linux', capabilities: [], stores: [], problems: []}, {authorization: 'Bearer ' + secret, 'content-type': 'application/json'});
     ok(await poll());
+    // Seed legacy data before INSERT commits, so the background dispatcher cannot race the fixture.
+    c.sql(`CREATE TABLE legacy_fixture(bad boolean); INSERT INTO legacy_fixture VALUES(false);
+      CREATE FUNCTION legacy_fixture_seed() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.kind='agent_run' THEN
+          NEW.data = NEW.data - 'projectSnapshot';
+          IF (SELECT bad FROM legacy_fixture) THEN NEW.data=jsonb_set(NEW.data,'{dispatch,projectId}','"no-such-project"'); END IF;
+        END IF; RETURN NEW; END $$;
+      CREATE TRIGGER legacy_fixture_seed BEFORE INSERT ON execution FOR EACH ROW EXECUTE FUNCTION legacy_fixture_seed();`);
     const s = ok(await post('/api/ops/session_start', {requestId: randomUUID(), text: 'hi', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host'}, owner));
-    c.sql(`UPDATE execution SET data = data - 'projectSnapshot' WHERE id=${lit(s.executionId)};`);
+
     const start = ok(await poll()).commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
     assert.ok(start, 'the legacy execution starts');
     assert.equal(start.payload.projectId, 'hello-world');
 
     // A start the coordinator refuses cancels that execution only. Corrupt the frozen dispatch identity: session edits
     // no longer retarget queued executions (execution-continuity.md session project selection).
+    c.sql('UPDATE legacy_fixture SET bad=true');
     const bad = ok(await post('/api/ops/session_start', {requestId: randomUUID(), text: 'hi', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host'}, owner));
-    c.sql(`UPDATE execution SET data = data - 'projectSnapshot' WHERE id=${lit(bad.executionId)};
-      UPDATE execution SET data = jsonb_set(data, '{dispatch,projectId}', '"no-such-project"') WHERE id=${lit(bad.executionId)};`);
     assert.ok(!ok(await poll()).commands.some((x: any) => x.executionId === bad.executionId), 'no start for the refused execution');
     const row = c.sql(`SELECT state || ' ' || (data->>'stopDetail') FROM execution WHERE id=${lit(bad.executionId)};`).trim();
     assert.equal(row, 'cancelled start refused: Unknown project');
