@@ -1,0 +1,13 @@
+{
+  "id": "publish-static",
+  "steps": [
+    {
+      "files": {
+        "index.html": "example/index.html"
+      },
+      "id": "publish",
+      "kind": "publication"
+    }
+  ],
+  "version": 2
+}

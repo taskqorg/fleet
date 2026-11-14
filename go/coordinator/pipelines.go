@@ -64,7 +64,7 @@ func validatePipeline(d doc) (doc, error) {
 	if len(steps) == 0 {
 		return bad("steps")
 	}
-	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
+	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}, "publication": {"id", "kind", "files"}}
 	seen := map[string]bool{}
 	for _, x := range steps {
 		s := mapOf(x)
@@ -109,6 +109,16 @@ func validatePipeline(d doc) (doc, error) {
 			}
 			if _, ok := s["prompt"].(string); !ok {
 				return bad("agent step " + id)
+			}
+		case "publication":
+			files := mapOf(s["files"])
+			if len(files) == 0 || files["index.html"] == nil {
+				return bad("publication step " + id + " requires index.html")
+			}
+			for name, path := range files {
+				if !testSiteFile.MatchString(name) || astr(path) == "" {
+					return bad("publication step " + id + " files")
+				}
 			}
 		case "script":
 			t, has := s["timeout_ms"]
@@ -269,14 +279,14 @@ func putRun(q *Request, run doc) error {
 	dir := nilIf(firstString(run["directedBy"], mapOf(run["requestedBy"])["email"]))
 	taskID := nilIf(firstString(run["deliveryId"], run["taskId"]))
 	sessID := nilIf(astr(run["sessionId"]))
-	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant,task_id,session_id,directed_by,pipeline_id,pipeline_revision)
-	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant,task_id,session_id,directed_by,pipeline_id,pipeline_revision,parent_execution_id)
+	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,
 	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant),
 	  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
-	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision)`,
-		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"], taskID, sessID, dir, pipeID, pipeRev); err != nil {
+	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),parent_execution_id=coalesce(execution.parent_execution_id,excluded.parent_execution_id)`,
+		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"], taskID, sessID, dir, pipeID, pipeRev, run["parentExecutionId"]); err != nil {
 		return err
 	}
 	if run["definitions"] != nil {
@@ -291,7 +301,7 @@ func putRun(q *Request, run doc) error {
 		if err != nil {
 			return err
 		}
-		data := doc{"index": i}
+		data := doc{"index": i, "traceparent": run["traceparent"]}
 		for k, v := range s {
 			if k != "state" && k != "observation" {
 				data[k] = v
@@ -441,9 +451,39 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 			reused = append(reused, astr(e["id"]))
 		}
 	}
-	run := doc{"id": id, "projectId": o["projectId"], "requestId": o["requestId"], "requestedBy": or("requestedBy", requester(q)), "definition": def,
+	run := doc{"id": id, "traceparent": originTrace(q), "projectId": o["projectId"], "requestId": o["requestId"], "requestedBy": or("requestedBy", requester(q)), "definition": def,
 		"definitionSha256": sha256hex(jsonBytes(def)), "pipelineId": def["id"], "pipeline": o["file"], "example": or("example", doc{}), "overrides": or("overrides", doc{}),
 		"state": "running", "startedAt": nowMs(), "durationMs": nil, "usage": nil, "result": nil, "steps": steps}
+	// Caller lineage is server-derived, never a pipeline parameter.
+	if strings.HasPrefix(q.agent, "execution:") {
+		source := strings.TrimPrefix(q.agent, "execution:")
+		parent, e := first(q, "SELECT project_id,task_id,session_id,directed_by FROM execution WHERE id=$1", source)
+		if e != nil {
+			return nil, e
+		}
+		if parent == nil || parent["project_id"] != run["projectId"] {
+			return nil, fail(403, "Pipeline caller project mismatch")
+		}
+		if parent["task_id"] != nil {
+			task, e := first(q, "SELECT project_id FROM task WHERE id=$1", parent["task_id"])
+			if e != nil {
+				return nil, e
+			}
+			if task == nil || task["project_id"] != run["projectId"] {
+				return nil, fail(403, "Pipeline caller task project mismatch")
+			}
+		}
+		if parent["session_id"] != nil {
+			session, e := get(q, parent["session_id"], "session")
+			if e != nil {
+				return nil, e
+			}
+			if session["projectId"] != run["projectId"] || session["taskId"] != nil && session["taskId"] != parent["task_id"] {
+				return nil, fail(403, "Pipeline caller session ownership mismatch")
+			}
+		}
+		run["parentExecutionId"], run["taskId"], run["sessionId"], run["directedBy"] = source, parent["task_id"], parent["session_id"], parent["directed_by"]
+	}
 	if o["experimentId"] != nil {
 		run["experimentId"] = o["experimentId"]
 	}
@@ -1006,6 +1046,9 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	tx := func(fn func(q *Request) error) error { return runTx(ctx, a, nil, true, "", fn) }
 	failNow := func(problem, message string) (bool, error) {
 		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
+	}
+	if kind == "publication" {
+		return runPublication(ctx, a, run, i, def)
 	}
 	connection := astr(def["connection"])
 
