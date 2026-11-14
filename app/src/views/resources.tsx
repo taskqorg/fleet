@@ -307,7 +307,7 @@ export function buildExecTree(executions: readonly ExecutionRow[]): TreeNode[] {
   const labelOf = (e: ExecutionRow) => {
     const cfg = e.configRef && typeof e.configRef === 'object' ? (e.configRef as Record<string, unknown>) : null;
     const h = e.harness ?? (typeof cfg?.harness === 'string' ? cfg.harness : null);
-    return [e.kind ?? 'run', h, e.model, e.hostId].filter(Boolean).join(' · ');
+    return [e.kind ?? 'run', h, e.model, e.hostId ?? cfg?.executorService].filter(Boolean).join(' · ');
   };
   const visit = (parentId: string | null): TreeNode[] => {
     const list = childrenByParent.get(parentId) ?? [];
@@ -324,7 +324,7 @@ export function buildExecTree(executions: readonly ExecutionRow[]): TreeNode[] {
       return {
         id: e.id,
         name: labelOf(e),
-        note: e.problem ?? (e.sessionId ? 'session' : undefined),
+        note: e.problem ?? (e.configRef && typeof e.configRef === 'object' && 'publicationAuthority' in e.configRef ? `Publication authority: ${String(e.configRef.publicationAuthority)} (configured role)` : e.sessionId ? 'session' : undefined),
         state: execState(e.state),
         lastSeen: e.observation === 'unconfirmed' ? ms(e.lastSeenAt) ?? undefined : undefined,
         time: leafTime(e),

@@ -22,4 +22,6 @@
 
 **Catalogue row (OR-22, D19):** state icon; title, and on the second line its ID, the [harness mark](../controls/harness-counts.md) while running and the [delivery stage](../controls/stage-chip.md); then age, cost and pin on the right. There are no column heads. Priority is a grouping (D11).
 
+For coordinator-local publication leaves, the execution tree names the coordinator service instead of a native host and shows the configured publication authority separately. A configured authority is not a live host observation.
+
 **Open.** None from stage 3. Phone navigation (d) is still open.

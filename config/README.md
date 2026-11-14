@@ -13,3 +13,5 @@ Checked-in configuration the coordinator loads at start.
 (docs/designs/fleet-definition-editors.md): the coordinator imports a file it has not seen, and after that its store wins;
 a changed file here shows as `repository-changed` until someone saves it. The files are canonical (keys sorted,
 two-space indent, trailing newline); `go/coordinator/definitions_test.go` checks it.
+
+`pipelines/publish-static.json` exposes the bounded publication program through the ordinary `pipeline_run_create` tool. Supply an example input named `index.html`; the destination comes from the run project and existing host-only publication binding, never from example fields. The resulting output records the protected URL, immutable version, source hashes and readback verification. A stored artifact alone is not a publication.

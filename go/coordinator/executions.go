@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -484,24 +485,22 @@ func init() {
 	// The example sites an agent builds (docs/website-example.md), served sandboxed from FLEET_TEST_SITE_ROOT.
 	gatedRoute("GET /test-sites/{project}/{file}", func(q *Request) (any, error) {
 		root, project, name := os.Getenv("FLEET_TEST_SITE_ROOT"), q.r.PathValue("project"), q.r.PathValue("file")
+		if !mayAccessProjectID(q.person, project) {
+			return nil, fail(404, "Unknown test site")
+		}
 		if root == "" || (project != "hello-world" && project != "hello-world-alt") || !testSiteFile.MatchString(name) {
 			return nil, fail(404, "Unknown test site")
 		}
-		base, err := filepath.EvalSymlinks(filepath.Join(root, project))
+		f, err := publicationSiteFile(filepath.Join(root, project), name)
 		if err != nil {
 			return nil, fail(404, "Unknown test site")
 		}
-		path, err := filepath.EvalSymlinks(filepath.Join(base, "current", name))
+		defer f.Close()
+		b, err := io.ReadAll(f)
 		if err != nil {
 			return nil, fail(404, "Unknown test site")
 		}
-		if !strings.HasPrefix(path, base+string(filepath.Separator)) {
-			return nil, fail(403, "Test-site path rejected")
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fail(404, "Unknown test site")
-		}
+
 		return raw(func(w http.ResponseWriter) error {
 			w.Header().Set("Content-Security-Policy", "sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'")
 			media := "text/html"

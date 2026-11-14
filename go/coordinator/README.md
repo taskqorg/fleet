@@ -19,6 +19,8 @@ The component groups its implementation by domain: projects, tasks, sessions and
 
 ## Invariants
 
+- [`publication.go`](publication.go) is the bounded `publication` pipeline program, executed by the coordinator service under its existing filesystem authority. The configured `publication` role is recorded separately and receives no synthetic heartbeat. Only the two configured test-site projects can publish; same-project stored artifacts are streamed and hashed, the durable immutable manifest fences replay, and the current pointer is selected atomically. Authenticated protected-route readback establishes success; failed verification restores the prior pointer only while the pointer still selects this attempt. Later publications are never overwritten by replay or cleanup. Pipeline cancellation serializes with the program and does not roll back a completed publication.
+
 - [`accounts.go`](accounts.go) couples account-host connectivity to the actual inspection destination: a fresh eligible native execution host takes precedence, a configured inspector remains the permitted fallback, and observations must match the configured holder. Discovery inspects an existing registry without authenticating or moving credentials.
 
 - [`execution_trace.go`](execution_trace.go) retains originating trace metadata in execution/queued-message records, records one durable dispatch edge per command, and supplies optional command run attribution; `telemetry_trace` resolves execution IDs under PostgreSQL RLS before querying spans.

@@ -137,7 +137,7 @@ function Steps({ text }: { text: string }) {
   try { steps = JSON.parse(text)?.steps; } catch { return null; }
   if (!Array.isArray(steps)) return null;
   steps = steps.filter(s => s && typeof s === 'object');
-  const items: StepItem[] = steps.map(s => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : s.kind === 'script' ? 'program' : 'agent', executor: s.profile ?? s.tool ?? s.command ?? '', reads: readsOf(s), writes: 'output' }));
+  const items: StepItem[] = steps.map(s => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : (s.kind === 'script' || s.kind === 'publication') ? 'program' : 'agent', executor: s.kind === 'publication' ? 'coordinator · publish-static' : s.profile ?? s.tool ?? s.command ?? '', reads: readsOf(s), writes: 'output' }));
   return <DetailSection title="Steps"><StepList items={items} label="Steps" /></DetailSection>;
 }
 
