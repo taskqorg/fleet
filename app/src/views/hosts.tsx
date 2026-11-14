@@ -80,7 +80,7 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, now, onGone,
     </DetailSection>
     {live && sel.problems?.length > 0 && <DetailSection title="Problems">{sel.problems.map((p: any) => <KvRow key={p.route} icon="activity" label={`Edge answers ${p.route} with ${p.status}`} meta={p.detail || p.location || undefined} />)}</DetailSection>}
     <DetailSection title="Capabilities">{sel.capabilities.length ? sel.capabilities.map((c: string) => <KvRow key={c} icon="check" label={c} />) : <span class="muted">none reported</span>}</DetailSection>
-    <DetailSection title="Store"><KvRow icon="save" label="Store" value={<FillBar total={null} segments={[]} />} /></DetailSection>
+    <DetailSection title="Store"><KvRow icon="save" label="Store checks" value={live ? sel.stores : 'unknown'} meta={live ? sel.storesReason : 'Host observation stale'} /></DetailSection>
     <DetailSection title="Remove">
       {err && <ProblemRow title="Not removed" facts={err} severity="failure" actions={[]} />}
       {!preview ? <Button label="Remove host" icon="trash-2" onClick={() => remove(false)} /> : <>
