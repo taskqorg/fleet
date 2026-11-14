@@ -1981,7 +1981,7 @@ REVOKE ALL ON FUNCTION resource_enqueue_source(text,text,text) FROM PUBLIC;
 -- Stable allowlist: touches, arbitrary JSON, model-call payloads and computed_at do not enqueue work.
 CREATE FUNCTION resource_execution_facts(r execution) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
  SELECT jsonb_build_array(r.kind,r.project_id,r.state,r.account_id,r.harness,r.model,r.started_at,r.ended_at,
- CASE WHEN coalesce(r.started_at, (to_timestamp(fleet_token_count(r.data->'startedAt')::double precision/1000)), r.ended_at) IS NULL THEN r.last_seen_at END,
+ CASE WHEN r.started_at IS NULL AND NOT (coalesce(r.data->>'startedAt','') ~ '^[0-9]{1,15}$') AND r.ended_at IS NULL THEN r.last_seen_at END,
  r.data->'provider',r.data->'connection',r.data->'tool',r.data->'outcome',r.data->'startedAt')
 $$;
 CREATE FUNCTION resource_capture_execution() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$

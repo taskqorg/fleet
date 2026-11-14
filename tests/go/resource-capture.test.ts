@@ -6,6 +6,7 @@ import {startCoordinator} from '../harness.ts';
 test('resource capture is atomic, coalesces only its transaction and aligns moved totals including NULL', async () => {
  const c=await startCoordinator({name:'resource-capture'});
  try {
+  c.sql("INSERT INTO execution(id,kind,state,data) VALUES('malformed-time','tool_run','succeeded',jsonb_build_object('startedAt',999999999999999999))");
   const count=()=>Number(c.sql("SELECT count(*) FROM resource_work WHERE execution_id='capture-e'").trim());
   c.sql(`BEGIN; INSERT INTO execution(id,kind,state,project_id,started_at) VALUES('capture-e','agent_run','running','A',now());
    INSERT INTO execution_totals(execution_id,project_id,tokens_input) VALUES('capture-e','A',10);
