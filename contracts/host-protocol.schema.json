@@ -444,7 +444,14 @@
         "hostId": {
           "type": "string"
         },
-        "payload": {}
+        "payload": {},
+        "traceparent": {
+          "type": "string",
+          "$comment": "Optional validated W3C parent of this durable command; absent on older coordinators."
+        },
+        "run": {
+          "$ref": "#/$defs/CommandRun"
+        }
       }
     },
     "Receipt": {
@@ -719,7 +726,9 @@
           "additionalProperties": true
         },
         "turn": {},
-        "workspaceKey": {"type": "string"},
+        "workspaceKey": {
+          "type": "string"
+        },
         "workingDirectory": {
           "type": "string"
         }
@@ -1965,6 +1974,30 @@
           "type": "string"
         }
       }
+    },
+    "CommandRun": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "experimentId": {
+          "type": "string"
+        },
+        "accountId": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        }
+      },
+      "$comment": "Coordinator-owned observation identity only; no credentials or permission grants."
     }
   }
 }

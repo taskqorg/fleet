@@ -102,6 +102,15 @@ func maybe(q *Request, id any, kind string) (doc, error) {
 
 func put(q *Request, kind string, v doc) error {
 	switch kind {
+	case "command":
+		if err := commandTrace(q, v); err != nil {
+			return err
+		}
+	case "queued-message":
+		if !validTraceparent(v["traceparent"]) {
+			v["traceparent"] = originTrace(q)
+			v["traceActor"] = actor(q, "fleet")
+		}
 	case "execution":
 		return putExecution(q, v)
 	case "question":
@@ -214,6 +223,13 @@ func putExecution(q *Request, e doc) error {
 			parent = astr(fo["executionId"])
 		}
 	}
+	if prev == "" && !validTraceparent(e["traceparent"]) {
+		tp, err := executionOrigin(q, parent)
+		if err != nil {
+			return err
+		}
+		e["traceparent"], e["traceActor"] = tp, actor(q, "fleet")
+	}
 	project := firstString(e["projectId"], sess["projectId"])
 	task := firstString(e["deliveryId"], sess["deliveryId"], sess["taskId"])
 	ac := mapOf(e["agentConfig"])
@@ -255,7 +271,7 @@ func putExecution(q *Request, e doc) error {
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,task_id=coalesce(execution.task_id,excluded.task_id),
 	  experiment_id=excluded.experiment_id,variant=excluded.variant,parent_execution_id=excluded.parent_execution_id,session_id=excluded.session_id,account_id=excluded.account_id,host_id=excluded.host_id,
-	  harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
+	  harness=excluded.harness,model=excluded.model,config_ref=excluded.config_ref,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data || jsonb_strip_nulls(jsonb_build_object('traceparent',execution.data->'traceparent','traceActor',execution.data->'traceActor')),
 	  directed_by=coalesce(excluded.directed_by,execution.directed_by),profile_id=coalesce(excluded.profile_id,execution.profile_id),profile_revision=coalesce(excluded.profile_revision,execution.profile_revision),
 	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
 	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,

@@ -3,7 +3,7 @@
   "$comment": "Coordinator operations of the telemetry domain (docs/designs/fleet-telemetry.md section 5): spans in ClickHouse read through operations, never raw SQL. Project spans need the project grant; system spans (no projectId) need full access. The rules are in ops.schema.json $comment and contracts/README.md.",
   "operations": {
     "telemetry_summary": {"read": false, "long": true, "errors": [400]},
-    "telemetry_trace": {"read": false, "long": true, "errors": [400]},
+    "telemetry_trace": {"read": false, "long": true, "errors": [400, 409]},
     "telemetry_findings": {"read": false, "long": true, "errors": []}
   },
   "$defs": {
@@ -19,8 +19,8 @@
     "TelemetryFindingsRequest": {"type": "object", "properties": {"projectId": {"type": "string"}}},
     "TelemetrySummaryReply": {"type": "object", "required": ["window", "enabled", "operations", "hosts", "processes", "runs", "droppedSpans", "rulesLastRun"], "properties": {"window": {"$ref": "#/$defs/TelemetryWindow"}, "enabled": {"type": "boolean"}, "error": {"type": "string"}, "operations": {"type": "array", "items": {"$ref": "#/$defs/OperationStats"}}, "hosts": {"type": "array", "items": {"$ref": "#/$defs/HostReading"}}, "processes": {"type": "array", "items": {"$ref": "#/$defs/ProcessReading"}}, "runs": {"type": "array", "items": {"$ref": "#/$defs/RunReading"}}, "droppedSpans": {"type": "integer"}, "rulesLastRun": {"type": ["string", "null"]}, "bytesPerDay": {"type": "integer"}}, "$comment": "enabled false: no span store configured (FLEET_CLICKHOUSE_URL) or telemetry switched off; error: the store did not answer. hosts and processes need full access; runs are the latest 50 execution ends in the caller's projects."},
     "TelemetrySummaryRequest": {"type": "object", "properties": {"window": {"$ref": "#/$defs/TelemetryWindow"}, "projectId": {"type": "string"}, "service": {"type": "string"}}, "$comment": "window defaults to 1h."},
-    "TelemetryTraceReply": {"type": "object", "required": ["spans", "hidden"], "properties": {"spans": {"type": "array", "items": {"$ref": "#/$defs/Span"}}, "hidden": {"type": "integer"}}, "$comment": "spans ordered by start; the app builds the tree by parentSpanId. hidden counts spans of the trace the caller may not see."},
-    "TelemetryTraceRequest": {"type": "object", "required": ["traceId"], "properties": {"traceId": {"type": "string"}}},
+    "TelemetryTraceReply": {"type": "object", "required": ["spans", "hidden"], "properties": {"spans": {"type": "array", "items": {"$ref": "#/$defs/Span"}}, "hidden": {"type": "integer"}, "traceId": {"type": "string"}}, "$comment": "spans ordered by start; the app builds the tree by parentSpanId. hidden counts spans of the trace the caller may not see."},
+    "TelemetryTraceRequest": {"type": "object", "properties": {"traceId": {"type": "string"}, "executionId": {"type": "string"}}, "$comment": "Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409."},
     "TelemetryWindow": {"type": "string", "enum": ["5m", "1h", "24h", "7d"]}
   }
 }

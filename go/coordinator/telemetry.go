@@ -373,13 +373,35 @@ func chTime(s string) string {
 
 func telemetryTrace(q *Request, r *contract.TelemetryTraceRequest) (contract.TelemetryTraceReply, error) {
 	out := contract.TelemetryTraceReply{Spans: []contract.Span{}}
-	if len(r.TraceId) != 32 || strings.Trim(r.TraceId, "0123456789abcdef") != "" {
+	traceID := deref(r.TraceId)
+	if deref(r.ExecutionId) != "" {
+		if traceID != "" {
+			return out, fail(400, "Specify traceId or executionId, not both")
+		}
+		err := runTx(q.ctx(), q.app, q, false, "", func(tq *Request) error {
+			e, err := one(tq, "SELECT data FROM execution WHERE id=$1", deref(r.ExecutionId))
+			if err != nil {
+				return err
+			}
+			trace, _, ok := obs.ParseTraceparent(astr(e["traceparent"]))
+			if !ok {
+				return fail(409, "Execution trace context unavailable")
+			}
+			traceID = trace
+			return nil
+		})
+		if err != nil {
+			return out, err
+		}
+	}
+	if len(traceID) != 32 || strings.Trim(traceID, "0123456789abcdef") != "" {
 		return out, fail(400, "traceId must be 32 lower-case hex characters")
 	}
+	out.TraceId = ptr(traceID)
 	if spanStore == nil {
 		return out, nil
 	}
-	params := map[string]string{"t": r.TraceId}
+	params := map[string]string{"t": traceID}
 	where := spanScope(q.person, params)
 	var rows []struct {
 		TraceID, SpanID, Parent, Service, HostID, Name, Kind, Start, Outcome, ErrorClass, ExecutionID string
