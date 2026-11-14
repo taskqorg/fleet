@@ -705,6 +705,29 @@ func taskGet(q *Request, id string) (doc, error) {
 	}
 	t["progress"] = doc{"executions": d["execution_count"], "byState": d["executions_by_state"]}
 	t["latestResult"], t["openQuestions"] = d["latest_result"], d["open_questions"]
+	// A completed task presents its explicitly accepted collection in selection
+	// order. Missing/hidden/unretained selections cannot turn a later diagnostic
+	// into the accepted result. Unaccepted work keeps task_view version ordering.
+	if t["state"] == "completed" && t["acceptedAt"] != nil && t["acceptedArtifactIds"] != nil {
+		selected, err := resourceLineageQuery(q, func() (doc, error) {
+			return first(q, taskLineageCTEs+`, accepted_results AS (
+ SELECT selection.position,a.id AS row_id,jsonb_build_object('id',coalesce(a.legacy_id,a.id),'artifactId',a.id,'executionId',a.execution_id,'path',a.name,'mediaType',a.media_type,'sha256',a.content_hash,'size',a.size) AS result
+ FROM jsonb_array_elements_text($2::jsonb) WITH ORDINALITY selection(id,position)
+ JOIN artifact a ON a.id=selection.id OR a.legacy_id=selection.id
+ WHERE a.state='stored' AND a.execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
+ UNION ALL
+ SELECT selection.position,d.id,d.data-'contentBase64'
+ FROM jsonb_array_elements_text($2::jsonb) WITH ORDINALITY selection(id,position)
+ JOIN document d ON d.id=selection.id AND d.kind='artifact'
+ WHERE d.data->>'executionId' IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
+ ) SELECT result FROM accepted_results ORDER BY position,row_id LIMIT 1`, id, js(t["acceptedArtifactIds"]))
+		})
+		if err != nil {
+			return nil, err
+		}
+		t["latestResult"] = selected["result"]
+	}
+
 	rollup, err := taskResourceRollup(q, id)
 	if err != nil {
 		return nil, err

@@ -12,7 +12,7 @@ test('Task result content versions resist replay and preserve explicit lineage a
   const id=randomUUID();c.sql(`INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,required,previous_artifact_id,state) VALUES('${id}',${project===null?'NULL':"'"+project+"'"},'${scope}','${sha}',1,'application/json','${name}','${eid}',${required},${previous===null?'NULL':"'"+previous+"'"},'stored')`);return id;
  };
  const legacy=(eid:string,sha?:string,scope?:string)=>{const id=randomUUID();c.sql(`INSERT INTO document(id,kind,project_id,data) VALUES('${id}','artifact','hello-world','${JSON.stringify({id,executionId:eid,path:'legacy.json',sha256:sha,scope})}')`);return id;};
- const get=async(tid:string)=>{const r=await fetch(c.base+'/api/ops/task_get',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify({taskId:tid})});const x=await r.json();assert.equal(r.status,200,JSON.stringify(x));return x;};
+ const get=async(tid:string,person='owner@trial.test')=>{const r=await fetch(c.base+'/api/ops/task_get',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':person,'content-type':'application/json'},body:JSON.stringify({taskId:tid})});const x=await r.json();assert.equal(r.status,200,JSON.stringify(x));return x;};
  try {
   const t=task(),old=execution(t),final=execution(t),replay=execution(t);
   artifact(old,hash(1));artifact(old,hash(2));
@@ -55,5 +55,30 @@ test('Task result content versions resist replay and preserve explicit lineage a
   const l7=execution(lineage),republished=artifact(l7,hash(41),true,'prod','hello-world',newBytes);artifact(execution(lineage),hash(41));assert.equal((await get(lineage)).latestResult.artifactId,republished,'automatic aliases stay in the newest explicit version');
 
   const same=task(),sameRun=execution(same);artifact(sameRun,hash(50),true);const prior=artifact(sameRun,hash(51),true);const rollback=artifact(sameRun,hash(50),false,'prod','hello-world',prior);assert.equal((await get(same)).latestResult.artifactId,rollback,'explicit publication has a new position even within one execution');
+
+  // Explicit acceptance outranks later publications without deleting history.
+  const accepted=task(),acceptedRun=execution(accepted),chosen=artifact(acceptedRun,hash(60));
+  const later=artifact(execution(accepted),hash(61),false,'prod','hello-world',null,'diagnostic.jsonl');
+  const select=(ids:string[])=>c.sql(`UPDATE task SET state='completed',accepted_at=now(),accepted_by='owner@trial.test',accepted_artifact_ids=ARRAY[${ids.map(id=>"'"+id+"'").join(',')}]::text[] WHERE id='${accepted}'`);
+  select([chosen]);assert.equal((await get(accepted)).latestResult.artifactId,chosen);
+  const unrelated=artifact(execution(task()),hash(70));select([unrelated]);assert.equal((await get(accepted)).latestResult,null,'owner cannot select another task publication');
+  const childRun=execution(accepted),childArtifact=artifact(childRun,hash(72)),childSession=randomUUID();
+  c.sql(`INSERT INTO document(id,kind,project_id,data) VALUES('${childSession}','session','hello-world','${JSON.stringify({taskId:accepted})}');UPDATE execution SET task_id=NULL,session_id='${childSession}' WHERE id='${childRun}'`);
+  select([childArtifact]);assert.equal((await get(accepted)).latestResult.artifactId,childArtifact,'attached child session results retain lineage without direct execution task binding');
+  const historical=legacy(acceptedRun,hash(71),'prod');select([historical]);assert.equal((await get(accepted)).latestResult.id,historical,'accepted legacy document remains readable');
+  const alias=randomUUID();c.sql(`UPDATE artifact SET legacy_id='${alias}' WHERE id='${chosen}'`);select([alias]);assert.equal((await get(accepted)).latestResult.artifactId,chosen,'canonical legacy alias resolves');
+
+  select([chosen,later]);assert.equal((await get(accepted)).latestResult.artifactId,chosen,'selection order, not publication order');
+  select([later,chosen]);assert.equal((await get(accepted)).latestResult.artifactId,later);
+  c.sql(`UPDATE artifact SET state='deleted' WHERE id='${later}'`);
+  assert.equal((await get(accepted)).latestResult.artifactId,chosen,'skip unavailable selection within accepted collection');
+  select([randomUUID(),later]);assert.equal((await get(accepted)).latestResult,null,'missing/deleted refs never fall back to unaccepted history');
+  select([chosen]);c.sql(`UPDATE artifact SET state='pending' WHERE id='${chosen}'`);
+  assert.equal((await get(accepted)).latestResult,null,'pending is not retained');
+  c.sql(`UPDATE artifact SET state='stored' WHERE id='${chosen}';UPDATE task SET project_id='desiign' WHERE id='${accepted}'`);
+  assert.equal((await get(accepted,'member@trial.test')).latestResult,null,'RLS hides accepted artifact from another project');
+  c.sql(`UPDATE task SET project_id='hello-world',state='in_progress' WHERE id='${accepted}'`);
+  assert.equal((await get(accepted)).latestResult.id,historical,'unaccepted work retains existing publication fallback');
+  assert.equal(c.sql(`SELECT count(*) FROM artifact WHERE id IN ('${chosen}','${later}')`).trim(),'2','history preserved');
  } finally {await c.stop();}
 });
