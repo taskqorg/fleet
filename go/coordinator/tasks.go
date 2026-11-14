@@ -615,6 +615,18 @@ const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",pr
  started_at AS "startedAt",ended_at AS "endedAt",definitions,data->'report' AS report`
 
 func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.ExecutionRow, error) {
+	page, err := executionsPage(q, f)
+	return page.Executions, err
+}
+
+func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.ExecutionsListReply, error) {
+	empty := contract.ExecutionsListReply{}
+	if f.Limit != nil && (*f.Limit < 1 || *f.Limit > 1000) {
+		return empty, fail(400, "limit must be 1..1000")
+	}
+	if f.After != nil && (f.Limit == nil || *f.After == "") {
+		return empty, fail(400, "after requires limit and a nonempty cursor")
+	}
 	c, p := []string{}, []any{}
 	for _, x := range []struct {
 		v   *string
@@ -638,11 +650,45 @@ func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.Ex
 		AND (project_id IS NULL OR EXISTS (SELECT 1 FROM definition d WHERE d.kind='project' AND d.id=execution.project_id))`)
 	}
 	c, p = projectIn(c, p, f.ProjectIds)
-	rs, err := rowsOf(q, "SELECT "+executionCols+" FROM execution"+where(c)+" ORDER BY seq", p...)
-	if err != nil {
-		return nil, err
+	if f.After != nil {
+		args := append(append([]any{}, p...), *f.After)
+		cursorWhere := append(append([]string{}, c...), fmt.Sprintf("id=$%d", len(args)))
+		var seq int64
+		err := q.tx.QueryRow(q.ctx(), "SELECT seq FROM execution"+where(cursorWhere), args...).Scan(&seq)
+		if err == pgx.ErrNoRows {
+			return empty, fail(400, "Invalid execution cursor")
+		}
+		if err != nil {
+			return empty, err
+		}
+		p = append(p, seq, *f.After)
+		c = append(c, fmt.Sprintf("(seq,id)>($%d,$%d)", len(p)-1, len(p)))
 	}
-	return asT[[]contract.ExecutionRow](rs)
+	suffix := " ORDER BY seq,id"
+	if f.Limit != nil {
+		p = append(p, *f.Limit+1)
+		suffix += fmt.Sprintf(" LIMIT $%d", len(p))
+	}
+	rs, err := rowsOf(q, "SELECT "+executionCols+" FROM execution"+where(c)+suffix, p...)
+	if err != nil {
+		return empty, err
+	}
+	es, err := asT[[]contract.ExecutionRow](rs)
+	if err != nil {
+		return empty, err
+	}
+	reply := contract.ExecutionsListReply{Executions: es}
+	if f.Limit != nil {
+		// Metadata is present only when the caller opts in to paging.
+		more := len(es) > int(*f.Limit)
+		reply.HasMore = &more
+		if len(es) > int(*f.Limit) {
+			reply.Executions = es[:*f.Limit]
+			cursor := reply.Executions[len(reply.Executions)-1].Id
+			reply.NextAfter = &cursor
+		}
+	}
+	return reply, nil
 }
 
 func taskGet(q *Request, id string) (doc, error) {
@@ -1239,8 +1285,7 @@ func init() {
 		return questionRow(q, "", id)
 	}))
 	gatedObjOp("executions_list", true, typedOp(func(q *Request, r *contract.ExecutionsListRequest) (contract.ExecutionsListReply, error) {
-		es, err := executionsList(q, *r)
-		return contract.ExecutionsListReply{Executions: es}, err
+		return executionsPage(q, *r)
 	}))
 	gatedObjOp("task_page", true, func(q *Request) (any, error) { return taskPage(q, body(q)) })
 	gatedObjOp("task_derived_check", true, typedOp(func(q *Request, _ *contract.TaskDerivedCheckRequest) (contract.TaskDerivedCheckReply, error) {

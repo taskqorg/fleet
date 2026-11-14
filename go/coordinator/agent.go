@@ -1532,6 +1532,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 }
 
 var agentDescriptions = map[string]string{
+	"executions_list":     "Read executions with optional project/task/session/parent/problem/needsYou filters. For bounded enumeration set limit (1..1000); reply has executions and hasMore, plus nextAfter when more rows exist. Repeat identical filters with after=nextAfter until hasMore=false. Order is seq,id; pages use fresh snapshots. Without limit returns the complete legacy executions wrapper, without paging metadata. after requires limit; inaccessible, unknown or filter-mismatched cursors return 400.",
 	"search":              "Find tasks, questions, projects and hosts by text, id or code (T-FLT-42, old codes too); field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). Hits list ids; tasks recently changed first",
 	"session_transition":  "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff",
 	"session_fork":        "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown",

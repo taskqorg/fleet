@@ -675,6 +675,8 @@ Throughput is not the constraint. A write transaction takes a few milliseconds (
 | Typed writes inside host ingest (observation and `last_seen_at`, `harness_version`, `child_agent` rows of the execution, `execution_totals`) | Columns that no GLOBAL writer sets. Totals are recomputed from the row, so a recomputation from either scope gives the same value. | Execution scope. A GLOBAL writer that updates the same execution row waits for its row lock. |
 | Migration 6 (documents to typed tables) | Runs once, alone. | One GLOBAL write |
 
+`executions_list` returns the legacy `{executions}` wrapper in full when `limit` is omitted. For bounded enumeration, agents set `limit` (1..1000). Paged replies add `hasMore` and, when true, `nextAfter`; repeat the same filters with `after: nextAfter` until `hasMore` is false. Pages order by `(seq,id)` with the same project, task, session, parent and problem filters and RLS as the complete read. A cursor must identify a visible row matching the filters; unknown, inaccessible and filter-mismatched cursors return 400. `after` requires `limit`. Each page has its own read snapshot; concurrent updates can move rows, so this is not an immutable export. The complete legacy path remains potentially large.
+
 **Phase 3 additions.**
 
 | Group | Invariant it needs | Mechanism |
