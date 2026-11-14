@@ -97,7 +97,11 @@ test('C3 unchanged heartbeats debounce change emissions while genuine state chan
   nodeTest.after(() => ctrl.abort());
   const dec = new TextDecoder();
   let buf = '';
-  let pendingRead = reader.read();
+  const nextRead = () => reader.read().catch(err => {
+    if (ctrl.signal.aborted) return {done: true as const, value: undefined};
+    throw err;
+  });
+  let pendingRead = nextRead();
   const readChunk = async (ms: number) => {
     let timer: ReturnType<typeof setTimeout>;
     const out = await Promise.race([
@@ -107,7 +111,7 @@ test('C3 unchanged heartbeats debounce change emissions while genuine state chan
     clearTimeout(timer!);
     if (out !== null) {
       if (!out.done && out.value) buf += dec.decode(out.value, {stream: true});
-      pendingRead = reader.read();
+      pendingRead = nextRead();
     }
     return buf;
   };
@@ -132,4 +136,22 @@ test('C3 unchanged heartbeats debounce change emissions while genuine state chan
   }
   ctrl.abort();
   assert.ok(sawChange, `expected host change event after state change, got ${buf}`);
+});
+
+test('C4 concurrent started/completed receipts retain terminal state (requirement: monotonic receipt state across scoped locks; risk: a nonterminal receipt overwrites a committed terminal receipt)', async () => {
+  const h = await registerHost('c4-receipt-host');
+  ok(await h('/api/hosts/poll', pollBody()));
+  for (let i = 0; i < 8; i++) {
+    const s = ok(await op('session_start', {requestId: randomUUID(), text: 'receipt race', projectId: 'hello-world', profileId: 'pm', hostId: 'c4-receipt-host'}));
+    const commands = ok(await h('/api/hosts/poll', pollBody())).commands;
+    const c = commands.find((c: any) => c.executionId === s.executionId);
+    assert.ok(c, 'start command queued');
+    const receipt = (status: string) => h('/api/hosts/receipts', {commandId: c.id, executionId: s.executionId, status});
+    const results = await Promise.all([receipt('started'), receipt('completed')]);
+    assert.equal(results[1].status, 200, JSON.stringify(results[1].body));
+    assert.ok([200, 409].includes(results[0].status), JSON.stringify(results[0]));
+    assert.equal((await receipt('started')).status, 409, 'terminal command rejects late started receipt');
+    const detail = ok(await call('GET', `/api/sessions/${s.sessionId}`, undefined, owner));
+    assert.equal(detail.executions.find((e: any) => e.id === s.executionId)?.state, 'succeeded');
+  }
 });
