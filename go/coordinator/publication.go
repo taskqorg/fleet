@@ -61,7 +61,8 @@ func publicationTarget(project string) (publicationDestination, error) {
 	c, ok := cfg.Projects[project]
 	root := os.Getenv("FLEET_TEST_SITE_ROOT")
 	expected := filepath.Join(root, project)
-	if !ok || root == "" || !filepath.IsAbs(root) || filepath.Clean(c.Root) != expected || cfg.HostID == "" || c.URL != "https://fleet.ufobe.com/test-sites/"+project+"/index.html" || c.Check != "http://127.0.0.1/test-sites/"+project+"/index.html" {
+	readbackURL, readbackErr := publicationLoopbackURL(project, "index.html")
+	if !ok || root == "" || !filepath.IsAbs(root) || filepath.Clean(c.Root) != expected || cfg.HostID == "" || c.URL != "https://fleet.ufobe.com/test-sites/"+project+"/index.html" || (readbackErr != nil || c.Check != readbackURL && !(readbackURL == "http://127.0.0.1:80/test-sites/"+project+"/index.html" && c.Check == "http://127.0.0.1/test-sites/"+project+"/index.html")) {
 		return out, fail(503, "Publication destination does not match protected test-site binding")
 	}
 	// A symlinked destination would change the configured authority boundary.
@@ -290,37 +291,12 @@ func publishStatic(ctx context.Context, dest publicationDestination, manifest pu
 	// Even after a restart, success requires actual current bytes via the protected
 	// HTTP route. A failed readback leaves the durable effect explicit, never resent.
 	failReadback := func(cause error) (doc, error) {
-		f, e := root.OpenFile(rel+"/failed", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if e == nil {
-			_, e = f.Write([]byte("readback failed; do not republish\n"))
-			if e == nil {
-				e = f.Sync()
-			}
-			f.Close()
-		}
-		if e != nil {
-			return nil, fmt.Errorf("Publication readback failed; recovery uncertain")
-		}
-		// The rejection directory entry must survive a crash before current is
-		// restored; otherwise restart could mistake this rejected attempt for a
-		// prepared, never-promoted version and publish it again.
-		directory, e := root.Open(rel)
-		if e != nil {
-			return nil, fmt.Errorf("Publication rejection durability unknown; not restored")
-		}
-		e = directory.Sync()
-		closeErr := directory.Close()
-		if e == nil {
-			e = closeErr
-		}
-		if e != nil {
-			return nil, fmt.Errorf("Publication rejection durability unknown; not restored")
-		}
-		if e = publicationRestore(root, rel, manifest.Previous, manifest.Version); e != nil {
+		if e := publicationReject(root, rel, manifest.Previous, manifest.Version, func() error { return publicationSyncDirectory(root, rel) }); e != nil {
 			return nil, e
 		}
 		return nil, cause
 	}
+
 	outputs := []any{}
 	for _, f := range manifest.Files {
 		r, e := readback(f)
@@ -491,15 +467,11 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 			}
 			return open()
 		}, func(f publicationFile) (io.ReadCloser, error) {
-			port := os.Getenv("PORT")
-			if port == "" {
-				port = "8787"
+			endpoint, e := publicationLoopbackURL(m.ProjectID, f.Name)
+			if e != nil {
+				return nil, e
 			}
-			n, e := strconv.Atoi(port)
-			if e != nil || n < 1 || n > 65535 {
-				return nil, fmt.Errorf("Invalid coordinator loopback port")
-			}
-			r, e := http.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:"+port+"/test-sites/"+m.ProjectID+"/"+f.Name, nil)
+			r, e := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 			if e != nil {
 				return nil, e
 			}
@@ -666,4 +638,54 @@ func publicationSiteFile(base, name string) (*os.File, error) {
 		}
 	}
 	return publicationRegular(root, filepath.Join(target, name))
+}
+
+func publicationLoopbackURL(project, name string) (string, error) {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8787"
+	}
+	n, e := strconv.Atoi(port)
+	if e != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("Invalid coordinator loopback port")
+	}
+	return "http://127.0.0.1:" + port + "/test-sites/" + project + "/" + name, nil
+}
+
+// The injectable sync boundary lets the crash-ordering regression fail the
+// directory barrier without disrupting a filesystem or production process.
+func publicationReject(root *os.Root, rel, previous, version string, syncDirectory func() error) error {
+	f, e := root.OpenFile(rel+"/failed", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if e != nil {
+		return fmt.Errorf("Publication readback failed; recovery uncertain")
+	}
+	_, e = f.Write([]byte("readback failed; do not republish\n"))
+	if e == nil {
+		e = f.Sync()
+	}
+	closeErr := f.Close()
+	if e == nil {
+		e = closeErr
+	}
+	if e != nil {
+		return fmt.Errorf("Publication readback failed; recovery uncertain")
+	}
+	// Persist the rejection's directory entry before restoring current. Otherwise
+	// a crash can erase failed and make the restored attempt look never promoted.
+	if e = syncDirectory(); e != nil {
+		return fmt.Errorf("Publication rejection durability unknown; not restored")
+	}
+	return publicationRestore(root, rel, previous, version)
+}
+func publicationSyncDirectory(root *os.Root, path string) error {
+	directory, e := root.Open(path)
+	if e != nil {
+		return e
+	}
+	e = directory.Sync()
+	closeErr := directory.Close()
+	if e == nil {
+		e = closeErr
+	}
+	return e
 }

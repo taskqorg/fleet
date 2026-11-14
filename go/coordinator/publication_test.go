@@ -121,6 +121,41 @@ func TestStaticPublicationSafetyAndRecovery(t *testing.T) {
 			t.Fatal("staged replay", opens, e)
 		}
 	})
+	t.Run("rejection-directory-sync-failure-no-restore", func(t *testing.T) {
+		d, m := fixture(t)
+		previous, _ := os.Readlink(filepath.Join(d.Root, "current"))
+		if _, e := publishStatic(context.Background(), d, m, source, read(d)); e != nil {
+			t.Fatal(e)
+		}
+		root, e := publicationRoot(d.Root)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer root.Close()
+		rel := "releases/" + m.Version
+		e = publicationReject(root, rel, previous, m.Version, func() error {
+			if _, e := root.Lstat(rel + "/failed"); e != nil {
+				t.Fatal("rejection not written before barrier", e)
+			}
+			current, _ := root.Readlink("current")
+			if current != rel {
+				t.Fatal("restored before directory barrier")
+			}
+			return errors.New("injected directory sync failure")
+		})
+		current, _ := root.Readlink("current")
+		if e == nil || !strings.Contains(e.Error(), "unknown") || current != rel {
+			t.Fatal("failed durability claimed/restored", e, current)
+		}
+		opens := 0
+		if _, e = publishStatic(context.Background(), d, m, func(f publicationFile) (io.ReadCloser, error) { opens++; return source(f) }, read(d)); e == nil || opens != 0 {
+			t.Fatal("rejected attempt republished", e, opens)
+		}
+		current, _ = root.Readlink("current")
+		if current != previous {
+			t.Fatal("restart did not reconcile known rejection", current)
+		}
+	})
 	for _, kind := range []string{"cancel", "integrity", "source-error", "traversal"} {
 		t.Run(kind, func(t *testing.T) {
 			d, m := fixture(t)
@@ -186,12 +221,32 @@ func TestStaticPublicationDestination(t *testing.T) {
 	os.MkdirAll(filepath.Join(home, ".config/fleet"), 0700)
 	t.Setenv("HOME", home)
 	t.Setenv("FLEET_TEST_SITE_ROOT", root)
+	t.Setenv("PORT", "80")
 	cfg := doc{"hostId": "publication-authority", "projects": doc{"hello-world": doc{"publicationRoot": filepath.Join(root, "hello-world"), "publicUrl": "https://fleet.ufobe.com/test-sites/hello-world/index.html", "checkUrl": "http://127.0.0.1/test-sites/hello-world/index.html"}}}
 	path := filepath.Join(home, ".config/fleet/program-worker.prototype.json")
 	os.WriteFile(path, jsonBytes(cfg), 0600)
 	if _, e := publicationTarget("hello-world"); e != nil {
 		t.Fatal(e)
 	}
+	t.Setenv("PORT", "9470")
+	binding := mapOf(mapOf(cfg["projects"])["hello-world"])
+	binding["checkUrl"] = "http://127.0.0.1:9470/test-sites/hello-world/index.html"
+	os.WriteFile(path, jsonBytes(cfg), 0600)
+	if _, e := publicationTarget("hello-world"); e != nil {
+		t.Fatal("configured coordinator-port route rejected", e)
+	}
+	binding["checkUrl"] = "http://127.0.0.1/test-sites/hello-world/index.html"
+	os.WriteFile(path, jsonBytes(cfg), 0600)
+	if _, e := publicationTarget("hello-world"); e == nil {
+		t.Fatal("port80 binding silently rerouted to different service")
+	}
+	binding["checkUrl"] = "http://127.0.0.1:9471/test-sites/hello-world/index.html"
+	os.WriteFile(path, jsonBytes(cfg), 0600)
+	if _, e := publicationTarget("hello-world"); e == nil {
+		t.Fatal("different-service route accepted")
+	}
+	binding["checkUrl"] = "http://127.0.0.1:9470/test-sites/hello-world/index.html"
+	os.WriteFile(path, jsonBytes(cfg), 0600)
 	if _, e := publicationTarget("another-project"); e == nil {
 		t.Fatal("arbitrary project accepted")
 	}
@@ -216,7 +271,7 @@ func TestStaticPublicationHTTPPipeline(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("FLEET_TEST_SITE_ROOT", root)
 	t.Setenv("PORT", strings.TrimPrefix(env.server.URL, "http://127.0.0.1:"))
-	cfg := doc{"hostId": "pub-authority", "projects": doc{"hello-world": doc{"publicationRoot": filepath.Join(root, "hello-world"), "publicUrl": "https://fleet.ufobe.com/test-sites/hello-world/index.html", "checkUrl": "http://127.0.0.1/test-sites/hello-world/index.html"}}}
+	cfg := doc{"hostId": "pub-authority", "projects": doc{"hello-world": doc{"publicationRoot": filepath.Join(root, "hello-world"), "publicUrl": "https://fleet.ufobe.com/test-sites/hello-world/index.html", "checkUrl": env.server.URL + "/test-sites/hello-world/index.html"}}}
 	os.WriteFile(filepath.Join(home, ".config/fleet/program-worker.prototype.json"), jsonBytes(cfg), 0600)
 	objects := map[string][]byte{}
 	var mu sync.Mutex
