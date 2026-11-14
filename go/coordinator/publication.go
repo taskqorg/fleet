@@ -301,6 +301,21 @@ func publishStatic(ctx context.Context, dest publicationDestination, manifest pu
 		if e != nil {
 			return nil, fmt.Errorf("Publication readback failed; recovery uncertain")
 		}
+		// The rejection directory entry must survive a crash before current is
+		// restored; otherwise restart could mistake this rejected attempt for a
+		// prepared, never-promoted version and publish it again.
+		directory, e := root.Open(rel)
+		if e != nil {
+			return nil, fmt.Errorf("Publication rejection durability unknown; not restored")
+		}
+		e = directory.Sync()
+		closeErr := directory.Close()
+		if e == nil {
+			e = closeErr
+		}
+		if e != nil {
+			return nil, fmt.Errorf("Publication rejection durability unknown; not restored")
+		}
 		if e = publicationRestore(root, rel, manifest.Previous, manifest.Version); e != nil {
 			return nil, e
 		}
