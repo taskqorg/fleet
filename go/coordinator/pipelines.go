@@ -990,7 +990,7 @@ func recordJob(q *Request, run doc, stepID, tool, jobID, connection string, usag
 	if c, ok := numOK(usage["credits"]); ok {
 		cost = doc{"unit": "credits", "credits": c, "connection": connection}
 	}
-	return writeConnectionCost(q, id, run["projectId"], cost)
+	return writeConnectionCost(q, id, cost)
 }
 
 func creditsOf(q *Request, executionID string) (any, error) {

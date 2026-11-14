@@ -258,12 +258,17 @@ func ingestIn(q *Request, b doc) (any, error) {
 	if err := markObservation(q, xid, "confirmed"); err != nil {
 		return nil, err
 	}
-	hasProcessClosed := false
+	hasProcessClosed, hasConfirmedUsage := false, false
 	for _, p := range prepared {
 		if astr(p.value["type"]) == string(contract.FleetEventTypeProcessClosed) {
 			hasProcessClosed = true
 		}
 		d := mapOf(p.value["data"])
+		normalized := mapOf(d["fleetNormalized"])
+		lifecycle := astr(normalized["lifecycle"])
+		if normalized["nativeUsage"] != nil || lifecycle == "assistant" || lifecycle == "result" || lifecycle == "turn.completed" || astr(d["type"]) == "assistant" {
+			hasConfirmedUsage = true
+		}
 		if v, ok := d["harnessVersion"].(string); ok {
 			if err := setHarnessVersion(q, xid, v); err != nil {
 				return nil, err
@@ -282,8 +287,14 @@ func ingestIn(q *Request, b doc) (any, error) {
 		}
 	}
 	ended, err := executionEnded(q, xid)
-	if err != nil || (!ended && !hasProcessClosed) {
-		return doc{"ok": true}, err
+	if err != nil {
+		return nil, err
+	}
+	if !ended && !hasProcessClosed {
+		if hasConfirmedUsage {
+			return doc{"ok": true}, writeConfirmedUsage(q, xid)
+		}
+		return doc{"ok": true}, nil
 	}
 	return doc{"ok": true}, writeTotals(q, xid)
 }

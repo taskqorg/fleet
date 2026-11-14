@@ -1,6 +1,6 @@
 # Fleet analytics: the work query and the price table
 
-Fleet's analytics is not a subsystem. Experiments, their records, statistics and the comparison screen belong to [Lab](fleet-lab.md#experiment-record); spans belong to [telemetry](fleet-telemetry.md#5-query-surface). This file owns two things only: `analytics_query`, one typed query over work history, and the price table that turns usage into estimated money.
+Fleet's analytics is not a subsystem. Experiments, their records, statistics and the comparison screen belong to [Lab](fleet-lab.md#experiment-record); spans belong to [telemetry](fleet-telemetry.md#5-query-surface). This file owns work-history analytics, resource summaries and the price table that turns usage into estimated money.
 
 Status: accepted design; schema, coordinator `analytics_query`, entity resource rollups, and price table built (UI views tracked in [design system](../design-system/README.md)).
 
@@ -68,3 +68,29 @@ The table belongs to connections and data, beside the provider catalogue in [con
 The first experiment may use one `owner` entry with basis `estimated`; nothing else is needed before it.
 
 Built: `price_entry`, `price_add`, `prices_list`, typed `CostFigure[]` / `ResourceSummary` / `ScopedResourceRollup` contracts, `analytics_query` with per-leaf `LATERAL` `price_entry_subject` pricing and RLS `hidden`/`unknown` counters, entity rollups in `task_get` / `session_get` / `definition_usage` / `executions_runners` / `lab_experiment_get`. Remaining: public vendor snapshot fetch pipeline and Analytics UI views.
+
+## Prepared project resources
+
+Target: project configuration opens independently of resource accounting. People and agents read the same prepared project summary, with version notifications and lightweight version checks. The latest confirmed facts suffice; no live estimate is required. Newly confirmed facts must reach the visible foreground interface within five seconds of becoming available to Fleet. Observation age and publication age remain separate; missing measurements never become zero.
+
+The source-capture foundation is built; the contribution processor, prepared operations and browser consumer are not built yet. Existing `project_context` and analytics reads keep their current query behavior until those stages are qualified.
+
+### Source ownership and capture
+
+`execution.project_id` is the authority for `execution_totals.project_id`, including NULL. An execution move aligns any existing totals in the same transaction, before source capture. Supported totals writers lock the parent execution row before writing totals; gateway and pipeline cost writers derive ownership from that locked parent, never an old caller-supplied project.
+
+Accepted normalized native usage updates canonical totals while the execution is still running. Existing per-call/final/assistant precedence and replay identities apply. This path does not end an execution or infer wall time, CPU, memory or API duration. Completion and `process.closed` retain their existing process-resource projection.
+
+Execution and totals triggers append durable `resource_work` inside the source transaction. Each work UUID belongs to `(source_xid, execution_id, origin, build_generation, repair_id)`; nullable identity fields compare equal. Repeated writes in one transaction coalesce and retain old/new non-null project scopes. Different transactions keep separate identities, so claiming an earlier row cannot erase a later commit. Source deletion cannot cascade away removal work. `computed_at`, rate-limit-only updates, arbitrary execution JSON and heartbeats with an already fixed leaf time do not create work.
+
+Connection/account classification changes append `resource_metadata_repair` with a stable job identity, first old and last new classification per transaction. Only document ID, kind, provider and normalized connection name are retained; credentials are never copied. Connection `connection:name` matches execution connection `name`; account references match document IDs. Price insertion does not enqueue historical work. Capture stays enabled when processing stops; rollback of a processor must retain pending work.
+
+Work and repair tables are maintenance-only under FORCE RLS. Narrow capture/alignment trigger functions use fixed `search_path`, restore the caller's scope on success/error and expose no unrestricted read or repair operation. A processor must repair legacy execution/totals ownership mismatch before publication.
+
+### Publication contract
+
+The planned processor replaces one execution contribution atomically under sorted project locks followed by its execution lock. It reads canonical facts and old contribution in one snapshot, checks that all actual scopes are locked, updates support rows/version and deletes only claimed work UUIDs together. It never locks source rows or uses work-ID order as commit progress. Counted metric/basis support, min/max multiplicities, all tool entries, currency/basis cost groups and price-reference counts make removals and corrections reversible without a history scan per reader.
+
+Initial build and metadata scans seed bounded execution-ID pages atomically with their checkpoint. Ready requires scan completion and no scoped pending work/repair in the finalize snapshot. Rebuild retains frozen valuation provenance and source work; incomplete construction stays preparing. First valuation records its method, including missing rates; later price inserts do not automatically reprice historical comparisons.
+
+Prepared reads require a current non-null project grant and matching source ownership. New read operations are additive; legacy operations remain available. Browser integration and load qualification follow server protocol qualification. Synthetic workload results describe their declared history, readers, event rates, hardware and network; they do not establish production capacity. The five-second requirement remains unproved until rendered-value measurements pass under that envelope.

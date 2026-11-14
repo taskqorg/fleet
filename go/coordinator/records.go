@@ -334,10 +334,44 @@ func putExecution(q *Request, e doc) error {
 // wallKnown: a run's wall time is measured when it has both ends, unless it was abandoned (it ended when given up).
 const wallKnown = `started_at IS NOT NULL AND ended_at IS NOT NULL AND problem IS DISTINCT FROM 'unknown:abandoned'`
 
+// lockExecutionForTotals establishes parent-before-totals row order for every totals writer.
+// Execution ownership is authoritative, including a projectless NULL owner.
+func lockExecutionForTotals(q *Request, id string) (string, error) {
+	var kind string
+	err := q.tx.QueryRow(q.ctx(), "SELECT kind::text FROM execution WHERE id=$1 FOR UPDATE", id).Scan(&kind)
+	if err == pgx.ErrNoRows {
+		return "", nil
+	}
+	return kind, err
+}
+
+// writeConfirmedUsage projects accepted native usage without inventing completion or process resources.
+func writeConfirmedUsage(q *Request, id string) error {
+	kind, err := lockExecutionForTotals(q, id)
+	if err != nil || kind == "" || kind == "pipeline_run" || kind == "pipeline_step" {
+		return err
+	}
+	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,computed_at)
+ SELECT id,project_id,directed_by,CASE
+ WHEN account_id IS NOT NULL AND NOT coalesce((SELECT m.is_api_conn FROM fleet_exec_conn_meta('',account_id) m),false) THEN 'subscription'
+ WHEN kind IN ('agent_run','child_agent','tool_run') THEN 'metered' ELSE 'unavailable' END,now()
+ FROM execution WHERE id=$1
+ ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,directed_by=excluded.directed_by,
+ computed_at=now()`, id); err != nil {
+		return err
+	}
+	for _, fn := range []string{"fleet_write_model", "fleet_write_tokens", "fleet_write_native_observations"} {
+		if err := exec(q, "SELECT "+fn+"($1)", id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // writeTotals persists and merges leaf-execution totals so receipt and process.closed converge regardless of arrival order.
 func writeTotals(q *Request, id string) error {
-	var kind string
-	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT kind::text FROM execution WHERE id=$1),'')", id).Scan(&kind); err != nil || kind == "" || kind == "pipeline_run" || kind == "pipeline_step" {
+	kind, err := lockExecutionForTotals(q, id)
+	if err != nil || kind == "" || kind == "pipeline_run" || kind == "pipeline_step" {
 		return err
 	}
 	if err := exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,wall_ms,wall_ms_basis,computed_at)
@@ -352,7 +386,7 @@ func writeTotals(q *Request, id string) error {
 	  now()
 	 FROM execution WHERE id=$1
 	 ON CONFLICT(execution_id) DO UPDATE SET
-	  project_id=coalesce(excluded.project_id,execution_totals.project_id),
+	  project_id=excluded.project_id,
 	  directed_by=coalesce(excluded.directed_by,execution_totals.directed_by),
 	  billing_basis=CASE WHEN execution_totals.billing_basis='metered' AND execution_totals.connection_cost IS NOT NULL THEN 'metered' ELSE excluded.billing_basis END,
 	  wall_ms=CASE WHEN (SELECT problem FROM execution WHERE id=$1)='unknown:abandoned' THEN NULL ELSE coalesce(excluded.wall_ms,execution_totals.wall_ms) END,
