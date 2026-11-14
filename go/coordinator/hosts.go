@@ -432,7 +432,7 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 			}
 		}
 		h := doc{"id": id, "configured": inList(configured, id), "platform": nil, "lastSeenAt": nil, "capabilities": []any{}, "problems": []any{},
-			"runningByHarness": by, "running": total, "slots": nil, "queued": n, "stores": "unavailable",
+			"runningByHarness": by, "running": total, "slots": nil, "queued": n, "stores": "unknown", "storesReason": "not observed",
 			"version": nil, "autoUpdate": "on", "update": nil}
 		if r := records[id]; r != nil {
 			h["autoUpdate"] = autoUpdateOf(r)
@@ -452,6 +452,7 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 				lastSeen = o["lastSeenAt"]
 			}
 			h["platform"], h["lastSeenAt"], h["version"] = o["platform"], lastSeen, o["version"]
+			h["stores"], h["storesReason"] = hostStoreStatus(o["stores"], seen, now)
 			if id == pds18Host() {
 				h["update"] = mergeUpdate(o["update"])
 			} else {
@@ -494,4 +495,41 @@ func (a *App) hostMayRun(h doc, projectID any, director any) bool {
 	}
 	p, err := a.resolveAccess(context.Background(), astr(director))
 	return err == nil && p != nil
+}
+
+// hostStoreStatus uses only checks reported by this host, never global store reachability.
+func hostStoreStatus(reports any, seen float64, now int64) (string, string) {
+	if seen <= 0 {
+		return "unknown", "not observed"
+	}
+	if float64(now)-seen >= hostStaleMs {
+		return "unknown", "host observation stale"
+	}
+	list, ok := reports.([]any)
+	if !ok || len(list) == 0 {
+		return "unknown", "no store checks reported"
+	}
+	yes, no := false, false
+	for _, v := range list {
+		r, ok := v.(map[string]any)
+		if !ok {
+			return "unknown", "invalid store check"
+		}
+		reachable, ok := r["reachable"].(bool)
+		if !ok {
+			return "unknown", "missing reachability"
+		}
+		if reachable {
+			yes = true
+		} else {
+			no = true
+		}
+	}
+	if yes && no {
+		return "mixed", "some reported stores unreachable"
+	}
+	if no {
+		return "unreachable", "all reported stores unreachable"
+	}
+	return "reachable", "all reported store checks succeeded"
 }

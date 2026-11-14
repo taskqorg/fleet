@@ -937,6 +937,7 @@ type HostRow struct {
 	RunningByHarness map[string]int64 `json:"runningByHarness"`
 	Slots            json.RawMessage  `json:"slots"`
 	Stores           string           `json:"stores"`
+	StoresReason     *string          `json:"storesReason,omitempty"`
 	Update           json.RawMessage  `json:"update"`
 	Version          *string          `json:"version"`
 }

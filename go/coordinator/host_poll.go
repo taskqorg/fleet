@@ -387,6 +387,9 @@ func (a *App) poll(q *Request) (any, error) {
 	stateSig := canonical(obs)
 	storesSig := canonical(open["stores"])
 	flushObs, flushStores, stateChanged := a.heartbeatNeedsFlush(host, stateSig, storesSig, now)
+	// Store changes persist with host observations without triggering global state-change work.
+	obs["stores"] = open["stores"]
+	flushObs = flushObs || flushStores
 
 	var flushGen uint64
 	ctx := q.ctx()
