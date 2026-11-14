@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {startCoordinator,lit} from '../harness.ts';
 
+// Requirement: fleet-analytics.md native observations and Lab attribution; risk: wrong variant labels or fabricated zero measurements.
 test('retained Lab descendants and native observations remain correctly attributed after upgrade',async()=>{
  const c=await startCoordinator({name:'harness-comparison'});
  try{
