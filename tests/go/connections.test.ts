@@ -444,9 +444,9 @@ async function suffixFixture(projectId = 'cs', differentOuter = false) {
     ok(await host('/api/hosts/artifacts/verified', {artifactId: r.artifactId, storeId: c.verify.storeId, sha256: createHash('sha256').update(bytes).digest('hex')}));
     return r.artifactId;
   };
-  const complete = async (runId: string, scoring = true) => {
+  const complete = async (runId: string, scoring = true, received?: any) => {
     const r = await until(async()=>{const v=ok(await call('GET', `/api/pipeline-runs/${runId}`));return v.steps[1]?.executionId?v:undefined;},'script launch');
-    const cmd = await until(async()=> (await poll()).commands.find((c: any) => c.executionId === r.steps[1].executionId),'script intake');
+    const cmd = received ?? await until(async()=> (await poll()).commands.find((c: any) => c.executionId === r.steps[1].executionId),'script intake');
     await receipt(cmd, 'started');
     const {mkdtempSync} = await import('node:fs'); const {tmpdir} = await import('node:os'); const {execFileSync} = await import('node:child_process');
     const dir = mkdtempSync(join(tmpdir(), 'fleet-suffix-'));
@@ -873,4 +873,37 @@ test('C8 connections_delete: owner only, refused while a key is in use, then the
   assert.equal(existsSync(join(SECRET_DIR, 'connections', c)), false);
   assert.equal((await op('connections_delete', {connection: c})).status, 404);
   ok(await op('connections_create', {name: c, provider: 'tavily'}));
+});
+
+// Coordinator phases and real local shell/HTTP receipts; the gateway/S3 are synthetic, no provider call.
+test('Pipeline step terminal ends agree across sequential API/script success, failure, cancellation and retry (requirement: observed pipeline-step timing; risk: finished steps read unfinished, retry rewrites history or containers count as work)', async () => {
+  const read = async (id: string) => ok(await op('pipeline_get', {runId: id}));
+  const typed = async (r: any) => {
+    const rows = ok(await op('executions_list', {parentExecutionId: r.id, limit: 100})).executions;
+    assert.equal(rows.length, r.steps.length);
+    for (const [i, step] of r.steps.entries()) {
+      const row = rows.find((x: any) => x.id === `${r.id}:step:${i}`);
+      assert.equal(row.state, step.state);
+      assert.equal(Date.parse(row.endedAt), step.finishedAt, 'typed end is the retained observed finish');
+      assert.equal(Date.parse(row.startedAt), step.startedAt);
+      if (typeof step.durationMs === 'number') assert.equal(Date.parse(row.endedAt) - Date.parse(row.startedAt), step.durationMs);
+    }
+  };
+  const success = await suffixFixture('hello-world');
+  await success.complete(success.trial.id, true, success.command);
+  const done = await read(success.trial.id);assert.equal(done.state, 'succeeded');await typed(done);
+  const failed = await suffixFixture('hello-world');await failed.receipt(failed.command, 'failed');
+  const bad = await until(async () => {const r = await read(failed.trial.id);return r.state === 'failed' ? r : undefined;}, 'failed step end');await typed(bad);
+  const seenBefore = seen.length;
+  const retry = ok(await op('pipeline_rerun', {runId: bad.id, mode: 'failed', requestId: randomUUID()}));
+  const retryStart = await read(retry.runId);
+  assert.equal(retryStart.steps[0].finishedAt, bad.steps[0].finishedAt, 'reused prefix keeps original timing');
+  const preparing = ok(await op('executions_list', {parentExecutionId: retry.runId, limit: 100})).executions;
+  assert.equal(preparing.find((x: any) => x.id === `${retry.runId}:step:1`).endedAt, null, 'retry suffix does not inherit the failed end');
+  const recovered = await failed.complete(retry.runId, false);await typed(recovered);
+  assert.equal(seen.length, seenBefore, 'local suffix retry does not repeat the API call');
+  assert.deepEqual((await read(bad.id)).steps, bad.steps, 'retry does not rewrite source history');
+  const cancelled = await suffixFixture('hello-world');
+  ok(await op('lab_cell_action', {experimentId: cancelled.exp.id, cell: cancelled.request.cell, action: 'cancel'}));
+  const stopped = await until(async () => {const r = await read(cancelled.trial.id);return r.state === 'cancelled' ? r : undefined;}, 'cancelled step end');await typed(stopped);
 });

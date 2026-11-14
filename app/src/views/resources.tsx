@@ -302,7 +302,7 @@ export function buildExecTree(executions: readonly ExecutionRow[]): TreeNode[] {
   const seen = new Set<string>();
   const leafTime = (e: ExecutionRow) => {
     const a = ms(e.startedAt), b = ms(e.endedAt);
-    return a && b && b >= a ? { value: (b - a) / 1000, basis: 'measured' as const } : { value: null, basis: 'unavailable' as const, reason: 'not finished' };
+    return a && b && b >= a ? { value: (b - a) / 1000, basis: 'measured' as const } : { value: null, basis: 'unavailable' as const, reason: ['succeeded', 'failed', 'cancelled'].includes(e.state) ? 'terminal timing unavailable' : 'not finished' };
   };
   const labelOf = (e: ExecutionRow) => {
     const cfg = e.configRef && typeof e.configRef === 'object' ? (e.configRef as Record<string, unknown>) : null;
