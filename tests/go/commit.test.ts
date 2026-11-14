@@ -45,7 +45,7 @@ test('M1 a migration applied by another coordinator while this one waited for th
   // The other coordinator: it holds the migration lock while it records the newest version, as if it had just applied it.
   c.sql(`DELETE FROM schema_migration WHERE version=${v}`);
   const other = spawn('psql', ['-h', pgdata, '-p', pgport, '-U', 'fleet', '-d', db, '-v', 'ON_ERROR_STOP=1', '-q'], {stdio: ['pipe', 'ignore', 'inherit']});
-  other.stdin.end(`BEGIN; SELECT pg_advisory_xact_lock(hashtext('fleet:write')); INSERT INTO schema_migration(version) VALUES(${v}); SELECT pg_sleep(3); COMMIT;\n`);
+  other.stdin.end(`BEGIN; SELECT pg_advisory_xact_lock(hashtextextended('fleet:write', 0)); INSERT INTO schema_migration(version) VALUES(${v}); SELECT pg_sleep(3); COMMIT;\n`);
   const otherDone = new Promise(r => other.on('exit', r));
   await sleep(500);
   const port = await freePort(), people = join(dirs, 'people.json');
