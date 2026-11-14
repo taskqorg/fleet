@@ -242,7 +242,9 @@ func publishStatic(ctx context.Context, dest publicationDestination, manifest pu
 		}
 	}
 	if _, e := root.Lstat(rel + "/failed"); e == nil {
-		publicationRestore(root, rel, manifest.Previous, manifest.Version)
+		if e := publicationReconcileRejection(root, rel, manifest.Previous, manifest.Version, func() error { return publicationSyncDirectory(root, rel) }); e != nil {
+			return nil, e
+		}
 		return nil, fmt.Errorf("Previous publication attempt failed; not repeated")
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return nil, e
@@ -670,9 +672,13 @@ func publicationReject(root *os.Root, rel, previous, version string, syncDirecto
 	if e != nil {
 		return fmt.Errorf("Publication readback failed; recovery uncertain")
 	}
-	// Persist the rejection's directory entry before restoring current. Otherwise
-	// a crash can erase failed and make the restored attempt look never promoted.
-	if e = syncDirectory(); e != nil {
+	return publicationReconcileRejection(root, rel, previous, version, syncDirectory)
+}
+
+// Observing a failed entry does not establish that an earlier failed barrier
+// made it durable. First-write and replay paths must cross the same barrier.
+func publicationReconcileRejection(root *os.Root, rel, previous, version string, syncDirectory func() error) error {
+	if e := syncDirectory(); e != nil {
 		return fmt.Errorf("Publication rejection durability unknown; not restored")
 	}
 	return publicationRestore(root, rel, previous, version)

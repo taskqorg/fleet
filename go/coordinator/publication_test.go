@@ -147,6 +147,11 @@ func TestStaticPublicationSafetyAndRecovery(t *testing.T) {
 		if e == nil || !strings.Contains(e.Error(), "unknown") || current != rel {
 			t.Fatal("failed durability claimed/restored", e, current)
 		}
+		e = publicationReconcileRejection(root, rel, previous, m.Version, func() error { return errors.New("injected replay directory sync failure") })
+		current, _ = root.Readlink("current")
+		if e == nil || !strings.Contains(e.Error(), "unknown") || current != rel {
+			t.Fatal("replay bypassed rejection barrier", e, current)
+		}
 		opens := 0
 		if _, e = publishStatic(context.Background(), d, m, func(f publicationFile) (io.ReadCloser, error) { opens++; return source(f) }, read(d)); e == nil || opens != 0 {
 			t.Fatal("rejected attempt republished", e, opens)
