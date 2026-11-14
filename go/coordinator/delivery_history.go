@@ -487,6 +487,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	hosts := deliveryHostVersions(obs, now)
 	for i := range releases {
 		deliveryInstalls(&releases[i], st, hosts, now)
+		deliveryUpdateObservations(&releases[i], obs)
 	}
 	runList := make([]contract.DeliveryRun, 0, len(have))
 	for _, r := range have {
@@ -614,13 +615,30 @@ func deliveryHostVersions(obs []doc, now time.Time) map[string]hostVersion {
 		if v == "" || now.UnixMilli()-int64(seen) > 3600_000 {
 			continue
 		}
-		at := now.Format(time.RFC3339)
-		if u, ok := decodeUpdate(o["update"]); ok && u.Version == v && u.State == "ok" && u.At != "" {
-			at = u.At
+		u, ok := decodeUpdate(o["update"])
+		if !ok || u.Version != v || u.State != "ok" {
+			continue
+		}
+		at := u.At
+		if at == "" {
+			at = now.Format(time.RFC3339)
 		}
 		out[astr(o["id"])] = hostVersion{v, at}
 	}
 	return out
+}
+
+// deliveryObservation distinguishes exact installation from availability of a change.
+// An older observation cannot establish availability before publication.
+func deliveryObservation(tag, published string, hv hostVersion, now time.Time) (at string, exact bool) {
+	if strings.HasPrefix(tag, "ui-") || hv.version == "" || versionLess(hv.version, releaseVersionOf(tag)) {
+		return "", false
+	}
+	at = hv.at
+	if at == "" || at < published {
+		at = now.Format(time.RFC3339)
+	}
+	return at, hv.version == releaseVersionOf(tag)
 }
 
 // deliveryInstalls: a release published since installsFrom is installed on a host when the host runs it or newer
@@ -633,14 +651,28 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 	if r.Installed == nil {
 		r.Installed = map[string]string{}
 	}
+	if r.InstalledVersions == nil {
+		r.InstalledVersions = map[string]string{}
+	}
+	if r.Available == nil {
+		r.Available = map[string]string{}
+	}
+	if r.AvailabilityVersions == nil {
+		r.AvailabilityVersions = map[string]string{}
+	}
 	for h, hv := range hosts {
-		// A ui-* release ships the web app only: hosts never install it.
-		if !strings.HasPrefix(r.Tag, "ui-") && r.Installed[h] == "" && !versionLess(hv.version, v) {
-			at := hv.at
-			if at < r.Published { // a newer version reported with an older update time: never before publication
-				at = now.Format(time.RFC3339)
-			}
+		at, exact := deliveryObservation(r.Tag, r.Published, hv, now)
+		if at == "" {
+			continue
+		}
+		if r.Available[h] == "" {
+			r.Available[h] = at
+			r.AvailabilityVersions[h] = hv.version
+		}
+		// Never attach today's version to a timestamp retained from a legacy observation.
+		if exact && r.Installed[h] == "" {
 			r.Installed[h] = at
+			r.InstalledVersions[h] = hv.version
 		}
 	}
 	if r.UiOnSite == nil {
@@ -648,6 +680,26 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 			if !versionLess(uv, v) && at >= r.Published && (r.UiOnSite == nil || at < *r.UiOnSite) {
 				r.UiOnSite = ptr(at)
 			}
+		}
+	}
+}
+
+// deliveryUpdateObservations retains actual version-specific updater results, including refusals.
+func deliveryUpdateObservations(r *contract.DeliveryRelease, obs []doc) {
+	if strings.HasPrefix(r.Tag, "ui-") {
+		return
+	}
+	for _, o := range obs {
+		u, ok := decodeUpdate(o["update"])
+		if !ok || u.Version != releaseVersionOf(r.Tag) || u.At == "" {
+			continue
+		}
+		if r.UpdateObservations == nil {
+			r.UpdateObservations = map[string]contract.UpdateResult{}
+		}
+		h := astr(o["id"])
+		if old, ok := r.UpdateObservations[h]; !ok || old.At < u.At {
+			r.UpdateObservations[h] = u
 		}
 	}
 }
@@ -715,19 +767,30 @@ func deliveryDerive(prs []contract.DeliveryPr, runs []contract.DeliveryRun, rele
 		if p.MqCiDone == nil {
 			p.MqCiDone = lastGreen
 		}
+		p.InstalledVersions, p.Available, p.AvailabilityVersions = nil, nil, nil
+		p.UpdateObservations = nil
 		p.Release, p.Released, p.UiOnSite, p.Installed = nil, nil, nil, map[string]string{}
 		for _, v := range vs {
 			if v.covers >= p.Merged {
 				p.Release, p.Released, p.UiOnSite = ptr(v.r.Tag), ptr(v.r.Published), v.r.UiOnSite
 				maps.Copy(p.Installed, v.r.Installed)
+				p.UpdateObservations = maps.Clone(v.r.UpdateObservations)
+				p.InstalledVersions = maps.Clone(v.r.InstalledVersions)
+				p.Available = maps.Clone(v.r.Available)
+				p.AvailabilityVersions = maps.Clone(v.r.AvailabilityVersions)
 				break
 			}
 		}
 		var installed *string
-		if at := p.Installed["coordinator"]; at != "" {
+		if at := p.Installed["coordinator"]; at != "" && p.InstalledVersions["coordinator"] == releaseVersionOf(deref(p.Release)) {
 			installed = &at
 		}
+		var available *string
+		if at := p.Available["coordinator"]; at != "" {
+			available = &at
+		}
 		d := map[string]*int64{
+			"availability": msBetween(p.Released, available), "time_to_available": msBetween(&p.Opened, available),
 			"pr_ci": msBetween(&p.Opened, p.PrCiDone), "enqueue": msBetween(p.PrCiDone, p.Enqueued), "queue": msBetween(p.Enqueued, p.MqCiDone),
 			"merge": msBetween(p.MqCiDone, &p.Merged), "release": msBetween(&p.Merged, p.Released), "install": msBetween(p.Released, installed),
 			"ui": msBetween(p.Released, p.UiOnSite), "lead": msBetween(&p.Opened, &p.Merged), "total": msBetween(&p.Opened, installed),
@@ -809,8 +872,8 @@ func deliveryPending(s deliverySeries, prs []contract.DeliveryPr, from, now, ins
 		switch {
 		case p.Released == nil:
 			add("release", p, p.Merged)
-		case installsFrom != "" && *p.Released >= installsFrom && p.Installed["coordinator"] == "" && strings.HasPrefix(deref(p.Release), "v"):
-			add("install", p, *p.Released)
+		case installsFrom != "" && *p.Released >= installsFrom && p.Available["coordinator"] == "" && strings.HasPrefix(deref(p.Release), "v"):
+			add("availability_wait", p, *p.Released)
 		}
 	}
 	for k := range s {
@@ -861,7 +924,7 @@ func baselineFrom(t time.Time) time.Time {
 
 func deliveryWindow(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from, until time.Time) contract.DeliveryBaseline {
 	f, u := from.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339)
-	b := contract.DeliveryBaseline{From: f, Until: u, Stats: deliveryValues(prs, runs, f, u).stats()}
+	b := contract.DeliveryBaseline{MetricBasis: ptr("exact-install-v1"), From: f, Until: u, Stats: deliveryValues(prs, runs, f, u).stats()}
 	for _, p := range prs {
 		if p.Merged >= f && p.Merged < u {
 			b.Counts.Prs++
@@ -886,6 +949,9 @@ func deliveryWindow(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from
 func deliveryCompare(prs []contract.DeliveryPr, cur deliverySeries, base contract.DeliveryBaseline, s contract.DeliverySettings) []contract.DeliveryRegression {
 	bs := map[string]contract.DeliveryStat{}
 	for _, b := range base.Stats {
+		if (b.Key == "install" || b.Key == "total") && deref(base.MetricBasis) != "exact-install-v1" {
+			continue
+		}
 		bs[b.Key] = b
 	}
 	merged := slices.Clone(prs)
@@ -896,7 +962,11 @@ func deliveryCompare(prs []contract.DeliveryPr, cur deliverySeries, base contrac
 	}
 	out := []contract.DeliveryRegression{}
 	for _, c := range cur.stats() {
-		b, ok := bs[c.Key]
+		baselineKey := c.Key
+		if c.Key == "availability_wait" {
+			baselineKey = "availability"
+		}
+		b, ok := bs[baselineKey]
 		if !ok || c.N < s.MinSamples || b.N < s.MinSamples {
 			continue
 		}
