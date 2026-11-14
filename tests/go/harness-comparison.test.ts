@@ -31,7 +31,7 @@ test('retained Lab descendants and native observations remain correctly attribut
    ev('native-api',1,'result',{}, {duration_api_ms:125,duration_ms:999})];
   for(const e of events)c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES('event',${lit(e.id)},'desiign',${lit(e)}::jsonb)`);
   // Reapply the exact upgrade projection, twice, to populated history rather than an empty schema.
-  const migration=readFileSync('go/coordinator/schema.sql','utf8').split('-- migration 54:')[1];
+  const migration=readFileSync('go/coordinator/schema.sql','utf8').split('-- migration 54:')[1].split('-- migration 55:')[0];
   const projection=migration.slice(migration.indexOf('CREATE OR REPLACE FUNCTION'));
   c.sql('BEGIN;'+projection+'COMMIT;');c.sql('BEGIN;'+projection+'COMMIT;');
   const rows=JSON.parse(c.sql(`SELECT json_agg(json_build_object('id',e.id,'reasoning',tokens_reasoning,'api',api_ms)) FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.id LIKE 'native-%'`));

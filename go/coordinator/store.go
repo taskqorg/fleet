@@ -624,7 +624,10 @@ func insertExecution(q *Request, v doc) (bool, error) {
 }
 
 // writeConnectionCost upserts the connection_cost total and measured duration of one tool_run.
-func writeConnectionCost(q *Request, id string, projectID any, cost any) error {
+func writeConnectionCost(q *Request, id string, cost any) error {
+	if kind, err := lockExecutionForTotals(q, id); err != nil || kind == "" {
+		return err
+	}
 	basis := "measured"
 	var c any
 	if cost == nil {
@@ -633,7 +636,7 @@ func writeConnectionCost(q *Request, id string, projectID any, cost any) error {
 		c = jsonBytes(cost)
 	}
 	return exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,connection_cost,connection_cost_basis,wall_ms,wall_ms_basis,active_ms,active_ms_basis,computed_at)
-	 SELECT e.id,coalesce($2,e.project_id),e.directed_by,'metered',$3,$4,
+	 SELECT e.id,e.project_id,e.directed_by,'metered',$2,$3,
 	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0,(extract(epoch FROM e.ended_at-e.started_at)*1000)::bigint) END,
 	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN 'measured' ELSE 'unavailable' END,
 	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0,(extract(epoch FROM e.ended_at-e.started_at)*1000)::bigint) END,
@@ -641,7 +644,7 @@ func writeConnectionCost(q *Request, id string, projectID any, cost any) error {
 	  now()
 	 FROM execution e WHERE e.id=$1
 	 ON CONFLICT(execution_id) DO UPDATE SET
-	  project_id=coalesce(excluded.project_id,execution_totals.project_id),
+	  project_id=excluded.project_id,
 	  directed_by=coalesce(excluded.directed_by,execution_totals.directed_by),
 	  billing_basis='metered',
 	  connection_cost=excluded.connection_cost,
@@ -650,7 +653,7 @@ func writeConnectionCost(q *Request, id string, projectID any, cost any) error {
 	  wall_ms_basis=CASE WHEN coalesce(excluded.wall_ms,execution_totals.wall_ms) IS NOT NULL THEN 'measured' ELSE execution_totals.wall_ms_basis END,
 	  active_ms=coalesce(excluded.active_ms,execution_totals.active_ms),
 	  active_ms_basis=CASE WHEN coalesce(excluded.active_ms,execution_totals.active_ms) IS NOT NULL THEN 'measured' ELSE execution_totals.active_ms_basis END,
-	  computed_at=now()`, id, projectID, c, basis)
+	  computed_at=now()`, id, c, basis)
 }
 
 func sortedKeysOf(m map[string]any) []string {

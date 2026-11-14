@@ -1166,7 +1166,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		}
 		cost = doc{"unit": u.Unit, u.Unit: amount, "amount": amount, "connection": l.Connection}
 	}
-	if err := writeConnectionCost(q, id, t["projectId"], cost); err != nil {
+	if err := writeConnectionCost(q, id, cost); err != nil {
 		return false, err
 	}
 	if d := l.Disabled; d != nil && d.Key != "" {

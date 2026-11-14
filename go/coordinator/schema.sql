@@ -1905,3 +1905,164 @@ ALTER TABLE document FORCE ROW LEVEL SECURITY;
 RESET row_security;
 ALTER TABLE execution ENABLE TRIGGER USER;
 ALTER TABLE execution_totals ENABLE TRIGGER USER;
+
+-- migration 55: transactional source capture for prepared project resource summaries.
+-- No history scan or prepared read exposure; capture remains on when processing is stopped.
+CREATE TABLE resource_work (
+ work_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ source_xid xid8 NOT NULL DEFAULT pg_current_xact_id(),
+ execution_id text NOT NULL,
+ origin text NOT NULL DEFAULT 'source' CHECK (origin IN ('source','build','metadata')),
+ build_generation uuid NULL,
+ repair_id uuid NULL,
+ first_pending_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ last_error_class text NULL,
+ CONSTRAINT resource_work_source_key UNIQUE NULLS NOT DISTINCT (source_xid,execution_id,origin,build_generation,repair_id)
+);
+CREATE INDEX resource_work_eligible ON resource_work(next_attempt_at,first_pending_at,work_id);
+CREATE INDEX resource_work_execution ON resource_work(execution_id);
+CREATE INDEX resource_work_repair ON resource_work(repair_id) WHERE repair_id IS NOT NULL;
+CREATE TABLE resource_work_scope (
+ work_id uuid NOT NULL REFERENCES resource_work ON DELETE CASCADE,
+ project_id text NOT NULL,
+ PRIMARY KEY(work_id,project_id)
+);
+CREATE INDEX resource_work_scope_project ON resource_work_scope(project_id,work_id);
+CREATE TABLE resource_metadata_repair (
+ repair_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ source_xid xid8 NOT NULL DEFAULT pg_current_xact_id(),
+ metadata_id text NOT NULL,
+ old_class jsonb NOT NULL,
+ new_class jsonb NOT NULL,
+ after_execution_id text NULL,
+ done boolean NOT NULL DEFAULT false,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ last_error text NULL,
+ UNIQUE(source_xid,metadata_id)
+);
+CREATE INDEX resource_metadata_repair_eligible ON resource_metadata_repair(next_attempt_at,created_at);
+CREATE TABLE resource_repair_scope (
+ repair_id uuid NOT NULL REFERENCES resource_metadata_repair ON DELETE CASCADE,
+ project_id text NOT NULL,
+ PRIMARY KEY(repair_id,project_id)
+);
+CREATE INDEX resource_repair_scope_project ON resource_repair_scope(project_id,repair_id);
+-- Pending work is maintenance state. It has no public operation and is never a source of private facts.
+ALTER TABLE resource_work ENABLE ROW LEVEL SECURITY;
+ALTER TABLE resource_work FORCE ROW LEVEL SECURITY;
+CREATE POLICY maintenance ON resource_work USING (current_setting('fleet.project_ids',true)='*');
+ALTER TABLE resource_work_scope ENABLE ROW LEVEL SECURITY;
+ALTER TABLE resource_work_scope FORCE ROW LEVEL SECURITY;
+CREATE POLICY maintenance ON resource_work_scope USING (current_setting('fleet.project_ids',true)='*');
+ALTER TABLE resource_metadata_repair ENABLE ROW LEVEL SECURITY;
+ALTER TABLE resource_metadata_repair FORCE ROW LEVEL SECURITY;
+CREATE POLICY maintenance ON resource_metadata_repair USING (current_setting('fleet.project_ids',true)='*');
+ALTER TABLE resource_repair_scope ENABLE ROW LEVEL SECURITY;
+ALTER TABLE resource_repair_scope FORCE ROW LEVEL SECURITY;
+CREATE POLICY maintenance ON resource_repair_scope USING (current_setting('fleet.project_ids',true)='*');
+
+CREATE FUNCTION resource_enqueue_source(eid text, old_project text, new_project text) RETURNS void
+LANGUAGE plpgsql SET search_path=public AS $$
+DECLARE wid uuid;
+BEGIN
+ INSERT INTO resource_work(execution_id) VALUES(eid)
+ ON CONFLICT ON CONSTRAINT resource_work_source_key DO UPDATE SET execution_id=excluded.execution_id
+ RETURNING work_id INTO wid;
+ INSERT INTO resource_work_scope(work_id,project_id)
+ SELECT wid,p FROM (VALUES(old_project),(new_project)) v(p) WHERE p IS NOT NULL
+ ON CONFLICT DO NOTHING;
+ PERFORM pg_notify('fleet_resource_work','');
+END $$;
+REVOKE ALL ON FUNCTION resource_enqueue_source(text,text,text) FROM PUBLIC;
+
+-- Stable allowlist: touches, arbitrary JSON, model-call payloads and computed_at do not enqueue work.
+CREATE FUNCTION resource_execution_facts(r execution) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+ SELECT jsonb_build_array(r.kind,r.project_id,r.state,r.account_id,r.harness,r.model,r.started_at,r.ended_at,
+ CASE WHEN r.started_at IS NULL AND NOT (coalesce(r.data->>'startedAt','') ~ '^[0-9]{1,15}$') AND r.ended_at IS NULL THEN r.last_seen_at END,
+ r.data->'provider',r.data->'connection',r.data->'tool',r.data->'outcome',r.data->'startedAt')
+$$;
+CREATE FUNCTION resource_capture_execution() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true); eid text; old_project text; new_project text;
+BEGIN
+ IF TG_TABLE_NAME <> 'execution' OR TG_WHEN <> 'AFTER' THEN RAISE EXCEPTION 'invalid resource capture context'; END IF;
+ IF TG_OP='UPDATE' AND resource_execution_facts(OLD) IS NOT DISTINCT FROM resource_execution_facts(NEW) THEN RETURN NULL; END IF;
+ IF TG_OP <> 'INSERT' THEN eid:=OLD.id; old_project:=OLD.project_id; END IF;
+ IF TG_OP <> 'DELETE' THEN eid:=NEW.id; new_project:=NEW.project_id; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ PERFORM resource_enqueue_source(eid,old_project,new_project);
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;
+REVOKE ALL ON FUNCTION resource_capture_execution() FROM PUBLIC;
+CREATE TRIGGER resource_capture_execution AFTER INSERT OR UPDATE OR DELETE ON execution
+ FOR EACH ROW EXECUTE FUNCTION resource_capture_execution();
+
+CREATE FUNCTION resource_capture_totals() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true); eid text; old_project text; new_project text;
+BEGIN
+ IF TG_TABLE_NAME <> 'execution_totals' OR TG_WHEN <> 'AFTER' THEN RAISE EXCEPTION 'invalid resource capture context'; END IF;
+ IF TG_OP='UPDATE' AND (to_jsonb(OLD)-ARRAY['execution_id','computed_at','rate_limit_last','rate_limit_last_basis'])
+   IS NOT DISTINCT FROM (to_jsonb(NEW)-ARRAY['execution_id','computed_at','rate_limit_last','rate_limit_last_basis']) THEN RETURN NULL; END IF;
+ IF TG_OP <> 'INSERT' THEN eid:=OLD.execution_id; old_project:=OLD.project_id; END IF;
+ IF TG_OP <> 'DELETE' THEN eid:=NEW.execution_id; new_project:=NEW.project_id; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ PERFORM resource_enqueue_source(eid,old_project,new_project);
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;
+REVOKE ALL ON FUNCTION resource_capture_totals() FROM PUBLIC;
+CREATE TRIGGER resource_capture_totals AFTER INSERT OR UPDATE OR DELETE ON execution_totals
+ FOR EACH ROW EXECUTE FUNCTION resource_capture_totals();
+
+CREATE FUNCTION resource_align_totals_owner() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true);
+BEGIN
+ IF TG_TABLE_NAME <> 'execution' OR TG_WHEN <> 'AFTER' OR TG_OP <> 'UPDATE' THEN RAISE EXCEPTION 'invalid resource alignment context'; END IF;
+ IF OLD.project_id IS NOT DISTINCT FROM NEW.project_id THEN RETURN NULL; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ UPDATE execution_totals SET project_id=NEW.project_id WHERE execution_id=NEW.id AND project_id IS DISTINCT FROM NEW.project_id;
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;
+REVOKE ALL ON FUNCTION resource_align_totals_owner() FROM PUBLIC;
+-- Alphabetical AFTER-trigger ordering aligns totals before execution capture.
+CREATE TRIGGER resource_align_totals_owner AFTER UPDATE OF project_id ON execution
+ FOR EACH ROW EXECUTE FUNCTION resource_align_totals_owner();
+
+CREATE FUNCTION resource_metadata_class(r document) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+ SELECT CASE WHEN r.kind IN ('api-connection','managed-account') THEN jsonb_build_object(
+ 'accountId',r.id,'connectionName',CASE WHEN r.kind='api-connection' THEN substr(r.id,12) END,
+ 'kind',r.kind,'provider',r.data->'provider') ELSE '{}'::jsonb END
+$$;
+CREATE FUNCTION resource_capture_metadata() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true); old_class jsonb:='{}'; new_class jsonb:='{}'; mid text;
+BEGIN
+ IF TG_TABLE_NAME <> 'document' OR TG_WHEN <> 'AFTER' THEN RAISE EXCEPTION 'invalid metadata capture context'; END IF;
+ IF TG_OP <> 'INSERT' THEN old_class:=resource_metadata_class(OLD); mid:=OLD.id; END IF;
+ IF TG_OP <> 'DELETE' THEN new_class:=resource_metadata_class(NEW); mid:=NEW.id; END IF;
+ IF old_class IS NOT DISTINCT FROM new_class THEN RETURN NULL; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ INSERT INTO resource_metadata_repair(metadata_id,old_class,new_class) VALUES(mid,old_class,new_class)
+ ON CONFLICT(source_xid,metadata_id) DO UPDATE SET new_class=excluded.new_class;
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+ PERFORM pg_notify('fleet_resource_work','');
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;
+REVOKE ALL ON FUNCTION resource_capture_metadata() FROM PUBLIC;
+CREATE TRIGGER resource_capture_metadata_insert AFTER INSERT ON document
+ FOR EACH ROW WHEN (NEW.kind IN ('api-connection','managed-account')) EXECUTE FUNCTION resource_capture_metadata();
+CREATE TRIGGER resource_capture_metadata_update AFTER UPDATE ON document
+ FOR EACH ROW WHEN (OLD.kind IN ('api-connection','managed-account') OR NEW.kind IN ('api-connection','managed-account')) EXECUTE FUNCTION resource_capture_metadata();
+CREATE TRIGGER resource_capture_metadata_delete AFTER DELETE ON document
+ FOR EACH ROW WHEN (OLD.kind IN ('api-connection','managed-account')) EXECUTE FUNCTION resource_capture_metadata();
