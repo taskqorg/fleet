@@ -68,6 +68,9 @@ test('native usage updates running totals atomically and replay does not double 
   await post('/api/hosts/events',{hostId:'capture-host',executionId:'running-e',events},host.secret);
   assert.deepEqual(read(),expected);
   assert.equal(Number(c.sql("SELECT count(*) FROM resource_work WHERE execution_id='running-e'").trim()),work);
+  await post('/api/hosts/events',{hostId:'capture-host',executionId:'running-e',events:[{id:'raw-result',seq:2,type:'result',timestamp:Date.now(),data:{duration_api_ms:9}}]},host.secret);
+  assert.equal(read().api,9,'existing raw result observation is accepted before completion');
+  assert.equal(read().state,'running');assert.equal(read().wall,null);
   c.sql("UPDATE execution SET project_id=NULL WHERE id='running-e'");
   await post('/api/hosts/events',{hostId:'capture-host',executionId:'running-e',events},host.secret);
   assert.equal(read().owner,null,'later usage cannot restore old project');

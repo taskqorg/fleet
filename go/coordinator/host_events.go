@@ -265,8 +265,8 @@ func ingestIn(q *Request, b doc) (any, error) {
 		}
 		d := mapOf(p.value["data"])
 		normalized := mapOf(d["fleetNormalized"])
-		lifecycle := astr(normalized["lifecycle"])
-		if normalized["nativeUsage"] != nil || lifecycle == "assistant" || lifecycle == "result" || lifecycle == "turn.completed" || astr(d["type"]) == "assistant" {
+		lifecycle := firstString(normalized["lifecycle"], p.value["type"])
+		if normalized["nativeUsage"] != nil || lifecycle == "assistant" || lifecycle == "result" || lifecycle == "turn.completed" || lifecycle == "usage.observation" || astr(d["type"]) == "assistant" {
 			hasConfirmedUsage = true
 		}
 		if v, ok := d["harnessVersion"].(string); ok {
