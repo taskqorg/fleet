@@ -47,7 +47,9 @@ test('Registration refresh preserves runtime causes before a failed terminal rec
   const task=await call('/api/ops/task_create',{projectId:'hello-world',title:'failure cause'});
   const {sessionId}=await call('/api/sessions',{});c.sql(`UPDATE document SET data=data||jsonb_build_object('taskId','${task.id}') WHERE id='${sessionId}'`);
   const e=await call(`/api/sessions/${sessionId}/messages`,{requestId:randomUUID(),text:'fixture'});
-  const poll=()=>call('/api/hosts/poll',{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
+  // Exercise a genuine registration refresh: unchanged heartbeats intentionally skip reconciliation.
+  let refresh=false;
+  const poll=()=>call('/api/hosts/poll',{platform:'darwin',capabilities:(refresh=!refresh)?['script']:[],stores:[],problems:[]},secret,null);
   const cmd=(await poll()).commands.find((x:any)=>x.executionId===e.id);
   await call('/api/hosts/receipts',{executionId:e.id,commandId:cmd.id,status:'started'},secret,null);
   await call('/api/hosts/events',{executionId:e.id,events:[{id:randomUUID(),seq:1,type:'preparation.failed',timestamp:Date.now(),data:{reason:'coding-tool-unready: browser'}}]},secret,null);
