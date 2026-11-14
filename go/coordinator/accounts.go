@@ -60,6 +60,30 @@ func bindingsOf(a doc) []map[string]any {
 	return out
 }
 
+// accountHostBeat only trusts an observation of the currently configured holder.
+func accountHostBeat(q *Request, id string) (doc, error) {
+	h, err := hostByID(q, id)
+	if err != nil || h == nil {
+		return nil, err
+	}
+	b, err := maybe(q, id, "host-observation")
+	if err != nil {
+		return nil, err
+	}
+	if b != nil && (astr(h["holder"]) == "" || b["holder"] != h["holder"]) {
+		return nil, nil
+	}
+	return b, nil
+}
+
+func accountBeatOnline(q *Request, b doc) bool {
+	if b == nil {
+		return false
+	}
+	seen := q.app.effectiveHostSeen(astr(b["id"]), num(b["lastSeenAt"]))
+	return seen > 0 && float64(nowMs())-seen < hostStaleMs
+}
+
 // accountHosts: the hosts a subscription of this harness may bind to, with their inspector and readiness.
 func accountHosts(q *Request, harness string) ([]doc, error) {
 	ids := []string{}
@@ -86,13 +110,35 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 		if err != nil {
 			return nil, err
 		}
+		allowed, err := harnessAllowed(q, id, harness)
+		if err != nil {
+			return nil, err
+		}
+		beat, err := accountHostBeat(q, id)
+		if err != nil {
+			return nil, err
+		}
+		native := inList(exec, id)
+		// Prefer a fresh eligible native host. A configured inspector remains a fallback,
+		// but its heartbeat and provider policy must describe the route actually dispatched.
+		if inspector != "" {
+			ib, err := accountHostBeat(q, inspector)
+			if err != nil {
+				return nil, err
+			}
+			ia, err := harnessAllowed(q, inspector, harness)
+			if err != nil {
+				return nil, err
+			}
+			if !(native && allowed && accountBeatOnline(q, beat)) && allowed && ia && (!native || accountBeatOnline(q, ib)) {
+				beat = ib
+			} else {
+				inspector = ""
+			}
+		}
 		look := id
 		if inspector != "" {
 			look = inspector
-		}
-		beat, err := maybe(q, look, "host-observation")
-		if err != nil {
-			return nil, err
 		}
 		var previous map[string]any
 		for _, a := range accounts {
@@ -107,10 +153,6 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 			platform = astr(beat["platform"])
 		} else if previous != nil && previous["platform"] != nil {
 			platform = astr(previous["platform"])
-		}
-		allowed, err := harnessAllowed(q, id, harness)
-		if err != nil {
-			return nil, err
 		}
 		var seen any
 		connectivity := "unknown"
@@ -130,7 +172,7 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 		switch {
 		case !allowed:
 			reason = fmt.Sprintf("%s is not allowed on this host (host setting harnesses.%s.allowed)", harness, harness)
-		case inList(exec, id):
+		case inList(exec, id) && inspector == "":
 			reason = "Native executor host; accounts bound by host observation, login on the host"
 		case inspector == "":
 			reason = "Remote native executable/account not provisioned for onboarding"
@@ -266,13 +308,6 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 		return nil, err
 	}
 	host := astr(nonNil(b["hostId"], defaultHostID(q)))
-	integ, err := hostWithRole(q, "inspector-for:"+host)
-	if err != nil {
-		return nil, err
-	}
-	if integ == "" {
-		integ = host
-	}
 	hs, err := accountHosts(q, astr(a["harness"]))
 	if err != nil {
 		return nil, err
@@ -293,6 +328,7 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 	case h["onboardingSupported"] != true:
 		return nil, fail(409, astr(h["reason"]))
 	}
+	integ := firstString(h["inspector"], host)
 	var binding any
 	if !catalogue {
 		if !accountName.MatchString(astr(b["binding"])) {
