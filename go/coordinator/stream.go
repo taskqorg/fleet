@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fleet/contract"
@@ -19,29 +20,38 @@ import (
 // Live change feed (docs/designs/fleet-operator-app.md §3, SL8). One LISTEN fleet_change connection per process wakes every open
 // stream; each stream reads in its own short snapshot in its viewer's scope, so it never holds a transaction between wakes.
 type Broadcast struct {
-	mu     sync.Mutex
-	subs   map[chan struct{}]bool
-	cancel context.CancelFunc
-	done   chan struct{}
+	mu                  sync.Mutex
+	subs                map[chan struct{}]bool
+	cancel              context.CancelFunc
+	done                chan struct{}
+	feedWake            chan struct{}
+	ring                []change
+	ringBase, feedHead  int64
+	feedReady, feedHeld bool
+	feedEpoch           uint64
+	filtered            map[string]*streamFlight
+	sinceQueries        atomic.Int64
+	rlsQueries          atomic.Int64
 }
 
 // heldWait: the next look when committed changes wait behind an older running transaction anywhere on the server.
 const heldWait = 250 * time.Millisecond
 
-func listen(parent context.Context, url string) *Broadcast {
+func listen(parent context.Context, url string, store *Store) *Broadcast {
 	ctx, cancel := context.WithCancel(parent)
-	b := &Broadcast{subs: map[chan struct{}]bool{}, cancel: cancel, done: make(chan struct{})}
+	b := &Broadcast{subs: map[chan struct{}]bool{}, cancel: cancel, done: make(chan struct{}), feedWake: make(chan struct{}, 1)}
+	go b.runFeed(ctx, store)
 	go func() {
 		defer close(b.done)
 		for ctx.Err() == nil {
 			conn, err := pgx.Connect(ctx, url)
 			if err == nil {
 				if _, err = conn.Exec(ctx, "LISTEN fleet_change"); err == nil {
-					b.wake() // anything committed while not listening
+					b.signalFeed() // anything committed while not listening
 					for err == nil {
 						_, err = conn.WaitForNotification(ctx)
 						if err == nil {
-							b.wake()
+							b.signalFeed()
 						}
 					}
 				}
@@ -170,6 +180,7 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 	w.WriteHeader(200)
 	sw := newSSE(w)
 	send := sw.send
+	publicCursor := cursor
 	send("ready", contract.StreamCursor{Cursor: cursor}, -1)
 	if err := sw.flush(); err != nil {
 		return nil
@@ -187,7 +198,7 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 				}
 				p, err := a.resolveAccess(ctx, q.person.Email)
 				if err != nil || grantsVersion(p) != initialVersion {
-					send("resync", contract.StreamCursor{Cursor: cursor}, -1)
+					send("resync", contract.StreamCursor{Cursor: publicCursor}, -1)
 					_ = sw.flush()
 					return nil
 				}
@@ -196,10 +207,9 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 			}
 			var cs []change
 			var resync bool
-			err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) (err error) {
-				cs, cursor, resync, held, err = since(ctx, tx, cursor, 1000)
-				return
-			})
+			batch := a.stream.readBatch(ctx, a, q.person, cursor)
+			cs, cursor, resync, held = batch.rows, batch.next, batch.resync, batch.held
+			err := batch.err
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -208,13 +218,26 @@ func (a *App) serveStream(q *Request, w http.ResponseWriter) error {
 				break
 			}
 			if resync {
-				send("resync", contract.StreamCursor{Cursor: cursor}, -1)
+				if err := a.store.Tx(ctx, sc, false, "", func(tx pgx.Tx) error {
+					current := *q
+					current.tx = tx
+					if err := refreshRequestAccess(&current); err != nil {
+						return err
+					}
+					var err error
+					publicCursor, err = head(ctx, tx)
+					return err
+				}); err != nil {
+					return nil
+				}
+				send("resync", contract.StreamCursor{Cursor: publicCursor}, -1)
 				break
 			}
 			for _, c := range cs {
+				publicCursor = c.Seq
 				send("", c, c.Seq)
 			}
-			if len(cs) < 1000 {
+			if !batch.more {
 				break
 			}
 		}
@@ -295,4 +318,11 @@ func (s *sse) flush() error {
 		}
 	}
 	return s.err
+}
+
+func (b *Broadcast) signalFeed() {
+	select {
+	case b.feedWake <- struct{}{}:
+	default:
+	}
 }

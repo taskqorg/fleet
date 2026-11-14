@@ -66,7 +66,7 @@ Each goal is measured as described in §9. The numbers are targets that are repo
 | D2 | Where the app lives | The app owns all of `fleet.ufobe.com`; the prototype pages are deleted (G7). Hosts never get a UI. Each main view has its own manifest. The built-screen registry determines the available routes. |
 | D3 | Offline | The service worker caches the shell. IndexedDB keeps the last-read data, read-only, with its age shown. No queued writes. The store is cleared on sign-out and on a grant change, and holds only what the grants allow. |
 | D4 | Client data layer | One normalized entity store on Preact Signals, in our own code. The client never decides list membership: `list_membership` decides, in one batched read. Membership, ordering and the anchor are covered by tests. Implemented by `app/src/store.ts` ([fleet-view-urls-and-list-path.md §2](fleet-view-urls-and-list-path.md)); the first version kept lists per component, which reset them on every filter change. |
-| D5 | Change-feed source | A change-log table written by triggers on every watched table, including `document`. The cursor is `seq`. Reads run under RLS. LISTEN/NOTIFY wakes the stream. Retention is an operator setting with no built-in cap. An old cursor gets `resync`. |
+| D5 | Change-feed source | A change-log table written by triggers on every watched table, including `document`. The cursor is `seq`. Reads run under RLS. LISTEN/NOTIFY wakes the stream. Change rows older than 24 hours are pruned in bounded batches; durable work and transcripts are retained. An old cursor gets `resync`. |
 
 These are settled elsewhere:
 * **Auth:** data foundation §10. Cloudflare Access sits in front of the guard, which verifies the JWT and injects the Bearer token. The browser holds no secret.
@@ -220,12 +220,12 @@ Kinds are always the client kinds above, never legacy kinds (design-system D15).
 **Stream.**
 * `GET /api/stream?cursor=N` is excluded from the GET read-snapshot wrapper (`longRoute`, `go/coordinator/registry.go`).
 * On connect it sends the visible backlog in its own short read snapshot.
-* One shared `LISTEN fleet_change` per process wakes the streams. Each stream reads short snapshots in its viewer scope using the tuple cursor above. When committed rows are held behind an older running transaction, it checks again after 250 ms, since the older transaction need not send another notification. Not built: the specified 50 ms notification debounce; the current broadcast coalesces pending channel wakes without a timer.
+* One shared `LISTEN fleet_change` per process wakes a feed loop with 75 ms coalescing. The loop reads `since()` once, preserves the XID barrier, and retains at most 4096 change rows in memory. A common 250 ms held-transaction timer handles older transactions that end without another notification. New batches are filtered by PostgreSQL RLS once per distinct current scope/person, grants version, authorization generation, cursor and feed epoch; tabs share that result. The filtered cache holds at most 128 entries of up to 1000 changes each. Catch-up outside the ring uses a current scoped transaction; expired cursors receive `resync`. Internal cursor advancement past hidden rows is never emitted to the viewer.
 * Each event is sent as `id: <seq>`, then `data: {kind,id,taskId,sessionId,hostId,op}`.
 * A `: ping` comment every 25 s keeps the connection open.
 * Headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`. The stream is not compressed.
 * The client reconnects manually with backoff and always passes `?cursor=`. `Last-Event-ID` is not used.
-* Each read uses `scopeOf(q.person)` and the ordinary row-level policies in [people and access](fleet-people-access.md#2-visibility); an app stream does not inherit unrestricted process scope.
+* Each identity batch and reconnect catch-up uses `scopeOf(q.person)` and the ordinary row-level policies in [people and access](fleet-people-access.md#2-visibility); an app stream does not inherit unrestricted process scope.
 
 **Catch-up and fallback.**
 * `changes_since {cursor, limit}` is the same read in request-response form.

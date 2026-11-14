@@ -1803,3 +1803,19 @@ $$;
 
 -- migration 52: suppress no-op store updates in fleet_artifact_change() so metadata/observed_at-only touches emit no change rows.
 CREATE OR REPLACE FUNCTION fleet_artifact_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; p text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'store' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'observed_at' - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW) - 'observed_at' - 'updated_at') THEN RETURN NULL; END IF; k := 'host'; i := r.host_id; h := r.host_id; ELSE IF TG_TABLE_NAME = 'artifact_copy' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'lease_expires_at' - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW) - 'lease_expires_at' - 'updated_at') THEN RETURN NULL; END IF; i := r.artifact_id; ELSE i := r.id; END IF; k := 'artifact'; p := r.project_id; SELECT coalesce(a.task_id, e.task_id), e.session_id INTO t, s FROM artifact a LEFT JOIN execution e ON e.id = a.execution_id WHERE a.id = i; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op) VALUES (k, i, t, s, h, p, left(TG_OP, 1)); PERFORM pg_notify('fleet_change', ''); RETURN NULL; END $$;
+
+-- migration 53: indexed transport validation and compact identities for closed ephemeral chunks.
+ALTER INDEX document_data SET (fastupdate = on);
+CREATE INDEX document_event_sequence ON document ((data->>'executionId'), ((data->>'seq')::bigint)) WHERE kind IN ('event','event-delta');
+CREATE INDEX document_delta_block ON document ((data->>'executionId'), (data->'data'->'fleetNormalized'->>'deltaOf'), seq) WHERE kind='event-delta';
+CREATE TABLE closed_delta_identity (
+ id text PRIMARY KEY,
+ execution_id text NOT NULL REFERENCES execution(id) ON DELETE CASCADE,
+ event_seq bigint NOT NULL,
+ digest text NOT NULL,
+ event_type text NOT NULL,
+ UNIQUE(execution_id,event_seq)
+);
+ALTER TABLE closed_delta_identity ENABLE ROW LEVEL SECURITY;
+ALTER TABLE closed_delta_identity FORCE ROW LEVEL SECURITY;
+CREATE POLICY execution_scope ON closed_delta_identity USING (EXISTS(SELECT 1 FROM execution WHERE execution.id=execution_id));
