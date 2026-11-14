@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -235,6 +236,7 @@ func (l *live) exitedNow() bool {
 }
 
 type executor struct {
+	stopCtx      context.Context
 	activity     *os.File
 	updateReady  atomic.Pointer[string]
 	db           *sql.DB
@@ -2183,9 +2185,12 @@ func runExecutor() error {
 	if err := os.Chmod(sessions, 0o700); err != nil {
 		return err
 	}
+	stopCtx, cancelStop := context.WithCancel(context.Background())
+	defer cancelStop()
+	e.stopCtx = stopCtx
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	go func() { <-sig; shutdown.Store(true) }()
+	go func() { <-sig; shutdown.Store(true); cancelStop() }()
 	if err := e.reconcile(); err != nil {
 		return err
 	}
@@ -2215,6 +2220,9 @@ func runExecutor() error {
 			status("done", "")
 			return nil
 		} else if err != nil {
+			if shutdown.Load() {
+				continue
+			}
 			// A redirected poll is already signalled once by the edge state; other failures log here.
 			var r redirected
 			if !errors.As(err, &r) {
@@ -2264,12 +2272,30 @@ func decodePoll(raw json.RawMessage) (*pollReply, error) {
 	return &reply, nil
 }
 
+const longPollWait = 25 * time.Second
+
+func (e *executor) baseCtx() context.Context {
+	if e.stopCtx != nil {
+		return e.stopCtx
+	}
+	return context.Background()
+}
+
 // poll owns the store-report cache and update signal; command execution never runs in this goroutine.
 func (e *executor) poll() (*pollReply, error) {
+	return e.pollWait(e.baseCtx(), 0)
+}
+
+func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply, error) {
 	v, roots := version, reportedRoots()
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
 		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root), GitConnections: gitConnections(connectionsDir())}
-	a := send(e.url, e.token, pollRoute, body)
+	var a answer
+	if wait > 0 {
+		a = sendPoll(ctx, e.url, e.token, pollRoute+"?wait="+wait.String(), body)
+	} else {
+		a = sendWithClient(ctx, outboxClient, e.url, e.token, pollRoute, pollRoute, body)
+	}
 	if a.status == 410 && strings.Contains(a.text, "host-removed") {
 		return nil, errHostRemoved
 	}
@@ -2314,10 +2340,11 @@ func (e *executor) exchange() (err error) {
 	if edgeWait(pollRoute) {
 		return nil
 	}
-	reply, err := e.poll()
+	reply, err := e.pollWait(e.baseCtx(), longPollWait)
 	if err != nil {
 		return err
 	}
+	beatCtx, cancelBeat := context.WithCancel(e.baseCtx())
 	stop, done := make(chan struct{}), make(chan struct{})
 	var removed atomic.Bool
 	go func() {
@@ -2332,7 +2359,7 @@ func (e *executor) exchange() (err error) {
 				if edgeWait(pollRoute) {
 					continue
 				}
-				if _, err := e.poll(); errors.Is(err, errHostRemoved) {
+				if _, err := e.pollWait(beatCtx, 0); errors.Is(err, errHostRemoved) {
 					removed.Store(true)
 					return
 				}
@@ -2340,6 +2367,7 @@ func (e *executor) exchange() (err error) {
 		}
 	}()
 	defer func() {
+		cancelBeat()
 		close(stop)
 		<-done
 		if err == nil && removed.Load() {

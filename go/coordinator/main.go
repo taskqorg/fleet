@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -48,6 +49,46 @@ type App struct {
 	browserSecret string
 	hostID        string
 	stream        *Broadcast
+
+	runtimeOnce         sync.Once
+	dispatchLoopStarted atomic.Bool
+	dispatchMu          sync.Mutex
+	dispatchCh          chan struct{}
+	dispatchDoneCh      chan struct{}
+	dispatchReqGen      uint64
+	dispatchDoneGen     uint64
+
+	envCacheGen  atomic.Uint64
+	envMu        sync.RWMutex
+	envCacheData map[string][]string
+	envCacheOK   bool
+
+	pollMu     sync.Mutex
+	hostWake   map[string]*hostWakeEntry
+	heartbeats map[string]*hostHeartbeat
+
+	stopOnce sync.Once
+	stopCh   chan struct{}
+}
+
+func (a *App) ensureRuntime() {
+	a.runtimeOnce.Do(func() {
+		a.dispatchCh = make(chan struct{}, 1)
+		a.dispatchDoneCh = make(chan struct{})
+		a.hostWake = map[string]*hostWakeEntry{}
+		a.heartbeats = map[string]*hostHeartbeat{}
+		a.stopCh = make(chan struct{})
+	})
+}
+
+func (a *App) stoppedCh() <-chan struct{} {
+	a.ensureRuntime()
+	return a.stopCh
+}
+
+func (a *App) closeLongPolls() {
+	a.ensureRuntime()
+	a.stopOnce.Do(func() { close(a.stopCh) })
 }
 
 func main() {
@@ -79,6 +120,7 @@ func main() {
 		log.Fatal(err)
 	}
 	a := &App{store: store, browserSecret: os.Getenv("FLEET_BROWSER_SECRET"), hostID: os.Getenv("FLEET_HOST_ID")}
+	a.ensureRuntime()
 	if a.hostID == "" {
 		a.hostID = "owner-mac"
 	}
@@ -99,6 +141,7 @@ func main() {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, os.Interrupt)
 		<-ch
+		a.closeLongPolls()
 		a.stream.close()
 		stopTelemetry() // the queued spans get their last flush
 		// In-flight requests finish; with socket activation new ones wait in the held socket for the next process.
@@ -242,6 +285,8 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 		return err
 	})
 	if err == nil {
+		a.invalidateEnvCache()
+		a.wakeDispatch()
 		a.publishPeople(people)
 		schedulePublish()
 	}

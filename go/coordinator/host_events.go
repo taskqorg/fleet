@@ -370,7 +370,7 @@ func transportAuthorize(q *Request, b doc) (contract.TransportAuthorizeReply, er
 		return rep, fail(400, "Expected exact recovery identity")
 	}
 	// Authorization rewrites the execution's transport records, which host ingest writes too: take its scope as well.
-	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "execution:"+xid); err != nil {
+	if err := acquireTxLock(q, "execution:"+xid); err != nil {
 		return rep, err
 	}
 	c, err := get(q, b["conflictId"], "transport-conflict")

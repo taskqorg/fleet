@@ -127,7 +127,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 		return contract.PersonSettings{}, err
 	}
 	// One writer per person: a set reads the document and writes it whole, so concurrent sets of different fields keep both.
-	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "person-setting:"+email); err != nil {
+	if err := acquireTxLock(q, "person-setting:"+email); err != nil {
 		return contract.PersonSettings{}, err
 	}
 	prev, err := personSettings(q, email)

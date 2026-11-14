@@ -372,6 +372,7 @@ func appendRevision(q *Request, kind, id string, head int64, text, repoBase *str
 	if err := put(q, "setting-change", change); err != nil {
 		return contract.Revision{}, err
 	}
+	invalidateEnvCacheOnCommit(q)
 	xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", n, kind, id)
 	if err != nil || len(xs) == 0 {
 		return contract.Revision{}, err

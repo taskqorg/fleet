@@ -386,11 +386,8 @@ func init() {
 	gatedRoute("GET /api/sessions/{id}", func(q *Request) (any, error) { return sessionGet(q, q.r.PathValue("id")) })
 	gatedRoute("POST /api/sessions/{id}/profile", func(q *Request) (any, error) { return sessionProfile(q, q.r.PathValue("id"), body(q)) })
 	// POST /api/sessions/{id}/messages: exactly requestId and text (optional delivery); one execution per requestId.
-	gatedRoute("POST /api/sessions/{id}/messages", func(q *Request) (any, error) {
-		s, err := get(q, q.r.PathValue("id"), "session")
-		if err != nil {
-			return nil, err
-		}
+	gatedLongRoute("POST /api/sessions/{id}/messages", func(q *Request) (any, error) {
+		sid := q.r.PathValue("id")
 		var b map[string]json.RawMessage
 		if json.Unmarshal(q.body, &b) != nil || b == nil {
 			return nil, fail(400, "Expected requestId, text and optional delivery")
@@ -411,7 +408,26 @@ func init() {
 				return nil, fail(400, "Invalid text")
 			}
 		}
-		return submit(q, doc{"sessionId": s["id"], "requestId": v["requestId"], "text": v["text"], "delivery": v["delivery"]})
+		var out doc
+		if err := runTx(q.ctx(), q.app, q, true, "session:"+sid, func(q *Request) error {
+			s, err := get(q, sid, "session")
+			if err != nil {
+				return err
+			}
+			out, err = submit(q, doc{"sessionId": s["id"], "requestId": v["requestId"], "text": v["text"], "delivery": v["delivery"]})
+			if err != nil {
+				return err
+			}
+			onEnd(q.tx, func(committed bool) {
+				if committed {
+					q.app.wakeDispatch()
+				}
+			})
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		return out, nil
 	})
 	gatedRoute("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
 		id := q.r.PathValue("id")

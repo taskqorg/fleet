@@ -37,7 +37,8 @@ func subscriptionLimitsRefresh(q *Request, req *contract.SubscriptionLimitsRefre
 	}
 	seen := map[string]float64{}
 	for _, o := range obs {
-		seen[astr(o["id"])] = num(o["lastSeenAt"])
+		hid := astr(o["id"])
+		seen[hid] = q.app.effectiveHostSeen(hid, num(o["lastSeenAt"]))
 	}
 	for _, a := range targets {
 		id := astr(a["id"])

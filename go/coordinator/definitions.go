@@ -210,6 +210,7 @@ func reconcileDefinitions(q *Request, files []definitionFile, broken map[string]
 		}
 		log.Printf("definitions: %s is invalid, its last valid revision stays: %v", key, e)
 	}
+	invalidateEnvCacheOnCommit(q)
 	return nil
 }
 
@@ -530,7 +531,7 @@ func init() {
 		if release == "" {
 			release = "unknown release"
 		}
-		if err := runTx(ctx, a, nil, true, "GLOBAL", func(q *Request) error { return reconcileDefinitions(q, files, broken, release) }); err != nil {
+		if err := runTx(ctx, a, nil, true, GLOBAL, func(q *Request) error { return reconcileDefinitions(q, files, broken, release) }); err != nil {
 			log.Fatalf("definitions: reconcile: %v", err)
 		}
 	})

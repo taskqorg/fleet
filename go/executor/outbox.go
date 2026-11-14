@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fleet/contract"
@@ -245,8 +246,18 @@ func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 // One pooled client: keep-alive avoids a TLS handshake per row; redirects are not followed.
 var outboxClient = &http.Client{Timeout: 5 * time.Second, CheckRedirect: noRedirect}
 
+// pollClient allows 25s coordinator long-polls plus network margin while preserving outboxClient's 5s timeout for heartbeats and receipts.
+var pollClient = &http.Client{Timeout: 35 * time.Second, CheckRedirect: noRedirect}
+
 func postJSON(c *http.Client, url, token string, v any) (*http.Response, error) {
-	req, err := http.NewRequest("POST", url, bytes.NewBufferString(enc(v)))
+	return postJSONCtx(context.Background(), c, url, token, v)
+}
+
+func postJSONCtx(ctx context.Context, c *http.Client, url, token string, v any) (*http.Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBufferString(enc(v)))
 	if err != nil {
 		return nil, err
 	}
@@ -255,10 +266,18 @@ func postJSON(c *http.Client, url, token string, v any) (*http.Response, error) 
 	return c.Do(req)
 }
 
-func send(url, token, route string, v any) answer {
-	a := classify(postJSON(outboxClient, url+route, token, v))
-	observe(route, a)
+func sendWithClient(ctx context.Context, c *http.Client, url, token, reqRoute, metricRoute string, v any) answer {
+	a := classify(postJSONCtx(ctx, c, url+reqRoute, token, v))
+	observe(metricRoute, a)
 	return a
+}
+
+func send(url, token, route string, v any) answer {
+	return sendWithClient(context.Background(), outboxClient, url, token, route, route, v)
+}
+
+func sendPoll(ctx context.Context, url, token, reqRoute string, v any) answer {
+	return sendWithClient(ctx, pollClient, url, token, reqRoute, pollRoute, v)
 }
 
 func post(url, token, route string, v any) (json.RawMessage, error) {

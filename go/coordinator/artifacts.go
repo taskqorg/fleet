@@ -288,7 +288,17 @@ func storesObserve(ctx context.Context, tx pgx.Tx, hostID string, stores any) er
 			}
 			return nil
 		}
-		if _, err := tx.Exec(ctx, "UPDATE store SET state=CASE WHEN NOT $5 THEN 'unreachable' WHEN free_space_warning_bytes IS NOT NULL AND coalesce($3,capacity_bytes) < free_space_warning_bytes THEN 'full' ELSE 'reachable' END,capacity_bytes=coalesce($3,capacity_bytes),used_bytes=coalesce($4,used_bytes),observed_at=CASE WHEN $5 THEN now() ELSE observed_at END WHERE id=$1 AND host_id=$2",
+		if _, err := tx.Exec(ctx, `UPDATE store SET
+			state=CASE WHEN NOT $5 THEN 'unreachable' WHEN free_space_warning_bytes IS NOT NULL AND coalesce($3,capacity_bytes) < free_space_warning_bytes THEN 'full' ELSE 'reachable' END,
+			capacity_bytes=coalesce($3,capacity_bytes),
+			used_bytes=coalesce($4,used_bytes),
+			observed_at=CASE WHEN $5 THEN now() ELSE observed_at END
+			WHERE id=$1 AND host_id=$2 AND (
+				state IS DISTINCT FROM CASE WHEN NOT $5 THEN 'unreachable' WHEN free_space_warning_bytes IS NOT NULL AND coalesce($3,capacity_bytes) < free_space_warning_bytes THEN 'full' ELSE 'reachable' END
+				OR capacity_bytes IS DISTINCT FROM coalesce($3,capacity_bytes)
+				OR used_bytes IS DISTINCT FROM coalesce($4,used_bytes)
+				OR ($5 AND (observed_at IS NULL OR observed_at < now() - interval '30 seconds'))
+			)`,
 			id, hostID, num("capacityBytes"), num("usedBytes"), s["reachable"] == true); err != nil {
 			return err
 		}

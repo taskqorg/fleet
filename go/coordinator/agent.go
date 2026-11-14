@@ -216,7 +216,7 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := get(q, sid, "session")
+	s, err := getForUpdate(q, sid, "session")
 	if err != nil {
 		return nil, err
 	}
@@ -306,12 +306,54 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 }
 
 // agentPromote starts the oldest queued message of every idle session (call after an execution ends).
+// It acquires canonical session:<id> locks in order to serialize with concurrent POST /api/sessions/{id}/messages.
 func agentPromote(q *Request) error {
 	queued, err := all(q, "queued-message", doc{"state": "queued"})
+	if err != nil || len(queued) == 0 {
+		return err
+	}
+	var orderable []string
+	deferred := false
+	seen := map[string]bool{}
+	var candidates []string
+	for _, m := range queued {
+		if sid := astr(m["sessionId"]); sid != "" && !seen[sid] {
+			seen[sid] = true
+			candidates = append(candidates, "session:"+sid)
+		}
+	}
+	sorted, err := sortLocks(candidates)
 	if err != nil {
 		return err
 	}
+	for _, k := range sorted {
+		if canAcquireTxLock(q.tx, k) {
+			orderable = append(orderable, k)
+		} else {
+			deferred = true
+		}
+	}
+	if len(orderable) > 0 {
+		if err := acquireTxLock(q, orderable...); err != nil {
+			return err
+		}
+		queued, err = all(q, "queued-message", doc{"state": "queued"})
+		if err != nil {
+			return err
+		}
+	}
+	if deferred {
+		onEnd(q.tx, func(committed bool) {
+			if committed && q.app != nil {
+				q.app.wakeDispatch()
+			}
+		})
+	}
 	for i, m := range queued {
+		sid := astr(m["sessionId"])
+		if !txHasLock(q.tx, "session:"+sid) {
+			continue
+		}
 		earlier := false
 		for _, x := range queued[:i] {
 			if x["sessionId"] == m["sessionId"] && x["state"] == "queued" && num(x["createdAt"]) < num(m["createdAt"]) {
@@ -321,13 +363,13 @@ func agentPromote(q *Request) error {
 		if earlier {
 			continue
 		}
-		if a, err := activeOf(q, astr(m["sessionId"])); err != nil {
+		if a, err := activeOf(q, sid); err != nil {
 			return err
 		} else if a != nil {
 			continue
 		}
 		e, err := func() (doc, error) {
-			s, err := get(q, astr(m["sessionId"]), "session")
+			s, err := getForUpdate(q, sid, "session")
 			if err != nil {
 				return nil, err
 			}
@@ -410,8 +452,17 @@ func agentOnReceipt(q *Request, c, e doc, status string) error {
 // wake: a child session's finished turn becomes the next message of the session that created it.
 func wake(q *Request, e doc, status string) error {
 	s, err := get(q, astr(e["sessionId"]), "session")
-	if err != nil || astr(s["createdBySessionId"]) == "" {
+	if err != nil {
 		return err
+	}
+	parentSid := astr(s["createdBySessionId"])
+	if parentSid == "" {
+		return nil
+	}
+	if canAcquireTxLock(q.tx, "session:"+parentSid) {
+		if err := acquireTxLock(q, "session:"+parentSid); err != nil {
+			return err
+		}
 	}
 	fresh, err := get(q, astr(e["id"]), "execution")
 	if err != nil {
@@ -479,7 +530,7 @@ func agentKnownNative(q *Request, e doc) (string, error) {
 
 // agentCaptureNative: keep the native id per continuation identity as the executor reports it.
 func agentCaptureNative(q *Request, e doc, id string) error {
-	s, err := get(q, astr(e["sessionId"]), "session")
+	s, err := getForUpdate(q, astr(e["sessionId"]), "session")
 	if err != nil {
 		return err
 	}
@@ -657,7 +708,7 @@ func sessionTransition(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := get(q, sid, "session")
+	s, err := getForUpdate(q, sid, "session")
 	if err != nil {
 		return nil, err
 	}

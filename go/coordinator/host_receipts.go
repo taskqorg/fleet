@@ -13,7 +13,7 @@ import (
 
 func init() {
 	longRoute("POST /api/hosts/receipts", func(q *Request) (any, error) {
-		return typedReceipt(q, q.app.statusReceiptIn)
+		return typedReceiptLocks(q, receiptLocks, q.app.statusReceiptIn)
 	})
 	longRoute("POST /api/hosts/accounts/report", func(q *Request) (any, error) {
 		return typedReceipt(q, noEnd(accountReceiptIn))
@@ -26,20 +26,42 @@ func init() {
 	})
 }
 
-// typedReceipt: a receipt route. The body decodes into its closed contract struct (unknown fields refused) and passes
-// its generated Validate, then fn runs in one transaction; an execution fn names as ended starts its pipeline step.
+func receiptLocks(b *contract.Receipt) []string {
+	switch b.Status {
+	case contract.ReceiptStatusCompleted, contract.ReceiptStatusFailed, contract.ReceiptStatusStopped:
+		return []string{GLOBAL, DISPATCH}
+	default:
+		return []string{"execution:" + b.ExecutionId}
+	}
+}
+
+// typedReceipt: a receipt route under GLOBAL.
 func typedReceipt[T any, P interface {
 	*T
 	Validate() error
 }](q *Request, fn func(q *Request, t *T) (any, string, error)) (any, error) {
+	return typedReceiptLocks[T, P](q, nil, fn)
+}
+
+// typedReceiptLocks: decode/validate the closed contract struct, then run fn in one transaction acquiring
+// canonical locks from locksFn (defaulting to GLOBAL); an execution fn names as ended starts its pipeline step.
+func typedReceiptLocks[T any, P interface {
+	*T
+	Validate() error
+}](q *Request, locksFn func(*T) []string, fn func(q *Request, t *T) (any, string, error)) (any, error) {
 	t, err := decodeValid[T, P](q.body, true)
 	if err != nil {
 		return nil, err
 	}
+	locks := []string{GLOBAL}
+	if locksFn != nil {
+		locks = locksFn(t)
+	}
 	var out any
 	var ended string
-	err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
+	err = q.app.store.TxLocks(q.ctx(), nil, true, locks, func(tx pgx.Tx) error {
 		q.tx = tx
+		defer func() { q.tx = nil }()
 		var err error
 		out, ended, err = fn(q, t)
 		return err
@@ -176,6 +198,22 @@ func (a *App) childReceiptIn(q *Request, b *contract.ChildReceipt) (any, error) 
 
 // statusReceiptIn: POST /api/hosts/receipts (contract.Receipt), a command's status.
 func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, error) {
+	if txHasLock(q.tx, GLOBAL) {
+		rs, err := queryRows(q, `SELECT DISTINCT sid FROM (
+		 SELECT session_id AS sid FROM execution WHERE id=$1
+		 UNION SELECT s.data->>'createdBySessionId' FROM execution e JOIN document s ON s.id=e.session_id AND s.kind='session' WHERE e.id=$1
+		 ) x WHERE coalesce(sid,'')<>''`, b.ExecutionId)
+		if err != nil {
+			return nil, "", err
+		}
+		locks := []string{"execution:" + b.ExecutionId}
+		for _, r := range rs {
+			locks = append(locks, "session:"+astr(r["sid"]))
+		}
+		if err := acquireTxLock(q, locks...); err != nil {
+			return nil, "", err
+		}
+	}
 	c, err := commandOf(q, b.HostId, b.ExecutionId, b.CommandId, "Command rejected")
 	if err != nil {
 		return nil, "", err
@@ -273,10 +311,25 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 			return nil, "", err
 		}
 		if terminal(e) {
-			if err := agentPromote(q); err != nil {
-				return nil, "", err
+			if txHasLock(q.tx, DISPATCH) || txHasLock(q.tx, GLOBAL) {
+				if err := agentPromote(q); err != nil {
+					return nil, "", err
+				}
+			} else {
+				onEnd(q.tx, func(committed bool) {
+					if committed {
+						a.wakeDispatch()
+					}
+				})
 			}
 		}
+	}
+	if lost {
+		onEnd(q.tx, func(committed bool) {
+			if committed {
+				a.wakeDispatch()
+			}
+		})
 	}
 	ended := ""
 	if terminal(e) || lost {

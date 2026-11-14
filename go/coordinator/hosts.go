@@ -444,7 +444,14 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 			h["update"] = mergeUpdate(nil)
 		}
 		if o != nil {
-			h["platform"], h["lastSeenAt"], h["version"] = o["platform"], o["lastSeenAt"], o["version"]
+			seen := q.app.effectiveHostSeen(id, num(o["lastSeenAt"]))
+			var lastSeen any
+			if seen > 0 {
+				lastSeen = seen
+			} else if o["lastSeenAt"] != nil {
+				lastSeen = o["lastSeenAt"]
+			}
+			h["platform"], h["lastSeenAt"], h["version"] = o["platform"], lastSeen, o["version"]
 			if id == pds18Host() {
 				h["update"] = mergeUpdate(o["update"])
 			} else {
@@ -454,7 +461,7 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 				h["capabilities"] = o["capabilities"]
 			}
 			// A host that stopped polling shows no problems: its staleness is the signal.
-			if seen, ok := o["lastSeenAt"].(float64); ok && float64(now)-seen < hostStaleMs && o["problems"] != nil {
+			if seen > 0 && float64(now)-seen < hostStaleMs && o["problems"] != nil {
 				h["problems"] = o["problems"]
 			}
 		}

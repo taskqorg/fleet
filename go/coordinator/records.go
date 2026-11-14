@@ -80,6 +80,13 @@ func get(q *Request, anyID any, kind string) (doc, error) {
 	return one(q, "SELECT data FROM document WHERE id=$1 AND kind=$2", id, kind)
 }
 
+func getForUpdate(q *Request, id, kind string) (doc, error) {
+	if id == "" {
+		return nil, errNotFound
+	}
+	return one(q, "SELECT data FROM document WHERE id=$1 AND kind=$2 FOR UPDATE", id, kind)
+}
+
 // maybe: get, nil when absent.
 func maybe(q *Request, id any, kind string) (doc, error) {
 	sid, _ := id.(string)
@@ -288,6 +295,21 @@ func putExecution(q *Request, e doc) error {
 		}
 		if _, err = settleTask(q, *t, ""); err == nil && terminalTyped[state] && !terminalTyped[prev] {
 			_, err = settleIdleTask(q, *t)
+		}
+	}
+	if err == nil && q.app != nil {
+		needDispatch := state == "preparing" && e["hostId"] == nil && kind == "agent_run"
+		newlySucceeded := state == "succeeded" && !terminalTyped[prev]
+		if needDispatch || newlySucceeded {
+			onEnd(q.tx, func(committed bool) {
+				if !committed {
+					return
+				}
+				q.app.wakeDispatch()
+				if newlySucceeded {
+					q.app.wakeAllHosts()
+				}
+			})
 		}
 	}
 	return err
@@ -512,6 +534,26 @@ func putDocument(q *Request, kind string, v doc) error {
 		project = p
 	}
 	_, err := q.tx.Exec(q.ctx(), "INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind", kind, v["id"], b, project)
+	if err == nil && q.app != nil {
+		switch kind {
+		case "command":
+			if astr(v["status"]) == "pending" {
+				if hid := astr(v["hostId"]); hid != "" {
+					onEnd(q.tx, func(committed bool) {
+						if committed {
+							q.app.wakeHost(hid)
+						}
+					})
+				}
+			}
+		case "host", "managed-account", "queued-message":
+			onEnd(q.tx, func(committed bool) {
+				if committed {
+					q.app.wakeDispatch()
+				}
+			})
+		}
+	}
 	return err
 }
 

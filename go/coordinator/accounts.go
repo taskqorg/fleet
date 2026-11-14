@@ -115,9 +115,14 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 		var seen any
 		connectivity := "unknown"
 		if beat != nil {
-			seen = beat["lastSeenAt"]
+			eff := q.app.effectiveHostSeen(look, num(beat["lastSeenAt"]))
+			if eff > 0 {
+				seen = eff
+			} else {
+				seen = beat["lastSeenAt"]
+			}
 			connectivity = "offline"
-			if float64(nowMs())-num(beat["lastSeenAt"]) < 30000 {
+			if float64(nowMs())-eff < 30000 {
 				connectivity = "online"
 			}
 		}

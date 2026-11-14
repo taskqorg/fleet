@@ -6,14 +6,179 @@ package main
 // needs-you question is open per cause.
 
 import (
+	"context"
 	"encoding/json"
 	"fleet/contract"
 	"fmt"
+	"log"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
+
+func init() {
+	onStart(func(ctx context.Context, a *App) {
+		startDispatchLoop(ctx, a)
+	})
+}
+
+func (a *App) currentDispatchReqGen() uint64 {
+	if a == nil {
+		return 0
+	}
+	a.ensureRuntime()
+	a.dispatchMu.Lock()
+	defer a.dispatchMu.Unlock()
+	return a.dispatchReqGen
+}
+
+func (a *App) wakeDispatch() {
+	_ = a.triggerDispatch()
+}
+
+func (a *App) triggerDispatch() uint64 {
+	if a == nil {
+		return 0
+	}
+	a.ensureRuntime()
+	a.dispatchMu.Lock()
+	a.dispatchReqGen++
+	gen := a.dispatchReqGen
+	a.dispatchMu.Unlock()
+	select {
+	case a.dispatchCh <- struct{}{}:
+	default:
+	}
+	return gen
+}
+
+func (a *App) waitDispatchCaughtUp(ctx context.Context, target uint64) error {
+	if a == nil {
+		return nil
+	}
+	a.ensureRuntime()
+	if !a.dispatchLoopStarted.Load() {
+		return a.dispatchPass(ctx, true)
+	}
+	for {
+		a.dispatchMu.Lock()
+		done := a.dispatchDoneGen >= target
+		ch := a.dispatchDoneCh
+		a.dispatchMu.Unlock()
+		if done {
+			return nil
+		}
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func startDispatchLoop(ctx context.Context, a *App) {
+	a.ensureRuntime()
+	a.dispatchLoopStarted.Store(true)
+	interval := envMs("FLEET_DISPATCH_FALLBACK_MS", 5000)
+	go func() {
+		var tickCh <-chan time.Time
+		if interval > 0 {
+			t := time.NewTicker(interval)
+			defer t.Stop()
+			tickCh = t.C
+		}
+		// Run an initial sweep so work present at startup dispatches promptly.
+		explicit := true
+		for {
+			a.dispatchMu.Lock()
+			target := a.dispatchReqGen
+			a.dispatchMu.Unlock()
+			if err := a.dispatchPass(ctx, explicit); err != nil && ctx.Err() == nil {
+				log.Printf("dispatch pass: %v", err)
+			}
+			a.dispatchMu.Lock()
+			if target > a.dispatchDoneGen {
+				a.dispatchDoneGen = target
+			}
+			close(a.dispatchDoneCh)
+			a.dispatchDoneCh = make(chan struct{})
+			more := a.dispatchReqGen > target
+			a.dispatchMu.Unlock()
+			if more {
+				explicit = true
+				continue
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.dispatchCh:
+				explicit = true
+			case <-tickCh:
+				explicit = false
+			}
+		}
+	}()
+}
+
+func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
+	var sessionIDs []string
+	var needsSweep bool
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+		rs, err := queryRows(q, `SELECT DISTINCT sid FROM (
+			SELECT data->>'sessionId' AS sid FROM document WHERE kind='queued-message' AND data->>'state'='queued'
+			UNION ALL
+			SELECT session_id AS sid FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run' AND session_id IS NOT NULL
+		) x WHERE coalesce(sid,'')<>''`)
+		if err != nil {
+			return err
+		}
+		for _, r := range rs {
+			if sid := astr(r["sid"]); sid != "" {
+				sessionIDs = append(sessionIDs, sid)
+			}
+		}
+		if explicit || len(sessionIDs) > 0 {
+			needsSweep = true
+			return nil
+		}
+		return q.tx.QueryRow(q.ctx(), `SELECT
+			EXISTS(SELECT 1 FROM document WHERE kind='delegation' AND coalesce(data->>'continuationExecutionId','')='' AND coalesce(data->>'state','')<>'suppressed')
+			OR EXISTS(SELECT 1 FROM question WHERE state IN ('open','answered') AND cause ~ '^(subscription|placement|host|director|execution):|^budget:.*:reached$')
+			OR EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','running','waiting'))`).Scan(&needsSweep)
+	}); err != nil {
+		return err
+	}
+	if !needsSweep {
+		return nil
+	}
+	locks := make([]string, 0, 1+len(sessionIDs))
+	locks = append(locks, DISPATCH)
+	for _, sid := range sessionIDs {
+		locks = append(locks, "session:"+sid)
+	}
+	return runTxLocks(ctx, a, nil, true, locks, func(q *Request) error {
+		if err := a.delegationReconcile(q); err != nil {
+			return err
+		}
+		ids, err := hostIDs(q)
+		if err != nil {
+			return err
+		}
+		envs, err := a.projectEnvironmentsCached(q)
+		if err != nil {
+			return err
+		}
+		if err := detectProblems(q, ids, envs); err != nil {
+			return err
+		}
+		if err := agentPromote(q); err != nil {
+			return err
+		}
+		return a.dispatchRun(q, "")
+	})
+}
 
 const onlineMs = 30000
 
@@ -58,8 +223,9 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 		return nil, err
 	}
 	for _, o := range obs {
-		k.caps[astr(o["id"])] = strs(o["capabilities"])
-		k.seen[astr(o["id"])] = num(o["lastSeenAt"])
+		hid := astr(o["id"])
+		k.caps[hid] = strs(o["capabilities"])
+		k.seen[hid] = q.app.effectiveHostSeen(hid, num(o["lastSeenAt"]))
 		if o["gitConnections"] != nil {
 			k.conns[astr(o["id"])] = strs(o["gitConnections"])
 		}
@@ -518,12 +684,12 @@ func recordDecision(q *Request, e doc, polling string, cs []*candidate, winner *
 	if winner != nil {
 		w = js(doc{"subscription": winner.Subscription, "host": winner.Host})
 	}
-	return exec(q, "INSERT INTO route_decision(execution_id,project_id,host_id,candidates,winner) VALUES($1,$2,$3,$4,$5)", e["id"], mapOf(e["dispatch"])["projectId"], polling, js(cs), w)
+	return exec(q, "INSERT INTO route_decision(execution_id,project_id,host_id,candidates,winner) VALUES($1,$2,$3,$4,$5)", e["id"], mapOf(e["dispatch"])["projectId"], nilIf(polling), js(cs), w)
 }
 
 var causeHost = regexp.MustCompile(`^host:([^:]+)`)
 
-// dispatchRun: one dispatch pass for a poll of the polling host.
+// dispatchRun: one dispatch pass; when polling == "", evaluates and assigns every host.
 func (a *App) dispatchRun(q *Request, polling string) error {
 	var ids []string
 	// Only the stall causes this pass raises: a key, budget-ask or other area's question keeps its cause.
@@ -549,6 +715,28 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if e["dispatch"] == nil || e["hostId"] != nil || e["state"] != "preparing" || e["stopRequested"] == true {
 			continue
 		}
+		if sid := astr(e["sessionId"]); sid != "" && !txHasLock(q.tx, "session:"+sid) {
+			if canAcquireTxLock(q.tx, "session:"+sid) {
+				if err := acquireTxLock(q, "session:"+sid); err != nil {
+					return err
+				}
+				// Re-read after acquiring the session lock so any concurrent session write is visible.
+				e, err = get(q, id, "execution")
+				if err != nil {
+					return err
+				}
+				if e["dispatch"] == nil || e["hostId"] != nil || e["state"] != "preparing" || e["stopRequested"] == true {
+					continue
+				}
+			} else {
+				onEnd(q.tx, func(committed bool) {
+					if committed {
+						a.wakeDispatch()
+					}
+				})
+				continue
+			}
+		}
 		cs, err := a.rankCandidates(q, e, k)
 		if err != nil {
 			return err
@@ -561,13 +749,13 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 		}
 		if best != nil {
-			if best.Host != polling {
+			if polling != "" && best.Host != polling {
 				continue
 			}
 			delete(e, "waitReason")
 			delete(e, "waitDetail")
-			// A refused start ends this execution only: returning would fail the whole poll, and every later poll of this
-			// host, while the execution stays queued (PDS18 outage, 2026-11-12). Its partial writes roll back first.
+			// A refused start ends this execution only: returning would fail the whole pass, and every later pass,
+			// while the execution stays queued (PDS18 outage, 2026-11-12). Its partial writes roll back first.
 			queued := mapOf(clone(e))
 			if err := exec(q, "SAVEPOINT start_command"); err != nil {
 				return err
@@ -575,7 +763,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if _, err := a.startCommand(q, e, best.Host, best.binding); err != nil {
 				var he *HTTPError
 				if !asHTTP(err, &he) {
-					return err // database or transport: retried by the next poll
+					return err // database or transport: retried by the next pass
 				}
 				if err := exec(q, "ROLLBACK TO SAVEPOINT start_command"); err != nil {
 					return err
@@ -592,7 +780,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if err := exec(q, "RELEASE SAVEPOINT start_command"); err != nil {
 				return err
 			}
-			if err := recordDecision(q, e, polling, cs, best); err != nil {
+			if err := recordDecision(q, e, firstString(polling, best.Host), cs, best); err != nil {
 				return err
 			}
 			if err := exec(q, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"]); err != nil {

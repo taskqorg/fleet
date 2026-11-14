@@ -265,13 +265,12 @@ func githubTokenFor(ctx context.Context, a *App, connection, project string) (st
 	}
 	revoke := func() {
 		if err := runTx(context.Background(), a, nil, true, "", func(q *Request) error {
-			if err := revokeTokens(q, exec); err != nil {
-				return err
-			}
-			_, err := connIngest(q)
-			return err
+			return revokeTokens(q, exec)
 		}); err != nil {
 			log.Printf("revoke %s: %v", exec, err)
+		}
+		if _, err := connIngestPass(context.Background(), a); err != nil {
+			log.Printf("ingest %s: %v", exec, err)
 		}
 	}
 	// The gateway must see the token before the call; a failed snapshot revokes it at once.

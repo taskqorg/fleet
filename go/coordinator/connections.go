@@ -815,7 +815,7 @@ func init() {
 		}
 		// Spool ingest and token revocation (FLEET_CONNECTION_TICK_MS: test seam, 0 turns it off); usage reconcile every 10 min.
 		every(ctx, "connections", envMs("FLEET_CONNECTION_TICK_MS", 3000), func(ctx context.Context) error {
-			err := runTx(ctx, a, nil, true, "", connTick)
+			err := connTickPass(ctx, a)
 			if err != nil {
 				log.Printf("connections tick: %v", err)
 			}
@@ -971,9 +971,11 @@ func revokeSteps(q *Request) error {
 	return nil
 }
 
-// Spool ingest (§3): every gateway line becomes one tool_run with connection_cost, idempotent by callId. A past day's
-// file is deleted once its lines are committed; a file with a line that could not be imported is kept. A line naming a disabled key disables its row and asks the owner once.
-func connIngest(q *Request) (int, error) {
+// Spool ingest (§3): every gateway line becomes one tool_run with connection_cost, idempotent by callId. Each
+// unrecorded line runs in its own transaction locked only by "usageKey:" + key (or NOLOCK when no usageKey), never
+// acquiring GLOBAL. A past day's file is deleted once its lines are committed; a file with a line that could not be
+// imported is kept.
+func connIngestPass(ctx context.Context, a *App) (int, error) {
 	if gatewayDir() == "" {
 		return 0, nil
 	}
@@ -1005,6 +1007,8 @@ func connIngest(q *Request) (int, error) {
 		}
 		// Whole lines of any length (no Scanner token cap, W3-2); a line not imported keeps the file.
 		unimported := 0
+		var parsed []contract.CallLine
+		var callIDs []string
 		for _, line := range bytes.Split(b, []byte{'\n'}) {
 			if len(bytes.TrimSpace(line)) == 0 {
 				continue
@@ -1016,27 +1020,56 @@ func connIngest(q *Request) (int, error) {
 				unimported++
 				continue
 			}
-			ok, err := connRecord(q, l)
-			if err != nil {
+			parsed = append(parsed, l)
+			if l.CallId != "" && l.TokenSha256 != nil && l.ExecutionId != nil {
+				callIDs = append(callIDs, "call:"+l.CallId)
+			}
+		}
+		existing := map[string]bool{}
+		if len(callIDs) > 0 {
+			if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+				rs, err := queryRows(q, "SELECT id FROM execution WHERE id = ANY($1)", callIDs)
+				if err != nil {
+					return err
+				}
+				for _, r := range rs {
+					existing[astr(r["id"])] = true
+				}
+				return nil
+			}); err != nil {
+				return added, err
+			}
+		}
+		for _, l := range parsed {
+			if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil || existing["call:"+l.CallId] {
+				continue
+			}
+			lock := NOLOCK
+			if l.UsageKey != nil && *l.UsageKey != "" {
+				lock = "usageKey:" + *l.UsageKey
+			}
+			var ok bool
+			if err := runTx(ctx, a, nil, true, lock, func(q *Request) error {
+				var err error
+				ok, err = connRecord(q, l)
+				if err != nil {
+					return err
+				}
+				if ok {
+					publish(q)
+				}
+				return nil
+			}); err != nil {
 				return added, err
 			}
 			if ok {
 				added++
 			}
 		}
-		if added > 0 {
-			publish(q)
-		}
 		if past && unimported > 0 {
 			log.Printf("spool %s: past day kept, %d line(s) not imported", f, unimported)
 		} else if past {
-			// Retired only once the imported lines are committed; a re-read after a lost commit is deduplicated by callId.
-			path := filepath.Join(dir, f)
-			onEnd(q.tx, func(committed bool) {
-				if committed {
-					os.Remove(path)
-				}
-			})
+			os.Remove(filepath.Join(dir, f))
 		}
 	}
 	return added, nil
@@ -1118,7 +1151,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 			// A finished job's charge (Meshy consumed_credits) counts once per (connection, job); later polls cost 0. A
 			// pipeline step's job is counted by recordJob instead.
 			// Concurrent ingests of two polls of one job serialize on the key.
-			if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "usageKey:"+*l.UsageKey); err != nil {
+			if err := acquireTxLock(q, "usageKey:"+*l.UsageKey); err != nil {
 				return false, err
 			}
 			var n int
@@ -1189,50 +1222,74 @@ func connDisable(q *Request, fp string, status int64) error {
 	return exec(q, "UPDATE question SET cause=$2 WHERE id=$1", id, cause)
 }
 
-var lastBlocked string
+var (
+	lastBlockedMu sync.Mutex
+	lastBlocked   string
+)
 
-// One pass: ingest, republish when the blocked set changed, revoke tokens of ended or unknown runs.
-func connTick(q *Request) error {
-	if _, err := connIngest(q); err != nil {
+// One pass: ingest without GLOBAL, republish when the blocked set changed, revoke tokens of ended or unknown runs.
+func connTickPass(ctx context.Context, a *App) error {
+	if _, err := connIngestPass(ctx, a); err != nil {
 		return err
 	}
-	b, err := blockedConnections(q)
-	if err != nil {
-		return err
-	}
-	s := string(jsonBytes(sortedKeysOf(func() map[string]any {
+	var blockedJSON string
+	var toRevoke []string
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+		b, err := blockedConnections(q)
+		if err != nil {
+			return err
+		}
 		m := map[string]any{}
 		for k, v := range b {
 			if v {
 				m[k] = true
 			}
 		}
-		return m
-	}())))
-	if s != lastBlocked {
-		onEnd(q.tx, func(committed bool) { // a rolled-back pass leaves lastBlocked so the next pass republishes
-			if committed {
-				lastBlocked = s
-				schedulePublish()
-			}
-		})
-	}
-	open, err := rows(q, "SELECT data FROM document WHERE kind='run-token' AND NOT data ? 'revokedAt' AND NOT data ? 'step' AND NOT data ? 'personal'")
-	if err != nil {
-		return err
-	}
-	for _, t := range open {
-		id := astr(t["executionId"])
-		var state *string
-		err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+"),'')", id).Scan(&state)
+		blockedJSON = string(jsonBytes(sortedKeysOf(m)))
+		open, err := rows(q, "SELECT data FROM document WHERE kind='run-token' AND NOT data ? 'revokedAt' AND NOT data ? 'step' AND NOT data ? 'personal'")
 		if err != nil {
 			return err
 		}
-		if state == nil || *state == "" || terminalTyped[*state] {
-			if err := revokeTokens(q, id); err != nil {
+		seenExec := map[string]bool{}
+		for _, t := range open {
+			id := astr(t["executionId"])
+			if seenExec[id] {
+				continue
+			}
+			var state *string
+			err := q.tx.QueryRow(q.ctx(), "SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND "+execKinds+"),'')", id).Scan(&state)
+			if err != nil {
 				return err
 			}
+			if state == nil || *state == "" || terminalTyped[*state] {
+				seenExec[id] = true
+				toRevoke = append(toRevoke, id)
+			}
 		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if len(toRevoke) > 0 {
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			for _, id := range toRevoke {
+				if err := revokeTokens(q, id); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	lastBlockedMu.Lock()
+	changed := blockedJSON != lastBlocked
+	if changed {
+		lastBlocked = blockedJSON
+	}
+	lastBlockedMu.Unlock()
+	if changed {
+		schedulePublish()
 	}
 	return nil
 }
