@@ -237,9 +237,9 @@ func putExecution(q *Request, e doc) error {
 	if kind == "agent_run" {
 		harness = harnessOf(e)
 	}
-	variant := any(nil)
-	if e["experimentId"] != nil {
-		variant = nilIf(astr(ac["id"]))
+	experiment, variant, err := executionLabContext(q, parent, project, e["experimentId"], e["variant"])
+	if err != nil {
+		return err
 	}
 	account := firstString(mapOf(e["effectiveAccount"])["accountId"], e["accountId"])
 	cfg := js(doc{"profileId": nilIf(astr(ac["id"])), "profileSha256": e["profileSha256"], "effort": e["effort"]})
@@ -275,7 +275,7 @@ func putExecution(q *Request, e doc) error {
 	  directed_by=coalesce(excluded.directed_by,execution.directed_by),profile_id=coalesce(excluded.profile_id,execution.profile_id),profile_revision=coalesce(excluded.profile_revision,execution.profile_revision),
 	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
 	  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-		id, kind, state, observation, nilIf(project), nilIf(task), e["experimentId"], variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, msTime(e["startedAt"]), msTime(e["finishedAt"]), js(data), nilIf(firstString(e["directedBy"], sess["directedBy"])), profileID, profileRev, pipelineID, pipelineRev, stepID)
+		id, kind, state, observation, nilIf(project), nilIf(task), experiment, variant, nilIf(parent), e["sessionId"], nilIf(account), e["hostId"], harness, e["model"], cfg, msTime(e["startedAt"]), msTime(e["finishedAt"]), js(data), nilIf(firstString(e["directedBy"], sess["directedBy"])), profileID, profileRev, pipelineID, pipelineRev, stepID)
 	if err != nil {
 		return err
 	}
@@ -364,6 +364,9 @@ func writeTotals(q *Request, id string) error {
 		return err
 	}
 	if err := exec(q, "SELECT fleet_write_tokens($1)", id); err != nil { // tokens from the harness's usage report (migration 40, 44, 50)
+		return err
+	}
+	if err := exec(q, "SELECT fleet_write_native_observations($1)", id); err != nil {
 		return err
 	}
 	if err := exec(q, `UPDATE execution_totals SET rate_limit_last=r.data->'data',rate_limit_last_basis='measured' FROM (SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id=$1`, id); err != nil {

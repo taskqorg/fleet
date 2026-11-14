@@ -149,6 +149,10 @@ const analyticsBaseLeavesSelect = `
   (coalesce(t.billing_basis, '') = 'subscription' OR (coalesce(t.billing_basis, '') IN ('', 'unavailable') AND e.account_id IS NOT NULL AND NOT coalesce(conn.is_api_conn, false))) AS is_sub,
   t.tokens_input,
   coalesce(t.tokens_input_basis, 'unavailable') AS tokens_input_basis,
+  t.tokens_reasoning,
+  coalesce(t.tokens_reasoning_basis, 'unavailable') AS tokens_reasoning_basis,
+  t.api_ms,
+  coalesce(t.api_ms_basis, 'unavailable') AS api_ms_basis,
   t.tokens_output,
   coalesce(t.tokens_output_basis, 'unavailable') AS tokens_output_basis,
   t.tokens_cache_read,
@@ -444,6 +448,18 @@ func decodeCostFigures(raw []byte) ([]contract.CostFigure, error) {
 }
 
 type sqlMeasureStats struct {
+	ApiMs         *float64 `json:"apiMs"`
+	ApiMsHave     int64    `json:"apiMsHave"`
+	ApiMsSub      int64    `json:"apiMsSub"`
+	ApiMsEst      int64    `json:"apiMsEst"`
+	ApiMsExpected int64    `json:"apiMsExpected"`
+
+	TokensR         *float64 `json:"tokensReasoning"`
+	TokensRHave     int64    `json:"tokensReasoningHave"`
+	TokensRSub      int64    `json:"tokensReasoningSub"`
+	TokensREst      int64    `json:"tokensReasoningEst"`
+	TokensRExpected int64    `json:"tokensReasoningExpected"`
+
 	Count               int64    `json:"count"`
 	Failed              int64    `json:"failed"`
 	TokensIn            *float64 `json:"tokensIn"`
@@ -547,6 +563,17 @@ const sqlMeasureSelect = `jsonb_build_object(
  'credits', sum(credits)::float8,
  'creditsHave', (count(*) FILTER (WHERE credits IS NOT NULL))::bigint,
  'creditsExpected', (count(*) FILTER (WHERE credits IS NOT NULL OR conn_unit = 'credits'))::bigint
+) || jsonb_build_object(
+ 'tokensReasoning', sum(tokens_reasoning)::float8,
+ 'tokensReasoningHave', (count(*) FILTER (WHERE tokens_reasoning IS NOT NULL))::bigint,
+ 'tokensReasoningSub', (count(*) FILTER (WHERE tokens_reasoning IS NOT NULL AND tokens_reasoning_basis = 'subscription'))::bigint,
+ 'tokensReasoningEst', (count(*) FILTER (WHERE tokens_reasoning IS NOT NULL AND tokens_reasoning_basis = 'estimated'))::bigint,
+ 'tokensReasoningExpected', (count(*) FILTER (WHERE kind IN ('agent_run', 'child_agent') OR tokens_reasoning IS NOT NULL))::bigint,
+ 'apiMs', sum(api_ms)::float8,
+ 'apiMsHave', (count(*) FILTER (WHERE api_ms IS NOT NULL))::bigint,
+ 'apiMsSub', (count(*) FILTER (WHERE api_ms IS NOT NULL AND api_ms_basis = 'subscription'))::bigint,
+ 'apiMsEst', (count(*) FILTER (WHERE api_ms IS NOT NULL AND api_ms_basis = 'estimated'))::bigint,
+ 'apiMsExpected', (count(*) FILTER (WHERE kind IN ('agent_run', 'child_agent') OR api_ms IS NOT NULL))::bigint
 )`
 
 func pickMeasuredNumber(val *float64, expected, have, sub, est int64) contract.MeasuredNumber {
@@ -570,6 +597,15 @@ func pickMeasuredNumber(val *float64, expected, have, sub, est int64) contract.M
 	return contract.MeasuredNumber{Value: &v, Basis: basis}
 }
 
+// nativeMeasuredNumber explains unsupported native observations without substituting wall time or zero.
+func nativeMeasuredNumber(value *float64, expected, have, sub, est int64, reason string) contract.MeasuredNumber {
+	n := pickMeasuredNumber(value, expected, have, sub, est)
+	if n.Value == nil {
+		n.Reason = &reason
+	}
+	return n
+}
+
 func buildAnalyticsMeasureMap(s sqlMeasureStats, measures []contract.AnalyticsMeasure) map[string]contract.MeasuredNumber {
 	out := make(map[string]contract.MeasuredNumber, len(measures))
 	for _, m := range measures {
@@ -589,7 +625,7 @@ func buildAnalyticsMeasureMap(s sqlMeasureStats, measures []contract.AnalyticsMe
 		case contract.AnalyticsMeasureTokensCacheWrite:
 			out[string(m)] = pickMeasuredNumber(s.TokensCW, s.TokensCWExpected, s.TokensCWHave, s.TokensCWSub, s.TokensCWEst)
 		case contract.AnalyticsMeasureTokensReasoning:
-			out[string(m)] = contract.MeasuredNumber{Basis: contract.ResourceBasisUnavailable, Reason: ptr("tokens_reasoning not recorded")}
+			out[string(m)] = nativeMeasuredNumber(s.TokensR, s.TokensRExpected, s.TokensRHave, s.TokensRSub, s.TokensREst, "harness did not report reasoning tokens")
 		case contract.AnalyticsMeasureWallMs:
 			out[string(m)] = pickMeasuredNumber(s.WallMs, s.WallMsExpected, s.WallMsHave, s.WallMsSub, s.WallMsEst)
 		case contract.AnalyticsMeasureWallMsP50:
@@ -599,7 +635,7 @@ func buildAnalyticsMeasureMap(s sqlMeasureStats, measures []contract.AnalyticsMe
 		case contract.AnalyticsMeasureActiveMs:
 			out[string(m)] = pickMeasuredNumber(s.ActiveMs, s.ActiveMsExpected, s.ActiveMsHave, s.ActiveMsSub, s.ActiveMsEst)
 		case contract.AnalyticsMeasureApiMs:
-			out[string(m)] = contract.MeasuredNumber{Basis: contract.ResourceBasisUnavailable, Reason: ptr("api_ms not recorded")}
+			out[string(m)] = nativeMeasuredNumber(s.ApiMs, s.ApiMsExpected, s.ApiMsHave, s.ApiMsSub, s.ApiMsEst, "harness did not report API duration")
 		case contract.AnalyticsMeasureCpuMs:
 			out[string(m)] = pickMeasuredNumber(s.CpuMs, s.CpuMsExpected, s.CpuMsHave, s.CpuMsSub, s.CpuMsEst)
 		case contract.AnalyticsMeasurePeakMemoryBytes:

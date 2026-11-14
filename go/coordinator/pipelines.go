@@ -311,13 +311,14 @@ func putRun(q *Request, run doc) error {
 		if st == "succeeded" || st == "failed" || st == "cancelled" {
 			ended = msTime(s["finishedAt"])
 		}
-		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,ended_at,data,task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id)
-		 VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,ended_at,data,task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id,experiment_id,variant)
+		 VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 		  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
+		  experiment_id=excluded.experiment_id,variant=excluded.variant,
 		  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
 		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), ended, jsonBytes(data), taskID, sessID, dir, pipeID, pipeRev, nilIf(astr(s["id"]))); err != nil {
+			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), ended, jsonBytes(data), taskID, sessID, dir, pipeID, pipeRev, nilIf(astr(s["id"])), run["experimentId"], run["variant"]); err != nil {
 			return err
 		}
 	}

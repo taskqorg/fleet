@@ -34,6 +34,21 @@ func nonNil(v ...any) any {
 	return nil
 }
 
+// executionLabContext inherits the trial label, never the executor profile. Cross-project work keeps its own scope.
+func executionLabContext(q *Request, parent, project string, experiment, variant any) (any, any, error) {
+	if parent != "" {
+		var exp, label *string
+		err := q.tx.QueryRow(q.ctx(), "SELECT experiment_id,variant FROM execution WHERE id=$1 AND project_id IS NOT DISTINCT FROM $2", parent, nilIf(project)).Scan(&exp, &label)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, err
+		}
+		if exp != nil {
+			return *exp, label, nil
+		}
+	}
+	return experiment, variant, nil
+}
+
 // createExecution inserts a typed row unless its id or request_id exists; true when this call inserted one.
 func createExecution(q *Request, v doc) (bool, error) {
 	if v["state"] == nil {
@@ -43,13 +58,17 @@ func createExecution(q *Request, v doc) (bool, error) {
 	if v["configRef"] != nil {
 		cfg = js(v["configRef"])
 	}
+	experiment, variant, err := executionLabContext(q, astr(v["parentExecutionId"]), astr(v["projectId"]), v["experimentId"], v["variant"])
+	if err != nil {
+		return false, err
+	}
 	data, traceErr := executionTraceData(q, v, v["data"])
 	if traceErr != nil {
 		return false, traceErr
 	}
 	tag, err := q.tx.Exec(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,task_id,parent_execution_id,session_id,host_id,harness,model,config_ref,data,experiment_id,variant,account_id,request_id,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision)
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) ON CONFLICT DO NOTHING`,
-		v["id"], v["kind"], v["state"], v["projectId"], v["taskId"], v["parentExecutionId"], v["sessionId"], v["hostId"], v["harness"], v["model"], cfg, js(data), v["experimentId"], v["variant"], v["accountId"], v["requestId"],
+		v["id"], v["kind"], v["state"], v["projectId"], v["taskId"], v["parentExecutionId"], v["sessionId"], v["hostId"], v["harness"], v["model"], cfg, js(data), experiment, variant, v["accountId"], v["requestId"],
 		v["directedBy"], v["pipelineId"], v["pipelineRevision"], v["stepId"], v["profileId"], v["profileRevision"])
 	return err == nil && tag.RowsAffected() > 0, err
 }

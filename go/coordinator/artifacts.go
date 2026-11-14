@@ -1140,7 +1140,10 @@ func artifactGetView(ctx context.Context, a *App, id, hostID string) (doc, error
 		v["availability"] = "unavailable"
 		if s != nil {
 			v["availability"] = "available"
-			if v["url"], err = presignFor(s, hostID, "GET", keyOf(x), map[string]string{"response-content-type": x.MediaType}); err != nil {
+			if hostID == "" {
+				// People and agent tools read through Fleet's existing authorization and stream.
+				v["url"] = "/api/results/" + url.PathEscape(x.ID)
+			} else if v["url"], err = presignFor(s, hostID, "GET", keyOf(x), map[string]string{"response-content-type": x.MediaType}); err != nil {
 				return nil, err
 			}
 		}

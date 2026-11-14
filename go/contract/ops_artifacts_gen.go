@@ -181,7 +181,7 @@ func (v *ArtifactRulePreviewRequest) Validate() error {
 	return nil
 }
 
-// ArtifactView: One artifact with its copies; availability available (with a presigned url), unavailable, or the artifact state.
+// ArtifactView: One artifact with its copies; availability available (with an authenticated same-origin /api/results/:id URL for people and agent tools), unavailable, or the artifact state. Host transfer reads retain presigned store URLs.
 type ArtifactView struct {
 	Availability          string              `json:"availability"`
 	Copies                []ArtifactCopyState `json:"copies"`

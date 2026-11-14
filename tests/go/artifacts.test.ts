@@ -45,7 +45,10 @@ test('Artifact write protocol and result bytes (artifacts.ts reserve/parts/commi
   const staged = Buffer.from(await (await fetch(c.verify.url)).arrayBuffer());
   const v = ok(await h('/api/hosts/artifacts/verified', {artifactId: r.artifactId, storeId: c.verify.storeId, sha256: createHash('sha256').update(staged).digest('hex')}));
   assert.equal(v.state, 'stored');
-  const all = await call('GET', `/api/results/${r.artifactId}`, undefined, owner);
+  const view = ok(await call('POST', '/api/ops/artifact_get', {artifactId: r.artifactId}, owner));
+  assert.equal(view.url, `/api/results/${r.artifactId}`, 'people and tools read via Fleet, not a separate store login');
+  assert.equal((await call('GET', view.url)).status, 401, 'the URL preserves Fleet authentication');
+  const all = await call('GET', view.url, undefined, owner);
   assert.equal(all.status, 200); assert.equal(all.body, bytes.toString());
   assert.match(all.headers.get('content-security-policy') ?? '', /^sandbox/);
   const part = await call('GET', `/api/results/${r.artifactId}`, undefined, {...owner, range: 'bytes=6-13'});
