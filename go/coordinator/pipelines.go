@@ -307,13 +307,17 @@ func putRun(q *Request, run doc) error {
 				data[k] = v
 			}
 		}
-		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,data,task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id)
-		 VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,data=excluded.data,
+		var ended any
+		if st == "succeeded" || st == "failed" || st == "cancelled" {
+			ended = msTime(s["finishedAt"])
+		}
+		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,ended_at,data,task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id)
+		 VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
 		  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
 		  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
 		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), jsonBytes(data), taskID, sessID, dir, pipeID, pipeRev, nilIf(astr(s["id"]))); err != nil {
+			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), ended, jsonBytes(data), taskID, sessID, dir, pipeID, pipeRev, nilIf(astr(s["id"]))); err != nil {
 			return err
 		}
 	}
@@ -739,12 +743,13 @@ func completeStep(q *Request, run doc, i int, output any, extra doc) error {
 	for k, v := range extra {
 		s[k] = v
 	}
-	s["output"], s["state"], s["finishedAt"] = output, "succeeded", nowMs()
-	st, ok := numOK(s["startedAt"])
-	if !ok {
-		st = float64(nowMs())
+	finished := nowMs()
+	s["output"], s["state"], s["finishedAt"] = output, "succeeded", finished
+	if st, ok := numOK(s["startedAt"]); ok {
+		s["durationMs"] = finished - int64(st)
+	} else {
+		s["durationMs"] = nil
 	}
-	s["durationMs"] = nowMs() - int64(st)
 	return putRun(q, run)
 }
 

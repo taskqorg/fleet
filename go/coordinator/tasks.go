@@ -610,9 +610,22 @@ const taskViewCols = `id,code,project_id AS "projectId",title,expected_outcome A
  result_destination AS "resultDestination",delivery_method AS "deliveryMethod",accepted_by AS "acceptedBy",accepted_at AS "acceptedAt",accepted_artifact_ids AS "acceptedArtifactIds",
  created_by AS "createdBy",directed_by AS "directedBy",requested_by AS "requestedBy",taken_from AS "takenFrom",created_at AS "createdAt",updated_at AS "updatedAt",pause_reason AS "pauseReason"`
 
+// Older pipeline steps retained millisecond ends in data but omitted the typed
+// column. Read that actual terminal observation only; never infer an end from
+// duration, updated_at or the current clock. Bounds keep RFC3339/Go timestamps
+// representable, and nested CASE protects casts of malformed legacy JSON.
+const executionEndSQL = `CASE WHEN kind<>'pipeline_step' THEN ended_at
+ WHEN state NOT IN ('succeeded','failed','cancelled') THEN NULL
+ WHEN ended_at IS NOT NULL THEN ended_at
+ WHEN jsonb_typeof(data->'finishedAt')='number' THEN
+  CASE WHEN (data->>'finishedAt')::numeric BETWEEN 0 AND 253402300799999
+   AND trunc((data->>'finishedAt')::numeric)=(data->>'finishedAt')::numeric
+  THEN to_timestamp(((data->>'finishedAt')::bigint/1000)::double precision)
+   + ((data->>'finishedAt')::bigint%1000)*interval '1 millisecond' END END`
+
 const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",project_id AS "projectId",task_id AS "taskId",experiment_id AS "experimentId",variant,parent_execution_id AS "parentExecutionId",
  session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
- started_at AS "startedAt",ended_at AS "endedAt",definitions,data->'report' AS report`
+ started_at AS "startedAt",` + executionEndSQL + ` AS "endedAt",definitions,data->'report' AS report`
 
 func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.ExecutionRow, error) {
 	page, err := executionsPage(q, f)
