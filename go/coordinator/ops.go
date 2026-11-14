@@ -60,6 +60,9 @@ func (a *App) runAgentOp(q *Request, name string, b json.RawMessage, key *string
 		}
 		return err
 	})
+	if err == nil && !op.read {
+		a.wakeDispatch()
+	}
 	return out, err
 }
 

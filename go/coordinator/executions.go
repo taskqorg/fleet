@@ -535,6 +535,21 @@ func init() {
 			if !idOK(id) {
 				return out, fail(400, "Expected execution ids")
 			}
+		}
+		sessRows, err := queryRows(q, "SELECT DISTINCT s FROM (SELECT e.session_id AS s FROM execution e WHERE e.id=ANY($1) UNION SELECT s.data->>'createdBySessionId' AS s FROM execution e JOIN document s ON s.kind='session' AND s.id=e.session_id WHERE e.id=ANY($1)) x WHERE coalesce(s,'')<>''", r.Ids)
+		if err != nil {
+			return out, err
+		}
+		var sessLocks []string
+		for _, sr := range sessRows {
+			if sid := astr(sr["s"]); sid != "" {
+				sessLocks = append(sessLocks, "session:"+sid)
+			}
+		}
+		if err := acquireTxLock(q, sessLocks...); err != nil {
+			return out, err
+		}
+		for _, id := range r.Ids {
 			state, err := executionAbandon(q, id, r.Reason, actor(q, "operator"))
 			if err != nil {
 				return out, err
@@ -596,7 +611,7 @@ func init() {
 	}))
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
-			return runTx(ctx, a, nil, true, "", func(q *Request) error {
+			return runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
 				// lostCond: still lost, re-checked under the row lock so a receipt that just arrived wins. A host job is also
 				// lost when its host keeps polling but sent no receipt for it in lostAfter: host jobs last minutes (p99 5 min),
 				// so a confirmed one that went silent was dropped by an executor restart. ponytail: a host job meant to run
@@ -632,7 +647,12 @@ func init() {
 					return nil
 				}
 				publish(q)
-				return agentPromote(q)
+				onEnd(q.tx, func(committed bool) {
+					if committed {
+						a.wakeDispatch()
+					}
+				})
+				return nil
 			})
 		})
 	})

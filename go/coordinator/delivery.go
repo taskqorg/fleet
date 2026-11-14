@@ -183,7 +183,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		}
 		obs, err := all(q, "host-observation", nil)
 		for _, o := range obs {
-			if seen, _ := numOK(o["lastSeenAt"]); nowMs()-int64(seen) < 3600_000 && astr(o["version"]) != "" {
+			if seen := a.effectiveHostSeen(astr(o["id"]), num(o["lastSeenAt"])); nowMs()-int64(seen) < 3600_000 && astr(o["version"]) != "" {
 				versions = append(versions, astr(o["version"]))
 			}
 		}

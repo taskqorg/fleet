@@ -4,12 +4,14 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,8 +23,7 @@ import (
 // Store: one pool of the coordinator role with the operator scope '*' as a startup option (docs/designs/fleet-data-foundation.md §12).
 // A transaction of a person other than the owner sets fleet.project_ids and fleet.person for itself (SET LOCAL).
 type Store struct {
-	pool  *pgxpool.Pool
-	locks sync.Map // scope key -> *sync.Mutex
+	pool *pgxpool.Pool
 }
 
 // Scope: nil is the coordinator's own '*' scope (the owner, hosts).
@@ -32,8 +33,178 @@ type Scope struct{ ProjectIDs, Person string }
 // fleet.actor from it, which fleet_change() records as change.actor (docs/designs/fleet-pm-agent.md §1).
 type actorKey struct{}
 
-// Scope keys. Lock order: GLOBAL before any execution scope; an execution-scope writer never takes GLOBAL.
-const GLOBAL = "fleet:write"
+// Canonical advisory-lock hierarchy. Within any transaction, requested locks are sorted and deduplicated by (rank, key),
+// and dynamic lock acquisition rejects any lock ordered before or equal to a lock already held in the transaction:
+//
+//	GLOBAL < DISPATCH < project:* < task:* < session:* < experiment:* < execution:* < host:* < usageKey:* < person-setting:*
+const (
+	GLOBAL   = "fleet:write"
+	DISPATCH = "dispatch"
+	NOLOCK   = "-"
+)
+
+func lockRank(key string) (int, error) {
+	switch {
+	case key == GLOBAL:
+		return 0, nil
+	case key == DISPATCH:
+		return 1, nil
+	case strings.HasPrefix(key, "project:") && len(key) > len("project:"):
+		return 2, nil
+	case strings.HasPrefix(key, "task:") && len(key) > len("task:"):
+		return 3, nil
+	case strings.HasPrefix(key, "session:") && len(key) > len("session:"):
+		return 4, nil
+	case strings.HasPrefix(key, "experiment:") && len(key) > len("experiment:"):
+		return 5, nil
+	case strings.HasPrefix(key, "execution:") && len(key) > len("execution:"):
+		return 6, nil
+	case strings.HasPrefix(key, "host:") && len(key) > len("host:"):
+		return 7, nil
+	case strings.HasPrefix(key, "usageKey:") && len(key) > len("usageKey:"):
+		return 8, nil
+	case strings.HasPrefix(key, "person-setting:") && len(key) > len("person-setting:"):
+		return 9, nil
+	default:
+		return -1, fmt.Errorf("unknown advisory lock scope %q", key)
+	}
+}
+
+func sortLocks(keys []string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	type ranked struct {
+		rank int
+		key  string
+	}
+	seen := make(map[string]struct{}, len(keys))
+	items := make([]ranked, 0, len(keys))
+	for _, k := range keys {
+		if k == "" || k == NOLOCK {
+			continue
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		r, err := lockRank(k)
+		if err != nil {
+			return nil, err
+		}
+		seen[k] = struct{}{}
+		items = append(items, ranked{rank: r, key: k})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].rank != items[j].rank {
+			return items[i].rank < items[j].rank
+		}
+		return items[i].key < items[j].key
+	})
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = it.key
+	}
+	return out, nil
+}
+
+type txLockState struct {
+	mu      sync.Mutex
+	write   bool
+	held    map[string]bool
+	hasMax  bool
+	maxRank int
+	maxKey  string
+}
+
+var txLockStates sync.Map // pgx.Tx -> *txLockState
+
+// acquireTxLocks acquires keys in canonical sorted order within tx using 64-bit hashtextextended($1, 0),
+// skipping already-held keys and failing explicitly on any out-of-order re-locking attempt.
+func acquireTxLocks(ctx context.Context, tx pgx.Tx, keys ...string) error {
+	sorted, err := sortLocks(keys)
+	if err != nil {
+		return err
+	}
+	if len(sorted) == 0 {
+		return nil
+	}
+	v, ok := txLockStates.Load(tx)
+	if !ok {
+		return errors.New("acquireTxLocks: transaction has no registered lock state")
+	}
+	st := v.(*txLockState)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !st.write {
+		return fmt.Errorf("advisory lock %q cannot be acquired inside a read-only transaction", sorted[0])
+	}
+	pending := make([]string, 0, len(sorted))
+	for _, k := range sorted {
+		if !st.held[k] {
+			pending = append(pending, k)
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	firstRank, _ := lockRank(pending[0])
+	if st.hasMax && (firstRank < st.maxRank || (firstRank == st.maxRank && pending[0] <= st.maxKey)) {
+		return fmt.Errorf("advisory lock order violation: cannot acquire %q after %q", pending[0], st.maxKey)
+	}
+	for _, k := range pending {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", k); err != nil {
+			return err
+		}
+		r, _ := lockRank(k)
+		st.held[k] = true
+		st.maxRank = r
+		st.maxKey = k
+		st.hasMax = true
+	}
+	return nil
+}
+
+func acquireTxLock(q *Request, keys ...string) error {
+	return acquireTxLocks(q.ctx(), q.tx, keys...)
+}
+
+func txHasLock(tx pgx.Tx, key string) bool {
+	if tx == nil {
+		return false
+	}
+	v, ok := txLockStates.Load(tx)
+	if !ok {
+		return false
+	}
+	st := v.(*txLockState)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.held[key]
+}
+
+func canAcquireTxLock(tx pgx.Tx, key string) bool {
+	if tx == nil {
+		return false
+	}
+	r, err := lockRank(key)
+	if err != nil {
+		return false
+	}
+	v, ok := txLockStates.Load(tx)
+	if !ok {
+		return false
+	}
+	st := v.(*txLockState)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !st.write {
+		return false
+	}
+	if st.held[key] {
+		return true
+	}
+	return !st.hasMax || r > st.maxRank || (r == st.maxRank && key > st.maxKey)
+}
 
 type HTTPError struct {
 	Code  int
@@ -61,31 +232,38 @@ func openStore(ctx context.Context, url string) (*Store, error) {
 	return &Store{pool: p}, nil
 }
 
-func (s *Store) mutex(key string) *sync.Mutex {
-	// ponytail: one mutex per scope key, never freed; prune by execution end if the map ever shows in memory.
-	m, _ := s.locks.LoadOrStore(key, &sync.Mutex{})
-	return m.(*sync.Mutex)
-}
-
 func retryable(err error) bool {
 	var pe *pgconn.PgError
 	return errors.As(err, &pe) && (pe.Code == "40001" || pe.Code == "40P01")
 }
 
-// Tx runs fn in one transaction. write: READ COMMITTED holding the scope lock (in-process queue, then
-// pg_advisory_xact_lock on the same key for other processes); read: a READ ONLY REPEATABLE READ snapshot.
+// Tx runs fn in one transaction. write: READ COMMITTED holding the scope lock (GLOBAL when lock == "",
+// no advisory lock when lock == NOLOCK); read: a READ ONLY REPEATABLE READ snapshot.
 // Serialization failures and deadlocks are retried with a short randomized backoff (5 ms .. 200 ms).
 func (s *Store) Tx(ctx context.Context, sc *Scope, write bool, lock string, fn func(pgx.Tx) error) error {
-	if write {
+	var locks []string
+	if write && lock != NOLOCK {
 		if lock == "" {
 			lock = GLOBAL
 		}
-		m := s.mutex(lock)
-		m.Lock()
-		defer m.Unlock()
+		locks = []string{lock}
+	}
+	return s.TxLocks(ctx, sc, write, locks, fn)
+}
+
+// TxLocks runs fn in one transaction acquiring the canonical sorted union of locks (64-bit hashtextextended).
+// When write is true and locks is empty, no initial advisory lock is acquired (equivalent to NOLOCK).
+func (s *Store) TxLocks(ctx context.Context, sc *Scope, write bool, locks []string, fn func(pgx.Tx) error) error {
+	var sorted []string
+	if write {
+		var err error
+		sorted, err = sortLocks(locks)
+		if err != nil {
+			return err
+		}
 	}
 	for attempt := 0; ; attempt++ {
-		err := s.once(ctx, sc, write, lock, fn)
+		err := s.once(ctx, sc, write, sorted, fn)
 		if err == nil || !retryable(err) {
 			return err
 		}
@@ -93,7 +271,7 @@ func (s *Store) Tx(ctx context.Context, sc *Scope, write bool, lock string, fn f
 	}
 }
 
-func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn func(pgx.Tx) error) error {
+func (s *Store) once(ctx context.Context, sc *Scope, write bool, sortedLocks []string, fn func(pgx.Tx) error) error {
 	opts := pgx.TxOptions{IsoLevel: pgx.ReadCommitted}
 	if !write {
 		opts = pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
@@ -101,6 +279,7 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn
 	var t pgx.Tx
 	err := pgx.BeginTxFunc(ctx, s.pool, opts, func(tx pgx.Tx) error {
 		t = tx
+		txLockStates.Store(tx, &txLockState{write: write, held: map[string]bool{}})
 		if a, _ := ctx.Value(actorKey{}).(string); a != "" {
 			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.actor',$1,true)", a); err != nil {
 				return err
@@ -111,13 +290,16 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, lock string, fn
 				return err
 			}
 		}
-		if write {
-			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", lock); err != nil {
+		if write && len(sortedLocks) > 0 {
+			if err := acquireTxLocks(ctx, tx, sortedLocks...); err != nil {
 				return err
 			}
 		}
 		return fn(tx)
 	})
+	if t != nil {
+		txLockStates.Delete(t)
+	}
 	if hooks, _ := endHooks.LoadAndDelete(t); hooks != nil {
 		for _, h := range *hooks.(*[]func(bool)) {
 			h(err == nil)
@@ -143,6 +325,10 @@ var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)
 // the migration lock before it checks schema_migration, so concurrent starts never run a section twice.
 // Migration 6's JavaScript document move is a no-op on an empty database and is not ported.
 func migrate(ctx context.Context, url string) error {
+	return migrateSQL(ctx, url, schemaSQL)
+}
+
+func migrateSQL(ctx context.Context, url, sqlText string) error {
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
 		return err
@@ -151,7 +337,7 @@ func migrate(ctx context.Context, url string) error {
 	if _, err := conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS schema_migration(version int PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
 		return err
 	}
-	text := []byte(schemaSQL)
+	text := []byte(sqlText)
 	idx := migrationSplit.FindAllSubmatchIndex(text, -1)
 	for i, m := range idx {
 		version, _ := strconv.Atoi(string(text[m[2]:m[3]]))
@@ -161,7 +347,7 @@ func migrate(ctx context.Context, url string) error {
 		}
 		body := string(text[m[0]:end])
 		err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext($1))", GLOBAL); err != nil {
+			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", GLOBAL); err != nil {
 				return err
 			}
 			// Decided under the lock: another coordinator may have applied this version while this one waited for it.
@@ -318,6 +504,17 @@ func runTx(ctx context.Context, a *App, q *Request, write bool, lock string, fn 
 		return a.store.Tx(ctx, nil, write, lock, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
 	}
 	return a.store.Tx(ctx, scopeOf(q.person), write, lock, func(tx pgx.Tx) error {
+		q.tx = tx
+		defer func() { q.tx = nil }()
+		return fn(q)
+	})
+}
+
+func runTxLocks(ctx context.Context, a *App, q *Request, write bool, locks []string, fn func(q *Request) error) error {
+	if q == nil {
+		return a.store.TxLocks(ctx, nil, write, locks, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
+	}
+	return a.store.TxLocks(ctx, scopeOf(q.person), write, locks, func(tx pgx.Tx) error {
 		q.tx = tx
 		defer func() { q.tx = nil }()
 		return fn(q)

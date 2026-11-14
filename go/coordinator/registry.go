@@ -327,10 +327,14 @@ func (a *App) serve(w http.ResponseWriter, hr *http.Request, kind int, h handler
 	} else if err == nil {
 		err = a.store.Tx(q.ctx(), scopeOf(q.person), kind == txWrite, "", func(tx pgx.Tx) error {
 			q.tx = tx
+			defer func() { q.tx = nil }()
 			var err error
 			out, err = h(q)
 			return err
 		})
+		if err == nil && kind == txWrite {
+			a.wakeDispatch()
+		}
 	}
 	if err == nil {
 		if r, ok := out.(raw); ok {

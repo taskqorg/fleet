@@ -276,6 +276,17 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 		snap.artifacts[aid] = a
 		artifactFacts[aid] = a.view()
 	}
+	if lock {
+		var keys []string
+		for i := len(reuse); i < len(steps); i++ {
+			if xid := astr(mapOf(steps[i])["executionId"]); xid != "" {
+				keys = append(keys, "execution:"+xid)
+			}
+		}
+		if err := acquireTxLock(q, keys...); err != nil {
+			return nil, err
+		}
+	}
 	for i := len(reuse); i < len(steps); i++ {
 		s, d := mapOf(steps[i]), mapOf(definitions[i])
 		if d["kind"] != "script" {
@@ -287,11 +298,6 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 				return nil, suffixConflict("missing suffix execution")
 			}
 			continue
-		}
-		if lock {
-			if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "execution:"+xid); err != nil {
-				return nil, err
-			}
 		}
 		e, err := get(q, xid, "execution")
 		if err != nil {
@@ -428,7 +434,7 @@ func expRetrySuffix(q *Request, id, cell string, b doc) (doc, error) {
 		created = false
 		done = nil
 		result = ""
-		if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "experiment:"+id); err != nil {
+		if err := acquireTxLock(q, "experiment:"+id); err != nil {
 			return err
 		}
 		if _, err := expLocked(q, id); err != nil {

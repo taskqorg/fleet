@@ -100,6 +100,12 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 		"actor": q.person.Email, "at": nowMs(), "note": js(r)}); err != nil {
 		return none, err
 	}
+	onEnd(q.tx, func(committed bool) {
+		if committed && q.app != nil {
+			q.app.clearHostCache(b.Id)
+			q.app.wakeDispatch()
+		}
+	})
 	r.Removed = true
 	return r, nil
 }
@@ -153,6 +159,12 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		if err := exec(q, "DELETE FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id); err != nil {
 			return out, err
 		}
+		hid := id
+		onEnd(q.tx, func(committed bool) {
+			if committed && q.app != nil {
+				q.app.clearHostCache(hid)
+			}
+		})
 	}
 	if err := put(q, "setting-change", doc{"id": newID(), "target": "system", "field": "purge", "value": doc{"host": gone}, "actor": q.person.Email, "at": nowMs()}); err != nil {
 		return out, err

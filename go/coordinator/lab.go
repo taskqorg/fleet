@@ -975,7 +975,7 @@ func expDecide(q *Request, b doc) (doc, error) {
 
 func expCreate(q *Request, b doc) (doc, error) {
 	// Serialize creator validation with the existing people projection/removal transaction.
-	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", GLOBAL); err != nil {
+	if err := acquireTxLock(q, GLOBAL); err != nil {
 		return nil, err
 	}
 	if q.person == nil {
@@ -2605,7 +2605,7 @@ func scoreCorrect(q *Request, id string, b doc) (doc, error) {
 	if old["form"] == "typed" {
 		return nil, fail(400, "A typed score follows from the trial's p, its bands and the label; correct the example or the bands instead")
 	}
-	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", "experiment:"+astr(old["experiment_id"])); err != nil {
+	if err := acquireTxLock(q, "experiment:"+astr(old["experiment_id"])); err != nil {
 		return nil, err
 	}
 	var n int
@@ -2999,15 +2999,17 @@ func labRatingWithdraw(q *Request, b doc) (doc, error) {
 	return labRating(q, id)
 }
 
-// The existing GLOBAL lock serializes this check/enqueue with people replacement; no owner fallback for Lab.
+// Lock the experiment row FOR SHARE before person/person_grant FOR SHARE, matching setPeople's table lock order
+// (experiment -> person) without acquiring GLOBAL after experiment:<id>.
 func labRequester(q *Request, id string) (*Person, error) {
-	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtext($1))", GLOBAL); err != nil {
-		return nil, err
-	}
-	exp, err := expRow(q, id)
+	rs, err := queryRows(q, "SELECT * FROM experiment WHERE id=$1 FOR SHARE", id)
 	if err != nil {
 		return nil, err
 	}
+	if len(rs) == 0 {
+		return nil, fail(404, "Unknown experiment")
+	}
+	exp := rs[0]
 	email := astr(exp["requested_by"])
 	if email == "" {
 		return nil, failCode(409, "Lab requester is unknown; retained history cannot authorize new work", "requester:unknown")
@@ -3015,7 +3017,7 @@ func labRequester(q *Request, id string) (*Person, error) {
 	if exp["requester_removed_at"] != nil {
 		return nil, failCode(409, "Lab requester was removed; this experiment cannot transfer identity", "requester:removed")
 	}
-	p, err := unscoped(q, func() (*Person, error) { return resolveAccessTx(q.ctx(), q.tx, email) })
+	p, err := unscoped(q, func() (*Person, error) { return resolveAccessShareTx(q.ctx(), q.tx, email) })
 	if err != nil {
 		var denied *HTTPError
 		if errors.As(err, &denied) && denied.Code == 403 {

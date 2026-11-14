@@ -905,13 +905,12 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 	line := gatewayCall(ctx, token, connection, tool, args)
 	// Revoked even when the caller left: a live token would keep the key reachable until the next start.
 	if err := runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error {
-		if err := revokeTokens(q, executionID); err != nil {
-			return err
-		}
-		_, err := connIngest(q)
-		return err
+		return revokeTokens(q, executionID)
 	}); err != nil {
 		log.Printf("revoke %s: %v", executionID, err)
+	}
+	if _, err := connIngestPass(context.WithoutCancel(ctx), a); err != nil {
+		log.Printf("ingest %s: %v", executionID, err)
 	}
 	return line
 }
@@ -1289,7 +1288,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	if pending > 0 {
 		return false, nil // uploads can finish after the completion receipt
 	}
-	if err := tx(func(q *Request) error { _, err := connIngest(q); return err }); err != nil {
+	if _, err := connIngestPass(ctx, a); err != nil {
 		return false, err
 	}
 	var output any

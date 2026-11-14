@@ -248,6 +248,7 @@ func projectArchive(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	invalidateEnvCacheOnCommit(q)
 	return doc{"projectId": id, "archived": true, "connectionRemovals": removed}, nil
 }
 

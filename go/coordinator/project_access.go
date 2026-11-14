@@ -13,9 +13,21 @@ func (a *App) resolveAccess(ctx context.Context, email string) (*Person, error) 
 	return out, err
 }
 func resolveAccessTx(ctx context.Context, tx pgx.Tx, email string) (*Person, error) {
+	return resolveAccessQuery(ctx, tx, email, false)
+}
+
+func resolveAccessShareTx(ctx context.Context, tx pgx.Tx, email string) (*Person, error) {
+	return resolveAccessQuery(ctx, tx, email, true)
+}
+
+func resolveAccessQuery(ctx context.Context, tx pgx.Tx, email string, share bool) (*Person, error) {
 	var out Person
 	err := func() error {
-		if err := tx.QueryRow(ctx, "SELECT email,name,roles,owner,loaded_at::text FROM person WHERE email=$1", email).Scan(&out.Email, &out.Name, &out.Roles, &out.Owner, &out.AccessVersion); err != nil {
+		forShare := ""
+		if share {
+			forShare = " FOR SHARE"
+		}
+		if err := tx.QueryRow(ctx, "SELECT email,name,roles,owner,loaded_at::text FROM person WHERE email=$1"+forShare, email).Scan(&out.Email, &out.Name, &out.Roles, &out.Owner, &out.AccessVersion); err != nil {
 			return err
 		}
 		var membershipVersion string
@@ -23,22 +35,50 @@ func resolveAccessTx(ctx context.Context, tx pgx.Tx, email string) (*Person, err
 			return err
 		}
 		out.AccessVersion += "/" + membershipVersion
-		rows, err := tx.Query(ctx, `SELECT object_kind,object_id FROM person_grant WHERE email=$1 UNION SELECT 'project',id FROM definition WHERE kind='project' AND initial_member=$1 AND initial_member_revoked_at IS NULL`, email)
+		grants := []doc{}
+		seen := map[string]struct{}{}
+		addGrant := func(kind, id string) {
+			k := kind + "\x00" + id
+			if _, ok := seen[k]; ok {
+				return
+			}
+			seen[k] = struct{}{}
+			grants = append(grants, doc{"kind": kind, "id": id})
+		}
+		rows, err := tx.Query(ctx, `SELECT object_kind,object_id FROM person_grant WHERE email=$1`+forShare, email)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		grants := []doc{}
 		for rows.Next() {
 			var kind, id string
 			if err := rows.Scan(&kind, &id); err != nil {
+				rows.Close()
 				return err
 			}
-			grants = append(grants, doc{"kind": kind, "id": id})
+			addGrant(kind, id)
 		}
 		if err = rows.Err(); err != nil {
+			rows.Close()
 			return err
 		}
+		rows.Close()
+		defRows, err := tx.Query(ctx, `SELECT 'project',id FROM definition WHERE kind='project' AND initial_member=$1 AND initial_member_revoked_at IS NULL`, email)
+		if err != nil {
+			return err
+		}
+		for defRows.Next() {
+			var kind, id string
+			if err := defRows.Scan(&kind, &id); err != nil {
+				defRows.Close()
+				return err
+			}
+			addGrant(kind, id)
+		}
+		if err = defRows.Err(); err != nil {
+			defRows.Close()
+			return err
+		}
+		defRows.Close()
 		raw, _ := json.Marshal(grants)
 		return json.Unmarshal(raw, &out.Grants)
 	}()
