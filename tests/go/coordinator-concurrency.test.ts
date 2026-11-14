@@ -75,8 +75,9 @@ test('C2 long-poll waits cleanly up to requested deadline and wakes immediately 
   const pendingPoll = h('/api/hosts/poll?wait=25s', pollBody());
   await new Promise(r => setTimeout(r, 80));
 
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}, owner));
-  const exec = ok(await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'wake long poll'}, owner));
+  // Pin placement: earlier cases leave other eligible hosts registered.
+  const started = ok(await op('session_start', {requestId: randomUUID(), text: 'wake long poll', projectId: 'hello-world', profileId: 'pm', hostId: 'c2-lp-host'}));
+  const exec = {id: started.executionId};
 
   const woken = ok(await pendingPoll);
   const wakeElapsed = performance.now() - wakeStart;
@@ -92,6 +93,8 @@ test('C3 unchanged heartbeats debounce change emissions while genuine state chan
   const res = await fetch(BASE + '/api/stream', {headers: owner, signal: ctrl.signal});
   assert.equal(res.status, 200);
   const reader = res.body!.getReader();
+  // Always release the stream, including assertion failures.
+  nodeTest.after(() => ctrl.abort());
   const dec = new TextDecoder();
   let buf = '';
   const readChunk = async (ms: number) => {
@@ -112,7 +115,7 @@ test('C3 unchanged heartbeats debounce change emissions while genuine state chan
   ok(await h('/api/hosts/poll', pollBody(['codex'])));
   ok(await h('/api/hosts/poll', pollBody(['codex'])));
   const hosts = ok(await op('hosts_list')).hosts as any[];
-  assert.ok(hosts.some(x => x.hostId === 'c3-hb-host' && x.online), `expected host online: ${JSON.stringify(hosts)}`);
+  assert.ok(hosts.some(x => x.id === 'c3-hb-host' && Date.now() - x.lastSeenAt < 30_000), `expected host online: ${JSON.stringify(hosts)}`);
   await readChunk(250);
   assert.ok(!/"kind":"host"/.test(buf), `unexpected host change on unchanged heartbeat: ${buf}`);
 

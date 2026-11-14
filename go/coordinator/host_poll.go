@@ -514,7 +514,7 @@ func (a *App) projectEnvironmentsCached(q *Request) (map[string][]string, error)
 	if a.envCacheOK {
 		out := make(map[string][]string, len(a.envCacheData))
 		for k, v := range a.envCacheData {
-			out[k] = append([]string(nil), v...)
+			out[k] = append([]string{}, v...)
 		}
 		a.envMu.RUnlock()
 		return out, nil
@@ -530,7 +530,7 @@ func (a *App) projectEnvironmentsCached(q *Request) (map[string][]string, error)
 	if a.envCacheGen.Load() == gen {
 		copyMap := make(map[string][]string, len(envs))
 		for k, v := range envs {
-			copyMap[k] = append([]string(nil), v...)
+			copyMap[k] = append([]string{}, v...)
 		}
 		a.envCacheData = copyMap
 		a.envCacheOK = true
