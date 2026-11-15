@@ -35,7 +35,7 @@ test('updates and deletions retain exact historical leaf states and hot prefix s
 });
 
 // Requirement: missing/contradictory/rolled-back/unanchored publications never become evidence.
-// Real SQL rollback is tested separately; these tests cover the reader's fail-closed boundary.
+// Risk: gaps or resets invent inclusion. Real SQL rollback is tested separately.
 test('journal gaps, bare counters, duplicate contradictions and epoch resets fail closed',()=>{
  const h=new PublicationHistory();h.ingest(row(10,0,0,[]));h.ingest(row(11,1,0,[leaf('A')]));h.ingest(row(11,1,0,[leaf('A')]));
  assert.equal(h.check(fact('A'),version(11),'1 · 0 failed','distinct').accepted,true);
@@ -63,6 +63,7 @@ test('observation retry retains first receipt and immutable body without blockin
 });
 
 // Requirement: a short1000-burst diagnostic cannot replace the declared full envelope or dev1.
+// Risk: shortened schedules or percentile results silently weaken qualification.
 test('controlled burst is explicit and preserves independent source/original-window/max guards',async()=>{
  const {workload,sourceRate,stats,hasRenderFailure}=await import('../performance/interface.ts');
  const diagnostic={mode:'controlled-burst' as const,sourceDistribution:'distinct' as const,readers:1,rate:1,warmup:3,duration:0,burst:1000,recovery:10};
@@ -78,6 +79,7 @@ test('controlled burst is explicit and preserves independent source/original-win
  assert.equal(hasRenderFailure('controlled-burst',[5000.01],0,0),true);assert.equal(hasRenderFailure('connected',[5000.01],0,0),true);assert.equal(hasRenderFailure('controlled-burst',[5000],0,0),false);assert.equal(hasRenderFailure('controlled-burst',[1],0,1),true);assert.equal(hasRenderFailure('controlled-burst',[1],1,0),true);assert.equal(hasRenderFailure('controlled-burst',[],0,0),true);assert.equal(hasRenderFailure('exceed-capacity',[5000.01],0,0),false);
 });
 
+// Requirement: publication identity retains every bigint revision. Risk: numeric rounding acknowledges another revision.
 test('publication revisions above safe integer retain exact ordering',()=>{
  const h=new PublicationHistory();h.ingest({...row(10,0,0,[]),revision:'9007199254740993'});
  h.ingest({...row(11,1,0,[leaf('A')]),revision:'9007199254740994',previous:'9007199254740993'});

@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {freePort,root} from '../harness.ts';
 
 // Requirement: observation receipt survives retries while unknown/no actual render cannot pass.
+// Risk: delayed retries forge a successful render or erase missing samples.
 // This is a negative wire regression, not a browser or performance acceptance result.
 test('fixture rejects unknown and changed observations and fails without actual render samples',{timeout:30000},async()=>{
  mkdirSync(join(root,'.egm'),{recursive:true});const out=mkdtempSync(join(root,'.egm','i-'));
