@@ -777,7 +777,7 @@ export function GroupControl<G extends string>({ value, options, onChange, none 
 }
 
 /**
- * Sort (OR-35): one chip, the field and then its direction. A click on the field opens the fields and the directions in a
+ * Sort (OR-35): one chip, the sort icon (as Group leads with its icon), the field and then its direction arrow. A click on the field opens the fields and the directions in a
  * short menu; the arrow on the right flips the direction in one click. The value is the field, "-" before it for descending.
  * A field may name its directions (Newest first / Oldest first for times, the default).
  */
@@ -787,7 +787,7 @@ export function SortControl({ value, fields, onChange }: { value: string; fields
   const [dDesc, dAsc] = (f[2] ?? ['Newest first', 'Oldest first']) as readonly [string, string];
   return <span class="pick" ref={m.ref} data-ui="sort-control">
     <button type="button" class="pick-b on" aria-haspopup="menu" aria-expanded={m.open} aria-label={`Sort by ${f[1]}`} data-tip="Sort by" onClick={() => m.setOpen(!m.open)}>
-      <span>{f[1]}</span><Icon name="chevron-down" /></button>
+      <Icon name={actions.sort} /><span>{f[1]}</span><Icon name="chevron-down" /></button>
     <button type="button" class="pick-x" aria-label={desc ? dDesc : dAsc} data-tip={`${desc ? dDesc : dAsc}; click for ${(desc ? dAsc : dDesc).toLowerCase()}`}
       onClick={() => { m.setOpen(false); onChange(desc ? f[0] : '-' + f[0]); }}><Icon name={desc ? actions.sortDesc : actions.sortAsc} /></button>
     {m.menu('Sort', [{ head: 'Sort by' }, ...fields.map(x => ({ key: x[0], label: x[1], on: x[0] === f[0], onPick: () => onChange((desc ? '-' : '') + x[0]) })), 'sep',
