@@ -1,5 +1,5 @@
 // Design report (D6): prints warnings, never fails. Reviewers and the owner read it.
-// Run pnpm run book first so the scroll check uses the current book.
+// pnpm run check:design builds the book first (it is not committed); run pnpm run book before calling this file directly.
 // Usage: pnpm run check:design [files or folders...]   (default: packages/ui)
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';

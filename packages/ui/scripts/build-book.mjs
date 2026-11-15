@@ -1,4 +1,5 @@
-// Builds docs/design-system/book/index.html: one self-contained file (no external requests, under 512 KB).
+// Builds docs/design-system/book/index.html and the pages below: self-contained files (no external requests, under
+// 512 KB). They are not committed: .gitignore, GENERATED in scripts/docs-report.ts and the CI design-report artifact list them.
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tokensCss } from './tokens.mjs';

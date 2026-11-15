@@ -7,7 +7,7 @@ This folder is the single knowledge base for Fleet's interface design. It plays 
 1. [owner-rules.md](owner-rules.md): the owner's rules. Read first in every design or UI session.
 2. [methodology-brief.md](methodology-brief.md): how design work is done here.
 3. `packages/ui`: the shared parts (tokens, icons, formatter, virtual list, controls). Use them; do not write local variants.
-4. [book/index.html](book/index.html): the live demo of `packages/ui`. [pages/mockups.html](pages/mockups.html): page mockups built from it. `pnpm run book` rebuilds it; `pnpm run check:design` prints the warning report; its checks are listed in `packages/ui/scripts/check-design.mjs`. CI posts the report summary on every pull request.
+4. [book/index.html](book/index.html): the live demo of `packages/ui`. [pages/mockups.html](pages/mockups.html): page mockups built from it. Both are built by `pnpm run book` and not committed (parallel UI changes never conflict on them); CI uploads them in the `design-report` artifact; `pnpm run check:design` prints the warning report; its checks are listed in `packages/ui/scripts/check-design.mjs`. CI posts the report summary on every pull request.
 
 ## Files
 

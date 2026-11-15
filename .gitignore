@@ -37,3 +37,7 @@ go/.cache/
 
 # Orca worktree setup, local to each machine.
 orca.yaml
+# Built by pnpm run book (packages/ui/scripts/build-book.mjs); CI uploads them in the design-report artifact.
+docs/design-system/book/index.html
+docs/design-system/pages/mockups.html
+docs/design-system/explorations/open-questions-01.html
