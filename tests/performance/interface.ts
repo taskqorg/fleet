@@ -19,11 +19,12 @@ export function stats(values: number[]) {
   const q = (p: number) => v.length ? v[Math.max(0, Math.ceil(p * v.length) - 1)] : null;
   return { count: v.length, min: q(0), p50: q(.5), p95: q(.95), p99: q(.99), max: q(1), violations: v.filter(x => x > 5000).length };
 }
-export type Workload = { readers: number; rate: number; warmup: number; duration: number; burst: number; recovery: number; mode: 'connected' | 'exceed-capacity'; network: 'unshaped' | '80ms-10Mbps' };
+export type SourceDistribution = 'hot' | 'distinct';
+export type Workload = { sourceDistribution: SourceDistribution; readers: number; rate: number; warmup: number; duration: number; burst: number; recovery: number; mode: 'connected' | 'exceed-capacity'; network: 'unshaped' | '80ms-10Mbps' };
 export function workload(x: Partial<Workload>, development = false): Workload {
-  const w: Workload = { readers: 1, rate: 1, warmup: 60, duration: 600, burst: 1000, recovery: 60, mode: 'connected', network: 'unshaped', ...x };
+  const w: Workload = { sourceDistribution: 'hot', readers: 1, rate: 1, warmup: 60, duration: 600, burst: 1000, recovery: 60, mode: 'connected', network: 'unshaped', ...x };
   for (const k of ['readers', 'rate', 'warmup', 'duration', 'burst', 'recovery'] as const) if (!Number.isInteger(w[k]) || w[k] < 0) throw Error('invalid workload ' + k);
-  if (!['connected', 'exceed-capacity'].includes(w.mode) || !['unshaped', '80ms-10Mbps'].includes(w.network)) throw Error('invalid classification');
+  if (!['hot', 'distinct'].includes(w.sourceDistribution) || !['connected', 'exceed-capacity'].includes(w.mode) || !['unshaped', '80ms-10Mbps'].includes(w.network)) throw Error('invalid classification');
   if (development) { if (w.readers !== 1 || w.rate > 1 || w.warmup > 2 || w.duration > 3 || w.burst > 1 || w.recovery > 5) throw Error('development is a small smoke only'); }
   else if (![1, 10, 50].includes(w.readers) || (w.mode === 'connected' && ![1, 20, 100].includes(w.rate)) || w.rate < 1 || w.warmup !== 60 || w.duration !== 600 || w.burst !== 1000 || w.recovery < 60) throw Error('outside declared envelope; classify exceed-capacity separately');
   return w;
@@ -65,8 +66,65 @@ class Writer {
   }
   close() { this.child.stdin!.end(); }
 }
-type Fact = { project: string; n: number; lower: number; upper: number | null; phase: string; due: number; error?: string };
-type Run = { id: string; spec: Workload; start: number; done: boolean; facts: Map<string, Fact[]>; seen: Map<string, number>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
+export type Publication = { epoch: string; revision: string; calls: number; errors: number };
+export type Fact = { id: string; execution: string; project: string; n: number; calls: number; errors: number; lower: number; upper: number | null; phase: string; due: number; transaction?: string; error?: string; proof?: Publication };
+// Both endpoints use performance.now() in this process. Round outward by one millisecond
+// per endpoint; neither SQL wall clocks nor browser clock offsets are subtracted.
+export const sourceClockUncertaintyMs = 1;
+export function sourceRate(facts: Fact[], spec: Workload, uncertaintyMs = sourceClockUncertaintyMs) {
+  const phases = (['sustained', 'burst'] as const).map(phase => {
+    const rows = facts.filter(f => f.phase === phase), expected = phase === 'burst' ? spec.burst : spec.rate * spec.duration;
+    const confirmed = rows.filter(f => !f.error && f.upper !== null && f.transaction);
+    const budgetMs = phase === 'burst' ? 1000 : spec.duration * 1000;
+    const lower = rows.length ? rows.reduce((v, f) => Math.min(v, f.lower), Infinity) : null;
+    const upper = confirmed.length ? confirmed.reduce((v, f) => Math.max(v, f.upper!), -Infinity) : null;
+    const spanMs = lower === null || upper === null ? null : upper - lower + 2 * uncertaintyMs;
+    // Count mutations/transactions independently: an aggregate counter delta is not a fact.
+    const identitiesValid = new Set(rows.map(f => f.id)).size === expected && new Set(confirmed.map(f => f.transaction)).size === expected;
+    const ordered = rows.toSorted((a, b) => a.due - b.due);
+    const windows = phase === 'sustained' ? Array.from({ length: spec.duration }, (_, second) => {
+      const bucket = ordered.slice(second * spec.rate, (second + 1) * spec.rate);
+      const spanMs = bucket.length ? Math.max(...bucket.map(f => f.upper ?? Infinity)) - Math.min(...bucket.map(f => f.lower)) + 2 * uncertaintyMs : null;
+      return { second, count: bucket.length, spanMs, valid: bucket.length === spec.rate && spanMs !== null && spanMs <= 1000 };
+    }) : [];
+    const valid = windows.every(w => w.valid) && Number.isFinite(uncertaintyMs) && uncertaintyMs >= 0 && expected > 0 && rows.length === expected && confirmed.length === expected && identitiesValid && spanMs !== null && spanMs <= budgetMs && confirmed.every(f => Number.isFinite(f.lower) && Number.isFinite(f.upper) && f.upper! >= f.lower);
+    return { phase, expected, offered: rows.length, admitted: confirmed.length, confirmed: confirmed.length, transactions: new Set(confirmed.map(f => f.transaction)).size, lower, upper, spanMs, budgetMs, windows, minimumConfirmedPerSecond: spanMs && spanMs > 0 ? confirmed.length * 1000 / spanMs : null, valid };
+  });
+  const unique = new Set(facts.map(f => f.id)).size === facts.length && new Set(facts.flatMap(f => f.transaction ? [f.transaction] : [])).size === facts.filter(f => f.transaction).length;
+  return { status: unique && phases.every(p => p.valid) ? 'qualified' : 'invalid-source-rate', uncertaintyMs, clock: 'same-process monotonic outward brackets, includes submission/queue/commit receipt', phases };
+}
+export function publicationVersion(value: string): { epoch: string; revision: string } | null {
+  const m = /^([^:]+):([0-9]+)$/.exec(value);
+  return m ? { epoch: m[1], revision: m[2] } : null;
+}
+export function canAcknowledge(fact: Fact, rendered: Publication, text: string) {
+  const proof = fact.proof;
+  return !fact.error && fact.upper !== null && !!proof && proof.epoch === rendered.epoch && BigInt(rendered.revision) >= BigInt(proof.revision) && rendered.calls >= proof.calls && rendered.errors >= proof.errors && text === `${rendered.calls} · ${rendered.errors} failed`;
+}
+export function bindProof(facts: Fact[], publication: Publication, leaves: Record<string, { calls: number; errors: number }>, distribution: SourceDistribution) {
+  for (const fact of facts) {
+    const leaf = leaves[fact.execution];
+    if (fact.proof?.epoch === publication.epoch || fact.error || fact.upper === null || !leaf) continue;
+    const included = distribution === 'hot' ? leaf.calls >= fact.calls && leaf.errors === fact.errors : leaf.calls === fact.calls && leaf.errors === fact.errors;
+    if (included) fact.proof = { ...publication };
+  }
+}
+export function sourceMutation(fact: Fact, distribution: SourceDistribution) {
+  const totals = `jsonb_build_object('byTool',jsonb_build_object(${literal(marker)},jsonb_build_object('calls',${fact.calls},'errors',${fact.errors})))`;
+  const mutation = distribution === 'hot'
+    ? `UPDATE execution_totals SET tool_calls=${totals} WHERE execution_id=${literal(fact.execution)};`
+    : `INSERT INTO execution(id,kind,state,project_id,started_at,harness,model) VALUES(${literal(fact.execution)},'agent_run','running',${literal(fact.project)},'2024-01-01','codex','interface-seed1-model-0'); INSERT INTO execution_totals(execution_id,project_id,tool_calls,tool_calls_basis) VALUES(${literal(fact.execution)},${literal(fact.project)},${totals},'measured');`;
+  return mutation;
+}
+export function sourceTransaction(fact: Fact, distribution: SourceDistribution) {
+  return `BEGIN; ${sourceMutation(fact, distribution)}
+SELECT pg_current_xact_id()::text AS source_tx, clock_timestamp()::text AS before_commit \\gset
+COMMIT;`;
+}
+export function proofSQL(project: string, executions: string[]) {
+  return `(SELECT json_build_object('epoch',s.epoch::text,'revision',s.revision::text,'calls',coalesce(t.calls,0),'errors',coalesce(t.errors,0),'leaves',(SELECT coalesce(json_object_agg(c.execution_id,json_build_object('calls',(v->>'calls')::bigint,'errors',(v->>'errors')::bigint)),'{}') FROM resource_contribution c CROSS JOIN LATERAL jsonb_array_elements(c.facts->'tools') v WHERE c.project_id=s.project_id AND c.included AND c.execution_id=ANY(ARRAY[${executions.map(literal).join(',')}]::text[]) AND v->>'name'=${literal(marker)} AND v->>'connection'='')) FROM resource_project_summary s LEFT JOIN resource_tool t ON t.project_id=s.project_id AND t.name=${literal(marker)} AND t.connection='' WHERE s.project_id=${literal(project)} AND s.ready)`;
+}
+type Run = { id: string; spec: Workload; start: number; done: boolean; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; publications: Map<string, Publication>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
 const pgSnapshot = (c: Coordinator) => JSON.parse(c.sql(`SELECT json_build_object('at',clock_timestamp(),'database',current_database(),'pg',version(),'settings',(SELECT json_object_agg(name,setting) FROM pg_settings WHERE name IN ('shared_buffers','work_mem','max_connections','fsync','synchronous_commit','track_io_timing','track_commit_timestamp','max_wal_size','effective_cache_size')),'databaseStats',(SELECT row_to_json(s) FROM pg_stat_database s WHERE datname=current_database()),'activity',(SELECT coalesce(json_agg(a),'[]') FROM (SELECT pid,state,wait_event_type,wait_event,query_start,left(query,250) query FROM pg_stat_activity WHERE datname=current_database()) a),'backlog',(SELECT count(*) FROM resource_work),'oldestPending',(SELECT min(first_pending_at) FROM resource_work),'builds',(SELECT coalesce(json_agg(b),'[]') FROM resource_build b))`).trim());
 
 export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number }) {
@@ -82,7 +140,8 @@ export async function serve(o: { out: string; history: number; projects: number;
     if (!cpu || cpu[0] / cpu[1] !== 4 || effective.memoryMax !== String(8 * 1024 ** 3)) throw Error('actual server cgroup must constrain the whole process tree to4CPU/8GiB: ' + JSON.stringify(effective));
   }
   mkdirSync(o.out, { recursive: true });
-  writeFileSync(resolve(o.out, 'manifest.json'), JSON.stringify(manifest(f), null, 2));
+  const baselineManifest = manifest(f);
+  writeFileSync(resolve(o.out, 'manifest.json'), JSON.stringify(baselineManifest, null, 2));
   writeFileSync(resolve(o.out, 'server.json'), JSON.stringify({ at: new Date().toISOString(), development: o.development, placement, hardware: hardware(), candidate: candidate(), clock: 'server monotonic milliseconds; lower before source submission, upper after commit; render receipt is a conservative actual-render upper bound including return network' }, null, 2));
   const log = createWriteStream(resolve(o.out, 'events.jsonl'), { flags: 'a' });
   const sqlLog = createWriteStream(resolve(o.out, 'psql.log'), { flags: 'a' });
@@ -113,6 +172,7 @@ export async function serve(o: { out: string; history: number; projects: number;
     const text = await r.text(); if (!r.ok) throw Error(`${name} ${r.status}: ${text}`); return JSON.parse(text);
   };
   const writers: Writer[] = [];
+  const sourceWriters: Writer[] = [];
   const server = http.createServer();
   let monitor: ReturnType<typeof setInterval> | undefined, closing = false;
   const close = async () => {
@@ -155,7 +215,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       assert.equal(proof.input, o.longEvents); assert.equal(proof.events, o.longEvents); assert.equal(proof.state, 'running'); assert.equal(proof.cpu, null); assert.equal(proof.api, null); assert.equal(proof.wall, null);
       writeFileSync(resolve(o.out, 'long-native.json'), JSON.stringify(proof, null, 2));
     }
-    for (const _ of ids) writers.push(new Writer(db, sqlLog));
+    for (const _ of ids) { const writer = new Writer(db, sqlLog); writers.push(writer); sourceWriters.push(writer); }
     const observer = new Writer(db, sqlLog); writers.push(observer);
     let observing = false;
     monitor = setInterval(() => {
@@ -165,24 +225,53 @@ export async function serve(o: { out: string; history: number; projects: number;
     writeFileSync(resolve(o.out, 'pg-before.json'), JSON.stringify(pgSnapshot(c), null, 2));
     const writeFact = async (r: Run, index: number, phase: string, due: number) => {
       const project = ids[index % ids.length], list = r.facts.get(project)!;
-      const fact: Fact = { project, n: list.length + 1, lower: stamp(), upper: null, phase, due }; list.push(fact); r.count++;
+      const n = list.length + 1, execution = r.spec.sourceDistribution === 'hot' ? project + '-marker' : `${project}-${r.id}-leaf-${index}`;
+      const fact: Fact = { id: `${r.id}-${index}`, execution, project, n, calls: r.spec.sourceDistribution === 'hot' ? n : 1, errors: r.spec.sourceDistribution === 'distinct' && index % 7 === 0 ? 1 : 0, lower: stamp(), upper: null, phase, due }; list.push(fact); r.count++;
+      emit('source-submitted', { run: r.id, sourceDistribution: r.spec.sourceDistribution, ...fact });
       try {
         if (native && project === ids[0]) await ingest([usage(++native.seq)]);
-        const receipt = await writers[index % ids.length].run(`BEGIN; UPDATE execution_totals SET tool_calls=jsonb_build_object('byTool',jsonb_build_object(${literal(marker)},jsonb_build_object('calls',${fact.n},'errors',0))) WHERE execution_id=${literal(project + '-marker')}; COMMIT;`);
-        fact.upper = stamp(); r.metrics.writes.push(fact.upper - fact.lower); r.metrics.schedule.push(fact.lower - due); emit('confirmed', { run: r.id, ...fact, receipt });
+        const receipt = await sourceWriters[index % sourceWriters.length].run(sourceTransaction(fact, r.spec.sourceDistribution), `json_build_object('transaction',:'source_tx','beforeCommit',:'before_commit')`);
+        fact.upper = stamp(); fact.transaction = receipt.payload.transaction;
+        r.metrics.writes.push(fact.upper - fact.lower); r.metrics.schedule.push(fact.lower - due); emit('confirmed', { run: r.id, sourceDistribution: r.spec.sourceDistribution, canonicalMutations: r.spec.sourceDistribution === 'hot' ? 1 : 2, ...fact, receipt });
       } catch (e) { fact.error = String(e); r.errors.push(String(e)); emit('source-error', { run: r.id, ...fact }); }
+    };
+    // One SELECT gives contribution membership, aggregate numerics and publication identity
+    // in the SAME PostgreSQL read snapshot. This is fixture-only, never a production API.
+    const proofReads = new Map<string, Promise<void>>();
+    const prove = (r: Run, project: string) => {
+      const active = proofReads.get(project); if (active) return active;
+      const facts = r.facts.get(project)!, pending = [...new Set(facts.filter(f => !f.proof && !f.error).map(f => f.execution))];
+      const query = proofSQL(project, pending);
+      const task = observer.run('', query).then(receipt => {
+        const p = receipt.payload; if (!p) return;
+        const publication: Publication = { epoch: p.epoch, revision: p.revision, calls: p.calls, errors: p.errors };
+        for (const fact of facts) if (fact.proof && fact.proof.epoch !== publication.epoch) delete fact.proof;
+        bindProof(facts, publication, p.leaves, r.spec.sourceDistribution);
+        r.publications.set(project + '/' + p.epoch + ':' + p.revision, publication);
+        emit('publication-proof', { run: r.id, project, publication, leaves: p.leaves, receipt });
+      }).finally(() => proofReads.delete(project));
+      proofReads.set(project, task); return task;
     };
     const finish = async (r: Run) => {
       const missing: object[] = [];
       for (const [reader, { project }] of r.readers) {
-        const seen = r.seen.get(reader) ?? 0;
-        for (const fact of r.facts.get(project)!) if (fact.n > seen && !fact.error && fact.phase !== 'warmup') missing.push({ reader, project, n: fact.n, age: stamp() - fact.lower });
+        const seen = r.seen.get(reader) ?? new Set<string>();
+        for (const fact of r.facts.get(project)!) if (!seen.has(fact.id) && !fact.error && fact.phase !== 'warmup') missing.push({ reader, project, n: fact.n, age: stamp() - fact.lower });
       }
-      const recovery = ids.map(project => ({ project, expected: r.facts.get(project)!.filter(x => !x.error).at(-1)?.n ?? 0, observed: Number(c.sql(`SELECT calls FROM resource_tool WHERE project_id=${literal(project)} AND name=${literal(marker)}`).trim()), errors: Number(c.sql(`SELECT errors FROM resource_tool WHERE project_id=${literal(project)} AND name=${literal(marker)}`).trim()), pending: Number(c.sql(`SELECT count(*) FROM resource_work_scope WHERE project_id=${literal(project)}`).trim()) }));
-      for (const x of recovery) if (x.expected !== x.observed || x.errors !== 0 || x.pending) r.errors.push('recovery/double-count mismatch: ' + JSON.stringify(x));
+      const allFacts = [...r.facts.values()].flat();
+      const expected = ids.map(project => {
+        const facts = r.facts.get(project)!.filter(f => !f.error && f.upper !== null);
+        const calls = r.spec.sourceDistribution === 'hot' ? facts.at(-1)?.calls ?? 0 : facts.reduce((s, f) => s + f.calls, 0), errors = facts.reduce((s, f) => s + f.errors, 0);
+        return { project, tools: { ...baselineManifest.expected[project].tools, [marker]: { calls, errors } }, totalCalls: baselineManifest.expected[project].metrics.toolCalls.sum + calls, totalErrors: baselineManifest.expected[project].metrics.toolErrors.sum + errors, calls: r.spec.sourceDistribution === 'hot' ? facts.at(-1)?.calls ?? 0 : facts.reduce((s, f) => s + f.calls, 0), errors: facts.reduce((s, f) => s + f.errors, 0), executions: baselineManifest.expected[project].executions + 1 + (r.spec.sourceDistribution === 'distinct' ? facts.length : 0) };
+      });
+      const recovery = expected.map(e => ({ ...e, observed: JSON.parse(c.sql(`SELECT json_build_object('calls',coalesce((SELECT calls FROM resource_tool WHERE project_id=${literal(e.project)} AND name=${literal(marker)} AND connection=''),0),'errors',coalesce((SELECT errors FROM resource_tool WHERE project_id=${literal(e.project)} AND name=${literal(marker)} AND connection=''),0),'tools',(SELECT coalesce(json_object_agg(name,v),'{}') FROM (SELECT name,sum(calls)::bigint calls,sum(errors)::bigint errors FROM resource_tool WHERE project_id=${literal(e.project)} GROUP BY name) v),'totalCalls',(SELECT sum(sum_value) FROM resource_metric WHERE project_id=${literal(e.project)} AND metric='toolCalls'),'totalErrors',(SELECT sum(sum_value) FROM resource_metric WHERE project_id=${literal(e.project)} AND metric='toolErrors'),'executions',(SELECT executions FROM resource_project_summary WHERE project_id=${literal(e.project)}),'pending',(SELECT count(*) FROM resource_work_scope WHERE project_id=${literal(e.project)}))`)) }));
+      for (const x of recovery) if (x.calls !== x.observed.calls || x.errors !== x.observed.errors || x.executions !== x.observed.executions || x.totalCalls !== x.observed.totalCalls || x.totalErrors !== x.observed.totalErrors || Object.keys(x.tools).length !== Object.keys(x.observed.tools).length || Object.entries(x.tools).some(([name, t]) => t.calls !== x.observed.tools[name]?.calls || t.errors !== x.observed.tools[name]?.errors) || x.observed.pending) r.errors.push('recovery/double-count mismatch: ' + JSON.stringify(x));
       if (!r.metrics.lags.length) r.errors.push('no measured connected foreground samples');
+      const rate = sourceRate(allFacts, r.spec);
       const failed = r.errors.length || missing.length || (r.spec.mode === 'connected' && r.metrics.lags.some(x => x > 5000));
-      const result = { id: r.id, spec: r.spec, development: o.development, status: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', classifications: r.spec.mode, facts: r.count, readers: [...r.readers], samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Render upper bounds include prewrite and return network. Preparing/hidden/disconnected intervals are errors in connected runs. Exceed-capacity recovered is not a five-second pass. This run alone does not prove the full envelope.' };
+      const source = { distribution: r.spec.sourceDistribution, logicalFactCount: allFacts.length, logicalFacts: allFacts.map(f => f.id), projects: [...r.facts.keys()], leafIDs: [...new Set(allFacts.map(f => f.execution))], distinctLeaves: new Set(allFacts.map(f => f.execution)).size, canonicalMutations: allFacts.filter(f => f.upper !== null).length * (r.spec.sourceDistribution === 'hot' ? 1 : 2), commitTransactionCount: new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : [])).size, commitTransactions: [...new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : []))] };
+      const result = { id: r.id, spec: r.spec, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : null, sourceRate: rate, source, classifications: [r.spec.mode, r.spec.sourceDistribution], facts: r.count, readers: [...r.readers], samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds include proof read and return network. Development is not capacity acceptance. This run alone does not prove the full envelope.' };
+      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: r.spec, source, expected, facts: allFacts }, null, 2));
       r.finish = result; r.done = true; emit('finish', result);
       writeFileSync(resolve(o.out, r.id + '-result.json'), JSON.stringify(result, null, 2));
       writeFileSync(resolve(o.out, r.id + '-pg-after.json'), JSON.stringify(pgSnapshot(c), null, 2));
@@ -190,8 +279,12 @@ export async function serve(o: { out: string; history: number; projects: number;
     };
     const produce = async (r: Run) => {
       const tasks = new Set<Promise<void>>(); let ordinal = 0;
-      const chains = ids.map(() => Promise.resolve());
-      const schedule = (phase: string, due: number) => { const n = ordinal++, slot = n % ids.length; const p = chains[slot].then(() => writeFact(r, n, phase, due)); chains[slot] = p; tasks.add(p); void p.finally(() => tasks.delete(p)); };
+      // Distinct facts have no shared mutable leaf: eight lanes per project, each with
+      // its own persistent transaction session. Hot keeps one ordered lane/project.
+      if (r.spec.sourceDistribution === 'distinct') for (let i = sourceWriters.length; i < ids.length * 8; i++) { const writer = new Writer(db, sqlLog); writers.push(writer); sourceWriters.push(writer); }
+      emit('source-lanes', { run: r.id, distribution: r.spec.sourceDistribution, lanes: sourceWriters.length });
+      const chains = sourceWriters.map(() => Promise.resolve());
+      const schedule = (phase: string, due: number) => { const n = ordinal++, slot = n % sourceWriters.length; const p = chains[slot].then(() => writeFact(r, n, phase, due)); chains[slot] = p; tasks.add(p); void p.finally(() => tasks.delete(p)); };
       for (const [phase, seconds] of [['warmup', r.spec.warmup], ['sustained', r.spec.duration]] as const) {
         const start = stamp();
         for (let i = 0; i < seconds * r.spec.rate; i++) { const due = start + i * 1000 / r.spec.rate; if (due > stamp()) await sleep(due - stamp()); schedule(phase, due); }
@@ -213,23 +306,30 @@ export async function serve(o: { out: string; history: number; projects: number;
           else if (path === '/__interface/start') {
             if (run && !run.done) throw Error('run already active');
             const spec = workload(b.spec, o.development);
+            if (native && spec.sourceDistribution === 'distinct') throw Error('long native hot-execution fixture requires hot source distribution; use a separate fresh distinct case');
             if (!Array.isArray(b.readers) || b.readers.length !== spec.readers || new Set(b.readers.map((x: any) => x.id)).size !== spec.readers || b.readers.some((x: any) => !ids.includes(x.project))) throw Error('reader barrier mismatch');
             // Fresh server per case: marker counters and prepared baseline must not carry a prior run.
             if (run) throw Error('start a fresh isolated server per case');
-            run = { id: randomUUID(), spec, start: stamp(), done: false, facts: new Map(ids.map(p => [p, []])), seen: new Map(), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
+            run = { id: randomUUID(), spec, start: stamp(), done: false, facts: new Map(ids.map(p => [p, []])), seen: new Map(), publications: new Map(), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
             emit('start', { id: run.id, spec, readers: b.readers, browser: b.browser }); result = { id: run.id }; void produce(run).catch(e => { run!.errors.push(String(e)); void finish(run!); });
           } else if (path === '/__interface/render') {
             const r = run; if (!r || r.id !== b.run || !r.readers.has(b.reader)) throw Error('unregistered render');
             const reader = r.readers.get(b.reader)!;
-            if (reader.project !== b.project || !Number.isSafeInteger(b.value) || b.value < 0 || !b.version || !b.visible || b.text !== b.value + ' · 0 failed') throw Error('unverified rendered value/envelope');
-            const received = stamp(), seen = r.seen.get(b.reader) ?? 0, facts = r.facts.get(b.project)!;
-            if (b.value > facts.length) throw Error('rendered count exceeds submitted facts');
-            for (const fact of facts) if (fact.n > seen && fact.n <= b.value && !fact.error) {
-              const upperMs = received - fact.lower;
-              if (fact.phase !== 'warmup') r.metrics.lags.push(upperMs);
-              emit('render-sample', { run: r.id, reader: b.reader, fact: fact.n, phase: fact.phase, project: b.project, upperMs, sourceAfterCommit: fact.upper, receipt: received, browser: b });
+            if (reader.project !== b.project || !Number.isSafeInteger(b.value) || !Number.isSafeInteger(b.errors) || b.value < 0 || b.errors < 0 || !publicationVersion(b.version ?? '') || !b.visible || b.text !== `${b.value} · ${b.errors} failed`) throw Error('unverified rendered value/envelope');
+            await prove(r, b.project);
+            const received = stamp(), seen = r.seen.get(b.reader) ?? new Set<string>(), facts = r.facts.get(b.project)!;
+            const publication = r.publications.get(b.project + '/' + b.version);
+            // A version not observed by the proof read is retried, never guessed from a count.
+            if (!publication || publication.calls !== b.value || publication.errors !== b.errors) { result = { accepted: false }; }
+            else {
+              for (const fact of facts) if (!seen.has(fact.id) && canAcknowledge(fact, publication, b.text)) {
+                const upperMs = received - fact.lower;
+                if (fact.phase !== 'warmup') r.metrics.lags.push(upperMs);
+                seen.add(fact.id);
+                emit('render-sample', { run: r.id, reader: b.reader, fact: fact.id, execution: fact.execution, phase: fact.phase, project: b.project, proof: fact.proof, upperMs, sourceAfterCommit: fact.upper, receipt: received, browser: b });
+              }
+              r.seen.set(b.reader, seen); result = { accepted: !facts.some(f => !f.error && !seen.has(f.id)) };
             }
-            r.seen.set(b.reader, Math.max(seen, b.value)); result = { accepted: true };
           } else if (path === '/__interface/error') { if (run) run.errors.push(JSON.stringify(b)); emit('browser-error', b); result = { accepted: true }; }
           else if (path === '/__interface/status') result = run?.finish ?? { done: false, id: run?.id, submitted: run?.count, errors: run?.errors };
           else if (path === '/__interface/control') {
@@ -314,7 +414,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     const { id: run } = await request('start', { spec, readers: readers.map(({ id, project }) => ({ id, project })), browser: evidence });
     for (const reader of readers) {
       await reader.page.evaluate(({ run, reader, project, marker }) => {
-        let previous = -1, sending = false, inEnvelope = true;
+        let previous = '', sending = false, inEnvelope = true;
         const observe = () => {
           const win = document.querySelector('[data-resource-window="tools"]');
           const label = [...(win?.querySelectorAll('span') ?? [])].find(x => x.textContent === marker);
@@ -323,14 +423,13 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
           const visible = !!row && document.visibilityState === 'visible' && row.getBoundingClientRect().height > 0 && row.getBoundingClientRect().top >= 0 && row.getBoundingClientRect().bottom <= innerHeight;
           if (!visible && inEnvelope) void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, type: 'left-connected-foreground-envelope', visibility: document.visibilityState, rowPresent: !!row }) });
           inEnvelope = visible;
-          if (value && Number(value[2]) !== 0) { void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, type: 'wrong-rendered-errors', text }) }); return; }
-          if (!value || !version || !visible || Number(value[1]) <= previous || sending) return;
+          if (!value || !version || !visible || version + '/' + text === previous || sending) return;
           const n = Number(value[1]); sending = true;
           requestAnimationFrame(() => requestAnimationFrame(() => {
             // Re-read the painted DOM; don't acknowledge an obsolete candidate or an attribute alone.
             const actual = row?.querySelector('.num')?.textContent ?? '';
-            if (actual !== text || !row?.isConnected || label?.textContent !== marker || document.visibilityState !== 'visible' || row.getBoundingClientRect().top < 0 || row.getBoundingClientRect().bottom > innerHeight) { sending = false; observe(); return; }
-            fetch('/__interface/render', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ run, reader, project, value: n, text: actual, version, visible, browserMonotonic: performance.now(), browserWall: Date.now(), domNodes: document.querySelectorAll('*').length, longTasks: (window as any).__interfaceLongTasks.splice(0) }) }).then(r => { if (!r.ok) throw Error('render receipt rejected'); previous = n; }).catch(error => { void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, error: String(error) }) }); }).finally(() => { sending = false; });
+            if (actual !== text || win?.getAttribute('data-resource-version') !== version || !row?.isConnected || label?.textContent !== marker || document.visibilityState !== 'visible' || row.getBoundingClientRect().top < 0 || row.getBoundingClientRect().bottom > innerHeight) { sending = false; observe(); return; }
+            fetch('/__interface/render', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ run, reader, project, value: n, errors: Number(value[2]), text: actual, version, visible, browserMonotonic: performance.now(), browserWall: Date.now(), domNodes: document.querySelectorAll('*').length, longTasks: (window as any).__interfaceLongTasks.splice(0) }) }).then(r => { if (!r.ok) throw Error('render receipt rejected'); return r.json(); }).then(result => { if (result.accepted) previous = version + '/' + text; }).catch(error => { void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, error: String(error) }) }); }).finally(() => { sending = false; });
           }));
         };
         new MutationObserver(observe).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
@@ -354,6 +453,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const args = Object.fromEntries(process.argv.slice(3).map(a => { const [k, v] = a.replace(/^--/, '').split('='); return [k, v ?? 'true']; }));
   const out = resolve(args.out ?? '.egm/interface-performance-run');
   if (process.argv[2] === 'serve') await serve({ out, history: Number(args.history ?? 618), projects: Number(args.projects ?? 1), cardinality: Number(args.cardinality ?? 3), longEvents: Number(args['long-events'] ?? 0), port: Number(args.port ?? 9479), development: args.development === 'true', placement: args.placement });
-  else if (process.argv[2] === 'browse') await browse({ origin: args.origin ?? 'http://127.0.0.1:9479', out, placement: args.placement, spec: { readers: Number(args.readers ?? 1), rate: Number(args.rate ?? 1), warmup: Number(args.warmup ?? 60), duration: Number(args.duration ?? 600), burst: Number(args.burst ?? 1000), recovery: Number(args.recovery ?? 60), mode: args.mode as Workload['mode'] ?? 'connected', network: args.network as Workload['network'] ?? 'unshaped' } });
+  else if (process.argv[2] === 'browse') await browse({ origin: args.origin ?? 'http://127.0.0.1:9479', out, placement: args.placement, spec: { readers: Number(args.readers ?? 1), rate: Number(args.rate ?? 1), warmup: Number(args.warmup ?? 60), duration: Number(args.duration ?? 600), burst: Number(args.burst ?? 1000), recovery: Number(args.recovery ?? 60), sourceDistribution: (args['source-distribution'] ?? 'hot') as SourceDistribution, mode: args.mode as Workload['mode'] ?? 'connected', network: args.network as Workload['network'] ?? 'unshaped' } });
   else throw Error('usage: interface.ts serve|browse --placement=<json> --out=<ignored directory> [--key=value]');
 }
