@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -455,6 +456,9 @@ func projectOp(name string, read bool, h handler) {
 }
 
 func init() {
+	projectOp("project_detail", true, resourceReadGate(typedOp(projectDetail)))
+	projectOp("project_resources", true, resourceReadGate(typedOp(projectPreparedResources)))
+	projectOp("project_resource_items", true, resourceReadGate(typedOp(projectPreparedItems)))
 	gatedRoute("GET /api/profiles", func(q *Request) (any, error) {
 		ps, err := listProfiles(q)
 		return doc{"profiles": ps}, err
@@ -636,7 +640,7 @@ func init() {
 		}
 		return q.app.runOp(q, q.r.PathValue("name"), q.body)
 	})
-	gatedLongRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps, nil) })
+	gatedLongRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps, agentDescriptions) })
 }
 
 // pipelineRun: a pipeline-run record with its steps.
@@ -667,6 +671,9 @@ func (a *App) mcp(q *Request, server string, ops map[string]registeredOp, descri
 	case "tools/list":
 		names := make([]string, 0, len(ops))
 		for n := range ops {
+			if !resourceOperationAdvertised(n) {
+				continue
+			}
 			names = append(names, n)
 		}
 		sort.Strings(names)
@@ -681,6 +688,9 @@ func (a *App) mcp(q *Request, server string, ops map[string]registeredOp, descri
 			tools = append(tools, t)
 		}
 		return doc{"jsonrpc": "2.0", "id": rpc.ID, "result": doc{"tools": tools}}, nil
+	}
+	if rpc.Method == "tools/call" && isResourceRead(rpc.Params.Name) && !resourceReadsEnabled {
+		return nil, fail(503, "Prepared project reads disabled")
 	}
 	if _, ok := ops[rpc.Params.Name]; rpc.Method != "tools/call" || !ok {
 		return nil, fail(400, "Unknown tool")
@@ -781,3 +791,75 @@ const projectQuestion = "kind IN ('operator_decision','secret') AND request_id I
 // projectQuestionJSON: a project question (contract.ProjectQuestion) from its columns.
 const projectQuestionJSON = `jsonb_build_object('id',id,'projectId',project_id,'requestId',request_id,'text',text,'state',CASE WHEN state='open' THEN 'waiting' ELSE state::text END,
  'createdAt',(extract(epoch FROM asked_at)*1000)::bigint,'actor',asked_by) || CASE WHEN state='answered' THEN jsonb_build_object('answer',answer,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'answeredBy',answered_by) ELSE '{}' END`
+
+// Startup exposure is independent of processor scheduling; source capture has no flag.
+var resourceReadsEnabled = os.Getenv("FLEET_RESOURCE_READS") == "on"
+
+func isResourceRead(name string) bool {
+	return name == "project_detail" || name == "project_resources" || name == "project_resource_items"
+}
+func resourceOperationAdvertised(name string) bool {
+	return !isResourceRead(name) || resourceReadsEnabled
+}
+
+// Authorization precedes typed item/category/cursor interpretation, including conditional reads.
+// Do not use projectContext here: an invalid configuration must not disable prepared reads.
+func resourceReadGate(h handler) handler {
+	return func(q *Request) (any, error) {
+		if !resourceReadsEnabled {
+			return nil, fail(503, "Prepared project reads disabled")
+		}
+		var b struct {
+			ProjectID string `json:"projectId"`
+		}
+		if json.Unmarshal(q.body, &b) != nil || strings.TrimSpace(b.ProjectID) == "" {
+			return nil, fail(400, "Expected projectId")
+		}
+		if q.person != nil && !mayAccessProjectID(q.person, b.ProjectID) {
+			return nil, fail(404, "Unknown project")
+		}
+		exists, err := has(q, `SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL`, b.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fail(404, "Unknown project")
+		}
+		return h(q)
+	}
+}
+func projectDetail(q *Request, r *contract.ProjectDetailRequest) (contract.ProjectDetailReply, error) {
+	p, err := projectContext(q, r.ProjectId)
+	if err != nil {
+		return contract.ProjectDetailReply{}, err
+	}
+	// Only this explicit shape reaches the new reader; legacy flattened settings stay legacy.
+	out := doc{}
+	for _, k := range []string{"id", "name", "content", "settings", "unknownKeys", "context", "revision", "contentSha", "repoSha", "sourceState", "initialAccess"} {
+		if v, ok := p[k]; ok {
+			out[k] = v
+		}
+	}
+	return replyAs[contract.ProjectDetailReply](out, nil)
+}
+func projectPreparedResources(q *Request, r *contract.ProjectResourcesRequest) (contract.ProjectResourcesReply, error) {
+	s, err := resourceReadPrepared(q, r.ProjectId)
+	if err != nil {
+		return nil, err
+	}
+	progress := resourcePublicProgress(s)
+	if !s.Ready {
+		return jsonBytes(contract.ResourcePreparingReply{Kind: "preparing", Version: json.RawMessage("null"), ProjectId: r.ProjectId, Progress: progress}), nil
+	}
+	version := s.Epoch + ":" + s.Revision
+	if r.KnownVersion != nil && *r.KnownVersion == version {
+		return jsonBytes(contract.ResourceUnchangedReply{Kind: "unchanged", ProjectId: r.ProjectId, Version: version, Progress: progress}), nil
+	}
+	return jsonBytes(contract.ResourceReadyReply{Kind: "ready", ProjectId: r.ProjectId, Version: version, Header: s.Header, Progress: progress}), nil
+}
+func projectPreparedItems(q *Request, r *contract.ProjectResourceItemsRequest) (contract.ProjectResourceItemsReply, error) {
+	if err := hostKeys(q.body, reflect.TypeOf(*r)); err != nil {
+		return nil, err
+	}
+	return resourceReadItems(q, r)
+}

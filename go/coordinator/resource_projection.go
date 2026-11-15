@@ -3,15 +3,21 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"os"
+	"reflect"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,7 +35,7 @@ var errResourceClearing = errors.New("resource build clearing")
 func init() { onStart(startResourceProcessor) }
 
 func startResourceProcessor(ctx context.Context, a *App) {
-	// Read once at startup. There is deliberately no capture flag or public read registration.
+	// Processor scheduling is independent of the startup read-exposure flag; capture is always on.
 	if os.Getenv("FLEET_RESOURCE_PROCESSOR") != "on" {
 		return
 	}
@@ -964,8 +970,8 @@ func resourcePreparedHeader(q *Request, p string) (contract.PreparedHeaderV1, er
 	return h, conversionErr
 }
 
-// resourcePublish is the internal publication seam for the later authorized API/SSE stage.
-// This slice emits only an internal PostgreSQL notification, and registers no public prepared reads.
+// resourcePublish commits the stored header/version and public resource_summary change together.
+// The revision trigger uses the existing permission-filtered change/XID/SSE path.
 func resourcePublish(q *Request, p string) error {
 	h, err := resourcePreparedHeader(q, p)
 	if err != nil {
@@ -977,7 +983,7 @@ func resourcePublish(q *Request, p string) error {
 	return exec(q, `SELECT pg_notify('fleet_resource_summary',$1)`, p)
 }
 
-// resourceProgressSQL is used by finalization and the next API stage in its authorized read snapshot.
+// resourceProgressSQL is used by finalization; authorized readers use the same coverage predicates.
 // Unenumerated metadata jobs conservatively keep ALL scopes pending until enumeration completes.
 const resourceProgressSQL = `SELECT EXISTS(SELECT 1 FROM resource_work_scope WHERE project_id=$1)
  OR EXISTS(SELECT 1 FROM resource_repair_scope WHERE project_id=$1)
@@ -1261,7 +1267,9 @@ func resourceReadPrepared(q *Request, p string) (resourcePreparedState, error) {
  FROM resource_project_summary s JOIN resource_build b USING(project_id) WHERE s.project_id=$1`, p).Scan(&header, &out.Epoch, &out.Revision, &out.Ready, &out.ValidatedAt, &out.PublishedAt, &out.ErrorClass)
 	if errors.Is(err, pgx.ErrNoRows) {
 		out.Pending = true
-		return out, nil
+		// No epoch exists yet, but validation still describes this read snapshot.
+		err = q.tx.QueryRow(q.ctx(), `SELECT transaction_timestamp()`).Scan(&out.ValidatedAt)
+		return out, err
 	}
 	if err != nil {
 		return out, err
@@ -1288,4 +1296,492 @@ func resourceReadPrepared(q *Request, p string) (resourcePreparedState, error) {
 		err = json.Unmarshal(header, &out.Header)
 	}
 	return out, err
+}
+
+func resourcePublicProgress(s resourcePreparedState) contract.ResourceProgress {
+	timestamp := func(t *time.Time) *string {
+		if t == nil {
+			return nil
+		}
+		v := t.UTC().Format(time.RFC3339Nano)
+		return &v
+	}
+	state := contract.ResourceProgressState("initializing")
+	if s.Ready {
+		state = "current"
+		if s.Pending {
+			state = "updating"
+		}
+	}
+	errClass := s.ErrorClass
+	if errClass != nil {
+		state = "error"
+		if !contract.ResourceErrorClass(*errClass).Valid() {
+			v := "projection_failed"
+			errClass = &v
+		}
+	}
+	return contract.ResourceProgress{State: state, ValidatedAt: s.ValidatedAt.UTC().Format(time.RFC3339Nano), PublishedAt: timestamp(s.PublishedAt), OldestPendingAt: timestamp(s.OldestPendingAt), Pending: s.Pending, ErrorClass: jsonBytes(errClass)}
+}
+
+// A cursor is a position in a build, never a grant or a frozen revision. Every page is a
+// fresh repeatable-read snapshot; continuously advancing revisions cannot starve navigation.
+type resourceItemCursor struct {
+	SchemaVersion int                       `json:"schemaVersion"`
+	ProjectID     string                    `json:"projectId"`
+	BuildEpoch    string                    `json:"buildEpoch"`
+	Category      contract.ResourceCategory `json:"category"`
+	Group         *contract.ResourceGroup   `json:"group"`
+	Query         string                    `json:"query"`
+	Direction     string                    `json:"direction"`
+	Key           contract.ResourceSortKey  `json:"key"`
+}
+
+type resourceItemQuery struct {
+	table, tuple, key, item string
+	where                   string
+	args                    []any
+}
+
+func resourceStrictJSON(raw []byte, v any) error {
+	// encoding/json accepts null into non-pointer scalars as their zero value. A client
+	// position must retain the declared scalar type, including a measured timestamp of zero.
+	t := reflect.TypeOf(v).Elem()
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) == nil {
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if f.Type.Kind() != reflect.Pointer && bytes.Equal(bytes.TrimSpace(fields[name]), []byte("null")) {
+				return fail(400, "Invalid resource position field "+name)
+			}
+		}
+	}
+	if err := hostKeys(raw, reflect.TypeOf(v)); err != nil {
+		return err
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(v); err != nil {
+		return fail(400, "Invalid resource position")
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		return fail(400, "Invalid resource position")
+	}
+	return nil
+}
+func resourceKeyValues(raw contract.ResourceSortKey, category contract.ResourceCategory) ([]any, error) {
+	textOK := func(s string) bool { return len([]rune(s)) <= 200 }
+	switch category {
+	case "tools":
+		var tag struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &tag) == nil && tag.Kind == "tool-position" {
+			var packed contract.ResourcePackedToolKey
+			if err := resourceStrictJSON(raw, &packed); err != nil {
+				return nil, err
+			}
+			decoded, err := resourceUnpack(packed.Encoded, "tp1.")
+			if err != nil {
+				return nil, err
+			}
+			// Keep the original inner JSON until scalar validation: decoding directly into
+			// ResourceToolKey would turn name:null into the empty string before it is checked.
+			var envelope struct {
+				SchemaVersion int             `json:"schemaVersion"`
+				Key           json.RawMessage `json:"key"`
+			}
+			if err = resourceStrictJSON(decoded, &envelope); err != nil {
+				return nil, err
+			}
+			if envelope.SchemaVersion != 1 {
+				return nil, fail(400, "Invalid tool position version")
+			}
+			raw = envelope.Key
+		}
+		var k contract.ResourceToolKey
+		if err := resourceStrictJSON(raw, &k); err != nil {
+			return nil, err
+		}
+		// Native usage already admits longer tool names; full persisted tuples must remain
+		// usable for continuation and deletion-safe re-anchors. HTTP bounds the request.
+		if k.Kind != "tool" {
+			return nil, fail(400, "Invalid tool anchor")
+		}
+		c := ""
+		if k.Connection != nil {
+			c = *k.Connection
+		}
+		return []any{k.Name, c}, nil
+	case "costs":
+		var k contract.ResourceCostKey
+		if err := resourceStrictJSON(raw, &k); err != nil {
+			return nil, err
+		}
+		if k.Kind != "cost" || !k.Basis.Valid() || (k.Currency != nil && !textOK(*k.Currency)) {
+			return nil, fail(400, "Invalid cost anchor")
+		}
+		c := ""
+		if k.Currency != nil {
+			c = *k.Currency
+		}
+		return []any{c, string(k.Basis)}, nil
+	case "prices":
+		var k contract.ResourcePriceKey
+		if err := resourceStrictJSON(raw, &k); err != nil {
+			return nil, err
+		}
+		if k.Kind != "price" || !textOK(k.PriceId) || k.ObservedAt < 0 {
+			return nil, fail(400, "Invalid price anchor")
+		}
+		return []any{k.PriceId, k.ObservedAt}, nil
+	}
+	return nil, fail(400, "Invalid resource category")
+}
+func resourceItemsQuery(r *contract.ProjectResourceItemsRequest, query string) resourceItemQuery {
+	q := resourceItemQuery{where: "project_id=$1", args: []any{r.ProjectId}}
+	switch r.Category {
+	case "tools":
+		q.table = "resource_tool"
+		q.tuple = `(name COLLATE "C",connection COLLATE "C")`
+		q.key = `jsonb_build_object('kind','tool','name',name,'connection',nullif(connection,''))`
+		q.item = q.key + ` || jsonb_build_object('calls',calls,'errors',errors)`
+		if query != "" {
+			q.where += ` AND strpos(lower(name),lower($2))>0`
+			q.args = append(q.args, query)
+		}
+	case "costs":
+		q.table = "resource_cost"
+		q.tuple = `(currency COLLATE "C",basis COLLATE "C")`
+		q.key = `jsonb_build_object('kind','cost','currency',nullif(currency,''),'basis',basis)`
+		q.item = q.key + ` || jsonb_build_object('value',value,'usages',usages,'note',CASE WHEN basis='subscription' THEN 'Subscription list-price equivalent' END,'reason',CASE WHEN basis='unavailable' THEN 'No recorded valuation' END,'priceCount',(SELECT count(*) FROM resource_price_ref p WHERE p.project_id=resource_cost.project_id AND p.currency=resource_cost.currency AND p.basis=resource_cost.basis))`
+	case "prices":
+		q.table = "resource_price_ref"
+		q.tuple = `(price_id COLLATE "C",observed_at)`
+		q.key = `jsonb_build_object('kind','price','priceId',price_id,'observedAt',observed_at)`
+		q.item = q.key + ` || jsonb_build_object('group',jsonb_build_object('currency',nullif(currency,''),'basis',basis))`
+		currency := ""
+		if r.Group.Currency != nil {
+			currency = *r.Group.Currency
+		}
+		q.where += ` AND currency=$2 AND basis=$3`
+		q.args = append(q.args, currency, string(r.Group.Basis))
+	}
+	return q
+}
+func (s resourceItemQuery) position(values []any, comparison string) (string, []any) {
+	args := slices.Clone(s.args)
+	predicate := s.where
+	if values != nil {
+		a := len(args) + 1
+		args = append(args, values...)
+		predicate += fmt.Sprintf(" AND %s %s ($%d,$%d)", s.tuple, comparison, a, a+1)
+	}
+	return predicate, args
+}
+func (s resourceItemQuery) page(q *Request, values []any, comparison string, descending bool, limit int64) ([]contract.ResourceSortKey, []contract.ResourceItem, error) {
+	where, args := s.position(values, comparison)
+	direction := "ASC"
+	if descending {
+		direction = "DESC"
+	}
+	// Direction applies independently to both tuple elements (ORDER BY tuple DESC would not
+	// use the two-column C-order index). The tuple itself is used only for comparisons.
+	order := strings.TrimSuffix(strings.TrimPrefix(s.tuple, "("), ")")
+	order = strings.ReplaceAll(order, ",", " "+direction+",") + " " + direction
+	rs, err := q.tx.Query(q.ctx(), "SELECT "+s.key+","+s.item+" FROM "+s.table+" WHERE "+where+" ORDER BY "+order+" LIMIT "+strconv.FormatInt(limit, 10), args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rs.Close()
+	keys := []contract.ResourceSortKey{}
+	items := []contract.ResourceItem{}
+	for rs.Next() {
+		var key, item []byte
+		if err := rs.Scan(&key, &item); err != nil {
+			return nil, nil, err
+		}
+		keys = append(keys, key)
+		items = append(items, item)
+	}
+	return keys, items, rs.Err()
+}
+func (s resourceItemQuery) exists(q *Request, key contract.ResourceSortKey, category contract.ResourceCategory, comparison string) (bool, error) {
+	values, err := resourceKeyValues(key, category)
+	if err != nil {
+		return false, err
+	}
+	where, args := s.position(values, comparison)
+	return has(q, "SELECT 1 FROM "+s.table+" WHERE "+where+" LIMIT 1", args...)
+}
+func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (contract.ProjectResourceItemsReply, error) {
+	limit := int64(50)
+	if r.Limit != nil {
+		limit = *r.Limit
+	}
+	if limit < 1 || limit > 100 {
+		return nil, fail(400, "Expected limit 1..100")
+	}
+	query := ""
+	if r.Query != nil {
+		query = *r.Query
+	}
+	if len([]rune(query)) > 200 || (r.Query != nil && r.Category != "tools") {
+		return nil, fail(400, "Query is tools-only, at most 200 characters")
+	}
+	if (r.Category == "prices") != (r.Group != nil) {
+		return nil, fail(400, "Group required only for prices")
+	}
+	if r.Group != nil && r.Group.Currency != nil && len([]rune(*r.Group.Currency)) > 200 {
+		return nil, fail(400, "Invalid currency")
+	}
+	choices := 0
+	for _, set := range []bool{r.Cursor != nil, r.Anchor != nil, r.Around != nil} {
+		if set {
+			choices++
+		}
+	}
+	if choices > 1 {
+		return nil, fail(400, "Use one of cursor, anchor, around")
+	}
+	var cursor *resourceItemCursor
+	var values []any
+	var err error
+	descending := r.Anchor != nil && *r.Anchor == "end"
+	comparison := ">"
+	var anchor contract.ResourceSortKey
+	if r.Cursor != nil {
+		cursorVersion := 1
+		var raw []byte
+		var e error
+		if strings.HasPrefix(*r.Cursor, "r2.") {
+			cursorVersion = 2
+			raw, e = resourceUnpack(*r.Cursor, "r2.")
+		} else {
+			raw, e = base64.RawURLEncoding.DecodeString(*r.Cursor)
+		}
+		if e != nil {
+			return nil, fail(400, "Invalid resource cursor")
+		}
+
+		cursor = &resourceItemCursor{}
+		if e = resourceStrictJSON(raw, cursor); e != nil {
+			return nil, e
+		}
+		if cursor.SchemaVersion != cursorVersion || cursor.ProjectID != r.ProjectId || cursor.Category != r.Category || !reflect.DeepEqual(cursor.Group, r.Group) || cursor.Query != query || (cursor.Direction != "after" && cursor.Direction != "before") {
+			return nil, fail(400, "Resource cursor binding mismatch")
+		}
+		if !resourceEpochPattern.MatchString(cursor.BuildEpoch) {
+			return nil, fail(400, "Invalid resource cursor epoch")
+		}
+		values, err = resourceKeyValues(cursor.Key, r.Category)
+		if err != nil {
+			return nil, err
+		}
+		descending = cursor.Direction == "before"
+	}
+	if r.Around != nil {
+		values, err = resourceKeyValues(r.Around.Key, r.Category)
+		if err != nil {
+			return nil, err
+		}
+		descending = r.Around.Direction == "atOrBefore"
+	}
+	if descending {
+		comparison = "<"
+	}
+	s, err := resourceReadPrepared(q, r.ProjectId)
+	if err != nil {
+		return nil, err
+	}
+	if cursor != nil && cursor.BuildEpoch != s.Epoch {
+		return nil, fail(409, "Resource build replaced; restart with around anchor")
+	}
+	if !s.Ready {
+		return jsonBytes(contract.ResourcePreparingReply{Kind: "preparing", Version: json.RawMessage("null"), ProjectId: r.ProjectId, Progress: resourcePublicProgress(s)}), nil
+	}
+	iq := resourceItemsQuery(r, query)
+	if r.Around != nil {
+		inclusive := comparison + "="
+		keys, _, e := iq.page(q, values, inclusive, descending, 1)
+		if e != nil {
+			return nil, e
+		}
+		if len(keys) == 0 {
+			keys, _, e = iq.page(q, values, map[bool]string{true: ">=", false: "<="}[descending], !descending, 1)
+			if e != nil {
+				return nil, e
+			}
+		}
+		if len(keys) > 0 {
+			anchor = keys[0]
+			values, err = resourceKeyValues(anchor, r.Category)
+			if err != nil {
+				return nil, err
+			}
+		}
+		comparison = inclusive
+	}
+	keys, items, err := iq.page(q, values, comparison, descending, limit)
+	if err != nil {
+		return nil, err
+	}
+	if descending {
+		slices.Reverse(keys)
+		slices.Reverse(items)
+	}
+	if len(keys) > 0 && anchor == nil {
+		anchor = keys[0]
+	}
+	if anchor == nil {
+		anchor = json.RawMessage("null")
+	}
+	total := int64(0)
+	switch r.Category {
+	case "tools":
+		total = s.Header.ItemCounts.Tools
+	case "costs":
+		total = s.Header.ItemCounts.Costs
+	case "prices":
+		total = s.Header.ItemCounts.Prices
+	}
+	if query != "" || r.Category == "prices" {
+		if err = q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM "+iq.table+" WHERE "+iq.where, iq.args...).Scan(&total); err != nil {
+			return nil, err
+		}
+	}
+	if r.Category == "tools" {
+		for i, key := range keys {
+			packed, err := resourceToolPosition(key)
+			if err != nil {
+				return nil, err
+			}
+			if packed != nil {
+				var item contract.ResourceToolItem
+				if err = json.Unmarshal(items[i], &item); err != nil {
+					return nil, err
+				}
+				item.Position = packed
+				items[i] = jsonBytes(item)
+			}
+		}
+		if string(anchor) != "null" {
+			packed, err := resourceToolPosition(anchor)
+			if err != nil {
+				return nil, err
+			}
+			if packed != nil {
+				anchor = jsonBytes(packed)
+			}
+		}
+	}
+	out := contract.ResourceItemsPage{ProjectId: r.ProjectId, Category: r.Category, Version: s.Epoch + ":" + s.Revision, Header: s.Header, Progress: resourcePublicProgress(s), Items: items, Total: total, ResolvedAnchor: anchor}
+	encode := func(key contract.ResourceSortKey, direction string) (*string, error) {
+		c := resourceItemCursor{SchemaVersion: 1, ProjectID: r.ProjectId, BuildEpoch: s.Epoch, Category: r.Category, Group: r.Group, Query: query, Direction: direction, Key: key}
+		raw := jsonBytes(c)
+		if len(raw) > resourcePackThreshold {
+			c.SchemaVersion = 2
+			token, err := resourcePack(jsonBytes(c), "r2.")
+			return &token, err
+		}
+		token := base64.RawURLEncoding.EncodeToString(raw)
+		return &token, nil
+	}
+	if len(keys) > 0 {
+		more, e := iq.exists(q, keys[len(keys)-1], r.Category, ">")
+		if e != nil {
+			return nil, e
+		}
+		if more {
+			out.NextCursor, err = encode(keys[len(keys)-1], "after")
+			if err != nil {
+				return nil, err
+			}
+		}
+		more, e = iq.exists(q, keys[0], r.Category, "<")
+		if e != nil {
+			return nil, e
+		}
+		if more {
+			out.PreviousCursor, err = encode(keys[0], "before")
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return jsonBytes(out), nil
+}
+
+var resourceEpochPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// Each tool-key field can originate in a separate admitted 1 MiB source body.
+// Go JSON can expand each source UTF-8 byte to six bytes (controls, <, >, &).
+// Two full fields therefore need at most 12 MiB, plus 4096 bytes for the tuple,
+// project/epoch/category, query<=200 runes, group<=200 runes and fixed envelope.
+// This is a decode allocation bound, not a tool-name admission cap.
+const resourceDecodedPositionMax = 12*(1<<20) + 4096
+const resourcePackThreshold = 32 * 1024 // representation choice only; small positions keep their original wire form
+
+type resourcePackedToolPosition struct {
+	SchemaVersion int                      `json:"schemaVersion"`
+	Key           contract.ResourceToolKey `json:"key"`
+}
+
+func resourcePack(raw []byte, prefix string) (string, error) {
+	if len(raw) > resourceDecodedPositionMax {
+		return "", fail(503, "Resource position exceeds admitted-source envelope")
+	}
+	var b bytes.Buffer
+	w := zlib.NewWriter(&b)
+	if _, err := w.Write(raw); err != nil {
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	token := prefix + base64.RawURLEncoding.EncodeToString(b.Bytes())
+	// Reserve the bounded query/group/project and JSON request envelope. Never emit a
+	// token that this operation cannot receive under the unchanged shared HTTP bound.
+	if len(token) > (1<<20)-4096 {
+		return "", fail(503, "Resource position exceeds HTTP envelope")
+	}
+	return token, nil
+}
+func resourceUnpack(token, prefix string) ([]byte, error) {
+	invalid := func() ([]byte, error) { return nil, fail(400, "Invalid compressed resource position") }
+	if !strings.HasPrefix(token, prefix) {
+		return invalid()
+	}
+	compressed, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, prefix))
+	if err != nil {
+		return invalid()
+	}
+	source := bytes.NewReader(compressed)
+	r, err := zlib.NewReader(source)
+	if err != nil {
+		return invalid()
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(r, resourceDecodedPositionMax+1))
+	closeErr := r.Close()
+	if readErr != nil || closeErr != nil || len(raw) > resourceDecodedPositionMax || source.Len() != 0 {
+		return invalid()
+	}
+	return raw, nil
+}
+func resourceToolPosition(key contract.ResourceSortKey) (*contract.ResourcePackedToolKey, error) {
+	// Canonical serialization includes JSON escaping expansion in the threshold decision.
+	var k contract.ResourceToolKey
+	if err := json.Unmarshal(key, &k); err != nil {
+		return nil, err
+	}
+	raw := jsonBytes(resourcePackedToolPosition{SchemaVersion: 1, Key: k})
+	if len(raw) <= resourcePackThreshold {
+		return nil, nil
+	}
+	token, err := resourcePack(raw, "tp1.")
+	if err != nil {
+		return nil, err
+	}
+	return &contract.ResourcePackedToolKey{Kind: "tool-position", Encoded: token}, nil
 }

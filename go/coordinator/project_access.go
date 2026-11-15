@@ -169,7 +169,7 @@ func refreshRequestAccess(q *Request) error {
 	return err
 }
 
-func projectAgentArguments(q *Request, args doc, executionID string) (doc, error) {
+func projectAgentArguments(q *Request, args doc, executionID string, preparedRead bool) (doc, error) {
 	e, err := get(q, executionID, "execution")
 	if err != nil {
 		return nil, err
@@ -179,7 +179,11 @@ func projectAgentArguments(q *Request, args doc, executionID string) (doc, error
 		return nil, err
 	}
 	if _, focused := session["focus"]; focused {
-		project, err := focusProject(q, session, args["projectId"])
+		resolver := focusProject
+		if preparedRead {
+			resolver = focusProjectID
+		}
+		project, err := resolver(q, session, args["projectId"])
 		if err != nil {
 			return nil, err
 		}
@@ -187,6 +191,9 @@ func projectAgentArguments(q *Request, args doc, executionID string) (doc, error
 		return args, nil
 	}
 	project := astr(session["projectId"])
+	if preparedRead && project == "" {
+		return nil, fail(400, "Expected projectId")
+	}
 	if args["projectId"] == nil {
 		args["projectId"] = project
 	}

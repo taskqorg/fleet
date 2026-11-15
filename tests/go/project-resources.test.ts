@@ -31,7 +31,7 @@ test('prepared resource processor qualifies against isolated PostgreSQL; off res
   });
   assert.equal(code,0,'real PostgreSQL processor proof');
   const res=await fetch(c.base+'/api/ops/project_resources',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify({projectId:'fleet'})});
-  assert.equal(res.status,404,'this slice registers no new prepared public operation');
+  assert.equal(res.status,503,'prepared public reads remain disabled until rollout');
   // An actually accepted native observation must traverse normalization AND the opted-in processor.
   env.FLEET_RESOURCE_PROCESSOR='on';await c.restart();
   const post=async(path:string,body:object,secret=c.secret)=>{

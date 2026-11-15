@@ -222,6 +222,56 @@ func (v *ProjectContextRequest) Validate() error {
 	return nil
 }
 
+type ProjectDetailReply struct {
+	Content       ProjectBundle              `json:"content"`
+	ContentSha    string                     `json:"contentSha"`
+	Context       []ProjectContextEntry      `json:"context"`
+	Id            string                     `json:"id"`
+	InitialAccess *ProjectInitialAccess      `json:"initialAccess,omitempty"`
+	Name          string                     `json:"name"`
+	RepoSha       *string                    `json:"repoSha,omitempty"`
+	Revision      int64                      `json:"revision"`
+	Settings      map[string]json.RawMessage `json:"settings"`
+	SourceState   *string                    `json:"sourceState,omitempty"`
+	UnknownKeys   []string                   `json:"unknownKeys"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectDetailReply) Validate() error {
+	if err := Check(&v.Content, "content"); err != nil {
+		return err
+	}
+	if v.Context == nil {
+		return Missing("context")
+	}
+	for i := range v.Context {
+		if err := Check(&v.Context[i], "context"); err != nil {
+			return err
+		}
+	}
+	if v.InitialAccess != nil {
+		if err := Check(v.InitialAccess, "initialAccess"); err != nil {
+			return err
+		}
+	}
+	if v.Settings == nil {
+		return Missing("settings")
+	}
+	if v.UnknownKeys == nil {
+		return Missing("unknownKeys")
+	}
+	return nil
+}
+
+type ProjectDetailRequest struct {
+	ProjectId string `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectDetailRequest) Validate() error {
+	return nil
+}
+
 type ProjectInitialAccess struct {
 	Member  *string `json:"member"`
 	Revoked bool    `json:"revoked"`
@@ -286,6 +336,55 @@ type ProjectReadinessRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ProjectReadinessRequest) Validate() error {
+	return nil
+}
+
+type ProjectResourceItemsReply = json.RawMessage
+
+type ProjectResourceItemsRequest struct {
+	Anchor       *ResourceAnchor  `json:"anchor,omitempty"`
+	Around       *ResourceAround  `json:"around,omitempty"`
+	Category     ResourceCategory `json:"category"`
+	Cursor       *string          `json:"cursor,omitempty"`
+	Group        *ResourceGroup   `json:"group,omitempty"`
+	KnownVersion *string          `json:"knownVersion,omitempty"`
+	Limit        *int64           `json:"limit,omitempty"`
+	ProjectId    string           `json:"projectId"`
+	Query        *string          `json:"query,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectResourceItemsRequest) Validate() error {
+	if v.Anchor != nil {
+		if err := Check(v.Anchor, "anchor"); err != nil {
+			return err
+		}
+	}
+	if v.Around != nil {
+		if err := Check(v.Around, "around"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Category, "category"); err != nil {
+		return err
+	}
+	if v.Group != nil {
+		if err := Check(v.Group, "group"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ProjectResourcesReply = json.RawMessage
+
+type ProjectResourcesRequest struct {
+	KnownVersion *string `json:"knownVersion,omitempty"`
+	ProjectId    string  `json:"projectId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectResourcesRequest) Validate() error {
 	return nil
 }
 
@@ -507,6 +606,63 @@ func (v *QuestionsWithdrawRequest) Validate() error {
 	return nil
 }
 
+type ResourceAnchor string
+
+const (
+	ResourceAnchorStart ResourceAnchor = "start"
+	ResourceAnchorEnd   ResourceAnchor = "end"
+)
+
+// ResourceAnchorValues lists every ResourceAnchor in schema order.
+var ResourceAnchorValues = []ResourceAnchor{ResourceAnchorStart, ResourceAnchorEnd}
+
+// Valid: v is one of the schema's values.
+func (v ResourceAnchor) Valid() bool {
+	for _, x := range ResourceAnchorValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ResourceAround struct {
+	Direction ResourceDirection `json:"direction"`
+	Key       ResourceSortKey   `json:"key"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceAround) Validate() error {
+	if err := Check(&v.Direction, "direction"); err != nil {
+		return err
+	}
+	if err := Check(&v.Key, "key"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ResourceCategory string
+
+const (
+	ResourceCategoryTools  ResourceCategory = "tools"
+	ResourceCategoryCosts  ResourceCategory = "costs"
+	ResourceCategoryPrices ResourceCategory = "prices"
+)
+
+// ResourceCategoryValues lists every ResourceCategory in schema order.
+var ResourceCategoryValues = []ResourceCategory{ResourceCategoryTools, ResourceCategoryCosts, ResourceCategoryPrices}
+
+// Valid: v is one of the schema's values.
+func (v ResourceCategory) Valid() bool {
+	for _, x := range ResourceCategoryValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type ResourceContributionV1 struct {
 	Costs             []ResourceCostV1            `json:"costs"`
 	EndedMs           *int64                      `json:"endedMs"`
@@ -553,6 +709,39 @@ func (v *ResourceContributionV1) Validate() error {
 	return nil
 }
 
+type ResourceCostItem struct {
+	Basis      ResourceBasis `json:"basis"`
+	Currency   *string       `json:"currency"`
+	Kind       string        `json:"kind"`
+	Note       *string       `json:"note"`
+	PriceCount int64         `json:"priceCount"`
+	Reason     *string       `json:"reason"`
+	Usages     *int64        `json:"usages"`
+	Value      *float64      `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceCostItem) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ResourceCostKey struct {
+	Basis    ResourceBasis `json:"basis"`
+	Currency *string       `json:"currency"`
+	Kind     string        `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceCostKey) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type ResourceCostV1 struct {
 	Amount        *string              `json:"amount"`
 	Basis         ResourceBasis        `json:"basis"`
@@ -573,6 +762,101 @@ func (v *ResourceCostV1) Validate() error {
 		if err := Check(&v.PriceRefs[i], "priceRefs"); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+type ResourceDirection string
+
+const (
+	ResourceDirectionAtOrAfter  ResourceDirection = "atOrAfter"
+	ResourceDirectionAtOrBefore ResourceDirection = "atOrBefore"
+)
+
+// ResourceDirectionValues lists every ResourceDirection in schema order.
+var ResourceDirectionValues = []ResourceDirection{ResourceDirectionAtOrAfter, ResourceDirectionAtOrBefore}
+
+// Valid: v is one of the schema's values.
+func (v ResourceDirection) Valid() bool {
+	for _, x := range ResourceDirectionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ResourceErrorClass string
+
+const (
+	ResourceErrorClassOwnershipMismatch ResourceErrorClass = "ownership_mismatch"
+	ResourceErrorClassProjectionFailed  ResourceErrorClass = "projection_failed"
+	ResourceErrorClassBuildFailed       ResourceErrorClass = "build_failed"
+	ResourceErrorClassMetadataFailed    ResourceErrorClass = "metadata_failed"
+)
+
+// ResourceErrorClassValues lists every ResourceErrorClass in schema order.
+var ResourceErrorClassValues = []ResourceErrorClass{ResourceErrorClassOwnershipMismatch, ResourceErrorClassProjectionFailed, ResourceErrorClassBuildFailed, ResourceErrorClassMetadataFailed}
+
+// Valid: v is one of the schema's values.
+func (v ResourceErrorClass) Valid() bool {
+	for _, x := range ResourceErrorClassValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ResourceGroup struct {
+	Basis    ResourceBasis `json:"basis"`
+	Currency *string       `json:"currency"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceGroup) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ResourceItem = json.RawMessage
+
+type ResourceItemsPage struct {
+	Category       ResourceCategory    `json:"category"`
+	Header         PreparedHeaderV1    `json:"header"`
+	Items          []ResourceItem      `json:"items"`
+	NextCursor     *string             `json:"nextCursor"`
+	PreviousCursor *string             `json:"previousCursor"`
+	Progress       ResourceProgress    `json:"progress"`
+	ProjectId      string              `json:"projectId"`
+	ResolvedAnchor ResourceResolvedKey `json:"resolvedAnchor"`
+	Total          int64               `json:"total"`
+	Version        string              `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceItemsPage) Validate() error {
+	if err := Check(&v.Category, "category"); err != nil {
+		return err
+	}
+	if err := Check(&v.Header, "header"); err != nil {
+		return err
+	}
+	if v.Items == nil {
+		return Missing("items")
+	}
+	for i := range v.Items {
+		if err := Check(&v.Items[i], "items"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Progress, "progress"); err != nil {
+		return err
+	}
+	if err := Check(&v.ResolvedAnchor, "resolvedAnchor"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -662,6 +946,65 @@ func (v *ResourceMetricV1) Validate() error {
 	return nil
 }
 
+type ResourceNullKey = json.RawMessage
+
+type ResourceNullableErrorClass = json.RawMessage
+
+// ResourcePackedToolKey: tp1. plus base64url of one complete zlib stream containing {schemaVersion:1,key:ResourceToolKey}; a position, never authority.
+type ResourcePackedToolKey struct {
+	Encoded string `json:"encoded"`
+	Kind    string `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourcePackedToolKey) Validate() error {
+	return nil
+}
+
+type ResourcePreparingReply struct {
+	Kind      string           `json:"kind"`
+	Progress  ResourceProgress `json:"progress"`
+	ProjectId string           `json:"projectId"`
+	Version   ResourceNullKey  `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourcePreparingReply) Validate() error {
+	if err := Check(&v.Progress, "progress"); err != nil {
+		return err
+	}
+	if err := Check(&v.Version, "version"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ResourcePriceItem struct {
+	Group      ResourceGroup `json:"group"`
+	Kind       string        `json:"kind"`
+	ObservedAt int64         `json:"observedAt"`
+	PriceId    string        `json:"priceId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourcePriceItem) Validate() error {
+	if err := Check(&v.Group, "group"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ResourcePriceKey struct {
+	Kind       string `json:"kind"`
+	ObservedAt int64  `json:"observedAt"`
+	PriceId    string `json:"priceId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourcePriceKey) Validate() error {
+	return nil
+}
+
 type ResourcePriceRefV1 struct {
 	ObservedAt int64  `json:"observedAt"`
 	PriceId    string `json:"priceId"`
@@ -669,6 +1012,102 @@ type ResourcePriceRefV1 struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ResourcePriceRefV1) Validate() error {
+	return nil
+}
+
+type ResourceProgress struct {
+	ErrorClass      ResourceNullableErrorClass `json:"errorClass"`
+	OldestPendingAt *string                    `json:"oldestPendingAt"`
+	Pending         bool                       `json:"pending"`
+	PublishedAt     *string                    `json:"publishedAt"`
+	State           ResourceProgressState      `json:"state"`
+	ValidatedAt     string                     `json:"validatedAt"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceProgress) Validate() error {
+	if err := Check(&v.ErrorClass, "errorClass"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ResourceProgressState string
+
+const (
+	ResourceProgressStateInitializing ResourceProgressState = "initializing"
+	ResourceProgressStateCurrent      ResourceProgressState = "current"
+	ResourceProgressStateUpdating     ResourceProgressState = "updating"
+	ResourceProgressStateError        ResourceProgressState = "error"
+)
+
+// ResourceProgressStateValues lists every ResourceProgressState in schema order.
+var ResourceProgressStateValues = []ResourceProgressState{ResourceProgressStateInitializing, ResourceProgressStateCurrent, ResourceProgressStateUpdating, ResourceProgressStateError}
+
+// Valid: v is one of the schema's values.
+func (v ResourceProgressState) Valid() bool {
+	for _, x := range ResourceProgressStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ResourceReadyReply struct {
+	Header    PreparedHeaderV1 `json:"header"`
+	Kind      string           `json:"kind"`
+	Progress  ResourceProgress `json:"progress"`
+	ProjectId string           `json:"projectId"`
+	Version   string           `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceReadyReply) Validate() error {
+	if err := Check(&v.Header, "header"); err != nil {
+		return err
+	}
+	if err := Check(&v.Progress, "progress"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ResourceResolvedKey = json.RawMessage
+
+type ResourceSortKey = json.RawMessage
+
+type ResourceToolItem struct {
+	Calls      int64                  `json:"calls"`
+	Connection *string                `json:"connection"`
+	Errors     int64                  `json:"errors"`
+	Kind       string                 `json:"kind"`
+	Name       string                 `json:"name"`
+	Position   *ResourcePackedToolKey `json:"position,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceToolItem) Validate() error {
+	if v.Position != nil {
+		if err := Check(v.Position, "position"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ResourceToolKey: Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.
+type ResourceToolKey struct {
+	Connection *string `json:"connection"`
+	Kind       string  `json:"kind"`
+	Name       string  `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceToolKey) Validate() error {
 	return nil
 }
 
@@ -681,6 +1120,21 @@ type ResourceToolV1 struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ResourceToolV1) Validate() error {
+	return nil
+}
+
+type ResourceUnchangedReply struct {
+	Kind      string           `json:"kind"`
+	Progress  ResourceProgress `json:"progress"`
+	ProjectId string           `json:"projectId"`
+	Version   string           `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceUnchangedReply) Validate() error {
+	if err := Check(&v.Progress, "progress"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1107,8 +1561,11 @@ func init() {
 		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
 		"project_code_set":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"2 to 5 characters, a letter first, not hex-only, no I or O, never used before. The project's tasks, questions and conversations get new codes; old codes stay aliases.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"code\"],\"type\":\"object\"}")},
 		"project_context":         {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"project_detail":          {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_list":            {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"project_readiness":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"project_resource_items":  {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"anchor\":{\"enum\":[\"start\",\"end\"],\"type\":\"string\"},\"around\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"atOrAfter\",\"atOrBefore\"],\"type\":\"string\"},\"key\":{\"oneOf\":[{\"$comment\":\"Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"tool\"},\"name\":{\"type\":\"string\"}},\"required\":[\"kind\",\"name\",\"connection\"],\"type\":\"object\"},{\"$comment\":\"tp1. plus base64url of one complete zlib stream containing {schemaVersion:1,key:ResourceToolKey}; a position, never authority.\",\"additionalProperties\":false,\"properties\":{\"encoded\":{\"type\":\"string\"},\"kind\":{\"const\":\"tool-position\"}},\"required\":[\"kind\",\"encoded\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"cost\"}},\"required\":[\"kind\",\"currency\",\"basis\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"price\"},\"observedAt\":{\"type\":\"integer\"},\"priceId\":{\"type\":\"string\"}},\"required\":[\"kind\",\"priceId\",\"observedAt\"],\"type\":\"object\"}]}},\"required\":[\"key\",\"direction\"],\"type\":\"object\"},\"category\":{\"enum\":[\"tools\",\"costs\",\"prices\"],\"type\":\"string\"},\"cursor\":{\"type\":\"string\"},\"group\":{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"currency\",\"basis\"],\"type\":\"object\"},\"knownVersion\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"category\"],\"type\":\"object\"}")},
+		"project_resources":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"knownVersion\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"question_answer":         {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Answers a project question, or any other question by id.\",\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},
 		"question_ask":            {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"text\"],\"type\":\"object\"}")},
 		"question_history":        {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},

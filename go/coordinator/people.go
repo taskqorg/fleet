@@ -190,7 +190,7 @@ func (a *App) guardOp(q *Request, name string, body json.RawMessage) error {
 	if architectOps.MatchString(name) && !hasRole(p, "architect") && !a.ownSubscription(q, name, b) {
 		return fail(403, "Architect role required")
 	}
-	if id, ok := b["projectId"].(string); ok && !mayAccessProjectID(p, id) {
+	if id, ok := b["projectId"].(string); ok && !(isResourceRead(name) && strings.TrimSpace(id) == "") && !mayAccessProjectID(p, id) {
 		return fail(404, "Unknown project")
 	}
 	return nil
