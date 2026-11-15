@@ -16,6 +16,15 @@ import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
 
+const BOOK_VERSION = { current: '1.261115.6', tone: 'attention' as const, summary: '1 part needs a look', updateReady: true, onUpdate: () => {}, rows: [
+  { key: 'tab', part: 'This tab', icon: 'panels-top-left' as const, version: '1.261115.5', state: 'update ready', tone: 'running' as const },
+  { key: 'ui', part: 'Site app', icon: 'house' as const, version: '1.261115.6', state: 'bundled', tone: 'neutral' as const },
+  { key: 'coordinator', part: 'Coordinator', icon: 'network' as const, version: '1.261115.6', state: 'running', tone: 'success' as const, note: 'since 2h' },
+  { key: 'gateway', part: 'Gateway', icon: 'shield' as const, version: '1.261115.6', state: 'ok', tone: 'success' as const },
+  { key: 'host:mac', part: 'mac', icon: 'terminal' as const, version: '1.261115.6', state: 'current', tone: 'success' as const },
+  { key: 'host:windows', part: 'windows', icon: 'terminal' as const, version: '1.261114.3', state: 'behind', tone: 'attention' as const, note: 'auto-update off' },
+] };
+
 function PageHead({ title, children }: { title: string; children?: ComponentChildren }) {
   return <header class="page-h"><h1>{title}</h1><span class="grow" />{children}</header>;
 }
@@ -529,7 +538,7 @@ function Catalogue() {
 function App() {
   const [loc, go] = useLocation();
   const cur = loc.split('/')[1] || 'overview';
-  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} user={{ name: 'Alex Kirs', onLogout: () => go('/overview') }}>
+  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
     <Switch>
       <Route path="/tasks/:id">{(p: { id: string }) => <Tasks id={p.id} />}</Route>
       <Route path="/tasks"><Tasks /></Route>

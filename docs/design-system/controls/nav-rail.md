@@ -9,7 +9,7 @@
 1. The pinned group, in the order the person set.
 2. The Search item: opens the [Spotlight palette](spotlight.md) (OR-31, OR-32). The rail has no search field of its own.
 3. All other sections, grouped (Operator, Architect) under small group headings.
-4. At the bottom, the current user block: avatar and name. A click (or right-click) opens a short menu with Logout, the Cloudflare Access logout (OR-42).
+4. At the bottom, the current user block: avatar and name. A click (or right-click) opens a short menu with Logout, the Cloudflare Access logout (OR-42). After the name, the [version](#version).
 
 Each item has a registry icon (OR-3), a name, an optional counter chip in a tone (for example `3` in attention for "need you"), and a pin button.
 
@@ -24,6 +24,10 @@ Each item has a registry icon (OR-3), a name, an optional counter chip in a tone
 * Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Group headings and the search row keep their height (the search hides and its filter clears), the user block keeps its avatar.
 * The divider on the rail's right edge resizes it (OR-41): drag, or focus it and press Left and Right; a double-click resets the width. Collapsed, the rail has no divider.
 * The collapse button shrinks the rail to icons, and below 760 px it is always collapsed: pins first and counters on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears.
+
+**Version.** The installed Fleet release (the coordinator's version, `1.261115.6`) in mono after the person's name. It is toned when a part needs a look (OR-18): attention for a host behind or an update held, danger for a failed update or an unreachable gateway. A click shows the overview (an informational layer, OR-14): one row per part with its version, state and a short note. The rows are this tab, the app the site serves (bundled or a separate UI release), the coordinator (since when, and the release it offers hosts when that differs), the gateway when configured, and each host (current, behind, updating, update failed, offline; auto-update off or held). The data is `system_versions`, the same read agents use.
+
+When the site serves a newer app than the tab runs, an Update button (icon) shows after the version and at the top of the overview, and the avatar gets a dot. The check compares the hashed entry script and stylesheet of the page this tab loaded with a fresh copy of the page: on load, on focus (at most once a minute) and every 5 minutes, so it gives the same answer every time and goes away once the tab runs the site's app. Update asks a waiting service worker to take over, then reloads; one click is enough. There is no separate update banner. Collapsed, the version hides and the Update button stays.
 
 **Keyboard.** `g` then a letter goes to a section ([principles §5](../principles.md#5-keyboard)). Up and down arrows move through items, `p` pins or unpins the focused item, and Alt+Up and Alt+Down move a focused pinned item.
 

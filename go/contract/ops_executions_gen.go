@@ -53,6 +53,19 @@ func (v *CiRunner) Validate() error {
 	return nil
 }
 
+type CoordinatorVersion struct {
+	Commit   *string `json:"commit,omitempty"`
+	Offered  *string `json:"offered,omitempty"`
+	Previous *string `json:"previous,omitempty"`
+	Started  string  `json:"started"`
+	Version  string  `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CoordinatorVersion) Validate() error {
+	return nil
+}
+
 // DeliveryBaseline: P50/P90 over a window (nearest rank); a named one is a stored snapshot.
 type DeliveryBaseline struct {
 	At          *string        `json:"at,omitempty"`
@@ -917,6 +930,39 @@ func (v *FileRef) Validate() error {
 	return nil
 }
 
+type GatewayState string
+
+const (
+	GatewayStateOk          GatewayState = "ok"
+	GatewayStateUnreachable GatewayState = "unreachable"
+)
+
+// GatewayStateValues lists every GatewayState in schema order.
+var GatewayStateValues = []GatewayState{GatewayStateOk, GatewayStateUnreachable}
+
+// Valid: v is one of the schema's values.
+func (v GatewayState) Valid() bool {
+	for _, x := range GatewayStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type GatewayVersion struct {
+	State   GatewayState `json:"state"`
+	Version *string      `json:"version,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayVersion) Validate() error {
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // HostRecord: A registered host (without its secret hash). harnesses: per harness name whether it is allowed; autoUpdate on, off or an RFC 3339 time.
 type HostRecord struct {
 	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
@@ -975,6 +1021,26 @@ func (v *HostRow) Validate() error {
 	}
 	if v.Slots == nil {
 		return Missing("slots")
+	}
+	if v.Update == nil {
+		return Missing("update")
+	}
+	return nil
+}
+
+type HostVersion struct {
+	AutoUpdate json.RawMessage `json:"autoUpdate"`
+	Behind     bool            `json:"behind"`
+	Id         string          `json:"id"`
+	LastSeenAt *float64        `json:"lastSeenAt"`
+	Update     json.RawMessage `json:"update"`
+	Version    *string         `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostVersion) Validate() error {
+	if v.AutoUpdate == nil {
+		return Missing("autoUpdate")
 	}
 	if v.Update == nil {
 		return Missing("update")
@@ -2117,6 +2183,42 @@ func (v *SystemPurgeRequest) Validate() error {
 	return nil
 }
 
+// SystemVersionsReply: Installed versions of every Fleet part in one read (go/coordinator/versions.go): the coordinator, the UI the site serves, the gateway when configured, and each host's executor with its update state.
+type SystemVersionsReply struct {
+	Coordinator  CoordinatorVersion `json:"coordinator"`
+	Gateway      *GatewayVersion    `json:"gateway,omitempty"`
+	Hosts        []HostVersion      `json:"hosts"`
+	ServerNow    int64              `json:"serverNow"`
+	StaleAfterMs int64              `json:"staleAfterMs"`
+	Ui           UiVersion          `json:"ui"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SystemVersionsReply) Validate() error {
+	if err := Check(&v.Coordinator, "coordinator"); err != nil {
+		return err
+	}
+	if v.Gateway != nil {
+		if err := Check(v.Gateway, "gateway"); err != nil {
+			return err
+		}
+	}
+	if v.Hosts == nil {
+		return Missing("hosts")
+	}
+	for i := range v.Hosts {
+		if err := Check(&v.Hosts[i], "hosts"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Ui, "ui"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type SystemVersionsRequest = map[string]json.RawMessage
+
 type TextChange struct {
 	Added     []string `json:"added"`
 	FirstLine int64    `json:"firstLine"`
@@ -2130,6 +2232,42 @@ func (v *TextChange) Validate() error {
 	}
 	if v.Removed == nil {
 		return Missing("removed")
+	}
+	return nil
+}
+
+// UiKind: bundled: the UI built into the coordinator release; ui: an independently installed UI release
+type UiKind string
+
+const (
+	UiKindBundled UiKind = "bundled"
+	UiKindUi      UiKind = "ui"
+)
+
+// UiKindValues lists every UiKind in schema order.
+var UiKindValues = []UiKind{UiKindBundled, UiKindUi}
+
+// Valid: v is one of the schema's values.
+func (v UiKind) Valid() bool {
+	for _, x := range UiKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type UiVersion struct {
+	BackendVersion string  `json:"backendVersion"`
+	Commit         *string `json:"commit,omitempty"`
+	Kind           UiKind  `json:"kind"`
+	Version        string  `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *UiVersion) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -2163,6 +2301,7 @@ func init() {
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
 		"system_purge":          {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Removes tombstoned rows no live or tombstoned row references (a removed host with no execution, session, command, store or artifact copy naming it). preview true counts them and changes nothing; the confirm recomputes with the same query.\",\"properties\":{\"kinds\":{\"items\":{\"$comment\":\"Kinds system_purge removes; the other object kinds of fleet-system-management.md join with their delete operations.\",\"enum\":[\"host\"],\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"preview\"],\"type\":\"object\"}")},
+		"system_versions":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}
