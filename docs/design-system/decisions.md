@@ -363,3 +363,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 
 * **Choice (owner):** a pinned row shows a pin before its state icon, and a click on it unpins (the row leaves the Pinned group). Only pinned rows get this column; other rows do not move. This replaces "rows carry no pin mark".
 * **Choice (owner):** the group and sort chips have no fill of their own and use the same box as the saved-view buttons (height, padding, centred content); a set value shows in foreground text.
+
+## 2026-11-15: Delivery as list and detail, one overview
+
+* **Question:** Delivery was one long page of stage cards and charts with no way to open a pull request, and it updated only by polling.
+* **Options:** the work area as an overview, a timeline, a metrics board, or tabs of the three.
+* **Choice (owner):** D, one overview in the order of the operator's questions: Needs a look, Moving now, Pace. No tabs: each tab answered only part of the question (OR-19). The control column lists pull requests by stage like Tasks; a pull request opens in the work area. The stage tiles (repeating the counters, OR-17) and the 24-hour in-flight stack are dropped.
+* **With it:** the `delivery` state family with Checks failed (`pr_failed`, from the latest finished pull_request run, read with a key); delivery changes in the change stream (kind `delivery`); a GitHub read every minute with a key; `TimeStrip` parts.

@@ -21,6 +21,21 @@ func TestDeliveryStages(t *testing.T) {
 			{Number: 3, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 4, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 5, CreatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}},
+			{Number: 6, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
+				SHA string `json:"sha"`
+			}{"h6"}},
+			{Number: 7, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
+				SHA string `json:"sha"`
+			}{"h7"}},
+		},
+		// The latest finished run per head and workflow decides: #6 failed after an older success, #7 passed after an older failure.
+		finished: []ghRun{
+			{Event: "pull_request", Conclusion: "success", HeadSHA: "h6", UpdatedAt: "2026-11-12T10:30:00Z"},
+			{Event: "pull_request", Conclusion: "failure", HeadSHA: "h6", UpdatedAt: "2026-11-12T11:30:00Z"},
+			// Another workflow passing later on the same head does not hide the failure.
+			{Event: "pull_request", Conclusion: "success", HeadSHA: "h6", UpdatedAt: "2026-11-12T11:40:00Z", Workflow: 2},
+			{Event: "pull_request", Conclusion: "failure", HeadSHA: "h7", UpdatedAt: "2026-11-12T10:30:00Z"},
+			{Event: "pull_request", Conclusion: "success", HeadSHA: "h7", UpdatedAt: "2026-11-12T11:30:00Z"},
 		},
 		runs: []ghRun{
 			{Event: "pull_request", Status: "in_progress", HeadSHA: "h2", CreatedAt: "2026-11-12T11:00:00Z"},
@@ -41,13 +56,19 @@ func TestDeliveryStages(t *testing.T) {
 		},
 	}
 	items, landing := deliveryStages("fleet", "o/r", g, []string{"1.2.9", "1.2.10"}, now)
-	want := map[int64]contract.DeliveryStage{1: "pr_open", 2: "pr_ci", 3: "mq_wait", 4: "mq_ci", 5: "mq_wait", 10: "installed", 11: "installing", 12: "releasing"}
+	want := map[int64]contract.DeliveryStage{1: "pr_open", 2: "pr_ci", 3: "mq_wait", 4: "mq_ci", 5: "mq_wait", 6: "pr_failed", 7: "pr_open", 10: "installed", 11: "installing", 12: "releasing"}
 	if len(items) != len(want) {
 		t.Fatalf("items = %+v", items)
 	}
 	for _, it := range items {
 		if want[it.Number] != it.Stage {
 			t.Errorf("#%d stage %s, want %s", it.Number, it.Stage, want[it.Number])
+		}
+		if it.Number == 6 && it.Since != "2026-11-12T11:30:00Z" {
+			t.Errorf("#6 failed since %s", it.Since)
+		}
+		if it.Number < 10 && deref(it.Opened) != "2026-11-12T10:00:00Z" || it.Number == 12 && deref(it.Merged) != "2026-11-12T11:00:00Z" {
+			t.Errorf("#%d opened %v merged %v", it.Number, deref(it.Opened), deref(it.Merged))
 		}
 	}
 	if landing != 3 {
@@ -80,5 +101,23 @@ func TestDeliveryReplyScoped(t *testing.T) {
 	}
 	if r := deliveryReply(last, func(string) bool { return false }); len(r.Items)+len(r.Samples) != 0 || r.Landing != 0 || r.Error != nil {
 		t.Fatalf("no access sees %+v", r)
+	}
+}
+
+// Requirement: a delivery pass that changes a project's pull requests reaches watchers through the change stream.
+// Risk: the Delivery page keeps showing old rows until its slow poll, because the trigger drops delivery documents.
+func TestDeliveryStateChange(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	var kind string
+	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES('delivery-state','delivery-state:fleet','fleet','{"refreshedAt":"x"}')`); err != nil {
+			return err
+		}
+		return q.tx.QueryRow(env.ctx, "SELECT kind FROM change WHERE id='delivery-state:fleet' ORDER BY seq DESC LIMIT 1").Scan(&kind)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "delivery" {
+		t.Fatalf("change kind %q", kind)
 	}
 }

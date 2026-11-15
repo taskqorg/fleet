@@ -797,6 +797,16 @@ const providersJSON = `
     "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
    },
+   "runs_completed_pr": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/actions/runs?event=pull_request&status=completed&per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "The latest finished pull_request workflow runs (delivery: a pull request whose checks failed).",
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
+   },
    "runs_queued": {
     "method": "GET",
     "path": "/repos/{owner}/{repo}/actions/runs?status=queued&per_page=100",

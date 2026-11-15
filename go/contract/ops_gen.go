@@ -76,6 +76,7 @@ const (
 	ChangeKindCommand               ChangeKind = "command"
 	ChangeKindConnectionKey         ChangeKind = "connection-key"
 	ChangeKindDefinition            ChangeKind = "definition"
+	ChangeKindDelivery              ChangeKind = "delivery"
 	ChangeKindEvent                 ChangeKind = "event"
 	ChangeKindExecution             ChangeKind = "execution"
 	ChangeKindExperiment            ChangeKind = "experiment"
@@ -91,7 +92,7 @@ const (
 )
 
 // ChangeKindValues lists every ChangeKind in schema order.
-var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindProjectRecommendation, ChangeKindQuestion, ChangeKindResourceSummary, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask}
+var ChangeKindValues = []ChangeKind{ChangeKindApiConnection, ChangeKindArtifact, ChangeKindCommand, ChangeKindConnectionKey, ChangeKindDefinition, ChangeKindDelivery, ChangeKindEvent, ChangeKindExecution, ChangeKindExperiment, ChangeKindHost, ChangeKindManagedAccount, ChangeKindProjectRecommendation, ChangeKindQuestion, ChangeKindResourceSummary, ChangeKindScore, ChangeKindSession, ChangeKindSettingChange, ChangeKindTask}
 
 // Valid: v is one of the schema's values.
 func (v ChangeKind) Valid() bool {

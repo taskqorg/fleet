@@ -29,6 +29,18 @@ export const states = {
     failed: { label: 'Failed', tone: 'danger', icon: 'octagon-x' },
     cancelled: { label: 'Cancelled', tone: 'neutral', icon: 'circle-slash' },
   },
+  // Delivery stage of a pull request (delivery_status DeliveryStage, docs/designs/fleet-delivery-pipeline.md).
+  delivery: {
+    pr_open: { label: 'Open', tone: 'neutral', icon: 'git-pull-request' },
+    pr_ci: { label: 'PR checks', tone: 'running', icon: 'activity' },
+    pr_failed: { label: 'Checks failed', tone: 'danger', icon: 'octagon-x' },
+    mq_wait: { label: 'Waiting in queue', tone: 'neutral', icon: 'list-ordered' },
+    mq_ci: { label: 'Queue checks', tone: 'running', icon: 'git-merge' },
+    releasing: { label: 'Releasing', tone: 'running', icon: 'archive' },
+    installing: { label: 'Installing', tone: 'running', icon: 'download' },
+    installed: { label: 'Installed', tone: 'success', icon: 'circle-check' },
+    merged: { label: 'Merged', tone: 'success', icon: 'check-check' },
+  },
   copy: {
     stored: { label: 'Stored', tone: 'success', icon: 'save' },
     placed: { label: 'Placed', tone: 'success', icon: 'check-check' },

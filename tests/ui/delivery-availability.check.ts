@@ -23,38 +23,27 @@ export async function checkDeliveryAvailability(browser: Browser, origin: string
       await page.goto(origin + '/delivery');
       await (await response).finished();
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-      const strip = page.getByRole('list', {name: 'Pull requests by stage'});
-      await strip.waitFor();
-      const numbers = strip.locator('[data-ui=number]');
-      assert(await numbers.count() > 0);
+      // The stage counters are the totals: unknown ('?', named "unknown") while GitHub data is incomplete, never zero.
+      const counters = page.getByRole('group', {name: 'Pull requests by stage'});
+      await counters.waitFor();
+      const open = counters.getByRole('button', {name: /^Open: /});
+      const overview = page.locator('[data-ui=delivery-overview]');
       if (fixture.error) {
         await page.getByRole('alert').filter({hasText: error}).waitFor();
-        await page.getByText('Some GitHub data is unavailable. Current totals and waiting status cannot be confirmed; retained observations are shown below.', {exact: true}).waitFor();
-        assert.equal(await page.getByText('Nothing waits past its limit.', {exact: true}).count(), 0);
-        assert.equal(await page.locator('.limit-card').getByText('None.', {exact: true}).count(), 0);
-        if (fixture.items.length === 0) {
-          assert.equal(await numbers.locator('xpath=self::*[contains(@class,"null")]').count(), await numbers.count(), fixture.name);
-          assert.equal(await page.locator('.limit-card .panel-h [data-ui=number]:not(.null)').count(), 0);
-          await page.getByText('History unavailable. GitHub data is incomplete.', {exact: true}).waitFor();
-          assert.equal(await page.locator('.delivery-flow [data-ui=area-chart]').count(), 0);
-        } else {
-          const open = strip.getByRole('listitem').filter({hasText: 'Open'}).locator('[data-ui=number]');
-          assert.match(await open.getAttribute('class') ?? '', /null/);
-          const retained = page.locator('.limit-card[aria-label="Open"] .panel-h');
-          assert.match(await retained.textContent() ?? '', /1\s*retained/);
-          const landing = strip.getByRole('listitem').filter({hasText: 'workers waiting to land'}).locator('[data-ui=number]');
-          assert.match(await landing.getAttribute('class') ?? '', /null/);
-          await page.getByText(/Retained observations: 2 workers were waiting to land/).waitFor();
+        await page.getByText('Some GitHub data is unavailable: current totals are unknown; the rows are the last ones read.', {exact: true}).waitFor();
+        assert.equal(await open.getAttribute('aria-label'), 'Open: unknown', fixture.name);
+        assert.equal(await counters.getByRole('button', {name: /: \d+$/}).count(), 0, `${fixture.name}: a measured count while incomplete`);
+        assert.equal(await page.getByText('Nothing in flight.', {exact: true}).count(), 0);
+        assert.equal(await page.getByText('No pull requests in flight.', {exact: true}).count(), 0);
+        if (fixture.items.length === 0) assert.equal(await page.getByText('Unavailable. GitHub data is incomplete.', {exact: true}).count(), 2, 'list and Moving now say unavailable');
+        else {
           await page.getByRole('link', {name: /Retained pull request/}).waitFor();
-          await page.getByText('Retained historical observations; GitHub coverage is incomplete.', {exact: true}).waitFor();
+          await overview.getByText('The last rows read; GitHub coverage is incomplete.', {exact: true}).waitFor();
         }
       } else {
-        assert.equal(await numbers.locator('xpath=self::*[contains(@class,"null") or contains(@class,"partial")]').count(), 0);
-        await page.getByText('Nothing waits past its limit.', {exact: true}).waitFor();
-        const open = strip.getByRole('listitem').filter({hasText: 'Open'}).locator('[data-ui=number]');
-        assert.equal((await open.textContent())?.trim(), String(fixture.items.length));
-        const landing = strip.getByRole('listitem').filter({hasText: 'workers waiting to land'}).locator('[data-ui=number]');
-        assert.equal((await landing.textContent())?.trim(), String(fixture.landing));
+        assert.equal(await open.getAttribute('aria-label'), `Open: ${fixture.items.length}`, fixture.name);
+        if (fixture.items.length === 0) { await page.getByText('No pull requests in flight.', {exact: true}).waitFor(); await overview.getByText('Nothing in flight.', {exact: true}).waitFor(); }
+        else await page.getByRole('link', {name: /Retained pull request/}).first().waitFor();
       }
       await page.unroute('**/api/ops/delivery_status');
     }
