@@ -433,7 +433,7 @@ function PreparedResourceWindow({ projectId, category, group, onClose }: { proje
   const frame = useRef({ rows, page }); frame.current = { rows, page };
   const movement = useRef<'replace' | 'append' | 'prepend'>('replace');
   const firstRequest = useRef<string | null>(null);
-  const responseContext = useRef(new WeakMap<object, { movement: 'replace' | 'append' | 'prepend'; jump?: 'start' | 'end'; anchor: { key: string; offsetPx: number } | null }>());
+  const responseContext = useRef(new WeakMap<object, { requestKey: string; movement: 'replace' | 'append' | 'prepend'; jump?: 'start' | 'end'; anchor: { key: string; offsetPx: number } | null }>());
   const restore = useRef<{ key: string; offsetPx: number; alignEnd?: boolean } | null>(null);
   const [loadingWindow, setLoadingWindow] = useState(false);
   const captured = useRef<{ key: string; offsetPx: number } | null>(null);
@@ -442,8 +442,8 @@ function PreparedResourceWindow({ projectId, category, group, onClose }: { proje
   const retainedPosition = useRef<ResourceSortKey | null>(null);
   const requestKey = preparedKey('project_resource_items', projectId, request);
   const result = usePreparedDoc(requestKey, async ({ signal }) => {
-    const first = firstRequest.current !== requestKey; firstRequest.current = requestKey;
-    const context = { movement: first ? movement.current : 'replace' as const, jump: first ? request.anchor : undefined, anchor: null as { key: string; offsetPx: number } | null };
+    const first = firstRequest.current !== requestKey;
+    const context = { requestKey, movement: first ? movement.current : 'replace' as const, jump: first ? request.anchor : undefined, anchor: null as { key: string; offsetPx: number } | null };
     const anchor = handle.current?.getAnchor() ?? null; if (anchor) captured.current = anchor;
     const item = anchor ? frame.current.rows.find(row => resourceItemKey(row) === anchor.key) : null;
     const position = item ? resourcePosition(item) : retainedPosition.current;
@@ -465,6 +465,8 @@ function PreparedResourceWindow({ projectId, category, group, onClose }: { proje
     if (!value || !('items' in value) || last.current === value) return;
     last.current = value;
     const context = responseContext.current.get(value);
+    // A preparing/error reply must not consume the requested jump or edge transition.
+    if (context) firstRequest.current = context.requestKey;
     const direction = context?.movement ?? 'replace';
     const sameEpoch = !frame.current.page || frame.current.page.version.split(':')[0] === value.version.split(':')[0];
     const segments = sameEpoch && direction === 'append' ? [...windowPages.current, value] : sameEpoch && direction === 'prepend' ? [value, ...windowPages.current] : [value];

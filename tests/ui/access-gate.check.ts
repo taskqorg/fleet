@@ -78,8 +78,12 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await focus();await p.getByText(/definition changed while you were editing/).waitFor();
     const restoredBase=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'member@trial.test','project-editor','desiign',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});
     assert.equal(restoredBase.base.revision,authoredBase.base.revision);assert.equal(restoredBase.base.contentSha,authoredBase.base.contentSha);assert.equal(restoredBase.requestId,authoredBase.requestId,'revalidation never silently rebases the optimistic write identity');
+    await p.evaluate(()=>{const original=Storage.prototype.setItem;(window as any).__storageSet=original;Storage.prototype.setItem=function(key,value){if(key.includes('project-editor'))throw Error('fixture quota');return original.call(this,key,value);};});
     await p.getByRole('button', { name: 'Discard edits and reload', exact: true }).click();
     await p.getByRole('heading', { name: 'External browser project', exact: true }).waitFor();
+    await focus();await p.getByRole('heading',{name:'External browser project',exact:true}).waitFor();
+    assert.equal(await p.getByRole('button',{name:'Discard edits and reload',exact:true}).count(),0,'discard survives quota failure and old draft does not return after revalidation');
+    await p.evaluate(()=>{Storage.prototype.setItem=(window as any).__storageSet;delete (window as any).__storageSet;});
     await edit('Name', 'Verified browser project'); const readback = p.waitForResponse(response => response.url().endsWith('/api/ops/project_detail') && response.status() === 200); await p.getByRole('button', { name: 'Save project', exact: true }).click();
     await p.getByText(/Saved version/).waitFor();
     await readback;
@@ -100,11 +104,29 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     console.log('prepared source-to-render small fixture ms', Date.now() - started);
     await p.getByRole('button', { name: /^Tools ·/ }).click();
     const grid = p.getByRole('grid', { name: 'Project tools', exact: true }); await grid.waitFor();
-    await p.getByRole('button', { name: 'Jump to end', exact: true }).click();
-    await p.getByText('new confirmed browser tool', { exact: true }).waitFor();
+    // A real preparing reply must retain the selected end transition until ready.
+    seed.sql("UPDATE resource_project_summary SET ready=false WHERE project_id='desiign'");
+    const preparingEnd=p.waitForResponse(async response=>response.url().endsWith('/api/ops/project_resource_items')&&response.request().postDataJSON()?.anchor==='end'&&(await response.json()).kind==='preparing');
+    await p.getByRole('button', { name: 'Jump to end', exact: true }).click();await preparingEnd;
+    await p.waitForFunction(()=>document.querySelector('[data-resource-window]')?.getAttribute('data-resource-version')==='');
+    const readyEnd=p.waitForResponse(async response=>response.url().endsWith('/api/ops/project_resource_items')&&response.request().postDataJSON()?.anchor==='end'&&Array.isArray((await response.json()).items));
+    seed.sql("UPDATE resource_project_summary SET ready=true WHERE project_id='desiign'");
+    await readyEnd;await p.getByText('new confirmed browser tool', { exact: true }).waitFor();
     await p.getByRole('button', { name: 'Jump to start', exact: true }).click();
     await p.getByText('browser-tool-0001', { exact: true }).waitFor();
-    for (const lastTool of ['0100','0150','0200']) {
+    // A temporary edge-read error must retry the identical cursor, then append it.
+    let failedCursor:string|undefined;
+    await p.route('**/api/ops/project_resource_items',async route=>{
+      const body=route.request().postDataJSON();
+      if(body.cursor&&!failedCursor){failedCursor=body.cursor;await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'fixture temporary edge failure'})});}
+      else {if(body.cursor&&failedCursor)assert.equal(body.cursor,failedCursor,'retry retains original edge cursor');await route.continue();}
+    });
+    const failedEdge=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_resource_items')&&response.status()===503);
+    await grid.evaluate(el=>{el.scrollTop=el.scrollHeight;el.dispatchEvent(new Event('scroll'));});await failedEdge;
+    await p.getByRole('button',{name:'Retry resources',exact:true}).click();
+    await p.waitForFunction(()=>document.querySelector('[data-resource-window]')?.getAttribute('data-window-last')?.includes('browser-tool-0100'));
+    await p.unroute('**/api/ops/project_resource_items');
+    for (const lastTool of ['0150','0200']) {
       const nextPage=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_resource_items')&&!!response.request().postDataJSON()?.cursor);
       await grid.evaluate(el=>{el.scrollTop=el.scrollHeight;el.dispatchEvent(new Event('scroll'));});await nextPage;
       await p.waitForFunction(tool=>document.querySelector('[data-resource-window]')?.getAttribute('data-window-last')?.includes('browser-tool-'+tool),lastTool);

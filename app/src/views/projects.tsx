@@ -273,7 +273,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
       <header class="detail-h">
         <h2>{id ? bundle.settings.name : 'Create project'}</h2><span class="grow" />
         <Button label={priorSave && !busy ? "Retry original save" : "Save project"} icon="save" busy={busy} onClick={save} />
-        {id && <Button label={conflict ? "Discard edits and reload" : "Reload project"} icon="rotate-cw" onClick={() => { if (conflict) { pendingSave.current = null; setPriorSave(false); draft.current?.write(''); baseline.current = JSON.stringify(latest.current); } void load(); }} />}
+        {id && <Button label={conflict ? "Discard edits and reload" : "Reload project"} icon="rotate-cw" onClick={() => { if (conflict) { pendingSave.current = null; setPriorSave(false); try { draft.current?.write(''); } catch (e) { if (e instanceof AccessChanged) return; /* cleared in authorized memory before optional persistence */ } baseline.current = JSON.stringify(latest.current); } void load(); }} />}
       </header>
       <StatusLine>{conflict || error || (priorSave && !busy ? 'Previous save has no verified readback. Retry original save keeps its request identity and original body; newer edits remain local.' : '')}</StatusLine>
       {sourceState === 'repository-changed' && <p>Source configuration changed. Saving keeps this edited project version.</p>}
