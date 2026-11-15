@@ -777,7 +777,7 @@ export function GroupControl<G extends string>({ value, options, onChange, none 
 }
 
 /**
- * Sort (OR-35): one chip, the field and then its direction. A click on the field opens the fields and the directions in a
+ * Sort (OR-35): one chip, the sort icon (as Group leads with its icon), the field and then its direction arrow. A click on the field opens the fields and the directions in a
  * short menu; the arrow on the right flips the direction in one click. The value is the field, "-" before it for descending.
  * A field may name its directions (Newest first / Oldest first for times, the default).
  */
@@ -787,7 +787,7 @@ export function SortControl({ value, fields, onChange }: { value: string; fields
   const [dDesc, dAsc] = (f[2] ?? ['Newest first', 'Oldest first']) as readonly [string, string];
   return <span class="pick" ref={m.ref} data-ui="sort-control">
     <button type="button" class="pick-b on" aria-haspopup="menu" aria-expanded={m.open} aria-label={`Sort by ${f[1]}`} data-tip="Sort by" onClick={() => m.setOpen(!m.open)}>
-      <span>{f[1]}</span><Icon name="chevron-down" /></button>
+      <Icon name={actions.sort} /><span>{f[1]}</span><Icon name="chevron-down" /></button>
     <button type="button" class="pick-x" aria-label={desc ? dDesc : dAsc} data-tip={`${desc ? dDesc : dAsc}; click for ${(desc ? dAsc : dDesc).toLowerCase()}`}
       onClick={() => { m.setOpen(false); onChange(desc ? f[0] : '-' + f[0]); }}><Icon name={desc ? actions.sortDesc : actions.sortAsc} /></button>
     {m.menu('Sort', [{ head: 'Sort by' }, ...fields.map(x => ({ key: x[0], label: x[1], on: x[0] === f[0], onPick: () => onChange((desc ? '-' : '') + x[0]) })), 'sep',
@@ -1190,6 +1190,16 @@ export function OfflineMarker({ state, since, now }: { state: 'current' | 'offli
 
 export const RowCheck = ({ checked, label, onToggle }: { checked: boolean; label: string; onToggle: () => void }) =>
   <input type="checkbox" class="row-check" data-ui="row-check" checked={checked} aria-label={label} onClick={e => e.stopPropagation()} onChange={onToggle} />;
+
+/* ---------- Row pin: the pin mark of a pinned row, before its state icon (OR-12, OR-37) ---------- */
+
+/**
+ * Rendered only on pinned rows, as the first cell; the caller gives that row the class pin-row, which adds the one leading
+ * column (styles.css), so other rows do not move. Both go together: the cell without the class shifts every cell.
+ * A click unpins and the row leaves the Pinned group.
+ */
+export const RowPin = ({ label, onUnpin }: { label: string; onUnpin: () => void }) =>
+  <button type="button" class="row-pin" data-ui="row-pin" aria-label={`Unpin ${label}`} data-tip="Unpin" onClick={e => { e.stopPropagation(); onUnpin(); }}><Icon name="pin" /></button>;
 
 /* ---------- Choice: one or several of a few fixed options (controls/choice.md) ---------- */
 

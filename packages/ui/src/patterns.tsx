@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, SelectToggle, RowCheck, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -54,7 +54,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   const pinned = shown.filter(t => t.pinned), unpinned = shown.filter(t => !t.pinned);
 
   const rows: Row[] = useMemo(() => {
-    // Pinned rows come first as a group of their own (OR-12); the group is the pin mark.
+    // Pinned rows come first as a group of their own (OR-12); each shows its pin before the state (RowPin).
     const top: Row[] = pinned.length ? [{ kind: 'group', key: 'g-\u0000pinned', label: 'Pinned', icon: 'pin', tone: 'neutral', count: pinned.length }, ...(closed.includes('\u0000pinned') ? [] : pinned.map(t => ({ kind: 'task' as const, t })))] : [];
     if (view.group === 'none') return [...top, ...unpinned.map(t => ({ kind: 'task' as const, t }))];
     const g = view.group;
@@ -100,7 +100,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
               { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => {} }]} />} />
       <VirtualList items={rows} getKey={r => r.kind === 'group' ? r.key : String(r.t.id)} rowHeight={row} follow="top" label="Tasks"
         columns={(selecting ? '1.25rem ' : '') + (row === ROW ? '1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem' : '1.25rem minmax(0,1fr) 2.75rem 4.5rem')}
-        rowClass={r => r.kind === 'group' ? 'grp' : `${r.t.id === selected ? 'sel' : ''}${sel.includes(r.t.id) ? ' checked' : ''}`}
+        rowClass={r => r.kind === 'group' ? 'grp' : `${r.t.id === selected ? 'sel' : ''}${sel.includes(r.t.id) ? ' checked' : ''}${r.t.pinned ? ' pin-row' : ''}`}
         onRowMenu={(r, at) => { if (r.kind === 'task') setMenu({ t: r.t, at }); }}
         header={row === ROW ? <>{selecting && <span />}<span /><span>Task</span><span /><span /><span class="r">Age</span><span class="r">Cost</span></> : undefined}
         render={r => r.kind === 'group'
@@ -127,6 +127,7 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting,
   const marks = <>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}{t.stage && <StageChip stage={t.stage} />}</>;
   return <>
     {check !== undefined && <span class="lead"><RowCheck checked={check} label={'Select ' + t.title} onToggle={onSelect} /></span>}
+    {t.pinned && <span class="lead"><RowPin label={t.title} onUnpin={selecting ? onSelect : onPin} /></span>}
     <span class="lead"><StateBadge family="task" state={t.state} reason={t.reason} compact /></span>
     <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} aria-keyshortcuts="P X"
       onClick={e => { if (selecting || e.shiftKey) { e.preventDefault(); onSelect(); } else if (onOpen) { e.preventDefault(); onOpen(t); } }}

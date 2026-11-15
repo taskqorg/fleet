@@ -358,3 +358,8 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question:** Group opened its choices inline (the line changed), with no quick way to remove it; Sort put the direction before the field and stepped through fields on click; the Select button sat at the far right and the selection bar replaced group and sort.
 * **Options:** group as a chip with a cross, a plain button with None inside, or one View popover; sort as one chip with the direction after the field, a chain of sort levels, or presets; selection bar on its own line, as the list header, or floating at the bottom.
 * **Choice (owner):** the first of each. Multi-level order is Group plus Sort (groups in attention order), so no sort chain for now. The select square starts the tools line above the checkbox column; the selection bar is its own line (select all, cross, count, actions on the right).
+
+## 2026-11-15: Pin mark on pinned rows, plain group and sort chips
+
+* **Choice (owner):** a pinned row shows a pin before its state icon, and a click on it unpins (the row leaves the Pinned group). Only pinned rows get this column; other rows do not move. This replaces "rows carry no pin mark".
+* **Choice (owner):** the group and sort chips have no fill of their own and use the same box as the saved-view buttons (height, padding, centred content); a set value shows in foreground text.

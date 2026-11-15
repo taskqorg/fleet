@@ -5,11 +5,12 @@
 **Purpose.** Shows long, growing lists: tasks, executions, events, results, hosts. The main control of every workspace.
 
 **Anatomy.** Sticky header row with column heads (sortable ones show ▲▼); body of fixed-height rows; optional group headers; new-rows pill ("12 new", no arrow, OR-7); the row menu (OR-12, OR-37) with Pin; footer count is in the [filter bar](filter-bar.md). A task row (OR-21, OR-22), from left to right:
+* on a pinned row only, the pin (`RowPin`, OR-37) before the state: a click unpins;
 * the state as an icon-only [state badge](state-badge.md), with name and reason in its tooltip (B1);
 * the title, which takes the free width at medium weight, with the ID (`font-mono`, `fg-muted`) right after it;
-* a compact service zone on the right: the [harness mark](harness-counts.md) while the task runs, the [delivery stage chip](stage-chip.md), the [age chip](number.md), the cost ([number](number.md), right aligned). No buttons in the row (OR-37).
+* a compact service zone on the right: the [harness mark](harness-counts.md) while the task runs, the [delivery stage chip](stage-chip.md), the [age chip](number.md), the cost ([number](number.md), right aligned). No other buttons in the row (OR-37).
 
-Every list follows the same order: state first, then name with ID, then the service zone (OR-22, [D12](../decisions.md)). The traceability check in `check:design` warns about any list row whose first cell is not a state badge.
+Every list follows the same order: state first, then name with ID, then the service zone (OR-22, [D12](../decisions.md)). The traceability check in `check:design` (after a row's pin or checkbox) warns about any list row whose first cell is not a state badge.
 
 **Grouping.** Lists can group rows. Each group header row shows the group's icon, name and count. Groups collapse; completed and cancelled start collapsed. Anchor keeping works across groups.
 

@@ -329,11 +329,18 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .vl-row:has(.row-link),.kv li:has(.row-link){cursor:pointer}
 .vl-row.sel{background:var(--selected);box-shadow:inset 3px 0 var(--accent)}
 .vl-row.checked{background:var(--selected)}
+/* A pinned row has one more leading column for its pin (RowPin); other rows keep the list's columns. */
+.vl-row.pin-row{grid-template-columns:1.25rem var(--cols,1fr)}
+@media (pointer:coarse){.vl-row.pin-row{grid-template-columns:var(--size-hit-phone) var(--cols,1fr)}}
+.row-pin{display:inline-grid;place-items:center;width:var(--size-icon);height:var(--size-icon);padding:0;border:0;border-radius:var(--radius-sm);background:none;color:var(--fg-muted);cursor:pointer;position:relative;z-index:1}
+.row-pin:hover{color:var(--fg);background:var(--hover)}
+.row-pin .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
 .seg-group{display:inline-flex;gap:var(--space-1)}
 /* Group and sort chips (OR-35): one chip per control, its choices in a short menu under it. */
-.pick{position:relative;display:inline-flex;align-items:stretch;min-height:var(--size-chip);border:1px solid transparent;border-radius:var(--radius-md);font-size:var(--font-size-sm);color:var(--fg-muted)}
-.pick:has(.pick-b.on){background:var(--selected);color:var(--fg)}
-.pick-b,.pick-x{display:inline-flex;align-items:center;gap:var(--space-1);height:100%;padding:0 var(--space-2);border:0;border-radius:var(--radius-md);background:none;color:inherit;font:inherit;cursor:pointer}
+.pick{position:relative;display:inline-flex;align-items:center;font-size:var(--font-size-sm);color:var(--fg-muted)}
+/* Same box as the saved-view buttons on the line above (.preset button): no fill of their own; set means foreground text. */
+.pick-b,.pick-x{display:inline-flex;align-items:center;gap:var(--space-1);height:var(--size-chip);padding:0 var(--space-2);border:0;border-radius:var(--radius-md);background:none;color:inherit;font:inherit;line-height:1;cursor:pointer}
+.pick-b.on{color:var(--fg)}
 .pick-b:hover,.pick-x:hover,.pick-b[aria-expanded=true]{background:var(--hover);color:var(--fg)}
 .pick-x{padding:0 var(--space-1)}
 .pick .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
@@ -444,7 +451,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 @media (max-width:760px){.rail .nav-count{top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1))}}
 /* M2: 44 px targets on touch for row pins, row links, nav links (owner exception) */
 @media (pointer:coarse){
-  .vl-row .btn.icon-only,.nav-i a,.rail-user-b,.nav-pin,.counter,.seg,.preset button,.saved-chip,.tabs button,.menu button{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}
+  .vl-row .btn.icon-only,.row-pin,.nav-i a,.rail-user-b,.nav-pin,.counter,.seg,.preset button,.saved-chip,.tabs button,.menu button{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}
   .row-link{display:inline-flex;align-items:center;min-height:var(--size-hit-phone)}
   .vl-row.static,.vl-head{height:auto;min-height:var(--size-row-phone)}
 }

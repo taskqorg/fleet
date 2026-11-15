@@ -24,8 +24,8 @@ try {
       await p.goto(`${mockups}#${r}`); await p.waitForTimeout(150);
       const grab = async () => {
         (await p.$$eval('[data-ui]', els => els.map(e => e.getAttribute('data-ui')))).forEach(x => seen.add(x));
-        // OR-22: in every list the first column is the state badge. Group headers and log entries are not item rows.
-        (await p.$$eval('.vl-row:not(.grp):not(.dyn)', rows => rows.filter(r => { const c = r.firstElementChild; return !c || !(c.matches('[data-ui=state-badge]') || c.querySelector('[data-ui=state-badge]')); })
+        // OR-22: in every list the first column is the state badge, after a row's pin or checkbox (OR-37). Group headers and log entries are not item rows.
+        (await p.$$eval('.vl-row:not(.grp):not(.dyn)', rows => rows.filter(r => { let c = r.firstElementChild; while (c && c.querySelector(':scope > [data-ui=row-pin], :scope > [data-ui=row-check]')) c = c.nextElementSibling; return !c || !(c.matches('[data-ui=state-badge]') || c.querySelector('[data-ui=state-badge]')); })
           .map(r => (r.closest('[role=grid]')?.getAttribute('aria-label') || r.closest('.panel')?.querySelector('h2')?.textContent || 'unnamed list')))).forEach(l => badLists.add(l));
       };
       await grab();
