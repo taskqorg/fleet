@@ -5,7 +5,6 @@ import assert from 'node:assert/strict';
 import {readFileSync, mkdirSync} from 'node:fs';
 import {build} from 'esbuild';
 import {chromium} from 'playwright';
-import {tokensCss} from '../../packages/ui/scripts/tokens.mjs';
 
 test('pipeline activation is its own finite state family', async () => {
   const bundle=await build({stdin:{contents:"export {states} from './packages/ui/src/registry.ts'",resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,platform:'node',format:'esm'});
@@ -29,6 +28,7 @@ test('mounted plan distinguishes inactive, actual, reused and unconfirmed rows',
       {...base,id:'unknown',activation:'selected',run:{state:'failed',note:'unconfirmed',time:u,cost:u}},
     ]}/>,document.body);
   `,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,format:'iife',jsx:'automatic',jsxImportSource:'preact'});
+  const {tokensCss}=await import(new URL('../../packages/ui/scripts/tokens.mjs',import.meta.url).href) as {tokensCss:()=>string};
   const browser=await chromium.launch({headless:true}),page=await browser.newPage();
   try {
     await page.setViewportSize({width:1280,height:900});await page.setContent('<body></body>');

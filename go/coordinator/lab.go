@@ -1425,6 +1425,10 @@ func labSelectedEvidence(q *Request, trial doc) (doc, []labFile, error) {
 		entry := mapOf(value)
 		step := mapOf(anys(trial["steps"])[i])
 		item := doc{"id": entry["id"], "activation": entry["activation"], "executionRef": entry["executionRef"], "executionState": step["state"], "observation": firstString(step["observation"], "confirmed")}
+		definition := mapOf(anys(mapOf(trial["definition"])["steps"])[i])
+		if definition["kind"] == "api" {
+			item["api"] = doc{"connection": definition["connection"], "tool": definition["tool"], "arguments": step["arguments"], "mode": firstString(definition["mode"], "sync"), "output": definition["output"]}
+		}
 		if native := astr(step["executionId"]); native != "" {
 			row, err := first(q, "SELECT definitions FROM execution WHERE id=$1 AND project_id IS NOT DISTINCT FROM $2", native, trial["projectId"])
 			if err != nil {
