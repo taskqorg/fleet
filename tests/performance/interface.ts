@@ -62,6 +62,11 @@ export function workload(x: Partial<Workload>, development = false): Workload {
   return w;
 }
 
+// Diagnostic history sizes are explicit declared points, never a full-envelope waiver.
+export function checkSourceFixture(mode: Workload['mode'], f: Fixture, longEvents = 0) {
+  if (mode === 'controlled-burst' && (![618, 100_000].includes(f.history) || f.projects !== 1 || longEvents)) throw Error('controlled-burst requires history618 or100000, one project and no long-native events');
+}
+
 function hardware() {
   const read = (p: string) => { try { return readFileSync(p, 'utf8').trim(); } catch { return null; } };
   const cg = read('/proc/self/cgroup'), path = cg?.split('\n').find(x => x.startsWith('0::'))?.slice(3);
@@ -168,9 +173,9 @@ export async function serve(o: { out: string; history: number; projects: number;
     if (!cpu || cpu[0] / cpu[1] !== 4 || effective.memoryMax !== String(8 * 1024 ** 3)) throw Error('actual server cgroup must constrain the whole process tree to4CPU/8GiB: ' + JSON.stringify(effective));
   }
   mkdirSync(o.out, { recursive: true });
-  const baselineManifest = manifest(f);
+  const baselineManifest = manifest(f), sourceCandidate = candidate();
   writeFileSync(resolve(o.out, 'manifest.json'), JSON.stringify(baselineManifest, null, 2));
-  writeFileSync(resolve(o.out, 'server.json'), JSON.stringify({ at: new Date().toISOString(), development: o.development, placement, hardware: hardware(), candidate: candidate(), clock: 'server monotonic milliseconds; lower before source submission, upper after commit; render receipt is a conservative actual-render upper bound including return network' }, null, 2));
+  writeFileSync(resolve(o.out, 'server.json'), JSON.stringify({ at: new Date().toISOString(), development: o.development, placement, hardware: hardware(), candidate: sourceCandidate, clock: 'server monotonic milliseconds; lower before source submission, upper after commit; render receipt is a conservative actual-render upper bound including return network' }, null, 2));
   const log = createWriteStream(resolve(o.out, 'events.jsonl'), { flags: 'a' });
   const sqlLog = createWriteStream(resolve(o.out, 'psql.log'), { flags: 'a' });
   const emit = (type: string, body: object) => log.write(JSON.stringify({ type, at: stamp(), ...body }) + '\n');
@@ -344,8 +349,9 @@ export async function serve(o: { out: string; history: number; projects: number;
       const rate = sourceRate(allFacts, r.spec, sourceClockUncertaintyMs, r.phaseWindows);
       const failed = hasRenderFailure(r.spec.mode, r.metrics.lags, r.errors.length, missing.length);
       const source = { distribution: r.spec.sourceDistribution, logicalFactCount: allFacts.length, logicalFacts: allFacts.map(f => f.id), projects: [...r.facts.keys()], leafIDs: [...new Set(allFacts.map(f => f.execution))], distinctLeaves: new Set(allFacts.map(f => f.execution)).size, canonicalMutations: allFacts.filter(f => f.upper !== null).length * (r.spec.sourceDistribution === 'hot' ? 1 : 2), commitTransactionCount: new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : [])).size, commitTransactions: [...new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : []))] };
-      const result = { id: r.id, spec: r.spec, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : failed ? 'render-or-recovery-failed' : null, renderVerdict: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', sourceRate: rate, source, diagnostic: r.spec.mode === 'controlled-burst', classifications: [r.spec.mode, r.spec.sourceDistribution, ...(r.spec.mode === 'controlled-burst' ? ['diagnostic', 'not-full-envelope'] : [])], observations: r.observations.entries.size, journalStats, facts: r.count, readers: [...r.readers], expectedSamples, samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds use the original pre-proof server receipt and include observation transport; proof acknowledgement is separate. Development and controlled-burst are not capacity acceptance. This run alone does not prove the full envelope.' };
-      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: r.spec, phaseWindows: r.phaseWindows, source, expected, facts: allFacts, journalStats, observationCount: r.observations.entries.size }, null, 2));
+      const recordedSpec = { ...r.spec, fixture: f };
+      const result = { id: r.id, spec: recordedSpec, candidate: sourceCandidate, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : failed ? 'render-or-recovery-failed' : null, renderVerdict: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', sourceRate: rate, source, diagnostic: r.spec.mode === 'controlled-burst', classifications: [r.spec.mode, r.spec.sourceDistribution, ...(r.spec.mode === 'controlled-burst' ? ['diagnostic', 'not-full-envelope'] : [])], observations: r.observations.entries.size, journalStats, facts: r.count, readers: [...r.readers], expectedSamples, samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds use the original pre-proof server receipt and include observation transport; proof acknowledgement is separate. Development and controlled-burst are not capacity acceptance. This run alone does not prove the full envelope.' };
+      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: recordedSpec, candidate: sourceCandidate, phaseWindows: r.phaseWindows, source, expected, facts: allFacts, journalStats, observationCount: r.observations.entries.size }, null, 2));
       r.finish = result; r.done = true; emit('finish', result);
       writeFileSync(resolve(o.out, r.id + '-result.json'), JSON.stringify(result, null, 2));
       writeFileSync(resolve(o.out, r.id + '-pg-after.json'), JSON.stringify(pgSnapshot(c), null, 2));
@@ -374,12 +380,12 @@ export async function serve(o: { out: string; history: number; projects: number;
           const path = req.url.split('?')[0]; let b: any = {};
           if (req.method === 'POST') { const chunks: Buffer[] = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > 1024 * 1024) throw Error('measurement body too large'); chunks.push(chunk); } b = JSON.parse(Buffer.concat(chunks).toString()); }
           let result: unknown;
-          if (path === '/__interface/config') result = { fixture: f, projects: ids, marker, longEvents: o.longEvents ?? 0, development: o.development, hostname: hostname(), candidate: candidate().sha, run: run?.id };
+          if (path === '/__interface/config') result = { fixture: f, projects: ids, marker, longEvents: o.longEvents ?? 0, development: o.development, hostname: hostname(), candidate: sourceCandidate.sha, run: run?.id };
           else if (path === '/__interface/clock') result = { monotonic: stamp(), wall: Date.now() };
           else if (path === '/__interface/start') {
             if (run && !run.done) throw Error('run already active');
             const spec = workload(b.spec, o.development);
-            if (spec.mode === 'controlled-burst' && (f.history !== 618 || f.projects !== 1 || o.longEvents)) throw Error('controlled-burst requires the separate 618-row/one-project fixture without long-native events');
+            checkSourceFixture(spec.mode, f, o.longEvents);
             if (native && spec.sourceDistribution === 'distinct') throw Error('long native hot-execution fixture requires hot source distribution; use a separate fresh distinct case');
             if (!Array.isArray(b.readers) || b.readers.length !== spec.readers || new Set(b.readers.map((x: any) => x.id)).size !== spec.readers || b.readers.some((x: any) => !ids.includes(x.project))) throw Error('reader barrier mismatch');
             // Fresh server per case: marker counters and prepared baseline must not carry a prior run.
