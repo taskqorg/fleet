@@ -1386,14 +1386,19 @@ func resourceKeyValues(raw contract.ResourceSortKey, category contract.ResourceC
 			if err != nil {
 				return nil, err
 			}
-			var envelope resourcePackedToolPosition
+			// Keep the original inner JSON until scalar validation: decoding directly into
+			// ResourceToolKey would turn name:null into the empty string before it is checked.
+			var envelope struct {
+				SchemaVersion int             `json:"schemaVersion"`
+				Key           json.RawMessage `json:"key"`
+			}
 			if err = resourceStrictJSON(decoded, &envelope); err != nil {
 				return nil, err
 			}
 			if envelope.SchemaVersion != 1 {
 				return nil, fail(400, "Invalid tool position version")
 			}
-			raw = jsonBytes(envelope.Key)
+			raw = envelope.Key
 		}
 		var k contract.ResourceToolKey
 		if err := resourceStrictJSON(raw, &k); err != nil {

@@ -279,6 +279,12 @@ test('admitted large native tool keys round-trip compressed cursors and packed a
   await page({around:{key:{kind:'tool-position',encoded:bomb},direction:'atOrAfter'}},400);
   const nonnull='tp1.'+deflateSync(Buffer.from(JSON.stringify({schemaVersion:1,key:{kind:'tool',name,connection:'\\\"><&'}}))).toString('base64url');
   assert.equal((await page({around:{key:{kind:'tool-position',encoded:nonnull},direction:'atOrAfter'}})).body.items[0].name,near,'packed connection remains part of the exact sort tuple');
+  for(const key of [{kind:'tool',name:null,connection:null},{kind:'tool',name:'x',connection:42},{kind:'tool',connection:null},null]){
+   const encoded='tp1.'+deflateSync(Buffer.from(JSON.stringify({schemaVersion:1,key}))).toString('base64url');
+   const packed={kind:'tool-position',encoded};
+   await page({around:{key:packed,direction:'atOrAfter'}},400);
+   await page({cursor:encode({...cursor,key:packed})},400);
+  }
   const broken={...position,encoded:position.encoded.slice(0,-3)};
   await page({around:{key:broken,direction:'atOrAfter'}},400);
   await page({category:'costs',around:{key:position,direction:'atOrAfter'}},400);
