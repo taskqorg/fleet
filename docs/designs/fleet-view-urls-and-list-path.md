@@ -34,6 +34,7 @@ The earlier TypeScript/PGlite measurements explained this design choice; they do
 * Search sends one request per typing pause (no key for 300 ms); a newer request supersedes the older one.
 * `task_page` over HTTP: median under 300 ms at 20,000 tasks for each filter and grouping case of the check, on the operator's machine against the coordinator binary (asserted by `pnpm run check:filter`). The 20,000 → 100,000 growth factor is reported, not asserted, because counts and search stay proportional to the matching set (see §3).
 * Every view state is in the URL in one canonical form. A link opens the same list, the same focused row and the same checked rows for any operator with access.
+* The last list view of each section (`/<id>?<query>`, without `focus` and `sel`) is the person setting `lastViews`, saved when the person leaves the section or the tab hides; the navigation opens a section at it, so leaving and coming back keeps sort, grouping and filters.
 * Agents build and read view links through one operation, with the same code the app uses.
 * `pnpm run check:filter` fails on any regression of the asserted goals.
 

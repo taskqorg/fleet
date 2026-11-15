@@ -46,6 +46,18 @@ test('P2 preferences (saved views, focus, focus presets, widths, row pins) are s
   }
 });
 
+test('P5 lastViews keeps each section\'s last list view, merged by section, removed by an empty string, and only app paths of that section (requirement: the navigation returns to a section as it was left; risk: one section\'s view overwrites another, or a stored value sends the person elsewhere)', async () => {
+  let s = await op('person_settings_set', {lastViews: {tasks: '/tasks?group=state&sort=created', hosts: '/hosts'}});
+  s = await op('person_settings_set', {lastViews: {tasks: '/tasks?group=none', hosts: ''}});
+  assert.deepEqual(s.lastViews, {tasks: '/tasks?group=none'});
+  assert.deepEqual((await op('person_settings_get')).lastViews, {tasks: '/tasks?group=none'});
+  for (const bad of [{lastViews: {tasks: '/hosts'}}, {lastViews: {tasks: 'https://evil.example/tasks'}}, {lastViews: {tasks: '/tasks//evil'}}, {lastViews: {tasks: '/tasksx'}}, {lastViews: {tasks: '/tasks/T-1'}}, {lastViews: {'Bad Key': '/x'}}]) {
+    const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify(bad)});
+    assert.equal(b.status, 400, JSON.stringify(bad));
+  }
+  await op('person_settings_set', {lastViews: {tasks: ''}});
+});
+
 test('P3 per-item changes (viewPut, viewDelete, rowPin, focusPresetPut, focusPresetDelete) apply to the stored lists, so concurrent saves keep each other (requirement: OR-33, OR-34 stored per person; risk: two devices saving views at once lose one)', async () => {
   const v = (name: string) => ({list: 'tasks', name, view: {view: 'tasks', state: ['failed']}});
   await Promise.all([op('person_settings_set', {viewPut: v('A')}), op('person_settings_set', {viewPut: v('B')}), op('person_settings_set', {rowPin: {list: 'tasks', id: 'x', pinned: true}}), op('person_settings_set', {rowPin: {list: 'tasks', id: 'y', pinned: true}})]);

@@ -8,7 +8,7 @@ import type { View } from '../../packages/view-url/view-url.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
-const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {}, navCollapsed: false };
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {} };
 export const prefs = signal<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
@@ -82,3 +82,19 @@ export const removeFocusPreset = (name: string) => savePrefs(s => ({ focusPreset
 /** A column width in px by key (nav, control); 0 resets to the default. */
 export const setWidth = (key: string, px: number) =>
   savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, { widths: { [key]: Math.round(px) } });
+
+/**
+ * Where the person left each section's list (path and query: sort, grouping, filters, search; never the open item or the
+ * checked rows), so the navigation returns to it. This tab's current value is kept here and sent once, when the person
+ * leaves the section or the tab hides, through savePrefs like any other preference.
+ */
+const here = new Map<string, string>();
+onClear.add(() => here.clear());
+export function noteView(section: string, url: string) { here.set(section, url); }
+export function saveView(section: string) {
+  const url = here.get(section);
+  if (!url || prefs.value.lastViews?.[section] === url) return;
+  savePrefs(s => ({ lastViews: { ...s.lastViews, [section]: url } }), { lastViews: { [section]: url } });
+}
+/** The path the navigation opens for a section: its list as last left (this tab first, then the stored one), or the section. */
+export const sectionPath = (section: string) => here.get(section) ?? prefs.value.lastViews?.[section] ?? '/' + section;
