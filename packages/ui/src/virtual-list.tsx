@@ -7,6 +7,8 @@ import { Virtualizer, elementScroll, observeElementOffset, observeElementRect } 
 
 export type VirtualListProps<T> = {
   items: T[];
+  /** Fill the owning column; the list is its only scroller. */
+  fill?: boolean;
   getKey: (item: T) => string;
   render: (item: T, index: number) => ComponentChildren;
   /** Fixed row height in px; with `dynamic`, the first estimate before measuring. */
@@ -31,7 +33,7 @@ export type VirtualListProps<T> = {
   /** Filled with the list's methods: scrollToKey for jumps (search hits). */
   handle?: { current: VirtualListHandle | null };
 };
-export type VirtualListHandle = { scrollToKey: (key: string, align: 'start' | 'center' | 'end') => void };
+export type VirtualListHandle = { getAnchor(): { key: string; offsetPx: number } | null; restoreAnchor(key: string, offsetPx: number): void; scrollToKey: (key: string, align: 'start' | 'center' | 'end') => void };
 
 // Touch devices get the 44 px row (owner exception to density, D14/M2).
 const TOUCH_ROW = parseInt(tokens.size['row-phone']);
@@ -44,6 +46,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   const [unseen, setUnseen] = useState(0);
   // Anchor = first visible item and its distance from the viewport top, captured before each update.
   const anchor = useRef<{ key: string; delta: number } | null>(null);
+  const requested = useRef<{ key: string; offsetPx?: number; align?: 'start' | 'center' | 'end' } | null>(null);
   const prev = useRef<{ keys: Set<string>; atEdge: boolean }>({ keys: new Set(p.items.map(p.getKey)), atEdge: true });
 
   const opts = {
@@ -97,7 +100,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const a = anchor.current;
     if (a) {
       const i = p.items.findIndex(it => p.getKey(it) === a.key);
-      if (i >= 0) el.scrollTop = v.getOffsetForIndex(i, 'start')![0] - a.delta;
+      if (i >= 0) v.scrollToOffset(v.getOffsetForIndex(i, 'start')![0] - a.delta);
       // The anchor left with the old window (reload to newest): show the followed edge.
       else if (replaced && p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); prev.current.atEdge = true; }
     }
@@ -115,25 +118,38 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     else if (p.items.length) v.scrollToIndex(p.items.length - 1, { align: 'end' });
   };
 
+  // Apply imperative restoration after this control's own anchor/layout work, before edge loading.
+  // A parent layout effect can run before or after ours; a local render also handles the latter.
+  useLayoutEffect(() => {
+    const r = requested.current, el = scroller.current; if (!r || !el) return;
+    requested.current = null;
+    const i = p.items.findIndex(item => p.getKey(item) === r.key);
+    if (i < 0) { if (!p.items.length) { v.scrollToOffset(0); anchor.current = null; } return; }
+    const start = v.getOffsetForIndex(i, 'start')?.[0];
+    const offset = r.align ? v.getOffsetForIndex(i, r.align)?.[0] : start === undefined ? undefined : start - (r.offsetPx ?? 0);
+    if (offset !== undefined && start !== undefined) { v.scrollToOffset(Math.max(0, offset)); anchor.current = { key: r.key, delta: start - el.scrollTop }; prev.current.atEdge = false; }
+  });
+
   // Asked once per window edge (length and edge row), so a replaced window of the same length asks again.
   const edgeKey = (side: 'start' | 'end') => `${p.items.length}:${p.items.length ? p.getKey(p.items[side === 'start' ? 0 : p.items.length - 1]) : ''}`;
   const endFor = useRef('');
-  const lastVisible = v.getVirtualItems().at(-1)?.index ?? -1;
-  useLayoutEffect(() => { if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== edgeKey('end')) { endFor.current = edgeKey('end'); p.onEnd(); } });
+  useLayoutEffect(() => { const el = scroller.current, lastVisible = el ? v.getVirtualItemForOffset(el.scrollTop + el.clientHeight)?.index ?? -1 : -1; if (lastVisible < p.items.length - 5) endFor.current = ''; if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== edgeKey('end')) { endFor.current = edgeKey('end'); p.onEnd(); } });
 
   // Read from the scroll position after anchor keeping ran, not from the render: rows just loaded above are not "in view".
   const startFor = useRef('');
-  const checkStart = () => { const el = scroller.current; if (p.onStart && el && p.items.length && el.scrollTop < p.rowHeight * 5 && startFor.current !== edgeKey('start')) { startFor.current = edgeKey('start'); p.onStart(); } };
+  const checkStart = () => { const el = scroller.current; if (el && el.scrollTop >= p.rowHeight * 5) startFor.current = ''; if (p.onStart && el && p.items.length && el.scrollTop < p.rowHeight * 5 && startFor.current !== edgeKey('start')) { startFor.current = edgeKey('start'); p.onStart(); } };
   useLayoutEffect(checkStart);
   if (p.handle) p.handle.current = {
-    scrollToKey: (key, align) => { const i = p.items.findIndex(it => p.getKey(it) === key); if (i >= 0) { prev.current.atEdge = false; v.scrollToIndex(i, { align }); const el = scroller.current, start = v.getOffsetForIndex(i, 'start')?.[0]; if (el && start !== undefined) anchor.current = { key, delta: start - el.scrollTop }; } },
+    getAnchor: () => { const el = scroller.current, first = el ? v.getVirtualItemForOffset(el.scrollTop) : undefined; return el && first ? { key: String(first.key), offsetPx: first.start - el.scrollTop } : null; },
+    restoreAnchor: (key, offsetPx) => { requested.current = { key, offsetPx }; rerender(0); },
+    scrollToKey: (key, align) => { requested.current = { key, align }; rerender(0); },
   };
 
-  const style = p.columns ? { '--cols': p.columns } : undefined;
+  const style = { ...(p.columns ? { '--cols': p.columns } : {}), ...(p.fill ? { flex: 1 } : {}) };
   return (
     <div data-ui="data-list" class={`vl-wrap ${p.class ?? ''}`} style={style}>
       {p.header && <div class="vl-head" role="row">{p.header}</div>}
-      <div ref={scroller} class="vl" role="grid" aria-label={p.label} aria-rowcount={p.items.length} tabIndex={0} onScroll={() => { capture(); checkStart(); }}>
+      <div ref={scroller} style={p.fill ? { flex: 1, height: 'auto' } : undefined} class="vl" role="grid" aria-label={p.label} aria-rowcount={p.items.length} tabIndex={0} onScroll={() => { capture(); checkStart(); }}>
         <div class="vl-space" style={{ height: `${v.getTotalSize()}px` }}>
           {v.getVirtualItems().map(vi => (
             <div key={vi.key} data-key={String(vi.key)} data-index={vi.index} ref={p.dynamic ? v.measureElement : undefined} role="row" aria-rowindex={vi.index + 1}

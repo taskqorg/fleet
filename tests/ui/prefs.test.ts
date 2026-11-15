@@ -2,16 +2,23 @@
 // through person_settings_set, never in the browser; focus filters lists that name no project.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration } from '../../app/src/access.ts';
+registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
+registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
+await ensureAccessGeneration();
 import { readFileSync } from 'node:fs';
 import { prefs, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds } from '../../app/src/prefs.ts';
 
 const sent: [string, any][] = [];
+const pendingReplies = new Set<Promise<void>>();
 // The server applies the patch; the mock answers with what the tab shows, which is enough to test what is sent.
 (globalThis as any).fetch = async (url: string, init: any) => {
   if (url.endsWith('_set')) sent.push([url, JSON.parse(init.body)]);
-  await new Promise(r => setTimeout(r, 5)); const reply = prefs.value; return { type: 'basic', status: 200, ok: true, json: async () => reply };
+  const pending = new Promise<void>(resolve => setTimeout(resolve, 5)); pendingReplies.add(pending);
+  await pending; pendingReplies.delete(pending); const reply = prefs.value; return { type: 'basic', status: 200, ok: true, json: async () => reply };
 };
-const settle = () => new Promise(r => setTimeout(r, 30));
+// Wait for real mock-reply completion and the next queued write, rather than a fixed wall-clock guess.
+const settle = async () => { for (;;) { await Promise.allSettled([...pendingReplies]); await new Promise<void>(resolve => setImmediate(resolve)); if (!pendingReplies.size) return; } };
 
 test('a save sends one item, never a whole list, so items saved elsewhere (an agent, another device) survive', async () => {
   useViews('tasks', []).save({ name: 'Early', view: { view: 'tasks' } });
@@ -57,9 +64,9 @@ test('OR-41 a width is sent by key only; 0 resets it', async () => {
   sent.length = 0;
   savePrefs(() => ({ widths: { nav: 200 } }), { widths: { nav: 200 } });
   assert.equal(prefs.value.widths.nav, 200);
-  await new Promise(r => setTimeout(r, 30));
+  await settle();
   setWidth('nav', 0); assert.equal(prefs.value.widths.nav, undefined);
-  await new Promise(r => setTimeout(r, 30));
+  await settle();
   assert.deepEqual(sent.at(-1)?.[1], { widths: { nav: 0 } });
 });
 

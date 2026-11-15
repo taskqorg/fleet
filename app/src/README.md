@@ -32,3 +32,11 @@
 - Run: `pnpm run typecheck`
 - Build: `pnpm run app:build`
 - Design warnings: `pnpm run check:design`
+
+## Authorized prepared reads
+
+`access.ts` owns the single generation gate and injected identity/baseline controllers. `api.ts` fences every ordinary read/write and provides only the fixed identity/no-cursor control allowlist. `main.tsx` unmounts private route generations before validation and preserves shell geometry. `feed.ts` establishes a new authorized baseline without replaying old cursors; `offline.ts` fences memory and async persistence independently of blocked deletion.
+
+`store.ts:usePreparedDoc` shares one active read plus one pending bit per canonical prepared key, checks bigint versions, retains figures on unchanged progress, cancels on last subscriber and checks foreground progress at most every two seconds. Scoped authored drafts remain in `api.ts` under their original actor/target; they are not server cache. Activation and rollback: [prepared resources](../../docs/designs/fleet-analytics.md#browser-access-and-activation).
+
+`prepareSending` retains complete message/start bodies and their SHA-256 under the authorized draft scope; explicit retries keep the original delivery arguments. Project editor/create targets share that adapter, preserve the original optimistic base and frozen pending save body, and never automatically resubmit after validation.

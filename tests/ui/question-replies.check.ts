@@ -6,10 +6,11 @@ export async function checkQuestionReplies(browser: Browser, origin: string) {
   const context = await browser.newContext(), page = await context.newPage();
   await page.addInitScript(() => {
     (window as any).EventSource = class {
-      constructor() { (window as any).feed = this; }
+      constructor() { (window as any).feed = this; queueMicrotask(() => { if (!this.closed) this.handlers.ready?.({data: JSON.stringify({cursor: 0})}); }); }
       handlers: Record<string, (e: any) => void> = {};
       addEventListener(name: string, fn: (e: any) => void) { this.handlers[name] = fn; }
-      close() {}
+      closed = false;
+      close() { this.closed = true; }
       onmessage?: (e: any) => void;
     };
   });

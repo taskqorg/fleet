@@ -117,11 +117,14 @@ try {
   await p.waitForFunction(() => Object.keys(sessionStorage).some(k => { if (!k.startsWith('fleet-lab-create:')) return false; const x = JSON.parse(sessionStorage.getItem(k)!); return x.state === 'created' && x.id && !x.message; }));
   const afterConfirmed = posts;
   await p.reload();
-  await p.getByRole('button', { name: 'Read details again', exact: true }).waitFor();
+  await p.getByText('Creation unconfirmed', { exact: true }).waitFor();
   releaseRead();
   await p.unroute('**/api/ops/lab_experiment_get');
-  await p.getByRole('button', { name: 'Read details again', exact: true }).click(); await p.waitForURL(/\/lab\/[a-f0-9-]+$/);
+  assert.equal(await p.getByRole('button', { name: 'Read details again', exact: true }).count(), 0, 'server receipt identity is not restored from browser input');
+  await p.getByRole('button', { name: 'Review experiments', exact: true }).click();
   assert.equal(posts, afterConfirmed);
+  await p.goto(origin + '/lab/new'); await p.getByText('Creation unconfirmed', { exact: true }).waitFor();
+  await p.getByRole('button', { name: 'Discard local draft', exact: true }).click();
   // Lose the reply after the real transaction commits; double activation and reload must not replay it.
   await fill('single');
   await p.route('**/api/ops/lab_experiment_create', async route => { await route.fetch(); await route.abort('failed'); });
@@ -145,8 +148,8 @@ try {
   await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor();
   await p.route('**/api/ops/me', async route => { const response = await route.fetch(); const m = await response.json(); await route.fulfill({ json: { ...m, grantsVersion: 'changed-for-fixture' } }); });
   await p.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await p.getByText('Access changed. Reload before creating a draft.', { exact: true }).waitFor();
-  assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), '');
+  await p.waitForFunction(() => [...document.querySelectorAll('textarea')].some(input => input.value === 'Actor-scoped draft'));
+  assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Actor-scoped draft', 'same actor input survives fresh target authorization after changed grants');
   assert.equal(await p.getByRole('grid', { name: 'Projects', exact: true }).count(), 0);
   assert.equal(await p.getByRole('searchbox', { name: 'Search Projects' }).count(), 0);
   assert.deepEqual(counts(), before);
@@ -157,7 +160,7 @@ try {
   await p.reload();
   await p.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent?.startsWith('Project:') && !b.hasAttribute('aria-disabled')));
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), '');
-  assert.equal(await p.evaluate(() => Object.keys(sessionStorage).some(k => k.startsWith('fleet-lab-create:owner@trial.test:'))), false);
+  assert.equal(await p.evaluate(() => Object.keys(sessionStorage).some(k => k === 'fleet-lab-create:' + JSON.stringify([1, 'owner@trial.test']))), true, 'original actor input remains quarantined');
   await context.close();
 } finally { await browser.close(); await close(); }
 console.log('Lab creation: all kinds, draft-only readback, rejection, uncertain POST and grant-clear passed; zero provider work.');

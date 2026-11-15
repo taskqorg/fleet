@@ -995,26 +995,34 @@ export const KvRow = ({ icon, label, meta, value }: { icon: IconName; label: str
 
 /* ---------- Composer (controls/composer.md) ---------- */
 
-/** Message input for a conversation: Enter sends, Shift+Enter adds a line; the draft survives updates and is kept per session. */
-export function Composer({ onSend, disabledReason, placeholder = 'Message', draftKey }: { onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftKey?: string }) {
-  const read = () => { try { return draftKey ? localStorage.getItem('draft:' + draftKey) ?? '' : ''; } catch { return ''; } };
-  const [text, setText] = useState(read);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { setText(read()); }, [draftKey]);
-  const keep = (v: string) => { setText(v); try { if (draftKey) localStorage.setItem('draft:' + draftKey, v); } catch { /* storage unavailable */ } };
+export type ComposerPersistence = { key: string; read(): string; write(text: string): void; clearIfUnchanged(text: string): void };
+export type ComposerProps = { onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftPersistence?: ComposerPersistence };
+/** App-owned scoped persistence; a target change resets private input and busy state synchronously. */
+export function Composer(props: ComposerProps) { return <ScopedComposer key={props.draftPersistence?.key ?? 'memory'} {...props} />; }
+function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draftPersistence }: ComposerProps) {
+  const [text, setText] = useState(''), [busy, setBusy] = useState(false), [warning, setWarning] = useState('');
+  const current = useRef({ text, key: draftPersistence?.key }); current.current = { text, key: draftPersistence?.key };
+  useEffect(() => { try { const value = draftPersistence?.read() ?? ''; current.current.text = value; setText(value); setWarning(''); } catch { setWarning('Draft storage unavailable; keep this page open.'); } }, [draftPersistence?.key]);
+  const keep = (value: string) => { current.current.text = value; setText(value); try { draftPersistence?.write(value); } catch { setWarning('Draft storage unavailable; keep this page open.'); } };
   const send = async () => {
-    const v = text.trim(); if (!v || busy || disabledReason) return;
-    // The draft is cleared only after a successful send; on failure it stays for another try.
-    setBusy(true); try { await onSend(v); keep(''); } catch { /* caller shows the error */ } finally { setBusy(false); }
+    const original = text, value = original.trim(), adapter = draftPersistence, key = adapter?.key;
+    if (!value || busy || disabledReason) return;
+    setBusy(true);
+    try {
+      await onSend(value);
+      // The captured adapter fences old generations; compare original, untrimmed input.
+      adapter?.clearIfUnchanged(original);
+      if (current.current.key === key && current.current.text === original) { current.current.text = ''; setText(''); }
+    } catch { /* caller shows send errors; authored text remains */ }
+    finally { if (current.current.key === key) setBusy(false); }
   };
-  return (
-    <div class="composer" data-ui="composer">
-      <textarea value={text} placeholder={placeholder} aria-label={placeholder} rows={2} disabled={!!disabledReason}
-        onInput={e => keep((e.target as HTMLTextAreaElement).value)}
-        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
-      <Button label="Send" kind="primary" busy={busy} disabledReason={disabledReason} onClick={send} />
-    </div>
-  );
+  return <div class="composer" data-ui="composer">
+    <textarea value={text} placeholder={placeholder} aria-label={placeholder} rows={2} disabled={!!disabledReason}
+      onInput={e => keep((e.target as HTMLTextAreaElement).value)}
+      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }} />
+    <Button label="Send" kind="primary" busy={busy} disabledReason={disabledReason} onClick={send} />
+    {warning && <span role="status">{warning}</span>}
+  </div>;
 }
 
 /* ---------- Code editor: a definition's text, edited in place (controls/code-editor.md) ---------- */
@@ -1183,3 +1191,6 @@ export function TimeStrip({ from, to, start, end, now, state, label }: { from: n
   return <span class="tstrip" data-ui="time-strip" role="img" aria-label={label}>
     <i class={`t-${states.execution[state].tone}${end === null ? ' live' : ''}`} style={{ left: `${a}%`, width: `max(2px, ${b - a}%)` }} /></span>;
 }
+
+/** Reserved two-line feedback region; updates never displace adjacent controls. */
+export const StatusLine = ({ children }: { children?: ComponentChildren }) => <div role="status" style={{ minHeight: '2lh' }}>{children}</div>;

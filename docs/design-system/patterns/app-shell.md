@@ -24,3 +24,5 @@ There is no top bar. Global search goes into the navigation.
 * A click anywhere on a list row opens it (OR-26). The shell handles this once for every row that has a row link, in virtual lists and in key-value lists.
 * Routes are stable URLs (`#/tasks/9989` in mockups, real paths in the app; specq F7). Back restores the list position and selection.
 * Every page renders `AppShell`. The traceability check in `pnpm run check:design` reports any page that does not.
+
+**Private transient state.** Access invalidation removes Spotlight results as well as routed/focus data. `AppShell` keeps its non-private geometry, but closes private search content while validation is pending and keys Spotlight by access generation. The caller also clears its shared search-result cache before identity validation.
