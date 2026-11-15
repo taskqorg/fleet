@@ -314,23 +314,27 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     const { id: run } = await request('start', { spec, readers: readers.map(({ id, project }) => ({ id, project })), browser: evidence });
     for (const reader of readers) {
       await reader.page.evaluate(({ run, reader, project, marker }) => {
-        let previous = -1, sending = false;
+        let previous = -1, sending = false, inEnvelope = true;
         const observe = () => {
           const win = document.querySelector('[data-resource-window="tools"]');
           const label = [...(win?.querySelectorAll('span') ?? [])].find(x => x.textContent === marker);
           const row = label?.closest('[data-key]'), text = row?.querySelector('.num')?.textContent ?? '';
-          const value = /^(\d+) ·/.exec(text), version = win?.getAttribute('data-resource-version');
+          const value = /^(\d+) · (\d+) failed$/.exec(text), version = win?.getAttribute('data-resource-version');
           const visible = !!row && document.visibilityState === 'visible' && row.getBoundingClientRect().height > 0 && row.getBoundingClientRect().top >= 0 && row.getBoundingClientRect().bottom <= innerHeight;
+          if (!visible && inEnvelope) void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, type: 'left-connected-foreground-envelope', visibility: document.visibilityState, rowPresent: !!row }) });
+          inEnvelope = visible;
+          if (value && Number(value[2]) !== 0) { void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, type: 'wrong-rendered-errors', text }) }); return; }
           if (!value || !version || !visible || Number(value[1]) <= previous || sending) return;
           const n = Number(value[1]); sending = true;
           requestAnimationFrame(() => requestAnimationFrame(() => {
             // Re-read the painted DOM; don't acknowledge an obsolete candidate or an attribute alone.
             const actual = row?.querySelector('.num')?.textContent ?? '';
-            if (actual !== text || !row?.isConnected) { sending = false; return; }
+            if (actual !== text || !row?.isConnected || label?.textContent !== marker || document.visibilityState !== 'visible' || row.getBoundingClientRect().top < 0 || row.getBoundingClientRect().bottom > innerHeight) { sending = false; observe(); return; }
             fetch('/__interface/render', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ run, reader, project, value: n, text: actual, version, visible, browserMonotonic: performance.now(), browserWall: Date.now(), domNodes: document.querySelectorAll('*').length, longTasks: (window as any).__interfaceLongTasks.splice(0) }) }).then(r => { if (!r.ok) throw Error('render receipt rejected'); previous = n; }).catch(error => { void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, error: String(error) }) }); }).finally(() => { sending = false; });
           }));
         };
         new MutationObserver(observe).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+        document.addEventListener('visibilitychange', observe);
         setInterval(observe, 50); observe();
       }, { run, reader: reader.id, project: reader.project, marker: config.marker });
     }
