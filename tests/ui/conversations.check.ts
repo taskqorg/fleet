@@ -9,6 +9,7 @@ import { chromium, type Page } from 'playwright';
 import { checkServer } from './seed.ts';
 import { checkAccessGate } from './access-gate.check.ts';
 import { checkProjects } from './projects.check.ts';
+import { checkProjectEditor } from './project-editor.check.ts';
 import { checkQuestionReplies } from './question-replies.check.ts';
 import { checkTaskStory } from './task-story.check.ts';
 import { checkDeliveryAvailability } from './delivery-availability.check.ts';
@@ -318,6 +319,7 @@ try {
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
   await checkProjects(b, origin, host);
+  await checkProjectEditor(b, origin, host);
   await checkAccessGate(b, c, seed);
   await checkSpotlight(b, origin);
   await checkTaskStory(b, origin);

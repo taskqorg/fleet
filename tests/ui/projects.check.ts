@@ -23,8 +23,10 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await p.getByRole('button',{name:'Check readiness',exact:true}).click();await p.getByText('No environment is configured.',{exact:true}).waitFor();
   const sendHost=await host('project-readiness-ui');
   const content=structuredClone(second.content);content.settings.environments=[{hostId:'project-readiness-ui',checkoutPath:'/tmp/ui-readiness'}];
-  await call('project_update',{projectId:id,requestId:crypto.randomUUID(),baseRevision:second.revision,content});
+  const configured=await call('project_update',{projectId:id,requestId:crypto.randomUUID(),baseRevision:second.revision,content});
   await p.getByRole('button',{name:'Reload project',exact:true}).click();
+  // Readiness belongs to the configured source, not the still-pending previous editor baseline.
+  await p.locator('.kv-row').filter({hasText:new RegExp(`Saved version${configured.revision}$`)}).waitFor();
   const queued=p.waitForResponse(r=>r.url().endsWith('/api/ops/project_readiness'));
   await p.getByRole('button',{name:'Check readiness',exact:true}).click();
   const check=(await (await queued).json()).hosts[0];assert.ok(check.executionId);
