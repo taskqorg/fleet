@@ -8,7 +8,7 @@ import { cpus, freemem, hostname, platform, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
-import { pipeline } from 'node:stream/promises';
+import { pipeline, finished } from 'node:stream/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { fixture, literal, manifest, marker, pricesSQL, projectIDs, seedSQL, type Fixture } from './seed-interface.ts';
@@ -347,8 +347,11 @@ export async function serve(o: { out: string; history: number; projects: number;
       const expectedSamples = [...r.readers.values()].reduce((n, reader) => n + r.facts.get(reader.project)!.filter(f => !f.error && f.phase !== 'warmup').length, 0);
       if (r.metrics.lags.length + missing.length !== expectedSamples) r.errors.push('render sample count mismatch');
       let journalStats: unknown = null;
-      const journalFile = createWriteStream(resolve(o.out, 'publication-journal.jsonl'));
-      const notificationFile=createWriteStream(resolve(o.out,'publication-notifications.jsonl'));
+      const journalErrors: string[] = [];
+      const journalPath = resolve(o.out, 'publication-journal.jsonl'), notificationPath = resolve(o.out, 'publication-notifications.jsonl');
+      const journalFile = createWriteStream(journalPath + '.partial', { flags: 'wx' });
+      const notificationFile = createWriteStream(notificationPath + '.partial', { flags: 'wx' });
+      const journalClosed = Promise.allSettled([finished(journalFile), finished(notificationFile)]);
       let notificationLinks=0;
       try {
         const scopes = await observer.run('', `(SELECT coalesce(jsonb_agg(p),'[]'::jsonb) FROM (SELECT DISTINCT project,epoch FROM interface_publication ORDER BY project,epoch) p)`);
@@ -365,18 +368,21 @@ export async function serve(o: { out: string; history: number; projects: number;
             const next = page.payload.at(-1).revision as string; if (next === cursor) throw Error('journal export cursor did not advance'); cursor = next;
           }
         }
-        journalFile.end();notificationFile.end();await Promise.all([once(journalFile,'finish'),once(notificationFile,'finish')]);
+        journalFile.end(); notificationFile.end();
+        for (const result of await journalClosed) if (result.status === 'rejected') throw result.reason;
         journalStats = {notificationLinks,...JSON.parse(c.sql(`SELECT json_build_object('publications',(SELECT count(*) FROM interface_publication),'deltas',(SELECT count(*) FROM interface_publication_delta),'bytes',pg_total_relation_size('interface_publication')+pg_total_relation_size('interface_publication_delta'))`))};
-      } catch (e) { journalFile.destroy(); notificationFile.destroy(); r.errors.push('journal-export:' + String(e)); }
+        renameSync(journalPath + '.partial', journalPath); renameSync(notificationPath + '.partial', notificationPath);
+      } catch (e) { journalFile.end(); notificationFile.end(); await journalClosed; journalErrors.push('journal-export:' + String(e)); }
       const auxiliaryErrors: string[] = [];
       try { writeFileSync(resolve(o.out, r.id + '-pg-after.json'), JSON.stringify(pgSnapshot(c), null, 2)); } catch (e) { auxiliaryErrors.push('pg-snapshot:' + String(e)); }
       try { await exportQueryStatistics(db, resolve(o.out, r.id + '-query-statistics.json')); } catch (e) { auxiliaryErrors.push('query-statistics:' + String(e)); }
+      const artifactsComplete = journalErrors.length === 0 && auxiliaryErrors.length === 0;
       const rate = sourceRate(allFacts, r.spec, sourceClockUncertaintyMs, r.phaseWindows);
       const failed = hasRenderFailure(r.spec.mode, r.metrics.lags, r.errors.length, missing.length);
       const source = { distribution: r.spec.sourceDistribution, logicalFactCount: allFacts.length, logicalFacts: allFacts.map(f => f.id), projects: [...r.facts.keys()], leafIDs: [...new Set(allFacts.map(f => f.execution))], distinctLeaves: new Set(allFacts.map(f => f.execution)).size, canonicalMutations: allFacts.filter(f => f.upper !== null).length * (r.spec.sourceDistribution === 'hot' ? 1 : 2), commitTransactionCount: new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : [])).size, commitTransactions: [...new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : []))] };
       const recordedSpec = { ...r.spec, fixture: f };
-      const result = { id: r.id, spec: recordedSpec, candidate: sourceCandidate, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : auxiliaryErrors.length ? 'incomplete' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : failed ? 'render-or-recovery-failed' : auxiliaryErrors.length ? 'artifact-export-failed' : null, renderVerdict: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', sourceRate: rate, source, diagnostic: r.spec.mode === 'controlled-burst', classifications: [r.spec.mode, r.spec.sourceDistribution, ...(r.spec.mode === 'controlled-burst' ? ['diagnostic', 'not-full-envelope'] : [])], observations: r.observations.entries.size, journalStats, facts: r.count, readers: [...r.readers], expectedSamples, samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: [...r.errors], auxiliaryErrors, artifactsComplete: auxiliaryErrors.length === 0, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds use the original pre-proof server receipt and include observation transport; proof acknowledgement is separate. Development and controlled-burst are not capacity acceptance. This run alone does not prove the full envelope.' };
-      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: recordedSpec, candidate: sourceCandidate, phaseWindows: r.phaseWindows, source, expected, facts: allFacts, journalStats, observationCount: r.observations.entries.size }, null, 2));
+      const result = { id: r.id, spec: recordedSpec, candidate: sourceCandidate, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : !artifactsComplete ? 'incomplete' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : failed ? 'render-or-recovery-failed' : !artifactsComplete ? 'artifact-export-failed' : null, renderVerdict: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', sourceRate: rate, source, diagnostic: r.spec.mode === 'controlled-burst', classifications: [r.spec.mode, r.spec.sourceDistribution, ...(r.spec.mode === 'controlled-burst' ? ['diagnostic', 'not-full-envelope'] : [])], observations: r.observations.entries.size, journalStats, facts: r.count, readers: [...r.readers], expectedSamples, samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: [...r.errors], journalErrors, auxiliaryErrors, artifactsComplete, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds use the original pre-proof server receipt and include observation transport; proof acknowledgement is separate. Development and controlled-burst are not capacity acceptance. This run alone does not prove the full envelope.' };
+      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: recordedSpec, candidate: sourceCandidate, phaseWindows: r.phaseWindows, source, expected, facts: allFacts, journalStats, journalErrors, auxiliaryErrors, artifactsComplete, observationCount: r.observations.entries.size }, null, 2));
       writeFileSync(resolve(o.out, r.id + '-result.json'), JSON.stringify(result, null, 2));
       r.finish = structuredClone(result); r.done = true; emit('finish', r.finish as object);
     };
