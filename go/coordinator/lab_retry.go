@@ -167,7 +167,7 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !same(def, source["definition"]) || sha256hex(jsonBytes(def)) != source["definitionSha256"] {
+	if !same(def, source["definition"]) || sha256hex([]byte(canonical(def))) != source["definitionSha256"] {
 		return nil, suffixConflict("frozen definition changed")
 	}
 	ref, err := definitionRef(q, "pipeline", astr(def["id"]), def)

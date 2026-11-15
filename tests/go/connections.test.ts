@@ -263,6 +263,10 @@ test('C6 a spool line that cannot be imported keeps its file, and lines after a 
 });
 
 test('P1 pipeline run is idempotent by requestId and refuses a changed body (requirement: docs/designs/fleet-asset-pipelines.md; risk: a retried request running twice)', async () => {
+  // Reach the reference validator with a granted connection; no provider key is needed.
+  const connections=ok(await op('connections_list')).connections;
+  if (!connections.some((entry:any)=>entry.name==='tavily')) ok(await op('connections_create',{name:'tavily',provider:'tavily'}));
+  ok(await op('connections_set_access',{connection:'tavily',access:{projects:['*']}}));
   const requestId = randomUUID();
   const a = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
   const b = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
@@ -836,7 +840,12 @@ test('P4 S7 preparation adopts exact identity only and retains image receipts (r
       const started = ok(await op('pipeline_run_create',{pipelineId,projectId:'hello-world',requestId:randomUUID(),example:{}}));
       const run = await until(async()=>{const r=ok(await op('pipeline_get',{runId:started.runId}));return r.state!=='running'?r:undefined;},'preparation job ends');
       if (mode==='wrong-tool'||mode==='ungranted') {
-        assert.equal(run.observedSteps[0].problem,'step:job-tools'); assert.deepEqual(assetJob.calls,[],'a POST cannot be configured as polling before any paid submit'); continue;
+        if (mode==='ungranted') {
+          assert.equal(run.plan.entries[0].activation,'blocked');
+          assert.equal(run.plan.entries[0].problem.code,'authority_denied');
+          assert.equal(run.plan.entries[0].executionRef,undefined);
+        } else { assert.equal(run.observedSteps[0].problem,'step:job-tools'); }
+        assert.deepEqual(assetJob.calls,[],'invalid/ungranted polling cannot start a paid submit'); continue;
       }
       assert.equal(assetJob.calls.filter(t=>t==='image_to_image').length,1,'uncertain POST never sent twice');
       assert.equal(assetJob.calls.filter(t=>t==='image_recent_tasks').length,1);
@@ -1004,10 +1013,10 @@ test('A superseded unscored assessment cannot poison the replacement trial (requ
     await fixture.receipt(fixture.command,'completed',{artifacts:['output.json']});
     await until(async()=>reached,"assessment storage rejection observed");
     const before=await fixture.view();assert.equal(before.trials[0].state,'succeeded');assert.equal(before.scores.length,0);
-    const retry=op('lab_cell_action',{experimentId:fixture.exp.id,cell:fixture.request.cell,action:'retry'});
-    const replacement=await until(async()=>{const view=await fixture.view();return view.trials.find((row:any)=>row.cell.attempt===2);},'replacement attempt admitted');
+    const retry=await op('lab_cell_action',{experimentId:fixture.exp.id,cell:fixture.request.cell,action:'retry'});
+    ok(retry);
+    const replacement=await until(async()=>{const view=await fixture.view();return view.trials.find((row:any)=>row.cell.attempt===fixture.trial.cell.attempt+1);},'replacement attempt admitted');
     assessmentWriteRejection=undefined;
-    ok(await retry);
     const done=await fixture.complete(replacement.id);
     assert.ok(done.scores.some((score:any)=>score.trialIds.includes(replacement.id)));
     assert.equal(done.scores.some((score:any)=>score.trialIds.includes(fixture.trial.id)),false);

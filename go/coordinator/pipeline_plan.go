@@ -95,15 +95,35 @@ const pipelineClaimObserved = "pipeline-claim-observed"
 // pipelineAuthorityStamp holds the current authority rows through token mint or
 // command handoff. A frozen project/profile is evidence, not permanent access.
 func pipelineAuthorityStamp(q *Request, run doc, index int, connection, tool, host string) (string, []string, error) {
+	// The caller has already resolved the run in its ordinary project scope.
+	// Authority belongs to the retained initiating actor, even when a different
+	// authorized operator requests recovery. Restore caller RLS before returning.
+	type result struct {
+		stamp       string
+		connections []string
+	}
+	out, err := unscoped(q, func() (result, error) {
+		stamp, connections, err := pipelineAuthorityStampWithin(q, run, index, connection, tool, host)
+		return result{stamp, connections}, err
+	})
+	return out.stamp, out.connections, err
+}
+
+func pipelineAuthorityStampWithin(q *Request, run doc, index int, connection, tool, host string) (string, []string, error) {
+	share := ""
+	resolve := resolveAccessTx
+	if value, ok := txLockStates.Load(q.tx); ok && value.(*txLockState).write {
+		share, resolve = " FOR SHARE", resolveAccessShareTx
+	}
 	authority := mapOf(run["authority"])
 	projectID := astr(run["projectId"])
-	actor, err := resolveAccessShareTx(q.ctx(), q.tx, astr(authority["actorEmail"]))
+	actor, err := resolve(q.ctx(), q.tx, astr(authority["actorEmail"]))
 	if err != nil || actor == nil || !mayAccessProjectID(actor, projectID) {
 		return "", nil, fail(403, "Pipeline initiating actor no longer has project access")
 	}
 	project := doc{}
 	if projectID != "" {
-		project, err = first(q, "SELECT head,access_version FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL FOR SHARE", projectID)
+		project, err = first(q, "SELECT head,access_version FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL"+share, projectID)
 		if err != nil {
 			return "", nil, err
 		}
@@ -123,7 +143,7 @@ func pipelineAuthorityStamp(q *Request, run doc, index int, connection, tool, ho
 		if override := astr(mapOf(run["overrides"])["profile"]); override != "" {
 			profileID = override
 		}
-		row, err := first(q, "SELECT id FROM definition WHERE kind='agent' AND id=$1 AND retired_at IS NULL FOR SHARE", profileID)
+		row, err := first(q, "SELECT id FROM definition WHERE kind='agent' AND id=$1 AND retired_at IS NULL"+share, profileID)
 		if err != nil {
 			return "", nil, err
 		}
@@ -150,7 +170,7 @@ func pipelineAuthorityStamp(q *Request, run doc, index int, connection, tool, ho
 	sort.Strings(connections)
 	connectionStamps := []any{}
 	for _, name := range connections {
-		row, err := first(q, "SELECT data FROM document WHERE id=$1 AND kind='api-connection' FOR SHARE", "connection:"+name)
+		row, err := first(q, "SELECT data FROM document WHERE id=$1 AND kind='api-connection'"+share, "connection:"+name)
 		if err != nil {
 			return "", nil, err
 		}
@@ -163,7 +183,7 @@ func pipelineAuthorityStamp(q *Request, run doc, index int, connection, tool, ho
 	}
 	stamp["connections"] = connectionStamps
 	if host != "" {
-		row, err := first(q, "SELECT data FROM document WHERE id=$1 AND kind='host' FOR SHARE", "host:"+host)
+		row, err := first(q, "SELECT data FROM document WHERE id=$1 AND kind='host'"+share, "host:"+host)
 		if err != nil {
 			return "", nil, err
 		}
@@ -171,7 +191,7 @@ func pipelineAuthorityStamp(q *Request, run doc, index int, connection, tool, ho
 		if h == nil || hostRemoved(h) {
 			return "", nil, fail(403, "Pipeline host is no longer available")
 		}
-		holder, err := resolveAccessShareTx(q.ctx(), q.tx, astr(h["holder"]))
+		holder, err := resolve(q.ctx(), q.tx, astr(h["holder"]))
 		if err != nil || holder == nil || projectID != "" && !mayAccessProjectID(holder, projectID) {
 			return "", nil, fail(403, "Pipeline host holder no longer has project access")
 		}
@@ -848,7 +868,7 @@ func pipelineRecoveryFence(q *Request, run doc) error {
 			return fail(409, "Unconfirmed external action cannot be replayed by rerun")
 		}
 		native := astr(step["executionId"])
-		execution, err := get(q, native, "execution")
+		execution, err := one(q, "SELECT "+execJSON+" || jsonb_build_object('projectId',project_id) FROM execution WHERE id=$1 AND kind='host_job'", native)
 		if err != nil {
 			return err
 		}
