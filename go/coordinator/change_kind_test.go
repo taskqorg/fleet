@@ -25,7 +25,7 @@ func TestChangeKindsMatchTriggers(t *testing.T) {
 		t.Fatal(err)
 	}
 	var kinds []string
-	for _, fn := range []string{"fleet_change", "fleet_artifact_change"} {
+	for _, fn := range []string{"fleet_change", "fleet_artifact_change", "fleet_resource_summary_change"} {
 		at := strings.LastIndex(schemaSQL, "FUNCTION "+fn+"() RETURNS")
 		if at < 0 {
 			t.Fatalf("schema.sql has no %s", fn)
@@ -34,7 +34,7 @@ func TestChangeKindsMatchTriggers(t *testing.T) {
 		def = def[:strings.Index(def, "$$;")]
 		before := len(kinds)
 		assigned := strings.Count(def, "k := ")
-		for _, m := range regexp.MustCompile(`k := '([a-z-]+)'`).FindAllStringSubmatch(def, -1) {
+		for _, m := range regexp.MustCompile(`k := '([a-z_-]+)'`).FindAllStringSubmatch(def, -1) {
 			kinds = append(kinds, m[1])
 		}
 		// k := r.kind copies the document kinds listed in the IN (...) right before it.

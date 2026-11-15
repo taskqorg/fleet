@@ -2132,3 +2132,17 @@ END $$;
 ALTER TABLE resource_valuation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE resource_valuation FORCE ROW LEVEL SECURITY;
 CREATE POLICY maintenance ON resource_valuation USING(current_setting('fleet.project_ids',true)='*');
+
+-- migration 57
+-- Prepared pages use the same C-order tuple as their cursors, including cost groups.
+CREATE INDEX resource_cost_page ON resource_cost(project_id,currency COLLATE "C",basis COLLATE "C");
+-- A committed header/revision and its public change are one transaction. Existing change
+-- RLS and XID barriers serve both SSE and reconnect; NOTIFY alone is never the record.
+CREATE FUNCTION fleet_resource_summary_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE k text; BEGIN
+ k := 'resource_summary';
+ INSERT INTO change(kind,id,project_id,op) VALUES(k,NEW.project_id,NEW.project_id,'U');
+ PERFORM pg_notify('fleet_change','');
+ RETURN NULL;
+END $$;
+CREATE TRIGGER resource_summary_change AFTER UPDATE OF revision ON resource_project_summary
+ FOR EACH ROW WHEN (OLD.revision IS DISTINCT FROM NEW.revision) EXECUTE FUNCTION fleet_resource_summary_change();

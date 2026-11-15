@@ -551,3 +551,45 @@ func TestResourcePostgres(t *testing.T) {
 
 	t.Log("PostgreSQL initial aggregates, replay, snapshot/claim race, A/B/NULL, repair, deletion, parallelism, extremes, frozen rebuild, metadata union and FORCE RLS passed")
 }
+
+// Requirement: both bound-project enumerations apply to every new read before cursor/anchor
+// interpretation. Risk: the generic host path exposes a foreign allowed project or loses binding.
+func TestResourceAPIBoundPaths(t *testing.T) {
+	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
+	if url == "" {
+		t.Skip("isolated API fixture")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	st, err := openStore(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	err = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+		p, err := resolveAccessTx(ctx, q.tx, "member@trial.test")
+		if err != nil {
+			return err
+		}
+		q.person = p
+		for _, name := range []string{"project_detail", "project_resources", "project_resource_items"} {
+			for _, args := range []doc{{}, {"projectId": "desiign", "knownVersion": "foreign:revision"}, {"projectId": "desiign", "around": doc{"key": doc{"kind": "tool", "name": "foreign-name", "connection": nil}, "direction": "atOrAfter"}}} {
+				bound, err := boundArguments(q, name, args, "api-agent")
+				if err != nil {
+					return err
+				}
+				if bound["projectId"] != "desiign" {
+					t.Fatalf("%s: lost project binding", name)
+				}
+			}
+			if _, err := boundArguments(q, name, doc{"projectId": "hello-world", "cursor": "foreign"}, "api-agent"); err == nil {
+				t.Fatalf("%s: accepted foreign project", name)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

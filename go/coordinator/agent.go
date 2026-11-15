@@ -1537,27 +1537,30 @@ func sessionStart(q *Request, b doc) (doc, error) {
 var agentDescriptions = map[string]string{
 	"pipeline_run_create": "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get. The shipped publish-static pipeline requires example.inputs [{path: \"index.html\", text: \"<html>…</html>\"}]. It publishes only to the project's configured dedicated Fleet test-site destination, using stored same-project input artifacts and protected HTTP byte/hash verification; output has url/version/verified/files. An arbitrary path, URL, command or credentials cannot select a destination. A generating pipeline can use a publication step files mapping from earlier-step input paths. Publication success and task acceptance are separate.",
 
-	"executions_list":     "Read executions with optional project/task/session/parent/problem/needsYou filters. For bounded enumeration set limit (1..1000); reply has executions and hasMore, plus nextAfter when more rows exist. Repeat identical filters with after=nextAfter until hasMore=false. Order is seq,id; pages use fresh snapshots. Without limit returns the complete legacy executions wrapper, without paging metadata. after requires limit; inaccessible, unknown or filter-mismatched cursors return 400.",
-	"search":              "Find tasks, questions, projects and hosts by text, id or code (T-FLT-42, old codes too); field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). Hits list ids; tasks recently changed first",
-	"session_transition":  "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff",
-	"session_fork":        "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown",
-	"session_resume":      "Native resume/fork argv and captured native sessions for a session",
-	"session_handoffs":    "Context handoffs of a session with delivery state",
-	"session_start":       "Start a new session in a project: projectId, requestId, role (project roles map) or profileId, optional account/hostId, taskId (the session works for that task of the project), text, setup run|skip. The creator is woken when it finishes",
-	"session_task_attach": "Attach a taskless session to a task (sessionId, taskId): it joins the task thread; earlier turns join without copying",
-	"project_readiness":   "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status",
-	"message_send":        "Send a message; starts a turn, or queues/steers it while the session is busy",
-	"queue_list":          "Queued messages",
-	"ask":                 "Ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume",
-	"reply":               "Answer a question; delivered to the asker as its next message",
-	"questions":           "List questions",
-	"questions_withdraw":  "Owner or full access: withdraw open questions that no longer need anyone (ids up to 1000, reason); one audit row each; skipped lists ids not open",
-	"executions_abandon":  "Owner or full access: end unfinished agent runs or host jobs no host will finish (ids, reason): failed, problem unknown:abandoned, parent woken, one audit row each",
-	"executions_dismiss":  "Owner or full access: take problems of finished executions off Needs you (ids, reason); the problem stays on the record; one audit row each",
-	"worker_done":         "Report the current execution done (checked against the current execution; captures native session)",
-	"execution_status":    "Execution state (preparing, running, waiting, succeeded, failed, cancelled; observation unconfirmed when the host lost track), stop outcome proven|unknown, suggested next action and resume info",
-	"focus_set":           "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus. Focus does not bind a repository checkout; use session_transition with projectId for that. Configure focus for the user’s intended granted project before project context reads",
-	"reconcile":           "Settle coordinator-owned queue/handoff state and report unproven executions",
+	"executions_list":        "Read executions with optional project/task/session/parent/problem/needsYou filters. For bounded enumeration set limit (1..1000); reply has executions and hasMore, plus nextAfter when more rows exist. Repeat identical filters with after=nextAfter until hasMore=false. Order is seq,id; pages use fresh snapshots. Without limit returns the complete legacy executions wrapper, without paging metadata. after requires limit; inaccessible, unknown or filter-mismatched cursors return 400.",
+	"search":                 "Find tasks, questions, projects and hosts by text, id or code (T-FLT-42, old codes too); field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). Hits list ids; tasks recently changed first",
+	"session_transition":     "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff",
+	"session_fork":           "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown",
+	"session_resume":         "Native resume/fork argv and captured native sessions for a session",
+	"session_handoffs":       "Context handoffs of a session with delivery state",
+	"session_start":          "Start a new session in a project: projectId, requestId, role (project roles map) or profileId, optional account/hostId, taskId (the session works for that task of the project), text, setup run|skip. The creator is woken when it finishes",
+	"session_task_attach":    "Attach a taskless session to a task (sessionId, taskId): it joins the task thread; earlier turns join without copying",
+	"project_detail":         "Read a project definition and revision independently of resource statistics; requires projectId",
+	"project_resources":      "Read prepared project resource figures/version and current progress; requires projectId",
+	"project_resource_items": "Read a bounded prepared tools/costs/prices window with an epoch-bound cursor or surviving anchor; requires projectId",
+	"project_readiness":      "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status",
+	"message_send":           "Send a message; starts a turn, or queues/steers it while the session is busy",
+	"queue_list":             "Queued messages",
+	"ask":                    "Ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume",
+	"reply":                  "Answer a question; delivered to the asker as its next message",
+	"questions":              "List questions",
+	"questions_withdraw":     "Owner or full access: withdraw open questions that no longer need anyone (ids up to 1000, reason); one audit row each; skipped lists ids not open",
+	"executions_abandon":     "Owner or full access: end unfinished agent runs or host jobs no host will finish (ids, reason): failed, problem unknown:abandoned, parent woken, one audit row each",
+	"executions_dismiss":     "Owner or full access: take problems of finished executions off Needs you (ids, reason); the problem stays on the record; one audit row each",
+	"worker_done":            "Report the current execution done (checked against the current execution; captures native session)",
+	"execution_status":       "Execution state (preparing, running, waiting, succeeded, failed, cancelled; observation unconfirmed when the host lost track), stop outcome proven|unknown, suggested next action and resume info",
+	"focus_set":              "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus. Focus does not bind a repository checkout; use session_transition with projectId for that. Configure focus for the user’s intended granted project before project context reads",
+	"reconcile":              "Settle coordinator-owned queue/handoff state and report unproven executions",
 }
 
 // agentOps: the agent tool table, also served as /api/ops and /api/tools.
@@ -1715,6 +1718,9 @@ func init() {
 				return nil, err
 			}
 			q.tx = nil
+			if isResourceRead(name) && !resourceReadsEnabled {
+				return nil, fail(503, "Prepared project reads disabled")
+			}
 			if !agentMay(q.person, name) {
 				return nil, fail(400, "Unknown agent tool")
 			}
@@ -1780,7 +1786,10 @@ func init() {
 			if name == "task_create" && a["projectId"] == nil && len(focus) == 1 {
 				a["projectId"] = focus[0] // one focus project is the default (§2)
 			}
-			if name == "project_update" || name == "project_context" || name == "project_readiness" {
+			if isResourceRead(name) && astr(a["projectId"]) != "" && !mayAccessProjectID(q.person, astr(a["projectId"])) {
+				return nil, fail(404, "Unknown project")
+			}
+			if name == "project_update" || name == "project_context" || name == "project_readiness" || isResourceRead(name) {
 				var err error
 				err = q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error {
 					q.tx = tx
@@ -1917,6 +1926,9 @@ var agentDenied = map[string]bool{"task_take": true, "hosts_register": true, "ho
 
 // agentMay: an operation outside the agent table that the director's role may call (the architect gate of guardOp).
 func agentMay(p *Person, name string) bool {
+	if !resourceOperationAdvertised(name) {
+		return false
+	}
 	if agentDenied[name] {
 		return false
 	}
@@ -2022,7 +2034,7 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 		}
 	case name == "reconcile":
 		return nil, fail(403, "Not available to host agents")
-	case name == "project_readiness" || name == "project_context" || name == "project_update":
+	case name == "project_readiness" || name == "project_context" || name == "project_update" || isResourceRead(name):
 		// Bound to the caller's own project: another project's readiness is not the agent's to read.
 		p, err := ownProject()
 		if err != nil {
