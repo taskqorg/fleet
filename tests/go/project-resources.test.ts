@@ -21,12 +21,18 @@ test('prepared resource processor qualifies against isolated PostgreSQL; off res
    CREATE FUNCTION resource_fixture_fail_page() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
     IF NEW.execution_id LIKE 'crash-%' AND EXISTS(SELECT 1 FROM resource_fixture_failure WHERE kind=NEW.origin) THEN RAISE EXCEPTION 'fixture page crash'; END IF;
     RETURN NEW; END $$;
-   CREATE TRIGGER resource_fixture_fail BEFORE INSERT ON resource_work FOR EACH ROW EXECUTE FUNCTION resource_fixture_fail_page();`);
+   CREATE TRIGGER resource_fixture_fail BEFORE INSERT ON resource_work FOR EACH ROW EXECUTE FUNCTION resource_fixture_fail_page();
+   CREATE FUNCTION resource_fixture_batch_metric() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.project_id='BATCH' AND NEW.metric='output' THEN
+     IF EXISTS(SELECT 1 FROM resource_fixture_failure WHERE kind='batch-error') THEN RAISE EXCEPTION 'fixture metric batch failure'; END IF;
+     IF EXISTS(SELECT 1 FROM resource_fixture_failure WHERE kind='batch-gate') THEN PERFORM pg_advisory_xact_lock(hashtextextended('fixture:metric-batch',0)); END IF;
+    END IF; RETURN NEW; END $$;
+   CREATE TRIGGER resource_fixture_batch_metric BEFORE INSERT OR UPDATE ON resource_metric FOR EACH ROW EXECUTE FUNCTION resource_fixture_batch_metric();`);
   const db=c.sql('SELECT current_database()').trim();
   const pg=process.env.FLEET_TRIAL_PGDATA||join(homedir(),'.cache/fleet-trial/pg');
   const url=`postgresql://fleet_app@/${db}?host=${encodeURIComponent(pg)}&port=${process.env.FLEET_TRIAL_PGPORT||'54329'}`;
   const code=await new Promise<number|null>((resolve,reject)=>{
-   const child=spawn('go',['test','./coordinator','-run','^TestResourcePostgres$','-count=1','-v'],{cwd:join(root,'go'),env:{...process.env,FLEET_RESOURCE_TEST_URL:url},stdio:'inherit'});
+   const child=spawn('go',['test','./coordinator','-run','^(TestResourcePostgres|TestResourceMetricBatchPostgres)$','-count=1','-v'],{cwd:join(root,'go'),env:{...process.env,FLEET_RESOURCE_TEST_URL:url},stdio:'inherit'});
    child.once('error',reject);child.once('exit',resolve);
   });
   assert.equal(code,0,'real PostgreSQL processor proof');
