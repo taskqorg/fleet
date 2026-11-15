@@ -16,7 +16,7 @@
    * rows in OR-22 order: state icon, title with its code, then the service zone: row facts (OR-37: since taken into work, executions, time in the current state, agent mark, host) with nothing over them on hover (OR-37).
    * the row menu (`ContextMenu`) on right click, long press, the Menu key or Shift+F10: Open, Pin or Unpin, Select, Copy code, Copy link, and the state actions that apply (Pause, Continue). `p` pins the focused row, `x` selects it.
    * selection mode: the Select square at the left of the tools line, Shift-click or `x` turns it on; a checkbox column appears left of the state icon under it and a click on a row toggles it; `SelectBar` takes its own line under the tools (group and sort stay): select all or none (of the loaded rows), the cross to leave, the count, then Pin, Unpin, Pause, Continue, Cancel (confirmed inline) on the right. Esc or the cross leaves the mode. Checked rows are the view URL's `sel`.
-   * a Pinned group at the top holds pinned rows (OR-12); rows carry no pin mark.
+   * a Pinned group at the top holds pinned rows (OR-12); each pinned row shows `RowPin` before its state icon, and a click on it unpins. While any row is pinned, the list has this column (empty on unpinned rows), so state icons stay in one column.
 
 **Behaviour.**
 * Default grouping is by priority (D11). Grouping by state uses attention order: waiting, failed, in progress, queued, paused, completed, cancelled. Completed and cancelled start collapsed.

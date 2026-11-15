@@ -1191,6 +1191,13 @@ export function OfflineMarker({ state, since, now }: { state: 'current' | 'offli
 export const RowCheck = ({ checked, label, onToggle }: { checked: boolean; label: string; onToggle: () => void }) =>
   <input type="checkbox" class="row-check" data-ui="row-check" checked={checked} aria-label={label} onClick={e => e.stopPropagation()} onChange={onToggle} />;
 
+/* ---------- Row pin: the pin mark of a pinned row, before its state icon (OR-12, OR-37) ---------- */
+
+/** Shown only on pinned rows; a click unpins (the row leaves the Pinned group). Unpinned rows keep the cell empty, so states line up. */
+export const RowPin = ({ pinned, label, onUnpin }: { pinned: boolean; label: string; onUnpin: () => void }) => pinned
+  ? <button type="button" class="row-pin" data-ui="row-pin" aria-label={`Unpin ${label}`} data-tip="Unpin" onClick={e => { e.stopPropagation(); onUnpin(); }}><Icon name="pin" /></button>
+  : <span />;
+
 /* ---------- Choice: one or several of a few fixed options (controls/choice.md) ---------- */
 
 export function Choice({ label, options, value, onChange }: {

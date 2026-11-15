@@ -3,7 +3,7 @@
 import { useCallback, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, RowFacts, Fact, VirtualList, ContextMenu, SelectBar, SelectToggle, ProblemRow, copyText, StateBadge, HarnessMark, AgeChip, Button,
+  ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, RowFacts, Fact, VirtualList, ContextMenu, SelectBar, SelectToggle, RowPin, ProblemRow, copyText, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, RowCheck, Totals, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   type TreeNode, type Harness, type StateOf, states as states_,
   keyConnection, EntityCode, actor, fileLabel, viewOf,
@@ -122,12 +122,13 @@ export function Tasks({ id }: { id?: string }) {
           : list.shownKey === null ? <Skeleton rows={8} />
           : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />)
           : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.t.id} rowHeight={ROW} follow="top" label="Tasks" onEnd={list.more}
-            columns={selecting ? '1.25rem 1.25rem minmax(0,1fr) auto' : '1.25rem minmax(0,1fr) auto'} rowClass={i => i.kind === 'group' ? 'grp' : `${i.t.id === id ? 'sel' : ''}${sel.includes(i.t.id) ? ' checked' : ''}`}
+            columns={`${selecting ? '1.25rem ' : ''}${pinned.length ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.t.id === id ? 'sel' : ''}${sel.includes(i.t.id) ? ' checked' : ''}`}
             onRowMenu={(i, at) => { if (i.kind === 'task') setMenu({ t: i.t, at }); }}
             render={i => i.kind === 'group'
               ? <GroupHeader icon={i.icon ?? (rowsGroup === 'priority' ? 'list-ordered' : 'folder-open')} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
                 {selecting && <span class="lead"><RowCheck checked={sel.includes(i.t.id)} label={'Select ' + i.t.title} onToggle={() => select(i.t)} /></span>}
+                {pinned.length > 0 && <span class="lead"><RowPin pinned={pins.has(i.t.id)} label={i.t.title} onUnpin={() => pins.toggle(i.t.id)} /></span>}
                 <span class="lead"><StateBadge family="task" state={i.t.pauseReason === 'held' ? 'held' : i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
                 <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} aria-keyshortcuts="P X"
                   onClick={e => { e.preventDefault(); if (selecting || e.shiftKey) select(i.t); else set({ focus: i.t.id }); }}
