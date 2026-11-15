@@ -92,7 +92,15 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     // Actual committed source -> processor -> prepared fetch -> rendered figure. This is a small fixture, not load acceptance.
     const resources = p.locator('[data-resource-project]');
     assert.equal(await resources.isVisible(), true);
-    const confirmed = await call('project_resources',{projectId:'desiign'});assert.equal(confirmed.kind,'ready');
+    // Ready can still be updating: freeze an exact baseline only after this fixture's queued
+    // source rows drain, otherwise an intermediate count can be skipped before it is rendered.
+    let confirmed = await call('project_resources',{projectId:'desiign'});
+    const baselineDeadline = Date.now() + 30_000;
+    while (confirmed.kind !== 'ready' || confirmed.progress.pending || confirmed.progress.state !== 'current') {
+      assert.ok(Date.now() < baselineDeadline, 'fixture source baseline did not drain: ' + JSON.stringify(confirmed));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      confirmed = await call('project_resources',{projectId:'desiign'});
+    }
     const previousCalls = confirmed.header.tools.totalCalls;
     await p.waitForFunction(expected=>{const dt=[...document.querySelectorAll('[data-resource-project] dt')].find(node=>node.textContent==='Tools');return Number(dt?.nextElementSibling?.textContent)===expected;},previousCalls);
     const oldVersion = await resources.getAttribute('data-resource-version');
