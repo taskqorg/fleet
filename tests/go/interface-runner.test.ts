@@ -8,7 +8,7 @@ import {freePort,root} from '../harness.ts';
 // Requirement: observation receipt survives retries while unknown/no actual render cannot pass.
 // Risk: delayed retries forge a successful render or erase missing samples.
 // These are protocol finalization regressions, not browser or performance acceptance results.
-for (const scenario of ['statistics exception', 'large export parallel stop', 'journal export exception'] as const) {
+for (const scenario of ['statistics exception', 'large export parallel stop', 'journal export exception', 'journal stream exception'] as const) {
  const positive = scenario !== 'statistics exception';
  // Requirement: one owner retains complete source/render evidence and every mandatory export outcome.
  // Risk: a failed journal/links artifact is reported complete or changes a known render verdict.
@@ -35,6 +35,7 @@ for (const scenario of ['statistics exception', 'large export parallel stop', 'j
    gate.stdin!.write("BEGIN;SELECT pg_advisory_lock(733631);SELECT 'locked';\n");await locked;
    sql('ALTER VIEW pg_stat_statements RENAME TO interface_real_statistics; CREATE VIEW pg_stat_statements AS WITH held AS MATERIALIZED (SELECT pg_advisory_xact_lock(733631)) SELECT s.* FROM interface_real_statistics s CROSS JOIN held; GRANT SELECT ON pg_stat_statements TO fleet;');
   }else if(scenario==='statistics exception') sql('DROP EXTENSION pg_stat_statements;');
+  else if(scenario==='journal stream exception')writeFileSync(join(out,'publication-journal.jsonl.partial'),'retained partial evidence\n');
 
   const {id:run}=await request('start',{spec:{sourceDistribution:'distinct',readers:1,rate:1,warmup:0,duration:1,burst:1,recovery:1,mode:'connected',network:'unshaped'},readers:[{id:'negative-reader',project:config.projects[0]}],browser:{classification:positive?'positive protocol finalization test, no actual DOM':'negative protocol test, no actual DOM'}});
   let result:any;
@@ -68,7 +69,7 @@ for (const scenario of ['statistics exception', 'large export parallel stop', 'j
     const ack=await request('render',body);await request('render',body);if(scenario==='journal export exception'&&row.calls===2&&ack.accepted){sql('DROP TABLE interface_publication;');journalDropped=true;}return false;
    });
    assert.equal(result.renderVerdict,'passed');assert.equal(result.samples.count,2);assert.equal(result.expectedSamples,2);assert.equal(result.missing.length,0);assert.deepEqual(result.errors,[]);assert.deepEqual(result.auxiliaryErrors,[]);const statistics=readFileSync(join(out,run+'-query-statistics.json'),'utf8');assert.ok(JSON.parse(statistics).length>0,'other statistics export succeeds');
-   if(scenario==='journal export exception'){assert.equal(result.artifactsComplete,false);assert.equal(result.status,'incomplete');assert.equal(result.reason,'artifact-export-failed');assert.ok(result.journalErrors.some((e:string)=>e.startsWith('journal-export:')));assert.equal(result.journalStats,null);assert.ok(existsSync(join(out,run+'-pg-after.json')),'snapshot succeeds independently');assert.ok(existsSync(join(out,'publication-journal.jsonl.partial')));assert.ok(existsSync(join(out,'publication-notifications.jsonl.partial')));}
+   if(scenario==='journal export exception'||scenario==='journal stream exception'){assert.equal(result.artifactsComplete,false);assert.equal(result.status,'incomplete');assert.equal(result.reason,'artifact-export-failed');assert.ok(result.journalErrors.some((e:string)=>e.startsWith('journal-export:')));assert.equal(result.journalStats,null);assert.ok(existsSync(join(out,run+'-pg-after.json')),'snapshot succeeds independently');assert.ok(existsSync(join(out,'publication-journal.jsonl.partial')));assert.ok(existsSync(join(out,'publication-notifications.jsonl.partial')));if(scenario==='journal stream exception'){assert.ok(result.journalErrors.some((e:string)=>e.includes('EEXIST')));assert.equal(readFileSync(join(out,'publication-journal.jsonl.partial'),'utf8'),'retained partial evidence\n');}}
    else{assert.equal(result.artifactsComplete,true);assert.deepEqual(result.journalErrors,[]);assert.ok(Buffer.byteLength(statistics)>1048576);}
    assert.ok(result.samples.min>=0&&result.samples.max<=5000);assert.ok(['passed','incomplete'].includes(result.status));
   }
@@ -90,8 +91,8 @@ for (const scenario of ['statistics exception', 'large export parallel stop', 'j
    const observations=events.filter(x=>x.type==='render-observation');assert.ok(observations.length>2);
    for(const observation of observations)assert.equal(observation.firstReceipt,observations.find(x=>x.observation.observation===observation.observation.observation)!.receipt);
   }
-  if(scenario!=='journal export exception')assert.ok(readFileSync(join(out,'publication-notifications.jsonl'),'utf8').trim(),'committed notification/XID mapping exported for the actual protocol');
-  if(scenario!=='journal export exception')assert.ok(readFileSync(join(out,'publication-journal.jsonl'),'utf8').trim(),'committed journal evidence retained even for failed/no-render runs');
+  if(scenario!=='journal export exception'&&scenario!=='journal stream exception')assert.ok(readFileSync(join(out,'publication-notifications.jsonl'),'utf8').trim(),'committed notification/XID mapping exported for the actual protocol');
+  if(scenario!=='journal export exception'&&scenario!=='journal stream exception')assert.ok(readFileSync(join(out,'publication-journal.jsonl'),'utf8').trim(),'committed journal evidence retained even for failed/no-render runs');
  }finally{
   gate?.stdin?.end();gate?.kill('SIGTERM');
   if(!exited){try{await request('stop',{})}catch{child.kill('SIGTERM')}await gone;}

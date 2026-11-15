@@ -17,6 +17,13 @@ import { PublicationHistory, ObservationBook, RenderBounds, journalVersion, inst
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const stamp = () => performance.now();
+// An error can precede a later page query; never wait for drain on an already failed stream.
+async function writeEvidenceLine(stream: ReturnType<typeof createWriteStream>, line: string) {
+  const check = () => { if (stream.errored) throw stream.errored; if (stream.destroyed || stream.writableEnded) throw Error('export stream unavailable: ' + String(stream.path)); };
+  check();
+  if (!stream.write(line)) { check(); await once(stream, 'drain'); }
+}
+
 // Stream the actual private-database statistics; query text may exceed spawnSync's1MiB buffer.
 async function exportQueryStatistics(database: string, file: string) {
   const partial = file + '.partial', output = createWriteStream(partial, { flags: 'wx' });
@@ -354,15 +361,16 @@ export async function serve(o: { out: string; history: number; projects: number;
       const journalClosed = Promise.allSettled([finished(journalFile), finished(notificationFile)]);
       let notificationLinks=0;
       try {
+        await Promise.all([once(journalFile, 'open'), once(notificationFile, 'open')]);
         const scopes = await observer.run('', `(SELECT coalesce(jsonb_agg(p),'[]'::jsonb) FROM (SELECT DISTINCT project,epoch FROM interface_publication ORDER BY project,epoch) p)`);
         for (const scope of scopes.payload) {
           let cursor: string | null = null;
           for (;;) {
             const page = await observer.run('', publicationJournalSQL(scope.project, scope.epoch, cursor));
-            for (const row of page.payload as JournalPublication[]) if (!journalFile.write(JSON.stringify(row) + '\n')) await once(journalFile, 'drain');
+            for (const row of page.payload as JournalPublication[]) await writeEvidenceLine(journalFile, JSON.stringify(row) + '\n');
             if(page.payload.length){
               const links=await observer.run('',publicationNotificationsSQL(scope.project,page.payload.map((row:JournalPublication)=>row.transaction)));
-              for(const row of links.payload){notificationLinks++;if(!notificationFile.write(JSON.stringify(row)+'\n'))await once(notificationFile,'drain');}
+              for(const row of links.payload){notificationLinks++;await writeEvidenceLine(notificationFile,JSON.stringify(row)+'\n');}
             }
             if (page.payload.length < 1000) break;
             const next = page.payload.at(-1).revision as string; if (next === cursor) throw Error('journal export cursor did not advance'); cursor = next;
