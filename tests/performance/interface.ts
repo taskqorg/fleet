@@ -21,6 +21,30 @@ export function stats(values: number[]) {
 }
 export type SourceDistribution = 'hot' | 'distinct';
 export type Workload = { sourceDistribution: SourceDistribution; readers: number; rate: number; warmup: number; duration: number; burst: number; recovery: number; mode: 'connected' | 'exceed-capacity'; network: 'unshaped' | '80ms-10Mbps' };
+export type SourcePhase = 'warmup' | 'sustained' | 'burst';
+export type PhaseWindow = { phase: SourcePhase; plannedStart: number; plannedEnd: number; actualStart: number; actualEnd: number | null; startOvershootMs: number; endOvershootMs: number | null; offered: number; expected: number; offering: 'paced' | 'early' };
+
+// One origin for all phases. Clock injection tests the actual deadline control flow without
+// sleeping for a600-second trial; runtime uses the normal monotonic clock and timer.
+export async function scheduleSourcePhases(spec: Workload, offer: (phase: SourcePhase, due: number) => void, observe: (event: 'start' | 'end', window: PhaseWindow) => void, clock = { now: stamp, sleep }) {
+  const origin = clock.now(), windows: PhaseWindow[] = [];
+  const until = async (deadline: number) => { while (clock.now() < deadline) await clock.sleep(deadline - clock.now()); };
+  for (const [phase, offset, seconds] of [['warmup', 0, spec.warmup], ['sustained', spec.warmup, spec.duration], ['burst', spec.warmup + spec.duration, 1]] as const) {
+    const plannedStart = origin + offset * 1000, plannedEnd = plannedStart + seconds * 1000;
+    await until(plannedStart);
+    const actualStart = clock.now(), expected = phase === 'burst' ? spec.burst : seconds * spec.rate;
+    const window: PhaseWindow = { phase, plannedStart, plannedEnd, actualStart, actualEnd: null, startOvershootMs: Math.max(0, actualStart - plannedStart), endOvershootMs: null, offered: 0, expected, offering: phase === 'burst' ? 'early' : 'paced' };
+    windows.push(window); observe('start', { ...window });
+    for (let i = 0; i < expected; i++) {
+      const due = phase === 'burst' ? plannedStart : plannedStart + i * 1000 / spec.rate;
+      await until(due); offer(phase, due); window.offered++;
+    }
+    await until(plannedEnd);
+    window.actualEnd = clock.now(); window.endOvershootMs = Math.max(0, window.actualEnd - plannedEnd);
+    observe('end', { ...window });
+  }
+  return windows;
+}
 export function workload(x: Partial<Workload>, development = false): Workload {
   const w: Workload = { sourceDistribution: 'hot', readers: 1, rate: 1, warmup: 60, duration: 600, burst: 1000, recovery: 60, mode: 'connected', network: 'unshaped', ...x };
   for (const k of ['readers', 'rate', 'warmup', 'duration', 'burst', 'recovery'] as const) if (!Number.isInteger(w[k]) || w[k] < 0) throw Error('invalid workload ' + k);
@@ -71,27 +95,39 @@ export type Fact = { id: string; execution: string; project: string; n: number; 
 // Both endpoints use performance.now() in this process. Round outward by one millisecond
 // per endpoint; neither SQL wall clocks nor browser clock offsets are subtracted.
 export const sourceClockUncertaintyMs = 1;
-export function sourceRate(facts: Fact[], spec: Workload, uncertaintyMs = sourceClockUncertaintyMs) {
+export function sourceRate(facts: Fact[], spec: Workload, uncertaintyMs = sourceClockUncertaintyMs, phaseWindows: PhaseWindow[] = []) {
+  const origin = phaseWindows[0]?.plannedStart;
+  const windowsValid = phaseWindows.length === 3 && phaseWindows.every((w, i) => {
+    const phase = (['warmup', 'sustained', 'burst'] as const)[i], offset = i === 0 ? 0 : i === 1 ? spec.warmup : spec.warmup + spec.duration;
+    const seconds = i === 0 ? spec.warmup : i === 1 ? spec.duration : 1;
+    return w.phase === phase && Number.isFinite(origin) && [w.plannedStart, w.plannedEnd, w.actualStart, w.actualEnd, w.startOvershootMs, w.endOvershootMs].every(v => v !== null && Number.isFinite(v)) &&
+      w.plannedStart === origin + offset * 1000 && w.plannedEnd === w.plannedStart + seconds * 1000 && w.actualStart >= w.plannedStart && w.actualEnd! >= w.plannedEnd && w.actualEnd! >= w.actualStart &&
+      w.startOvershootMs === w.actualStart - w.plannedStart && w.endOvershootMs === w.actualEnd! - w.plannedEnd &&
+      (i === 0 || w.actualStart >= phaseWindows[i - 1].actualEnd!) && w.expected === (phase === 'burst' ? spec.burst : seconds * spec.rate) && w.offered === w.expected && w.offering === (phase === 'burst' ? 'early' : 'paced');
+  });
   const phases = (['sustained', 'burst'] as const).map(phase => {
+    const window = phaseWindows.find(w => w.phase === phase);
     const rows = facts.filter(f => f.phase === phase), expected = phase === 'burst' ? spec.burst : spec.rate * spec.duration;
     const confirmed = rows.filter(f => !f.error && f.upper !== null && f.transaction);
     const budgetMs = phase === 'burst' ? 1000 : spec.duration * 1000;
     const lower = rows.length ? rows.reduce((v, f) => Math.min(v, f.lower), Infinity) : null;
     const upper = confirmed.length ? confirmed.reduce((v, f) => Math.max(v, f.upper!), -Infinity) : null;
-    const spanMs = lower === null || upper === null ? null : upper - lower + 2 * uncertaintyMs;
+    const spanMs = !window || upper === null ? null : upper - window.plannedStart + 2 * uncertaintyMs;
     // Count mutations/transactions independently: an aggregate counter delta is not a fact.
     const identitiesValid = new Set(rows.map(f => f.id)).size === expected && new Set(confirmed.map(f => f.transaction)).size === expected;
     const ordered = rows.toSorted((a, b) => a.due - b.due);
     const windows = phase === 'sustained' ? Array.from({ length: spec.duration }, (_, second) => {
       const bucket = ordered.slice(second * spec.rate, (second + 1) * spec.rate);
       const spanMs = bucket.length ? Math.max(...bucket.map(f => f.upper ?? Infinity)) - Math.min(...bucket.map(f => f.lower)) + 2 * uncertaintyMs : null;
-      return { second, count: bucket.length, spanMs, valid: bucket.length === spec.rate && spanMs !== null && spanMs <= 1000 };
+      const plannedStart = window ? window.plannedStart + second * 1000 : null, plannedEnd = plannedStart === null ? null : plannedStart + 1000;
+      const withinOriginalWindow = plannedStart !== null && bucket.every(f => f.lower >= plannedStart && f.upper !== null && f.upper + 2 * uncertaintyMs <= plannedEnd!);
+      return { second, count: bucket.length, spanMs, plannedStart, plannedEnd, valid: bucket.length === spec.rate && spanMs !== null && spanMs <= 1000 && withinOriginalWindow };
     }) : [];
-    const valid = windows.every(w => w.valid) && Number.isFinite(uncertaintyMs) && uncertaintyMs >= 0 && expected > 0 && rows.length === expected && confirmed.length === expected && identitiesValid && spanMs !== null && spanMs <= budgetMs && confirmed.every(f => Number.isFinite(f.lower) && Number.isFinite(f.upper) && f.upper! >= f.lower);
-    return { phase, expected, offered: rows.length, admitted: confirmed.length, confirmed: confirmed.length, transactions: new Set(confirmed.map(f => f.transaction)).size, lower, upper, spanMs, budgetMs, windows, minimumConfirmedPerSecond: spanMs && spanMs > 0 ? confirmed.length * 1000 / spanMs : null, valid };
+    const valid = windowsValid && windows.every(w => w.valid) && Number.isFinite(uncertaintyMs) && uncertaintyMs >= 0 && expected > 0 && rows.length === expected && confirmed.length === expected && identitiesValid && spanMs !== null && spanMs <= budgetMs && confirmed.every(f => Number.isFinite(f.lower) && Number.isFinite(f.upper) && f.upper! >= f.lower && f.lower >= window!.plannedStart);
+    return { phase, expected, offered: rows.length, admitted: confirmed.length, confirmed: confirmed.length, transactions: new Set(confirmed.map(f => f.transaction)).size, lower, upper, windowStart: window?.plannedStart ?? null, windowEnd: window?.plannedEnd ?? null, spanMs, budgetMs, windows, minimumConfirmedPerSecond: spanMs && spanMs > 0 ? confirmed.length * 1000 / spanMs : null, valid };
   });
   const unique = new Set(facts.map(f => f.id)).size === facts.length && new Set(facts.flatMap(f => f.transaction ? [f.transaction] : [])).size === facts.filter(f => f.transaction).length;
-  return { status: unique && phases.every(p => p.valid) ? 'qualified' : 'invalid-source-rate', uncertaintyMs, clock: 'same-process monotonic outward brackets, includes submission/queue/commit receipt', phases };
+  return { status: unique && windowsValid && phases.every(p => p.valid) ? 'qualified' : 'invalid-source-rate', uncertaintyMs, clock: 'same-process monotonic outward brackets from original phase start, includes submission/queue/commit receipt', phaseWindows, phaseWindowsValid: windowsValid, phases };
 }
 export function publicationVersion(value: string): { epoch: string; revision: string } | null {
   const m = /^([^:]+):([0-9]+)$/.exec(value);
@@ -124,7 +160,7 @@ COMMIT;`;
 export function proofSQL(project: string, executions: string[]) {
   return `(SELECT json_build_object('epoch',s.epoch::text,'revision',s.revision::text,'calls',coalesce(t.calls,0),'errors',coalesce(t.errors,0),'leaves',(SELECT coalesce(json_object_agg(c.execution_id,json_build_object('calls',(v->>'calls')::bigint,'errors',(v->>'errors')::bigint)),'{}') FROM resource_contribution c CROSS JOIN LATERAL jsonb_array_elements(c.facts->'tools') v WHERE c.project_id=s.project_id AND c.included AND c.execution_id=ANY(ARRAY[${executions.map(literal).join(',')}]::text[]) AND v->>'name'=${literal(marker)} AND v->>'connection'='')) FROM resource_project_summary s LEFT JOIN resource_tool t ON t.project_id=s.project_id AND t.name=${literal(marker)} AND t.connection='' WHERE s.project_id=${literal(project)} AND s.ready)`;
 }
-type Run = { id: string; spec: Workload; start: number; done: boolean; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; publications: Map<string, Publication>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
+type Run = { id: string; spec: Workload; start: number; done: boolean; phaseWindows: PhaseWindow[]; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; publications: Map<string, Publication>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
 const pgSnapshot = (c: Coordinator) => JSON.parse(c.sql(`SELECT json_build_object('at',clock_timestamp(),'database',current_database(),'pg',version(),'settings',(SELECT json_object_agg(name,setting) FROM pg_settings WHERE name IN ('shared_buffers','work_mem','max_connections','fsync','synchronous_commit','track_io_timing','track_commit_timestamp','max_wal_size','effective_cache_size')),'databaseStats',(SELECT row_to_json(s) FROM pg_stat_database s WHERE datname=current_database()),'activity',(SELECT coalesce(json_agg(a),'[]') FROM (SELECT pid,state,wait_event_type,wait_event,query_start,left(query,250) query FROM pg_stat_activity WHERE datname=current_database()) a),'backlog',(SELECT count(*) FROM resource_work),'oldestPending',(SELECT min(first_pending_at) FROM resource_work),'builds',(SELECT coalesce(json_agg(b),'[]') FROM resource_build b))`).trim());
 
 export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number }) {
@@ -267,11 +303,11 @@ export async function serve(o: { out: string; history: number; projects: number;
       const recovery = expected.map(e => ({ ...e, observed: JSON.parse(c.sql(`SELECT json_build_object('calls',coalesce((SELECT calls FROM resource_tool WHERE project_id=${literal(e.project)} AND name=${literal(marker)} AND connection=''),0),'errors',coalesce((SELECT errors FROM resource_tool WHERE project_id=${literal(e.project)} AND name=${literal(marker)} AND connection=''),0),'tools',(SELECT coalesce(json_object_agg(name,v),'{}') FROM (SELECT name,sum(calls)::bigint calls,sum(errors)::bigint errors FROM resource_tool WHERE project_id=${literal(e.project)} GROUP BY name) v),'totalCalls',(SELECT sum(sum_value) FROM resource_metric WHERE project_id=${literal(e.project)} AND metric='toolCalls'),'totalErrors',(SELECT sum(sum_value) FROM resource_metric WHERE project_id=${literal(e.project)} AND metric='toolErrors'),'executions',(SELECT executions FROM resource_project_summary WHERE project_id=${literal(e.project)}),'pending',(SELECT count(*) FROM resource_work_scope WHERE project_id=${literal(e.project)}))`)) }));
       for (const x of recovery) if (x.calls !== x.observed.calls || x.errors !== x.observed.errors || x.executions !== x.observed.executions || x.totalCalls !== x.observed.totalCalls || x.totalErrors !== x.observed.totalErrors || Object.keys(x.tools).length !== Object.keys(x.observed.tools).length || Object.entries(x.tools).some(([name, t]) => t.calls !== x.observed.tools[name]?.calls || t.errors !== x.observed.tools[name]?.errors) || x.observed.pending) r.errors.push('recovery/double-count mismatch: ' + JSON.stringify(x));
       if (!r.metrics.lags.length) r.errors.push('no measured connected foreground samples');
-      const rate = sourceRate(allFacts, r.spec);
+      const rate = sourceRate(allFacts, r.spec, sourceClockUncertaintyMs, r.phaseWindows);
       const failed = r.errors.length || missing.length || (r.spec.mode === 'connected' && r.metrics.lags.some(x => x > 5000));
       const source = { distribution: r.spec.sourceDistribution, logicalFactCount: allFacts.length, logicalFacts: allFacts.map(f => f.id), projects: [...r.facts.keys()], leafIDs: [...new Set(allFacts.map(f => f.execution))], distinctLeaves: new Set(allFacts.map(f => f.execution)).size, canonicalMutations: allFacts.filter(f => f.upper !== null).length * (r.spec.sourceDistribution === 'hot' ? 1 : 2), commitTransactionCount: new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : [])).size, commitTransactions: [...new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : []))] };
       const result = { id: r.id, spec: r.spec, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : null, sourceRate: rate, source, classifications: [r.spec.mode, r.spec.sourceDistribution], facts: r.count, readers: [...r.readers], samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds include proof read and return network. Development is not capacity acceptance. This run alone does not prove the full envelope.' };
-      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: r.spec, source, expected, facts: allFacts }, null, 2));
+      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: r.spec, phaseWindows: r.phaseWindows, source, expected, facts: allFacts }, null, 2));
       r.finish = result; r.done = true; emit('finish', result);
       writeFileSync(resolve(o.out, r.id + '-result.json'), JSON.stringify(result, null, 2));
       writeFileSync(resolve(o.out, r.id + '-pg-after.json'), JSON.stringify(pgSnapshot(c), null, 2));
@@ -284,14 +320,12 @@ export async function serve(o: { out: string; history: number; projects: number;
       if (r.spec.sourceDistribution === 'distinct') for (let i = sourceWriters.length; i < ids.length * 8; i++) { const writer = new Writer(db, sqlLog); writers.push(writer); sourceWriters.push(writer); }
       emit('source-lanes', { run: r.id, distribution: r.spec.sourceDistribution, lanes: sourceWriters.length });
       const chains = sourceWriters.map(() => Promise.resolve());
-      const schedule = (phase: string, due: number) => { const n = ordinal++, slot = n % sourceWriters.length; const p = chains[slot].then(() => writeFact(r, n, phase, due)); chains[slot] = p; tasks.add(p); void p.finally(() => tasks.delete(p)); };
-      for (const [phase, seconds] of [['warmup', r.spec.warmup], ['sustained', r.spec.duration]] as const) {
-        const start = stamp();
-        for (let i = 0; i < seconds * r.spec.rate; i++) { const due = start + i * 1000 / r.spec.rate; if (due > stamp()) await sleep(due - stamp()); schedule(phase, due); }
-      }
-      const burst = stamp();
-      for (let i = 0; i < r.spec.burst; i++) { const due = burst + i * 1000 / Math.max(1, r.spec.burst); if (due > stamp()) await sleep(due - stamp()); schedule('burst', due); }
-      emit('burst-scheduled', { run: r.id, count: r.spec.burst, durationMs: stamp() - burst });
+      const schedule = (phase: SourcePhase, due: number) => {
+        const n = ordinal++, slot = n % sourceWriters.length, project = ids[n % ids.length];
+        emit('source-offered', { run: r.id, id: `${r.id}-${n}`, execution: r.spec.sourceDistribution === 'hot' ? project + '-marker' : `${project}-${r.id}-leaf-${n}`, project, phase, due, offeredAt: stamp(), lane: slot });
+        const p = chains[slot].then(() => writeFact(r, n, phase, due)); chains[slot] = p; tasks.add(p); void p.finally(() => tasks.delete(p));
+      };
+      r.phaseWindows = await scheduleSourcePhases(r.spec, schedule, (event, window) => emit('source-phase-' + event, { run: r.id, window }));
       await Promise.all(tasks);
       await sleep(r.spec.recovery * 1000); await finish(r);
     };
@@ -310,7 +344,7 @@ export async function serve(o: { out: string; history: number; projects: number;
             if (!Array.isArray(b.readers) || b.readers.length !== spec.readers || new Set(b.readers.map((x: any) => x.id)).size !== spec.readers || b.readers.some((x: any) => !ids.includes(x.project))) throw Error('reader barrier mismatch');
             // Fresh server per case: marker counters and prepared baseline must not carry a prior run.
             if (run) throw Error('start a fresh isolated server per case');
-            run = { id: randomUUID(), spec, start: stamp(), done: false, facts: new Map(ids.map(p => [p, []])), seen: new Map(), publications: new Map(), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
+            run = { id: randomUUID(), spec, start: stamp(), done: false, phaseWindows: [], facts: new Map(ids.map(p => [p, []])), seen: new Map(), publications: new Map(), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
             emit('start', { id: run.id, spec, readers: b.readers, browser: b.browser }); result = { id: run.id }; void produce(run).catch(e => { run!.errors.push(String(e)); void finish(run!); });
           } else if (path === '/__interface/render') {
             const r = run; if (!r || r.id !== b.run || !r.readers.has(b.reader)) throw Error('unregistered render');
