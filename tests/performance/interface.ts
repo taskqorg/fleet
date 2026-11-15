@@ -178,8 +178,8 @@ export async function serve(o: { out: string; history: number; projects: number;
         const seen = r.seen.get(reader) ?? 0;
         for (const fact of r.facts.get(project)!) if (fact.n > seen && !fact.error && fact.phase !== 'warmup') missing.push({ reader, project, n: fact.n, age: stamp() - fact.lower });
       }
-      const recovery = ids.map(project => ({ project, expected: r.facts.get(project)!.filter(x => !x.error).at(-1)?.n ?? 0, observed: Number(c.sql(`SELECT calls FROM resource_tool WHERE project_id=${literal(project)} AND name=${literal(marker)}`).trim()), pending: Number(c.sql(`SELECT count(*) FROM resource_work_scope WHERE project_id=${literal(project)}`).trim()) }));
-      for (const x of recovery) if (x.expected !== x.observed || x.pending) r.errors.push('recovery/double-count mismatch: ' + JSON.stringify(x));
+      const recovery = ids.map(project => ({ project, expected: r.facts.get(project)!.filter(x => !x.error).at(-1)?.n ?? 0, observed: Number(c.sql(`SELECT calls FROM resource_tool WHERE project_id=${literal(project)} AND name=${literal(marker)}`).trim()), errors: Number(c.sql(`SELECT errors FROM resource_tool WHERE project_id=${literal(project)} AND name=${literal(marker)}`).trim()), pending: Number(c.sql(`SELECT count(*) FROM resource_work_scope WHERE project_id=${literal(project)}`).trim()) }));
+      for (const x of recovery) if (x.expected !== x.observed || x.errors !== 0 || x.pending) r.errors.push('recovery/double-count mismatch: ' + JSON.stringify(x));
       if (!r.metrics.lags.length) r.errors.push('no measured connected foreground samples');
       const failed = r.errors.length || missing.length || (r.spec.mode === 'connected' && r.metrics.lags.some(x => x > 5000));
       const result = { id: r.id, spec: r.spec, development: o.development, status: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', classifications: r.spec.mode, facts: r.count, readers: [...r.readers], samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Render upper bounds include prewrite and return network. Preparing/hidden/disconnected intervals are errors in connected runs. Exceed-capacity recovered is not a five-second pass. This run alone does not prove the full envelope.' };
@@ -221,7 +221,7 @@ export async function serve(o: { out: string; history: number; projects: number;
           } else if (path === '/__interface/render') {
             const r = run; if (!r || r.id !== b.run || !r.readers.has(b.reader)) throw Error('unregistered render');
             const reader = r.readers.get(b.reader)!;
-            if (reader.project !== b.project || !Number.isSafeInteger(b.value) || b.value < 0 || !b.version || !b.visible || !b.text?.includes(b.value + ' ·')) throw Error('unverified rendered value/envelope');
+            if (reader.project !== b.project || !Number.isSafeInteger(b.value) || b.value < 0 || !b.version || !b.visible || b.text !== b.value + ' · 0 failed') throw Error('unverified rendered value/envelope');
             const received = stamp(), seen = r.seen.get(b.reader) ?? 0, facts = r.facts.get(b.project)!;
             if (b.value > facts.length) throw Error('rendered count exceeds submitted facts');
             for (const fact of facts) if (fact.n > seen && fact.n <= b.value && !fact.error) {
