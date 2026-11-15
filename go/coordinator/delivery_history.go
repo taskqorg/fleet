@@ -71,7 +71,8 @@ func init() {
 // ---- storage ----
 
 func dhPut(q *Request, kind, id string, v any) error {
-	return exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data,updated_at=now()`,
+	// Equal data is not written again, so the change stream (kind delivery) carries only real changes.
+	return exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data,updated_at=now() WHERE document.data IS DISTINCT FROM EXCLUDED.data`,
 		kind, id, ciProject, jsonBytes(v))
 }
 

@@ -113,7 +113,7 @@ function IdleD({ range, onRange, day, onDay }: { range: string; onRange: (r: str
       <div class="vl-wrap" style={{ '--cols': '3.5rem minmax(0,1fr) 3rem' }}>
         {moving.map(p => <div key={p.n} class="vl-row static" role="row">
           <span class="mono muted">#{p.n}</span>
-          <TimeStrip from={from} to={NOW} start={p.opened} end={null} now={NOW} state="running" label={`#${p.n}`} parts={partsOf(p)} />
+          <TimeStrip from={from} to={NOW} now={NOW} label={`#${p.n}`} parts={partsOf(p)} />
           <span class="r"><AgeChip t={p.since} now={NOW} alertAfter={LIMIT[p.stage]} alertLabel="past the stage limit" /></span>
         </div>)}
       </div>

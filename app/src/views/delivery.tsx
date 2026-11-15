@@ -36,7 +36,10 @@ const ms = (s?: string | null) => s ? Date.parse(s) : NaN;
 const late = (it: Item, now: number) => LIMIT[it.stage] !== undefined && now - ms(it.since) >= LIMIT[it.stage]! * 1000;
 /** The focus segment of a pull request: owner~repo~number (stable, readable, no slash). */
 const idOf = (it: { repo: string; number: number }) => `${it.repo.replace('/', '~')}~${it.number}`;
-const touches = (c: Change) => c.kind === 'delivery';
+// Current rows change with delivery-state:<project>; the recorded history (records and the regression check) with the rest.
+const touchesStatus = (c: Change) => c.kind === 'delivery' && c.id.startsWith('delivery-state:');
+const touchesHistory = (c: Change) => c.kind === 'delivery' && !c.id.startsWith('delivery-state:');
+const NONE = 'none' as const; // no history kept (404): known, unlike still loading
 const p = (xs: number[], q: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)]; };
 const sec = (v: number | null | undefined) => ({ value: v == null ? null : v / 1000, basis: v == null ? 'unavailable' as const : 'measured' as const, reason: v == null ? 'no pull requests' : undefined });
 
@@ -45,15 +48,16 @@ export function Delivery({ id }: { id?: string }) {
   const ex = view.extra ?? {};
   const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
   const focus = focusIds() ?? [];
-  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touches, 300000);
+  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
   const range = RANGES.find(r => r.id === ex.range) ?? RANGES[1];
   const now = Date.now();
   // The recorded history covers the fleet repository only; a 404 (no history kept) or a focus away from fleet hides Pace.
   const fleetShown = !focus.length || focus.includes('fleet');
-  const pace = useDoc<{ h: History; b: Ops['delivery_baseline']['reply']; r: Ops['delivery_regressions']['reply'] } | null>(
+  const paceDoc = useDoc<{ h: History; b: Ops['delivery_baseline']['reply']; r: Ops['delivery_regressions']['reply'] } | typeof NONE>(
     prefsRead.value && fleetShown ? 'delivery-pace:' + range.id : null,
     () => Promise.all([op('delivery_history', { since: new Date(Date.now() - range.ms).toISOString() }), op('delivery_baseline', { days: 14 }), op('delivery_regressions', {})])
-      .then(([h, b, r]) => ({ h, b, r }), e => { if (/404/.test(String(e?.message ?? e))) return null; throw e; }), touches, 600000);
+      .then(([h, b, r]) => ({ h, b, r }), e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; }), touchesHistory, 600000);
+  const pace = { data: paceDoc.data === NONE ? null : paceDoc.data, error: paceDoc.error, none: paceDoc.data === NONE };
 
   const data = status.data;
   const items = data?.items ?? [];
@@ -111,7 +115,7 @@ export function Delivery({ id }: { id?: string }) {
     </section>
   </>;
   return <ListDetail list={list} detailKey={id}
-    idle={<Overview now={now} items={items} incomplete={incomplete} pace={pace.data ?? null} paceError={pace.error} fleetShown={fleetShown} range={range} at={at}
+    idle={<Overview now={now} items={items} incomplete={incomplete} pace={pace.data ?? null} paceError={pace.error} fleetShown={fleetShown && !pace.none} range={range} at={at} href={it => href({ focus: idOf(it) })}
       onRange={r => set({ extra: { ...ex, range: r === '7d' ? undefined as any : r, at: undefined as any } })} onAt={a => set({ extra: { ...ex, at: a === null ? undefined as any : String(a) } })} onOpen={go} />}
     detail={id ? <PrDetail key={id} id={id} item={open} now={now} onClose={() => go()} /> : undefined} />;
 }
@@ -134,9 +138,9 @@ function PrRow({ it, now, sel, href, onOpen }: { it: Item; now: number; sel: boo
 }
 
 /** The work area while no pull request is open: what needs a look, what moves now, the pace. */
-function Overview({ now, items, incomplete, pace, paceError, fleetShown, range, at, onRange, onAt, onOpen }: {
+function Overview({ now, items, incomplete, pace, paceError, fleetShown, range, at, onRange, onAt, onOpen, href }: {
   now: number; items: Item[]; incomplete: boolean; pace: { h: History; b: Ops['delivery_baseline']['reply']; r: Ops['delivery_regressions']['reply'] } | null; paceError: string | null;
-  fleetShown: boolean; range: typeof RANGES[number]; at: number | null; onRange: (r: string) => void; onAt: (a: number | null) => void; onOpen: (it: Item) => void;
+  fleetShown: boolean; range: typeof RANGES[number]; at: number | null; onRange: (r: string) => void; onAt: (a: number | null) => void; onOpen: (it: Item) => void; href: (it: Item) => string;
 }) {
   const moving = ORDER.filter(s => !DONE.includes(s)).flatMap(s => items.filter(it => it.stage === s));
   const failed = items.filter(it => it.stage === 'pr_failed'), stuck = moving.filter(it => late(it, now));
@@ -153,8 +157,8 @@ function Overview({ now, items, incomplete, pace, paceError, fleetShown, range, 
       {!moving.length ? <Empty text={incomplete ? 'Unavailable. GitHub data is incomplete.' : 'Nothing in flight.'} />
         : <div class="vl-wrap" role="grid" aria-label="Pull requests in flight" style={{ '--cols': '3.5rem minmax(0,1fr) 3rem' }}>{moving.map(it =>
           <div key={idOf(it)} class="vl-row static" role="row">
-            <a class="mono row-link" href={`/delivery/${idOf(it)}`} onClick={e => { e.preventDefault(); onOpen(it); }}>#{it.number}</a>
-            <TimeStrip from={now - 6 * HOUR} to={now} start={ms(it.opened) || ms(it.since)} end={null} now={now} state="running" label={`#${it.number} ${it.title}`} parts={lane(it, now)} />
+            <a class="mono row-link" href={href(it)} onClick={e => { e.preventDefault(); onOpen(it); }}>#{it.number}</a>
+            <TimeStrip from={now - 6 * HOUR} to={now} now={now} label={`#${it.number} ${it.title}`} parts={lane(it, now)} />
             <span class="r"><AgeChip t={ms(it.since)} now={now} alertAfter={LIMIT[it.stage]} alertLabel="past the stage limit" /></span>
           </div>)}</div>}
       {incomplete && moving.length > 0 && <p class="muted type-sm">The last rows read; GitHub coverage is incomplete.</p>}
@@ -224,12 +228,16 @@ function Pace({ pace, error, now, range, at, onRange, onAt }: { pace: { h: Histo
  *  has a recorded history; other repositories show what the current read knows). */
 function PrDetail({ id, item, now, onClose }: { id: string; item?: Item; now: number; onClose: () => void }) {
   const [owner, repo, num] = id.split('~'), number = Number(num), fleet = `${owner}/${repo}` === FLEET;
-  const h = useDoc<History | null>(fleet ? 'delivery-pr:' + number : null, () => op('delivery_history', { number }).catch(e => { if (/404/.test(String(e?.message ?? e))) return null; throw e; }), touches, 600000);
+  const hd = useDoc<History | typeof NONE>(fleet ? 'delivery-pr:' + number : null, () => op('delivery_history', { number }).catch(e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; }), touchesHistory, 600000);
+  const h = { data: hd.data === NONE ? null : hd.data, error: hd.error, loading: fleet && hd.data === null && !hd.error };
   const x = h.data?.prs.find(q => q.number === number);
+  // The merge queue splits at its last successful run's start: waiting for a runner before, its checks after.
+  const qStart = h.data?.runs.filter(r => r.conclusion === 'success' && r.started).map(r => r.started!).sort().at(-1);
   const title = item?.title || x?.title || `#${number}`;
-  const steps: [string, Stage, string | undefined, string | undefined][] = x ? [
-    ['PR checks', 'pr_ci', x.opened, x.prCiDone], ['Waiting in queue', 'mq_wait', x.enqueued ?? x.prCiDone, x.mqCiDone ? undefined : x.merged],
-    ['Queue checks', 'mq_ci', x.enqueued, x.mqCiDone], ['Releasing', 'releasing', x.merged, x.released], ['Installing', 'installing', x.released, x.installed?.coordinator],
+  const steps: (readonly [string, Stage, string | undefined, string | undefined])[] = x ? [
+    ['PR checks', 'pr_ci', x.opened, x.prCiDone],
+    ...(qStart && x.enqueued ? [['Waiting in queue', 'mq_wait', x.enqueued, qStart], ['Queue checks', 'mq_ci', qStart, x.mqCiDone ?? x.merged]] as const : [['Merge queue', 'mq_ci', x.enqueued, x.mqCiDone ?? x.merged]] as const),
+    ['Releasing', 'releasing', x.merged, x.released], ['Installing', 'installing', x.released, x.installed?.coordinator],
   ] : [];
   // A stage without its own end ends where a later one starts; only the last stage reached runs to now.
   const known = steps.filter(([, , a]) => a);
@@ -265,7 +273,7 @@ function PrDetail({ id, item, now, onClose }: { id: string; item?: Item; now: nu
           {item.opened && <KvRow icon="git-pull-request" label="Opened" value={<AgeChip t={ms(item.opened)} now={now} />} />}
         </DetailSection>
         <p class="muted type-sm">{fleet ? 'The stage history is recorded once the pull request merges.' : 'Stage history is recorded for the fleet repository only.'}</p>
-      </> : h.data === undefined || (fleet && !h.data && !h.error) ? <Skeleton rows={4} /> : <Empty text="This pull request is not in flight and has no recorded history." />}
+      </> : h.loading ? <Skeleton rows={4} /> : <Empty text="This pull request is not in flight and has no recorded history." />}
     </div>
   </article>;
 }

@@ -41,11 +41,11 @@ type deliveryRepo struct {
 }
 
 var (
-	deliveryPassAt time.Time // when the last pass started
-	deliveryMu     sync.Mutex
-	deliveryLast   = deliveryState{source: contract.DeliverySourceNone}
-	queueBranch    = regexp.MustCompile(`^gh-readonly-queue/[^/]+/pr-(\d+)-`)
-	githubRemote   = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(\.git)?/?$`)
+	deliveryKeylessAt time.Time // when keyless repositories were last read: they keep FLEET_DELIVERY_KEYLESS_MS apart
+	deliveryMu        sync.Mutex
+	deliveryLast      = deliveryState{source: contract.DeliverySourceNone}
+	queueBranch       = regexp.MustCompile(`^gh-readonly-queue/[^/]+/pr-(\d+)-`)
+	githubRemote      = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(\.git)?/?$`)
 )
 
 func init() {
@@ -58,15 +58,7 @@ func init() {
 		if d > 0 {
 			go deliveryPass(ctx, a) // the first read at start: a deploy every few minutes must not blank the page
 		}
-		every(ctx, "delivery", d, func(ctx context.Context) error {
-			deliveryMu.Lock()
-			keyless, last := deliveryLast.source != contract.DeliverySourceKey, deliveryPassAt
-			deliveryMu.Unlock()
-			if keyless && time.Since(last) < time.Duration(envMs("FLEET_DELIVERY_KEYLESS_MS", 6*60*1000))*time.Millisecond {
-				return nil
-			}
-			return deliveryPass(ctx, a)
-		})
+		every(ctx, "delivery", d, func(ctx context.Context) error { return deliveryPass(ctx, a) })
 	})
 	operation("delivery_status", true, typedOp(deliveryStatus))
 }
@@ -139,6 +131,7 @@ type ghRun struct {
 	Branch     string `json:"head_branch"`
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
+	Workflow   int64  `json:"workflow_id"`
 }
 type ghRelease struct {
 	Tag       string `json:"tag_name"`
@@ -210,11 +203,22 @@ func deliveryPass(ctx context.Context, a *App) error {
 	now := time.Now().UTC()
 	deliveryMu.Lock()
 	prev := deliveryLast
-	deliveryPassAt = now
+	// Keyless reads share GitHub's 60 an hour per address: a keyless repository is read at most every 6 minutes even
+	// while keyed ones are read every minute; between its reads it keeps its last items.
+	readKeyless := now.Sub(deliveryKeylessAt) >= time.Duration(envMs("FLEET_DELIVERY_KEYLESS_MS", 6*60*1000))*time.Millisecond
+	if readKeyless {
+		deliveryKeylessAt = now
+	}
 	deliveryMu.Unlock()
 	repos, counts, failed := map[string]*deliveryRepo{}, map[string]map[string]int64{}, 0
 	for _, key := range targets {
 		t := byKey[key]
+		if !keyedRepo[key] && !readKeyless {
+			if p := prev.repos[key]; p != nil {
+				repos[key] = &deliveryRepo{projects: t.projects, items: p.items, landing: p.landing, problem: p.problem}
+				continue
+			}
+		}
 		var g ghRepo
 		var active, queued, finished struct {
 			Runs []ghRun `json:"workflow_runs"`
@@ -248,7 +252,9 @@ func deliveryPass(ctx context.Context, a *App) error {
 		// required: a connection that does not grant runs_completed_pr leaves failed checks unseen, not the repository.
 		if keyedRepo[key] {
 			if body, ferr := githubReadKeyed(ctx, a, t.projects[0], "runs_completed_pr", map[string]string{"owner": t.owner, "repo": t.repo}); ferr == nil {
-				json.Unmarshal(body, &finished)
+				if uerr := json.Unmarshal(body, &finished); uerr != nil {
+					log.Printf("delivery %s: failed checks unreadable: %v", name, uerr)
+				}
 			} else {
 				log.Printf("delivery %s: failed checks unread: %v", name, ferr)
 			}
@@ -282,9 +288,19 @@ func deliveryPass(ctx context.Context, a *App) error {
 	// Watchers learn of a change through the change stream: one small document per project whose rows changed, so a
 	// pass that changes nothing writes nothing (fleet_change maps kind delivery-state to the change kind delivery).
 	changed := map[string]bool{}
+	same := func(p, r *deliveryRepo) bool {
+		return p.problem == r.problem && p.landing == r.landing && string(jsonBytes(p.items)) == string(jsonBytes(r.items))
+	}
 	for key, r := range repos {
-		if p := prev.repos[key]; p == nil || !slices.EqualFunc(p.items, r.items, func(a, b contract.DeliveryItem) bool { return string(jsonBytes(a)) == string(jsonBytes(b)) }) {
+		if p := prev.repos[key]; p == nil || !same(p, r) {
 			for _, id := range r.projects {
+				changed[id] = true
+			}
+		}
+	}
+	for key, p := range prev.repos { // a repository no longer read (grant revoked, removed from the project): its rows go
+		if repos[key] == nil {
+			for _, id := range p.projects {
 				changed[id] = true
 			}
 		}
@@ -316,11 +332,23 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 		it.Merged = p.MergedAt
 		return it
 	}
-	// The latest finished pull_request run per head commit: its conclusion tells failed checks from a quiet open PR.
-	done := map[string]ghRun{}
+	// The latest finished pull_request run per head commit and workflow: a head whose latest run of any workflow failed
+	// has failed checks (one workflow passing later does not hide another's failure); since is the latest such failure.
+	type headRun struct {
+		sha      string
+		workflow int64
+	}
+	latest := map[headRun]ghRun{}
 	for _, r := range g.finished {
-		if o, ok := done[r.HeadSHA]; r.Event == "pull_request" && (!ok || r.UpdatedAt > o.UpdatedAt) {
-			done[r.HeadSHA] = r
+		k := headRun{r.HeadSHA, r.Workflow}
+		if o, ok := latest[k]; r.Event == "pull_request" && (!ok || r.UpdatedAt > o.UpdatedAt) {
+			latest[k] = r
+		}
+	}
+	failedAt := map[string]string{}
+	for k, r := range latest {
+		if (r.Conclusion == "failure" || r.Conclusion == "timed_out") && r.UpdatedAt > failedAt[k.sha] {
+			failedAt[k.sha] = r.UpdatedAt
 		}
 	}
 	// The earliest active run per pull request: pull_request runs by head commit, merge_group runs by queue branch.
@@ -358,8 +386,8 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 		}
 		if r, ok := prRun[p.Head.SHA]; ok {
 			out = append(out, item(p, contract.DeliveryStagePrCi, r.at))
-		} else if f, ok := done[p.Head.SHA]; ok && (f.Conclusion == "failure" || f.Conclusion == "timed_out") {
-			out = append(out, item(p, contract.DeliveryStagePrFailed, f.UpdatedAt))
+		} else if at, ok := failedAt[p.Head.SHA]; ok {
+			out = append(out, item(p, contract.DeliveryStagePrFailed, at))
 		} else if p.AutoMerge != nil {
 			out = append(out, item(p, contract.DeliveryStageMqWait, p.CreatedAt))
 		} else {

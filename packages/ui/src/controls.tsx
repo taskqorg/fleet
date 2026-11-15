@@ -1326,13 +1326,15 @@ export function AreaChart(p: AreaChartProps) {
 /** One run as a bar from its start to its end (to now while it runs) inside [from, to]; a run older than the window starts at its left edge. */
 /** A part of a lane: one stage of a pull request, with its own tone and name (the name is in the strip's label too). */
 export type StripPart = { start: number; end: number | null; tone: Tone; label: string };
-export function TimeStrip({ from, to, start, end, now, state, label, parts }: { from: number; to: number; start: number; end: number | null; now: number; state: StateOf<'execution'>; label: string;
-  /** Several consecutive parts in one lane (stages), in place of the single start..end bar. */ parts?: StripPart[] }) {
+/** One bar (a run: start..end in its execution state) or several consecutive parts in one lane (stages). */
+type TimeStripProps = { from: number; to: number; now: number; label: string } &
+  ({ start: number; end: number | null; state: StateOf<'execution'>; parts?: never } | { parts: StripPart[]; start?: never; end?: never; state?: never });
+export function TimeStrip({ from, to, start, end, now, state, label, parts }: TimeStripProps) {
   const x = (t: number) => Math.min(100, Math.max(0, (t - from) / (to - from) * 100));
   const bar = (s: number, e: number | null, tone: Tone, tip?: string, key?: number) => { const a = x(s), b = x(e ?? now);
     return <i key={key} class={`t-${tone}${e === null ? ' live' : ''}`} data-tip={tip} style={{ left: `${a}%`, width: `max(2px, ${b - a}%)` }} />; };
   return <span class="tstrip" data-ui="time-strip" role="img" aria-label={parts ? `${label}: ${parts.map(p => p.label).join(', ')}` : label}>
-    {parts ? parts.map((p, i) => bar(p.start, p.end, p.tone, p.label, i)) : bar(start, end, states.execution[state].tone)}</span>;
+    {parts ? parts.map((p, i) => bar(p.start, p.end, p.tone, p.label, i)) : bar(start!, end ?? null, states.execution[state!].tone)}</span>;
 }
 
 /** Reserved two-line feedback region; updates never displace adjacent controls. */

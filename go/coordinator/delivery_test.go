@@ -28,10 +28,12 @@ func TestDeliveryStages(t *testing.T) {
 				SHA string `json:"sha"`
 			}{"h7"}},
 		},
-		// The latest finished run per head decides: #6 failed after an older success, #7 passed after an older failure.
+		// The latest finished run per head and workflow decides: #6 failed after an older success, #7 passed after an older failure.
 		finished: []ghRun{
 			{Event: "pull_request", Conclusion: "success", HeadSHA: "h6", UpdatedAt: "2026-11-12T10:30:00Z"},
 			{Event: "pull_request", Conclusion: "failure", HeadSHA: "h6", UpdatedAt: "2026-11-12T11:30:00Z"},
+			// Another workflow passing later on the same head does not hide the failure.
+			{Event: "pull_request", Conclusion: "success", HeadSHA: "h6", UpdatedAt: "2026-11-12T11:40:00Z", Workflow: 2},
 			{Event: "pull_request", Conclusion: "failure", HeadSHA: "h7", UpdatedAt: "2026-11-12T10:30:00Z"},
 			{Event: "pull_request", Conclusion: "success", HeadSHA: "h7", UpdatedAt: "2026-11-12T11:30:00Z"},
 		},
