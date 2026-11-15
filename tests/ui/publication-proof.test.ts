@@ -98,3 +98,15 @@ test('render bounds retain pending early observations and correct late old proof
  assert.equal(b.entries.get('r/g')?.confirmed,true);assert.equal(b.confirm('r/g')?.receipt,150);
  assert.equal(b.entries.size,2,'correction must not duplicate samples');
 });
+
+// Requirement: only explicit618/100000 history diagnostics with truthful selected dimensions.
+// Risk: a short arbitrary profile silently substitutes for full qualification or native usage.
+test('controlled history allowance rejects unsupported dimensions without weakening full profiles',async()=>{
+ const {checkSourceFixture,workload}=await import('../performance/interface.ts');
+ const {fixture,manifest}=await import('../performance/seed-interface.ts');
+ for(const size of [618,100000]){const f=fixture(size,1);assert.doesNotThrow(()=>checkSourceFixture('controlled-burst',f));assert.equal(manifest(f).history,size);}
+ for(const size of [18,18794,1000000])assert.throws(()=>checkSourceFixture('controlled-burst',fixture(size,1)),/history618 or100000/);
+ assert.throws(()=>checkSourceFixture('controlled-burst',fixture(100000,5)));assert.throws(()=>checkSourceFixture('controlled-burst',fixture(100000,1),100000));
+ assert.doesNotThrow(()=>checkSourceFixture('connected',fixture(1000000,5),100000));
+ assert.throws(()=>workload({mode:'connected',warmup:3,duration:0,recovery:10}),'full horizons remain required');
+});

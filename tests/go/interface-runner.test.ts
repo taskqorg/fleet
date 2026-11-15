@@ -47,6 +47,9 @@ test('fixture finalization preserves positive confirmed samples and fails unknow
    assert.equal(result.renderVerdict,'passed');assert.equal(result.samples.count,2);assert.equal(result.expectedSamples,2);assert.equal(result.missing.length,0);assert.deepEqual(result.errors,[]);
    assert.ok(result.samples.min>=0&&result.samples.max<=5000);assert.ok(['passed','incomplete'].includes(result.status));
   }
+  assert.deepEqual(result.spec.fixture,config.fixture,'result retains actual fixture dimensions, not a diagnostic default');
+  assert.deepEqual(JSON.parse(readFileSync(join(out,'source-manifest.json'),'utf8')).spec.fixture,config.fixture);
+  assert.equal(result.candidate.sha,config.candidate,'result binds the candidate actually served');
   await request('stop',{});await gone;
   const events=readFileSync(join(out,'events.jsonl'),'utf8').trim().split('\n').map(l=>JSON.parse(l));
   if(!positive){
