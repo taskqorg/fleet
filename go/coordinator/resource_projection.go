@@ -511,6 +511,9 @@ func resourcePrepareReplacement(q *Request, id string, projects []string, span *
 	w.claimed = nil
 	var raw []byte
 	e := q.tx.QueryRow(q.ctx(), resourceClaimSnapshotSQL(), id).Scan(&w.claimed, &raw)
+	if e == nil {
+		span.Set("fleet.resource.claimed_work_count", strconv.Itoa(len(w.claimed)))
+	}
 	if e != nil || len(w.claimed) == 0 {
 		return w, e
 	}
@@ -712,22 +715,50 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 
 const resourceCohortSize = 16
 
+// The selected-ID union avoids repeating an unrelated pending-scope scan per leaf.
+const resourceBatchHintsSQL = `WITH candidates AS MATERIALIZED (
+ SELECT id,project_id FROM execution WHERE id=ANY($1::text[]) AND project_id IS NOT NULL AND project_id<>''
+), selected_work AS MATERIALIZED (
+ SELECT work_id,execution_id FROM resource_work WHERE execution_id=ANY($1::text[])
+), selected_work_scopes AS MATERIALIZED (
+ SELECT work_id,project_id FROM resource_work_scope WHERE work_id=ANY(ARRAY(SELECT work_id FROM selected_work))
+), scopes AS (
+ SELECT id,project_id FROM candidates
+ UNION SELECT execution_id,project_id FROM execution_totals WHERE execution_id=ANY($1::text[])
+ UNION SELECT execution_id,project_id FROM resource_contribution WHERE execution_id=ANY($1::text[])
+ UNION SELECT w.execution_id,s.project_id FROM selected_work w JOIN selected_work_scopes s USING(work_id)
+), merged AS MATERIALIZED (
+ SELECT id,min(project_id) project_id,count(DISTINCT project_id) scope_count FROM scopes WHERE project_id IS NOT NULL GROUP BY id
+)
+SELECT c.id,c.project_id FROM candidates c JOIN merged m USING(id) WHERE m.scope_count=1 AND m.project_id=c.project_id`
+
 // Only a scheduling hint. Locked per-leaf snapshots below remain authoritative.
-func resourceBatchHints(ctx context.Context, a *App, ids []string) (map[string]string, error) {
+func resourceBatchHints(ctx context.Context, a *App, ids []string) (out map[string]string, resultErr error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	ctx, span := obs.Start(ctx, "resource.scope_hint", "internal")
+	span.Set("fleet.resource.hint_input_count", strconv.Itoa(len(ids)))
+	defer func() { span.End(resultErr) }()
 	pool := a.store.readPool
 	if pool == nil {
 		pool = a.store.pool
 	}
-	scopes := strings.ReplaceAll(resourceScopesSQL, "$1", "e.id")
-	rs, err := pool.Query(ctx, `SELECT e.id,e.project_id FROM execution e
- CROSS JOIN LATERAL (SELECT array_agg(p ORDER BY p COLLATE "C") projects FROM (`+scopes+`) s) scope
- WHERE e.id=ANY($1::text[]) AND e.project_id IS NOT NULL AND e.project_id<>''
- AND cardinality(scope.projects)=1 AND scope.projects[1]=e.project_id`, ids)
+	start := time.Now()
+	conn, err := pool.Acquire(ctx)
+	span.Set("fleet.resource.acquire_us", strconv.FormatInt(time.Since(start).Microseconds(), 10))
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+	start = time.Now()
+	defer func() { span.Set("fleet.resource.query_us", strconv.FormatInt(time.Since(start).Microseconds(), 10)) }()
+	rs, err := conn.Query(ctx, resourceBatchHintsSQL, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rs.Close()
-	out := map[string]string{}
+	out = map[string]string{}
 	for rs.Next() {
 		var id, p string
 		if err = rs.Scan(&id, &p); err != nil {
@@ -735,7 +766,11 @@ func resourceBatchHints(ctx context.Context, a *App, ids []string) (map[string]s
 		}
 		out[id] = p
 	}
-	return out, rs.Err()
+	if err = rs.Err(); err != nil {
+		return nil, err
+	}
+	span.Set("fleet.resource.hint_result_count", strconv.Itoa(len(out)))
+	return out, nil
 }
 
 // One cohort transaction attempt. Failure never consumes a subset; the caller isolates it.
