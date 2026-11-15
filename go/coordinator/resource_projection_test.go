@@ -986,7 +986,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "1", ids)
 	equal(`SELECT execution_id FROM resource_work WHERE execution_id=ANY($1::text[])`, "cohort-01", ids)
 	equal(`SELECT count(*)::text FROM resource_contribution WHERE execution_id='cohort-poison-other'`, "1")
-	equal(`SELECT (next_attempt_at>clock_timestamp())::text FROM resource_work WHERE execution_id='cohort-01'`, "true")
+	equal(`SELECT attempts::text||':'||(next_attempt_at>first_pending_at+interval '90 milliseconds')::text FROM resource_work WHERE execution_id='cohort-01'`, "1:true")
 	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "37")
 	sql(`DELETE FROM resource_fixture_cohort_fault; UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='cohort-01'`)
 	if err = resourceReplace(ctx, a, "cohort-01"); err != nil {
@@ -1026,9 +1026,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "54")
 	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", ids)
 	afterPub := scalar(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`)
-	if afterPub == beforePub {
-		t.Fatal("server did not commit before response loss")
-	}
+	equal(`SELECT (count(*)=$1::bigint+1)::text FROM interface_publication WHERE project='COHORT'`, "true", beforePub)
 	if e = resourceReplaceCandidates(ctx, a, ids); e != nil {
 		t.Fatal(e)
 	}
