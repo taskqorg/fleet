@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {readFileSync, mkdirSync} from 'node:fs';
 import {build} from 'esbuild';
 import {chromium} from 'playwright';
+import {tokensCss} from '../../packages/ui/scripts/tokens.mjs';
 
 test('pipeline activation is its own finite state family', async () => {
   const bundle=await build({stdin:{contents:"export {states} from './packages/ui/src/registry.ts'",resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,platform:'node',format:'esm'});
@@ -31,7 +32,7 @@ test('mounted plan distinguishes inactive, actual, reused and unconfirmed rows',
   const browser=await chromium.launch({headless:true}),page=await browser.newPage();
   try {
     await page.setViewportSize({width:1280,height:900});await page.setContent('<body></body>');
-    await page.addStyleTag({content:readFileSync('packages/ui/src/styles.css','utf8')});
+    await page.addStyleTag({content:tokensCss()+readFileSync('packages/ui/src/styles.css','utf8')});
     await page.addScriptTag({content:result.outputFiles[0].text});
     const rows=page.getByRole('list',{name:'Conditional plan'}).getByRole('listitem');
     assert.equal(await rows.count(),7);
@@ -42,6 +43,11 @@ test('mounted plan distinguishes inactive, actual, reused and unconfirmed rows',
     assert.match(await rows.nth(5).innerText(),/reused · original resources/);
     assert.match(await rows.nth(6).innerText(),/unconfirmed/);
     const shots=process.env.FLEET_BROWSER_SHOTS;
-    if(shots){mkdirSync(shots,{recursive:true});await page.screenshot({path:`${shots}/pipeline-plan.png`,fullPage:true});}
+    if(shots){
+      mkdirSync(shots,{recursive:true});await page.screenshot({path:`${shots}/pipeline-plan.png`,fullPage:true});
+      await page.setViewportSize({width:620,height:900});
+      await page.evaluate(()=>document.documentElement.dataset.theme='dark');
+      await page.screenshot({path:`${shots}/pipeline-plan-dark-620.png`,fullPage:true});
+    }
   } finally {await browser.close();}
 });
