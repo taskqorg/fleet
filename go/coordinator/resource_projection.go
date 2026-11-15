@@ -689,6 +689,7 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	batch := &pgx.Batch{}
 	for _, k := range keys {
 		m := c.Metrics[k]
 		if !contract.ResourceMetricNameV1(k).Valid() {
@@ -706,23 +707,22 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 		reason := deref(m.Reason)
 		// A subtract updates an existing support row; constraints deliberately reject corrupt ledgers.
 		if sign > 0 {
-			if err := exec(q, `INSERT INTO resource_metric(project_id,metric,basis,present_count,expected_count,sum_value,reasons)
+			batch.Queue(`INSERT INTO resource_metric(project_id,metric,basis,present_count,expected_count,sum_value,reasons)
     VALUES($1,$2,$3,$4,$5,$6::numeric,CASE WHEN $7='' THEN '{}'::jsonb ELSE jsonb_build_object($7,1) END)
     ON CONFLICT(project_id,metric,basis) DO UPDATE SET present_count=resource_metric.present_count+excluded.present_count,
      expected_count=resource_metric.expected_count+excluded.expected_count,sum_value=resource_metric.sum_value+excluded.sum_value,
-     reasons=CASE WHEN $7='' THEN resource_metric.reasons ELSE jsonb_set(resource_metric.reasons,ARRAY[$7],to_jsonb(coalesce((resource_metric.reasons->>$7)::bigint,0)+1)) END`, p, k, m.Basis, present, expected, value, reason); err != nil {
-				return err
-			}
+     reasons=CASE WHEN $7='' THEN resource_metric.reasons ELSE jsonb_set(resource_metric.reasons,ARRAY[$7],to_jsonb(coalesce((resource_metric.reasons->>$7)::bigint,0)+1)) END`, p, k, m.Basis, present, expected, value, reason)
 		} else {
-			if err := exec(q, `UPDATE resource_metric SET present_count=present_count+$4,expected_count=expected_count+$5,sum_value=sum_value-$6::numeric,
+			batch.Queue(`UPDATE resource_metric SET present_count=present_count+$4,expected_count=expected_count+$5,sum_value=sum_value-$6::numeric,
     reasons=CASE WHEN $7='' THEN reasons WHEN (reasons->>$7)::bigint=1 THEN reasons-$7 ELSE jsonb_set(reasons,ARRAY[$7],to_jsonb((reasons->>$7)::bigint-1)) END
-    WHERE project_id=$1 AND metric=$2 AND basis=$3`, p, k, m.Basis, present, expected, value, reason); err != nil {
-				return err
-			}
+    WHERE project_id=$1 AND metric=$2 AND basis=$3`, p, k, m.Basis, present, expected, value, reason)
 		}
-		if err := exec(q, `DELETE FROM resource_metric WHERE project_id=$1 AND metric=$2 AND basis=$3 AND present_count=0 AND expected_count=0 AND reasons='{}'`, p, k, m.Basis); err != nil {
-			return err
-		}
+		batch.Queue(`DELETE FROM resource_metric WHERE project_id=$1 AND metric=$2 AND basis=$3 AND present_count=0 AND expected_count=0 AND reasons='{}'`, p, k, m.Basis)
+	}
+	// Close consumes every queued result and returns the first SQL error. The caller
+	// must roll back the enclosing replacement before publication on any failure.
+	if err := q.tx.SendBatch(q.ctx(), batch).Close(); err != nil {
+		return err
 	}
 	for _, v := range []struct {
 		metric string

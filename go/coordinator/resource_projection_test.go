@@ -593,3 +593,120 @@ func TestResourceAPIBoundPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Requirement: batched metric statements preserve atomic replacement on SQL failure and
+// actual backend loss; risk: partial support/publication commits or retries double count.
+func TestResourceMetricBatchPostgres(t *testing.T) {
+	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
+	if url == "" {
+		t.Skip("isolated PostgreSQL fixture")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := openStore(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	sql := func(s string) {
+		t.Helper()
+		if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return exec(q, s) }); e != nil {
+			t.Fatal(e)
+		}
+	}
+	scalar := func(s string) string {
+		t.Helper()
+		var v string
+		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s).Scan(&v) }); e != nil {
+			t.Fatal(e)
+		}
+		return v
+	}
+	snapshot := func() string {
+		return scalar(`SELECT jsonb_build_object(
+ 'summary',(SELECT to_jsonb(s) FROM resource_project_summary s WHERE project_id='BATCH'),
+ 'metrics',(SELECT jsonb_agg(m ORDER BY metric,basis) FROM resource_metric m WHERE project_id='BATCH'),
+ 'contribution',(SELECT to_jsonb(c) FROM resource_contribution c WHERE execution_id='batch-leaf'),
+ 'valuation',(SELECT to_jsonb(v) FROM resource_valuation v WHERE execution_id='batch-leaf'))::text`)
+	}
+	sql(`INSERT INTO execution(id,kind,state,project_id,harness,model,started_at) VALUES('batch-leaf','agent_run','succeeded','BATCH','codex','batch-model','2024-01-01');
+ INSERT INTO execution_totals(execution_id,project_id,tokens_input,tokens_input_basis,tokens_output,tokens_output_basis) VALUES('batch-leaf','BATCH',10,'measured',7,'measured')`)
+	if err = resourceReplace(ctx, a, "batch-leaf"); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshot()
+	sql(`UPDATE execution_totals SET tokens_input=20 WHERE execution_id='batch-leaf'`)
+	work := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id='batch-leaf'`)
+	sql(`INSERT INTO resource_fixture_failure VALUES('batch-error')`)
+	if err = resourceReplace(ctx, a, "batch-leaf"); err == nil || !strings.Contains(err.Error(), "fixture metric batch failure") {
+		t.Fatalf("SQL error not propagated: %v", err)
+	}
+	if got := snapshot(); got != before {
+		t.Fatal("failed batch committed partial support/contribution/publication")
+	}
+	if got := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id='batch-leaf'`); got != work {
+		t.Fatal("failed batch lost immutable claim", got, work)
+	}
+	sql(`DELETE FROM resource_fixture_failure WHERE kind='batch-error';
+ INSERT INTO resource_fixture_failure VALUES('batch-gate');
+ UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='batch-leaf'`)
+	gate, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Close(context.Background())
+	if _, err = gate.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended('fixture:metric-batch',0))`); err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended('fixture:metric-batch',0))`)
+	done := make(chan error, 1)
+	go func() { done <- resourceReplace(ctx, a, "batch-leaf") }()
+	var backend int32
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		err = gate.QueryRow(ctx, `SELECT coalesce((SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user AND wait_event='advisory' AND query LIKE '%resource_metric%' AND pid<>pg_backend_pid() LIMIT 1),0)`).Scan(&backend)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if backend != 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("metric batch did not reach controlled backend boundary")
+		}
+	}
+	var killed bool
+	if err = gate.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, backend).Scan(&killed); err != nil || !killed {
+		t.Fatalf("backend termination: %v %v", killed, err)
+	}
+	if err = <-done; err == nil {
+		t.Fatal("terminated batch succeeded")
+	}
+	if got := snapshot(); got != before {
+		t.Fatal("backend loss committed partial support/contribution/publication")
+	}
+	if got := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id='batch-leaf'`); got != work {
+		t.Fatal("backend loss lost immutable claim")
+	}
+	sql(`DELETE FROM resource_fixture_failure WHERE kind='batch-gate';UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='batch-leaf'`)
+	if err = resourceReplace(ctx, a, "batch-leaf"); err != nil {
+		t.Fatal(err)
+	}
+	if got := scalar(`SELECT sum_value::text FROM resource_metric WHERE project_id='BATCH' AND metric='input'`); got != "20" {
+		t.Fatal("retry input", got)
+	}
+	if got := scalar(`SELECT sum_value::text FROM resource_metric WHERE project_id='BATCH' AND metric='output'`); got != "7" {
+		t.Fatal("retry output", got)
+	}
+	if got := scalar(`SELECT count(*)::text FROM resource_work WHERE execution_id='batch-leaf'`); got != "0" {
+		t.Fatal("retry did not drain", got)
+	}
+	after := snapshot()
+	if err = resourceReplace(ctx, a, "batch-leaf"); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot() != after {
+		t.Fatal("replay changed support/publication")
+	}
+	t.Logf("SQL failure and terminated backend %d rolled back metric batch; immutable claim retained; exact retry/replay passed", backend)
+}
