@@ -99,9 +99,26 @@ function App() {
     });
     startFeed(null); startStore();
     const validate = () => { invalidateAccess('focus'); last = null; void ensureAccessGeneration('focus').then(() => loadPrefs()).catch(() => {}); };
-    validate(); addEventListener('focus', validate); addEventListener('online', validate);
+    // Focus and online check the person quietly: the same identity and grants keep everything on screen (the change
+    // stream brings what happened meanwhile); a different person, changed grants or a closed gate fence and validate as
+    // at start (docs/designs/fleet-analytics.md, the access gate). Offline keeps what is shown; signed out has its own path.
+    let checking = false;
+    const recheck = async () => {
+      const s = access.value;
+      if (s.state === 'closed') return validate();
+      if (s.state !== 'open' || !s.identity || checking) return;
+      checking = true;
+      try {
+        const m = await accessControlOp('me', {});
+        const cur = access.value;
+        if (cur.generation !== s.generation || cur.state !== 'open') return;
+        if (m.email !== s.identity.identityKey || (m.grantsVersion ?? '') !== s.identity.grantsVersion) validate();
+        else { setUser(m.name || m.email); void loadPrefs(); }
+      } catch { /* offline or signed out: handled by their own state */ } finally { checking = false; }
+    };
+    validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
-    return () => { unregister(); stopFeed(); removeEventListener('focus', validate); removeEventListener('online', validate); };
+    return () => { unregister(); stopFeed(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
   }, []);
   useEffect(() => { if (signedOut.value) { invalidateAccess('signed out'); void clearAll(true); } }, [signedOut.value]);
   // Each section's list view is noted as it changes and saved when the person leaves the section or the tab hides, so the

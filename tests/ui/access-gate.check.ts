@@ -56,6 +56,12 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.waitForFunction(() => !!document.querySelector('[data-resource-project]')?.getAttribute('data-resource-version'));
     assert.equal(await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).count(), 1, 'summary preserves dirty fields');
     assert.deepEqual(await p.locator('[data-ui="list-detail"]').boundingBox(), geometry, 'summary does not move columns');
+    // Returning to the window with the same person keeps the page: nothing unmounts, nothing shows "Validating access".
+    await p.evaluate(() => { (window as any).__kept = document.querySelector('[data-ui="detail"]'); });
+    const meChecked = p.waitForResponse(r => r.url().endsWith('/api/ops/me'));
+    await focus(); await meChecked; await p.waitForTimeout(300);
+    assert.equal(await p.evaluate(() => (window as any).__kept?.isConnected === true), true, 'focus with the same person unmounted the page');
+    assert.equal(await p.getByText('Validating access…').count(), 0, 'focus with the same person showed Validating access');
     await focus();
     await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).waitFor();
     assert.equal(await p.getByLabel('Name', { exact: true }).inputValue(), 'Browser dirty project', 'authored editor input survives a new authorized generation');
