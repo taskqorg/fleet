@@ -35,6 +35,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`; `generated/ops.ts` re-exports every domain file and joins their `Ops<Domain>`); Go gets `contract.Operations`, filled by the `init` of each domain's generated file, which
   `go/coordinator/ops_contract_test.go` compares with the registry. A handler registered through `typedOp` (`go/coordinator/registry.go`)
   decodes the body into `<Name>Request` and returns `<Name>Reply`; operations move to it domain by domain.
+* `ops-tasks.schema.json` also owns the internal `ResourceContributionV1`, `ResourceMethodV1` and `PreparedHeaderV1` prepared-resource shapes. They register no operation. Metric keys use `ResourceMetricNameV1`; nullable decimal strings preserve exact money/credit values and measured zero. The coordinator validates its fixed metric key set and stores all normalized tool/cost/price support; legacy wire summaries keep their existing numeric fields.
 * `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
   `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.
 

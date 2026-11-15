@@ -59,6 +59,63 @@ func (v *EntityResolveRequest) Validate() error {
 	return nil
 }
 
+type PreparedHeaderV1 struct {
+	Credits         *float64             `json:"credits"`
+	Durations       DurationBreakdown    `json:"durations"`
+	Executions      int64                `json:"executions"`
+	ItemCounts      PreparedItemCountsV1 `json:"itemCounts"`
+	PeakMemoryBytes MeasuredInt          `json:"peakMemoryBytes"`
+	Tokens          TokenBreakdown       `json:"tokens"`
+	Tools           PreparedToolsV1      `json:"tools"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PreparedHeaderV1) Validate() error {
+	if err := Check(&v.Durations, "durations"); err != nil {
+		return err
+	}
+	if err := Check(&v.ItemCounts, "itemCounts"); err != nil {
+		return err
+	}
+	if err := Check(&v.PeakMemoryBytes, "peakMemoryBytes"); err != nil {
+		return err
+	}
+	if err := Check(&v.Tokens, "tokens"); err != nil {
+		return err
+	}
+	if err := Check(&v.Tools, "tools"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type PreparedItemCountsV1 struct {
+	Costs  int64 `json:"costs"`
+	Prices int64 `json:"prices"`
+	Tools  int64 `json:"tools"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PreparedItemCountsV1) Validate() error {
+	return nil
+}
+
+type PreparedToolsV1 struct {
+	Basis       ResourceBasis `json:"basis"`
+	FailedCalls int64         `json:"failedCalls"`
+	Other       *int64        `json:"other"`
+	TotalCalls  int64         `json:"totalCalls"`
+	Turns       int64         `json:"turns"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PreparedToolsV1) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type ProjectCodeSetReply struct {
 	Code      string `json:"code"`
 	ProjectId string `json:"projectId"`
@@ -447,6 +504,183 @@ func (v *QuestionsWithdrawRequest) Validate() error {
 	if v.Ids == nil {
 		return Missing("ids")
 	}
+	return nil
+}
+
+type ResourceContributionV1 struct {
+	Costs             []ResourceCostV1            `json:"costs"`
+	EndedMs           *int64                      `json:"endedMs"`
+	ExecutionId       string                      `json:"executionId"`
+	HasTotals         bool                        `json:"hasTotals"`
+	HistoryIncomplete bool                        `json:"historyIncomplete"`
+	Included          bool                        `json:"included"`
+	Kind              string                      `json:"kind"`
+	Metrics           map[string]ResourceMetricV1 `json:"metrics"`
+	ObservedAt        *int64                      `json:"observedAt"`
+	OtherCalls        int64                       `json:"otherCalls"`
+	OtherErrors       int64                       `json:"otherErrors"`
+	ProcessActor      bool                        `json:"processActor"`
+	ProjectId         *string                     `json:"projectId"`
+	SchemaVersion     int64                       `json:"schemaVersion"`
+	StartedMs         *int64                      `json:"startedMs"`
+	State             string                      `json:"state"`
+	TokenActor        bool                        `json:"tokenActor"`
+	ToolActor         bool                        `json:"toolActor"`
+	Tools             []ResourceToolV1            `json:"tools"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceContributionV1) Validate() error {
+	if v.Costs == nil {
+		return Missing("costs")
+	}
+	for i := range v.Costs {
+		if err := Check(&v.Costs[i], "costs"); err != nil {
+			return err
+		}
+	}
+	if v.Metrics == nil {
+		return Missing("metrics")
+	}
+	if v.Tools == nil {
+		return Missing("tools")
+	}
+	for i := range v.Tools {
+		if err := Check(&v.Tools[i], "tools"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ResourceCostV1 struct {
+	Amount        *string              `json:"amount"`
+	Basis         ResourceBasis        `json:"basis"`
+	Currency      *string              `json:"currency"`
+	PriceRefs     []ResourcePriceRefV1 `json:"priceRefs"`
+	UnpricedCount int64                `json:"unpricedCount"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceCostV1) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	if v.PriceRefs == nil {
+		return Missing("priceRefs")
+	}
+	for i := range v.PriceRefs {
+		if err := Check(&v.PriceRefs[i], "priceRefs"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ResourceMethodComponentV1 struct {
+	Currency   *string `json:"currency"`
+	ObservedAt *int64  `json:"observedAt"`
+	PriceId    *string `json:"priceId"`
+	Rate       *string `json:"rate"`
+	Subject    string  `json:"subject"`
+	Unit       string  `json:"unit"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceMethodComponentV1) Validate() error {
+	return nil
+}
+
+type ResourceMethodV1 struct {
+	Components    []ResourceMethodComponentV1 `json:"components"`
+	Connection    *string                     `json:"connection"`
+	Model         *string                     `json:"model"`
+	Provider      *string                     `json:"provider"`
+	SchemaVersion int64                       `json:"schemaVersion"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceMethodV1) Validate() error {
+	if v.Components == nil {
+		return Missing("components")
+	}
+	for i := range v.Components {
+		if err := Check(&v.Components[i], "components"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ResourceMetricNameV1 string
+
+const (
+	ResourceMetricNameV1Input           ResourceMetricNameV1 = "input"
+	ResourceMetricNameV1Output          ResourceMetricNameV1 = "output"
+	ResourceMetricNameV1CacheRead       ResourceMetricNameV1 = "cacheRead"
+	ResourceMetricNameV1CacheWrite      ResourceMetricNameV1 = "cacheWrite"
+	ResourceMetricNameV1Reasoning       ResourceMetricNameV1 = "reasoning"
+	ResourceMetricNameV1WallMs          ResourceMetricNameV1 = "wallMs"
+	ResourceMetricNameV1ActiveMs        ResourceMetricNameV1 = "activeMs"
+	ResourceMetricNameV1ApiMs           ResourceMetricNameV1 = "apiMs"
+	ResourceMetricNameV1CpuMs           ResourceMetricNameV1 = "cpuMs"
+	ResourceMetricNameV1PeakMemoryBytes ResourceMetricNameV1 = "peakMemoryBytes"
+	ResourceMetricNameV1Credits         ResourceMetricNameV1 = "credits"
+	ResourceMetricNameV1Turns           ResourceMetricNameV1 = "turns"
+	ResourceMetricNameV1ToolCalls       ResourceMetricNameV1 = "toolCalls"
+	ResourceMetricNameV1ToolErrors      ResourceMetricNameV1 = "toolErrors"
+	ResourceMetricNameV1TokenActors     ResourceMetricNameV1 = "tokenActors"
+	ResourceMetricNameV1ProcessActors   ResourceMetricNameV1 = "processActors"
+	ResourceMetricNameV1ToolActors      ResourceMetricNameV1 = "toolActors"
+)
+
+// ResourceMetricNameV1Values lists every ResourceMetricNameV1 in schema order.
+var ResourceMetricNameV1Values = []ResourceMetricNameV1{ResourceMetricNameV1Input, ResourceMetricNameV1Output, ResourceMetricNameV1CacheRead, ResourceMetricNameV1CacheWrite, ResourceMetricNameV1Reasoning, ResourceMetricNameV1WallMs, ResourceMetricNameV1ActiveMs, ResourceMetricNameV1ApiMs, ResourceMetricNameV1CpuMs, ResourceMetricNameV1PeakMemoryBytes, ResourceMetricNameV1Credits, ResourceMetricNameV1Turns, ResourceMetricNameV1ToolCalls, ResourceMetricNameV1ToolErrors, ResourceMetricNameV1TokenActors, ResourceMetricNameV1ProcessActors, ResourceMetricNameV1ToolActors}
+
+// Valid: v is one of the schema's values.
+func (v ResourceMetricNameV1) Valid() bool {
+	for _, x := range ResourceMetricNameV1Values {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ResourceMetricV1 struct {
+	Basis    ResourceBasis `json:"basis"`
+	Expected bool          `json:"expected"`
+	Reason   *string       `json:"reason"`
+	Value    *string       `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceMetricV1) Validate() error {
+	if err := Check(&v.Basis, "basis"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ResourcePriceRefV1 struct {
+	ObservedAt int64  `json:"observedAt"`
+	PriceId    string `json:"priceId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourcePriceRefV1) Validate() error {
+	return nil
+}
+
+type ResourceToolV1 struct {
+	Calls      int64  `json:"calls"`
+	Connection string `json:"connection"`
+	Errors     int64  `json:"errors"`
+	Name       string `json:"name"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourceToolV1) Validate() error {
 	return nil
 }
 

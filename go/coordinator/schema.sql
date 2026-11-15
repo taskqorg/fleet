@@ -2066,3 +2066,69 @@ CREATE TRIGGER resource_capture_metadata_update AFTER UPDATE ON document
  FOR EACH ROW WHEN (OLD.kind IN ('api-connection','managed-account') OR NEW.kind IN ('api-connection','managed-account')) EXECUTE FUNCTION resource_capture_metadata();
 CREATE TRIGGER resource_capture_metadata_delete AFTER DELETE ON document
  FOR EACH ROW WHEN (OLD.kind IN ('api-connection','managed-account')) EXECUTE FUNCTION resource_capture_metadata();
+
+-- migration 56: replacement-safe prepared resources; capture remains always enabled.
+CREATE INDEX resource_work_oldest ON resource_work(first_pending_at);
+CREATE TABLE resource_contribution (
+ execution_id text PRIMARY KEY, project_id text NULL, source_sha text NOT NULL,
+ included boolean NOT NULL, facts jsonb NOT NULL, method jsonb NOT NULL,
+ method_sha text NOT NULL, updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX resource_contribution_project ON resource_contribution(project_id,execution_id COLLATE "C");
+CREATE TABLE resource_valuation (
+ execution_id text PRIMARY KEY, method_sha text NOT NULL, method jsonb NOT NULL,
+ chosen_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TABLE resource_project_summary (
+ project_id text PRIMARY KEY, epoch uuid NOT NULL DEFAULT gen_random_uuid(), revision bigint NOT NULL DEFAULT 0 CHECK(revision>=0),
+ build_generation uuid NOT NULL, ready boolean NOT NULL DEFAULT false, header jsonb NOT NULL DEFAULT '{}', published_at timestamptz NULL,
+ executions bigint NOT NULL DEFAULT 0 CHECK(executions>=0), history_incomplete bigint NOT NULL DEFAULT 0 CHECK(history_incomplete>=0),
+ other_calls bigint NOT NULL DEFAULT 0 CHECK(other_calls>=0), other_errors bigint NOT NULL DEFAULT 0 CHECK(other_errors>=0),
+ tool_count bigint NOT NULL DEFAULT 0 CHECK(tool_count>=0), cost_count bigint NOT NULL DEFAULT 0 CHECK(cost_count>=0), price_count bigint NOT NULL DEFAULT 0 CHECK(price_count>=0)
+);
+CREATE TYPE resource_metric_name AS ENUM ('input','output','cacheRead','cacheWrite','reasoning','wallMs','activeMs','apiMs','cpuMs','peakMemoryBytes','credits','turns','toolCalls','toolErrors','tokenActors','processActors','toolActors');
+CREATE TABLE resource_metric (
+ project_id text NOT NULL, metric resource_metric_name NOT NULL, basis text NOT NULL CHECK(basis IN ('measured','estimated','subscription','unavailable')),
+ present_count bigint NOT NULL CHECK(present_count>=0), expected_count bigint NOT NULL CHECK(expected_count>=0),
+ sum_value numeric NOT NULL, reasons jsonb NOT NULL DEFAULT '{}', PRIMARY KEY(project_id,metric,basis)
+);
+CREATE TABLE resource_extreme (
+ project_id text NOT NULL, metric text NOT NULL CHECK(metric IN ('start','end','peakMemory')),
+ value bigint NOT NULL, multiplicity bigint NOT NULL CHECK(multiplicity>0), PRIMARY KEY(project_id,metric,value)
+);
+CREATE INDEX resource_extreme_last ON resource_extreme(project_id,metric,value DESC);
+CREATE TABLE resource_tool (
+ project_id text NOT NULL, connection text NOT NULL, name text NOT NULL,
+ calls bigint NOT NULL CHECK(calls>=0), errors bigint NOT NULL CHECK(errors>=0), references_count bigint NOT NULL CHECK(references_count>0),
+ PRIMARY KEY(project_id,connection,name)
+);
+CREATE INDEX resource_tool_page ON resource_tool(project_id,name COLLATE "C",connection COLLATE "C");
+CREATE TABLE resource_cost (
+ project_id text NOT NULL, currency text NOT NULL, basis text NOT NULL CHECK(basis IN ('measured','estimated','subscription','unavailable')),
+ value numeric NULL, usages bigint NOT NULL CHECK(usages>=0), references_count bigint NOT NULL CHECK(references_count>0), PRIMARY KEY(project_id,currency,basis)
+);
+CREATE TABLE resource_price_ref (
+ project_id text NOT NULL, currency text NOT NULL, basis text NOT NULL, price_id text NOT NULL,
+ observed_at bigint NOT NULL, references_count bigint NOT NULL CHECK(references_count>0), PRIMARY KEY(project_id,currency,basis,price_id,observed_at)
+);
+CREATE INDEX resource_price_ref_page ON resource_price_ref(project_id,currency,basis,price_id COLLATE "C",observed_at);
+CREATE TABLE resource_build (
+ project_id text PRIMARY KEY, generation uuid NOT NULL DEFAULT gen_random_uuid(), after_execution_id text NULL,
+ scan_done boolean NOT NULL DEFAULT false, ready boolean NOT NULL DEFAULT false,
+ phase text NOT NULL DEFAULT 'scanning' CHECK(phase IN ('clearing','scanning','draining','ready')),
+ last_error text NULL, updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+-- Bounded project scans and metadata union scans use these keyset indexes.
+CREATE INDEX resource_execution_project_page ON execution(project_id,id COLLATE "C");
+CREATE INDEX resource_execution_account_page ON execution(account_id,id COLLATE "C");
+CREATE INDEX resource_execution_connection_page ON execution((data->>'connection'),id COLLATE "C");
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY ARRAY['resource_contribution','resource_project_summary','resource_metric','resource_extreme','resource_tool','resource_cost','resource_price_ref','resource_build'] LOOP
+  EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',t);
+  EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY',t);
+  EXECUTE format('CREATE POLICY project_scope ON %I USING (current_setting(''fleet.project_ids'',true)=''*'' OR project_id=ANY(string_to_array(current_setting(''fleet.project_ids'',true),'','')))',t);
+ END LOOP;
+END $$;
+ALTER TABLE resource_valuation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE resource_valuation FORCE ROW LEVEL SECURITY;
+CREATE POLICY maintenance ON resource_valuation USING(current_setting('fleet.project_ids',true)='*');

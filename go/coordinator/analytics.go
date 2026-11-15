@@ -942,38 +942,42 @@ ORDER BY is_total ASC, %s`, dimJSONBuild, sqlMeasureSelect, dimListSQL,
 // ---- Shared ResourceSummary & ScopedResourceRollup SQL / Go Builders ----
 
 type resourceLeafRow struct {
-	Scope                  string
-	ScopeKey               string
-	ID                     string
-	Kind                   string
-	State                  string
-	StartedMs              *int64
-	EndedMs                *int64
-	HasTotals              bool
-	TokensInput            *int64
-	TokensInputBasis       contract.ResourceBasis
-	TokensOutput           *int64
-	TokensOutputBasis      contract.ResourceBasis
-	TokensCacheRead        *int64
-	TokensCacheReadBasis   contract.ResourceBasis
-	TokensCacheWrite       *int64
-	TokensCacheWriteBasis  contract.ResourceBasis
-	WallMs                 *int64
-	WallMsBasis            contract.ResourceBasis
-	ActiveMs               *int64
-	ActiveMsBasis          contract.ResourceBasis
-	CpuMs                  *int64
-	CpuMsBasis             contract.ResourceBasis
-	PeakMemoryBytes        *int64
-	PeakMemoryBytesBasis   contract.ResourceBasis
-	TurnCount              int64
-	ToolCallsRaw           []byte
-	ToolCallsBasis         contract.ResourceBasis
-	ToolConnection         *string
-	ToolName               *string
-	Credits                *float64
-	HasConnectionCost      bool
-	Costs                  []contract.CostFigure
+	Scope                 string
+	ScopeKey              string
+	ID                    string
+	Kind                  string
+	State                 string
+	StartedMs             *int64
+	EndedMs               *int64
+	HasTotals             bool
+	TokensInput           *int64
+	TokensInputBasis      contract.ResourceBasis
+	TokensOutput          *int64
+	TokensOutputBasis     contract.ResourceBasis
+	TokensCacheRead       *int64
+	TokensCacheReadBasis  contract.ResourceBasis
+	TokensCacheWrite      *int64
+	TokensCacheWriteBasis contract.ResourceBasis
+	TokensReasoning       *int64
+	TokensReasoningBasis  contract.ResourceBasis
+	ApiMs                 *int64
+	ApiMsBasis            contract.ResourceBasis
+	WallMs                *int64
+	WallMsBasis           contract.ResourceBasis
+	ActiveMs              *int64
+	ActiveMsBasis         contract.ResourceBasis
+	CpuMs                 *int64
+	CpuMsBasis            contract.ResourceBasis
+	PeakMemoryBytes       *int64
+	PeakMemoryBytesBasis  contract.ResourceBasis
+	TurnCount             int64
+	ToolCallsRaw          []byte
+	ToolCallsBasis        contract.ResourceBasis
+	ToolConnection        *string
+	ToolName              *string
+	Credits               *float64
+	HasConnectionCost     bool
+	Costs                 []contract.CostFigure
 }
 
 const resourceLeafRowSelect = `
@@ -990,6 +994,7 @@ const resourceLeafRowSelect = `
   l.tokens_output, l.tokens_output_basis,
   l.tokens_cache_read, l.tokens_cache_read_basis,
   l.tokens_cache_write, l.tokens_cache_write_basis,
+  l.tokens_reasoning, l.tokens_reasoning_basis, l.api_ms, l.api_ms_basis,
   l.wall_ms, l.wall_ms_basis,
   l.active_ms, l.active_ms_basis,
   l.cpu_ms, l.cpu_ms_basis,
@@ -1030,12 +1035,13 @@ leaves AS MATERIALIZED (%s WHERE %s AND e.id IN (SELECT leaf_id FROM scoped_leav
 	grouped := map[string][]resourceLeafRow{}
 	for rows.Next() {
 		var r resourceLeafRow
-		var tiB, toB, tcrB, tcwB, wB, aB, cB, pmB, tcB string
+		var tiB, toB, tcrB, tcwB, trB, apiB, wB, aB, cB, pmB, tcB string
 		var costsRaw []byte
 		if err := rows.Scan(
 			&r.Scope, &r.ScopeKey, &r.ID, &r.Kind, &r.State,
 			&r.StartedMs, &r.EndedMs, &r.HasTotals,
 			&r.TokensInput, &tiB, &r.TokensOutput, &toB, &r.TokensCacheRead, &tcrB, &r.TokensCacheWrite, &tcwB,
+			&r.TokensReasoning, &trB, &r.ApiMs, &apiB,
 			&r.WallMs, &wB, &r.ActiveMs, &aB, &r.CpuMs, &cB, &r.PeakMemoryBytes, &pmB,
 			&r.TurnCount, &r.ToolCallsRaw, &tcB, &r.ToolConnection, &r.ToolName,
 			&r.Credits, &r.HasConnectionCost, &costsRaw,
@@ -1046,6 +1052,8 @@ leaves AS MATERIALIZED (%s WHERE %s AND e.id IN (SELECT leaf_id FROM scoped_leav
 		r.TokensOutputBasis = contract.ResourceBasis(toB)
 		r.TokensCacheReadBasis = contract.ResourceBasis(tcrB)
 		r.TokensCacheWriteBasis = contract.ResourceBasis(tcwB)
+		r.TokensReasoningBasis = contract.ResourceBasis(trB)
+		r.ApiMsBasis = contract.ResourceBasis(apiB)
 		r.WallMsBasis = contract.ResourceBasis(wB)
 		r.ActiveMsBasis = contract.ResourceBasis(aB)
 		r.CpuMsBasis = contract.ResourceBasis(cB)
@@ -1152,7 +1160,8 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 	out.Executions = int64(len(leaves))
 
 	// Tokens (agent_run / child_agent rows determine token basis so gateway tool_runs don't downgrade).
-	var inSum, outSum, crSum, cwSum int64
+	var inSum, outSum, crSum, cwSum, reasoningSum, apiSum int64
+	var reasoningHave, apiHave int64
 	var inHave, outHave, crHave, cwHave, tokExpected int64
 	var tokBases []contract.ResourceBasis
 
@@ -1213,6 +1222,14 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 			}
 		}
 
+		if l.TokensReasoning != nil {
+			reasoningSum += *l.TokensReasoning
+			reasoningHave++
+		}
+		if l.ApiMs != nil {
+			apiSum += *l.ApiMs
+			apiHave++
+		}
 		if l.WallMs != nil {
 			wallSum += *l.WallMs
 			wallHave++
@@ -1338,6 +1355,12 @@ func summarizeResourceLeaves(leaves []resourceLeafRow) contract.ResourceSummary 
 		}
 	}
 
+	if reasoningHave > 0 {
+		out.Tokens.Reasoning = &reasoningSum
+	}
+	if apiHave > 0 {
+		out.Durations.ApiMs = &apiSum
+	}
 	// Durations.
 	out.Durations.TotalRuns = procRuns
 	out.Durations.MeasuredCpuRuns = cpuHave

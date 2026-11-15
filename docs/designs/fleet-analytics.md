@@ -73,7 +73,7 @@ Built: `price_entry`, `price_add`, `prices_list`, typed `CostFigure[]` / `Resour
 
 Target: project configuration opens independently of resource accounting. People and agents read the same prepared project summary, with version notifications and lightweight version checks. The latest confirmed facts suffice; no live estimate is required. Newly confirmed facts must reach the visible foreground interface within five seconds of becoming available to Fleet. Observation age and publication age remain separate; missing measurements never become zero.
 
-The source-capture foundation is built; the contribution processor, prepared operations and browser consumer are not built yet. Existing `project_context` and analytics reads keep their current query behavior until those stages are qualified.
+Source capture and the opt-in contribution processor are implemented. Prepared public operations and the browser consumer are not built yet; production processing remains off until qualification and explicit rollout. Existing `project_context` and analytics reads keep their current query behavior until those stages are qualified.
 
 ### Source ownership and capture
 
@@ -89,8 +89,18 @@ Work and repair tables are maintenance-only under FORCE RLS. Narrow capture/alig
 
 ### Publication contract
 
-The planned processor replaces one execution contribution atomically under sorted project locks followed by its execution lock. It reads canonical facts and old contribution in one snapshot, checks that all actual scopes are locked, updates support rows/version and deletes only claimed work UUIDs together. It never locks source rows or uses work-ID order as commit progress. Counted metric/basis support, min/max multiplicities, all tool entries, currency/basis cost groups and price-reference counts make removals and corrections reversible without a history scan per reader.
+The processor replaces one execution contribution atomically under sorted project locks followed by its execution lock. It reads canonical facts and old contribution in one snapshot, checks that all actual scopes are locked, updates support rows/version and deletes only claimed work UUIDs together. It never locks source rows or uses work-ID order as commit progress. Counted metric/basis support, min/max multiplicities, all tool entries, currency/basis cost groups and price-reference counts make removals and corrections reversible without a history scan per reader.
 
 Initial build and metadata scans seed bounded execution-ID pages atomically with their checkpoint. Ready requires scan completion and no scoped pending work/repair in the finalize snapshot. Rebuild retains frozen valuation provenance and source work; incomplete construction stays preparing. First valuation records its method, including missing rates; later price inserts do not automatically reprice historical comparisons.
 
 Prepared reads require a current non-null project grant and matching source ownership. New read operations are additive; legacy operations remain available. Browser integration and load qualification follow server protocol qualification. Synthetic workload results describe their declared history, readers, event rates, hardware and network; they do not establish production capacity. The five-second requirement remains unproved until rendered-value measurements pass under that envelope.
+
+### Processor rollout and internal boundary
+
+`FLEET_RESOURCE_PROCESSOR=on/off` is read once at startup and defaults off. Capture has no off switch: processor-off and restarts retain pending UUIDs. This slice registers no prepared operation or public prepared notification. Internal publication emits `fleet_resource_summary`; the additive API stage owns authorized SSE delivery and read exposure. Existing executors, gateway behavior and legacy reads remain compatible.
+
+The [coordinator contract](../../go/coordinator/README.md#internal-prepared-resource-interfaces) defines replacement, ownership repair, build/rebuild, metadata and read helpers. Derived tables enforce FORCE RLS; work and retained valuation are maintenance-only. The internal read helper first reads a scoped header, then checks maintenance progress in the same repeatable-read snapshot. An unfinished metadata enumeration conservatively keeps coverage pending, even before its affected projects are known.
+
+Contributions use canonical typed JSON, sorted metric/tool keys, integer values and decimal strings. Reasoning tokens and reported API duration reach both prepared and shared legacy resource mapping; reasoning is separate from total tokens. Scalar/basis/reason counts and counted extrema preserve measured zero, missing values and partial memory coverage. Normalized tool/cost/price rows have maintained item counts, so the fixed header does not enumerate high-cardinality details.
+
+A frozen first method records all token components and the connection unit, including unavailable rates. Later usage corrections reuse it; price insertion alone creates no work. Rebuild clears only disposable contributions/support in bounded pages, keeps source work and valuation, and holds affected replacements while clearing. Initial build and metadata page seeds commit with their checkpoint; an aborted page cannot advance coverage. Failed work keeps its first pending time and retries with delay from 100 ms to one second. Queued hints use retry time before age so failing or clearing scopes do not indefinitely starve others.
