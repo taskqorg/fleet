@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,67 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// Requirement: bounded cohorts preserve project order and every selected candidate;
+// risk: interleaving removes amortization, mixes uncertain scopes or starves later work.
+func TestResourceCandidateCohorts(t *testing.T) {
+	interleaved := make([]string, 100)
+	hints := map[string]string{}
+	for i := range interleaved {
+		interleaved[i] = fmt.Sprintf("selected-%03d", i)
+		hints[interleaved[i]] = fmt.Sprint(i % 5)
+	}
+	var wantInterleaved [][]string
+	for block := 0; block < 2; block++ {
+		for project := 0; project < 5; project++ {
+			var group []string
+			for member := block * 16; member < (block+1)*16 && member < 20; member++ {
+				group = append(group, interleaved[project+5*member])
+			}
+			wantInterleaved = append(wantInterleaved, group)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		ids   []string
+		hints map[string]string
+		want  [][]string
+	}{
+		{name: "empty"},
+		{name: "failed hints stay scalar", ids: []string{"a", "b", "c"}, want: [][]string{{"a"}, {"b"}, {"c"}}},
+		{name: "unknown earliest candidate retains priority",
+			ids:   []string{"a", "unknown", "b", "a2", "b2", "missing"},
+			hints: map[string]string{"a": "P", "a2": "P", "b": "Q", "b2": "Q", "unknown": ""},
+			want:  [][]string{{"a", "a2"}, {"unknown"}, {"b", "b2"}, {"missing"}}},
+		{name: "five interleaved projects keep16 then4 each", ids: interleaved, hints: hints, want: wantInterleaved},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := slices.Clone(tc.ids)
+			got := resourceCandidateCohorts(tc.ids, tc.hints)
+			if !reflect.DeepEqual(got, tc.want) || !slices.Equal(tc.ids, before) {
+				t.Fatalf("cohorts=%v want=%v; input=%v before=%v", got, tc.want, tc.ids, before)
+			}
+			seen := map[string]bool{}
+			for _, group := range got {
+				if len(group) == 0 || len(group) > resourceCohortSize {
+					t.Fatalf("invalid cohort size %d", len(group))
+				}
+				for _, id := range group {
+					if seen[id] {
+						t.Fatalf("selected candidate repeated: %s", id)
+					}
+					seen[id] = true
+					if len(group) > 1 && (tc.hints[id] == "" || tc.hints[id] != tc.hints[group[0]]) {
+						t.Fatalf("mixed or uncertain cohort: %v", group)
+					}
+				}
+			}
+			if len(seen) != len(tc.ids) {
+				t.Fatalf("consumed %d of %d selected IDs", len(seen), len(tc.ids))
+			}
+		})
+	}
+}
 
 // Requirement: exact nullable facts, complete tools and frozen pricing; risk: rounded money,
 // lost zero/reasoning/API measurements, truncated tools, or changing historical methods.
@@ -1113,6 +1175,133 @@ func TestResourceCohortPostgres(t *testing.T) {
 		t.Fatal("clearing hints starved a healthy project outside the first 100 rows")
 	}
 	t.Logf("16 independent leaves/one publication; SQL and backend %d rollback; late UUID retained; frozen method; lost COMMIT response/replay; bounded poison isolation; locked scope change/NULL/RLS passed", backend)
+
+	// Requirement: interleaved projects retain bounded amortization and fair work coverage;
+	// risk: adjacent-only cohorts degrade to one transaction/publication per selected leaf.
+	{
+		interleaved := make([]string, 100)
+		projects := make([]string, 5)
+		inputs := make([]int, 5)
+		for p := range projects {
+			projects[p] = fmt.Sprintf("COHORT_INTERLEAVED_%d", p)
+		}
+		for i := range interleaved {
+			interleaved[i] = fmt.Sprintf("cohort-interleaved-%03d", i)
+			failures := 0
+			if i%7 == 0 {
+				failures = 1
+			}
+			// Both canonical writes share one source transaction/work identity.
+			sql(`WITH source AS (
+ INSERT INTO execution(id,kind,state,project_id,harness,model,started_at)
+ VALUES($1,'agent_run','succeeded',$2,'codex','interleaved-model','2024-01-01') RETURNING id
+) INSERT INTO execution_totals(execution_id,project_id,tokens_input,tokens_input_basis,tool_calls,tool_calls_basis)
+ SELECT id,$2,$3,'measured',jsonb_build_object('byTool',jsonb_build_object('!cohort-tool',jsonb_build_object('calls',1,'errors',$4::int))),'measured' FROM source`,
+				interleaved[i], projects[i%5], i, failures)
+			inputs[i%5] += i
+		}
+		sql(`UPDATE resource_work SET next_attempt_at=now()-interval '1 day',first_pending_at=now()-interval '1 day'
+ WHERE execution_id=ANY($1::text[])`, interleaved)
+		selectWork := func() []string {
+			t.Helper()
+			var ids []string
+			if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+				rows, e := q.tx.Query(q.ctx(), resourceCandidatesSQL)
+				if e != nil {
+					return e
+				}
+				ids, e = pgx.CollectRows(rows, pgx.RowTo[string])
+				return e
+			}); e != nil {
+				t.Fatal(e)
+			}
+			return ids
+		}
+		selected := selectWork()
+		if !reflect.DeepEqual(selected, interleaved) {
+			t.Fatalf("bounded fair interleaved selection = %v", selected)
+		}
+		equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "100", interleaved)
+		sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('cohort-interleaved-later','tool_run','succeeded','COHORT_INTERLEAVED_LATER')`)
+		laterWork := scalar(`SELECT work_id::text FROM resource_work WHERE execution_id='cohort-interleaved-later'`)
+		if e := resourceReplaceCandidates(ctx, a, selected); e != nil {
+			t.Fatal(e)
+		}
+		equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", interleaved)
+		equal(`SELECT count(*)::text FROM resource_work WHERE execution_id LIKE 'cohort-clear-%'`, "105")
+		equal(`SELECT work_id::text FROM resource_work WHERE execution_id='cohort-interleaved-later'`, laterWork)
+		for p, project := range projects {
+			equal(`SELECT count(*)::text FROM interface_publication WHERE project=$1`, "2", project)
+			equal(`SELECT string_agg(jsonb_array_length(leaves)::text,',' ORDER BY revision) FROM interface_publication WHERE project=$1`, "16,4", project)
+			equal(`SELECT count(*)::text FROM change c JOIN interface_publication p ON p.publication_xid=c.xid AND p.project=c.id
+ WHERE c.kind='resource_summary' AND c.id=$1`, "2", project)
+			equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id=$1 AND included`, "20", project)
+			equal(`SELECT sum_value::text FROM resource_metric WHERE project_id=$1 AND metric='input'`, fmt.Sprint(inputs[p]), project)
+			equal(`SELECT present_count::text||':'||expected_count::text FROM resource_metric WHERE project_id=$1 AND metric='input' AND basis='measured'`, "20:20", project)
+			equal(`SELECT calls::text||':'||errors::text FROM resource_tool WHERE project_id=$1 AND name='!cohort-tool'`, "20:3", project)
+		}
+		equal(`SELECT count(*)::text FROM interface_publication_delta WHERE project=ANY($1::text[])`, "100", projects)
+		methods := scalar(`SELECT string_agg(method_sha,',' ORDER BY execution_id) FROM resource_valuation WHERE execution_id=ANY($1::text[])`, interleaved)
+		if !slices.Contains(selectWork(), "cohort-interleaved-later") {
+			t.Fatal("work outside the selected100 was not eligible for the next pass")
+		}
+		if e := resourceReplaceCandidates(ctx, a, []string{"cohort-interleaved-later"}); e != nil {
+			t.Fatal(e)
+		}
+
+		// Poison in the first gathered project cannot prevent the other99 updates.
+		sql(`UPDATE execution_totals SET tokens_input=tokens_input+1 WHERE execution_id=ANY($1::text[])`, interleaved)
+		sql(`INSERT INTO resource_fixture_cohort_fault VALUES($1,'retryable')`, interleaved[10])
+		if e := resourceReplaceCandidates(ctx, a, interleaved); e == nil {
+			t.Fatal("interleaved poison failure hidden")
+		}
+		equal(`SELECT execution_id FROM resource_work WHERE execution_id=ANY($1::text[])`, interleaved[10], interleaved)
+		equal(`SELECT attempts::text FROM resource_work WHERE execution_id=$1`, "1", interleaved[10])
+		for p, project := range projects {
+			want := inputs[p] + 20
+			if p == 0 {
+				want--
+			}
+			equal(`SELECT sum_value::text FROM resource_metric WHERE project_id=$1 AND metric='input'`, fmt.Sprint(want), project)
+		}
+		sql(`DELETE FROM resource_fixture_cohort_fault WHERE execution_id=$1`, interleaved[10])
+		sql(`UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id=$1`, interleaved[10])
+		if e := resourceReplaceCandidates(ctx, a, interleaved); e != nil {
+			t.Fatal(e)
+		}
+		equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", interleaved)
+		equal(`SELECT string_agg(method_sha,',' ORDER BY execution_id) FROM resource_valuation WHERE execution_id=ANY($1::text[])`, methods, interleaved)
+
+		// Captured old/new scopes and NULL ownership remain independent.
+		sql(`UPDATE execution SET project_id='COHORT_INTERLEAVED_ALT' WHERE id=$1`, interleaved[0])
+		sql(`UPDATE execution SET project_id=NULL WHERE id=$1`, interleaved[5])
+		sql(`UPDATE execution_totals SET tokens_input=tokens_input+1 WHERE execution_id=$1`, interleaved[10])
+		hints, e := resourceBatchHints(ctx, a, interleaved)
+		if e != nil || hints[interleaved[0]] != "" || hints[interleaved[5]] != "" {
+			t.Fatalf("moving/NULL gathering hint: %v %v", hints, e)
+		}
+		if e := resourceReplaceCandidates(ctx, a, interleaved); e != nil {
+			t.Fatal(e)
+		}
+		equal(`SELECT sum_value::text FROM resource_metric WHERE project_id=$1 AND metric='input'`, fmt.Sprint(inputs[0]+20-1-6+1), projects[0])
+		equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id=$1 AND included`, "18", projects[0])
+		equal(`SELECT calls::text||':'||errors::text FROM resource_tool WHERE project_id='COHORT_INTERLEAVED_ALT' AND name='!cohort-tool'`, "1:1")
+		equal(`SELECT (project_id IS NULL AND NOT included)::text FROM resource_contribution WHERE execution_id=$1`, "true", interleaved[5])
+		equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", interleaved)
+		if e := st.Tx(ctx, &Scope{ProjectIDs: projects[0], Person: "interleaved-reader"}, false, NOLOCK, func(tx pgx.Tx) error {
+			var count int
+			if e := tx.QueryRow(ctx, `SELECT count(*) FROM resource_contribution WHERE execution_id=ANY($1::text[])`, interleaved).Scan(&count); e != nil {
+				return e
+			}
+			if count != 18 {
+				return fmt.Errorf("interleaved RLS exposed %d leaves, want18", count)
+			}
+			return nil
+		}); e != nil {
+			t.Fatal(e)
+		}
+		t.Log("100 selected interleaved leaves,16/4 publications per project, retained outside/clearing UUIDs,99 healthy poison updates, frozen methods, moving/NULL/RLS")
+	}
 }
 
 // The fixture reads PostgreSQL protocol frames and withholds exactly the first
