@@ -19,7 +19,8 @@ case $1 in
     pnpm exec playwright install chromium
     node tests/ui/filter.check.ts --assert --sizes 3000
     node tests/ui/conversations.check.ts
-    node tests/ui/lab-create.check.ts ;;
+    node tests/ui/lab-create.check.ts
+    FLEET_CONTROL_BROWSER=1 node --test tests/ui/pipeline-plan.test.ts ;;
   # Speculative release build (docs/designs/fleet-delivery-pipeline.md#4-automatic-release); needs GH_TOKEN, GH_REPO.
   release)
     version=$(deploy/release-version.sh "$GITHUB_SHA")

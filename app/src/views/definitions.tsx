@@ -144,11 +144,11 @@ const readsOf = (s: any, sources: Set<string>) => {
 };
 
 function Steps({ text }: { text: string }) {
-  let steps: any[] = [];
-  try { steps = JSON.parse(text)?.steps; } catch { return null; }
+  let steps: any[] = [], resultStep: string | undefined;
+  try { const definition = JSON.parse(text); steps = definition?.steps; resultStep = definition?.resultStep; } catch { return null; }
   if (!Array.isArray(steps)) return null;
   steps = steps.filter(s => s && typeof s === 'object');
-  const items: StepItem[] = steps.map((s, i) => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : (s.kind === 'script' || s.kind === 'publication') ? 'program' : 'agent', executor: s.kind === 'publication' ? 'coordinator · publish-static' : s.profile ?? s.tool ?? s.command ?? '', reads: readsOf(s, new Set(['example', ...steps.slice(0, i).map(s => s.id)])), writes: 'output' }));
+  const items: StepItem[] = steps.map((s, i) => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : (s.kind === 'script' || s.kind === 'publication') ? 'program' : 'agent', executor: s.kind === 'publication' ? 'coordinator · publish-static' : s.profile ?? s.tool ?? s.command ?? '', reads: readsOf(s, new Set(['example', ...steps.slice(0, i).map(s => s.id)])), writes: 'output', result: s.id === resultStep, condition: s.when ? `${s.when.source?.step}.${(s.when.source?.path ?? []).join('.')} = ${JSON.stringify(s.when.equals)}` : undefined }));
   return <DetailSection title="Steps"><StepList items={items} label="Steps" /></DetailSection>;
 }
 

@@ -125,11 +125,7 @@ func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []do
 }
 
 func judgeOutput(run doc) doc {
-	steps := anys(run["steps"])
-	if len(steps) == 0 {
-		return nil
-	}
-	return mapOf(mapOf(steps[len(steps)-1])["output"])
+	return mapOf(pipelineResultValue(run))
 }
 
 func sameTrialSet(a, b []any) bool {

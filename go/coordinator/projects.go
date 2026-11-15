@@ -645,13 +645,14 @@ func init() {
 
 // pipelineRun: a pipeline-run record with its steps.
 func pipelineRun(q *Request, id string) (doc, error) {
-	r, err := one(q, "SELECT "+execJSON+" FROM execution WHERE id=$1 AND "+runRows, id)
+	run, err := getRun(q, id)
 	if err != nil {
 		return nil, err
 	}
-	steps, err := rows(q, "SELECT ("+execJSON+") - 'index' FROM execution WHERE kind='pipeline_step' AND parent_execution_id=$1 ORDER BY (data->>'index')::int", id)
-	r["steps"] = steps
-	return r, err
+	if run == nil {
+		return nil, fail(404, "Unknown pipeline run")
+	}
+	return pipelinePlanRead(q, run)
 }
 
 // mcp: a JSON-RPC tools server over an operation table; each call runs in its own transaction.

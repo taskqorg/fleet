@@ -54,8 +54,13 @@ func problemOf(outcome, c string) string {
 
 func validatePipeline(d doc) (doc, error) {
 	bad := func(m string) (doc, error) { return nil, fail(500, "Invalid pipeline: "+m) }
-	if v, _ := numOK(d["version"]); v != 2 {
-		return bad("version must be 2")
+	version, _ := numOK(d["version"])
+	if version != 2 && version != 3 {
+		return bad("version must be 2 or 3")
+	}
+	_, hasResultStep := d["resultStep"]
+	if !keysOnly(d, "version", "id", "steps", "resultStep") || version == 2 && hasResultStep {
+		return bad("root keys or resultStep version")
 	}
 	if !stepIDPattern.MatchString(astr(d["id"])) {
 		return bad("id")
@@ -72,11 +77,22 @@ func validatePipeline(d doc) (doc, error) {
 		if s == nil || !stepIDPattern.MatchString(id) || seen[id] || id == "example" {
 			return bad(fmt.Sprintf("step id %v", s["id"]))
 		}
+		if when, has := s["when"]; has {
+			if version != 3 {
+				return bad("when requires version 3")
+			}
+			if err := validatePipelineCondition(when, seen); err != nil {
+				return bad("step " + id + ": " + err.Error())
+			}
+		}
 		seen[id] = true
 		kind := astr(s["kind"])
 		keys, ok := allowed[kind]
 		if !ok {
 			return bad(fmt.Sprintf("step kind %v", s["kind"]))
+		}
+		if version == 3 {
+			keys = append(append([]string{}, keys...), "when")
 		}
 		for k := range s {
 			if !keysOnly(doc{k: 1}, keys...) {
@@ -126,6 +142,13 @@ func validatePipeline(d doc) (doc, error) {
 			if astr(s["command"]) == "" || has && !(isInt && n > 0) {
 				return bad("script step " + id)
 			}
+		}
+	}
+	if version == 3 {
+		last := mapOf(steps[len(steps)-1])
+		_, conditional := last["when"]
+		if astr(d["resultStep"]) != astr(last["id"]) || last["kind"] != "script" || conditional {
+			return bad("resultStep must name the last unconditional script step")
 		}
 	}
 	return d, nil
@@ -259,8 +282,11 @@ func resolveRefs(v any, example any, outputs doc, quote bool) (any, error) {
 	return v, nil
 }
 
-// putRun writes the pipeline_run row and one pipeline_step row per step.
+// putRun writes the current plan and only executions that have actually been selected.
 func putRun(q *Request, run doc) error {
+	if err := guardPipelineWrite(q, run); err != nil {
+		return err
+	}
 	rest := doc{}
 	for k, v := range run {
 		if k != "steps" && k != "state" && k != "observation" {
@@ -281,7 +307,7 @@ func putRun(q *Request, run doc) error {
 	sessID := nilIf(astr(run["sessionId"]))
 	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant,task_id,session_id,directed_by,pipeline_id,pipeline_revision,parent_execution_id)
 	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
+	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data || CASE WHEN execution.data ? 'projectAssessments' THEN jsonb_build_object('projectAssessments',execution.data->'projectAssessments') ELSE '{}'::jsonb END,
 	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,
 	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant),
 	  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
@@ -296,6 +322,10 @@ func putRun(q *Request, run doc) error {
 		}
 	}
 	for i, x := range anys(run["steps"]) {
+		entry := pipelinePlanEntry(run, i)
+		if entry == nil || entry["activation"] != "selected" || mapOf(entry["executionRef"])["mode"] == "reused" {
+			continue
+		}
 		s := mapOf(x)
 		st, sobs, err := runState(s)
 		if err != nil {
@@ -330,39 +360,65 @@ func withSteps(q *Request, runs []doc) ([]doc, error) {
 		return runs, nil
 	}
 	ids := []string{}
-	for _, r := range runs {
-		ids = append(ids, astr(r["id"]))
-	}
-	steps, err := queryRows(q, "SELECT parent_execution_id AS run,id AS step,"+execJSON+" AS data FROM execution WHERE kind='pipeline_step' AND parent_execution_id=ANY($1) ORDER BY (data->>'index')::int", ids)
-	if err != nil {
-		return nil, err
-	}
-	stepIDs := []string{}
-	for _, s := range steps {
-		stepIDs = append(stepIDs, astr(s["step"]))
-	}
-	// Each step's provider calls (tool_run children) with their cost and its basis (fleet-analytics.md, basis).
-	calls, err := queryRows(q, `SELECT e.parent_execution_id AS step,e.id,e.data->>'tool' AS tool,e.data->>'connection' AS connection,t.connection_cost AS cost,
-	 coalesce(t.connection_cost_basis,'unavailable') AS basis FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id
-	 WHERE e.kind='tool_run' AND e.parent_execution_id=ANY($1) ORDER BY e.seq`, stepIDs)
-	if err != nil {
-		return nil, err
-	}
-	byStep := map[any][]any{}
-	for _, c := range calls {
-		byStep[c["step"]] = append(byStep[c["step"]], doc{"id": c["id"], "tool": c["tool"], "connection": c["connection"], "cost": c["cost"], "basis": c["basis"]})
-	}
-	for _, r := range runs {
-		list := []any{}
-		for _, s := range steps {
-			if s["run"] == r["id"] {
-				d := mapOf(s["data"])
-				delete(d, "index")
-				d["calls"] = append([]any{}, byStep[s["step"]]...)
-				list = append(list, d)
+	for _, run := range runs {
+		if err := requirePipelinePlan(run); err != nil {
+			return nil, err
+		}
+		for _, v := range pipelinePlanEntries(run) {
+			entry := mapOf(v)
+			if entry["activation"] == "selected" {
+				ids = append(ids, astr(mapOf(entry["executionRef"])["executionId"]))
 			}
 		}
-		r["steps"] = list
+	}
+	records, err := queryRows(q, "SELECT id AS step,parent_execution_id AS owner,project_id AS project,"+execJSON+" AS data FROM execution WHERE kind='pipeline_step' AND id=ANY($1)", ids)
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string]doc{}
+	for _, record := range records {
+		byID[astr(record["step"])] = record
+	}
+	calls, err := queryRows(q, `SELECT e.parent_execution_id AS step,e.id,e.data->>'tool' AS tool,e.data->>'connection' AS connection,t.connection_cost AS cost,
+  coalesce(t.connection_cost_basis,'unavailable') AS basis FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id
+  WHERE e.kind='tool_run' AND e.parent_execution_id=ANY($1) ORDER BY e.seq`, ids)
+	if err != nil {
+		return nil, err
+	}
+	byStep := map[string][]any{}
+	for _, c := range calls {
+		key := astr(c["step"])
+		byStep[key] = append(byStep[key], doc{"id": c["id"], "tool": c["tool"], "connection": c["connection"], "cost": c["cost"], "basis": c["basis"]})
+	}
+	for _, run := range runs {
+		list := []any{}
+		definition := anys(mapOf(run["definition"])["steps"])
+		for i, v := range pipelinePlanEntries(run) {
+			entry, def := mapOf(v), mapOf(definition[i])
+			step := doc{"id": entry["id"], "kind": def["kind"]}
+			if def["kind"] == "api" {
+				step["tool"], step["connection"] = def["tool"], def["connection"]
+			}
+			if entry["activation"] == "selected" {
+				ref := mapOf(entry["executionRef"])
+				record := byID[astr(ref["executionId"])]
+				if record == nil || record["owner"] != ref["sourceRunId"] || !same(record["project"], run["projectId"]) || mapOf(record["data"])["id"] != ref["sourceStepId"] {
+					return nil, fail(409, "Missing or foreign selected pipeline execution")
+				}
+				for k, value := range mapOf(record["data"]) {
+					if k != "index" {
+						step[k] = value
+					}
+				}
+				step["id"], step["kind"] = entry["id"], def["kind"]
+				step["calls"] = append([]any{}, byStep[astr(ref["executionId"])]...)
+				if ref["mode"] == "reused" {
+					step["reusedFrom"] = ref["sourceRunId"]
+				}
+			}
+			list = append(list, step)
+		}
+		run["steps"] = list
 	}
 	return runs, nil
 }
@@ -443,21 +499,9 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 		}
 		return d
 	}
-	// A rerun: the reused prefix of the earlier run's steps comes over as it ended (state, output, usage, artifacts by id).
 	reused := []string{}
-	for i, x := range anys(o["reuse"]) {
-		if i < len(steps) {
-			e := doc{}
-			for k, v := range mapOf(x) {
-				e[k] = v
-			}
-			e["reusedFrom"] = o["rerunOf"]
-			steps[i] = e
-			reused = append(reused, astr(e["id"]))
-		}
-	}
 	run := doc{"id": id, "traceparent": originTrace(q), "projectId": o["projectId"], "requestId": o["requestId"], "requestedBy": or("requestedBy", requester(q)), "definition": def,
-		"definitionSha256": sha256hex(jsonBytes(def)), "pipelineId": def["id"], "pipeline": o["file"], "example": or("example", doc{}), "overrides": or("overrides", doc{}),
+		"definitionSha256": sha256hex([]byte(canonical(def))), "pipelineId": def["id"], "pipeline": o["file"], "example": or("example", doc{}), "overrides": or("overrides", doc{}),
 		"state": "running", "startedAt": nowMs(), "durationMs": nil, "usage": nil, "result": nil, "steps": steps}
 	// Caller lineage is server-derived, never a pipeline parameter.
 	if strings.HasPrefix(q.agent, "execution:") {
@@ -486,6 +530,9 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 			if session["projectId"] != run["projectId"] || session["taskId"] != nil && session["taskId"] != parent["task_id"] {
 				return nil, fail(403, "Pipeline caller session ownership mismatch")
 			}
+		}
+		if strings.TrimSpace(astr(parent["directed_by"])) == "" {
+			return nil, fail(403, "Pipeline caller has no initiating actor provenance")
 		}
 		run["parentExecutionId"], run["taskId"], run["sessionId"], run["directedBy"] = source, parent["task_id"], parent["session_id"], parent["directed_by"]
 	}
@@ -517,6 +564,59 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 		}
 		run["projectSnapshot"] = snapshot
 		run["definitions"] = append(run["definitions"].([]contract.DefinitionRef), contract.DefinitionRef{Kind: contract.DefinitionKindProject, Id: pid, Revision: int64(num(snapshot["revision"])), ContentSha: astr(snapshot["contentSha"])})
+	}
+	if err := initPipelinePlan(run); err != nil {
+		return nil, err
+	}
+	if len(anys(o["reuse"])) > 0 {
+		old, err := getRun(q, astr(o["rerunOf"]))
+		if err != nil || old == nil {
+			return nil, fail(409, "Reused source run is unavailable")
+		}
+		verified, err := succeededPrefix(q, old, def)
+		if err != nil {
+			return nil, err
+		}
+		if len(verified) < len(anys(o["reuse"])) {
+			return nil, fail(409, "Reused prefix proof changed")
+		}
+		for i := range anys(o["reuse"]) {
+			sourceEntry := pipelinePlanEntry(old, i)
+			entry := pipelinePlanEntry(run, i)
+			definition := mapOf(anys(def["steps"])[i])
+			when := mapOf(definition["when"])
+			var output any
+			if when != nil {
+				for _, value := range steps[:i] {
+					previous := mapOf(value)
+					if previous["id"] == mapOf(when["source"])["step"] {
+						output = previous["output"]
+					}
+				}
+			}
+			decision := pipelineConditionDecision(when, output, nowMs())
+			if decision["outcome"] != sourceEntry["activation"] {
+				return nil, fail(409, "Reused prefix guard proof differs")
+			}
+			if evidence := mapOf(sourceEntry["decision"])["sourceArtifact"]; evidence != nil {
+				decision["sourceArtifact"] = evidence
+			}
+			entry["activation"], entry["decision"] = decision["outcome"], decision
+			if entry["activation"] == "not_selected" {
+				continue
+			}
+			ref := doc{}
+			for k, v := range mapOf(sourceEntry["executionRef"]) {
+				ref[k] = v
+			}
+			ref["mode"] = "reused"
+			entry["executionRef"], entry["inputs"] = ref, sourceEntry["inputs"]
+			step := mapOf(verified[i])
+			step["reusedFrom"] = ref["sourceRunId"]
+			steps[i] = step
+			reused = append(reused, astr(entry["id"]))
+		}
+		run["reused"] = reused
 	}
 	return run, putRun(q, run)
 }
@@ -558,7 +658,7 @@ func pipelineWait(ctx context.Context, a *App, runID string) (doc, error) {
 			return nil, fail(404, "Not found")
 		}
 		if r["state"] != "running" {
-			return r, nil
+			return pipelinePublicRead(ctx, a, runID)
 		}
 		select {
 		case <-ctx.Done():
@@ -586,7 +686,7 @@ func pipelineOnExecution(a *App, executionID string) {
 func pipelineTick(ctx context.Context, a *App) {
 	var ids []string
 	runTx(ctx, a, nil, false, "", func(q *Request) error {
-		rs, err := queryRows(q, "SELECT id FROM execution WHERE "+runRows+" AND state='running' AND (data->'definition'->>'version')::int=2 ORDER BY seq")
+		rs, err := queryRows(q, "SELECT id FROM execution WHERE "+runRows+" AND state='running' AND data->>'planVersion'='1' ORDER BY seq")
 		for _, r := range rs {
 			ids = append(ids, astr(r["id"]))
 		}
@@ -627,15 +727,28 @@ func pipelineCancelIn(q *Request, runID string) (string, doc, error) {
 		return "", nil, err
 	}
 	own := ""
-	for _, x := range anys(run["steps"]) {
-		step := mapOf(x)
-		if step["state"] == "running" || step["state"] == "preparing" {
-			if step["state"] == "running" {
-				own = astr(step["executionId"])
-			}
-			step["state"], step["finishedAt"] = "cancelled", nowMs()
-			break
+	for i, value := range pipelinePlanEntries(run) {
+		entry := mapOf(value)
+		if entry["activation"] != "selected" || mapOf(entry["executionRef"])["mode"] == "reused" {
+			continue
 		}
+		step := mapOf(anys(run["steps"])[i])
+		if step["state"] != "running" && step["state"] != "preparing" && step["state"] != "waiting" {
+			continue
+		}
+		dispatch := mapOf(entry["dispatch"])
+		if dispatch["phase"] == "handed_off" {
+			own = astr(step["executionId"])
+			step["observation"], run["observation"] = "unconfirmed", "unconfirmed"
+		} else if native := astr(step["executionId"]); native != "" {
+			if err := exec(q, "UPDATE document SET data=data||'{\"status\":\"stopped\"}'::jsonb WHERE kind='command' AND data->>'executionId'=$1 AND data->>'status'='pending'", native); err != nil {
+				return "", nil, err
+			}
+			if err := exec(q, "UPDATE execution SET state='cancelled',ended_at=now() WHERE id=$1 AND state IN ('preparing','waiting')", native); err != nil {
+				return "", nil, err
+			}
+		}
+		step["state"], step["finishedAt"] = "cancelled", nowMs()
 	}
 	return own, run, finishRun(q, run, "cancelled", "cancelled")
 }
@@ -645,6 +758,24 @@ func notifyFinished(a *App, run doc) {
 }
 
 func finishRun(q *Request, run doc, state, problem string) error {
+	if state == "succeeded" {
+		if err := bindPipelineResult(q, run); err != nil {
+			state, problem = "failed", "result_invalid"
+		}
+	}
+	if state != "succeeded" {
+		delete(run, "canonicalResult")
+		code := "prior_step_failed"
+		if state == "cancelled" {
+			code = "run_cancelled"
+		}
+		for _, value := range pipelinePlanEntries(run) {
+			entry := mapOf(value)
+			if entry["activation"] == "pending" {
+				entry["activation"], entry["problem"] = "blocked", doc{"code": code, "message": "Run ended before this entry could activate"}
+			}
+		}
+	}
 	run["state"], run["finishedAt"] = state, nowMs()
 	st, _ := numOK(run["startedAt"])
 	run["durationMs"] = nowMs() - int64(st)
@@ -652,9 +783,9 @@ func finishRun(q *Request, run doc, state, problem string) error {
 	outputs := doc{}
 	var search doc
 	var stepErr any
-	for _, x := range anys(run["steps"]) {
+	for i, x := range anys(run["steps"]) {
 		s := mapOf(x)
-		if u := mapOf(s["usage"]); u != nil {
+		if u := mapOf(s["usage"]); u != nil && mapOf(pipelinePlanEntry(run, i)["executionRef"])["mode"] != "reused" {
 			used = true
 			c, _ := numOK(u["credits"])
 			credits += c
@@ -735,12 +866,20 @@ func saveArtifact(q *Request, run doc, executionID, name string, b []byte, media
 func completeStep(q *Request, run doc, i int, output any, extra doc) error {
 	s := mapOf(anys(run["steps"])[i])
 	if s["outputArtifactId"] == nil {
-		id, err := saveArtifact(q, run, stepRow(run, i), "output.json", jsonBytes(output), "application/json")
-		if err != nil {
-			return err
-		}
-		s["outputArtifactId"] = id
+		return fail(409, "Pipeline output has not been materialized")
 	}
+	artifact, err := artifactRow(withTx(q), q.app, astr(s["outputArtifactId"]))
+	if err != nil {
+		return err
+	}
+	if !pipelineOutputIdentity(artifact, run["projectId"], stepRow(run, i)) || artifact.ContentHash != sha256hex(jsonBytes(output)) {
+		return fail(409, "Pipeline output identity or bytes changed")
+	}
+	dispatch := mapOf(pipelinePlanEntry(run, i)["dispatch"])
+	if dispatch["phase"] != "handed_off" {
+		return fail(409, "Pipeline output has no committed handoff")
+	}
+	dispatch["phase"], dispatch["settledAtMs"] = "settled", nowMs()
 	for k, v := range extra {
 		s[k] = v
 	}
@@ -814,7 +953,11 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 	out := []fileRef{}
 	for j := 0; j < n && j < len(steps); j++ {
 		s := mapOf(steps[j])
-		ids := []string{stepRow(run, j)}
+		entry := pipelinePlanEntry(run, j)
+		if entry == nil || entry["activation"] != "selected" || s["state"] != "succeeded" || s["observation"] == "unconfirmed" {
+			continue
+		}
+		ids := []string{astr(mapOf(entry["executionRef"])["executionId"])}
 		if e := astr(s["executionId"]); e != "" {
 			ids = append(ids, e)
 		}
@@ -833,6 +976,9 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 			}
 			for _, a := range as {
 				rel := strings.TrimPrefix(astr(a["path"]), "output/")
+				if pipelineReservedInput(rel) {
+					continue // server control is a consumer input, never a producer output
+				}
 				dot := false
 				for _, p := range strings.Split(rel, "/") {
 					dot = dot || strings.HasPrefix(p, ".")
@@ -855,34 +1001,10 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 }
 
 func inputsFor(q *Request, run doc, i int) ([]any, error) {
-	out := []any{}
-	ex := mapOf(run["example"])
-	if inputs := anys(ex["inputs"]); len(inputs) > 0 {
-		if run["exampleInputs"] == nil {
-			list := []any{}
-			for _, x := range inputs {
-				f := mapOf(x)
-				b, err := exampleFileBytes(q, run["projectId"], f)
-				if err != nil {
-					return nil, err
-				}
-				media := "text/plain"
-				if f["media_type"] != nil {
-					media = astr(f["media_type"])
-				}
-				id, err := saveArtifact(q, run, astr(run["id"]), "example/"+astr(f["path"]), b, media)
-				if err != nil {
-					return nil, err
-				}
-				list = append(list, doc{"artifactId": id, "path": "example/" + astr(f["path"])})
-			}
-			run["exampleInputs"] = list
-			if err := putRun(q, run); err != nil {
-				return nil, err
-			}
-		}
+	if len(anys(mapOf(run["example"])["inputs"])) > 0 && run["exampleInputs"] == nil {
+		return nil, fail(409, "Pipeline example inputs must be materialized before preparation")
 	}
-	out = append(out, anys(run["exampleInputs"])...)
+	out := append([]any{}, anys(run["exampleInputs"])...)
 	fs, err := pipelineOutputs(q, run, i)
 	if err != nil {
 		return nil, err
@@ -936,17 +1058,24 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 		return unavailable
 	}
 	var token string
+	var claimed doc
+	var won bool
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		by := mapOf(run["requestedBy"])["email"]
-		m, err := mint(q, doc{"executionId": executionID, "directedBy": by, "projectId": run["projectId"], "experimentId": run["experimentId"], "step": true}, []string{connection})
-		if err == nil {
-			token, _ = m["token"].(string)
-		}
+		var err error
+		claimed, token, won, err = claimPipelineAPI(q, astr(run["id"]), executionID, connection, tool)
 		return err
 	})
-	if err != nil || token == "" {
+	if err != nil {
+		unavailable.ErrorCode = ptr("pipeline-authority-denied")
 		return unavailable
 	}
+	if !won || token == "" {
+		unavailable.ErrorCode = ptr(pipelineClaimObserved)
+		return unavailable
+	}
+	// Only the confirmed commit owner reaches the gateway; keep this caller's
+	// expected revision aligned without replacing its retained step observations.
+	run["plan"] = claimed["plan"]
 	writeSnapshot(ctx, a) // the gateway must see the token before the call
 	line := gatewayCall(ctx, token, connection, tool, args)
 	// Revoked even when the caller left: a live token would keep the key reachable until the next start.
@@ -1006,27 +1135,57 @@ func creditsOf(q *Request, executionID string) (any, error) {
 func advanceOnce(ctx context.Context, a *App, runID string) error {
 	for {
 		var run doc
-		if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) { run, err = getRun(q, runID); return }); err != nil {
-			return err
-		}
-		if run == nil || run["state"] != "running" || mapOf(run["definition"])["version"] != float64(2) {
-			return nil
-		}
-		i := -1
-		for j, x := range anys(run["steps"]) {
-			if mapOf(x)["state"] != "succeeded" {
-				i = j
-				break
-			}
-		}
-		if i < 0 {
-			if err := runTx(ctx, a, nil, true, "", func(q *Request) error { return finishRun(q, run, "succeeded", "") }); err != nil {
+		index := -1
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			if _, err := first(q, "SELECT id FROM execution WHERE id=$1 FOR UPDATE", runID); err != nil {
 				return err
 			}
+			var err error
+			run, err = getRun(q, runID)
+			if err != nil || run == nil || run["state"] != "running" {
+				return err
+			}
+			for i, value := range pipelinePlanEntries(run) {
+				entry := mapOf(value)
+				if entry["activation"] == "not_selected" {
+					continue
+				}
+				if entry["activation"] == "pending" {
+					if err := selectPipelineStep(q, run, i); err != nil {
+						return err
+					}
+					if run["state"] != "running" {
+						return nil
+					}
+					if entry["activation"] == "not_selected" {
+						continue
+					}
+				}
+				if entry["activation"] == "blocked" {
+					return finishRun(q, run, "failed", "prior_step_failed")
+				}
+				step := mapOf(anys(run["steps"])[i])
+				if step["state"] == "succeeded" {
+					continue
+				}
+				index = i
+				return nil
+			}
+			return finishRun(q, run, "succeeded", "")
+		}); err != nil {
+			return err
+		}
+		if run == nil {
+			return nil
+		}
+		if run["state"] != "running" {
 			notifyFinished(a, run)
 			return nil
 		}
-		again, err := runStep(ctx, a, run, i)
+		if index < 0 {
+			return nil
+		}
+		again, err := runStep(ctx, a, run, index)
 		if err != nil {
 			return err
 		}
@@ -1049,7 +1208,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	row := stepRow(run, i)
 	kind := astr(def["kind"])
-	tx := func(fn func(q *Request) error) error { return runTx(ctx, a, nil, true, "", fn) }
+	tx := func(fn func(q *Request) error) error { return runPipelineTransition(ctx, a, run, fn) }
 	failNow := func(problem, message string) (bool, error) {
 		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
 	}
@@ -1059,8 +1218,12 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	connection := astr(def["connection"])
 
 	if s["state"] == "preparing" {
+		prepared, err := materializePipelineInputs(ctx, a, run, i)
+		if err != nil {
+			return failNow("infra:inputs", err.Error())
+		}
+		freezePipelineInputs(run, i, prepared)
 		var resolved any
-		var err error
 		switch kind {
 		case "api":
 			resolved, err = resolveRefs(withArguments(def, mapOf(run["overrides"])), run["example"], outputs, false)
@@ -1114,6 +1277,9 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			defer inflight.Delete(row)
 			tool := astr(def["tool"])
 			line := connCallFor(ctx, a, run, connection, row, tool, resolved)
+			if deref(line.ErrorCode) == pipelineClaimObserved {
+				return false, nil
+			}
 			job := def["mode"] == "job"
 			// A job submit without a clear answer: a task created since the call started is adopted; otherwise unknown, never resent.
 			code := deref(line.ErrorCode)
@@ -1186,7 +1352,13 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 					s["reply"] = out // the paid answer stays inspectable on the failed step
 					return failNow(err.Error(), "Output mapping: a reference to the reply is missing")
 				}
+				if err := materializePipelineOutput(ctx, a, run, i, mapped); err != nil {
+					return false, err
+				}
 				return true, tx(func(q *Request) error { return completeStep(q, run, i, mapped, doc{"usage": usage}) })
+			}
+			if err := materializePipelineOutput(ctx, a, run, i, out); err != nil {
+				return false, err
 			}
 			return true, tx(func(q *Request) error {
 				return completeStep(q, run, i, out, doc{"usage": mapOf(out)["usage"]})
@@ -1194,8 +1366,8 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		}
 		var execID string
 		err = tx(func(q *Request) error {
-			inputs, err := inputsFor(q, run, i)
-			if err != nil {
+			inputs := prepared.files
+			if err := putRun(q, run); err != nil {
 				return err
 			}
 			if kind == "agent" {
@@ -1211,6 +1383,19 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 				return err
 			}
 			s["executionId"] = execID
+			dispatch := mapOf(pipelinePlanEntry(run, i)["dispatch"])
+			dispatch["nativeExecutionId"] = execID
+			if kind == "script" {
+				command, err := first(q, "SELECT data FROM document WHERE kind='command' AND data->>'executionId'=$1 AND data->>'kind'='script'", execID)
+				if err != nil {
+					return err
+				}
+				c := mapOf(command["data"])
+				if c == nil {
+					return fail(409, "Pipeline script command was not reserved")
+				}
+				dispatch["phase"], dispatch["commandId"], dispatch["hostId"] = "prepared", c["id"], c["hostId"]
+			}
 			return putRun(q, run)
 		})
 		if err != nil {
@@ -1230,6 +1415,12 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	if kind != "api" && s["executionId"] == nil {
 		return failNow("unknown:start", "Coordinator stopped while starting the step; not replayed")
+	}
+	if kind == "api" && mapOf(pipelinePlanEntry(run, i)["dispatch"])["phase"] == "reserved" {
+		// No committed handoff exists. Resume preparation with the same frozen
+		// bindings and logical step; this is not replay of a provider call.
+		s["state"] = "preparing"
+		return true, tx(func(q *Request) error { return putRun(q, run) })
 	}
 	if kind == "api" && def["mode"] != "job" {
 		if _, busy := inflight.Load(row); busy {
@@ -1276,6 +1467,9 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			result := out["output"]
 			if result == nil {
 				result = doc{}
+			}
+			if err := materializePipelineOutput(ctx, a, run, i, result); err != nil {
+				return false, err
 			}
 			return true, tx(func(q *Request) error {
 				if err := completeStep(q, run, i, result, doc{"usage": out["usage"]}); err != nil {
@@ -1365,6 +1559,9 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 		}
 		output = doc{"files": files}
 	}
+	if err := materializePipelineOutput(ctx, a, run, i, output); err != nil {
+		return false, err
+	}
 	return true, tx(func(q *Request) error {
 		u, err := creditsOf(q, astr(s["executionId"]))
 		if err != nil {
@@ -1408,7 +1605,10 @@ func init() {
 		if err == nil && out["state"] == "running" {
 			pipelineAdvance(q.app, astr(out["id"]))
 		}
-		return out, err
+		if err != nil {
+			return nil, err
+		}
+		return pipelinePublicRead(q.ctx(), q.app, astr(out["id"]))
 	})
 	// pipeline_rerun: a finished run again on the current definition (or the caller's draft); mode failed reuses the steps
 	// that succeeded and would run the same way.
@@ -1693,8 +1893,11 @@ func runPipeline(q *Request, invocation string) (any, error) {
 			"requestedBy": requester(q), "extra": doc{"signature": signature, "invocation": inv, "selectedMethod": method["id"], "selectionSource": source, "context": p}})
 		return err
 	})
-	if err != nil || old {
-		return run, err
+	if err != nil {
+		return nil, err
+	}
+	if old {
+		return pipelinePublicRead(q.ctx(), q.app, astr(run["id"]))
 	}
 	pipelineAdvance(q.app, astr(run["id"]))
 	return pipelineWait(q.ctx(), q.app, astr(run["id"]))
@@ -1912,6 +2115,9 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (doc, error) {
 		}
 		return prev[0], nil
 	}
+	if err := pipelineRecoveryFence(q, old); err != nil {
+		return nil, err
+	}
 	// The overrides that pick machines and credentials stay the owner's, as on pipeline_run_create.
 	if ov := mapOf(old["overrides"]); q.person != nil && !fullAccess(q.person) && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {
 		return nil, fail(403, "Only the owner reruns a run that overrides host, account or profile")
@@ -1944,24 +2150,59 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (doc, error) {
 
 // succeededPrefix preserves immutable outputs/execution provenance, without charging copied work again.
 func succeededPrefix(q *Request, old, def doc) ([]any, error) {
+	if err := requirePipelinePlan(old); err != nil {
+		return nil, err
+	}
 	reuse := []any{}
 	oldSteps, newSteps := anys(old["steps"]), anys(def["steps"])
 	oldDef := anys(mapOf(old["definition"])["steps"])
 	for i := 0; i < len(oldSteps) && i < len(newSteps) && i < len(oldDef); i++ {
-		e := mapOf(oldSteps[i])
-		if e["state"] != "succeeded" || canonical(oldDef[i]) != canonical(newSteps[i]) {
+		e, entry := mapOf(oldSteps[i]), pipelinePlanEntry(old, i)
+		if canonical(oldDef[i]) != canonical(newSteps[i]) {
 			break
 		}
-		if astr(mapOf(newSteps[i])["kind"]) == "agent" {
-			same, err := sameAgentStep(q, astr(e["executionId"]), mapOf(newSteps[i]), mapOf(old["overrides"]))
+		if entry["activation"] == "not_selected" {
+			reuse = append(reuse, doc{"id": e["id"], "kind": e["kind"]})
+			continue
+		}
+		if entry["activation"] != "selected" || e["state"] != "succeeded" || e["observation"] == "unconfirmed" || mapOf(entry["dispatch"])["phase"] != "settled" && mapOf(entry["executionRef"])["mode"] != "reused" {
+			break
+		}
+		if err := pipelineOutputOwner(q, old, i, astr(e["outputArtifactId"])); err != nil {
+			return nil, err
+		}
+		artifact, err := artifactRow(withTx(q), q.app, astr(e["outputArtifactId"]))
+		if err != nil || artifact.ContentHash != sha256hex(jsonBytes(e["output"])) {
+			return nil, fail(409, "Reused output bytes cannot be verified")
+		}
+		bindings := anys(entry["inputs"])
+		if bindings == nil || sha256hex([]byte(canonical(bindings))) != mapOf(entry["executionRef"])["sourceInputSha256"] {
+			return nil, fail(409, "Reused input identity cannot be verified")
+		}
+		for _, value := range bindings {
+			binding := mapOf(value)
+			a, err := artifactRow(withTx(q), q.app, astr(binding["artifactId"]))
+			if err != nil || a.State != "stored" || !same(a.ProjectID, old["projectId"]) || a.ContentHash != binding["sha256"] {
+				return nil, fail(409, "Reused input artifact is unavailable or changed")
+			}
+		}
+		definition := mapOf(newSteps[i])
+		connection, tool := "", ""
+		if definition["kind"] == "api" {
+			connection, tool = astr(definition["connection"]), astr(definition["tool"])
+		}
+		if _, _, err := pipelineAuthorityStamp(q, old, i, connection, tool, ""); err != nil {
+			return nil, err
+		}
+		if definition["kind"] == "agent" {
+			same, err := sameAgentStep(q, astr(e["executionId"]), definition, mapOf(old["overrides"]))
 			if err != nil {
 				return nil, err
 			}
 			if !same {
-				break
+				return nil, fail(409, "Reused agent configuration or model changed")
 			}
 		}
-		// The step's work came from R: its output and execution stay, its spend is R's (not counted again here).
 		c := doc{}
 		for k, v := range e {
 			if k != "calls" && k != "usage" {

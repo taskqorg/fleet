@@ -4,7 +4,7 @@
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField, StepList, msMeasured, type StepItem } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { LabCreate } from './lab-create.tsx';
@@ -103,6 +103,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const [recordErrors, setRecordErrors] = useState<Record<string, string>>({});
   const [savedRecord, setSavedRecord] = useState<Record<string, string>>({});
   const [sel, setSel] = useState<string[]>([]);
+  const [planTrial, setPlanTrial] = useState<string>();
   const [msg, setMsg] = useState<{ text: string; tone: 'warning' | 'failure' } | null>(null);
   const [patch, setPatch] = useState<any>(null);
   useEffect(() => { if (e && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); }, [!!e]);
@@ -148,6 +149,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
               {(c?.trials ?? []).map((key: string) => { const t = trial(key); if (!t) return null;
                 const conf = [t.confounders.hosts.join(', '), t.confounders.harnesses.join(', '), t.confounders.models.join(', '), 'web ' + t.confounders.webRoute].filter(Boolean).join(' · ');
                 return <span key={key} class="lab-trial">
+                  <Button label="View trial plan" icon="network" iconOnly kind="quiet" onClick={() => setPlanTrial(t.id)} />
                   <StateBadge family="trial" state={t.observation === 'unconfirmed' ? 'unknown' : t.state} reason={t.problem ?? (t.comparable ? undefined : 'left out of comparison')} compact />
                   {t.comparable && <RowCheck checked={sel.includes(t.id)} label={`Select repeat ${t.cell.repeat + 1} for rating`} onToggle={() => toggle(t.id)} />}
                   <span class="muted" data-tip={conf}>r{t.cell.repeat + 1}{t.cell.attempt ? `.${t.cell.attempt}` : ''}</span>
@@ -167,6 +169,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
         </div>)}
       </div>
     </section>
+    {planTrial && <TrialPlan key={planTrial} id={planTrial} projectId={e.projectId} assessments={e.trials.find((t: any) => t.id === planTrial)?.projectAssessments ?? []} onClose={() => setPlanTrial(undefined)} />}
     <section class="panel"><header class="panel-h"><Icon name="sliders-horizontal" /><h2>Variants</h2></header>
       <DetailSection title="Spread across repeats">{e.variants.map((v: any) => <KvRow key={v.label} icon="git-merge" label={v.proposalLabel ? `${v.proposalLabel} · ${v.label}` : v.label}
         meta={<><span>{Object.entries(v.summary).map(([k, s]: any) => `${evaluatorLabel(k)} ${scoreText(s)}`).join(' · ') || 'no scores yet'}</span><span> · Pipeline: <a href={`/pipelines/${v.pipelineId ?? e.pipelineId}`}>{v.pipelineId ?? e.pipelineId}</a></span><span class="id"> · Executable digest: {v.config_ref}</span>{v.catalogueConfigRef && <span class="id"> · Catalogue identity: {v.catalogueConfigRef}</span>}{v.catalogueRef && <span> · <a href={`/catalogue/${v.catalogueRef.id}`}>Catalogue r{v.catalogueRef.revision}</a></span>}</>}
@@ -200,4 +203,28 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
       {e.ratings.length ? e.ratings.map((r: any) => <Rating key={r.id} r={r} now={now} />) : <Empty text="Select comparable trials in the matrix to ask for a rating." />}
     </section>
   </article>;
+}
+
+// A scoped server read owns the plan; the matrix never reconstructs omitted work.
+function TrialPlan({ id, projectId, assessments, onClose }: { id: string; projectId: string; assessments: any[]; onClose: () => void }) {
+  const { data: run, state, error } = useDoc(`pipeline-plan:${projectId}:${id}`, () => op('pipeline_get', { runId: id, projectId }), touches, 5000);
+  const items: StepItem[] = (run?.plan.entries ?? []).map(entry => {
+    const execution = entry.execution;
+    const definitions = (run?.definition as { steps?: { id: string; kind: string }[] } | undefined)?.steps ?? [];
+    const definition = definitions.find(step => step.id === entry.id);
+    return { id: entry.id, kind: definition?.kind === 'api' ? 'tool' : definition?.kind === 'agent' ? 'agent' : 'program', executor: definition?.kind ?? '', reads: '', writes: '', activation: entry.activation, activationReason: entry.problem?.code ?? entry.decision?.reason,
+      result: entry.id === run?.canonicalResult?.stepId,
+      run: execution ? { state: execution.state, reason: execution.observation, note: entry.executionRef?.mode === 'reused' ? 'reused · original resources' : execution.observation === 'unconfirmed' ? 'unconfirmed' : undefined,
+        time: msMeasured(execution.durationMs), cost: { value: null, basis: 'unavailable' as const }, error: execution.error ? JSON.stringify(execution.error) : undefined } : undefined };
+  });
+  return <DetailSection title="Trial plan">
+    <KvRow icon="network" label="Trial" value={<><EntityCode id={id} what="Trial" /><Button label="Close trial plan" icon="x" iconOnly onClick={onClose} /></>} />
+    <OfflineMarker state={state} now={Date.now()} />
+    {error && <ProblemRow title="Trial plan unavailable" facts={error} severity="failure" actions={[]} />}
+    {run && <KvRow icon="rows-3" label="Plan entries" meta={`${run.planSummary.planned} planned · ${run.planSummary.freshExecutions} fresh · ${run.planSummary.reusedExecutions} reused · ${run.planSummary.notSelected} not selected · ${run.planSummary.pending} pending · ${run.planSummary.blocked} blocked`} />}
+    {run ? <StepList label="Trial activation and execution" items={items} /> : <Empty text="Plan unavailable" />}
+    {(run?.plan.entries ?? []).filter(entry => entry.executionRef?.mode === 'reused').map(entry => <KvRow key={entry.id} icon="network" label={`${entry.id} · reused source`} value={<a href={`/api/pipeline-runs/${entry.executionRef!.sourceRunId}`} target="_blank" rel="noopener">Open source run</a>} />)}
+    {run?.canonicalResult && <KvRow icon="file-text" label="Canonical result" value={<a href={`/api/results/${run.canonicalResult.artifact.artifactId}`} target="_blank" rel="noopener">Open result</a>} />}
+    {assessments.map(assessment => <KvRow key={`${assessment.checkId}:${assessment.evaluatorSha256}:${assessment.inputSha256}`} icon="file-text" label={`Project assessment · ${assessment.checkId}`} meta={assessment.schemaId} value={<a href={`/api/results/${assessment.artifactId}`} target="_blank" rel="noopener">Open assessment</a>} />)}
+  </DetailSection>;
 }

@@ -24,6 +24,25 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 async function call(method: string, path: string, body?: unknown, person = OWNER) {
   const r = await fetch(BASE + path, {method, headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': person, ...(body === undefined ? {} : {'content-type': 'application/json'})}, body: body === undefined ? undefined : JSON.stringify(body)});
   const text = await r.text(); let parsed: any = text; try { parsed = JSON.parse(text); } catch {}
+  if (r.status === 200 && parsed?.planVersion === 1 && parsed?.plan) {
+    // Test-only observation join for existing assertions. The HTTP contract has
+    // no steps array; inactive plan entries have no execution or measurements.
+    assert.equal(parsed.steps, undefined);
+    parsed.observedSteps = await Promise.all(parsed.plan.entries.map(async (entry: any) => {
+      const observed = entry.execution;
+      if (!observed) return {id: entry.id, activation: entry.activation};
+      let output: any;
+      if (entry.output) {
+        const artifact = await call('GET', `/api/results/${entry.output.artifactId}`, undefined, person);
+        assert.equal(artifact.status, 200);
+        assert.equal(sha(typeof artifact.body === 'string' ? artifact.body : JSON.stringify(artifact.body)), entry.output.sha256);
+        output = artifact.body;
+      }
+      return {...observed, id: entry.id, activation: entry.activation, executionId: observed.nativeExecutionId,
+        finishedAt: observed.endedAt, output, outputArtifactId: entry.output?.artifactId,
+        problem: observed.error?.code, reusedFrom: entry.executionRef.mode === 'reused' ? entry.executionRef.sourceRunId : undefined};
+    }));
+  }
   return {status: r.status, body: parsed};
 }
 const op = (name: string, body: unknown = {}, person = OWNER) => call('POST', '/api/ops/' + name, body, person);
@@ -84,11 +103,16 @@ after(() => gateway.close());
 const name = (p: string) => p + '-' + randomUUID().slice(0, 8);
 // One fake S3 for the file: artifacts written in one test are read in later ones.
 let artifactReadBarrier: {hash: string, reached: () => void, release: Promise<void>} | undefined;
+let assessmentWriteRejection: {hash:string; reached:()=>void} | undefined;
 const s3 = (async () => {
   const backend = await fakeS3();
   const proxy = createServer(async (req,res) => {
     const chunks: Buffer[]=[]; for await (const c of req) chunks.push(c as Buffer);
     const body=Buffer.concat(chunks);
+    const rejected=assessmentWriteRejection;
+    if(rejected && req.method==='PUT' && createHash('sha256').update(body).digest('hex')===rejected.hash){
+      rejected.reached();res.writeHead(503);res.end('synthetic assessment storage unavailable');return;
+    }
     const response=await fetch(`http://127.0.0.1:${backend.port}${req.url}`, {method:req.method,headers:req.headers as Record<string,string>,body:['GET','HEAD'].includes(req.method!)?undefined:body});
     const bytes=Buffer.from(await response.arrayBuffer());
     const barrier=artifactReadBarrier;
@@ -239,6 +263,10 @@ test('C6 a spool line that cannot be imported keeps its file, and lines after a 
 });
 
 test('P1 pipeline run is idempotent by requestId and refuses a changed body (requirement: docs/designs/fleet-asset-pipelines.md; risk: a retried request running twice)', async () => {
+  // Reach the reference validator with a granted connection; no provider key is needed.
+  const connections=ok(await op('connections_list')).connections;
+  if (!connections.some((entry:any)=>entry.name==='tavily')) ok(await op('connections_create',{name:'tavily',provider:'tavily'}));
+  ok(await op('connections_set_access',{connection:'tavily',access:{projects:['*']}}));
   const requestId = randomUUID();
   const a = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
   const b = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
@@ -250,7 +278,7 @@ test('P1 pipeline run is idempotent by requestId and refuses a changed body (req
   assert.equal((await call('POST', '/api/pipelines/hello-search/runs', {requestId: randomUUID(), bogus: 1})).status, 400);
   // A missing reference fails the step before any call: problem ref:<path>.
   const done = await until(async () => { const r = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}})); return r.state !== 'running' ? r : undefined; }, 'run ends');
-  assert.equal(done.state, 'failed'); assert.equal(done.steps[0].problem, 'ref:example.query');
+  assert.equal(done.state, 'failed'); assert.equal(done.observedSteps[0].problem, 'ref:example.query');
 });
 
 test('P2 api step without a usable connection fails as infra, and an unanswered call is unknown, never replayed (requirement: docs/designs/fleet-asset-pipelines.md; risk: a charged call sent twice)', async () => {
@@ -258,7 +286,7 @@ test('P2 api step without a usable connection fails as infra, and an unanswered 
   const seenBefore = seen.length;
   const none = await until(async () => { const r = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId: 'p2a', example: {query: 'q'}})); return r.state !== 'running' ? r : undefined; }, 'run ends');
   // tavily may exist from an import; then the call reaches the gateway and is unknown. Either way never "completed".
-  if (seen.length === seenBefore) { assert.equal(none.state, 'failed'); assert.equal(none.steps[0].problem, 'infra:connection-unavailable'); }
+  if (seen.length === seenBefore) { assert.equal(none.state, 'failed'); assert.equal(none.observedSteps[0].problem, 'infra:connection-unavailable'); }
   // With a usable connection the gateway sees one call with a run token; 502 provider-timeout leaves the outcome unknown.
   const c = await until(async () => {
     const list = ok(await op('connections_list'));
@@ -268,7 +296,7 @@ test('P2 api step without a usable connection fails as infra, and an unanswered 
   assert.equal(c.name, 'tavily');
   const n = seen.length;
   const r = await until(async () => { const x = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId: 'p2b', example: {query: 'q'}})); return x.state !== 'running' ? x : undefined; }, 'run ends');
-  assert.deepEqual([r.state, r.observation], ['failed', 'unconfirmed']); assert.equal(r.steps[0].problem, 'unknown:provider-timeout');
+  assert.deepEqual([r.state, r.observation], ['failed', 'unconfirmed']); assert.equal(r.observedSteps[0].problem, 'unknown:provider-timeout');
   assert.equal(seen.length - n, 1, 'one call, not replayed');
   assert.match(seen.at(-1)!, /^Bearer \S+$/);
   // The step's token is revoked after the call.
@@ -310,9 +338,9 @@ test('A1 analytics stage 1: an api step on the typed-decision connection gives t
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
   const requestId = randomUUID();
   const r = await until(async () => { const x = ok(await call('POST', '/api/pipelines/typed-decision/runs', {requestId, example: {prompt: example.prompt}})); return x.state !== 'running' && x.state !== 'preparing' ? x : undefined; }, 'run ends');
-  assert.equal(r.state, 'succeeded', JSON.stringify(r.steps));
-  assert.deepEqual(r.steps[0].output, {answer: {type: 'noul', noul: 0.93}, p: 0.93, answered_by: 'jev-1.14.0', tokens: {input_tokens: 286, output_tokens: 20}});
-  assert.deepEqual(r.steps[0].calls.map((c: any) => [c.tool, c.basis, c.cost?.unit, c.cost?.amount]), [['system_one', 'measured', 'input_tokens', 286]]);
+  assert.equal(r.state, 'succeeded', JSON.stringify(r.observedSteps));
+  assert.deepEqual(r.observedSteps[0].output, {answer: {type: 'noul', noul: 0.93}, p: 0.93, answered_by: 'jev-1.14.0', tokens: {input_tokens: 286, output_tokens: 20}});
+  assert.deepEqual(r.observedSteps[0].calls.map((c: any) => [c.tool, c.basis, c.cost?.unit, c.cost?.amount]), [['system_one', 'measured', 'input_tokens', 286]]);
 });
 
 test('S4 binary example files: import stores each file from the seed directory by its sha256 and refuses a mismatch (requirement: docs/designs/fleet-asset-pipelines.md §4, Binary example files; risk: an example whose image or GLB differs from the seed, or a run staging bytes nobody checked)', async () => {
@@ -403,7 +431,7 @@ test('A4 analytics stage 4: a typed evaluator scores each trial through its vari
 });
 
 // One domain fixture extends the counted gateway/S3 above. It speaks the real host protocol; no DB repairs or provider calls.
-async function suffixFixture(projectId = 'cs', differentOuter = false) {
+async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: {id:string;run:string}[]) {
   const secret = trialHostSecret;
   assert.ok(secret, 'shared store host registered');
   const host = async (path: string, body: object, auth = secret) => {
@@ -418,15 +446,16 @@ async function suffixFixture(projectId = 'cs', differentOuter = false) {
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
   example.version = 4000000 + Math.floor(Math.random() * 1e8);
   example.inputs = [{path: 'seed.txt', text: 'frozen local input\n'}];
+  if (checks) example.checks = checks;
   const {examples: [pin]} = ok(await op('lab_examples_add', {projectId, examples: [example], approved: true}));
   const exp = ok(await op('lab_experiment_create', {kind: 'single', projectId, pipelineId: differentOuter ? 'typed-decision' : pipelineId, examples: [pin.artifactId], variants: [{label: 'v', ...(differentOuter ? {pipelineId} : {})}],
     evaluators: [{kind: 'script', ref: 'example.checks', form: 'pass_fail'}], goal: 'Recover only local suffix', hypothesis: 'The confirmed result is reused without another call'}));
   ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
   const view = () => op('lab_experiment_get', {experimentId: exp.id}).then(ok);
   const trial = await until(async () => { const v = await view(); return v.trials[0]?.state === 'running' ? v.trials[0] : undefined; }, 'source trial');
-  const run = await until(async () => { const r = ok(await call('GET', `/api/pipeline-runs/${trial.id}`)); return r.steps[1]?.executionId ? r : undefined; }, 'suffix command');
+  const run = await until(async () => { const r = ok(await call('GET', `/api/pipeline-runs/${trial.id}`)); return r.observedSteps[1]?.executionId ? r : undefined; }, 'suffix command');
   const poll = () => host('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}).then(ok);
-  const command = (await poll()).commands.find((c: any) => c.executionId === run.steps[1].executionId);
+  const command = (await poll()).commands.find((c: any) => c.executionId === run.observedSteps[1].executionId);
   assert.ok(command);
   const receipt = (cmd: any, status: string, extra = {}) => host('/api/hosts/receipts', {commandId: cmd.id, executionId: cmd.executionId, status, ...extra}).then(ok);
   await receipt(command, 'started');
@@ -445,8 +474,8 @@ async function suffixFixture(projectId = 'cs', differentOuter = false) {
     return r.artifactId;
   };
   const complete = async (runId: string, scoring = true, received?: any) => {
-    const r = await until(async()=>{const v=ok(await call('GET', `/api/pipeline-runs/${runId}`));return v.steps[1]?.executionId?v:undefined;},'script launch');
-    const cmd = received ?? await until(async()=> (await poll()).commands.find((c: any) => c.executionId === r.steps[1].executionId),'script intake');
+    const r = await until(async()=>{const v=ok(await call('GET', `/api/pipeline-runs/${runId}`));return v.observedSteps[1]?.executionId?v:undefined;},'script launch');
+    const cmd = received ?? await until(async()=> (await poll()).commands.find((c: any) => c.executionId === r.observedSteps[1].executionId),'script intake');
     await receipt(cmd, 'started');
     const {mkdtempSync} = await import('node:fs'); const {tmpdir} = await import('node:os'); const {execFileSync} = await import('node:child_process');
     const dir = mkdtempSync(join(tmpdir(), 'fleet-suffix-'));
@@ -463,7 +492,7 @@ async function suffixFixture(projectId = 'cs', differentOuter = false) {
     if (!scoring) return until(async () => { const r = ok(await call('GET', `/api/pipeline-runs/${runId}`)); return r.state === 'succeeded' ? r : undefined; }, 'ordinary rerun completes');
     return until(async () => { const v = await view(); return v.scores.some((s: any) => s.trialIds.includes(runId)) ? v : undefined; }, 'normal recovered score');
   };
-  return {exp,trial,run,command,request,host,view,prove,receipt,poll,complete,upload,content,pipelineId};
+  return {exp,trial,run,command,request,host,view,prove,receipt,poll,complete,upload,content,pipelineId,pin,example};
 }
 
 test('L2 local-suffix retry: real stored bytes, normal scoring and atomic replay without another provider call (requirement: fleet-lab local-suffix retry; risk: double charge, lost cell lineage or replay dispatch)', async () => {
@@ -482,12 +511,12 @@ test('L2 local-suffix retry: real stored bytes, normal scoring and atomic replay
   assert.deepEqual(recovered.recovery,{sourceRunId:f.trial.id,reusedStepIds:['decide']});
   assert.equal(recovered.cell.attempt,f.trial.cell.attempt+1);
   const r = ok(await call('GET',`/api/pipeline-runs/${rid}`));
-  assert.equal(r.steps[0].outputArtifactId,f.run.steps[0].outputArtifactId); assert.equal((r.steps[0].calls ?? []).length,0);
+  assert.equal(r.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId); assert.equal(r.plan.entries[0].executionRef.mode,'reused');
   const done = await f.complete(rid); assert.ok(done.trials.find((t: any) => t.id===rid).comparable);
   assert.equal(done.spend.calls.value,1); assert.equal(seen.length,before);
   const source = ok(await call('GET',`/api/pipeline-runs/${f.trial.id}`));
-  assert.deepEqual(source.steps[0].calls,f.run.steps[0].calls);
-  assert.deepEqual(source.steps[0].usage,f.run.steps[0].usage);
+  assert.deepEqual(source.observedSteps[0].calls,f.run.observedSteps[0].calls);
+  assert.deepEqual(source.observedSteps[0].usage,f.run.observedSteps[0].usage);
   assert.deepEqual(done.trials.find((t:any)=>t.id===f.trial.id).cost,a.trials.find((t:any)=>t.id===f.trial.id).cost);
   assert.deepEqual(ok(await op('lab_cell_action',f.request)).recovery,a.recovery,'stable replay after scoring');
   const bad = await op('lab_cell_action',{...f.request,sourceRunId:rid}); assert.equal(bad.status,409);
@@ -509,14 +538,14 @@ test('L3 guarded races and privacy (requirement: fleet-lab local-suffix retry; r
   const different = await op('lab_cell_action',{...f.request,sourceRunId:foreign.trial.id});
   assert.equal(different.status,409); assert.ok(!JSON.stringify(different.body).includes(rid));
   // A source without runtime proof never passes because an arbitrary caller supplies proof/output-looking fields.
-  assert.equal((await op('lab_cell_action',{...foreign.request,sourceRunId:'missing',proof:'approved',outputArtifactId:f.run.steps[0].outputArtifactId})).status,409);
+  assert.equal((await op('lab_cell_action',{...foreign.request,sourceRunId:'missing',proof:'approved',outputArtifactId:f.run.observedSteps[0].outputArtifactId})).status,409);
   assert.equal((await f.view()).trials.length,2);
 });
 
 test('L4 content checks fail before mutation (requirement: fleet-lab frozen inputs and actual bytes; risk: metadata-only availability or definition drift cancels the source)', async () => {
   const f=await suffixFixture(); await f.prove(); await f.receipt(f.command,'unknown'); const before=seen.length;
   const store=await s3;
-  const original=JSON.stringify(f.run.steps[0].output);
+  const original=JSON.stringify(f.run.observedSteps[0].output);
   const entry=[...store.objects.entries()].find(([key,bytes])=>key.includes('/cs/lab/') && bytes.toString()===original); assert.ok(entry);
   const [key,bytes]=entry;
   try {
@@ -550,25 +579,25 @@ test('L5 ordinary failed rerun preserves immutable API output through transitive
   const before=seen.length;
   const firstReply=ok(await op('pipeline_rerun',{runId:f.trial.id,mode:'failed',requestId:randomUUID(),outputArtifactId:'caller-cannot-override'}));
   const first=ok(await call('GET',`/api/pipeline-runs/${firstReply.runId}`));
-  assert.equal(first.steps[0].outputArtifactId,f.run.steps[0].outputArtifactId);
-  const started=await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first.id}`)); return r.steps[1]?.executionId?r:undefined;},'ordinary rerun starts');
-  const cmd=(await f.poll()).commands.find((c:any)=>c.executionId===started.steps[1].executionId); assert.ok(cmd);
+  assert.equal(first.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId);
+  const started=await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first.id}`)); return r.observedSteps[1]?.executionId?r:undefined;},'ordinary rerun starts');
+  const cmd=(await f.poll()).commands.find((c:any)=>c.executionId===started.observedSteps[1].executionId); assert.ok(cmd);
   await f.receipt(cmd,'started'); await f.receipt(cmd,'failed',{error:'local fixture exit'});
   await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first.id}`));return r.state==='failed'?r:undefined;},'local suffix fails');
   const secondReply=ok(await op('pipeline_rerun',{runId:first.id,mode:'failed',requestId:randomUUID()}));
   const second=ok(await call('GET',`/api/pipeline-runs/${secondReply.runId}`));
-  assert.equal(second.steps[0].outputArtifactId,f.run.steps[0].outputArtifactId); assert.equal(second.steps[0].reusedFrom,first.id);
+  assert.equal(second.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId); assert.equal(second.observedSteps[0].reusedFrom,f.trial.id);
   const finished = await f.complete(second.id,false); assert.equal(seen.length,before);
   // Two child paths normalize to the same name; last stored child output wins over the coordinator fallback.
-  const late = await f.upload({executionId:finished.steps[1].executionId},JSON.stringify({p:0.42,marker:'last child path wins'}),'output/output.json');
+  const late = await f.upload({executionId:finished.observedSteps[1].executionId},JSON.stringify({p:0.42,marker:'last child path wins'}),'output/output.json');
   const head = ok(await op('definition_get',{kind:'pipeline',id:f.pipelineId})); const expanded=structuredClone(head.content);
   expanded.pipeline.steps.push({id:'tail',kind:'script',command:'cat "$FLEET_INPUT_DIR/combine/output.json" > "$FLEET_OUTPUT_DIR/output.json"'});
   ok(await op('definition_save',{kind:'pipeline',id:f.pipelineId,baseRevision:head.head,content:expanded,message:'append local namespace fixture'}));
   const tail = ok(await op('pipeline_rerun',{runId:second.id,mode:'failed',requestId:randomUUID()}));
-  const tailRun = await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${tail.runId}`));return r.steps[2]?.executionId?r:undefined;},'tail command');
-  const intake = (await f.poll()).commands.find((c:any)=>c.executionId===tailRun.steps[2].executionId);assert.ok(intake);
+  const tailRun = await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${tail.runId}`));return r.observedSteps[2]?.executionId?r:undefined;},'tail command');
+  const intake = (await f.poll()).commands.find((c:any)=>c.executionId===tailRun.observedSteps[2].executionId);assert.ok(intake);
   const combined = intake.payload.inputs.filter((x:any)=>x.path==='combine/output.json');assert.equal(combined.length,1);assert.equal(combined[0].artifactId,late);
-  assert.equal(intake.payload.inputs.find((x:any)=>x.path==='decide/output.json').artifactId,f.run.steps[0].outputArtifactId);
+  assert.equal(intake.payload.inputs.find((x:any)=>x.path==='decide/output.json').artifactId,f.run.observedSteps[0].outputArtifactId);
   // The command was accepted by this poll; finish that exact command without requesting a second delivery.
   await f.receipt(intake,'started');
   const data = await fetch(BASE+'/api/results/'+late,{headers:{authorization:'Bearer '+SECRET,'x-fleet-person':OWNER}});assert.equal(data.status,200);
@@ -590,14 +619,14 @@ test('L8 transitive Lab suffix retains immediate source and original artifact (r
   const f=await suffixFixture();await f.prove();await f.receipt(f.command,'unknown');
   const before=seen.length;
   const first=ok(await op('lab_cell_action',f.request)).recovery.runId;
-  const run=await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first}`));return r.steps[1]?.executionId?r:undefined;},'first recovery script');
-  const cmd=await until(async()=>(await f.poll()).commands.find((c:any)=>c.executionId===run.steps[1].executionId),'first recovery intake');
+  const run=await until(async()=>{const r=ok(await call('GET',`/api/pipeline-runs/${first}`));return r.observedSteps[1]?.executionId?r:undefined;},'first recovery script');
+  const cmd=await until(async()=>(await f.poll()).commands.find((c:any)=>c.executionId===run.observedSteps[1].executionId),'first recovery intake');
   await f.receipt(cmd,'started');
   ok(await f.host('/api/hosts/events',{executionId:cmd.executionId,events:[{id:cmd.id+'-2',seq:2,type:'process.reconciled',timestamp:Date.now(),data:{ownedProcesses:1,resolved:true,survived:false,launchWindowUnresolved:false}}]}));
   await f.receipt(cmd,'unknown');
   const second=ok(await op('lab_cell_action',{...f.request,sourceRunId:first,requestId:randomUUID()})).recovery.runId;
   const derived=ok(await call('GET',`/api/pipeline-runs/${second}`));
-  assert.equal(derived.steps[0].reusedFrom,first);assert.equal(derived.steps[0].outputArtifactId,f.run.steps[0].outputArtifactId);
+  assert.equal(derived.observedSteps[0].reusedFrom,f.trial.id);assert.equal(derived.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId);
   const done=await f.complete(second);assert.equal(done.trials.find((t:any)=>t.id===second).recovery.sourceRunId,first);
   assert.equal(done.spend.calls.value,1);assert.equal(seen.length,before);
 });
@@ -612,12 +641,12 @@ test('Lab suffix recovery uses variant pipeline when outer pipeline differs (req
   assert.ok(done.trials.find((t: any) => t.id === recovered).comparable);
   const run = ok(await call('GET', `/api/pipeline-runs/${recovered}`));
   assert.equal(run.pipelineId, f.pipelineId);
-  assert.equal(run.steps[0].outputArtifactId, f.run.steps[0].outputArtifactId);
+  assert.equal(run.observedSteps[0].outputArtifactId, f.run.observedSteps[0].outputArtifactId);
 });
 
 test('L6 preflight never holds the write lock and revalidates lifecycle changes (requirement: fleet-lab preflight/commit boundary; risk: a slow store blocks writes or deleted content passes a stale snapshot)', async () => {
   const f=await suffixFixture();await f.prove();await f.receipt(f.command,'unknown');
-  const hash=sha(JSON.stringify(f.run.steps[0].output));
+  const hash=sha(JSON.stringify(f.run.observedSteps[0].output));
   let reached!:()=>void, release!:()=>void;
   const hit=new Promise<void>(r=>reached=r), gate=new Promise<void>(r=>release=r);
   artifactReadBarrier={hash,reached,release:gate};
@@ -811,17 +840,22 @@ test('P4 S7 preparation adopts exact identity only and retains image receipts (r
       const started = ok(await op('pipeline_run_create',{pipelineId,projectId:'hello-world',requestId:randomUUID(),example:{}}));
       const run = await until(async()=>{const r=ok(await op('pipeline_get',{runId:started.runId}));return r.state!=='running'?r:undefined;},'preparation job ends');
       if (mode==='wrong-tool'||mode==='ungranted') {
-        assert.equal(run.steps[0].problem,'step:job-tools'); assert.deepEqual(assetJob.calls,[],'a POST cannot be configured as polling before any paid submit'); continue;
+        if (mode==='ungranted') {
+          assert.equal(run.plan.entries[0].activation,'blocked');
+          assert.equal(run.plan.entries[0].problem.code,'authority_denied');
+          assert.equal(run.plan.entries[0].executionRef,undefined);
+        } else { assert.equal(run.observedSteps[0].problem,'step:job-tools'); }
+        assert.deepEqual(assetJob.calls,[],'invalid/ungranted polling cannot start a paid submit'); continue;
       }
       assert.equal(assetJob.calls.filter(t=>t==='image_to_image').length,1,'uncertain POST never sent twice');
       assert.equal(assetJob.calls.filter(t=>t==='image_recent_tasks').length,1);
       if (mode==='exact') {
         assert.equal(run.state,'succeeded');
-        assert.deepEqual(run.steps[0].output.image_urls,['https://invented.invalid/front.png']);
-        assert.equal(run.steps[0].output.receipt.consumed_credits,6);
-        assert.equal(run.steps[0].output.jobId,assetJob.jobId);
+        assert.deepEqual(run.observedSteps[0].output.image_urls,['https://invented.invalid/front.png']);
+        assert.equal(run.observedSteps[0].output.receipt.consumed_credits,6);
+        assert.equal(run.observedSteps[0].output.jobId,assetJob.jobId);
       } else {
-        assert.equal(run.steps[0].problem,'unknown:submit-unconfirmed');
+        assert.equal(run.observedSteps[0].problem,'unknown:submit-unconfirmed');
         assert.equal(run.observation,'unconfirmed');
         assert.equal(assetJob.calls.includes('image_job_status'),false,'unknown job never polled or resubmitted');
       }
@@ -847,11 +881,11 @@ test('P5 source rig job preserves exact request and confirmed result (requiremen
       assert.equal(assetJob.calls.filter(t=>t==='rigging').length,1);
       if (mode==='exact') {
         assert.equal(run.state,'succeeded');
-        assert.deepEqual(run.steps[0].output.request,args);
-        assert.deepEqual(run.steps[0].output.result,{rigged_character_glb_url:'https://invented.invalid/rig.glb'});
-        assert.equal(run.steps[0].output.receipt.consumed_credits,7);
+        assert.deepEqual(run.observedSteps[0].output.request,args);
+        assert.deepEqual(run.observedSteps[0].output.result,{rigged_character_glb_url:'https://invented.invalid/rig.glb'});
+        assert.equal(run.observedSteps[0].output.receipt.consumed_credits,7);
       } else {
-        assert.equal(run.steps[0].problem,'unknown:submit-unconfirmed');
+        assert.equal(run.observedSteps[0].problem,'unknown:submit-unconfirmed');
         assert.equal(assetJob.calls.includes('rigging_job_status'),false);
       }
     }
@@ -880,9 +914,11 @@ test('Pipeline step terminal ends agree across sequential API/script success, fa
   const read = async (id: string) => ok(await op('pipeline_get', {runId: id}));
   const typed = async (r: any) => {
     const rows = ok(await op('executions_list', {parentExecutionId: r.id, limit: 100})).executions;
-    assert.equal(rows.length, r.steps.length);
-    for (const [i, step] of r.steps.entries()) {
-      const row = rows.find((x: any) => x.id === `${r.id}:step:${i}`);
+    assert.equal(rows.length, r.planSummary.freshExecutions);
+    for (const [i, step] of r.observedSteps.entries()) {
+      const entry = r.plan.entries[i];
+      if (entry.activation !== 'selected' || entry.executionRef.mode === 'reused') continue;
+      const row = rows.find((x: any) => x.id === entry.executionRef.executionId);
       assert.equal(row.state, step.state);
       assert.equal(Date.parse(row.endedAt), step.finishedAt, 'typed end is the retained observed finish');
       assert.equal(Date.parse(row.startedAt), step.startedAt);
@@ -897,13 +933,93 @@ test('Pipeline step terminal ends agree across sequential API/script success, fa
   const seenBefore = seen.length;
   const retry = ok(await op('pipeline_rerun', {runId: bad.id, mode: 'failed', requestId: randomUUID()}));
   const retryStart = await read(retry.runId);
-  assert.equal(retryStart.steps[0].finishedAt, bad.steps[0].finishedAt, 'reused prefix keeps original timing');
+  assert.equal(retryStart.observedSteps[0].finishedAt, bad.observedSteps[0].finishedAt, 'reused prefix keeps original timing');
   const preparing = ok(await op('executions_list', {parentExecutionId: retry.runId, limit: 100})).executions;
   assert.equal(preparing.find((x: any) => x.id === `${retry.runId}:step:1`).endedAt, null, 'retry suffix does not inherit the failed end');
   const recovered = await failed.complete(retry.runId, false);await typed(recovered);
   assert.equal(seen.length, seenBefore, 'local suffix retry does not repeat the API call');
-  assert.deepEqual((await read(bad.id)).steps, bad.steps, 'retry does not rewrite source history');
+  assert.deepEqual((await read(bad.id)).observedSteps, bad.observedSteps, 'retry does not rewrite source history');
   const cancelled = await suffixFixture('hello-world');
   ok(await op('lab_cell_action', {experimentId: cancelled.exp.id, cell: cancelled.request.cell, action: 'cancel'}));
   const stopped = await until(async () => {const r = await read(cancelled.trial.id);return r.state === 'cancelled' ? r : undefined;}, 'cancelled step end');await typed(stopped);
+});
+
+test('Conditional HTTP plan selects one counted API action and omits a false review execution (requirement: finite v3 activation and canonical artifact binding; risk: a false branch dispatches or a last physical slot replaces the result)', async () => {
+  const fixture = await suffixFixture('hello-world');
+  await fixture.complete(fixture.trial.id, true, fixture.command);
+  const content = structuredClone(fixture.content), pipelineId = name('conditional');
+  const decide = {...content.pipeline.steps[0], output: {p: '${reply.answers.q.noul}', review: false}};
+  const review = {...content.pipeline.steps[0], id: 'review', when: {kind:'boolean',source:{step:'decide',path:['review']},equals:true}};
+  content.pipeline = {id:pipelineId,version:3,resultStep:'final',steps:[decide,review,{id:'final',kind:'script',host:fixture.command.hostId,command:'synthetic-finalizer-not-executed-by-fixture'}]};
+  ok(await op('definition_create',{kind:'pipeline',id:pipelineId,content,message:'conditional protocol fixture'}));
+  const before = seen.length;
+  const started = ok(await op('pipeline_run_create',{pipelineId,projectId:'hello-world',requestId:randomUUID(),example:{prompt:'Synthetic condition fixture'}}));
+  const read = () => call('GET',`/api/pipeline-runs/${started.runId}`).then(ok);
+  const run = await until(async()=>{const value=await read();return value.plan.entries[2].execution?.nativeExecutionId ? value : undefined;},'conditional final preparation');
+  const skipped = run.plan.entries[1];
+  assert.equal(skipped.activation,'not_selected');assert.equal(skipped.executionRef,undefined);assert.equal(skipped.execution,undefined);
+  const children = ok(await op('executions_list',{parentExecutionId:run.id,limit:100})).executions;
+  assert.equal(children.length,2);assert.equal(children.some((row:any)=>row.stepId==='review'),false);
+  const command = await until(async()=>(await fixture.poll()).commands.find((row:any)=>row.executionId===run.plan.entries[2].execution.nativeExecutionId),'conditional host handoff');
+  const controlInput = command.payload.inputs.find((row:any)=>row.path==='__fleet_control/pipeline.json');assert.ok(controlInput);
+  const control = ok(await call('GET',`/api/results/${controlInput.artifactId}`));
+  assert.equal(control.entries[1].activation,'not_selected');assert.equal(control.entries[1].executionRef,undefined);
+  assert.equal(JSON.stringify(control).includes('runToken'),false);
+  const selected = control.inputs.find((row:any)=>row.path==='decide/output.json');assert.ok(selected);
+  await fixture.receipt(command,'started');
+  await fixture.upload(command,JSON.stringify({fleetLineage:{schema:'fleet.result-lineage.v1',selectedSources:[selected]},projectResult:{synthetic:'canonical'}}));
+  await fixture.receipt(command,'completed',{artifacts:['output.json']});
+  const finished = await until(async()=>{const value=await read();return value.state==='succeeded'?value:undefined;},'conditional final result');
+  assert.equal(finished.canonicalResult.mode,'finalizer');assert.equal(finished.canonicalResult.stepId,'final');
+  assert.deepEqual(finished.canonicalResult.selectedSources,[selected]);
+  assert.equal(finished.planSummary.notSelected,1);assert.equal(finished.planSummary.freshExecutions,2);
+  assert.equal(seen.length-before,1,'false review must not call the counted fake provider');
+});
+
+
+test('Lab retains exact assessment bytes for passing and failing contract checks (requirement: project assessment artifact/readback; risk: exit zero becomes model accuracy or nonzero evidence disappears)', async () => {
+  const bytes = '{"schema":"synthetic.assessment.v1","falseAccepts":1}\n';
+  for (const exit of [0,3]) {
+    const command = `test -s __fleet_evaluation/evidence/decide/output.json && test -s __fleet_evaluation/evidence/combine/output.json && grep -q canonicalResult __fleet_evaluation/trial.json || exit 7; mkdir evaluation; printf '%s\\n' '${bytes.trim()}' > evaluation/assessment.json; exit ${exit}`;
+    const fixture = await suffixFixture('hello-world',false,[{id:'contract',run:command}]);
+    const admitted=ok(await op('lab_example_get',{artifactId:fixture.pin.artifactId}));
+    assert.equal(admitted.projectId,'hello-world');assert.equal(admitted.state,'approved');
+    assert.deepEqual(admitted.example.inputs,fixture.example.inputs);
+    const original=await fetch(BASE+'/api/results/'+admitted.artifactId,{headers:{authorization:'Bearer '+SECRET,'x-fleet-person':OWNER}});
+    assert.equal(original.status,200);assert.equal(sha(await original.text()),admitted.hash);
+    const view = await fixture.complete(fixture.trial.id,true,fixture.command);
+    const trial = view.trials.find((row:any)=>row.id===fixture.trial.id);
+    assert.equal(trial.projectAssessments.length,1);
+    const evidence = trial.projectAssessments[0];
+    assert.equal(evidence.sha256,sha(bytes));assert.equal(evidence.schemaId,'synthetic.assessment.v1');
+    const response = await fetch(BASE+'/api/results/'+evidence.artifactId,{headers:{authorization:'Bearer '+SECRET,'x-fleet-person':OWNER}});
+    assert.equal(response.status,200);const retained = await response.text();assert.equal(retained,bytes);
+    const score = view.scores.find((row:any)=>row.trialIds.includes(trial.id));
+    assert.equal(score.value,exit===0,'contract validity does not mean zero model errors');
+    const again = ok(await op('lab_experiment_get',{experimentId:fixture.exp.id})).trials.find((row:any)=>row.id===trial.id);
+    assert.deepEqual(again.projectAssessments,trial.projectAssessments);
+  }
+});
+
+
+test('A superseded unscored assessment cannot poison the replacement trial (requirement: latest-attempt assessment fence and reconciliation; risk: storage recovery repeatedly rolls back new scores)', async () => {
+  const bytes='{"schema":"synthetic.replacement-assessment.v1"}\n';
+  const command=`mkdir evaluation; printf '%s\\n' '${bytes.trim()}' > evaluation/assessment.json`;
+  const fixture=await suffixFixture('hello-world',false,[{id:'contract',run:command}]);
+  let reached=false;
+  await fixture.upload(fixture.command,JSON.stringify(fixture.run.observedSteps[0].output));
+  assessmentWriteRejection={hash:sha(bytes),reached:()=>{reached=true;}};
+  try {
+    await fixture.receipt(fixture.command,'completed',{artifacts:['output.json']});
+    await until(async()=>reached,"assessment storage rejection observed");
+    const before=await fixture.view();assert.equal(before.trials[0].state,'succeeded');assert.equal(before.scores.length,0);
+    const retry=await op('lab_cell_action',{experimentId:fixture.exp.id,cell:fixture.request.cell,action:'retry'});
+    ok(retry);
+    const replacement=await until(async()=>{const view=await fixture.view();return view.trials.find((row:any)=>row.cell.attempt===fixture.trial.cell.attempt+1);},'replacement attempt admitted');
+    assessmentWriteRejection=undefined;
+    const done=await fixture.complete(replacement.id);
+    assert.ok(done.scores.some((score:any)=>score.trialIds.includes(replacement.id)));
+    assert.equal(done.scores.some((score:any)=>score.trialIds.includes(fixture.trial.id)),false);
+    assert.equal(done.trials.find((row:any)=>row.id===fixture.trial.id).projectAssessments,undefined);
+  } finally {assessmentWriteRejection=undefined;}
 });

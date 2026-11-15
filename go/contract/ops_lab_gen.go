@@ -51,6 +51,8 @@ func (v *LabCompareMethodsRequest) Validate() error {
 type LabExampleGetReply struct {
 	ArtifactId string          `json:"artifactId"`
 	Example    json.RawMessage `json:"example"`
+	Hash       string          `json:"hash"`
+	ProjectId  *string         `json:"projectId,omitempty"`
 	State      json.RawMessage `json:"state"`
 }
 
@@ -181,7 +183,166 @@ func (v *LabExperimentDecideRequest) Validate() error {
 }
 
 // LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline. comparison: each non-baseline variant vs the first on the primary evaluator, {variant, baseline, evaluator, split, result: {n, mean, low, high, tooFew, examples}} (fleet-lab.md, Statistics). typed: per variant {variant, split, stats: [{tag, n, confident, correct, coverage, selectiveAccuracy, escalation}]}, the aggregate last with tag all.
-type LabExperimentGetReply = map[string]json.RawMessage
+type LabExperimentGetReply struct {
+	Agreement          json.RawMessage  `json:"agreement"`
+	Budgets            json.RawMessage  `json:"budgets"`
+	Cells              json.RawMessage  `json:"cells"`
+	Comparison         json.RawMessage  `json:"comparison"`
+	CreatedAt          json.RawMessage  `json:"createdAt"`
+	DecidedAt          json.RawMessage  `json:"decidedAt"`
+	DecidedBy          json.RawMessage  `json:"decidedBy"`
+	Decision           json.RawMessage  `json:"decision"`
+	DecisionReason     json.RawMessage  `json:"decisionReason"`
+	DecisionRule       json.RawMessage  `json:"decisionRule"`
+	Evaluators         json.RawMessage  `json:"evaluators"`
+	Examples           json.RawMessage  `json:"examples"`
+	Goal               json.RawMessage  `json:"goal"`
+	Hypothesis         json.RawMessage  `json:"hypothesis"`
+	Id                 json.RawMessage  `json:"id"`
+	Judges             json.RawMessage  `json:"judges"`
+	Kind               json.RawMessage  `json:"kind"`
+	LabGroup           json.RawMessage  `json:"labGroup"`
+	LaunchedAt         json.RawMessage  `json:"launchedAt"`
+	Notes              json.RawMessage  `json:"notes"`
+	Pairwise           json.RawMessage  `json:"pairwise"`
+	PipelineId         json.RawMessage  `json:"pipelineId"`
+	PrimaryEvaluator   json.RawMessage  `json:"primaryEvaluator"`
+	Priority           json.RawMessage  `json:"priority"`
+	ProjectId          json.RawMessage  `json:"projectId"`
+	Repeats            json.RawMessage  `json:"repeats"`
+	RequestedBy        json.RawMessage  `json:"requestedBy"`
+	RequesterRemovedAt json.RawMessage  `json:"requesterRemovedAt"`
+	Scores             json.RawMessage  `json:"scores"`
+	Spend              json.RawMessage  `json:"spend"`
+	State              json.RawMessage  `json:"state"`
+	StopReason         json.RawMessage  `json:"stopReason"`
+	Strategies         json.RawMessage  `json:"strategies"`
+	Strategy           json.RawMessage  `json:"strategy"`
+	Trials             []LabTrialRecord `json:"trials"`
+	Typed              json.RawMessage  `json:"typed"`
+	Variants           json.RawMessage  `json:"variants"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentGetReply) Validate() error {
+	if v.Agreement == nil {
+		return Missing("agreement")
+	}
+	if v.Budgets == nil {
+		return Missing("budgets")
+	}
+	if v.Cells == nil {
+		return Missing("cells")
+	}
+	if v.Comparison == nil {
+		return Missing("comparison")
+	}
+	if v.CreatedAt == nil {
+		return Missing("createdAt")
+	}
+	if v.DecidedAt == nil {
+		return Missing("decidedAt")
+	}
+	if v.DecidedBy == nil {
+		return Missing("decidedBy")
+	}
+	if v.Decision == nil {
+		return Missing("decision")
+	}
+	if v.DecisionReason == nil {
+		return Missing("decisionReason")
+	}
+	if v.DecisionRule == nil {
+		return Missing("decisionRule")
+	}
+	if v.Evaluators == nil {
+		return Missing("evaluators")
+	}
+	if v.Examples == nil {
+		return Missing("examples")
+	}
+	if v.Goal == nil {
+		return Missing("goal")
+	}
+	if v.Hypothesis == nil {
+		return Missing("hypothesis")
+	}
+	if v.Id == nil {
+		return Missing("id")
+	}
+	if v.Judges == nil {
+		return Missing("judges")
+	}
+	if v.Kind == nil {
+		return Missing("kind")
+	}
+	if v.LabGroup == nil {
+		return Missing("labGroup")
+	}
+	if v.LaunchedAt == nil {
+		return Missing("launchedAt")
+	}
+	if v.Notes == nil {
+		return Missing("notes")
+	}
+	if v.Pairwise == nil {
+		return Missing("pairwise")
+	}
+	if v.PipelineId == nil {
+		return Missing("pipelineId")
+	}
+	if v.PrimaryEvaluator == nil {
+		return Missing("primaryEvaluator")
+	}
+	if v.Priority == nil {
+		return Missing("priority")
+	}
+	if v.ProjectId == nil {
+		return Missing("projectId")
+	}
+	if v.Repeats == nil {
+		return Missing("repeats")
+	}
+	if v.RequestedBy == nil {
+		return Missing("requestedBy")
+	}
+	if v.RequesterRemovedAt == nil {
+		return Missing("requesterRemovedAt")
+	}
+	if v.Scores == nil {
+		return Missing("scores")
+	}
+	if v.Spend == nil {
+		return Missing("spend")
+	}
+	if v.State == nil {
+		return Missing("state")
+	}
+	if v.StopReason == nil {
+		return Missing("stopReason")
+	}
+	if v.Strategies == nil {
+		return Missing("strategies")
+	}
+	if v.Strategy == nil {
+		return Missing("strategy")
+	}
+	if v.Trials == nil {
+		return Missing("trials")
+	}
+	for i := range v.Trials {
+		if err := Check(&v.Trials[i], "trials"); err != nil {
+			return err
+		}
+	}
+	if v.Typed == nil {
+		return Missing("typed")
+	}
+	if v.Variants == nil {
+		return Missing("variants")
+	}
+	return nil
+}
 
 type LabExperimentGetRequest struct {
 	ExperimentId string `json:"experimentId"`
@@ -490,6 +651,96 @@ func (v *LabScoreCorrectRequest) Validate() error {
 	if v.Value == nil {
 		return Missing("value")
 	}
+	return nil
+}
+
+type LabTrialRecord struct {
+	CanonicalResult    *PipelineCanonicalResult `json:"canonicalResult,omitempty"`
+	Cell               json.RawMessage          `json:"cell"`
+	Comparable         bool                     `json:"comparable"`
+	Confounders        json.RawMessage          `json:"confounders"`
+	Cost               []CostFigure             `json:"cost"`
+	DurationMs         json.RawMessage          `json:"durationMs"`
+	FinishedAt         json.RawMessage          `json:"finishedAt"`
+	Id                 string                   `json:"id"`
+	Observation        PipelineObservation      `json:"observation"`
+	PlanSummary        PipelinePlanSummary      `json:"planSummary"`
+	Problem            json.RawMessage          `json:"problem"`
+	ProjectAssessments []ProjectAssessmentRef   `json:"projectAssessments,omitempty"`
+	Recovery           json.RawMessage          `json:"recovery,omitempty"`
+	Scores             []json.RawMessage        `json:"scores"`
+	Spend              json.RawMessage          `json:"spend"`
+	StartedAt          json.RawMessage          `json:"startedAt"`
+	State              ExecutionState           `json:"state"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabTrialRecord) Validate() error {
+	if v.CanonicalResult != nil {
+		if err := Check(v.CanonicalResult, "canonicalResult"); err != nil {
+			return err
+		}
+	}
+	if v.Cell == nil {
+		return Missing("cell")
+	}
+	if v.Confounders == nil {
+		return Missing("confounders")
+	}
+	if v.Cost == nil {
+		return Missing("cost")
+	}
+	for i := range v.Cost {
+		if err := Check(&v.Cost[i], "cost"); err != nil {
+			return err
+		}
+	}
+	if v.DurationMs == nil {
+		return Missing("durationMs")
+	}
+	if v.FinishedAt == nil {
+		return Missing("finishedAt")
+	}
+	if err := Check(&v.Observation, "observation"); err != nil {
+		return err
+	}
+	if err := Check(&v.PlanSummary, "planSummary"); err != nil {
+		return err
+	}
+	if v.Problem == nil {
+		return Missing("problem")
+	}
+	for i := range v.ProjectAssessments {
+		if err := Check(&v.ProjectAssessments[i], "projectAssessments"); err != nil {
+			return err
+		}
+	}
+	if v.Scores == nil {
+		return Missing("scores")
+	}
+	if v.Spend == nil {
+		return Missing("spend")
+	}
+	if v.StartedAt == nil {
+		return Missing("startedAt")
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ProjectAssessmentRef struct {
+	ArtifactId      string `json:"artifactId"`
+	CheckId         string `json:"checkId"`
+	EvaluatorSha256 string `json:"evaluatorSha256"`
+	InputSha256     string `json:"inputSha256"`
+	SchemaId        string `json:"schemaId"`
+	Sha256          string `json:"sha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAssessmentRef) Validate() error {
 	return nil
 }
 

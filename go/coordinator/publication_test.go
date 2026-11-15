@@ -327,10 +327,10 @@ func TestStaticPublicationHTTPPipeline(t *testing.T) {
 	if code != 200 || finished["state"] != "succeeded" {
 		t.Fatal(code, finished)
 	}
-	step := mapOf(anys(finished["steps"])[0])
-	job := astr(step["executionId"])
-	if step["executorService"] != "coordinator" || mapOf(step["output"])["verified"] != true {
-		t.Fatal(step)
+	entry := mapOf(anys(mapOf(finished["plan"])["entries"])[0])
+	job := astr(mapOf(entry["execution"])["nativeExecutionId"])
+	if entry["activation"] != "selected" || mapOf(entry["output"])["artifactId"] == nil || finished["steps"] != nil {
+		t.Fatal("invalid plan projection", finished)
 	}
 	code, repeated := env.callJSON(t, "POST", "/api/pipelines/publish-static/runs", body, env.ownerHeaders())
 	runWG.Wait()
@@ -413,6 +413,16 @@ func TestStaticPublicationHTTPPipeline(t *testing.T) {
 		bad["example"] = doc{}
 		bad["exampleInputs"] = []any{doc{"artifactId": id, "path": "example/index.html"}}
 		bad["steps"] = []any{doc{"id": "publish", "kind": "publication", "state": "preparing"}}
+		// A new current-format attempt must not retain the completed run's
+		// frozen inputs, settled dispatch or producer execution identities.
+		delete(bad, "canonicalResult")
+		if e := initPipelinePlan(bad); e != nil {
+			t.Fatal(e)
+		}
+		if e := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error { return selectPipelineStep(q, bad, 0) }); e != nil {
+			t.Fatal(e)
+		}
+
 		previous, _ := os.Readlink(filepath.Join(root, "hello-world/current"))
 		_, e := runPublication(env.ctx, env.app, bad, 0, mapOf(anys(mapOf(bad["definition"])["steps"])[0]))
 		if e != nil {
@@ -508,7 +518,7 @@ func TestPublicationAgentPipelineLineage(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		if len(rs) != 2 {
+		if len(rs) != 1 {
 			t.Fatal(rs)
 		}
 		for _, r := range rs {

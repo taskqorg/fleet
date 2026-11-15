@@ -55,5 +55,33 @@
    "greeklish"
   ],
   "maturity": "indexed"
+ },
+ {
+  "id": "cs:event-review-triage",
+  "source": {
+   "repo": "cs",
+   "path": "scripts/ai/jev-lab/README.md",
+   "anchor": "event-review-triage",
+   "commit": "752cb7e689dead6cf76b135b09e4fd9e86457434",
+   "sha256": "7068a1ed75b0412c7a1924cb5e043aaf5ce90239ec54da984edaab4afa9a3b62"
+  },
+  "source_status": "current",
+  "actor": "owner",
+  "goal": "Compare deterministic preflight, Jev triage and qualified semantic review on the same eligible event localization",
+  "expected_outcome": "Final accepted/rejected/held/unknown dispositions, false accepts and actual route resources remain inspectable; no routing adoption follows from contract success",
+  "checks": [
+   {
+    "kind": "script",
+    "ref": "example.checks",
+    "metric": "pass_fail"
+   }
+  ],
+  "lab_fit": "work",
+  "tags": [
+   "cs",
+   "translation",
+   "triage"
+  ],
+  "maturity": "indexed"
  }
 ]

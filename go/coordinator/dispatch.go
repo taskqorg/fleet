@@ -125,6 +125,7 @@ func startDispatchLoop(ctx context.Context, a *App) {
 func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	var sessionIDs []string
 	var needsSweep bool
+	var pipelinePending bool
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		rs, err := queryRows(q, `SELECT DISTINCT sid FROM (
 			SELECT data->>'sessionId' AS sid FROM document WHERE kind='queued-message' AND data->>'state'='queued'
@@ -153,7 +154,15 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	if !needsSweep {
 		return nil
 	}
-	locks := make([]string, 0, 1+len(sessionIDs))
+	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+		return q.tx.QueryRow(q.ctx(), "SELECT EXISTS(SELECT 1 FROM execution WHERE state IN ('preparing','waiting') AND kind='agent_run' AND host_id IS NULL AND data ? 'pipelineRunId')").Scan(&pipelinePending)
+	}); err != nil {
+		return err
+	}
+	locks := make([]string, 0, 2+len(sessionIDs))
+	if pipelinePending {
+		locks = append(locks, GLOBAL)
+	}
 	locks = append(locks, DISPATCH)
 	for _, sid := range sessionIDs {
 		locks = append(locks, "session:"+sid)
@@ -749,6 +758,14 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 		}
 		if best != nil {
+			if e["pipelineRunId"] != nil && !txHasLock(q.tx, GLOBAL) {
+				onEnd(q.tx, func(committed bool) {
+					if committed {
+						a.wakeDispatch()
+					}
+				})
+				continue
+			}
 			if polling != "" && best.Host != polling {
 				continue
 			}
@@ -977,7 +994,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if err := agentDecorate(q, s, e, p); err != nil {
 		return nil, err
 	}
-	if granted := strs(cfg["connections"]); len(granted) > 0 {
+	if granted := strs(cfg["connections"]); len(granted) > 0 && e["pipelineRunId"] == nil {
 		run, err := mint(q, doc{"executionId": e["id"], "directedBy": e["directedBy"], "projectId": s["projectId"], "experimentId": e["experimentId"], "pipelineRunId": s["pipelineRunId"]}, granted)
 		if err != nil {
 			return nil, err
@@ -995,6 +1012,9 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		return nil, err
 	}
 	if err := put(q, "command", command); err != nil {
+		return nil, err
+	}
+	if err := preparePipelineCommand(q, e, command); err != nil {
 		return nil, err
 	}
 	if binding != nil && binding["taken"] == true {
