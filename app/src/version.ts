@@ -11,7 +11,7 @@ type Versions = Ops['system_versions']['reply'];
 export const versions = signal<Versions | null>(null);
 export const updateReady = signal(false);
 export const updating = signal(false);
-/** The site's UI version when this tab was known to match the site (first check that found no update). */
+/** The site's UI version at a moment this tab was known to run the site's app (its assets matched before and after the read). */
 let tabVersion: string | null = null;
 
 // The entry script and the stylesheet carry content hashes (app/build.mjs), so a new app always changes one of them.
@@ -35,11 +35,21 @@ export async function checkUpdate() {
 
 export async function loadVersions() {
   try {
+    const mine = own(), before = await servedAssets();
     const v = await op('system_versions', {});
     versions.value = v;
-    if (!updateReady.value && tabVersion === null) tabVersion = v.ui.version;
+    // The tab runs the version the site reported only when the site's page matched the tab on both sides of the read.
+    if (mine && before === mine && await servedAssets() === mine) tabVersion = v.ui.version;
   } catch { /* the mark keeps its last answer */ }
 }
+
+/** Release versions compare by numeric parts (1.261115.6); anything else is not ordered. */
+const olderThan = (a: string | null | undefined, b: string | null | undefined) => {
+  const pa = a?.split('.').map(Number), pb = b?.split('.').map(Number);
+  if (!pa || !pb || pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some(n => !Number.isFinite(n))) return false;
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i];
+  return false;
+};
 
 /**
  * Reload into the new app on the first click: the waiting service worker (if any) takes over first, so the reload is
@@ -52,20 +62,30 @@ export async function applyUpdate() {
     const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
     if (reg) {
       await reg.update().catch(() => {});
-      const w = reg.waiting ?? reg.installing;
+      // A worker still installing (precaching the new app) is waited for, then asked to take over.
+      const installing = reg.installing;
+      if (installing && !reg.waiting) await new Promise<void>(done => {
+        const t = setTimeout(done, 8000);
+        installing.addEventListener('statechange', () => { if (installing.state !== 'installing') { clearTimeout(t); done(); } });
+      });
+      const w = reg.waiting;
       if (w) await new Promise<void>(done => {
         navigator.serviceWorker.addEventListener('controllerchange', () => done(), { once: true });
         setTimeout(done, 4000);
         w.postMessage('skip-waiting');
       });
     }
-  } finally { location.reload(); }
+  } finally {
+    location.reload();
+    // A reload the page did not start (cancelled by the browser) leaves the button usable again.
+    setTimeout(() => { updating.value = false; }, 5000);
+  }
 }
 
 /** Starts the checks: soon after load, when the tab gets focus (at most once a minute), and every 5 minutes. */
 export function startVersionChecks(): () => void {
   let last = 0;
-  const run = () => { if (Date.now() - last < 60_000) return; last = Date.now(); void checkUpdate(); void loadVersions(); };
+  const run = () => { if (document.hidden || Date.now() - last < 60_000) return; last = Date.now(); void checkUpdate(); void loadVersions(); };
   const first = setTimeout(run, 3000), every = setInterval(() => { last = 0; run(); }, 300_000);
   addEventListener('focus', run);
   return () => { clearTimeout(first); clearInterval(every); removeEventListener('focus', run); };
@@ -82,7 +102,7 @@ export function versionInfo(now = Date.now()): VersionInfo {
     const started = Date.parse(v.coordinator.started);
     rows.push({ key: 'coordinator', part: 'Coordinator', icon: 'network', version: v.coordinator.version, state: 'running', tone: 'success',
       note: [Number.isFinite(started) ? `since ${age(started, now).text}` : '', v.coordinator.offered && v.coordinator.offered !== v.coordinator.version ? `offers ${v.coordinator.offered}` : ''].filter(Boolean).join(', ') || undefined });
-    if (v.gateway) rows.push({ key: 'gateway', part: 'Gateway', icon: 'shield', version: v.gateway.version ?? null, state: v.gateway.state === 'ok' ? 'ok' : 'unreachable', tone: v.gateway.state === 'ok' ? 'success' : 'danger' });
+    if (v.gateway) rows.push({ key: 'gateway', part: 'Gateway', icon: 'shield', version: v.gateway.version ?? null, state: v.gateway.state, tone: v.gateway.state === 'ok' ? 'success' : v.gateway.state === 'draining' ? 'attention' : 'danger' });
     for (const h of v.hosts) rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...hostState(h, v.serverNow, v.staleAfterMs) });
   }
   const worst = rows.reduce((t, r) => RANK[r.tone] > RANK[t] ? r.tone : t, 'neutral' as Tone), n = rows.filter(r => RANK[r.tone] > 0).length;
@@ -92,7 +112,9 @@ export function versionInfo(now = Date.now()): VersionInfo {
 function hostState(h: Versions['hosts'][number], now: number, staleMs: number): { state: string; tone: Tone; note?: string } {
   if (h.lastSeenAt === null || now - h.lastSeenAt > staleMs) return { state: 'offline', tone: 'neutral', note: h.lastSeenAt ? `seen ${age(h.lastSeenAt, now).text}` : undefined };
   const u = (h.update ?? null) as { state?: string; version?: string; error?: string } | null;
-  if (u && ['error', 'failed', 'refused'].includes(u.state ?? '')) return { state: `update ${u.state}`, tone: 'danger', note: u.error };
+  // A failed update stops mattering once the host runs that release or a newer one another way.
+  const stale = !!u?.version && !!h.version && !olderThan(h.version, u.version);
+  if (u && !stale && ['error', 'failed', 'refused'].includes(u.state ?? '')) return { state: `update ${u.state}`, tone: 'danger', note: u.error };
   if (u?.state === 'pending') return { state: 'updating', tone: 'running', note: u.version };
   const auto = typeof h.autoUpdate === 'string' ? h.autoUpdate : 'on';
   const held = auto === 'off' || (auto !== 'on' && Date.parse(auto) > now);

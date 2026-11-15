@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
+	"sync"
 	"time"
 
 	"fleet/contract"
@@ -61,45 +63,92 @@ func buildCommit() string {
 	return ""
 }
 
-// uiRelease: the UI the site serves, as GET /ui-release.json reports it (appRoutes picks the same one).
+// uiReleaseManifest: release.json of the independently installed UI release that appRoutes serves, when it is one: kind
+// ui and built for this backend version. ok false means the site serves the bundled app. The one rule for appRoutes,
+// uiServed and system_versions.
+type uiManifest struct{ Kind, Version, BackendVersion, Commit string }
+
+func selectedUIRelease() (dir string, m uiManifest, ok bool) {
+	root := os.Getenv("FLEET_UI_ROOT")
+	if root == "" {
+		return "", m, false
+	}
+	cur, err := filepath.EvalSymlinks(filepath.Join(root, "current"))
+	if err != nil {
+		return "", m, false
+	}
+	b, err := os.ReadFile(filepath.Join(cur, "release.json"))
+	if err != nil || json.Unmarshal(b, &m) != nil || m.Kind != "ui" || m.BackendVersion != version {
+		return "", m, false
+	}
+	return cur, m, true
+}
+
+// uiRelease: the UI the site serves, as GET /ui-release.json reports it.
 func uiRelease() doc {
-	if root := os.Getenv("FLEET_UI_ROOT"); root != "" {
-		var m struct{ Kind, Version, BackendVersion, Commit string }
-		if cur, err := filepath.EvalSymlinks(filepath.Join(root, "current")); err == nil {
-			if b, err := os.ReadFile(filepath.Join(cur, "release.json")); err == nil && json.Unmarshal(b, &m) == nil && m.Kind == "ui" && m.BackendVersion == version && m.Version != "" {
-				out := doc{"kind": "ui", "version": m.Version, "backendVersion": m.BackendVersion}
-				if m.Commit != "" {
-					out["commit"] = m.Commit
-				}
-				return out
-			}
+	if _, m, ok := selectedUIRelease(); ok {
+		out := doc{"kind": "ui", "version": m.Version, "backendVersion": m.BackendVersion}
+		if m.Version == "" {
+			out["version"] = version
 		}
+		if m.Commit != "" {
+			out["commit"] = m.Commit
+		}
+		return out
 	}
 	return doc{"kind": "bundled", "version": version, "backendVersion": version}
 }
 
-// gatewayVersion: the gateway's GET /healthz version (go/gateway), nil when no gateway is configured.
-func gatewayVersion(ctx context.Context) doc {
-	base := gatewayURL()
-	if base == "" {
+// The gateway's state is probed outside any request: a read returns the last probe at once (never holding its
+// transaction on the network) and starts a new probe when that one is older than a minute.
+var gatewayProbe struct {
+	sync.Mutex
+	at      time.Time
+	last    doc
+	running bool
+}
+
+func gatewayVersion(_ context.Context) doc {
+	if gatewayURL() == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	gatewayProbe.Lock()
+	defer gatewayProbe.Unlock()
+	if !gatewayProbe.running && time.Since(gatewayProbe.at) > time.Minute {
+		gatewayProbe.running = true
+		go func() {
+			d := probeGateway()
+			gatewayProbe.Lock()
+			gatewayProbe.last, gatewayProbe.at, gatewayProbe.running = d, time.Now(), false
+			gatewayProbe.Unlock()
+		}()
+	}
+	return gatewayProbe.last
+}
+
+// probeGateway: GET /healthz of fleet-gateway (go/gateway), with the Access headers gatewayCall uses for https.
+func probeGateway() doc {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", base+"/healthz", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", gatewayURL()+"/healthz", nil)
 	if err != nil {
 		return doc{"state": "unreachable"}
+	}
+	if strings.HasPrefix(gatewayURL(), "https://") {
+		for k, v := range cfAccessHeaders() {
+			req.Header.Set(k, v)
+		}
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return doc{"state": "unreachable"}
 	}
 	defer res.Body.Close()
-	var h struct{ Version string }
-	if res.StatusCode != 200 || json.NewDecoder(res.Body).Decode(&h) != nil {
+	var h struct{ Status, Version string }
+	if res.StatusCode != 200 || json.NewDecoder(res.Body).Decode(&h) != nil || (h.Status != "ok" && h.Status != "draining") {
 		return doc{"state": "unreachable"}
 	}
-	out := doc{"state": "ok"}
+	out := doc{"state": h.Status}
 	if h.Version != "" {
 		out["version"] = h.Version
 	}

@@ -18,7 +18,6 @@ import (
 	"maps"
 	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -593,13 +592,8 @@ func msBetween(a, b *string) *int64 {
 // uiServed: the UI version the site serves now (the independently installed UI when it matches this backend, else the
 // bundled one), as appRoutes picks it.
 func uiServed() string {
-	if root := os.Getenv("FLEET_UI_ROOT"); root != "" {
-		var m struct{ Kind, Version, BackendVersion string }
-		if cur, err := filepath.EvalSymlinks(filepath.Join(root, "current")); err == nil {
-			if b, err := os.ReadFile(filepath.Join(cur, "release.json")); err == nil && json.Unmarshal(b, &m) == nil && m.Kind == "ui" && m.BackendVersion == version && m.Version != "" {
-				return m.Version
-			}
-		}
+	if _, m, ok := selectedUIRelease(); ok && m.Version != "" {
+		return m.Version
 	}
 	return version
 }

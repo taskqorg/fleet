@@ -930,15 +930,17 @@ func (v *FileRef) Validate() error {
 	return nil
 }
 
+// GatewayState: the gateway's /healthz status (draining: shutting down), or unreachable
 type GatewayState string
 
 const (
 	GatewayStateOk          GatewayState = "ok"
+	GatewayStateDraining    GatewayState = "draining"
 	GatewayStateUnreachable GatewayState = "unreachable"
 )
 
 // GatewayStateValues lists every GatewayState in schema order.
-var GatewayStateValues = []GatewayState{GatewayStateOk, GatewayStateUnreachable}
+var GatewayStateValues = []GatewayState{GatewayStateOk, GatewayStateDraining, GatewayStateUnreachable}
 
 // Valid: v is one of the schema's values.
 func (v GatewayState) Valid() bool {

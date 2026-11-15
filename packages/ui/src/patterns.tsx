@@ -236,8 +236,10 @@ function useFloating(ref: { current: HTMLElement | null }, focusBack: string) {
   useEffect(() => {
     if (!open) return;
     ref.current?.querySelector<HTMLElement>('.float [role=menuitem], .float button')?.focus();
+    // Focus goes back to the first opener that is shown (the version is hidden on the collapsed rail; the avatar is not).
+    const back = () => [...(ref.current?.querySelectorAll<HTMLElement>(focusBack) ?? [])].find(e => e.offsetParent !== null)?.focus();
     const close = (e: Event) => {
-      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; ref.current?.querySelector<HTMLElement>(focusBack)?.focus(); }
+      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; back(); }
       else if (ref.current?.contains(e.target as Node)) return;
       setOpen(null);
     };
@@ -254,13 +256,13 @@ function useFloating(ref: { current: HTMLElement | null }, focusBack: string) {
 /** The signed-in person at the bottom of the navigation: avatar and name (avatar only when collapsed); a click opens Logout. The version follows. */
 function UserBlock({ name, onLogout, version }: { name: string; onLogout: () => void; version?: VersionInfo }) {
   const ref = useRef<HTMLDivElement>(null);
-  const menu = useFloating(ref, '.rail-user-b'), panel = useFloating(ref, '.rail-ver');
+  const menu = useFloating(ref, '.rail-user-b'), panel = useFloating(ref, '.rail-ver, .rail-user-b');
   const v = version, attention = !!v && (v.updateReady || v.tone !== 'neutral');
   return <div class="rail-user" ref={ref}>
-    <button type="button" class="rail-user-b" aria-label={name} aria-haspopup="menu" aria-expanded={!!menu.open} onClick={e => { panel.setOpen(null); menu.toggle(e); }} onContextMenu={menu.toggle}>
+    <button type="button" class="rail-user-b" aria-label={name} aria-haspopup="menu" aria-expanded={!!menu.open} onClick={e => { panel.setOpen(null); menu.toggle(e); }} onContextMenu={e => { panel.setOpen(null); menu.toggle(e); }}>
       <span class={`avatar${attention ? ` dot t-${v!.updateReady ? 'running' : v!.tone}` : ''}`} aria-hidden="true" data-tip={name} data-tip-narrow>{name.slice(0, 1).toUpperCase()}</span><span class="nm">{name}</span>
     </button>
-    {v && <button type="button" class={`rail-ver t-${v.tone}`} aria-haspopup="true" aria-expanded={!!panel.open} aria-label={`Version ${v.current ?? 'unknown'}${v.summary ? `, ${v.summary}` : ''}: show every part`} data-tip={v.summary ? `Versions: ${v.summary}` : 'Versions'}
+    {v && <button type="button" class={`rail-ver t-${v.tone}`} aria-expanded={!!panel.open} aria-label={`Version ${v.current ?? 'unknown'}${v.summary ? `, ${v.summary}` : ''}: show every part`} data-tip={v.summary ? `Versions: ${v.summary}` : 'Versions'}
       onClick={e => { menu.setOpen(null); if (!panel.open) v.onOpen?.(); panel.toggle(e); }}>{v.current ?? '…'}</button>}
     {v?.updateReady && <span class="rail-upd"><Button label={v.updating ? 'Updating' : 'Update to the new version'} icon="rotate-cw" iconOnly kind="primary" busy={v.updating} onClick={v.onUpdate} /></span>}
     {menu.open && <span class="menu rail-menu up float" role="menu" aria-label={name} style={{ left: menu.open.left + 'px', bottom: menu.open.bottom + 'px' }}>
