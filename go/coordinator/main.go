@@ -282,7 +282,7 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 				}
 			}
 		}
-		_, err := tx.Exec(ctx, "SELECT pg_notify('fleet_change','')")
+		_, err := tx.Exec(ctx, "SELECT fleet_enqueue_wake('fleet_change','')")
 		return err
 	})
 	if err == nil {

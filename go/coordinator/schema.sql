@@ -2146,3 +2146,76 @@ CREATE FUNCTION fleet_resource_summary_change() RETURNS trigger LANGUAGE plpgsql
 END $$;
 CREATE TRIGGER resource_summary_change AFTER UPDATE OF revision ON resource_project_summary
  FOR EACH ROW WHEN (OLD.revision IS DISTINCT FROM NEW.revision) EXECUTE FUNCTION fleet_resource_summary_change();
+
+
+-- migration 58: durable notification intents keep NOTIFY's commit mutex out of source transactions.
+CREATE TABLE wake_outbox (
+ wake_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ source_xid xid8 NOT NULL DEFAULT pg_current_xact_id(),
+ channel text NOT NULL CHECK (channel IN ('fleet_change','fleet_resource_work','fleet_resource_summary')),
+ payload text NOT NULL CHECK (octet_length(payload)<8000),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX wake_outbox_pending ON wake_outbox(created_at,wake_id);
+ALTER TABLE wake_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wake_outbox FORCE ROW LEVEL SECURITY;
+CREATE POLICY maintenance ON wake_outbox USING (current_setting('fleet.project_ids',true)='*');
+
+-- Only an append enters maintenance scope; callers cannot supply a source XID or modify old intents.
+CREATE FUNCTION fleet_enqueue_wake(ch text, body text) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true);
+BEGIN
+ IF ch IS NULL OR body IS NULL OR ch NOT IN ('fleet_change','fleet_resource_work','fleet_resource_summary')
+  OR octet_length(body)>=8000 OR (ch<>'fleet_resource_summary' AND body<>'') THEN
+  RAISE EXCEPTION 'invalid wake channel or payload';
+ END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ INSERT INTO wake_outbox(channel,payload) VALUES(ch,body);
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;
+REVOKE ALL ON FUNCTION fleet_enqueue_wake(text,text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION fleet_enqueue_wake(text,text) TO fleet_app;
+
+CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'session' THEN k := 'session'; s := r.id; ELSIF r.kind IN ('event', 'event-delta', 'message') THEN k := 'event'; s := r.data->>'sessionId'; ELSIF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'command' THEN k := 'command'; h := r.data->>'hostId'; s := r.data->>'sessionId'; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSIF r.kind IN ('managed-account', 'api-connection', 'connection-key', 'setting-change', 'project-recommendation') THEN k := r.kind; w := r.data->>'holder'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $$;
+
+CREATE OR REPLACE FUNCTION fleet_artifact_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; p text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'store' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'observed_at' - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW) - 'observed_at' - 'updated_at') THEN RETURN NULL; END IF; k := 'host'; i := r.host_id; h := r.host_id; ELSE IF TG_TABLE_NAME = 'artifact_copy' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'lease_expires_at' - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW) - 'lease_expires_at' - 'updated_at') THEN RETURN NULL; END IF; i := r.artifact_id; ELSE i := r.id; END IF; k := 'artifact'; p := r.project_id; SELECT coalesce(a.task_id, e.task_id), e.session_id INTO t, s FROM artifact a LEFT JOIN execution e ON e.id = a.execution_id WHERE a.id = i; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op) VALUES (k, i, t, s, h, p, left(TG_OP, 1)); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $$;
+
+CREATE OR REPLACE FUNCTION resource_enqueue_source(eid text, old_project text, new_project text) RETURNS void
+LANGUAGE plpgsql SET search_path=public AS $$
+DECLARE wid uuid;
+BEGIN
+ INSERT INTO resource_work(execution_id) VALUES(eid)
+ ON CONFLICT ON CONSTRAINT resource_work_source_key DO UPDATE SET execution_id=excluded.execution_id
+ RETURNING work_id INTO wid;
+ INSERT INTO resource_work_scope(work_id,project_id)
+ SELECT wid,p FROM (VALUES(old_project),(new_project)) v(p) WHERE p IS NOT NULL
+ ON CONFLICT DO NOTHING;
+ PERFORM fleet_enqueue_wake('fleet_resource_work','');
+END $$;
+
+CREATE OR REPLACE FUNCTION resource_capture_metadata() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true); old_class jsonb:='{}'; new_class jsonb:='{}'; mid text;
+BEGIN
+ IF TG_TABLE_NAME <> 'document' OR TG_WHEN <> 'AFTER' THEN RAISE EXCEPTION 'invalid metadata capture context'; END IF;
+ IF TG_OP <> 'INSERT' THEN old_class:=resource_metadata_class(OLD); mid:=OLD.id; END IF;
+ IF TG_OP <> 'DELETE' THEN new_class:=resource_metadata_class(NEW); mid:=NEW.id; END IF;
+ IF old_class IS NOT DISTINCT FROM new_class THEN RETURN NULL; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ INSERT INTO resource_metadata_repair(metadata_id,old_class,new_class) VALUES(mid,old_class,new_class)
+ ON CONFLICT(source_xid,metadata_id) DO UPDATE SET new_class=excluded.new_class;
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+ PERFORM fleet_enqueue_wake('fleet_resource_work','');
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;
+
+CREATE OR REPLACE FUNCTION fleet_resource_summary_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE k text; BEGIN
+ k := 'resource_summary';
+ INSERT INTO change(kind,id,project_id,op) VALUES(k,NEW.project_id,NEW.project_id,'U');
+ PERFORM fleet_enqueue_wake('fleet_change','');
+ RETURN NULL;
+END $$;

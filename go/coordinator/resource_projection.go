@@ -980,7 +980,7 @@ func resourcePublish(q *Request, p string) error {
 	if err = exec(q, `UPDATE resource_project_summary SET header=$2,revision=revision+1,published_at=clock_timestamp() WHERE project_id=$1`, p, jsonBytes(h)); err != nil {
 		return err
 	}
-	return exec(q, `SELECT pg_notify('fleet_resource_summary',$1)`, p)
+	return exec(q, `SELECT fleet_enqueue_wake('fleet_resource_summary',$1)`, p)
 }
 
 // resourceProgressSQL is used by finalization; authorized readers use the same coverage predicates.
