@@ -7,9 +7,11 @@ import http from 'node:http';
 import { cpus, freemem, hostname, platform, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { fixture, literal, manifest, marker, pricesSQL, projectIDs, seedSQL, type Fixture } from './seed-interface.ts';
 import { startCoordinator, type Coordinator } from '../harness.ts';
+import { PublicationHistory, ObservationBook, journalVersion, installPublicationJournalSQL, publicationJournalSQL, publicationAnchorsSQL, type JournalPublication } from './publication-proof.ts';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const stamp = () => performance.now();
@@ -19,8 +21,9 @@ export function stats(values: number[]) {
   const q = (p: number) => v.length ? v[Math.max(0, Math.ceil(p * v.length) - 1)] : null;
   return { count: v.length, min: q(0), p50: q(.5), p95: q(.95), p99: q(.99), max: q(1), violations: v.filter(x => x > 5000).length };
 }
+export function hasRenderFailure(mode: 'connected' | 'exceed-capacity' | 'controlled-burst', lags: number[], errors: number, missing: number) { return !lags.length || errors > 0 || missing > 0 || mode !== 'exceed-capacity' && lags.some(x => x > 5000); }
 export type SourceDistribution = 'hot' | 'distinct';
-export type Workload = { sourceDistribution: SourceDistribution; readers: number; rate: number; warmup: number; duration: number; burst: number; recovery: number; mode: 'connected' | 'exceed-capacity'; network: 'unshaped' | '80ms-10Mbps' };
+export type Workload = { sourceDistribution: SourceDistribution; readers: number; rate: number; warmup: number; duration: number; burst: number; recovery: number; mode: 'connected' | 'exceed-capacity' | 'controlled-burst'; network: 'unshaped' | '80ms-10Mbps' };
 export type SourcePhase = 'warmup' | 'sustained' | 'burst';
 export type PhaseWindow = { phase: SourcePhase; plannedStart: number; plannedEnd: number; actualStart: number; actualEnd: number | null; startOvershootMs: number; endOvershootMs: number | null; offered: number; expected: number; offering: 'paced' | 'early' };
 
@@ -48,8 +51,9 @@ export async function scheduleSourcePhases(spec: Workload, offer: (phase: Source
 export function workload(x: Partial<Workload>, development = false): Workload {
   const w: Workload = { sourceDistribution: 'hot', readers: 1, rate: 1, warmup: 60, duration: 600, burst: 1000, recovery: 60, mode: 'connected', network: 'unshaped', ...x };
   for (const k of ['readers', 'rate', 'warmup', 'duration', 'burst', 'recovery'] as const) if (!Number.isInteger(w[k]) || w[k] < 0) throw Error('invalid workload ' + k);
-  if (!['hot', 'distinct'].includes(w.sourceDistribution) || !['connected', 'exceed-capacity'].includes(w.mode) || !['unshaped', '80ms-10Mbps'].includes(w.network)) throw Error('invalid classification');
-  if (development) { if (w.readers !== 1 || w.rate > 1 || w.warmup > 2 || w.duration > 3 || w.burst > 1 || w.recovery > 5) throw Error('development is a small smoke only'); }
+  if (!['hot', 'distinct'].includes(w.sourceDistribution) || !['connected', 'exceed-capacity', 'controlled-burst'].includes(w.mode) || !['unshaped', '80ms-10Mbps'].includes(w.network)) throw Error('invalid classification');
+  if (w.mode === 'controlled-burst') { if (development || w.sourceDistribution !== 'distinct' || w.readers !== 1 || w.rate !== 1 || w.warmup !== 3 || w.duration !== 0 || w.burst !== 1000 || w.recovery !== 10) throw Error('controlled-burst is a separate fixed diagnostic, not development or full qualification'); }
+  else if (development) { if (w.readers !== 1 || w.rate > 1 || w.warmup > 2 || w.duration > 3 || w.burst > 1 || w.recovery > 5) throw Error('development is a small smoke only'); }
   else if (![1, 10, 50].includes(w.readers) || (w.mode === 'connected' && ![1, 20, 100].includes(w.rate)) || w.rate < 1 || w.warmup !== 60 || w.duration !== 600 || w.burst !== 1000 || w.recovery < 60) throw Error('outside declared envelope; classify exceed-capacity separately');
   return w;
 }
@@ -123,28 +127,14 @@ export function sourceRate(facts: Fact[], spec: Workload, uncertaintyMs = source
       const withinOriginalWindow = plannedStart !== null && bucket.every(f => f.lower >= plannedStart && f.upper !== null && f.upper + 2 * uncertaintyMs <= plannedEnd!);
       return { second, count: bucket.length, spanMs, plannedStart, plannedEnd, valid: bucket.length === spec.rate && spanMs !== null && spanMs <= 1000 && withinOriginalWindow };
     }) : [];
-    const valid = windowsValid && windows.every(w => w.valid) && Number.isFinite(uncertaintyMs) && uncertaintyMs >= 0 && expected > 0 && rows.length === expected && confirmed.length === expected && identitiesValid && spanMs !== null && spanMs <= budgetMs && confirmed.every(f => Number.isFinite(f.lower) && Number.isFinite(f.upper) && f.upper! >= f.lower && f.lower >= window!.plannedStart);
-    return { phase, expected, offered: rows.length, admitted: confirmed.length, confirmed: confirmed.length, transactions: new Set(confirmed.map(f => f.transaction)).size, lower, upper, windowStart: window?.plannedStart ?? null, windowEnd: window?.plannedEnd ?? null, spanMs, budgetMs, windows, minimumConfirmedPerSecond: spanMs && spanMs > 0 ? confirmed.length * 1000 / spanMs : null, valid };
+    const notRun = spec.mode === 'controlled-burst' && phase === 'sustained' && expected === 0 && rows.length === 0;
+    const valid = notRun ? windowsValid && Number.isFinite(uncertaintyMs) && uncertaintyMs >= 0 : windowsValid && windows.every(w => w.valid) && Number.isFinite(uncertaintyMs) && uncertaintyMs >= 0 && expected > 0 && rows.length === expected && confirmed.length === expected && identitiesValid && spanMs !== null && spanMs <= budgetMs && confirmed.every(f => Number.isFinite(f.lower) && Number.isFinite(f.upper) && f.upper! >= f.lower && f.lower >= window!.plannedStart);
+    return { phase, notRun, expected, offered: rows.length, admitted: confirmed.length, confirmed: confirmed.length, transactions: new Set(confirmed.map(f => f.transaction)).size, lower, upper, windowStart: window?.plannedStart ?? null, windowEnd: window?.plannedEnd ?? null, spanMs, budgetMs, windows, minimumConfirmedPerSecond: spanMs && spanMs > 0 ? confirmed.length * 1000 / spanMs : null, valid };
   });
   const unique = new Set(facts.map(f => f.id)).size === facts.length && new Set(facts.flatMap(f => f.transaction ? [f.transaction] : [])).size === facts.filter(f => f.transaction).length;
   return { status: unique && windowsValid && phases.every(p => p.valid) ? 'qualified' : 'invalid-source-rate', uncertaintyMs, clock: 'same-process monotonic outward brackets from original phase start, includes submission/queue/commit receipt', phaseWindows, phaseWindowsValid: windowsValid, phases };
 }
-export function publicationVersion(value: string): { epoch: string; revision: string } | null {
-  const m = /^([^:]+):([0-9]+)$/.exec(value);
-  return m ? { epoch: m[1], revision: m[2] } : null;
-}
-export function canAcknowledge(fact: Fact, rendered: Publication, text: string) {
-  const proof = fact.proof;
-  return !fact.error && fact.upper !== null && !!proof && proof.epoch === rendered.epoch && BigInt(rendered.revision) >= BigInt(proof.revision) && rendered.calls >= proof.calls && rendered.errors >= proof.errors && text === `${rendered.calls} · ${rendered.errors} failed`;
-}
-export function bindProof(facts: Fact[], publication: Publication, leaves: Record<string, { calls: number; errors: number }>, distribution: SourceDistribution) {
-  for (const fact of facts) {
-    const leaf = leaves[fact.execution];
-    if (fact.proof?.epoch === publication.epoch || fact.error || fact.upper === null || !leaf) continue;
-    const included = distribution === 'hot' ? leaf.calls >= fact.calls && leaf.errors === fact.errors : leaf.calls === fact.calls && leaf.errors === fact.errors;
-    if (included) fact.proof = { ...publication };
-  }
-}
+export const publicationVersion = journalVersion;
 export function sourceMutation(fact: Fact, distribution: SourceDistribution) {
   const totals = `jsonb_build_object('byTool',jsonb_build_object(${literal(marker)},jsonb_build_object('calls',${fact.calls},'errors',${fact.errors})))`;
   const mutation = distribution === 'hot'
@@ -157,10 +147,7 @@ export function sourceTransaction(fact: Fact, distribution: SourceDistribution) 
 SELECT pg_current_xact_id()::text AS source_tx, clock_timestamp()::text AS before_commit \\gset
 COMMIT;`;
 }
-export function proofSQL(project: string, executions: string[]) {
-  return `(SELECT json_build_object('epoch',s.epoch::text,'revision',s.revision::text,'calls',coalesce(t.calls,0),'errors',coalesce(t.errors,0),'leaves',(SELECT coalesce(json_object_agg(c.execution_id,json_build_object('calls',(v->>'calls')::bigint,'errors',(v->>'errors')::bigint)),'{}') FROM resource_contribution c CROSS JOIN LATERAL jsonb_array_elements(c.facts->'tools') v WHERE c.project_id=s.project_id AND c.included AND c.execution_id=ANY(ARRAY[${executions.map(literal).join(',')}]::text[]) AND v->>'name'=${literal(marker)} AND v->>'connection'='')) FROM resource_project_summary s LEFT JOIN resource_tool t ON t.project_id=s.project_id AND t.name=${literal(marker)} AND t.connection='' WHERE s.project_id=${literal(project)} AND s.ready)`;
-}
-type Run = { id: string; spec: Workload; start: number; done: boolean; phaseWindows: PhaseWindow[]; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; publications: Map<string, Publication>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
+type Run = { id: string; spec: Workload; start: number; done: boolean; phaseWindows: PhaseWindow[]; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; history: PublicationHistory; observations: ObservationBook; unseen: Map<string, Map<string, Fact>>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
 const pgSnapshot = (c: Coordinator) => JSON.parse(c.sql(`SELECT json_build_object('at',clock_timestamp(),'database',current_database(),'pg',version(),'settings',(SELECT json_object_agg(name,setting) FROM pg_settings WHERE name IN ('shared_buffers','work_mem','max_connections','fsync','synchronous_commit','track_io_timing','track_commit_timestamp','max_wal_size','effective_cache_size')),'databaseStats',(SELECT row_to_json(s) FROM pg_stat_database s WHERE datname=current_database()),'activity',(SELECT coalesce(json_agg(a),'[]') FROM (SELECT pid,state,wait_event_type,wait_event,query_start,left(query,250) query FROM pg_stat_activity WHERE datname=current_database()) a),'backlog',(SELECT count(*) FROM resource_work),'oldestPending',(SELECT min(first_pending_at) FROM resource_work),'builds',(SELECT coalesce(json_agg(b),'[]') FROM resource_build b))`).trim());
 
 export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number }) {
@@ -232,6 +219,10 @@ export async function serve(o: { out: string; history: number; projects: number;
       emit('build', { state: state.map(x => ({ project: x.projectId, progress: x.progress })) }); await sleep(1000);
     }
     await parity(c, f, o.out);
+    c.sql(installPublicationJournalSQL(ids, marker));
+    const anchors: JournalPublication[] = JSON.parse(c.sql('SELECT ' + publicationAnchorsSQL));
+    assert.equal(anchors.length, ids.length, 'all fixture projects need a ready journal anchor');
+    writeFileSync(resolve(o.out, 'journal-anchors.json'), JSON.stringify(anchors, null, 2));
     for (const id of ids) c.sql(`BEGIN; INSERT INTO execution(id,kind,state,project_id,started_at,harness,model) VALUES(${literal(id + '-marker')},'agent_run','running',${literal(id)},'2024-01-01','codex','interface-seed1-model-0'); INSERT INTO execution_totals(execution_id,project_id,tool_calls,tool_calls_basis) VALUES(${literal(id + '-marker')},${literal(id)},${literal(JSON.stringify({ byTool: { [marker]: { calls: 0, errors: 0 } } }))},'measured'); COMMIT;`);
     let native: { secret: string; seq: number } | null = null;
     const hostID = 'interface-seed1-host';
@@ -263,6 +254,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       const project = ids[index % ids.length], list = r.facts.get(project)!;
       const n = list.length + 1, execution = r.spec.sourceDistribution === 'hot' ? project + '-marker' : `${project}-${r.id}-leaf-${index}`;
       const fact: Fact = { id: `${r.id}-${index}`, execution, project, n, calls: r.spec.sourceDistribution === 'hot' ? n : 1, errors: r.spec.sourceDistribution === 'distinct' && index % 7 === 0 ? 1 : 0, lower: stamp(), upper: null, phase, due }; list.push(fact); r.count++;
+      for (const [reader, state] of r.readers) if (state.project === project) r.unseen.get(reader)!.set(fact.id, fact);
       emit('source-submitted', { run: r.id, sourceDistribution: r.spec.sourceDistribution, ...fact });
       try {
         if (native && project === ids[0]) await ingest([usage(++native.seq)]);
@@ -271,28 +263,35 @@ export async function serve(o: { out: string; history: number; projects: number;
         r.metrics.writes.push(fact.upper - fact.lower); r.metrics.schedule.push(fact.lower - due); emit('confirmed', { run: r.id, sourceDistribution: r.spec.sourceDistribution, canonicalMutations: r.spec.sourceDistribution === 'hot' ? 1 : 2, ...fact, receipt });
       } catch (e) { fact.error = String(e); r.errors.push(String(e)); emit('source-error', { run: r.id, ...fact }); }
     };
-    // One SELECT gives contribution membership, aggregate numerics and publication identity
-    // in the SAME PostgreSQL read snapshot. This is fixture-only, never a production API.
+    // Read immutable committed publication history, including OLD painted versions.
     const proofReads = new Map<string, Promise<void>>();
-    const prove = (r: Run, project: string) => {
-      const active = proofReads.get(project); if (active) return active;
-      const facts = r.facts.get(project)!, pending = [...new Set(facts.filter(f => !f.proof && !f.error).map(f => f.execution))];
-      const query = proofSQL(project, pending);
-      const task = observer.run('', query).then(receipt => {
-        const p = receipt.payload; if (!p) return;
-        const publication: Publication = { epoch: p.epoch, revision: p.revision, calls: p.calls, errors: p.errors };
-        for (const fact of facts) if (fact.proof && fact.proof.epoch !== publication.epoch) delete fact.proof;
-        bindProof(facts, publication, p.leaves, r.spec.sourceDistribution);
-        r.publications.set(project + '/' + p.epoch + ':' + p.revision, publication);
-        emit('publication-proof', { run: r.id, project, publication, leaves: p.leaves, receipt });
-      }).finally(() => proofReads.delete(project));
-      proofReads.set(project, task); return task;
+    const prove = (r: Run, project: string, version: string) => {
+      const v = publicationVersion(version)!;
+      const known = r.history.latest(project, v.epoch);
+      if (known !== null && BigInt(known) >= BigInt(v.revision)) return Promise.resolve();
+      const key = project + '/' + v.epoch, active = proofReads.get(key); if (active) return active;
+      const task = (async () => {
+        for (;;) {
+          const before = r.history.latest(project, v.epoch);
+          const receipt = await observer.run('', publicationJournalSQL(project, v.epoch, before));
+          const rows = receipt.payload as JournalPublication[];
+          for (const row of rows) r.history.ingest(row);
+          emit('publication-history', { run: r.id, project, requestedVersion: version, rows, receipt });
+          const failure = r.history.epochs.get(key)?.invalid;
+          if (failure) { const error = 'journal:' + key + ':' + failure; if (!r.errors.includes(error)) r.errors.push(error); break; }
+          const after = r.history.latest(project, v.epoch);
+          if (rows.length < 1000 || after !== null && BigInt(after) >= BigInt(v.revision)) break;
+          if (after === before) throw Error('journal history did not advance');
+        }
+      })().finally(() => proofReads.delete(key));
+      proofReads.set(key, task); return task;
     };
     const finish = async (r: Run) => {
+      await Promise.allSettled([...proofReads.values()]);
       const missing: object[] = [];
       for (const [reader, { project }] of r.readers) {
         const seen = r.seen.get(reader) ?? new Set<string>();
-        for (const fact of r.facts.get(project)!) if (!seen.has(fact.id) && !fact.error && fact.phase !== 'warmup') missing.push({ reader, project, n: fact.n, age: stamp() - fact.lower });
+        for (const fact of r.unseen.get(reader)!.values()) if (!seen.has(fact.id) && !fact.error && fact.phase !== 'warmup') missing.push({ reader, project, n: fact.n, age: stamp() - fact.lower });
       }
       const allFacts = [...r.facts.values()].flat();
       const expected = ids.map(project => {
@@ -303,11 +302,29 @@ export async function serve(o: { out: string; history: number; projects: number;
       const recovery = expected.map(e => ({ ...e, observed: JSON.parse(c.sql(`SELECT json_build_object('calls',coalesce((SELECT calls FROM resource_tool WHERE project_id=${literal(e.project)} AND name=${literal(marker)} AND connection=''),0),'errors',coalesce((SELECT errors FROM resource_tool WHERE project_id=${literal(e.project)} AND name=${literal(marker)} AND connection=''),0),'tools',(SELECT coalesce(json_object_agg(name,v),'{}') FROM (SELECT name,sum(calls)::bigint calls,sum(errors)::bigint errors FROM resource_tool WHERE project_id=${literal(e.project)} GROUP BY name) v),'totalCalls',(SELECT sum(sum_value) FROM resource_metric WHERE project_id=${literal(e.project)} AND metric='toolCalls'),'totalErrors',(SELECT sum(sum_value) FROM resource_metric WHERE project_id=${literal(e.project)} AND metric='toolErrors'),'executions',(SELECT executions FROM resource_project_summary WHERE project_id=${literal(e.project)}),'pending',(SELECT count(*) FROM resource_work_scope WHERE project_id=${literal(e.project)}))`)) }));
       for (const x of recovery) if (x.calls !== x.observed.calls || x.errors !== x.observed.errors || x.executions !== x.observed.executions || x.totalCalls !== x.observed.totalCalls || x.totalErrors !== x.observed.totalErrors || Object.keys(x.tools).length !== Object.keys(x.observed.tools).length || Object.entries(x.tools).some(([name, t]) => t.calls !== x.observed.tools[name]?.calls || t.errors !== x.observed.tools[name]?.errors) || x.observed.pending) r.errors.push('recovery/double-count mismatch: ' + JSON.stringify(x));
       if (!r.metrics.lags.length) r.errors.push('no measured connected foreground samples');
+      const expectedSamples = [...r.readers.values()].reduce((n, reader) => n + r.facts.get(reader.project)!.filter(f => !f.error && f.phase !== 'warmup').length, 0);
+      if (r.metrics.lags.length + missing.length !== expectedSamples) r.errors.push('render sample count mismatch');
+      let journalStats: unknown = null;
+      const journalFile = createWriteStream(resolve(o.out, 'publication-journal.jsonl'));
+      try {
+        const scopes = await observer.run('', `(SELECT coalesce(jsonb_agg(p),'[]'::jsonb) FROM (SELECT DISTINCT project,epoch FROM interface_publication ORDER BY project,epoch) p)`);
+        for (const scope of scopes.payload) {
+          let cursor: string | null = null;
+          for (;;) {
+            const page = await observer.run('', publicationJournalSQL(scope.project, scope.epoch, cursor));
+            for (const row of page.payload as JournalPublication[]) if (!journalFile.write(JSON.stringify(row) + '\n')) await once(journalFile, 'drain');
+            if (page.payload.length < 1000) break;
+            const next = page.payload.at(-1).revision as string; if (next === cursor) throw Error('journal export cursor did not advance'); cursor = next;
+          }
+        }
+        journalFile.end(); await once(journalFile, 'finish');
+        journalStats = JSON.parse(c.sql(`SELECT json_build_object('publications',(SELECT count(*) FROM interface_publication),'deltas',(SELECT count(*) FROM interface_publication_delta),'bytes',pg_total_relation_size('interface_publication')+pg_total_relation_size('interface_publication_delta'))`));
+      } catch (e) { journalFile.destroy(); r.errors.push('journal-export:' + String(e)); }
       const rate = sourceRate(allFacts, r.spec, sourceClockUncertaintyMs, r.phaseWindows);
-      const failed = r.errors.length || missing.length || (r.spec.mode === 'connected' && r.metrics.lags.some(x => x > 5000));
+      const failed = hasRenderFailure(r.spec.mode, r.metrics.lags, r.errors.length, missing.length);
       const source = { distribution: r.spec.sourceDistribution, logicalFactCount: allFacts.length, logicalFacts: allFacts.map(f => f.id), projects: [...r.facts.keys()], leafIDs: [...new Set(allFacts.map(f => f.execution))], distinctLeaves: new Set(allFacts.map(f => f.execution)).size, canonicalMutations: allFacts.filter(f => f.upper !== null).length * (r.spec.sourceDistribution === 'hot' ? 1 : 2), commitTransactionCount: new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : [])).size, commitTransactions: [...new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : []))] };
-      const result = { id: r.id, spec: r.spec, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : null, sourceRate: rate, source, classifications: [r.spec.mode, r.spec.sourceDistribution], facts: r.count, readers: [...r.readers], samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds include proof read and return network. Development is not capacity acceptance. This run alone does not prove the full envelope.' };
-      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: r.spec, phaseWindows: r.phaseWindows, source, expected, facts: allFacts }, null, 2));
+      const result = { id: r.id, spec: r.spec, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : failed ? 'render-or-recovery-failed' : null, renderVerdict: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', sourceRate: rate, source, diagnostic: r.spec.mode === 'controlled-burst', classifications: [r.spec.mode, r.spec.sourceDistribution, ...(r.spec.mode === 'controlled-burst' ? ['diagnostic', 'not-full-envelope'] : [])], observations: r.observations.entries.size, journalStats, facts: r.count, readers: [...r.readers], expectedSamples, samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds use the original pre-proof server receipt and include observation transport; proof acknowledgement is separate. Development and controlled-burst are not capacity acceptance. This run alone does not prove the full envelope.' };
+      writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: r.spec, phaseWindows: r.phaseWindows, source, expected, facts: allFacts, journalStats, observationCount: r.observations.entries.size }, null, 2));
       r.finish = result; r.done = true; emit('finish', result);
       writeFileSync(resolve(o.out, r.id + '-result.json'), JSON.stringify(result, null, 2));
       writeFileSync(resolve(o.out, r.id + '-pg-after.json'), JSON.stringify(pgSnapshot(c), null, 2));
@@ -330,6 +347,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       await sleep(r.spec.recovery * 1000); await finish(r);
     };
     server.on('request', async (req, res) => {
+      const requestReceived = stamp();
       try {
         if (req.url?.startsWith('/__interface/')) {
           const path = req.url.split('?')[0]; let b: any = {};
@@ -340,30 +358,47 @@ export async function serve(o: { out: string; history: number; projects: number;
           else if (path === '/__interface/start') {
             if (run && !run.done) throw Error('run already active');
             const spec = workload(b.spec, o.development);
+            if (spec.mode === 'controlled-burst' && (f.history !== 618 || f.projects !== 1 || o.longEvents)) throw Error('controlled-burst requires the separate 618-row/one-project fixture without long-native events');
             if (native && spec.sourceDistribution === 'distinct') throw Error('long native hot-execution fixture requires hot source distribution; use a separate fresh distinct case');
             if (!Array.isArray(b.readers) || b.readers.length !== spec.readers || new Set(b.readers.map((x: any) => x.id)).size !== spec.readers || b.readers.some((x: any) => !ids.includes(x.project))) throw Error('reader barrier mismatch');
             // Fresh server per case: marker counters and prepared baseline must not carry a prior run.
             if (run) throw Error('start a fresh isolated server per case');
-            run = { id: randomUUID(), spec, start: stamp(), done: false, phaseWindows: [], facts: new Map(ids.map(p => [p, []])), seen: new Map(), publications: new Map(), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
+            run = { id: randomUUID(), spec, start: stamp(), done: false, phaseWindows: [], facts: new Map(ids.map(p => [p, []])), seen: new Map(), history: new PublicationHistory(), observations: new ObservationBook(), unseen: new Map(b.readers.map((x: any) => [x.id, new Map()])), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
+            for (const anchor of anchors) run.history.ingest(anchor);
             emit('start', { id: run.id, spec, readers: b.readers, browser: b.browser }); result = { id: run.id }; void produce(run).catch(e => { run!.errors.push(String(e)); void finish(run!); });
           } else if (path === '/__interface/render') {
             const r = run; if (!r || r.id !== b.run || !r.readers.has(b.reader)) throw Error('unregistered render');
             const reader = r.readers.get(b.reader)!;
-            if (reader.project !== b.project || !Number.isSafeInteger(b.value) || !Number.isSafeInteger(b.errors) || b.value < 0 || b.errors < 0 || !publicationVersion(b.version ?? '') || !b.visible || b.text !== `${b.value} · ${b.errors} failed`) throw Error('unverified rendered value/envelope');
-            await prove(r, b.project);
-            const received = stamp(), seen = r.seen.get(b.reader) ?? new Set<string>(), facts = r.facts.get(b.project)!;
-            const publication = r.publications.get(b.project + '/' + b.version);
-            // A version not observed by the proof read is retried, never guessed from a count.
-            if (!publication || publication.calls !== b.value || publication.errors !== b.errors) { result = { accepted: false }; }
+            const observation = r.observations.receive(b, requestReceived);
+            emit('render-observation', { run: r.id, observation: b, receipt: requestReceived, firstReceipt: observation.firstReceipt, attempt: observation.attempts });
+            let reason: string;
+            if (r.done) { reason = 'run-finished'; result = { accepted: false, reason }; }
+            else if (!observation.consistent) { reason = 'observation-changed'; r.errors.push(reason); result = { accepted: false, reason }; }
+            else if (reader.project !== b.project || !Number.isSafeInteger(b.value) || !Number.isSafeInteger(b.errors) || b.value < 0 || b.errors < 0 || !publicationVersion(b.version ?? '') || b.visible !== true || b.text !== `${b.value} · ${b.errors} failed` || !Number.isFinite(b.browserMonotonic) || !Number.isFinite(b.browserWall)) { reason = 'unverified-render-envelope'; r.errors.push(reason); result = { accepted: false, reason }; }
             else {
-              for (const fact of facts) if (!seen.has(fact.id) && canAcknowledge(fact, publication, b.text)) {
-                const upperMs = received - fact.lower;
-                if (fact.phase !== 'warmup') r.metrics.lags.push(upperMs);
-                seen.add(fact.id);
-                emit('render-sample', { run: r.id, reader: b.reader, fact: fact.id, execution: fact.execution, phase: fact.phase, project: b.project, proof: fact.proof, upperMs, sourceAfterCommit: fact.upper, receipt: received, browser: b });
+              await prove(r, b.project, b.version);
+              const found = r.history.lookup(b.project, b.version, b.text);
+              if (!found.accepted) { reason = found.reason; if (reason === 'publication-text-mismatch') r.errors.push(reason + ':' + b.observation); result = { accepted: false, reason }; }
+              else {
+                const seen = r.seen.get(b.reader) ?? new Set<string>(); let pendingReceipt = false;
+                for (const fact of r.unseen.get(b.reader)!.values()) {
+                  if (fact.error || fact.lower > observation.firstReceipt) continue;
+                  const proof = r.history.check(fact, b.version, b.text, r.spec.sourceDistribution);
+                  if (!proof.accepted) continue;
+                  if (fact.upper === null) { pendingReceipt = true; continue; }
+                  const upperMs = observation.firstReceipt - fact.lower;
+                  if (fact.phase !== 'warmup') r.metrics.lags.push(upperMs);
+                  const publication = { epoch: proof.publication.epoch, revision: proof.publication.revision, calls: proof.publication.calls, errors: proof.publication.errors };
+                  fact.proof ??= publication; seen.add(fact.id); r.unseen.get(b.reader)!.delete(fact.id);
+                  emit('render-sample', { run: r.id, reader: b.reader, fact: fact.id, execution: fact.execution, phase: fact.phase, project: b.project, proof: publication, leaf: proof.leaf, upperMs, sourceAfterCommit: fact.upper, receipt: observation.firstReceipt, proofAcknowledged: stamp(), observation: b.observation, browser: b });
+                }
+                r.seen.set(b.reader, seen); reason = pendingReceipt ? 'source-receipt-pending' : 'committed-publication'; result = { accepted: !pendingReceipt, reason };
               }
-              r.seen.set(b.reader, seen); result = { accepted: !facts.some(f => !f.error && !seen.has(f.id)) };
             }
+            emit('render-attempt', { run: r.id, reader: b.reader, observation: b.observation, version: b.version, receipt: requestReceived, firstReceipt: observation.firstReceipt, acknowledged: stamp(), ...(result as { accepted: boolean; reason: string }) });
+          } else if (path === '/__interface/candidate') {
+            if (!run || b.run !== run.id || !run.readers.has(b.reader)) throw Error('unregistered DOM candidate');
+            emit('dom-candidate', { ...b, receipt: requestReceived }); result = { accepted: true };
           } else if (path === '/__interface/error') { if (run) run.errors.push(JSON.stringify(b)); emit('browser-error', b); result = { accepted: true }; }
           else if (path === '/__interface/status') result = run?.finish ?? { done: false, id: run?.id, submitted: run?.count, errors: run?.errors };
           else if (path === '/__interface/control') {
@@ -448,27 +483,53 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     const { id: run } = await request('start', { spec, readers: readers.map(({ id, project }) => ({ id, project })), browser: evidence });
     for (const reader of readers) {
       await reader.page.evaluate(({ run, reader, project, marker }) => {
-        let previous = '', sending = false, inEnvelope = true;
-        const observe = () => {
+        let lastCaptured = '', scheduled = false, inEnvelope = true, stopped = false, sequence = 0;
+        const pending = new Map<string, { body: any; sending: boolean; retryAt: number }>();
+        const reportError = (error: object) => { if (!stopped) void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, ...error }) }); };
+        const terminalReasons = new Set(['missing-anchor', 'publication-history-gap', 'publication-ledger-mismatch', 'contradictory-publication', 'invalid-publication-counts', 'invalid-leaf-counts', 'publication-text-mismatch', 'unverified-render-envelope', 'observation-changed', 'run-finished']);
+        const send = (entry: { body: any; sending: boolean; retryAt: number }) => {
+          if (stopped || entry.sending || performance.now() < entry.retryAt) return;
+          entry.sending = true;
+          void fetch('/__interface/render', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(entry.body) }).then(async response => {
+            if (!response.ok) throw Error('render receipt rejected');
+            const result = await response.json();
+            if (result.accepted || terminalReasons.has(result.reason)) pending.delete(entry.body.observation);
+            else entry.retryAt = performance.now() + 100;
+          }).catch(error => { reportError({ error: String(error), observation: entry.body.observation }); entry.retryAt = performance.now() + 100; }).finally(() => { entry.sending = false; });
+        };
+        const scene = () => {
           const win = document.querySelector('[data-resource-window="tools"]');
           const label = [...(win?.querySelectorAll('span') ?? [])].find(x => x.textContent === marker);
           const row = label?.closest('[data-key]'), text = row?.querySelector('.num')?.textContent ?? '';
           const value = /^(\d+) · (\d+) failed$/.exec(text), version = win?.getAttribute('data-resource-version');
           const visible = !!row && document.visibilityState === 'visible' && row.getBoundingClientRect().height > 0 && row.getBoundingClientRect().top >= 0 && row.getBoundingClientRect().bottom <= innerHeight;
-          if (!visible && inEnvelope) void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, type: 'left-connected-foreground-envelope', visibility: document.visibilityState, rowPresent: !!row }) });
-          inEnvelope = visible;
-          if (!value || !version || !visible || version + '/' + text === previous || sending) return;
-          const n = Number(value[1]); sending = true;
+          return { win, label, row, text, value, version, visible };
+        };
+        const observe = () => {
+          if (stopped) return;
+          const candidate = scene();
+          if (!candidate.visible && inEnvelope) reportError({ type: 'left-connected-foreground-envelope', visibility: document.visibilityState, rowPresent: !!candidate.row });
+          inEnvelope = candidate.visible;
+          if (!candidate.value || !candidate.version || !candidate.visible || candidate.version + '/' + candidate.text === lastCaptured || scheduled) return;
+          scheduled = true;
           requestAnimationFrame(() => requestAnimationFrame(() => {
-            // Re-read the painted DOM; don't acknowledge an obsolete candidate or an attribute alone.
-            const actual = row?.querySelector('.num')?.textContent ?? '';
-            if (actual !== text || win?.getAttribute('data-resource-version') !== version || !row?.isConnected || label?.textContent !== marker || document.visibilityState !== 'visible' || row.getBoundingClientRect().top < 0 || row.getBoundingClientRect().bottom > innerHeight) { sending = false; observe(); return; }
-            fetch('/__interface/render', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ run, reader, project, value: n, errors: Number(value[2]), text: actual, version, visible, browserMonotonic: performance.now(), browserWall: Date.now(), domNodes: document.querySelectorAll('*').length, longTasks: (window as any).__interfaceLongTasks.splice(0) }) }).then(r => { if (!r.ok) throw Error('render receipt rejected'); return r.json(); }).then(result => { if (result.accepted) previous = version + '/' + text; }).catch(error => { void fetch('/__interface/error', { method: 'POST', body: JSON.stringify({ reader, error: String(error) }) }); }).finally(() => { sending = false; });
+            scheduled = false; if (stopped) return;
+            const actual = scene();
+            if (actual.text !== candidate.text || actual.version !== candidate.version || !actual.row?.isConnected || actual.label?.textContent !== marker || !actual.visible) {
+              void fetch('/__interface/candidate', { method: 'POST', body: JSON.stringify({ run, reader, project, reason: 'changed-before-double-raf', candidate: { text: candidate.text, version: candidate.version }, actual: { text: actual.text, version: actual.version, visible: actual.visible }, browserMonotonic: performance.now(), browserWall: Date.now() }) });
+              observe(); return;
+            }
+            lastCaptured = actual.version + '/' + actual.text;
+            const observation = reader + '-' + (++sequence);
+            const body = { observation, run, reader, project, value: Number(actual.value![1]), errors: Number(actual.value![2]), text: actual.text, version: actual.version, visible: actual.visible, browserMonotonic: performance.now(), browserWall: Date.now(), domNodes: document.querySelectorAll('*').length, longTasks: (window as any).__interfaceLongTasks.splice(0) };
+            const entry = { body, sending: false, retryAt: 0 }; pending.set(observation, entry); send(entry);
           }));
         };
-        new MutationObserver(observe).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+        const mutations = new MutationObserver(observe); mutations.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
         document.addEventListener('visibilitychange', observe);
-        setInterval(observe, 50); observe();
+        const timer = setInterval(() => { observe(); for (const entry of pending.values()) send(entry); }, 50);
+        (window as any).__interfaceStopObservation = () => { stopped = true; clearInterval(timer); mutations.disconnect(); document.removeEventListener('visibilitychange', observe); pending.clear(); };
+        observe();
       }, { run, reader: reader.id, project: reader.project, marker: config.marker });
     }
     let controlling = false;
@@ -476,6 +537,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     let result;
     for (;;) { await sleep(1000); result = await request('status'); if (result.status) break; }
     clearInterval(controls); controls = undefined;
+    await Promise.all(readers.map(r => r.page.evaluate(() => (window as any).__interfaceStopObservation?.())));
     await readers[0].page.screenshot({ path: resolve(o.out, 'rendered.png') });
     evidence.result = result; writeFileSync(resolve(o.out, 'browser.json'), JSON.stringify(evidence, null, 2));
     console.log(JSON.stringify(result));
