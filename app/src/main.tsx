@@ -102,19 +102,21 @@ function App() {
     // Focus and online check the person quietly: the same identity and grants keep everything on screen (the change
     // stream brings what happened meanwhile); a different person, changed grants or a closed gate fence and validate as
     // at start (docs/designs/fleet-analytics.md, the access gate). Offline keeps what is shown; signed out has its own path.
-    let checking = false;
-    const recheck = async () => {
+    let checking = false, again = false;
+    const recheck = async (): Promise<void> => {
       const s = access.value;
-      if (s.state === 'closed') return validate();
-      if (s.state !== 'open' || !s.identity || checking) return;
+      // Not open (closed, or a validation still running): validate as before, which restarts a running one.
+      if (s.state !== 'open' || !s.identity) return validate();
+      // A focus during a quiet check is checked right after it, so a change in between is never missed.
+      if (checking) { again = true; return; }
       checking = true;
       try {
         const m = await accessControlOp('me', {});
         const cur = access.value;
         if (cur.generation !== s.generation || cur.state !== 'open') return;
+        // The same person: nothing to redo; preferences and data stay, and the change stream brings what changed.
         if (m.email !== s.identity.identityKey || (m.grantsVersion ?? '') !== s.identity.grantsVersion) validate();
-        else { setUser(m.name || m.email); void loadPrefs(); }
-      } catch { /* offline or signed out: handled by their own state */ } finally { checking = false; }
+      } catch { /* offline or signed out: handled by their own state */ } finally { checking = false; if (again) { again = false; void recheck(); } }
     };
     validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});

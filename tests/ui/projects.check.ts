@@ -18,7 +18,7 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await edit('Name','UI edited project');await p.getByRole('heading',{name:'UI edited project',exact:true}).waitFor();
   const update=p.waitForResponse(r=>r.url().endsWith('/api/ops/project_update'));
   await p.getByRole('button',{name:'Save project',exact:true}).click();
-  const updateResponse=await update;assert.equal(updateResponse.status(),200,await updateResponse.text());
+  const updateResponse=await update;if(updateResponse.status()!==200)assert.fail(await updateResponse.text().catch(()=>'project_update '+updateResponse.status())); // the body only when it explains a failure: reading it eagerly can throw on its own
   const second=await call('project_context',{projectId:id});assert.equal(second.revision,2);assert.equal(second.name,'UI edited project');
   await p.locator('.kv-row').filter({hasText:/Saved version2$/}).waitFor();
   await p.reload();await p.getByRole('heading',{name:'UI edited project',exact:true}).waitFor();
