@@ -27,12 +27,21 @@ test('prepared resource processor qualifies against isolated PostgreSQL; off res
      IF EXISTS(SELECT 1 FROM resource_fixture_failure WHERE kind='batch-error') THEN RAISE EXCEPTION 'fixture metric batch failure'; END IF;
      IF EXISTS(SELECT 1 FROM resource_fixture_failure WHERE kind='batch-gate') THEN PERFORM pg_advisory_xact_lock(hashtextextended('fixture:metric-batch',0)); END IF;
     END IF; RETURN NEW; END $$;
-   CREATE TRIGGER resource_fixture_batch_metric BEFORE INSERT OR UPDATE ON resource_metric FOR EACH ROW EXECUTE FUNCTION resource_fixture_batch_metric();`);
+   CREATE TRIGGER resource_fixture_batch_metric BEFORE INSERT OR UPDATE ON resource_metric FOR EACH ROW EXECUTE FUNCTION resource_fixture_batch_metric();
+   CREATE FUNCTION resource_fixture_header_allowed(p text) RETURNS boolean LANGUAGE plpgsql AS $$ BEGIN
+    IF p='SUPPORT_NOOP' AND current_setting('fleet.fixture_header_error',true)='on' THEN RAISE EXCEPTION 'fixture header batch failure'; END IF; RETURN true; END $$;
+   CREATE POLICY resource_fixture_header_error ON resource_extreme AS RESTRICTIVE FOR SELECT USING(resource_fixture_header_allowed(project_id));
+   CREATE TABLE resource_fixture_item_updates(item text);
+   CREATE FUNCTION resource_fixture_item_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.project_id='SUPPORT_NOOP' THEN INSERT INTO resource_fixture_item_updates VALUES(TG_ARGV[0]); END IF; RETURN NULL; END $$;
+   CREATE TRIGGER resource_fixture_tool_update AFTER UPDATE OF tool_count ON resource_project_summary FOR EACH ROW EXECUTE FUNCTION resource_fixture_item_update('tool');
+   CREATE TRIGGER resource_fixture_cost_update AFTER UPDATE OF cost_count ON resource_project_summary FOR EACH ROW EXECUTE FUNCTION resource_fixture_item_update('cost');
+   CREATE TRIGGER resource_fixture_price_update AFTER UPDATE OF price_count ON resource_project_summary FOR EACH ROW EXECUTE FUNCTION resource_fixture_item_update('price');`);
   const db=c.sql('SELECT current_database()').trim();
   const pg=process.env.FLEET_TRIAL_PGDATA||join(homedir(),'.cache/fleet-trial/pg');
   const url=`postgresql://fleet_app@/${db}?host=${encodeURIComponent(pg)}&port=${process.env.FLEET_TRIAL_PGPORT||'54329'}`;
   const code=await new Promise<number|null>((resolve,reject)=>{
-   const child=spawn('go',['test','./coordinator','-run','^(TestResourcePostgres|TestResourceMetricBatchPostgres)$','-count=1','-v'],{cwd:join(root,'go'),env:{...process.env,FLEET_RESOURCE_TEST_URL:url},stdio:'inherit'});
+   const child=spawn('go',['test','./coordinator','-run','^(TestResourcePostgres|TestResourceMetricBatchPostgres|TestResourceNoopSupportPostgres)$','-count=1','-v'],{cwd:join(root,'go'),env:{...process.env,FLEET_RESOURCE_TEST_URL:url},stdio:'inherit'});
    child.once('error',reject);child.once('exit',resolve);
   });
   assert.equal(code,0,'real PostgreSQL processor proof');

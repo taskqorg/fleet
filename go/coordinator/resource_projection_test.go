@@ -710,3 +710,127 @@ func TestResourceMetricBatchPostgres(t *testing.T) {
 	}
 	t.Logf("SQL failure and terminated backend %d rolled back metric batch; immutable claim retained; exact retry/replay passed", backend)
 }
+
+// Requirement: no-op elimination preserves zero/missing coverage, support multiplicity
+// and last-reference removal; risk: numeric zero hides an item or drops extrema/reasons.
+func TestResourceNoopSupportPostgres(t *testing.T) {
+	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
+	if url == "" {
+		t.Skip("isolated PostgreSQL fixture")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := openStore(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	scalar := func(sql string) string {
+		t.Helper()
+		var v string
+		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(q.ctx(), sql).Scan(&v) }); e != nil {
+			t.Fatal(e)
+		}
+		return v
+	}
+	equal := func(sql, want string) {
+		t.Helper()
+		if got := scalar(sql); got != want {
+			t.Fatalf("%s = %q want %q", sql, got, want)
+		}
+	}
+	c := contract.ResourceContributionV1{SchemaVersion: 1, ExecutionId: "zero-support", ProjectId: ptr("SUPPORT_NOOP"), Included: true, StartedMs: ptr(int64(100)), EndedMs: ptr(int64(200)), Metrics: map[string]contract.ResourceMetricV1{
+		"input":           {Value: ptr("0"), Basis: contract.ResourceBasisMeasured, Expected: true},
+		"output":          {Basis: contract.ResourceBasisUnavailable, Expected: true, Reason: ptr("fixture_missing")},
+		"credits":         {Basis: contract.ResourceBasisUnavailable},
+		"turns":           {Basis: contract.ResourceBasisUnavailable, Reason: ptr("retained_reason")},
+		"peakMemoryBytes": {Value: ptr("0"), Basis: contract.ResourceBasisMeasured, Expected: true},
+	}, Tools: []contract.ResourceToolV1{{Name: "zero-tool", Calls: 0, Errors: 0}}, Costs: []contract.ResourceCostV1{{Currency: ptr("USD"), Basis: contract.ResourceBasisMeasured, Amount: ptr("0"), PriceRefs: []contract.ResourcePriceRefV1{{PriceId: "zero-price", ObservedAt: 1704067200000}}}}}
+	apply := func(sign int64) error {
+		return runTxLocks(ctx, a, nil, true, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
+			if e := resourceEnsureProject(q, "SUPPORT_NOOP"); e != nil {
+				return e
+			}
+			if e := resourceApply(q, c, sign); e != nil {
+				return e
+			}
+			return resourcePublish(q, "SUPPORT_NOOP")
+		})
+	}
+	if err = apply(1); err != nil {
+		t.Fatal(err)
+	}
+	if err = apply(1); err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT present_count||':'||expected_count||':'||sum_value FROM resource_metric WHERE project_id='SUPPORT_NOOP' AND metric='input'`, "2:2:0")
+	equal(`SELECT present_count||':'||expected_count||':'||(reasons->>'fixture_missing') FROM resource_metric WHERE project_id='SUPPORT_NOOP' AND metric='output'`, "0:2:2")
+	equal(`SELECT reasons->>'retained_reason' FROM resource_metric WHERE project_id='SUPPORT_NOOP' AND metric='turns'`, "2")
+	equal(`SELECT count(*)::text FROM resource_metric WHERE project_id='SUPPORT_NOOP' AND metric='credits'`, "0")
+	equal(`SELECT tool_count||':'||cost_count||':'||price_count FROM resource_project_summary WHERE project_id='SUPPORT_NOOP'`, "1:1:1")
+	equal(`SELECT calls||':'||errors||':'||references_count FROM resource_tool WHERE project_id='SUPPORT_NOOP'`, "0:0:2")
+	equal(`SELECT value::text||':'||references_count FROM resource_cost WHERE project_id='SUPPORT_NOOP'`, "0:2")
+	equal(`SELECT references_count::text FROM resource_price_ref WHERE project_id='SUPPORT_NOOP'`, "2")
+	equal(`SELECT count(*)::text FROM resource_fixture_item_updates`, "3")
+	// A callback failure after real publication must roll support, revision AND its wake intent back.
+	before := scalar(`SELECT jsonb_build_object('summary',(SELECT to_jsonb(s) FROM resource_project_summary s WHERE project_id='SUPPORT_NOOP'),'metric',(SELECT jsonb_agg(m ORDER BY metric,basis) FROM resource_metric m WHERE project_id='SUPPORT_NOOP'))::text`)
+	failure := errors.New("fixture rollback after atomic publication")
+	var failedXID string
+	err = runTxLocks(ctx, a, nil, true, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
+		if e := q.tx.QueryRow(q.ctx(), `SELECT pg_current_xact_id()::text`).Scan(&failedXID); e != nil {
+			return e
+		}
+		if e := resourceApply(q, c, 1); e != nil {
+			return e
+		}
+		if e := resourcePublish(q, "SUPPORT_NOOP"); e != nil {
+			return e
+		}
+		var intents int64
+		if e := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM wake_outbox WHERE source_xid=pg_current_xact_id()`).Scan(&intents); e != nil {
+			return e
+		}
+		if intents == 0 {
+			return errors.New("publication did not create its transactional wake intent")
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	after := scalar(`SELECT jsonb_build_object('summary',(SELECT to_jsonb(s) FROM resource_project_summary s WHERE project_id='SUPPORT_NOOP'),'metric',(SELECT jsonb_agg(m ORDER BY metric,basis) FROM resource_metric m WHERE project_id='SUPPORT_NOOP'))::text`)
+	if after != before {
+		t.Fatal("failed replacement leaked support/publication")
+	}
+	equal(`SELECT count(*)::text FROM wake_outbox WHERE source_xid::text='`+failedXID+`'`, "0")
+	// The third fixed-header SELECT fails after earlier batch results are valid.
+	// It must abort before a new public version can be acknowledged.
+	err = runTxLocks(ctx, a, nil, true, []string{"project:SUPPORT_NOOP"}, func(q *Request) error {
+		if e := resourceApply(q, c, 1); e != nil {
+			return e
+		}
+		if e := exec(q, `SET LOCAL fleet.fixture_header_error='on'`); e != nil {
+			return e
+		}
+		return resourcePublish(q, "SUPPORT_NOOP")
+	})
+	if err == nil || !strings.Contains(err.Error(), "fixture header batch failure") {
+		t.Fatalf("last header batch SQL error not propagated: %v", err)
+	}
+	if got := scalar(`SELECT jsonb_build_object('summary',(SELECT to_jsonb(s) FROM resource_project_summary s WHERE project_id='SUPPORT_NOOP'),'metric',(SELECT jsonb_agg(m ORDER BY metric,basis) FROM resource_metric m WHERE project_id='SUPPORT_NOOP'))::text`); got != before {
+		t.Fatal("header batch failure leaked support/publication")
+	}
+
+	if err = apply(-1); err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT count(*)::text FROM resource_fixture_item_updates`, "3")
+	equal(`SELECT min(multiplicity)::text FROM resource_extreme WHERE project_id='SUPPORT_NOOP'`, "1")
+	if err = apply(-1); err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT tool_count||':'||cost_count||':'||price_count FROM resource_project_summary WHERE project_id='SUPPORT_NOOP'`, "0:0:0")
+	equal(`SELECT count(*)::text FROM resource_fixture_item_updates`, "6")
+	equal(`SELECT ((SELECT count(*) FROM resource_metric WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_extreme WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_tool WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_cost WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_price_ref WHERE project_id='SUPPORT_NOOP'))::text`, "0")
+}
