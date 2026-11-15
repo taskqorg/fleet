@@ -147,7 +147,10 @@ try {
   await p.getByRole('button', { name: /^Project:/ }).click();
   await p.getByRole('searchbox', { name: 'Search Projects' }).waitFor();
   await p.route('**/api/ops/me', async route => { const response = await route.fetch(); const m = await response.json(); await route.fulfill({ json: { ...m, grantsVersion: 'changed-for-fixture' } }); });
-  await p.evaluate(() => window.dispatchEvent(new Event('focus')));
+  // Focus checks the person quietly; the changed grants in its reply fence (the picker closes), then the draft returns.
+  const meChanged = p.waitForResponse(r => r.url().endsWith('/api/ops/me'));
+  await p.evaluate(() => window.dispatchEvent(new Event('focus'))); await meChanged;
+  await p.getByRole('grid', { name: 'Projects', exact: true }).waitFor({ state: 'detached' });
   await p.waitForFunction(() => [...document.querySelectorAll('textarea')].some(input => input.value === 'Actor-scoped draft'));
   assert.equal(await p.getByRole('textbox', { name: 'Goal', exact: true }).inputValue(), 'Actor-scoped draft', 'same actor input survives fresh target authorization after changed grants');
   assert.equal(await p.getByRole('grid', { name: 'Projects', exact: true }).count(), 0);
