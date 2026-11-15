@@ -496,9 +496,137 @@ func resourceEnsureProject(q *Request, p string) error {
 	return exec(q, `INSERT INTO resource_project_summary(project_id,build_generation) SELECT project_id,generation FROM resource_build WHERE project_id=$1 ON CONFLICT DO NOTHING`, p)
 }
 
+type resourceReplacement struct {
+	id           string
+	projects     []string
+	claimed      []string
+	snapshot     resourceSnapshot
+	contribution contract.ResourceContributionV1
+	method       contract.ResourceMethodV1
+}
+
+func resourcePrepareReplacement(q *Request, id string, projects []string, span *obs.Span) (*resourceReplacement, error) {
+	w := &resourceReplacement{id: id, projects: projects}
+	claimStart := time.Now()
+	w.claimed = nil
+	var raw []byte
+	e := q.tx.QueryRow(q.ctx(), resourceClaimSnapshotSQL(), id).Scan(&w.claimed, &raw)
+	if e != nil || len(w.claimed) == 0 {
+		return w, e
+	}
+	span.Set("fleet.resource.claim_snapshot_us", strconv.FormatInt(time.Since(claimStart).Microseconds(), 10))
+	span.Set("fleet.resource.claim_snapshot_returned_at_unix_us", strconv.FormatInt(time.Now().UnixMicro(), 10))
+	stage := time.Now()
+	span.Set("fleet.resource.snapshot_bytes", strconv.Itoa(len(raw)))
+	var s resourceSnapshot
+	if e = json.Unmarshal(raw, &s); e != nil {
+		return w, e
+	}
+	c, m, e := resourceContribution(id, s)
+	if e != nil {
+		return w, e
+	}
+	span.Set("fleet.resource.reduce_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
+	affected := []string{}
+	if c.ProjectId != nil {
+		affected = append(affected, *c.ProjectId)
+	}
+	if s.Old != nil && s.Old.Facts.ProjectId != nil {
+		affected = append(affected, *s.Old.Facts.ProjectId)
+	}
+	if e = resourceCheckLocks(q, append(affected, s.Scopes...)); e != nil {
+		return w, e
+	}
+	// Also recheck the actual totals owner from this same source snapshot, via mismatch repair.
+	if s.Mismatch {
+		return w, errResourceOwnership
+	}
+	w.snapshot, w.contribution, w.method = s, c, m
+	return w, nil
+}
+
+func resourceLockSummaries(q *Request, projects []string) error {
+	var e error
+	for _, p := range projects {
+		var phase string
+		lockSummary := func() error {
+			return q.tx.QueryRow(q.ctx(), `SELECT b.phase FROM resource_build b JOIN resource_project_summary s USING(project_id) WHERE b.project_id=$1 FOR UPDATE OF s`, p).Scan(&phase)
+		}
+		e = lockSummary()
+		if errors.Is(e, pgx.ErrNoRows) {
+			if e = resourceEnsureProject(q, p); e != nil {
+				return e
+			}
+			e = lockSummary()
+		}
+		if e != nil {
+			return e
+		}
+		if phase == "clearing" {
+			return errResourceClearing
+		}
+	}
+	return nil
+}
+
+func resourceApplyReplacement(q *Request, w *resourceReplacement) (map[string]bool, error) {
+	id, projects, s, c, m := w.id, w.projects, w.snapshot, w.contribution, w.method
+	changed := map[string]bool{}
+	var e error
+	sha, msha := resourceSHA(s.Fingerprint), resourceSHA(m)
+	sourceExists := string(s.Leaf) != "null"
+	equal := s.Old != nil && sourceExists && s.Old.SourceSHA == sha && s.Old.MethodSHA == msha && s.Old.Facts.Included == c.Included
+	if !equal {
+		// Summary rows are already locked in project order; all support writes are deterministic.
+		for _, p := range projects {
+			if s.Old != nil && s.Old.Facts.ProjectId != nil && *s.Old.Facts.ProjectId == p {
+				if e = resourceApply(q, s.Old.Facts, -1); e != nil {
+					return nil, e
+				}
+			}
+			if sourceExists && c.ProjectId != nil && *c.ProjectId == p {
+				if e = resourceApply(q, c, 1); e != nil {
+					return nil, e
+				}
+			}
+		}
+		if sourceExists {
+			if c.Included && s.ValuationInput {
+				if e = exec(q, `INSERT INTO resource_valuation(execution_id,method_sha,method) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, msha, jsonBytes(m)); e != nil {
+					return nil, e
+				}
+			}
+			if e = exec(q, `INSERT INTO resource_contribution(execution_id,project_id,source_sha,included,facts,method,method_sha) VALUES($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,source_sha=excluded.source_sha,included=excluded.included,facts=excluded.facts,method=excluded.method,method_sha=excluded.method_sha,updated_at=clock_timestamp()`, id, c.ProjectId, sha, c.Included, jsonBytes(c), jsonBytes(m), msha); e != nil {
+				return nil, e
+			}
+		} else {
+			if e = exec(q, `DELETE FROM resource_contribution WHERE execution_id=$1`, id); e != nil {
+				return nil, e
+			}
+		}
+
+		if c.Included && c.ProjectId != nil {
+			changed[*c.ProjectId] = true
+		}
+		if s.Old != nil && s.Old.Facts.Included && s.Old.Facts.ProjectId != nil {
+			changed[*s.Old.Facts.ProjectId] = true
+		}
+
+	}
+	if err := exec(q, `DELETE FROM resource_work WHERE work_id=ANY($1::uuid[])`, w.claimed); err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
 // resourceReplace consumes only the UUIDs claimed by this attempt. The callback is replayable:
 // every retry resets its local claims, snapshot and candidate. Scope expansion restarts the whole Tx.
 func resourceReplace(ctx context.Context, a *App, id string) error {
+	return resourceReplaceAttempt(ctx, a, id, false)
+}
+
+func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) error {
 	ctx, span := obs.Start(obs.WithRun(ctx, obs.Run{ExecutionID: id}), "resource.replace", "internal")
 	var finalErr error
 	defer func() { span.End(finalErr) }()
@@ -519,112 +647,35 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 		}
 		var bodyFinished time.Time
 		lockStart := time.Now()
-		err = runTxLocks(ctx, a, nil, true, locks, func(q *Request) error {
+		run := runTxLocks
+		if once {
+			run = runTxLocksOnce
+		}
+		err = run(ctx, a, nil, true, locks, func(q *Request) error {
 			span.Set("fleet.resource.lock_ms", strconv.FormatInt(time.Since(lockStart).Milliseconds(), 10))
 			defer func() { bodyFinished = time.Now() }()
-			claimStart := time.Now()
-			claimed = nil
-			var raw []byte
-			e := q.tx.QueryRow(q.ctx(), resourceClaimSnapshotSQL(), id).Scan(&claimed, &raw)
+			w, e := resourcePrepareReplacement(q, id, projects, span)
+			claimed = w.claimed
 			if e != nil || len(claimed) == 0 {
 				return e
 			}
-			span.Set("fleet.resource.claim_snapshot_us", strconv.FormatInt(time.Since(claimStart).Microseconds(), 10))
-			span.Set("fleet.resource.claim_snapshot_returned_at_unix_us", strconv.FormatInt(time.Now().UnixMicro(), 10))
 			stage := time.Now()
-			span.Set("fleet.resource.snapshot_bytes", strconv.Itoa(len(raw)))
-			var s resourceSnapshot
-			if e = json.Unmarshal(raw, &s); e != nil {
+			if e = resourceLockSummaries(q, projects); e != nil {
 				return e
 			}
-			c, m, e := resourceContribution(id, s)
+			span.Set("fleet.resource.project_setup_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
+			changed, e := resourceApplyReplacement(q, w)
 			if e != nil {
 				return e
 			}
-			span.Set("fleet.resource.reduce_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
-			stage = time.Now()
-			affected := []string{}
-			if c.ProjectId != nil {
-				affected = append(affected, *c.ProjectId)
-			}
-			if s.Old != nil && s.Old.Facts.ProjectId != nil {
-				affected = append(affected, *s.Old.Facts.ProjectId)
-			}
-			if e = resourceCheckLocks(q, append(affected, s.Scopes...)); e != nil {
-				return e
-			}
-			// Also recheck the actual totals owner from this same source snapshot, via mismatch repair.
-			if s.Mismatch {
-				return errResourceOwnership
-			}
 			for _, p := range projects {
-				var phase string
-				lockSummary := func() error {
-					return q.tx.QueryRow(q.ctx(), `SELECT b.phase FROM resource_build b JOIN resource_project_summary s USING(project_id) WHERE b.project_id=$1 FOR UPDATE OF s`, p).Scan(&phase)
-				}
-				e = lockSummary()
-				if errors.Is(e, pgx.ErrNoRows) {
-					if e = resourceEnsureProject(q, p); e != nil {
+				if changed[p] {
+					if e = resourcePublish(q, p); e != nil {
 						return e
-					}
-					e = lockSummary()
-				}
-				if e != nil {
-					return e
-				}
-				if phase == "clearing" {
-					return errResourceClearing
-				}
-			}
-			span.Set("fleet.resource.project_setup_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
-			sha, msha := resourceSHA(s.Fingerprint), resourceSHA(m)
-			sourceExists := string(s.Leaf) != "null"
-			equal := s.Old != nil && sourceExists && s.Old.SourceSHA == sha && s.Old.MethodSHA == msha && s.Old.Facts.Included == c.Included
-			if !equal {
-				// Summary rows are already locked in project order; all support writes are deterministic.
-				for _, p := range projects {
-					if s.Old != nil && s.Old.Facts.ProjectId != nil && *s.Old.Facts.ProjectId == p {
-						if e = resourceApply(q, s.Old.Facts, -1); e != nil {
-							return e
-						}
-					}
-					if sourceExists && c.ProjectId != nil && *c.ProjectId == p {
-						if e = resourceApply(q, c, 1); e != nil {
-							return e
-						}
-					}
-				}
-				if sourceExists {
-					if c.Included && s.ValuationInput {
-						if e = exec(q, `INSERT INTO resource_valuation(execution_id,method_sha,method) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, msha, jsonBytes(m)); e != nil {
-							return e
-						}
-					}
-					if e = exec(q, `INSERT INTO resource_contribution(execution_id,project_id,source_sha,included,facts,method,method_sha) VALUES($1,$2,$3,$4,$5,$6,$7)
-      ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,source_sha=excluded.source_sha,included=excluded.included,facts=excluded.facts,method=excluded.method,method_sha=excluded.method_sha,updated_at=clock_timestamp()`, id, c.ProjectId, sha, c.Included, jsonBytes(c), jsonBytes(m), msha); e != nil {
-						return e
-					}
-				} else {
-					if e = exec(q, `DELETE FROM resource_contribution WHERE execution_id=$1`, id); e != nil {
-						return e
-					}
-				}
-				changed := map[string]bool{}
-				if c.Included && c.ProjectId != nil {
-					changed[*c.ProjectId] = true
-				}
-				if s.Old != nil && s.Old.Facts.Included && s.Old.Facts.ProjectId != nil {
-					changed[*s.Old.Facts.ProjectId] = true
-				}
-				for _, p := range projects {
-					if changed[p] {
-						if e = resourcePublish(q, p); e != nil {
-							return e
-						}
 					}
 				}
 			}
-			return exec(q, `DELETE FROM resource_work WHERE work_id=ANY($1::uuid[])`, claimed)
+			return nil
 		})
 		if !bodyFinished.IsZero() {
 			span.Set("fleet.resource.transaction_end_us", strconv.FormatInt(time.Since(bodyFinished).Microseconds(), 10))
@@ -658,6 +709,169 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 		return err
 	}
 }
+
+const resourceCohortSize = 16
+
+// Only a scheduling hint. Locked per-leaf snapshots below remain authoritative.
+func resourceBatchHints(ctx context.Context, a *App, ids []string) (map[string]string, error) {
+	pool := a.store.readPool
+	if pool == nil {
+		pool = a.store.pool
+	}
+	scopes := strings.ReplaceAll(resourceScopesSQL, "$1", "e.id")
+	rs, err := pool.Query(ctx, `SELECT e.id,e.project_id FROM execution e
+ CROSS JOIN LATERAL (SELECT array_agg(p ORDER BY p COLLATE "C") projects FROM (`+scopes+`) s) scope
+ WHERE e.id=ANY($1::text[]) AND e.project_id IS NOT NULL AND e.project_id<>''
+ AND cardinality(scope.projects)=1 AND scope.projects[1]=e.project_id`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	out := map[string]string{}
+	for rs.Next() {
+		var id, p string
+		if err = rs.Scan(&id, &p); err != nil {
+			return nil, err
+		}
+		out[id] = p
+	}
+	return out, rs.Err()
+}
+
+// One cohort transaction attempt. Failure never consumes a subset; the caller isolates it.
+func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr error) {
+	if len(ids) < 2 || len(ids) > resourceCohortSize {
+		return errResourceScope
+	}
+	hints, err := resourceBatchHints(ctx, a, ids)
+	if err != nil {
+		return err
+	}
+	project := hints[ids[0]]
+	if project == "" {
+		return errResourceScope
+	}
+	locks := []string{"project:" + project}
+	unique := map[string]bool{}
+	for _, id := range ids {
+		if hints[id] != project || unique[id] {
+			return errResourceScope
+		}
+		unique[id] = true
+		locks = append(locks, "execution:"+id)
+	}
+	ctx, batchSpan := obs.Start(ctx, "resource.batch", "internal")
+	batchSpan.Set("fleet.resource.batch_size", strconv.Itoa(len(ids)))
+	defer func() { batchSpan.End(resultErr) }()
+	type member struct {
+		ctx  context.Context
+		span *obs.Span
+		work *resourceReplacement
+	}
+	members := make([]member, 0, len(ids))
+	for _, id := range ids {
+		leafCtx, span := obs.Start(obs.WithRun(ctx, obs.Run{ExecutionID: id}), "resource.replace", "internal")
+		span.Set("fleet.resource.batch_size", strconv.Itoa(len(ids)))
+		members = append(members, member{ctx: leafCtx, span: span})
+	}
+	var bodyFinished time.Time
+	lockStart := time.Now()
+	resultErr = runTxLocksOnce(ctx, a, nil, true, locks, func(q *Request) error {
+		defer func() { bodyFinished = time.Now() }()
+		batchSpan.Set("fleet.resource.lock_ms", strconv.FormatInt(time.Since(lockStart).Milliseconds(), 10))
+		// Claim/evaluate every member before the first support mutation.
+		for i := range members {
+			member := &members[i]
+			sub := *q
+			sub.r = q.r.WithContext(member.ctx)
+			work, e := resourcePrepareReplacement(&sub, ids[i], []string{project}, member.span)
+			member.work = work
+			if e != nil {
+				return e
+			}
+			if len(work.claimed) == 0 {
+				continue
+			}
+			c, s := work.contribution, work.snapshot
+			if c.ProjectId == nil || *c.ProjectId != project || len(s.Scopes) != 1 || s.Scopes[0] != project || s.Old != nil && (s.Old.Facts.ProjectId == nil || *s.Old.Facts.ProjectId != project) {
+				return errResourceScope
+			}
+		}
+		stage := time.Now()
+		if e := resourceLockSummaries(q, []string{project}); e != nil {
+			return e
+		}
+		setup := strconv.FormatInt(time.Since(stage).Microseconds(), 10)
+		changed := false
+		for i := range members {
+			member := &members[i]
+			member.span.Set("fleet.resource.project_setup_us", setup)
+			if len(member.work.claimed) == 0 {
+				continue
+			}
+			sub := *q
+			sub.r = q.r.WithContext(member.ctx)
+			affected, e := resourceApplyReplacement(&sub, member.work)
+			if e != nil {
+				return e
+			}
+			changed = changed || affected[project]
+		}
+		if changed {
+			return resourcePublish(q, project)
+		}
+		return nil
+	})
+	ended := time.Now()
+	for _, member := range members {
+		if !bodyFinished.IsZero() {
+			member.span.Set("fleet.resource.transaction_end_us", strconv.FormatInt(ended.Sub(bodyFinished).Microseconds(), 10))
+		}
+		if resultErr == nil && member.work != nil && len(member.work.claimed) > 0 {
+			member.span.Set("fleet.resource.commit_confirmed_at_unix_us", strconv.FormatInt(ended.UnixMicro(), 10))
+			if version := batchSpan.Attrs["fleet.resource.publication_version"]; version != "" {
+				member.span.Set("fleet.resource.publication_version", version)
+			}
+		}
+		member.span.End(resultErr)
+	}
+	return resultErr
+}
+
+// Preserve candidate order and interleave build/metadata work at the existing pass boundary.
+func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error {
+	hints, err := resourceBatchHints(ctx, a, ids)
+	var finalErr error
+	if err != nil {
+		hints = nil
+		finalErr = err
+	}
+	for first := 0; first < len(ids); {
+		end := first + 1
+		project := hints[ids[first]]
+		if project != "" {
+			for end < len(ids) && end-first < resourceCohortSize && hints[ids[end]] == project {
+				end++
+			}
+		}
+		if end-first == 1 {
+			if e := resourceReplace(ctx, a, ids[first]); e != nil {
+				finalErr = e
+			}
+		} else if e := resourceReplaceBatch(ctx, a, ids[first:end]); e != nil {
+			// A failed/uncertain cohort left no acknowledged subset. Durable UUID claims make
+			// replay safe even if COMMIT succeeded but its response was lost.
+			for _, id := range ids[first:end] {
+				if e := resourceReplaceAttempt(ctx, a, id, true); e != nil {
+					finalErr = e
+				}
+			}
+		}
+		first = end
+	}
+	return finalErr
+}
+
 func resourceErrorClass(err error) string {
 	if errors.Is(err, errResourceOwnership) {
 		return "ownership_mismatch"
@@ -1232,6 +1446,15 @@ func resourceMetadataPage(ctx context.Context, a *App, repair string) error {
 	})
 }
 
+const resourceCandidatesSQL = `SELECT execution_id FROM (SELECT execution_id,next_attempt_at,first_pending_at FROM resource_work candidate
+ WHERE next_attempt_at<=clock_timestamp()
+ AND (NOT EXISTS(SELECT 1 FROM resource_build WHERE phase='clearing') OR NOT EXISTS(
+  SELECT 1 FROM resource_work blocked JOIN resource_work_scope scope USING(work_id)
+  JOIN resource_build build ON build.project_id=scope.project_id
+  WHERE blocked.execution_id=candidate.execution_id AND build.phase='clearing'))
+ ORDER BY next_attempt_at,first_pending_at,work_id LIMIT 100) candidates
+ GROUP BY execution_id ORDER BY min(next_attempt_at),min(first_pending_at),execution_id`
+
 func resourceProcessorPass(ctx context.Context, a *App) error {
 	ctx, span := obs.Start(ctx, "resource.process", "internal")
 	var finalErr error
@@ -1274,9 +1497,7 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		if e != nil {
 			return e
 		}
-		rs, e = q.tx.Query(q.ctx(), `SELECT execution_id FROM (SELECT execution_id,next_attempt_at,first_pending_at FROM resource_work
- WHERE next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,first_pending_at,work_id LIMIT 100) candidates
- GROUP BY execution_id ORDER BY min(next_attempt_at),min(first_pending_at),execution_id`)
+		rs, e = q.tx.Query(q.ctx(), resourceCandidatesSQL)
 		if e != nil {
 			return e
 		}
@@ -1313,10 +1534,8 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 			})
 		}
 	}
-	for _, id := range ids {
-		if e := resourceReplace(ctx, a, id); e != nil {
-			finalErr = e
-		}
+	if e := resourceReplaceCandidates(ctx, a, ids); e != nil {
+		finalErr = e
 	}
 	span.Set("fleet.resource.candidates", strconv.Itoa(len(ids)))
 	return finalErr
