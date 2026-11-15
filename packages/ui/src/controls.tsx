@@ -777,8 +777,8 @@ export function GroupControl<G extends string>({ value, options, onChange, none 
 }
 
 /**
- * Sort (OR-35): one chip led by the direction icon, a button that flips the direction (as Group leads with its icon), then the field. A click on the field opens the fields and the directions in a
- * short menu; the arrow on the right flips the direction in one click. The value is the field, "-" before it for descending.
+ * Sort (OR-35): one chip led by the direction icon, a button that flips the direction in one click (as Group leads with
+ * its icon), then the field, which opens the fields and the directions in a short menu. The value is the field, "-" before it for descending.
  * A field may name its directions (Newest first / Oldest first for times, the default).
  */
 export function SortControl({ value, fields, onChange }: { value: string; fields: readonly (readonly [string, string] | readonly [string, string, readonly [string, string]])[]; onChange: (v: string) => void }) {
