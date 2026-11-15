@@ -300,3 +300,20 @@ func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
 		t.Fatal("superseded attempt accepted assessment", err)
 	}
 }
+
+// Requirement: an unscored historical attempt cannot obstruct script grading
+// after a newer attempt exists. Risk: the retained latest-attempt link fence
+// causes every reconcile pass to roll back on the superseded trial.
+func TestLabAssessmentSkipsSupersededScriptEvaluation(t *testing.T) {
+	cell := func(attempt int) doc {
+		return doc{"example": "synthetic", "variant": "v", "repeat": 1, "attempt": attempt}
+	}
+	old := doc{"id": "old", "state": "succeeded", "observation": "confirmed", "cell": cell(1)}
+	latest := doc{"id": "latest", "state": "preparing", "observation": "confirmed", "cell": cell(2)}
+	exp := doc{"state": "running", "evaluators": []any{doc{"kind": "script", "ref": "example.checks", "form": "pass_fail"}}}
+	launched := []string{}
+	complete, err := expEvaluate(nil, exp, []doc{old, latest}, nil, nil, &launched, nil)
+	if err != nil || !complete || len(launched) != 0 {
+		t.Fatal("superseded unscored trial obstructed grading", complete, err, launched)
+	}
+}

@@ -101,14 +101,19 @@ func pipelineAuthorityStamp(q *Request, run doc, index int, connection, tool, ho
 	if err != nil || actor == nil || !mayAccessProjectID(actor, projectID) {
 		return "", nil, fail(403, "Pipeline initiating actor no longer has project access")
 	}
-	project, err := first(q, "SELECT head,access_version FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL FOR SHARE", projectID)
-	if err != nil {
-		return "", nil, err
+	project := doc{}
+	if projectID != "" {
+		project, err = first(q, "SELECT head,access_version FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL FOR SHARE", projectID)
+		if err != nil {
+			return "", nil, err
+		}
+		if project == nil {
+			return "", nil, fail(403, "Pipeline project is no longer available")
+		}
 	}
-	if project == nil {
-		return "", nil, fail(403, "Pipeline project is no longer available")
-	}
-	stamp := doc{"actor": actor.Email, "accessVersion": actor.AccessVersion, "project": projectID, "projectVersion": project["access_version"], "projectHead": project["head"]}
+	// Global draft/static runs retain the existing full-access initiating-actor
+	// boundary; they do not invent a project or borrow another actor's rights.
+	stamp := doc{"actor": actor.Email, "accessVersion": actor.AccessVersion, "project": run["projectId"], "projectVersion": project["access_version"], "projectHead": project["head"]}
 	connections := []string{}
 	definition := mapOf(anys(mapOf(run["definition"])["steps"])[index])
 	if connection != "" {
@@ -167,7 +172,7 @@ func pipelineAuthorityStamp(q *Request, run doc, index int, connection, tool, ho
 			return "", nil, fail(403, "Pipeline host is no longer available")
 		}
 		holder, err := resolveAccessShareTx(q.ctx(), q.tx, astr(h["holder"]))
-		if err != nil || holder == nil || !mayAccessProjectID(holder, projectID) {
+		if err != nil || holder == nil || projectID != "" && !mayAccessProjectID(holder, projectID) {
 			return "", nil, fail(403, "Pipeline host holder no longer has project access")
 		}
 		stamp["host"], stamp["holderAccessVersion"] = host, holder.AccessVersion
@@ -310,7 +315,8 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if grants["token"] == nil || len(anys(grants["refused"])) > 0 {
+		refused, ok := grants["refused"].([]string)
+		if grants["token"] == nil || !ok || len(refused) > 0 {
 			return false, fail(403, "Pipeline command connection grant was refused")
 		}
 		payload := mapOf(command["payload"])
@@ -581,7 +587,7 @@ func materializePipelineInputs(ctx context.Context, a *App, run doc, index int) 
 			step := mapOf(anys(run["steps"])[i])
 			if native := astr(step["executionId"]); native != "" {
 				if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-					row, err := first(q, "SELECT definitions FROM execution WHERE id=$1 AND project_id=$2", native, run["projectId"])
+					row, err := first(q, "SELECT definitions FROM execution WHERE id=$1 AND project_id IS NOT DISTINCT FROM $2", native, run["projectId"])
 					if err != nil {
 						return err
 					}
@@ -876,4 +882,51 @@ func pipelineRecoveryFence(q *Request, run doc) error {
 		}
 	}
 	return nil
+}
+
+// restorePipelineValue keeps existing map/slice aliases alive while restoring a
+// transition snapshot. Numeric types are preserved; no JSON roundtrip is used.
+func restorePipelineValue(current, snapshot any) any {
+	switch source := snapshot.(type) {
+	case map[string]any:
+		target := mapOf(current)
+		if target == nil {
+			target = doc{}
+		}
+		for key := range target {
+			if _, ok := source[key]; !ok {
+				delete(target, key)
+			}
+		}
+		for key, value := range source {
+			target[key] = restorePipelineValue(target[key], value)
+		}
+		return target
+	case []any:
+		target := anys(current)
+		if len(target) != len(source) {
+			target = make([]any, len(source))
+		}
+		for i, value := range source {
+			target[i] = restorePipelineValue(target[i], value)
+		}
+		return target
+	default:
+		return snapshot
+	}
+}
+
+// runPipelineTransition retries DB work with the complete pre-transition
+// snapshot, including a paid answer's already materialized output binding.
+// Effects and object I/O must remain outside this callback.
+func runPipelineTransition(ctx context.Context, a *App, run doc, fn func(*Request) error) error {
+	snapshot := restorePipelineValue(nil, run)
+	return runTx(ctx, a, nil, true, "", func(q *Request) error {
+		onEnd(q.tx, func(committed bool) {
+			if !committed {
+				restorePipelineValue(run, snapshot)
+			}
+		})
+		return fn(q)
+	})
 }

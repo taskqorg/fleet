@@ -103,11 +103,16 @@ after(() => gateway.close());
 const name = (p: string) => p + '-' + randomUUID().slice(0, 8);
 // One fake S3 for the file: artifacts written in one test are read in later ones.
 let artifactReadBarrier: {hash: string, reached: () => void, release: Promise<void>} | undefined;
+let assessmentWriteRejection: {hash:string; reached:()=>void} | undefined;
 const s3 = (async () => {
   const backend = await fakeS3();
   const proxy = createServer(async (req,res) => {
     const chunks: Buffer[]=[]; for await (const c of req) chunks.push(c as Buffer);
     const body=Buffer.concat(chunks);
+    const rejected=assessmentWriteRejection;
+    if(rejected && req.method==='PUT' && createHash('sha256').update(body).digest('hex')===rejected.hash){
+      rejected.reached();res.writeHead(503);res.end('synthetic assessment storage unavailable');return;
+    }
     const response=await fetch(`http://127.0.0.1:${backend.port}${req.url}`, {method:req.method,headers:req.headers as Record<string,string>,body:['GET','HEAD'].includes(req.method!)?undefined:body});
     const bytes=Buffer.from(await response.arrayBuffer());
     const barrier=artifactReadBarrier;
@@ -483,7 +488,7 @@ async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: 
     if (!scoring) return until(async () => { const r = ok(await call('GET', `/api/pipeline-runs/${runId}`)); return r.state === 'succeeded' ? r : undefined; }, 'ordinary rerun completes');
     return until(async () => { const v = await view(); return v.scores.some((s: any) => s.trialIds.includes(runId)) ? v : undefined; }, 'normal recovered score');
   };
-  return {exp,trial,run,command,request,host,view,prove,receipt,poll,complete,upload,content,pipelineId};
+  return {exp,trial,run,command,request,host,view,prove,receipt,poll,complete,upload,content,pipelineId,pin,example};
 }
 
 test('L2 local-suffix retry: real stored bytes, normal scoring and atomic replay without another provider call (requirement: fleet-lab local-suffix retry; risk: double charge, lost cell lineage or replay dispatch)', async () => {
@@ -966,8 +971,13 @@ test('Conditional HTTP plan selects one counted API action and omits a false rev
 test('Lab retains exact assessment bytes for passing and failing contract checks (requirement: project assessment artifact/readback; risk: exit zero becomes model accuracy or nonzero evidence disappears)', async () => {
   const bytes = '{"schema":"synthetic.assessment.v1","falseAccepts":1}\n';
   for (const exit of [0,3]) {
-    const command = `mkdir evaluation; printf '%s\\n' '${bytes.trim()}' > evaluation/assessment.json; exit ${exit}`;
+    const command = `test -s __fleet_evaluation/evidence/decide/output.json && test -s __fleet_evaluation/evidence/combine/output.json && grep -q canonicalResult __fleet_evaluation/trial.json || exit 7; mkdir evaluation; printf '%s\\n' '${bytes.trim()}' > evaluation/assessment.json; exit ${exit}`;
     const fixture = await suffixFixture('hello-world',false,[{id:'contract',run:command}]);
+    const admitted=ok(await op('lab_example_get',{artifactId:fixture.pin.artifactId}));
+    assert.equal(admitted.projectId,'hello-world');assert.equal(admitted.state,'approved');
+    assert.deepEqual(admitted.example.inputs,fixture.example.inputs);
+    const original=await fetch(BASE+'/api/results/'+admitted.artifactId,{headers:{authorization:'Bearer '+SECRET,'x-fleet-person':OWNER}});
+    assert.equal(original.status,200);assert.equal(sha(await original.text()),admitted.hash);
     const view = await fixture.complete(fixture.trial.id,true,fixture.command);
     const trial = view.trials.find((row:any)=>row.id===fixture.trial.id);
     assert.equal(trial.projectAssessments.length,1);
@@ -980,4 +990,27 @@ test('Lab retains exact assessment bytes for passing and failing contract checks
     const again = ok(await op('lab_experiment_get',{experimentId:fixture.exp.id})).trials.find((row:any)=>row.id===trial.id);
     assert.deepEqual(again.projectAssessments,trial.projectAssessments);
   }
+});
+
+
+test('A superseded unscored assessment cannot poison the replacement trial (requirement: latest-attempt assessment fence and reconciliation; risk: storage recovery repeatedly rolls back new scores)', async () => {
+  const bytes='{"schema":"synthetic.replacement-assessment.v1"}\n';
+  const command=`mkdir evaluation; printf '%s\\n' '${bytes.trim()}' > evaluation/assessment.json`;
+  const fixture=await suffixFixture('hello-world',false,[{id:'contract',run:command}]);
+  let reached=false;
+  await fixture.upload(fixture.command,JSON.stringify(fixture.run.observedSteps[0].output));
+  assessmentWriteRejection={hash:sha(bytes),reached:()=>{reached=true;}};
+  try {
+    await fixture.receipt(fixture.command,'completed',{artifacts:['output.json']});
+    await until(async()=>reached,"assessment storage rejection observed");
+    const before=await fixture.view();assert.equal(before.trials[0].state,'succeeded');assert.equal(before.scores.length,0);
+    const retry=op('lab_cell_action',{experimentId:fixture.exp.id,cell:fixture.request.cell,action:'retry'});
+    const replacement=await until(async()=>{const view=await fixture.view();return view.trials.find((row:any)=>row.cell.attempt===2);},'replacement attempt admitted');
+    assessmentWriteRejection=undefined;
+    ok(await retry);
+    const done=await fixture.complete(replacement.id);
+    assert.ok(done.scores.some((score:any)=>score.trialIds.includes(replacement.id)));
+    assert.equal(done.scores.some((score:any)=>score.trialIds.includes(fixture.trial.id)),false);
+    assert.equal(done.trials.find((row:any)=>row.id===fixture.trial.id).projectAssessments,undefined);
+  } finally {assessmentWriteRejection=undefined;}
 });

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -507,5 +508,93 @@ func TestPipelineRecoveryRejectsUnconfirmedExternalAction(t *testing.T) {
 	var conflict *HTTPError
 	if err := pipelineRecoveryFence(nil, run); !errors.As(err, &conflict) || conflict.Code != 409 {
 		t.Fatal("ambiguous action accepted for replay", err)
+	}
+}
+
+// Requirement: a committed paid/native answer survives retryable DB failure,
+// with the complete transition restored and no second external handoff.
+// Risk: a leaked settled phase turns a confirmed answer into unknown:interrupted.
+func TestPipelineCompletionRestoresFullStateOnDBRetry(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	run := planFixture(t, "completion-retry")
+	output := doc{"answer": "synthetic retained result"}
+	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := putRun(q, run); err != nil {
+			return err
+		}
+		if err := selectPipelineStep(q, run, 0); err != nil {
+			return err
+		}
+		entry := pipelinePlanEntry(run, 0)
+		entry["inputs"] = []any{}
+		mapOf(entry["dispatch"])["phase"] = "handed_off"
+		mapOf(anys(run["steps"])[0])["state"] = "running"
+		if err := putRun(q, run); err != nil {
+			return err
+		}
+		return exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('completion-output','hello-world','lab',$1,$2,'application/json','output.json',$3,'stored')`, sha256hex(jsonBytes(output)), len(jsonBytes(output)), stepRow(run, 0))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	step := mapOf(anys(run["steps"])[0])
+	step["outputArtifactId"] = "completion-output" // materialized outside the transition, before any success write
+	attempts := 0
+	if err := runPipelineTransition(env.ctx, env.app, run, func(q *Request) error {
+		attempts++
+		if mapOf(pipelinePlanEntry(run, 0)["dispatch"])["phase"] != "handed_off" || step["state"] != "running" || step["outputArtifactId"] != "completion-output" {
+			return errors.New("retry leaked mutated state or lost retained answer")
+		}
+		if err := completeStep(q, run, 0, output, nil); err != nil {
+			return err
+		}
+		if attempts == 1 {
+			return exec(q, `DO $$ BEGIN RAISE EXCEPTION 'injected serialization failure' USING ERRCODE='40001'; END $$`)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || step["state"] != "succeeded" || mapOf(pipelinePlanEntry(run, 0)["dispatch"])["phase"] != "settled" {
+		t.Fatal("completion retry failed", attempts, run)
+	}
+	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+		actual, err := getRun(q, astr(run["id"]))
+		if err != nil {
+			return err
+		}
+		if mapOf(anys(actual["steps"])[0])["outputArtifactId"] != "completion-output" || unconfirmed(actual) {
+			t.Fatal("retained result was lost", actual)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Requirement: shared draft/static runs keep their existing owner-equivalent
+// actor boundary. Risk: requiring a nonexistent project breaks every draft Run.
+func TestPipelineGlobalOwnerAuthority(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	for _, email := range []string{testOwnerEmail, "outsider@trial.test"} {
+		run := planFixture(t, "global-"+strings.Split(email, "@")[0])
+		run["projectId"] = nil
+		run["requestedBy"] = doc{"email": email}
+		if err := initPipelinePlan(run); err != nil {
+			t.Fatal(err)
+		}
+		if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+			if err := putRun(q, run); err != nil {
+				return err
+			}
+			return selectPipelineStep(q, run, 0)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if email == testOwnerEmail && pipelinePlanEntry(run, 0)["activation"] != "selected" {
+			t.Fatal("global owner run denied", run)
+		}
+		if email != testOwnerEmail && pipelinePlanEntry(run, 0)["activation"] != "blocked" {
+			t.Fatal("global run borrowed owner authority", run)
+		}
 	}
 }

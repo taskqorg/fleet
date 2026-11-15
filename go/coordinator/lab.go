@@ -1418,6 +1418,65 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 	return out, nil
 }
 
+// labSelectedEvidence is evaluator-only; never stage this snapshot for producers/judges.
+func labSelectedEvidence(q *Request, trial doc) (doc, []labFile, error) {
+	entries, bindings, files := []any{}, []any{}, []labFile{}
+	for i, value := range pipelinePlanEntries(trial) {
+		entry := mapOf(value)
+		step := mapOf(anys(trial["steps"])[i])
+		item := doc{"id": entry["id"], "activation": entry["activation"], "executionRef": entry["executionRef"], "executionState": step["state"], "observation": firstString(step["observation"], "confirmed")}
+		if native := astr(step["executionId"]); native != "" {
+			row, err := first(q, "SELECT definitions FROM execution WHERE id=$1 AND project_id IS NOT DISTINCT FROM $2", native, trial["projectId"])
+			if err != nil {
+				return nil, nil, err
+			}
+			if row != nil {
+				item["definitionPins"] = row["definitions"]
+			}
+		}
+		entries = append(entries, item)
+	}
+	outputs, err := pipelineOutputs(q, trial, -1)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, output := range outputs {
+		if !strings.HasSuffix(output.Path, ".json") {
+			continue
+		}
+		artifact, err := artifactRow(withTx(q), q.app, output.ArtifactID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if artifact.State != "stored" || !same(artifact.ProjectID, trial["projectId"]) {
+			return nil, nil, fail(409, "Unavailable evaluator evidence")
+		}
+		bytes, err := artifactBytes(withTx(q), q.app, output.ArtifactID, 64<<20)
+		if err != nil {
+			return nil, nil, err
+		}
+		if sha256hex(bytes) != artifact.ContentHash {
+			return nil, nil, fail(409, "Evaluator evidence hash differs")
+		}
+		producer, _, _ := strings.Cut(output.Path, "/")
+		var entry doc
+		for _, value := range pipelinePlanEntries(trial) {
+			if mapOf(value)["id"] == producer {
+				entry = mapOf(value)
+				break
+			}
+		}
+		if entry == nil {
+			return nil, nil, fail(409, "Evaluator producer unavailable")
+		}
+		ref := mapOf(entry["executionRef"])
+		path := "__fleet_evaluation/evidence/" + output.Path
+		bindings = append(bindings, doc{"path": output.Path, "evidencePath": path, "artifactId": output.ArtifactID, "sha256": artifact.ContentHash, "producerRunId": ref["sourceRunId"], "producerStepId": producer, "producerExecutionId": ref["executionId"]})
+		files = append(files, labFile{path, bytes})
+	}
+	return doc{"schema": "fleet.pipeline-control.v1", "consumerStepId": "final", "entries": entries, "inputs": bindings}, files, nil
+}
+
 func findPin(exp doc, id any) doc {
 	for _, p := range anys(exp["examples"]) {
 		if mapOf(p)["id"] == id {
@@ -1438,6 +1497,7 @@ func findVariant(exp doc, label any) doc {
 
 // expEvaluate: automatic evaluators over completed trials; true when every completed trial is evaluated by each.
 func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]string, checked map[string]doc) (bool, error) {
+	_, latest := expLatest(trials)
 	complete, typedExamples := true, map[string]doc{} // each pinned example read once per pass
 	for _, x := range anys(exp["evaluators"]) {
 		e := mapOf(x)
@@ -1474,6 +1534,10 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				continue
 			}
 			if e["kind"] == "script" {
+				cell := mapOf(t["cell"])
+				if latest[cellKey(cell["example"], cell["variant"], cell["repeat"])]["id"] != t["id"] {
+					continue // superseded evidence cannot link or obstruct the current attempt
+				}
 				r := checked[astr(t["id"])]
 				if r == nil {
 					complete = false
@@ -1630,7 +1694,13 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		if err != nil {
 			return err
 		}
-		for _, t := range expTrials(runs) {
+		trials := expTrials(runs)
+		_, latest := expLatest(trials)
+		for _, t := range trials {
+			cell := mapOf(t["cell"])
+			if latest[cellKey(cell["example"], cell["variant"], cell["repeat"])]["id"] != t["id"] {
+				continue
+			}
 			if !comparable(t) {
 				continue
 			}
@@ -1664,7 +1734,12 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 					return fail(409, "Evaluator input collides with reserved namespace")
 				}
 			}
-			metadata := doc{"schema": "fleet.lab-trial.v1", "evaluatorSha256": labEvaluatorIdentity(anys(full["checks"]), files), "trialId": t["id"], "runId": t["id"], "experimentId": id, "variantId": mapOf(t["cell"])["variant"], "planSummary": pipelinePlanSummary(t), "executionState": t["state"], "observation": firstString(t["observation"], "confirmed"), "resources": doc{"usage": t["usage"], "durationMs": t["durationMs"]}, "inputs": labFileBindings(files)}
+			evidence, evidenceFiles, err := labSelectedEvidence(q, t)
+			if err != nil {
+				return err
+			}
+			files = append(files, evidenceFiles...)
+			metadata := doc{"schema": "fleet.lab-trial.v1", "evaluatorSha256": labEvaluatorIdentity(anys(full["checks"]), files), "trialId": t["id"], "runId": t["id"], "experimentId": id, "variantId": mapOf(t["cell"])["variant"], "planSummary": pipelinePlanSummary(t), "canonicalResult": t["canonicalResult"], "evidence": evidence, "executionState": t["state"], "observation": firstString(t["observation"], "confirmed"), "resources": doc{"usage": t["usage"], "durationMs": t["durationMs"]}, "inputs": labFileBindings(files)}
 			files = append(files, labFile{"__fleet_evaluation/trial.json", jsonBytes(metadata)})
 			evaluator, input := labAssessmentInputs(t, anys(full["checks"]), files)
 			todo[astr(t["id"])] = pending{anys(full["checks"]), files, t, evaluator, input, labAssessmentSnapshot(t, full)}

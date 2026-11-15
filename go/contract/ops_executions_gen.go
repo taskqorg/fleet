@@ -1140,7 +1140,7 @@ func (v *PipelineArtifactRef) Validate() error {
 
 type PipelineAuthority struct {
 	ActorEmail            string                  `json:"actorEmail"`
-	ProjectId             string                  `json:"projectId"`
+	ProjectId             *string                 `json:"projectId"`
 	RequestedCapabilities []PipelineCapabilityRef `json:"requestedCapabilities"`
 }
 

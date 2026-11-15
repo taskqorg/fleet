@@ -329,7 +329,7 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 	job := row + ":publication"
 	email := astr(mapOf(run["requestedBy"])["email"])
 	failStart := func(cause error) (bool, error) {
-		return false, runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error {
+		return false, runPipelineTransition(context.WithoutCancel(ctx), a, run, func(q *Request) error {
 			if step["startedAt"] == nil {
 				step["startedAt"] = nowMs()
 			}
@@ -427,20 +427,26 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 	}
 	// The durable claim commits before filesystem or readback effects. A second
 	// owner observes the existing claim and must not invoke the publication again.
-	won := false
+	won, eligible := false, false
 	err = runTx(ctx, a, q, true, "", func(q *Request) error {
+		won, eligible = false, false // each retried callback must prove its own outcome
 		current, e := getRun(q, astr(run["id"]))
 		if e != nil || current == nil {
 			return e
 		}
 		entry := pipelinePlanEntry(current, i)
 		dispatch := mapOf(entry["dispatch"])
-		if current["state"] != "running" || dispatch["phase"] != "reserved" {
+		if current["state"] != "running" || dispatch["phase"] != "reserved" && dispatch["phase"] != "handed_off" {
 			return nil
 		}
+		eligible = true
 		stamp, _, e := pipelineAuthorityStamp(q, current, i, "", "", dest.Authority)
 		if e != nil {
 			return e
+		}
+		if dispatch["phase"] == "handed_off" {
+			run["plan"] = current["plan"]
+			return nil // only receipt-bound reconciliation may follow
 		}
 		dispatch["phase"], dispatch["claimId"], dispatch["ownerBootId"] = "handed_off", newID(), pipelineBootID
 		dispatch["handedOffAtMs"], dispatch["authoritySha256"] = nowMs(), stamp
@@ -453,6 +459,9 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 	if err != nil {
 		return failStart(err)
 	}
+	if !eligible {
+		return false, nil
+	}
 	reconcileOnly := !won
 	if reconcileOnly {
 		// A committed manifest is an independent filesystem receipt. Recover that
@@ -464,7 +473,7 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 		manifest, e := publicationRegular(root, "releases/fleet-"+sha256hex([]byte(job))[:32]+"/manifest.json")
 		root.Close()
 		if e != nil {
-			return false, runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error {
+			return false, runPipelineTransition(context.WithoutCancel(ctx), a, run, func(q *Request) error {
 				return failStep(q, run, i, "unknown:publication", "Handoff has no durable publication receipt")
 			})
 		}
@@ -546,7 +555,7 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 	if err == nil {
 		err = materializePipelineOutput(endCtx, a, run, i, output)
 	}
-	persistErr := runTx(endCtx, a, nil, true, "", func(q *Request) error {
+	persistErr := runPipelineTransition(endCtx, a, run, func(q *Request) error {
 		state := "succeeded"
 		var problem any
 		if err != nil {

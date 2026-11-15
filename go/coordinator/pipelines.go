@@ -1208,7 +1208,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	}
 	row := stepRow(run, i)
 	kind := astr(def["kind"])
-	tx := func(fn func(q *Request) error) error { return runTx(ctx, a, nil, true, "", fn) }
+	tx := func(fn func(q *Request) error) error { return runPipelineTransition(ctx, a, run, fn) }
 	failNow := func(problem, message string) (bool, error) {
 		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
 	}
