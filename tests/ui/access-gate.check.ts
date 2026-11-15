@@ -45,7 +45,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
   await p.route('**/api/ops/project_resources', async route => { if (summaryHeld) await summaryWait; await route.continue().catch(() => {}); });
   try {
     seed.sql(`INSERT INTO execution(id,kind,state,project_id,data) SELECT 'browser-resource-'||lpad(i::text,4,'0'),'tool_run','succeeded','desiign',jsonb_build_object('tool','browser-tool-'||lpad(i::text,4,'0')) FROM generate_series(1,207) i;`);
-    await p.goto(origin + '/projects/desiign?preparedResources=on');
+    await p.goto(origin + '/projects/desiign');
     await p.getByRole('button', { name: 'Save project', exact: true }).waitFor();
     await edit('Name', 'Browser dirty project');
     await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).waitFor();

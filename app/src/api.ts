@@ -143,11 +143,14 @@ export function useAlive(): AbortSignal {
   return c.current.signal;
 }
 
-/** Explicit per-tab rollout selection plus existing server tool advertisement. No server flag is changed. */
+/** Default-on selection still requires server advertisement; explicit per-tab opt-out survives. */
 export function preparedResourcesSelected() {
   if (typeof location === 'undefined') return false;
   const value = new URLSearchParams(location.search).get('preparedResources');
-  try { if (value === 'on' || value === 'off') sessionStorage.setItem('fleet-prepared-resources', value); return (value ?? sessionStorage.getItem('fleet-prepared-resources')) === 'on'; } catch { return value === 'on'; }
+  try {
+    if (value === 'on' || value === 'off') { sessionStorage.setItem('fleet-prepared-resources', value); return value === 'on'; }
+    return sessionStorage.getItem('fleet-prepared-resources') !== 'off';
+  } catch { return value !== 'off'; }
 }
 let resourceCapability: { generation: number; promise: Promise<boolean> } | null = null;
 export function preparedResourcesAvailable(): Promise<boolean> {
