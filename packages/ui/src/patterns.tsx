@@ -54,7 +54,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
 
   const rows: Row[] = useMemo(() => {
     // Pinned rows come first as a group of their own (OR-12); the group is the pin mark.
-    const top: Row[] = pinned.length ? [{ kind: 'group', key: 'g-pinned', label: 'Pinned', icon: 'pin', tone: 'neutral', count: pinned.length }, ...(closed.includes('pinned') ? [] : pinned.map(t => ({ kind: 'task' as const, t })))] : [];
+    const top: Row[] = pinned.length ? [{ kind: 'group', key: 'g-\u0000pinned', label: 'Pinned', icon: 'pin', tone: 'neutral', count: pinned.length }, ...(closed.includes('\u0000pinned') ? [] : pinned.map(t => ({ kind: 'task' as const, t })))] : [];
     if (view.group === 'none') return [...top, ...unpinned.map(t => ({ kind: 'task' as const, t }))];
     const g = view.group;
     const keyOf = (t: TaskRow) => String(g === 'priority' ? t.priority : g === 'state' ? t.state : g === 'project' ? t.project : g === 'agent' ? t.agent : t.host);
@@ -108,7 +108,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
               open={!closed.includes(r.key.slice(2))} onToggle={() => { const k = r.key.slice(2); setClosed(closed.includes(k) ? closed.filter(x => x !== k) : [...closed, k]); }} />
           : <TaskCells t={r.t} now={now} onOpen={onOpen} showPriority={view.group !== 'priority'} two={row !== ROW}
               check={selecting ? sel.includes(r.t.id) : undefined} onSelect={() => toggle(r.t.id)} selecting={selecting} onPin={() => onPin(r.t.id)}
-              onMenu={at => setMenu({ t: r.t, at })} />} />
+              />} />
       {menu && <ContextMenu at={menu.at} label={menu.t.title} onClose={() => setMenu(null)} items={[
         { label: 'Open', icon: actions.open, onClick: () => onOpen?.(menu.t) },
         { label: menu.t.pinned ? 'Unpin' : 'Pin', icon: menu.t.pinned ? 'pin-off' : 'pin', onClick: () => onPin(menu.t.id) },
@@ -120,20 +120,19 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   );
 }
 
-function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting, onSelect, onMenu }: { t: TaskRow; now: number; onPin: () => void; onOpen?: (t: TaskRow) => void; showPriority: boolean; two: boolean;
-  check?: boolean; selecting: boolean; onSelect: () => void; onMenu: (at: { x: number; y: number }) => void }) {
+function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting, onSelect }: { t: TaskRow; now: number; onPin: () => void; onOpen?: (t: TaskRow) => void; showPriority: boolean; two: boolean;
+  check?: boolean; selecting: boolean; onSelect: () => void }) {
   // OR-22: state icon leftmost; ID beside the title; agent mark only while running; delivery stage as a chip.
   // A two-line catalogue row keeps the marks on the second line, so the title has the whole first line (OR-21).
   const marks = <>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}{t.stage && <StageChip stage={t.stage} />}</>;
   return <>
     {check !== undefined && <span class="lead"><RowCheck checked={check} label={'Select ' + t.title} onToggle={onSelect} /></span>}
     <span class="lead"><StateBadge family="task" state={t.state} reason={t.reason} compact /></span>
-    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} aria-keyshortcuts="P X Shift+F10"
+    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} aria-keyshortcuts="P X"
       onClick={e => { if (selecting || e.shiftKey) { e.preventDefault(); onSelect(); } else if (onOpen) { e.preventDefault(); onOpen(t); } }}
       onKeyDown={e => {
         if (e.altKey || e.ctrlKey || e.metaKey) return;
         if (e.key === 'p') { e.preventDefault(); onPin(); } else if (e.key === 'x') { e.preventDefault(); onSelect(); }
-        else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onMenu({ x: r.left, y: r.bottom }); }
       }}>{t.title}</a><EntityCode code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} />{two && marks}</span>
     {!two && <><span>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}</span><span>{t.stage && <StageChip stage={t.stage} />}</span></>}
     <span class="r"><AgeChip t={t.started} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></span>

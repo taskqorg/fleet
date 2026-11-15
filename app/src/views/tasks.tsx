@@ -11,7 +11,7 @@ import {
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
-import { listKey, DEFAULT_TASK_SORT, type View } from '../../../packages/view-url/view-url.ts';
+import { listKey, formatView, DEFAULT_TASK_SORT, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 import { usePins, useViews, withFocus, setFocus } from '../prefs.ts';
 import { ScopedRollupDetails, buildExecTree, resourceTotals } from './resources.tsx';
@@ -44,11 +44,12 @@ export function Tasks({ id }: { id?: string }) {
   // Selection mode (OR-37): a checkbox column left of the state, the action bar in place of group and sort.
   const [selectOn, setSelectOn] = useState(false);
   const selecting = selectOn || sel.length > 0;
-  const leave = useCallback(() => { setSelectOn(false); set({ sel: undefined }); }, [set]);
+  const [confirmCancel, setConfirmCancel] = useState<TaskRow[] | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const leave = useCallback(() => { setSelectOn(false); setConfirmCancel(null); setBulkError(null); set({ sel: undefined }); }, [set]);
   const [menu, setMenu] = useState<{ t: TaskRow; at: { x: number; y: number } } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
-  const [confirmCancel, setConfirmCancel] = useState(false);
-  const [bulkError, setBulkError] = useState<string | null>(null);
   const pinned = rows.filter(r => pins.has(r.id)), rest = rows.filter(r => !pins.has(r.id));
   const groupOf = (r: TaskRow) => String(r.sortKey[0]);
   const items: Item[] = [];
@@ -66,20 +67,22 @@ export function Tasks({ id }: { id?: string }) {
   const chosen = rows.filter(r => sel.includes(r.id));
   const canPause = (t: TaskRow) => !TERMINAL.includes(t.state) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
   const bulk = async (action: 'pause' | 'resume' | 'cancel', ts: TaskRow[]) => {
-    setBulkError(null);
+    if (busy || !ts.length) return;
+    setBulkError(null); setBusy(true);
     const r = await Promise.allSettled(ts.map(t => op('task_update', { taskId: t.id, action })));
+    setBusy(false);
     const failed = r.filter(x => x.status === 'rejected') as PromiseRejectedResult[];
     if (failed.length) setBulkError(`${failed.length} of ${ts.length} did not ${action}: ${failed[0].reason?.message ?? failed[0].reason}`);
   };
-  const off = !online.value ? 'offline' : undefined;
+  const off = !online.value ? 'offline' : busy ? 'Working' : undefined;
   const pinAll = (on: boolean) => { for (const t of chosen) if (pins.has(t.id) !== on) pins.toggle(t.id); };
-  const select = (t: TaskRow) => { setSelectOn(true); toggleSel(t.id); };
+  const select = (t: TaskRow) => { setSelectOn(true); setConfirmCancel(null); toggleSel(t.id); };
   const rowMenu = (t: TaskRow): Parameters<typeof ContextMenu>[0]['items'] => [
     { label: 'Open', icon: actions.open, onClick: () => set({ focus: t.id }) },
     { label: pins.has(t.id) ? 'Unpin' : 'Pin', icon: pins.has(t.id) ? 'pin-off' : 'pin', onClick: () => pins.toggle(t.id) },
     { label: sel.includes(t.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => select(t) },
     { label: 'Copy code', icon: actions.copy, onClick: () => copyText(t.code ?? t.id) },
-    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + href({ focus: t.id })) },
+    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + formatView({ view: 'tasks', focus: t.id })) },
     ...(canResume(t) ? [{ label: t.pauseReason === 'held' ? 'Release' : 'Continue', icon: 'rotate-cw' as const, disabledReason: off, onClick: () => bulk('resume', [t]) }] : []),
     ...(canPause(t) ? [{ label: 'Pause', icon: 'pause' as const, disabledReason: off, onClick: () => bulk('pause', [t]) }] : []),
   ];
@@ -101,12 +104,12 @@ export function Tasks({ id }: { id?: string }) {
           <StateCounters family="task" label="Tasks by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [], preset: undefined })}
             onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s], preset: undefined })} />}
         tools={selecting
-          ? <SelectBar count={sel.length} total={rows.length} onAll={() => set({ sel: rows.map(r => r.id) })} onNone={() => set({ sel: [] })} onExit={leave} actions={[
+          ? <SelectBar count={chosen.length} total={rows.length} onAll={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: rows.map(r => r.id) }); }} onNone={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: [] }); }} onExit={leave} actions={[
               { label: 'Pin', icon: 'pin', onClick: () => pinAll(true), disabledReason: chosen.length && chosen.every(t => pins.has(t.id)) ? 'All pinned' : undefined },
               { label: 'Unpin', icon: 'pin-off', onClick: () => pinAll(false), disabledReason: chosen.some(t => pins.has(t.id)) ? undefined : 'None pinned' },
               { label: 'Pause', icon: 'pause', onClick: () => bulk('pause', chosen.filter(canPause)), disabledReason: off ?? (chosen.some(canPause) ? undefined : 'None can pause') },
               { label: 'Continue', icon: 'rotate-cw', onClick: () => bulk('resume', chosen.filter(canResume)), disabledReason: off ?? (chosen.some(canResume) ? undefined : 'None paused') },
-              { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => setConfirmCancel(true), disabledReason: off ?? (chosen.some(t => !TERMINAL.includes(t.state)) ? undefined : 'None can cancel') },
+              { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => setConfirmCancel(chosen.filter(t => !TERMINAL.includes(t.state))), disabledReason: off ?? (chosen.some(t => !TERMINAL.includes(t.state)) ? undefined : 'None can cancel') },
             ]} />
           : <>
             <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ group: g, preset: undefined })} />
@@ -114,8 +117,8 @@ export function Tasks({ id }: { id?: string }) {
             <span class="grow" />
             <Button label="Select" icon="square" iconOnly kind="quiet" onClick={() => setSelectOn(true)} />
           </>} />}>
-        {confirmCancel && <ProblemRow severity="warning" title={`Cancel ${chosen.filter(t => !TERMINAL.includes(t.state)).length} tasks?`} facts="Running work is asked to stop; finished external effects stay."
-          actions={[{ label: 'Yes, cancel', primary: true, onClick: () => { setConfirmCancel(false); bulk('cancel', chosen.filter(t => !TERMINAL.includes(t.state))); } }, { label: 'Keep', onClick: () => setConfirmCancel(false) }]} />}
+        {confirmCancel && <ProblemRow severity="warning" title={`Cancel ${confirmCancel.length} ${confirmCancel.length === 1 ? 'task' : 'tasks'}?`} facts="Running work is asked to stop; finished external effects stay."
+          actions={[{ label: 'Yes, cancel', primary: true, onClick: () => { const ts = confirmCancel; setConfirmCancel(null); bulk('cancel', ts); } }, { label: 'Keep', onClick: () => setConfirmCancel(null) }]} />}
         {bulkError && <ErrorBanner text={bulkError} />}
         {list.error && !rows.length ? <ErrorBanner text={`Tasks did not load: ${list.error}`} onRetry={list.reload} />
           : list.shownKey === null ? <Skeleton rows={8} />
@@ -126,15 +129,15 @@ export function Tasks({ id }: { id?: string }) {
             render={i => i.kind === 'group'
               ? <GroupHeader icon={i.icon ?? (rowsGroup === 'priority' ? 'list-ordered' : 'folder-open')} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
-                {selecting && <span class="lead"><RowCheck checked={sel.includes(i.t.id)} label={'Select ' + i.t.title} onToggle={() => toggleSel(i.t.id)} /></span>}
+                {selecting && <span class="lead"><RowCheck checked={sel.includes(i.t.id)} label={'Select ' + i.t.title} onToggle={() => select(i.t)} /></span>}
                 <span class="lead"><StateBadge family="task" state={i.t.pauseReason === 'held' ? 'held' : i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
-                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} aria-keyshortcuts="P X Shift+F10"
+                <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} aria-keyshortcuts="P X"
                   onClick={e => { e.preventDefault(); if (selecting || e.shiftKey) select(i.t); else set({ focus: i.t.id }); }}
                   onKeyDown={e => {
                     if (e.altKey || e.ctrlKey || e.metaKey) return;
                     if (e.key === 'p') { e.preventDefault(); pins.toggle(i.t.id); }
                     else if (e.key === 'x') { e.preventDefault(); select(i.t); }
-                    else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setMenu({ t: i.t, at: { x: r.left, y: r.bottom } }); }
+                    // The Menu key and Shift+F10 fire contextmenu on the row: onRowMenu opens the menu.
                   }}>{i.t.title}</a><EntityCode code={i.t.code} id={i.t.id} /></span>
                 <span class="rz"><TaskFacts t={i.t} now={now} /></span>
               </>} />}

@@ -748,7 +748,6 @@ export function SortControl({ value, fields, onChange }: { value: string; fields
 export const RowFacts = ({ children }: { children: ComponentChildren }) => <span class="row-facts" data-ui="row-facts">{children}</span>;
 export const Fact = ({ icon, text, tip, label, children }: { icon?: IconName; text?: string; tip: string; label?: string; children?: ComponentChildren }) =>
   <span class="fact" data-tip={tip} aria-label={children ? undefined : label ?? tip}>{icon && <Icon name={icon} />}{text}{children}</span>;
-export const RowActs = ({ set, children }: { set: boolean; children: ComponentChildren }) => <span class={`row-acts${set ? ' set' : ''}`} data-ui="row-acts">{children}</span>;
 
 /* ---------- Row menu: the right-click menu of a list row (OR-12, OR-14) ---------- */
 
@@ -759,6 +758,9 @@ export type MenuItem = { label: string; icon: IconName; onClick: () => void; dis
  */
 export function ContextMenu({ at, label, items, onClose }: { at: { x: number; y: number }; label: string; items: MenuItem[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Focus goes back where it was (the row) when the menu closes, unless the person moved it elsewhere.
+  const back = useRef(document.activeElement as HTMLElement | null);
+  useEffect(() => () => { const a = document.activeElement; if (!a || a === document.body || ref.current?.contains(a) || !a.isConnected) back.current?.focus?.({ preventScroll: true }); }, []);
   useEffect(() => {
     const close = (e: Event) => {
       if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; e.stopPropagation(); }
