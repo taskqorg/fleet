@@ -436,6 +436,17 @@ func TestResourcePostgres(t *testing.T) {
 	equal(`SELECT coalesce(sum((reasons->>'not_reported')::bigint),0)::text FROM resource_metric WHERE project_id='A' AND metric='cpuMs'`, "0")
 	equal(`SELECT count(*)::text FROM resource_tool WHERE project_id='A' AND name LIKE 'tool-%'`, "0")
 
+	// P1 regression: contribution creation is earlier than the first usable valuation snapshot.
+	sql(`INSERT INTO price_entry(id,subject,unit,price,currency,effective_from,observed_at,source) VALUES('creation-price','creation-model','input_tokens',0.02,'USD','2020-01-01','2020-01-01','owner');
+ INSERT INTO execution(id,kind,state,project_id,model) VALUES('p-creation','agent_run','preparing','VALUATION','creation-latest')`)
+	replace("p-creation")
+	equal(`SELECT count(*)::text FROM resource_valuation WHERE execution_id='p-creation'`, "0")
+	sql(`UPDATE execution SET state='running',model='creation-model',started_at='2024-01-01' WHERE id='p-creation';
+ INSERT INTO execution_totals(execution_id,project_id,tokens_input,tokens_input_basis) VALUES('p-creation','VALUATION',5,'measured')`)
+	replace("p-creation")
+	equal(`SELECT value::text FROM resource_cost WHERE project_id='VALUATION' AND currency='USD'`, "0.1")
+	equal(`SELECT count(*)::text FROM resource_valuation WHERE execution_id='p-creation'`, "1")
+
 	// An actual failing page seed rolls work, scopes AND checkpoint back; a committed page resumes.
 	sql(`INSERT INTO execution(id,kind,state,project_id,data) SELECT 'crash-'||lpad(i::text,4,'0'),'tool_run','succeeded','CRASH','{"connection":"crash","tool":"x"}'::jsonb FROM generate_series(1,105) i;
  DELETE FROM resource_work WHERE execution_id LIKE 'crash-%'`)
@@ -485,6 +496,38 @@ func TestResourcePostgres(t *testing.T) {
 		t.Fatal(e)
 	}
 	equal(`SELECT count(*)::text FROM resource_repair_scope WHERE repair_id=$1::uuid`, "0", repair)
+
+	// P2 regression: a completed metadata enumeration waiting on failed work cannot starve later jobs.
+	sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES('p-meta-blocked','tool_run','succeeded','META','{"connection":"blocked","tool":"x"}');
+ INSERT INTO document(id,kind,data) VALUES('connection:blocked','api-connection','{"provider":"fixture"}')`)
+	replace("p-meta-blocked")
+	blocked := scalar(`SELECT repair_id::text FROM resource_metadata_repair WHERE metadata_id='connection:blocked'`)
+	if e = resourceMetadataPage(ctx, a, blocked); e != nil {
+		t.Fatal(e)
+	}
+	if e = resourceMetadataPage(ctx, a, blocked); e != nil {
+		t.Fatal(e)
+	}
+	sql(`UPDATE resource_work SET next_attempt_at=clock_timestamp()+interval '1 hour',last_error_class='projection_failed' WHERE repair_id=$1::uuid`, blocked)
+	sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES('p-meta-later','tool_run','succeeded','META','{"connection":"later","tool":"x"}');
+ INSERT INTO document(id,kind,data) VALUES('connection:later','api-connection','{"provider":"fixture"}')`)
+	later := scalar(`SELECT repair_id::text FROM resource_metadata_repair WHERE metadata_id='connection:later'`)
+	if e = resourceProcessorPass(ctx, a); e != nil {
+		t.Fatal(e)
+	}
+	equal(`SELECT after_execution_id FROM resource_metadata_repair WHERE repair_id=$1::uuid`, "p-meta-later", later)
+	equal(`SELECT count(*)::text FROM resource_repair_scope WHERE repair_id=$1::uuid`, "1", blocked)
+	if e = resourceMetadataPage(ctx, a, later); e != nil {
+		t.Fatal(e)
+	}
+	if e = resourceMetadataPage(ctx, a, later); e != nil {
+		t.Fatal(e)
+	}
+	sql(`UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE repair_id=$1::uuid`, blocked)
+	replace("p-meta-blocked")
+	if e = resourceMetadataPage(ctx, a, blocked); e != nil {
+		t.Fatal(e)
+	}
 
 	t.Log("PostgreSQL initial aggregates, replay, snapshot/claim race, A/B/NULL, repair, deletion, parallelism, extremes, frozen rebuild, metadata union and FORCE RLS passed")
 }

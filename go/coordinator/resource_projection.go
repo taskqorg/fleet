@@ -22,8 +22,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const resourcePageSize = 100
-
 var errResourceScope = errors.New("resource scope expanded")
 var errResourceOwnership = errors.New("ownership_mismatch")
 var errResourceClearing = errors.New("resource build clearing")
@@ -94,6 +92,9 @@ var resourceSourceSQL = `WITH leaf AS MATERIALIZED (` + resourceBaseLeavesSQL() 
   to_jsonb(t)-ARRAY['computed_at','rate_limit_last','rate_limit_last_basis'],l.provider,l.is_sub)
   FROM execution e JOIN leaf l ON l.id=e.id LEFT JOIN execution_totals t ON t.execution_id=e.id),
  'scopes',(SELECT coalesce(jsonb_agg(p ORDER BY p COLLATE "C"),'[]') FROM (SELECT project_id p FROM execution WHERE id=$1 UNION SELECT project_id FROM execution_totals WHERE execution_id=$1 UNION SELECT project_id FROM resource_contribution WHERE execution_id=$1 UNION SELECT ws.project_id FROM resource_work_scope ws JOIN resource_work w USING(work_id) WHERE w.execution_id=$1) scopes WHERE p IS NOT NULL),
+ 'valuationInput',EXISTS(SELECT 1 FROM leaf l WHERE l.leaf_at IS NOT NULL AND (
+  (nullif(l.model,'') IS NOT NULL AND l.model NOT LIKE '%-latest' AND coalesce(l.tokens_input,l.tokens_output,l.tokens_cache_read,l.tokens_cache_write) IS NOT NULL)
+  OR l.direct_amount IS NOT NULL OR (l.conn_amount IS NOT NULL AND nullif(l.conn_unit,'') IS NOT NULL))),
  'mismatch',EXISTS(SELECT 1 FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.id=$1 AND e.project_id IS DISTINCT FROM t.project_id),
  'old',(SELECT to_jsonb(c) FROM resource_contribution c WHERE c.execution_id=$1),
  'valuation',(SELECT method FROM resource_valuation WHERE execution_id=$1),
@@ -121,11 +122,12 @@ func resourceBaseLeavesSQL() string {
 }
 
 type resourceSnapshot struct {
-	Leaf        json.RawMessage `json:"leaf"`
-	Fingerprint json.RawMessage `json:"fingerprint"`
-	Mismatch    bool            `json:"mismatch"`
-	Scopes      []string        `json:"scopes"`
-	Old         *struct {
+	Leaf           json.RawMessage `json:"leaf"`
+	Fingerprint    json.RawMessage `json:"fingerprint"`
+	ValuationInput bool            `json:"valuationInput"`
+	Mismatch       bool            `json:"mismatch"`
+	Scopes         []string        `json:"scopes"`
+	Old            *struct {
 		Facts     contract.ResourceContributionV1 `json:"facts"`
 		SourceSHA string                          `json:"source_sha"`
 		MethodSHA string                          `json:"method_sha"`
@@ -564,7 +566,7 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 					}
 				}
 				if sourceExists {
-					if c.Included {
+					if c.Included && s.ValuationInput {
 						if e = exec(q, `INSERT INTO resource_valuation(execution_id,method_sha,method) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, msha, jsonBytes(m)); e != nil {
 							return e
 						}
@@ -1178,7 +1180,9 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		if e != nil {
 			return e
 		}
-		rs, e = q.tx.Query(q.ctx(), `SELECT repair_id::text FROM resource_metadata_repair WHERE next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,created_at LIMIT 1`)
+		rs, e = q.tx.Query(q.ctx(), `SELECT repair_id::text FROM resource_metadata_repair r WHERE next_attempt_at<=clock_timestamp()
+ AND (NOT done OR NOT EXISTS(SELECT 1 FROM resource_work w WHERE w.repair_id=r.repair_id))
+ ORDER BY next_attempt_at,created_at LIMIT 1`)
 		if e != nil {
 			return e
 		}
