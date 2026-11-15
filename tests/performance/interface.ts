@@ -11,7 +11,7 @@ import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { fixture, literal, manifest, marker, pricesSQL, projectIDs, seedSQL, type Fixture } from './seed-interface.ts';
 import { startCoordinator, type Coordinator } from '../harness.ts';
-import { PublicationHistory, ObservationBook, journalVersion, installPublicationJournalSQL, publicationJournalSQL, publicationAnchorsSQL, type JournalPublication } from './publication-proof.ts';
+import { PublicationHistory, ObservationBook, RenderBounds, journalVersion, installPublicationJournalSQL, publicationJournalSQL, publicationAnchorsSQL, type JournalPublication, type RenderObservation, type LeafState } from './publication-proof.ts';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const stamp = () => performance.now();
@@ -147,7 +147,8 @@ export function sourceTransaction(fact: Fact, distribution: SourceDistribution) 
 SELECT pg_current_xact_id()::text AS source_tx, clock_timestamp()::text AS before_commit \\gset
 COMMIT;`;
 }
-type Run = { id: string; spec: Workload; start: number; done: boolean; phaseWindows: PhaseWindow[]; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; history: PublicationHistory; observations: ObservationBook; unseen: Map<string, Map<string, Fact>>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
+type SampleBound = {fact: Fact; reader: string; browser: RenderObservation; publication: {epoch:string;revision:string;calls:number;errors:number}; leaf: LeafState};
+type Run = { id: string; spec: Workload; start: number; done: boolean; phaseWindows: PhaseWindow[]; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; history: PublicationHistory; observations: ObservationBook; bounds: RenderBounds<SampleBound>; processedReceipt: Map<string,number>; unseen: Map<string, Map<string, Fact>>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
 const pgSnapshot = (c: Coordinator) => JSON.parse(c.sql(`SELECT json_build_object('at',clock_timestamp(),'database',current_database(),'pg',version(),'settings',(SELECT json_object_agg(name,setting) FROM pg_settings WHERE name IN ('shared_buffers','work_mem','max_connections','fsync','synchronous_commit','track_io_timing','track_commit_timestamp','max_wal_size','effective_cache_size')),'databaseStats',(SELECT row_to_json(s) FROM pg_stat_database s WHERE datname=current_database()),'activity',(SELECT coalesce(json_agg(a),'[]') FROM (SELECT pid,state,wait_event_type,wait_event,query_start,left(query,250) query FROM pg_stat_activity WHERE datname=current_database()) a),'backlog',(SELECT count(*) FROM resource_work),'oldestPending',(SELECT min(first_pending_at) FROM resource_work),'builds',(SELECT coalesce(json_agg(b),'[]') FROM resource_build b))`).trim());
 
 export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number }) {
@@ -250,6 +251,14 @@ export async function serve(o: { out: string; history: number; projects: number;
       void observer.run('', `(SELECT json_build_object('pending',count(*),'oldest',min(first_pending_at),'failed',count(*) FILTER(WHERE last_error_class IS NOT NULL)) FROM resource_work)`).then(result => emit('backlog', { run: run?.id, ...result })).catch(e => emit('observer-error', { error: String(e) })).finally(() => { observing = false; });
     }, 1000);
     writeFileSync(resolve(o.out, 'pg-before.json'), JSON.stringify(pgSnapshot(c), null, 2));
+    const acknowledge = (r: Run, reader: string, fact: Fact) => {
+      if (fact.upper === null || fact.error) return;
+      const entry = r.bounds.confirm(reader + '/' + fact.id); if (!entry) return;
+      const {browser, publication, leaf} = entry.value, seen = r.seen.get(reader) ?? new Set<string>();
+      const correction = seen.has(fact.id);
+      fact.proof ??= publication; seen.add(fact.id); r.seen.set(reader, seen); r.unseen.get(reader)!.delete(fact.id);
+      emit(correction ? 'render-sample-correction' : 'render-sample', {run:r.id,reader,fact:fact.id,execution:fact.execution,phase:fact.phase,project:fact.project,proof:publication,leaf,upperMs:entry.receipt-fact.lower,sourceAfterCommit:fact.upper,receipt:entry.receipt,proofAcknowledged:stamp(),observation:browser.observation,browser});
+    };
     const writeFact = async (r: Run, index: number, phase: string, due: number) => {
       const project = ids[index % ids.length], list = r.facts.get(project)!;
       const n = list.length + 1, execution = r.spec.sourceDistribution === 'hot' ? project + '-marker' : `${project}-${r.id}-leaf-${index}`;
@@ -261,6 +270,7 @@ export async function serve(o: { out: string; history: number; projects: number;
         const receipt = await sourceWriters[index % sourceWriters.length].run(sourceTransaction(fact, r.spec.sourceDistribution), `json_build_object('transaction',:'source_tx','beforeCommit',:'before_commit')`);
         fact.upper = stamp(); fact.transaction = receipt.payload.transaction;
         r.metrics.writes.push(fact.upper - fact.lower); r.metrics.schedule.push(fact.lower - due); emit('confirmed', { run: r.id, sourceDistribution: r.spec.sourceDistribution, canonicalMutations: r.spec.sourceDistribution === 'hot' ? 1 : 2, ...fact, receipt });
+        for (const [reader,state] of r.readers) if (state.project === project) acknowledge(r,reader,fact);
       } catch (e) { fact.error = String(e); r.errors.push(String(e)); emit('source-error', { run: r.id, ...fact }); }
     };
     // Read immutable committed publication history, including OLD painted versions.
@@ -302,6 +312,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       const recovery = expected.map(e => ({ ...e, observed: JSON.parse(c.sql(`SELECT json_build_object('calls',coalesce((SELECT calls FROM resource_tool WHERE project_id=${literal(e.project)} AND name=${literal(marker)} AND connection=''),0),'errors',coalesce((SELECT errors FROM resource_tool WHERE project_id=${literal(e.project)} AND name=${literal(marker)} AND connection=''),0),'tools',(SELECT coalesce(json_object_agg(name,v),'{}') FROM (SELECT name,sum(calls)::bigint calls,sum(errors)::bigint errors FROM resource_tool WHERE project_id=${literal(e.project)} GROUP BY name) v),'totalCalls',(SELECT sum(sum_value) FROM resource_metric WHERE project_id=${literal(e.project)} AND metric='toolCalls'),'totalErrors',(SELECT sum(sum_value) FROM resource_metric WHERE project_id=${literal(e.project)} AND metric='toolErrors'),'executions',(SELECT executions FROM resource_project_summary WHERE project_id=${literal(e.project)}),'pending',(SELECT count(*) FROM resource_work_scope WHERE project_id=${literal(e.project)}))`)) }));
       for (const x of recovery) if (x.calls !== x.observed.calls || x.errors !== x.observed.errors || x.executions !== x.observed.executions || x.totalCalls !== x.observed.totalCalls || x.totalErrors !== x.observed.totalErrors || Object.keys(x.tools).length !== Object.keys(x.observed.tools).length || Object.entries(x.tools).some(([name, t]) => t.calls !== x.observed.tools[name]?.calls || t.errors !== x.observed.tools[name]?.errors) || x.observed.pending) r.errors.push('recovery/double-count mismatch: ' + JSON.stringify(x));
       if (!r.metrics.lags.length) r.errors.push('no measured connected foreground samples');
+      r.metrics.lags = [...r.bounds.entries.values()].filter(x => x.confirmed && x.value.fact.phase !== 'warmup').map(x => x.receipt-x.value.fact.lower);
       const expectedSamples = [...r.readers.values()].reduce((n, reader) => n + r.facts.get(reader.project)!.filter(f => !f.error && f.phase !== 'warmup').length, 0);
       if (r.metrics.lags.length + missing.length !== expectedSamples) r.errors.push('render sample count mismatch');
       let journalStats: unknown = null;
@@ -363,7 +374,7 @@ export async function serve(o: { out: string; history: number; projects: number;
             if (!Array.isArray(b.readers) || b.readers.length !== spec.readers || new Set(b.readers.map((x: any) => x.id)).size !== spec.readers || b.readers.some((x: any) => !ids.includes(x.project))) throw Error('reader barrier mismatch');
             // Fresh server per case: marker counters and prepared baseline must not carry a prior run.
             if (run) throw Error('start a fresh isolated server per case');
-            run = { id: randomUUID(), spec, start: stamp(), done: false, phaseWindows: [], facts: new Map(ids.map(p => [p, []])), seen: new Map(), history: new PublicationHistory(), observations: new ObservationBook(), unseen: new Map(b.readers.map((x: any) => [x.id, new Map()])), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
+            run = { id: randomUUID(), spec, start: stamp(), done: false, phaseWindows: [], facts: new Map(ids.map(p => [p, []])), seen: new Map(), history: new PublicationHistory(), observations: new ObservationBook(), bounds: new RenderBounds(), processedReceipt: new Map(), unseen: new Map(b.readers.map((x: any) => [x.id, new Map()])), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
             for (const anchor of anchors) run.history.ingest(anchor);
             emit('start', { id: run.id, spec, readers: b.readers, browser: b.browser }); result = { id: run.id }; void produce(run).catch(e => { run!.errors.push(String(e)); void finish(run!); });
           } else if (path === '/__interface/render') {
@@ -380,19 +391,22 @@ export async function serve(o: { out: string; history: number; projects: number;
               const found = r.history.lookup(b.project, b.version, b.text);
               if (!found.accepted) { reason = found.reason; if (reason === 'publication-text-mismatch') r.errors.push(reason + ':' + b.observation); result = { accepted: false, reason }; }
               else {
-                const seen = r.seen.get(b.reader) ?? new Set<string>(); let pendingReceipt = false;
-                for (const fact of r.unseen.get(b.reader)!.values()) {
+                let pendingReceipt = false;
+                // Normal increasing receipts visit pending facts only. A late older proof must
+                // also correct already acknowledged facts instead of losing the earlier bound.
+                const previousReceipt = r.processedReceipt.get(b.reader) ?? -Infinity;
+                const candidates = observation.firstReceipt < previousReceipt ? r.facts.get(b.project)! : r.unseen.get(b.reader)!.values();
+                r.processedReceipt.set(b.reader,Math.max(previousReceipt,observation.firstReceipt));
+                for (const fact of candidates) {
                   if (fact.error || fact.lower > observation.firstReceipt) continue;
                   const proof = r.history.check(fact, b.version, b.text, r.spec.sourceDistribution);
                   if (!proof.accepted) continue;
-                  if (fact.upper === null) { pendingReceipt = true; continue; }
-                  const upperMs = observation.firstReceipt - fact.lower;
-                  if (fact.phase !== 'warmup') r.metrics.lags.push(upperMs);
-                  const publication = { epoch: proof.publication.epoch, revision: proof.publication.revision, calls: proof.publication.calls, errors: proof.publication.errors };
-                  fact.proof ??= publication; seen.add(fact.id); r.unseen.get(b.reader)!.delete(fact.id);
-                  emit('render-sample', { run: r.id, reader: b.reader, fact: fact.id, execution: fact.execution, phase: fact.phase, project: b.project, proof: publication, leaf: proof.leaf, upperMs, sourceAfterCommit: fact.upper, receipt: observation.firstReceipt, proofAcknowledged: stamp(), observation: b.observation, browser: b });
+                  const publication = {epoch:proof.publication.epoch,revision:proof.publication.revision,calls:proof.publication.calls,errors:proof.publication.errors};
+                  const changed = r.bounds.offer(b.reader+'/'+fact.id,observation.firstReceipt,{fact,reader:b.reader,browser:b,publication,leaf:proof.leaf});
+                  if (fact.upper === null) pendingReceipt = true;
+                  else if (changed) acknowledge(r,b.reader,fact);
                 }
-                r.seen.set(b.reader, seen); reason = pendingReceipt ? 'source-receipt-pending' : 'committed-publication'; result = { accepted: !pendingReceipt, reason };
+                reason = pendingReceipt ? 'source-receipt-pending' : 'committed-publication'; result = { accepted: !pendingReceipt, reason };
               }
             }
             emit('render-attempt', { run: r.id, reader: b.reader, observation: b.observation, version: b.version, receipt: requestReceived, firstReceipt: observation.firstReceipt, acknowledged: stamp(), ...(result as { accepted: boolean; reason: string }) });

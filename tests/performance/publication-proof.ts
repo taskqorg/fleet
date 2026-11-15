@@ -104,3 +104,11 @@ export class ObservationBook{
  }
 }
 export const publicationAnchorsSQL=`(SELECT coalesce(jsonb_agg(to_jsonb(p)-'revision'-'previous'-'publication_xid'||jsonb_build_object('revision',revision::text,'previous',previous::text,'transaction',publication_xid::text)),'[]'::jsonb) FROM interface_publication p WHERE anchor)`;
+
+// Proof and source receipts may complete in either order. Keep the earliest proven
+// observation even before confirmation; later completion cannot overwrite its bound.
+export class RenderBounds<T>{
+ entries=new Map<string,{receipt:number;value:T;confirmed:boolean}>();
+ offer(key:string,receipt:number,value:T){const old=this.entries.get(key);if(old&&old.receipt<=receipt)return false;this.entries.set(key,{receipt,value,confirmed:old?.confirmed??false});return true;}
+ confirm(key:string){const entry=this.entries.get(key);if(!entry)return null;entry.confirmed=true;return entry;}
+}

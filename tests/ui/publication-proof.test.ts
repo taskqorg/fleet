@@ -87,3 +87,14 @@ test('publication revisions above safe integer retain exact ordering',()=>{
  assert.equal(h.check(fact('A'),epoch+':9007199254740994','1 · 0 failed','distinct').accepted,true);
  assert.equal(h.check(fact('A'),epoch+':9007199254740993','0 · 0 failed','distinct').accepted,false);
 });
+
+// Requirement: first proven receipt survives source/proof completion reordering.
+// Risk: a newer paint wins while an older proven observation awaits source confirmation.
+test('render bounds retain pending early observations and correct late old proofs',async()=>{
+ const {RenderBounds}=await import('../performance/publication-proof.ts');const b=new RenderBounds<string>();
+ b.offer('r/f',100,'old paint before source receipt');assert.equal(b.offer('r/f',200,'new paint'),false);
+ assert.equal(b.confirm('r/f')?.receipt,100);assert.equal(b.entries.get('r/f')?.value,'old paint before source receipt');
+ b.offer('r/g',300,'new proof finished first');b.confirm('r/g');assert.equal(b.offer('r/g',150,'old proof finished late'),true);
+ assert.equal(b.entries.get('r/g')?.confirmed,true);assert.equal(b.confirm('r/g')?.receipt,150);
+ assert.equal(b.entries.size,2,'correction must not duplicate samples');
+});
