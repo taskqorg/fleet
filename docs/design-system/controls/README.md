@@ -6,6 +6,9 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 |---|---|
 | [button](button.md) | Every action |
 | [data-list](data-list.md) | Long lists that scroll well |
+| [row-menu](row-menu.md) | Row actions on right click, no hover buttons |
+| [selection](selection.md) | Several rows at once: select square, checkbox column, selection bar |
+| [row-pin](row-pin.md) | A pinned row's pin, unpin in one click |
 | [filter-bar](filter-bar.md) | Filters and grouping, saved and shared |
 | [search](search.md) | Fast search |
 | [spotlight](spotlight.md) | Cmd+K palette: find and open anything |
@@ -24,7 +27,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [result-viewer](result-viewer.md) | Result viewers |
 | [text-field](text-field.md) | Unsaved form values with accessible labels and errors |
 | [setting-field](setting-field.md) | Settings with applied or apply error |
-| [nav-rail](nav-rail.md) | Many sections; pinned per person |
+| [nav-rail](nav-rail.md) | Many sections; pinned per person; the installed version and the update |
 | [split-button](split-button.md) | Default action with alternatives |
 | [state-counters](state-counters.md) | Counts per state, quick state filter |
 | [stat-strip](stat-strip.md) | Operational counts |
