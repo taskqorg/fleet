@@ -153,7 +153,7 @@ function Results() {
       <PageHead title="Results" />
       <Panel><ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search results"
           shown={shown.length} total={RESULTS.length}
-          extra={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies} onAll={() => setCopies([])} onToggle={c => setCopies(copies.includes(c) ? copies.filter(x => x !== c) : [...copies, c])} />} />}>
+          counters={<StateCounters family="copy" label="Results by copy state" counts={counts} active={copies} onAll={() => setCopies([])} onToggle={c => setCopies(copies.includes(c) ? copies.filter(x => x !== c) : [...copies, c])} />} />}>
         <VirtualList items={shown} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" rowClass={r => r.id === sel.id ? 'sel' : ''}
           columns="1.25rem minmax(0,1fr) 4rem 4.5rem 2.75rem"
           header={<><span /><span>Result</span><span>Project</span><span class="r">Size</span><span class="r">Age</span></>}

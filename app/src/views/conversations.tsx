@@ -44,7 +44,7 @@ export function Conversations({ id }: { id?: string }) {
     <section class="panel">
       <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery}
         shown={states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total} total={list.total}
-        extra={<StateCounters family="session" label="Conversations by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [] })}
+        counters={<StateCounters family="session" label="Conversations by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [] })}
           onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>
         {list.error && !rows.length ? <ErrorBanner text={`Conversations did not load: ${list.error}`} onRetry={list.reload} />
           : list.shownKey === null || (!rows.length && list.pending) ? <Skeleton rows={8} />

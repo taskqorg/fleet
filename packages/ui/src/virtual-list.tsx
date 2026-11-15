@@ -24,6 +24,8 @@ export type VirtualListProps<T> = {
   class?: string;
   /** Extra class per row, e.g. group headers. */
   rowClass?: (item: T) => string;
+  /** Right click (or long press) on a row: the page opens its row menu (ContextMenu) at the pointer. */
+  onRowMenu?: (item: T, at: { x: number; y: number }) => void;
   /** Infinite scroll (OR-11): called once per list length when the last rows come into view. */
   onEnd?: () => void;
   /** Upward loading (threads): called once per list length when the first rows come into view. */
@@ -153,7 +155,8 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
         <div class="vl-space" style={{ height: `${v.getTotalSize()}px` }}>
           {v.getVirtualItems().map(vi => (
             <div key={vi.key} data-key={String(vi.key)} data-index={vi.index} ref={p.dynamic ? v.measureElement : undefined} role="row" aria-rowindex={vi.index + 1}
-              class={`vl-row${p.dynamic ? ' dyn' : ''} ${p.rowClass?.(p.items[vi.index]) ?? ''}`} style={{ transform: `translateY(${vi.start}px)`, height: p.dynamic ? undefined : `${p.rowHeight}px` }}>
+              class={`vl-row${p.dynamic ? ' dyn' : ''} ${p.rowClass?.(p.items[vi.index]) ?? ''}`} style={{ transform: `translateY(${vi.start}px)`, height: p.dynamic ? undefined : `${p.rowHeight}px` }}
+              onContextMenu={p.onRowMenu ? e => { e.preventDefault(); p.onRowMenu!(p.items[vi.index], { x: e.clientX, y: e.clientY }); } : undefined}>
               {p.render(p.items[vi.index], vi.index)}
             </div>
           ))}

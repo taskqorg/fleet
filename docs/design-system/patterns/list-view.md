@@ -13,7 +13,10 @@
    * Sort (OR-35): changed or created, with a direction toggle; Tasks default to recently changed first. A saved view stores grouping and sort.
 3. **[Virtual list](../controls/data-list.md):**
    * group header rows;
-   * rows in OR-22 order: state icon, title with its code, then the service zone: row facts (OR-37: since taken into work, executions, time in the current state, agent mark, host) with pin and checkbox over them on hover or when set.
+   * rows in OR-22 order: state icon, title with its code, then the service zone: row facts (OR-37: since taken into work, executions, time in the current state, agent mark, host) with nothing over them on hover (OR-37).
+   * the row menu (`ContextMenu`) on right click, long press, the Menu key or Shift+F10: Open, Pin or Unpin, Select, Copy code, Copy link, and the state actions that apply (Pause, Continue). `p` pins the focused row, `x` selects it.
+   * selection mode: the Select button after group and sort, Shift-click or `x` turns it on; a checkbox column appears left of the state icon and a click on a row toggles it; `SelectBar` replaces group and sort at the same height: select all or none (of the loaded rows), the count, Pin, Unpin, Pause, Continue, Cancel (confirmed inline), and a cross. Esc or the cross leaves the mode. Checked rows are the view URL's `sel`.
+   * a Pinned group at the top holds pinned rows (OR-12); rows carry no pin mark.
 
 **Behaviour.**
 * Default grouping is by priority (D11). Grouping by state uses attention order: waiting, failed, in progress, queued, paused, completed, cancelled. Completed and cancelled start collapsed.

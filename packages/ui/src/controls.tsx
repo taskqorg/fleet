@@ -1,6 +1,6 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
 import { Fragment, type ComponentChildren, type TargetedMouseEvent } from 'preact';
-import { useEffect, useId, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
 import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, bytes, exact, stamp, percent, duration, agentLabel, actor } from './format.ts';
 import type { Block as ThreadBlock, ResourceSummary } from '../../../contracts/generated/ops.ts';
@@ -187,8 +187,12 @@ type FilterBarProps = {
   query: string; onQuery: (q: string) => void; placeholder: string;
   /** Filters applied from outside the query (a link from another screen); each removes on its own. */
   chips?: Chip[]; onRemove?: (c: Chip) => void; onClear?: () => void;
-  /** After the search, on the same wrapping line: views, state counters, group and sort. */
+  /** After the search, on the same wrapping line: saved views. */
   extra?: ComponentChildren;
+  /** The state quick filter (Σ and the state chips), on a line of its own. */
+  counters?: ComponentChildren;
+  /** List tools after the state quick filter, on a line of their own: group and sort. */
+  tools?: ComponentChildren;
   shown: number; total: number;
 };
 export function FilterBar(p: FilterBarProps) {
@@ -205,6 +209,8 @@ export function FilterBar(p: FilterBarProps) {
         {chips.length > 0 && p.onClear && <Button label="Clear" kind="quiet" onClick={p.onClear} />}
         <span class="count" aria-live="polite">{p.shown < p.total ? `${p.shown.toLocaleString('en')} of ${p.total.toLocaleString('en')}` : ''}</span>
       </div>
+      {p.counters && <div class="fbar-line">{p.counters}</div>}
+      {p.tools && <div class="fbar-line">{p.tools}</div>}
     </div>
   );
 }
@@ -736,14 +742,76 @@ export function SortControl({ value, fields, onChange }: { value: string; fields
     <button type="button" class="seg" aria-label={`Sort by ${fields[i][1]}`} data-tip={`Sort by ${next[1].toLowerCase()}`} onClick={() => onChange((desc ? '-' : '') + next[0])}>{fields[i][1]}</button></span>;
 }
 
-/* ---------- Row facts and row affordances (OR-37) ---------- */
+/* ---------- Row facts (OR-37) ---------- */
 
 /** Live facts of a row in short form, in the row's right zone (OR-21). Each fact is icon + compact value with a tooltip. */
 export const RowFacts = ({ children }: { children: ComponentChildren }) => <span class="row-facts" data-ui="row-facts">{children}</span>;
 export const Fact = ({ icon, text, tip, label, children }: { icon?: IconName; text?: string; tip: string; label?: string; children?: ComponentChildren }) =>
   <span class="fact" data-tip={tip} aria-label={children ? undefined : label ?? tip}>{icon && <Icon name={icon} />}{text}{children}</span>;
-/** Pin and checkbox of a row: shown on hover, keyboard focus or when set; they overlay the facts, so nothing moves (OR-23). */
 export const RowActs = ({ set, children }: { set: boolean; children: ComponentChildren }) => <span class={`row-acts${set ? ' set' : ''}`} data-ui="row-acts">{children}</span>;
+
+/* ---------- Row menu: the right-click menu of a list row (OR-12, OR-14) ---------- */
+
+export type MenuItem = { label: string; icon: IconName; onClick: () => void; disabledReason?: string; danger?: boolean };
+/**
+ * A short menu at the pointer: right click, long press, or the Menu key / Shift+F10 on a focused row. A list page mounts one
+ * for the whole list (rows are virtual). Esc, a click outside or a scroll closes it; arrows move between items.
+ */
+export function ContextMenu({ at, label, items, onClose }: { at: { x: number; y: number }; label: string; items: MenuItem[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; e.stopPropagation(); }
+      else if (e.type === 'pointerdown' && ref.current?.contains(e.target as Node)) return;
+      onClose();
+    };
+    document.addEventListener('pointerdown', close, true); document.addEventListener('keydown', close, true); document.addEventListener('scroll', close, true); addEventListener('blur', close);
+    return () => { document.removeEventListener('pointerdown', close, true); document.removeEventListener('keydown', close, true); document.removeEventListener('scroll', close, true); removeEventListener('blur', close); };
+  }, [onClose]);
+  // Keep the menu inside the window: it opens to the left or upward when the pointer is near an edge.
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.left = `${Math.max(4, at.x + r.width > innerWidth - 4 ? at.x - r.width : at.x)}px`;
+    el.style.top = `${Math.max(4, at.y + r.height > innerHeight - 4 ? at.y - r.height : at.y)}px`;
+    el.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+  }, [at.x, at.y]);
+  const move = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const all = [...ref.current!.querySelectorAll<HTMLElement>('[role=menuitem]')], i = all.indexOf(document.activeElement as HTMLElement);
+    all[(i + (e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length]?.focus();
+  };
+  return <div ref={ref} class="menu ctx-menu" data-ui="context-menu" role="menu" aria-label={label} style={{ left: at.x, top: at.y }} onKeyDown={move}>
+    {items.map(a => <button type="button" role="menuitem" key={a.label} class={a.danger ? 't-danger' : undefined} aria-disabled={!!a.disabledReason || undefined} data-tip={a.disabledReason}
+      onClick={() => { if (a.disabledReason) return; onClose(); a.onClick(); }}><Icon name={a.icon} />{a.label}</button>)}
+  </div>;
+}
+
+/* ---------- Selection mode: a checkbox column and the action bar (OR-37) ---------- */
+
+/**
+ * Shown in place of the list tools (group and sort) while the list is in selection mode, at the same height (OR-23).
+ * The box selects every loaded row or none; actions apply to the selected rows; Esc or the cross leaves the mode.
+ */
+export function SelectBar({ count, total, onAll, onNone, actions: acts, onExit }: {
+  count: number; total: number; onAll: () => void; onNone: () => void; actions: MenuItem[]; onExit: () => void;
+}) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !(e.target as Element).closest?.('input,textarea,[role=menu]')) onExit(); };
+    document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc);
+  }, [onExit]);
+  const all = total > 0 && count >= total;
+  return <div class="select-bar" data-ui="select-bar" role="toolbar" aria-label="Selection">
+    <input type="checkbox" class="row-check" checked={all} ref={el => { if (el) el.indeterminate = count > 0 && !all; }}
+      aria-label={all ? 'Select none' : 'Select all'} data-tip={all ? 'Select none' : 'Select all'} onChange={() => all ? onNone() : onAll()} />
+    <span class="num" aria-live="polite">{count.toLocaleString('en')}</span>
+    {acts.map(a => <Button key={a.label} label={a.label} icon={a.icon} iconOnly kind={a.danger ? 'danger' : 'quiet'}
+      disabledReason={count === 0 ? 'Select rows first' : a.disabledReason} onClick={a.onClick} />)}
+    <span class="grow" />
+    <Button label="Leave selection" icon="x" iconOnly kind="quiet" onClick={onExit} />
+  </div>;
+}
 
 /* ---------- Focus: one project multi-select for the whole app, with presets (OR-34) ---------- */
 

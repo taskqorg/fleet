@@ -53,7 +53,7 @@ export function Results({ id }: { id?: string }) {
       <ListFrame pending={busy} bar={<FilterBar query={query} placeholder="Search results, media:image since:7d" onQuery={setQuery} chips={chips}
         onRemove={c => { const { [c.field]: _, ...rest } = view.extra ?? {}; set({ extra: rest }); }}
         onClear={() => { setQuery(''); set({ q: undefined, state: [], extra: {} }); }} shown={rows?.length ?? 0} total={rows?.length ?? 0}
-        extra={<StateCounters family="artifact" label="Results by state" counts={{ stored: null, pending: null, failed: null, deleted: null }} active={states}
+        counters={<StateCounters family="artifact" label="Results by state" counts={{ stored: null, pending: null, failed: null, deleted: null }} active={states}
           onAll={() => set({ state: [] })} onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>
         {!rows ? <Skeleton rows={8} /> : !rows.length ? <Empty text="No results match." />
           : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" onEnd={() => next !== null && !busy && load(next)}

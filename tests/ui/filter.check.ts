@@ -88,7 +88,13 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await step('focus first row', `document.querySelector('.vl-row .row-link').click()`, false);
     const focused = await url();
     rule(N, new URL(origin + focused).searchParams.get('sel') === new URL(origin + beforeFocus).searchParams.get('sel'), 'focus changed sel');
-    await step('check a row', `document.querySelectorAll('.vl-row .row-check')[1].click()`, false);
+    // OR-37: hovering a row moves nothing in it (no hover-only affordances over or beside the row facts).
+    const facts = async () => page.evaluate(() => [...document.querySelectorAll('.vl-row .row-facts')].slice(0, 3).map(e => { const r = e.getBoundingClientRect(); return `${r.left},${r.width}`; }).join('|'));
+    const factsBefore = await facts(); await page.hover('.vl-row:has(.row-facts) .tt'); await page.waitForTimeout(100);
+    rule(N, factsBefore === await facts(), 'hovering a row moved its facts');
+    // Selection mode: a shift click selects a row and shows the checkbox column; the checkbox is the view URL's sel.
+    await step('check a row', `document.querySelectorAll('.vl-row .row-link')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }))`, false);
+    rule(N, await page.evaluate(() => document.querySelectorAll('.vl-row .row-check:checked').length === 1 && !!document.querySelector('[data-ui=select-bar]')), 'shift click did not enter selection mode');
     const checked = await url();
     rule(N, checked.split('?')[0] === focused.split('?')[0], 'checking a row changed focus');
     rule(N, /[?&]sel=/.test(checked), 'checked row not in the URL');
