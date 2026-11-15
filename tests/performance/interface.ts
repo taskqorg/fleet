@@ -27,6 +27,10 @@ export type Workload = { sourceDistribution: SourceDistribution; readers: number
 export type SourcePhase = 'warmup' | 'sustained' | 'burst';
 export type PhaseWindow = { phase: SourcePhase; plannedStart: number; plannedEnd: number; actualStart: number; actualEnd: number | null; startOvershootMs: number; endOvershootMs: number | null; offered: number; expected: number; offering: 'paced' | 'early' };
 
+// Fixed before qualification: pace each second's requested facts over its first800ms.
+// The original1000ms windows and conservative confirmation validator stay unchanged.
+export const sourcePacing = { version: 1, offeredSpanMs: 800, minimumTailHeadroomMs: 200 } as const;
+
 // One origin for all phases. Clock injection tests the actual deadline control flow without
 // sleeping for a600-second trial; runtime uses the normal monotonic clock and timer.
 export async function scheduleSourcePhases(spec: Workload, offer: (phase: SourcePhase, due: number) => void, observe: (event: 'start' | 'end', window: PhaseWindow) => void, clock = { now: stamp, sleep }) {
@@ -39,7 +43,7 @@ export async function scheduleSourcePhases(spec: Workload, offer: (phase: Source
     const window: PhaseWindow = { phase, plannedStart, plannedEnd, actualStart, actualEnd: null, startOvershootMs: Math.max(0, actualStart - plannedStart), endOvershootMs: null, offered: 0, expected, offering: phase === 'burst' ? 'early' : 'paced' };
     windows.push(window); observe('start', { ...window });
     for (let i = 0; i < expected; i++) {
-      const due = phase === 'burst' ? plannedStart : plannedStart + i * 1000 / spec.rate;
+      const due = phase === 'burst' ? plannedStart : plannedStart + Math.floor(i / spec.rate) * 1000 + (i % spec.rate) * sourcePacing.offeredSpanMs / spec.rate;
       await until(due); offer(phase, due); window.offered++;
     }
     await until(plannedEnd);
@@ -125,21 +129,21 @@ export function sourceRate(facts: Fact[], spec: Workload, uncertaintyMs = source
       const spanMs = bucket.length ? Math.max(...bucket.map(f => f.upper ?? Infinity)) - Math.min(...bucket.map(f => f.lower)) + 2 * uncertaintyMs : null;
       const plannedStart = window ? window.plannedStart + second * 1000 : null, plannedEnd = plannedStart === null ? null : plannedStart + 1000;
       const withinOriginalWindow = plannedStart !== null && bucket.every(f => f.lower >= plannedStart && f.upper !== null && f.upper + 2 * uncertaintyMs <= plannedEnd!);
-      return { second, count: bucket.length, spanMs, plannedStart, plannedEnd, valid: bucket.length === spec.rate && spanMs !== null && spanMs <= 1000 && withinOriginalWindow };
+      return { second, count: bucket.length, spanMs, plannedStart, plannedEnd, lastPlannedOffer: bucket.length ? Math.max(...bucket.map(f => f.due)) : null, lastSubmitted: bucket.length ? Math.max(...bucket.map(f => f.lower)) : null, lastConfirmed: bucket.length ? Math.max(...bucket.map(f => f.upper ?? Infinity)) : null, confirmationTailHeadroomMs: plannedEnd === null || !bucket.length ? null : plannedEnd - Math.max(...bucket.map(f => f.upper ?? Infinity)) - 2 * uncertaintyMs, valid: bucket.length === spec.rate && spanMs !== null && spanMs <= 1000 && withinOriginalWindow };
     }) : [];
     const notRun = spec.mode === 'controlled-burst' && phase === 'sustained' && expected === 0 && rows.length === 0;
     const valid = notRun ? windowsValid && Number.isFinite(uncertaintyMs) && uncertaintyMs >= 0 : windowsValid && windows.every(w => w.valid) && Number.isFinite(uncertaintyMs) && uncertaintyMs >= 0 && expected > 0 && rows.length === expected && confirmed.length === expected && identitiesValid && spanMs !== null && spanMs <= budgetMs && confirmed.every(f => Number.isFinite(f.lower) && Number.isFinite(f.upper) && f.upper! >= f.lower && f.lower >= window!.plannedStart);
     return { phase, notRun, expected, offered: rows.length, admitted: confirmed.length, confirmed: confirmed.length, transactions: new Set(confirmed.map(f => f.transaction)).size, lower, upper, windowStart: window?.plannedStart ?? null, windowEnd: window?.plannedEnd ?? null, spanMs, budgetMs, windows, minimumConfirmedPerSecond: spanMs && spanMs > 0 ? confirmed.length * 1000 / spanMs : null, valid };
   });
   const unique = new Set(facts.map(f => f.id)).size === facts.length && new Set(facts.flatMap(f => f.transaction ? [f.transaction] : [])).size === facts.filter(f => f.transaction).length;
-  return { status: unique && windowsValid && phases.every(p => p.valid) ? 'qualified' : 'invalid-source-rate', uncertaintyMs, clock: 'same-process monotonic outward brackets from original phase start, includes submission/queue/commit receipt', phaseWindows, phaseWindowsValid: windowsValid, phases };
+  return { pacing: sourcePacing, status: unique && windowsValid && phases.every(p => p.valid) ? 'qualified' : 'invalid-source-rate', uncertaintyMs, clock: 'same-process monotonic outward brackets from original phase start, includes submission/queue/commit receipt', phaseWindows, phaseWindowsValid: windowsValid, phases };
 }
 export const publicationVersion = journalVersion;
 export function sourceMutation(fact: Fact, distribution: SourceDistribution) {
   const totals = `jsonb_build_object('byTool',jsonb_build_object(${literal(marker)},jsonb_build_object('calls',${fact.calls},'errors',${fact.errors})))`;
   const mutation = distribution === 'hot'
     ? `UPDATE execution_totals SET tool_calls=${totals} WHERE execution_id=${literal(fact.execution)};`
-    : `INSERT INTO execution(id,kind,state,project_id,started_at,harness,model) VALUES(${literal(fact.execution)},'agent_run','running',${literal(fact.project)},'2024-01-01','codex','interface-seed1-model-0'); INSERT INTO execution_totals(execution_id,project_id,tool_calls,tool_calls_basis) VALUES(${literal(fact.execution)},${literal(fact.project)},${totals},'measured');`;
+    : `INSERT INTO execution(id,kind,state,project_id,started_at,ended_at,harness,model) VALUES(${literal(fact.execution)},'agent_run','succeeded',${literal(fact.project)},'2024-01-01 00:00:00+00','2024-01-01 00:00:01+00','codex','interface-seed1-model-0'); INSERT INTO execution_totals(execution_id,project_id,tool_calls,tool_calls_basis) VALUES(${literal(fact.execution)},${literal(fact.project)},${totals},'measured');`;
   return mutation;
 }
 export function sourceTransaction(fact: Fact, distribution: SourceDistribution) {

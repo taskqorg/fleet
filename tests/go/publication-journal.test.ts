@@ -32,6 +32,10 @@ test('committed publication journal preserves withheld leaf, old paint, rollback
   const held={id:'held',execution:'journal-held',project,n:1,calls:1,errors:1,lower:0,upper:1,phase:'burst',due:0};
   const other={...held,id:'other',execution:'journal-other',n:2,errors:0};
   c.sql(sourceTransaction(held,'distinct'));c.sql(sourceTransaction(other,'distinct'));
+  // Synthetic completed history must not become phantom live/stuck work or invented runtime.
+  const history=JSON.parse(c.sql(`SELECT json_agg(json_build_object('state',e.state,'start',extract(epoch FROM e.started_at),'end',extract(epoch FROM e.ended_at),'wall',t.wall_ms,'cpu',t.cpu_ms,'api',t.api_ms,'active',t.active_ms,'tokens',t.tokens_input,'toolBasis',t.tool_calls_basis)) FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.id IN ('journal-held','journal-other')`));
+  assert.equal(history.length,2);for(const row of history){assert.equal(row.state,'succeeded');assert.equal(row.start,1704067200);assert.equal(row.end,1704067201);for(const field of ['wall','cpu','api','active','tokens'])assert.equal(row[field],null,'synthetic endpoints never invent measured '+field);assert.equal(row.toolBasis,'measured');}
+
   await until(()=>current().calls===1);const early=current();assert.equal(early.errors,0);
   assert.equal(c.sql("SELECT count(*) FROM resource_work WHERE execution_id='journal-held'").trim(),'1');
   c.sql("DELETE FROM journal_hold WHERE id='journal-held'");await until(()=>current().calls===2);const both=current();assert.equal(both.errors,1);

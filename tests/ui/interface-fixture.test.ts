@@ -105,3 +105,22 @@ test('source validity requires complete horizons and rejects late last commit at
 
 // Requirement: a fact is acknowledged only after exact leaf inclusion and painted same-epoch publication.
 // Risk: a later unrelated leaf/summary crosses the missing fact's prefix; replay drops or double-counts it.
+
+// Requirement: fixed100 facts in each original second, with planned commit headroom.
+// Risk: late-tail fixtures waive a real deadline or silently rebase the next window.
+test('paced100/s retains all600 original windows and rejects slow commits despite headroom', async () => {
+ const spec=workload({rate:100});let now=0;const facts:Fact[]=[];
+ const windows=await scheduleSourcePhases(spec,(phase,due)=>{
+  const id=String(facts.length);facts.push({id,execution:id,project:'p',n:1,calls:1,errors:0,phase,due,lower:now,upper:now+100,transaction:id});
+ },()=>{},{now:()=>now,sleep:async ms=>{now+=ms;}});
+ const sustained=facts.filter(f=>f.phase==='sustained');assert.equal(sustained.length,60000);
+ for(let second=0;second<600;second++){
+  const bucket=sustained.slice(second*100,(second+1)*100),start=60000+second*1000;
+  assert.equal(bucket[0].due,start);assert.equal(bucket[99].due,start+792);
+ }
+ const result=sourceRate(facts,spec,1,windows);assert.equal(result.status,'qualified');
+ assert.equal(result.phases[0].windows.length,600);assert.equal(result.phases[0].windows[0].confirmationTailHeadroomMs,106);
+ const slow=facts.map(f=>f===sustained[99]?{...f,upper:61000}:f);
+ assert.equal(sourceRate(slow,spec,1,windows).status,'invalid-source-rate','all slow facts remain subject to original deadline');
+ assert.equal(windows[2].plannedStart,660000);assert.equal(now,661000);
+});
