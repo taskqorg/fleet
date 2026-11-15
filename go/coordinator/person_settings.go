@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fleet/contract"
 	"maps"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -308,6 +309,8 @@ func checkView(v contract.SavedView) error {
 	return nil
 }
 
+var sectionID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
 // checkPrefs: names are present and unique (views per list), each view is a valid view of its list (viewProblem, the
 // view_link check), widths are not negative.
 func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
@@ -350,10 +353,17 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 			return fail(400, "widths: "+k+" is negative")
 		}
 	}
-	// A last view is that section's own app path: /<id>, /<id>/<focus> or /<id>?<query>, short, never another origin.
+	// A last view is that section's own list: /<id> or /<id>?<query>, short, never another origin; section ids are short
+	// lower-case words and a request names at most 64 of them.
+	if len(r.LastViews) > 64 {
+		return fail(400, "lastViews: at most 64 sections")
+	}
 	for k, v := range r.LastViews {
-		if v != "" && (k == "" || len(v) > 2048 || !(v == "/"+k || strings.HasPrefix(v, "/"+k+"/") || strings.HasPrefix(v, "/"+k+"?")) || strings.Contains(v, "//")) {
-			return fail(400, "lastViews: "+k+" must be an app path of that section")
+		if !sectionID.MatchString(k) {
+			return fail(400, "lastViews: "+k+" is not a section id")
+		}
+		if v != "" && (len(v) > 2048 || !(v == "/"+k || strings.HasPrefix(v, "/"+k+"?")) || strings.Contains(v, "//")) {
+			return fail(400, "lastViews: "+k+" must be that section's list path")
 		}
 	}
 	return nil

@@ -87,6 +87,15 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
     await page.locator('.rail [data-id="tasks"] a').first().click(); await page.waitForURL('**/tasks**');
     rule(N, await url() === grouped, `back to Tasks lost the view: ${await url()} for ${grouped}`);
+    // It is stored for the person: after a reload, Hosts then Tasks from the rail still opens the grouped list.
+    await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
+    const prefsRead = page.waitForResponse(r => r.url().endsWith('/api/ops/person_settings_get'));
+    await page.reload(); await prefsRead; await page.waitForSelector('.rail [data-id="tasks"] a');
+    await page.locator('.rail [data-id="tasks"] a').first().click(); await page.waitForURL('**/tasks**');
+    rule(N, await url() === grouped, `after a reload Tasks lost the view: ${await url()} for ${grouped}`);
+    // The reloaded list settles before the next step measures it (no skeleton, rows on screen, the same rows twice).
+    await page.waitForSelector('[data-ui=data-list] .vl-row .row-link'); await page.waitForFunction(() => !document.querySelector('[data-ui=list-view] .skeleton, .skeleton'));
+    await page.waitForTimeout(500);
     await step('click All', `document.querySelector('.counter.sigma').click()`);
     await step('pick preset', `[...document.querySelectorAll('[data-ui=saved-views] button')].find(b=>/Running/.test(b.textContent)).click()`);
     const beforeFocus = await url();

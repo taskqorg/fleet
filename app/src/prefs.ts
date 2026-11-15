@@ -84,20 +84,17 @@ export const setWidth = (key: string, px: number) =>
   savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, { widths: { [key]: Math.round(px) } });
 
 /**
- * Where the person left each section (its path and query: sort, group, filters, the open item; never the checked rows),
- * so the navigation returns to it. A person setting like the others, saved a moment after the view settles.
+ * Where the person left each section's list (path and query: sort, grouping, filters, search; never the open item or the
+ * checked rows), so the navigation returns to it. This tab's current value is kept here and sent once, when the person
+ * leaves the section or the tab hides, through savePrefs like any other preference.
  */
-const viewTimers = new Map<string, ReturnType<typeof setTimeout>>();
-export function rememberView(section: string, url: string) {
-  if (prefs.value.lastViews?.[section] === url) return;
-  // The navigation sees the view at once; the server gets it once the view settles (typing, quick clicks).
-  prefs.value = { ...prefs.value, lastViews: { ...prefs.value.lastViews, [section]: url } };
-  clearTimeout(viewTimers.get(section));
-  viewTimers.set(section, setTimeout(() => {
-    viewTimers.delete(section);
-    const now = prefs.value.lastViews?.[section];
-    if (now) savePrefs(s => ({ lastViews: { ...s.lastViews, [section]: now } }), { lastViews: { [section]: now } });
-  }, 800));
+const here = new Map<string, string>();
+onClear.add(() => here.clear());
+export function noteView(section: string, url: string) { here.set(section, url); }
+export function saveView(section: string) {
+  const url = here.get(section);
+  if (!url || prefs.value.lastViews?.[section] === url) return;
+  savePrefs(s => ({ lastViews: { ...s.lastViews, [section]: url } }), { lastViews: { [section]: url } });
 }
-/** The path the navigation opens for a section: its last view, or the section itself. */
-export const sectionPath = (section: string) => prefs.value.lastViews?.[section] ?? '/' + section;
+/** The path the navigation opens for a section: its list as last left (this tab first, then the stored one), or the section. */
+export const sectionPath = (section: string) => here.get(section) ?? prefs.value.lastViews?.[section] ?? '/' + section;

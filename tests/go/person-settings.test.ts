@@ -46,12 +46,12 @@ test('P2 preferences (saved views, focus, focus presets, widths, row pins) are s
   }
 });
 
-test('P5 lastViews keeps each section\'s last view, merged by section, removed by an empty string, and only app paths of that section (requirement: the navigation returns to a section as it was left; risk: one section\'s view overwrites another, or a stored value sends the person elsewhere)', async () => {
-  let s = await op('person_settings_set', {lastViews: {tasks: '/tasks?group=state&sort=created', hosts: '/hosts/mac'}});
+test('P5 lastViews keeps each section\'s last list view, merged by section, removed by an empty string, and only app paths of that section (requirement: the navigation returns to a section as it was left; risk: one section\'s view overwrites another, or a stored value sends the person elsewhere)', async () => {
+  let s = await op('person_settings_set', {lastViews: {tasks: '/tasks?group=state&sort=created', hosts: '/hosts'}});
   s = await op('person_settings_set', {lastViews: {tasks: '/tasks?group=none', hosts: ''}});
   assert.deepEqual(s.lastViews, {tasks: '/tasks?group=none'});
   assert.deepEqual((await op('person_settings_get')).lastViews, {tasks: '/tasks?group=none'});
-  for (const bad of [{lastViews: {tasks: '/hosts'}}, {lastViews: {tasks: 'https://evil.example/tasks'}}, {lastViews: {tasks: '/tasks//evil'}}, {lastViews: {tasks: '/tasksx'}}]) {
+  for (const bad of [{lastViews: {tasks: '/hosts'}}, {lastViews: {tasks: 'https://evil.example/tasks'}}, {lastViews: {tasks: '/tasks//evil'}}, {lastViews: {tasks: '/tasksx'}}, {lastViews: {tasks: '/tasks/T-1'}}, {lastViews: {'Bad Key': '/x'}}]) {
     const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify(bad)});
     assert.equal(b.status, 400, JSON.stringify(bad));
   }
