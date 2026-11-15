@@ -60,8 +60,8 @@ try {
       // OR-35, OR-36: Group is an icon, not a word; there is no Filter button.
       for (const el of document.querySelectorAll('.seg-label')) if (visible(el) && /\bgroup\b/i.test(el.innerText)) out.push('OR-35 "Group" written as a word; use the registry icon with a tooltip');
       for (const el of document.querySelectorAll('button')) if (visible(el) && /^filter$/i.test((el.getAttribute('aria-label') || el.innerText).trim())) out.push('OR-36 Filter button; filters are typed in search');
-      // OR-37: pin and checkbox of a row that is not hovered and not set stay hidden.
-      for (const el of document.querySelectorAll('.vl-row .row-acts:not(.set)')) if (!el.closest('.vl-row').matches(':hover') && getComputedStyle(el).opacity !== '0' && matchMedia('(hover:hover)').matches) { out.push('OR-37 row affordances visible without hover'); break; }
+      // OR-37: a list row has no hover-only buttons; row actions live in the row menu and the selection bar.
+      for (const el of document.querySelectorAll('.vl-row [data-ui=button][aria-label="Pin"], .vl-row [data-ui=button][aria-label="Unpin"]')) if (visible(el)) { out.push('OR-37 pin button in a list row; pin from the row menu'); break; }
       // WCAG 1.4.1 / OR-18: attention or danger tone with no icon and no meaning in text or name.
       const MEANING = /fail|error|warn|alert|long|full|low|exhaust|unavailable|offline|need|attention|look|unconfirmed/i;
       for (const el of document.querySelectorAll('[class*="t-danger"], [class*="t-attention"]')) {

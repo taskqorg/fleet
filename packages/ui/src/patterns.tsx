@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, RowCheck, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -38,6 +38,11 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   const [active, setActive] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [closed, setClosed] = useState<string[]>(['completed', 'cancelled']);
+  // Selection mode (OR-37): a checkbox column left of the state; the action bar replaces group and sort.
+  const [selectOn, setSelectOn] = useState(false), [sel, setSel] = useState<number[]>([]);
+  const selecting = selectOn || sel.length > 0;
+  const toggle = (id: number) => { setSelectOn(true); setSel(x => x.includes(id) ? x.filter(i => i !== id) : [...x, id]); };
+  const [menu, setMenu] = useState<{ t: TaskRow; at: { x: number; y: number } } | null>(null);
   const edit = (v: Partial<View>) => { setView({ ...view, ...v }); setActive(null); };
 
   const byChips = items.filter(t => view.chips.every(c => c.field === 'Project' ? t.project === c.value : c.field === 'Agent' ? t.agent === c.value : t.host === c.value)
@@ -45,28 +50,30 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   // ponytail: counts and grouping computed client-side over loaded rows; server aggregates when lists are paged.
   const counts = useMemo(() => { const c: Partial<Record<StateOf<'task'>, number>> = {}; for (const s of Object.keys(states.task) as StateOf<'task'>[]) c[s] = 0; for (const t of byChips) c[t.state]!++; return c; }, [byChips]);
   const shown = view.states.length ? byChips.filter(t => view.states.includes(t.state)) : byChips;
-  const pinnedFirst = [...shown.filter(t => t.pinned), ...shown.filter(t => !t.pinned)];
+  const pinned = shown.filter(t => t.pinned), unpinned = shown.filter(t => !t.pinned);
 
   const rows: Row[] = useMemo(() => {
-    if (view.group === 'none') return pinnedFirst.map(t => ({ kind: 'task', t }));
+    // Pinned rows come first as a group of their own (OR-12); the group is the pin mark.
+    const top: Row[] = pinned.length ? [{ kind: 'group', key: 'g-\u0000pinned', label: 'Pinned', icon: 'pin', tone: 'neutral', count: pinned.length }, ...(closed.includes('\u0000pinned') ? [] : pinned.map(t => ({ kind: 'task' as const, t })))] : [];
+    if (view.group === 'none') return [...top, ...unpinned.map(t => ({ kind: 'task' as const, t }))];
     const g = view.group;
     const keyOf = (t: TaskRow) => String(g === 'priority' ? t.priority : g === 'state' ? t.state : g === 'project' ? t.project : g === 'agent' ? t.agent : t.host);
-    const order = g === 'priority' ? ['0', '1', '2'] : g === 'state' ? ['waiting', 'failed', 'in_progress', 'queued', 'held', 'paused', 'completed', 'cancelled'] : [...new Set(pinnedFirst.map(keyOf))].sort();
+    const order = g === 'priority' ? ['0', '1', '2'] : g === 'state' ? ['waiting', 'failed', 'in_progress', 'queued', 'held', 'paused', 'completed', 'cancelled'] : [...new Set(unpinned.map(keyOf))].sort();
     const head = (k: string): { label: string; icon: IconName; tone: Tone } => {
       if (g === 'priority') return { label: `Priority ${k}`, icon: k === '0' ? 'triangle-alert' : 'list-ordered', tone: k === '0' ? 'danger' : 'neutral' };
       if (g === 'state') { const d = states.task[k as StateOf<'task'>] as StateDef; return { label: d.label, icon: d.icon, tone: d.tone }; }
       if (g === 'agent') return { label: harnesses[k as Harness].label, icon: harnesses[k as Harness].icon, tone: 'neutral' };
       return { label: k, icon: g === 'host' ? 'panels-top-left' : 'folder-open', tone: 'neutral' };
     };
-    const out: Row[] = [];
+    const out: Row[] = [...top];
     for (const k of order) {
-      const items = pinnedFirst.filter(t => keyOf(t) === k);
+      const items = unpinned.filter(t => keyOf(t) === k);
       if (!items.length) continue;
       out.push({ kind: 'group', key: `g-${k}`, count: items.length, ...head(k) });
       if (!closed.includes(k)) for (const t of items) out.push({ kind: 'task', t });
     }
     return out;
-  }, [pinnedFirst, view.group, closed]);
+  }, [pinned, unpinned, view.group, closed]);
 
   return (
     <div class="list-view" data-ui="list-view" style={height ? { '--list-height': height } : undefined}>
@@ -78,34 +85,58 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
             onPick={n => { const v = views.find(x => x.name === n)!; setView(v); setActive(n); }}
             onSave={n => { const v = { ...view, name: n }; setViews([...views.filter(x => x.name !== n), v]); setActive(n); }}
             onUnpin={n => { setViews(views.filter(v => v.name !== n)); if (active === n) setActive(null); }} />
-          <span class="grow" />
+        </>}
+        counters={
           <StateCounters family="task" label="Tasks by state" counts={counts} active={view.states} onAll={() => edit({ states: [] })}
-            onToggle={s => edit({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />
-          <GroupControl value={view.group} options={GROUPS.map(g => [g.id, g.label] as const)} onChange={g => edit({ group: g })} />
-        </>} />
+            onToggle={s => edit({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />}
+        tools={selecting
+          ? <SelectBar count={sel.length} total={shown.length} onAll={() => setSel(shown.map(t => t.id))} onNone={() => setSel([])} onExit={() => { setSelectOn(false); setSel([]); }} actions={[
+              { label: 'Pin', icon: 'pin', onClick: () => sel.forEach(id => !items.find(t => t.id === id)?.pinned && onPin(id)) },
+              { label: 'Unpin', icon: 'pin-off', onClick: () => sel.forEach(id => items.find(t => t.id === id)?.pinned && onPin(id)) },
+              { label: 'Pause', icon: 'pause', onClick: () => {} },
+              { label: 'Continue', icon: 'rotate-cw', onClick: () => {} },
+              { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => {} }]} />
+          : <><GroupControl value={view.group} options={GROUPS.map(g => [g.id, g.label] as const)} onChange={g => edit({ group: g })} />
+            <span class="grow" /><Button label="Select" icon="square" iconOnly kind="quiet" onClick={() => setSelectOn(true)} /></>} />
       <VirtualList items={rows} getKey={r => r.kind === 'group' ? r.key : String(r.t.id)} rowHeight={row} follow="top" label="Tasks"
-        columns={row === ROW ? '1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem 1.75rem' : '1.25rem minmax(0,1fr) 2.75rem 4.5rem 1.75rem'}
-        rowClass={r => r.kind === 'group' ? 'grp' : r.t.id === selected ? 'sel' : ''}
-        header={row === ROW ? <><span /><span>Task</span><span /><span /><span class="r">Age</span><span class="r">Cost</span><span /></> : undefined}
+        columns={(selecting ? '1.25rem ' : '') + (row === ROW ? '1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem' : '1.25rem minmax(0,1fr) 2.75rem 4.5rem')}
+        rowClass={r => r.kind === 'group' ? 'grp' : `${r.t.id === selected ? 'sel' : ''}${sel.includes(r.t.id) ? ' checked' : ''}`}
+        onRowMenu={(r, at) => { if (r.kind === 'task') setMenu({ t: r.t, at }); }}
+        header={row === ROW ? <>{selecting && <span />}<span /><span>Task</span><span /><span /><span class="r">Age</span><span class="r">Cost</span></> : undefined}
         render={r => r.kind === 'group'
           ? <GroupHeader icon={r.icon} tone={r.tone} label={r.label} count={r.count}
               open={!closed.includes(r.key.slice(2))} onToggle={() => { const k = r.key.slice(2); setClosed(closed.includes(k) ? closed.filter(x => x !== k) : [...closed, k]); }} />
-          : <TaskCells t={r.t} now={now} onPin={onPin} onOpen={onOpen} showPriority={view.group !== 'priority'} two={row !== ROW} />} />
+          : <TaskCells t={r.t} now={now} onOpen={onOpen} showPriority={view.group !== 'priority'} two={row !== ROW}
+              check={selecting ? sel.includes(r.t.id) : undefined} onSelect={() => toggle(r.t.id)} selecting={selecting} onPin={() => onPin(r.t.id)}
+              />} />
+      {menu && <ContextMenu at={menu.at} label={menu.t.title} onClose={() => setMenu(null)} items={[
+        { label: 'Open', icon: actions.open, onClick: () => onOpen?.(menu.t) },
+        { label: menu.t.pinned ? 'Unpin' : 'Pin', icon: menu.t.pinned ? 'pin-off' : 'pin', onClick: () => onPin(menu.t.id) },
+        { label: sel.includes(menu.t.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => toggle(menu.t.id) },
+        { label: 'Copy code', icon: actions.copy, onClick: () => copyText(`T-FLT-${menu.t.id}`) },
+        { label: 'Copy link', icon: 'link', onClick: () => copyText(`#/tasks/${menu.t.id}`) },
+        { label: 'Pause', icon: 'pause', onClick: () => {} }]} />}
     </div>
   );
 }
 
-function TaskCells({ t, now, onPin, onOpen, showPriority, two }: { t: TaskRow; now: number; onPin: (id: number) => void; onOpen?: (t: TaskRow) => void; showPriority: boolean; two: boolean }) {
+function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting, onSelect }: { t: TaskRow; now: number; onPin: () => void; onOpen?: (t: TaskRow) => void; showPriority: boolean; two: boolean;
+  check?: boolean; selecting: boolean; onSelect: () => void }) {
   // OR-22: state icon leftmost; ID beside the title; agent mark only while running; delivery stage as a chip.
   // A two-line catalogue row keeps the marks on the second line, so the title has the whole first line (OR-21).
   const marks = <>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}{t.stage && <StageChip stage={t.stage} />}</>;
   return <>
+    {check !== undefined && <span class="lead"><RowCheck checked={check} label={'Select ' + t.title} onToggle={onSelect} /></span>}
     <span class="lead"><StateBadge family="task" state={t.state} reason={t.reason} compact /></span>
-    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} onClick={e => { if (onOpen) { e.preventDefault(); onOpen(t); } }}>{t.title}</a><EntityCode code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} />{two && marks}</span>
+    <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} aria-keyshortcuts="P X"
+      onClick={e => { if (selecting || e.shiftKey) { e.preventDefault(); onSelect(); } else if (onOpen) { e.preventDefault(); onOpen(t); } }}
+      onKeyDown={e => {
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
+        if (e.key === 'p') { e.preventDefault(); onPin(); } else if (e.key === 'x') { e.preventDefault(); onSelect(); }
+      }}>{t.title}</a><EntityCode code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} />{two && marks}</span>
     {!two && <><span>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}</span><span>{t.stage && <StageChip stage={t.stage} />}</span></>}
     <span class="r"><AgeChip t={t.started} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></span>
     <span class="r"><Num m={t.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: t.cost, basis: t.est ? 'estimated' : 'measured' }} kind="money" rise="bad" /></span>
-    <Button label={t.pinned ? 'Unpin' : 'Pin'} icon={t.pinned ? actions.unpin : actions.pin} iconOnly pressed={t.pinned} onClick={() => onPin(t.id)} />
   </>;
 }
 

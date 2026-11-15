@@ -328,6 +328,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .row-link{color:inherit;text-decoration:none}
 .vl-row:has(.row-link),.kv li:has(.row-link){cursor:pointer}
 .vl-row.sel{background:var(--selected);box-shadow:inset 3px 0 var(--accent)}
+.vl-row.checked{background:var(--selected)}
 .seg-group{display:inline-flex;gap:var(--space-1)}
 
 /* App shell and page layout (patterns/app-shell.md) */
@@ -665,11 +666,11 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .row-facts .fact{display:inline-flex;align-items:center;gap:2px}
 .row-facts .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
 .row-facts .chip-age{padding:0}
-.row-acts{position:absolute;right:0;top:0;bottom:0;display:flex;align-items:center;gap:var(--space-1);padding-left:var(--space-2);background:var(--hover);opacity:0;pointer-events:none}
-.vl-row:hover .row-acts,.row-acts:focus-within{opacity:1;pointer-events:auto;background:var(--hover)}
-.vl-row.sel .row-acts{background:var(--selected)}
-.row-acts.set{position:static;opacity:1;pointer-events:auto;background:none}
-@media (hover:none){.row-acts{position:static;opacity:1;pointer-events:auto;background:none}}
+/* Row menu at the pointer (ContextMenu) and the selection bar in place of the list tools (SelectBar). */
+.ctx-menu{position:fixed;top:0;left:0;right:auto;z-index:30}
+.menu button.t-danger{color:var(--tone-fg)}
+.select-bar{display:flex;align-items:center;gap:var(--space-2);flex:1;min-width:0}
+.select-bar .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;min-width:3ch}
 .counter.sigma .num{font-weight:var(--font-weight-bold)}
 /* Focus (OR-34): a nav-row button; its panel opens inline below it. */
 .focus-ctl{padding:0 var(--space-2) var(--space-2)}
