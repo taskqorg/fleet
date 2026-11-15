@@ -2,12 +2,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import http from 'node:http';
 import { cpus, freemem, hostname, platform, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { once } from 'node:events';
+import { pipeline } from 'node:stream/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { fixture, literal, manifest, marker, pricesSQL, projectIDs, seedSQL, type Fixture } from './seed-interface.ts';
 import { startCoordinator, type Coordinator } from '../harness.ts';
@@ -15,6 +17,19 @@ import { PublicationHistory, ObservationBook, RenderBounds, journalVersion, inst
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const stamp = () => performance.now();
+// Stream the actual private-database statistics; query text may exceed spawnSync's1MiB buffer.
+async function exportQueryStatistics(database: string, file: string) {
+  const partial = file + '.partial', output = createWriteStream(partial, { flags: 'wx' });
+  const child = spawn('psql', ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', process.env.FLEET_TRIAL_PGDATA!, '-p', process.env.FLEET_TRIAL_PGPORT ?? '54329', '-U', 'fleet', '-d', database], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', b => { stderr = (stderr + String(b)).slice(-4096); });
+  const exited = new Promise<void>((resolve, reject) => { child.once('error', reject); child.once('close', code => code === 0 ? resolve() : reject(Error('query-statistics psql exit ' + code + ' (stderr tail, at most4096 characters): ' + stderr))); });
+  child.stdin.on('error', () => {});
+  child.stdin.end("SELECT coalesce(json_agg(s),'[]') FROM (SELECT * FROM pg_stat_statements WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database()) ORDER BY total_exec_time DESC) s");
+  try { await Promise.all([pipeline(child.stdout, output), exited]); renameSync(partial, file); }
+  catch (e) { child.kill('SIGTERM'); await exited.catch(() => {}); throw e; }
+}
+
 const command = (name: string, args: string[]) => { try { return execFileSync(name, args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }).trim(); } catch { return null; } };
 export function stats(values: number[]) {
   const v = values.toSorted((a, b) => a - b);
@@ -157,7 +172,7 @@ SELECT pg_current_xact_id()::text AS source_tx, clock_timestamp()::text AS befor
 COMMIT;`;
 }
 type SampleBound = {fact: Fact; reader: string; browser: RenderObservation; publication: {epoch:string;revision:string;calls:number;errors:number}; leaf: LeafState};
-type Run = { id: string; spec: Workload; start: number; done: boolean; phaseWindows: PhaseWindow[]; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; history: PublicationHistory; observations: ObservationBook; bounds: RenderBounds<SampleBound>; processedReceipt: Map<string,number>; unseen: Map<string, Map<string, Fact>>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
+type Run = { id: string; spec: Workload; start: number; done: boolean; abort: AbortController; producer?: Promise<void>; finalization?: Promise<void>; phaseWindows: PhaseWindow[]; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; history: PublicationHistory; observations: ObservationBook; bounds: RenderBounds<SampleBound>; processedReceipt: Map<string,number>; unseen: Map<string, Map<string, Fact>>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
 const pgSnapshot = (c: Coordinator) => JSON.parse(c.sql(`SELECT json_build_object('at',clock_timestamp(),'database',current_database(),'pg',version(),'settings',(SELECT json_object_agg(name,setting) FROM pg_settings WHERE name IN ('shared_buffers','work_mem','max_connections','fsync','synchronous_commit','track_io_timing','track_commit_timestamp','max_wal_size','effective_cache_size')),'databaseStats',(SELECT row_to_json(s) FROM pg_stat_database s WHERE datname=current_database()),'activity',(SELECT coalesce(json_agg(a),'[]') FROM (SELECT pid,state,wait_event_type,wait_event,query_start,left(query,250) query FROM pg_stat_activity WHERE datname=current_database()) a),'backlog',(SELECT count(*) FROM resource_work),'oldestPending',(SELECT min(first_pending_at) FROM resource_work),'builds',(SELECT coalesce(json_agg(b),'[]') FROM resource_build b))`).trim());
 
 export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number }) {
@@ -211,11 +226,17 @@ export async function serve(o: { out: string; history: number; projects: number;
   const close = async () => {
     if (closing) return; closing = true;
     if (monitor) clearInterval(monitor);
+    if (run) {
+      if (!run.done && !run.finalization) run.abort.abort();
+      await run.producer;
+      await run.finalization;
+    }
     server.close(); for (const w of writers) w.close(); await c.stop(); sink.close();
     execFileSync('pg_ctl', ['-D', pgdata, '-m', 'fast', '-w', 'stop'], { stdio: 'ignore' });
     log.end(); sqlLog.end(); spans.end();
   };
-  process.once('SIGTERM', () => void close()); process.once('SIGINT', () => void close());
+  const closeSafely = () => void close().catch(e => console.error('fixture cleanup failed:', e));
+  process.once('SIGTERM', closeSafely); process.once('SIGINT', closeSafely);
   try {
     const db = c.sql('SELECT current_database()').trim();
     execFileSync('psql', ['-X', '-q', '-v', 'ON_ERROR_STOP=1', '-h', pgdata, '-p', process.env.FLEET_TRIAL_PGPORT ?? '54329', '-U', 'postgres', '-d', db], { input: 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements; GRANT pg_read_all_stats TO fleet;', stdio: ['pipe', 'ignore', 'pipe'] });
@@ -269,6 +290,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       emit(correction ? 'render-sample-correction' : 'render-sample', {run:r.id,reader,fact:fact.id,execution:fact.execution,phase:fact.phase,project:fact.project,proof:publication,leaf,upperMs:entry.receipt-fact.lower,sourceAfterCommit:fact.upper,receipt:entry.receipt,proofAcknowledged:stamp(),observation:browser.observation,browser});
     };
     const writeFact = async (r: Run, index: number, phase: string, due: number) => {
+      if (r.abort.signal.aborted) return;
       const project = ids[index % ids.length], list = r.facts.get(project)!;
       const n = list.length + 1, execution = r.spec.sourceDistribution === 'hot' ? project + '-marker' : `${project}-${r.id}-leaf-${index}`;
       const fact: Fact = { id: `${r.id}-${index}`, execution, project, n, calls: r.spec.sourceDistribution === 'hot' ? n : 1, errors: r.spec.sourceDistribution === 'distinct' && index % 7 === 0 ? 1 : 0, lower: stamp(), upper: null, phase, due }; list.push(fact); r.count++;
@@ -305,7 +327,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       })().finally(() => proofReads.delete(key));
       proofReads.set(key, task); return task;
     };
-    const finish = async (r: Run) => {
+    const finishOwned = async (r: Run) => {
       await Promise.allSettled([...proofReads.values()]);
       const missing: object[] = [];
       for (const [reader, { project }] of r.readers) {
@@ -346,16 +368,32 @@ export async function serve(o: { out: string; history: number; projects: number;
         journalFile.end();notificationFile.end();await Promise.all([once(journalFile,'finish'),once(notificationFile,'finish')]);
         journalStats = {notificationLinks,...JSON.parse(c.sql(`SELECT json_build_object('publications',(SELECT count(*) FROM interface_publication),'deltas',(SELECT count(*) FROM interface_publication_delta),'bytes',pg_total_relation_size('interface_publication')+pg_total_relation_size('interface_publication_delta'))`))};
       } catch (e) { journalFile.destroy(); notificationFile.destroy(); r.errors.push('journal-export:' + String(e)); }
+      const auxiliaryErrors: string[] = [];
+      try { writeFileSync(resolve(o.out, r.id + '-pg-after.json'), JSON.stringify(pgSnapshot(c), null, 2)); } catch (e) { auxiliaryErrors.push('pg-snapshot:' + String(e)); }
+      try { await exportQueryStatistics(db, resolve(o.out, r.id + '-query-statistics.json')); } catch (e) { auxiliaryErrors.push('query-statistics:' + String(e)); }
       const rate = sourceRate(allFacts, r.spec, sourceClockUncertaintyMs, r.phaseWindows);
       const failed = hasRenderFailure(r.spec.mode, r.metrics.lags, r.errors.length, missing.length);
       const source = { distribution: r.spec.sourceDistribution, logicalFactCount: allFacts.length, logicalFacts: allFacts.map(f => f.id), projects: [...r.facts.keys()], leafIDs: [...new Set(allFacts.map(f => f.execution))], distinctLeaves: new Set(allFacts.map(f => f.execution)).size, canonicalMutations: allFacts.filter(f => f.upper !== null).length * (r.spec.sourceDistribution === 'hot' ? 1 : 2), commitTransactionCount: new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : [])).size, commitTransactions: [...new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : []))] };
       const recordedSpec = { ...r.spec, fixture: f };
-      const result = { id: r.id, spec: recordedSpec, candidate: sourceCandidate, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : failed ? 'render-or-recovery-failed' : null, renderVerdict: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', sourceRate: rate, source, diagnostic: r.spec.mode === 'controlled-burst', classifications: [r.spec.mode, r.spec.sourceDistribution, ...(r.spec.mode === 'controlled-burst' ? ['diagnostic', 'not-full-envelope'] : [])], observations: r.observations.entries.size, journalStats, facts: r.count, readers: [...r.readers], expectedSamples, samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: r.errors, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds use the original pre-proof server receipt and include observation transport; proof acknowledgement is separate. Development and controlled-burst are not capacity acceptance. This run alone does not prove the full envelope.' };
+      const result = { id: r.id, spec: recordedSpec, candidate: sourceCandidate, development: o.development, status: rate.status !== 'qualified' ? 'incomplete' : failed ? 'failed' : auxiliaryErrors.length ? 'incomplete' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', reason: rate.status !== 'qualified' ? 'invalid-source-rate' : failed ? 'render-or-recovery-failed' : auxiliaryErrors.length ? 'artifact-export-failed' : null, renderVerdict: failed ? 'failed' : r.spec.mode === 'exceed-capacity' ? 'recovered' : 'passed', sourceRate: rate, source, diagnostic: r.spec.mode === 'controlled-burst', classifications: [r.spec.mode, r.spec.sourceDistribution, ...(r.spec.mode === 'controlled-burst' ? ['diagnostic', 'not-full-envelope'] : [])], observations: r.observations.entries.size, journalStats, facts: r.count, readers: [...r.readers], expectedSamples, samples: stats(r.metrics.lags), sourceWriteMs: stats(r.metrics.writes), scheduleDelayMs: stats(r.metrics.schedule), actionAckMs: stats(r.metrics.controls), recovery, missing, errors: [...r.errors], auxiliaryErrors, artifactsComplete: auxiliaryErrors.length === 0, note: 'Hot mode is hot-execution replacement evidence, never distinct-launch throughput. Legacy hot passed results without source-rate proof are unqualified. Render bounds use the original pre-proof server receipt and include observation transport; proof acknowledgement is separate. Development and controlled-burst are not capacity acceptance. This run alone does not prove the full envelope.' };
       writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: recordedSpec, candidate: sourceCandidate, phaseWindows: r.phaseWindows, source, expected, facts: allFacts, journalStats, observationCount: r.observations.entries.size }, null, 2));
-      r.finish = result; r.done = true; emit('finish', result);
       writeFileSync(resolve(o.out, r.id + '-result.json'), JSON.stringify(result, null, 2));
-      writeFileSync(resolve(o.out, r.id + '-pg-after.json'), JSON.stringify(pgSnapshot(c), null, 2));
-      writeFileSync(resolve(o.out, r.id + '-query-statistics.json'), c.sql("SELECT coalesce(json_agg(s),'[]') FROM (SELECT * FROM pg_stat_statements WHERE dbid=(SELECT oid FROM pg_database WHERE datname=current_database()) ORDER BY total_exec_time DESC) s"));
+      r.finish = structuredClone(result); r.done = true; emit('finish', r.finish as object);
+    };
+    const finish = (r: Run): Promise<void> => {
+      if (r.finalization) return r.finalization;
+      let settled!: () => void;
+      r.finalization = new Promise<void>(resolve => { settled = resolve; });
+      emit('finish-start', { run: r.id });
+      void (async () => {
+        try { await finishOwned(r); }
+        catch (e) {
+          const facts = [...r.facts.values()].flat(), partialSamples = stats([...r.bounds.entries.values()].filter(x => x.confirmed && x.value.fact.phase !== 'warmup').map(x => x.receipt - x.value.fact.lower)), failure = { id: r.id, spec: { ...r.spec, fixture: f }, candidate: sourceCandidate, status: 'incomplete', reason: 'required-finalization-evidence-missing', renderVerdict: partialSamples.violations ? 'failed' : 'unknown', sourceRate: sourceRate(facts, r.spec, sourceClockUncertaintyMs, r.phaseWindows), samples: partialSamples, recovery: null, missing: null, errors: [...r.errors, String(e)], artifactsComplete: false };
+          r.finish = structuredClone(failure); r.done = true;
+          try { writeFileSync(resolve(o.out, 'source-manifest.json'), JSON.stringify({ run: r.id, spec: failure.spec, candidate: sourceCandidate, phaseWindows: r.phaseWindows, facts, recovery: null, errors: failure.errors }, null, 2)); writeFileSync(resolve(o.out, r.id + '-result.json'), JSON.stringify(failure, null, 2)); emit('finish', failure); } catch (writeError) { console.error('fixture result persistence failed:', writeError); }
+        } finally { settled(); }
+      })();
+      return r.finalization;
     };
     const produce = async (r: Run) => {
       const tasks = new Set<Promise<void>>(); let ordinal = 0;
@@ -369,9 +407,9 @@ export async function serve(o: { out: string; history: number; projects: number;
         emit('source-offered', { run: r.id, id: `${r.id}-${n}`, execution: r.spec.sourceDistribution === 'hot' ? project + '-marker' : `${project}-${r.id}-leaf-${n}`, project, phase, due, offeredAt: stamp(), lane: slot });
         const p = chains[slot].then(() => writeFact(r, n, phase, due)); chains[slot] = p; tasks.add(p); void p.finally(() => tasks.delete(p));
       };
-      r.phaseWindows = await scheduleSourcePhases(r.spec, schedule, (event, window) => emit('source-phase-' + event, { run: r.id, window }));
-      await Promise.all(tasks);
-      await sleep(r.spec.recovery * 1000); await finish(r);
+      try { r.phaseWindows = await scheduleSourcePhases(r.spec, schedule, (event, window) => emit('source-phase-' + event, { run: r.id, window }), { now: stamp, sleep: ms => delay(ms, undefined, { signal: r.abort.signal }) }); }
+      finally { await Promise.allSettled(tasks); }
+      await delay(r.spec.recovery * 1000, undefined, { signal: r.abort.signal }); await finish(r);
     };
     server.on('request', async (req, res) => {
       const requestReceived = stamp();
@@ -390,16 +428,16 @@ export async function serve(o: { out: string; history: number; projects: number;
             if (!Array.isArray(b.readers) || b.readers.length !== spec.readers || new Set(b.readers.map((x: any) => x.id)).size !== spec.readers || b.readers.some((x: any) => !ids.includes(x.project))) throw Error('reader barrier mismatch');
             // Fresh server per case: marker counters and prepared baseline must not carry a prior run.
             if (run) throw Error('start a fresh isolated server per case');
-            run = { id: randomUUID(), spec, start: stamp(), done: false, phaseWindows: [], facts: new Map(ids.map(p => [p, []])), seen: new Map(), history: new PublicationHistory(), observations: new ObservationBook(), bounds: new RenderBounds(), processedReceipt: new Map(), unseen: new Map(b.readers.map((x: any) => [x.id, new Map()])), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
+            run = { id: randomUUID(), spec, start: stamp(), done: false, abort: new AbortController(), phaseWindows: [], facts: new Map(ids.map(p => [p, []])), seen: new Map(), history: new PublicationHistory(), observations: new ObservationBook(), bounds: new RenderBounds(), processedReceipt: new Map(), unseen: new Map(b.readers.map((x: any) => [x.id, new Map()])), metrics: { lags: [], writes: [], schedule: [], controls: [] }, errors: [], readers: new Map(b.readers.map((x: any) => [x.id, { project: x.project, visible: true }])), count: 0 };
             for (const anchor of anchors) run.history.ingest(anchor);
-            emit('start', { id: run.id, spec, readers: b.readers, browser: b.browser }); result = { id: run.id }; void produce(run).catch(e => { run!.errors.push(String(e)); void finish(run!); });
+            emit('start', { id: run.id, spec, readers: b.readers, browser: b.browser }); result = { id: run.id }; const startedRun = run; startedRun.producer = produce(startedRun).catch(async e => { startedRun.errors.push(startedRun.abort.signal.aborted ? 'run-cancelled' : String(e)); await finish(startedRun); });
           } else if (path === '/__interface/render') {
             const r = run; if (!r || r.id !== b.run || !r.readers.has(b.reader)) throw Error('unregistered render');
             const reader = r.readers.get(b.reader)!;
             const observation = r.observations.receive(b, requestReceived);
             emit('render-observation', { run: r.id, observation: b, receipt: requestReceived, firstReceipt: observation.firstReceipt, attempt: observation.attempts });
             let reason: string;
-            if (r.done) { reason = 'run-finished'; result = { accepted: false, reason }; }
+            if (r.done || r.finalization) { reason = r.done ? 'run-finished' : 'run-finalizing'; result = { accepted: false, reason }; }
             else if (!observation.consistent) { reason = 'observation-changed'; r.errors.push(reason); result = { accepted: false, reason }; }
             else if (reader.project !== b.project || !Number.isSafeInteger(b.value) || !Number.isSafeInteger(b.errors) || b.value < 0 || b.errors < 0 || !publicationVersion(b.version ?? '') || b.visible !== true || b.text !== `${b.value} · ${b.errors} failed` || !Number.isFinite(b.browserMonotonic) || !Number.isFinite(b.browserWall)) { reason = 'unverified-render-envelope'; r.errors.push(reason); result = { accepted: false, reason }; }
             else {
@@ -430,14 +468,14 @@ export async function serve(o: { out: string; history: number; projects: number;
             if (!run || b.run !== run.id || !run.readers.has(b.reader)) throw Error('unregistered DOM candidate');
             emit('dom-candidate', { ...b, receipt: requestReceived }); result = { accepted: true };
           } else if (path === '/__interface/error') { if (run) run.errors.push(JSON.stringify(b)); emit('browser-error', b); result = { accepted: true }; }
-          else if (path === '/__interface/status') result = run?.finish ?? { done: false, id: run?.id, submitted: run?.count, errors: run?.errors };
+          else if (path === '/__interface/status') result = run?.finish ?? { done: false, id: run?.id, submitted: run?.count, finalizing: !!run?.finalization, errors: run?.errors };
           else if (path === '/__interface/control') {
             const begin = stamp(), detail = await op('project_detail', { projectId: ids[0] });
             const readMs = stamp() - begin, t = stamp();
             const content = structuredClone(detail.content); content.settings.name = ids[0] + ' control ' + randomUUID().slice(0, 6);
             await op('project_update', { projectId: ids[0], requestId: randomUUID(), baseRevision: detail.revision, content });
             const ackMs = stamp() - t; run?.metrics.controls.push(ackMs); emit('control', { readMs, ackMs }); result = { readMs, ackMs };
-          } else if (path === '/__interface/stop') { result = { stopped: true }; res.end(JSON.stringify(result)); void close(); return; }
+          } else if (path === '/__interface/stop') { result = { stopped: true }; res.end(JSON.stringify(result)); closeSafely(); return; }
           else throw Error('unknown measurement route');
           res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result)); return;
         }
@@ -483,6 +521,8 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
   notificationLog.on('error',e=>notificationErrors.push(String(e)));
   const evidence: any = { spec, placement, hardware: hardware(), chromium: browser.version(), server: config, navigation: [], networkProbes: [] };
   const readers: { id: string; project: string; page: import('playwright').Page }[] = [];
+  let browserComplete = false;
+  const reportError = async (body: object) => { try { await request('error', body); } catch (e) { (evidence.reportingErrors ??= []).push(String(e)); } };
   let controls: ReturnType<typeof setInterval> | undefined;
   try {
     for (let i = 0; i < spec.readers; i++) {
@@ -497,8 +537,8 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
         }catch{notificationErrors.push('unparseable event-source message');}
       });
       if (spec.network === '80ms-10Mbps') { await session.send('Network.emulateNetworkConditions', { offline: false, latency: 80, downloadThroughput: 10_000_000 / 8, uploadThroughput: 10_000_000 / 8 }); }
-      page.on('pageerror', error => void request('error', { reader: id, type: 'pageerror', error: error.message }));
-      page.on('response', response => { if (response.status() >= 400) void request('error', { reader: id, type: 'http', status: response.status(), path: new URL(response.url()).pathname }); });
+      page.on('pageerror', error => void reportError({ reader: id, type: 'pageerror', error: error.message }));
+      page.on('response', response => { if (response.status() >= 400) void reportError({ reader: id, type: 'http', status: response.status(), path: new URL(response.url()).pathname }); });
       await page.addInitScript(()=>{
         const original=window.fetch.bind(window),events:any[]=[];(window as any).__interfaceAPIs=events;
         window.fetch=(input,init)=>{
@@ -591,7 +631,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       }, { run, reader: reader.id, project: reader.project, marker: config.marker });
     }
     let controlling = false;
-    controls = setInterval(() => { if (controlling) return; controlling = true; void request('control').catch(e => request('error', { error: String(e), type: 'control' })).finally(() => { controlling = false; }); }, 1000);
+    controls = setInterval(() => { if (controlling) return; controlling = true; void request('control').catch(e => reportError({ error: String(e), type: 'control' })).finally(() => { controlling = false; }); }, 1000);
     let result;
     for (;;) { await sleep(1000); result = await request('status'); if (result.status) break; }
     clearInterval(controls); controls = undefined;
@@ -599,11 +639,24 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     writeFileSync(resolve(o.out,'api-traces.json'),JSON.stringify(await Promise.all(readers.map(async r=>({reader:r.id,requests:await r.page.evaluate(()=>(window as any).__interfaceAPIs)}))),null,2));
     evidence.notificationCapture={count:notificationCount,bufferMaxBytes:notificationBufferMax,errors:notificationErrors};
     if(notificationErrors.length)throw Error('notification capture failed: '+notificationErrors.join(','));
+    evidence.result = result;
     await readers[0].page.screenshot({ path: resolve(o.out, 'rendered.png') });
-    evidence.result = result; writeFileSync(resolve(o.out, 'browser.json'), JSON.stringify(evidence, null, 2));
+    writeFileSync(resolve(o.out, 'browser.json'), JSON.stringify(evidence, null, 2)); browserComplete = true;
     console.log(JSON.stringify(result));
     if (!['passed', 'recovered'].includes(result.status)) process.exitCode = 1;
-  } finally { if(controls)clearInterval(controls);try{await browser.close();}finally{capturing=false;notificationLog.end();if(!notificationLog.errored)await once(notificationLog,'finish');} }
+  } catch (e) { evidence.failure = String(e); throw e; }
+  finally {
+    if (controls) clearInterval(controls);
+    if (!browserComplete) {
+      evidence.incomplete = true; evidence.visualAcceptance = false;
+      const partial = await Promise.all(readers.map(async r => { try { return { reader: r.id, requests: await r.page.evaluate(() => (window as any).__interfaceAPIs) }; } catch (e) { return { reader: r.id, unavailable: String(e) }; } }));
+      try { writeFileSync(resolve(o.out, 'api-traces-incomplete.json'), JSON.stringify(partial, null, 2)); } catch (e) { evidence.tracePersistenceError = String(e); }
+      try { if (readers[0]) await readers[0].page.screenshot({ path: resolve(o.out, 'rendered-incomplete.png') }); else evidence.screenshotError = 'no reader available'; } catch (e) { evidence.screenshotError = String(e); }
+      evidence.notificationCapture = { count: notificationCount, bufferMaxBytes: notificationBufferMax, errors: notificationErrors };
+      try { writeFileSync(resolve(o.out, 'browser-incomplete.json'), JSON.stringify(evidence, null, 2)); } catch (e) { console.error('incomplete browser evidence persistence failed:', e); }
+    }
+    try { await browser.close(); } finally { capturing = false; notificationLog.end(); if (!notificationLog.errored) await once(notificationLog, 'finish'); }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
