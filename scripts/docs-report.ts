@@ -7,6 +7,8 @@ import { join, normalize, posix } from 'node:path';
 import { slug } from './lab-drift.ts';
 
 const root = join(import.meta.dirname, '..');
+// Outputs of `pnpm run book` (packages/ui/scripts/build-book.mjs): built, never committed, so links to them resolve.
+export const GENERATED = ['docs/design-system/book/index.html', 'docs/design-system/pages/mockups.html', 'docs/design-system/explorations/open-questions-01.html'];
 const git = (...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] });
 
 export type Kind = 'contract' | 'index' | 'paper' | 'evidence' | 'asset' | 'spec' | null;
@@ -87,7 +89,7 @@ function report(baseArg?: string) {
   const text = new Map<string, string>();
   const read = (p: string) => { if (!text.has(p)) text.set(p, readFileSync(join(root, p), 'utf8')); return text.get(p)!; };
   const resolve = (from: string, target: string) => normalize(posix.join(posix.dirname(from), decodeURI(target))).replace(/\\/g, '/').replace(/\/$/, '');
-  const exists = (p: string) => tracked.has(p) || (existsSync(join(root, p)) && statSync(join(root, p)).isDirectory());
+  const exists = (p: string) => tracked.has(p) || GENERATED.includes(p) || (existsSync(join(root, p)) && statSync(join(root, p)).isDirectory());
   const out: string[] = [];
   const add = (p: string, line: number, id: string, msg: string) => out.push(`${p}:${line} ${id} ${msg}`);
 
@@ -139,7 +141,7 @@ function report(baseArg?: string) {
       for (const [m] of l.matchAll(CITE)) {
         const [path, hash] = m.split('#');
         cited.add(path);
-        if (!tracked.has(path)) add(p, i + 1, 'docs.cite', `${path} does not exist`);
+        if (!tracked.has(path) && !GENERATED.includes(path)) add(p, i + 1, 'docs.cite', `${path} does not exist`);
         else if (hash && path.endsWith('.md') && !anchors(read(path)).has(hash)) add(p, i + 1, 'docs.cite', `${m}: no heading #${hash}`);
       }
     });
