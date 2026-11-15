@@ -62,6 +62,7 @@ test('fixture finalization preserves positive confirmed samples and fails unknow
    const observations=events.filter(x=>x.type==='render-observation');assert.ok(observations.length>2);
    for(const observation of observations)assert.equal(observation.firstReceipt,observations.find(x=>x.observation.observation===observation.observation.observation)!.receipt);
   }
+  assert.ok(readFileSync(join(out,'publication-notifications.jsonl'),'utf8').trim(),'committed notification/XID mapping exported for the actual protocol');
   assert.ok(readFileSync(join(out,'publication-journal.jsonl'),'utf8').trim(),'committed journal evidence retained even for failed/no-render runs');
  }finally{
   if(!exited){try{await request('stop',{})}catch{child.kill('SIGTERM')}await gone;}

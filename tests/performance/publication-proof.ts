@@ -112,3 +112,10 @@ export class RenderBounds<T>{
  offer(key:string,receipt:number,value:T){const old=this.entries.get(key);if(old&&old.receipt<=receipt)return false;this.entries.set(key,{receipt,value,confirmed:old?.confirmed??false});return true;}
  confirm(key:string){const entry=this.entries.get(key);if(!entry)return null;entry.confirmed=true;return entry;}
 }
+
+// Bounded post-envelope export binds observed SSE sequence IDs to the actual
+// committed publication XID; no sequence or higher version supplies inclusion.
+export function publicationNotificationsSQL(project:string,transactions:string[]){
+ if(transactions.length>1000||transactions.some(x=>!/^\d+$/.test(x)))throw Error('invalid notification export page');
+ return `(SELECT coalesce(jsonb_agg(jsonb_build_object('sequence',seq::text,'transaction',xid::text,'project',id) ORDER BY xid,seq),'[]'::jsonb) FROM change WHERE kind='resource_summary' AND id=${literal(project)} AND xid=ANY(ARRAY[${[...new Set(transactions)].map(literal).join(',')}]::xid8[]))`;
+}

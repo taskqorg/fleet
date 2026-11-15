@@ -849,12 +849,15 @@ func projectPreparedResources(q *Request, r *contract.ProjectResourcesRequest) (
 	}
 	progress := resourcePublicProgress(s)
 	if !s.Ready {
+		resourceTraceResponse(q, r.ProjectId, "", "preparing")
 		return jsonBytes(contract.ResourcePreparingReply{Kind: "preparing", Version: json.RawMessage("null"), ProjectId: r.ProjectId, Progress: progress}), nil
 	}
 	version := s.Epoch + ":" + s.Revision
 	if r.KnownVersion != nil && *r.KnownVersion == version {
+		resourceTraceResponse(q, r.ProjectId, version, "unchanged")
 		return jsonBytes(contract.ResourceUnchangedReply{Kind: "unchanged", ProjectId: r.ProjectId, Version: version, Progress: progress}), nil
 	}
+	resourceTraceResponse(q, r.ProjectId, version, "ready")
 	return jsonBytes(contract.ResourceReadyReply{Kind: "ready", ProjectId: r.ProjectId, Version: version, Header: s.Header, Progress: progress}), nil
 }
 func projectPreparedItems(q *Request, r *contract.ProjectResourceItemsRequest) (contract.ProjectResourceItemsReply, error) {

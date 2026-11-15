@@ -443,17 +443,44 @@ func resourceValueCosts(c *contract.ResourceContributionV1, l map[string]any, m 
 	return nil
 }
 
-func resourceScopes(q *Request, id string) ([]string, error) {
-	rs, err := q.tx.Query(q.ctx(), `SELECT p FROM (
+const resourceScopesSQL = `SELECT p FROM (
  SELECT project_id p FROM execution WHERE id=$1 UNION SELECT project_id FROM execution_totals WHERE execution_id=$1
  UNION SELECT project_id FROM resource_contribution WHERE execution_id=$1
  UNION SELECT s.project_id FROM resource_work_scope s JOIN resource_work w USING(work_id) WHERE w.execution_id=$1
- ) v WHERE p IS NOT NULL ORDER BY p COLLATE "C"`, id)
+ ) v WHERE p IS NOT NULL ORDER BY p COLLATE "C"`
+
+func resourceScopes(q *Request, id string) ([]string, error) {
+	rs, err := q.tx.Query(q.ctx(), resourceScopesSQL, id)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rs, pgx.RowTo[string])
 }
+
+// Internal hint only: every authoritative scope is rechecked under the sorted locks.
+// One statement has its own snapshot and the maintenance pool's startup RLS scope.
+func resourceScopeHint(ctx context.Context, a *App, id string) ([]string, error) {
+	pool := a.store.readPool
+	if pool == nil {
+		pool = a.store.pool
+	}
+	rs, err := pool.Query(ctx, resourceScopesSQL, id)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rs, pgx.RowTo[string])
+}
+
+// Materialization claims only work rows before evaluating the source in this same
+// statement snapshot. Later work is neither observed as claimed nor deleted.
+func resourceClaimSnapshotSQL() string {
+	return `WITH claimed AS MATERIALIZED (
+ SELECT work_id FROM resource_work WHERE execution_id=$1 AND next_attempt_at<=clock_timestamp()
+ ORDER BY work_id FOR UPDATE SKIP LOCKED)
+ SELECT (SELECT coalesce(array_agg(work_id::text ORDER BY work_id),'{}'::text[]) FROM claimed),
+ CASE WHEN EXISTS(SELECT 1 FROM claimed) THEN (` + resourceSourceSQL + `) ELSE NULL END`
+}
+
 func resourceCheckLocks(q *Request, projects []string) error {
 	for _, p := range projects {
 		if !txHasLock(q.tx, "project:"+p) {
@@ -478,44 +505,33 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 	projects := []string{}
 	claimed := []string{}
 	for {
-		err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-			ps, e := resourceScopes(q, id)
-			if e == nil {
-				projects = ps
-			}
-			return e
-		})
+		scopeStart := time.Now()
+		ps, err := resourceScopeHint(ctx, a, id)
+		projects = ps
 		if err != nil {
 			finalErr = err
 			return err
 		}
+		span.Set("fleet.resource.scope_hint_us", strconv.FormatInt(time.Since(scopeStart).Microseconds(), 10))
 		locks := []string{"execution:" + id}
 		for _, p := range projects {
 			locks = append(locks, "project:"+p)
 		}
+		var bodyFinished time.Time
 		lockStart := time.Now()
 		err = runTxLocks(ctx, a, nil, true, locks, func(q *Request) error {
 			span.Set("fleet.resource.lock_ms", strconv.FormatInt(time.Since(lockStart).Milliseconds(), 10))
+			defer func() { bodyFinished = time.Now() }()
+			claimStart := time.Now()
 			claimed = nil
-			ps, e := resourceScopes(q, id)
-			if e != nil {
-				return e
-			}
-			if e = resourceCheckLocks(q, ps); e != nil {
-				return e
-			}
-			rs, e := q.tx.Query(q.ctx(), `SELECT work_id::text FROM resource_work WHERE execution_id=$1 AND next_attempt_at<=clock_timestamp() ORDER BY work_id FOR UPDATE SKIP LOCKED`, id)
-			if e != nil {
-				return e
-			}
-			claimed, e = pgx.CollectRows(rs, pgx.RowTo[string])
+			var raw []byte
+			e := q.tx.QueryRow(q.ctx(), resourceClaimSnapshotSQL(), id).Scan(&claimed, &raw)
 			if e != nil || len(claimed) == 0 {
 				return e
 			}
-			var raw []byte
-			if e = q.tx.QueryRow(q.ctx(), resourceSourceSQL, id).Scan(&raw); e != nil {
-				return e
-			}
+			span.Set("fleet.resource.claim_snapshot_us", strconv.FormatInt(time.Since(claimStart).Microseconds(), 10))
+			span.Set("fleet.resource.claim_snapshot_returned_at_unix_us", strconv.FormatInt(time.Now().UnixMicro(), 10))
+			stage := time.Now()
 			span.Set("fleet.resource.snapshot_bytes", strconv.Itoa(len(raw)))
 			var s resourceSnapshot
 			if e = json.Unmarshal(raw, &s); e != nil {
@@ -525,6 +541,8 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 			if e != nil {
 				return e
 			}
+			span.Set("fleet.resource.reduce_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
+			stage = time.Now()
 			affected := []string{}
 			if c.ProjectId != nil {
 				affected = append(affected, *c.ProjectId)
@@ -540,20 +558,25 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 				return errResourceOwnership
 			}
 			for _, p := range projects {
-				if e = resourceEnsureProject(q, p); e != nil {
-					return e
-				}
 				var phase string
-				if e = q.tx.QueryRow(q.ctx(), `SELECT phase FROM resource_build WHERE project_id=$1`, p).Scan(&phase); e != nil {
+				lockSummary := func() error {
+					return q.tx.QueryRow(q.ctx(), `SELECT b.phase FROM resource_build b JOIN resource_project_summary s USING(project_id) WHERE b.project_id=$1 FOR UPDATE OF s`, p).Scan(&phase)
+				}
+				e = lockSummary()
+				if errors.Is(e, pgx.ErrNoRows) {
+					if e = resourceEnsureProject(q, p); e != nil {
+						return e
+					}
+					e = lockSummary()
+				}
+				if e != nil {
 					return e
 				}
 				if phase == "clearing" {
 					return errResourceClearing
 				}
-				if _, e = q.tx.Exec(q.ctx(), `SELECT 1 FROM resource_project_summary WHERE project_id=$1 FOR UPDATE`, p); e != nil {
-					return e
-				}
 			}
+			span.Set("fleet.resource.project_setup_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
 			sha, msha := resourceSHA(s.Fingerprint), resourceSHA(m)
 			sourceExists := string(s.Leaf) != "null"
 			equal := s.Old != nil && sourceExists && s.Old.SourceSHA == sha && s.Old.MethodSHA == msha && s.Old.Facts.Included == c.Included
@@ -603,6 +626,12 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 			}
 			return exec(q, `DELETE FROM resource_work WHERE work_id=ANY($1::uuid[])`, claimed)
 		})
+		if !bodyFinished.IsZero() {
+			span.Set("fleet.resource.transaction_end_us", strconv.FormatInt(time.Since(bodyFinished).Microseconds(), 10))
+		}
+		if err == nil && len(claimed) > 0 {
+			span.Set("fleet.resource.commit_confirmed_at_unix_us", strconv.FormatInt(time.Now().UnixMicro(), 10))
+		}
 		if errors.Is(err, errResourceScope) {
 			continue
 		}
@@ -671,7 +700,15 @@ func repairTotalsOwnership(ctx context.Context, a *App, id string) error {
 	}
 }
 
-func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) error {
+func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) (resultErr error) {
+	_, stageSpan := obs.Start(q.ctx(), "resource.apply", "internal")
+	defer func() { stageSpan.End(resultErr) }()
+	stage := time.Now()
+	mark := func(name string) {
+		stageSpan.Set("fleet.resource."+name+"_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
+		stage = time.Now()
+	}
+
 	if !c.Included || c.ProjectId == nil {
 		return nil
 	}
@@ -684,6 +721,7 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
   other_calls=other_calls+$4,other_errors=other_errors+$5 WHERE project_id=$1`, p, sign, history, sign*c.OtherCalls, sign*c.OtherErrors); err != nil {
 		return err
 	}
+	mark("apply_summary")
 	keys := make([]string, 0, len(c.Metrics))
 	for k := range c.Metrics {
 		keys = append(keys, k)
@@ -705,6 +743,11 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 			expected = sign
 		}
 		reason := deref(m.Reason)
+		// Only the entire zero support tuple is a no-op. Measured zero, expected
+		// missing values and reasons retain their presence/coverage/reference deltas.
+		if m.Value == nil && !m.Expected && reason == "" && m.Basis.Valid() {
+			continue
+		}
 		// A subtract updates an existing support row; constraints deliberately reject corrupt ledgers.
 		if sign > 0 {
 			batch.Queue(`INSERT INTO resource_metric(project_id,metric,basis,present_count,expected_count,sum_value,reasons)
@@ -724,6 +767,7 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 	if err := q.tx.SendBatch(q.ctx(), batch).Close(); err != nil {
 		return err
 	}
+	mark("apply_metrics")
 	for _, v := range []struct {
 		metric string
 		value  *int64
@@ -748,6 +792,7 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 			}
 		}
 	}
+	mark("apply_extremes")
 	for _, t := range c.Tools {
 		delta := int64(0)
 		if sign > 0 {
@@ -770,10 +815,13 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 				return err
 			}
 		}
-		if err := exec(q, `UPDATE resource_project_summary SET tool_count=tool_count+$2 WHERE project_id=$1`, p, delta); err != nil {
-			return err
+		if delta != 0 {
+			if err := exec(q, `UPDATE resource_project_summary SET tool_count=tool_count+$2 WHERE project_id=$1`, p, delta); err != nil {
+				return err
+			}
 		}
 	}
+	mark("apply_tools")
 	for _, cost := range c.Costs {
 		delta := int64(0)
 		if sign > 0 {
@@ -796,8 +844,10 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 				return err
 			}
 		}
-		if err := exec(q, `UPDATE resource_project_summary SET cost_count=cost_count+$2 WHERE project_id=$1`, p, delta); err != nil {
-			return err
+		if delta != 0 {
+			if err := exec(q, `UPDATE resource_project_summary SET cost_count=cost_count+$2 WHERE project_id=$1`, p, delta); err != nil {
+				return err
+			}
 		}
 		for _, r := range cost.PriceRefs {
 			delta = 0
@@ -821,21 +871,38 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 					return err
 				}
 			}
-			if err := exec(q, `UPDATE resource_project_summary SET price_count=price_count+$2 WHERE project_id=$1`, p, delta); err != nil {
-				return err
+			if delta != 0 {
+				if err := exec(q, `UPDATE resource_project_summary SET price_count=price_count+$2 WHERE project_id=$1`, p, delta); err != nil {
+					return err
+				}
 			}
 		}
 	}
+	mark("apply_costs_and_prices")
 	return nil
 }
 
 // resourcePreparedHeader reads only fixed-size metric support and indexed extremes. Detail support
 // counts are maintained during replacement, so high-cardinality tools/prices never expand the header.
-func resourcePreparedHeader(q *Request, p string) (contract.PreparedHeaderV1, error) {
+func resourcePreparedHeader(q *Request, p string) (out contract.PreparedHeaderV1, resultErr error) {
 	empty := emptyResourceSummary()
 	h := contract.PreparedHeaderV1{Tokens: empty.Tokens, Durations: empty.Durations, PeakMemoryBytes: empty.PeakMemoryBytes, Tools: contract.PreparedToolsV1{Basis: contract.ResourceBasisUnavailable}}
 	var other int64
-	if err := q.tx.QueryRow(q.ctx(), `SELECT executions,other_calls,tool_count,cost_count,price_count FROM resource_project_summary WHERE project_id=$1`, p).Scan(&h.Executions, &other, &h.ItemCounts.Tools, &h.ItemCounts.Costs, &h.ItemCounts.Prices); err != nil {
+	batch := &pgx.Batch{}
+	batch.Queue(`SELECT executions,other_calls,tool_count,cost_count,price_count FROM resource_project_summary WHERE project_id=$1`, p)
+	batch.Queue(`SELECT metric::text,basis,present_count,expected_count,sum_value::text FROM resource_metric WHERE project_id=$1 ORDER BY metric,basis`, p)
+	batch.Queue(`SELECT
+ (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='start' ORDER BY value LIMIT 1),
+ (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='end' ORDER BY value DESC LIMIT 1),
+ (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='peakMemory' ORDER BY value DESC LIMIT 1)`, p)
+	results := q.tx.SendBatch(q.ctx(), batch)
+	// Closing consumes even unread results; a late SQL error must precede publication.
+	defer func() {
+		if err := results.Close(); resultErr == nil {
+			resultErr = err
+		}
+	}()
+	if err := results.QueryRow().Scan(&h.Executions, &other, &h.ItemCounts.Tools, &h.ItemCounts.Costs, &h.ItemCounts.Prices); err != nil {
 		return h, err
 	}
 	if other > 0 {
@@ -847,7 +914,7 @@ func resourcePreparedHeader(q *Request, p string) (contract.PreparedHeaderV1, er
 		bases             []contract.ResourceBasis
 	}
 	ms := map[string]*measure{}
-	rs, err := q.tx.Query(q.ctx(), `SELECT metric::text,basis,present_count,expected_count,sum_value::text FROM resource_metric WHERE project_id=$1 ORDER BY metric,basis`, p)
+	rs, err := results.Query()
 	if err != nil {
 		return h, err
 	}
@@ -941,10 +1008,7 @@ func resourcePreparedHeader(q *Request, p string) (contract.PreparedHeaderV1, er
 	}
 	h.Durations.Basis = basis("wallMs")
 	var start, end, memory *int64
-	if err = q.tx.QueryRow(q.ctx(), `SELECT
- (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='start' ORDER BY value LIMIT 1),
- (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='end' ORDER BY value DESC LIMIT 1),
- (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='peakMemory' ORDER BY value DESC LIMIT 1)`, p).Scan(&start, &end, &memory); err != nil {
+	if err = results.QueryRow().Scan(&start, &end, &memory); err != nil {
 		return h, err
 	}
 	if start != nil && end != nil && *end >= *start {
@@ -972,15 +1036,29 @@ func resourcePreparedHeader(q *Request, p string) (contract.PreparedHeaderV1, er
 
 // resourcePublish commits the stored header/version and public resource_summary change together.
 // The revision trigger uses the existing permission-filtered change/XID/SSE path.
-func resourcePublish(q *Request, p string) error {
+func resourcePublish(q *Request, p string) (resultErr error) {
+	_, publishSpan := obs.Start(q.ctx(), "resource.publish", "internal")
+	defer func() { publishSpan.End(resultErr) }()
+	stage := time.Now()
+
 	h, err := resourcePreparedHeader(q, p)
+	publishSpan.Set("fleet.resource.header_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
+	stage = time.Now()
 	if err != nil {
 		return err
 	}
-	if err = exec(q, `UPDATE resource_project_summary SET header=$2,revision=revision+1,published_at=clock_timestamp() WHERE project_id=$1`, p, jsonBytes(h)); err != nil {
-		return err
+	var version string
+	// The enqueue column is PostgreSQL void; deliberately skip its codec.
+	err = q.tx.QueryRow(q.ctx(), `WITH published AS (
+ UPDATE resource_project_summary SET header=$2,revision=revision+1,published_at=clock_timestamp()
+ WHERE project_id=$1 RETURNING project_id,epoch,revision)
+ SELECT epoch::text||':'||revision::text,fleet_enqueue_wake('fleet_resource_summary',project_id) FROM published`, p, jsonBytes(h)).Scan(&version, nil)
+	if err == nil {
+		publishSpan.Set("fleet.resource.publication_version", version)
+		obs.From(q.ctx()).Set("fleet.resource.publication_version", version)
 	}
-	return exec(q, `SELECT fleet_enqueue_wake('fleet_resource_summary',$1)`, p)
+	publishSpan.Set("fleet.resource.publication_update_and_wake_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
+	return err
 }
 
 // resourceProgressSQL is used by finalization; authorized readers use the same coverage predicates.
@@ -1515,6 +1593,19 @@ func (s resourceItemQuery) exists(q *Request, key contract.ResourceSortKey, cate
 	where, args := s.position(values, comparison)
 	return has(q, "SELECT 1 FROM "+s.table+" WHERE "+where+" LIMIT 1", args...)
 }
+
+// Identifiers and versions only; a publication version on a failed parent is
+// uncommitted. A response version describes the actual successful typed read.
+func resourceTraceResponse(q *Request, project, version, kind string) {
+	if span := obs.From(q.ctx()); span != nil {
+		span.ProjectID = ptr(project)
+		span.Set("fleet.resource.response_kind", kind)
+		if version != "" {
+			span.Set("fleet.resource.response_version", version)
+		}
+	}
+}
+
 func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (contract.ProjectResourceItemsReply, error) {
 	limit := int64(50)
 	if r.Limit != nil {
@@ -1599,6 +1690,7 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 		return nil, fail(409, "Resource build replaced; restart with around anchor")
 	}
 	if !s.Ready {
+		resourceTraceResponse(q, r.ProjectId, "", "preparing")
 		return jsonBytes(contract.ResourcePreparingReply{Kind: "preparing", Version: json.RawMessage("null"), ProjectId: r.ProjectId, Progress: resourcePublicProgress(s)}), nil
 	}
 	iq := resourceItemsQuery(r, query)
@@ -1710,6 +1802,7 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 			}
 		}
 	}
+	resourceTraceResponse(q, r.ProjectId, out.Version, "page")
 	return jsonBytes(out), nil
 }
 

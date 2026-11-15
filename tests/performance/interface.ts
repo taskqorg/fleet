@@ -11,7 +11,7 @@ import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { fixture, literal, manifest, marker, pricesSQL, projectIDs, seedSQL, type Fixture } from './seed-interface.ts';
 import { startCoordinator, type Coordinator } from '../harness.ts';
-import { PublicationHistory, ObservationBook, RenderBounds, journalVersion, installPublicationJournalSQL, publicationJournalSQL, publicationAnchorsSQL, type JournalPublication, type RenderObservation, type LeafState } from './publication-proof.ts';
+import { PublicationHistory, ObservationBook, RenderBounds, journalVersion, installPublicationJournalSQL, publicationJournalSQL, publicationAnchorsSQL, publicationNotificationsSQL, type JournalPublication, type RenderObservation, type LeafState } from './publication-proof.ts';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const stamp = () => performance.now();
@@ -68,7 +68,7 @@ function candidate() {
   const status = command('git', ['status', '--porcelain']);
   const binary = process.env.FLEET_TRIAL_SERVER ?? 'go/bin/fleet-coordinator';
   if (!existsSync(binary)) throw Error('build candidate coordinator first: ' + binary);
-  const files = ['tests/performance/interface.ts', 'tests/performance/seed-interface.ts', 'tests/harness.ts', 'app/src/api.ts'];
+  const files = ['tests/performance/interface.ts', 'tests/performance/seed-interface.ts', 'tests/performance/publication-proof.ts', 'tests/harness.ts', 'app/src/api.ts'];
   return { sha, dirty: status, diffSHA256: createHash('sha256').update(command('git', ['diff', 'HEAD']) ?? '').digest('hex'), sourceFiles: Object.fromEntries(files.map(p => [p, createHash('sha256').update(readFileSync(p)).digest('hex')])), binarySHA256: createHash('sha256').update(readFileSync(binary)).digest('hex'), builtAssets: command('sh', ['-c', 'find dist/app -type f -name "*.js" -exec shasum -a 256 {} \\;']) };
 }
 
@@ -317,6 +317,8 @@ export async function serve(o: { out: string; history: number; projects: number;
       if (r.metrics.lags.length + missing.length !== expectedSamples) r.errors.push('render sample count mismatch');
       let journalStats: unknown = null;
       const journalFile = createWriteStream(resolve(o.out, 'publication-journal.jsonl'));
+      const notificationFile=createWriteStream(resolve(o.out,'publication-notifications.jsonl'));
+      let notificationLinks=0;
       try {
         const scopes = await observer.run('', `(SELECT coalesce(jsonb_agg(p),'[]'::jsonb) FROM (SELECT DISTINCT project,epoch FROM interface_publication ORDER BY project,epoch) p)`);
         for (const scope of scopes.payload) {
@@ -324,13 +326,17 @@ export async function serve(o: { out: string; history: number; projects: number;
           for (;;) {
             const page = await observer.run('', publicationJournalSQL(scope.project, scope.epoch, cursor));
             for (const row of page.payload as JournalPublication[]) if (!journalFile.write(JSON.stringify(row) + '\n')) await once(journalFile, 'drain');
+            if(page.payload.length){
+              const links=await observer.run('',publicationNotificationsSQL(scope.project,page.payload.map((row:JournalPublication)=>row.transaction)));
+              for(const row of links.payload){notificationLinks++;if(!notificationFile.write(JSON.stringify(row)+'\n'))await once(notificationFile,'drain');}
+            }
             if (page.payload.length < 1000) break;
             const next = page.payload.at(-1).revision as string; if (next === cursor) throw Error('journal export cursor did not advance'); cursor = next;
           }
         }
-        journalFile.end(); await once(journalFile, 'finish');
-        journalStats = JSON.parse(c.sql(`SELECT json_build_object('publications',(SELECT count(*) FROM interface_publication),'deltas',(SELECT count(*) FROM interface_publication_delta),'bytes',pg_total_relation_size('interface_publication')+pg_total_relation_size('interface_publication_delta'))`));
-      } catch (e) { journalFile.destroy(); r.errors.push('journal-export:' + String(e)); }
+        journalFile.end();notificationFile.end();await Promise.all([once(journalFile,'finish'),once(notificationFile,'finish')]);
+        journalStats = {notificationLinks,...JSON.parse(c.sql(`SELECT json_build_object('publications',(SELECT count(*) FROM interface_publication),'deltas',(SELECT count(*) FROM interface_publication_delta),'bytes',pg_total_relation_size('interface_publication')+pg_total_relation_size('interface_publication_delta'))`))};
+      } catch (e) { journalFile.destroy(); notificationFile.destroy(); r.errors.push('journal-export:' + String(e)); }
       const rate = sourceRate(allFacts, r.spec, sourceClockUncertaintyMs, r.phaseWindows);
       const failed = hasRenderFailure(r.spec.mode, r.metrics.lags, r.errors.length, missing.length);
       const source = { distribution: r.spec.sourceDistribution, logicalFactCount: allFacts.length, logicalFacts: allFacts.map(f => f.id), projects: [...r.facts.keys()], leafIDs: [...new Set(allFacts.map(f => f.execution))], distinctLeaves: new Set(allFacts.map(f => f.execution)).size, canonicalMutations: allFacts.filter(f => f.upper !== null).length * (r.spec.sourceDistribution === 'hot' ? 1 : 2), commitTransactionCount: new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : [])).size, commitTransactions: [...new Set(allFacts.flatMap(f => f.transaction ? [f.transaction] : []))] };
@@ -462,6 +468,9 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
   if (!config.development && (hostname() === config.hostname || placement.separateMachine !== true || !placement.reservation)) throw Error('separate reserved Chromium machine required');
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ headless: true, args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
+  const notificationLog=createWriteStream(resolve(o.out,'notifications-received.jsonl'));
+  const notificationErrors:string[]=[];let notificationCount=0,notificationBufferMax=0,capturing=true;
+  notificationLog.on('error',e=>notificationErrors.push(String(e)));
   const evidence: any = { spec, placement, hardware: hardware(), chromium: browser.version(), server: config, navigation: [], networkProbes: [] };
   const readers: { id: string; project: string; page: import('playwright').Page }[] = [];
   let controls: ReturnType<typeof setInterval> | undefined;
@@ -470,9 +479,30 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
       const page = await context.newPage(), project = config.projects[i % config.projects.length], id = 'reader-' + i;
       const session = await context.newCDPSession(page);
-      if (spec.network === '80ms-10Mbps') { await session.send('Network.enable'); await session.send('Network.emulateNetworkConditions', { offline: false, latency: 80, downloadThroughput: 10_000_000 / 8, uploadThroughput: 10_000_000 / 8 }); }
+      await session.send('Network.enable');
+      session.on('Network.eventSourceMessageReceived',event=>{
+        if(!capturing)return;
+        try{const change=JSON.parse(event.data);if(change.kind!=='resource_summary'||!config.projects.includes(change.id))return;
+          notificationCount++;notificationLog.write(JSON.stringify({reader:id,cdpMonotonicMs:event.timestamp*1000,receivedAt:stamp(),eventId:event.eventId,change:{sequence:String(change.seq),project:change.id,op:change.op}})+'\n');notificationBufferMax=Math.max(notificationBufferMax,notificationLog.writableLength);
+        }catch{notificationErrors.push('unparseable event-source message');}
+      });
+      if (spec.network === '80ms-10Mbps') { await session.send('Network.emulateNetworkConditions', { offline: false, latency: 80, downloadThroughput: 10_000_000 / 8, uploadThroughput: 10_000_000 / 8 }); }
       page.on('pageerror', error => void request('error', { reader: id, type: 'pageerror', error: error.message }));
       page.on('response', response => { if (response.status() >= 400) void request('error', { reader: id, type: 'http', status: response.status(), path: new URL(response.url()).pathname }); });
+      await page.addInitScript(()=>{
+        const original=window.fetch.bind(window),events:any[]=[];(window as any).__interfaceAPIs=events;
+        window.fetch=(input,init)=>{
+          const path=new URL(input instanceof Request?input.url:String(input),location.href);
+          if(path.origin!==location.origin||!['/api/ops/project_resources','/api/ops/project_resource_items'].includes(path.pathname))return original(input,init);
+          const trace=crypto.randomUUID().replaceAll('-',''),span=crypto.randomUUID().replaceAll('-','').slice(0,16);
+          const headers=new Headers(init?.headers??(input instanceof Request?input.headers:undefined));headers.set('traceparent',`00-${trace}-${span}-01`);
+          const event:any={trace,span,path:path.pathname,startedAt:performance.now(),browserWall:Date.now()};events.push(event);
+          return original(input,{...init,headers}).then(response=>{
+            event.headersAt=performance.now();event.status=response.status;
+            const json=response.json.bind(response);response.json=()=>json().then(body=>{event.bodyParsedAt=performance.now();event.version=response.ok&&typeof body?.version==='string'?body.version:null;event.kind=typeof body?.kind==='string'?body.kind:null;return body;});return response;
+          }).catch(error=>{event.failedAt=performance.now();event.error=error?.name??'fetch-error';throw error;});
+        };
+      });
       await page.addInitScript(() => { (window as any).__interfaceLongTasks = []; new PerformanceObserver(list => { for (const entry of list.getEntries()) (window as any).__interfaceLongTasks.push({ start: entry.startTime, duration: entry.duration }); }).observe({ type: 'longtask', buffered: true }); });
       const start = stamp(); await page.goto(o.origin + '/projects/' + project);
       await page.getByRole('button', { name: 'Save project', exact: true }).waitFor();
@@ -492,6 +522,10 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       const t0 = stamp(), clock = await request('clock'), t1 = stamp();
       const shaped = await page.evaluate(async () => { const before = performance.now(), c = await (await fetch('/__interface/clock')).json(); return { before, after: performance.now(), server: c }; });
       evidence.networkProbes.push({ reader: id, t0, t1, clock, uncertaintyMs: t1 - t0, shaped, impairment: spec.network === 'unshaped' ? 'none' : 'CDP additional latency80ms,10Mbps each reader; actual network RTT is retained, not relabeled80ms total' });
+      await session.send('Performance.enable');
+      const metricClock=async()=>{const r=await session.send('Performance.getMetrics');return r.metrics.find(x=>x.name==='Timestamp')?.value??null;};
+      const before=await metricClock(),browserClock=await page.evaluate(()=>({monotonic:performance.now(),wall:Date.now(),timeOrigin:performance.timeOrigin})),after=await metricClock();
+      (evidence.clockBridges??=[]).push({reader:id,cdpBeforeSeconds:before,browser:browserClock,cdpAfterSeconds:after,note:'raw same-browser clock bracket; no estimated cross-machine offset subtracted'});
       readers.push({ id, project, page });
     }
     const { id: run } = await request('start', { spec, readers: readers.map(({ id, project }) => ({ id, project })), browser: evidence });
@@ -552,11 +586,14 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     for (;;) { await sleep(1000); result = await request('status'); if (result.status) break; }
     clearInterval(controls); controls = undefined;
     await Promise.all(readers.map(r => r.page.evaluate(() => (window as any).__interfaceStopObservation?.())));
+    writeFileSync(resolve(o.out,'api-traces.json'),JSON.stringify(await Promise.all(readers.map(async r=>({reader:r.id,requests:await r.page.evaluate(()=>(window as any).__interfaceAPIs)}))),null,2));
+    evidence.notificationCapture={count:notificationCount,bufferMaxBytes:notificationBufferMax,errors:notificationErrors};
+    if(notificationErrors.length)throw Error('notification capture failed: '+notificationErrors.join(','));
     await readers[0].page.screenshot({ path: resolve(o.out, 'rendered.png') });
     evidence.result = result; writeFileSync(resolve(o.out, 'browser.json'), JSON.stringify(evidence, null, 2));
     console.log(JSON.stringify(result));
     if (!['passed', 'recovered'].includes(result.status)) process.exitCode = 1;
-  } finally { if (controls) clearInterval(controls); await browser.close(); }
+  } finally { if(controls)clearInterval(controls);try{await browser.close();}finally{capturing=false;notificationLog.end();if(!notificationLog.errored)await once(notificationLog,'finish');} }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

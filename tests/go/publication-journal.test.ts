@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {homedir} from 'node:os';
 import {startCoordinator} from '../harness.ts';
 import {sourceTransaction} from '../performance/interface.ts';
-import {PublicationHistory,installPublicationJournalSQL,publicationAnchorsSQL,publicationJournalSQL} from '../performance/publication-proof.ts';
+import {PublicationHistory,installPublicationJournalSQL,publicationAnchorsSQL,publicationJournalSQL,publicationNotificationsSQL} from '../performance/publication-proof.ts';
 
 // Requirement: the measurement journal binds actual committed I/U/D to exact old publications.
 // Risk: delayed proof acknowledges a withheld leaf, invents a rollback, or guesses through a gap/reset.
@@ -35,6 +35,9 @@ test('committed publication journal preserves withheld leaf, old paint, rollback
   await until(()=>current().calls===1);const early=current();assert.equal(early.errors,0);
   assert.equal(c.sql("SELECT count(*) FROM resource_work WHERE execution_id='journal-held'").trim(),'1');
   c.sql("DELETE FROM journal_hold WHERE id='journal-held'");await until(()=>current().calls===2);const both=current();assert.equal(both.errors,1);
+  const committedRows=JSON.parse(c.sql('SELECT '+publicationJournalSQL(project,epoch,anchors[0].revision)));
+  const links=JSON.parse(c.sql('SELECT '+publicationNotificationsSQL(project,committedRows.map((row:any)=>row.transaction))));
+  assert.equal(links.length,committedRows.length);for(const row of committedRows)assert.ok(links.some((link:any)=>link.project===project&&link.transaction===row.transaction&&/^\d+$/.test(link.sequence)),'notification sequence must bind to a genuine committed publication XID');
   ingest(); // Proof deliberately runs AFTER the database has advanced past the old observed paint.
   assert.equal(h.check(other,epoch+':'+early.revision,'1 · 0 failed','distinct').accepted,true);
   assert.equal(h.check(held,epoch+':'+early.revision,'1 · 0 failed','distinct').accepted,false);
