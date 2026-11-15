@@ -68,14 +68,20 @@ func labFileBindings(files []labFile) []any {
 	return bindings
 }
 
-func labAssessmentInputs(trial doc, checks []any, files []labFile) (string, string) {
-	evaluator := []any{doc{"checks": checks}}
+func labEvaluatorIdentity(checks []any, files []labFile) string {
+	members := []any{}
 	for _, f := range files {
 		if f.path == "tools/program.py" || f.path == "contracts.json" {
-			evaluator = append(evaluator, doc{"path": f.path, "sha256": sha256hex(f.bytes)})
+			members = append(members, doc{"path": f.path, "sha256": sha256hex(f.bytes)})
 		}
 	}
-	return sha256hex([]byte(canonical(evaluator))), sha256hex([]byte(canonical(labFileBindings(files))))
+	sort.Slice(members, func(i, j int) bool { return astr(mapOf(members[i])["path"]) < astr(mapOf(members[j])["path"]) })
+	evaluator := append([]any{doc{"checks": checks}}, members...)
+	return sha256hex([]byte(canonical(evaluator)))
+}
+
+func labAssessmentInputs(trial doc, checks []any, files []labFile) (string, string) {
+	return labEvaluatorIdentity(checks, files), sha256hex([]byte(canonical(labFileBindings(files))))
 }
 
 // Upload before opening the linking transaction. A storage failure cannot make

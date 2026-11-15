@@ -162,3 +162,141 @@ func TestRunChecksRetainsAssessmentEvidence(t *testing.T) {
 		t.Fatal("escaped evaluator root")
 	}
 }
+
+// Requirement: assessment evidence and its contract score link atomically under
+// the current trial identity. Risk: rollback, changed bytes or a newer attempt
+// leaves a passing score attached to stale or missing evidence.
+func TestLabAssessmentLinkIdentityAndRollback(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	trial := planFixture(t, "assessment-trial")
+	definition := doc{"version": float64(2), "id": "assessment", "steps": []any{doc{"id": "route", "kind": "script", "command": "synthetic-not-executed"}}}
+	trial["definition"], trial["definitionSha256"], trial["pipelineId"] = definition, sha256hex([]byte(canonical(definition))), "assessment"
+	trial["steps"] = anys(trial["steps"])[:1]
+	trial["experimentId"], trial["variant"], trial["cell"] = "assessment-exp", "v", doc{"example": "synthetic", "variant": "v", "repeat": 1, "attempt": 1}
+	if err := initPipelinePlan(trial); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256hex([]byte("synthetic assessment bytes"))
+	ref := doc{"checkId": "contract", "schemaId": "synthetic.assessment.v1", "artifactId": "assessment-evidence", "sha256": hash, "evaluatorSha256": sha256hex([]byte("evaluator")), "inputSha256": sha256hex([]byte("inputs"))}
+	result := doc{"projectAssessments": []any{ref}}
+	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id) VALUES('assessment-exp','hello-world','single','assessment')"); err != nil {
+			return err
+		}
+		if err := putRun(q, trial); err != nil {
+			return err
+		}
+		if err := selectPipelineStep(q, trial, 0); err != nil {
+			return err
+		}
+		output := doc{"synthetic": "result"}
+		if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('assessment-result','hello-world','lab',$1,$2,'application/json','output.json',$3,'stored')`, sha256hex(jsonBytes(output)), len(jsonBytes(output)), stepRow(trial, 0)); err != nil {
+			return err
+		}
+		entry := pipelinePlanEntry(trial, 0)
+		entry["inputs"] = []any{}
+		mapOf(entry["dispatch"])["phase"] = "handed_off"
+		mapOf(anys(trial["steps"])[0])["outputArtifactId"] = "assessment-result"
+		if err := completeStep(q, trial, 0, output, nil); err != nil {
+			return err
+		}
+		if err := finishRun(q, trial, "succeeded", ""); err != nil {
+			return err
+		}
+		return exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('assessment-evidence','hello-world','lab',$1,26,'application/json','assessments/synthetic.json',$2,'stored')`, hash, trial["id"])
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rollback := errors.New("injected score/link rollback")
+	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := linkLabAssessments(q, trial, result); err != nil {
+			return err
+		}
+		if _, err := scoreAdd(q, doc{"experimentId": "assessment-exp", "projectId": "hello-world", "trialIds": []any{trial["id"]}, "evaluator": "script:example.checks:pass_fail", "evaluatorVersion": "synthetic", "form": "pass_fail", "value": true}); err != nil {
+			return err
+		}
+		return rollback
+	}); !errors.Is(err, rollback) {
+		t.Fatal(err)
+	}
+	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		current, err := getRun(q, astr(trial["id"]))
+		if err != nil {
+			return err
+		}
+		if current["projectAssessments"] != nil {
+			t.Fatal("rollback retained an evidence link")
+		}
+		var n int
+		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM score WHERE experiment_id='assessment-exp'").Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("rollback retained a contract score")
+		}
+		if err := linkLabAssessments(q, trial, result); err != nil {
+			return err
+		}
+		if err := linkLabAssessments(q, trial, result); err != nil {
+			return err
+		}
+		current, err = getRun(q, astr(trial["id"]))
+		if err != nil {
+			return err
+		}
+		if len(anys(current["projectAssessments"])) != 1 {
+			t.Fatal("idempotent link duplicated evidence")
+		}
+		// A later plan write cannot erase the independently linked evidence.
+		return putRun(q, trial)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	changed := doc{}
+	for k, v := range ref {
+		changed[k] = v
+	}
+	changed["sha256"], changed["artifactId"] = sha256hex([]byte("different bytes")), "assessment-different"
+	err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES('assessment-different','hello-world','lab',$1,15,'application/json','assessments/synthetic.json',$2,'stored')`, changed["sha256"], trial["id"]); err != nil {
+			return err
+		}
+		return linkLabAssessments(q, trial, doc{"projectAssessments": []any{changed}})
+	})
+	var conflict *HTTPError
+	if !errors.As(err, &conflict) || conflict.Code != 409 || conflict.Extra["reason"] != "assessment_identity_conflict" {
+		t.Fatal("changed assessment bytes accepted", err)
+	}
+	failedStorage := doc{"assessments": []any{doc{"checkId": "contract", "schemaId": "synthetic.assessment.v1", "bytes": []byte("{}"), "sha256": sha256hex([]byte("{}"))}}}
+	if err := materializeLabAssessments(env.ctx, env.app, trial, failedStorage, astr(ref["evaluatorSha256"]), astr(ref["inputSha256"])); err == nil || failedStorage["projectAssessments"] != nil {
+		t.Fatal("missing storage fabricated durable evidence", err, failedStorage)
+	}
+	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+		current, err := getRun(q, astr(trial["id"]))
+		if err != nil {
+			return err
+		}
+		if len(anys(current["projectAssessments"])) != 1 {
+			t.Fatal("plan write lost retained assessment")
+		}
+		full := doc{"checks": []any{}}
+		checked := doc{"assessmentSnapshot": labAssessmentSnapshot(current, full)}
+		if err := validateLabAssessmentSnapshot(q, current, doc{"checks": []any{doc{"id": "changed", "run": "exit 0"}}}, checked); err == nil {
+			t.Fatal("changed check snapshot accepted")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err = runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		newer := planFixture(t, "assessment-new-attempt")
+		newer["experimentId"], newer["variant"], newer["cell"] = "assessment-exp", "v", doc{"example": "synthetic", "variant": "v", "repeat": 1, "attempt": 2}
+		if err := putRun(q, newer); err != nil {
+			return err
+		}
+		return linkLabAssessments(q, trial, result)
+	})
+	if !errors.As(err, &conflict) || conflict.Code != 409 {
+		t.Fatal("superseded attempt accepted assessment", err)
+	}
+}

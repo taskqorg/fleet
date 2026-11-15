@@ -579,6 +579,20 @@ func materializePipelineInputs(ctx context.Context, a *App, run doc, index int) 
 				metadata["executionRef"] = entry["executionRef"]
 			}
 			step := mapOf(anys(run["steps"])[i])
+			if native := astr(step["executionId"]); native != "" {
+				if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
+					row, err := first(q, "SELECT definitions FROM execution WHERE id=$1 AND project_id=$2", native, run["projectId"])
+					if err != nil {
+						return err
+					}
+					if row != nil && row["definitions"] != nil {
+						metadata["definitionPins"] = row["definitions"]
+					}
+					return nil
+				}); err != nil {
+					return nil, err
+				}
+			}
 			if step["state"] != nil {
 				metadata["observation"] = firstString(step["observation"], "confirmed")
 				metadata["executionState"] = step["state"]
@@ -804,6 +818,61 @@ func pipelineResultValue(run doc) any {
 				return mapOf(output)["projectResult"]
 			}
 			return output
+		}
+	}
+	return nil
+}
+
+// A rerun is not permission to replay a possibly completed provider/native
+// action. Only the existing command-bound local process proof can release an
+// interrupted script suffix; the original observation stays unconfirmed.
+func pipelineRecoveryFence(q *Request, run doc) error {
+	for i, value := range pipelinePlanEntries(run) {
+		entry := mapOf(value)
+		if entry["activation"] != "selected" {
+			continue
+		}
+		step := mapOf(anys(run["steps"])[i])
+		if !unconfirmed(step) {
+			continue
+		}
+		definition := mapOf(anys(mapOf(run["definition"])["steps"])[i])
+		ref := mapOf(entry["executionRef"])
+		if definition["kind"] != "script" || ref["mode"] != "fresh" {
+			return fail(409, "Unconfirmed external action cannot be replayed by rerun")
+		}
+		native := astr(step["executionId"])
+		execution, err := get(q, native, "execution")
+		if err != nil {
+			return err
+		}
+		if execution == nil || execution["pipelineRunId"] != run["id"] || !same(execution["projectId"], run["projectId"]) {
+			return fail(409, "Interrupted script ownership proof unavailable")
+		}
+		commands, err := all(q, "command", doc{"executionId": native})
+		if err != nil {
+			return err
+		}
+		command, err := suffixCommand(commands)
+		if err != nil {
+			return err
+		}
+		dispatch := mapOf(entry["dispatch"])
+		if dispatch["commandId"] != command["id"] || dispatch["nativeExecutionId"] != native || dispatch["phase"] != "handed_off" {
+			return fail(409, "Interrupted script handoff proof unavailable")
+		}
+		events, err := eventsWhere(q, doc{"executionId": native, "type": "process.reconciled"})
+		if err != nil {
+			return err
+		}
+		matches := 0
+		for _, event := range events {
+			if suffixProof(execution, command, event, stepRow(run, i)) {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return fail(409, "Interrupted script has no unique command-bound process proof")
 		}
 	}
 	return nil

@@ -422,7 +422,7 @@ test('A4 analytics stage 4: a typed evaluator scores each trial through its vari
 });
 
 // One domain fixture extends the counted gateway/S3 above. It speaks the real host protocol; no DB repairs or provider calls.
-async function suffixFixture(projectId = 'cs', differentOuter = false) {
+async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: {id:string;run:string}[]) {
   const secret = trialHostSecret;
   assert.ok(secret, 'shared store host registered');
   const host = async (path: string, body: object, auth = secret) => {
@@ -437,6 +437,7 @@ async function suffixFixture(projectId = 'cs', differentOuter = false) {
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
   example.version = 4000000 + Math.floor(Math.random() * 1e8);
   example.inputs = [{path: 'seed.txt', text: 'frozen local input\n'}];
+  if (checks) example.checks = checks;
   const {examples: [pin]} = ok(await op('lab_examples_add', {projectId, examples: [example], approved: true}));
   const exp = ok(await op('lab_experiment_create', {kind: 'single', projectId, pipelineId: differentOuter ? 'typed-decision' : pipelineId, examples: [pin.artifactId], variants: [{label: 'v', ...(differentOuter ? {pipelineId} : {})}],
     evaluators: [{kind: 'script', ref: 'example.checks', form: 'pass_fail'}], goal: 'Recover only local suffix', hypothesis: 'The confirmed result is reused without another call'}));
@@ -927,4 +928,56 @@ test('Pipeline step terminal ends agree across sequential API/script success, fa
   const cancelled = await suffixFixture('hello-world');
   ok(await op('lab_cell_action', {experimentId: cancelled.exp.id, cell: cancelled.request.cell, action: 'cancel'}));
   const stopped = await until(async () => {const r = await read(cancelled.trial.id);return r.state === 'cancelled' ? r : undefined;}, 'cancelled step end');await typed(stopped);
+});
+
+test('Conditional HTTP plan selects one counted API action and omits a false review execution (requirement: finite v3 activation and canonical artifact binding; risk: a false branch dispatches or a last physical slot replaces the result)', async () => {
+  const fixture = await suffixFixture('hello-world');
+  await fixture.complete(fixture.trial.id, true, fixture.command);
+  const content = structuredClone(fixture.content), pipelineId = name('conditional');
+  const decide = {...content.pipeline.steps[0], output: {p: '${reply.answers.q.noul}', review: false}};
+  const review = {...content.pipeline.steps[0], id: 'review', when: {kind:'boolean',source:{step:'decide',path:['review']},equals:true}};
+  content.pipeline = {id:pipelineId,version:3,resultStep:'final',steps:[decide,review,{id:'final',kind:'script',host:fixture.command.hostId,command:'synthetic-finalizer-not-executed-by-fixture'}]};
+  ok(await op('definition_create',{kind:'pipeline',id:pipelineId,content,message:'conditional protocol fixture'}));
+  const before = seen.length;
+  const started = ok(await op('pipeline_run_create',{pipelineId,projectId:'hello-world',requestId:randomUUID(),example:{prompt:'Synthetic condition fixture'}}));
+  const read = () => call('GET',`/api/pipeline-runs/${started.runId}`).then(ok);
+  const run = await until(async()=>{const value=await read();return value.plan.entries[2].execution?.nativeExecutionId ? value : undefined;},'conditional final preparation');
+  const skipped = run.plan.entries[1];
+  assert.equal(skipped.activation,'not_selected');assert.equal(skipped.executionRef,undefined);assert.equal(skipped.execution,undefined);
+  const children = ok(await op('executions_list',{parentExecutionId:run.id,limit:100})).executions;
+  assert.equal(children.length,2);assert.equal(children.some((row:any)=>row.stepId==='review'),false);
+  const command = await until(async()=>(await fixture.poll()).commands.find((row:any)=>row.executionId===run.plan.entries[2].execution.nativeExecutionId),'conditional host handoff');
+  const controlInput = command.payload.inputs.find((row:any)=>row.path==='__fleet_control/pipeline.json');assert.ok(controlInput);
+  const control = ok(await call('GET',`/api/results/${controlInput.artifactId}`));
+  assert.equal(control.entries[1].activation,'not_selected');assert.equal(control.entries[1].executionRef,undefined);
+  assert.equal(JSON.stringify(control).includes('runToken'),false);
+  const selected = control.inputs.find((row:any)=>row.path==='decide/output.json');assert.ok(selected);
+  await fixture.receipt(command,'started');
+  await fixture.upload(command,JSON.stringify({fleetLineage:{schema:'fleet.result-lineage.v1',selectedSources:[selected]},projectResult:{synthetic:'canonical'}}));
+  await fixture.receipt(command,'completed',{artifacts:['output.json']});
+  const finished = await until(async()=>{const value=await read();return value.state==='succeeded'?value:undefined;},'conditional final result');
+  assert.equal(finished.canonicalResult.mode,'finalizer');assert.equal(finished.canonicalResult.stepId,'final');
+  assert.deepEqual(finished.canonicalResult.selectedSources,[selected]);
+  assert.equal(finished.planSummary.notSelected,1);assert.equal(finished.planSummary.freshExecutions,2);
+  assert.equal(seen.length-before,1,'false review must not call the counted fake provider');
+});
+
+
+test('Lab retains exact assessment bytes for passing and failing contract checks (requirement: project assessment artifact/readback; risk: exit zero becomes model accuracy or nonzero evidence disappears)', async () => {
+  const bytes = '{"schema":"synthetic.assessment.v1","falseAccepts":1}\n';
+  for (const exit of [0,3]) {
+    const command = `mkdir evaluation; printf '%s\\n' '${bytes.trim()}' > evaluation/assessment.json; exit ${exit}`;
+    const fixture = await suffixFixture('hello-world',false,[{id:'contract',run:command}]);
+    const view = await fixture.complete(fixture.trial.id,true,fixture.command);
+    const trial = view.trials.find((row:any)=>row.id===fixture.trial.id);
+    assert.equal(trial.projectAssessments.length,1);
+    const evidence = trial.projectAssessments[0];
+    assert.equal(evidence.sha256,sha(bytes));assert.equal(evidence.schemaId,'synthetic.assessment.v1');
+    const response = await fetch(BASE+'/api/results/'+evidence.artifactId,{headers:{authorization:'Bearer '+SECRET,'x-fleet-person':OWNER}});
+    assert.equal(response.status,200);const retained = await response.text();assert.equal(retained,bytes);
+    const score = view.scores.find((row:any)=>row.trialIds.includes(trial.id));
+    assert.equal(score.value,exit===0,'contract validity does not mean zero model errors');
+    const again = ok(await op('lab_experiment_get',{experimentId:fixture.exp.id})).trials.find((row:any)=>row.id===trial.id);
+    assert.deepEqual(again.projectAssessments,trial.projectAssessments);
+  }
 });

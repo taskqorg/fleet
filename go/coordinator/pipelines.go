@@ -976,6 +976,9 @@ func pipelineOutputs(q *Request, run doc, n int) ([]fileRef, error) {
 			}
 			for _, a := range as {
 				rel := strings.TrimPrefix(astr(a["path"]), "output/")
+				if pipelineReservedInput(rel) {
+					continue // server control is a consumer input, never a producer output
+				}
 				dot := false
 				for _, p := range strings.Split(rel, "/") {
 					dot = dot || strings.HasPrefix(p, ".")
@@ -2111,6 +2114,9 @@ func pipelineRerun(q *Request, r *contract.PipelineRerunRequest) (doc, error) {
 			return nil, fail(409, "Request identity conflict")
 		}
 		return prev[0], nil
+	}
+	if err := pipelineRecoveryFence(q, old); err != nil {
+		return nil, err
 	}
 	// The overrides that pick machines and credentials stay the owner's, as on pipeline_run_create.
 	if ov := mapOf(old["overrides"]); q.person != nil && !fullAccess(q.person) && (ov["host"] != nil || ov["account"] != nil || ov["profile"] != nil) {

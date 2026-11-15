@@ -1664,7 +1664,7 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 					return fail(409, "Evaluator input collides with reserved namespace")
 				}
 			}
-			metadata := doc{"schema": "fleet.lab-trial.v1", "trialId": t["id"], "runId": t["id"], "experimentId": id, "variantId": mapOf(t["cell"])["variant"], "planSummary": pipelinePlanSummary(t), "executionState": t["state"], "observation": firstString(t["observation"], "confirmed"), "resources": doc{"usage": t["usage"], "durationMs": t["durationMs"]}, "inputs": labFileBindings(files)}
+			metadata := doc{"schema": "fleet.lab-trial.v1", "evaluatorSha256": labEvaluatorIdentity(anys(full["checks"]), files), "trialId": t["id"], "runId": t["id"], "experimentId": id, "variantId": mapOf(t["cell"])["variant"], "planSummary": pipelinePlanSummary(t), "executionState": t["state"], "observation": firstString(t["observation"], "confirmed"), "resources": doc{"usage": t["usage"], "durationMs": t["durationMs"]}, "inputs": labFileBindings(files)}
 			files = append(files, labFile{"__fleet_evaluation/trial.json", jsonBytes(metadata)})
 			evaluator, input := labAssessmentInputs(t, anys(full["checks"]), files)
 			todo[astr(t["id"])] = pending{anys(full["checks"]), files, t, evaluator, input, labAssessmentSnapshot(t, full)}
@@ -1974,7 +1974,7 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 		}
 		c := mapOf(t["cell"])
 		var rid string
-		if err := runTx(q.ctx(), q.app, q, true, "experiment:"+id, func(q *Request) error {
+		if err := runTxLocks(q.ctx(), q.app, q, true, []string{GLOBAL, "experiment:" + id}, func(q *Request) error {
 			runs, err := expRuns(q, id)
 			if err != nil {
 				return err
@@ -1982,6 +1982,9 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 			_, latest := expLatest(expTrials(runs))
 			if latest[cell] == nil || latest[cell]["id"] != t["id"] {
 				return fail(409, "Cell source changed; read it again")
+			}
+			if err := pipelineRecoveryFence(q, latest[cell]); err != nil {
+				return err
 			}
 			if err := exec(q, "UPDATE experiment SET state='running' WHERE id=$1 AND state='done'", id); err != nil {
 				return err
@@ -2476,7 +2479,11 @@ func expGet(q *Request, id string) (doc, error) {
 	}
 	tv := []any{}
 	for _, t := range trials {
-		tv = append(tv, trialView(t))
+		view, err := asT[contract.LabTrialRecord](trialView(t))
+		if err != nil {
+			return nil, err
+		}
+		tv = append(tv, view)
 	}
 	judges := []any{}
 	for _, r := range runs {

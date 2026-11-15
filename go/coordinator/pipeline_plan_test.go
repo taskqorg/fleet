@@ -494,3 +494,18 @@ func TestPipelineVerifiedPrefixReuse(t *testing.T) {
 		t.Fatal("corrupt reused output accepted", err)
 	}
 }
+
+// Requirement: ordinary rerun cannot turn an ambiguous API outcome into a new
+// provider invocation. Risk: a retry label bypasses the durable handoff fence.
+func TestPipelineRecoveryRejectsUnconfirmedExternalAction(t *testing.T) {
+	run := planFixture(t, "unknown-action")
+	definition := mapOf(run["definition"])
+	mapOf(anys(definition["steps"])[0])["kind"] = "api"
+	entry := pipelinePlanEntry(run, 0)
+	entry["activation"], entry["executionRef"], entry["dispatch"] = "selected", doc{"mode": "fresh"}, doc{"phase": "handed_off"}
+	mapOf(anys(run["steps"])[0])["observation"] = "unconfirmed"
+	var conflict *HTTPError
+	if err := pipelineRecoveryFence(nil, run); !errors.As(err, &conflict) || conflict.Code != 409 {
+		t.Fatal("ambiguous action accepted for replay", err)
+	}
+}
