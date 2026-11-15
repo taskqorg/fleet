@@ -18,7 +18,14 @@ import (
 )
 
 var (
-	viewNames     = []string{"tasks", "conversations", "hosts", "overview", "results", "projects"}
+	viewNames     = []string{"tasks", "conversations", "hosts", "overview", "results", "projects", "delivery"}
+	deliveryStage = func() []string { // delivery_status's stages, the Delivery list's state filter
+		out := []string{}
+		for _, s := range contract.DeliveryStageValues {
+			out = append(out, string(s))
+		}
+		return out
+	}()
 	artifactState = []string{"stored", "pending", "failed", "deleted"}
 	viewGroups    = slices.Sorted(maps.Keys(taskGroups)) // task_page's groups
 	viewSorts     = func() []string {                    // task_page's sorts, each also descending
@@ -29,7 +36,7 @@ var (
 		return slices.Sorted(slices.Values(out))
 	}()
 	viewKeys = map[string][]string{"tasks": {"group", "preset", "project", "q", "sel", "sort", "state"},
-		"conversations": {"archived", "preset", "project", "q", "sel", "state"}, "results": {"project", "q", "state"}}
+		"conversations": {"archived", "preset", "project", "q", "sel", "state"}, "results": {"project", "q", "state"}, "delivery": {"q", "state"}}
 	schemeURL = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
 )
 
@@ -54,6 +61,8 @@ func viewStates(name string) []string {
 		return listStates // task states, held included
 	case "results":
 		return artifactState
+	case "delivery":
+		return deliveryStage
 	}
 	return sessionStates
 }

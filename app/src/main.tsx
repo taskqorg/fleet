@@ -30,7 +30,7 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
   tasks: { focus: true, view: p => <Tasks id={p.id} /> },
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },
   results: { focus: true, view: p => <Results id={p.id} /> },
-  delivery: { focus: false, view: () => <Delivery /> },
+  delivery: { focus: true, view: p => <Delivery id={p.id} /> },
   hosts: { focus: true, view: p => <Hosts id={p.id} /> },
   runners: { focus: false, view: () => <Runners /> },
   lab: { focus: true, view: p => <Lab id={p.id} /> },

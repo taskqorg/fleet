@@ -2,22 +2,31 @@
 
 App only. Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
-**Purpose.** Answers "where does delivery wait right now, and since when?" for all connected projects together: pull requests from open to installed on hosts.
+**Purpose.** Answers, in this order: what in delivery needs a look, what is moving now, and what the pace is. Covers the pull requests of all connected projects, from open to installed on hosts.
 
-**Layout.** [App shell](../patterns/app-shell.md) without a control column (no catalogue, like Overview). The page head shows the age of the last GitHub read (red after 15 minutes) and a `public GitHub` chip while no key is on the `github` connection. Then:
-* a [stat strip](../controls/stat-strip.md): pull requests per stage and the workers waiting to land; a stage whose oldest pull request is past its limit is red;
-* one line naming the first such stage ("Waiting starts at Queue wait");
-* one stacked [area chart](../controls/area-chart.md) "In flight, 24 hours": a layer per stage from Open to Installing, bottom up, on one scale, so a growing layer shows where delivery backs up; PR stages in the two greys, the merge queue in amber, the release tail in green, the second stage of the queue and of the tail striped;
-* a "Trend" panel: P50 and P90 per stage (PR CI, Queue, Release, Install, Lead) per day over 14 days from `delivery_baseline`, each as a pair of areas over the striped P50 of the baseline the last regression check used (the 7 days before it, or the named snapshot); a stage the last regression check found slower (P50 or P90 of the last 24 hours) shows its values red; the panel is hidden for a person without the fleet project or focused away from it; the head names the open regressions from `delivery_regressions`;
-* one card per stage in pipeline order (Open, PR CI, Queue wait, Queue CI, Releasing, Installing, Installed 24h; Merged 24h for repositories without releases): count and oldest age in the head, an [area chart](../controls/area-chart.md) of the count over 24 hours on one scale for all cards, and the six oldest pull requests (state icon, title with `#number`, release, age in stage; the row opens the pull request on GitHub).
+**Layout.** [List and detail](../patterns/list-detail.md), like Tasks ([D: owner, 2026-11-15](../decisions.md)).
+
+*Control column.* The page head shows the age of the last GitHub read (red after 15 minutes) and a `public GitHub` chip while no key is on the `github` connection. The [filter bar](../controls/filter-bar.md) has the search (`state:` and `project:` terms), the [state counters](../controls/state-counters.md) of the `delivery` family as the stage quick filter, then Group (Stage, Project, None) and Sort (in stage since, opened). Rows are grouped by stage in attention order: Checks failed, Queue checks, Waiting in queue, PR checks, Open, Releasing, Installing, Installed (and Merged for repositories without releases). A row: stage icon, title, `#number` and the release; the time in the stage on the right, red past the stage's limit. A row opens the pull request in the work area.
+
+*Work area, nothing open:*
+1. **Needs a look**, only when something does: the open regressions (`delivery_regressions`), pull requests whose checks failed, and pull requests past their stage's limit, as [problem rows](../controls/problem-row.md); the latest 3 and `+K` (OR-30).
+2. **Moving now, 6 hours:** one lane per pull request not yet installed, in list order, on a shared 6-hour axis ([time strip](../controls/time-strip.md) with parts): the span before the current stage (one part: the current read knows only when the pull request opened and when it entered its stage), then the current stage to now, red past its limit; the time in stage on the right.
+3. **Pace** (the fleet repository's recorded history; hidden for a person focused away from fleet): a range choice (24 h, 7 days, 30 days); [totals](../controls/number.md) of open-to-installed P50 and P90 against the rolling baseline, pull requests merged (and per day), queue removals (and how many were flaky); two [area charts](../controls/area-chart.md): "Where the time goes" (P50 per stage per bucket, stacked: PR checks, queue, release, install) and "Merged" per bucket. A bucket (a day, or 2 hours in the 24 h range) filters the list to the pull requests merged in it, shown as a removable chip.
+
+*Work area, a pull request open:* the title, stage, author and age; totals (open to installed or lead so far, queue runs, removals and flaky ones); the stages on one time axis, each a time strip with its duration (a stage without its own end ends where the next starts); the merge-queue runs with their conclusion and failed jobs; the hosts it is installed on. Other repositories, and fleet pull requests not merged yet, show what the current read knows.
 
 | Inventory item | Shown by |
 |---|---|
-| Delivery stage of each change (review, merge, deployment) | Stage cards and their rows |
-| Where delivery waits | Red stat and age chip, the "waiting starts" line, a rising area |
+| Delivery stage of each change (review, merge, deployment) | The list, grouped by stage; the opened pull request's stages |
+| Where delivery waits | Needs a look; red time in stage; the red part of a lane |
+| Delivery pace and regressions | Pace totals against the baseline; Where the time goes; regressions in Needs a look |
 
-**Data.** `delivery_status`; the trend panel reads `delivery_baseline` and `delivery_regressions` ([delivery health](../../designs/fleet-delivery-pipeline.md#delivery-health)). The coordinator reads GitHub every 6 minutes (pull requests, active workflow runs, releases) through the `github` connection, or unauthenticated for the fleet repository while the connection has no key, and records the per-stage counts at each read. Installed: every host seen in the last hour runs that release or newer (`hosts_list` versions).
+**Live.** Delivery reaches the page through the change stream: each pass that changes a project's pull requests writes `delivery-state:<project>`, and each history refresh writes `delivery-history`, both change kind `delivery`; the page re-reads on that change, and every 5 minutes as a fallback. With a key the coordinator reads GitHub every minute (pull requests, active and the latest finished workflow runs, releases); without one, the fleet repository every 6 minutes. Installed: every host seen in the last hour runs that release or newer.
 
-**Limits per stage.** PR CI 30 min, Queue wait 15 min, Queue CI 30 min, Releasing 20 min, Installing 20 min; Open has none (people work there).
+**Data.** `delivery_status`, and for Pace and the opened pull request `delivery_history`, `delivery_baseline` and `delivery_regressions` ([delivery health](../../designs/fleet-delivery-pipeline.md#delivery-health)). The view (stages, search, group, sort, range, picked bucket, opened pull request) is in the URL.
 
-**Open.** A project focus control filters items and samples by `projectId`. Workers waiting to land is the count of pull requests with auto-merge on or in the merge queue: Fleet keeps no record of the waiting worker itself.
+**Limits per stage.** PR checks 30 min, Waiting in queue 15 min, Queue checks 30 min, Releasing 20 min, Installing 20 min; Open has none (people work there); Checks failed always needs a look.
+
+**Unknown is not zero.** When some GitHub reads failed, the stage counters are unknown (`?`), an alert names the failure, and the rows are the last ones read, said so.
+
+**Open.** Workers waiting to land is no longer shown; Fleet keeps no record of the waiting worker itself.

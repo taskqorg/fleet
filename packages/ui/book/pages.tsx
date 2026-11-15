@@ -10,6 +10,7 @@ import {
   ListDetail, DefinitionEditor, Choice, DraftBar, StepList, FlowStrip, HarnessMark, type StepItem, type FlowNode, type Harness, type StateOf, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
+import { Delivery } from './delivery.tsx';
 import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtures.ts';
 import tokens from '../tokens.json';
 
@@ -540,6 +541,7 @@ function App() {
       <Route path="/pipelines/:id">{(p: { id: string }) => <Pipelines key={p.id} id={p.id} />}</Route>
       <Route path="/pipelines"><Pipelines key="issue-to-pr" /></Route>
       <Route path="/catalogue"><Catalogue /></Route>
+      <Route path="/delivery"><Delivery /></Route>
       <Route path="/"><Overview /></Route>
       <Route path="/overview"><Overview /></Route>
       <Route><Empty text="This section is not mocked up in stage 3." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>

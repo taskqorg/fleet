@@ -50,7 +50,7 @@ try {
     ['/pipelines', ['list-detail', 'state-badge']],
     ['/lab', ['list-detail', 'state-badge']],
     ['/runners', ['time-strip', 'state-badge', 'harness-counts']],
-    ['/delivery', ['app-shell', 'stat-strip', 'area-chart']],
+    ['/delivery', ['list-detail', 'state-counters', 'delivery-overview']],
   ];
   page.on('requestfailed', r => { if (!r.url().includes('/api/stream') && !r.failure()?.errorText.includes('ERR_ABORTED')) errors.push('request failed ' + r.url()); }); // navigation aborts the stream
   page.on('response', r => { if (r.status() >= 400 && !(expectedCatalogueFailure && r.url().includes('/api/ops/catalogue') && r.status() === 503)) errors.push(r.status() + ' ' + r.url()); });

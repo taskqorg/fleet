@@ -208,7 +208,9 @@ func (v *DeliveryHistoryRequest) Validate() error {
 
 // DeliveryItem: One pull request in its current delivery stage; since: when it entered it (RFC 3339). installed and merged are the last 24 hours only.
 type DeliveryItem struct {
+	Merged    *string       `json:"merged,omitempty"`
 	Number    int64         `json:"number"`
+	Opened    *string       `json:"opened,omitempty"`
 	ProjectId string        `json:"projectId"`
 	Release   *string       `json:"release,omitempty"`
 	Repo      string        `json:"repo"`
@@ -462,11 +464,13 @@ func (v DeliverySource) Valid() bool {
 	return false
 }
 
+// DeliveryStage: pr_failed: open, no run active, and the last finished pull_request run on its head failed (read only with a GitHub key)
 type DeliveryStage string
 
 const (
 	DeliveryStagePrOpen     DeliveryStage = "pr_open"
 	DeliveryStagePrCi       DeliveryStage = "pr_ci"
+	DeliveryStagePrFailed   DeliveryStage = "pr_failed"
 	DeliveryStageMqWait     DeliveryStage = "mq_wait"
 	DeliveryStageMqCi       DeliveryStage = "mq_ci"
 	DeliveryStageReleasing  DeliveryStage = "releasing"
@@ -476,7 +480,7 @@ const (
 )
 
 // DeliveryStageValues lists every DeliveryStage in schema order.
-var DeliveryStageValues = []DeliveryStage{DeliveryStagePrOpen, DeliveryStagePrCi, DeliveryStageMqWait, DeliveryStageMqCi, DeliveryStageReleasing, DeliveryStageInstalling, DeliveryStageInstalled, DeliveryStageMerged}
+var DeliveryStageValues = []DeliveryStage{DeliveryStagePrOpen, DeliveryStagePrCi, DeliveryStagePrFailed, DeliveryStageMqWait, DeliveryStageMqCi, DeliveryStageReleasing, DeliveryStageInstalling, DeliveryStageInstalled, DeliveryStageMerged}
 
 // Valid: v is one of the schema's values.
 func (v DeliveryStage) Valid() bool {
