@@ -2,11 +2,11 @@
 import { Projects } from './views/projects.tsx';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
+import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
 import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
 import { access, accessGeneration, ensureAccessGeneration, invalidateAccess, registerAccessValidator } from './access.ts';
 import { op, accessControlOp, signedOut, type Ops } from './api.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset, rememberView, sectionPath } from './prefs.ts';
 import { useDoc } from './store.ts';
 import { startFeed, stopFeed } from './feed.ts';
 import { startStore } from './store.ts';
@@ -71,6 +71,7 @@ const found = (kind: Hit['kind'], go: (to: string) => void): SpotlightProvider =
 
 function App() {
   const [loc, go] = useLocation();
+  const query = useSearch();
   const [update, setUpdate] = useState(false);
   const current = loc.split('/')[1] || 'overview';
   const search = useRef((['task', 'question', 'conversation', 'project', 'host'] as const).map(k => found(k, go))).current;
@@ -102,10 +103,17 @@ function App() {
     return () => { unregister(); stopFeed(); removeEventListener('focus', validate); removeEventListener('online', validate); };
   }, []);
   useEffect(() => { if (signedOut.value) { invalidateAccess('signed out'); void clearAll(true); } }, [signedOut.value]);
+  // Each section's view is remembered as the person leaves it, so the navigation returns to it (prefs.ts rememberView).
+  useEffect(() => {
+    if (access.value.state !== 'open' || !prefsRead.value || !NAV.some(n => n.id === current)) return;
+    const q = new URLSearchParams(query); q.delete('sel');
+    const qs = q.toString();
+    rememberView(current, loc + (qs ? '?' + qs : ''));
+  }, [loc, query, access.value.state, prefsRead.value]);
   // The project focus (OR-34) is a person setting; lists apply it where their view names no projects.
   const focus = prefs.value.focus, presets = prefs.value.focusPresets;
   const focusCtl = (mini: boolean) => <Focus mini={mini} value={focus} presets={presets} />;
-  return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown} focus={access.value.state === 'open' ? focusCtl : undefined}
+  return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={NAV} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown} focus={access.value.state === 'open' ? focusCtl : undefined}
     widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); } } : undefined}>

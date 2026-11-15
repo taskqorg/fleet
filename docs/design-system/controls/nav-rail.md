@@ -18,6 +18,7 @@ Each item has a registry icon (OR-3), a name, an optional counter chip in a tone
 * Right-click (or the context-menu key, Shift+F10) on any item opens a short menu: Pin or Unpin, and for a pinned item Move up and Move down.
 * Drag a pinned item to reorder the pinned group.
 * Pins and their order are a person setting (`pins` in `person_settings_get`/`person_settings_set`) and are restored on every device.
+* A section opens as the person left it: its sort, grouping, filters and open item (`lastViews`, a person setting kept per section as its path and query; checked rows are not kept). Spotlight's section jumps do the same.
 * Counters show only when they are not zero and link to the filtered list. A counter's tone follows the [state badge](state-badge.md) mapping.
 * The current section has the `selected` background.
 * Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Group headings and the search row keep their height (the search hides and its filter clears), the user block keeps its avatar.

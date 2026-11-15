@@ -76,6 +76,9 @@ func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 	if ps.Widths == nil {
 		ps.Widths = map[string]int64{}
 	}
+	if ps.LastViews == nil {
+		ps.LastViews = map[string]string{}
+	}
 	if ps.RowPins == nil {
 		ps.RowPins = map[string][]string{}
 	}
@@ -218,6 +221,16 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			}
 		}
 	}
+	if r.LastViews != nil {
+		next.LastViews = maps.Clone(prev.LastViews)
+		for k, v := range r.LastViews {
+			if v == "" {
+				delete(next.LastViews, k)
+			} else {
+				next.LastViews[k] = v
+			}
+		}
+	}
 	if r.NavCollapsed != nil {
 		next.NavCollapsed = *r.NavCollapsed
 	}
@@ -248,7 +261,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	by := actor(q, "operator")
 	_, err = unscoped(q, func() (struct{}, error) {
 		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(next.Order), "pins": next.Pins,
-			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed}); err != nil {
+			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed, "lastViews": next.LastViews}); err != nil {
 			return struct{}{}, err
 		}
 		change := func(field string, previous, value any) error {
@@ -264,6 +277,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			previous, value any
 		}{{"pins", prev.Pins, next.Pins}, {"views", prev.Views, next.Views}, {"focus", prev.Focus, next.Focus},
 			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}} {
+			// lastViews is where the person was, not a setting: it changes on every navigation and is not audited.
 			a, _ := json.Marshal(f.previous)
 			b, _ := json.Marshal(f.value)
 			if string(a) != string(b) {
@@ -334,6 +348,12 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 	for k, w := range r.Widths {
 		if w < 0 {
 			return fail(400, "widths: "+k+" is negative")
+		}
+	}
+	// A last view is that section's own app path: /<id>, /<id>/<focus> or /<id>?<query>, short, never another origin.
+	for k, v := range r.LastViews {
+		if v != "" && (k == "" || len(v) > 2048 || !(v == "/"+k || strings.HasPrefix(v, "/"+k+"/") || strings.HasPrefix(v, "/"+k+"?")) || strings.Contains(v, "//")) {
+			return fail(400, "lastViews: "+k+" must be an app path of that section")
 		}
 	}
 	return nil

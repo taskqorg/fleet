@@ -82,6 +82,11 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await step('click state counter', `document.querySelector('[data-ui=state-counters] .counter:not(.sigma)').click()`);
     await step('open group choices', `document.querySelector('[data-ui=group-control] button').click()`, false);
     await step('click group Agent', `[...document.querySelectorAll('[data-ui=group-control] [role=menuitemradio]')].find(b=>b.textContent==='Agent').click()`);
+    // The navigation returns to a section as it was left: Hosts and back to Tasks keeps the grouping (prefs.ts rememberView).
+    const grouped = await url();
+    await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
+    await page.locator('.rail [data-id="tasks"] a').first().click(); await page.waitForURL('**/tasks**');
+    rule(N, await url() === grouped, `back to Tasks lost the view: ${await url()} for ${grouped}`);
     await step('click All', `document.querySelector('.counter.sigma').click()`);
     await step('pick preset', `[...document.querySelectorAll('[data-ui=saved-views] button')].find(b=>/Running/.test(b.textContent)).click()`);
     const beforeFocus = await url();

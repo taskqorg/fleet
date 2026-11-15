@@ -8,7 +8,7 @@ import type { View } from '../../packages/view-url/view-url.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
-const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {}, navCollapsed: false };
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {} };
 export const prefs = signal<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
@@ -82,3 +82,22 @@ export const removeFocusPreset = (name: string) => savePrefs(s => ({ focusPreset
 /** A column width in px by key (nav, control); 0 resets to the default. */
 export const setWidth = (key: string, px: number) =>
   savePrefs(s => { const w = { ...s.widths }; if (px) w[key] = Math.round(px); else delete w[key]; return { widths: w }; }, { widths: { [key]: Math.round(px) } });
+
+/**
+ * Where the person left each section (its path and query: sort, group, filters, the open item; never the checked rows),
+ * so the navigation returns to it. A person setting like the others, saved a moment after the view settles.
+ */
+const viewTimers = new Map<string, ReturnType<typeof setTimeout>>();
+export function rememberView(section: string, url: string) {
+  if (prefs.value.lastViews?.[section] === url) return;
+  // The navigation sees the view at once; the server gets it once the view settles (typing, quick clicks).
+  prefs.value = { ...prefs.value, lastViews: { ...prefs.value.lastViews, [section]: url } };
+  clearTimeout(viewTimers.get(section));
+  viewTimers.set(section, setTimeout(() => {
+    viewTimers.delete(section);
+    const now = prefs.value.lastViews?.[section];
+    if (now) savePrefs(s => ({ lastViews: { ...s.lastViews, [section]: now } }), { lastViews: { [section]: now } });
+  }, 800));
+}
+/** The path the navigation opens for a section: its last view, or the section itself. */
+export const sectionPath = (section: string) => prefs.value.lastViews?.[section] ?? '/' + section;
