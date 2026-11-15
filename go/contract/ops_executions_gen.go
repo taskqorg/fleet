@@ -1106,8 +1106,357 @@ func (v *HostsUpdateRequest) Validate() error {
 	return nil
 }
 
-// PipelineGetReply: A pipeline run with its steps, state and results (pipelineRun).
-type PipelineGetReply = map[string]json.RawMessage
+type PipelineActivation string
+
+const (
+	PipelineActivationPending     PipelineActivation = "pending"
+	PipelineActivationSelected    PipelineActivation = "selected"
+	PipelineActivationNotSelected PipelineActivation = "not_selected"
+	PipelineActivationBlocked     PipelineActivation = "blocked"
+)
+
+// PipelineActivationValues lists every PipelineActivation in schema order.
+var PipelineActivationValues = []PipelineActivation{PipelineActivationPending, PipelineActivationSelected, PipelineActivationNotSelected, PipelineActivationBlocked}
+
+// Valid: v is one of the schema's values.
+func (v PipelineActivation) Valid() bool {
+	for _, x := range PipelineActivationValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PipelineArtifactRef struct {
+	ArtifactId string `json:"artifactId"`
+	Sha256     string `json:"sha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineArtifactRef) Validate() error {
+	return nil
+}
+
+type PipelineAuthority struct {
+	ActorEmail            string                  `json:"actorEmail"`
+	ProjectId             string                  `json:"projectId"`
+	RequestedCapabilities []PipelineCapabilityRef `json:"requestedCapabilities"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineAuthority) Validate() error {
+	if v.RequestedCapabilities == nil {
+		return Missing("requestedCapabilities")
+	}
+	for i := range v.RequestedCapabilities {
+		if err := Check(&v.RequestedCapabilities[i], "requestedCapabilities"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PipelineCanonicalResult struct {
+	Artifact            PipelineArtifactRef    `json:"artifact"`
+	ControlArtifact     *PipelineArtifactRef   `json:"controlArtifact,omitempty"`
+	Inputs              []PipelineInputBinding `json:"inputs"`
+	Mode                PipelineResultMode     `json:"mode"`
+	ProducerExecutionId string                 `json:"producerExecutionId"`
+	SelectedSources     []PipelineInputBinding `json:"selectedSources"`
+	StepId              string                 `json:"stepId"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineCanonicalResult) Validate() error {
+	if err := Check(&v.Artifact, "artifact"); err != nil {
+		return err
+	}
+	if v.ControlArtifact != nil {
+		if err := Check(v.ControlArtifact, "controlArtifact"); err != nil {
+			return err
+		}
+	}
+	if v.Inputs == nil {
+		return Missing("inputs")
+	}
+	for i := range v.Inputs {
+		if err := Check(&v.Inputs[i], "inputs"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Mode, "mode"); err != nil {
+		return err
+	}
+	if v.SelectedSources == nil {
+		return Missing("selectedSources")
+	}
+	for i := range v.SelectedSources {
+		if err := Check(&v.SelectedSources[i], "selectedSources"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PipelineCapabilityKind string
+
+const (
+	PipelineCapabilityKindConnection PipelineCapabilityKind = "connection"
+	PipelineCapabilityKindProfile    PipelineCapabilityKind = "profile"
+)
+
+// PipelineCapabilityKindValues lists every PipelineCapabilityKind in schema order.
+var PipelineCapabilityKindValues = []PipelineCapabilityKind{PipelineCapabilityKindConnection, PipelineCapabilityKindProfile}
+
+// Valid: v is one of the schema's values.
+func (v PipelineCapabilityKind) Valid() bool {
+	for _, x := range PipelineCapabilityKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PipelineCapabilityRef struct {
+	Id   string                 `json:"id"`
+	Kind PipelineCapabilityKind `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineCapabilityRef) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type PipelineConditionDecision struct {
+	EvaluatedAtMs   int64                   `json:"evaluatedAtMs"`
+	Kind            PipelineDecisionKind    `json:"kind"`
+	ObservedBoolean *bool                   `json:"observedBoolean,omitempty"`
+	ObservedString  *string                 `json:"observedString,omitempty"`
+	Outcome         PipelineDecisionOutcome `json:"outcome"`
+	Path            []string                `json:"path,omitempty"`
+	Reason          PipelinePlanReason      `json:"reason"`
+	RuleSha256      string                  `json:"ruleSha256"`
+	SourceArtifact  *PipelineArtifactRef    `json:"sourceArtifact,omitempty"`
+	SourceStepId    *string                 `json:"sourceStepId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineConditionDecision) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.Outcome, "outcome"); err != nil {
+		return err
+	}
+	if err := Check(&v.Reason, "reason"); err != nil {
+		return err
+	}
+	if v.SourceArtifact != nil {
+		if err := Check(v.SourceArtifact, "sourceArtifact"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PipelineDecisionKind string
+
+const (
+	PipelineDecisionKindUnconditional PipelineDecisionKind = "unconditional"
+	PipelineDecisionKindBoolean       PipelineDecisionKind = "boolean"
+	PipelineDecisionKindEnum          PipelineDecisionKind = "enum"
+)
+
+// PipelineDecisionKindValues lists every PipelineDecisionKind in schema order.
+var PipelineDecisionKindValues = []PipelineDecisionKind{PipelineDecisionKindUnconditional, PipelineDecisionKindBoolean, PipelineDecisionKindEnum}
+
+// Valid: v is one of the schema's values.
+func (v PipelineDecisionKind) Valid() bool {
+	for _, x := range PipelineDecisionKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PipelineDecisionOutcome string
+
+const (
+	PipelineDecisionOutcomeSelected    PipelineDecisionOutcome = "selected"
+	PipelineDecisionOutcomeNotSelected PipelineDecisionOutcome = "not_selected"
+	PipelineDecisionOutcomeBlocked     PipelineDecisionOutcome = "blocked"
+)
+
+// PipelineDecisionOutcomeValues lists every PipelineDecisionOutcome in schema order.
+var PipelineDecisionOutcomeValues = []PipelineDecisionOutcome{PipelineDecisionOutcomeSelected, PipelineDecisionOutcomeNotSelected, PipelineDecisionOutcomeBlocked}
+
+// Valid: v is one of the schema's values.
+func (v PipelineDecisionOutcome) Valid() bool {
+	for _, x := range PipelineDecisionOutcomeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PipelineDispatch struct {
+	AuthoritySha256   *string               `json:"authoritySha256,omitempty"`
+	ClaimId           *string               `json:"claimId,omitempty"`
+	CommandId         *string               `json:"commandId,omitempty"`
+	HandedOffAtMs     *int64                `json:"handedOffAtMs,omitempty"`
+	HostId            *string               `json:"hostId,omitempty"`
+	NativeExecutionId *string               `json:"nativeExecutionId,omitempty"`
+	OwnerBootId       *string               `json:"ownerBootId,omitempty"`
+	Phase             PipelineDispatchPhase `json:"phase"`
+	SettledAtMs       *int64                `json:"settledAtMs,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineDispatch) Validate() error {
+	if err := Check(&v.Phase, "phase"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type PipelineDispatchPhase string
+
+const (
+	PipelineDispatchPhaseReserved  PipelineDispatchPhase = "reserved"
+	PipelineDispatchPhasePrepared  PipelineDispatchPhase = "prepared"
+	PipelineDispatchPhaseHandedOff PipelineDispatchPhase = "handed_off"
+	PipelineDispatchPhaseSettled   PipelineDispatchPhase = "settled"
+)
+
+// PipelineDispatchPhaseValues lists every PipelineDispatchPhase in schema order.
+var PipelineDispatchPhaseValues = []PipelineDispatchPhase{PipelineDispatchPhaseReserved, PipelineDispatchPhasePrepared, PipelineDispatchPhaseHandedOff, PipelineDispatchPhaseSettled}
+
+// Valid: v is one of the schema's values.
+func (v PipelineDispatchPhase) Valid() bool {
+	for _, x := range PipelineDispatchPhaseValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PipelineExecutionRef struct {
+	ExecutionId            string          `json:"executionId"`
+	Mode                   PipelineRefMode `json:"mode"`
+	SourceDefinitionSha256 string          `json:"sourceDefinitionSha256"`
+	SourceInputSha256      string          `json:"sourceInputSha256"`
+	SourceRunId            string          `json:"sourceRunId"`
+	SourceStepId           string          `json:"sourceStepId"`
+	SourceStepIndex        int64           `json:"sourceStepIndex"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineExecutionRef) Validate() error {
+	if err := Check(&v.Mode, "mode"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type PipelineExecutionView struct {
+	Calls             []json.RawMessage   `json:"calls,omitempty"`
+	DurationMs        *float64            `json:"durationMs,omitempty"`
+	EndedAt           json.RawMessage     `json:"endedAt,omitempty"`
+	Error             json.RawMessage     `json:"error,omitempty"`
+	ExecutionId       string              `json:"executionId"`
+	NativeExecutionId *string             `json:"nativeExecutionId,omitempty"`
+	Observation       PipelineObservation `json:"observation"`
+	Resources         json.RawMessage     `json:"resources,omitempty"`
+	StartedAt         json.RawMessage     `json:"startedAt,omitempty"`
+	State             ExecutionState      `json:"state"`
+	Usage             json.RawMessage     `json:"usage,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineExecutionView) Validate() error {
+	if err := Check(&v.Observation, "observation"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// PipelineGetReply: One current-format pipeline plan with actual selected execution references and canonical result.
+type PipelineGetReply struct {
+	Authority         json.RawMessage          `json:"authority,omitempty"`
+	CanonicalResult   *PipelineCanonicalResult `json:"canonicalResult,omitempty"`
+	Context           json.RawMessage          `json:"context,omitempty"`
+	Definition        json.RawMessage          `json:"definition,omitempty"`
+	DefinitionSha256  *string                  `json:"definitionSha256,omitempty"`
+	Definitions       []DefinitionRef          `json:"definitions,omitempty"`
+	DirectedBy        *string                  `json:"directedBy,omitempty"`
+	DurationMs        *float64                 `json:"durationMs,omitempty"`
+	Example           json.RawMessage          `json:"example,omitempty"`
+	FinishedAt        *float64                 `json:"finishedAt,omitempty"`
+	Id                string                   `json:"id"`
+	Invocation        *string                  `json:"invocation,omitempty"`
+	Observation       *PipelineObservation     `json:"observation,omitempty"`
+	Overrides         json.RawMessage          `json:"overrides,omitempty"`
+	ParentExecutionId *string                  `json:"parentExecutionId,omitempty"`
+	Pipeline          *string                  `json:"pipeline,omitempty"`
+	PipelineId        *string                  `json:"pipelineId,omitempty"`
+	Plan              PipelinePlan             `json:"plan"`
+	PlanSummary       PipelinePlanSummary      `json:"planSummary"`
+	PlanVersion       int64                    `json:"planVersion"`
+	ProjectId         *string                  `json:"projectId,omitempty"`
+	ProjectSnapshot   json.RawMessage          `json:"projectSnapshot,omitempty"`
+	RequestId         *string                  `json:"requestId,omitempty"`
+	RequestedBy       json.RawMessage          `json:"requestedBy,omitempty"`
+	RerunOf           *string                  `json:"rerunOf,omitempty"`
+	Result            json.RawMessage          `json:"result,omitempty"`
+	Reused            []string                 `json:"reused,omitempty"`
+	SelectedMethod    *string                  `json:"selectedMethod,omitempty"`
+	SelectionSource   *string                  `json:"selectionSource,omitempty"`
+	SessionId         *string                  `json:"sessionId,omitempty"`
+	StartedAt         *float64                 `json:"startedAt,omitempty"`
+	State             ExecutionState           `json:"state"`
+	TaskId            *string                  `json:"taskId,omitempty"`
+	Usage             json.RawMessage          `json:"usage,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineGetReply) Validate() error {
+	if v.CanonicalResult != nil {
+		if err := Check(v.CanonicalResult, "canonicalResult"); err != nil {
+			return err
+		}
+	}
+	for i := range v.Definitions {
+		if err := Check(&v.Definitions[i], "definitions"); err != nil {
+			return err
+		}
+	}
+	if v.Observation != nil {
+		if err := Check(v.Observation, "observation"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Plan, "plan"); err != nil {
+		return err
+	}
+	if err := Check(&v.PlanSummary, "planSummary"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
 
 type PipelineGetRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
@@ -1120,13 +1469,18 @@ func (v *PipelineGetRequest) Validate() error {
 }
 
 type PipelineHistoryReply struct {
-	Runs []map[string]json.RawMessage `json:"runs"`
+	Runs []PipelineGetReply `json:"runs"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *PipelineHistoryReply) Validate() error {
 	if v.Runs == nil {
 		return Missing("runs")
+	}
+	for i := range v.Runs {
+		if err := Check(&v.Runs[i], "runs"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1138,6 +1492,199 @@ type PipelineHistoryRequest struct {
 // Validate: the schema's required fields and enums (see Check).
 func (v *PipelineHistoryRequest) Validate() error {
 	return nil
+}
+
+type PipelineInputBinding struct {
+	ArtifactId          string  `json:"artifactId"`
+	Path                string  `json:"path"`
+	ProducerExecutionId *string `json:"producerExecutionId,omitempty"`
+	ProducerRunId       *string `json:"producerRunId,omitempty"`
+	ProducerStepId      *string `json:"producerStepId,omitempty"`
+	Sha256              string  `json:"sha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineInputBinding) Validate() error {
+	return nil
+}
+
+type PipelineObservation string
+
+const (
+	PipelineObservationConfirmed   PipelineObservation = "confirmed"
+	PipelineObservationUnconfirmed PipelineObservation = "unconfirmed"
+)
+
+// PipelineObservationValues lists every PipelineObservation in schema order.
+var PipelineObservationValues = []PipelineObservation{PipelineObservationConfirmed, PipelineObservationUnconfirmed}
+
+// Valid: v is one of the schema's values.
+func (v PipelineObservation) Valid() bool {
+	for _, x := range PipelineObservationValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PipelinePlan struct {
+	DefinitionSha256 string              `json:"definitionSha256"`
+	Entries          []PipelinePlanEntry `json:"entries"`
+	Revision         int64               `json:"revision"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelinePlan) Validate() error {
+	if v.Entries == nil {
+		return Missing("entries")
+	}
+	for i := range v.Entries {
+		if err := Check(&v.Entries[i], "entries"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PipelinePlanEntry struct {
+	Activation       PipelineActivation         `json:"activation"`
+	Decision         *PipelineConditionDecision `json:"decision,omitempty"`
+	DefinitionSha256 string                     `json:"definitionSha256"`
+	Dispatch         *PipelineDispatch          `json:"dispatch,omitempty"`
+	Execution        *PipelineExecutionView     `json:"execution,omitempty"`
+	ExecutionRef     *PipelineExecutionRef      `json:"executionRef,omitempty"`
+	Id               string                     `json:"id"`
+	Index            int64                      `json:"index"`
+	Inputs           []PipelineInputBinding     `json:"inputs,omitempty"`
+	Output           *PipelineArtifactRef       `json:"output,omitempty"`
+	Problem          *PipelinePlanProblem       `json:"problem,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelinePlanEntry) Validate() error {
+	if err := Check(&v.Activation, "activation"); err != nil {
+		return err
+	}
+	if v.Decision != nil {
+		if err := Check(v.Decision, "decision"); err != nil {
+			return err
+		}
+	}
+	if v.Dispatch != nil {
+		if err := Check(v.Dispatch, "dispatch"); err != nil {
+			return err
+		}
+	}
+	if v.Execution != nil {
+		if err := Check(v.Execution, "execution"); err != nil {
+			return err
+		}
+	}
+	if v.ExecutionRef != nil {
+		if err := Check(v.ExecutionRef, "executionRef"); err != nil {
+			return err
+		}
+	}
+	for i := range v.Inputs {
+		if err := Check(&v.Inputs[i], "inputs"); err != nil {
+			return err
+		}
+	}
+	if v.Output != nil {
+		if err := Check(v.Output, "output"); err != nil {
+			return err
+		}
+	}
+	if v.Problem != nil {
+		if err := Check(v.Problem, "problem"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type PipelinePlanProblem struct {
+	Code    PipelinePlanReason `json:"code"`
+	Message string             `json:"message"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelinePlanProblem) Validate() error {
+	if err := Check(&v.Code, "code"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type PipelinePlanReason string
+
+const (
+	PipelinePlanReasonUnconditional      PipelinePlanReason = "unconditional"
+	PipelinePlanReasonConditionTrue      PipelinePlanReason = "condition_true"
+	PipelinePlanReasonConditionFalse     PipelinePlanReason = "condition_false"
+	PipelinePlanReasonConditionMissing   PipelinePlanReason = "condition_missing"
+	PipelinePlanReasonConditionNull      PipelinePlanReason = "condition_null"
+	PipelinePlanReasonConditionType      PipelinePlanReason = "condition_type"
+	PipelinePlanReasonConditionDomain    PipelinePlanReason = "condition_domain"
+	PipelinePlanReasonSourceUnavailable  PipelinePlanReason = "source_unavailable"
+	PipelinePlanReasonSourceUnconfirmed  PipelinePlanReason = "source_unconfirmed"
+	PipelinePlanReasonSourceHashMismatch PipelinePlanReason = "source_hash_mismatch"
+	PipelinePlanReasonAuthorityDenied    PipelinePlanReason = "authority_denied"
+	PipelinePlanReasonRunCancelled       PipelinePlanReason = "run_cancelled"
+	PipelinePlanReasonPriorStepFailed    PipelinePlanReason = "prior_step_failed"
+	PipelinePlanReasonInputCollision     PipelinePlanReason = "input_collision"
+	PipelinePlanReasonDispatchUnknown    PipelinePlanReason = "dispatch_unknown"
+	PipelinePlanReasonResultInvalid      PipelinePlanReason = "result_invalid"
+	PipelinePlanReasonConfigChanged      PipelinePlanReason = "config_changed"
+)
+
+// PipelinePlanReasonValues lists every PipelinePlanReason in schema order.
+var PipelinePlanReasonValues = []PipelinePlanReason{PipelinePlanReasonUnconditional, PipelinePlanReasonConditionTrue, PipelinePlanReasonConditionFalse, PipelinePlanReasonConditionMissing, PipelinePlanReasonConditionNull, PipelinePlanReasonConditionType, PipelinePlanReasonConditionDomain, PipelinePlanReasonSourceUnavailable, PipelinePlanReasonSourceUnconfirmed, PipelinePlanReasonSourceHashMismatch, PipelinePlanReasonAuthorityDenied, PipelinePlanReasonRunCancelled, PipelinePlanReasonPriorStepFailed, PipelinePlanReasonInputCollision, PipelinePlanReasonDispatchUnknown, PipelinePlanReasonResultInvalid, PipelinePlanReasonConfigChanged}
+
+// Valid: v is one of the schema's values.
+func (v PipelinePlanReason) Valid() bool {
+	for _, x := range PipelinePlanReasonValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type PipelinePlanSummary struct {
+	Blocked          int64 `json:"blocked"`
+	FreshExecutions  int64 `json:"freshExecutions"`
+	NotSelected      int64 `json:"notSelected"`
+	Pending          int64 `json:"pending"`
+	Planned          int64 `json:"planned"`
+	ReusedExecutions int64 `json:"reusedExecutions"`
+	Selected         int64 `json:"selected"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelinePlanSummary) Validate() error {
+	return nil
+}
+
+type PipelineRefMode string
+
+const (
+	PipelineRefModeFresh  PipelineRefMode = "fresh"
+	PipelineRefModeReused PipelineRefMode = "reused"
+)
+
+// PipelineRefModeValues lists every PipelineRefMode in schema order.
+var PipelineRefModeValues = []PipelineRefMode{PipelineRefModeFresh, PipelineRefModeReused}
+
+// Valid: v is one of the schema's values.
+func (v PipelineRefMode) Valid() bool {
+	for _, x := range PipelineRefModeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 type PipelineRerunReply struct {
@@ -1177,6 +1724,26 @@ func (v *PipelineRerunRequest) Validate() error {
 	return nil
 }
 
+type PipelineResultMode string
+
+const (
+	PipelineResultModeStatic    PipelineResultMode = "static"
+	PipelineResultModeFinalizer PipelineResultMode = "finalizer"
+)
+
+// PipelineResultModeValues lists every PipelineResultMode in schema order.
+var PipelineResultModeValues = []PipelineResultMode{PipelineResultModeStatic, PipelineResultModeFinalizer}
+
+// Valid: v is one of the schema's values.
+func (v PipelineResultMode) Valid() bool {
+	for _, x := range PipelineResultModeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type PipelineRunCreateReply struct {
 	Definitions []DefinitionRef `json:"definitions"`
 	RunId       string          `json:"runId"`
@@ -1211,8 +1778,72 @@ func (v *PipelineRunCreateRequest) Validate() error {
 	return nil
 }
 
-// PipelineRunReply: A pipeline run with its steps, state and results (pipelineRun).
-type PipelineRunReply = map[string]json.RawMessage
+// PipelineRunReply: One current-format pipeline plan with actual selected execution references and canonical result.
+type PipelineRunReply struct {
+	Authority         json.RawMessage          `json:"authority,omitempty"`
+	CanonicalResult   *PipelineCanonicalResult `json:"canonicalResult,omitempty"`
+	Context           json.RawMessage          `json:"context,omitempty"`
+	Definition        json.RawMessage          `json:"definition,omitempty"`
+	DefinitionSha256  *string                  `json:"definitionSha256,omitempty"`
+	Definitions       []DefinitionRef          `json:"definitions,omitempty"`
+	DirectedBy        *string                  `json:"directedBy,omitempty"`
+	DurationMs        *float64                 `json:"durationMs,omitempty"`
+	Example           json.RawMessage          `json:"example,omitempty"`
+	FinishedAt        *float64                 `json:"finishedAt,omitempty"`
+	Id                string                   `json:"id"`
+	Invocation        *string                  `json:"invocation,omitempty"`
+	Observation       *PipelineObservation     `json:"observation,omitempty"`
+	Overrides         json.RawMessage          `json:"overrides,omitempty"`
+	ParentExecutionId *string                  `json:"parentExecutionId,omitempty"`
+	Pipeline          *string                  `json:"pipeline,omitempty"`
+	PipelineId        *string                  `json:"pipelineId,omitempty"`
+	Plan              PipelinePlan             `json:"plan"`
+	PlanSummary       PipelinePlanSummary      `json:"planSummary"`
+	PlanVersion       int64                    `json:"planVersion"`
+	ProjectId         *string                  `json:"projectId,omitempty"`
+	ProjectSnapshot   json.RawMessage          `json:"projectSnapshot,omitempty"`
+	RequestId         *string                  `json:"requestId,omitempty"`
+	RequestedBy       json.RawMessage          `json:"requestedBy,omitempty"`
+	RerunOf           *string                  `json:"rerunOf,omitempty"`
+	Result            json.RawMessage          `json:"result,omitempty"`
+	Reused            []string                 `json:"reused,omitempty"`
+	SelectedMethod    *string                  `json:"selectedMethod,omitempty"`
+	SelectionSource   *string                  `json:"selectionSource,omitempty"`
+	SessionId         *string                  `json:"sessionId,omitempty"`
+	StartedAt         *float64                 `json:"startedAt,omitempty"`
+	State             ExecutionState           `json:"state"`
+	TaskId            *string                  `json:"taskId,omitempty"`
+	Usage             json.RawMessage          `json:"usage,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PipelineRunReply) Validate() error {
+	if v.CanonicalResult != nil {
+		if err := Check(v.CanonicalResult, "canonicalResult"); err != nil {
+			return err
+		}
+	}
+	for i := range v.Definitions {
+		if err := Check(&v.Definitions[i], "definitions"); err != nil {
+			return err
+		}
+	}
+	if v.Observation != nil {
+		if err := Check(v.Observation, "observation"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Plan, "plan"); err != nil {
+		return err
+	}
+	if err := Check(&v.PlanSummary, "planSummary"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	return nil
+}
 
 // PipelineRunRequest: Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.
 type PipelineRunRequest struct {
@@ -1524,8 +2155,8 @@ func init() {
 		"hosts_remove":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host (fleet-system-management.md, Hosts). preview true changes nothing and returns the counts; false removes: running work is cancelled, the secret and settings are dropped, the host record stays as a tombstone (state removed) for history.\",\"properties\":{\"id\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"id\",\"preview\"],\"type\":\"object\"}")},
 		"hosts_rotate_secret":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"id\":{\"type\":\"string\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"hosts_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host.\",\"additionalProperties\":true,\"properties\":{\"autoUpdate\":{},\"harnesses\":{},\"id\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
-		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\"],\"type\":\"object\"}")},
-		"pipeline_history":      {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
+		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\"],\"type\":\"object\"}")},
+		"pipeline_history":      {Read: true, Long: false, Errors: []int{404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"pipeline_rerun":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"mode\":{\"enum\":[\"failed\",\"all\"],\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\",\"mode\"],\"type\":\"object\"}")},
 		"pipeline_run":          {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\"}")},
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},

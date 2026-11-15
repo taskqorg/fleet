@@ -72,8 +72,17 @@ func TestPipelineStepTerminalTimingProjection(t *testing.T) {
 			t.Fatal("wrong retained end", c.id, r["endedAt"], e)
 		}
 	}
-	run := doc{"id": "persisted-pipeline", "pipelineId": "timing", "projectId": "hello-world", "state": "running", "startedAt": start, "steps": []any{doc{"id": "one", "kind": "api", "state": "succeeded", "startedAt": start, "finishedAt": finish}}}
+	run := planFixture(t, "persisted-pipeline")
+	run["startedAt"] = start
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		if e := putRun(q, run); e != nil {
+			return e
+		}
+		if e := selectPipelineStep(q, run, 0); e != nil {
+			return e
+		}
+		selected := mapOf(anys(run["steps"])[0])
+		selected["state"], selected["startedAt"], selected["finishedAt"] = "succeeded", start, finish
 		if e := putRun(q, run); e != nil {
 			return e
 		}

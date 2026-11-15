@@ -157,3 +157,72 @@ func TestTypedPollMismatchRetainsPendingWork(t *testing.T) {
 		t.Fatal("decode failure executed or acknowledged work")
 	}
 }
+
+// Requirement: duplicate delivery, lost terminal receipts and journal reopen
+// never start a native action twice. An interrupted accepted action stays unknown.
+// Risk: a database claim test alone misses replay in the actual executor handler.
+func TestPipelineCommandJournalNativeStartOnce(t *testing.T) {
+	for _, crash := range []bool{false, true} {
+		name := "lost-receipt"
+		if crash {
+			name = "crash-before-terminal"
+		}
+		t.Run(name, func(t *testing.T) {
+			e, root := scriptExecutor(t)
+			lastSignal = nil
+			t.Cleanup(func() { lastSignal = nil })
+			marker := filepath.Join(root, "native-starts")
+			command := M{"id": "pipeline-command", "executionId": "pipeline-native", "sessionId": "pipeline-session", "kind": "script", "payload": M{"command": fmt.Sprintf("printf 'start\\n' >> %q", marker)}}
+			if err := e.run(command); err != nil {
+				t.Fatal(err)
+			}
+			<-e.live["pipeline-native"].exited
+			// Redelivery crosses the real journal admission path before settlement.
+			if err := e.run(command); err != nil {
+				t.Fatal(err)
+			}
+			if !crash {
+				settle(t, e, "pipeline-native")
+			}
+			if _, err := e.db.Exec("DELETE FROM outbox"); err != nil {
+				t.Fatal(err)
+			}
+			var seq int
+			var databaseName, journalPath string
+			if err := e.db.QueryRow("PRAGMA database_list").Scan(&seq, &databaseName, &journalPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db, err := openJournal(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			restarted := &executor{db: db, ex: db, root: root, host: "fake", sessions: e.sessions, live: map[string]*live{}, harnessCache: map[string]M{}}
+			if err := restarted.reconcile(); err != nil {
+				t.Fatal(err)
+			}
+			if crash && lastReceipt(restarted, "pipeline-command") != "unknown" {
+				t.Fatal("crash was treated as a known outcome")
+			}
+			if err := restarted.run(command); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(marker)
+			if err != nil || string(b) != "start\n" || len(restarted.live) != 0 {
+				t.Fatalf("native starts %q, %v", b, err)
+			}
+			changed := decM(enc(command))
+			changed["payload"] = M{"command": "exit 99"}
+			if err := restarted.run(changed); err == nil {
+				t.Fatal("changed command body reused identity")
+			}
+			b, err = os.ReadFile(marker)
+			if err != nil || string(b) != "start\n" {
+				t.Fatalf("conflict changed native starts: %q, %v", b, err)
+			}
+		})
+	}
+}

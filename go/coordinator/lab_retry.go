@@ -206,6 +206,9 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 	snap := &suffixSnapshot{exp: exp, source: source, variant: variant, reuse: reuse, artifacts: map[string]*Artifact{}, expected: map[string]string{}, proofs: []any{}}
 	// Include every original prefix coordinator output, even when a child file overrides its staging path.
 	for i, x := range reuse {
+		if pipelinePlanEntry(source, i)["activation"] == "not_selected" {
+			continue
+		}
 		s := mapOf(x)
 		aid := astr(s["outputArtifactId"])
 		if aid == "" {
@@ -255,6 +258,23 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 			snap.expected[aid] = ""
 		}
 	}
+	// Every selected suffix freezes its own inputs, including the server control
+	// artifact. Verify those exact command bindings rather than guessing inputs
+	// from a flattened prefix projection.
+	for i := len(reuse); i < len(steps); i++ {
+		entry := pipelinePlanEntry(source, i)
+		if entry["activation"] != "selected" {
+			continue
+		}
+		bindings := anys(entry["inputs"])
+		if bindings == nil || sha256hex([]byte(canonical(bindings))) != mapOf(entry["executionRef"])["sourceInputSha256"] {
+			return nil, suffixConflict("suffix input binding unavailable")
+		}
+		for _, value := range bindings {
+			binding := mapOf(value)
+			snap.expected[astr(binding["artifactId"])] = astr(binding["sha256"])
+		}
+	}
 	artifactFacts := doc{}
 	for aid, expected := range snap.expected {
 		a, err := artifactRow(withTx(q), q.app, aid)
@@ -292,8 +312,12 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 		if d["kind"] != "script" {
 			return nil, suffixConflict("suffix is not script-only")
 		}
+		entry := pipelinePlanEntry(source, i)
 		xid := astr(s["executionId"])
 		if xid == "" {
+			if entry["executionRef"] == nil && (entry["activation"] == "pending" || entry["activation"] == "blocked" || entry["activation"] == "not_selected") {
+				continue
+			}
 			if s["state"] != "preparing" {
 				return nil, suffixConflict("missing suffix execution")
 			}
@@ -317,6 +341,10 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 		command, err := suffixCommand(commands)
 		if err != nil {
 			return nil, err
+		}
+		dispatch := mapOf(entry["dispatch"])
+		if entry["activation"] != "selected" || mapOf(entry["executionRef"])["mode"] != "fresh" || dispatch["phase"] != "handed_off" || dispatch["commandId"] != command["id"] || dispatch["nativeExecutionId"] != xid {
+			return nil, suffixConflict("selected launch plan binding changed")
 		}
 		session, err := get(q, e["sessionId"], "session")
 		if err != nil {
@@ -359,7 +387,18 @@ func suffixRead(q *Request, identity doc, lock bool) (*suffixSnapshot, error) {
 			return nil, suffixConflict("suffix is already confirmed successful")
 		}
 		// Only the first pending suffix command has inputs; later steps were never launched.
-		if !same(mapOf(command["payload"])["inputs"], snap.inputs) {
+		frozen := []any{}
+		for _, value := range anys(entry["inputs"]) {
+			binding := mapOf(value)
+			frozen = append(frozen, doc{"path": binding["path"], "artifactId": binding["artifactId"]})
+		}
+		// Preparation sorts binding facts, while commands retain staging order.
+		ordered := func(values []any) string {
+			copy := append([]any{}, values...)
+			sort.Slice(copy, func(i, j int) bool { return astr(mapOf(copy[i])["path"]) < astr(mapOf(copy[j])["path"]) })
+			return canonical(copy)
+		}
+		if ordered(anys(mapOf(command["payload"])["inputs"])) != ordered(frozen) {
 			return nil, suffixConflict("original suffix inputs differ")
 		}
 		snap.proofs = append(snap.proofs, doc{"executionId": xid, "commandId": command["id"], "eventId": proof["id"]})

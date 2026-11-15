@@ -352,6 +352,15 @@ function StepsDemo() {
       { id: 'render', kind: 'tool', executor: <b>render_asset</b>, reads: 'inputs/', writes: 'renders/', run: { state: 'failed', note: '7 of 8', time: { value: 372, basis: 'measured' }, cost: { value: 3.4, basis: 'estimated', reason: 'tokens' }, error: 'asset-07 · exit 1 · CUDA out of memory' } },
       { id: 'assemble', kind: 'agent', executor: <b>codex-designer</b>, reads: 'renders/', writes: 'page', run: { state: 'waiting', note: 'waits for render', time: u, cost: u } },
     ]} />
+    <StepList label="Conditional plan" items={[
+      { id: 'prepare', kind: 'program', executor: 'local', reads: 'packet', writes: 'candidate', activation: 'selected', run: {state:'succeeded',time:{value:1,basis:'measured'},cost:u} },
+      { id: 'review', kind: 'agent', executor: 'qualified checker', reads: 'candidate', writes: 'verdict', activation: 'not_selected', activationReason: 'condition_false' },
+      { id: 'pending', kind: 'program', executor: 'local', reads: 'candidate', writes: 'result', activation: 'pending' },
+      { id: 'blocked', kind: 'program', executor: 'local', reads: 'verdict', writes: 'result', activation: 'blocked', activationReason: 'source_missing' },
+      { id: 'prepared', kind: 'agent', executor: 'checker', reads: 'candidate', writes: 'verdict', activation: 'selected', run: {state:'preparing',time:u,cost:u} },
+      { id: 'reused', kind: 'program', executor: 'local', reads: 'packet', writes: 'candidate', activation: 'selected', run: {state:'succeeded',note:'reused · original resources',time:u,cost:u} },
+      { id: 'unconfirmed', kind: 'tool', executor: 'provider', reads: 'question', writes: 'answer', activation: 'selected', run: {state:'failed',note:'unconfirmed',time:u,cost:u} },
+    ]} />
   </div>;
 }
 function DraftDemo() {

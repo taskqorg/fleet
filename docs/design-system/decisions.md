@@ -370,3 +370,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Options:** the work area as an overview, a timeline, a metrics board, or tabs of the three.
 * **Choice (owner):** D, one overview in the order of the operator's questions: Needs a look, Moving now, Pace. No tabs: each tab answered only part of the question (OR-19). The control column lists pull requests by stage like Tasks; a pull request opens in the work area. The stage tiles (repeating the counters, OR-17) and the 24-hour in-flight stack are dropped.
 * **With it:** the `delivery` state family with Checks failed (`pr_failed`, from the latest finished pull_request run, read with a key); delivery changes in the change stream (kind `delivery`); a GitHub read every minute with a key; `TimeStrip` parts.
+
+## 2026-11-16: Conditional plan facts in the existing step list
+
+* **Context:** the owner approved the reviewed conditional-pipeline implementation.
+* **Choice:** keep activation separate from execution state in the shared StepList; show pending, not selected and blocked without fabricated execution measurements. Lab opens an authorized trial plan in its existing detail and links retained project assessments. Definition rows expose finite conditions and the result source.
+* **Evidence boundary:** a completed run or passing assessment contract does not imply model-quality acceptance or adoption.

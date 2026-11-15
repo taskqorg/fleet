@@ -30,6 +30,10 @@ Retain accepted assignments, dependencies, pending questions, answers and execut
 
 Automatic progression depends on this state, not on continuously polling agents. Transport, persistence layout and notification implementation remain open.
 
+The finite sequential pipeline runtime persists plan revision, activation evidence, exact selected execution references and dispatch ownership in the same PostgreSQL transaction fence. Competing transitions cannot overwrite a newer plan. A selected host action reserves one native execution and command before handoff; token mint is deferred until current authority is checked. Repeated host delivery preserves that command's identity/body; the executor journal admits its handler once. API/publication handoff uses a committed claim before effects. An ambiguous effect stays unconfirmed and is not resubmitted under another identity.
+
+Cancellation blocks pending entries, stops prepared commands before handoff and preserves selected references. Work already handed off remains unconfirmed until independent receipts establish its outcome; late events do not reopen the parent automatically. Publication recovery requires its durable immutable filesystem receipt and cannot restage an absent receipt. Explicit new-format prefix/local-suffix recovery verifies frozen definition/config/model/input/artifact and command/process evidence; missing proof returns 409. Reused work keeps original ownership and spend. General graph execution, concurrency and expression evaluation remain outside this finite sequential slice.
+
 ## Operator control
 
 Present the overall assignment and its nested work, with questions and interruptions requiring attention. Existing pause, cancellation, authority and budget rules apply across coordinated work. An available child result is retained even when its parent cannot continue.

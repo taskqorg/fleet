@@ -327,10 +327,10 @@ func TestStaticPublicationHTTPPipeline(t *testing.T) {
 	if code != 200 || finished["state"] != "succeeded" {
 		t.Fatal(code, finished)
 	}
-	step := mapOf(anys(finished["steps"])[0])
-	job := astr(step["executionId"])
-	if step["executorService"] != "coordinator" || mapOf(step["output"])["verified"] != true {
-		t.Fatal(step)
+	entry := mapOf(anys(mapOf(finished["plan"])["entries"])[0])
+	job := astr(mapOf(entry["execution"])["nativeExecutionId"])
+	if entry["activation"] != "selected" || mapOf(entry["output"])["artifactId"] == nil || finished["steps"] != nil {
+		t.Fatal("invalid plan projection", finished)
 	}
 	code, repeated := env.callJSON(t, "POST", "/api/pipelines/publish-static/runs", body, env.ownerHeaders())
 	runWG.Wait()
@@ -508,7 +508,7 @@ func TestPublicationAgentPipelineLineage(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		if len(rs) != 2 {
+		if len(rs) != 1 {
 			t.Fatal(rs)
 		}
 		for _, r := range rs {

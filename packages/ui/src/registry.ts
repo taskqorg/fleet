@@ -68,6 +68,13 @@ export const states = {
     stopped: { label: 'Stopped', tone: 'neutral', icon: 'circle-slash' },
     done: { label: 'Done', tone: 'success', icon: 'circle-check' },
   },
+  /** Eligibility in a pipeline plan, independent of execution state. */
+  activation: {
+    pending: { label: 'Pending', tone: 'neutral', icon: 'circle-dashed' },
+    selected: { label: 'Selected', tone: 'running', icon: 'check' },
+    not_selected: { label: 'Not selected', tone: 'neutral', icon: 'circle-slash' },
+    blocked: { label: 'Blocked', tone: 'attention', icon: 'triangle-alert' },
+  },
   /** A Lab trial (pipeline run, execution states): unknown is a failed run whose outcome nobody can prove (observation unconfirmed, never replayed). */
   trial: {
     preparing: { label: 'Preparing', tone: 'running', icon: 'rotate-cw' },

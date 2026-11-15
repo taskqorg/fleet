@@ -76,3 +76,9 @@ The three independent fixed-header reads use one ordered batch under the same pr
 - Run: `cd go && go test ./coordinator`
 - Build the executable: `cd go && CGO_ENABLED=0 go build -o bin/fleet-coordinator ./coordinator`
 - For the repository-selected full gate, use the command in [`../../fleet.md`](../../fleet.md#verification); it requires the project test environment and is not a coordinator-only check.
+
+## Finite pipeline plans
+
+`pipeline_condition.go` owns the closed Boolean/enum grammar. `pipeline_plan.go` owns version-1 plan identity, revision fencing, selected execution references, current authority/handoff and canonical result/input bindings. `pipelines.go` compiles static v2 and conditional v3 definitions into that one model and projects internal observations from selected rows. Public plan reads do not reconstruct omitted work from generic execution lists. Old runtime formats require a clean start, without an adapter or state reset in source delivery.
+
+`lab_assessment.go` captures fixed contained assessment bytes, materializes ordinary artifacts outside write locks and links exact evaluator/input/trial identities with the existing Lab score transaction. `lab_retry.go` verifies current-format selected command/process and artifact proof; missing proof conflicts and never authorizes provider replay. See [pipeline configuration](../../docs/configuration.md#pipeline-execution) and [Lab assessments](../../docs/designs/fleet-lab.md#conditional-plans-and-project-assessments).

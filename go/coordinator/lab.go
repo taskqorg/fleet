@@ -484,7 +484,7 @@ func labExamplesList(q *Request, state any) (doc, error) {
 }
 
 func labExampleGet(q *Request, id string) (doc, error) {
-	rs, err := queryRows(q, "SELECT id,approved_at FROM artifact WHERE id=$1 AND role='example'", id)
+	rs, err := queryRows(q, "SELECT id,approved_at,project_id,content_hash FROM artifact WHERE id=$1 AND role='example'", id)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +503,11 @@ func labExampleGet(q *Request, id string) (doc, error) {
 	if rs[0]["approved_at"] != nil {
 		st = "approved"
 	}
-	return doc{"artifactId": id, "state": st, "example": ex}, nil
+	out := doc{"artifactId": id, "state": st, "example": ex, "hash": rs[0]["content_hash"]}
+	if rs[0]["project_id"] != nil {
+		out["projectId"] = rs[0]["project_id"]
+	}
+	return out, nil
 }
 
 // ---- scores ----
@@ -586,16 +590,25 @@ func runChecks(ctx context.Context, checks []any, files []labFile) (doc, error) 
 		return nil, err
 	}
 	defer os.RemoveAll(dir)
+	seenFiles := map[string]bool{}
 	for _, f := range files {
+		if !pipelineInputPath(f.path) || seenFiles[f.path] {
+			return nil, fail(400, "Invalid evaluator input path")
+		}
+		seenFiles[f.path] = true
 		p := filepath.Join(dir, f.path)
 		os.MkdirAll(filepath.Dir(p), 0o755)
 		if err := os.WriteFile(p, f.bytes, 0o644); err != nil {
 			return nil, err
 		}
 	}
-	failed := []any{}
+	failed, captured := []any{}, []any{}
 	for _, x := range checks {
 		c := mapOf(x)
+		// Never attribute a previous check's file to the current check.
+		if err := os.RemoveAll(filepath.Join(dir, "evaluation")); err != nil {
+			return nil, err
+		}
 		cmd := osexec.CommandContext(ctx, "sh", "-c", astr(c["run"]))
 		cmd.Dir = dir
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "FLEET_OUTPUT_DIR=" + dir}
@@ -604,14 +617,19 @@ func runChecks(ctx context.Context, checks []any, files []labFile) (doc, error) 
 		ownGroup(cmd)
 		err := cmd.Run()
 		killGroup(cmd)
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		assessment, captureErr := captureLabAssessment(dir)
+		if assessment != nil {
+			assessment["checkId"] = c["id"]
+			captured = append(captured, assessment)
 		}
-		if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err() // capture precedes cleanup; cancelled work remains unscored
+		}
+		if err != nil || captureErr != nil {
 			failed = append(failed, c["id"])
 		}
 	}
-	return doc{"passed": len(checks) - len(failed), "total": len(checks), "failed": failed}, nil
+	return doc{"passed": len(checks) - len(failed), "total": len(checks), "failed": failed, "assessments": captured}, nil
 }
 
 func scoreView(r doc) doc {
@@ -1376,7 +1394,7 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 	}
 	for _, o := range outs {
 		_, rel, _ := strings.Cut(o.Path, "/")
-		if rel == "" {
+		if rel == "" || rel == "output.json" || pipelineReservedInput(rel) {
 			continue
 		}
 		b, err := artifactBytes(withTx(q), q.app, o.ArtifactID, 64<<20)
@@ -1384,6 +1402,14 @@ func trialFiles(q *Request, trial, example doc) ([]labFile, error) {
 			return nil, err
 		}
 		set(rel, b)
+	}
+	if result := mapOf(trial["canonicalResult"]); result != nil {
+		binding := mapOf(result["artifact"])
+		b, err := artifactBytes(withTx(q), q.app, astr(binding["artifactId"]), 64<<20)
+		if err != nil || sha256hex(b) != binding["sha256"] {
+			return nil, fail(409, "Canonical trial result bytes unavailable")
+		}
+		set("output.json", b)
 	}
 	out := []labFile{}
 	for _, p := range order {
@@ -1457,6 +1483,17 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 				if err != nil {
 					return false, err
 				}
+				if len(anys(r["projectAssessments"])) > 0 {
+					if e["form"] != "pass_fail" {
+						return false, fail(409, "Project assessment contract checks require pass_fail")
+					}
+					if err := validateLabAssessmentSnapshot(q, t, full, r); err != nil {
+						return false, err
+					}
+					if err := linkLabAssessments(q, t, r); err != nil {
+						return false, err
+					}
+				}
 				passed, _ := numOK(r["passed"])
 				total, _ := numOK(r["total"])
 				failed := anys(r["failed"])
@@ -1468,6 +1505,9 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 					}
 				}
 				rat := fmt.Sprintf("%v of %v checks pass", passed, total)
+				if len(anys(r["projectAssessments"])) > 0 {
+					rat += "; project assessment contract only, see retained artifacts for quality"
+				}
 				if len(failed) > 0 {
 					fs := []string{}
 					for _, f := range failed {
@@ -1531,11 +1571,7 @@ func expEvaluate(q *Request, exp doc, trials, runs, current []doc, launched *[]s
 			if run["state"] != "succeeded" {
 				continue // a failed judge run counts as evaluated; it has no score
 			}
-			steps := anys(run["steps"])
-			var last doc
-			if len(steps) > 0 {
-				last = mapOf(mapOf(steps[len(steps)-1])["output"])
-			}
+			last := mapOf(pipelineResultValue(run))
 			if checkValue(astr(e["form"]), last["value"], nil) != nil {
 				continue
 			}
@@ -1567,8 +1603,11 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 	launched := []string{}
 	// Script checks run after the read snapshot closed and before the write transaction, so a slow check holds neither.
 	type pending struct {
-		checks []any
-		files  []labFile
+		checks           []any
+		files            []labFile
+		trial            doc
+		evaluator, input string
+		snapshot         doc
 	}
 	todo := map[string]pending{}
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
@@ -1619,7 +1658,16 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 				}
 				files = append(files, labFile{"references/" + astr(f["path"]), b})
 			}
-			todo[astr(t["id"])] = pending{anys(full["checks"]), files}
+			for _, f := range files {
+				first, _, _ := strings.Cut(f.path, "/")
+				if strings.EqualFold(first, "__fleet_evaluation") || strings.EqualFold(first, "evaluation") {
+					return fail(409, "Evaluator input collides with reserved namespace")
+				}
+			}
+			metadata := doc{"schema": "fleet.lab-trial.v1", "trialId": t["id"], "runId": t["id"], "experimentId": id, "variantId": mapOf(t["cell"])["variant"], "planSummary": pipelinePlanSummary(t), "executionState": t["state"], "observation": firstString(t["observation"], "confirmed"), "resources": doc{"usage": t["usage"], "durationMs": t["durationMs"]}, "inputs": labFileBindings(files)}
+			files = append(files, labFile{"__fleet_evaluation/trial.json", jsonBytes(metadata)})
+			evaluator, input := labAssessmentInputs(t, anys(full["checks"]), files)
+			todo[astr(t["id"])] = pending{anys(full["checks"]), files, t, evaluator, input, labAssessmentSnapshot(t, full)}
 		}
 		return nil
 	}); err != nil {
@@ -1631,9 +1679,13 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 		if err != nil {
 			return err
 		}
+		if err := materializeLabAssessments(ctx, a, p.trial, r, p.evaluator, p.input); err != nil {
+			return err
+		}
+		r["assessmentSnapshot"] = p.snapshot
 		checked[id] = r
 	}
-	err := runTx(ctx, a, nil, true, "experiment:"+id, func(q *Request) error {
+	err := runTxLocks(ctx, a, nil, true, []string{GLOBAL, "experiment:" + id}, func(q *Request) error {
 		exp, err := expRow(q, id)
 		if err != nil || exp["state"] == "draft" {
 			return err
@@ -2366,6 +2418,13 @@ func expGet(q *Request, id string) (doc, error) {
 		}
 		v := doc{"id": t["id"], "cell": t["cell"], "state": t["state"], "observation": t["observation"], "problem": t["problem"], "comparable": comparable(t), "startedAt": t["startedAt"], "finishedAt": t["finishedAt"],
 			"durationMs": t["durationMs"], "spend": spend, "cost": append([]contract.CostFigure{}, trialCost[t["id"]]...), "confounders": doc{"hosts": uniq(hosts), "harnesses": uniq(harnesses), "models": uniq(models), "webRoute": web}, "scores": mine}
+		v["planSummary"] = pipelinePlanSummary(t)
+		if t["canonicalResult"] != nil {
+			v["canonicalResult"] = t["canonicalResult"]
+		}
+		if t["projectAssessments"] != nil {
+			v["projectAssessments"] = t["projectAssessments"]
+		}
 		if recovery := mapOf(t["recovery"]); recovery != nil {
 			v["recovery"] = doc{"sourceRunId": mapOf(recovery["identity"])["sourceRunId"], "reusedStepIds": recovery["reusedStepIds"]}
 		}
@@ -2847,11 +2906,7 @@ func scoreTyped(q *Request, exp, t, pin doc, name string, examples map[string]do
 			label, tag = astr(e["expected"]), astr(e["tag"])
 		}
 	}
-	steps := anys(t["steps"])
-	var out doc
-	if len(steps) > 0 {
-		out = mapOf(mapOf(steps[len(steps)-1])["output"])
-	}
+	out := mapOf(pipelineResultValue(t))
 	p, isP := numOK(out["p"])
 	switch {
 	case reason != "":

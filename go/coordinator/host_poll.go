@@ -253,6 +253,7 @@ func hostProblems(list []contract.EdgeProblem) []any {
 }
 
 func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string) ([]doc, error) {
+	var pipelinePending bool
 	var hasPending bool
 	var removed bool
 	if err := runTx(ctx, a, nil, false, "", func(rq *Request) error {
@@ -263,7 +264,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			return nil
 		}
 		var cnt int
-		if err := rq.tx.QueryRow(rq.ctx(), "SELECT count(*) FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'status'='pending'", host).Scan(&cnt); err != nil {
+		if err := rq.tx.QueryRow(rq.ctx(), "SELECT count(*),coalesce(bool_or(e.data ? 'pipelineRunId'),false) FROM document c LEFT JOIN execution e ON e.id=c.data->>'executionId' WHERE c.kind='command' AND c.data->>'hostId'=$1 AND c.data->>'status'='pending'", host).Scan(&cnt, &pipelinePending); err != nil {
 			return err
 		}
 		hasPending = cnt > 0
@@ -279,7 +280,11 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 	}
 	out := []doc{}
 	var hostDoc doc
-	err := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
+	locks := []string{"host:" + host}
+	if pipelinePending {
+		locks = append([]string{GLOBAL}, locks...)
+	}
+	err := runTxLocks(ctx, a, nil, true, locks, func(wq *Request) error {
 		h, err := maybe(wq, "host:"+host, "host")
 		if err != nil {
 			return err
@@ -325,6 +330,13 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 				if !ok {
 					continue
 				}
+			}
+			ok, err = handoffPipelineCommand(wq, e, c)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
 			}
 			// The ready filter may rewrite the command (delegation inputs): reply with it as stored now.
 			fresh, err := get(wq, c["id"], "command")

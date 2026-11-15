@@ -51,6 +51,8 @@ func (v *LabCompareMethodsRequest) Validate() error {
 type LabExampleGetReply struct {
 	ArtifactId string          `json:"artifactId"`
 	Example    json.RawMessage `json:"example"`
+	Hash       string          `json:"hash"`
+	ProjectId  *string         `json:"projectId,omitempty"`
 	State      json.RawMessage `json:"state"`
 }
 
@@ -490,6 +492,20 @@ func (v *LabScoreCorrectRequest) Validate() error {
 	if v.Value == nil {
 		return Missing("value")
 	}
+	return nil
+}
+
+type ProjectAssessmentRef struct {
+	ArtifactId      string `json:"artifactId"`
+	CheckId         string `json:"checkId"`
+	EvaluatorSha256 string `json:"evaluatorSha256"`
+	InputSha256     string `json:"inputSha256"`
+	SchemaId        string `json:"schemaId"`
+	Sha256          string `json:"sha256"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectAssessmentRef) Validate() error {
 	return nil
 }
 

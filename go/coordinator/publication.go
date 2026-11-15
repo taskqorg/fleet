@@ -348,10 +348,15 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 	}
 	q := backgroundRequest(ctx, a, nil)
 	q.person = person
+	prepared, err := materializePipelineInputs(ctx, a, run, i)
+	if err != nil {
+		return failStart(err)
+	}
+	freezePipelineInputs(run, i, prepared)
 	var dest publicationDestination
 	var files []publicationFile
 	original := jsonBytes(run)
-	err = runTx(ctx, a, q, true, "project:"+astr(run["projectId"]), func(q *Request) error {
+	err = runTx(ctx, a, q, true, "", func(q *Request) error {
 		var restored doc
 		if e := json.Unmarshal(original, &restored); e != nil {
 			return e
@@ -383,10 +388,7 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 		if !role {
 			return fail(403, "Configured publication authority has no publication role")
 		}
-		inputs, e := inputsFor(q, run, i)
-		if e != nil {
-			return e
-		}
+		inputs := prepared.files
 		for name, value := range mapOf(def["files"]) {
 			id := ""
 			for _, v := range inputs {
@@ -422,6 +424,51 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 	})
 	if err != nil {
 		return failStart(err)
+	}
+	// The durable claim commits before filesystem or readback effects. A second
+	// owner observes the existing claim and must not invoke the publication again.
+	won := false
+	err = runTx(ctx, a, q, true, "", func(q *Request) error {
+		current, e := getRun(q, astr(run["id"]))
+		if e != nil || current == nil {
+			return e
+		}
+		entry := pipelinePlanEntry(current, i)
+		dispatch := mapOf(entry["dispatch"])
+		if current["state"] != "running" || dispatch["phase"] != "reserved" {
+			return nil
+		}
+		stamp, _, e := pipelineAuthorityStamp(q, current, i, "", "", dest.Authority)
+		if e != nil {
+			return e
+		}
+		dispatch["phase"], dispatch["claimId"], dispatch["ownerBootId"] = "handed_off", newID(), pipelineBootID
+		dispatch["handedOffAtMs"], dispatch["authoritySha256"] = nowMs(), stamp
+		if e = putRun(q, current); e != nil {
+			return e
+		}
+		run["plan"], won = current["plan"], true
+		return nil
+	})
+	if err != nil {
+		return failStart(err)
+	}
+	reconcileOnly := !won
+	if reconcileOnly {
+		// A committed manifest is an independent filesystem receipt. Recover that
+		// exact publication; absence of a receipt is not permission to stage again.
+		root, e := publicationRoot(dest.Root)
+		if e != nil {
+			return failStart(e)
+		}
+		manifest, e := publicationRegular(root, "releases/fleet-"+sha256hex([]byte(job))[:32]+"/manifest.json")
+		root.Close()
+		if e != nil {
+			return false, runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error {
+				return failStep(q, run, i, "unknown:publication", "Handoff has no durable publication receipt")
+			})
+		}
+		manifest.Close()
 	}
 	tp := ""
 	_ = runTx(ctx, a, q, false, "", func(q *Request) error { e, e2 := get(q, job, "execution"); tp = astr(e["traceparent"]); return e2 })
@@ -460,6 +507,9 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 		}
 		m := publicationManifest{Version: "fleet-" + sha256hex([]byte(job))[:32], RunID: astr(run["id"]), ProjectID: astr(run["projectId"]), DefinitionSHA256: astr(run["definitionSha256"]), Files: files, InputSHA256: publicationInputHash(files)}
 		output, err = publishStatic(ctx, dest, m, func(f publicationFile) (io.ReadCloser, error) {
+			if reconcileOnly {
+				return nil, fmt.Errorf("Publication receipt disappeared; not restaged")
+			}
 			source, open, e := artifactRead(withTx(q), a, f.ArtifactID, nil)
 			if e != nil {
 				return nil, e
@@ -493,6 +543,9 @@ func runPublication(ctx context.Context, a *App, run doc, i int, def doc) (bool,
 		return err
 	})
 	endCtx := context.WithoutCancel(ctx)
+	if err == nil {
+		err = materializePipelineOutput(endCtx, a, run, i, output)
+	}
 	persistErr := runTx(endCtx, a, nil, true, "", func(q *Request) error {
 		state := "succeeded"
 		var problem any

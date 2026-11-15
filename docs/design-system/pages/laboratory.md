@@ -45,3 +45,7 @@ CI checks actual draft creation/readback with zero trial/native/provider work, v
 ## Access changes and authored input
 
 Quarantine locally authored draft input under its original validated identity. Restore only after the same identity freshly authorizes its project; never restore another actor's text. Server-derived receipt/result fields are cleared on access invalidation and require authorized readback. Unknown creation outcomes retain uncertainty and never automatically resend. Captured generation guards every storage/readback/success callback, so late replies cannot repopulate or clear a new actor's draft.
+
+## Trial plan inspection
+
+“View trial plan” opens a read-only detail within the experiment and fetches only that trial through authorized `pipeline_get`. It uses the shared StepList to distinguish pending, selected execution, not selected and blocked. Unavailable resources stay unavailable; reused and unconfirmed observations retain their labels. The canonical result and project assessment artifacts have separate links. Current identity/grant fences apply to late reads; unavailable plans show an explicit empty/error state, without a write or automatic retry of work.

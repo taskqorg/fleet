@@ -1226,7 +1226,8 @@ export function DraftBar({ changes, base, note, actions: acts }: {
 
 export type StepItem =
   | { band: 'loop' | 'parallel'; label: string; inset?: boolean }
-  | { id: string; kind: StepKind; executor: ComponentChildren; reads: string; writes: string; inset?: boolean;
+  | { id: string; kind: StepKind; executor: ComponentChildren; reads: string; writes: string; inset?: boolean; condition?: string; result?: boolean;
+      activation?: StateOf<'activation'>; activationReason?: string;
       /** The step in one run: shown in place of what it reads and writes. */
       run?: { state: StateOf<'execution'>; reason?: string; note?: string; time: Measured; cost: Measured; error?: string } };
 
@@ -1240,10 +1241,10 @@ export function StepList({ items, open, onOpen, label, children }: { items: Step
     return <div key={s.id} role="listitem" class={`step-item${s.inset ? ' inset' : ''}`}>
       <button type="button" class={`step${open === s.id ? ' open' : ''}`} aria-expanded={onOpen ? open === s.id : undefined} onClick={() => onOpen?.(s.id)}>
         <span class="no">{String(n).padStart(2, '0')}</span>
-        {s.run ? <StateBadge family="execution" state={s.run.state} reason={s.run.reason} compact /> : <span class="lead" data-tip={k.label}><Icon name={k.icon} label={k.label} /></span>}
-        <b class="nm">{s.id}</b><span class="ex">{s.executor}</span>
+        {s.run ? <StateBadge family="execution" state={s.run.state} reason={s.run.reason} compact /> : s.activation ? <StateBadge family="activation" state={s.activation} reason={s.activationReason} compact /> : <span class="lead" data-tip={k.label}><Icon name={k.icon} label={k.label} /></span>}
+        <b class="nm">{s.id}</b><span class="ex">{s.executor}{s.result && ' · result'}</span>
         {s.run ? <span class="svc">{s.run.note && <span class="chip-age">{s.run.note}</span>}<Num m={s.run.time} kind="duration" /><Num m={s.run.cost} kind="money" /></span>
-          : <span class="io">reads {s.reads} · writes <span class="w">{s.writes}</span></span>}
+          : <span class="io">{s.activation ? <>{states.activation[s.activation].label}{s.activationReason && ` · ${s.activationReason}`}</> : <>{s.condition && <>when {s.condition} · </>}reads {s.reads} · writes <span class="w">{s.writes}</span></>}</span>}
       </button>
       {s.run?.error && <div class="step-error" data-important="">{s.run.error}</div>}
       {open === s.id && children && <div class="step-edit">{children}</div>}

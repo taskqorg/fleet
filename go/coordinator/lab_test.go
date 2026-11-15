@@ -77,7 +77,7 @@ func TestJudgeRerunRetainsArtifactInputs(t *testing.T) {
 func TestPairwiseOrderDependenceAndVersions(t *testing.T) {
 	// Requirement: S5 never scores position bias and separates rubrics; risk: false agreement across versions.
 	run := func(id, value string, order int) doc {
-		return doc{"id": id, "state": "succeeded", "judge": doc{"evaluator": "judge:pair:pick_best", "groupId": "g", "trialIds": []any{"a", "b"}, "order": order}, "steps": []any{doc{"output": doc{"value": value}}}}
+		return doc{"id": id, "state": "succeeded", "judge": doc{"evaluator": "judge:pair:pick_best", "groupId": "g", "trialIds": []any{"a", "b"}, "order": order}, "canonicalResult": doc{"stepId": "judge", "mode": "static"}, "plan": doc{"entries": []any{doc{"id": "judge"}}}, "steps": []any{doc{"id": "judge", "output": doc{"value": value}}}}
 	}
 	view := pairwiseView([]doc{run("one", "a", 0), run("two", "b", 1)})
 	if len(view) != 1 || mapOf(view[0])["reason"] != "order-dependent" {
@@ -124,5 +124,41 @@ func TestPairwiseWaitsForAllLatestCandidates(t *testing.T) {
 				t.Fatal("old attempt included")
 			}
 		}
+	}
+}
+
+// Requirement: capture exact assessment bytes before scratch cleanup, independently
+// of exit status. Risk: a later check inherits stale evidence or follows symlinks.
+func TestRunChecksRetainsAssessmentEvidence(t *testing.T) {
+	bytes := "{\"schema\":\"test.assessment.v1\",\"falseAccepts\":2}\n"
+	checks := []any{
+		doc{"id": "contract", "run": "mkdir evaluation; printf '%s\\n' '{\"schema\":\"test.assessment.v1\",\"falseAccepts\":2}' > evaluation/assessment.json; exit 3"},
+		doc{"id": "later", "run": "test ! -e evaluation/assessment.json"},
+	}
+	result, err := runChecks(context.Background(), checks, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := anys(result["assessments"])
+	if len(captured) != 1 || len(anys(result["failed"])) != 1 || mapOf(captured[0])["checkId"] != "contract" || mapOf(captured[0])["sha256"] != sha256hex([]byte(bytes)) || string(mapOf(captured[0])["bytes"].([]byte)) != bytes {
+		t.Fatal(result)
+	}
+	// A structurally valid assessment with model errors is still a passing contract.
+	result, err = runChecks(context.Background(), []any{doc{"id": "valid", "run": "mkdir evaluation; printf '%s' '{\"schema\":\"test.assessment.v1\",\"falseAccepts\":9}' > evaluation/assessment.json"}}, nil)
+	if err != nil || len(anys(result["failed"])) != 0 || len(anys(result["assessments"])) != 1 {
+		t.Fatal(result, err)
+	}
+	for _, command := range []string{
+		"mkdir evaluation; ln -s ../truth.json evaluation/assessment.json",
+		"mkdir evaluation; printf '%s' '{}' > evaluation/assessment.json",
+		"ln -s references evaluation",
+	} {
+		result, err = runChecks(context.Background(), []any{doc{"id": "invalid", "run": command}}, []labFile{{"truth.json", []byte(bytes)}, {"references/truth.json", []byte(bytes)}})
+		if err != nil || len(anys(result["failed"])) != 1 || len(anys(result["assessments"])) != 0 {
+			t.Fatal(command, result, err)
+		}
+	}
+	if _, err = runChecks(context.Background(), nil, []labFile{{"../escape", []byte("x")}}); err == nil {
+		t.Fatal("escaped evaluator root")
 	}
 }
