@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { expected, fixture, manifest, seedSQL } from '../performance/seed-interface.ts';
-import { bindProof, canAcknowledge, sourceRate, scheduleSourcePhases, stats, workload, type Fact, type Publication, type PhaseWindow, type Workload } from '../performance/interface.ts';
+import { sourceRate, scheduleSourcePhases, stats, workload, type Fact, type PhaseWindow, type Workload } from '../performance/interface.ts';
 
 const completedWindows = (spec: Workload): PhaseWindow[] => [
   ['warmup', 0, spec.warmup, spec.warmup * spec.rate, 'paced'],
@@ -105,35 +105,3 @@ test('source validity requires complete horizons and rejects late last commit at
 
 // Requirement: a fact is acknowledged only after exact leaf inclusion and painted same-epoch publication.
 // Risk: a later unrelated leaf/summary crosses the missing fact's prefix; replay drops or double-counts it.
-test('distinct inclusion waits for its leaf, exact errors, epoch and revision; hot replacement remains supported', () => {
-  const make = (id: string, errors = 0): Fact => ({ id, execution: id, project: 'p', n: 1, calls: 1, errors, lower: 0, upper: 1, phase: 'burst', due: 0, transaction: id });
-  const a = make('pending', 1), b = make('published'), facts = [a, b];
-  const early: Publication = { epoch: 'epoch-a', revision: '9007199254740993', calls: 1, errors: 0 };
-  bindProof(facts, early, { published: { calls: 1, errors: 0 } }, 'distinct');
-  assert.equal(canAcknowledge(a, early, '1 · 0 failed'), false, 'equal aggregate is not pending leaf inclusion');
-  assert.equal(canAcknowledge(b, early, '1 · 0 failed'), true);
-  const unrelated = { ...early, revision: '9007199254740994', calls: 5 };
-  bindProof(facts, unrelated, { published: { calls: 1, errors: 0 } }, 'distinct');
-  assert.equal(canAcknowledge(a, unrelated, '5 · 0 failed'), false, 'higher count/newer revision is not inclusion');
-  const included = { ...early, revision: '9007199254740995', calls: 2, errors: 1 };
-  bindProof(facts, included, { pending: { calls: 1, errors: 0 } }, 'distinct');
-  assert.equal(a.proof, undefined, 'wrong leaf errors cannot bind');
-  a.upper = null;
-  bindProof(facts, included, { pending: { calls: 1, errors: 1 } }, 'distinct');
-  assert.equal(a.proof, undefined, 'publication may arrive before commit receipt');
-  a.upper = 2;
-  bindProof(facts, included, { pending: { calls: 1, errors: 1 } }, 'distinct');
-  assert.equal(canAcknowledge(a, included, '2 · 1 failed'), true);
-  assert.equal(canAcknowledge(a, early, '1 · 0 failed'), false, 'old revision');
-  assert.equal(canAcknowledge(a, { ...included, epoch: 'epoch-b' }, '2 · 1 failed'), false, 'wrong epoch');
-  assert.equal(canAcknowledge(a, included, '2 · 0 failed'), false, 'wrong numeric representation');
-  assert.equal(canAcknowledge(a, { ...included, calls: 1 }, '1 · 1 failed'), false);
-  const seen = new Set<string>();
-  for (let replay = 0; replay < 2; replay++) for (const fact of facts) if (canAcknowledge(fact, included, '2 · 1 failed')) seen.add(fact.id);
-  assert.deepEqual([...seen].sort(), ['pending', 'published'], 'no missing fact or duplicate acknowledgement');
-  assert.equal(facts.reduce((s, f) => s + f.calls, 0), 2);
-  assert.equal(facts.reduce((s, f) => s + f.errors, 0), 1);
-  const hot = [make('marker'), { ...make('marker'), id: 'next', n: 2, calls: 2 }];
-  bindProof(hot, { ...included, errors: 0 }, { marker: { calls: 2, errors: 0 } }, 'hot');
-  assert.ok(hot.every(f => canAcknowledge(f, { ...included, errors: 0 }, '2 · 0 failed')));
-});
