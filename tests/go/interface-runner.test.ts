@@ -22,7 +22,8 @@ for (const scenario of ['statistics exception', 'large export parallel stop', 'j
  let stopped=false,journalDropped=false,gate:ReturnType<typeof spawn>|undefined;
  let exited=false;const gone=new Promise<void>(r=>child.once('exit',()=>{exited=true;r();}));
  const request=async(path:string,body?:object)=>{const r=await fetch(origin+'/__interface/'+path,body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{});const b=await r.json() as any;assert.equal(r.status,200,JSON.stringify(b));return b;};
- const wait=async(check:()=>Promise<boolean>,ms=15000)=>{const end=Date.now()+ms;while(!await check()){assert.ok(!exited&&Date.now()<end,'private runner did not reach checkpoint: '+readFileSync(join(out,'server.log'),'utf8'));await new Promise(r=>setTimeout(r,20));}};
+ // The log is read only to explain a failure: read on every poll, it raced the log stream's lazy file creation (ENOENT).
+ const wait=async(check:()=>Promise<boolean>,ms=15000)=>{const end=Date.now()+ms;while(!await check()){if(exited||Date.now()>=end){const f=join(out,'server.log');assert.fail('private runner did not reach checkpoint: '+(existsSync(f)?readFileSync(f,'utf8'):'(no log yet)'));}await new Promise(r=>setTimeout(r,20));}};
  try{
   let config:any;await wait(async()=>{try{config=await request('config');return true}catch{return false}});
   const db=JSON.parse(readFileSync(join(out,'pg-before.json'),'utf8')).database;

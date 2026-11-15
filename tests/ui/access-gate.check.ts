@@ -59,7 +59,8 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     // Returning to the window with the same person keeps the page: nothing unmounts, nothing shows "Validating access".
     await p.evaluate(() => { (window as any).__kept = document.querySelector('[data-ui="detail"]'); });
     const meChecked = p.waitForResponse(r => r.url().endsWith('/api/ops/me'));
-    await focus(); await meChecked; await p.waitForTimeout(300);
+    // A wrongful fence would start right after the reply (validate runs synchronously): two frames are enough to see it.
+    await focus(); await meChecked; await p.evaluate(() => new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
     assert.equal(await p.evaluate(() => (window as any).__kept?.isConnected === true), true, 'focus with the same person unmounted the page');
     assert.equal(await p.getByText('Validating access…').count(), 0, 'focus with the same person showed Validating access');
     await focus();
