@@ -238,3 +238,29 @@ test('poll fallback fences an old baseline response and activates only the newes
     invalidateAccess('poll cleanup');registerAccessBaseline(async()=>({cursor:0,activate(){},dispose(){}}));await ensureAccessGeneration();
   }
 });
+
+// Requirement: explicit retries retain complete authored bodies, not a newly inferred delivery mode.
+// Risk: a late/unknown send reuses an identity with different arguments, or async hashing writes across a fence.
+import { prepareSending } from '../../app/src/api.ts';
+test('scoped submissions retain original body/hash through edits and refuse stale async persistence', async () => {
+  const storage = globalThis.localStorage, map = new Map<string,string>();
+  (globalThis as any).localStorage = { getItem:(key:string)=>map.get(key)??null,setItem:(key:string,value:string)=>map.set(key,value),removeItem:(key:string)=>map.delete(key) };
+  try {
+    const scope=authorizedDraftScope({kind:'session',id:'frozen-submission'});
+    const original=await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'original',delivery:'steer'});
+    const changed=await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'new intent'});
+    assert.notEqual(changed.requestId,original.requestId);
+    const retry=await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'original'});
+    assert.deepEqual(retry,original,'explicit retry keeps original delivery, body and request identity');
+    await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'other intent'});sendingId(scope,null,'original');
+    assert.notEqual((await prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'original'})).requestId,original.requestId,'late confirmed success removes only its own unresolved identity');
+    assert.ok([...map.values()].some(text=>JSON.parse(text).sending?.bodySha?.length===64));
+    await assert.rejects(prepareSending(scope,'message_send',{sessionId:'foreign',text:'foreign'}),/authorized target/);
+    const editorScope=authorizedDraftScope({kind:'project-editor',id:'editor-storage-failure'}),adapter=createDraftPersistence(editorScope);
+    (globalThis as any).localStorage.setItem=()=>{throw Error('quota');};
+    assert.throws(()=>adapter.write('authored configuration'),/quota/);assert.equal(adapter.read(),'authored configuration','optional persistence failure retains authorized input in memory');
+    const pending=prepareSending(scope,'message_send',{sessionId:'frozen-submission',text:'fenced hashing'});
+    invalidateAccess('hashing fence');await assert.rejects(pending,AccessChanged);
+    await ensureAccessGeneration();assert.throws(()=>adapter.write('late'),AccessChanged);
+  } finally { (globalThis as any).localStorage=storage; }
+});

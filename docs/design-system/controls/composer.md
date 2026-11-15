@@ -21,3 +21,5 @@
 The app injects a scoped persistence adapter after validating the identity and target. The shared control has no storage access; without an adapter it is memory-only. Closing the access gate quarantines authored unsent text under its original identity and target. Restore requires the same validated identity and freshly authorized target, including after changed grants. Other actors never inspect it. Legacy unscoped drafts remain quarantined without attribution or deletion.
 
 Send completion clears only the originally submitted text if unchanged. Newer input and newer-generation records survive late success. Unknown submission outcomes retain the original request identity and body; reopening never automatically resends them. Storage failure preserves the authorized in-memory input and exposes a warning.
+
+Submission metadata freezes the complete message/start body and SHA-256, including delivery mode. Explicit retries of unchanged authored text retain that exact body and request identity after fresh target authorization. Editing another submission keeps unresolved metadata under the original scope; returning to its text reuses its original identity.

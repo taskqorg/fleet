@@ -22,3 +22,11 @@ When explicitly selected and advertised, `project_detail` loads the editor indep
 Prepared figures retain their basis, measured zero and unknown coverage. Published version, validation time, processing progress and underlying observation age are separate; publication time is not observation time. Unchanged figures may still have pending or failed processing. Figures retain their last confirmed value during refresh failure with a visible status in reserved space. Breakdowns use continuous virtual windows with count, search and start/end jumps; no per-page scroller. See [data list](../controls/data-list.md).
 
 Capability-off or unavailable old servers retain the established composite path. Client activation and rollback are specified in [prepared project resources](../../designs/fleet-analytics.md#prepared-project-resources). Rendered-value qualification remains separate from delivery.
+
+Authored configuration edits survive a focus/access generation fence under the original identity and editor target. Restore existing-project edits only after a fresh authorized configuration read, retaining their optimistic base revision/content hash and showing conflict when the source changed. New-project input has a separate actor-scoped creation target. Neither reopening nor an uncertain prior save automatically resends content.
+
+Project draft fields use controlled `TextField` values; typing changes only the authored local bundle. The header Save project action remains the single complete configuration write, so intermediate field input also survives authorized restoration.
+
+An unverified save retains its original operation body and request identity separately from newer edits. After revalidation, Retry original save is explicit and sends only that frozen body. Verified readback advances the base; it clears the submitted draft only when no newer input exists.
+
+Creation fields become editable only after the validated actor scope and any authored draft have been restored. A late initialization cannot overwrite input typed into an already usable form; an authored project ID is never used as an authorization lookup.

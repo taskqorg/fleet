@@ -431,51 +431,68 @@ function PreparedResourceWindow({ projectId, category, group, onClose }: { proje
   const [rows, setRows] = useState<ResourceItem[]>([]), [page, setPage] = useState<ResourceItemsPage | null>(null);
   const [prices, setPrices] = useState<ResourceGroup | null>(null);
   const frame = useRef({ rows, page }); frame.current = { rows, page };
-  const movement = useRef<'replace' | 'append' | 'prepend'>('replace'), consumed = useRef(false);
+  const movement = useRef<'replace' | 'append' | 'prepend'>('replace');
+  const firstRequest = useRef<string | null>(null);
+  const responseContext = useRef(new WeakMap<object, { movement: 'replace' | 'append' | 'prepend'; jump?: 'start' | 'end'; anchor: { key: string; offsetPx: number } | null }>());
   const restore = useRef<{ key: string; offsetPx: number; alignEnd?: boolean } | null>(null);
-  const loadingWindow = useRef(false);
+  const [loadingWindow, setLoadingWindow] = useState(false);
   const captured = useRef<{ key: string; offsetPx: number } | null>(null);
   const last = useRef<unknown>(null);
-  const result = usePreparedDoc(preparedKey('project_resource_items', projectId, request), async ({ signal }) => {
-    const anchor = handle.current?.getAnchor() ?? null; captured.current = anchor;
+  const windowPages = useRef<ResourceItemsPage[]>([]);
+  const retainedPosition = useRef<ResourceSortKey | null>(null);
+  const requestKey = preparedKey('project_resource_items', projectId, request);
+  const result = usePreparedDoc(requestKey, async ({ signal }) => {
+    const first = firstRequest.current !== requestKey; firstRequest.current = requestKey;
+    const context = { movement: first ? movement.current : 'replace' as const, jump: first ? request.anchor : undefined, anchor: null as { key: string; offsetPx: number } | null };
+    const anchor = handle.current?.getAnchor() ?? null; if (anchor) captured.current = anchor;
     const item = anchor ? frame.current.rows.find(row => resourceItemKey(row) === anchor.key) : null;
-    const position = item ? resourcePosition(item) : null;
+    const position = item ? resourcePosition(item) : retainedPosition.current;
+    if (position) retainedPosition.current = position;
+    context.anchor = captured.current;
     const base = { projectId, category, group, ...(category === 'tools' ? { query: request.query ?? '' } : {}), limit: 50 };
-    let next: ProjectResourceItemsRequest = !consumed.current ? { ...base, ...request } : position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' };
-    try { return await op('project_resource_items', next, { signal }); }
-    catch (e) { if (!(e instanceof OpError) || e.status !== 409) throw e; next = position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' }; return op('project_resource_items', next, { signal }); }
+    let next: ProjectResourceItemsRequest = first ? { ...base, ...request } : position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' };
+    let value;
+    try { value = await op('project_resource_items', next, { signal }); }
+    catch (e) { if (!(e instanceof OpError) || e.status !== 409) throw e; next = position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' }; value = await op('project_resource_items', next, { signal }); }
+    responseContext.current.set(value, context); return value;
   }, { touches: c => c.kind === 'resource_summary' && c.id === projectId });
   useLayoutEffect(() => {
     const value = result.data;
+    if (result.state === 'preparing') {
+      windowPages.current = []; last.current = null; setLoadingWindow(false);
+      setRows([]); setPage(null); restore.current = { key: '', offsetPx: 0 }; return;
+    }
     if (!value || !('items' in value) || last.current === value) return;
     last.current = value;
-    const direction = consumed.current ? 'replace' : movement.current;
+    const context = responseContext.current.get(value);
+    const direction = context?.movement ?? 'replace';
     const sameEpoch = !frame.current.page || frame.current.page.version.split(':')[0] === value.version.split(':')[0];
-    const combined = sameEpoch && direction === 'append' ? [...frame.current.rows, ...value.items] : sameEpoch && direction === 'prepend' ? [...value.items, ...frame.current.rows] : value.items;
-    const unique = [...new Map(combined.map(item => [resourceItemKey(item), item])).values()];
-    // Retain a small continuous window, never accumulate history in the browser.
-    const bounded = direction === 'prepend' ? unique.slice(0, 150) : unique.slice(-150);
-    const a = captured.current;
-    if (!consumed.current && request.anchor === 'end' && bounded.length) restore.current = { key: resourceItemKey(bounded.at(-1)!), offsetPx: 0, alignEnd: true };
-    else if (!consumed.current && request.anchor === 'start') restore.current = { key: bounded.length ? resourceItemKey(bounded[0]) : '', offsetPx: 0 };
+    const segments = sameEpoch && direction === 'append' ? [...windowPages.current, value] : sameEpoch && direction === 'prepend' ? [value, ...windowPages.current] : [value];
+    windowPages.current = direction === 'prepend' ? segments.slice(0, 3) : segments.slice(-3);
+    const bounded = [...new Map(windowPages.current.flatMap(segment => segment.items).map(item => [resourceItemKey(item), item])).values()];
+    // Cursors belong to the actual retained edges, not the most recently fetched page.
+    const edges = { previousCursor: windowPages.current[0]?.previousCursor ?? null, nextCursor: windowPages.current.at(-1)?.nextCursor ?? null };
+    const a = context?.anchor;
+    if (context?.jump === 'end' && bounded.length) restore.current = { key: resourceItemKey(bounded.at(-1)!), offsetPx: 0, alignEnd: true };
+    else if (context?.jump === 'start') restore.current = { key: bounded.length ? resourceItemKey(bounded[0]) : '', offsetPx: 0 };
     else if (a && bounded.some(row => resourceItemKey(row) === a.key)) restore.current = a;
     else if (value.resolvedAnchor) restore.current = { key: resourcePositionKey(value.resolvedAnchor), offsetPx: 0 };
     else restore.current = { key: '', offsetPx: 0 };
-    consumed.current = true; setRows(bounded); setPage(value);
-  }, [result.data]);
-  useLayoutEffect(() => { if (restore.current) { if (restore.current.alignEnd) handle.current?.scrollToKey(restore.current.key, 'end'); else handle.current?.restoreAnchor(restore.current.key, restore.current.offsetPx); restore.current = null; loadingWindow.current = false; } }, [rows]);
-  const move = (position: Pick<ProjectResourceItemsRequest, 'anchor' | 'cursor'>, kind: typeof movement.current = 'replace') => { loadingWindow.current = true; movement.current = kind; consumed.current = false; setRequest({ category, group, query: category === 'tools' ? query : undefined, limit: 50, ...position }); };
+    setRows(bounded); setPage({ ...value, ...edges });
+  }, [result.data, result.state]);
+  useLayoutEffect(() => { if (restore.current) { if (restore.current.alignEnd) handle.current?.scrollToKey(restore.current.key, 'end'); else handle.current?.restoreAnchor(restore.current.key, restore.current.offsetPx); restore.current = null; setLoadingWindow(false); } }, [rows]);
+  const move = (position: Pick<ProjectResourceItemsRequest, 'anchor' | 'cursor'>, kind: typeof movement.current = 'replace') => { if (position.anchor) { retainedPosition.current = null; captured.current = null; } setLoadingWindow(true); movement.current = kind; const next = { category, group, query: category === 'tools' ? query : undefined, limit: 50, ...position }; if (preparedKey('project_resource_items', projectId, next) === requestKey) { firstRequest.current = null; result.refresh('jump'); } else setRequest(next); };
   if (prices) return <PreparedResourceWindow projectId={projectId} category="prices" group={prices} onClose={() => setPrices(null)} />;
-  return <article class="detail conversation" data-ui="detail" data-resource-window={category} data-resource-version={page?.version ?? ''}>
+  return <article class="detail conversation" data-ui="detail" data-resource-window={category} data-window-first={rows.length ? resourceItemKey(rows[0]) : ''} data-window-last={rows.length ? resourceItemKey(rows.at(-1)!) : ''} data-resource-version={page?.version ?? ''}>
     <header class="detail-h"><h2>{category === 'prices' ? 'Price basis' : category === 'tools' ? 'Tools' : 'Costs'}</h2><span class="grow" /><Button label="Close resources" icon="x" iconOnly onClick={onClose} /></header>
     <ResourceProgressLine progress={result.progress} error={result.error} />
     {page && <Totals items={preparedTotals(page.header)} />}
-    <div class="answers">{category === 'tools' && <SearchField label="Search tools" value={query} onInput={value => { setQuery(value.slice(0, 200)); consumed.current = false; movement.current = 'replace'; setRequest({ category, query: value.slice(0, 200), limit: 50, anchor: 'start' }); }} onSearch={() => {}} />}
+    <div class="answers">{category === 'tools' && <SearchField label="Search tools" value={query} onInput={value => { setLoadingWindow(true); setQuery(value.slice(0, 200)); retainedPosition.current = null; captured.current = null; firstRequest.current = null; movement.current = 'replace'; setRequest({ category, query: value.slice(0, 200), limit: 50, anchor: 'start' }); }} onSearch={() => {}} />}
       <span>{rows.length} of {page?.total ?? '—'}</span><Button label="Jump to start" icon="arrow-up" iconOnly onClick={() => move({ anchor: 'start' })} /><Button label="Jump to end" icon="arrow-down" iconOnly onClick={() => move({ anchor: 'end' })} />
       {result.error && <Button label="Retry resources" icon="rotate-cw" onClick={() => result.refresh('retry')} />}</div>
     <VirtualList fill handle={handle} items={rows} getKey={resourceItemKey} label={`Project ${category}`} rowHeight={ROW2} follow="top" columns="1.25rem minmax(0,1fr) auto"
-      onEnd={() => { if (!loadingWindow.current && page?.nextCursor) move({ cursor: page.nextCursor }, 'append'); }}
-      onStart={() => { if (!loadingWindow.current && page?.previousCursor) move({ cursor: page.previousCursor }, 'prepend'); }}
+      onEnd={!loadingWindow && page?.nextCursor ? () => move({ cursor: page.nextCursor! }, 'append') : undefined}
+      onStart={!loadingWindow && page?.previousCursor ? () => move({ cursor: page.previousCursor! }, 'prepend') : undefined}
       render={item => <><StateBadge family="source" state="current" compact />{item.kind === 'tool' ? <><span>{item.name}</span><span class="num">{item.calls} · {item.errors} failed</span></> : item.kind === 'cost' ? <><CostFigures cost={[{ ...item, reason: item.reason ?? undefined, note: item.note ?? undefined, usages: item.usages ?? undefined }]} showUnavailable /><Button label={`Price basis · ${item.priceCount}`} onClick={() => setPrices({ currency: item.currency, basis: item.basis })} /></> : <><span><EntityCode id={item.priceId} what="Price" /> Recorded rate</span><AgeChip t={item.observedAt} now={Date.now()} /></>}</>} />
     {!rows.length && page && <Empty text="No matching confirmed items." />}
   </article>;

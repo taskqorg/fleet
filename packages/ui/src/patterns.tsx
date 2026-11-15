@@ -111,7 +111,7 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two }: { t: TaskRow; n
 
 /* ---------- App shell (patterns/app-shell.md) ---------- */
 
-export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus }: {
+export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus, privateReady = true, privateGeneration = 0 }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
   /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
   /** The project focus control (OR-34); it gets the collapsed state. */ focus?: (mini: boolean) => ComponentChildren;
@@ -119,6 +119,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   /** The signed-in person, shown at the bottom of the navigation with a Logout menu. */ user?: { name: string; onLogout: () => void };
   /** Column widths in px by key (`nav`, `control`) and the collapsed navigation: person settings (OR-41, OR-42). onWidth(key, 0) resets.
    *  Without them the shell keeps its own (book and mockups). */
+  privateReady?: boolean; privateGeneration?: number;
   widths?: Record<string, number>; onWidth?: (key: string, px: number) => void; collapsed?: boolean; onCollapsed?: (on: boolean) => void;
   /** False until those settings are read: the shell stays hidden, so nothing jumps when they arrive (OR-23). */ ready?: boolean;
 }) {
@@ -128,11 +129,11 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   const mini = collapsed ?? ownMini, widths = stored ?? ownWidths;
   const ownSet = useRef((k: string, px: number) => setOwnWidths(w => { const n = { ...w }; if (px) n[k] = px; else delete n[k]; return n; })).current;
   const setWidth = onWidth ?? ownSet;
-  const [spot, setSpot] = useState(false);
+  const [spot, setSpot] = useState<number | null>(null);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (e.key.toLowerCase() === 'k' || (e.code === 'KeyK' && !/^[a-z]$/i.test(e.key)))) { e.preventDefault(); setSpot(s => !s); } };
+    const k = (e: KeyboardEvent) => { if (privateReady && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (e.key.toLowerCase() === 'k' || (e.code === 'KeyK' && !/^[a-z]$/i.test(e.key)))) { e.preventDefault(); setSpot(s => s === privateGeneration ? null : privateGeneration); } };
     addEventListener('keydown', k); return () => removeEventListener('keydown', k);
-  }, []);
+  }, [privateReady, privateGeneration]);
   const toggle = () => (onCollapsed ?? setOwnMini)(!mini);
   // Stored widths are clamped on the way in, so a value an agent or another device wrote never breaks the layout.
   const vars = Object.fromEntries(Object.entries(COLS).filter(([, c]) => typeof widths[c.key] === 'number' && widths[c.key] > 0).map(([n, c]) => [`--size-${n}`, Math.max(c.lo, Math.min(c.hi, widths[c.key])) + 'px']));
@@ -145,7 +146,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   return (
     <Widths.Provider value={setWidth}><div class={`shell${ready ? '' : ' pending'}`} data-ui="app-shell" onClick={openRow} style={vars}>
       <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
-      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned} onSearch={() => setSpot(true)} tools={focus?.(mini)}
+      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned} onSearch={() => setSpot(privateGeneration)} tools={focus?.(mini)}
         head={<><span class="brand-mark" role="img" aria-label="Fleet" /><b class="brand">Fleet</b><span class="grow" />
           {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}</>}
         foot={user && <UserBlock {...user} />} />
@@ -155,7 +156,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
         <span class="nav-toggle"><Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></span>
         <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
       </div>
-      {spot && <Spotlight providers={[sectionProvider(nav, onGo), ...search]} onClose={() => setSpot(false)} />}
+      {spot === privateGeneration && privateReady && <Spotlight key={privateGeneration} providers={[sectionProvider(nav, onGo), ...search]} onClose={() => setSpot(null)} />}
       <TooltipLayer />
     </div></Widths.Provider>
   );

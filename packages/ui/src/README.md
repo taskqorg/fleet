@@ -31,3 +31,5 @@
 - Design warnings: `pnpm run check:design`
 
 `VirtualListHandle` exposes `getAnchor()` and `restoreAnchor(key, offsetPx)` in addition to key jumps; `fill` makes it the owning column's only scroller. `Composer` accepts an injected `draftPersistence` adapter and is memory-only without one; completion clears only unchanged original text. `StatusLine` reserves two lines for visible asynchronous feedback without moving adjacent controls.
+
+`AppShell.privateReady` and `privateGeneration` fence its Spotlight state independently of column geometry. `Composer` remounts its private input by adapter key, resetting busy state before another target becomes usable. VirtualList applies requested restoration after its own layout work and uses current viewport edges for continuous loading.

@@ -996,8 +996,10 @@ export const KvRow = ({ icon, label, meta, value }: { icon: IconName; label: str
 /* ---------- Composer (controls/composer.md) ---------- */
 
 export type ComposerPersistence = { key: string; read(): string; write(text: string): void; clearIfUnchanged(text: string): void };
-/** App-owned scoped persistence; memory-only when no adapter is supplied. */
-export function Composer({ onSend, disabledReason, placeholder = 'Message', draftPersistence }: { onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftPersistence?: ComposerPersistence }) {
+export type ComposerProps = { onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftPersistence?: ComposerPersistence };
+/** App-owned scoped persistence; a target change resets private input and busy state synchronously. */
+export function Composer(props: ComposerProps) { return <ScopedComposer key={props.draftPersistence?.key ?? 'memory'} {...props} />; }
+function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draftPersistence }: ComposerProps) {
   const [text, setText] = useState(''), [busy, setBusy] = useState(false), [warning, setWarning] = useState('');
   const current = useRef({ text, key: draftPersistence?.key }); current.current = { text, key: draftPersistence?.key };
   useEffect(() => { try { const value = draftPersistence?.read() ?? ''; current.current.text = value; setText(value); setWarning(''); } catch { setWarning('Draft storage unavailable; keep this page open.'); } }, [draftPersistence?.key]);

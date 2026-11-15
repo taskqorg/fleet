@@ -72,7 +72,7 @@ export async function writeOnce<K extends OpName>(name: K, body: Ops[K]['request
   }
 }
 
-export type DraftScope = { identityKey: string; target: { kind: 'session'; id: string } | { kind: 'project'; id: string; roleId: string }; grantsVersion: string; generation: number };
+export type DraftScope = { identityKey: string; target: { kind: 'session'; id: string } | { kind: 'project'; id: string; roleId: string } | { kind: 'project-editor'; id: string } | { kind: 'project-create'; id: '' }; grantsVersion: string; generation: number };
 export type DraftPersistence = { key: string; read(): string; write(text: string): void; clearIfUnchanged(text: string): void };
 const draftKey = (s: DraftScope) => 'fleet-input:' + JSON.stringify([1, s.identityKey, s.target.kind, s.target.id, s.target.kind === 'project' ? s.target.roleId : null]);
 const checkScope = (s: DraftScope) => { assertAccessGeneration(s.generation); if (access.value.identity?.identityKey !== s.identityKey) throw new AccessChanged(); };
@@ -80,7 +80,8 @@ export function authorizedDraftScope(target: DraftScope['target']): DraftScope {
   const s = access.value; assertAccessGeneration(s.generation);
   return { ...s.identity!, target, generation: s.generation };
 }
-type DraftRecord = { text?: string; sending?: { text: string; requestId: string }; grantsVersion: string; generation: number };
+type Submission = { text: string; requestId: string; operation?: 'message_send' | 'session_start'; body?: unknown; bodySha?: string };
+type DraftRecord = { text?: string; sending?: Submission; uncertain?: Submission[]; grantsVersion: string; generation: number };
 const inputMemory = new Map<string, DraftRecord>();
 function readInput(s: DraftScope): DraftRecord {
   checkScope(s); const key = draftKey(s);
@@ -103,16 +104,36 @@ export function createDraftPersistence(scope: DraftScope): DraftPersistence {
 export function sendingId(scope: DraftScope, text: string | null, expectedText?: string): string {
   const r = readInput(scope);
   if (text === null) {
-    if (expectedText === undefined || r.sending?.text === expectedText) {
-      try { writeInput(scope, { ...r, sending: undefined }); }
-      catch (e) { if (e instanceof AccessChanged) throw e; inputMemory.set(draftKey(scope), r); } // retaining an old identity is safer than inventing a new retry
-    }
+    const clearsCurrent = expectedText === undefined || r.sending?.text === expectedText;
+    const uncertain = r.uncertain?.filter(item => expectedText === undefined ? item.requestId !== r.sending?.requestId : item.text !== expectedText);
+    try { writeInput(scope, { ...r, sending: clearsCurrent ? undefined : r.sending, uncertain }); }
+    catch (e) { if (e instanceof AccessChanged) throw e; inputMemory.set(draftKey(scope), r); } // retaining an old identity is safer than inventing a new retry
     return '';
   }
   if (r.sending?.text === text) return r.sending.requestId;
-  const requestId = crypto.randomUUID();
-  try { writeInput(scope, { ...r, sending: { text, requestId } }); } catch (e) { if (e instanceof AccessChanged) throw e; /* retained in memory; Composer reports storage failure */ }
+  const retained = r.uncertain?.find(item => item.text === text);
+  const requestId = retained?.requestId ?? crypto.randomUUID();
+  const uncertain = [...(r.uncertain ?? []).filter(item => item.requestId !== requestId), ...(r.sending ? [r.sending] : [])];
+  try { writeInput(scope, { ...r, uncertain, sending: retained ?? { text, requestId } }); } catch (e) { if (e instanceof AccessChanged) throw e; /* retained in memory; Composer reports storage failure */ }
   return requestId;
+}
+
+/** Freeze the complete authored submission, including delivery mode, for an explicit identical-text retry. */
+export async function prepareSending<K extends 'message_send' | 'session_start'>(scope: DraftScope, operation: K, body: Omit<Ops[K]['request'], 'requestId'>): Promise<Ops[K]['request']> {
+  const text = body.text; if (typeof text !== 'string') throw Error('Submission text is required');
+  const requestId = sendingId(scope, text), record = readInput(scope), previous = record.sending!;
+  const digest = async (value: unknown) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  const retained = previous.operation === operation && previous.body ? previous.body as Ops[K]['request'] : { ...body, requestId } as Ops[K]['request'];
+  const fields = retained as Record<string, unknown>;
+  const targetMatches = operation === 'message_send' ? scope.target.kind === 'session' && fields.sessionId === scope.target.id
+    : scope.target.kind === 'project' && fields.projectId === scope.target.id && fields.role === scope.target.roleId;
+  if (!targetMatches || fields.text !== text || fields.requestId !== requestId) throw Error('Stored submission does not match its authorized target');
+  const bodySha = await digest(retained); checkScope(scope);
+  if (previous.bodySha && previous.bodySha !== bodySha) throw Error('Stored submission differs from its original body');
+  const current = readInput(scope); if (current.sending?.requestId !== requestId) throw Error('Submission was superseded before sending');
+  try { writeInput(scope, { ...current, sending: { text, requestId, operation, body: retained, bodySha } }); }
+  catch (error) { if (error instanceof AccessChanged) throw error; /* original body and identity remain in authorized memory */ }
+  return retained;
 }
 
 /** A signal that aborts when the component unmounts: pass it to writeOnce so a retry loop ends with its view. */

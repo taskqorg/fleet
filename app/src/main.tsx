@@ -76,7 +76,7 @@ function App() {
   const search = useRef((['task', 'question', 'conversation', 'project', 'host'] as const).map(k => found(k, go))).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   // Preferences load only after authorized baseline activation.
-  // // and again on window focus (below): agents and other devices change them too
+  // Focus revalidates access before reloading changes from agents and other devices.
   const [user, setUser] = useState<string | null>(null);
   // OR-23: the shell shows once the first settings read answers, or after 1.5 s at most; a later store clear does not hide it again.
   const [shown, setShown] = useState(false);
@@ -87,6 +87,7 @@ function App() {
   const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }), { pins: ids });
   useEffect(() => {
     const unregister = registerAccessValidator(async ({ generation, signal }) => {
+      last = null;
       const clear = clearAll();
       const m = await accessControlOp('me', {}, { signal });
       await clear; if (signal.aborted || generation !== accessGeneration()) throw Error('Access changed');
@@ -104,7 +105,7 @@ function App() {
   // The project focus (OR-34) is a person setting; lists apply it where their view names no projects.
   const focus = prefs.value.focus, presets = prefs.value.focusPresets;
   const focusCtl = (mini: boolean) => <Focus mini={mini} value={focus} presets={presets} />;
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown} focus={access.value.state === 'open' ? focusCtl : undefined}
+  return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown} focus={access.value.state === 'open' ? focusCtl : undefined}
     widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); } } : undefined}>

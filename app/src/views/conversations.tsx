@@ -9,7 +9,7 @@ import {
   keyConnection,
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
-import { op, online, addRequestedKey, writeOnce, sendingId, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
 import { focusIds } from '../prefs.ts';
@@ -65,7 +65,8 @@ export function Conversations({ id }: { id?: string }) {
 
 function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
-  const { data: s, error, state, restored } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }), c => c.sessionId === id && c.kind !== 'event');
+  const [verifiedTarget, setVerifiedTarget] = useState<string | null>(null);
+  const { data: s, error, state, restored } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }).then(reply => { setVerifiedTarget(id); return reply; }), c => c.sessionId === id && c.kind !== 'event');
   // A session that got a task shows the task's thread (design "Thread scope"): the first page resolves it and returns the key.
   const thread = useThread({ session: id });
   const key: ThreadKey = thread.win?.key ?? { session: id };
@@ -159,14 +160,14 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         {active && <EntityCode id={active.id} what="Run" />}
         {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
       </div>
-      <Composer draftPersistence={s && !restored ? createDraftPersistence(authorizedDraftScope({ kind: 'session', id })) : undefined} disabledReason={off ? 'offline' : undefined} placeholder={active ? 'Steer' : 'Message'}
+      <Composer draftPersistence={s && !restored && verifiedTarget === id ? createDraftPersistence(authorizedDraftScope({ kind: 'session', id })) : undefined} disabledReason={off ? 'offline' : verifiedTarget !== id ? 'Validating conversation' : undefined} placeholder={active ? 'Steer' : 'Message'}
         onSend={async text => {
           // One requestId per draft text until it is sent, kept next to the draft: a resend after a failure or a reload is the
           // same write, never a second one. A definite error (nothing stored) clears it.
           const scope = authorizedDraftScope({ kind: 'session', id });
-          const requestId = sendingId(scope, text);
+          const request = await prepareSending(scope, 'message_send', { sessionId: id, text, ...(active ? { delivery: 'steer' } : {}) });
           setFailure(null);
-          try { await writeOnce('message_send', { sessionId: id, requestId, text, ...(active ? { delivery: 'steer' } : {}) }, unknown, { signal: alive.current.signal }); sendingId(scope, null, text); setFailure(null); }
+          try { await writeOnce('message_send', request, unknown, { signal: alive.current.signal }); sendingId(scope, null, text); setFailure(null); }
           catch (e: any) { if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) { if (!unknownOutcome(e)) sendingId(scope, null, text); setFailure({ text: e.message }); } throw e; } }} /></div>
   </article>;
 }
@@ -192,13 +193,14 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
 
 function NewConversation({onDone}:{onDone:(sessionId:string)=>void}){
  const alive=useAlive();
+ const [verifiedProject,setVerifiedProject]=useState<string|null>(null);
  const projects=useDoc<any>('conversation-projects',()=>op('project_list',{}),c=>c.kind==='definition');
  const [project,setProject]=useState(new URLSearchParams(location.search).get('new')??''),[role,setRole]=useState('pm'),[error,setError]=useState('');
- const detail=useDoc<any>(project?'conversation-project:'+project:null,()=>op('project_detail',{projectId:project}).catch(e=>{if(e instanceof OpError&&[404,503].includes(e.status))return op('project_context',{projectId:project});throw e;}),c=>c.kind==='definition');
- const selected=detail.restored?null:detail.data?.settings;
+ const detail=useDoc<any>(project?'conversation-project:'+project:null,()=>op('project_detail',{projectId:project}).catch(e=>{if(e instanceof OpError&&[404,503].includes(e.status))return op('project_context',{projectId:project});throw e;}).then(reply=>{setVerifiedProject(project);return reply;}),c=>c.kind==='definition');
+ const selected=detail.restored||verifiedProject!==project?null:detail.data?.settings;
  const roles=Object.entries(selected?.roles??{}).map(([id,profile])=>({id,label:`${id} · ${String(profile)}`}));
  return <DetailSection title="New conversation"><Choice label="Project" value={project} onChange={p=>{setProject(p);setRole('pm');}} options={(projects.data?.projects??[]).map((p:any)=>({id:p.id,label:p.name}))}/>
  {project&&<Choice label="Role / configuration" value={role} onChange={setRole} options={roles}/>}
- {error&&<ErrorBanner text={error}/>}<Composer draftPersistence={selected&&roles.some(r=>r.id===role)?createDraftPersistence(authorizedDraftScope({kind:'project',id:project,roleId:role})):undefined} placeholder="Describe the work for this project" disabledReason={!project||!roles.some(r=>r.id===role)?'Choose a project and a mapped role':undefined} onSend={async text=>{const scope=authorizedDraftScope({kind:'project',id:project,roleId:role});try{setError('');const r=await writeOnce('session_start',{projectId:project,role,requestId:sendingId(scope,text),text},()=>setError('unknown, retrying'),{signal:alive});sendingId(scope,null,text);onDone(r.sessionId);}catch(e:any){if(!(e instanceof AccessChanged)&&!unknownOutcome(e)&&!(e instanceof OpError&&e.message==='aborted'))sendingId(scope,null,text);setError(e.message);throw e;}}}/>
+ {error&&<ErrorBanner text={error}/>}<Composer draftPersistence={selected&&roles.some(r=>r.id===role)?createDraftPersistence(authorizedDraftScope({kind:'project',id:project,roleId:role})):undefined} placeholder="Describe the work for this project" disabledReason={!project||!roles.some(r=>r.id===role)?'Choose a project and a mapped role':undefined} onSend={async text=>{const scope=authorizedDraftScope({kind:'project',id:project,roleId:role});try{setError('');const request=await prepareSending(scope,'session_start',{projectId:project,role,text});const r=await writeOnce('session_start',request,()=>setError('unknown, retrying'),{signal:alive});sendingId(scope,null,text);onDone(r.sessionId);}catch(e:any){if(!(e instanceof AccessChanged)&&!unknownOutcome(e)&&!(e instanceof OpError&&e.message==='aborted'))sendingId(scope,null,text);setError(e.message);throw e;}}}/>
  <Button label="Projectless conversation" icon="messages-square" onClick={()=>op('session_create',{}).then(r=>onDone(r.sessionId),e=>setError(e.message))}/></DetailSection>;
 }

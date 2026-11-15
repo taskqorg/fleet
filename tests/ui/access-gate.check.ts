@@ -30,7 +30,12 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
   };
   const focus = () => p.evaluate(() => window.dispatchEvent(new Event('focus')));
   const resync = () => p.evaluate(() => (window as any).__streams.at(-1).dispatchEvent(new MessageEvent('resync', { data: JSON.stringify({ cursor: 0 }) })));
+  const idleSave = () => p.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent?.trim() === 'Save project' && !button.disabled && button.getAttribute('aria-disabled') !== 'true' && button.getAttribute('aria-busy') !== 'true'));
   const edit = async (label: string, value: string) => { await p.getByLabel(label, { exact: true }).click(); const input = p.getByLabel(label, { exact: true }); await input.fill(value); await input.press('Enter'); };
+  if (process.env.FLEET_WINDOW_DIAGNOSTIC) {
+    p.on('request', request => { if (request.url().endsWith('/api/ops/project_resource_items')) { const body=request.postDataJSON(); console.log('window request',JSON.stringify({anchor:body.anchor,cursor:!!body.cursor,around:body.around?.key?.kind,queryLength:body.query?.length})); } });
+    p.on('response', async response => { if(response.url().endsWith('/api/ops/project_resource_items'))try{const body=await response.json();console.log('window response',JSON.stringify({count:body.items?.length,first:body.items?.[0]?.name?.slice(0,40),last:body.items?.at(-1)?.name?.slice(0,40),previous:!!body.previousCursor,next:!!body.nextCursor}));}catch{} });
+  }
   const screenshots = process.env.FLEET_BROWSER_SHOTS;
   if (screenshots) mkdirSync(screenshots, { recursive: true });
   const shot = async (name: string) => { if (screenshots) await p.screenshot({ path: screenshots + '/' + name + '.png' }); };
@@ -51,11 +56,28 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.waitForFunction(() => !!document.querySelector('[data-resource-project]')?.getAttribute('data-resource-version'));
     assert.equal(await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).count(), 1, 'summary preserves dirty fields');
     assert.deepEqual(await p.locator('[data-ui="list-detail"]').boundingBox(), geometry, 'summary does not move columns');
+    await focus();
+    await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).waitFor();
+    assert.equal(await p.getByLabel('Name', { exact: true }).inputValue(), 'Browser dirty project', 'authored editor input survives a new authorized generation');
+    await p.getByLabel('Name', { exact: true }).fill('Unsubmitted field input');
+    await focus();
+    await p.getByRole('heading', { name: 'Unsubmitted field input', exact: true }).waitFor();
+    await edit('Name', 'Browser dirty project');
     const detail = await call('project_detail', { projectId: 'desiign' });
+    const authoredBase=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'member@trial.test','project-editor','desiign',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});
+    await p.evaluate(()=>{const original=Storage.prototype.setItem;(window as any).__storageSet=original;Storage.prototype.setItem=function(key,value){if(key.includes('project-editor'))throw Error('fixture quota');return original.call(this,key,value);};});
+    await p.getByLabel('Name',{exact:true}).fill('Quota-protected editor input');
+    await p.getByText('Draft storage unavailable; keep this page open.',{exact:true}).waitFor();await focus();
+    await p.getByRole('heading',{name:'Quota-protected editor input',exact:true}).waitFor();
+    await p.evaluate(()=>{Storage.prototype.setItem=(window as any).__storageSet;delete (window as any).__storageSet;});
+    await edit('Name','Browser dirty project');
     const changed = structuredClone(detail.content); changed.settings.name = 'External browser project';
     await call('project_update', { projectId: 'desiign', requestId: crypto.randomUUID(), baseRevision: detail.revision, content: changed });
     await p.getByText(/definition changed while you were editing/).waitFor();
     assert.equal(await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).count(), 1);
+    await focus();await p.getByText(/definition changed while you were editing/).waitFor();
+    const restoredBase=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'member@trial.test','project-editor','desiign',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});
+    assert.equal(restoredBase.base.revision,authoredBase.base.revision);assert.equal(restoredBase.base.contentSha,authoredBase.base.contentSha);assert.equal(restoredBase.requestId,authoredBase.requestId,'revalidation never silently rebases the optimistic write identity');
     await p.getByRole('button', { name: 'Discard edits and reload', exact: true }).click();
     await p.getByRole('heading', { name: 'External browser project', exact: true }).waitFor();
     await edit('Name', 'Verified browser project'); const readback = p.waitForResponse(response => response.url().endsWith('/api/ops/project_detail') && response.status() === 200); await p.getByRole('button', { name: 'Save project', exact: true }).click();
@@ -66,7 +88,9 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     // Actual committed source -> processor -> prepared fetch -> rendered figure. This is a small fixture, not load acceptance.
     const resources = p.locator('[data-resource-project]');
     assert.equal(await resources.isVisible(), true);
-    const previousCalls = Number(await resources.locator('dt').filter({ hasText: /^Tools$/ }).locator('..').locator('dd').innerText());
+    const confirmed = await call('project_resources',{projectId:'desiign'});assert.equal(confirmed.kind,'ready');
+    const previousCalls = confirmed.header.tools.totalCalls;
+    await p.waitForFunction(expected=>{const dt=[...document.querySelectorAll('[data-resource-project] dt')].find(node=>node.textContent==='Tools');return Number(dt?.nextElementSibling?.textContent)===expected;},previousCalls);
     const oldVersion = await resources.getAttribute('data-resource-version');
     const started = Date.now();
     seed.sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES('browser-resource-new','tool_run','succeeded','desiign','{"tool":"new confirmed browser tool"}');`);
@@ -80,6 +104,16 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.getByText('new confirmed browser tool', { exact: true }).waitFor();
     await p.getByRole('button', { name: 'Jump to start', exact: true }).click();
     await p.getByText('browser-tool-0001', { exact: true }).waitFor();
+    for (const lastTool of ['0100','0150','0200']) {
+      const nextPage=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_resource_items')&&!!response.request().postDataJSON()?.cursor);
+      await grid.evaluate(el=>{el.scrollTop=el.scrollHeight;el.dispatchEvent(new Event('scroll'));});await nextPage;
+      await p.waitForFunction(tool=>document.querySelector('[data-resource-window]')?.getAttribute('data-window-last')?.includes('browser-tool-'+tool),lastTool);
+    }
+    const previousPage=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_resource_items')&&!!response.request().postDataJSON()?.cursor);
+    await grid.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});await previousPage;
+    await p.waitForFunction(()=>document.querySelector('[data-resource-window]')?.getAttribute('data-window-first')?.includes('browser-tool-0001'));
+    await grid.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
+    await p.getByText('browser-tool-0001',{exact:true}).waitFor();
     await grid.evaluate(el => { el.scrollTop = 650; el.dispatchEvent(new Event('scroll')); });
     const anchor = await grid.evaluate(element => { const top = element.getBoundingClientRect().top; return [...element.querySelectorAll('[role="row"]')].map(row => ({ key: row.getAttribute('data-key')!, top: row.getBoundingClientRect().top, bottom: row.getBoundingClientRect().bottom })).find(row => row.bottom > top); });
     assert.ok(anchor);
@@ -103,6 +137,13 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     seed.sql("UPDATE resource_project_summary SET epoch=gen_random_uuid(),revision=revision+1 WHERE project_id='desiign'");
     await p.waitForFunction(version => document.querySelector('[data-resource-window]')?.getAttribute('data-resource-version') !== version, epochVersion);
     assert.ok(packedRequests > 0, 'packed server position reaches around unchanged');
+    seed.sql("UPDATE resource_project_summary SET ready=false WHERE project_id='desiign'");
+    await p.waitForFunction(()=>document.querySelector('[data-resource-window]')?.getAttribute('data-resource-version')==='');
+    assert.equal(await grid.locator('[role="row"]').count(),0,'preparing removes stale local rows');
+    assert.equal(await p.locator('[data-resource-window] .totals').count(),0,'preparing removes the old publication header');
+    seed.sql("UPDATE resource_project_summary SET ready=true,epoch=gen_random_uuid(),revision=revision+1 WHERE project_id='desiign'");
+    await p.waitForFunction(()=>!!document.querySelector('[data-resource-window]')?.getAttribute('data-resource-version'));
+    assert.equal(await grid.getAttribute('aria-rowcount'),'1','new authorized publication re-anchors the retained packed position');
     p.off('request', packed);
     await shot('resource-packed-epoch');
     await p.getByRole('button', { name: 'Close resources', exact: true }).click();
@@ -111,28 +152,44 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     const writeWait = new Promise<void>(resolve => { releaseWrite = resolve; }), writeStarted = new Promise<void>(resolve => { wrote = resolve; });
     await p.route('**/api/ops/project_update', async route => { const response = await route.fetch(); wrote(); await writeWait; await route.fulfill({ response }).catch(() => {}); });
     await edit('Name', 'Committed before revoke'); await p.getByRole('button', { name: 'Save project', exact: true }).click(); await writeStarted;
+    await p.getByLabel('Name',{exact:true}).fill('Newer input after submitted save');
+    await p.keyboard.press('Meta+k');
+    const palette=p.getByRole('dialog');await palette.waitFor();
+    const search=palette.getByRole('combobox');await search.fill('desiign');
+    await palette.getByText('Committed before revoke',{exact:true}).waitFor();
+    let releaseSearch!:()=>void,searchStarted!:()=>void;
+    const searchWait=new Promise<void>(resolve=>{releaseSearch=resolve}),searchPending=new Promise<void>(resolve=>{searchStarted=resolve});
+    await p.route('**/api/ops/search',async route=>{const response=await route.fetch();searchStarted();await searchWait;await route.fulfill({response}).catch(()=>{});});
+    await search.fill('Committed');await searchPending;
     let releaseMe!: () => void, meStarted!: () => void;
     const meWait = new Promise<void>(resolve => { releaseMe = resolve; }), mePending = new Promise<void>(resolve => { meStarted = resolve; });
     let holdMe = true;
     await p.route('**/api/ops/me', async route => { if (holdMe) { meStarted(); await meWait; } await route.continue().catch(() => {}); });
     await resync(); await mePending;
     assert.equal(await p.getByRole('button', { name: 'Save project', exact: true }).count(), 0, 'private editor unmounted during pending me');
+    assert.equal(await p.getByRole('dialog').count(),0,'private Spotlight results unmount while identity validation is pending');
     assert.equal(await p.getByText('Member', { exact: true }).count(), 0, 'previous identity label hidden');
     let readbacks = 0; p.on('request', request => { if (request.url().endsWith('/api/ops/project_detail')) readbacks++; });
     releaseWrite(); await tick(); assert.equal(readbacks, 0, 'late write does not start a new-generation readback');
-    holdMe = false; releaseMe(); await p.getByRole('button', { name: 'Save project', exact: true }).waitFor();
+    actor='outsider@trial.test';releaseSearch();await p.unroute('**/api/ops/search');
+    holdMe = false; releaseMe();await p.getByText('Outsider',{exact:true}).waitFor();
+    assert.equal(await p.getByRole('dialog').getByText('Committed before revoke',{exact:true}).count(),0,'old search response cannot appear under the new identity');
+    await p.keyboard.press('Escape');actor='member@trial.test';await focus();await p.getByRole('button', { name: 'Retry original save', exact: true }).waitFor();
+    await p.getByRole('button', { name: 'Retry original save', exact: true }).click(); await idleSave();
+    await p.keyboard.press('Escape');
     assert.equal((await call('project_detail', { projectId: 'desiign' })).name, 'Committed before revoke', 'durable write is neither undone nor resent');
+    assert.equal(await p.getByLabel('Name',{exact:true}).inputValue(),'Newer input after submitted save','late success/readback cannot erase newer authored input');
     await p.unroute('**/api/ops/project_update'); await p.unroute('**/api/ops/me');
     let releaseReadback!: () => void, reading!: () => void;
     const readbackWait = new Promise<void>(resolve => { releaseReadback=resolve; }), readingStarted = new Promise<void>(resolve => { reading=resolve; });
     await p.route('**/api/ops/project_detail', async route => { const response=await route.fetch(); if(response.status()===200){reading();await readbackWait;}await route.fulfill({response}).catch(()=>{}); });
     await edit('Name','Readback generation fence');
-    const savedReply=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_update'));
+    const savedReply=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_update'));savedReply.catch(()=>{});
     await p.getByRole('button',{name:'Save project',exact:true}).click();assert.equal((await savedReply).status(),200);await readingStarted;
     actor='outsider@trial.test';await focus();await p.getByText('Outsider',{exact:true}).waitFor();releaseReadback();
     await p.unroute('**/api/ops/project_detail');
     assert.equal(await p.getByRole('heading',{name:'Readback generation fence',exact:true}).count(),0,'a pre-revoke readback cannot apply under a new identity');
-    actor='member@trial.test';await focus();await p.getByRole('button',{name:'Save project',exact:true}).waitFor();
+    actor='member@trial.test';await focus();await p.getByRole('button',{name:'Retry original save',exact:true}).waitFor();await p.getByRole('button',{name:'Retry original save',exact:true}).click();await idleSave();
 
     // Mounted thread/Composer: preserve author text for the same freshly authorized target only.
     seed.put('session', { id: 'browser-access-session', projectId: 'desiign', createdAt: Date.now() });
@@ -195,6 +252,18 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     assert.ok(Date.now() - beforeBlocked >= 1800, 'fixture observed the blocked-clear fallback rather than an immediate delete');
     assert.equal(await p.getByText('Blocked stale private marker', { exact: true }).count(), 0);
     await p.evaluate(() => { (window as any).__idbBlocker.close(); delete (window as any).__idbBlocker; });
+    // Creation input is actor-scoped, and its authored ID is never treated as an existing authorization grant.
+    actor='owner@trial.test';await p.goto(origin+'/projects');await p.getByRole('button',{name:'Create project',exact:true}).click();
+    await p.getByLabel('Project ID',{exact:true}).fill('browser-create-authored-only');await p.getByLabel('Name',{exact:true}).fill('Unsent creation actor');
+    const creationRecord=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'owner@trial.test','project-create','',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});
+    assert.equal(creationRecord.bundle.settings.name,'Unsent creation actor','creation input is retained before the validation fence');
+    let draftIdReads=0;const createdIdRead=(request:import('playwright').Request)=>{if(request.url().endsWith('/api/ops/project_detail')&&request.postDataJSON()?.projectId==='browser-create-authored-only')draftIdReads++;};p.on('request',createdIdRead);
+    await focus();await p.getByRole('button',{name:'Create project',exact:true}).click();await p.getByRole('heading',{name:'Create project',exact:true}).waitFor();
+    assert.equal(await p.getByLabel('Name',{exact:true}).inputValue(),'Unsent creation actor');
+    const restoredCreation=await p.evaluate(()=>{const key='fleet-input:'+JSON.stringify([1,'owner@trial.test','project-create','',null]);return JSON.parse(JSON.parse(localStorage.getItem(key)!).text);});
+    assert.equal(restoredCreation.requestId,creationRecord.requestId);assert.equal(draftIdReads,0);
+    actor='outsider@trial.test';await focus();await p.getByRole('button',{name:'Create project',exact:true}).click();
+    assert.equal(await p.getByLabel('Project ID',{exact:true}).inputValue(),'','another actor never restores creation input');p.off('request',createdIdRead);
     // Lab authored input belongs to the original actor, while restored server receipt fields are quarantined.
     actor = 'owner@trial.test'; await p.goto(origin + '/lab/new');
     const goal = p.getByRole('textbox', { name: 'Goal', exact: true }); await goal.waitFor();

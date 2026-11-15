@@ -3,11 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   AreaChart, StatusLine, Button, Choice, CodeEditor, CostFigures, DetailSection, Empty, ErrorBanner, Icon,
-  KvRow, ListDetail, Num, SearchField, SettingField, Totals, VirtualList, matchSearch,
+  KvRow, ListDetail, Num, SearchField, TextField, Totals, VirtualList, matchSearch,
   msMeasured, numMeasured, type ChartBucket, type ChartSeries, type Measured, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
-import { op, useAlive, writeOnce, preparedResourcesAvailable, AccessChanged, OpError, type Ops } from '../api.ts';
+import { op, useAlive, writeOnce, preparedResourcesAvailable, createDraftPersistence, authorizedDraftScope, AccessChanged, OpError, type DraftPersistence, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { subscribe } from '../feed.ts';
 import { accessGeneration, isAccessCurrent } from '../access.ts';
@@ -138,12 +138,31 @@ export function Projects({ id }: { id?: string }) {
 
 function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => void }) {
   const [, go] = useLocation();
-  const [bundle, setBundle] = useState<Bundle>(fresh);
+  const editorGeneration = useRef(accessGeneration()).current;
+  const [bundle, applyBundle] = useState<Bundle>(fresh);
   const baseline = useRef(JSON.stringify(bundle)), latest = useRef(bundle); latest.current = bundle;
+  type EditBase = { content: Bundle; revision: number; contentSha: string; repoSha: string | null };
+  type PendingSave = { name: 'project_update'; body: Ops['project_update']['request'] } | { name: 'project_create'; body: Ops['project_create']['request'] };
+  const draft = useRef<DraftPersistence | null>(null), editBase = useRef<EditBase | null>(null), pendingSave = useRef<PendingSave | null>(null);
+  const [priorSave, setPriorSave] = useState(false);
+  const remember = (value: Bundle) => {
+    if (!draft.current || !editBase.current) return;
+    try { draft.current.write(JSON.stringify(value) === baseline.current && !pendingSave.current ? '' : JSON.stringify({ bundle: value, base: editBase.current, requestId: requestId.current, pendingSave: pendingSave.current })); }
+    catch (e) { if (!(e instanceof AccessChanged)) setError('Draft storage unavailable; keep this page open.'); }
+  };
+  const setBundle = (next: Bundle | ((old: Bundle) => Bundle)) => { const value = typeof next === 'function' ? next(latest.current) : next; latest.current = value; applyBundle(value); remember(value); };
+  const validBundle = (value: any): value is Bundle => value && value.settings && typeof value.settings === 'object' && Array.isArray(value.contextFiles) && value.contextFiles.every((file: any) => typeof file.path === 'string' && typeof file.text === 'string');
+  const restoreEdit = () => {
+    try {
+      const text = draft.current?.read(); if (!text) return null;
+      const saved = JSON.parse(text);
+      return validBundle(saved.bundle) && validBundle(saved.base?.content) && Number.isSafeInteger(saved.base.revision) && typeof saved.base.contentSha === 'string' && typeof saved.requestId === 'string' && (!saved.pendingSave || (['project_create', 'project_update'].includes(saved.pendingSave.name) && typeof saved.pendingSave.body?.requestId === 'string' && validBundle(saved.pendingSave.body.content))) ? saved as { bundle: Bundle; base: EditBase; requestId: string; pendingSave?: PendingSave | null } : null;
+    } catch { return null; }
+  };
   const [conflict, setConflict] = useState(''), [prepared, setPrepared] = useState<boolean | null>(null);
   const [breakdown, setBreakdown] = useState<'tools' | 'costs' | null>(null);
   const summary = useProjectResources(id, prepared === true && !breakdown);
-  useEffect(() => { let active = true; preparedResourcesAvailable().then(v => { if (active) setPrepared(v); }); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; preparedResourcesAvailable().then(v => { if (active) setPrepared(v); }).catch(e => { if (active && !(e instanceof AccessChanged)) setPrepared(false); }); return () => { active = false; }; }, []);
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -152,9 +171,17 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
   const [resources, setResources] = useState<Ops['project_context']['reply']['resources']>(undefined);
   const [repoSha, setRepoSha] = useState<string | null>(null);
   const [sourceState, setSourceState] = useState('');
-  const requestId = useRef(crypto.randomUUID()), alive = useAlive();
-  const [loaded, setLoaded] = useState(!id);
+  const requestId = useRef<string>(crypto.randomUUID()), alive = useAlive();
+  const [loaded, setLoaded] = useState(false);
   const loadSequence = useRef(0);
+  useEffect(() => {
+    if (id || !isAccessCurrent(editorGeneration)) return;
+    draft.current = createDraftPersistence(authorizedDraftScope({ kind: 'project-create', id: '' }));
+    const saved = restoreEdit(); editBase.current = saved?.base ?? { content: fresh(), revision: 0, contentSha: '', repoSha: null };
+    baseline.current = JSON.stringify(editBase.current.content); requestId.current = saved?.requestId ?? crypto.randomUUID(); pendingSave.current = saved?.pendingSave ?? null; setPriorSave(!!pendingSave.current);
+    if (saved) setBundle(saved.bundle);
+    setLoaded(true);
+  }, [id]);
   const readDetail = async (projectId: string) => {
     if (prepared) {
       try { return await op('project_detail', { projectId }, { signal: alive }); }
@@ -172,11 +199,16 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
         if (p.revision !== revision) setConflict('Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.');
         return;
       }
-      baseline.current = JSON.stringify(p.content);
-      setBundle(p.content); setRevision(p.revision); setAccess(p.initialAccess);
+      // The target is freshly authorized before authored input for this actor is inspected.
+      draft.current = createDraftPersistence(authorizedDraftScope({ kind: 'project-editor', id }));
+      const saved = restoreEdit();
+      editBase.current = saved?.base ?? { content: p.content, revision: p.revision, contentSha: p.contentSha, repoSha: p.repoSha ?? null };
+      baseline.current = JSON.stringify(editBase.current.content);
+      requestId.current = saved?.requestId ?? crypto.randomUUID(); pendingSave.current = saved?.pendingSave ?? null; setPriorSave(!!pendingSave.current);
+      setError(''); setBundle(saved?.bundle ?? p.content); setRevision(editBase.current.revision); setAccess(p.initialAccess);
       setResources('resources' in p ? p.resources : undefined);
-      setRepoSha(p.repoSha ?? null); setSourceState(p.sourceState ?? '');
-      requestId.current = crypto.randomUUID(); setReady(null); setError(''); setConflict(''); setLoaded(true);
+      setRepoSha(editBase.current.repoSha); setSourceState(p.sourceState ?? '');
+      setReady(null); setConflict(saved && saved.base.contentSha !== p.contentSha ? 'Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.' : ''); setLoaded(true);
     } catch (e: any) { if (!(e instanceof AccessChanged) && !alive.aborted) setError(e.message); }
   };
   const reload = useRef(load); reload.current = load;
@@ -186,27 +218,37 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
   }, [id, prepared]);
   const setting = (key: string, value: any) => setBundle(b => ({ ...b, settings: { ...b.settings, [key]: value } }));
   const field = (label: string, value: string, save: (s: string) => void) => (
-    <SettingField help="Edit this project field; Save project applies the complete version." label={label} value={value} status={{ kind: 'pending' }} now={Date.now()} onSave={save} />
+    <TextField help="Save project applies the complete version." label={label} value={value} onChange={save} />
   );
   const save = async () => {
-    const generation = accessGeneration(), submitted = bundle;
-    setBusy(true);
+    const generation = accessGeneration();
+    const mutation: PendingSave = pendingSave.current ?? (id
+      ? { name: 'project_update', body: { projectId: id, requestId: requestId.current, baseRevision: revision, content: bundle, repoSha } }
+      : { name: 'project_create', body: { id: bundle.settings.id, requestId: requestId.current, content: bundle } });
+    const submitted = mutation.body.content;
+    pendingSave.current = mutation; setPriorSave(true); remember(latest.current); setBusy(true);
     try {
       const unknown = () => setError('unknown, retrying');
-      const p: any = id
-        ? await writeOnce('project_update', { projectId: id, requestId: requestId.current, baseRevision: revision, content: bundle, repoSha }, unknown, { signal: alive })
-        : await writeOnce('project_create', { id: bundle.settings.id, requestId: requestId.current, content: bundle }, unknown, { signal: alive });
+      const p = mutation.name === 'project_update'
+        ? await writeOnce(mutation.name, mutation.body, unknown, { signal: alive })
+        : await writeOnce(mutation.name, mutation.body, unknown, { signal: alive });
       if (!isAccessCurrent(generation)) return;
+      if (typeof p.projectId !== 'string' || typeof p.revision !== 'number' || !Number.isSafeInteger(p.revision) || typeof p.contentSha !== 'string') throw Error('Saved reply has no verifiable project version.');
       const check = await readDetail(p.projectId);
       if (!isAccessCurrent(generation) || alive.aborted) return;
       if (check.revision !== p.revision || check.contentSha !== p.contentSha) throw Error('Saved version changed; reload before editing.');
+      setError(''); pendingSave.current = null; setPriorSave(false); requestId.current = crypto.randomUUID();
       baseline.current = JSON.stringify(check.content);
-      if (JSON.stringify(latest.current) === JSON.stringify(submitted)) setBundle(check.content);
+      editBase.current = { content: check.content, revision: check.revision, contentSha: check.contentSha, repoSha: check.repoSha ?? null };
+      if (JSON.stringify(latest.current) === JSON.stringify(submitted)) setBundle(check.content); else remember(latest.current);
       setRevision(check.revision); setAccess(check.initialAccess);
       setResources('resources' in check ? check.resources : undefined);
       setRepoSha(check.repoSha ?? null); setSourceState(check.sourceState ?? '');
-      requestId.current = crypto.randomUUID(); setError(''); setConflict(''); onSaved(p.projectId);
-    } catch (e: any) { if (isAccessCurrent(generation) && !alive.aborted) setError(e.message); } finally { if (isAccessCurrent(generation) && !alive.aborted) setBusy(false); }
+      setConflict(''); onSaved(p.projectId);
+    } catch (e: any) { if (isAccessCurrent(generation) && !alive.aborted) {
+      if (e instanceof OpError && [400, 404, 409].includes(e.status)) { pendingSave.current = null; setPriorSave(false); requestId.current = crypto.randomUUID(); remember(latest.current); }
+      setError(e.message);
+    } } finally { if (isAccessCurrent(generation) && !alive.aborted) setBusy(false); }
   };
   const bindings = (kind: 'repos' | 'environments', title: string, keys: string[]) => {
     const items: any[] = bundle.settings[kind] ?? [];
@@ -230,10 +272,10 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
     <article class="detail" data-ui="detail">
       <header class="detail-h">
         <h2>{id ? bundle.settings.name : 'Create project'}</h2><span class="grow" />
-        <Button label="Save project" icon="save" busy={busy} onClick={save} />
-        {id && <Button label={conflict ? "Discard edits and reload" : "Reload project"} icon="rotate-cw" onClick={() => { if (conflict) baseline.current = JSON.stringify(latest.current); void load(); }} />}
+        <Button label={priorSave && !busy ? "Retry original save" : "Save project"} icon="save" busy={busy} onClick={save} />
+        {id && <Button label={conflict ? "Discard edits and reload" : "Reload project"} icon="rotate-cw" onClick={() => { if (conflict) { pendingSave.current = null; setPriorSave(false); draft.current?.write(''); baseline.current = JSON.stringify(latest.current); } void load(); }} />}
       </header>
-      <StatusLine>{conflict || error}</StatusLine>
+      <StatusLine>{conflict || error || (priorSave && !busy ? 'Previous save has no verified readback. Retry original save keeps its request identity and original body; newer edits remain local.' : '')}</StatusLine>
       {sourceState === 'repository-changed' && <p>Source configuration changed. Saving keeps this edited project version.</p>}
       {id && prepared && <DetailSection title="Project resources"><PreparedProjectResources projectId={id} summary={summary} onOpen={setBreakdown} /></DetailSection>}
       <DetailSection title="Context">
