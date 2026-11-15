@@ -45,7 +45,7 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
   await p.route('**/api/ops/project_resources', async route => { if (summaryHeld) await summaryWait; await route.continue().catch(() => {}); });
   try {
     seed.sql(`INSERT INTO execution(id,kind,state,project_id,data) SELECT 'browser-resource-'||lpad(i::text,4,'0'),'tool_run','succeeded','desiign',jsonb_build_object('tool','browser-tool-'||lpad(i::text,4,'0')) FROM generate_series(1,207) i;`);
-    await p.goto(origin + '/projects/desiign?preparedResources=on');
+    await p.goto(origin + '/projects/desiign');
     await p.getByRole('button', { name: 'Save project', exact: true }).waitFor();
     await edit('Name', 'Browser dirty project');
     await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).waitFor();
@@ -92,7 +92,15 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     // Actual committed source -> processor -> prepared fetch -> rendered figure. This is a small fixture, not load acceptance.
     const resources = p.locator('[data-resource-project]');
     assert.equal(await resources.isVisible(), true);
-    const confirmed = await call('project_resources',{projectId:'desiign'});assert.equal(confirmed.kind,'ready');
+    // Ready can still be updating: freeze an exact baseline only after this fixture's queued
+    // source rows drain, otherwise an intermediate count can be skipped before it is rendered.
+    let confirmed = await call('project_resources',{projectId:'desiign'});
+    const baselineDeadline = Date.now() + 30_000;
+    while (confirmed.kind !== 'ready' || confirmed.progress.pending || confirmed.progress.state !== 'current') {
+      assert.ok(Date.now() < baselineDeadline, 'fixture source baseline did not drain: ' + JSON.stringify(confirmed));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      confirmed = await call('project_resources',{projectId:'desiign'});
+    }
     const previousCalls = confirmed.header.tools.totalCalls;
     await p.waitForFunction(expected=>{const dt=[...document.querySelectorAll('[data-resource-project] dt')].find(node=>node.textContent==='Tools');return Number(dt?.nextElementSibling?.textContent)===expected;},previousCalls);
     const oldVersion = await resources.getAttribute('data-resource-version');

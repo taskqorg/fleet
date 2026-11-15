@@ -6,9 +6,31 @@ import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration
 registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
 registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
 await ensureAccessGeneration();
-import { op, OpError, writeOnce, sendingId, authorizedDraftScope } from '../../app/src/api.ts';
+import { op, OpError, writeOnce, sendingId, authorizedDraftScope, preparedResourcesSelected } from '../../app/src/api.ts';
 
 const reply = (status: number, body: () => Promise<unknown>) => (globalThis as any).fetch = async () => ({ type: 'basic', status, ok: status < 300, statusText: 'x', json: body });
+
+// Requirement: ordinary fresh Projects uses advertised prepared reads; risk: rollout stays opt-in
+// forever or an invalid query silently overrides the owner's intentional opt-out.
+test('prepared selection defaults on and retains explicit per-tab opt-out', () => {
+  const saved = { location: Object.getOwnPropertyDescriptor(globalThis, 'location'), storage: Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage') };
+  const values = new Map<string, string>();
+  try {
+    Object.defineProperty(globalThis, 'location', { configurable: true, value: { search: '' } });
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => values.set(k, v) } });
+    assert.equal(preparedResourcesSelected(), true);
+    (globalThis as any).location.search = '?preparedResources=off'; assert.equal(preparedResourcesSelected(), false);
+    (globalThis as any).location.search = ''; assert.equal(preparedResourcesSelected(), false);
+    (globalThis as any).location.search = '?preparedResources=invalid'; assert.equal(preparedResourcesSelected(), false);
+    (globalThis as any).location.search = '?preparedResources=on'; assert.equal(preparedResourcesSelected(), true);
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, get() { throw Error('storage denied'); } });
+    (globalThis as any).location.search = '?preparedResources=off'; assert.equal(preparedResourcesSelected(), false);
+    (globalThis as any).location.search = ''; assert.equal(preparedResourcesSelected(), true);
+  } finally {
+    if (saved.location) Object.defineProperty(globalThis, 'location', saved.location); else delete (globalThis as any).location;
+    if (saved.storage) Object.defineProperty(globalThis, 'sessionStorage', saved.storage); else delete (globalThis as any).sessionStorage;
+  }
+});
 
 test('a 2xx reply whose body does not read rejects instead of resolving empty', async () => {
   const saved = (globalThis as any).fetch;

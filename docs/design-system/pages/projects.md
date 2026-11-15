@@ -17,7 +17,7 @@ Owner access administration distinguishes initial membership from explicit grant
 
 ## Independent configuration and confirmed resources
 
-When explicitly selected and advertised, `project_detail` loads the editor independently of `project_resources`. Summary preparation, failure and refresh never block editing, saving or configuration readback. Summary updates never replace dirty fields. A changed definition while dirty shows an explicit conflict; optimistic revision checking remains authoritative. Save readback verifies revision and content hash through configuration only.
+When advertised by the server, `project_detail` loads the editor independently of `project_resources` by default, including a fresh ordinary project URL. Explicit per-tab opt-out retains the legacy path. Summary preparation, failure and refresh never block editing, saving or configuration readback. Summary updates never replace dirty fields. A changed definition while dirty shows an explicit conflict; optimistic revision checking remains authoritative. Save readback verifies revision and content hash through configuration only.
 
 Prepared figures retain their basis, measured zero and unknown coverage. Published version, validation time, processing progress and underlying observation age are separate; publication time is not observation time. Unchanged figures may still have pending or failed processing. Figures retain their last confirmed value during refresh failure with a visible status in reserved space. Breakdowns use continuous virtual windows with count, search and start/end jumps; no per-page scroller. See [data list](../controls/data-list.md).
 
