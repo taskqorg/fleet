@@ -329,6 +329,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .vl-row:has(.row-link),.kv li:has(.row-link){cursor:pointer}
 .vl-row.sel{background:var(--selected);box-shadow:inset 3px 0 var(--accent)}
 .vl-row.checked{background:var(--selected)}
+/* A pinned row has one more leading column for its pin (RowPin); other rows keep the list's columns. */
+.vl-row.pin-row{grid-template-columns:1.25rem var(--cols,1fr)}
 .row-pin{display:inline-grid;place-items:center;width:var(--size-icon);height:var(--size-icon);padding:0;border:0;border-radius:var(--radius-sm);background:none;color:var(--fg-muted);cursor:pointer;position:relative;z-index:1}
 .row-pin:hover{color:var(--fg);background:var(--hover)}
 .row-pin .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}

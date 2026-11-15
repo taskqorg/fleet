@@ -1193,7 +1193,7 @@ export const RowCheck = ({ checked, label, onToggle }: { checked: boolean; label
 
 /* ---------- Row pin: the pin mark of a pinned row, before its state icon (OR-12, OR-37) ---------- */
 
-/** Shown only on pinned rows; a click unpins (the row leaves the Pinned group). Unpinned rows keep the cell empty, so states line up. */
+/** Shown only on pinned rows, in a column of their own (row class pin-row); a click unpins and the row leaves the Pinned group. Other rows do not move. */
 export const RowPin = ({ pinned, label, onUnpin }: { pinned: boolean; label: string; onUnpin: () => void }) => pinned
   ? <button type="button" class="row-pin" data-ui="row-pin" aria-label={`Unpin ${label}`} data-tip="Unpin" onClick={e => { e.stopPropagation(); onUnpin(); }}><Icon name="pin" /></button>
   : <span />;

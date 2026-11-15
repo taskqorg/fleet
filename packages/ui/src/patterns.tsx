@@ -99,14 +99,14 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
               { label: 'Continue', icon: 'rotate-cw', onClick: () => {} },
               { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => {} }]} />} />
       <VirtualList items={rows} getKey={r => r.kind === 'group' ? r.key : String(r.t.id)} rowHeight={row} follow="top" label="Tasks"
-        columns={(selecting ? '1.25rem ' : '') + (pinned.length ? '1.25rem ' : '') + (row === ROW ? '1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem' : '1.25rem minmax(0,1fr) 2.75rem 4.5rem')}
-        rowClass={r => r.kind === 'group' ? 'grp' : `${r.t.id === selected ? 'sel' : ''}${sel.includes(r.t.id) ? ' checked' : ''}`}
+        columns={(selecting ? '1.25rem ' : '') + (row === ROW ? '1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem' : '1.25rem minmax(0,1fr) 2.75rem 4.5rem')}
+        rowClass={r => r.kind === 'group' ? 'grp' : `${r.t.id === selected ? 'sel' : ''}${sel.includes(r.t.id) ? ' checked' : ''}${r.t.pinned ? ' pin-row' : ''}`}
         onRowMenu={(r, at) => { if (r.kind === 'task') setMenu({ t: r.t, at }); }}
-        header={row === ROW ? <>{selecting && <span />}{pinned.length > 0 && <span />}<span /><span>Task</span><span /><span /><span class="r">Age</span><span class="r">Cost</span></> : undefined}
+        header={row === ROW ? <>{selecting && <span />}<span /><span>Task</span><span /><span /><span class="r">Age</span><span class="r">Cost</span></> : undefined}
         render={r => r.kind === 'group'
           ? <GroupHeader icon={r.icon} tone={r.tone} label={r.label} count={r.count}
               open={!closed.includes(r.key.slice(2))} onToggle={() => { const k = r.key.slice(2); setClosed(closed.includes(k) ? closed.filter(x => x !== k) : [...closed, k]); }} />
-          : <TaskCells t={r.t} now={now} onOpen={onOpen} showPriority={view.group !== 'priority'} two={row !== ROW} pinCol={pinned.length > 0}
+          : <TaskCells t={r.t} now={now} onOpen={onOpen} showPriority={view.group !== 'priority'} two={row !== ROW}
               check={selecting ? sel.includes(r.t.id) : undefined} onSelect={() => toggle(r.t.id)} selecting={selecting} onPin={() => onPin(r.t.id)}
               />} />
       {menu && <ContextMenu at={menu.at} label={menu.t.title} onClose={() => setMenu(null)} items={[
@@ -120,14 +120,14 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   );
 }
 
-function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting, onSelect, pinCol }: { t: TaskRow; now: number; onPin: () => void; onOpen?: (t: TaskRow) => void; showPriority: boolean; two: boolean;
-  check?: boolean; selecting: boolean; onSelect: () => void; pinCol: boolean }) {
+function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting, onSelect }: { t: TaskRow; now: number; onPin: () => void; onOpen?: (t: TaskRow) => void; showPriority: boolean; two: boolean;
+  check?: boolean; selecting: boolean; onSelect: () => void}) {
   // OR-22: state icon leftmost; ID beside the title; agent mark only while running; delivery stage as a chip.
   // A two-line catalogue row keeps the marks on the second line, so the title has the whole first line (OR-21).
   const marks = <>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}{t.stage && <StageChip stage={t.stage} />}</>;
   return <>
     {check !== undefined && <span class="lead"><RowCheck checked={check} label={'Select ' + t.title} onToggle={onSelect} /></span>}
-    {pinCol && <span class="lead"><RowPin pinned={!!t.pinned} label={t.title} onUnpin={onPin} /></span>}
+    {t.pinned && <span class="lead"><RowPin pinned label={t.title} onUnpin={onPin} /></span>}
     <span class="lead"><StateBadge family="task" state={t.state} reason={t.reason} compact /></span>
     <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} aria-keyshortcuts="P X"
       onClick={e => { if (selecting || e.shiftKey) { e.preventDefault(); onSelect(); } else if (onOpen) { e.preventDefault(); onOpen(t); } }}
