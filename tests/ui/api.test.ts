@@ -217,3 +217,24 @@ test('feed abandons pre-ready/pre-activation events, fences queued frames, and d
     registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} })); await ensureAccessGeneration();
   }
 });
+
+// Requirement: a late old polling baseline cannot reopen access or advance the new cursor.
+// Risk: a no-cursor response obtained under previous grants is activated after a newer resync.
+test('poll fallback fences an old baseline response and activates only the newest authorized cursor', async () => {
+  const EventSource = (globalThis as any).EventSource, fetch = globalThis.fetch;
+  const waiting: ((value: Response) => void)[] = [];
+  (globalThis as any).EventSource = undefined;
+  globalThis.fetch = ((_url: string, init: RequestInit) => { assert.deepEqual(JSON.parse(init.body as string), {}); return new Promise<Response>(resolve => waiting.push(resolve)); }) as typeof fetch;
+  const feed = await import('../../app/src/feed.ts');
+  registerAccessValidator(async () => ({ identityKey: 'poll@fixture.test', grantsVersion: 'poll' }));
+  try {
+    invalidateAccess('poll start');feed.startFeed(null);
+    const old=ensureAccessGeneration();await tick();assert.equal(waiting.length,1);
+    invalidateAccess('poll superseded');const current=ensureAccessGeneration();await tick();assert.equal(waiting.length,2);
+    waiting[0](Response.json({cursor:900,changes:[],resync:false}));await assert.rejects(old,AccessChanged);assert.equal(feed.currentCursor(),null);
+    waiting[1](Response.json({cursor:901,changes:[],resync:false}));await current;assert.equal(feed.currentCursor(),901);
+  } finally {
+    feed.stopFeed();(globalThis as any).EventSource=EventSource;globalThis.fetch=fetch;
+    invalidateAccess('poll cleanup');registerAccessBaseline(async()=>({cursor:0,activate(){},dispose(){}}));await ensureAccessGeneration();
+  }
+});

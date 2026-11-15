@@ -172,6 +172,17 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.getByText('Outsider', { exact: true }).waitFor();
     await p.unroute('**/api/ops/artifact_list');
     await p.waitForFunction(() => !document.body.textContent?.includes('Private result marker.txt'));
+    // A real preference write may commit before identity changes; its late reply must not overwrite the new actor.
+    actor='member@trial.test';await focus();await p.getByText('Member',{exact:true}).waitFor();
+    let releasePrefs!:()=>void, prefsStarted!:()=>void;
+    const prefsWait=new Promise<void>(resolve=>{releasePrefs=resolve}), prefsPending=new Promise<void>(resolve=>{prefsStarted=resolve});
+    await p.route('**/api/ops/person_settings_set',async route=>{const response=await route.fetch();prefsStarted();await prefsWait;await route.fulfill({response}).catch(()=>{});});
+    await p.getByRole('separator',{name:'Resize list',exact:true}).press('ArrowRight');await prefsPending;
+    actor='outsider@trial.test';const newPrefs=p.waitForResponse(response=>response.url().endsWith('/api/ops/person_settings_get'));
+    await focus();await newPrefs;await p.getByText('Outsider',{exact:true}).waitFor();
+    const newWidth=await p.locator('.shell').evaluate(element=>(element as HTMLElement).style.getPropertyValue('--size-ctl'));
+    releasePrefs();await p.unroute('**/api/ops/person_settings_set');await p.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>resolve())));
+    assert.equal(await p.locator('.shell').evaluate(element=>(element as HTMLElement).style.getPropertyValue('--size-ctl')),newWidth,'old preference reply cannot overwrite current actor geometry');
     // The real IndexedDB deletion is blocked by a connection that deliberately ignores versionchange.
     actor = 'member@trial.test'; await focus(); await p.getByText('Member', { exact: true }).waitFor();
     await p.evaluate(async () => {
