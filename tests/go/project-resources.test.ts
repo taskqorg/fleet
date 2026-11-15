@@ -118,3 +118,23 @@ test('processor startup resumes durable initial-build pages and drains off-perio
   }
  }finally{await c.stop();}
 });
+
+// Requirement: scope scheduling stays bounded and non-authoritative under real RLS;
+// risk: a drained queue's stale statistics cause repeated scans or unsafe scope inference.
+test('selected resource hints preserve scopes and avoid unrelated queue amplification',async()=>{
+ const c=await startCoordinator({name:'resource-hints',env:{FLEET_RESOURCE_PROCESSOR:'off',FLEET_LOST_AFTER_MS:'3600000'}});
+ try{
+  // Retain real queue pages with zero live-row statistics before fresh arrivals.
+  c.sql(`INSERT INTO resource_work(execution_id,origin) SELECT 'hint-drained-'||i,'build' FROM generate_series(1,1000)i;
+   INSERT INTO resource_work_scope SELECT work_id,'HINT_DRAINED' FROM resource_work;
+   DELETE FROM resource_work; ANALYZE resource_work; ANALYZE resource_work_scope;`);
+  const db=c.sql('SELECT current_database()').trim();
+  const pg=process.env.FLEET_TRIAL_PGDATA||join(homedir(),'.cache/fleet-trial/pg');
+  const url=`postgresql://fleet_app@/${db}?host=${encodeURIComponent(pg)}&port=${process.env.FLEET_TRIAL_PGPORT||'54329'}`;
+  const code=await new Promise<number|null>((resolve,reject)=>{
+   const child=spawn('go',['test','./coordinator','-run','^TestResourceBatchHintsPostgres$','-count=1','-v'],{cwd:join(root,'go'),env:{...process.env,FLEET_RESOURCE_TEST_URL:url},stdio:'inherit'});
+   child.once('error',reject);child.once('exit',resolve);
+  });
+  assert.equal(code,0,'real PostgreSQL selected-ID scope proof');
+ }finally{await c.stop();}
+});

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1146,4 +1147,165 @@ func (c *resourceLostCommitConn) Read(dst []byte) (int, error) {
 	n := copy(dst, c.pending)
 	c.pending = c.pending[n:]
 	return n, nil
+}
+
+// Requirement: bounded selected-ID hints preserve every scope exclusion under FORCE RLS;
+// risk: correlated scope scans amplify backlog, or missing/moving data authorizes an unsafe cohort.
+func TestResourceBatchHintsPostgres(t *testing.T) {
+	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
+	if url == "" {
+		t.Skip("isolated PostgreSQL fixture")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st, err := openStore(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	sql := func(s string, args ...any) {
+		t.Helper()
+		if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return exec(q, s, args...) }); e != nil {
+			t.Fatal(e)
+		}
+	}
+	scalar := func(s string, args ...any) string {
+		t.Helper()
+		var v string
+		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(ctx, s, args...).Scan(&v) }); e != nil {
+			t.Fatal(e)
+		}
+		return v
+	}
+	if got := scalar(`SELECT (relpages>0 AND reltuples=0)::text FROM pg_class WHERE relname='resource_work_scope'`); got != "true" {
+		t.Fatal("fixture lacks retained empty queue pages/statistics", got)
+	}
+	seedStarted := time.Now()
+	sql(`INSERT INTO execution(id,kind,state,project_id,harness,started_at,ended_at) SELECT 'hint-'||lpad(i::text,4,'0'),'agent_run','succeeded','HINT_A','codex','2024-01-01','2024-01-01 00:00:01' FROM generate_series(0,999)i;
+ INSERT INTO execution_totals(execution_id,project_id,tokens_input,tokens_input_basis) SELECT id,project_id,1,'measured' FROM execution WHERE project_id='HINT_A'`)
+	t.Logf("scope fixture source seeding_ms=%.3f", time.Since(seedStarted).Seconds()*1000)
+	ids := make([]string, 100)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("hint-%04d", i)
+	}
+	for _, n := range []int{100, 16} {
+		queryStarted := time.Now()
+		hints, e := resourceBatchHints(ctx, a, ids[:n])
+		t.Logf("scope selected=%d acquire_query_decode_ms=%.3f", n, time.Since(queryStarted).Seconds()*1000)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if len(hints) != n {
+			t.Fatal("lost selected scopes", n, len(hints))
+		}
+		for _, id := range ids[:n] {
+			if hints[id] != "HINT_A" {
+				t.Fatal("selected scope", id, hints[id])
+			}
+		}
+	}
+	// The work queue has existing pages but empty ANALYZE statistics, as after a
+	// drain. Count actual scope-row visits, not a wall-time threshold or a chosen node type.
+	var raw json.RawMessage
+	if e := st.readPool.QueryRow(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+resourceBatchHintsSQL, ids).Scan(&raw); e != nil {
+		t.Fatal(e)
+	}
+	var plans []map[string]any
+	if e := json.Unmarshal(raw, &plans); e != nil {
+		t.Fatal(e)
+	}
+	var scopeRows float64
+	var walk func(map[string]any)
+	walk = func(n map[string]any) {
+		if n["Relation Name"] == "resource_work_scope" {
+			rows, _ := n["Actual Rows"].(float64)
+			filtered, _ := n["Rows Removed by Filter"].(float64)
+			loops, _ := n["Actual Loops"].(float64)
+			scopeRows += (rows + filtered) * loops
+		}
+		if children, ok := n["Plans"].([]any); ok {
+			for _, child := range children {
+				walk(child.(map[string]any))
+			}
+		}
+	}
+	walk(plans[0]["Plan"].(map[string]any))
+	t.Logf("scope explain execution_ms=%v actual_work_scope_rows=%.0f", plans[0]["Execution Time"], scopeRows)
+	var queueScopes int
+	if e := st.readPool.QueryRow(ctx, `SELECT count(*) FROM resource_work_scope`).Scan(&queueScopes); e != nil {
+		t.Fatal(e)
+	}
+	if scopeRows > float64(queueScopes+len(ids)) {
+		t.Fatalf("selected hints revisited unrelated queue scopes: %.0f > %d", scopeRows, queueScopes+len(ids))
+	}
+	// Same canonical union as the scalar hint: NULL/empty source, deleted/missing
+	// source, old contribution and retained cross-project work all remain distinct.
+	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('hint-null','agent_run','succeeded',NULL),('hint-empty','agent_run','succeeded',''),('hint-moving','agent_run','succeeded','HINT_A'),('hint-pending-multi','agent_run','succeeded','HINT_A'),('hint-deleted','agent_run','succeeded','HINT_A'),('hint-from-null','agent_run','succeeded',NULL)`)
+	for _, id := range []string{"hint-moving", "hint-deleted", "hint-from-null"} {
+		if e := resourceReplace(ctx, a, id); e != nil {
+			t.Fatal(e)
+		}
+	}
+	sql(`UPDATE execution SET project_id='HINT_B' WHERE id IN ('hint-moving','hint-pending-multi');
+ UPDATE execution SET project_id='HINT_A' WHERE id IN ('hint-pending-multi','hint-from-null');
+ DELETE FROM execution WHERE id='hint-deleted'`)
+	edge := []string{"hint-null", "hint-empty", "hint-moving", "hint-pending-multi", "hint-deleted", "hint-from-null", "hint-missing", "hint-0000", "hint-0000"}
+	hints, e := resourceBatchHints(ctx, a, edge)
+	if e != nil {
+		t.Fatal(e)
+	}
+	expected := map[string]string{}
+	for _, id := range edge {
+		project := scalar(`SELECT coalesce((SELECT project_id FROM execution WHERE id=$1),'')`, id)
+		scopes, e := resourceScopeHint(ctx, a, id)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if project != "" && len(scopes) == 1 && scopes[0] == project {
+			expected[id] = project
+		}
+	}
+	if !reflect.DeepEqual(hints, expected) {
+		t.Fatalf("bulk/scalar scope union mismatch: got%v expected%v", hints, expected)
+	}
+	if len(hints) != 2 || hints["hint-0000"] != "HINT_A" || hints["hint-from-null"] != "HINT_A" {
+		t.Fatalf("unsafe scope exclusions: %v", hints)
+	}
+	before := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id IN ('hint-from-null','hint-0000')`)
+	if e = resourceReplaceBatch(ctx, a, []string{"hint-from-null", "hint-0000"}); !errors.Is(e, errResourceScope) {
+		t.Fatalf("a hint authorized an old NULL contribution: %v", e)
+	}
+	if after := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id IN ('hint-from-null','hint-0000')`); after != before {
+		t.Fatal("rejected authoritative scope lost work")
+	}
+	if e = st.Tx(ctx, &Scope{ProjectIDs: "HINT_B", Person: "hint-reader"}, false, NOLOCK, func(tx pgx.Tx) error {
+		rows, e := tx.Query(ctx, resourceBatchHintsSQL, ids)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+		if rows.Next() {
+			return errors.New("selected-ID hint SQL leaked another project's source")
+		}
+		return rows.Err()
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if e = resourceReplaceCandidates(ctx, a, []string{"hint-moving", "hint-pending-multi", "hint-deleted", "hint-from-null", "hint-0000"}); e != nil {
+		t.Fatal(e)
+	}
+	if got := scalar(`SELECT count(*)::text FROM resource_work WHERE execution_id IN ('hint-moving','hint-pending-multi','hint-deleted','hint-from-null','hint-0000')`); got != "0" {
+		t.Fatal("independent scope fallback did not drain", got)
+	}
+	// The empty fast path cannot acquire a connection or invent a scope.
+	closed, e := openStore(ctx, url)
+	if e != nil {
+		t.Fatal(e)
+	}
+	closed.Close()
+	if empty, e := resourceBatchHints(ctx, &App{store: closed}, nil); e != nil || len(empty) != 0 {
+		t.Fatal("empty hints used database or invented rows", empty, e)
+	}
+	t.Logf("selected100/16 scopes equivalent; actual work-scope rows examined %.0f of %d, retained empty-page statistics; NULL/missing/moving/multi/duplicate exclusion, authoritative rejection, fallback and FORCE RLS passed", scopeRows, queueScopes)
 }
