@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -1373,11 +1374,34 @@ func resourceKeyValues(raw contract.ResourceSortKey, category contract.ResourceC
 	textOK := func(s string) bool { return len([]rune(s)) <= 200 }
 	switch category {
 	case "tools":
+		var tag struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &tag) == nil && tag.Kind == "tool-position" {
+			var packed contract.ResourcePackedToolKey
+			if err := resourceStrictJSON(raw, &packed); err != nil {
+				return nil, err
+			}
+			decoded, err := resourceUnpack(packed.Encoded, "tp1.")
+			if err != nil {
+				return nil, err
+			}
+			var envelope resourcePackedToolPosition
+			if err = resourceStrictJSON(decoded, &envelope); err != nil {
+				return nil, err
+			}
+			if envelope.SchemaVersion != 1 {
+				return nil, fail(400, "Invalid tool position version")
+			}
+			raw = jsonBytes(envelope.Key)
+		}
 		var k contract.ResourceToolKey
 		if err := resourceStrictJSON(raw, &k); err != nil {
 			return nil, err
 		}
-		if k.Kind != "tool" || !textOK(k.Name) || (k.Connection != nil && !textOK(*k.Connection)) {
+		// Native usage already admits longer tool names; full persisted tuples must remain
+		// usable for continuation and deletion-safe re-anchors. HTTP bounds the request.
+		if k.Kind != "tool" {
 			return nil, fail(400, "Invalid tool anchor")
 		}
 		c := ""
@@ -1523,18 +1547,24 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 	comparison := ">"
 	var anchor contract.ResourceSortKey
 	if r.Cursor != nil {
-		if len(*r.Cursor) > 8192 {
-			return nil, fail(400, "Invalid resource cursor")
+		cursorVersion := 1
+		var raw []byte
+		var e error
+		if strings.HasPrefix(*r.Cursor, "r2.") {
+			cursorVersion = 2
+			raw, e = resourceUnpack(*r.Cursor, "r2.")
+		} else {
+			raw, e = base64.RawURLEncoding.DecodeString(*r.Cursor)
 		}
-		raw, e := base64.RawURLEncoding.DecodeString(*r.Cursor)
 		if e != nil {
 			return nil, fail(400, "Invalid resource cursor")
 		}
+
 		cursor = &resourceItemCursor{}
 		if e = resourceStrictJSON(raw, cursor); e != nil {
 			return nil, e
 		}
-		if cursor.SchemaVersion != 1 || cursor.ProjectID != r.ProjectId || cursor.Category != r.Category || !reflect.DeepEqual(cursor.Group, r.Group) || cursor.Query != query || (cursor.Direction != "after" && cursor.Direction != "before") {
+		if cursor.SchemaVersion != cursorVersion || cursor.ProjectID != r.ProjectId || cursor.Category != r.Category || !reflect.DeepEqual(cursor.Group, r.Group) || cursor.Query != query || (cursor.Direction != "after" && cursor.Direction != "before") {
 			return nil, fail(400, "Resource cursor binding mismatch")
 		}
 		if !resourceEpochPattern.MatchString(cursor.BuildEpoch) {
@@ -1616,11 +1646,42 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 			return nil, err
 		}
 	}
+	if r.Category == "tools" {
+		for i, key := range keys {
+			packed, err := resourceToolPosition(key)
+			if err != nil {
+				return nil, err
+			}
+			if packed != nil {
+				var item contract.ResourceToolItem
+				if err = json.Unmarshal(items[i], &item); err != nil {
+					return nil, err
+				}
+				item.Position = packed
+				items[i] = jsonBytes(item)
+			}
+		}
+		if string(anchor) != "null" {
+			packed, err := resourceToolPosition(anchor)
+			if err != nil {
+				return nil, err
+			}
+			if packed != nil {
+				anchor = jsonBytes(packed)
+			}
+		}
+	}
 	out := contract.ResourceItemsPage{ProjectId: r.ProjectId, Category: r.Category, Version: s.Epoch + ":" + s.Revision, Header: s.Header, Progress: resourcePublicProgress(s), Items: items, Total: total, ResolvedAnchor: anchor}
-	encode := func(key contract.ResourceSortKey, direction string) *string {
+	encode := func(key contract.ResourceSortKey, direction string) (*string, error) {
 		c := resourceItemCursor{SchemaVersion: 1, ProjectID: r.ProjectId, BuildEpoch: s.Epoch, Category: r.Category, Group: r.Group, Query: query, Direction: direction, Key: key}
-		token := base64.RawURLEncoding.EncodeToString(jsonBytes(c))
-		return &token
+		raw := jsonBytes(c)
+		if len(raw) > resourcePackThreshold {
+			c.SchemaVersion = 2
+			token, err := resourcePack(jsonBytes(c), "r2.")
+			return &token, err
+		}
+		token := base64.RawURLEncoding.EncodeToString(raw)
+		return &token, nil
 	}
 	if len(keys) > 0 {
 		more, e := iq.exists(q, keys[len(keys)-1], r.Category, ">")
@@ -1628,17 +1689,94 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 			return nil, e
 		}
 		if more {
-			out.NextCursor = encode(keys[len(keys)-1], "after")
+			out.NextCursor, err = encode(keys[len(keys)-1], "after")
+			if err != nil {
+				return nil, err
+			}
 		}
 		more, e = iq.exists(q, keys[0], r.Category, "<")
 		if e != nil {
 			return nil, e
 		}
 		if more {
-			out.PreviousCursor = encode(keys[0], "before")
+			out.PreviousCursor, err = encode(keys[0], "before")
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return jsonBytes(out), nil
 }
 
 var resourceEpochPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// Each tool-key field can originate in a separate admitted 1 MiB source body.
+// Go JSON can expand each source UTF-8 byte to six bytes (controls, <, >, &).
+// Two full fields therefore need at most 12 MiB, plus 4096 bytes for the tuple,
+// project/epoch/category, query<=200 runes, group<=200 runes and fixed envelope.
+// This is a decode allocation bound, not a tool-name admission cap.
+const resourceDecodedPositionMax = 12*(1<<20) + 4096
+const resourcePackThreshold = 32 * 1024 // representation choice only; small positions keep their original wire form
+
+type resourcePackedToolPosition struct {
+	SchemaVersion int                      `json:"schemaVersion"`
+	Key           contract.ResourceToolKey `json:"key"`
+}
+
+func resourcePack(raw []byte, prefix string) (string, error) {
+	if len(raw) > resourceDecodedPositionMax {
+		return "", fail(503, "Resource position exceeds admitted-source envelope")
+	}
+	var b bytes.Buffer
+	w := zlib.NewWriter(&b)
+	if _, err := w.Write(raw); err != nil {
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	token := prefix + base64.RawURLEncoding.EncodeToString(b.Bytes())
+	// Reserve the bounded query/group/project and JSON request envelope. Never emit a
+	// token that this operation cannot receive under the unchanged shared HTTP bound.
+	if len(token) > (1<<20)-4096 {
+		return "", fail(503, "Resource position exceeds HTTP envelope")
+	}
+	return token, nil
+}
+func resourceUnpack(token, prefix string) ([]byte, error) {
+	invalid := func() ([]byte, error) { return nil, fail(400, "Invalid compressed resource position") }
+	if !strings.HasPrefix(token, prefix) {
+		return invalid()
+	}
+	compressed, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, prefix))
+	if err != nil {
+		return invalid()
+	}
+	source := bytes.NewReader(compressed)
+	r, err := zlib.NewReader(source)
+	if err != nil {
+		return invalid()
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(r, resourceDecodedPositionMax+1))
+	closeErr := r.Close()
+	if readErr != nil || closeErr != nil || len(raw) > resourceDecodedPositionMax || source.Len() != 0 {
+		return invalid()
+	}
+	return raw, nil
+}
+func resourceToolPosition(key contract.ResourceSortKey) (*contract.ResourcePackedToolKey, error) {
+	// Canonical serialization includes JSON escaping expansion in the threshold decision.
+	var k contract.ResourceToolKey
+	if err := json.Unmarshal(key, &k); err != nil {
+		return nil, err
+	}
+	raw := jsonBytes(resourcePackedToolPosition{SchemaVersion: 1, Key: k})
+	if len(raw) <= resourcePackThreshold {
+		return nil, nil
+	}
+	token, err := resourcePack(raw, "tp1.")
+	if err != nil {
+		return nil, err
+	}
+	return &contract.ResourcePackedToolKey{Kind: "tool-position", Encoded: token}, nil
+}

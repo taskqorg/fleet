@@ -950,6 +950,17 @@ type ResourceNullKey = json.RawMessage
 
 type ResourceNullableErrorClass = json.RawMessage
 
+// ResourcePackedToolKey: tp1. plus base64url of one complete zlib stream containing {schemaVersion:1,key:ResourceToolKey}; a position, never authority.
+type ResourcePackedToolKey struct {
+	Encoded string `json:"encoded"`
+	Kind    string `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ResourcePackedToolKey) Validate() error {
+	return nil
+}
+
 type ResourcePreparingReply struct {
 	Kind      string           `json:"kind"`
 	Progress  ResourceProgress `json:"progress"`
@@ -1070,18 +1081,25 @@ type ResourceResolvedKey = json.RawMessage
 type ResourceSortKey = json.RawMessage
 
 type ResourceToolItem struct {
-	Calls      int64   `json:"calls"`
-	Connection *string `json:"connection"`
-	Errors     int64   `json:"errors"`
-	Kind       string  `json:"kind"`
-	Name       string  `json:"name"`
+	Calls      int64                  `json:"calls"`
+	Connection *string                `json:"connection"`
+	Errors     int64                  `json:"errors"`
+	Kind       string                 `json:"kind"`
+	Name       string                 `json:"name"`
+	Position   *ResourcePackedToolKey `json:"position,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ResourceToolItem) Validate() error {
+	if v.Position != nil {
+		if err := Check(v.Position, "position"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
+// ResourceToolKey: Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.
 type ResourceToolKey struct {
 	Connection *string `json:"connection"`
 	Kind       string  `json:"kind"`
@@ -1546,7 +1564,7 @@ func init() {
 		"project_detail":          {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"project_list":            {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"project_readiness":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"project_resource_items":  {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"anchor\":{\"enum\":[\"start\",\"end\"],\"type\":\"string\"},\"around\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"atOrAfter\",\"atOrBefore\"],\"type\":\"string\"},\"key\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"tool\"},\"name\":{\"type\":\"string\"}},\"required\":[\"kind\",\"name\",\"connection\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"cost\"}},\"required\":[\"kind\",\"currency\",\"basis\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"price\"},\"observedAt\":{\"type\":\"integer\"},\"priceId\":{\"type\":\"string\"}},\"required\":[\"kind\",\"priceId\",\"observedAt\"],\"type\":\"object\"}]}},\"required\":[\"key\",\"direction\"],\"type\":\"object\"},\"category\":{\"enum\":[\"tools\",\"costs\",\"prices\"],\"type\":\"string\"},\"cursor\":{\"type\":\"string\"},\"group\":{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"currency\",\"basis\"],\"type\":\"object\"},\"knownVersion\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"category\"],\"type\":\"object\"}")},
+		"project_resource_items":  {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"anchor\":{\"enum\":[\"start\",\"end\"],\"type\":\"string\"},\"around\":{\"additionalProperties\":false,\"properties\":{\"direction\":{\"enum\":[\"atOrAfter\",\"atOrBefore\"],\"type\":\"string\"},\"key\":{\"oneOf\":[{\"$comment\":\"Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"tool\"},\"name\":{\"type\":\"string\"}},\"required\":[\"kind\",\"name\",\"connection\"],\"type\":\"object\"},{\"$comment\":\"tp1. plus base64url of one complete zlib stream containing {schemaVersion:1,key:ResourceToolKey}; a position, never authority.\",\"additionalProperties\":false,\"properties\":{\"encoded\":{\"type\":\"string\"},\"kind\":{\"const\":\"tool-position\"}},\"required\":[\"kind\",\"encoded\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]},\"kind\":{\"const\":\"cost\"}},\"required\":[\"kind\",\"currency\",\"basis\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"price\"},\"observedAt\":{\"type\":\"integer\"},\"priceId\":{\"type\":\"string\"}},\"required\":[\"kind\",\"priceId\",\"observedAt\"],\"type\":\"object\"}]}},\"required\":[\"key\",\"direction\"],\"type\":\"object\"},\"category\":{\"enum\":[\"tools\",\"costs\",\"prices\"],\"type\":\"string\"},\"cursor\":{\"type\":\"string\"},\"group\":{\"additionalProperties\":false,\"properties\":{\"basis\":{\"enum\":[\"measured\",\"estimated\",\"subscription\",\"unavailable\"],\"type\":\"string\"},\"currency\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"currency\",\"basis\"],\"type\":\"object\"},\"knownVersion\":{\"type\":\"string\"},\"limit\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"category\"],\"type\":\"object\"}")},
 		"project_resources":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"knownVersion\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"question_answer":         {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Answers a project question, or any other question by id.\",\"additionalProperties\":true,\"properties\":{\"answer\":{\"type\":\"string\"},\"artifactIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"answer\"],\"type\":\"object\"}")},
 		"question_ask":            {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"text\"],\"type\":\"object\"}")},

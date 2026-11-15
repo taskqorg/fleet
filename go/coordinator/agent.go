@@ -1794,7 +1794,7 @@ func init() {
 				err = q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error {
 					q.tx = tx
 					defer func() { q.tx = nil }()
-					a, err = projectAgentArguments(q, a, executionID)
+					a, err = projectAgentArguments(q, a, executionID, isResourceRead(name))
 					return err
 				})
 				if err != nil {
@@ -1857,7 +1857,7 @@ func focusIDs(s doc) []string {
 
 // focusProject: the project of a call in a focused session: the given one (inside focus and the director's grants), or
 // the single focus project.
-func focusProject(q *Request, s doc, given any) (string, error) {
+func focusProjectID(q *Request, s doc, given any) (string, error) {
 	ids, all := focusIDs(s), mapOf(s["focus"])["projectIds"] == "*"
 	p, _ := given.(string)
 	if p == "" {
@@ -1869,7 +1869,27 @@ func focusProject(q *Request, s doc, given any) (string, error) {
 	if !all && !slices.Contains(ids, p) {
 		return "", fail(403, "Project outside the session focus")
 	}
-	if !mayAccessProjectID(q.person, p) || projectSettingsOf(q, p) == nil {
+	if !mayAccessProjectID(q.person, p) {
+		return "", fail(404, "Unknown project")
+	}
+	exists, err := has(q, `SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL`, p)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", fail(404, "Unknown project")
+	}
+	return p, nil
+}
+
+// Legacy focus resolution keeps its existing configuration validation. Prepared reads
+// use focusProjectID so a configuration failure cannot take down the resource projection.
+func focusProject(q *Request, s doc, given any) (string, error) {
+	p, err := focusProjectID(q, s, given)
+	if err != nil {
+		return "", err
+	}
+	if projectSettingsOf(q, p) == nil {
 		return "", fail(404, "Unknown project")
 	}
 	return p, nil
@@ -1973,9 +1993,15 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 			return "", err
 		}
 		if _, ok := s["focus"]; ok {
+			if isResourceRead(name) {
+				return focusProjectID(q, s, a["projectId"])
+			}
 			return focusProject(q, s, a["projectId"])
 		}
 		p := astr(s["projectId"])
+		if isResourceRead(name) && p == "" {
+			return "", fail(400, "Expected projectId")
+		}
 		if v, ok := a["projectId"]; p == "" || (ok && v != p) {
 			return "", fail(403, "Project belongs to another agent")
 		}

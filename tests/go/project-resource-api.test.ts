@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {join} from 'node:path';
 import {homedir} from 'node:os';
+import {deflateSync,inflateSync} from 'node:zlib';
 import {startCoordinator,root} from '../harness.ts';
 
 const owner='owner@trial.test',member='member@trial.test',outsider='outsider@trial.test';
@@ -106,16 +107,53 @@ test('prepared operations: auth, progress, configuration independence, C-order w
   const lock=spawn('psql',['-h',pg,'-p',process.env.FLEET_TRIAL_PGPORT||'54329','-U','fleet','-d',db,'-Atq'],{stdio:['pipe','pipe','inherit']});const closed=once(lock,'close');
   let output='';lock.stdout.on('data',x=>output+=x);lock.stdin.write("BEGIN; LOCK execution,execution_totals IN ACCESS EXCLUSIVE MODE; SELECT 'source-locked';\n");
   try{await wait(()=>output.includes('source-locked'));for(const name of operations)await op(name,{projectId:'desiign',category:'tools'},member);}finally{lock.stdin.end('COMMIT;\n');await closed;}
+  // Hold the page table after its header snapshot starts, then publish a replacement before
+  // releasing the page. The response must contain the old header AND old items together.
+  const beforeAtomic=await page({limit:1});
+  const publishing=spawn('psql',['-h',pg,'-p',process.env.FLEET_TRIAL_PGPORT||'54329','-U','fleet','-d',db,'-Atq'],{stdio:['pipe','pipe','inherit']});const published=once(publishing,'close');let publicationOutput='';publishing.stdout.on('data',x=>publicationOutput+=x);
+  publishing.stdin.write("BEGIN; SET fleet.project_ids='*'; LOCK resource_tool IN ACCESS EXCLUSIVE MODE; SELECT 'page-held';\n");
+  let delayed:Promise<any>|undefined;
+  try{
+   await wait(()=>publicationOutput.includes('page-held'));
+   delayed=page({limit:1});
+   await wait(()=>c.sql("SELECT count(*) FROM pg_locks WHERE relation='resource_tool'::regclass AND NOT granted").trim()==='1');
+   publishing.stdin.end("UPDATE resource_tool SET calls=calls+1 WHERE project_id='desiign' AND name='Z%_literal'; UPDATE resource_project_summary SET revision=revision+1,header=jsonb_set(header,'{tools,totalCalls}',to_jsonb((header#>>'{tools,totalCalls}')::bigint+1)) WHERE project_id='desiign'; COMMIT;\n");
+   await published;
+   const atomic=await delayed;assert.deepEqual(atomic.header,beforeAtomic.header);assert.deepEqual(atomic.items,beforeAtomic.items);assert.equal(atomic.version,beforeAtomic.version);
+   const newer=await page({limit:1});assert.equal(newer.items[0].calls,atomic.items[0].calls+1);assert.equal(newer.header.tools.totalCalls,atomic.header.tools.totalCalls+1);
+  }finally{if(publishing.exitCode===null)publishing.stdin.end('ROLLBACK;\n');await published;await delayed;}
+  // Native usage has no 200-character tool-name cap. Keep the full admitted key usable
+  // in both issued cursors (also larger than 8192 bytes) and deletion-safe around reads.
+  const nativeID='api-long-native',longName='z'.repeat(9000);
+  await op('project_create',{id:nativeID,requestId:'prepared-long-native',content:{settings:{id:nativeID,name:'Long native tool fixture',contextFiles:[],roles:{}},contextFiles:[]}},member);
+  c.sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES('api-long-tool','tool_run','succeeded','${nativeID}',jsonb_build_object('tool',repeat('z',9000))),('api-long-tail','tool_run','succeeded','${nativeID}','{"tool":"zzzzz{"}');`);
+  env.FLEET_RESOURCE_PROCESSOR='on';await c.restart();
+  await wait(()=>c.sql(`SELECT ready AND header->>'executions'='2' FROM resource_project_summary WHERE project_id='${nativeID}'`).trim()==='t');
+  const longPage=await page({projectId:nativeID,limit:1});assert.equal(longPage.items[0].name,longName);assert.ok(longPage.nextCursor.length>8192);
+  assert.equal((await page({projectId:nativeID,limit:1,cursor:longPage.nextCursor})).items[0].name,'zzzzz{');
+  const longKey={kind:'tool',name:longName,connection:null};assert.equal((await page({projectId:nativeID,around:{key:longKey,direction:'atOrAfter'}})).resolvedAnchor.name,longName);
+  c.sql("DELETE FROM execution WHERE id='api-long-tool'");
+  await wait(()=>c.sql(`SELECT header->>'executions' FROM resource_project_summary WHERE project_id='${nativeID}'`).trim()==='1');
+  assert.equal((await page({projectId:nativeID,around:{key:longKey,direction:'atOrAfter'}})).resolvedAnchor.name,'zzzzz{');
+  env.FLEET_RESOURCE_PROCESSOR='off';await c.restart();
   // Both generic and host-agent paths must bind before interpreting foreign cursors/anchors.
   const host=(await op('hosts_register',{id:'api-host',holder:member}));
   const sid='api-session';c.sql(`INSERT INTO document(id,kind,project_id,data) VALUES('${sid}','session','desiign','{"id":"api-session","projectId":"desiign"}');
    INSERT INTO execution(id,kind,state,project_id,session_id,host_id,directed_by,data) VALUES('api-agent','agent_run','running','desiign','${sid}','api-host','${member}',jsonb_build_object('id','api-agent','hostId','api-host','sessionId','${sid}','projectId','desiign','directedBy','${member}'));
    INSERT INTO document(id,kind,project_id,data) VALUES('api-command','command','desiign','{"id":"api-command","executionId":"api-agent","hostId":"api-host"}');`);
   const agent=async(name:string,args:object,expected=200)=>{const r=await request('/api/hosts/agent-tools',{hostId:'api-host',executionId:'api-agent',commandId:'api-command',request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}}},member,host.secret);assert.equal(r.status,expected,JSON.stringify(r.body));return r.status===200?JSON.parse(r.body.result.content[0].text):r.body;};
+  c.sql(`INSERT INTO document(id,kind,data) VALUES('api-unbound-session','session','{"id":"api-unbound-session","directedBy":"${member}"}'),('api-unbound-command','command','{"id":"api-unbound-command","executionId":"api-unbound-agent","hostId":"api-host"}');
+   INSERT INTO execution(id,kind,state,session_id,host_id,directed_by,data) VALUES('api-unbound-agent','agent_run','running','api-unbound-session','api-host','${member}',jsonb_build_object('id','api-unbound-agent','hostId','api-host','sessionId','api-unbound-session','directedBy','${member}'));`);
+  for(const name of operations){const r=await request('/api/hosts/agent-tools',{hostId:'api-host',executionId:'api-unbound-agent',commandId:'api-unbound-command',request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:{category:'tools'}}}},member,host.secret);assert.equal(r.status,400,JSON.stringify(r.body));}
   for(const name of operations){
    const b=await agent(name,{category:'tools'});assert.equal(b.projectId??b.id,'desiign');
    await agent(name,{projectId:'hello-world',category:'bogus',cursor:'bad'},404);
   }
+  c.sql("UPDATE document SET data=data||'{\"focus\":{\"projectIds\":[\"desiign\"]}}'::jsonb WHERE id='api-session'; UPDATE definition_revision SET content=jsonb_set(content::jsonb,'{settings,roles}','42')::text WHERE kind='project' AND id='desiign'");
+  assert.equal((await agent('project_resources',{})).kind,'ready');
+  assert.ok((await agent('project_resource_items',{category:'tools'})).items.length>0);
+  await agent('project_detail',{},500);
+  c.sql(`UPDATE definition_revision SET content=${quote(JSON.parse(revision))} WHERE kind='project' AND id='desiign'`);
   assert.equal((await agent('project_resources',{knownVersion:'foreign:version'})).kind,'ready');
   await agent('project_resource_items',{category:'tools',cursor:prices.nextCursor},400);
   const foreignCursor=Buffer.from(JSON.stringify({...JSON.parse(Buffer.from(first.nextCursor,'base64url').toString()),projectId:'hello-world'})).toString('base64url');
@@ -197,4 +235,57 @@ test('resource_summary commit, rollback, XID barrier, scoped SSE and reconnect',
   assert.equal((await op('changes_since',{cursor:baseline},member)).changes.length,0);
   assert.ok(!newScope.frames.some(f=>String(f.data.seq)===after));
  }finally{for(const a of aborts)a.abort();await c.stop();}
+});
+
+// Requirement: every returned large native position round-trips inside the unchanged HTTP
+// body envelope with exact identity. Risk: JSON/base64 escaping overflows admission, decoder
+// expansion/truncation is accepted, or packed keys bypass scope/category/epoch validation.
+test('admitted large native tool keys round-trip compressed cursors and packed anchors over HTTP',{timeout:60000},async()=>{
+ const c=await startCoordinator({name:'large-key-proof',env:{FLEET_RESOURCE_READS:'on',FLEET_RESOURCE_PROCESSOR:'on',FLEET_LOST_AFTER_MS:'3600000'}});
+ const request=async(path:string,body:any,secret=c.secret)=>{const bytes=JSON.stringify(body);const r=await fetch(c.base+path,{method:'POST',headers:{authorization:'Bearer '+secret,'content-type':'application/json',...(secret===c.secret?{'x-fleet-person':owner}:{})},body:bytes});return {status:r.status,body:await r.json() as any,bytes:Buffer.byteLength(bytes)};};
+ const p='large-native',name='\u0001'.repeat(174650),near='\u0001'.repeat(200)+'nearby',query='\u0001'.repeat(200);
+ const page=async(args:any={},status=200,person=owner)=>{
+  const bytes=JSON.stringify({projectId:p,category:'tools',limit:1,...args});const r=await fetch(c.base+'/api/ops/project_resource_items',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':person,'content-type':'application/json'},body:bytes});
+  const body=await r.json() as any;assert.equal(r.status,status,status===200?body.message:undefined);return {body,bytes:Buffer.byteLength(bytes)};
+ };
+ try{
+  assert.equal((await request('/api/ops/project_create',{id:p,requestId:p,content:{settings:{id:p,name:p,roles:{},contextFiles:[]},contextFiles:[]}})).status,200);
+  const host=(await request('/api/ops/hosts_register',{id:'large-native-host'})).body;
+  c.sql(`INSERT INTO execution(id,kind,state,project_id,host_id,started_at,data) VALUES('large-native-agent','agent_run','running','${p}','large-native-host',now(),'{"id":"large-native-agent","hostId":"large-native-host"}'),('large-native-neighbor','agent_run','running','${p}','large-native-host',now(),'{"id":"large-native-neighbor","hostId":"large-native-host"}');`);
+  const sourceBody={hostId:'large-native-host',executionId:'large-native-agent',events:[{id:'large-native-close',seq:1,type:'process.closed',timestamp:Date.now(),data:{exitCode:0,resources:{toolCalls:{[name]:{calls:1,errors:0},tail:{calls:1,errors:0}}}}}]};
+  const source=await request('/api/hosts/events',sourceBody,host.secret);assert.equal(source.status,200);assert.equal(source.bytes,1048168);assert.ok(source.bytes<(1<<20));
+  const neighbor=await request('/api/hosts/events',{hostId:'large-native-host',executionId:'large-native-neighbor',events:[{id:'large-neighbor-close',seq:1,type:'process.closed',timestamp:Date.now(),data:{exitCode:0,resources:{toolCalls:{[near]:{calls:1,errors:0}}}}}]},host.secret);assert.equal(neighbor.status,200);
+  await wait(()=>c.sql(`SELECT ready AND header#>>'{itemCounts,tools}'='3' FROM resource_project_summary WHERE project_id='${p}'`).trim()==='t');
+  assert.equal(c.sql(`SELECT max(length(name)) FROM resource_tool WHERE project_id='${p}'`).trim(),'174650','real admitted source persisted without truncation');
+  const first=await page();assert.equal(first.body.items[0].name,name);assert.match(first.body.nextCursor,/^r2\./);assert.equal(first.body.items[0].position.kind,'tool-position');assert.deepEqual(first.body.resolvedAnchor,first.body.items[0].position);
+  const next=await page({cursor:first.body.nextCursor});assert.equal(next.body.items[0].name,near);assert.ok(next.bytes<(1<<20));
+  // Ordinary small cursor schema1 remains the emitted format and is still readable.
+  assert.equal(JSON.parse(Buffer.from(next.body.previousCursor,'base64url').toString()).schemaVersion,1);
+  const previous=await page({cursor:next.body.previousCursor});assert.equal(previous.body.items[0].name,name);
+  const position=first.body.items[0].position;
+  const around=await page({query,around:{key:position,direction:'atOrAfter'}});assert.equal(around.body.items[0].name,name);assert.deepEqual(around.body.resolvedAnchor,position);assert.ok(around.bytes<(1<<20));
+  const compressed=Buffer.from(first.body.nextCursor.slice(3),'base64url');const cursor=JSON.parse(inflateSync(compressed).toString());assert.equal(cursor.schemaVersion,2);
+  const encode=(value:any)=>'r2.'+deflateSync(Buffer.from(JSON.stringify(value))).toString('base64url');
+  await page({projectId:'hello-world',cursor:first.body.nextCursor},400);
+  await page({category:'costs',cursor:first.body.nextCursor},400);
+  await page({query:'different',cursor:first.body.nextCursor},400);
+  await page({cursor:encode({...cursor,buildEpoch:'00000000-0000-0000-0000-000000000000'})},409);
+  await page({cursor:encode({...cursor,schemaVersion:1})},400);
+  await page({cursor:first.body.nextCursor},404,outsider);
+  await page({cursor:'r2.not_base64'},400);
+  await page({cursor:'r2.'+compressed.subarray(0,-1).toString('base64url')},400);
+  await page({cursor:'r2.'+Buffer.concat([compressed,Buffer.from([0])]).toString('base64url')},400);
+  const bomb='tp1.'+deflateSync(Buffer.alloc(12*(1<<20)+4097,97)).toString('base64url');
+  await page({around:{key:{kind:'tool-position',encoded:bomb},direction:'atOrAfter'}},400);
+  const nonnull='tp1.'+deflateSync(Buffer.from(JSON.stringify({schemaVersion:1,key:{kind:'tool',name,connection:'\\\"><&'}}))).toString('base64url');
+  assert.equal((await page({around:{key:{kind:'tool-position',encoded:nonnull},direction:'atOrAfter'}})).body.items[0].name,near,'packed connection remains part of the exact sort tuple');
+  const broken={...position,encoded:position.encoded.slice(0,-3)};
+  await page({around:{key:broken,direction:'atOrAfter'}},400);
+  await page({category:'costs',around:{key:position,direction:'atOrAfter'}},400);
+  const foreign=await page({projectId:'hello-world',around:{key:position,direction:'atOrAfter'}});assert.ok(foreign.body.items.every((x:any)=>x.name!==name));
+  c.sql("BEGIN; SELECT id FROM execution WHERE id='large-native-agent' FOR UPDATE; DELETE FROM execution_totals WHERE execution_id='large-native-agent'; DELETE FROM execution WHERE id='large-native-agent'; COMMIT;");
+  await wait(()=>c.sql(`SELECT header->>'executions' FROM resource_project_summary WHERE project_id='${p}'`).trim()==='1');
+  const survived=await page({query,around:{key:position,direction:'atOrAfter'}});assert.equal(survived.body.resolvedAnchor.name,near);assert.equal(survived.body.items[0].name,near);
+  console.log(JSON.stringify({largePositionEvidence:{sourceBytes:source.bytes,persistedNameCharacters:name.length,nextCursorCharacters:first.body.nextCursor.length,nextRequestBytes:next.bytes,previousRequestBytes:previous.bytes,aroundQuery200RequestBytes:around.bytes,positionCharacters:position.encoded.length}}));
+ }finally{await c.stop();}
 });
