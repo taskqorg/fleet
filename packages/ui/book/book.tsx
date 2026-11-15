@@ -4,7 +4,7 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
   Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, StatStrip,
-  TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl,
+  TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
   Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage,
 } from '../src/index.ts';
@@ -175,12 +175,15 @@ function PendingDemo() {
 }
 
 const BOOK_GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
-const BOOK_SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
+const BOOK_SORTS = [['changed', 'Changed'], ['created', 'Created'], ['title', 'Title', ['Z to A', 'A to Z']]] as const;
 function GroupSortDemo() {
   const [group, setGroup] = useState<typeof BOOK_GROUPS[number][0]>('priority');
   const [sort, setSort] = useState('-changed');
+  const [sel, setSel] = useState(false);
   return <div class="stack">
-    <div class="fbar-line"><GroupControl value={group} options={BOOK_GROUPS} onChange={setGroup} /><SortControl value={sort} fields={BOOK_SORTS} onChange={setSort} /></div>
+    <div class="fbar-line"><SelectToggle on={sel} onClick={() => setSel(!sel)} /><GroupControl value={group} options={BOOK_GROUPS} onChange={setGroup} /><SortControl value={sort} fields={BOOK_SORTS} onChange={setSort} /></div>
+    {sel && <div class="fbar-line"><SelectBar count={2} total={8} onAll={() => {}} onNone={() => {}} onExit={() => setSel(false)} actions={[
+      { label: 'Pin', icon: 'pin', onClick: () => {} }, { label: 'Pause', icon: 'pause', onClick: () => {} }, { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => {} }]} /></div>}
     <span class="muted type-sm">Value: group={group}, sort={sort}</span>
   </div>;
 }
@@ -375,7 +378,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['lifecycle', 'Harness marks, delivery stages, outcome block, detail sections', 'harness-counts', () => <LifecycleDemo />, <>D11: agent mark only while a task runs; delivery stage chip; harness counts per host omit zero; outcome block above task tabs (B2); stacked detail sections (C3).</>],
   ['stat-strip', 'Stat strip', 'stat-strip', () => <StatsDemo />, <>Operational counts: what needs you, failures, running against slots, workers per host. An offline host shows its last known count as a lower bound.</>],
   ['list-pending', 'Updating list: pending counters and rows, row checks', 'row-check', () => <PendingDemo />, <>A filter change keeps the last rows and counts on screen, dimmed under a thin bar, until the new answer replaces them in place. Checked rows are the view URL's sel.</>],
-  ['group-sort', 'Group and sort', 'filter-bar', () => <GroupSortDemo />, <>OR-35. Group: icon and the current choice; a click opens the choices inline. Sort: direction toggle, then the field, which steps to the next field on click.</>],
+  ['group-sort', 'Group and sort', 'filter-bar', () => <GroupSortDemo />, <>OR-35. Group: one chip with the icon and the grouping; its choices in a short menu, the cross removes the grouping. Sort: the field (menu of fields and directions), then the direction arrow, which flips in one click. The square at the left starts selection; the selection bar gets its own line.</>],
   ['data-list', 'Task list view: views, state counters, grouping, filters, virtual list', 'data-list', () => <ListDemo />, <>Saved views per person (pin, unpin, Save view). State counters show totals and filter on click. Group by state or project; groups collapse. Filters expand inline (OR-14). Title takes the space; service fields sit on the right (OR-21). State is an icon with a delayed tooltip (B1, OR-20).</>],
   ['execution-tree', 'Execution tree', 'execution-tree', () => <ExecTree nodes={BOOK_TREE} now={NOW} label="Executions" />],
   ['step-list', 'Step list and flow strip', 'step-list', () => <StepsDemo />, <>D20: a pipeline is edited in the list; the picture above is drawn from it and is read-only. Click a step to open it in place. The second list shows a run on top of the same rows.</>],

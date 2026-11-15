@@ -201,7 +201,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .btn,.chip,.saved-chip,.seg,.tabs button{min-height:var(--size-hit-phone)}
   .setting{grid-template-columns:1fr}.setting .help{grid-column:1}
 }
-@media (pointer:coarse){.btn,.chip button,.seg,.tw,.pill{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}}
+@media (pointer:coarse){.btn,.chip button,.seg,.pick-b,.pick-x,.tw,.pill{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
 /* Tooltip (OR-20): small, contextual, distinct floating surface (OR-16) */
@@ -330,6 +330,19 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .vl-row.sel{background:var(--selected);box-shadow:inset 3px 0 var(--accent)}
 .vl-row.checked{background:var(--selected)}
 .seg-group{display:inline-flex;gap:var(--space-1)}
+/* Group and sort chips (OR-35): one chip per control, its choices in a short menu under it. */
+.pick{position:relative;display:inline-flex;align-items:center;height:var(--size-chip);border:1px solid transparent;border-radius:var(--radius-md);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.pick:has(.pick-b.on){background:var(--selected);color:var(--fg)}
+.pick-b,.pick-x{display:inline-flex;align-items:center;gap:var(--space-1);height:100%;padding:0 var(--space-2);border:0;border-radius:var(--radius-md);background:none;color:inherit;font:inherit;cursor:pointer}
+.pick-b:hover,.pick-x:hover,.pick-b[aria-expanded=true]{background:var(--hover);color:var(--fg)}
+.pick-x{padding:0 var(--space-1)}
+.pick .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.pick-b>.icon:last-child{opacity:.6}
+.pick-menu{left:0;right:auto;z-index:20}
+.pick-menu button[role=menuitemradio]{gap:var(--space-2)}
+.pick-menu .grow{flex:1}
+.menu-sep{height:1px;margin:var(--space-1) 0;background:var(--line)}
+.menu-h{padding:var(--space-1) var(--space-3) 0;font-size:var(--font-size-xs);color:var(--fg-muted);text-transform:uppercase;letter-spacing:.04em}
 
 /* App shell and page layout (patterns/app-shell.md) */
 /* Three columns (OR-24). The shell alone takes the viewport height; each column has at most one scroller (OR-25). */
@@ -669,8 +682,10 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 /* Row menu at the pointer (ContextMenu) and the selection bar in place of the list tools (SelectBar). */
 .ctx-menu{position:fixed;top:0;left:0;right:auto;z-index:30}
 .menu button.t-danger{color:var(--tone-fg)}
-.select-bar{display:flex;align-items:center;gap:var(--space-2);flex:1;min-width:0}
-.select-bar .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;min-width:3ch}
+.select-bar{display:flex;align-items:center;gap:var(--space-2);flex:1;min-width:0;padding:var(--space-1) 0;border-top:1px solid var(--line-soft)}
+.select-bar .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+/* The select toggle's icon sits in the checkbox column it opens (rows and the select-all box start at the same x). */
+.sel-toggle{display:inline-flex;margin-left:calc((var(--size-icon) - var(--size-control)) / 2)}
 .counter.sigma .num{font-weight:var(--font-weight-bold)}
 /* Focus (OR-34): a nav-row button; its panel opens inline below it. */
 .focus-ctl{padding:0 var(--space-2) var(--space-2)}
