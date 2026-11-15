@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {join} from 'node:path';
 import {homedir} from 'node:os';
 import {startCoordinator,root} from '../harness.ts';
+import {installPublicationJournalSQL} from '../performance/publication-proof.ts';
 
 // Requirement: real PostgreSQL processor protocol and off-by-default rollout; risk: capture stops,
 // restart loses backlog, unqualified prepared reads activate, or tests only exercise a mock reducer.
@@ -37,14 +38,25 @@ test('prepared resource processor qualifies against isolated PostgreSQL; off res
    CREATE TRIGGER resource_fixture_tool_update AFTER UPDATE OF tool_count ON resource_project_summary FOR EACH ROW EXECUTE FUNCTION resource_fixture_item_update('tool');
    CREATE TRIGGER resource_fixture_cost_update AFTER UPDATE OF cost_count ON resource_project_summary FOR EACH ROW EXECUTE FUNCTION resource_fixture_item_update('cost');
    CREATE TRIGGER resource_fixture_price_update AFTER UPDATE OF price_count ON resource_project_summary FOR EACH ROW EXECUTE FUNCTION resource_fixture_item_update('price');`);
+  c.sql(`CREATE TABLE resource_fixture_cohort_fault(execution_id text PRIMARY KEY,mode text NOT NULL);
+   CREATE FUNCTION resource_fixture_cohort_fault() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE mode text; BEGIN
+    SELECT f.mode INTO mode FROM resource_fixture_cohort_fault f WHERE f.execution_id=NEW.execution_id;
+    IF mode='error' THEN RAISE EXCEPTION 'fixture cohort failure'; END IF;
+    IF mode='retryable' THEN RAISE EXCEPTION 'fixture cohort serialization' USING ERRCODE='40001'; END IF;
+    IF mode='gate' THEN PERFORM pg_advisory_xact_lock(hashtextextended('fixture:cohort',0)); END IF;
+    RETURN NEW; END $$;
+   CREATE TRIGGER resource_fixture_cohort_fault BEFORE INSERT OR UPDATE ON resource_contribution FOR EACH ROW EXECUTE FUNCTION resource_fixture_cohort_fault();`);
   const db=c.sql('SELECT current_database()').trim();
   const pg=process.env.FLEET_TRIAL_PGDATA||join(homedir(),'.cache/fleet-trial/pg');
   const url=`postgresql://fleet_app@/${db}?host=${encodeURIComponent(pg)}&port=${process.env.FLEET_TRIAL_PGPORT||'54329'}`;
-  const code=await new Promise<number|null>((resolve,reject)=>{
-   const child=spawn('go',['test','./coordinator','-run','^(TestResourcePostgres|TestResourceMetricBatchPostgres|TestResourceNoopSupportPostgres)$','-count=1','-v'],{cwd:join(root,'go'),env:{...process.env,FLEET_RESOURCE_TEST_URL:url},stdio:'inherit'});
-   child.once('error',reject);child.once('exit',resolve);
-  });
-  assert.equal(code,0,'real PostgreSQL processor proof');
+  for (const pattern of ['^(TestResourcePostgres|TestResourceMetricBatchPostgres|TestResourceNoopSupportPostgres)$','^TestResourceCohortPostgres$']) {
+   if(pattern==='^TestResourceCohortPostgres$') c.sql(installPublicationJournalSQL(['COHORT'],'!cohort-tool'));
+   const code=await new Promise<number|null>((resolve,reject)=>{
+    const child=spawn('go',['test','./coordinator','-run',pattern,'-count=1','-v'],{cwd:join(root,'go'),env:{...process.env,FLEET_RESOURCE_TEST_URL:url},stdio:'inherit'});
+    child.once('error',reject);child.once('exit',resolve);
+   });
+   assert.equal(code,0,'real PostgreSQL processor proof: '+pattern);
+  }
   const res=await fetch(c.base+'/api/ops/project_resources',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify({projectId:'fleet'})});
   assert.equal(res.status,503,'prepared public reads remain disabled until rollout');
   // An actually accepted native observation must traverse normalization AND the opted-in processor.

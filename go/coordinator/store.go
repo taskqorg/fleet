@@ -277,6 +277,15 @@ func (s *Store) Tx(ctx context.Context, sc *Scope, write bool, lock string, fn f
 // TxLocks runs fn in one transaction acquiring the canonical sorted union of locks (64-bit hashtextextended).
 // When write is true and locks is empty, no initial advisory lock is acquired (equivalent to NOLOCK).
 func (s *Store) TxLocks(ctx context.Context, sc *Scope, write bool, locks []string, fn func(pgx.Tx) error) error {
+	return s.txLocks(ctx, sc, write, locks, true, fn)
+}
+
+// TxLocksOnce preserves lock ordering and access-cache fences but leaves retry/isolation to its caller.
+func (s *Store) TxLocksOnce(ctx context.Context, sc *Scope, write bool, locks []string, fn func(pgx.Tx) error) error {
+	return s.txLocks(ctx, sc, write, locks, false, fn)
+}
+
+func (s *Store) txLocks(ctx context.Context, sc *Scope, write bool, locks []string, retry bool, fn func(pgx.Tx) error) error {
 	if write {
 		s.authMu.Lock()
 		s.authWrites++
@@ -303,7 +312,7 @@ func (s *Store) TxLocks(ctx context.Context, sc *Scope, write bool, locks []stri
 	}
 	for attempt := 0; ; attempt++ {
 		err := s.once(ctx, sc, write, sorted, fn)
-		if err == nil || !retryable(err) {
+		if err == nil || !retry || !retryable(err) {
 			return err
 		}
 		delay := time.NewTimer(time.Duration(rand.Float64() * float64(min(200, 5<<min(attempt, 6))) * float64(time.Millisecond)))
@@ -564,6 +573,18 @@ func runTxLocks(ctx context.Context, a *App, q *Request, write bool, locks []str
 		return a.store.TxLocks(ctx, nil, write, locks, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
 	}
 	return a.store.TxLocks(ctx, scopeOf(q.person), write, locks, func(tx pgx.Tx) error {
+		q.tx = tx
+		defer func() { q.tx = nil }()
+		return fn(q)
+	})
+}
+
+// One maintenance transaction attempt; bounded resource cohorts isolate failures outside it.
+func runTxLocksOnce(ctx context.Context, a *App, q *Request, write bool, locks []string, fn func(q *Request) error) error {
+	if q == nil {
+		return a.store.TxLocksOnce(ctx, nil, write, locks, func(tx pgx.Tx) error { return fn(backgroundRequest(ctx, a, tx)) })
+	}
+	return a.store.TxLocksOnce(ctx, scopeOf(q.person), write, locks, func(tx pgx.Tx) error {
 		q.tx = tx
 		defer func() { q.tx = nil }()
 		return fn(q)

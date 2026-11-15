@@ -1,18 +1,24 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"fleet/contract"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Requirement: exact nullable facts, complete tools and frozen pricing; risk: rounded money,
@@ -833,4 +839,311 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	equal(`SELECT tool_count||':'||cost_count||':'||price_count FROM resource_project_summary WHERE project_id='SUPPORT_NOOP'`, "0:0:0")
 	equal(`SELECT count(*)::text FROM resource_fixture_item_updates`, "6")
 	equal(`SELECT ((SELECT count(*) FROM resource_metric WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_extreme WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_tool WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_cost WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_price_ref WHERE project_id='SUPPORT_NOOP'))::text`, "0")
+}
+
+// Requirement: one bounded project cohort commits exact independent leaves atomically;
+// risk: failed members consume healthy claims, late facts disappear, or publication assumes one leaf.
+func TestResourceCohortPostgres(t *testing.T) {
+	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
+	if url == "" {
+		t.Skip("isolated PostgreSQL fixture")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	st, err := openStore(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := &App{store: st}
+	sql := func(s string, args ...any) {
+		t.Helper()
+		if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return exec(q, s, args...) }); e != nil {
+			t.Fatal(e)
+		}
+	}
+	scalar := func(s string, args ...any) string {
+		t.Helper()
+		var v string
+		if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { return q.tx.QueryRow(q.ctx(), s, args...).Scan(&v) }); e != nil {
+			t.Fatal(e)
+		}
+		return v
+	}
+	equal := func(s, want string, args ...any) {
+		t.Helper()
+		if got := scalar(s, args...); got != want {
+			t.Fatalf("%s = %q want %q", s, got, want)
+		}
+	}
+	ids := make([]string, resourceCohortSize)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("cohort-%02d", i)
+		sql(`INSERT INTO execution(id,kind,state,project_id,harness,model,started_at) VALUES($1,'agent_run','succeeded','COHORT','codex','cohort-model','2024-01-01');`, ids[i])
+		sql(`INSERT INTO execution_totals(execution_id,project_id,tokens_input,tokens_input_basis) VALUES($1,'COHORT',$2,'measured')`, ids[i], i%3)
+	}
+	if err = runTxLocks(ctx, a, nil, true, []string{"project:COHORT"}, func(q *Request) error { return resourceEnsureProject(q, "COHORT") }); err != nil {
+		t.Fatal(err)
+	}
+	work := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id=ANY($1::text[])`, ids)
+	pristine := func() {
+		t.Helper()
+		equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id='COHORT'`, "0")
+		equal(`SELECT count(*)::text FROM resource_valuation WHERE execution_id=ANY($1::text[])`, "0", ids)
+		equal(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`, "0")
+		equal(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id=ANY($1::text[])`, work, ids)
+	}
+	sql(`INSERT INTO resource_fixture_cohort_fault VALUES('cohort-01','error')`)
+	if err = resourceReplaceBatch(ctx, a, ids); err == nil || !strings.Contains(err.Error(), "fixture cohort failure") {
+		t.Fatalf("cohort SQL failure: %v", err)
+	}
+	pristine()
+	sql(`UPDATE resource_fixture_cohort_fault SET mode='gate'`)
+	gate, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Close(context.Background())
+	if _, err = gate.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended('fixture:cohort',0))`); err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended('fixture:cohort',0))`)
+	done := make(chan error, 1)
+	launch := func() int32 {
+		t.Helper()
+		go func() { done <- resourceReplaceBatch(ctx, a, ids) }()
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+			var pid int32
+			if e := gate.QueryRow(ctx, `SELECT coalesce((SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user AND wait_event='advisory' AND query LIKE '%resource_contribution%' AND pid<>pg_backend_pid() LIMIT 1),0)`).Scan(&pid); e != nil {
+				t.Fatal(e)
+			}
+			if pid != 0 {
+				return pid
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("cohort did not reach controlled contribution boundary")
+			}
+		}
+	}
+	backend := launch()
+	var killed bool
+	if err = gate.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, backend).Scan(&killed); err != nil || !killed {
+		t.Fatalf("terminate backend: %v %v", killed, err)
+	}
+	if err = <-done; err == nil {
+		t.Fatal("terminated cohort succeeded")
+	}
+	pristine()
+	launch()
+	// All cohort snapshots were captured before any support mutation. A later source
+	// transaction must commit without waiting for the processor and retain its new UUID.
+	sql(`UPDATE execution_totals SET tokens_input=7 WHERE execution_id='cohort-00'`)
+	late := scalar(`SELECT work_id::text FROM resource_work WHERE execution_id='cohort-00' ORDER BY first_pending_at DESC,work_id DESC LIMIT 1`)
+	if _, err = gate.Exec(ctx, `SELECT pg_advisory_unlock(hashtextextended('fixture:cohort',0))`); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id='COHORT'`, "16")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "15")
+	equal(`SELECT present_count::text||':'||expected_count::text FROM resource_metric WHERE project_id='COHORT' AND metric='input' AND basis='measured'`, "16:16")
+	equal(`SELECT count(*)::text FROM resource_valuation WHERE execution_id=ANY($1::text[])`, "16", ids)
+	equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id='COHORT' AND facts#>>'{metrics,cpuMs,value}' IS NOT NULL`, "0")
+	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "1", ids)
+	equal(`SELECT work_id::text FROM resource_work WHERE execution_id='cohort-00'`, late)
+	equal(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`, "1")
+	equal(`SELECT jsonb_array_length(leaves)::text FROM interface_publication WHERE project='COHORT'`, "16")
+	equal(`SELECT count(*)::text FROM change c JOIN interface_publication p ON p.publication_xid=c.xid WHERE c.kind='resource_summary' AND c.id='COHORT'`, "1")
+	method := scalar(`SELECT method_sha FROM resource_valuation WHERE execution_id='cohort-00'`)
+	sql(`DELETE FROM resource_fixture_cohort_fault; INSERT INTO price_entry(id,subject,unit,price,currency,effective_from,observed_at,source) VALUES('cohort-late','cohort-model','input_tokens',9,'USD','2020-01-01','2025-01-01','owner')`)
+	if err = resourceReplace(ctx, a, "cohort-00"); err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "22")
+	equal(`SELECT method_sha FROM resource_valuation WHERE execution_id='cohort-00'`, method)
+	revision := scalar(`SELECT revision::text FROM resource_project_summary WHERE project_id='COHORT'`)
+	// Durable replay also covers retry after the caller loses acknowledgement: already
+	// committed immutable claims cannot create another revision or refreeze a method.
+	if err = resourceReplaceBatch(ctx, a, ids); err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT revision::text FROM resource_project_summary WHERE project_id='COHORT'`, revision)
+	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", ids)
+	// A retryable SQL poison gets one cohort attempt, then independent bounded leaves.
+	for _, id := range ids {
+		sql(`UPDATE execution_totals SET tokens_input=tokens_input+1 WHERE execution_id=$1`, id)
+	}
+	sql(`INSERT INTO resource_fixture_cohort_fault VALUES('cohort-01','retryable')`)
+	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('cohort-poison-other','tool_run','succeeded','COHORT_POISON_OTHER')`)
+	started := time.Now()
+	if err = resourceReplaceCandidates(ctx, a, append(append([]string{}, ids...), "cohort-poison-other")); err == nil {
+		t.Fatal("poison failure hidden")
+	}
+	if time.Since(started) > 5*time.Second {
+		t.Fatal("cohort poison retried without bound")
+	}
+	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "1", ids)
+	equal(`SELECT execution_id FROM resource_work WHERE execution_id=ANY($1::text[])`, "cohort-01", ids)
+	equal(`SELECT count(*)::text FROM resource_contribution WHERE execution_id='cohort-poison-other'`, "1")
+	equal(`SELECT attempts::text||':'||(next_attempt_at>first_pending_at+interval '90 milliseconds')::text FROM resource_work WHERE execution_id='cohort-01'`, "1:true")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "37")
+	sql(`DELETE FROM resource_fixture_cohort_fault; UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='cohort-01'`)
+	if err = resourceReplace(ctx, a, "cohort-01"); err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "38")
+
+	// Lose the actual server COMMIT response, not an invented callback error. The
+	// independent connection must observe all committed leaves before durable replay.
+	for _, id := range ids {
+		sql(`UPDATE execution_totals SET tokens_input=tokens_input+1 WHERE execution_id=$1`, id)
+	}
+	cfg := st.pool.Config()
+	var drop atomic.Bool
+	dial := cfg.ConnConfig.DialFunc
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, address string) (net.Conn, error) {
+		c, e := dial(ctx, network, address)
+		if e != nil {
+			return nil, e
+		}
+		return &resourceLostCommitConn{Conn: c, reader: bufio.NewReader(c), drop: &drop}, nil
+	}
+	pool, e := pgxpool.NewWithConfig(ctx, cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer pool.Close()
+	ambiguous := &App{store: &Store{pool: pool, readPool: st.readPool}}
+	beforePub := scalar(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`)
+	drop.Store(true)
+	if e = resourceReplaceBatch(ctx, ambiguous, ids); e == nil {
+		t.Fatal("lost COMMIT acknowledgement reported success")
+	}
+	if drop.Load() {
+		t.Fatalf("test did not intercept committed response: %v", e)
+	}
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "54")
+	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", ids)
+	afterPub := scalar(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`)
+	equal(`SELECT (count(*)=$1::bigint+1)::text FROM interface_publication WHERE project='COHORT'`, "true", beforePub)
+	if e = resourceReplaceCandidates(ctx, a, ids); e != nil {
+		t.Fatal(e)
+	}
+	equal(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`, afterPub)
+	equal(`SELECT method_sha FROM resource_valuation WHERE execution_id='cohort-00'`, method)
+
+	// Change scope after the bulk hint but before the canonical lock set is acquired.
+	// Rechecking all members must roll back, without adding a lock out of order.
+	sql(`UPDATE execution_totals SET tokens_input=tokens_input+1 WHERE execution_id='cohort-00'`)
+	beforeMove := scalar(`SELECT revision::text FROM resource_project_summary WHERE project_id='COHORT'`)
+	if _, e = gate.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended('project:COHORT',0))`); e != nil {
+		t.Fatal(e)
+	}
+	go func() { done <- resourceReplaceBatch(ctx, a, ids) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		var waiting bool
+		if e = gate.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND usename=current_user AND wait_event='advisory' AND pid<>pg_backend_pid())`).Scan(&waiting); e != nil {
+			t.Fatal(e)
+		}
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cohort did not wait for project lock")
+		}
+	}
+	sql(`UPDATE execution SET project_id='COHORT_ALT' WHERE id='cohort-00'`)
+	if _, e = gate.Exec(ctx, `SELECT pg_advisory_unlock(hashtextextended('project:COHORT',0))`); e != nil {
+		t.Fatal(e)
+	}
+	if e = <-done; !errors.Is(e, errResourceScope) {
+		t.Fatalf("changed cohort scope: %v", e)
+	}
+	equal(`SELECT revision::text FROM resource_project_summary WHERE project_id='COHORT'`, beforeMove)
+	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id='cohort-00'`, "2")
+	if e = resourceReplaceCandidates(ctx, a, ids); e != nil {
+		t.Fatal(e)
+	}
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "45")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT_ALT' AND metric='input'`, "10")
+	sql(`UPDATE execution SET project_id=NULL WHERE id='cohort-00'`)
+	if e = resourceReplaceCandidates(ctx, a, ids); e != nil {
+		t.Fatal(e)
+	}
+	equal(`SELECT count(*)::text FROM resource_metric WHERE project_id='COHORT_ALT'`, "0")
+	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", ids)
+	if e = st.Tx(ctx, &Scope{ProjectIDs: "COHORT", Person: "cohort-reader"}, false, NOLOCK, func(tx pgx.Tx) error {
+		var count int
+		if e := tx.QueryRow(ctx, `SELECT count(*) FROM resource_contribution WHERE execution_id='cohort-00'`).Scan(&count); e != nil {
+			return e
+		}
+		if count != 0 {
+			return errors.New("NULL derived scope leak")
+		}
+		return nil
+	}); e != nil {
+		t.Fatal(e)
+	}
+
+	// A stalled clearing project must not fill every candidate slot indefinitely.
+	sql(`INSERT INTO execution(id,kind,state,project_id) SELECT 'cohort-clear-'||i,'tool_run','succeeded','COHORT_CLEAR' FROM generate_series(1,105) i;
+ INSERT INTO resource_build(project_id,phase) VALUES('COHORT_CLEAR','clearing');
+ UPDATE resource_work SET next_attempt_at=clock_timestamp()-interval '1 day',first_pending_at=clock_timestamp()-interval '1 day' WHERE execution_id LIKE 'cohort-clear-%';
+ INSERT INTO execution(id,kind,state,project_id) VALUES('cohort-healthy-other','tool_run','succeeded','COHORT_OTHER')`)
+	var candidates []string
+	if e = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+		rows, e := q.tx.Query(ctx, resourceCandidatesSQL)
+		if e != nil {
+			return e
+		}
+		candidates, e = pgx.CollectRows(rows, pgx.RowTo[string])
+		return e
+	}); e != nil {
+		t.Fatal(e)
+	}
+	found := false
+	for _, id := range candidates {
+		if id == "cohort-healthy-other" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("clearing hints starved a healthy project outside the first 100 rows")
+	}
+	t.Logf("16 independent leaves/one publication; SQL and backend %d rollback; late UUID retained; frozen method; lost COMMIT response/replay; bounded poison isolation; locked scope change/NULL/RLS passed", backend)
+}
+
+// The fixture reads PostgreSQL protocol frames and withholds exactly the first
+// armed CommandComplete(COMMIT). PostgreSQL has committed before emitting it.
+type resourceLostCommitConn struct {
+	net.Conn
+	reader  *bufio.Reader
+	pending []byte
+	drop    *atomic.Bool
+}
+
+func (c *resourceLostCommitConn) Read(dst []byte) (int, error) {
+	if len(c.pending) == 0 {
+		header := make([]byte, 5)
+		if _, e := io.ReadFull(c.reader, header); e != nil {
+			return 0, e
+		}
+		n := int(binary.BigEndian.Uint32(header[1:]))
+		if n < 4 || n > 16*1024*1024 {
+			return 0, errors.New("invalid fixture PostgreSQL frame")
+		}
+		body := make([]byte, n-4)
+		if _, e := io.ReadFull(c.reader, body); e != nil {
+			return 0, e
+		}
+		if header[0] == 'C' && string(body) == "COMMIT\x00" && c.drop.CompareAndSwap(true, false) {
+			c.Conn.Close()
+			return 0, errors.New("fixture lost committed response")
+		}
+		c.pending = append(header, body...)
+	}
+	n := copy(dst, c.pending)
+	c.pending = c.pending[n:]
+	return n, nil
 }
