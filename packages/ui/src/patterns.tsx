@@ -41,6 +41,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   // Selection mode (OR-37): a checkbox column left of the state; the action bar replaces group and sort.
   const [selectOn, setSelectOn] = useState(false), [sel, setSel] = useState<number[]>([]);
   const selecting = selectOn || sel.length > 0;
+  const leave = () => { setSelectOn(false); setSel([]); };
   const toggle = (id: number) => { setSelectOn(true); setSel(x => x.includes(id) ? x.filter(i => i !== id) : [...x, id]); };
   const [menu, setMenu] = useState<{ t: TaskRow; at: { x: number; y: number } } | null>(null);
   const edit = (v: Partial<View>) => { setView({ ...view, ...v }); setActive(null); };
@@ -89,9 +90,9 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
         counters={
           <StateCounters family="task" label="Tasks by state" counts={counts} active={view.states} onAll={() => edit({ states: [] })}
             onToggle={s => edit({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />}
-        tools={<><SelectToggle on={selecting} onClick={() => { if (selecting) { setSelectOn(false); setSel([]); } else setSelectOn(true); }} />
+        tools={<><SelectToggle on={selecting} onClick={() => selecting ? leave() : setSelectOn(true)} />
           <GroupControl value={view.group} options={GROUPS.map(g => [g.id, g.label] as const)} onChange={g => edit({ group: g })} /></>}
-        selection={selecting && <SelectBar count={sel.length} total={shown.length} onAll={() => setSel(shown.map(t => t.id))} onNone={() => setSel([])} onExit={() => { setSelectOn(false); setSel([]); }} actions={[
+        selection={selecting && <SelectBar count={sel.length} total={shown.length} onAll={() => setSel(shown.map(t => t.id))} onNone={() => setSel([])} onExit={leave} actions={[
               { label: 'Pin', icon: 'pin', onClick: () => sel.forEach(id => !items.find(t => t.id === id)?.pinned && onPin(id)) },
               { label: 'Unpin', icon: 'pin-off', onClick: () => sel.forEach(id => items.find(t => t.id === id)?.pinned && onPin(id)) },
               { label: 'Pause', icon: 'pause', onClick: () => {} },

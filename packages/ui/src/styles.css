@@ -331,7 +331,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .vl-row.checked{background:var(--selected)}
 .seg-group{display:inline-flex;gap:var(--space-1)}
 /* Group and sort chips (OR-35): one chip per control, its choices in a short menu under it. */
-.pick{position:relative;display:inline-flex;align-items:center;height:var(--size-chip);border:1px solid transparent;border-radius:var(--radius-md);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.pick{position:relative;display:inline-flex;align-items:stretch;min-height:var(--size-chip);border:1px solid transparent;border-radius:var(--radius-md);font-size:var(--font-size-sm);color:var(--fg-muted)}
 .pick:has(.pick-b.on){background:var(--selected);color:var(--fg)}
 .pick-b,.pick-x{display:inline-flex;align-items:center;gap:var(--space-1);height:100%;padding:0 var(--space-2);border:0;border-radius:var(--radius-md);background:none;color:inherit;font:inherit;cursor:pointer}
 .pick-b:hover,.pick-x:hover,.pick-b[aria-expanded=true]{background:var(--hover);color:var(--fg)}
@@ -679,7 +679,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .row-facts .fact{display:inline-flex;align-items:center;gap:2px}
 .row-facts .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
 .row-facts .chip-age{padding:0}
-/* Row menu at the pointer (ContextMenu) and the selection bar in place of the list tools (SelectBar). */
+/* Row menu at the pointer (ContextMenu) and the selection bar on its own line under the list tools (SelectBar). */
 .ctx-menu{position:fixed;top:0;left:0;right:auto;z-index:30}
 .menu button.t-danger{color:var(--tone-fg)}
 .select-bar{display:flex;align-items:center;gap:var(--space-2);flex:1;min-width:0;padding:var(--space-1) 0;border-top:1px solid var(--line-soft)}

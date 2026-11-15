@@ -27,7 +27,7 @@ Every list follows the same order: state first, then name with ID, then the serv
 * Pinned rows show first (OR-12).
 * Selection, scroll position and sort are kept per list and restored on return.
 * Columns: resizable, the title column flexes. Text overflows with ellipsis and full text on hover.
-* Selection mode (OR-37) when the list has bulk actions: a checkbox column left of the state icon; `SelectBar` replaces group and sort while it is on ([list view](../patterns/list-view.md)).
+* Selection mode (OR-37) when the list has bulk actions: a checkbox column left of the state icon; `SelectBar` takes its own line under group and sort while it is on ([list view](../patterns/list-view.md)).
 
 **Keyboard.** `j`/`k` or `↓`/`↑` move selection; `Home`/`End` first/last; `Enter` opens; `x` toggles selection; `Shift+↓` extends.
 
