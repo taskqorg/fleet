@@ -54,7 +54,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   const pinned = shown.filter(t => t.pinned), unpinned = shown.filter(t => !t.pinned);
 
   const rows: Row[] = useMemo(() => {
-    // Pinned rows come first as a group of their own (OR-12); the group is the pin mark.
+    // Pinned rows come first as a group of their own (OR-12); each shows its pin before the state (RowPin).
     const top: Row[] = pinned.length ? [{ kind: 'group', key: 'g-\u0000pinned', label: 'Pinned', icon: 'pin', tone: 'neutral', count: pinned.length }, ...(closed.includes('\u0000pinned') ? [] : pinned.map(t => ({ kind: 'task' as const, t })))] : [];
     if (view.group === 'none') return [...top, ...unpinned.map(t => ({ kind: 'task' as const, t }))];
     const g = view.group;
@@ -121,13 +121,13 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
 }
 
 function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting, onSelect }: { t: TaskRow; now: number; onPin: () => void; onOpen?: (t: TaskRow) => void; showPriority: boolean; two: boolean;
-  check?: boolean; selecting: boolean; onSelect: () => void}) {
+  check?: boolean; selecting: boolean; onSelect: () => void }) {
   // OR-22: state icon leftmost; ID beside the title; agent mark only while running; delivery stage as a chip.
   // A two-line catalogue row keeps the marks on the second line, so the title has the whole first line (OR-21).
   const marks = <>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}{t.stage && <StageChip stage={t.stage} />}</>;
   return <>
     {check !== undefined && <span class="lead"><RowCheck checked={check} label={'Select ' + t.title} onToggle={onSelect} /></span>}
-    {t.pinned && <span class="lead"><RowPin pinned label={t.title} onUnpin={onPin} /></span>}
+    {t.pinned && <span class="lead"><RowPin label={t.title} onUnpin={selecting ? onSelect : onPin} /></span>}
     <span class="lead"><StateBadge family="task" state={t.state} reason={t.reason} compact /></span>
     <span class="tt">{showPriority && t.priority === 0 && <span class="p0" aria-label="priority 0">p0</span>}<a class="title row-link" href={`#/tasks/${t.id}`} aria-keyshortcuts="P X"
       onClick={e => { if (selecting || e.shiftKey) { e.preventDefault(); onSelect(); } else if (onOpen) { e.preventDefault(); onOpen(t); } }}

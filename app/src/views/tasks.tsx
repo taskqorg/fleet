@@ -21,7 +21,7 @@ const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Proje
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
 type TaskRow = { id: string; code?: string | null; title: string; state: StateOf<'task'>; pauseReason?: string | null; waitReason: string | null; priority: 'urgent' | 'normal' | 'background'; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number;
   stateAt?: string; executions?: number; lastAgent?: string | null; sortKey: (string | number)[] };
-type Item = { kind: 'group'; key: string; label: string; count: number; icon?: 'pin' } | { kind: 'task'; t: TaskRow };
+type Item = { kind: 'group'; key: string; label: string; count: number; icon?: 'pin' } | { kind: 'task'; t: TaskRow; pinned?: boolean };
 const PINNED = '\u0000pinned'; // group key of the pinned rows; never a server group key
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
@@ -53,10 +53,10 @@ export function Tasks({ id }: { id?: string }) {
   const pinned = rows.filter(r => pins.has(r.id)), rest = rows.filter(r => !pins.has(r.id));
   const groupOf = (r: TaskRow) => String(r.sortKey[0]);
   const items: Item[] = [];
-  // Pinned rows come first, as a group of their own (OR-12); the group is the pin mark, so rows carry none.
+  // Pinned rows come first, as a group of their own (OR-12); each shows its pin before the state (RowPin).
   if (pinned.length) {
     items.push({ kind: 'group', key: PINNED, label: 'Pinned', count: pinned.length, icon: 'pin' });
-    if (!closed.includes(PINNED)) for (const t of pinned) items.push({ kind: 'task', t });
+    if (!closed.includes(PINNED)) for (const t of pinned) items.push({ kind: 'task', t, pinned: true });
   }
   let last: string | null = null;
   for (const t of rest) {
@@ -122,13 +122,17 @@ export function Tasks({ id }: { id?: string }) {
           : list.shownKey === null ? <Skeleton rows={8} />
           : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />)
           : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.t.id} rowHeight={ROW} follow="top" label="Tasks" onEnd={list.more}
-            columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.t.id === id ? 'sel' : ''}${sel.includes(i.t.id) ? ' checked' : ''}${pins.has(i.t.id) ? ' pin-row' : ''}`}
+            columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.t.id === id ? 'sel' : ''}${sel.includes(i.t.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
             onRowMenu={(i, at) => { if (i.kind === 'task') setMenu({ t: i.t, at }); }}
             render={i => i.kind === 'group'
               ? <GroupHeader icon={i.icon ?? (rowsGroup === 'priority' ? 'list-ordered' : 'folder-open')} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
               : <>
                 {selecting && <span class="lead"><RowCheck checked={sel.includes(i.t.id)} label={'Select ' + i.t.title} onToggle={() => select(i.t)} /></span>}
-                {pins.has(i.t.id) && <span class="lead"><RowPin pinned label={i.t.title} onUnpin={() => pins.toggle(i.t.id)} /></span>}
+                {i.pinned && <span class="lead"><RowPin label={i.t.title} onUnpin={() => {
+                  // In selection mode the pin selects like the rest of the row; otherwise it unpins and focus follows the row to its group.
+                  if (selecting) return select(i.t);
+                  pins.toggle(i.t.id); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(i.t.id)}"] .row-link`)?.focus({ preventScroll: true }));
+                }} /></span>}
                 <span class="lead"><StateBadge family="task" state={i.t.pauseReason === 'held' ? 'held' : i.t.state} reason={i.t.waitReason ?? undefined} compact /></span>
                 <span class="tt">{rowsGroup !== 'priority' && <PriorityChip p={i.t.priority} />}<a class="title row-link" href={href({ focus: i.t.id })} aria-keyshortcuts="P X"
                   onClick={e => { e.preventDefault(); if (selecting || e.shiftKey) select(i.t); else set({ focus: i.t.id }); }}

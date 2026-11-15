@@ -1193,10 +1193,13 @@ export const RowCheck = ({ checked, label, onToggle }: { checked: boolean; label
 
 /* ---------- Row pin: the pin mark of a pinned row, before its state icon (OR-12, OR-37) ---------- */
 
-/** Shown only on pinned rows, in a column of their own (row class pin-row); a click unpins and the row leaves the Pinned group. Other rows do not move. */
-export const RowPin = ({ pinned, label, onUnpin }: { pinned: boolean; label: string; onUnpin: () => void }) => pinned
-  ? <button type="button" class="row-pin" data-ui="row-pin" aria-label={`Unpin ${label}`} data-tip="Unpin" onClick={e => { e.stopPropagation(); onUnpin(); }}><Icon name="pin" /></button>
-  : <span />;
+/**
+ * Rendered only on pinned rows, as the first cell; the caller gives that row the class pin-row, which adds the one leading
+ * column (styles.css), so other rows do not move. Both go together: the cell without the class shifts every cell.
+ * A click unpins and the row leaves the Pinned group.
+ */
+export const RowPin = ({ label, onUnpin }: { label: string; onUnpin: () => void }) =>
+  <button type="button" class="row-pin" data-ui="row-pin" aria-label={`Unpin ${label}`} data-tip="Unpin" onClick={e => { e.stopPropagation(); onUnpin(); }}><Icon name="pin" /></button>;
 
 /* ---------- Choice: one or several of a few fixed options (controls/choice.md) ---------- */
 
