@@ -166,6 +166,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
   const [ready, setReady] = useState<any>(null);
   const [access, setAccess] = useState<any>(null);
   const [resources, setResources] = useState<Ops['project_context']['reply']['resources']>(undefined);
@@ -174,6 +175,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
   const requestId = useRef<string>(crypto.randomUUID()), alive = useAlive();
   const [loaded, setLoaded] = useState(false);
   const loadSequence = useRef(0);
+  const reloadAfterSave = useRef(false);
   useEffect(() => {
     if (id || !isAccessCurrent(editorGeneration)) return;
     draft.current = createDraftPersistence(authorizedDraftScope({ kind: 'project-create', id: '' }));
@@ -191,25 +193,27 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
   };
   const load = async () => {
     if (!id || prepared === null) return;
+    if (saving.current) { reloadAfterSave.current = true; return; }
     const generation = accessGeneration(), sequence = ++loadSequence.current;
     try {
       const p = await readDetail(id);
-      if (!isAccessCurrent(generation) || alive.aborted || sequence !== loadSequence.current) return;
+      if (!isAccessCurrent(generation) || alive.aborted || sequence !== loadSequence.current || saving.current) return;
       if (JSON.stringify(latest.current) !== baseline.current) {
-        if (p.revision !== revision) setConflict('Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.');
+        if (p.revision !== editBase.current?.revision) setConflict('Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.');
         return;
       }
       // The target is freshly authorized before authored input for this actor is inspected.
       draft.current = createDraftPersistence(authorizedDraftScope({ kind: 'project-editor', id }));
       const saved = restoreEdit();
+      if (editBase.current?.contentSha !== p.contentSha || editBase.current?.repoSha !== (p.repoSha ?? null)) setReady(null);
       editBase.current = saved?.base ?? { content: p.content, revision: p.revision, contentSha: p.contentSha, repoSha: p.repoSha ?? null };
       baseline.current = JSON.stringify(editBase.current.content);
       requestId.current = saved?.requestId ?? crypto.randomUUID(); pendingSave.current = saved?.pendingSave ?? null; setPriorSave(!!pendingSave.current);
       setError(''); setBundle(saved?.bundle ?? p.content); setRevision(editBase.current.revision); setAccess(p.initialAccess);
       setResources('resources' in p ? p.resources : undefined);
       setRepoSha(editBase.current.repoSha); setSourceState(p.sourceState ?? '');
-      setReady(null); setConflict(saved && saved.base.contentSha !== p.contentSha ? 'Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.' : ''); setLoaded(true);
-    } catch (e: any) { if (!(e instanceof AccessChanged) && !alive.aborted) setError(e.message); }
+      setConflict(saved && saved.base.contentSha !== p.contentSha ? 'Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.' : ''); setLoaded(true);
+    } catch (e: any) { if (!(e instanceof AccessChanged) && !alive.aborted && isAccessCurrent(generation) && sequence === loadSequence.current) setError(e.message); }
   };
   const reload = useRef(load); reload.current = load;
   useEffect(() => {
@@ -221,6 +225,10 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
     <TextField help="Save project applies the complete version." label={label} value={value} onChange={save} />
   );
   const save = async () => {
+    if (saving.current) return;
+    saving.current = true;
+    // Ordinary reads cannot replace the optimistic base or frozen request during a save.
+    ++loadSequence.current;
     const generation = accessGeneration();
     const mutation: PendingSave = pendingSave.current ?? (id
       ? { name: 'project_update', body: { projectId: id, requestId: requestId.current, baseRevision: revision, content: bundle, repoSha } }
@@ -239,6 +247,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
       if (check.revision !== p.revision || check.contentSha !== p.contentSha) throw Error('Saved version changed; reload before editing.');
       setError(''); pendingSave.current = null; setPriorSave(false); requestId.current = crypto.randomUUID();
       baseline.current = JSON.stringify(check.content);
+      if (editBase.current?.contentSha !== check.contentSha || editBase.current?.repoSha !== (check.repoSha ?? null)) setReady(null);
       editBase.current = { content: check.content, revision: check.revision, contentSha: check.contentSha, repoSha: check.repoSha ?? null };
       if (JSON.stringify(latest.current) === JSON.stringify(submitted)) setBundle(check.content); else remember(latest.current);
       setRevision(check.revision); setAccess(check.initialAccess);
@@ -248,7 +257,13 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
     } catch (e: any) { if (isAccessCurrent(generation) && !alive.aborted) {
       if (e instanceof OpError && [400, 404, 409].includes(e.status)) { pendingSave.current = null; setPriorSave(false); requestId.current = crypto.randomUUID(); remember(latest.current); }
       setError(e.message);
-    } } finally { if (isAccessCurrent(generation) && !alive.aborted) setBusy(false); }
+    } } finally {
+      saving.current = false;
+      if (isAccessCurrent(generation) && !alive.aborted) {
+        setBusy(false);
+        if (reloadAfterSave.current) { reloadAfterSave.current = false; void reload.current(); }
+      }
+    }
   };
   const bindings = (kind: 'repos' | 'environments', title: string, keys: string[]) => {
     const items: any[] = bundle.settings[kind] ?? [];

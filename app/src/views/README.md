@@ -32,3 +32,5 @@ Each file exports one routed Preact screen. `main.tsx:SCREENS` maps the registry
 - Design warnings: `pnpm run check:design`
 
 Projects uses independent configuration/save/readback and prepared resource headers when explicitly selected and advertised. Dirty fields survive resource updates; definition changes show conflicts. `resources.tsx:PreparedProjectResources` owns bounded continuous tools/costs/prices windows using opaque server positions and shared anchor methods. Legacy rendering remains available while capability is off. Composer receives an identity/authorized-target persistence adapter; Lab separately quarantines authored input and clears server-derived receipts on access changes.
+
+Project saves fence older configuration reads and coalesce definition refreshes until the write/readback settles. Reloading the same content and repository hash retains the current readiness observation; applying a changed source clears it.
