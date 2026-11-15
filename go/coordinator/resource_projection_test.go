@@ -51,6 +51,18 @@ func TestResourceContributionExact(t *testing.T) {
 	}
 }
 
+// Requirement: confirmed turns are retained for every leaf while only agent/tool actors
+// contribute tool-call coverage; risk: non-agent turns disappear or unrelated tool JSON changes basis.
+func TestResourceNonAgentTurns(t *testing.T) {
+	c, _, err := resourceContribution("job", resourceSnapshot{Leaf: json.RawMessage(`{"kind":"host_job","state":"succeeded","project_id":"A","has_totals":true,"turn_count":7,"turn_count_basis":"measured","tool_calls":{"byTool":{"ignored":{"calls":99,"errors":1}}},"tool_calls_basis":"estimated"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deref(c.Metrics["turns"].Value) != "7" || c.Metrics["toolCalls"].Value != nil || len(c.Tools) != 0 {
+		t.Fatalf("non-agent facts lost or invented: %+v", c)
+	}
+}
+
 // Requirement: legacy resource reads include reported reasoning/API; risk: mapped SQL observations
 // disappear in the reducer or reasoning is counted twice in total tokens.
 func TestResourceLegacyReasoningAPI(t *testing.T) {
@@ -435,6 +447,14 @@ func TestResourcePostgres(t *testing.T) {
 	replace("p-high")
 	equal(`SELECT coalesce(sum((reasons->>'not_reported')::bigint),0)::text FROM resource_metric WHERE project_id='A' AND metric='cpuMs'`, "0")
 	equal(`SELECT count(*)::text FROM resource_tool WHERE project_id='A' AND name LIKE 'tool-%'`, "0")
+
+	// Shared legacy semantics include confirmed turns on host_job leaves, while ignoring their tool JSON.
+	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('p-turns-job','host_job','succeeded','TURNS');
+ INSERT INTO execution_totals(execution_id,project_id,turn_count,turn_count_basis,tool_calls,tool_calls_basis) VALUES('p-turns-job','TURNS',7,'measured','{"byTool":{"ignored":{"calls":99,"errors":1}}}','estimated')`)
+	replace("p-turns-job")
+	if h := header("TURNS"); h.Tools.Turns != 7 || h.Tools.TotalCalls != 0 || h.Tools.Basis != contract.ResourceBasisUnavailable {
+		t.Fatalf("non-agent parity %+v", h.Tools)
+	}
 
 	// P1 regression: contribution creation is earlier than the first usable valuation snapshot.
 	sql(`INSERT INTO price_entry(id,subject,unit,price,currency,effective_from,observed_at,source) VALUES('creation-price','creation-model','input_tokens',0.02,'USD','2020-01-01','2020-01-01','owner');

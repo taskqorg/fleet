@@ -255,7 +255,7 @@ func resourceContribution(id string, s resourceSnapshot) (contract.ResourceContr
 		{"input", "tokens_input", "", c.TokenActor}, {"output", "tokens_output", "", c.TokenActor}, {"cacheRead", "tokens_cache_read", "", c.TokenActor}, {"cacheWrite", "tokens_cache_write", "", c.TokenActor}, {"reasoning", "tokens_reasoning", "", c.TokenActor},
 		{"wallMs", "wall_ms", "", true}, {"activeMs", "active_ms", "", true}, {"apiMs", "api_ms", "", true},
 		{"cpuMs", "cpu_ms", "cpu_missing_reason", c.ProcessActor}, {"peakMemoryBytes", "peak_memory_bytes", "memory_missing_reason", c.ProcessActor},
-		{"turns", "turn_count", "", c.ToolActor}, {"credits", "credits", "", false},
+		{"turns", "turn_count", "", true}, {"credits", "credits", "", false},
 	} {
 		v := resourceNum(l[m.col])
 		if !m.expected && m.name != "credits" {
@@ -303,7 +303,7 @@ func resourceContribution(id string, s resourceSnapshot) (contract.ResourceContr
 		errs.Add(errs, big.NewInt(t.Errors))
 	}
 	tb := resourceBasis(l["tool_calls_basis"])
-	present := c.Kind == "tool_run" || l["tool_calls"] != nil
+	present := c.ToolActor && (c.Kind == "tool_run" || l["tool_calls"] != nil)
 	if c.Kind == "tool_run" && tb == contract.ResourceBasisUnavailable {
 		tb = contract.ResourceBasisMeasured
 	}
