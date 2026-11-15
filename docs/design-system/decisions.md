@@ -352,3 +352,9 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Options:** A. checkbox replaces the state icon on hover; B. reserved empty slots for checkbox and pin; C. checkboxes only in selection mode, as their own column. Pin marks: Pinned group, pin before the title, pin in the facts.
 * **Choice (owner):** C, with the checkbox column left of the state icon so the state stays visible; pin through the row menu (right click), `p`, the selection bar and the task header; pinned rows as a Pinned group at the top with no per-row mark. The state quick filter has a line of its own between the search line and group and sort; the title takes all width the facts leave.
 * **Controls:** `ContextMenu`, `SelectBar`, `VirtualList` `onRowMenu`, `FilterBar` `counters` and `tools`. `RowActs` is removed. OR-37 updated.
+
+## 2026-11-15: Group and sort as chips with menus, selection from the left
+
+* **Question:** Group opened its choices inline (the line changed), with no quick way to remove it; Sort put the direction before the field and stepped through fields on click; the Select button sat at the far right and the selection bar replaced group and sort.
+* **Options:** group as a chip with a cross, a plain button with None inside, or one View popover; sort as one chip with the direction after the field, a chain of sort levels, or presets; selection bar on its own line, as the list header, or floating at the bottom.
+* **Choice (owner):** the first of each. Multi-level order is Group plus Sort (groups in attention order), so no sort chain for now. The select square starts the tools line above the checkbox column; the selection bar is its own line (select all, cross, count, actions on the right).

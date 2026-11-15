@@ -191,8 +191,10 @@ type FilterBarProps = {
   extra?: ComponentChildren;
   /** The state quick filter (Σ and the state chips), on a line of its own. */
   counters?: ComponentChildren;
-  /** List tools after the state quick filter, on a line of their own: group and sort. */
+  /** List tools after the state quick filter, on a line of their own: the selection toggle, group and sort. */
   tools?: ComponentChildren;
+  /** While selection mode is on: the selection bar, on its own line under the tools (nothing it shows covers them). */
+  selection?: ComponentChildren;
   shown: number; total: number;
 };
 export function FilterBar(p: FilterBarProps) {
@@ -211,6 +213,7 @@ export function FilterBar(p: FilterBarProps) {
       </div>
       {p.counters && <div class="fbar-line">{p.counters}</div>}
       {p.tools && <div class="fbar-line">{p.tools}</div>}
+      {p.selection && <div class="fbar-line">{p.selection}</div>}
     </div>
   );
 }
@@ -618,6 +621,24 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
   </div>;
 }
 
+/* ---------- Menu dismissal shared by the short menus under a button ---------- */
+
+/**
+ * Closes an open menu on a pointer press outside `ref`, on Escape (focus back to `back` inside ref), and when focus
+ * leaves `ref` (Tab away). One rule for SplitButton, ActionMenu and the group and sort chips.
+ */
+export function useDismiss(open: boolean, ref: { current: HTMLElement | null }, close: () => void, back?: string) {
+  useEffect(() => {
+    if (!open) return;
+    const press = (e: Event) => { if (!ref.current?.contains(e.target as Node)) close(); };
+    const key = (e: KeyboardEvent) => { if (e.key !== 'Escape') return; e.stopPropagation(); close(); if (back) ref.current?.querySelector<HTMLElement>(back)?.focus(); };
+    const blur = (e: FocusEvent) => { const to = e.relatedTarget as Node | null; if (to && !ref.current?.contains(to)) close(); };
+    const el = ref.current;
+    document.addEventListener('pointerdown', press); document.addEventListener('keydown', key, true); el?.addEventListener('focusout', blur);
+    return () => { document.removeEventListener('pointerdown', press); document.removeEventListener('keydown', key, true); el?.removeEventListener('focusout', blur); };
+  }, [open]);
+}
+
 /* ---------- Split button (split-button.md) ---------- */
 
 /** Default action plus a short menu of alternatives for the same place (OR-14 allows short action menus). */
@@ -627,12 +648,7 @@ export function SplitButton({ main, alternatives, kind = 'default' }: {
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: Event) => { if (!(e instanceof KeyboardEvent) || e.key === 'Escape') if (!ref.current?.contains(e.target as Node) || e instanceof KeyboardEvent) setOpen(false); };
-    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close);
-    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); };
-  }, [open]);
+  useDismiss(open, ref, () => setOpen(false), '.split-more');
   return (
     <span class={`split ${kind}`} data-ui="split-button" ref={ref}>
       <Button label={main.label} icon={main.icon} kind={kind} onClick={main.onClick} />
@@ -648,12 +664,7 @@ export function SplitButton({ main, alternatives, kind = 'default' }: {
 export function ActionMenu({ label, items, disabledReason }: { label: string; items: { label: string; icon: IconName; onClick: () => void; disabledReason?: string }[]; disabledReason?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: Event) => { if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('pointerdown', close); document.addEventListener('keydown', close);
-    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); };
-  }, [open]);
+  useDismiss(open, ref, () => setOpen(false), '.btn');
   return <span class="split action-menu" data-ui="split-button" ref={ref}>
     <button type="button" class="btn default icon-only" aria-haspopup="menu" aria-expanded={open} aria-label={label} data-tip={disabledReason ?? label} aria-disabled={!!disabledReason || undefined}
       onClick={() => !disabledReason && setOpen(!open)}><Icon name={actions.more} /></button>
@@ -726,20 +737,63 @@ export function Presets({ system = [], presets, active, onPick, onSave, onUnpin 
 
 /* ---------- Group and sort: shared list controls, part of a saved view (OR-35) ---------- */
 
-/** Group by: the registry icon and the current choice; a click opens the choices inline (OR-14), a pick closes them. */
-export function GroupControl<G extends string>({ value, options, onChange }: { value: G; options: readonly (readonly [G, string])[]; onChange: (g: G) => void }) {
-  const [open, setOpen] = useState(false), cur = options.find(([g]) => g === value)?.[1] ?? value;
-  return <span class="seg-group" role="group" aria-label="Group by" data-ui="group-control">
-    <button type="button" class={`seg${open ? ' on' : ''}`} aria-expanded={open} aria-label={`Group by ${cur}`} data-tip="Group by" onClick={() => setOpen(!open)}><Icon name={actions.group} />{!open && cur}</button>
-    {open && options.map(([g, l]) => <button type="button" key={g} class={`seg${value === g ? ' on' : ''}`} aria-pressed={value === g} onClick={() => { setOpen(false); onChange(g); }}>{l}</button>)}</span>;
+/** A short choice menu under its button (OR-14: a short menu may float): the current choice is checked; Esc or a click outside closes it. */
+type PickItem = { key: string; label: string; on: boolean; onPick: () => void; icon?: IconName } | 'sep' | { head: string };
+function usePickMenu() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useDismiss(open, ref, () => setOpen(false), '.pick-b');
+  // Focus starts on the checked choice, so Enter keeps the current value.
+  useEffect(() => { if (open) (ref.current?.querySelector<HTMLElement>('.menu [aria-checked=true]') ?? ref.current?.querySelector<HTMLElement>('.menu [role=menuitemradio]'))?.focus(); }, [open]);
+  const move = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const all = [...ref.current!.querySelectorAll<HTMLElement>('.menu [role=menuitemradio]')], i = all.indexOf(document.activeElement as HTMLElement);
+    all[(i + (e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length]?.focus();
+  };
+  const menu = (label: string, items: PickItem[]) => open && <span class="menu pick-menu" role="menu" aria-label={label} onKeyDown={move}>
+    {items.map((it, i) => it === 'sep' ? <span key={i} class="menu-sep" role="separator" />
+      : 'head' in it ? <span key={i} class="menu-h">{it.head}</span>
+      : <button type="button" key={it.key} role="menuitemradio" aria-checked={it.on} onClick={() => { setOpen(false); it.onPick(); }}>
+          {it.icon && <Icon name={it.icon} />}<span class="grow">{it.label}</span>{it.on && <Icon name="check" />}</button>)}
+  </span>;
+  return { open, setOpen, ref, menu };
 }
 
-/** Sort: a direction toggle (icon) and the field, which steps to the next field on click; the value is the field, "-" before it for descending. */
-export function SortControl({ value, fields, onChange }: { value: string; fields: readonly (readonly [string, string])[]; onChange: (v: string) => void }) {
-  const desc = value.startsWith('-'), field = desc ? value.slice(1) : value, i = Math.max(0, fields.findIndex(([f]) => f === field)), next = fields[(i + 1) % fields.length];
-  return <span class="seg-group" role="group" aria-label="Sort" data-ui="sort-control">
-    <button type="button" class="seg" aria-label={desc ? 'Descending' : 'Ascending'} data-tip={desc ? 'Newest first' : 'Oldest first'} onClick={() => onChange(desc ? field : '-' + field)}><Icon name={desc ? actions.sortDesc : actions.sortAsc} /></button>
-    <button type="button" class="seg" aria-label={`Sort by ${fields[i][1]}`} data-tip={`Sort by ${next[1].toLowerCase()}`} onClick={() => onChange((desc ? '-' : '') + next[0])}>{fields[i][1]}</button></span>;
+/**
+ * Group by (OR-35): one chip with the registry icon and the current grouping; a click opens the choices in a short menu
+ * and the line never changes. The cross removes the grouping in one click; with no grouping only the icon shows.
+ */
+export function GroupControl<G extends string>({ value, options, onChange, none = 'none' as G }: { value: G; options: readonly (readonly [G, string])[]; onChange: (g: G) => void;
+  /** The option key that means no grouping; without it in the options there is no cross and no "No grouping". */ none?: G }) {
+  const m = usePickMenu(), canNone = options.some(([g]) => g === none), on = !canNone || value !== none, cur = options.find(([g]) => g === value)?.[1] ?? value;
+  return <span class="pick" ref={m.ref} data-ui="group-control">
+    <button type="button" class={`pick-b${on ? ' on' : ''}`} aria-haspopup="menu" aria-expanded={m.open} aria-label={on ? `Group by ${cur}` : 'Group by: none'} data-tip="Group by"
+      onClick={() => m.setOpen(!m.open)}><Icon name={actions.group} />{on && <span>{cur}</span>}<Icon name="chevron-down" /></button>
+    {on && canNone && <button type="button" class="pick-x" aria-label="Remove grouping" data-tip="No grouping" onClick={() => { m.setOpen(false); onChange(none); }}><Icon name="x" /></button>}
+    {m.menu('Group by', [{ head: 'Group by' }, ...options.filter(([g]) => g !== none).map(([g, l]) => ({ key: g, label: l, on: g === value, onPick: () => onChange(g) })),
+      ...(canNone ? ['sep' as const, { key: none, label: 'No grouping', on: !on, onPick: () => onChange(none) }] : [])])}
+  </span>;
+}
+
+/**
+ * Sort (OR-35): one chip, the field and then its direction. A click on the field opens the fields and the directions in a
+ * short menu; the arrow on the right flips the direction in one click. The value is the field, "-" before it for descending.
+ * A field may name its directions (Newest first / Oldest first for times, the default).
+ */
+export function SortControl({ value, fields, onChange }: { value: string; fields: readonly (readonly [string, string] | readonly [string, string, readonly [string, string]])[]; onChange: (v: string) => void }) {
+  const m = usePickMenu();
+  const desc = value.startsWith('-'), field = desc ? value.slice(1) : value, f = fields.find(x => x[0] === field) ?? fields[0];
+  const [dDesc, dAsc] = (f[2] ?? ['Newest first', 'Oldest first']) as readonly [string, string];
+  return <span class="pick" ref={m.ref} data-ui="sort-control">
+    <button type="button" class="pick-b on" aria-haspopup="menu" aria-expanded={m.open} aria-label={`Sort by ${f[1]}`} data-tip="Sort by" onClick={() => m.setOpen(!m.open)}>
+      <span>{f[1]}</span><Icon name="chevron-down" /></button>
+    <button type="button" class="pick-x" aria-label={desc ? dDesc : dAsc} data-tip={`${desc ? dDesc : dAsc}; click for ${(desc ? dAsc : dDesc).toLowerCase()}`}
+      onClick={() => { m.setOpen(false); onChange(desc ? f[0] : '-' + f[0]); }}><Icon name={desc ? actions.sortDesc : actions.sortAsc} /></button>
+    {m.menu('Sort', [{ head: 'Sort by' }, ...fields.map(x => ({ key: x[0], label: x[1], on: x[0] === f[0], onPick: () => onChange((desc ? '-' : '') + x[0]) })), 'sep',
+      { key: 'desc', label: dDesc, icon: actions.sortDesc, on: desc, onPick: () => onChange('-' + f[0]) },
+      { key: 'asc', label: dAsc, icon: actions.sortAsc, on: !desc, onPick: () => onChange(f[0]) }])}
+  </span>;
 }
 
 /* ---------- Row facts (OR-37) ---------- */
@@ -793,8 +847,8 @@ export function ContextMenu({ at, label, items, onClose }: { at: { x: number; y:
 /* ---------- Selection mode: a checkbox column and the action bar (OR-37) ---------- */
 
 /**
- * Shown in place of the list tools (group and sort) while the list is in selection mode, at the same height (OR-23).
- * The box selects every loaded row or none; actions apply to the selected rows; Esc or the cross leaves the mode.
+ * The selection bar: its own line under the list tools while selection mode is on (FilterBar selection); group and sort
+ * stay. The box selects every loaded row or none; actions apply to the selected rows; Esc or the cross leaves the mode.
  */
 export function SelectBar({ count, total, onAll, onNone, actions: acts, onExit }: {
   count: number; total: number; onAll: () => void; onNone: () => void; actions: MenuItem[]; onExit: () => void;
@@ -804,16 +858,21 @@ export function SelectBar({ count, total, onAll, onNone, actions: acts, onExit }
     document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc);
   }, [onExit]);
   const all = total > 0 && count >= total;
+  // Left to right: select all (in the row checkbox column), leave, the count; the actions on the right.
   return <div class="select-bar" data-ui="select-bar" role="toolbar" aria-label="Selection">
     <input type="checkbox" class="row-check" checked={all} ref={el => { if (el) el.indeterminate = count > 0 && !all; }}
       aria-label={all ? 'Select none' : 'Select all'} data-tip={all ? 'Select none' : 'Select all'} onChange={() => all ? onNone() : onAll()} />
-    <span class="num" aria-live="polite">{count.toLocaleString('en')}</span>
+    <Button label="Leave selection" icon="x" iconOnly kind="quiet" onClick={onExit} />
+    <span aria-live="polite"><span class="num">{count.toLocaleString('en')}</span> selected</span>
+    <span class="grow" />
     {acts.map(a => <Button key={a.label} label={a.label} icon={a.icon} iconOnly kind={a.danger ? 'danger' : 'quiet'}
       disabledReason={count === 0 ? 'Select rows first' : a.disabledReason} onClick={a.onClick} />)}
-    <span class="grow" />
-    <Button label="Leave selection" icon="x" iconOnly kind="quiet" onClick={onExit} />
   </div>;
 }
+
+/** Turns selection mode on: a checkbox-shaped button at the left of the list tools, above the checkbox column it opens. */
+export const SelectToggle = ({ on, onClick }: { on: boolean; onClick: () => void }) =>
+  <span class="sel-toggle"><Button label="Select" icon="square" iconOnly kind="quiet" pressed={on} onClick={onClick} /></span>;
 
 /* ---------- Focus: one project multi-select for the whole app, with presets (OR-34) ---------- */
 

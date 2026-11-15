@@ -10,7 +10,9 @@
 
 **Views (OR-33).** `Presets` shows the system presets first (not removable; Tasks "Running" is every state that is not terminal), then the person's own views with a remove `×`, then "Save view" (an icon; it opens an inline name field, OR-14). A view stores state selection, search, project, grouping and sort. Views are stored on the server per person (`person_settings_set` `views`), so they follow the person and agents read and write them.
 
-**Group and Sort (OR-35).** `GroupControl`: the Group registry icon with a tooltip, then the choices. `SortControl`: a direction toggle (sort icons) and the fields; the value is the field, with `-` for descending.
+**Group and Sort (OR-35).** `GroupControl`: one chip, the Group registry icon and the current grouping; a click opens the choices in a short menu (the line never changes), and the cross removes the grouping in one click. With no grouping the chip is the icon alone. `SortControl`: one chip, the field and then its direction arrow; a click on the field opens a short menu of fields and directions, a click on the arrow flips the direction. Direction names follow the field (Newest first, A to Z). Sorting by state then by time is Group: State with Sort: Changed. The value is the field, with `-` for descending.
+
+**Selection.** `SelectToggle` (a square) starts the tools line, above the checkbox column it opens. In selection mode `SelectBar` takes a line of its own under the tools: select all, leave (cross), the count, and the actions on the right. Group and sort stay where they are.
 
 **Behaviour.**
 * The full state (filters, search, sort, grouping) is in the URL query; searching replaces the history entry while typing.

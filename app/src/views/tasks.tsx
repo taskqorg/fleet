@@ -3,7 +3,7 @@
 import { useCallback, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, RowFacts, Fact, VirtualList, ContextMenu, SelectBar, ProblemRow, copyText, StateBadge, HarnessMark, AgeChip, Button,
+  ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, RowFacts, Fact, VirtualList, ContextMenu, SelectBar, SelectToggle, ProblemRow, copyText, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, RowCheck, Totals, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   type TreeNode, type Harness, type StateOf, states as states_,
   keyConnection, EntityCode, actor, fileLabel, viewOf,
@@ -103,20 +103,18 @@ export function Tasks({ id }: { id?: string }) {
         counters={
           <StateCounters family="task" label="Tasks by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [], preset: undefined })}
             onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s], preset: undefined })} />}
-        tools={selecting
-          ? <SelectBar count={chosen.length} total={rows.length} onAll={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: rows.map(r => r.id) }); }} onNone={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: [] }); }} onExit={leave} actions={[
+        tools={<>
+          <SelectToggle on={selecting} onClick={() => selecting ? leave() : setSelectOn(true)} />
+          <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ group: g, preset: undefined })} />
+          <SortControl value={view.sort ?? DEFAULT_TASK_SORT} fields={SORTS} onChange={v => set({ sort: v, preset: undefined })} />
+        </>}
+        selection={selecting && <SelectBar count={chosen.length} total={rows.length} onAll={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: rows.map(r => r.id) }); }} onNone={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: [] }); }} onExit={leave} actions={[
               { label: 'Pin', icon: 'pin', onClick: () => pinAll(true), disabledReason: chosen.length && chosen.every(t => pins.has(t.id)) ? 'All pinned' : undefined },
               { label: 'Unpin', icon: 'pin-off', onClick: () => pinAll(false), disabledReason: chosen.some(t => pins.has(t.id)) ? undefined : 'None pinned' },
               { label: 'Pause', icon: 'pause', onClick: () => bulk('pause', chosen.filter(canPause)), disabledReason: off ?? (chosen.some(canPause) ? undefined : 'None can pause') },
               { label: 'Continue', icon: 'rotate-cw', onClick: () => bulk('resume', chosen.filter(canResume)), disabledReason: off ?? (chosen.some(canResume) ? undefined : 'None paused') },
               { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => setConfirmCancel(chosen.filter(t => !TERMINAL.includes(t.state))), disabledReason: off ?? (chosen.some(t => !TERMINAL.includes(t.state)) ? undefined : 'None can cancel') },
-            ]} />
-          : <>
-            <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ group: g, preset: undefined })} />
-            <SortControl value={view.sort ?? DEFAULT_TASK_SORT} fields={SORTS} onChange={v => set({ sort: v, preset: undefined })} />
-            <span class="grow" />
-            <Button label="Select" icon="square" iconOnly kind="quiet" onClick={() => setSelectOn(true)} />
-          </>} />}>
+            ]} />} />}>
         {confirmCancel && <ProblemRow severity="warning" title={`Cancel ${confirmCancel.length} ${confirmCancel.length === 1 ? 'task' : 'tasks'}?`} facts="Running work is asked to stop; finished external effects stay."
           actions={[{ label: 'Yes, cancel', primary: true, onClick: () => { const ts = confirmCancel; setConfirmCancel(null); bulk('cancel', ts); } }, { label: 'Keep', onClick: () => setConfirmCancel(null) }]} />}
         {bulkError && <ErrorBanner text={bulkError} />}

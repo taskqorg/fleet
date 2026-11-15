@@ -81,7 +81,7 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     };
     await step('click state counter', `document.querySelector('[data-ui=state-counters] .counter:not(.sigma)').click()`);
     await step('open group choices', `document.querySelector('[data-ui=group-control] button').click()`, false);
-    await step('click group Agent', `[...document.querySelectorAll('[data-ui=group-control] .seg')].find(b=>b.textContent==='Agent').click()`);
+    await step('click group Agent', `[...document.querySelectorAll('[data-ui=group-control] [role=menuitemradio]')].find(b=>b.textContent==='Agent').click()`);
     await step('click All', `document.querySelector('.counter.sigma').click()`);
     await step('pick preset', `[...document.querySelectorAll('[data-ui=saved-views] button')].find(b=>/Running/.test(b.textContent)).click()`);
     const beforeFocus = await url();

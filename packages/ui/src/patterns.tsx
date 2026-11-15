@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, RowCheck, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, SelectToggle, RowCheck, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -41,6 +41,7 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   // Selection mode (OR-37): a checkbox column left of the state; the action bar replaces group and sort.
   const [selectOn, setSelectOn] = useState(false), [sel, setSel] = useState<number[]>([]);
   const selecting = selectOn || sel.length > 0;
+  const leave = () => { setSelectOn(false); setSel([]); };
   const toggle = (id: number) => { setSelectOn(true); setSel(x => x.includes(id) ? x.filter(i => i !== id) : [...x, id]); };
   const [menu, setMenu] = useState<{ t: TaskRow; at: { x: number; y: number } } | null>(null);
   const edit = (v: Partial<View>) => { setView({ ...view, ...v }); setActive(null); };
@@ -89,15 +90,14 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
         counters={
           <StateCounters family="task" label="Tasks by state" counts={counts} active={view.states} onAll={() => edit({ states: [] })}
             onToggle={s => edit({ states: view.states.includes(s) ? view.states.filter(x => x !== s) : [...view.states, s] })} />}
-        tools={selecting
-          ? <SelectBar count={sel.length} total={shown.length} onAll={() => setSel(shown.map(t => t.id))} onNone={() => setSel([])} onExit={() => { setSelectOn(false); setSel([]); }} actions={[
+        tools={<><SelectToggle on={selecting} onClick={() => selecting ? leave() : setSelectOn(true)} />
+          <GroupControl value={view.group} options={GROUPS.map(g => [g.id, g.label] as const)} onChange={g => edit({ group: g })} /></>}
+        selection={selecting && <SelectBar count={sel.length} total={shown.length} onAll={() => setSel(shown.map(t => t.id))} onNone={() => setSel([])} onExit={leave} actions={[
               { label: 'Pin', icon: 'pin', onClick: () => sel.forEach(id => !items.find(t => t.id === id)?.pinned && onPin(id)) },
               { label: 'Unpin', icon: 'pin-off', onClick: () => sel.forEach(id => items.find(t => t.id === id)?.pinned && onPin(id)) },
               { label: 'Pause', icon: 'pause', onClick: () => {} },
               { label: 'Continue', icon: 'rotate-cw', onClick: () => {} },
-              { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => {} }]} />
-          : <><GroupControl value={view.group} options={GROUPS.map(g => [g.id, g.label] as const)} onChange={g => edit({ group: g })} />
-            <span class="grow" /><Button label="Select" icon="square" iconOnly kind="quiet" onClick={() => setSelectOn(true)} /></>} />
+              { label: 'Cancel', icon: 'circle-slash', danger: true, onClick: () => {} }]} />} />
       <VirtualList items={rows} getKey={r => r.kind === 'group' ? r.key : String(r.t.id)} rowHeight={row} follow="top" label="Tasks"
         columns={(selecting ? '1.25rem ' : '') + (row === ROW ? '1.25rem minmax(0,1fr) 1.25rem 1.25rem 2.75rem 4.5rem' : '1.25rem minmax(0,1fr) 2.75rem 4.5rem')}
         rowClass={r => r.kind === 'group' ? 'grp' : `${r.t.id === selected ? 'sel' : ''}${sel.includes(r.t.id) ? ' checked' : ''}`}
