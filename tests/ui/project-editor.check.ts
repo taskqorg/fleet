@@ -77,6 +77,28 @@ export async function checkProjectEditor(browser: Browser, origin: string, host:
     await call('project_update', { projectId: id, requestId: crypto.randomUUID(), baseRevision: saved.revision, content: changed });
     await p.getByRole('heading', { name: id + '-external', exact: true }).waitFor();
     assert.equal(await p.locator('.kv-row').filter({ hasText: /Not ready$/ }).count(), 0, 'a changed definition invalidates the previous readiness');
+    // A queued refresh compares with the verified base even before the next render,
+    // while input authored during the save remains local and the busy control stays disabled.
+    let written!: () => void;
+    const writing = new Promise<void>(resolve => { written = resolve; });
+    const saveGate = new Promise<void>(resolve => { release = resolve; });
+    await p.route('**/api/ops/project_update', async route => {
+      const response = await route.fetch(); assert.equal(response.status(), 200);
+      written(); await saveGate; await route.fulfill({ response });
+    });
+    await p.getByLabel('Name', { exact: true }).fill(id + '-submitted');
+    await p.getByRole('button', { name: 'Save project', exact: true }).click(); await writing;
+    assert.equal(await p.getByRole('button', { name: 'Save project', exact: true }).getAttribute('aria-disabled'), 'true');
+    await p.getByRole('button', { name: 'Reload project', exact: true }).click();
+    await p.getByLabel('Name', { exact: true }).fill(id + '-newer');
+    const refreshed = p.waitForResponse(response => /\/api\/ops\/project_(detail|context)$/.test(response.url()));
+    release!(); await (await refreshed).finished();
+    await p.locator('.kv-row').filter({ hasText: /Saved version4$/ }).waitFor(); await settle();
+    assert.equal(await p.getByLabel('Name', { exact: true }).inputValue(), id + '-newer');
+    assert.equal(await p.getByText(/definition changed while you were editing/).count(), 0, 'own verified save cannot create an external-source conflict');
+    const retained = await call('project_context', { projectId: id });
+    assert.equal(retained.revision, 4); assert.equal(retained.name, id + '-submitted');
+    await p.unroute('**/api/ops/project_update');
     assert.deepEqual(errors, []);
     assert.deepEqual(failures, []);
     console.log('ok Project Editor real save revision/hash readback, delayed old response, and retained host readiness');

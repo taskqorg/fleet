@@ -13,6 +13,8 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await edit('Project ID',id);await edit('Name','UI retained project');
   await p.getByRole('button',{name:'Save project',exact:true}).click();await p.waitForURL('**/projects/'+id);
   const first=await call('project_context',{projectId:id});assert.equal(first.revision,1);assert.equal(first.name,'UI retained project');
+  // Creation changes the actor's project grants. Establish the new authorized feed baseline before the next write.
+  await p.reload();await p.getByRole('heading',{name:'UI retained project',exact:true}).waitFor();
   await edit('Name','UI edited project');await p.getByRole('heading',{name:'UI edited project',exact:true}).waitFor();
   const update=p.waitForResponse(r=>r.url().endsWith('/api/ops/project_update'));
   await p.getByRole('button',{name:'Save project',exact:true}).click();

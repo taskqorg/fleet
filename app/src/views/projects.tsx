@@ -199,7 +199,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
       const p = await readDetail(id);
       if (!isAccessCurrent(generation) || alive.aborted || sequence !== loadSequence.current || saving.current) return;
       if (JSON.stringify(latest.current) !== baseline.current) {
-        if (p.revision !== revision) setConflict('Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.');
+        if (p.revision !== editBase.current?.revision) setConflict('Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.');
         return;
       }
       // The target is freshly authorized before authored input for this actor is inspected.
