@@ -123,6 +123,13 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     });
     const failedEdge=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_resource_items')&&response.status()===503);
     await grid.evaluate(el=>{el.scrollTop=el.scrollHeight;el.dispatchEvent(new Event('scroll'));});await failedEdge;
+    const returnStart=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_resource_items')&&response.request().postDataJSON()?.anchor==='start');
+    await p.getByRole('button',{name:'Jump to start',exact:true}).click();await returnStart;
+    await p.getByText('browser-tool-0001',{exact:true}).waitFor();
+    await p.waitForFunction(()=>document.querySelector('[role=grid][aria-label="Project tools"]')!.scrollTop===0);
+    failedCursor=undefined;
+    const failedAgain=p.waitForResponse(response=>response.url().endsWith('/api/ops/project_resource_items')&&response.status()===503);
+    await grid.evaluate(el=>{el.scrollTop=el.scrollHeight;el.dispatchEvent(new Event('scroll'));});await failedAgain;
     await p.getByRole('button',{name:'Retry resources',exact:true}).click();
     await p.waitForFunction(()=>document.querySelector('[data-resource-window]')?.getAttribute('data-window-last')?.includes('browser-tool-0100'));
     await p.unroute('**/api/ops/project_resource_items');

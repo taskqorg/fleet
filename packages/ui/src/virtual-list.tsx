@@ -133,11 +133,11 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   // Asked once per window edge (length and edge row), so a replaced window of the same length asks again.
   const edgeKey = (side: 'start' | 'end') => `${p.items.length}:${p.items.length ? p.getKey(p.items[side === 'start' ? 0 : p.items.length - 1]) : ''}`;
   const endFor = useRef('');
-  useLayoutEffect(() => { const el = scroller.current, lastVisible = el ? v.getVirtualItemForOffset(el.scrollTop + el.clientHeight)?.index ?? -1 : -1; if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== edgeKey('end')) { endFor.current = edgeKey('end'); p.onEnd(); } });
+  useLayoutEffect(() => { const el = scroller.current, lastVisible = el ? v.getVirtualItemForOffset(el.scrollTop + el.clientHeight)?.index ?? -1 : -1; if (lastVisible < p.items.length - 5) endFor.current = ''; if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== edgeKey('end')) { endFor.current = edgeKey('end'); p.onEnd(); } });
 
   // Read from the scroll position after anchor keeping ran, not from the render: rows just loaded above are not "in view".
   const startFor = useRef('');
-  const checkStart = () => { const el = scroller.current; if (p.onStart && el && p.items.length && el.scrollTop < p.rowHeight * 5 && startFor.current !== edgeKey('start')) { startFor.current = edgeKey('start'); p.onStart(); } };
+  const checkStart = () => { const el = scroller.current; if (el && el.scrollTop >= p.rowHeight * 5) startFor.current = ''; if (p.onStart && el && p.items.length && el.scrollTop < p.rowHeight * 5 && startFor.current !== edgeKey('start')) { startFor.current = edgeKey('start'); p.onStart(); } };
   useLayoutEffect(checkStart);
   if (p.handle) p.handle.current = {
     getAnchor: () => { const el = scroller.current, first = el ? v.getVirtualItemForOffset(el.scrollTop) : undefined; return el && first ? { key: String(first.key), offsetPx: first.start - el.scrollTop } : null; },
