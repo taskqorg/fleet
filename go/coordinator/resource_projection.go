@@ -1343,6 +1343,19 @@ type resourceItemQuery struct {
 }
 
 func resourceStrictJSON(raw []byte, v any) error {
+	// encoding/json accepts null into non-pointer scalars as their zero value. A client
+	// position must retain the declared scalar type, including a measured timestamp of zero.
+	t := reflect.TypeOf(v).Elem()
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) == nil {
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if f.Type.Kind() != reflect.Pointer && bytes.Equal(bytes.TrimSpace(fields[name]), []byte("null")) {
+				return fail(400, "Invalid resource position field "+name)
+			}
+		}
+	}
 	if err := hostKeys(raw, reflect.TypeOf(v)); err != nil {
 		return err
 	}

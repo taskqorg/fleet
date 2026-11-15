@@ -72,7 +72,7 @@ test('prepared operations: auth, progress, configuration independence, C-order w
   const prev=await page({cursor:last.previousCursor,limit:3});assert.deepEqual(prev.items.map((x:any)=>x.name),seen.slice(-6,-3));
   const literal=await page({query:'%_',limit:3});assert.deepEqual(literal.items.map((x:any)=>x.name),['Z%_literal']);assert.equal(literal.total,1);
   assert.equal((await page({query:'TOOL-0001'})).total,1);
-  for(const args of [{limit:0},{limit:101},{query:'x'.repeat(201)},{category:'costs',query:''},{group:{currency:'USD',basis:'measured'}},{category:'prices'},{category:'prices',group:{basis:'measured'}},{cursor:'bad'},{anchor:'end',around:{key:{kind:'tool',name:'a',connection:null},direction:'atOrAfter'}},{around:{key:{kind:'price',priceId:'x',observedAt:0},direction:'atOrAfter'}},{around:{key:{kind:'tool',name:'x'},direction:'atOrAfter'}}])await op('project_resource_items',{projectId:'desiign',category:'tools',...args},owner,400);
+  for(const args of [{limit:0},{limit:101},{query:'x'.repeat(201)},{category:'costs',query:''},{group:{currency:'USD',basis:'measured'}},{category:'prices'},{category:'prices',group:{basis:'measured'}},{cursor:'bad'},{anchor:'end',around:{key:{kind:'tool',name:'a',connection:null},direction:'atOrAfter'}},{around:{key:{kind:'price',priceId:'x',observedAt:0},direction:'atOrAfter'}},{around:{key:{kind:'tool',name:'x'},direction:'atOrAfter'}},{around:{key:{kind:'tool',name:null,connection:null},direction:'atOrAfter'}},{category:'prices',group:{currency:'USD',basis:'measured'},around:{key:{kind:'price',priceId:'x',observedAt:null},direction:'atOrAfter'}}])await op('project_resource_items',{projectId:'desiign',category:'tools',...args},owner,400);
   await op('project_resource_items',{projectId:'hello-world',category:'tools',cursor:first.nextCursor},owner,400);
   await op('project_resource_items',{projectId:'desiign',category:'tools',cursor:first.nextCursor,query:'different'},owner,400);
   // Revisions may advance on every request; existing cursors remain usable and each page/header is atomic.
@@ -126,6 +126,12 @@ test('prepared operations: auth, progress, configuration independence, C-order w
   const bindingURL=`postgresql://fleet_app@/${db}?host=${encodeURIComponent(pg)}&port=${process.env.FLEET_TRIAL_PGPORT||'54329'}`;
   const binding=spawn('go',['test','./coordinator','-run','^TestResourceAPIBoundPaths$','-count=1'],{cwd:join(root,'go'),env:{...process.env,FLEET_RESOURCE_TEST_URL:bindingURL},stdio:'inherit'});
   assert.equal((await once(binding,'exit'))[0],0,'generic host binding proof');
+  env.FLEET_RESOURCE_READS='off';await c.restart();
+  for(const name of operations)await agent(name,{projectId:'desiign',category:'tools'},503);
+  const discovery=await request('/api/hosts/agent-tools',{hostId:'api-host',executionId:'api-agent',commandId:'api-command',request:{jsonrpc:'2.0',id:1,method:'tools/list'}},member,host.secret);
+  assert.equal(discovery.status,200);assert.ok(!discovery.body.result.tools.some((t:any)=>operations.includes(t.name)));
+  const disabledMCP=await request('/api/project-tools',{id:1,method:'tools/call',params:{name:'project_resources',arguments:{projectId:'desiign'}}});assert.equal(disabledMCP.status,503);
+  env.FLEET_RESOURCE_READS='on';await c.restart();
   // HTTP and agent revocation use the same current project visibility; supplied version cannot bypass it.
   const people=(await op('people_list',{})).people;const changed=people.map((p:any)=>p.email===member?{...p,grants:[]}:p);await op('people_set',{people:changed});
   for(const name of operations){await op(name,{projectId:'desiign',category:'bogus',cursor:'bad',knownVersion:ready.version},member,404);await op(name,{projectId:'nonexistent'},member,404);}
