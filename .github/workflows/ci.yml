@@ -636,7 +636,6 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          pnpm run book
           pnpm run check:design
           { echo '### Design report (warnings only)'; echo '```'; cat design-report/report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload design report and screenshots
@@ -648,6 +647,7 @@ jobs:
             design-report/
             docs/design-system/book/index.html
             docs/design-system/pages/mockups.html
+            docs/design-system/explorations/open-questions-01.html
           retention-days: 7
           overwrite: true
           if-no-files-found: warn

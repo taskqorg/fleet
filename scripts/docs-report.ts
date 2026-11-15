@@ -7,7 +7,8 @@ import { join, normalize, posix } from 'node:path';
 import { slug } from './lab-drift.ts';
 
 const root = join(import.meta.dirname, '..');
-// Outputs of `pnpm run book` (packages/ui/scripts/build-book.mjs): built, never committed, so links to them resolve.
+// Outputs of `pnpm run book`: the page() calls in packages/ui/scripts/build-book.mjs, listed again in .gitignore and the
+// design-report artifact of .github/workflows/ci.yml. Built, never committed, so links and citations to them resolve.
 export const GENERATED = ['docs/design-system/book/index.html', 'docs/design-system/pages/mockups.html', 'docs/design-system/explorations/open-questions-01.html'];
 const git = (...a: string[]) => execFileSync('git', a, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] });
 
@@ -22,7 +23,7 @@ export function kind(p: string, linked: (p: string) => boolean = () => false): K
   if (!inEvidence && (p.endsWith('-brief.md') || /\d{4}-\d{2}-\d{2}/.test(p) || /(^|\/)(reviews|handoffs|archive|explorations|prototypes)\//.test(p))) return 'paper';
   if (inEvidence) return 'evidence';
   const md = p.endsWith('.md');
-  if (!md && (p === 'docs/design-system/book/index.html' || p === 'docs/design-system/pages/mockups.html' || (p.startsWith('docs/design-system/') && linked(p)))) return 'asset';
+  if (!md && p.startsWith('docs/design-system/') && linked(p)) return 'asset';
   return md ? 'spec' : 'paper';
 }
 
@@ -73,7 +74,7 @@ function selfCheck() {
   ok(kind('fleet.md') === 'contract' && kind('docs/designs/README.md') === 'index', 'contract and index');
   ok(kind('docs/designs/lab-brief.md') === 'paper' && kind('docs/handoffs/x.md') === 'paper' && kind('docs/design-system/reviews/2026-11-10/a.png') === 'paper', 'paper by name');
   ok(kind('evidence/2026-11-09/x.json') === 'evidence' && kind('docs/lab.md') === 'spec' && kind('src/x.ts') === null, 'evidence, spec, outside');
-  ok(kind('docs/design-system/x.html', () => true) === 'asset' && kind('docs/design-system/x.html') === 'paper' && kind('docs/design-system/book/index.html') === 'asset', 'asset');
+  ok(kind('docs/design-system/x.html', () => true) === 'asset' && kind('docs/design-system/x.html') === 'paper', 'asset');
   ok(linkFixOnly(['see [a](old.md#x)'], ['see [a](new.md#y)']) && !linkFixOnly(['see [a](a.md)'], ['saw [a](a.md)']) && !linkFixOnly(['a'], []), 'link fix');
   const a = anchors('# A b\n## A b\n```\n# no\n```\n<a id="x"></a>\n### `C` [d](e.md)');
   ok(a.has('a-b') && a.has('a-b-1') && a.has('x') && a.has('c-d') && !a.has('no'), 'anchors');
@@ -101,7 +102,7 @@ function report(baseArg?: string) {
     if (!linkedFrom.has(t)) linkedFrom.set(t, new Set());
     linkedFrom.get(t)!.add(p);
   }
-  const assetLinked = (p: string) => [...(linkedFrom.get(p) ?? [])].some(f => f.startsWith('docs/design-system/book/') || kind(f) === 'spec');
+  const assetLinked = (p: string) => [...(linkedFrom.get(p) ?? [])].some(f => kind(f) === 'spec');
   const kinds = new Map(files.map(p => [p, kind(p, assetLinked)]));
   const specs = files.filter(p => kinds.get(p) === 'spec');
 
