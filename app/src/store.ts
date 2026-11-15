@@ -6,6 +6,7 @@
 // Order: every record and every list remembers the change cursor its data reflects. A page answer is applied at the cursor
 // its request started from, a membership answer at the cursor of its change batch; an older answer never overwrites a
 // newer record or list. Changes that arrive while a list's page is loading are asked about once the page has landed.
+import { AccessChanged, accessGeneration, ensureAccessGeneration, isAccessCurrent, assertAccessGeneration } from './access.ts';
 import { signal, effect, type Signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { op, online, signedOut, OpError, type Ops } from './api.ts';
@@ -42,7 +43,7 @@ const cursorNow = () => currentCursor() ?? 0;
  */
 export function clearMemory() {
   records.clear(); holders.clear();
-  for (const [key, e] of lists) { e.state.value = null; e.seq = 0; e.touchedWhileLoading.clear(); if (e.mounted) loadList(e.kind, key, e.view); else lists.delete(key); }
+  for (const [key, e] of lists) { e.state.value = null; e.seq = 0; e.touchedWhileLoading.clear(); if (!e.mounted) lists.delete(key); else if (isAccessCurrent(accessGeneration())) void loadList(e.kind, key, e.view); }
   for (const s of docs.values()) s.value = null;
   generation.value++;
 }
@@ -80,7 +81,9 @@ const idsAndKeys = (rows: Row[]) => ({ ids: rows.map(x => x.id), keys: Object.fr
 /** Fill the first frame from IndexedDB unless the server has already answered (a failed load still restores). */
 async function restore(key: string, e: Entry) {
   if (e.state.value?.at) return;
+  const generation = accessGeneration();
   const saved = await load<Saved>('list:' + key);
+  if (!isAccessCurrent(generation)) return;
   if (!saved || e.state.value?.at) return;
   const error = e.state.value?.error ?? null;
   putRows(saved.data.rows, -1); // stored rows never win over anything the server sends
@@ -90,22 +93,24 @@ async function restore(key: string, e: Entry) {
 
 /** Load the first page of a list. A superseded request is aborted through abort and leaves the list as it was. */
 export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal) {
-  const e = entry(kind, key, view), from = cursorNow();
+  const e = entry(kind, key, view), from = cursorNow(), generation = accessGeneration();
   e.loading++; e.busy.value = true;
   try {
+    await ensureAccessGeneration(); assertAccessGeneration(generation);
     const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
+    assertAccessGeneration(generation);
     if (from < e.seq) return; // a newer membership answer already updated this list
     const rows = rowsOf(r);
     setList(key, e, { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null });
     putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
   } catch (err: any) {
-    if (err instanceof OpError && err.message === 'aborted') return;
+    if (err instanceof AccessChanged || !isAccessCurrent(generation) || err instanceof OpError && err.message === 'aborted') return;
     const s = e.state.value;
     setList(key, e, s ? { ...s, error: err.message } : { ids: [], keys: {}, counts: {}, total: 0, groups: [], nextAfter: null, at: 0, restored: false, error: err.message });
     if (!s?.ids.length) restore(key, e); // offline: show what was stored, marked as not loaded
   } finally {
     e.loading--; e.busy.value = e.loading > 0;
-    if (!e.loading && e.touchedWhileLoading.size) { const ids = [...e.touchedWhileLoading]; e.touchedWhileLoading.clear(); await ask(e.kind, ids, [[key, e]], Math.max(e.touchedSeq, cursorNow())); }
+    if (isAccessCurrent(generation) && !e.loading && e.touchedWhileLoading.size) { const ids = [...e.touchedWhileLoading]; e.touchedWhileLoading.clear(); await ask(e.kind, ids, [[key, e]], Math.max(e.touchedSeq, cursorNow())); }
   }
 }
 
@@ -113,24 +118,27 @@ export async function loadList(kind: Kind, key: string, view: View, abort?: Abor
 export async function nextPage(key: string) {
   const e = lists.get(key), st = e?.state.value;
   if (!e || !st?.nextAfter || e.paging || e.loading) return;
-  e.paging = true; const from = cursorNow();
+  e.paging = true; const from = cursorNow(), generation = accessGeneration();
   try {
     const r = await op(opName(e.kind), { ...e.params, limit: 100, after: st.nextAfter as unknown[] });
+    assertAccessGeneration(generation);
     const now = e.state.value;
     if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
     const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
     setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter });
     putRows(rows, from); persist(key, e);
-  } catch (err: any) { if (e.state.value) setList(key, e, { ...e.state.value, error: err.message }); } finally { e.paging = false; }
+  } catch (err: any) { if (isAccessCurrent(generation) && e.state.value) setList(key, e, { ...e.state.value, error: err.message }); } finally { e.paging = false; }
 }
 
 /** Ask list_membership about ids for the given lists (two lists per call), at the cursor of the changes. */
 async function ask(kind: Kind, ids: string[], targets: [string, Entry][], seq: number) {
+  const generation = accessGeneration();
   for (const pair of chunks(targets, MEMBERSHIP_LISTS)) {
     try {
       const answers: { rows: Row[]; counts: Record<string, number> | null; groups: Group[] | null }[] = pair.map(() => ({ rows: [], counts: null, groups: null }));
       for (const part of chunks(ids, MEMBERSHIP_IDS)) {
         const r = await op('list_membership', { ids: part, lists: pair.map(([, e]) => ({ name: kind, ...e.params })) });
+        assertAccessGeneration(generation);
         r.lists.forEach((l: any, i: number) => { answers[i].rows.push(...l.rows); answers[i].counts = l.counts; answers[i].groups = l.groups ?? null; });
       }
       pair.forEach(([key, e], i) => {
@@ -140,12 +148,13 @@ async function ask(kind: Kind, ids: string[], targets: [string, Entry][], seq: n
         setList(key, e, { ...cur, ...placed, counts: a.counts ?? cur.counts, total: a.counts ? Object.values(a.counts).reduce((x, n) => x + n, 0) : cur.total, groups: a.groups ?? cur.groups, at: Date.now() });
         putRows(a.rows, seq); e.seq = seq; persist(key, e);
       });
-    } catch { for (const [key, e] of pair) loadList(kind, key, e.view); } // never stop updating silently: full reload
+    } catch { if (!isAccessCurrent(generation)) return; for (const [key, e] of pair) loadList(kind, key, e.view); } // never stop updating silently: full reload
   }
 }
 
 /** One batch of feed changes: every mounted list with touched ids is asked once (lists still loading ask after landing). */
 export async function applyChanges(cs: Change[]) {
+  if (!isAccessCurrent(accessGeneration())) return;
   const seq = Math.max(0, ...cs.map(c => c.seq));
   for (const kind of ['tasks', 'sessions'] as Kind[]) {
     const ids = touched(cs, kind); if (!ids.length) continue;
@@ -188,7 +197,7 @@ export function useList(kind: Kind, urlView: View) {
     e.mounted++;
     ctrl.current?.abort(); const c = ctrl.current = new AbortController();
     restore(key, e); loadList(kind, key, view, c.signal);
-    return () => { e.mounted--; };
+    return () => { e.mounted--; c.abort(); };
   }, [key, ready]);
   const se = shown ? lists.get(shown) : undefined, cur = se?.state.value ?? null;
   const rows = cur ? cur.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) : [];
@@ -210,10 +219,10 @@ export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches:
     if (!name || !s) return;
     let live = true, seq = 0;
     const get = async () => {
-      const mine = ++seq;
-      try { const d = await fetchRef.current(); if (live && mine === seq) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); } }
+      const mine = ++seq, generation = accessGeneration();
+      try { await ensureAccessGeneration(); assertAccessGeneration(generation); const d = await fetchRef.current(); if (isAccessCurrent(generation) && live && mine === seq) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); } }
       catch (e: any) {
-        if (!live || mine !== seq) return;
+        if (!isAccessCurrent(generation) || !live || mine !== seq) return;
         s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e.message };
         if (s.value.data === null) restoreDoc(); // offline: show what was stored
       }
@@ -231,3 +240,85 @@ export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches:
 
 /** For tests: the stored list under key and a record. */
 export const peek = { generation: () => generation.value, list: (key: string) => lists.get(key)?.state.value ?? null, record: (id: string) => records.get(id) ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
+
+// Prepared readers share scheduling by normalized request AND access generation.
+import type { ProjectResourcesReply, ProjectResourceItemsReply, ResourceProgress, ProjectResourceItemsRequest } from '../../contracts/generated/ops.ts';
+type PreparedReply = ProjectResourcesReply | ProjectResourceItemsReply;
+export type PreparedState<T> = { data: T | null; progress: ResourceProgress | null; error: string | null; restored: boolean; state: 'idle' | 'loading' | 'ready' | 'preparing' | 'error' | 'disposed' };
+type PreparedFetcher<T> = (context: { signal: AbortSignal; knownVersion?: string }) => Promise<T>;
+type PreparedEntry<T> = { value: Signal<PreparedState<T>>; fetcher: PreparedFetcher<T>; subscribers: number; visible: number; controller: AbortController | null; request: number; pending: boolean; version?: string; timer?: ReturnType<typeof setInterval>; disposed: boolean; refresh(reason?: string): void };
+const prepared = new Map<string, PreparedEntry<any>>();
+export function preparedKey(operation: 'project_resources' | 'project_resource_items', projectId: string, request: Omit<ProjectResourceItemsRequest, 'projectId' | 'knownVersion'> | null = null) {
+  const r = request;
+  // Fixed fields; packed positions/cursors remain exact opaque server strings.
+  const key = r?.around?.key;
+  const position = !key ? null : key.kind === 'tool-position' ? [key.kind, key.encoded] : key.kind === 'tool' ? [key.kind, key.name, key.connection] : key.kind === 'cost' ? [key.kind, key.currency, key.basis] : [key.kind, key.priceId, key.observedAt];
+  return JSON.stringify([operation, projectId, r ? [r.category, r.group ? [r.group.currency, r.group.basis] : null, r.query ?? '', r.limit ?? 50, r.cursor ?? null, r.anchor ?? null, r.around ? [position, r.around.direction] : null] : null, accessGeneration()]);
+}
+function versionParts(version: string) { const split = version.lastIndexOf(':'); return { epoch: version.slice(0, split), revision: BigInt(version.slice(split + 1)) }; }
+export function olderPreparedVersion(candidate: string, current?: string) {
+  if (!current) return false;
+  const a = versionParts(candidate), b = versionParts(current); return a.epoch === b.epoch && a.revision < b.revision;
+}
+export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: PreparedFetcher<T>, visible = true, interval = 2000) {
+  let entry = prepared.get(key) as PreparedEntry<T> | undefined;
+  if (!entry) {
+    const generation = accessGeneration();
+    const e: PreparedEntry<T> = { value: signal({ data: null, progress: null, error: null, restored: false, state: 'idle' }), fetcher, subscribers: 0, visible: 0, controller: null, request: 0, pending: false, disposed: false,
+      refresh: () => {
+        if (e.disposed || !e.subscribers) return;
+        if (e.controller) { e.pending = true; return; }
+        const c = e.controller = new AbortController(), request = ++e.request;
+        e.value.value = { ...e.value.value, state: e.value.value.data ? e.value.value.state : 'loading' };
+        void (async () => {
+          try {
+            await ensureAccessGeneration(); assertAccessGeneration(generation);
+            const result = await e.fetcher({ signal: c.signal, knownVersion: e.version });
+            assertAccessGeneration(generation);
+            if (e.disposed || c.signal.aborted || request !== e.request) return;
+            if (result.version && olderPreparedVersion(result.version, e.version)) return;
+            const previous = e.value.value;
+            if ('kind' in result && result.kind === 'unchanged') {
+              e.value.value = { ...previous, progress: result.progress, error: null, state: previous.data ? 'ready' : 'preparing' };
+            } else if ('kind' in result && result.kind === 'preparing') {
+              e.version = undefined;
+              e.value.value = { data: null, progress: result.progress, error: null, restored: false, state: 'preparing' };
+            } else {
+              e.version = result.version ?? undefined;
+              e.value.value = { data: result, progress: result.progress, error: null, restored: false, state: 'ready' };
+            }
+          } catch (error: any) {
+            if (!e.disposed && !c.signal.aborted && isAccessCurrent(generation)) e.value.value = { ...e.value.value, error: error.message, state: 'error' };
+          } finally {
+            if (e.controller === c) e.controller = null;
+            if (e.pending && !e.disposed) { e.pending = false; e.refresh('pending'); }
+          }
+        })();
+      } };
+    prepared.set(key, entry = e);
+  }
+  const e = entry; e.fetcher = fetcher; e.subscribers++; if (visible) e.visible++;
+  if (!e.timer && e.visible) e.timer = setInterval(() => { if (e.visible && (typeof document === 'undefined' || document.visibilityState === 'visible')) e.refresh('interval'); }, Math.min(interval, 2000));
+  if (e.subscribers === 1) e.refresh('mount');
+  return { key, value: e.value, refresh: e.refresh, release: () => {
+    e.subscribers--; if (visible) e.visible--;
+    if (!e.visible) { clearInterval(e.timer); e.timer = undefined; }
+    if (!e.subscribers) { e.disposed = true; e.pending = false; e.request++; e.controller?.abort(); clearInterval(e.timer); prepared.delete(key); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; }
+  } };
+}
+onClear.add(() => { for (const e of prepared.values()) { e.disposed = true; e.request++; e.controller?.abort(); clearInterval(e.timer); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; } prepared.clear(); });
+export function usePreparedDoc<T extends PreparedReply>(key: string | null, fetcher: PreparedFetcher<T>, options: { touches: (c: Change) => boolean; visible?: boolean }) {
+  const ref = useRef(fetcher); ref.current = fetcher;
+  const touches = useRef(options.touches); touches.current = options.touches;
+  const [reader, setReader] = useState<ReturnType<typeof acquirePrepared<T>> | null>(null);
+  useEffect(() => {
+    if (!key) { setReader(null); return; }
+    const r = acquirePrepared(key, c => ref.current(c), options.visible !== false); setReader(r);
+    const off = subscribe({ resync: () => r.refresh('resync'), changes: changes => { if (changes.some(touches.current)) r.refresh('notification'); } });
+    const focus = () => r.refresh('foreground');
+    addEventListener('visibilitychange', focus); addEventListener('online', focus);
+    return () => { off(); r.release(); removeEventListener('visibilitychange', focus); removeEventListener('online', focus); };
+  }, [key, options.visible]);
+  const data = (reader?.key === key ? reader.value.value : null) ?? { data: null, progress: null, error: null, restored: false, state: 'idle' as const };
+  return { ...data, refresh: reader?.refresh ?? (() => {}) };
+}

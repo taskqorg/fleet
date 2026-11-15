@@ -23,9 +23,11 @@
 ## Side Effects
 
 - Components update browser DOM, focus, history-adjacent UI callbacks, and local component state.
-- Clipboard helpers call `navigator.clipboard`; `Composer` persists drafts in browser storage when a `draftKey` is supplied.
+- Clipboard helpers call `navigator.clipboard`; `Composer` uses injected persistence only; the app owns its storage and authorization.
 
 ## Verification
 
 - Run: `pnpm run typecheck`
 - Design warnings: `pnpm run check:design`
+
+`VirtualListHandle` exposes `getAnchor()` and `restoreAnchor(key, offsetPx)` in addition to key jumps; `fill` makes it the owning column's only scroller. `Composer` accepts an injected `draftPersistence` adapter and is memory-only without one; completion clears only unchanged original text. `StatusLine` reserves two lines for visible asynchronous feedback without moving adjacent controls.

@@ -2,6 +2,10 @@
 // through person_settings_set, never in the browser; focus filters lists that name no project.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration } from '../../app/src/access.ts';
+registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
+registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
+await ensureAccessGeneration();
 import { readFileSync } from 'node:fs';
 import { prefs, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds } from '../../app/src/prefs.ts';
 

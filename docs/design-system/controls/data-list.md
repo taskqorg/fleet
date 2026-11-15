@@ -38,3 +38,7 @@ Every list follows the same order: state first, then name with ID, then the serv
 **Implementation.** Bottom-following lists retain the tail through measured row-height and viewport-size changes while the reader is at the end. Readers above the tail retain their anchor and receive the new-entry pill. Rendering window from TanStack Virtual core; anchor keeping and the pill in `VirtualList` (D4). Any collection longer than a screen uses it (OR-9). Threads also load upward: `onStart` fires once per list length when the first rows are in view, rows loaded above keep the row being read in place (OR-23) and do not count in the pill, and `handle.current.scrollToKey(key, align)` jumps to a row (search hits).
 
 **Used in.** Overview, Tasks, Results, Hosts, Laboratory trials, History.
+
+## Prepared windows
+
+`VirtualListHandle.getAnchor()` returns the first visible key and `offsetPx` from the viewport top. `restoreAnchor(key, offsetPx)` preserves that position after layout; an empty window resets to zero. Prepared windows capture the full server sort tuple, preferring an opaque item position when supplied. Refresh uses `around`; a deleted key restores the server's nearest surviving key at the top. Epoch replacement discards cursors and revalidates the captured position. Continuous loading, filtered count, search and start/end jumps share the same control and scroller.

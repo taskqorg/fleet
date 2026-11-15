@@ -1,6 +1,10 @@
 // Entity store (docs/designs/fleet-view-urls-and-list-path.md §2) against a fake /api/ops: paging, ordering, clearing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration } from '../../app/src/access.ts';
+registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
+registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
+await ensureAccessGeneration();
 import { loadList, nextPage, applyChanges, peek } from '../../app/src/store.ts';
 import { clearAll } from '../../app/src/offline.ts';
 import { op } from '../../app/src/api.ts';
@@ -26,7 +30,7 @@ test('review #33-1: paging uses the shown list\'s own params and waits while tha
   answer = async (_n, b) => b.after ? page([row('t9')]) : page([row('t1')], ['1', -1, 't1']);
   await loadList('tasks', 'A', A);
   const slow = deferred(); answer = async (_n, b) => b.filter.state[0] === 'queued' ? slow.p : page([row('t2')]);
-  const pendingB = loadList('tasks', 'B', B); // a new filter is pending while A is on screen
+  const pendingB = loadList('tasks', 'B', B); await new Promise(r => setImmediate(r)); // a new filter is pending while A is on screen
   calls = []; answer = async (_n, b) => b.filter.state[0] === 'queued' ? slow.p : page([row('t9')]);
   await nextPage('A');
   assert.deepEqual(calls.map(c => c.body.filter.state), [['failed']]);
@@ -86,7 +90,7 @@ function fakeIndexedDB() {
   const req = (f: () => unknown) => { const r: any = {}; setTimeout(() => { r.result = f(); r.onsuccess?.(); }); return r; };
   const store = { get: (k: string) => req(() => data.get(k)), put: (v: unknown, k: string) => req(() => { data.set(k, v); }), getAll: () => req(() => [...data.values()]),
     getAllKeys: () => req(() => [...data.keys()]), delete: (k: string) => req(() => { data.delete(k); }) };
-  const db = { transaction: () => ({ objectStore: () => store }), createObjectStore: () => store, close() {}, onversionchange: null };
+  const db = { transaction: () => { const t: any = { objectStore: () => store, abort() { t.onabort?.(); } }; setTimeout(() => t.oncomplete?.(), 3); return t; }, createObjectStore: () => store, close() {}, onversionchange: null };
   return { data, open: () => { const r: any = {}; setTimeout(() => { r.result = db; r.onupgradeneeded?.(); r.onsuccess?.(); }); return r; },
     deleteDatabase: () => { const r: any = {}; setTimeout(() => { data.clear(); r.onsuccess?.(); }); return r; } };
 }
@@ -130,4 +134,29 @@ test('review #34-4: an older membership answer landing late does not re-add a ta
   assert.deepEqual(peek.list('R')!.ids, []);
   late.ok({ lists: [{ rows: [row('t1')], counts: { queued: 1 }, groups: [] }] }); await older;
   assert.deepEqual(peek.list('R')!.ids, [], 'the answer for change 15 arrived after the one for 20 and was ignored');
+});
+
+// Requirement: one request per prepared key, one pending refresh, last-subscriber cancellation.
+// Risk: event bursts multiply requests, unchanged progress erases figures or an old revision wins.
+import { acquirePrepared, preparedKey, olderPreparedVersion } from '../../app/src/store.ts';
+const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+test('prepared scheduler shares active reads, coalesces bursts and retains unchanged figures with new progress', async () => {
+  const progress = { state: 'current' as const, validatedAt: '2026-11-15T00:00:00Z', publishedAt: null, oldestPendingAt: null, pending: false, errorClass: null };
+  const waiting: { ok: (value: any) => void; signal: AbortSignal; version?: string }[] = [];
+  const fetcher = ({ signal, knownVersion }: { signal: AbortSignal; knownVersion?: string }) => new Promise<any>(ok => waiting.push({ ok, signal, version: knownVersion }));
+  const key = preparedKey('project_resources', 'fixture'), one = acquirePrepared(key, fetcher), two = acquirePrepared(key, fetcher);
+  try {
+    await turn(); assert.equal(waiting.length, 1);
+    for (let i = 0; i < 100; i++) one.refresh('event');
+    waiting[0].ok({ kind: 'ready', projectId: 'fixture', version: 'epoch:9007199254740993', header: { executions: 7 }, progress }); await turn();
+    assert.equal(waiting.length, 2); assert.equal(waiting[1].version, 'epoch:9007199254740993');
+    waiting[1].ok({ kind: 'unchanged', projectId: 'fixture', version: 'epoch:9007199254740993', progress: { ...progress, pending: true, state: 'updating' } }); await turn();
+    assert.equal((one.value.value.data as any).header.executions, 7); assert.equal(two.value.value.progress?.state, 'updating');
+    one.refresh(); await turn(); assert.equal(waiting.length, 3);
+    waiting[2].ok({ kind: 'ready', projectId: 'fixture', version: 'epoch:9007199254740992', header: { executions: 0 }, progress }); await turn();
+    assert.equal((one.value.value.data as any).header.executions, 7, 'bigint revision comparison rejects older replies');
+    one.refresh(); await turn(); one.release(); assert.equal(waiting[3].signal.aborted, false); two.release(); assert.equal(waiting[3].signal.aborted, true);
+    waiting[3].ok({ kind: 'ready', projectId: 'fixture', version: 'epoch:9007199254740994', header: { executions: 9 }, progress }); await turn(); assert.equal(one.value.value.data, null);
+  } catch (error) { one.release(); two.release(); throw error; }
+  assert.equal(olderPreparedVersion('new:1', 'old:99'), false, 'a replacement epoch is distinct from revision order');
 });

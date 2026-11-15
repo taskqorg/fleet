@@ -2,7 +2,11 @@
 // rendered a thread window without blocks ("Cannot read properties of undefined (reading 'length')").
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { op, OpError, writeOnce, sendingId } from '../../app/src/api.ts';
+import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration } from '../../app/src/access.ts';
+registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
+registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
+await ensureAccessGeneration();
+import { op, OpError, writeOnce, sendingId, authorizedDraftScope } from '../../app/src/api.ts';
 
 const reply = (status: number, body: () => Promise<unknown>) => (globalThis as any).fetch = async () => ({ type: 'basic', status, ok: status < 300, statusText: 'x', json: body });
 
@@ -59,11 +63,12 @@ test('a draft keeps its requestId across attempts and reloads until sent or defi
   const m = new Map<string, string>(); const saved = (globalThis as any).localStorage;
   (globalThis as any).localStorage = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => m.set(k, v), removeItem: (k: string) => m.delete(k) };
   try {
-    const a = sendingId('s', 'hi');
-    assert.equal(sendingId('s', 'hi'), a, 'same text, same write');
-    assert.notEqual(sendingId('s', 'hi!'), a, 'edited text is a new write');
-    const b = sendingId('s', 'hi'); sendingId('s', null);
-    assert.notEqual(sendingId('s', 'hi'), b, 'after a send the same text is a new write');
+    const scope = authorizedDraftScope({ kind: 'session', id: 's' });
+    const a = sendingId(scope, 'hi');
+    assert.equal(sendingId(scope, 'hi'), a, 'same text, same write');
+    assert.notEqual(sendingId(scope, 'hi!'), a, 'edited text is a new write');
+    const b = sendingId(scope, 'hi'); sendingId(scope, null);
+    assert.notEqual(sendingId(scope, 'hi'), b, 'after a send the same text is a new write');
   } finally { (globalThis as any).localStorage = saved; }
 });
 
@@ -88,4 +93,127 @@ for (const [name, body] of [
     assert.deepEqual(await writeOnce(name as any, body as any, () => {}, { wait: 0 }), { ok: 1 });
     assert.equal(bodies.length, 2); assert.equal(bodies[1], bodies[0], 'the retry sends the same write (same requestId), which the coordinator replays');
   } finally { (globalThis as any).fetch = saved; }
+});
+
+// Requirement: all ordinary operations and writes belong to one validated generation.
+// Risk: late decoded replies or retries cross a revoke/identity boundary, or falsely report offline.
+import { access, invalidateAccess, AccessChanged, accessGeneration } from '../../app/src/access.ts';
+import { accessControlOp, createDraftPersistence, online } from '../../app/src/api.ts';
+const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+test('access gate fences pending me, late reads/writes and retry identities before new baseline opens', async () => {
+  const originalFetch = globalThis.fetch;
+  let release!: (value: Response) => void;
+  globalThis.fetch = (() => new Promise<Response>(resolve => { release = resolve; })) as typeof fetch;
+  try {
+    const read = op('session_get', { sessionId: 'old' }); await tick();
+    const before = online.value;
+    invalidateAccess('revoke');
+    let validate!: (value: { identityKey: string; grantsVersion: string }) => void;
+    let base!: (value: { cursor: number; activate(): void; dispose(): void }) => void;
+    let activated = 0, disposed = 0;
+    registerAccessValidator(() => new Promise(resolve => { validate = resolve; }));
+    registerAccessBaseline(() => new Promise(resolve => { base = resolve; }));
+    const gate = ensureAccessGeneration();
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; return Response.json({ ok: true }); }) as typeof fetch;
+    const next = op('session_get', { sessionId: 'new' });
+    await tick(); assert.equal(calls, 0, 'ordinary reads do not run while me is pending');
+    release(Response.json({ id: 'private-old' })); await assert.rejects(read, AccessChanged);
+    assert.equal(online.value, before, 'an access fence is not offline');
+    validate({ identityKey: 'next@fixture.test', grantsVersion: 'two' }); await tick();
+    assert.equal(calls, 0, 'me alone cannot release reads');
+    base({ cursor: 20, activate() { activated++; }, dispose() { disposed++; } });
+    await gate; await next; assert.equal(activated, 1); assert.equal(calls, 1);
+    assert.equal(access.value.cursor, 20);
+    let unknown = 0;
+    globalThis.fetch = (async () => { invalidateAccess('revoke during write'); throw Error('lost write reply'); }) as typeof fetch;
+    await assert.rejects(writeOnce('message_send', { sessionId: 's', requestId: 'same', text: 'body' }, () => unknown++, { wait: 0 }), AccessChanged);
+    assert.equal(unknown, 0, 'fenced writes are never automatically retried in another generation');
+    assert.equal(disposed, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
+    registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
+    await ensureAccessGeneration();
+  }
+});
+test('a superseded baseline is disposed and cannot open a newer generation; failed baseline stays closed', async () => {
+  invalidateAccess('baseline race');
+  let late!: (value: { cursor: number; activate(): void; dispose(): void }) => void;
+  registerAccessBaseline(() => new Promise(resolve => { late = resolve; }));
+  const old = ensureAccessGeneration(); await tick();
+  invalidateAccess('newer resync');
+  let disposed = 0;
+  registerAccessBaseline(async () => { throw Error('unavailable'); });
+  const failed = ensureAccessGeneration(); await assert.rejects(failed, /unavailable/);
+  late({ cursor: 100, activate() { throw Error('must not activate'); }, dispose() { disposed++; } });
+  await assert.rejects(old, AccessChanged); assert.equal(disposed, 1); assert.equal(access.value.state, 'closed');
+  assert.equal(access.value.cursor, null);
+  registerAccessBaseline(async () => ({ cursor: 101, activate() {}, dispose() {} })); await ensureAccessGeneration();
+});
+test('control boundary allowlists me and no-option baseline only', async () => {
+  assert.throws(() => accessControlOp('session_get' as any, {}), /Invalid access control/);
+  assert.throws(() => accessControlOp('changes_since', { cursor: 2 }), /no cursor/);
+});
+// Requirement: authored input survives for its owner only, after fresh target authorization.
+// Risk: a stale clear erases newer text or restores another actor's private draft/request identity.
+test('scoped drafts quarantine across grants/actors and late success cannot erase newer input', async () => {
+  const storage = globalThis.localStorage, map = new Map<string, string>();
+  (globalThis as any).localStorage = { getItem: (key: string) => map.get(key) ?? null, setItem: (key: string, value: string) => map.set(key, value), removeItem: (key: string) => map.delete(key) };
+  try {
+    const scope = authorizedDraftScope({ kind: 'session', id: 'draft-target' }), adapter = createDraftPersistence(scope);
+    adapter.write('original'); const request = sendingId(scope, 'original');
+    adapter.write('newer'); adapter.clearIfUnchanged('original'); assert.equal(adapter.read(), 'newer');
+    const nextRequest = sendingId(scope, 'newer'); sendingId(scope, null, 'original'); assert.equal(sendingId(scope, 'newer'), nextRequest);
+    invalidateAccess('same actor changed grants');
+    assert.throws(() => adapter.clearIfUnchanged('newer'), AccessChanged);
+    registerAccessValidator(async () => ({ identityKey: scope.identityKey, grantsVersion: 'changed' })); await ensureAccessGeneration();
+    const same = authorizedDraftScope(scope.target); assert.equal(createDraftPersistence(same).read(), 'newer');
+    assert.notEqual(sendingId(same, 'original'), nextRequest); // explicit changed-body attempt; never sent automatically
+    invalidateAccess('new identity'); registerAccessValidator(async () => ({ identityKey: 'other@fixture.test', grantsVersion: 'other' })); await ensureAccessGeneration();
+    const other = authorizedDraftScope(scope.target); assert.equal(createDraftPersistence(other).read(), '');
+    assert.notEqual(sendingId(other, 'original'), request);
+    assert.throws(() => sendingId(same, null), AccessChanged);
+  } finally { (globalThis as any).localStorage = storage; }
+});
+
+// Requirement: transport baseline ordering is explicit, independent of subscriber registration order.
+// Risk: a pre-ready event, late poll or animation frame advances an unauthorized cursor or releases private reads.
+test('feed abandons pre-ready/pre-activation events, fences queued frames, and disposes transport', async () => {
+  const saved = { EventSource: (globalThis as any).EventSource, requestAnimationFrame: (globalThis as any).requestAnimationFrame, cancelAnimationFrame: (globalThis as any).cancelAnimationFrame };
+  const sources: FakeSource[] = [], frames = new Map<number, FrameRequestCallback>(); let frameId = 0;
+  class FakeSource extends EventTarget {
+    url: string; closed = false; onmessage: ((e: MessageEvent) => void) | null = null; onerror: (() => void) | null = null;
+    constructor(url: string) { super(); this.url = url; sources.push(this); }
+    close() { this.closed = true; }
+    ready(cursor: number) { this.dispatchEvent(new MessageEvent('ready', { data: JSON.stringify({ cursor }) })); }
+    change(seq: number) { this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq, kind: 'task', id: 'private', taskId: 'private', sessionId: null, hostId: null, op: 'U' }) })); }
+  }
+  (globalThis as any).EventSource = FakeSource;
+  (globalThis as any).requestAnimationFrame = (fn: FrameRequestCallback) => { const id=++frameId;frames.set(id,fn);return id; };
+  (globalThis as any).cancelAnimationFrame = (id: number) => frames.delete(id);
+  const feed = await import('../../app/src/feed.ts');
+  registerAccessValidator(async () => ({ identityKey: 'feed@fixture.test', grantsVersion: 'one' }));
+  const received: number[] = []; let reloads = 0;
+  const off = feed.subscribe({ changes: changes => received.push(...changes.map(change => change.seq)), resync: () => reloads++ });
+  try {
+    invalidateAccess('feed startup'); feed.startFeed(null);
+    const early = ensureAccessGeneration(); await tick();
+    assert.equal(sources[0].url, '/api/stream'); sources[0].change(1);
+    await assert.rejects(early, /before baseline/); assert.equal(sources[0].closed, true); assert.equal(feed.currentCursor(), null);
+    const raced = ensureAccessGeneration(); await tick();
+    sources[1].ready(10); sources[1].change(11); // separate callbacks before promise activation continuation
+    await assert.rejects(raced, AccessChanged); await tick();
+    assert.equal(sources[1].closed, true); assert.equal(received.length, 0);
+    const next = ensureAccessGeneration(); await tick(); sources.at(-1)!.ready(20); await next;
+    assert.equal(feed.currentCursor(), 20); assert.equal(reloads, 1);
+    sources.at(-1)!.change(21); assert.equal(frames.size, 1);
+    invalidateAccess('frame fence'); assert.equal(frames.size, 0); assert.equal(feed.currentCursor(), null);
+    sources[0].change(99); for (const fn of frames.values()) fn(0); assert.deepEqual(received, []);
+  } finally {
+    off(); feed.stopFeed();
+    Object.assign(globalThis, saved);
+    registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsVersion: 'one' }));
+    registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} })); await ensureAccessGeneration();
+  }
 });

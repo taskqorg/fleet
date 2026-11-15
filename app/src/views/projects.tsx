@@ -2,14 +2,16 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  AreaChart, Button, Choice, CodeEditor, CostFigures, DetailSection, Empty, ErrorBanner, Icon,
+  AreaChart, StatusLine, Button, Choice, CodeEditor, CostFigures, DetailSection, Empty, ErrorBanner, Icon,
   KvRow, ListDetail, Num, SearchField, SettingField, Totals, VirtualList, matchSearch,
   msMeasured, numMeasured, type ChartBucket, type ChartSeries, type Measured, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
-import { op, useAlive, writeOnce, type Ops } from '../api.ts';
+import { op, useAlive, writeOnce, preparedResourcesAvailable, AccessChanged, OpError, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { resourceTotals } from './resources.tsx';
+import { subscribe } from '../feed.ts';
+import { accessGeneration, isAccessCurrent } from '../access.ts';
+import { resourceTotals, useProjectResources, PreparedProjectResources } from './resources.tsx';
 
 type Bundle = { settings: Record<string, any>; contextFiles: { path: string; text: string }[] };
 type AnalyticsReply = Ops['analytics_query']['reply'];
@@ -137,6 +139,11 @@ export function Projects({ id }: { id?: string }) {
 function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => void }) {
   const [, go] = useLocation();
   const [bundle, setBundle] = useState<Bundle>(fresh);
+  const baseline = useRef(JSON.stringify(bundle)), latest = useRef(bundle); latest.current = bundle;
+  const [conflict, setConflict] = useState(''), [prepared, setPrepared] = useState<boolean | null>(null);
+  const [breakdown, setBreakdown] = useState<'tools' | 'costs' | null>(null);
+  const summary = useProjectResources(id, prepared === true && !breakdown);
+  useEffect(() => { let active = true; preparedResourcesAvailable().then(v => { if (active) setPrepared(v); }); return () => { active = false; }; }, []);
   const [revision, setRevision] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -147,35 +154,59 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
   const [sourceState, setSourceState] = useState('');
   const requestId = useRef(crypto.randomUUID()), alive = useAlive();
   const [loaded, setLoaded] = useState(!id);
-  const load = async () => {
-    if (!id) return;
-    try {
-      const p: any = await op('project_context', { projectId: id });
-      setBundle(p.content); setRevision(p.revision); setAccess(p.initialAccess);
-      setResources(p.resources);
-      setRepoSha(p.repoSha ?? null); setSourceState(p.sourceState ?? '');
-      requestId.current = crypto.randomUUID(); setReady(null); setError(''); setLoaded(true);
-    } catch (e: any) { setError(e.message); }
+  const loadSequence = useRef(0);
+  const readDetail = async (projectId: string) => {
+    if (prepared) {
+      try { return await op('project_detail', { projectId }, { signal: alive }); }
+      catch (e) { if (!(e instanceof OpError) || e.status !== 503) throw e; setPrepared(false); }
+    }
+    return op('project_context', { projectId }, { signal: alive });
   };
-  useEffect(() => { void load(); }, [id]);
+  const load = async () => {
+    if (!id || prepared === null) return;
+    const generation = accessGeneration(), sequence = ++loadSequence.current;
+    try {
+      const p = await readDetail(id);
+      if (!isAccessCurrent(generation) || alive.aborted || sequence !== loadSequence.current) return;
+      if (JSON.stringify(latest.current) !== baseline.current) {
+        if (p.revision !== revision) setConflict('Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.');
+        return;
+      }
+      baseline.current = JSON.stringify(p.content);
+      setBundle(p.content); setRevision(p.revision); setAccess(p.initialAccess);
+      setResources('resources' in p ? p.resources : undefined);
+      setRepoSha(p.repoSha ?? null); setSourceState(p.sourceState ?? '');
+      requestId.current = crypto.randomUUID(); setReady(null); setError(''); setConflict(''); setLoaded(true);
+    } catch (e: any) { if (!(e instanceof AccessChanged) && !alive.aborted) setError(e.message); }
+  };
+  const reload = useRef(load); reload.current = load;
+  useEffect(() => {
+    void reload.current();
+    return subscribe({ resync: () => { void reload.current(); }, changes: changes => { if (changes.some(c => c.kind === 'definition')) void reload.current(); } });
+  }, [id, prepared]);
   const setting = (key: string, value: any) => setBundle(b => ({ ...b, settings: { ...b.settings, [key]: value } }));
   const field = (label: string, value: string, save: (s: string) => void) => (
     <SettingField help="Edit this project field; Save project applies the complete version." label={label} value={value} status={{ kind: 'pending' }} now={Date.now()} onSave={save} />
   );
   const save = async () => {
+    const generation = accessGeneration(), submitted = bundle;
     setBusy(true);
     try {
       const unknown = () => setError('unknown, retrying');
       const p: any = id
         ? await writeOnce('project_update', { projectId: id, requestId: requestId.current, baseRevision: revision, content: bundle, repoSha }, unknown, { signal: alive })
         : await writeOnce('project_create', { id: bundle.settings.id, requestId: requestId.current, content: bundle }, unknown, { signal: alive });
-      const check: any = await op('project_context', { projectId: p.projectId });
+      if (!isAccessCurrent(generation)) return;
+      const check = await readDetail(p.projectId);
+      if (!isAccessCurrent(generation) || alive.aborted) return;
       if (check.revision !== p.revision || check.contentSha !== p.contentSha) throw Error('Saved version changed; reload before editing.');
-      setBundle(check.content); setRevision(check.revision); setAccess(check.initialAccess);
-      setResources(check.resources);
+      baseline.current = JSON.stringify(check.content);
+      if (JSON.stringify(latest.current) === JSON.stringify(submitted)) setBundle(check.content);
+      setRevision(check.revision); setAccess(check.initialAccess);
+      setResources('resources' in check ? check.resources : undefined);
       setRepoSha(check.repoSha ?? null); setSourceState(check.sourceState ?? '');
-      requestId.current = crypto.randomUUID(); setError(''); onSaved(p.projectId);
-    } catch (e: any) { setError(e.message); } finally { setBusy(false); }
+      requestId.current = crypto.randomUUID(); setError(''); setConflict(''); onSaved(p.projectId);
+    } catch (e: any) { if (isAccessCurrent(generation) && !alive.aborted) setError(e.message); } finally { if (isAccessCurrent(generation) && !alive.aborted) setBusy(false); }
   };
   const bindings = (kind: 'repos' | 'environments', title: string, keys: string[]) => {
     const items: any[] = bundle.settings[kind] ?? [];
@@ -193,16 +224,18 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
     );
   };
   if (!loaded) return error ? <ErrorBanner text={error} onRetry={() => void load()} /> : <Empty text="Loading project…" />;
+  if (id && prepared && breakdown) return <PreparedProjectResources projectId={id} summary={summary} category={breakdown} onClose={() => setBreakdown(null)} />;
   const ctxTotals = resources ? resourceTotals(resources, { hideUnavailable: false }) : [];
   return (
     <article class="detail" data-ui="detail">
       <header class="detail-h">
         <h2>{id ? bundle.settings.name : 'Create project'}</h2><span class="grow" />
         <Button label="Save project" icon="save" busy={busy} onClick={save} />
-        {id && <Button label="Reload project" icon="rotate-cw" onClick={() => void load()} />}
+        {id && <Button label={conflict ? "Discard edits and reload" : "Reload project"} icon="rotate-cw" onClick={() => { if (conflict) baseline.current = JSON.stringify(latest.current); void load(); }} />}
       </header>
-      {error && <div role="alert">{error}</div>}
+      <StatusLine>{conflict || error}</StatusLine>
       {sourceState === 'repository-changed' && <p>Source configuration changed. Saving keeps this edited project version.</p>}
+      {id && prepared && <DetailSection title="Project resources"><PreparedProjectResources projectId={id} summary={summary} onOpen={setBreakdown} /></DetailSection>}
       <DetailSection title="Context">
         {!id && field('Project ID', bundle.settings.id, v => setting('id', v))}
         {field('Name', bundle.settings.name, v => setting('name', v))}
@@ -243,7 +276,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
           <p>Separate explicit grants and full administrator access remain effective.</p>
         </DetailSection>
       )}
-      {id && ctxTotals.length > 0 && (
+      {id && !prepared && ctxTotals.length > 0 && (
         <DetailSection title="Project resources">
           <Totals items={ctxTotals} />
         </DetailSection>

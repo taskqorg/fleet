@@ -13,3 +13,7 @@
 * Each tile links to the filtered list behind its number.
 
 **Do.** Show at most one strip per page, near the top (W1). **Don't.** Use big cards or gauges (W2).
+
+**Prepared resources.** Reserve progress/error space so validation never shifts adjacent content. Keep last confirmed figures during refresh, with their basis and partial/missing disclosure. `current` means checked at the response snapshot; an old underlying observation remains old and is never replaced by publication time. Preparing has no invented version or zero values; unchanged may still report updating/error.
+
+`StatusLine` in `packages/ui` reserves two text lines for preparation, validation and refresh feedback even while idle. It is a normal flow region, so a visible message is never hidden in a zero-height overlay.

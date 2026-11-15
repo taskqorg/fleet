@@ -8,10 +8,16 @@
 
 **Behaviour.**
 * `Enter` sends and `Shift+Enter` adds a line.
-* The draft is kept per conversation in the browser, so updates and reloads never lose it (specq F3).
+* The app may keep a draft per validated identity and authorized target through the injected persistence adapter (specq F3).
 * While a send is in progress the button shows busy.
 * Offline, both the text area and the button are disabled, with the reason "offline". Nothing is queued (fleet-operator-app D3).
 
 **Accessibility.** The text area is labelled by its placeholder ("Message", or "Steer or queue a message" while the agent runs). On touch screens it is at least 44 px high.
 
 **Used in.** Conversations.
+
+## Authorized persistence
+
+The app injects a scoped persistence adapter after validating the identity and target. The shared control has no storage access; without an adapter it is memory-only. Closing the access gate quarantines authored unsent text under its original identity and target. Restore requires the same validated identity and freshly authorized target, including after changed grants. Other actors never inspect it. Legacy unscoped drafts remain quarantined without attribution or deletion.
+
+Send completion clears only the originally submitted text if unchanged. Newer input and newer-generation records survive late success. Unknown submission outcomes retain the original request identity and body; reopening never automatically resends them. Storage failure preserves the authorized in-memory input and exposes a warning.

@@ -1,11 +1,14 @@
 // Shared resource rollup and recursive execution tree helpers (docs/design-system/pages/{tasks,conversations,projects,definitions,runners,hosts}.md).
-import { useState } from 'preact/hooks';
+import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  Button, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals,
+  StatusLine, AgeChip, Button, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals,
   msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
 } from '../../../packages/ui/src/index.ts';
+import { op, OpError } from '../api.ts';
+import { usePreparedDoc, preparedKey } from '../store.ts';
+import type { ResourceItem, ResourceSortKey, ResourceItemsPage, ProjectResourceItemsRequest, ResourceCategory, ResourceGroup, PreparedHeaderV1, ResourceProgress } from '../../../contracts/generated/ops.ts';
 import type { CostFigure, ExecutionRow, ResourceSummary, ScopedResourceRollup } from '../../../contracts/generated/ops.ts';
 
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
@@ -366,4 +369,114 @@ export function buildExecTree(executions: readonly ExecutionRow[]): TreeNode[] {
     return out;
   };
   return visit(null);
+}
+
+/** Captured positions are opaque when supplied; never decode/rebuild packed tool keys. */
+export function resourcePosition(item: ResourceItem): ResourceSortKey {
+  if (item.kind === 'tool') return item.position ?? { kind: 'tool', name: item.name, connection: item.connection };
+  if (item.kind === 'cost') return { kind: 'cost', currency: item.currency, basis: item.basis };
+  return { kind: 'price', priceId: item.priceId, observedAt: item.observedAt };
+}
+export function resourcePositionKey(key: ResourceSortKey): string {
+  return JSON.stringify(key.kind === 'tool-position' ? [key.kind, key.encoded] : key.kind === 'tool' ? [key.kind, key.name, key.connection] : key.kind === 'cost' ? [key.kind, key.currency, key.basis] : [key.kind, key.priceId, key.observedAt]);
+}
+export const resourceItemKey = (item: ResourceItem) => resourcePositionKey(resourcePosition(item));
+export function useProjectResources(projectId: string | undefined, enabled: boolean) {
+  return usePreparedDoc(projectId && enabled ? preparedKey('project_resources', projectId) : null,
+    ({ signal, knownVersion }) => op('project_resources', { projectId: projectId!, knownVersion }, { signal }),
+    { touches: c => c.kind === 'resource_summary' && c.id === projectId });
+}
+type ProjectResourceState = ReturnType<typeof useProjectResources>;
+const preparedTotals = (header: PreparedHeaderV1 | null): TotalItem[] => {
+  const unknown: Measured = { value: null, basis: 'unavailable' };
+  const metric = (value: number | null | undefined, basis: Measured['basis'] | undefined, scale = 1) => header ? resNum(value, basis ?? 'unavailable', scale) : unknown;
+  return [
+    { label: 'Executions', m: header ? { value: header.executions, basis: 'measured' } : unknown, kind: 'count' },
+    { label: 'Tokens', m: metric(header?.tokens.total, header?.tokens.basis), kind: 'count' },
+    { label: 'Reasoning', m: metric(header?.tokens.reasoning, header?.tokens.basis), kind: 'count' },
+    { label: 'Elapsed', m: metric(header?.durations.elapsedMs, header?.durations.basis, 0.001), kind: 'duration' },
+    { label: 'Execution wall', m: metric(header?.durations.executionWallMs, header?.durations.basis, 0.001), kind: 'duration' },
+    { label: 'Active', m: metric(header?.durations.activeMs, header?.durations.basis, 0.001), kind: 'duration' },
+    { label: 'API', m: metric(header?.durations.apiMs, header?.durations.basis, 0.001), kind: 'duration' },
+    { label: 'CPU', m: { ...metric(header?.durations.cpuMs, header?.durations.basis, 0.001), ...(header && header.durations.measuredCpuRuns < header.durations.totalRuns ? { partial: `${header.durations.measuredCpuRuns} of ${header.durations.totalRuns} measured` } : {}) }, kind: 'duration' },
+    { label: 'Peak memory', m: { ...metric(header?.peakMemoryBytes.value, header?.peakMemoryBytes.basis), reason: header?.peakMemoryBytes.reason }, kind: 'bytes' },
+    { label: 'Tools', m: metric(header?.tools.totalCalls, header?.tools.basis), kind: 'count' },
+    { label: 'Credits', m: metric(header?.credits, header?.credits == null ? 'unavailable' : 'measured'), kind: 'count' },
+  ];
+};
+function ResourceProgressLine({ progress, error }: { progress: ResourceProgress | null; error: string | null }) {
+  const now = Date.now();
+  return <StatusLine>{error ? 'Refresh failed: ' + error : progress ? <>
+    {progress.state === 'current' ? 'Confirmed' : progress.state}{progress.errorClass ? ' · ' + progress.errorClass : ''}
+    {' · checked '}<AgeChip t={Date.parse(progress.validatedAt)} now={now} />
+    {progress.pending && <> · Pending {progress.oldestPendingAt ? <AgeChip t={Date.parse(progress.oldestPendingAt)} now={now} /> : 'age unknown'}</>}
+  </> : 'Preparing confirmed resources…'}</StatusLine>;
+}
+export function PreparedProjectResources({ projectId, summary, category, onOpen, onClose }: { projectId: string; summary: ProjectResourceState; category?: 'tools' | 'costs'; onOpen?: (category: 'tools' | 'costs') => void; onClose?: () => void }) {
+  const reply = summary.data, header = reply && 'header' in reply ? reply.header : null;
+  if (category) return <PreparedResourceWindow key={projectId + category} projectId={projectId} category={category} onClose={onClose!} />;
+  return <section data-resource-project={projectId} data-resource-version={reply?.version ?? ''} data-resource-state={summary.progress?.state ?? 'initializing'}>
+    <ResourceProgressLine progress={summary.progress} error={summary.error} />
+    <Totals items={preparedTotals(header)} /><div class="answers">
+      <Button label={`Tools · ${header?.itemCounts.tools ?? '—'}`} icon="terminal" disabledReason={!header ? 'Preparing confirmed figures' : undefined} onClick={() => onOpen?.('tools')} />
+      <Button label={`Costs · ${header?.itemCounts.costs ?? '—'}`} icon="chart-no-axes-column" disabledReason={!header ? 'Preparing confirmed figures' : undefined} onClick={() => onOpen?.('costs')} />
+    </div><p class="muted">Latest confirmed facts. Underlying observation time is unavailable; checked time is not measurement time.</p>
+    <Button label="Refresh resources" icon="rotate-cw" iconOnly onClick={() => summary.refresh('retry')} />
+  </section>;
+}
+function PreparedResourceWindow({ projectId, category, group, onClose }: { projectId: string; category: ResourceCategory; group?: ResourceGroup; onClose: () => void }) {
+  const handle = useRef<VirtualListHandle | null>(null);
+  const [query, setQuery] = useState('');
+  const [request, setRequest] = useState<Omit<ProjectResourceItemsRequest, 'projectId'>>({ category, group, limit: 50, anchor: 'start' });
+  const [rows, setRows] = useState<ResourceItem[]>([]), [page, setPage] = useState<ResourceItemsPage | null>(null);
+  const [prices, setPrices] = useState<ResourceGroup | null>(null);
+  const frame = useRef({ rows, page }); frame.current = { rows, page };
+  const movement = useRef<'replace' | 'append' | 'prepend'>('replace'), consumed = useRef(false);
+  const restore = useRef<{ key: string; offsetPx: number; alignEnd?: boolean } | null>(null);
+  const loadingWindow = useRef(false);
+  const captured = useRef<{ key: string; offsetPx: number } | null>(null);
+  const last = useRef<unknown>(null);
+  const result = usePreparedDoc(preparedKey('project_resource_items', projectId, request), async ({ signal }) => {
+    const anchor = handle.current?.getAnchor() ?? null; captured.current = anchor;
+    const item = anchor ? frame.current.rows.find(row => resourceItemKey(row) === anchor.key) : null;
+    const position = item ? resourcePosition(item) : null;
+    const base = { projectId, category, group, ...(category === 'tools' ? { query: request.query ?? '' } : {}), limit: 50 };
+    let next: ProjectResourceItemsRequest = !consumed.current ? { ...base, ...request } : position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' };
+    try { return await op('project_resource_items', next, { signal }); }
+    catch (e) { if (!(e instanceof OpError) || e.status !== 409) throw e; next = position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' }; return op('project_resource_items', next, { signal }); }
+  }, { touches: c => c.kind === 'resource_summary' && c.id === projectId });
+  useLayoutEffect(() => {
+    const value = result.data;
+    if (!value || !('items' in value) || last.current === value) return;
+    last.current = value;
+    const direction = consumed.current ? 'replace' : movement.current;
+    const sameEpoch = !frame.current.page || frame.current.page.version.split(':')[0] === value.version.split(':')[0];
+    const combined = sameEpoch && direction === 'append' ? [...frame.current.rows, ...value.items] : sameEpoch && direction === 'prepend' ? [...value.items, ...frame.current.rows] : value.items;
+    const unique = [...new Map(combined.map(item => [resourceItemKey(item), item])).values()];
+    // Retain a small continuous window, never accumulate history in the browser.
+    const bounded = direction === 'prepend' ? unique.slice(0, 150) : unique.slice(-150);
+    const a = captured.current;
+    if (!consumed.current && request.anchor === 'end' && bounded.length) restore.current = { key: resourceItemKey(bounded.at(-1)!), offsetPx: 0, alignEnd: true };
+    else if (!consumed.current && request.anchor === 'start') restore.current = { key: bounded.length ? resourceItemKey(bounded[0]) : '', offsetPx: 0 };
+    else if (a && bounded.some(row => resourceItemKey(row) === a.key)) restore.current = a;
+    else if (value.resolvedAnchor) restore.current = { key: resourcePositionKey(value.resolvedAnchor), offsetPx: 0 };
+    else restore.current = { key: '', offsetPx: 0 };
+    consumed.current = true; setRows(bounded); setPage(value);
+  }, [result.data]);
+  useLayoutEffect(() => { if (restore.current) { if (restore.current.alignEnd) handle.current?.scrollToKey(restore.current.key, 'end'); else handle.current?.restoreAnchor(restore.current.key, restore.current.offsetPx); restore.current = null; loadingWindow.current = false; } }, [rows]);
+  const move = (position: Pick<ProjectResourceItemsRequest, 'anchor' | 'cursor'>, kind: typeof movement.current = 'replace') => { loadingWindow.current = true; movement.current = kind; consumed.current = false; setRequest({ category, group, query: category === 'tools' ? query : undefined, limit: 50, ...position }); };
+  if (prices) return <PreparedResourceWindow projectId={projectId} category="prices" group={prices} onClose={() => setPrices(null)} />;
+  return <article class="detail conversation" data-ui="detail" data-resource-window={category} data-resource-version={page?.version ?? ''}>
+    <header class="detail-h"><h2>{category === 'prices' ? 'Price basis' : category === 'tools' ? 'Tools' : 'Costs'}</h2><span class="grow" /><Button label="Close resources" icon="x" iconOnly onClick={onClose} /></header>
+    <ResourceProgressLine progress={result.progress} error={result.error} />
+    {page && <Totals items={preparedTotals(page.header)} />}
+    <div class="answers">{category === 'tools' && <SearchField label="Search tools" value={query} onInput={value => { setQuery(value.slice(0, 200)); consumed.current = false; movement.current = 'replace'; setRequest({ category, query: value.slice(0, 200), limit: 50, anchor: 'start' }); }} onSearch={() => {}} />}
+      <span>{rows.length} of {page?.total ?? '—'}</span><Button label="Jump to start" icon="arrow-up" iconOnly onClick={() => move({ anchor: 'start' })} /><Button label="Jump to end" icon="arrow-down" iconOnly onClick={() => move({ anchor: 'end' })} />
+      {result.error && <Button label="Retry resources" icon="rotate-cw" onClick={() => result.refresh('retry')} />}</div>
+    <VirtualList fill handle={handle} items={rows} getKey={resourceItemKey} label={`Project ${category}`} rowHeight={ROW2} follow="top" columns="1.25rem minmax(0,1fr) auto"
+      onEnd={() => { if (!loadingWindow.current && page?.nextCursor) move({ cursor: page.nextCursor }, 'append'); }}
+      onStart={() => { if (!loadingWindow.current && page?.previousCursor) move({ cursor: page.previousCursor }, 'prepend'); }}
+      render={item => <><StateBadge family="source" state="current" compact />{item.kind === 'tool' ? <><span>{item.name}</span><span class="num">{item.calls} · {item.errors} failed</span></> : item.kind === 'cost' ? <><CostFigures cost={[{ ...item, reason: item.reason ?? undefined, note: item.note ?? undefined, usages: item.usages ?? undefined }]} showUnavailable /><Button label={`Price basis · ${item.priceCount}`} onClick={() => setPrices({ currency: item.currency, basis: item.basis })} /></> : <><span><EntityCode id={item.priceId} what="Price" /> Recorded rate</span><AgeChip t={item.observedAt} now={Date.now()} /></>}</>} />
+    {!rows.length && page && <Empty text="No matching confirmed items." />}
+  </article>;
 }

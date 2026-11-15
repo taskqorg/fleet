@@ -3,9 +3,11 @@
 // proxy that injects the Bearer as the access guard does. Chromium opens the built app and asserts behaviour; timings are printed,
 // never asserted. Exits 1 when an assertion fails.
 // Run: pnpm run build && node tests/ui/conversations.check.ts
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { chromium, type Page } from 'playwright';
 import { checkServer } from './seed.ts';
+import { checkAccessGate } from './access-gate.check.ts';
 import { checkProjects } from './projects.check.ts';
 import { checkQuestionReplies } from './question-replies.check.ts';
 import { checkTaskStory } from './task-story.check.ts';
@@ -13,11 +15,13 @@ import { checkDeliveryAvailability } from './delivery-availability.check.ts';
 import { checkSpotlight } from './spotlight.check.ts';
 import { checkPublicationInputs } from './publication-inputs.check.ts';
 
+execFileSync(process.execPath, ['--test', 'tests/ui/composer.test.ts', 'tests/ui/virtual-list.test.ts'], { stdio: 'inherit', env: { ...process.env, FLEET_CONTROL_BROWSER: '1' } });
+
 const failures: string[] = [], timings: string[] = [];
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failures.push(what); };
 const time = (what: string, ms: number) => { timings.push(`${what}: ${ms.toFixed(0)} ms`); };
 
-const { origin, seed, host, close } = await checkServer({ store: true });
+const { origin, seed, host, close, c } = await checkServer({ store: true, env: { FLEET_RESOURCE_READS: 'on', FLEET_RESOURCE_PROCESSOR: 'on' } });
 const lit = (v: unknown) => v === null ? 'NULL' : typeof v === 'number' ? String(v) : "'" + String(typeof v === 'string' ? v : JSON.stringify(v)).replace(/'/g, "''") + "'";
 // Captured fixtures, as stored.
 for (const name of ['codex-6a55ab8b', 'claude-127d6fd7', 'lost-receipt-d89cc199']) {
@@ -314,6 +318,7 @@ try {
   check(!errors.length, `no page errors${errors.length ? ': ' + errors.join('; ') : ''}`);
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
   await checkProjects(b, origin, host);
+  await checkAccessGate(b, c, seed);
   await checkSpotlight(b, origin);
   await checkTaskStory(b, origin);
   await checkDeliveryAvailability(b, origin);

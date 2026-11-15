@@ -3,13 +3,14 @@ import { Projects } from './views/projects.tsx';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation } from 'wouter-preact';
-import { AppShell, Empty, Button, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
-import { op, signedOut, type Ops } from './api.ts';
+import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
+import { access, accessGeneration, ensureAccessGeneration, invalidateAccess, registerAccessValidator } from './access.ts';
+import { op, accessControlOp, signedOut, type Ops } from './api.ts';
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset } from './prefs.ts';
 import { useDoc } from './store.ts';
-import { startFeed } from './feed.ts';
+import { startFeed, stopFeed } from './feed.ts';
 import { startStore } from './store.ts';
-import { checkGrants, clearAll } from './offline.ts';
+import { clearAll } from './offline.ts';
 import { Overview } from './views/overview.tsx';
 import { Tasks } from './views/tasks.tsx';
 import { Conversations } from './views/conversations.tsx';
@@ -74,39 +75,51 @@ function App() {
   const current = loc.split('/')[1] || 'overview';
   const search = useRef((['task', 'question', 'conversation', 'project', 'host'] as const).map(k => found(k, go))).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
-  useEffect(() => { loadPrefs(); }, []); // and again on window focus (below): agents and other devices change them too
+  // Preferences load only after authorized baseline activation.
+  // // and again on window focus (below): agents and other devices change them too
   const [user, setUser] = useState<string | null>(null);
   // OR-23: the shell shows once the first settings read answers, or after 1.5 s at most; a later store clear does not hide it again.
   const [shown, setShown] = useState(false);
   useEffect(() => { if (prefsRead.value) setShown(true); }, [prefsRead.value]);
   useEffect(() => { const t = setTimeout(() => setShown(true), 1500); return () => clearTimeout(t); }, []);
+  const geometry = useRef({ widths: prefs.value.widths, navCollapsed: prefs.value.navCollapsed });
+  if (access.value.state === 'open' && prefsRead.value) geometry.current = { widths: prefs.value.widths, navCollapsed: prefs.value.navCollapsed };
   const pins = prefs.value.pins, savePins = (ids: string[]) => savePrefs(() => ({ pins: ids }), { pins: ids });
   useEffect(() => {
-    // Identity and grants (D3): a changed grants version clears stored data. Re-read on focus too.
-    const me = () => op('me', {}).then(m => { setUser(m.name || m.email); return checkGrants(m.grantsVersion ?? ''); }).catch(() => {}); // no person: '' still clears another person's data.
-    me(); addEventListener('focus', me); addEventListener('focus', loadPrefs);
-    // The feed starts at the server head: every mounted list loads a fresh page (restored rows only fill the first frame),
-    // and lists shown from storage or after a failed load reload when the feed comes back (store.ts).
-    startStore(); startFeed(null);
+    const unregister = registerAccessValidator(async ({ generation, signal }) => {
+      const clear = clearAll();
+      const m = await accessControlOp('me', {}, { signal });
+      await clear; if (signal.aborted || generation !== accessGeneration()) throw Error('Access changed');
+      if (!m.email) throw Error('Sign in to continue');
+      setUser(m.name || m.email);
+      return { identityKey: m.email, grantsVersion: m.grantsVersion ?? '' };
+    });
+    startFeed(null); startStore();
+    const validate = () => { invalidateAccess('focus'); last = null; void ensureAccessGeneration('focus').then(() => loadPrefs()).catch(() => {}); };
+    validate(); addEventListener('focus', validate); addEventListener('online', validate);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
-    return () => { removeEventListener('focus', me); removeEventListener('focus', loadPrefs); };
+    return () => { unregister(); stopFeed(); removeEventListener('focus', validate); removeEventListener('online', validate); };
   }, []);
-  useEffect(() => { if (signedOut.value) clearAll(true); }, [signedOut.value]);
+  useEffect(() => { if (signedOut.value) { invalidateAccess('signed out'); void clearAll(true); } }, [signedOut.value]);
   // The project focus (OR-34) is a person setting; lists apply it where their view names no projects.
   const focus = prefs.value.focus, presets = prefs.value.focusPresets;
   const focusCtl = (mini: boolean) => <Focus mini={mini} value={focus} presets={presets} />;
-  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={pins} onPins={savePins} search={search} ready={shown} focus={focusCtl}
-    widths={prefs.value.widths} onWidth={setWidth} collapsed={prefs.value.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
+  return <AppShell nav={NAV} current={current} waiting={0} onGo={id => go('/' + id)} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown} focus={access.value.state === 'open' ? focusCtl : undefined}
+    widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
-    user={user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); } } : undefined}>
+    user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); } } : undefined}>
     {update && <div class="problem warning" role="status"><b>Update available</b><span class="facts">A new version of the app is ready.</span><span class="acts"><Button label="Reload" onClick={() => location.reload()} /></span></div>}
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
-    <Switch>
+    {access.value.state === 'open' ? <PrivateRoutes key={access.value.generation} go={go} /> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
+  </AppShell>;
+}
+
+function PrivateRoutes({ go }: { go: (to: string) => void }) {
+  return <Switch>
       <Route path="/"><Redirect to="/overview" /></Route>
       {BUILT.map(s => <Route key={s.id} path={s.focus ? `/${s.id}/:id?` : `/${s.id}`}>{(p: { id?: string }) => s.view(p)}</Route>)}
       <Route><Empty text="This page does not exist." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
-    </Switch>
-  </AppShell>;
+    </Switch>;
 }
 
 /** The focus control with its own project list, so a definition change re-renders only the control. */

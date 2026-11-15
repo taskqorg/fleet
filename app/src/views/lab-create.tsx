@@ -1,9 +1,10 @@
 // Lab draft creation uses the existing operation, never launch (laboratory.md, Create experiment).
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { matchSearch, Button, Choice, CodeEditor, DetailSection, Empty, ListDetail, ProblemRow, RowCheck, SearchField, StateBadge, TextField, VirtualList, ROW2 } from '../../../packages/ui/src/index.ts';
+import { matchSearch, StatusLine, Button, Choice, CodeEditor, DetailSection, Empty, ListDetail, ProblemRow, RowCheck, SearchField, StateBadge, TextField, VirtualList, ROW2 } from '../../../packages/ui/src/index.ts';
 import { op, online, signedOut, OpError, type Ops } from '../api.ts';
-import { checkGrants, onClear } from '../offline.ts';
+import { access, accessGeneration, isAccessCurrent } from '../access.ts';
+import { onClear } from '../offline.ts';
 
 type Variant = { label: string; pipelineId: string; overrides: string };
 type Evaluator = { kind: string; ref: string; form: string; overrides: string };
@@ -17,8 +18,6 @@ type Picker = { label: string; options: Option[]; selected: string[]; multiple?:
 const PREFIX = 'fleet-lab-create:';
 const blank = (): Draft => ({ projectId: '', pipelineId: '', kind: '', examples: [], repeats: '1', goal: '', hypothesis: '', decisionRule: '', labGroup: '',
   variants: [{ label: 'A', pipelineId: '', overrides: '{}' }], evaluators: [], primary: '', budgets: [], generator: 'list', params: '{"variants":[]}', max: '', k: '' });
-const clearDrafts = () => { try { for (const key of Object.keys(sessionStorage)) if (key.startsWith(PREFIX)) sessionStorage.removeItem(key); } catch { /* storage unavailable */ } };
-onClear.add(clearDrafts);
 const object = (text: string, label: string): Record<string, unknown> => {
   let x: unknown; try { x = JSON.parse(text); } catch (e) { throw Error(`${label}: ${(e as Error).message}`); }
   if (!x || typeof x !== 'object' || Array.isArray(x)) throw Error(label + ' must be an object');
@@ -54,10 +53,13 @@ export function LabCreate() {
   const [projects, setProjects] = useState<Option[]>([]), [pipelines, setPipelines] = useState<Option[]>([]), [examples, setExamples] = useState<Option[]>([]);
   const [picker, setPicker] = useState<Picker | null>(null), [query, setQuery] = useState('');
   const invoker = useRef<HTMLElement | null>(null), startPanel = useRef<HTMLElement | null>(null);
+  const generation = useRef(accessGeneration()).current;
   const live = useRef(true), identity = useRef(''), current = useRef(receipt), busy = useRef(false);
   current.current = receipt;
-  const persist = (next: Receipt) => { current.current = next; if (live.current) setReceipt(next); if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify(next)); } catch { if (live.current) setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); } };
+  const persist = (next: Receipt) => { if (!live.current || !isAccessCurrent(generation)) return; current.current = next; if (live.current) setReceipt(next); if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify(next)); } catch { if (live.current) setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); } };
   const clearAccess = () => {
+    // Preserve authored input under its original actor; server receipts require fresh readback.
+    if (identity.current) try { sessionStorage.setItem(identity.current, JSON.stringify({ draft: current.current.draft, state: current.current.state === 'editing' ? 'editing' : 'uncertain', message: current.current.state === 'editing' ? undefined : 'Previous creation outcome requires review; do not resend.' })); } catch { /* input still existed in this view */ }
     identity.current = ''; invoker.current = null; busy.current = true; setKey('');
     current.current = { draft: blank(), state: 'editing' }; setReceipt(current.current);
     setPicker(null); setQuery(''); setProjects([]); setPipelines([]); setExamples([]);
@@ -69,19 +71,19 @@ export function LabCreate() {
     onClear.add(cleared);
     (async () => {
       try {
-        const me = await op('me', {}); if (!me.email) throw Error('Sign in before creating an experiment.');
-        await checkGrants(me.grantsVersion ?? ''); if (!live.current) return;
-        try {
-          const previous = JSON.parse(sessionStorage.getItem(PREFIX + 'actor') ?? 'null');
-          if (previous && previous.actor !== me.email) clearDrafts();
-          sessionStorage.setItem(PREFIX + 'actor', JSON.stringify({ actor: me.email }));
-        } catch { setStorageWarning('Browser storage is unavailable. Keep this page open until creation is resolved.'); }
-        const k = PREFIX + me.email + ':' + me.grantsVersion; identity.current = k;
+        const actor = access.value.identity?.identityKey;
+        if (!actor || !isAccessCurrent(generation)) return;
+        const k = PREFIX + JSON.stringify([1, actor]); identity.current = k;
         let saved: Receipt | null = null; try { saved = JSON.parse(sessionStorage.getItem(k) ?? 'null'); } catch { /* start an empty draft */ }
         if (saved?.draft && typeof saved.draft.projectId === 'string' && typeof saved.draft.pipelineId === 'string' && typeof saved.draft.repeats === 'string' && Array.isArray(saved.draft.examples) && Array.isArray(saved.draft.variants) && Array.isArray(saved.draft.evaluators) && Array.isArray(saved.draft.budgets) && ['editing', 'pending', 'uncertain', 'created'].includes(saved.state)) {
           if (saved.state === 'pending') saved = { ...saved, state: 'uncertain', message: 'The previous request has no confirmed reply. Review experiments before starting another draft.' };
           if (saved.state === 'created') saved = saved.id ? { ...saved, message: 'Creation confirmed. Read the retained details to continue.' } : { ...saved, state: 'uncertain', message: 'The saved reply has no experiment identity. Review experiments.' };
-          persist(saved);
+          if (saved.draft.projectId) {
+            try { await op('project_detail', { projectId: saved.draft.projectId }); }
+            catch (e) { if (e instanceof OpError && [404, 503].includes(e.status)) await op('project_context', { projectId: saved.draft.projectId }); else throw e; }
+          }
+          if (!isAccessCurrent(generation) || !live.current) return;
+          persist({ draft: saved.draft, state: saved.state === 'editing' ? 'editing' : 'uncertain', ...(saved.state !== 'editing' ? { message: 'Previous creation outcome requires review; do not resend.' } : {}) });
         }
         busy.current = false; setKey(k); setError('');
         const [p, e] = await Promise.all([op('project_list', {}), op('lab_examples_list', { state: 'approved' })]);
@@ -91,12 +93,6 @@ export function LabCreate() {
       } catch (e: any) { if (live.current) setError(e.message); }
     })();
     return () => { live.current = false; identity.current = ''; onClear.delete(cleared); };
-  }, []);
-  useEffect(() => {
-    const verify = async () => { try { const me = await op('me', {}); const next = PREFIX + me.email + ':' + me.grantsVersion;
-      if (identity.current && next !== identity.current) { clearDrafts(); clearAccess(); }
-    } catch { /* ordinary signed-out handling clears the cache */ } };
-    addEventListener('focus', verify); return () => removeEventListener('focus', verify);
   }, []);
   const d = receipt.draft;
   useEffect(() => { let active = true; const scope = identity.current, project = d.projectId; setPipelines([]); if (d.projectId) op('definition_list', { kind: 'pipeline', projectId: d.projectId }).then(x => {
@@ -113,10 +109,10 @@ export function LabCreate() {
     try {
       const e = await op('lab_experiment_get', { experimentId: id });
       if (e.id !== id || e.projectId !== draft.projectId || e.pipelineId !== draft.pipelineId || e.state !== 'draft') throw Error('Created experiment readback differs. Review its retained record.');
-      if (identity.current !== k) return;
+      if (!isAccessCurrent(generation) || identity.current !== k) return;
       try { sessionStorage.removeItem(k); } catch { /* memory still keeps the receipt */ }
       if (live.current) go('/lab/' + encodeURIComponent(id));
-    } catch (e: any) { if (identity.current === k) persist({ draft, state: 'created', id, message: `Creation confirmed; details unavailable: ${e.message}` }); }
+    } catch (e: any) { if (isAccessCurrent(generation) && identity.current === k) persist({ draft, state: 'created', id, message: `Creation confirmed; details unavailable: ${e.message}` }); }
   };
   const create = async () => {
     if (picker || !key || busy.current || current.current.state !== 'editing' || !online.value || signedOut.value) return;
@@ -126,10 +122,10 @@ export function LabCreate() {
     try {
       const e = await op('lab_experiment_create', body);
       if (typeof e.id !== 'string' || !e.id) throw Error('The create reply did not identify the experiment.');
-      if (identity.current !== k) return;
+      if (!isAccessCurrent(generation) || identity.current !== k) return;
       persist({ draft, state: 'created', id: e.id }); await readback(e.id, draft, k);
     } catch (e: any) {
-      if (identity.current !== k) return;
+      if (!isAccessCurrent(generation) || identity.current !== k) return;
       if (e instanceof OpError && [400, 403, 404, 409].includes(e.status)) { persist({ draft, state: 'editing' }); setError(e.message); }
       else persist({ draft, state: 'uncertain', message: 'Creation could not be confirmed. Do not repeat this request; review experiments. ' + e.message });
     } finally { busy.current = false; }
@@ -156,7 +152,7 @@ export function LabCreate() {
       {matching.length === 0 && <Empty text={available.length === 0 ? "No available choices. Check access and the required definitions or approved examples." : "No choices match this search. Clear the search to see available choices."} />}</>
       : <section class="panel" ref={startPanel}><p>Create a draft, inspect it, then use its separate Launch control.</p><Button label="Choose project" onClick={event => pick(event.currentTarget, 'Projects', projects, [d.projectId], id => edit({ projectId: id }))} disabledReason={disabled} /></section>}</>;
   const detail = <article class="detail" data-ui="detail" aria-label="Create experiment" tabIndex={-1}><header class="detail-h"><h2>New experiment</h2><span class="grow" /><Button label="Create draft" icon="plus" kind="primary" busy={receipt.state === 'pending'} disabledReason={disabled || invalid || undefined} onClick={create} /></header>
-    <div class="status-line" role="status">{receipt.state === 'pending' ? 'Creating draft…' : invalid && !error ? invalid : ''}</div>
+    <StatusLine>{receipt.state === 'pending' ? 'Creating draft…' : invalid && !error ? invalid : ''}</StatusLine>
     {error && <ProblemRow title="Draft not created" facts={error} severity="failure" actions={[]} />}
     {storageWarning && <ProblemRow title="Draft storage unavailable" facts={storageWarning} severity="warning" actions={[]} />}
     {receipt.message && <ProblemRow title={receipt.state === 'created' ? 'Creation confirmed' : 'Creation unconfirmed'} facts={receipt.message} severity="warning" actions={[]} />}

@@ -14,3 +14,11 @@ Edit name, owned context, repository references, existing host environments and 
 Opening a PM conversation supplies the chosen project and mapped PM configuration through shared session operations. A projectless conversation remains available. Context and actual tools follow the directing person's rights; a role label is not an authority grant.
 
 Owner access administration distinguishes initial membership from explicit grants and offers revocation of initial membership. A saved project with an unavailable resource remains configured and shows its readiness reasons. No destructive project lifecycle action is required.
+
+## Independent configuration and confirmed resources
+
+When explicitly selected and advertised, `project_detail` loads the editor independently of `project_resources`. Summary preparation, failure and refresh never block editing, saving or configuration readback. Summary updates never replace dirty fields. A changed definition while dirty shows an explicit conflict; optimistic revision checking remains authoritative. Save readback verifies revision and content hash through configuration only.
+
+Prepared figures retain their basis, measured zero and unknown coverage. Published version, validation time, processing progress and underlying observation age are separate; publication time is not observation time. Unchanged figures may still have pending or failed processing. Figures retain their last confirmed value during refresh failure with a visible status in reserved space. Breakdowns use continuous virtual windows with count, search and start/end jumps; no per-page scroller. See [data list](../controls/data-list.md).
+
+Capability-off or unavailable old servers retain the established composite path. Client activation and rollback are specified in [prepared project resources](../../designs/fleet-analytics.md#prepared-project-resources). Rendered-value qualification remains separate from delivery.
