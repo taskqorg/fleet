@@ -873,7 +873,31 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 	return resultErr
 }
 
-// Preserve candidate order and interleave build/metadata work at the existing pass boundary.
+// Keep first-unconsumed priority and per-project order within the selected pass.
+// Other projects between eligible leaves must not fragment every cohort.
+func resourceCandidateCohorts(ids []string, hints map[string]string) [][]string {
+	consumed := make([]bool, len(ids))
+	var cohorts [][]string
+	for first, id := range ids {
+		if consumed[first] {
+			continue
+		}
+		consumed[first] = true
+		cohort := []string{id}
+		if project := hints[id]; project != "" {
+			for next := first + 1; next < len(ids) && len(cohort) < resourceCohortSize; next++ {
+				if !consumed[next] && hints[ids[next]] == project {
+					consumed[next] = true
+					cohort = append(cohort, ids[next])
+				}
+			}
+		}
+		cohorts = append(cohorts, cohort)
+	}
+	return cohorts
+}
+
+// Consume only this selected set before the existing build/metadata pass boundary.
 func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error {
 	hints, err := resourceBatchHints(ctx, a, ids)
 	var finalErr error
@@ -881,28 +905,20 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 		hints = nil
 		finalErr = err
 	}
-	for first := 0; first < len(ids); {
-		end := first + 1
-		project := hints[ids[first]]
-		if project != "" {
-			for end < len(ids) && end-first < resourceCohortSize && hints[ids[end]] == project {
-				end++
-			}
-		}
-		if end-first == 1 {
-			if e := resourceReplace(ctx, a, ids[first]); e != nil {
+	for _, cohort := range resourceCandidateCohorts(ids, hints) {
+		if len(cohort) == 1 {
+			if e := resourceReplace(ctx, a, cohort[0]); e != nil {
 				finalErr = e
 			}
-		} else if e := resourceReplaceBatch(ctx, a, ids[first:end]); e != nil {
+		} else if e := resourceReplaceBatch(ctx, a, cohort); e != nil {
 			// A failed/uncertain cohort left no acknowledged subset. Durable UUID claims make
 			// replay safe even if COMMIT succeeded but its response was lost.
-			for _, id := range ids[first:end] {
+			for _, id := range cohort {
 				if e := resourceReplaceAttempt(ctx, a, id, true); e != nil {
 					finalErr = e
 				}
 			}
 		}
-		first = end
 	}
 	return finalErr
 }
