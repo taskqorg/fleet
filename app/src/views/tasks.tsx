@@ -50,7 +50,13 @@ export function Tasks({ id }: { id?: string }) {
   const leave = useCallback(() => { setSelectOn(false); setConfirmCancel(null); setBulkError(null); set({ sel: undefined }); }, [set]);
   const [menu, setMenu] = useState<{ t: TaskRow; at: { x: number; y: number } } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
-  const pinned = rows.filter(r => pins.has(r.id)), rest = rows.filter(r => !pins.has(r.id));
+  // Pinned tasks stay in the list whatever the filter, search or grouping (OR-12): they are read by id, unfiltered,
+  // and live through task changes; the filtered page supplies the rest.
+  const pinnedDoc = useDoc<TaskRow[]>(pins.ids.length ? 'task-pins:' + pins.ids.join(',') : null,
+    () => op('list_membership', { ids: pins.ids, lists: [{ name: 'tasks', filter: {}, sort: view.sort ?? DEFAULT_TASK_SORT }] }).then(r => r.lists[0].rows as unknown as TaskRow[]),
+    c => c.kind === 'task' && pins.has(c.id));
+  const byId = new Map((pinnedDoc.data ?? []).map(r => [r.id, r]));
+  const pinned = pins.ids.map(id => byId.get(id) ?? rows.find(r => r.id === id)).filter((r): r is TaskRow => !!r), rest = rows.filter(r => !pins.has(r.id));
   const groupOf = (r: TaskRow) => String(r.sortKey[0]);
   const items: Item[] = [];
   // Pinned rows come first, as a group of their own (OR-12); each shows its pin before the state (RowPin).
@@ -120,7 +126,7 @@ export function Tasks({ id }: { id?: string }) {
         {bulkError && <ErrorBanner text={bulkError} />}
         {list.error && !rows.length ? <ErrorBanner text={`Tasks did not load: ${list.error}`} onRetry={list.reload} />
           : list.shownKey === null ? <Skeleton rows={8} />
-          : !rows.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />)
+          : !rows.length && !pinned.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />)
           : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.t.id} rowHeight={ROW} follow="top" label="Tasks" onEnd={list.more}
             columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.t.id === id ? 'sel' : ''}${sel.includes(i.t.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
             onRowMenu={(i, at) => { if (i.kind === 'task') setMenu({ t: i.t, at }); }}

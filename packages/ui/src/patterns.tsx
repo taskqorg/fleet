@@ -51,7 +51,8 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   // ponytail: counts and grouping computed client-side over loaded rows; server aggregates when lists are paged.
   const counts = useMemo(() => { const c: Partial<Record<StateOf<'task'>, number>> = {}; for (const s of Object.keys(states.task) as StateOf<'task'>[]) c[s] = 0; for (const t of byChips) c[t.state]!++; return c; }, [byChips]);
   const shown = view.states.length ? byChips.filter(t => view.states.includes(t.state)) : byChips;
-  const pinned = shown.filter(t => t.pinned), unpinned = shown.filter(t => !t.pinned);
+  // Pinned tasks stay whatever the filter or search (OR-12); the filter narrows the rest.
+  const pinned = items.filter(t => t.pinned), unpinned = shown.filter(t => !t.pinned);
 
   const rows: Row[] = useMemo(() => {
     // Pinned rows come first as a group of their own (OR-12); each shows its pin before the state (RowPin).
