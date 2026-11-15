@@ -103,7 +103,9 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     const focused = await url();
     rule(N, new URL(origin + focused).searchParams.get('sel') === new URL(origin + beforeFocus).searchParams.get('sel'), 'focus changed sel');
     // OR-37: hovering a row moves nothing in it (no hover-only affordances over or beside the row facts).
-    const facts = async () => page.evaluate(() => [...document.querySelectorAll('.vl-row .row-facts')].slice(0, 3).map(e => { const r = e.getBoundingClientRect(); return `${r.left},${r.width}`; }).join('|'));
+    // Facts are right-aligned and their text changes with time (now, 1m), so the left edge moves by itself: compare the
+    // right edge of the same rows (a hover affordance over or beside the facts would move or cover it).
+    const facts = async () => page.evaluate(() => [...document.querySelectorAll('.vl-row')].filter(r => r.querySelector('.row-facts')).slice(0, 3).map(r => `${r.getAttribute('data-key')}:${Math.round(r.querySelector('.row-facts')!.getBoundingClientRect().right)}`).join('|'));
     const factsBefore = await facts(); await page.hover('.vl-row:has(.row-facts) .tt'); await page.waitForTimeout(100);
     rule(N, factsBefore === await facts(), 'hovering a row moved its facts');
     // Selection mode: a shift click selects a row and shows the checkbox column; the checkbox is the view URL's sel.
