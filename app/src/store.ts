@@ -213,9 +213,8 @@ export function useList(kind: Kind, urlView: View) {
  * Readers of one doc name share its reads; a doc name identifies its read, so they pass equivalent fetches (the Focus
  * control and Projects both read `projects`). Every request for a read in one task (one feed batch reaching all readers,
  * mounts in one render) becomes one request. Reads are never held back by a running one, and an answer is shown when it
- * started after the one on screen, so a stalled or slow request neither blocks nor overwrites newer data, and a later
- * read's failure stays visible over an older answer. Clearing memory
- * discards running reads and pending restores.
+ * started after the one on screen, so a stalled or slow request neither blocks nor overwrites newer data; a later read's
+ * failure stays visible over an older answer. Clearing memory discards running reads and pending restores.
  */
 type DocReader = { fetch: () => Promise<unknown> };
 type DocFlight = { readers: Set<DocReader>; started: number; shown: number; failed: number; scheduled: boolean; cleared: number };
@@ -262,17 +261,19 @@ function discardDocReads() { for (const f of flights.values()) { f.shown = f.fai
 export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches: (c: Change) => boolean, refreshMs?: number) {
   const fetchRef = useRef(fetch); fetchRef.current = fetch;
   const touchRef = useRef(touches); touchRef.current = touches;
+  const reloadRef = useRef<() => void>(() => {});
   const s = name ? docSignal(name) : null;
   const gen = generation.value;
   useEffect(() => {
     if (!name) return;
     const release = holdDoc(name, () => fetchRef.current());
+    reloadRef.current = () => readDoc(name);
     const off = subscribe({ resync: () => readDoc(name), changes: cs => { if (cs.some(c => touchRef.current(c))) readDoc(name); } });
     const timer = refreshMs ? setInterval(() => readDoc(name), refreshMs) : 0;
-    return () => { release(); off(); clearInterval(timer); };
+    return () => { reloadRef.current = () => {}; release(); off(); clearInterval(timer); };
   }, [name, refreshMs, gen]);
   const v = s?.value ?? null;
-  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => { if (name) readDoc(name); } };
+  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => reloadRef.current() };
 }
 
 /** For tests: the stored list under key and a record. */
