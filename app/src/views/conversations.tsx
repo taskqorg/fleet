@@ -41,7 +41,7 @@ export function Conversations({ id }: { id?: string }) {
     view: 'conversations', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS, groupLabel,
     pinDoc: 'session-pins', pinRead: v => ({ key: [!!v.archived], filter: { archived: !!v.archived } }),
     pinTouches: (c, has) => (c.kind === 'session' && has(c.id)) || (!!c.sessionId && has(c.sessionId)),
-    saveExtra: v => ({ archived: v.archived }), pickExtra: (sv, cur) => ({ archived: sv.archived, ...(!!sv.archived !== !!cur.archived ? { sel: undefined } : {}) }),
+    saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),
     dropDone: true, listId: v => !!v.archived,
   });
   const { view, set, chosen, off, states, confirm } = page;
@@ -64,7 +64,7 @@ export function Conversations({ id }: { id?: string }) {
     {newConversation&&<NewConversation onDone={sessionId=>{setNewConversation(false);set({focus:sessionId});}}/>}
     <ListPagePanel page={page} noun="Conversations" placeholder="Search conversations" family="session" groups={GROUPS} sorts={SORTS} focused={id}
       tools={<Button label="Archived" icon="archive" iconOnly kind="quiet" pressed={archived} onClick={toggleArchived} />}
-      actions={[
+      actions={() => [
         archived ? { label: 'Unarchive', icon: 'archive-restore', onClick: () => unarchive(chosen), disabledReason: off }
           : { label: 'Archive', icon: 'archive', danger: true, onClick: () => page.setConfirm(chosen.filter(canArchive)), disabledReason: off ?? (chosen.some(canArchive) ? undefined : 'None can be archived') },
       ]}
@@ -83,7 +83,6 @@ export function Conversations({ id }: { id?: string }) {
   </>;
   return <ListDetail list={pane} detail={id ? <Conversation key={id} id={id} onClose={() => set({ focus: undefined })} /> : undefined} detailKey={id} />;
 }
-
 
 /** Row facts of a conversation (OR-37): time since the last activity, open questions, executions, agent. */
 function SessionFacts({ s, now }: { s: SessionRow; now: number }) {

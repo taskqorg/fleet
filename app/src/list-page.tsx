@@ -5,7 +5,7 @@ import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import {
   ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, VirtualList, ContextMenu, SelectBar, SelectToggle, RowPin, RowCheck, copyText, actions,
-  EntityCode, ErrorBanner, Skeleton, type IconName,
+  EntityCode, ErrorBanner, Skeleton, type IconName, type Family, type StateOf,
 } from '../../packages/ui/src/index.ts';
 import tokens from '../../packages/ui/tokens.json';
 import { op, online } from './api.ts';
@@ -48,11 +48,12 @@ export type ListPageOptions = {
   saveGroup?: string;
   /** Further view keys a personal view saves. */
   saveExtra?: (v: View) => Partial<View>;
-  /** Further view keys a personal view restores, given the current view. */
-  pickExtra?: (saved: View, current: View) => Partial<View>;
+  /** Further view keys a personal view restores. */
+  pickExtra?: (saved: View) => Partial<View>;
   /** Rows a bulk action finished leave the selection. */
   dropDone?: boolean;
-  /** A change of this value is a switch to another list: it ends selection mode and a pending confirmation. */
+  /** A change of this value is a switch to another list: it ends selection mode and a pending confirmation; a saved view
+   * that switches lists also drops the checked rows. */
   listId?: (v: View) => unknown;
 };
 
@@ -75,7 +76,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const [confirm, setConfirm] = useState<R[] | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const leave = useCallback(() => { setSelectOn(false); setConfirm(null); setBulkError(null); set({ sel: undefined }); }, [set]);
+  const leave = () => { setSelectOn(false); setConfirm(null); setBulkError(null); set({ sel: undefined }); };
   const [menu, setMenu] = useState<{ r: R; at: { x: number; y: number } } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   // A switch to another list by any path ends selection mode and a pending confirmation.
@@ -140,7 +141,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   // A system preset sets the states only; a personal view restores everything it saved.
   const pick = (n: string) => {
     const p = views.list.find(x => x.name === n)!, sv = savedView(p.view);
-    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: sv.project ?? [], q: sv.q, ...o.pickExtra?.(sv, view), preset: n });
+    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: sv.project ?? [], q: sv.q, ...o.pickExtra?.(sv), preset: n, ...(o.listId && o.listId(sv) !== o.listId(view) ? { sel: undefined } : {}) });
   };
   const save = (n: string) => views.save({ name: n, view: { view: o.view, state: view.state, group: view.group ?? o.saveGroup, sort: view.sort, project: view.project, q: view.q, ...o.saveExtra?.(view) } });
   const shown = states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
@@ -152,21 +153,20 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
 }
 export type ListPage<R extends ListRow> = ReturnType<typeof useListPage<R>>;
 
-type Options = readonly (readonly [string, string])[];
 
 /** The list section: filter bar (search, saved views, state counters, tools, selection bar), banners, the rows and the row menu. */
-export function ListPagePanel<R extends ListRow>(p: {
+export function ListPagePanel<R extends ListRow, F extends Family, G extends string>(p: {
   page: ListPage<R>;
   /** Plural noun of the error banners: "Tasks did not load", "Pinned tasks did not load". */
   noun: string;
   placeholder: string;
-  family: 'task' | 'session';
-  groups: Options;
-  sorts: Options;
+  family: F;
+  groups: readonly (readonly [G, string])[];
+  sorts: readonly (readonly [string, string])[];
   /** Tools after Select, Group and Sort. */
   tools?: ComponentChildren;
-  /** Selection bar actions after Pin and Unpin. */
-  actions: BarActions;
+  /** Selection bar actions after Pin and Unpin; built only in selection mode. */
+  actions: () => BarActions;
   /** Row menu items after Open, Pin, Select, Copy code and Copy link. */
   menu: (r: R) => MenuItems;
   /** A pending confirmation, shown above the banners. */
@@ -196,18 +196,18 @@ export function ListPagePanel<R extends ListRow>(p: {
     <ListFrame pending={list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={list.total}
       extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
         onSave={g.save} onUnpin={views.remove} />}
-      counters={<StateCounters family={p.family} label={`${p.noun} by state`} pending={list.pending} counts={list.counts as any} active={g.states as any} onAll={() => set({ state: [], preset: undefined })}
-        onToggle={(s: string) => set({ state: g.states.includes(s) ? g.states.filter(x => x !== s) : [...g.states, s], preset: undefined })} />}
+      counters={<StateCounters family={p.family} label={`${p.noun} by state`} pending={list.pending} counts={list.counts as any} active={g.states as StateOf<F>[]} onAll={() => set({ state: [], preset: undefined })}
+        onToggle={(x: StateOf<F>) => { const s = String(x); set({ state: g.states.includes(s) ? g.states.filter(y => y !== s) : [...g.states, s], preset: undefined }); }} />}
       tools={<>
         <SelectToggle on={selecting} onClick={() => selecting ? g.leave() : g.setSelectOn(true)} />
-        <GroupControl value={g.group} options={p.groups} onChange={x => set({ group: x, preset: undefined })} />
+        <GroupControl value={g.group as G} options={p.groups} onChange={x => set({ group: x, preset: undefined })} />
         <SortControl value={g.sort} fields={p.sorts} onChange={v => set({ sort: v, preset: undefined })} />
         {p.tools}
       </>}
       selection={selecting && <SelectBar count={chosen.length} total={displayed.length} onAll={() => { g.setSelectOn(true); g.setConfirm(null); set({ sel: displayed.map(r => r.id) }); }} onNone={() => { g.setSelectOn(true); g.setConfirm(null); set({ sel: [] }); }} onExit={g.leave} actions={[
         { label: 'Pin', icon: 'pin', onClick: () => g.pinAll(true), disabledReason: chosen.length && chosen.every(r => pins.has(r.id)) ? 'All pinned' : undefined },
         { label: 'Unpin', icon: 'pin-off', onClick: () => g.pinAll(false), disabledReason: chosen.some(r => pins.has(r.id)) ? undefined : 'None pinned' },
-        ...p.actions,
+        ...p.actions(),
       ]} />} />}>
       {p.confirm}
       {g.bulkError && <ErrorBanner text={g.bulkError} />}
