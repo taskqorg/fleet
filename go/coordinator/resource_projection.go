@@ -1021,7 +1021,7 @@ func repairTotalsOwnership(ctx context.Context, a *App, id string) error {
 	}
 }
 
-// resourceApply applies or subtracts one contribution's support on its own (tests and single replacements).
+// resourceApply applies or subtracts one contribution's support on its own (tests; replacements use resourceDelta).
 func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) error {
 	if !c.Included || c.ProjectId == nil {
 		return nil

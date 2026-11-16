@@ -2319,3 +2319,15 @@ BEGIN
  ON CONFLICT DO NOTHING;
  PERFORM fleet_enqueue_wake('fleet_resource_work','');
 END $$;
+
+-- migration 64: a replacement transaction writes its net reason-count changes per metric row at once. Merging keeps a
+-- reason while its count is positive, drops it at zero and rejects a negative count as a corrupt ledger.
+CREATE FUNCTION resource_reasons_merge(old jsonb, delta jsonb) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE merged jsonb;
+BEGIN
+ SELECT coalesce(jsonb_object_agg(k,v),'{}'::jsonb) INTO merged FROM (
+  SELECT k,sum(v) v FROM (SELECT key k,value::bigint v FROM jsonb_each_text(old) UNION ALL SELECT key,value::bigint FROM jsonb_each_text(delta)) x
+  GROUP BY k HAVING sum(v)<>0) y;
+ IF EXISTS(SELECT 1 FROM jsonb_each_text(merged) WHERE value::bigint<0) THEN RAISE EXCEPTION 'negative resource reason count'; END IF;
+ RETURN merged;
+END $$;
