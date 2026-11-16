@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"os"
 	"reflect"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -788,7 +790,8 @@ func TestResourceMetricBatchPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := snapshot()
-	sql(`UPDATE execution_totals SET tokens_input=20 WHERE execution_id='batch-leaf'`)
+	// The fault sits on the output metric row, so the change must move output (a net-zero key is not rewritten).
+	sql(`UPDATE execution_totals SET tokens_input=20,tokens_output=8 WHERE execution_id='batch-leaf'`)
 	work := scalar(`SELECT string_agg(work_id::text,',' ORDER BY work_id) FROM resource_work WHERE execution_id='batch-leaf'`)
 	sql(`INSERT INTO resource_fixture_failure VALUES('batch-error')`)
 	if err = resourceReplace(ctx, a, "batch-leaf"); err == nil || !strings.Contains(err.Error(), "fixture metric batch failure") {
@@ -847,7 +850,7 @@ func TestResourceMetricBatchPostgres(t *testing.T) {
 	if got := scalar(`SELECT sum_value::text FROM resource_metric WHERE project_id='BATCH' AND metric='input'`); got != "20" {
 		t.Fatal("retry input", got)
 	}
-	if got := scalar(`SELECT sum_value::text FROM resource_metric WHERE project_id='BATCH' AND metric='output'`); got != "7" {
+	if got := scalar(`SELECT sum_value::text FROM resource_metric WHERE project_id='BATCH' AND metric='output'`); got != "8" {
 		t.Fatal("retry output", got)
 	}
 	if got := scalar(`SELECT count(*)::text FROM resource_work WHERE execution_id='batch-leaf'`); got != "0" {
@@ -985,6 +988,299 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	equal(`SELECT tool_count||':'||cost_count||':'||price_count FROM resource_project_summary WHERE project_id='SUPPORT_NOOP'`, "0:0:0")
 	equal(`SELECT count(*)::text FROM resource_fixture_item_updates`, "6")
 	equal(`SELECT ((SELECT count(*) FROM resource_metric WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_extreme WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_tool WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_cost WHERE project_id='SUPPORT_NOOP')+(SELECT count(*) FROM resource_price_ref WHERE project_id='SUPPORT_NOOP'))::text`, "0")
+
+	// Requirement: a cohort's single set of support writes leaves exactly the rows that applying its leaves one by one
+	// leaves, including subtractions, reasons, extremes, tools, costs and price references; risk: netting drops a
+	// reference, a reason count or an item count, or keeps an empty row.
+	rng := rand.New(rand.NewSource(7))
+	pick := func(xs ...string) string { return xs[rng.Intn(len(xs))] }
+	gen := func(project string, i int) contract.ResourceContributionV1 {
+		metrics := map[string]contract.ResourceMetricV1{}
+		for _, m := range []string{"input", "output", "cacheRead", "wallMs", "credits", "turns", "peakMemoryBytes"} {
+			switch rng.Intn(4) {
+			case 0:
+				metrics[m] = contract.ResourceMetricV1{Value: ptr(fmt.Sprintf("%d.%02d", rng.Intn(50), rng.Intn(100))), Basis: contract.ResourceBasis(pick("measured", "estimated")), Expected: rng.Intn(2) == 0}
+			case 1:
+				metrics[m] = contract.ResourceMetricV1{Basis: contract.ResourceBasisUnavailable, Expected: true, Reason: ptr(pick("missing_a", "missing_b"))}
+			case 2:
+				metrics[m] = contract.ResourceMetricV1{Value: ptr(fmt.Sprint(rng.Intn(9))), Basis: contract.ResourceBasisMeasured}
+			}
+		}
+		var tools []contract.ResourceToolV1
+		for _, n := range []string{"read", "write", "exec"} {
+			if rng.Intn(2) == 0 {
+				tools = append(tools, contract.ResourceToolV1{Connection: pick("", "mcp"), Name: n, Calls: int64(rng.Intn(5)), Errors: int64(rng.Intn(2))})
+			}
+		}
+		var costs []contract.ResourceCostV1
+		if rng.Intn(2) == 0 {
+			var amount *string
+			if rng.Intn(5) > 0 {
+				amount = ptr(fmt.Sprintf("0.%03d", rng.Intn(1000)))
+			}
+			costs = append(costs, contract.ResourceCostV1{Currency: ptr(pick("USD", "EUR")), Basis: contract.ResourceBasis(pick("measured", "estimated")), Amount: amount, UnpricedCount: int64(rng.Intn(2)),
+				PriceRefs: []contract.ResourcePriceRefV1{{PriceId: pick("p1", "p2"), ObservedAt: int64(1704067200000 + rng.Intn(3))}}})
+		}
+		return contract.ResourceContributionV1{SchemaVersion: 1, ExecutionId: fmt.Sprintf("eq-%d", i), ProjectId: ptr(project), Included: true, HistoryIncomplete: rng.Intn(3) == 0,
+			OtherCalls: int64(rng.Intn(3)), OtherErrors: int64(rng.Intn(2)), StartedMs: ptr(int64(1000 + rng.Intn(5))), EndedMs: ptr(int64(2000 + rng.Intn(5))), Metrics: metrics, Tools: tools, Costs: costs}
+	}
+	type step struct {
+		c    contract.ResourceContributionV1
+		sign int64
+	}
+	var steps []step
+	var live []int
+	for i := 0; i < 120; i++ {
+		switch {
+		case len(live) > 0 && rng.Intn(4) == 0: // a deleted leaf subtracts its contribution
+			j := rng.Intn(len(live))
+			steps = append(steps, step{steps[live[j]].c, -1})
+			live = append(live[:j], live[j+1:]...)
+		case len(live) > 0 && rng.Intn(3) == 0: // a replacement subtracts the old contribution and adds the new one
+			j := rng.Intn(len(live))
+			old := steps[live[j]].c
+			next := gen("EQ", i)
+			next.ExecutionId = old.ExecutionId
+			steps = append(steps, step{old, -1}, step{next, 1})
+			live[j] = len(steps) - 1
+		default:
+			steps = append(steps, step{gen("EQ", i), 1})
+			live = append(live, len(steps)-1)
+		}
+	}
+	// An only reference re-valued from unknown to known: NULL must not outlive the row it belonged to.
+	unknown := contract.ResourceContributionV1{SchemaVersion: 1, ExecutionId: "eq-revalued", ProjectId: ptr("EQ"), Included: true, Metrics: map[string]contract.ResourceMetricV1{},
+		Costs: []contract.ResourceCostV1{{Currency: ptr("JPY"), Basis: contract.ResourceBasisMeasured, UnpricedCount: 1}}}
+	known := unknown
+	known.Costs = []contract.ResourceCostV1{{Currency: ptr("JPY"), Basis: contract.ResourceBasisMeasured, Amount: ptr("5")}}
+	steps = append(steps, step{unknown, 1}, step{unknown, -1}, step{known, 1})
+	// A stored NULL value whose last reference is then replaced in a later transaction (row recreated as 3).
+	krw := func(id string, amount *string) contract.ResourceContributionV1 {
+		c := unknown
+		c.ExecutionId = id
+		c.Costs = []contract.ResourceCostV1{{Currency: ptr("KRW"), Basis: contract.ResourceBasisMeasured, Amount: amount}}
+		return c
+	}
+	steps = append(steps, step{krw("eq-krw-u", nil), 1}, step{krw("eq-krw-k", ptr("5")), 1}, step{krw("eq-krw-u", nil), -1})
+	// Phase 2, a later transaction that only adds known amounts (the netted path) onto stored rows, including a NULL
+	// cost value left by phase 1.
+	phase1 := len(steps)
+	for i := 0; i < 40; i++ {
+		c := gen("EQ", 1000+i)
+		for j := range c.Costs {
+			if c.Costs[j].Amount == nil {
+				c.Costs[j].Amount = ptr("0.5")
+			}
+		}
+		steps = append(steps, step{c, 1})
+	}
+	steps = append(steps, step{krw("eq-krw-k", ptr("5")), -1}, step{krw("eq-krw-k", ptr("3")), 1})
+	for _, mode := range []string{"EQ_LEAF", "EQ_COHORT"} {
+		for _, part := range [][]step{steps[:phase1], steps[phase1:]} {
+			if err = runTxLocks(ctx, a, nil, true, []string{"project:" + mode}, func(q *Request) error {
+				if e := resourceEnsureProject(q, mode); e != nil {
+					return e
+				}
+				d := newResourceDelta(mode)
+				for _, st := range part {
+					c := st.c
+					c.ProjectId = ptr(mode)
+					if mode == "EQ_LEAF" {
+						if e := resourceApply(q, c, st.sign); e != nil {
+							return e
+						}
+					} else if e := d.add(c, st.sign); e != nil {
+						return e
+					}
+				}
+				if mode == "EQ_COHORT" {
+					return d.flush(q)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(mode, err)
+			}
+		}
+	}
+	// Independent reference: the removed per-contribution statements, simulated in order. A support row is
+	// created by its first add, changed in place while referenced and deleted when its last reference goes.
+	type simMetric struct {
+		present, expected int64
+		sum               string
+		reasons           map[string]int64
+	}
+	type simCost struct {
+		value        *string
+		scale        int
+		usages, refs int64
+	}
+	var sum = func(a, b string) string {
+		v, e := decimalArithmetic(a, b, false)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return v
+	}
+	summary := map[string]int64{}
+	metrics, extremes, tools, costs, prices := map[[2]string]*simMetric{}, map[[2]string]int64{}, map[[2]string][3]int64{}, map[[2]string]*simCost{}, map[string]int64{}
+	for _, st := range steps {
+		c, sign := st.c, st.sign
+		summary["e"] += sign
+		if c.HistoryIncomplete {
+			summary["h"] += sign
+		}
+		summary["oc"] += sign * c.OtherCalls
+		summary["oe"] += sign * c.OtherErrors
+		for name, m := range c.Metrics {
+			reason := deref(m.Reason)
+			if m.Value == nil && !m.Expected && reason == "" {
+				continue
+			}
+			key := [2]string{name, string(m.Basis)}
+			x := metrics[key]
+			if x == nil {
+				x = &simMetric{sum: "0", reasons: map[string]int64{}}
+				metrics[key] = x
+			}
+			if m.Value != nil {
+				x.present += sign
+				x.sum = sum(x.sum, resourceSigned(*m.Value, sign))
+			}
+			if m.Expected {
+				x.expected += sign
+			}
+			if reason != "" {
+				if x.reasons[reason] += sign; x.reasons[reason] == 0 {
+					delete(x.reasons, reason)
+				}
+			}
+			if x.present == 0 && x.expected == 0 && len(x.reasons) == 0 {
+				delete(metrics, key)
+			}
+		}
+		for _, v := range []struct {
+			m string
+			v *int64
+		}{{"start", c.StartedMs}, {"end", c.EndedMs}, {"peakMemory", resourceInt(json.Number(deref(c.Metrics["peakMemoryBytes"].Value)))}} {
+			if v.v != nil {
+				key := [2]string{v.m, fmt.Sprint(*v.v)}
+				if extremes[key] += sign; extremes[key] == 0 {
+					delete(extremes, key)
+				}
+			}
+		}
+		for _, tl := range c.Tools {
+			key := [2]string{tl.Connection, tl.Name}
+			x := tools[key]
+			x = [3]int64{x[0] + sign*tl.Calls, x[1] + sign*tl.Errors, x[2] + sign}
+			if x[2] == 0 {
+				delete(tools, key)
+			} else {
+				tools[key] = x
+			}
+		}
+		for _, cost := range c.Costs {
+			key := [2]string{deref(cost.Currency), string(cost.Basis)}
+			x := costs[key]
+			if x == nil {
+				costs[key] = &simCost{value: cost.Amount, usages: cost.UnpricedCount, refs: 1}
+				if cost.Amount != nil {
+					costs[key].scale = resourceScale(*cost.Amount)
+				}
+			} else if sign < 0 && x.refs == 1 {
+				delete(costs, key)
+			} else {
+				if x.value != nil && cost.Amount != nil {
+					v := sum(*x.value, resourceSigned(*cost.Amount, sign))
+					x.value, x.scale = &v, max(x.scale, resourceScale(*cost.Amount))
+				} else {
+					x.value = nil
+				}
+				x.usages += sign * cost.UnpricedCount
+				x.refs += sign
+			}
+			for _, r := range cost.PriceRefs {
+				key := fmt.Sprintf("%s|%s|%s|%d", deref(cost.Currency), cost.Basis, r.PriceId, r.ObservedAt)
+				if prices[key] += sign; prices[key] == 0 {
+					delete(prices, key)
+				}
+			}
+		}
+	}
+	summary["t"], summary["c"], summary["p"] = int64(len(tools)), int64(len(costs)), int64(len(prices))
+	var mRows, eRows, tRows, cRows, pRows []any
+	for _, k := range pairKeys(metrics) {
+		x := metrics[k]
+		mRows = append(mRows, []any{k[0], k[1], x.present, x.expected, x.sum, x.reasons})
+	}
+	for _, k := range pairKeys(extremes) {
+		mult := extremes[k]
+		v, _ := strconv.ParseInt(k[1], 10, 64)
+		eRows = append(eRows, []any{k[0], v, mult})
+	}
+	sort.Slice(eRows, func(i, j int) bool {
+		a, b := eRows[i].([]any), eRows[j].([]any)
+		return a[0].(string) < b[0].(string) || a[0] == b[0] && a[1].(int64) < b[1].(int64)
+	})
+	for _, k := range pairKeys(tools) {
+		x := tools[k]
+		tRows = append(tRows, []any{k[0], k[1], x[0], x[1], x[2]})
+	}
+	for _, k := range pairKeys(costs) {
+		x := costs[k]
+		var v *string
+		if x.value != nil {
+			padded := resourceAtScale(*x.value, x.scale)
+			v = &padded
+		}
+		cRows = append(cRows, []any{k[0], k[1], v, x.usages, x.refs})
+	}
+	pk := make([]string, 0, len(prices))
+	for k := range prices {
+		pk = append(pk, k)
+	}
+	sort.Strings(pk)
+	for _, k := range pk {
+		f := strings.Split(k, "|")
+		at, _ := strconv.ParseInt(f[3], 10, 64)
+		pRows = append(pRows, []any{f[0], f[1], f[2], at, prices[k]})
+	}
+	normal := func(v any) any {
+		b, e := json.Marshal(v)
+		if e != nil {
+			t.Fatal(e)
+		}
+		var out any
+		if e = json.Unmarshal(b, &out); e != nil {
+			t.Fatal(e)
+		}
+		return out
+	}
+	want := normal(map[string]any{"summary": summary, "metric": mRows, "extreme": eRows, "tool": tRows, "cost": cRows, "price": pRows})
+	support := func(p string) any {
+		var out any
+		if e := json.Unmarshal([]byte(scalar(`SELECT jsonb_build_object(
+ 'summary',(SELECT jsonb_build_object('e',executions,'h',history_incomplete,'oc',other_calls,'oe',other_errors,'t',tool_count,'c',cost_count,'p',price_count) FROM resource_project_summary WHERE project_id='`+p+`'),
+ 'metric',(SELECT jsonb_agg(jsonb_build_array(metric::text,basis,present_count,expected_count,trim_scale(sum_value)::text,reasons) ORDER BY metric::text COLLATE "C",basis COLLATE "C") FROM resource_metric WHERE project_id='`+p+`'),
+ 'extreme',(SELECT jsonb_agg(jsonb_build_array(metric,value,multiplicity) ORDER BY metric COLLATE "C",value) FROM resource_extreme WHERE project_id='`+p+`'),
+ 'tool',(SELECT jsonb_agg(jsonb_build_array(connection,name,calls,errors,references_count) ORDER BY connection COLLATE "C",name COLLATE "C") FROM resource_tool WHERE project_id='`+p+`'),
+ 'cost',(SELECT jsonb_agg(jsonb_build_array(currency,basis,value::text,usages,references_count) ORDER BY currency COLLATE "C",basis COLLATE "C") FROM resource_cost WHERE project_id='`+p+`'),
+ 'price',(SELECT jsonb_agg(jsonb_build_array(currency,basis,price_id,observed_at,references_count) ORDER BY currency COLLATE "C",basis COLLATE "C",price_id COLLATE "C",observed_at) FROM resource_price_ref WHERE project_id='`+p+`'))::text`)), &out); e != nil {
+			t.Fatal(e)
+		}
+		return out
+	}
+	for _, mode := range []string{"EQ_LEAF", "EQ_COHORT"} {
+		if got := support(mode); !reflect.DeepEqual(got, want) {
+			gb, _ := json.Marshal(got)
+			wb, _ := json.Marshal(want)
+			t.Fatalf("%s support differs from sequential per-contribution application:\ngot  %s\nwant %s", mode, gb, wb)
+		}
+	}
+	if len(tRows) == 0 || len(mRows) == 0 || len(cRows) == 0 || costs[[2]string{"JPY", "measured"}] == nil || *costs[[2]string{"JPY", "measured"}].value != "5" || costs[[2]string{"KRW", "measured"}] == nil || costs[[2]string{"KRW", "measured"}].value == nil {
+		t.Fatal("equivalence fixture is degenerate")
+	}
+
 }
 
 // Requirement: one bounded project cohort commits exact independent leaves atomically;
@@ -1584,4 +1880,16 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 		t.Fatal("empty hints used database or invented rows", empty, e)
 	}
 	t.Logf("selected100/16 scopes equivalent; actual work-scope rows examined %.0f of %d, retained empty-page statistics; NULL/missing/moving/multi/duplicate exclusion, authoritative rejection, fallback and FORCE RLS passed", scopeRows, queueScopes)
+}
+
+// resourceApply applies or subtracts one contribution's support on its own (replacements use resourceDelta).
+func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) error {
+	if !c.Included || c.ProjectId == nil {
+		return nil
+	}
+	d := newResourceDelta(*c.ProjectId)
+	if err := d.add(c, sign); err != nil {
+		return err
+	}
+	return d.flush(q)
 }
