@@ -112,6 +112,10 @@ export class EventSourceRecorder {
   if(complete&&(!this.documents.size||[...this.documents.values()].some(d=>!d.frozen||d.acknowledged!==d.observed||!d.sources.length)))this.errors.push('native EventSource document evidence unfinished or missing');
   if(complete&&[...this.documents.values()].some(d=>d.nativeErrors))this.errors.push('native EventSource error events observed');
   if(complete&&this.errors.length)throw Error('native EventSource capture incomplete: '+this.errors.join('; '));
-  if(complete){try{for(const name of ['eventsource-events','notifications-received'])renameSync(resolve(this.out,name+'.jsonl.partial'),resolve(this.out,name+'.jsonl'));this.complete=true;}catch(e){this.errors.push(String(e));throw e;}}
+  if(complete){
+   const published:string[]=[];
+   try{for(const name of ['eventsource-events','notifications-received']){renameSync(resolve(this.out,name+'.jsonl.partial'),resolve(this.out,name+'.jsonl'));published.push(name);}this.complete=true;}
+   catch(e){this.errors.push(String(e));for(const name of published.reverse())try{renameSync(resolve(this.out,name+'.jsonl'),resolve(this.out,name+'.jsonl.partial'));}catch(rollback){this.errors.push('partial evidence rollback: '+String(rollback));}throw e;}
+  }
  }
 }

@@ -521,6 +521,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     for (let i = 0; i < spec.readers; i++) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
       const page = await context.newPage(), project = config.projects[i % config.projects.length], id = 'reader-' + i;
+      readers.push({ id, project, page });
       const session = await context.newCDPSession(page);
       await page.addInitScript(installEventSourceCapture,{projects:config.projects});
       if (spec.network === '80ms-10Mbps') { await session.send('Network.emulateNetworkConditions', { offline: false, latency: 80, downloadThroughput: 10_000_000 / 8, uploadThroughput: 10_000_000 / 8 }); }
@@ -564,7 +565,6 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       const metricClock=async()=>{const r=await session.send('Performance.getMetrics');return r.metrics.find(x=>x.name==='Timestamp')?.value??null;};
       const before=await metricClock(),browserClock=await page.evaluate(()=>({monotonic:performance.now(),wall:Date.now(),timeOrigin:performance.timeOrigin})),after=await metricClock();
       (evidence.clockBridges??=[]).push({reader:id,cdpBeforeSeconds:before,browser:browserClock,cdpAfterSeconds:after,note:'raw same-browser clock bracket; no estimated cross-machine offset subtracted'});
-      readers.push({ id, project, page });
     }
     notifications.start(readers);
     const { id: run } = await request('start', { spec, readers: readers.map(({ id, project }) => ({ id, project })), browser: evidence });
