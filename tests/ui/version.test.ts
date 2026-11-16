@@ -29,7 +29,8 @@ test('failed refresh retains a timestamped snapshot with unknown status', () => 
   const data = snapshot(); (data.hosts as any[]).push({ id: 'fixture', version: null, lastSeenAt: null, autoUpdate: 'on', update: { state: 'failed', error: 'disk full' }, behind: null });
   v.versions.value = data; v.versionObservedAt.value = Date.now(); v.versionError.value = 'unreachable';
   const coordinator = v.versionInfo().rows.find((r: any) => r.key === 'coordinator');
-  assert.match(coordinator.state, /unknown/); assert.match(coordinator.note, /observed .*unreachable/);
+  assert.match(coordinator.state, /unknown/); assert.match(coordinator.note, /unreachable/);
+  assert.ok(coordinator.times.some((t: any) => t.label === 'observed' && typeof t.at === 'number'), 'the observed moment is a time, shown compact with the exact time on hover (OR-2)');
   assert.equal(coordinator.tone, 'attention');
   assert.equal(v.versionInfo().rows.find((r: any) => r.key === 'host:fixture').tone, 'danger', 'stale snapshot erased a known failure alert');
 });

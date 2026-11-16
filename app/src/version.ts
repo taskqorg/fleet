@@ -4,7 +4,7 @@
 // named in the page this tab loaded against the ones in a fresh copy of the page. It does not depend on service worker
 // events, so it gives the same answer on every check, and after an update the reloaded tab matches the site.
 import { signal } from '@preact/signals';
-import { age, type Tone, type VersionInfo, type VersionRow } from '../../packages/ui/src/index.ts';
+import { type Tone, type VersionInfo, type VersionRow } from '../../packages/ui/src/index.ts';
 import { op, type Ops } from './api.ts';
 import { accessGeneration, isAccessCurrent, onAccessInvalidated } from './access.ts';
 
@@ -117,17 +117,29 @@ export function versionInfo(now = Date.now()): VersionInfo {
   const v = versions.value, rows: VersionRow[] = [];
   rows.push({ key: 'tab', part: 'This tab', icon: 'panels-top-left', version: tabVersion.value, state: updateChecked.value ? (updateReady.value ? 'update ready' : 'current') : 'unknown', tone: updateChecked.value ? (updateReady.value ? 'running' : 'success') : 'attention' });
   if (v) {
+    // Server moments shift by the clock offset seen when the reply arrived, so ages count on this tab's clock.
+    const skew = (versionObservedAt.value ?? now) - v.serverNow, serverNow = now - skew, local = (t: number) => t + skew;
     rows.push({ key: 'ui', part: 'Site app', icon: 'house', version: v.ui.version, state: v.ui.kind === 'ui' ? 'UI release' : 'bundled', tone: 'neutral' });
     const started = Date.parse(v.coordinator.started);
     rows.push({ key: 'coordinator', part: 'Coordinator', icon: 'network', version: v.coordinator.version, state: 'running', tone: 'success',
-      note: [Number.isFinite(started) ? `since ${age(started, now).text}` : '', v.coordinator.offered && v.coordinator.offered !== v.coordinator.version ? `offers ${v.coordinator.offered}` : ''].filter(Boolean).join(', ') || undefined });
-    if (v.gateway) rows.push({ key: 'gateway', part: 'Gateway', icon: 'shield', version: v.gateway.version ?? null, state: v.gateway.observedAt === null || v.serverNow + Math.max(0, now - (versionObservedAt.value ?? now)) - v.gateway.observedAt > 60_000 ? 'unknown (probe pending)' : v.gateway.state, note: v.gateway.observedAt ? `observed ${new Date(v.gateway.observedAt).toISOString()}` : 'No probe result yet', tone: v.gateway.observedAt === null || v.serverNow + Math.max(0, now - (versionObservedAt.value ?? now)) - v.gateway.observedAt > 60_000 ? 'attention' : v.gateway.state === 'ok' ? 'success' : v.gateway.state === 'draining' || v.gateway.state === 'pending' ? 'attention' : 'danger' });
-    for (const h of v.hosts) rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...hostState(h, v.serverNow + Math.max(0, now - (versionObservedAt.value ?? now)), v.staleAfterMs) });
+      times: Number.isFinite(started) ? [{ label: 'started', at: local(started) }] : undefined,
+      note: v.coordinator.offered && v.coordinator.offered !== v.coordinator.version ? `offers ${v.coordinator.offered}` : undefined });
+    if (v.gateway) {
+      const g = v.gateway, stale = g.observedAt === null || serverNow - g.observedAt > 60_000;
+      rows.push({ key: 'gateway', part: 'Gateway', icon: 'shield', version: g.version ?? null, state: stale ? 'unknown (probe pending)' : g.state,
+        times: g.observedAt ? [{ label: 'checked', at: local(g.observedAt) }] : undefined, note: g.observedAt ? undefined : 'No probe result yet',
+        tone: stale ? 'attention' : g.state === 'ok' ? 'success' : g.state === 'draining' || g.state === 'pending' ? 'attention' : 'danger' });
+    }
+    for (const h of v.hosts) {
+      const s = hostState(h, serverNow, v.staleAfterMs);
+      rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...s, times: s.seen ? [{ label: 'last seen', at: local(s.seen) }] : undefined });
+    }
   }
   if (v && (versionError.value || versionObservedAt.value === null || now - versionObservedAt.value > 300_000)) {
     for (const row of rows) if (row.key !== 'tab') {
       row.state = `unknown (last: ${row.state})`; if (row.tone !== 'danger') row.tone = 'attention';
-      row.note = [row.note, versionObservedAt.value === null ? 'Never observed' : `observed ${new Date(versionObservedAt.value).toISOString()}`, versionError.value].filter(Boolean).join('; ');
+      if (versionObservedAt.value !== null) row.times = [...row.times ?? [], { label: 'observed', at: versionObservedAt.value }];
+      row.note = [row.note, versionObservedAt.value === null ? 'Never observed' : '', versionError.value].filter(Boolean).join('; ') || undefined;
     }
   }
   if (updateError.value) rows.unshift({ key: 'update', part: 'App update', icon: 'rotate-cw', version: null, state: 'pending / failed', tone: 'attention', note: updateError.value });
@@ -135,13 +147,13 @@ export function versionInfo(now = Date.now()): VersionInfo {
   return { current: v?.coordinator.version ?? null, tone: RANK[worst] > 0 ? worst : 'neutral', summary: n ? `${n} ${n === 1 ? 'part needs' : 'parts need'} a look` : undefined, updateReady: updateChecked.value && updateReady.value, updating: updating.value, onUpdate: applyUpdate, rows, onOpen: () => { void loadVersions(); void checkUpdate(); } };
 }
 
-export function hostState(h: Versions['hosts'][number], now: number, staleMs: number): { state: string; tone: Tone; note?: string } {
-  const offline = h.lastSeenAt === null || now - h.lastSeenAt > staleMs;
+export function hostState(h: Versions['hosts'][number], now: number, staleMs: number): { state: string; tone: Tone; note?: string; seen?: number } {
+  const offline = h.lastSeenAt === null || now - h.lastSeenAt > staleMs, seen = offline && h.lastSeenAt !== null ? h.lastSeenAt : undefined;
   const u = (h.update ?? null) as { state?: string; version?: string; error?: string } | null;
   // A failed update stops mattering once the host runs that release or a newer one another way.
   const stale = olderThan(h.version, u?.version) === false;
-  if (u && !stale && ['error', 'failed', 'refused'].includes(u.state ?? '')) return { state: `${offline ? 'offline; ' : ''}update ${u.state}`, tone: 'danger', note: [u.error, offline ? (h.lastSeenAt === null ? 'never seen' : `last seen ${new Date(h.lastSeenAt).toISOString()}`) : ''].filter(Boolean).join('; ') };
-  if (offline) return { state: 'offline', tone: 'neutral', note: h.lastSeenAt === null ? 'never seen' : `last seen ${new Date(h.lastSeenAt).toISOString()}` };
+  if (u && !stale && ['error', 'failed', 'refused'].includes(u.state ?? '')) return { state: `${offline ? 'offline; ' : ''}update ${u.state}`, tone: 'danger', seen, note: [u.error, offline && h.lastSeenAt === null ? 'never seen' : ''].filter(Boolean).join('; ') || undefined };
+  if (offline) return { state: 'offline', tone: 'neutral', seen, note: h.lastSeenAt === null ? 'never seen' : undefined };
   if (u?.state === 'pending') return { state: 'update pending', tone: 'running', note: u.version };
   const auto = typeof h.autoUpdate === 'string' ? h.autoUpdate : 'on';
   const held = auto === 'off' || (auto !== 'on' && Date.parse(auto) > now);

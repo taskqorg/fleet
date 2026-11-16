@@ -147,12 +147,18 @@ export function CostFigures({ cost, showUnavailable = false, empty }: { cost: re
   );
 }
 
+/** A past moment in compact form (OR-2): "4m", "2h", "12 Nov"; the exact time on hover, the long form as its name. */
+export function Ago({ t, now }: { t: number; now?: number }) {
+  const a = age(t, now ?? Date.now());
+  return <time class="when" dateTime={new Date(t).toISOString()} data-tip={exact(t)} aria-label={a.long}>{a.text}</time>;
+}
+
 /** Age chip with visual salience (OR-2, OR-18): turns to the given tone past the caller's threshold. */
 export function AgeChip({ t, now, alertAfter, tone = 'danger', alertLabel = 'needs a look' }: { t: number; now: number; alertAfter?: number; tone?: Tone; alertLabel?: string }) {
   const a = age(t, now);
   const alert = alertAfter !== undefined && now - t >= alertAfter * 1000;
   // D14/M3: the alert is never colour only: icon + meaning in the name and tooltip.
-  return <span data-ui="number" class={`chip-age${alert ? ` t-${tone} alert` : ''}`} aria-label={alert ? `${a.long}, ${alertLabel}` : a.long} data-tip={alert ? alertLabel : undefined}>
+  return <span data-ui="number" class={`chip-age${alert ? ` t-${tone} alert` : ''}`} aria-label={alert ? `${a.long}, ${alertLabel}` : a.long} data-tip={alert ? `${alertLabel}, ${exact(t)}` : exact(t)}>
     {alert && <Icon name="triangle-alert" />}{a.text}</span>;
 }
 
@@ -518,7 +524,7 @@ export function TextRow({ who, markdown, mark, by, at, now, onCopyFail }: { who:
   return <div class={`th-row th-text ${who}`} data-ui="thread-row">
     <div class="th-main">
       <div class="th-who">{who === 'operator' ? <span class="who" data-tip={by ?? undefined}>{name}</span> : <AgentMark {...(mark ?? {})} />}
-        {at ? <span class="when" data-tip={exact(at)} aria-label={age(at, t).long}>{age(at, t).text}</span> : null}</div>
+        {at ? <Ago t={at} now={t} /> : null}</div>
       <Markdown text={markdown} onCopyFail={onCopyFail} /></div>
     <span class="th-svc"><Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, markdown)).catch(e => onCopyFail?.(e))} /></span>
   </div>;

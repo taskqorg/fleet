@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Icon, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -223,7 +223,8 @@ function Divider({ name }: { name: 'rail' | 'ctl' }) {
 }
 
 /** One part of Fleet in the version overview: the tab, the site's UI, the coordinator, the gateway, each host. */
-export type VersionRow = { key: string; part: string; icon: IconName; version: string | null; state: string; tone: Tone; note?: string };
+export type VersionRow = { key: string; part: string; icon: IconName; version: string | null; state: string; tone: Tone; note?: string;
+  /** Moments shown in compact form with the exact time on hover (OR-2), e.g. { label: 'last seen', at }. */ times?: { label: string; at: number }[] };
 /**
  * The installed version beside the person (nav-rail.md, Version): the Fleet release, toned when a part needs a look (OR-18).
  * A click shows the overview of every part. When the site serves a newer app than this tab, Update reloads into it at once.
@@ -276,7 +277,7 @@ function UserBlock({ name, onLogout, version }: { name: string; onLogout: () => 
       <table class="ver-table"><tbody>{v.rows.map(r => <tr key={r.key}>
         <th scope="row"><Icon name={r.icon} /><span>{r.part}</span></th>
         <td class="mono">{r.version ?? '—'}</td>
-        <td><span class={`ver-state t-${r.tone}`}>{r.state}</span>{r.note && <span class="muted"> {r.note}</span>}</td>
+        <td><span class={`ver-state t-${r.tone}`}>{r.state}</span>{r.times?.map(x => <span class="muted" key={x.label}> {x.label} <Ago t={x.at} /></span>)}{r.note && <span class="muted"> {r.note}</span>}</td>
       </tr>)}</tbody></table>
     </div>}
   </div>;
