@@ -286,3 +286,21 @@ test('scoped submissions retain original body/hash through edits and refuse stal
     await ensureAccessGeneration();assert.throws(()=>adapter.write('late'),AccessChanged);
   } finally { (globalThis as any).localStorage=storage; }
 });
+
+// Requirement: a focus check belongs to its access generation.
+// Risk: an old 401 signs out a newly validated person after a resync.
+test('generation-bound quiet identity check cannot sign out a newer generation', async () => {
+  const { accessSignal } = await import('../../app/src/access.ts');
+  const { signedOut } = await import('../../app/src/api.ts');
+  const originalFetch = globalThis.fetch;
+  let release!: (value: Response) => void;
+  globalThis.fetch = async () => new Promise<Response>(resolve => { release = resolve; });
+  try {
+    const check = accessControlOp('me', {}, { signal: accessSignal(accessGeneration()) });
+    invalidateAccess('resync during focus'); await ensureAccessGeneration();
+    release(new Response('', { status: 401 }));
+    await assert.rejects(check, AccessChanged);
+    assert.equal(signedOut.value, false, 'old identity response signed out the current person');
+    assert.equal(access.value.state, 'open');
+  } finally { globalThis.fetch = originalFetch; }
+});

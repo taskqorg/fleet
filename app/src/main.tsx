@@ -4,7 +4,7 @@ import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
 import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
-import { access, accessGeneration, ensureAccessGeneration, invalidateAccess, registerAccessValidator } from './access.ts';
+import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset, noteView, saveView, sectionPath } from './prefs.ts';
@@ -111,19 +111,20 @@ function App() {
       if (checking) { again = true; return; }
       checking = true;
       try {
-        const m = await accessControlOp('me', {}, { signal: AbortSignal.timeout(10000) });
+        const m = await accessControlOp('me', {}, { signal: AbortSignal.any([accessSignal(s.generation), AbortSignal.timeout(10000)]) });
         const cur = access.value;
         if (cur.generation !== s.generation || cur.state !== 'open') return;
         // The same person: nothing to redo; preferences and data stay, and the change stream brings what changed.
         if (m.email !== s.identity.identityKey || (m.grantsVersion ?? '') !== s.identity.grantsVersion) validate();
       } catch (e) {
+        if (access.value.generation !== s.generation || access.value.state !== 'open') return;
         // Offline keeps what is shown, and signed out has its own path; any other failure (a timeout, a 5xx, an
         // incomplete reply) leaves the person unverified, so the gate validates as at start.
         if (!(e instanceof OpError && (e.status === 0 && e.message === 'offline' || e.status === 401 || e.status === 403))) validate();
       } finally { checking = false; if (again) { again = false; void recheck(); } }
     };
     // Preferences changed on another device or by an agent (person_settings_set writes a setting-change for this person).
-    const offPrefs = subscribe({ resync: () => {}, changes: cs => { if (cs.some(c => c.kind === 'setting-change')) void loadPrefs(); } });
+    const offPrefs = subscribe({ resync: () => { void loadPrefs(); }, changes: cs => { if (cs.some(c => c.kind === 'setting-change')) void loadPrefs(); } });
     validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
     return () => { unregister(); stopFeed(); offPrefs(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };

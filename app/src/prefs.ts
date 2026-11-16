@@ -17,24 +17,40 @@ export const prefs = signal<Settings>(empty);
 export const prefsRead = signal(false);
 
 // A cleared store (signed out, another person, new grants) forgets the previous person's preferences too.
-onClear.add(() => { seq++; epoch++; pending = 0; prefs.value = empty; prefsRead.value = false; loadPrefs(); });
+onClear.add(() => { seq++; epoch++; readSeq++; refreshAfterSave = false; pending = 0; prefs.value = empty; prefsRead.value = false; loadPrefs(); });
 
 // ponytail: last write wins; seq drops a stale reply. Each save sends only what changed: one item (viewPut, viewDelete,
 // rowPin, focusPresetPut, focusPresetDelete), one width, or a value the person set whole (focus, section pins in their
 // order). The server applies it to the stored copy under the person lock, so saves from other devices and agents survive.
 // Saves from this tab still run in order. A failed save shows the server copy again (or the state before it, when unreachable).
 // epoch: a store clear drops saves still queued for the previous person; pending: a read never overwrites a save in flight.
+let readSeq = 0, refreshAfterSave = false;
 let seq = 0, epoch = 0, pending = 0, chain: Promise<unknown> = Promise.resolve();
 // Any answer of the current person's read opens the gate (one held back by a save keeps the shown copy, the server's plus
 // that save); an answer for a person cleared meanwhile (epoch) does not.
-export function loadPrefs() { const n = seq, e = epoch; const done = () => { if (e === epoch) prefsRead.value = true; }; return op('person_settings_get', {}).then(s => { if (seq === n && !pending) prefs.value = s; done(); }, done); }
+export function loadPrefs(): Promise<void> {
+  // A setting-change during a local save must be read after the last queued patch settles.
+  if (pending) { refreshAfterSave = true; prefsRead.value = true; return Promise.resolve(); }
+  const n = seq, e = epoch, read = ++readSeq;
+  const done = () => { if (e === epoch) prefsRead.value = true; };
+  return op('person_settings_get', {}).then(s => {
+    if (e !== epoch || read !== readSeq) return;
+    if (seq === n && !pending) prefs.value = s;
+    else if (pending) refreshAfterSave = true;
+    else void loadPrefs(); // a save finished while this older read was in flight
+    done();
+  }, done);
+}
+function refreshAfterWrites() {
+  if (!pending && refreshAfterSave) { refreshAfterSave = false; void loadPrefs(); }
+}
 /** Show the change at once and send its patch. */
 export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Patch) {
   const n = ++seq, e = epoch, before = prefs.value;
   prefs.value = { ...before, ...change(before) };
   pending++;
   chain = chain.then(() => e !== epoch ? null : op('person_settings_set', patch))
-    .then(s => { if (e !== epoch) return; pending--; if (s && seq === n) prefs.value = s; }, () => { if (e !== epoch) return; pending--; if (seq === n) { prefs.value = before; loadPrefs(); } });
+    .then(s => { if (e !== epoch) return; pending--; if (s && seq === n) prefs.value = s; refreshAfterWrites(); }, () => { if (e !== epoch) return; pending--; if (seq === n) { prefs.value = before; loadPrefs(); } refreshAfterWrites(); });
 }
 
 export function usePins(list: string) {
