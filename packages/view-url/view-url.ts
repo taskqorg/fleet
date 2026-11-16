@@ -106,7 +106,7 @@ export function viewProblem(v: unknown): string | null {
   for (const [k, x] of Object.entries(o)) {
     if (k === 'view' || x === undefined) continue;
     if (k === 'focus') { if (typeof x !== 'string' || !x) return 'focus must be a non-empty string'; continue; }
-    if (k === 'extra') { if (!x || typeof x !== 'object' || Object.values(x).some(i => typeof i !== 'string')) return 'extra must map keys to strings'; continue; }
+    if (k === 'extra') { if (!x || typeof x !== 'object' || Object.values(x).some(i => i !== undefined && typeof i !== 'string')) return 'extra must map keys to strings'; continue; }
     if (!Object.hasOwn(table, k)) return `${k} is not a key of the ${name} view`;
     if (k === 'state') { if (!strs(x) || !(x as string[]).every(i => states.includes(i))) return 'state must be a list of: ' + states.join(', '); }
     else if (k === 'group') { if (!(TASK_GROUPS as readonly unknown[]).includes(x)) return 'group must be one of ' + TASK_GROUPS.join(', '); }
@@ -154,7 +154,8 @@ const known = (v: View, keep: (k: Key) => boolean): [string, string][] =>
 
 export function formatView(v: View): string {
   const ps = known(v, () => true), table = TABLE[v.view];
-  for (const [k, x] of Object.entries(v.extra ?? {})) if (!Object.hasOwn(table, k)) ps.push([enc(k), enc(x)]);
+  // An absent value (undefined) is no parameter, never the text "undefined".
+  for (const [k, x] of Object.entries(v.extra ?? {})) if (x !== undefined && !Object.hasOwn(table, k)) ps.push([enc(k), enc(x)]);
   const q = join(ps);
   // A dot segment ('.', '..') would be resolved away by the browser, so its dots are escaped.
   const focus = v.focus === '.' || v.focus === '..' ? v.focus.replace(/\./g, '%2E') : v.focus && enc(v.focus);

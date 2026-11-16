@@ -63,9 +63,12 @@ export function Delivery({ id }: { id?: string }) {
   const items = data?.items ?? [];
   const incomplete = !!data?.error;
   const stages = (view.state ?? []) as Stage[];
-  const group = ex.group ?? 'stage', sort = ex.sort ?? 'since';
+  // Links saved before the fix may carry the text "undefined": unknown values fall back to the defaults.
+  const group = GROUPS.some(g => g[0] === ex.group) ? ex.group! : 'stage', sort = SORTS.some(f => f[0] === ex.sort?.replace(/^-/, '')) ? ex.sort! : 'since';
+  // Default values leave the link (undefined drops the key).
+  const setExtra = (patch: Record<string, string | undefined>) => { const next: Record<string, string> = {}; for (const [k, x] of Object.entries({ ...ex, ...patch })) if (x !== undefined) next[k] = x; set({ extra: next }); };
   // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows.
-  const at = ex.at ? Number(ex.at) : null;
+  const at = ex.at && Number.isFinite(Number(ex.at)) ? Number(ex.at) : null;
   const picked: Item[] | null = at !== null && pace.data ? pace.data.h.prs.filter(x => ms(x.merged) >= at && ms(x.merged) < at + range.bucket).map(fromHistory) : null;
   const source = picked ?? items;
   const shown = source.filter(it => (!stages.length || stages.includes(it.stage)) && matchSearch(query, `${it.title} #${it.number} ${it.repo}`, { state: it.stage, project: it.projectId }));
@@ -94,12 +97,12 @@ export function Delivery({ id }: { id?: string }) {
       {data?.refreshedAt && <AgeChip t={ms(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}</header>
     <section class="panel">
       <ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search pull requests, state:mq_wait project:fleet" shown={shown.length} total={source.length}
-        chips={picked && at !== null ? [{ field: 'Merged', value: bucketLabel(at, range.bucket) }] : []} onRemove={() => set({ extra: { ...ex, at: undefined as any } })}
+        chips={picked && at !== null ? [{ field: 'Merged', value: bucketLabel(at, range.bucket) }] : []} onRemove={() => setExtra({ at: undefined })}
         counters={<StateCounters family="delivery" label="Pull requests by stage" counts={counts} active={stages} onAll={() => set({ state: [] })}
           onToggle={s => set({ state: stages.includes(s) ? stages.filter(x => x !== s) : [...stages, s] })} />}
         tools={<>
-          <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ extra: { ...ex, group: g === 'stage' ? undefined as any : g } })} />
-          <SortControl value={sort} fields={SORTS} onChange={v => set({ extra: { ...ex, sort: v === 'since' ? undefined as any : v } })} />
+          <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => setExtra({ group: g === 'stage' ? undefined : g })} />
+          <SortControl value={sort} fields={SORTS} onChange={v => setExtra({ sort: v === 'since' ? undefined : v })} />
         </>} />}>
         {status.error && !data ? <ErrorBanner text={`Delivery did not load: ${status.error}`} />
           : !data ? <Skeleton rows={6} />
@@ -116,7 +119,7 @@ export function Delivery({ id }: { id?: string }) {
   </>;
   return <ListDetail list={list} detailKey={id}
     idle={<Overview now={now} items={items} incomplete={incomplete} pace={pace.data ?? null} paceError={pace.error} fleetShown={fleetShown && !pace.none} range={range} at={at} href={it => href({ focus: idOf(it) })}
-      onRange={r => set({ extra: { ...ex, range: r === '7d' ? undefined as any : r, at: undefined as any } })} onAt={a => set({ extra: { ...ex, at: a === null ? undefined as any : String(a) } })} onOpen={go} />}
+      onRange={r => setExtra({ range: r === '7d' ? undefined : r, at: undefined })} onAt={a => setExtra({ at: a === null ? undefined : String(a) })} onOpen={go} />}
     detail={id ? <PrDetail key={id} id={id} item={open} now={now} onClose={() => go()} /> : undefined} />;
 }
 
