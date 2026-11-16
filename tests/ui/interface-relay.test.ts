@@ -34,7 +34,7 @@ if (mode !== 'standby') {
   const up = net.createConnection({host:'127.0.0.1',port:Number(source),allowHalfOpen:true});
   sockets.add(down); sockets.add(up); down.pipe(up); up.pipe(down);
   down.on('error',()=>up.destroy()); up.on('error',()=>down.destroy());
-  down.on('close',()=>{sockets.delete(down);up.destroy();});
+  down.on('close',hadError=>{sockets.delete(down);if(hadError||!down.readableEnded)up.destroy();}); // like the relay: a finished request still drains to the source
   up.on('close',()=>{sockets.delete(up);if(!up.readableEnded)down.destroy();});
  });
  server.listen(Number(port),'127.0.0.1',()=>{
