@@ -148,7 +148,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
   /** The project focus control (OR-34); it gets the collapsed state. */ focus?: (mini: boolean) => ComponentChildren;
   /** The person's pinned sections (person settings); without them the shell keeps its own demo pins. */ pins?: string[]; onPins?: (ids: string[]) => void;
-  /** The signed-in person, shown at the bottom of the navigation with a Logout menu. */ user?: { name: string; onLogout: () => void };
+  /** The signed-in person, shown at the bottom of the navigation with a Logout menu, and the installed version. */ user?: { name: string; onLogout: () => void; version?: VersionInfo };
   /** Column widths in px by key (`nav`, `control`) and the collapsed navigation: person settings (OR-41, OR-42). onWidth(key, 0) resets.
    *  Without them the shell keeps its own (book and mockups). */
   privateReady?: boolean; privateGeneration?: number;
@@ -221,33 +221,63 @@ function Divider({ name }: { name: 'rail' | 'ctl' }) {
     onKeyUp={e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; const el = e.currentTarget as HTMLElement; save(key, clamp(el, width(el))); }} />;
 }
 
-/** The signed-in person at the bottom of the navigation: avatar and name (avatar only when collapsed); a click opens Logout. */
-function UserBlock({ name, onLogout }: { name: string; onLogout: () => void }) {
+/** One part of Fleet in the version overview: the tab, the site's UI, the coordinator, the gateway, each host. */
+export type VersionRow = { key: string; part: string; icon: IconName; version: string | null; state: string; tone: Tone; note?: string };
+/**
+ * The installed version beside the person (nav-rail.md, Version): the Fleet release, toned when a part needs a look (OR-18).
+ * A click shows the overview of every part. When the site serves a newer app than this tab, Update reloads into it at once.
+ */
+export type VersionInfo = { current: string | null; tone: Tone;
+  /** Says in words what the tone shows (WCAG 1.4.1), e.g. "1 part needs a look"; absent when nothing does. */ summary?: string; updateReady: boolean; onUpdate: () => void; updating?: boolean; rows: VersionRow[]; onOpen?: () => void };
+
+/** A floating layer fixed above its opener (OR-14 informational, OR-16): Esc, a click outside, a rail scroll or a resize closes it. */
+function useFloating(ref: { current: HTMLElement | null }, focusBack: string) {
   const [open, setOpen] = useState<{ left: number; bottom: number } | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    ref.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+    ref.current?.querySelector<HTMLElement>('.float [role=menuitem], .float button')?.focus();
+    // Focus goes back to the first opener that is shown (the version is hidden on the collapsed rail; the avatar is not).
+    const back = () => [...(ref.current?.querySelectorAll<HTMLElement>(focusBack) ?? [])].find(e => e.offsetParent !== null)?.focus();
     const close = (e: Event) => {
-      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; ref.current?.querySelector<HTMLElement>('.rail-user-b')?.focus(); }
+      if (e instanceof KeyboardEvent) { if (e.key !== 'Escape') return; back(); }
       else if (ref.current?.contains(e.target as Node)) return;
       setOpen(null);
     };
-    // The menu is fixed where it opened, so a rail scroll or a resize closes it.
-    // Only the rail's own scroll moves the button; lists scrolling elsewhere (a live feed keeping its anchor) leave it open.
+    // Only the rail's own scroll moves the opener; lists scrolling elsewhere (a live feed keeping its anchor) leave it open.
     const gone = () => setOpen(null), rail = ref.current?.closest('.rail');
     document.addEventListener('pointerdown', close); document.addEventListener('keydown', close); rail?.addEventListener('scroll', gone); addEventListener('resize', gone);
     return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', close); rail?.removeEventListener('scroll', gone); removeEventListener('resize', gone); };
   }, [!!open]);
-  // Fixed, so the scrolling rail never clips it (the collapsed rail is narrower than the menu).
-  const toggle = (e: Event) => { e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setOpen(open ? null : { left: r.left, bottom: innerHeight - r.top + 4 }); };
+  // Fixed, so the scrolling rail never clips it (the collapsed rail is narrower than the layer).
+  const toggle = (e: Event) => { e.preventDefault(); const r = ((e.currentTarget as HTMLElement).closest('.rail-user') ?? e.currentTarget as HTMLElement).getBoundingClientRect(); setOpen(open ? null : { left: r.left, bottom: innerHeight - r.top + 4 }); };
+  return { open, setOpen, toggle };
+}
+
+/** The signed-in person at the bottom of the navigation: avatar and name (avatar only when collapsed); a click opens Logout. The version follows. */
+function UserBlock({ name, onLogout, version }: { name: string; onLogout: () => void; version?: VersionInfo }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const menu = useFloating(ref, '.rail-user-b'), panel = useFloating(ref, '.rail-ver, .rail-user-b');
+  const v = version, attention = !!v && (v.updateReady || v.tone !== 'neutral');
   return <div class="rail-user" ref={ref}>
-    <button type="button" class="rail-user-b" aria-label={name} aria-haspopup="menu" aria-expanded={!!open} onClick={toggle} onContextMenu={toggle}>
-      <span class="avatar" aria-hidden="true" data-tip={name} data-tip-narrow>{name.slice(0, 1).toUpperCase()}</span><span class="nm">{name}</span>
+    <button type="button" class="rail-user-b" aria-label={name} aria-haspopup="menu" aria-expanded={!!menu.open} onClick={e => { panel.setOpen(null); menu.toggle(e); }} onContextMenu={e => { panel.setOpen(null); menu.toggle(e); }}>
+      <span class={`avatar${attention ? ` dot t-${v!.updateReady ? 'running' : v!.tone}` : ''}`} aria-hidden="true" data-tip={name} data-tip-narrow>{name.slice(0, 1).toUpperCase()}</span><span class="nm">{name}</span>
     </button>
-    {open && <span class="menu rail-menu up" role="menu" aria-label={name} style={{ left: open.left + 'px', bottom: open.bottom + 'px' }}>
-      <button type="button" role="menuitem" onClick={() => { setOpen(null); onLogout(); }}><Icon name="log-out" />Logout</button>
+    {v && <button type="button" class={`rail-ver t-${v.tone}`} aria-expanded={!!panel.open} aria-label={`Version ${v.current ?? 'unknown'}${v.summary ? `, ${v.summary}` : ''}: show every part`} data-tip={v.summary ? `Versions: ${v.summary}` : 'Versions'}
+      onClick={e => { menu.setOpen(null); if (!panel.open) v.onOpen?.(); panel.toggle(e); }}>{v.current ?? '…'}</button>}
+    {v?.updateReady && <span class="rail-upd"><Button label={v.updating ? 'Updating' : 'Update to the new version'} icon="rotate-cw" iconOnly kind="primary" busy={v.updating} onClick={v.onUpdate} /></span>}
+    {menu.open && <span class="menu rail-menu up float" role="menu" aria-label={name} style={{ left: menu.open.left + 'px', bottom: menu.open.bottom + 'px' }}>
+      {v?.updateReady && <button type="button" role="menuitem" onClick={() => { menu.setOpen(null); v.onUpdate(); }}><Icon name="rotate-cw" />Update</button>}
+      {v && <button type="button" role="menuitem" class="menu-ver" onClick={() => { const at = menu.open!; menu.setOpen(null); v.onOpen?.(); panel.setOpen(at); }}><Icon name="info" />Versions</button>}
+      <button type="button" role="menuitem" onClick={() => { menu.setOpen(null); onLogout(); }}><Icon name="log-out" />Logout</button>
     </span>}
+    {v && panel.open && <div class="ver-panel float" data-ui="version-panel" role="group" aria-label="Versions" style={{ left: panel.open.left + 'px', bottom: panel.open.bottom + 'px', '--ver-bottom': panel.open.bottom + 'px' }}>
+      {v.updateReady && <div class="ver-update"><span>A newer app is on the site.</span><Button label={v.updating ? 'Updating' : 'Update'} icon="rotate-cw" kind="primary" busy={v.updating} onClick={v.onUpdate} /></div>}
+      <table class="ver-table"><tbody>{v.rows.map(r => <tr key={r.key}>
+        <th scope="row"><Icon name={r.icon} /><span>{r.part}</span></th>
+        <td class="mono">{r.version ?? '—'}</td>
+        <td><span class={`ver-state t-${r.tone}`}>{r.state}</span>{r.note && <span class="muted"> {r.note}</span>}</td>
+      </tr>)}</tbody></table>
+    </div>}
   </div>;
 }
 

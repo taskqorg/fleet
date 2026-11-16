@@ -667,15 +667,8 @@ func appRoutes() {
 	dir, _ := filepath.Abs(envOr("FLEET_APP_DIR", "dist/app"))
 	// An incompatible independently installed UI never survives a backend rollback.
 	appDir := func() string {
-		if root := os.Getenv("FLEET_UI_ROOT"); root != "" {
-			var m struct{ Kind, BackendVersion string }
-			current, resolveErr := filepath.EvalSymlinks(filepath.Join(root, "current"))
-			if resolveErr != nil {
-				return dir
-			}
-			if b, err := os.ReadFile(filepath.Join(current, "release.json")); err == nil && json.Unmarshal(b, &m) == nil && m.Kind == "ui" && m.BackendVersion == version {
-				return current
-			}
+		if cur, _, ok := selectedUIRelease(); ok {
+			return cur
 		}
 		return dir
 	}

@@ -256,7 +256,21 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .rail.mini .nm,.rail.mini .nav-pin,.rail.mini .rail-menu:not(.up),.rail.mini .brand,.rail.mini .waiting{display:none}
 .rail.mini .rail-h{visibility:hidden;width:0;padding:var(--space-1) 0;overflow:hidden;white-space:nowrap}
 .rail.mini .rail-head{padding-left:var(--space-2)}
-.rail-user{position:relative;display:flex}
+.rail-user{position:relative;display:flex;align-items:center;gap:var(--space-1)}
+/* Version beside the person (nav-rail.md, Version) and its overview panel. */
+.rail-ver{flex:none;height:var(--size-control);padding:0 var(--space-2);border:0;border-radius:var(--radius-sm);background:none;color:var(--fg-muted);font-family:var(--font-mono);font-size:var(--font-size-xs);font-variant-numeric:tabular-nums;cursor:pointer}
+.rail-ver:hover,.rail-ver[aria-expanded=true]{background:var(--hover);color:var(--fg)}
+.rail-ver:not(.t-neutral){color:var(--tone-fg)}
+/* Collapsed (OR-42: the same row height), the version and Update move into the avatar's menu; the dot on the avatar stays. */
+.rail.mini .rail-ver,.rail.mini .rail-upd{display:none}
+.rail:not(.mini) .menu-ver{display:none}
+.avatar.dot{position:relative}.avatar.dot::after{content:'';position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--tone-fg);box-shadow:0 0 0 2px var(--bg)}
+.ver-panel{max-height:calc(100% - var(--ver-bottom, 0px) - 8px);overflow:auto;position:fixed;z-index:20;min-width:min(24rem,calc(100vw - 16px));max-width:calc(100vw - 16px);padding:var(--space-2);background:var(--float);border:1px solid var(--line);border-radius:var(--radius-md);box-shadow:var(--elevation-popover)}
+.ver-update{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);padding:0 var(--space-2) var(--space-2);margin-bottom:var(--space-1);border-bottom:1px solid var(--line)}
+.ver-table{width:100%;border-collapse:collapse;font-size:var(--font-size-sm)}
+.ver-table th,.ver-table td{padding:var(--space-1) var(--space-2);text-align:left;white-space:nowrap;font-weight:normal}
+.ver-table th{display:flex;align-items:center;gap:var(--space-2);color:var(--fg-muted)}
+.ver-state{color:var(--tone-fg)}
 .rail-foot{margin-top:auto;padding-top:var(--space-3);border-top:1px solid var(--line)}
 .rail-user-b{flex:1;display:flex;align-items:center;gap:var(--space-2);min-width:0;height:var(--size-control);padding:0 var(--space-3);border:0;border-radius:var(--radius-md);background:none;color:var(--fg-muted);cursor:pointer;text-align:left}
 .rail-user-b:hover,.rail-user-b[aria-expanded=true]{background:var(--hover);color:var(--fg)}
@@ -406,6 +420,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .nav-toggle,.divider{display:none}
   .split-list>.page-h:first-child{padding-left:var(--space-4)}
   .rail .nm,.rail .rail-h,.rail .nav-pin,.rail .rail-menu:not(.up),.rail .rail-g:not(.pinned) .nav-i.pinned,.rail .brand,.rail .waiting,.rail-head{display:none}
+  .rail .rail-ver,.rail .rail-upd{display:none}.rail:not(.mini) .menu-ver{display:flex}
   .rail .nav-i a{padding:0 var(--space-2);position:relative}
   .rail .nav-count{position:absolute;top:0;right:0;padding:0 var(--space-1)}
   .shell-main,.shell-main:not(:has(>.split-view)){padding:var(--space-3)}

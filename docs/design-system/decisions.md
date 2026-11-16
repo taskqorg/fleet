@@ -376,3 +376,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Context:** the owner approved the reviewed conditional-pipeline implementation.
 * **Choice:** keep activation separate from execution state in the shared StepList; show pending, not selected and blocked without fabricated execution measurements. Lab opens an authorized trial plan in its existing detail and links retained project assessments. Definition rows expose finite conditions and the result source.
 * **Evidence boundary:** a completed run or passing assessment contract does not imply model-quality acceptance or adoption.
+
+## 2026-11-15: Version beside the person, one update control
+
+* **Question:** where does the person see what Fleet runs, and why did "Update available" come and go and return after an update?
+* **Cause found:** the banner listened for the service worker's `updatefound` event. The browser often runs its update check during navigation, before the page listens, so the event was missed (no banner) or arrived later (banner). Reload did not activate the waiting worker (no `skipWaiting`), so the old worker kept control and the next check could raise the banner again.
+* **Choice (owner):** one control: the version after the person's name, toned by the parts' states, a click shows every part's version and state; when the site serves a newer app, an Update button that updates on the first click. The banner is removed.
+* **How:** `system_versions` (coordinator, served UI, gateway, hosts with update state); the app compares its own hashed assets with the site's current page instead of waiting for worker events; Update tells a waiting worker to `skipWaiting`, then reloads.
