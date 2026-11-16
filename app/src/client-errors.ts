@@ -42,7 +42,8 @@ export function describe(error: unknown): { name: string; message: string; stack
   return { name: 'NonError', message, stack: '' };
 }
 
-const frames = (stack: string) => stack.split('\n').map(l => l.trim()).filter(l => /^at\s|^[^@\s][^@]*@\S+:\d+|^@\S+:\d+/.test(l));
+// The server's clientFrameLine, anchored the same way.
+const frames = (stack: string) => stack.split('\n').map(l => l.trim()).filter(l => /^(at\s.+|[^@\s][^@]*@\S+:\d+(:\d+)?|@\S+:\d+(:\d+)?)$/.test(l));
 /** The top frame as the server's fingerprint takes it: the first script frame, else the first built-in one. */
 export function frameOf(stack: string): string {
   const fs = frames(stack);
@@ -55,8 +56,6 @@ export const frameKey = (stack: string) => { const f = frameOf(stack); return !f
 const MAX_COUNT = 1_000_000;
 /** A repeat-count send carries only the first frames (no message header), about 2 KB; the top frame line is kept whole. */
 const REPEAT_STACK = 2048;
-/** The most distinct errors one tab tracks; past it, a new error whose window passed replaces an idle one, else it is dropped. */
-const MAX_ENTRIES = 500;
 
 export type ReporterOptions = {
   /** unloading: the tab is hidden or unloading (flush), so the send must outlive the page. */
@@ -106,16 +105,14 @@ export function createReporter(o: ReporterOptions) {
         // server reads the same top frame as for the repeats.
         let stack = trimBytes(d.stack, LIMITS.stack);
         if (frameOf(stack) !== frameOf(d.stack)) stack = trimBytes(frames(d.stack).join('\n'), LIMITS.stack);
-        const report = { name, message, stack, source, path: trimBytes(o.path(), LIMITS.path) || '/',
-          version: trimBytes(o.version(), LIMITS.version), userAgent: trimBytes(o.userAgent, LIMITS.userAgent) };
+        const safe = (f: () => string, fallback: string) => { try { return f(); } catch { return fallback; } };
+        const report = { name, message, stack, source, path: trimBytes(safe(o.path, typeof location === 'undefined' ? '/' : location.pathname), LIMITS.path) || '/',
+          version: trimBytes(safe(o.version, ''), LIMITS.version), userAgent: trimBytes(o.userAgent, LIMITS.userAgent) };
         const e = entries.get(key);
         if (!e) {
-          // Past the first-report cap a new error is only counted, and not tracked, so its repeats cannot open groups.
+          // Past the first-report cap a new error is only counted, and not tracked, so its repeats cannot open groups (and the
+          // tab tracks at most maxReports errors).
           if (sent >= max) { dropped++; return; }
-          if (entries.size >= MAX_ENTRIES) {
-            for (const [k, x] of entries) if (x.pending === 0 && t - x.sentAt >= windowMs) { entries.delete(k); break; }
-            if (entries.size >= MAX_ENTRIES) { dropped++; return; }
-          }
           const next: Entry = { sentAt: t, pending: 0, firstAt: t, timer: 0, report };
           entries.set(key, next); emitFirst(next); return;
         }

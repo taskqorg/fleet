@@ -143,10 +143,10 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 	if err != nil {
 		return rep, fail(400, "Invalid at: expected RFC 3339")
 	}
-	person, full := "", q.person != nil && fullAccess(q.person)
-	if q.person != nil {
-		person = q.person.Email
+	if q.person == nil {
+		return rep, fail(403, "Sign in to report browser errors")
 	}
+	person, full := q.person.Email, fullAccess(q.person)
 	top := clientTopFrame(r.Stack)
 	fp := clientFingerprint(r.Name, r.Message, top)
 	// The groups are system data the reporting person may not read: written in the coordinator's own scope.
@@ -158,24 +158,40 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			if err != nil {
 				return rep, err
 			}
+			// A new group: within the person's hourly and total allowances and, for a person without full access, the
+			// members' cap; else counted in the over-limit group. The caps count the groups retention keeps
+			// (clientErrorKept): a quiet group pinned by its problem holds its slot until the problem lets go.
+			kept, cutoff := clientErrorKept("$3"), time.Now().Add(-clientErrorRetention)
+			over := false
 			if !known {
-				// A new group: within the person's hourly and total allowances and, for a person without full access, the
-				// members' global cap; else counted in the over-limit group. The caps count the groups retention keeps
-				// (clientErrorKept): a quiet group pinned by its problem holds its slot until the problem lets go. One lock orders concurrent new groups, so
-				// parallel tabs cannot all pass the same count.
+				// The person's own counts first (first_person index), so a person past their limits never waits on the lock.
+				var hour, mine int
+				if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE first_seen > now()-interval '1 hour'), count(*) FROM client_error c
+					WHERE first_person=$1 AND fingerprint<>$2 AND `+kept, person, clientErrorOverLimit, cutoff).Scan(&hour, &mine); err != nil {
+					return rep, err
+				}
+				over = hour >= clientErrorNewPerHour || mine >= clientErrorPerPerson
+			}
+			if !known && !over {
+				// One lock orders concurrent new groups, so parallel tabs cannot all pass the same count; the same group
+				// opened meanwhile by another tab is then known.
 				if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
 					return rep, err
 				}
-				var hour, mine, members int
-				if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE first_person=$1 AND first_seen > now()-interval '1 hour'),
-					count(*) FILTER (WHERE first_person=$1), count(*) FILTER (WHERE NOT first_full) FROM client_error c WHERE fingerprint<>$2 AND `+clientErrorKept("$3"),
-					person, clientErrorOverLimit, time.Now().Add(-clientErrorRetention)).Scan(&hour, &mine, &members); err != nil {
+				if known, err = has(q, "SELECT 1 FROM client_error WHERE fingerprint=$1", fp); err != nil {
 					return rep, err
 				}
-				if hour >= clientErrorNewPerHour || mine >= clientErrorPerPerson || (!full && members >= clientErrorGroupsKept) {
-					fp, top = clientErrorOverLimit, ""
-					name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly or total new-group limit, or the members' group cap, was reached", "error"
+				if !known && !full {
+					var members int
+					if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM client_error c WHERE NOT first_full AND fingerprint<>$1 AND `+clientErrorKept("$2"), clientErrorOverLimit, cutoff).Scan(&members); err != nil {
+						return rep, err
+					}
+					over = members >= clientErrorGroupsKept
 				}
+			}
+			if over {
+				fp, top = clientErrorOverLimit, ""
+				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly or total new-group limit, or the members' group cap, was reached", "error"
 			}
 			var inserted bool
 			err = q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions,first_person,first_full)
