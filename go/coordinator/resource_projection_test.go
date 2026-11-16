@@ -1054,29 +1054,52 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	known := unknown
 	known.Costs = []contract.ResourceCostV1{{Currency: ptr("JPY"), Basis: contract.ResourceBasisMeasured, Amount: ptr("5")}}
 	steps = append(steps, step{unknown, 1}, step{unknown, -1}, step{known, 1})
-	for _, mode := range []string{"EQ_LEAF", "EQ_COHORT"} {
-		if err = runTxLocks(ctx, a, nil, true, []string{"project:" + mode}, func(q *Request) error {
-			if e := resourceEnsureProject(q, mode); e != nil {
-				return e
+	// A stored NULL value whose last reference is then replaced in a later transaction (row recreated as 3).
+	krw := func(id string, amount *string) contract.ResourceContributionV1 {
+		c := unknown
+		c.ExecutionId = id
+		c.Costs = []contract.ResourceCostV1{{Currency: ptr("KRW"), Basis: contract.ResourceBasisMeasured, Amount: amount}}
+		return c
+	}
+	steps = append(steps, step{krw("eq-krw-u", nil), 1}, step{krw("eq-krw-k", ptr("5")), 1}, step{krw("eq-krw-u", nil), -1})
+	// Phase 2, a later transaction that only adds known amounts (the netted path) onto stored rows, including a NULL
+	// cost value left by phase 1.
+	phase1 := len(steps)
+	for i := 0; i < 40; i++ {
+		c := gen("EQ", 1000+i)
+		for j := range c.Costs {
+			if c.Costs[j].Amount == nil {
+				c.Costs[j].Amount = ptr("0.5")
 			}
-			d := newResourceDelta(mode)
-			for _, st := range steps {
-				c := st.c
-				c.ProjectId = ptr(mode)
-				if mode == "EQ_LEAF" {
-					if e := resourceApply(q, c, st.sign); e != nil {
-						return e
-					}
-				} else if e := d.add(c, st.sign); e != nil {
+		}
+		steps = append(steps, step{c, 1})
+	}
+	steps = append(steps, step{krw("eq-krw-k", ptr("5")), -1}, step{krw("eq-krw-k", ptr("3")), 1})
+	for _, mode := range []string{"EQ_LEAF", "EQ_COHORT"} {
+		for _, part := range [][]step{steps[:phase1], steps[phase1:]} {
+			if err = runTxLocks(ctx, a, nil, true, []string{"project:" + mode}, func(q *Request) error {
+				if e := resourceEnsureProject(q, mode); e != nil {
 					return e
 				}
+				d := newResourceDelta(mode)
+				for _, st := range part {
+					c := st.c
+					c.ProjectId = ptr(mode)
+					if mode == "EQ_LEAF" {
+						if e := resourceApply(q, c, st.sign); e != nil {
+							return e
+						}
+					} else if e := d.add(c, st.sign); e != nil {
+						return e
+					}
+				}
+				if mode == "EQ_COHORT" {
+					return d.flush(q)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(mode, err)
 			}
-			if mode == "EQ_COHORT" {
-				return d.flush(q)
-			}
-			return nil
-		}); err != nil {
-			t.Fatal(mode, err)
 		}
 	}
 	// Independent reference: the removed per-contribution statements, simulated in order. A support row is
@@ -1245,7 +1268,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 			t.Fatalf("%s support differs from sequential per-contribution application:\ngot  %s\nwant %s", mode, gb, wb)
 		}
 	}
-	if len(tRows) == 0 || len(mRows) == 0 || len(cRows) == 0 || costs[[2]string{"JPY", "measured"}] == nil || *costs[[2]string{"JPY", "measured"}].value != "5" {
+	if len(tRows) == 0 || len(mRows) == 0 || len(cRows) == 0 || costs[[2]string{"JPY", "measured"}] == nil || *costs[[2]string{"JPY", "measured"}].value != "5" || costs[[2]string{"KRW", "measured"}] == nil || costs[[2]string{"KRW", "measured"}].value == nil {
 		t.Fatal("equivalence fixture is degenerate")
 	}
 

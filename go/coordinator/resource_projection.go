@@ -884,8 +884,13 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 			}
 			changed = changed || affected[project]
 		}
-		// The whole cohort's support changes are one set of writes (every member is this project's).
-		if e := resourceFlushDeltas(q, []string{project}, deltas); e != nil {
+		// The whole cohort's support changes are one set of writes, for every project any member touched.
+		touched := make([]string, 0, len(deltas))
+		for p := range deltas {
+			touched = append(touched, p)
+		}
+		sort.Strings(touched)
+		if e := resourceFlushDeltas(q, touched, deltas); e != nil {
 			return e
 		}
 		if changed {

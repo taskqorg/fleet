@@ -15,9 +15,10 @@ import (
 
 // resourceDelta accumulates the support changes of every contribution applied to one project in one replacement
 // transaction and writes them in one batch. Counts, references, multiplicities and decimal sums are additive, so the
-// net change of a cohort leaves exactly the rows that applying its leaves one by one leaves. A cost whose amount is
-// unknown is the exception: NULL absorbs every later sum until its row is deleted and recreated, so such a cost key
-// keeps the original per-contribution statements in order. A subtract that would make a count, multiplicity or reason
+// net change of a cohort leaves exactly the rows that applying its leaves one by one leaves. Cost values are the
+// exception: an unknown amount makes the stored value NULL, which absorbs every later sum until the row is deleted at
+// its last reference and recreated. A cost key is therefore netted only when the transaction only adds known amounts to
+// it; a key with any unknown amount or any subtract keeps the per-contribution statements in order. A subtract that would make a count, multiplicity or reason
 // count negative still fails: CHECK constraints and resource_reasons_merge reject it.
 type resourceDelta struct {
 	project                                    string
@@ -46,8 +47,8 @@ type resourceCostOp struct {
 type resourceCostDelta struct {
 	value        string
 	usages, refs int64
-	ops          []resourceCostOp // every change in order; written one by one when any amount is unknown
-	unknown      bool
+	ops          []resourceCostOp // every change in order
+	sequential   bool             // an unknown amount or a subtract: written one by one, see resourceDelta
 }
 type resourcePriceKey struct {
 	currency, basis, price string
@@ -139,9 +140,10 @@ func (d *resourceDelta) add(c contract.ResourceContributionV1, sign int64) error
 			d.costs[key] = x
 		}
 		x.ops = append(x.ops, resourceCostOp{cost.Amount, cost.UnpricedCount, sign})
-		if cost.Amount == nil {
-			x.unknown = true
-		} else {
+		if cost.Amount == nil || sign < 0 {
+			x.sequential = true
+		}
+		if cost.Amount != nil {
 			s, err := decimalArithmetic(x.value, resourceSigned(*cost.Amount, sign), false)
 			if err != nil {
 				return err
@@ -339,7 +341,7 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 	var cUp, cRest costRows
 	for _, k := range pairKeys(d.costs) {
 		x := d.costs[k]
-		if x.unknown {
+		if x.sequential {
 			for _, op := range x.ops {
 				if op.sign > 0 {
 					w.inserted(&costCount, `INSERT INTO resource_cost(project_id,currency,basis,value,usages,references_count) VALUES($1,$2,$3,$4::numeric,$5,1)
