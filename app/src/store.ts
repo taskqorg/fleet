@@ -213,11 +213,12 @@ export function useList(kind: Kind, urlView: View) {
  * Readers of one doc name share its reads; a doc name identifies its read, so they pass equivalent fetches (the Focus
  * control and Projects both read `projects`). Every request for a read in one task (one feed batch reaching all readers,
  * mounts in one render) becomes one request. Reads are never held back by a running one, and an answer is shown when it
- * started after the one on screen, so a stalled or slow request neither blocks nor overwrites newer data. Clearing memory
+ * started after the one on screen, so a stalled or slow request neither blocks nor overwrites newer data, and a later
+ * read's failure stays visible over an older answer. Clearing memory
  * discards running reads and pending restores.
  */
 type DocReader = { fetch: () => Promise<unknown> };
-type DocFlight = { readers: Set<DocReader>; started: number; shown: number; scheduled: boolean; cleared: number };
+type DocFlight = { readers: Set<DocReader>; started: number; shown: number; failed: number; scheduled: boolean; cleared: number };
 const flights = new Map<string, DocFlight>();
 function docSignal(name: string) { let s = docs.get(name); if (!s) docs.set(name, s = signal(null)); return s; }
 function restoreDoc(name: string, f: DocFlight) {
@@ -231,9 +232,11 @@ async function startDoc(name: string, f: DocFlight) {
   try {
     await ensureAccessGeneration(); assertAccessGeneration(generation);
     const d = await reader.fetch();
-    if (newest()) { f.shown = read; s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); }
+    // A later read's failure stays visible over this older answer.
+    if (newest()) { f.shown = read; s.value = { data: d, restored: false, error: f.failed > read ? s.value?.error ?? null : null }; save('doc:' + name, d, currentCursor()); }
   } catch (e: any) {
-    if (!newest() || read !== f.started) return; // a later read is still running or already shown
+    if (!newest() || read < f.failed) return; // newer data or a newer failure is already shown
+    f.failed = read;
     s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e?.message ?? String(e) };
     if (s.value.data === null) restoreDoc(name, f); // offline: show what was stored
   }
@@ -246,13 +249,14 @@ export function readDoc(name: string) {
 }
 /** Mount a reader: shows stored data first, then reads. Returns the release. */
 export function holdDoc(name: string, fetch: () => Promise<unknown>) {
-  let f = flights.get(name); if (!f) flights.set(name, f = { readers: new Set(), started: 0, shown: 0, scheduled: false, cleared: 0 });
+  let f = flights.get(name); if (!f) flights.set(name, f = { readers: new Set(), started: 0, shown: 0, failed: 0, scheduled: false, cleared: 0 });
   const flight = f, reader: DocReader = { fetch }; flight.readers.add(reader);
   if (!docSignal(name).value?.data) restoreDoc(name, flight);
   readDoc(name);
-  return () => { flight.readers.delete(reader); if (!flight.readers.size && flights.get(name) === flight) flights.delete(name); };
+  // An effect re-run releases and mounts in one task; the flight and its running read survive that.
+  return () => { flight.readers.delete(reader); queueMicrotask(() => { if (!flight.readers.size && flights.get(name) === flight) flights.delete(name); }); };
 }
-function discardDocReads() { for (const f of flights.values()) { f.shown = f.started; f.cleared++; } }
+function discardDocReads() { for (const f of flights.values()) { f.shown = f.failed = f.started; f.cleared++; } }
 
 /** Detail and page reads by name (task_get, session_get, overview, hosts). The last value stays visible while re-reading. */
 export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches: (c: Change) => boolean, refreshMs?: number) {
