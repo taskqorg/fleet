@@ -107,7 +107,7 @@ export async function loadList(kind: Kind, key: string, view: View, abort?: Abor
     const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
     assertAccessGeneration(generation);
     if (from < e.seq) { // a newer membership answer already updated this list, but not its refused cursor
-      if (cursorReset && e.state.value) setList(key, e, { ...e.state.value, nextAfter: r.nextAfter });
+      if (cursorReset && e.state.value) { setList(key, e, { ...e.state.value, nextAfter: r.nextAfter }); persist(key, e); }
       return;
     }
     const rows = rowsOf(r);
@@ -115,7 +115,7 @@ export async function loadList(kind: Kind, key: string, view: View, abort?: Abor
     e.pageError = false; putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
   } catch (err: any) {
     if (err instanceof AccessChanged || !isAccessCurrent(generation) || err instanceof OpError && err.message === 'aborted') return;
-    const s = e.state.value;
+    const s = e.state.value; e.pageError = false; // the load's error now; a page must not clear it
     setList(key, e, s ? { ...s, error: err.message } : { ids: [], keys: {}, counts: {}, total: 0, groups: [], nextAfter: null, at: 0, restored: false, error: err.message });
     if (!s?.ids.length) restore(key, e); // offline: show what was stored, marked as not loaded
   } finally {

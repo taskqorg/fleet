@@ -90,6 +90,7 @@ test('a page error clears with the next page; a failed first-page load keeps its
   assert.equal(peek.list('F')!.error, 'busy');
   answer = async () => page([row('t2')], ['g', 's', 't2']); await nextPage('F');
   assert.equal(peek.list('F')!.error, null);
+  answer = async () => ({ httpStatus: 500, message: 'busy' }); await nextPage('F'); // a page error, then a failed load
   answer = async (_n, b) => b.after ? page([row('t3')]) : { httpStatus: 500, message: 'down' };
   await loadList('sessions', 'F', V); await nextPage('F');
   assert.equal(peek.list('F')!.error, 'down', 'a page does not hide the failed load from the back-online reload');
