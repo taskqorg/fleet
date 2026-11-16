@@ -40,7 +40,7 @@ export async function checkClientErrors(browser: Browser, origin: string) {
     // A render crash: Overview receives a reply it cannot render, shows a recoverable error and reports it.
     await page.route('**/api/ops/questions_list', route => route.fulfill({ json: { questions: null } }));
     await page.goto(origin + '/overview');
-    await page.getByText('This page failed to render. The error was reported.', { exact: true }).waitFor();
+    await page.getByText('This page failed to render.', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Reload' }).waitFor();
     for (let i = 0; i < 100; i++) {
       if ((await call('client_errors_list', {})).errors.some((e: any) => e.source === 'render' && e.lastPath === '/overview')) break;

@@ -51,7 +51,9 @@ var clientErrorLimits = []struct {
 }
 
 func init() {
-	operation("client_error_report", false, typedOp(clientErrorReport))
+	// Long: its own transaction under no global write lock (one advisory lock orders new groups only), so a burst of
+	// browser reports never queues behind Fleet's real writes.
+	longOp("client_error_report", typedOp(clientErrorReport))
 	operation("client_errors_list", true, ownerFirst("Browser errors need full access", typedOp(clientErrorsList)))
 	operation("client_error_get", true, ownerFirst("Browser errors need full access", typedOp(clientErrorGet)))
 	onStart(func(ctx context.Context, a *App) {
@@ -67,13 +69,18 @@ func init() {
 	})
 }
 
-// clientErrorsPrune: the scheduled retention (never a report): groups unseen since before cutoff, unless a problem
-// question holds their cause (open, or answered by the owner).
+// clientErrorKept: the SQL condition on client_error c (cutoff in parameter p) of a group retention keeps: seen since
+// the cutoff, or held by its problem (open, or answered by the owner). The caps count exactly these groups and the
+// prune deletes exactly the others, so the two always agree.
+func clientErrorKept(p string) string {
+	return `(c.last_seen >= ` + p + ` OR EXISTS (SELECT 1 FROM question x WHERE x.cause='` + clientErrorCause + `'||c.fingerprint AND x.state IN ('open','answered')))`
+}
+
+// clientErrorsPrune: the scheduled retention (never a report): every group clientErrorKept does not keep.
 func clientErrorsPrune(ctx context.Context, a *App, cutoff time.Time) (int64, error) {
 	var n int64
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		t, err := q.tx.Exec(q.ctx(), `DELETE FROM client_error c WHERE c.last_seen < $1
-			AND NOT EXISTS (SELECT 1 FROM question x WHERE x.cause='`+clientErrorCause+`'||c.fingerprint AND x.state IN ('open','answered'))`, cutoff)
+		t, err := q.tx.Exec(q.ctx(), `DELETE FROM client_error c WHERE NOT `+clientErrorKept("$1"), cutoff)
 		n = t.RowsAffected()
 		return err
 	})
@@ -143,71 +150,76 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 	top := clientTopFrame(r.Stack)
 	fp := clientFingerprint(r.Name, r.Message, top)
 	// The groups are system data the reporting person may not read: written in the coordinator's own scope.
-	return unscoped(q, func() (contract.ClientErrorReportReply, error) {
-		name, message, source := r.Name, r.Message, string(r.Source)
-		known, err := has(q, "SELECT 1 FROM client_error WHERE fingerprint=$1", fp)
-		if err != nil {
-			return rep, err
-		}
-		if !known {
-			// A new group: within the person's hourly and total allowances and, for a person without full access, the
-			// members' global cap; else counted in the over-limit group. The caps count groups seen within the retention:
-			// a quiet group kept by its problem no longer takes a slot. One lock orders concurrent new groups, so
-			// parallel tabs cannot all pass the same count.
-			if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
+	err = runTx(q.ctx(), q.app, q, true, NOLOCK, func(q *Request) error {
+		var err error
+		rep, err = unscoped(q, func() (contract.ClientErrorReportReply, error) {
+			name, message, source := r.Name, r.Message, string(r.Source)
+			known, err := has(q, "SELECT 1 FROM client_error WHERE fingerprint=$1", fp)
+			if err != nil {
 				return rep, err
 			}
-			var hour, mine, members int
-			if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE first_person=$1 AND first_seen > now()-interval '1 hour'),
-				count(*) FILTER (WHERE first_person=$1), count(*) FILTER (WHERE NOT first_full) FROM client_error WHERE fingerprint<>$2 AND last_seen >= $3`,
-				person, clientErrorOverLimit, time.Now().Add(-clientErrorRetention)).Scan(&hour, &mine, &members); err != nil {
+			if !known {
+				// A new group: within the person's hourly and total allowances and, for a person without full access, the
+				// members' global cap; else counted in the over-limit group. The caps count the groups retention keeps
+				// (clientErrorKept): a quiet group pinned by its problem holds its slot until the problem lets go. One lock orders concurrent new groups, so
+				// parallel tabs cannot all pass the same count.
+				if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
+					return rep, err
+				}
+				var hour, mine, members int
+				if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE first_person=$1 AND first_seen > now()-interval '1 hour'),
+					count(*) FILTER (WHERE first_person=$1), count(*) FILTER (WHERE NOT first_full) FROM client_error c WHERE fingerprint<>$2 AND `+clientErrorKept("$3"),
+					person, clientErrorOverLimit, time.Now().Add(-clientErrorRetention)).Scan(&hour, &mine, &members); err != nil {
+					return rep, err
+				}
+				if hour >= clientErrorNewPerHour || mine >= clientErrorPerPerson || (!full && members >= clientErrorGroupsKept) {
+					fp, top = clientErrorOverLimit, ""
+					name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly or total new-group limit, or the members' group cap, was reached", "error"
+				}
+			}
+			var inserted bool
+			err = q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions,first_person,first_full)
+				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10::text='' THEN '{}'::text[] ELSE ARRAY[$10::text] END,CASE WHEN $7::text='' THEN '{}'::text[] ELSE ARRAY[$7::text] END,$10,$13)
+				ON CONFLICT (fingerprint) DO UPDATE SET last_seen=now(), count=c.count+EXCLUDED.count, last_version=EXCLUDED.last_version,
+				  last_path=EXCLUDED.last_path, last_user_agent=EXCLUDED.last_user_agent,
+				  people=CASE WHEN $10::text='' OR $10::text=ANY(c.people) OR cardinality(c.people)>=$11 THEN c.people ELSE c.people||$10::text END,
+				  versions=CASE WHEN $7::text='' OR c.versions[cardinality(c.versions)]=$7::text THEN c.versions
+				    ELSE (SELECT v[greatest(1,cardinality(v)-$12+1):] FROM (SELECT array_remove(c.versions,$7::text)||$7::text AS v) s) END
+				RETURNING count,(xmax=0)`,
+				fp, name, message, top, source, r.Count, r.Version, r.Path, r.UserAgent, person, clientErrorPeopleKept, clientErrorVersions, full).Scan(&rep.Count, &inserted)
+			if err != nil {
 				return rep, err
 			}
-			if hour >= clientErrorNewPerHour || mine >= clientErrorPerPerson || (!full && members >= clientErrorGroupsKept) {
-				fp, top = clientErrorOverLimit, ""
-				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly or total new-group limit, or the members' group cap, was reached", "error"
-			}
-		}
-		var inserted bool
-		err = q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions,first_person,first_full)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10::text='' THEN '{}'::text[] ELSE ARRAY[$10::text] END,CASE WHEN $7::text='' THEN '{}'::text[] ELSE ARRAY[$7::text] END,$10,$13)
-			ON CONFLICT (fingerprint) DO UPDATE SET last_seen=now(), count=c.count+EXCLUDED.count, last_version=EXCLUDED.last_version,
-			  last_path=EXCLUDED.last_path, last_user_agent=EXCLUDED.last_user_agent,
-			  people=CASE WHEN $10::text='' OR $10::text=ANY(c.people) OR cardinality(c.people)>=$11 THEN c.people ELSE c.people||$10::text END,
-			  versions=CASE WHEN $7::text='' OR c.versions[cardinality(c.versions)]=$7::text THEN c.versions
-			    ELSE (SELECT v[greatest(1,cardinality(v)-$12+1):] FROM (SELECT array_remove(c.versions,$7::text)||$7::text AS v) s) END
-			RETURNING count,(xmax=0)`,
-			fp, name, message, top, source, r.Count, r.Version, r.Path, r.UserAgent, person, clientErrorPeopleKept, clientErrorVersions, full).Scan(&rep.Count, &inserted)
-		if err != nil {
-			return rep, err
-		}
-		rep.Fingerprint, rep.First = fp, inserted
-		if err := exec(q, "INSERT INTO client_error_report(fingerprint,client_at,person,version,path,user_agent,count,source,stack) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-			fp, at, person, r.Version, r.Path, r.UserAgent, r.Count, string(r.Source), r.Stack); err != nil {
-			return rep, err
-		}
-		// The group's own oldest reports only; a report never deletes another group or closes a problem.
-		if err := exec(q, "DELETE FROM client_error_report WHERE fingerprint=$1 AND seq < (SELECT min(seq) FROM (SELECT seq FROM client_error_report WHERE fingerprint=$1 ORDER BY seq DESC LIMIT $2) k)", fp, clientErrorReportsKept); err != nil {
-			return rep, err
-		}
-		if !inserted {
-			return rep, nil
-		}
-		if fp != clientErrorOverLimit {
-			// Only a person's first groups of a day get a problem: later ones are stored unpinned and age out.
-			var today int
-			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM client_error WHERE first_person=$1 AND first_seen > now()-interval '24 hours' AND fingerprint<>$2", person, clientErrorOverLimit).Scan(&today); err != nil {
+			rep.Fingerprint, rep.First = fp, inserted
+			if err := exec(q, "INSERT INTO client_error_report(fingerprint,client_at,person,version,path,user_agent,count,source,stack) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+				fp, at, person, r.Version, r.Path, r.UserAgent, r.Count, string(r.Source), r.Stack); err != nil {
 				return rep, err
 			}
-			if today > clientErrorProblemsPerDay {
+			// The group's own oldest reports only; a report never deletes another group or closes a problem.
+			if err := exec(q, "DELETE FROM client_error_report WHERE fingerprint=$1 AND seq < (SELECT min(seq) FROM (SELECT seq FROM client_error_report WHERE fingerprint=$1 ORDER BY seq DESC LIMIT $2) k)", fp, clientErrorReportsKept); err != nil {
+				return rep, err
+			}
+			if !inserted {
 				return rep, nil
 			}
-		}
-		if h, err := problemHeld(q, clientErrorCause+fp); err != nil || h != nil {
-			return rep, err
-		}
-		return rep, problemAsk(q, "direct", Problem{Cause: clientErrorCause + fp, Text: clientErrorText(fp), Data: doc{"fingerprint": fp}})
+			if fp != clientErrorOverLimit {
+				// Only a person's first groups of a day get a problem: later ones are stored unpinned and age out.
+				var today int
+				if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM client_error WHERE first_person=$1 AND first_seen > now()-interval '24 hours' AND fingerprint<>$2", person, clientErrorOverLimit).Scan(&today); err != nil {
+					return rep, err
+				}
+				if today > clientErrorProblemsPerDay {
+					return rep, nil
+				}
+			}
+			if h, err := problemHeld(q, clientErrorCause+fp); err != nil || h != nil {
+				return rep, err
+			}
+			return rep, problemAsk(q, "direct", Problem{Cause: clientErrorCause + fp, Text: clientErrorText(fp), Data: doc{"fingerprint": fp}})
+		})
+		return err
 	})
+	return rep, err
 }
 
 // clientErrorText: fixed wording and the fingerprint only. Reported strings are untrusted and never enter a question

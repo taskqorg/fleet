@@ -275,3 +275,64 @@ func TestClientErrorLimits(t *testing.T) {
 		t.Fatalf("quiet groups still hold the caps: %v", r)
 	}
 }
+
+// Requirement: fleet-telemetry.md section 9: the caps count exactly the groups retention keeps, so groups pinned by an
+// open or answered problem count against their person's total cap and the members' cap even past the retention, until
+// the problem lets go. Risk: aged pinned groups fall out of the count while the prune keeps them, so the caps stop
+// bounding storage and problems.
+func TestClientErrorPinnedGroupsCount(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	member, outsider := personHeaders(e, "member@trial.test"), personHeaders(e, "outsider@trial.test")
+	report := func(h map[string]string, msg string) string {
+		code, body := e.callJSON(t, "POST", "/api/ops/client_error_report", clientReport(map[string]any{"message": msg}), h)
+		if code != 200 {
+			t.Fatalf("report: %d %v", code, body)
+		}
+		return body["fingerprint"].(string)
+	}
+	age := func() {
+		if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE client_error SET first_seen=now()-interval '31 days', last_seen=now()-interval '31 days' WHERE first_person='member@trial.test'"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The member opens clientErrorPerPerson groups, each pinned by a problem, all past the retention.
+	for i := 0; i < clientErrorPerPerson; i++ {
+		if fp := report(member, "pinned "+itoa(i)); fp == clientErrorOverLimit {
+			t.Fatalf("refused at %d", i)
+		}
+		if (i+1)%clientErrorProblemsPerDay == 0 {
+			age()
+		}
+	}
+	var pinned int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM question WHERE cause LIKE 'problem:client-error:%' AND state='open'").Scan(&pinned); err != nil || pinned != clientErrorPerPerson {
+		t.Fatalf("pinned: %d %v", pinned, err)
+	}
+	if n, err := clientErrorsPrune(e.ctx, e.app, time.Now().Add(-clientErrorRetention)); err != nil || n != 0 {
+		t.Fatalf("prune removed pinned groups: %d %v", n, err)
+	}
+	if fp := report(member, "one more"); fp != clientErrorOverLimit {
+		t.Fatalf("aged pinned groups left the per-person count: %s", fp)
+	}
+	release := func(msg string) {
+		if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE question SET state='withdrawn', cause=NULL WHERE cause=(SELECT '"+clientErrorCause+"'||fingerprint FROM client_error WHERE message=$1)", msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	release("pinned 0")
+	if fp := report(member, "after a release"); fp == clientErrorOverLimit {
+		t.Fatal("a released slot stayed taken")
+	}
+	// The members' cap counts the same pinned groups.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO client_error(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,first_person,first_seen)
+		SELECT 'fill-'||i,'E','m','','error',1,'','/','','someone-'||i,now()-interval '2 days' FROM generate_series(1,$1) i`, clientErrorGroupsKept-clientErrorPerPerson); err != nil {
+		t.Fatal(err)
+	}
+	if fp := report(outsider, "outsider at the members' cap"); fp != clientErrorOverLimit {
+		t.Fatalf("aged pinned groups left the members' count: %s", fp)
+	}
+	release("pinned 1")
+	if fp := report(outsider, "outsider after a release"); fp == clientErrorOverLimit {
+		t.Fatal("a released members' slot stayed taken")
+	}
+}

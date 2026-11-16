@@ -40,7 +40,7 @@ class RenderBoundary extends Component<{ at: string; children: ComponentChildren
   componentDidCatch(error: unknown) { if (!ignoreError(error)) reporter.capture(error, 'render'); this.setState({ failed: true }); }
   componentDidUpdate(prev: { at: string }) { if (prev.at !== this.props.at && this.state.failed) this.setState({ failed: false }); }
   render() {
-    return this.state.failed ? <Empty text="This page failed to render. The error was reported." action={<Button label="Reload" icon="rotate-ccw" onClick={() => location.reload()} />} /> : this.props.children;
+    return this.state.failed ? <Empty text="This page failed to render." action={<Button label="Reload" icon="rotate-ccw" onClick={() => location.reload()} />} /> : this.props.children;
   }
 }
 

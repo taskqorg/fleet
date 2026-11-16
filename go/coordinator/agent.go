@@ -1956,6 +1956,10 @@ func agentMay(p *Person, name string) bool {
 	if agentDenied[name] {
 		return false
 	}
+	// Browser errors need full access: a director without it is not offered tools that would always refuse.
+	if (name == "client_errors_list" || name == "client_error_get") && !fullAccess(p) {
+		return false
+	}
 	_, op := operations[name]
 	_, long := longOperations[name]
 	// account_*: guardOp lets a holder manage their own subscription, so the tools stay offered and guardOp decides.

@@ -49,12 +49,12 @@ export function frameOf(stack: string): string {
   return fs.find(l => l.includes('/')) ?? fs[0] ?? '';
 }
 /** frameOf normalized as the server does (no origin, asset hash, line or column): the tab's dedupe key matches its group. */
-export const frameKey = (stack: string) => frameOf(stack).replace(/[a-z][a-z0-9+.-]*:\/\/[^/\s)]+/g, '').replace(/-[A-Za-z0-9]{8,}\.(m?js|css)\b/g, '.$1').replace(/(:\d+)+/g, '').trim();
+export const frameKey = (stack: string) => { const f = frameOf(stack); return !f.includes('/') ? f : f.replace(/[a-z][a-z0-9+.-]*:\/\/[^/\s)]+/g, '').replace(/-[A-Za-z0-9]{8,}\.(m?js|css)\b/g, '.$1').replace(/(:\d+)+/g, '').trim(); };
 
 /** The server's repeat count limit; more repeats in one window are counted in dropped. */
 const MAX_COUNT = 1_000_000;
-/** A repeat-count send carries only the first frames (no message header), so the top frame survives in about 1 KB. */
-const REPEAT_STACK = 1024;
+/** A repeat-count send carries only the first frames (no message header), about 2 KB; the top frame line is kept whole. */
+const REPEAT_STACK = 2048;
 /** The most distinct errors one tab tracks; past it, a new error whose window passed replaces an idle one, else it is dropped. */
 const MAX_ENTRIES = 500;
 
@@ -71,7 +71,7 @@ export type ReporterOptions = {
   maxReports?: number;
   /** The most repeat-count sends a tab makes (window ends and flushes); later repeats are counted in dropped only. */
   maxRepeats?: number;
-  /** The most repeat counts one flush sends (keepalive bodies share a 64 KiB budget on unload). */
+  /** The most repeat counts one flush sends (keepalive bodies share a 64 KiB budget on unload; each is under about 5 KB). */
   flushEntries?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
 };
@@ -93,7 +93,8 @@ export function createReporter(o: ReporterOptions) {
     const n = Math.min(e.pending, MAX_COUNT);
     dropped += e.pending - n; e.pending = 0; e.timer++; e.sentAt = now();
     if (repeats >= maxRepeats) { dropped += n; return; }
-    repeats++; send({ ...e.report, stack: trimBytes(frames(e.report.stack).join('\n'), REPEAT_STACK), count: n, at: new Date(e.firstAt).toISOString() });
+    const all = frames(e.report.stack).join('\n'), cut = trimBytes(all, REPEAT_STACK);
+    repeats++; send({ ...e.report, stack: frameOf(cut) === frameOf(all) ? cut : trimBytes(frameOf(all), LIMITS.stack), count: n, at: new Date(e.firstAt).toISOString() });
   };
   return {
     capture(error: unknown, source: ClientErrorSource) {
@@ -145,8 +146,8 @@ export type Reporter = ReturnType<typeof createReporter>;
 export function sendReport(report: ClientErrorReport, unloading = false) {
   try {
     fetch('/api/ops/client_error_report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(report),
-      // keepalive only while the tab is hidden or unloading: its bodies share a 64 KiB budget a burst would exceed.
-      credentials: 'same-origin', redirect: 'manual', keepalive: unloading || (typeof document !== 'undefined' && document.visibilityState === 'hidden') }).catch(() => {});
+      // keepalive only for a flush (tab hidden or unloading): its bodies share a 64 KiB budget a burst would exceed.
+      credentials: 'same-origin', redirect: 'manual', keepalive: unloading }).catch(() => {});
   } catch { /* never throws */ }
 }
 

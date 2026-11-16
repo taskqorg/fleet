@@ -77,7 +77,7 @@ test('a flush moves the window: the older timer sends nothing, and counts and st
   r.capture(e, 'error'); advance(60_000); r.capture(e, 'error');
   r.flush();
   assert.equal(sent.length, 2);
-  assert.ok(new TextEncoder().encode(sent[1].stack).length <= 1024, 'a repeat count carries only the stack head');
+  assert.ok(new TextEncoder().encode(sent[1].stack).length <= 2048, 'a repeat count carries only the stack head');
   assert.equal(m.frameOf(sent[1].stack), 'at f (https://h/assets/main-AAAA1111.js:1:2)', 'the head keeps the top script frame');
   advance(5 * 60_000);
   assert.equal(sent.length, 2, 'the timer of the moved window sent a second report');
