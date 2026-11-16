@@ -3,9 +3,10 @@
 // normalized top stack frame. A new group opens a needs-you problem for the owner; agents and the owner read groups with
 // client_errors_list and client_error_get. Every reported string is untrusted browser data: the problem text holds only
 // fixed wording and the fingerprint. Storage is bounded without a report ever deleting another group: each group keeps
-// its latest clientErrorReportsKept reports; one person opens at most clientErrorNewPerHour groups an hour and the store
-// holds at most clientErrorGroupsKept groups, past either limit a report counts into the fixed over-limit group; the
-// hourly client-errors pass deletes groups unseen for clientErrorRetention whose problem is not open or answered.
+// its latest clientErrorReportsKept reports; one person opens at most clientErrorNewPerHour groups an hour and
+// clientErrorPerPerson in all, people without full access at most clientErrorGroupsKept together; past a limit a report
+// counts into the fixed over-limit group. Only a person's first clientErrorProblemsPerDay groups a day open a problem;
+// the hourly client-errors pass deletes groups unseen for clientErrorRetention whose problem is not open or answered.
 package main
 
 import (
@@ -22,14 +23,16 @@ import (
 )
 
 const (
-	clientErrorReportsKept = 20                  // clientErrors.reportsKept
-	clientErrorGroupsKept  = 1000                // clientErrors.groupsKept: a hard cap; new groups past it are refused (counted)
-	clientErrorNewPerHour  = 20                  // clientErrors.newGroupsPerHour, per person
-	clientErrorOverLimit   = "over-limit"        // the group that counts reports refused a new group
-	clientErrorRetention   = 30 * 24 * time.Hour // clientErrors.retention
-	clientErrorPeopleKept  = 100
-	clientErrorVersions    = 20
-	clientErrorCause       = "problem:client-error:"
+	clientErrorReportsKept    = 20                  // clientErrors.reportsKept
+	clientErrorGroupsKept     = 1000                // clientErrors.groupsKept: groups opened by people without full access; past it they are refused (counted)
+	clientErrorNewPerHour     = 20                  // clientErrors.newGroupsPerHour, per person
+	clientErrorPerPerson      = 100                 // clientErrors.groupsPerPerson: total groups one person opened
+	clientErrorProblemsPerDay = 5                   // clientErrors.problemsPerDay: a person's groups a day that get a problem
+	clientErrorOverLimit      = "over-limit"        // the group that counts reports refused a new group
+	clientErrorRetention      = 30 * 24 * time.Hour // clientErrors.retention
+	clientErrorPeopleKept     = 100
+	clientErrorVersions       = 20
+	clientErrorCause          = "problem:client-error:"
 )
 
 // The byte limits of ClientErrorReportRequest (contracts/ops-telemetry.schema.json); a larger field is 400.
@@ -133,7 +136,7 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 	if err != nil {
 		return rep, fail(400, "Invalid at: expected RFC 3339")
 	}
-	person := ""
+	person, full := "", fullAccess(q.person)
 	if q.person != nil {
 		person = q.person.Email
 	}
@@ -147,26 +150,32 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			return rep, err
 		}
 		if !known {
-			// A new group: within the person's hourly allowance and the global cap, else counted in the over-limit group.
-			var mine, all int
-			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FILTER (WHERE first_person=$1 AND first_seen > now()-interval '1 hour'),count(*) FROM client_error", person).Scan(&mine, &all); err != nil {
+			// A new group: within the person's hourly and total allowances and, for a person without full access, the
+			// members' global cap; else counted in the over-limit group. One lock orders concurrent new groups, so
+			// parallel tabs cannot all pass the same count.
+			if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
 				return rep, err
 			}
-			if mine >= clientErrorNewPerHour || all >= clientErrorGroupsKept {
+			var hour, mine, members int
+			if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE first_person=$1 AND first_seen > now()-interval '1 hour'),
+				count(*) FILTER (WHERE first_person=$1), count(*) FILTER (WHERE NOT first_full) FROM client_error WHERE fingerprint<>$2`, person, clientErrorOverLimit).Scan(&hour, &mine, &members); err != nil {
+				return rep, err
+			}
+			if hour >= clientErrorNewPerHour || mine >= clientErrorPerPerson || (!full && members >= clientErrorGroupsKept) {
 				fp, top = clientErrorOverLimit, ""
 				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly new-group limit or the global group cap was reached", "error"
 			}
 		}
 		var inserted bool
-		err = q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions,first_person)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10::text='' THEN '{}'::text[] ELSE ARRAY[$10::text] END,CASE WHEN $7::text='' THEN '{}'::text[] ELSE ARRAY[$7::text] END,$10)
+		err = q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions,first_person,first_full)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10::text='' THEN '{}'::text[] ELSE ARRAY[$10::text] END,CASE WHEN $7::text='' THEN '{}'::text[] ELSE ARRAY[$7::text] END,$10,$13)
 			ON CONFLICT (fingerprint) DO UPDATE SET last_seen=now(), count=c.count+EXCLUDED.count, last_version=EXCLUDED.last_version,
 			  last_path=EXCLUDED.last_path, last_user_agent=EXCLUDED.last_user_agent,
 			  people=CASE WHEN $10::text='' OR $10::text=ANY(c.people) OR cardinality(c.people)>=$11 THEN c.people ELSE c.people||$10::text END,
 			  versions=CASE WHEN $7::text='' OR c.versions[cardinality(c.versions)]=$7::text THEN c.versions
 			    ELSE (SELECT v[greatest(1,cardinality(v)-$12+1):] FROM (SELECT array_remove(c.versions,$7::text)||$7::text AS v) s) END
 			RETURNING count,(xmax=0)`,
-			fp, name, message, top, source, r.Count, r.Version, r.Path, r.UserAgent, person, clientErrorPeopleKept, clientErrorVersions).Scan(&rep.Count, &inserted)
+			fp, name, message, top, source, r.Count, r.Version, r.Path, r.UserAgent, person, clientErrorPeopleKept, clientErrorVersions, full).Scan(&rep.Count, &inserted)
 		if err != nil {
 			return rep, err
 		}
@@ -181,6 +190,16 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 		}
 		if !inserted {
 			return rep, nil
+		}
+		if fp != clientErrorOverLimit {
+			// Only a person's first groups of a day get a problem: later ones are stored unpinned and age out.
+			var today int
+			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM client_error WHERE first_person=$1 AND first_seen > now()-interval '24 hours' AND fingerprint<>$2", person, clientErrorOverLimit).Scan(&today); err != nil {
+				return rep, err
+			}
+			if today > clientErrorProblemsPerDay {
+				return rep, nil
+			}
 		}
 		if h, err := problemHeld(q, clientErrorCause+fp); err != nil || h != nil {
 			return rep, err
@@ -211,13 +230,13 @@ func scanClientErrors(rows pgx.Rows) ([]contract.ClientError, error) {
 			rows.Close()
 			return nil, err
 		}
-		e.Source, e.FirstSeen, e.LastSeen = contract.ClientErrorSource(source), rfc3339(first), rfc3339(last)
+		e.Source, e.FirstSeen, e.LastSeen = contract.ClientErrorSource(source), clientTime(first), clientTime(last)
 		out = append(out, e)
 	}
 	return out, rows.Err()
 }
 
-func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+func clientTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 func clientErrorsList(q *Request, r *contract.ClientErrorsListRequest) (contract.ClientErrorsListReply, error) {
 	var rep contract.ClientErrorsListReply
@@ -273,7 +292,7 @@ func clientErrorGet(q *Request, r *contract.ClientErrorGetRequest) (contract.Cli
 		if err := rows.Scan(&at, &clientAt, &x.Person, &x.Version, &x.Path, &x.UserAgent, &x.Count, &source, &x.Stack); err != nil {
 			return rep, err
 		}
-		x.At, x.ClientAt, x.Source = rfc3339(at), rfc3339(clientAt), contract.ClientErrorSource(source)
+		x.At, x.ClientAt, x.Source = clientTime(at), clientTime(clientAt), contract.ClientErrorSource(source)
 		rep.Reports = append(rep.Reports, x)
 	}
 	return rep, rows.Err()

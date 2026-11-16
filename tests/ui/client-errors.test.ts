@@ -89,6 +89,24 @@ test('a flush moves the window: the older timer sends nothing, and counts and st
   assert.equal(loop.r.stats().dropped, 5);
 });
 
+test('past the first-report cap a new error is not tracked, so its repeats send nothing', () => {
+  const { r, sent, advance } = harness({ maxReports: 1 });
+  r.capture(new Error('a'), 'error'); r.capture(new Error('b'), 'error'); r.capture(new Error('b'), 'error');
+  advance(10 * 60_000); r.flush();
+  assert.equal(sent.length, 1);
+  assert.equal(r.stats().dropped, 2);
+});
+
+test('a long message does not push the top frame out of a repeat count', () => {
+  const { r, sent } = harness();
+  const e = new Error('x'.repeat(1900)); e.stack = 'Error: ' + 'x'.repeat(1900) + '\n    at f (https://h/assets/main-AAAA1111.js:1:2)';
+  r.capture(e, 'error'); r.capture(e, 'error'); r.flush();
+  assert.equal(m.frameOf(sent[1].stack), 'at f (https://h/assets/main-AAAA1111.js:1:2)');
+  const moved = Object.assign(new Error('y'), { stack: 'Error: y\n    at f (http://other:9/assets/main-ZZZZ9999.js:7:1)' });
+  r.capture(Object.assign(new Error('y'), { stack: 'Error: y\n    at f (https://h/assets/main-AAAA1111.js:1:2)' }), 'error'); r.capture(moved, 'error');
+  assert.equal(sent.length, 3, 'another build or column of one error is the same tab key');
+});
+
 test('the top frame skips built-ins like the server fingerprint', () => {
   assert.equal(m.frameOf('RangeError: x\n    at Date.toISOString (<anonymous>)\n    at a (https://h/assets/main-X.js:1:2)'), 'at a (https://h/assets/main-X.js:1:2)');
   assert.equal(m.frameOf('TypeError: x\nglobal code@https://h/main.js:3:9'), 'global code@https://h/main.js:3:9');

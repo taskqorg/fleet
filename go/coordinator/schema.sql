@@ -2239,7 +2239,7 @@ CREATE INDEX task_sort_project_created ON task((coalesce(project_id,'~')), (seq:
 
 -- migration 62: browser errors of the operator app (client_error_report, docs/designs/fleet-telemetry.md section 9):
 -- one group per fingerprint (name, message, normalized top frame) and its latest reports (at most 20 per group);
--- first_person bounds how many new groups one person opens an hour.
+-- first_person and first_full bound the new groups one person, and people without full access together, open.
 -- System data: only the unrestricted scope sees it; the report operation writes it in the coordinator's own scope.
 CREATE TABLE client_error(
   fingerprint text PRIMARY KEY,
@@ -2255,7 +2255,8 @@ CREATE TABLE client_error(
   last_user_agent text NOT NULL,
   people text[] NOT NULL DEFAULT '{}',
   versions text[] NOT NULL DEFAULT '{}',
-  first_person text NOT NULL DEFAULT ''
+  first_person text NOT NULL DEFAULT '',
+  first_full boolean NOT NULL DEFAULT false
 );
 CREATE INDEX client_error_last_seen ON client_error(last_seen DESC, fingerprint);
 CREATE INDEX client_error_first_person ON client_error(first_person, first_seen);

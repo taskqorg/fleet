@@ -180,12 +180,14 @@ func TestClientErrorOps(t *testing.T) {
 }
 
 // Requirement: fleet-telemetry.md section 9: a problem's text is fixed wording and the fingerprint (reported strings are
-// untrusted), one person opens at most clientErrorNewPerHour groups an hour and the store at most clientErrorGroupsKept;
-// past either, reports count in the over-limit group and nothing is deleted. Risk: a member injects instructions into
-// the owner's and agents' needs-you text, or floods needs-you and evicts real groups.
+// untrusted), one person opens at most clientErrorNewPerHour groups an hour and clientErrorPerPerson in all, people
+// without full access at most clientErrorGroupsKept together; past a limit reports count in the over-limit group and
+// nothing is deleted; only a person's first clientErrorProblemsPerDay groups a day are pinned by a problem, the rest age
+// out. Risk: a member injects instructions into the owner's and agents' needs-you text, floods needs-you, or fills the
+// store so that other people's and the owner's errors are refused.
 func TestClientErrorLimits(t *testing.T) {
 	e := openTestCoordinator(t, false)
-	owner, member := e.ownerHeaders(), personHeaders(e, "member@trial.test")
+	owner, member, outsider := e.ownerHeaders(), personHeaders(e, "member@trial.test"), personHeaders(e, "outsider@trial.test")
 	report := func(h map[string]string, over map[string]any) map[string]any {
 		code, body := e.callJSON(t, "POST", "/api/ops/client_error_report", clientReport(over), h)
 		if code != 200 {
@@ -218,30 +220,51 @@ func TestClientErrorLimits(t *testing.T) {
 	if mine != clientErrorNewPerHour || over != 1 || overCount != 5 {
 		t.Fatalf("per-person cap: %d groups, over-limit %d with %d", mine, over, overCount)
 	}
+	// Only the member's first groups of the day (and the over-limit group) are pinned by a problem.
 	var problems int
-	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM question WHERE cause LIKE 'problem:client-error:%' AND state='open'").Scan(&problems); err != nil || problems != clientErrorNewPerHour+1 {
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM question WHERE cause LIKE 'problem:client-error:%' AND state='open'").Scan(&problems); err != nil || problems != clientErrorProblemsPerDay+1 {
 		t.Fatalf("problems: %d %v", problems, err)
 	}
 	// A known group still counts past the cap, and another person still opens new groups.
 	if r := report(member, map[string]any{"message": "flood 1"}); r["fingerprint"] == clientErrorOverLimit {
 		t.Fatal("a known group refused past the cap")
 	}
-	if r := report(owner, map[string]any{"message": "owner's own"}); r["fingerprint"] == clientErrorOverLimit || r["first"] != true {
-		t.Fatalf("owner refused: %v", r)
+	if r := report(outsider, map[string]any{"message": "outsider's own"}); r["fingerprint"] == clientErrorOverLimit || r["first"] != true {
+		t.Fatalf("a member blocked another person: %v", r)
 	}
 
-	// The global cap refuses new groups and deletes none.
-	if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO client_error(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent)
-		SELECT 'fill-'||i,'E','m','','error',1,'','/','' FROM generate_series(1,$1) i`, clientErrorGroupsKept); err != nil {
+	// The member's groups past the problem threshold age out; pinned ones stay.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE client_error SET last_seen=now()-interval '31 days' WHERE first_person='member@trial.test'"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := clientErrorsPrune(e.ctx, e.app, time.Now().Add(-clientErrorRetention)); err != nil || n != int64(clientErrorNewPerHour-clientErrorProblemsPerDay) {
+		t.Fatalf("prune: %d %v", n, err)
+	}
+
+	// A person's total cap: one member never holds more than clientErrorPerPerson groups, so others keep their room.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO client_error(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,first_person,first_seen)
+		SELECT 'old-'||i,'E','m','','error',1,'','/','','outsider@trial.test',now()-interval '2 days' FROM generate_series(1,$1) i`, clientErrorPerPerson); err != nil {
+		t.Fatal(err)
+	}
+	if r := report(outsider, map[string]any{"message": "past the total cap"}); r["fingerprint"] != clientErrorOverLimit {
+		t.Fatalf("total cap: %v", r)
+	}
+
+	// The members' global cap refuses their new groups and deletes none; the owner (full access) still reports.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `INSERT INTO client_error(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,first_person,first_seen)
+		SELECT 'fill-'||i,'E','m','','error',1,'','/','','someone-'||i,now()-interval '2 days' FROM generate_series(1,$1) i`, clientErrorGroupsKept); err != nil {
 		t.Fatal(err)
 	}
 	var before, after int
 	e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM client_error").Scan(&before)
-	if r := report(owner, map[string]any{"message": "past the global cap"}); r["fingerprint"] != clientErrorOverLimit {
+	if r := report(personHeaders(e, "member@trial.test"), map[string]any{"message": "past the global cap"}); r["fingerprint"] != clientErrorOverLimit {
 		t.Fatalf("global cap: %v", r)
 	}
 	e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM client_error").Scan(&after)
 	if after != before {
 		t.Fatalf("groups %d -> %d", before, after)
+	}
+	if r := report(owner, map[string]any{"message": "owner past every member cap"}); r["fingerprint"] == clientErrorOverLimit || r["first"] != true {
+		t.Fatalf("owner refused: %v", r)
 	}
 }
