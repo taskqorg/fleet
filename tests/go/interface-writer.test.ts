@@ -1,6 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {PassThrough} from 'node:stream';
+import {homedir} from 'node:os';
+import {join} from 'node:path';
 import {startCoordinator} from '../harness.ts';
 import {Writer} from '../performance/sql-writer-interface.ts';
 import {sourceTransaction,type Fact} from '../performance/interface.ts';
@@ -9,6 +11,8 @@ import {sourceTransaction,type Fact} from '../performance/interface.ts';
 // Risk: receipt gating serializes the producer, batching merges XIDs, or partial failure/cancel invents confirmation.
 test('fixture SQL lanes preserve FIFO independent commits, error prefixes, cancellation and native parity',{timeout:60000},async()=>{
  const c=await startCoordinator({name:'interface-writer',env:{FLEET_RESOURCE_PROCESSOR:'on',FLEET_RESOURCE_READS:'on',FLEET_LOST_AFTER_MS:'864000000'}});
+ // The harness supports its documented default socket when no override is exported; Writer receives that same owned socket.
+ const previousSocket=process.env.FLEET_TRIAL_PGDATA;process.env.FLEET_TRIAL_PGDATA=previousSocket||join(homedir(),'.cache/fleet-trial/pg');
  const writers:Writer[]=[],log=new PassThrough();log.resume();
  const make=()=>{const w=new Writer(c.sql('SELECT current_database()').trim(),log);writers.push(w);return w;};
  const fact=(i:number,id='pipe-'+i):Fact=>({id,execution:id,project:'pipe-project',n:i+1,calls:1,errors:i%7===0?1:0,lower:performance.now(),upper:null,phase:'burst',due:0});
@@ -38,5 +42,5 @@ test('fixture SQL lanes preserve FIFO independent commits, error prefixes, cance
   assert.equal(c.sql("SELECT count(*) FROM execution WHERE id IN ('pipe-cancel','pipe-after-cancel')").trim(),'0','cancelled uncommitted prefix rolled back; no false receipt');
   await Promise.all(lanes.map(w=>w.close()));
   assert.equal(c.sql(`SELECT count(*) FROM pg_stat_activity WHERE pid=ANY(ARRAY[${receipts.map(r=>r.backend).join(',')}])`).trim(),'0','owned source sessions closed');
- }finally{await Promise.all(writers.map(w=>w.close()));await c.stop();log.end();}
+ }finally{await Promise.all(writers.map(w=>w.close()));await c.stop();log.end();if(previousSocket===undefined)delete process.env.FLEET_TRIAL_PGDATA;else process.env.FLEET_TRIAL_PGDATA=previousSocket;}
 });
