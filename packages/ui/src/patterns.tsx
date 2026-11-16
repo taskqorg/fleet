@@ -17,6 +17,8 @@ export type TaskRow = {
   started: number; cost: number | null; est: boolean; pinned?: boolean; priority: 0 | 1 | 2; stage?: Stage;
 };
 export type GroupBy = 'priority' | 'state' | 'project' | 'agent' | 'host' | 'none';
+/** The list view's system presets (Tasks): they set the states only. */
+const SYSTEM_PRESETS = ['Needs me', 'Running'];
 type View = { name: string; chips: Chip[]; states: StateOf<'task'>[]; group: GroupBy };
 type Row = { kind: 'group'; key: string; label: string; icon: IconName; tone: Tone; count: number } | { kind: 'task'; t: TaskRow };
 const GROUPS: { id: GroupBy; label: string }[] = [
@@ -30,11 +32,11 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
   row?: number;
 }) {
   const [views, setViews] = useState<View[]>([
-    { name: 'Needs me', chips: [], states: ['waiting', 'failed'], group: 'priority' },
-    { name: 'Running', chips: [], states: ['in_progress', 'queued'], group: 'agent' },
+    { name: 'Needs me', chips: [], states: ['waiting', 'failed'], group: 'project' },
+    { name: 'Running', chips: [], states: ['in_progress', 'queued'], group: 'project' },
     { name: 'cs', chips: [{ field: 'Project', value: 'cs' }], states: [], group: 'state' },
   ]);
-  const [view, setView] = useState<View>({ name: '', chips: [], states: [], group: 'priority' });
+  const [view, setView] = useState<View>({ name: '', chips: [], states: [], group: 'project' });
   const [active, setActive] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [closed, setClosed] = useState<string[]>(['completed', 'cancelled']);
@@ -83,8 +85,9 @@ export function TaskListView({ items, now, onPin, onOpen, selected, height, row 
         onRemove={c => edit({ chips: view.chips.filter(x => x.field !== c.field || x.value !== c.value) })} onClear={() => edit({ chips: [], states: [] })}
         shown={shown.length} total={items.length}
         extra={<>
-          <Presets presets={views.map(v => v.name)} active={active}
-            onPick={n => { const v = views.find(x => x.name === n)!; setView(v); setActive(n); }}
+          <Presets system={SYSTEM_PRESETS} presets={views.map(v => v.name).filter(n => !SYSTEM_PRESETS.includes(n))} active={active}
+            // A system preset sets the states only (OR-33); a personal view restores all it saved.
+            onPick={n => { const v = views.find(x => x.name === n)!; setView(SYSTEM_PRESETS.includes(n) ? { ...view, name: n, states: v.states } : v); setActive(n); }}
             onSave={n => { const v = { ...view, name: n }; setViews([...views.filter(x => x.name !== n), v]); setActive(n); }}
             onUnpin={n => { setViews(views.filter(v => v.name !== n)); if (active === n) setActive(null); }} />
         </>}

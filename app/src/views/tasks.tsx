@@ -34,7 +34,7 @@ const SYSTEM_VIEWS = [{ name: 'Needs me', view: { view: 'tasks' as const, state:
 export function Tasks({ id }: { id?: string }) {
   const { view, set, href } = useUrlView('tasks');
   const [closed, setClosed] = useState<string[]>([]);
-  const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
+  const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined, preset: undefined }, 'type'));
   const pins = usePins('tasks');
   const views = useViews('tasks', SYSTEM_VIEWS);
   const list = useList('tasks', view);
@@ -109,11 +109,16 @@ export function Tasks({ id }: { id?: string }) {
   const now = Date.now();
   const filtered = !!(states.length || view.q || view.project?.length), focused = !view.project?.length && !!withFocus(view).project?.length;
   const presetKey = (v: View) => listKey({ ...v, view: 'tasks' });
-  const sameStates = (a?: string[], b?: string[]) => [...a ?? []].sort().join() === [...b ?? []].sort().join();
-  const activePreset = views.list.find(v => v.system ? sameStates(v.view.state, view.state) && !!view.state?.length : presetKey(v.view) === listKey(view))?.name ?? null;
+  // A personal view matches the whole view and wins over a system preset with the same states; a system preset matches the
+  // states alone. Saved views from before the project default kept no group: they were grouped by priority.
+  const stateKey = (state?: string[]) => listKey({ view: 'tasks', state: state ?? [] });
+  const savedView = (v: View): View => v.group ? v : { ...v, group: 'priority' };
+  const mine = views.list.filter(v => !v.system), system = views.list.filter(v => v.system);
+  const activePreset = mine.find(v => presetKey(savedView(v.view)) === listKey(view))?.name
+    ?? (view.state?.length ? system.find(v => stateKey(v.view.state) === stateKey(view.state))?.name : undefined) ?? null;
   const pick = (n: string) => {
-    const p = views.list.find(x => x.name === n)!;
-    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, preset: n });
+    const p = views.list.find(x => x.name === n)!, sv = savedView(p.view);
+    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: sv.project ?? [], q: sv.q, preset: n });
   };
   const listPane = <>
     <header class="page-h"><h1>Tasks</h1><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
@@ -121,7 +126,7 @@ export function Tasks({ id }: { id?: string }) {
       <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search tasks, agent:claude host:mac" onQuery={setQuery} shown={shown} total={list.total}
         extra={<>
           <Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={activePreset} onPick={pick}
-            onSave={n => views.save({ name: n, view: { view: 'tasks', state: view.state, group: view.group, sort: view.sort, project: view.project, q: view.q } })} onUnpin={views.remove} />
+            onSave={n => views.save({ name: n, view: { view: 'tasks', state: view.state, group: view.group ?? DEFAULT_TASK_GROUP, sort: view.sort, project: view.project, q: view.q } })} onUnpin={views.remove} />
         </>}
         counters={
           <StateCounters family="task" label="Tasks by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [], preset: undefined })}

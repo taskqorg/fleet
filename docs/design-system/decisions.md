@@ -114,7 +114,7 @@ Append only. Each entry: date, question, options, choice, reason.
 
 ## 2026-11-10 D11: Owner picks on open questions (a)–(c), task row order, harness counts
 
-* **(a) Priority:** A2, generalised. The operator chooses the grouping: priority, state, project, agent, host or none, alongside quick state filters and saved views ([list view](patterns/list-view.md)). Default grouping was priority; since 2026-11-16 it is project (owner). The `p0` marker appears in rows only when the list is not grouped by priority (OR-17).
+* **(a) Priority:** A2, generalised. The operator chooses the grouping: priority, state, project, agent, host or none, alongside quick state filters and saved views ([list view](patterns/list-view.md)). Default grouping is priority. The `p0` marker appears in rows only when the list is not grouped by priority (OR-17).
 * **New rule OR-22:**
   * The state icon is the leftmost column.
   * The ID sits right after the title.
@@ -383,3 +383,10 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Cause found:** the banner listened for the service worker's `updatefound` event. The browser often runs its update check during navigation, before the page listens, so the event was missed (no banner) or arrived later (banner). Reload did not activate the waiting worker (no `skipWaiting`), so the old worker kept control and the next check could raise the banner again.
 * **Choice (owner):** one control: the version after the person's name, toned by the parts' states, a click shows every part's version and state; when the site serves a newer app, an Update button that updates on the first click. The banner is removed.
 * **How:** `system_versions` (coordinator, served UI, gateway, hosts with update state); the app compares its own hashed assets with the site's current page instead of waiting for worker events; Update tells a waiting worker to `skipWaiting`, then reloads.
+
+## 2026-11-16: Tasks group by project; system presets set states only
+
+* **Question:** which grouping does Tasks open with, and what does a system preset (Needs me, Running) change?
+* **Options:** keep priority as the default grouping (D11) or group by project; let a preset carry its own grouping and sort, or only its states.
+* **Choice (owner):** group by project and sort by most recently changed first by default; a system preset sets only the state filter and keeps the person's grouping, sort, projects and search. Personal views still restore everything they saved; views saved before this kept no group and open grouped by priority as when they were saved.
+* **Reason:** the owner works across projects and switches presets often; a preset that reset the grouping undid the person's choice each time.
