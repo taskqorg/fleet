@@ -17,6 +17,7 @@
 
 - Host secrets, account registries, credential homes, workspaces, Git metadata, and staged instruction sources are ownership-, path-, and symlink-checked before use ([executor.go: `hostSecret`](executor.go), [accounts.go: `runnable`](accounts.go), [attempt_context.go: `resolveAttemptContext`](attempt_context.go)).
 - A launch is journaled before its process exists; owned process identities are journaled before reconciliation. After a restart, surviving recorded processes are fenced and cleaned up rather than reattached ([executor.go: `launch`, `own`, `reconcileProcesses`](executor.go)).
+- A held coordinator poll (up to 25 s) does not pause the 100 ms process loop for live executions: exits, output, script deadlines and samples are handled while it waits. A process-loop failure cancels the poll and stops the executor ([executor.go: `heldPoll`](executor.go)).
 - A process or provider action with uncertain external outcome stays `unknown`; it is not silently retried as a known failure ([executor.go: `reconcile`](executor.go), [mcp_connection.go: `connectionCall`](mcp_connection.go)).
 - Source resolution does not fetch, read working-tree rules, or execute Git hooks or filters. It requires the declared commit, exact blobs, digests, origin identity, and allowed owned storage ([attempt_context.go: `resolveAttemptContext`](attempt_context.go)).
 - Worktree cleanup keeps work when configured reasons such as uncommitted changes, unpushed commits, or teardown failure apply ([worktree.go: `teardown`](worktree.go)).

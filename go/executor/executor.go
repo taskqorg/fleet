@@ -1558,6 +1558,50 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 	return nil
 }
 
+// tickEvery: the process loop period while the coordinator holds the poll (README, Side effects: observe()).
+const tickEvery = 100 * time.Millisecond
+
+// tickFailed: a process-loop failure during the held poll; the main loop treats it as fatal, like its own tick.
+type tickFailed struct{ error }
+
+func (t tickFailed) Unwrap() error { return t.error }
+
+// heldPoll waits for the coordinator's held poll while this goroutine keeps ticking, so a process exit, its output,
+// a script deadline and resource samples never wait up to longPollWait for the answer. It ticks only while
+// executions are live; an idle host keeps one update drain and journal count per exchange. A tick failure cancels
+// the poll, waits for its goroutine and drops any reply: the executor stops, and commands without a receipt stay
+// pending on the coordinator (host_poll.go selects status 'pending') for delivery again.
+func (e *executor) heldPoll() (*pollReply, error) {
+	ctx, cancel := context.WithCancel(e.baseCtx())
+	defer cancel()
+	type answered struct {
+		reply *pollReply
+		err   error
+	}
+	got := make(chan answered, 1)
+	go func() {
+		reply, err := e.pollWait(ctx, longPollWait)
+		got <- answered{reply, err}
+	}()
+	beat := time.NewTicker(tickEvery)
+	defer beat.Stop()
+	for {
+		select {
+		case a := <-got:
+			return a.reply, a.err
+		case <-beat.C:
+			if len(e.live) == 0 {
+				continue
+			}
+			if err := e.tick(); err != nil {
+				cancel()
+				<-got
+				return nil, tickFailed{err}
+			}
+		}
+	}
+}
+
 func anyPart(rel string, bad func(string) bool) bool {
 	for _, x := range strings.Split(rel, "/") {
 		if bad(x) {
@@ -2209,7 +2253,13 @@ func runExecutor() error {
 			status("error", "")
 			return err
 		}
-		if err := e.exchange(); errors.Is(err, errHostRemoved) {
+		err := e.exchange()
+		var failed tickFailed
+		if errors.As(err, &failed) {
+			status("error", "")
+			return failed.error
+		}
+		if errors.Is(err, errHostRemoved) {
 			// The owner removed this host (fleet-system-management.md, Hosts): stop polling and exit 0, so the unit's
 			// Restart=on-failure does not start it again.
 			fmt.Fprintln(os.Stderr, "executor: this host was removed from Fleet; stopping its runs")
@@ -2242,7 +2292,7 @@ func runExecutor() error {
 			failingSince = time.Time{}
 			status("working", "")
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(tickEvery)
 	}
 }
 
@@ -2340,7 +2390,7 @@ func (e *executor) exchange() (err error) {
 	if edgeWait(pollRoute) {
 		return nil
 	}
-	reply, err := e.pollWait(e.baseCtx(), longPollWait)
+	reply, err := e.heldPoll()
 	if err != nil {
 		return err
 	}

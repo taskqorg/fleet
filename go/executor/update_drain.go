@@ -46,18 +46,25 @@ func updatePending(s *updateSignal) bool {
 }
 
 func (e *executor) drainUpdate() error {
-	e.updateReady.Store(nil)
+	// One store per tick: the held poll's goroutine reads updateReady at any moment and must not see a transient nil.
+	ready, err := e.idleUpdate()
+	e.updateReady.Store(ready)
+	return err
+}
+
+// idleUpdate releases the activity lease once nothing holds it and returns the pending update target, or nil.
+func (e *executor) idleUpdate() (*string, error) {
 	if ok, err := e.activityLease(); err != nil {
-		return err
+		return nil, err
 	} else if !ok {
-		return nil
+		return nil, nil
 	}
 	var n int
 	if err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches)+(SELECT count(*) FROM owned)+(SELECT count(*) FROM mcp_groups)+(SELECT count(*) FROM commands WHERE terminal=0)+(SELECT count(*) FROM outbox)+(SELECT count(*) FROM outbox_failed WHERE status=401)+(SELECT count(*) FROM transfers WHERE state IN ('queued','running'))`).Scan(&n); err != nil {
-		return err
+		return nil, err
 	}
 	if len(e.live) > 0 || n > 0 {
-		return nil
+		return nil, nil
 	}
 	if e.activity != nil {
 		e.activity.Close()
@@ -67,9 +74,9 @@ func (e *executor) drainUpdate() error {
 	defer signalMu.Unlock()
 	if updatePending(lastSignal) {
 		v := *lastSignal.Target
-		e.updateReady.Store(&v)
+		return &v, nil
 	}
-	return nil
+	return nil, nil
 }
 
 var updateVersion = regexp.MustCompile(`^[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$`)
