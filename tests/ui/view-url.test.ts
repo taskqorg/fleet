@@ -1,7 +1,7 @@
 // View URL codec (docs/designs/fleet-view-urls-and-list-path.md §1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseView, formatView, listKey, toPageParams, TASK_GROUPS, type View } from '../../packages/view-url/view-url.ts';
+import { parseView, formatView, listKey, toPageParams, viewProblem, type View } from '../../packages/view-url/view-url.ts';
 
 const p = (u: string): View => { const v = parseView(u); assert.ok(v, 'not a view: ' + u); return v!; };
 const canon = (u: string) => formatView(p(u));
@@ -77,7 +77,20 @@ test('list key ignores focus, sel and preset; equal views give equal keys', () =
 
 test('page params map onto task_page and sessions_list inputs', () => {
   assert.deepEqual(toPageParams(p('/tasks?q=hero&project=-&state=failed')), { filter: { state: ['failed'], search: 'hero', projectId: [null] }, group: 'project', sort: '-changed' });
-  assert.deepEqual(toPageParams(p('/conversations?state=running')), { filter: { state: ['running'], archived: false } });
+  assert.deepEqual(toPageParams(p('/conversations?state=running')), { filter: { state: ['running'], archived: false }, group: 'project', sort: '-activity' });
+  assert.deepEqual(toPageParams(p('/conversations?group=state&sort=created')), { filter: { archived: false }, group: 'state', sort: 'created' });
+});
+
+test('conversations group and sort: defaults are omitted, other lists\' values are not read', () => {
+  assert.equal(canon('/conversations?group=project&sort=-activity'), '/conversations');
+  assert.equal(canon('/conversations?sort=created&group=agent'), '/conversations?group=agent&sort=created');
+  assert.equal(canon('/conversations?group=priority&sort=-changed'), '/conversations');
+  assert.equal(canon('/tasks?group=agent&sort=-activity'), '/tasks?group=agent');
+  assert.equal(listKey(p('/conversations?group=project')), 'conversations');
+  assert.notEqual(listKey(p('/conversations?group=none')), listKey(p('/conversations')));
+  assert.equal(viewProblem({ view: 'conversations', group: 'host' }), 'group must be one of agent, none, project, state');
+  assert.equal(viewProblem({ view: 'conversations', sort: '-changed' }), 'sort must be one of -activity, -created, activity, created');
+  assert.equal(viewProblem({ view: 'conversations', group: 'state', sort: 'created' }), null);
 });
 
 test("today's links still parse", () => {

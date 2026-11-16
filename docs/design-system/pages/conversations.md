@@ -18,4 +18,11 @@
 
 **Message:** a head line with the author (the person, or the agent mark: harness, model, effort) and the age (OR-2, exact time on hover), then the body. Copy on one message, or Cmd+C on a selection, writes plain markdown and chat-safe HTML with a header line per message ([formats, Copy](../formats.md#copy)).
 
-**List row (OR-22):** state icon, then the first message with its ID, then the harness mark, then the open questions count.
+**Filter bar** (as on [Tasks](tasks.md)): search and saved views; the state quick filter on its own line; then the select square, Group and Sort chips ([filter bar](../controls/filter-bar.md)).
+* System presets (OR-33): "Needs me" is waiting and failed, "Running" is preparing, running and waiting. A preset sets only the state filter; grouping, sort, projects and search stay. Personal saved views restore everything they saved. Archived conversations are their own list (`archived=1` in the view URL), not a preset.
+* Group (OR-35): project (default), state in attention order (waiting, failed, running, preparing, idle, succeeded, cancelled), agent (harness) or none. Headers show the group's count for the active filters.
+* Sort (OR-35): last activity (default, latest first) or created, with a direction toggle. Last activity is the latest change of the conversation, its messages and events, or the start or end of its executions (`sessions_list` `activityAt`).
+
+**List row (OR-22, OR-37):** on a pinned row, the [pin](../controls/row-pin.md) first; the state icon; the first message as the title, which takes all free width, with its ID on the second line; the row facts on the right: open questions (attention tone), executions, time since the last activity, harness mark. No buttons appear on hover: pin, select, copy and Archive are in the [row menu](../controls/row-menu.md); `p` pins and `x` selects the focused row.
+* Pinned conversations are a Pinned group at the top, kept whatever the filter, search or grouping (OR-12).
+* [Selection mode](../controls/selection.md): checkboxes only in the mode, as their own column left of the state; the bar acts on the selected rows: Pin, Unpin and Archive (confirmed inline; `session_archive` per conversation, refused while an execution is active).

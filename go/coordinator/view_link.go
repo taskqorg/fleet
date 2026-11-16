@@ -27,18 +27,28 @@ var (
 		return out
 	}()
 	artifactState = []string{"stored", "pending", "failed", "deleted"}
-	viewGroups    = slices.Sorted(maps.Keys(taskGroups)) // task_page's groups
-	viewSorts     = func() []string {                    // task_page's sorts, each also descending
-		out := []string{}
-		for k := range taskSorts {
-			out = append(out, k, "-"+k)
-		}
-		return slices.Sorted(slices.Values(out))
-	}()
+	// viewOrder: each list view's groups and sorts (task_page, sessions_list), each sort also descending, and defaults.
+	viewOrder = map[string]listOrder{
+		"tasks":         {slices.Sorted(maps.Keys(taskGroups)), bothWays(taskSorts), defaultTaskGroup, defaultTaskSort},
+		"conversations": {slices.Sorted(maps.Keys(sessionGroups)), bothWays(sessionSorts), defaultSessionGroup, defaultSessionSort},
+	}
 	viewKeys = map[string][]string{"tasks": {"group", "preset", "project", "q", "sel", "sort", "state"},
-		"conversations": {"archived", "preset", "project", "q", "sel", "state"}, "results": {"project", "q", "state"}, "delivery": {"q", "state"}}
+		"conversations": {"archived", "group", "preset", "project", "q", "sel", "sort", "state"}, "results": {"project", "q", "state"}, "delivery": {"q", "state"}}
 	schemeURL = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
 )
+
+type listOrder struct {
+	groups, sorts []string
+	group, sort   string
+}
+
+func bothWays(sorts map[string]string) []string {
+	out := []string{}
+	for k := range sorts {
+		out = append(out, k, "-"+k)
+	}
+	return slices.Sorted(slices.Values(out))
+}
 
 // view: one operator-app view state; Project holds nil for "no project".
 type view struct {
@@ -167,12 +177,12 @@ func viewProblem(v any) string {
 				return "state must be a list of: " + strings.Join(states, ", ")
 			}
 		case k == "group":
-			if s, _ := x.(string); !slices.Contains(viewGroups, s) {
-				return "group must be one of " + strings.Join(viewGroups, ", ")
+			if s, _ := x.(string); !slices.Contains(viewOrder[name].groups, s) {
+				return "group must be one of " + strings.Join(viewOrder[name].groups, ", ")
 			}
 		case k == "sort":
-			if s, _ := x.(string); !slices.Contains(viewSorts, s) {
-				return "sort must be one of " + strings.Join(viewSorts, ", ")
+			if s, _ := x.(string); !slices.Contains(viewOrder[name].sorts, s) {
+				return "sort must be one of " + strings.Join(viewOrder[name].sorts, ", ")
 			}
 		case k == "project":
 			xs, ok := x.([]any)
@@ -275,11 +285,11 @@ func parseView(input, origin string) (view, bool) {
 		}
 		switch k {
 		case "group":
-			if g := viewDec(raw, true); slices.Contains(viewGroups, g) {
+			if g := viewDec(raw, true); slices.Contains(viewOrder[v.View].groups, g) {
 				v.Group = g
 			}
 		case "sort":
-			if x := viewDec(raw, true); slices.Contains(viewSorts, x) {
+			if x := viewDec(raw, true); slices.Contains(viewOrder[v.View].sorts, x) {
 				v.Sort = x
 			}
 		case "preset":
@@ -356,10 +366,10 @@ func formatView(v view) string {
 		}
 		return strings.Join(out, ",")
 	}
-	if has("group") && v.Group != "" && v.Group != defaultTaskGroup {
+	if has("group") && v.Group != "" && v.Group != viewOrder[v.View].group {
 		ps["group"] = v.Group
 	}
-	if has("sort") && v.Sort != "" && v.Sort != defaultTaskSort {
+	if has("sort") && v.Sort != "" && v.Sort != viewOrder[v.View].sort {
 		ps["sort"] = viewEnc(v.Sort)
 	}
 	if has("preset") && v.Preset != "" {

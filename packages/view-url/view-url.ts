@@ -18,6 +18,11 @@ export const DEFAULT_TASK_GROUP = 'project';
 /** Order inside a group (task_page sort): '-' is descending; the default is recently changed first. */
 export const TASK_SORTS = ['-changed', '-created', 'changed', 'created'] as const;
 export const DEFAULT_TASK_SORT = '-changed';
+/** Conversations (sessions_list group and sort): grouped by project, latest activity first unless the view says otherwise. */
+export const SESSION_GROUPS = ['project', 'state', 'agent', 'none'] as const;
+export const SESSION_SORTS = ['-activity', '-created', 'activity', 'created'] as const;
+export const DEFAULT_SESSION_GROUP = 'project';
+export const DEFAULT_SESSION_SORT = '-activity';
 export const ARTIFACT_STATES = ['stored', 'pending', 'failed', 'deleted'] as const;
 /** Delivery stages (delivery_status DeliveryStage); the Delivery list's state filter. */
 export const DELIVERY_STAGES = ['pr_open', 'pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'releasing', 'installing', 'installed', 'merged'] as const;
@@ -58,6 +63,12 @@ const listKey_ = (field: 'state' | 'sel', allowed?: readonly string[]): Key => (
   format: v => v[field]?.length ? sorted(v[field]!).map(enc).join(',') : undefined,
   list: field !== 'sel',
 });
+// Group and sort of a list view: only the view's own values are read, and its default is written as nothing.
+const choice = (field: 'group' | 'sort', allowed: readonly string[], def: string): Key => ({
+  parse: (v, raw) => { const x = dec(raw, true); if (allowed.includes(x)) v[field] = x; },
+  format: v => v[field] && v[field] !== def ? enc(v[field]!) : undefined,
+  list: true,
+});
 const text = (field: 'q' | 'preset', list: boolean): Key => ({
   parse: (v, raw) => { const x = dec(raw, true); if (x) v[field] = x; },
   format: v => v[field] ? enc(v[field]!) : undefined,
@@ -78,13 +89,15 @@ function sortProjects(ps: (string | null)[]): (string | null)[] {
 // One table per view: every key the view understands, with its parse and canonical format. Anything else goes to extra.
 const TABLE: Record<ViewName, Record<string, Key>> = {
   tasks: {
-    group: { parse: (v, raw) => { const g = dec(raw, true); if ((TASK_GROUPS as readonly string[]).includes(g)) v.group = g; }, format: v => v.group && v.group !== DEFAULT_TASK_GROUP ? v.group : undefined, list: true },
+    group: choice('group', TASK_GROUPS, DEFAULT_TASK_GROUP),
     preset: text('preset', false), project, q: text('q', true), sel: listKey_('sel'), state: listKey_('state', TASK_STATES),
-    sort: { parse: (v, raw) => { const x = dec(raw, true); if ((TASK_SORTS as readonly string[]).includes(x)) v.sort = x; }, format: v => v.sort && v.sort !== DEFAULT_TASK_SORT ? enc(v.sort) : undefined, list: true },
+    sort: choice('sort', TASK_SORTS, DEFAULT_TASK_SORT),
   },
   conversations: {
     archived: { parse: (v, raw) => { if (raw === '1') v.archived = true; }, format: v => v.archived ? '1' : undefined, list: true },
+    group: choice('group', SESSION_GROUPS, DEFAULT_SESSION_GROUP),
     preset: text('preset', false), project, q: text('q', true), sel: listKey_('sel'), state: listKey_('state', SESSION_STATES),
+    sort: choice('sort', SESSION_SORTS, DEFAULT_SESSION_SORT),
   },
   // Results (docs/designs/fleet-conversations.md Stage 4): task, execution, media and since ride in extra.
   results: { project, q: text('q', true), state: listKey_('state', ARTIFACT_STATES) },
@@ -92,7 +105,11 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
   delivery: { q: text('q', true), state: listKey_('state', DELIVERY_STAGES) },
   hosts: {}, overview: {}, projects: {},
 };
-const DEFAULT_GROUP: Partial<Record<ViewName, string>> = { tasks: DEFAULT_TASK_GROUP };
+// The groups and sorts each list view takes, with its defaults (task_page and sessions_list).
+const ORDER: Partial<Record<ViewName, { groups: readonly string[]; sorts: readonly string[]; group: string; sort: string }>> = {
+  tasks: { groups: TASK_GROUPS, sorts: TASK_SORTS, group: DEFAULT_TASK_GROUP, sort: DEFAULT_TASK_SORT },
+  conversations: { groups: SESSION_GROUPS, sorts: SESSION_SORTS, group: DEFAULT_SESSION_GROUP, sort: DEFAULT_SESSION_SORT },
+};
 
 /**
  * Checks a view object from outside (an agent's view_link call): every field must be a known key of that view with a valid
@@ -111,8 +128,8 @@ export function viewProblem(v: unknown): string | null {
     if (k === 'extra') { if (!x || typeof x !== 'object' || Object.values(x).some(i => typeof i !== 'string')) return 'extra must map keys to strings'; continue; }
     if (!Object.hasOwn(table, k)) return `${k} is not a key of the ${name} view`;
     if (k === 'state') { if (!strs(x) || !(x as string[]).every(i => states.includes(i))) return 'state must be a list of: ' + states.join(', '); }
-    else if (k === 'group') { if (!(TASK_GROUPS as readonly unknown[]).includes(x)) return 'group must be one of ' + TASK_GROUPS.join(', '); }
-    else if (k === 'sort') { if (!(TASK_SORTS as readonly unknown[]).includes(x)) return 'sort must be one of ' + TASK_SORTS.join(', '); }
+    else if (k === 'group') { const gs = ORDER[name]!.groups; if (!gs.includes(x as string)) return 'group must be one of ' + [...gs].sort().join(', '); }
+    else if (k === 'sort') { const ss = ORDER[name]!.sorts; if (!ss.includes(x as string)) return 'sort must be one of ' + [...ss].sort().join(', '); }
     else if (k === 'project') { if (!Array.isArray(x) || !x.every(i => i === null || (typeof i === 'string' && i !== ''))) return 'project must be a list of project ids or null'; }
     else if (k === 'sel') { if (!strs(x)) return 'sel must be a list of ids'; }
     else if (k === 'q' || k === 'preset') { if (typeof x !== 'string') return k + ' must be a string'; }
@@ -176,5 +193,6 @@ export function toPageParams(v: View): PageParams {
   if (v.q) filter.search = v.q;
   if (v.project?.length) filter.projectId = sortProjects(v.project);
   if (v.view === 'conversations') filter.archived = !!v.archived;
-  return v.view === 'tasks' ? { filter, group: v.group ?? DEFAULT_GROUP.tasks, sort: v.sort ?? DEFAULT_TASK_SORT } : { filter };
+  const o = ORDER[v.view];
+  return o ? { filter, group: v.group ?? o.group, sort: v.sort ?? o.sort } : { filter };
 }
