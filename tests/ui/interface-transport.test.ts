@@ -11,17 +11,18 @@ import { join } from 'node:path';
 import { ephemeralCertificate, proxyRequest } from '../performance/interface.ts';
 
 async function origin() {
-  const seen: http.IncomingHttpHeaders[] = [];
+  const seen: http.IncomingHttpHeaders[] = [], errors: Error[] = [];
+  let streamsClosed = 0;
   const upstream = http.createServer((req, res) => {
     seen.push(req.headers);
-    if (req.url === '/api/stream') { res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive' }); res.write('event: ready\ndata: {"cursor":7}\n\n'); return; }
+    if (req.url === '/api/stream') { res.on('close', () => streamsClosed++); res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive, x-hop' , 'x-hop': 'connection-only' }); res.write('event: ready\ndata: {"cursor":7}\n\n'); return; }
     res.writeHead(200, { 'content-type': 'application/json', connection: 'keep-alive' }); res.end(JSON.stringify({ path: req.url }));
   });
   await new Promise<void>(r => upstream.listen(0, '127.0.0.1', r));
   const tls = ephemeralCertificate(mkdtempSync(join(tmpdir(), 'h2-origin-')));
-  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert, allowHTTP1: true }, (req, res) => proxyRequest(req as any, res as any, 'http://127.0.0.1:' + (upstream.address() as any).port, { 'x-fleet-person': 'owner@trial.test' }, true, e => { throw e; }));
+  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert, allowHTTP1: true }, (req, res) => proxyRequest(req as any, res as any, 'http://127.0.0.1:' + (upstream.address() as any).port, { 'x-fleet-person': 'owner@trial.test' }, true, e => errors.push(e)));
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
-  return { seen, tls, url: 'https://127.0.0.1:' + (server.address() as any).port, close: () => { server.close(); upstream.closeAllConnections(); upstream.close(); } };
+  return { seen, errors, streamsClosed: () => streamsClosed, tls, url: 'https://127.0.0.1:' + (server.address() as any).port, close: () => { server.close(); upstream.closeAllConnections(); upstream.close(); } };
 }
 
 test('h2 origin forwards JSON and an open event stream, dropping only connection-specific headers', async () => {
@@ -37,6 +38,10 @@ test('h2 origin forwards JSON and an open event stream, dropping only connection
     assert.equal(json.headers.connection, undefined);
     assert.equal(o.seen.length, 2);
     for (const h of o.seen) { assert.equal(h['x-fleet-person'], 'owner@trial.test'); assert.equal(h['content-type'], 'application/json'); assert.ok(!Object.keys(h).some(k => k.startsWith(':'))); }
+    assert.equal(stream.headers['x-hop'], undefined, 'a Connection-listed header is connection-specific');
+    for (let i = 0; i < 100 && o.streamsClosed() < 1; i++) await new Promise(r => setTimeout(r, 10));
+    assert.equal(o.streamsClosed(), 1, 'closing the client stream ends the coordinator subscription');
+    assert.deepEqual(o.errors, []);
     assert.equal(new X509Certificate(o.tls.cert).fingerprint256, o.tls.fingerprint256);
   } finally { session.close(); o.close(); }
 });

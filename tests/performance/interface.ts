@@ -3,12 +3,11 @@ import assert from 'node:assert/strict';
 import {Writer} from './sql-writer-interface.ts';
 import {installEventSourceCapture,EventSourceRecorder} from './eventsource-interface.ts';
 import { execFileSync, spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import http from 'node:http';
 import http2 from 'node:http2';
 import https from 'node:https';
-import { X509Certificate } from 'node:crypto';
 import { cpus, freemem, hostname, platform, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { once } from 'node:events';
@@ -168,16 +167,27 @@ const pgSnapshot = (c: Coordinator) => JSON.parse(c.sql(`SELECT json_build_objec
 // with an ephemeral self-signed loopback certificate; `h1` keeps the HTTP/1.1 per-origin socket queue of earlier cases.
 export type Transport = 'h1' | 'h2';
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'http2-settings', 'te', 'host']);
-const endToEnd = (headers: http.IncomingHttpHeaders) => Object.fromEntries(Object.entries(headers).filter(([k]) => !k.startsWith(':') && !HOP_BY_HOP.has(k.toLowerCase())));
-/** Forward one origin request to the coordinator over HTTP/1.1; an HTTP/2 answer drops connection-specific headers. */
+/** Drop pseudo, hop-by-hop and Connection-listed headers (RFC 9110 7.6.1), which HTTP/2 forbids. */
+const endToEnd = (headers: http.IncomingHttpHeaders) => {
+  const listed = new Set(String(headers.connection ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+  return Object.fromEntries(Object.entries(headers).filter(([k]) => !k.startsWith(':') && !HOP_BY_HOP.has(k.toLowerCase()) && !listed.has(k.toLowerCase())));
+};
+/**
+ * Forward one origin request to the coordinator over HTTP/1.1. HTTP/1.1 requests and answers pass unchanged; HTTP/2 ones
+ * lose only connection-specific headers. A closed client stream (an EventSource closed, a page navigated) also ends
+ * the coordinator request, so no abandoned subscription keeps streaming.
+ */
 export function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse, base: string, extra: Record<string, string>, h2: boolean, onError: (e: Error) => void) {
   const target = new URL(base);
-  const upstream = http.request({ hostname: target.hostname, port: target.port, method: req.method, path: req.url, headers: { ...endToEnd(req.headers), host: target.host, origin: base, ...extra } }, response => { res.writeHead(response.statusCode!, h2 ? endToEnd(response.headers) : response.headers); response.pipe(res); });
-  upstream.on('error', e => { onError(e); if (!res.headersSent) res.writeHead(502); res.end(); }); req.pipe(upstream);
+  let answer: http.IncomingMessage | null = null;
+  const upstream = http.request({ hostname: target.hostname, port: target.port, method: req.method, path: req.url, headers: { ...(h2 ? endToEnd(req.headers) : req.headers), host: target.host, origin: base, ...extra } }, response => { answer = response; res.writeHead(response.statusCode!, h2 ? endToEnd(response.headers) : response.headers); response.pipe(res); });
+  // HTTP/2 compatibility marks a reset stream's response finished, so completeness is read from the coordinator answer.
+  res.on('close', () => { if (!answer?.complete) upstream.destroy(); });
+  upstream.on('error', e => { if (res.destroyed) return; onError(e); if (!res.headersSent) res.writeHead(502); res.end(); }); req.pipe(upstream);
 }
 export function ephemeralCertificate(out: string) {
   const key = resolve(out, 'origin-key.pem'), cert = resolve(out, 'origin-cert.pem');
-  execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-keyout', key, '-out', cert], { stdio: 'ignore' });
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-keyout', key, '-out', cert], { stdio: ['ignore', 'ignore', 'pipe'] }); // a failure carries openssl's stderr
   const pem = readFileSync(cert); return { key: readFileSync(key), cert: pem, fingerprint256: new X509Certificate(pem).fingerprint256 };
 }
 export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number; transport?: Transport }) {
@@ -436,7 +446,7 @@ export async function serve(o: { out: string; history: number; projects: number;
           const path = req.url.split('?')[0]; let b: any = {};
           if (req.method === 'POST') { const chunks: Buffer[] = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > 1024 * 1024) throw Error('measurement body too large'); chunks.push(chunk); } b = JSON.parse(Buffer.concat(chunks).toString()); }
           let result: unknown;
-          if (path === '/__interface/config') result = { fixture: f, projects: ids, marker, longEvents: o.longEvents ?? 0, development: o.development, hostname: hostname(), candidate: sourceCandidate.sha, run: run?.id, transport, certificateSHA256: tls?.fingerprint256 ?? null, certificatePEM: tls?.cert.toString() ?? null };
+          if (path === '/__interface/config') result = { fixture: f, projects: ids, marker, longEvents: o.longEvents ?? 0, development: o.development, hostname: hostname(), candidate: sourceCandidate.sha, run: run?.id, transport, certificatePEM: tls?.cert.toString() ?? null };
           else if (path === '/__interface/clock') result = { monotonic: stamp(), wall: Date.now() };
           else if (path === '/__interface/start') {
             if (run && !run.done) throw Error('run already active');
@@ -525,29 +535,29 @@ async function parity(c: Coordinator, f: Fixture, out: string) {
 export async function browse(o: { origin: string; out: string; spec: Workload; placement: string }) {
   const url = new URL(o.origin);
   if (!['127.0.0.1', 'localhost'].includes(url.hostname) || !['http:', 'https:'].includes(url.protocol)) throw Error('use a loopback SSH tunnel to isolated server, never production');
-  // The https origin is the fixture's own ephemeral loopback certificate; it is pinned to the fingerprint the first answer saw.
-  let pinned: string | null = null;
-  const fetchOrigin = (target: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) => url.protocol === 'http:' ? fetch(target, init) : new Promise<{ ok: boolean; status: number; json(): Promise<any> }>((ok, fail) => {
-    const r = https.request(target, { method: init.method ?? 'GET', headers: init.headers, rejectUnauthorized: false }, response => {
-      const seen = (response.socket as import('node:tls').TLSSocket).getPeerCertificate().fingerprint256;
-      if (pinned && seen !== pinned) { response.destroy(); fail(Error('origin certificate changed')); return; }
-      pinned ??= seen;
+  // The https origin is the fixture's own ephemeral loopback certificate. Only the config read accepts it unverified;
+  // its PEM then becomes the sole trusted CA, so every later request verifies the same key at handshake.
+  let trusted: https.Agent | null = null;
+  const fetchOrigin = (target: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) => url.protocol === 'http:' ? fetch(target, init) : new Promise<{ ok: boolean; status: number; json(): Promise<any>; fingerprint256: string }>((ok, fail) => {
+    const r = https.request(target, { method: init.method ?? 'GET', headers: init.headers, ...(trusted ? { agent: trusted } : { agent: false, rejectUnauthorized: false }) }, response => {
+      const fingerprint256 = (response.socket as import('node:tls').TLSSocket).getPeerCertificate().fingerprint256;
       const chunks: Buffer[] = []; response.on('data', c => chunks.push(c)); response.on('error', fail);
-      response.on('end', () => { const text = Buffer.concat(chunks).toString(); ok({ ok: response.statusCode! < 400, status: response.statusCode!, json: async () => JSON.parse(text) }); });
+      response.on('end', () => { const text = Buffer.concat(chunks).toString(); ok({ ok: response.statusCode! < 400, status: response.statusCode!, fingerprint256, json: async () => JSON.parse(text) }); });
     });
     r.on('error', fail); r.end(init.body);
   });
-  mkdirSync(o.out, { recursive: true });
   const request = async (path: string, body?: object) => { const r = await fetchOrigin(o.origin + '/__interface/' + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}); const b = await r.json() as any; if (!r.ok) throw Error(JSON.stringify(b)); return b; };
-  const config = await request('config'), spec = workload(o.spec, config.development);
   const transport: Transport = url.protocol === 'https:' ? 'h2' : 'h1';
-  if ((config.transport ?? 'h1') !== transport || (transport === 'h2' && config.certificateSHA256 !== pinned)) throw Error('origin transport or certificate does not match the fixture');
+  const first = await fetchOrigin(o.origin + '/__interface/config'), config = await first.json(), spec = workload(o.spec, config.development);
+  if (!first.ok) throw Error(JSON.stringify(config));
+  const certificate = transport === 'h2' ? new X509Certificate(config.certificatePEM) : null;
+  if ((config.transport ?? 'h1') !== transport || (certificate && certificate.fingerprint256 !== (first as any).fingerprint256)) throw Error('origin transport or certificate does not match the fixture');
+  if (certificate) trusted = new https.Agent({ keepAlive: true, ca: config.certificatePEM });
   const placement = JSON.parse(readFileSync(o.placement, 'utf8'));
   if (!config.development && (hostname() === config.hostname || placement.separateMachine !== true || !placement.reservation)) throw Error('separate reserved Chromium machine required');
   const { chromium } = await import('playwright');
   // Chromium accepts exactly the fixture's public key; every other certificate error still fails.
-  const spki = transport === 'h2' ? createHash('sha256').update(new X509Certificate(config.certificatePEM).publicKey.export({ type: 'spki', format: 'der' })).digest('base64') : null;
-  if (transport === 'h2' && new X509Certificate(config.certificatePEM).fingerprint256 !== pinned) throw Error('origin certificate does not match the fixture');
+  const spki = certificate ? createHash('sha256').update(certificate.publicKey.export({ type: 'spki', format: 'der' })).digest('base64') : null;
   const browser = await chromium.launch({ headless: true, args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', ...(spki ? ['--ignore-certificate-errors-spki-list=' + spki] : [])] });
   const notifications=new EventSourceRecorder(o.out);
   const evidence: any = { spec, placement, transport, hardware: hardware(), chromium: browser.version(), server: config, navigation: [], networkProbes: [] };
@@ -687,7 +697,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       evidence.notificationCapture=notifications.snapshot();
       try { writeFileSync(resolve(o.out, 'browser-incomplete.json'), JSON.stringify(evidence, null, 2)); } catch (e) { console.error('incomplete browser evidence persistence failed:', e); }
     }
-    try { await notifications.finish(false); } finally { await browser.close(); }
+    try { await notifications.finish(false); } finally { await browser.close(); trusted?.destroy(); }
   }
 }
 
