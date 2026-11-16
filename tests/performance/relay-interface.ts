@@ -2,6 +2,7 @@
 import net, { type Socket } from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 type Options = {
   host: string; sourcePort: number; listenPort: number; legPorts: readonly [number, number];
@@ -12,7 +13,7 @@ type Launch = (args: string[]) => ChildProcess;
 const port = (n: number, zero = false) => Number.isInteger(n) && n >= (zero ? 0 : 1) && n <= 65535;
 const aborted = () => Object.assign(new Error('interface relay startup cancelled'), { name: 'AbortError' });
 
-export async function startInterfaceRelay(o: Options, launch: Launch = args => spawn('ssh', args, { stdio: ['ignore', 'ignore', 'pipe'] })) {
+export async function startInterfaceRelay(o: Options, launch: Launch = args => spawn('ssh', args, { stdio: ['ignore', 'pipe', 'ignore'] })) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(o.host) || !port(o.sourcePort) || !port(o.listenPort, true) ||
       o.legPorts.length !== 2 || o.legPorts.some(n => !port(n)) || new Set(o.legPorts).size !== 2 || o.legPorts.includes(o.listenPort)) {
     throw Error('use an SSH alias and distinct loopback listen/two leg ports');
@@ -51,11 +52,16 @@ export async function startInterfaceRelay(o: Options, launch: Launch = args => s
       emit('flow-close', { id, leg, fromBrowserBytes: down.bytesRead, toBrowserBytes: down.bytesWritten, active: flows.size });
       resolveFlow();
     };
-    down.once('close', () => { downClosed = true; up.destroy(); complete(); });
-    up.once('close', () => {
+    down.once('close', hadError => {
+      downClosed = true;
+      // The browser may finish after receiving an early source FIN while up still drains its request.
+      if (hadError || !down.readableEnded || !down.writableFinished) up.destroy();
+      complete();
+    });
+    up.once('close', hadError => {
       upClosed = true;
       // A normal source FIN already ends down through pipe; let queued writes drain.
-      if (!up.readableEnded) down.destroy();
+      if (hadError || !up.readableEnded || !up.writableFinished) down.destroy();
       complete();
     });
   });
@@ -91,8 +97,10 @@ export async function startInterfaceRelay(o: Options, launch: Launch = args => s
     const listening: Promise<void>[] = [];
     for (const [index, legPort] of o.legPorts.entries()) {
       if (stopping) throw failure ?? aborted();
+      const marker = `FLEET_INTERFACE_READY_${randomUUID().replaceAll('-', '')}`;
       const child = launch(['-N', '-T', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
-        '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ControlPersist=no', '-o', 'LogLevel=DEBUG1',
+        '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ControlPersist=no',
+        '-o', 'PermitLocalCommand=yes', '-o', `LocalCommand=printf '${marker}\\n'`,
         '-L', `127.0.0.1:${legPort}:127.0.0.1:${o.sourcePort}`, o.host]);
       let resolveExit!: () => void, resolveReady!: () => void, rejectReady!: (e: Error) => void;
       const leg: Leg = { child, port: legPort, exited: false, closed: new Promise(resolve => { resolveExit = resolve; }) };
@@ -106,13 +114,13 @@ export async function startInterfaceRelay(o: Options, launch: Launch = args => s
         emit('leg-exit', { leg: index, childPid: child.pid, code, signal });
         fail(Error(`interface source leg ${index} exited (${code ?? signal})`));
       });
-      if (!child.stderr) throw Error('SSH diagnostics pipe unavailable');
+      if (!child.stdout) throw Error('SSH acknowledgement pipe unavailable');
       let tail = '', confirmed = false;
-      child.stderr.on('data', (chunk: Buffer) => {
-        // Authentication diagnostics are neither retained nor emitted. Bound even a long line.
+      child.stdout.on('data', (chunk: Buffer) => {
+        // LocalCommand runs after successful forwarding setup; pre-bind SSH logs cannot acknowledge it.
         const lines = (tail + chunk.toString()).split('\n'); tail = lines.pop()!.slice(-8192);
         for (const line of lines) {
-          if (!confirmed && line.trim() === `debug1: Local forwarding listening on 127.0.0.1 port ${legPort}.`) {
+          if (!confirmed && line.trim() === marker) {
             confirmed = true; emit('leg-listening', { leg: index, childPid: child.pid, port: legPort }); resolveReady();
           }
         }
