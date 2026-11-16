@@ -44,7 +44,7 @@ const cursorNow = () => currentCursor() ?? 0;
 export function clearMemory() {
   records.clear(); holders.clear();
   for (const [key, e] of lists) { e.state.value = null; e.seq = 0; e.touchedWhileLoading.clear(); if (!e.mounted) lists.delete(key); else if (isAccessCurrent(accessGeneration())) void loadList(e.kind, key, e.view); }
-  for (const s of docs.values()) s.value = null;
+  discardDocReads(); for (const s of docs.values()) s.value = null;
   generation.value++;
 }
 onClear.add(clearMemory);
@@ -210,50 +210,56 @@ export function useList(kind: Kind, urlView: View) {
 }
 
 /**
- * One read at a time per doc name, shared by every mounted reader of that name (the Focus control and Projects both read
- * `projects`). A read asked for while one runs is not sent alongside it: one trailing read follows, so the last answer is
- * never older than the last request, and a burst of feed changes costs at most two reads instead of one per change.
+ * One running read per mounted doc name, shared by every reader of that name (the Focus control and Projects both read
+ * `projects`); a doc name identifies its read, so readers of one name pass equivalent fetches. A feed change asked for
+ * while a read runs becomes one trailing read, so the last answer is never older than the last change. A reload, a
+ * resync, or a refresh tick that finds the running read older than its own period starts a fresh read instead and the
+ * superseded answer is discarded, so a stalled request never blocks recovery. Clearing memory discards running reads.
  */
-type DocReader = { fetch: () => Promise<unknown> };
-type DocFlight = { readers: DocReader[]; running: boolean; again: boolean };
+type DocFlight = { readers: number; fetch: () => Promise<unknown>; epoch: number; running: boolean; startedAt: number; again: boolean };
 const flights = new Map<string, DocFlight>();
 function docSignal(name: string) { let s = docs.get(name); if (!s) docs.set(name, s = signal(null)); return s; }
-function restoreDoc(name: string) {
+function restoreDoc(name: string, f: DocFlight) {
   const s = docSignal(name);
-  void load<unknown>('doc:' + name).then(v => { if (v && flights.has(name) && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
+  void load<unknown>('doc:' + name).then(v => { if (v && flights.get(name) === f && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
 }
-/** Ask for a fresh read of a mounted doc; joins the running read by scheduling one trailing read. */
-export function readDoc(name: string) {
-  const f = flights.get(name); if (!f) return;
-  if (f.running) { f.again = true; return; }
-  f.running = true;
-  void (async () => {
-    try {
-      do {
-        f.again = false;
-        const reader = f.readers[f.readers.length - 1]; if (!reader) return;
-        const generation = accessGeneration(), s = docSignal(name);
-        try {
-          await ensureAccessGeneration(); assertAccessGeneration(generation);
-          const d = await reader.fetch();
-          if (isAccessCurrent(generation) && flights.get(name) === f) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); }
-        } catch (e: any) {
-          if (!isAccessCurrent(generation) || flights.get(name) !== f) continue;
-          s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e.message };
-          if (s.value.data === null) restoreDoc(name); // offline: show what was stored
+async function runDoc(name: string, f: DocFlight, epoch: number) {
+  const current = () => flights.get(name) === f && f.epoch === epoch;
+  try {
+    do {
+      f.again = false;
+      const generation = accessGeneration(), s = docSignal(name);
+      try {
+        await ensureAccessGeneration(); assertAccessGeneration(generation);
+        const d = await f.fetch();
+        if (!current()) return;
+        if (isAccessCurrent(generation)) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); }
+      } catch (e: any) {
+        if (!current()) return;
+        if (isAccessCurrent(generation)) {
+          s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e?.message ?? String(e) };
+          if (s.value.data === null) restoreDoc(name, f); // offline: show what was stored
         }
-      } while (f.again && flights.get(name) === f);
-    } finally { f.running = false; }
-  })();
+      }
+    } while (f.again && current());
+  } finally { if (current()) f.running = false; }
 }
-/** Mount a reader of a doc: shows stored data first, then reads (or joins the running read). Returns the release. */
+/** Read a mounted doc. While a read runs, ask for one trailing read; `supersedeAfterMs` starts a fresh read instead once the running one is that old (0: now). */
+export function readDoc(name: string, supersedeAfterMs?: number) {
+  const f = flights.get(name); if (!f) return;
+  if (f.running && (supersedeAfterMs === undefined || performance.now() - f.startedAt < supersedeAfterMs)) { f.again = true; return; }
+  f.running = true; f.startedAt = performance.now();
+  void runDoc(name, f, ++f.epoch);
+}
+/** Mount a reader: shows stored data first, then reads, or joins the running read. Returns the release. */
 export function holdDoc(name: string, fetch: () => Promise<unknown>) {
-  let f = flights.get(name); if (!f) flights.set(name, f = { readers: [], running: false, again: false });
-  const reader: DocReader = { fetch }, flight = f; flight.readers.push(reader);
-  if (!docSignal(name).value?.data) restoreDoc(name);
-  readDoc(name);
-  return () => { const i = flight.readers.indexOf(reader); if (i >= 0) flight.readers.splice(i, 1); if (!flight.readers.length && flights.get(name) === flight) flights.delete(name); };
+  let f = flights.get(name); if (!f) flights.set(name, f = { readers: 0, fetch, epoch: 0, running: false, startedAt: 0, again: false });
+  const flight = f; flight.readers++; flight.fetch = fetch;
+  if (!docSignal(name).value?.data) restoreDoc(name, flight);
+  if (!flight.running) readDoc(name);
+  return () => { if (--flight.readers === 0 && flights.get(name) === flight) flights.delete(name); };
 }
+function discardDocReads() { for (const f of flights.values()) { f.epoch++; f.running = false; f.again = false; } }
 
 /** Detail and page reads by name (task_get, session_get, overview, hosts). The last value stays visible while re-reading. */
 export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches: (c: Change) => boolean, refreshMs?: number) {
@@ -263,17 +269,17 @@ export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches:
   const gen = generation.value;
   useEffect(() => {
     if (!name) return;
-    const release = holdDoc(name, () => fetchRef.current()), get = () => readDoc(name);
-    const off = subscribe({ resync: get, changes: cs => { if (cs.some(c => touchRef.current(c))) get(); } });
-    const timer = refreshMs ? setInterval(get, refreshMs) : 0;
+    const release = holdDoc(name, () => fetchRef.current());
+    const off = subscribe({ resync: () => readDoc(name, 0), changes: cs => { if (cs.some(c => touchRef.current(c))) readDoc(name); } });
+    const timer = refreshMs ? setInterval(() => readDoc(name, refreshMs), refreshMs) : 0;
     return () => { release(); off(); clearInterval(timer); };
   }, [name, refreshMs, gen]);
   const v = s?.value ?? null;
-  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => { if (name) readDoc(name); } };
+  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => { if (name) readDoc(name, 0); } };
 }
 
 /** For tests: the stored list under key and a record. */
-export const peek = { generation: () => generation.value, list: (key: string) => lists.get(key)?.state.value ?? null, record: (id: string) => records.get(id) ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
+export const peek = { generation: () => generation.value, doc: (name: string) => docs.get(name)?.value ?? null, list: (key: string) => lists.get(key)?.state.value ?? null, record: (id: string) => records.get(id) ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
 
 // Prepared readers share scheduling by normalized request AND access generation.
 import type { ProjectResourcesReply, ProjectResourceItemsReply, ResourceProgress, ProjectResourceItemsRequest } from '../../contracts/generated/ops.ts';

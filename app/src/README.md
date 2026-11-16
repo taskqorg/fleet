@@ -21,7 +21,7 @@
 - `writeOnce` retries only unknown write outcomes with the same request body and stops on a definite error or aborted signal (`api.ts:writeOnce`).
 - The server decides list membership and ordering; `applyMembership` only merges returned rows, and `store.ts` bounds `list_membership` calls to 1,000 IDs and two lists.
 - Feed delivery de-duplicates sequence numbers and batches subscribers per animation frame (`feed.ts:deliver`).
-- Every mounted reader of one doc name shares one read at a time: a read asked for while one runs becomes a single trailing read, so a burst of feed changes costs at most two requests per name and the last answer is never older than the last request (`store.ts:readDoc`).
+- A doc name identifies its read: every mounted reader of one name shares one running read, and feed changes that arrive while it runs become one trailing read, so the last answer is never older than the last change. A reload, a resync, or a refresh tick that finds the running read older than its own period starts a fresh read and discards the superseded answer; clearing memory discards running reads (`store.ts:readDoc`).
 - Preference invalidation uses the server's audit `settingTarget`, not the actor or an inferred project: current-person changes reread, other known targets do not, and legacy missing/null targets plus resync remain conservative. Mounted project detail skips only a known other `project/<id>` definition; own, legacy, unknown and non-project dependency changes still reread.
 - Stored app data is cleared when the grants version changes or the browser is signed out (`offline.ts:checkGrants`, `main.tsx:App`).
 
