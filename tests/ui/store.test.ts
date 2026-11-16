@@ -16,8 +16,8 @@ let answer: (name: string, body: any) => Promise<any> = async () => ({});
 const realFetch = async (url: string, init: any) => {
   const name = url.split('/api/ops/')[1], body = JSON.parse(init.body);
   calls.push({ name, body });
-  const data = await answer(name, body);
-  return new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
+  const { httpStatus: status = 200, ...data } = await answer(name, body) ?? {};
+  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 };
 (globalThis as any).fetch = realFetch;
 const row = (id: string, title = id) => ({ id, title, sortKey: ['1', -Number(id.replace(/\D/g, '') || 0), id] });
@@ -40,6 +40,75 @@ test('review #33-1: paging uses the shown list\'s own params and waits while tha
   const slowA = deferred(); answer = async () => slowA.p; const reloading = loadList('tasks', 'A', A);
   calls = []; await nextPage('A'); assert.equal(calls.length, 0); // no page request while A reloads
   slowA.ok(page([row('t1')], ['1', -1, 't1'])); await reloading;
+});
+
+test('a refused page cursor reloads the first page once, keeping rows, and pages on; a second refusal shows the error', async () => {
+  await clearAll();
+  const V = { view: 'conversations' as const }, refused = { httpStatus: 400, message: 'Invalid after' };
+  answer = async () => page([row('t1'), row('t2')], ['old', 't2']); // a cursor of an older shape
+  await loadList('sessions', 'C', V);
+  const slow = deferred(); calls = [];
+  answer = async (_n, b) => b.after?.[0] === 'old' ? refused : b.after ? page([row('t4')]) : slow.p;
+  const paging = nextPage('C'); await new Promise(r => setImmediate(r));
+  assert.deepEqual(calls.map(c => c.body.after?.[0] ?? null), ['old', null], 'the refused cursor is followed by one first-page request');
+  assert.deepEqual(peek.list('C')!.ids, ['t1', 't2'], 'rows stay on screen while the first page reloads');
+  assert.equal(peek.list('C')!.error, null);
+  slow.ok(page([row('t1'), row('t3')], ['g', 's', 't3'])); await paging;
+  assert.deepEqual(calls.map(c => c.body.after?.[0] ?? null), ['old', null, 'g'], 'the person is at the end: it pages on with the fresh cursor');
+  assert.deepEqual(peek.list('C')!.ids, ['t1', 't3', 't4']); assert.equal(peek.list('C')!.error, null);
+  // A server that refuses its own fresh cursor: one reload per list load, then the error, rows kept.
+  answer = async (_n, b) => b.after ? refused : page([row('t1'), row('t3')], ['g', 's', 't3']);
+  await loadList('sessions', 'C', V); calls = []; await nextPage('C');
+  assert.deepEqual(calls.map(c => !!c.body.after), [true, false, true], 'no second reload in the same list load');
+  assert.equal(peek.list('C')!.error, 'Invalid after');
+  assert.deepEqual(peek.list('C')!.ids, ['t1', 't3']);
+  calls = []; await nextPage('C'); assert.deepEqual(calls.map(c => !!c.body.after), [true], 'scrolling again does not reload');
+});
+
+test('a recovery reload that steps aside for a newer membership answer still drops the refused cursor', async () => {
+  await clearAll();
+  const V = { view: 'conversations' as const };
+  answer = async () => page([row('t1')], ['old', 't1']);
+  peek.mount('sessions', 'E', V); await loadList('sessions', 'E', V);
+  const member = deferred(), first = deferred();
+  answer = async (n, b) => n === 'list_membership' ? member.p : b.after?.[0] === 'old' ? { httpStatus: 400, message: 'Invalid after' } : b.after ? page([row('t5')]) : first.p;
+  const changing = applyChanges([{ seq: 10, kind: 'session', id: 't2', taskId: null, sessionId: 't2', hostId: null, op: 'I' } as any]);
+  await new Promise(r => setImmediate(r));
+  const paging = nextPage('E'); await new Promise(r => setImmediate(r));
+  member.ok({ lists: [{ rows: [row('t2')], counts: { queued: 2 }, groups: [] }] }); await changing;
+  first.ok(page([row('t1')], ['g', 's', 't1'])); await paging;
+  assert.ok(peek.list('E')!.ids.includes('t2'), 'the newer membership answer is kept');
+  assert.ok(peek.list('E')!.ids.includes('t5'), 'paged on with the fresh cursor'); assert.equal(peek.list('E')!.error, null);
+});
+
+test('a page error clears with the next page; a failed first-page load keeps its error', async () => {
+  await clearAll();
+  const V = { view: 'conversations' as const };
+  answer = async () => page([row('t1')], ['g', 's', 't1']);
+  await loadList('sessions', 'F', V);
+  answer = async () => ({ httpStatus: 500, message: 'busy' }); await nextPage('F');
+  assert.equal(peek.list('F')!.error, 'busy');
+  answer = async () => page([row('t2')], ['g', 's', 't2']); await nextPage('F');
+  assert.equal(peek.list('F')!.error, null);
+  answer = async () => ({ httpStatus: 500, message: 'busy' }); await nextPage('F'); // a page error, then a failed load
+  answer = async (_n, b) => b.after ? page([row('t3')]) : { httpStatus: 500, message: 'down' };
+  await loadList('sessions', 'F', V); await nextPage('F');
+  assert.equal(peek.list('F')!.error, 'down', 'a page does not hide the failed load from the back-online reload');
+});
+
+test('a refused cursor while a reload runs leaves the cursor to that reload', async () => {
+  await clearAll();
+  const V = { view: 'conversations' as const };
+  answer = async () => page([row('t1')], ['old', 't1']);
+  await loadList('sessions', 'D', V);
+  const refusal = deferred(), slow = deferred(); calls = [];
+  answer = async (_n, b) => b.after ? refusal.p : slow.p;
+  const paging = nextPage('D'); await new Promise(r => setImmediate(r));
+  const reloading = loadList('sessions', 'D', V); await new Promise(r => setImmediate(r));
+  refusal.ok({ httpStatus: 400, message: 'Invalid after' }); await paging;
+  assert.equal(calls.length, 2, 'no extra first-page request on top of the running reload');
+  assert.equal(peek.list('D')!.error, null);
+  slow.ok(page([row('t1')], ['g', 's', 't1'])); await reloading;
 });
 
 test('review #33-3: an older page answer never overwrites a newer record; changes during a load are asked after it lands', async () => {

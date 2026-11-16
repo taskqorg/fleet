@@ -35,6 +35,17 @@ test('failed refresh retains a timestamped snapshot with unknown status', () => 
   assert.equal(v.versionInfo().rows.find((r: any) => r.key === 'host:fixture').tone, 'danger', 'stale snapshot erased a known failure alert');
 });
 
+test('the open overview recounts ages and states from one later present', () => {
+  const now = Date.now(), data = snapshot();
+  data.serverNow = now; (data as any).gateway = { version: '1.261115.5', state: 'ok', observedAt: now - 40_000 };
+  v.versions.value = data; v.versionObservedAt.value = now; v.versionError.value = null;
+  const info = v.versionInfo(now), gateway = (rows: any[]) => rows.find((r: any) => r.key === 'gateway');
+  assert.equal(gateway(info.rows).state, 'ok'); assert.equal(gateway(info.rows).times[0].now - gateway(info.rows).times[0].at, 40_000);
+  const later = info.at!(now + 30_000).rows;
+  assert.equal(gateway(later).times[0].now - gateway(later).times[0].at, 70_000, 'the age moves on with the present');
+  assert.match(gateway(later).state, /unknown/, 'and the state next to it reflects the same present');
+});
+
 test('access invalidation clears private version data and rejects a late read', async () => {
   const originalFetch = globalThis.fetch;
   Object.defineProperty(globalThis, 'document', { configurable: true, value: { head: { innerHTML: html } } });
@@ -90,5 +101,28 @@ test('narrow rail exposes Versions and a long overview stays within the viewport
     assert.equal(await panel.evaluate(el => el.scrollHeight > el.clientHeight), true);
     await panel.getByText('host 49', { exact: true }).scrollIntoViewIfNeeded();
     assert.equal(await panel.getByText('host 49', { exact: true }).isVisible(), true);
+  } finally { await browser.close(); }
+});
+
+test('the open version overview recounts its ages on a timer', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
+  const { chromium } = await import('playwright');
+  const fixture = await build({ stdin: { contents: `
+    import {render} from 'preact';import {AppShell} from './packages/ui/src/index.ts';
+    const checked=Date.now()-40000, info=now=>({current:'1.261115.5',tone:'neutral',updateReady:false,onUpdate:()=>{},at:info,rows:[{key:'gateway',part:'Gateway',icon:'shield',version:'1.261115.5',state:now-checked>60000?'unknown':'ok',tone:'success',times:[{label:'checked',at:checked,now}]}]}), version=info(Date.now());
+    render(<AppShell nav={[]} current="tasks" onGo={()=>{}} waiting={0} user={{name:'Fixture person',onLogout:()=>{},version}}><p>Fixture work</p></AppShell>,document.body);
+  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    await page.clock.install(); await page.setContent('<body></body>');
+    await page.addScriptTag({ content: fixture.outputFiles[0].text });
+    await page.getByRole('button', { name: 'Fixture person', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Versions', exact: true }).click();
+    const age = page.getByRole('group', { name: 'Versions', exact: true }).locator('time');
+    const first = await age.innerText();
+    await page.clock.runFor(10 * 60_000);
+    assert.notEqual(await age.innerText(), first, 'the age moved on while the overview stayed open');
+    assert.equal(await age.innerText(), '10m');
+    assert.equal(await page.locator('.ver-state').innerText(), 'unknown', 'the state counts from the same present as the age');
   } finally { await browser.close(); }
 });

@@ -144,7 +144,7 @@ export function versionInfo(now = Date.now()): VersionInfo {
   }
   if (updateError.value) rows.unshift({ key: 'update', part: 'App update', icon: 'rotate-cw', version: null, state: 'pending / failed', tone: 'attention', note: updateError.value });
   const worst = rows.reduce((t, r) => RANK[r.tone] > RANK[t] ? r.tone : t, 'neutral' as Tone), n = rows.filter(r => RANK[r.tone] > 0).length;
-  return { current: v?.coordinator.version ?? null, tone: RANK[worst] > 0 ? worst : 'neutral', summary: n ? `${n} ${n === 1 ? 'part needs' : 'parts need'} a look` : undefined, updateReady: updateChecked.value && updateReady.value, updating: updating.value, onUpdate: applyUpdate, rows, onOpen: () => { void loadVersions(); void checkUpdate(); } };
+  return { current: v?.coordinator.version ?? null, tone: RANK[worst] > 0 ? worst : 'neutral', summary: n ? `${n} ${n === 1 ? 'part needs' : 'parts need'} a look` : undefined, updateReady: updateChecked.value && updateReady.value, updating: updating.value, onUpdate: applyUpdate, rows, at: versionInfo, onOpen: () => { void loadVersions(); void checkUpdate(); } };
 }
 
 export function hostState(h: Versions['hosts'][number], now: number, staleMs: number): { state: string; tone: Tone; note?: string; seen?: number } {

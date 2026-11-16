@@ -2,14 +2,13 @@
 // open, the work area shows the system (Limits has its own route, /hosts/limits): services (RED from spans), findings of the rules pass, recent runs with their CPU
 // and memory, and purge (docs/designs/fleet-telemetry.md §8, fleet-system-management.md System screen).
 // Staleness is decided on the client from lastSeenAt (no write happens when a host stops polling), re-evaluated every 5 s.
-import { useEffect, useState } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { EntityCode, ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow } from '../../../packages/ui/src/index.ts';
+import { EntityCode, ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow, useTick } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { Limits } from './limits.tsx';
 
-const useTick = (msTick: number) => { const [, set] = useState(0); useEffect(() => { const t = setInterval(() => set(n => n + 1), msTick); return () => clearInterval(t); }, [msTick]); };
 const ms = (s: string) => Date.parse(s);
 const m = (value: number | null | undefined) => ({ value: value ?? null, basis: value == null ? 'unavailable' : 'measured' } as const);
 

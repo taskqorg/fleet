@@ -24,7 +24,7 @@ type Params = ReturnType<typeof toPageParams>;
 type Group = { key: string; label: string; count: number };
 export type ListState = { ids: string[]; keys: Record<string, SortKey>; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; restored: boolean; error: string | null };
 type Saved = Omit<ListState, 'restored' | 'error'> & { rows: Row[] };
-type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; seq: number; mounted: number; loading: number; touchedWhileLoading: Set<string>; touchedSeq: number; paging: boolean };
+type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; seq: number; mounted: number; loading: number; touchedWhileLoading: Set<string>; touchedSeq: number; paging: boolean; cursorReset: boolean; pageError: boolean };
 type Doc = { data: unknown; restored: boolean; error: string | null };
 
 const records = new Map<string, { row: Row; seq: number }>();
@@ -51,7 +51,7 @@ onClear.add(clearMemory);
 
 function entry(kind: Kind, key: string, view: View): Entry {
   let e = lists.get(key);
-  if (!e) lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), seq: 0, mounted: 0, loading: 0, touchedWhileLoading: new Set(), touchedSeq: 0, paging: false });
+  if (!e) lists.set(key, e = { kind, view, params: toPageParams(view), state: signal(null), busy: signal(false), seq: 0, mounted: 0, loading: 0, touchedWhileLoading: new Set(), touchedSeq: 0, paging: false, cursorReset: false, pageError: false });
   return e;
 }
 /** Set a list's state and keep the id -> lists index right. */
@@ -94,21 +94,28 @@ async function restore(key: string, e: Entry) {
   setList(key, e, { ...rest, at: 0, restored: true, error });
 }
 
-/** Load the first page of a list. A superseded request is aborted through abort and leaves the list as it was. */
-export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal) {
+/**
+ * Load the first page of a list. A superseded request is aborted through abort and leaves the list as it was.
+ * `cursorReset` marks the reload nextPage starts after the server refused a stale cursor; any other load allows one again
+ * (an accepted page does not: a server refusing its own deeper cursor would snap the list back to page 1 on every scroll).
+ */
+export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal, cursorReset = false) {
   const e = entry(kind, key, view), from = cursorNow(), generation = accessGeneration();
-  e.loading++; e.busy.value = true;
+  e.cursorReset = cursorReset; e.loading++; e.busy.value = true;
   try {
     await ensureAccessGeneration(); assertAccessGeneration(generation);
     const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
     assertAccessGeneration(generation);
-    if (from < e.seq) return; // a newer membership answer already updated this list
+    if (from < e.seq) { // a newer membership answer already updated this list, but not its refused cursor
+      if (cursorReset && e.state.value) { setList(key, e, { ...e.state.value, nextAfter: r.nextAfter }); persist(key, e); }
+      return;
+    }
     const rows = rowsOf(r);
     setList(key, e, { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null });
-    putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
+    e.pageError = false; putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
   } catch (err: any) {
     if (err instanceof AccessChanged || !isAccessCurrent(generation) || err instanceof OpError && err.message === 'aborted') return;
-    const s = e.state.value;
+    const s = e.state.value; e.pageError = false; // the load's error now; a page must not clear it
     setList(key, e, s ? { ...s, error: err.message } : { ids: [], keys: {}, counts: {}, total: 0, groups: [], nextAfter: null, at: 0, restored: false, error: err.message });
     if (!s?.ids.length) restore(key, e); // offline: show what was stored, marked as not loaded
   } finally {
@@ -117,7 +124,12 @@ export async function loadList(kind: Kind, key: string, view: View, abort?: Abor
   }
 }
 
-/** The next page of the list stored under key, with that list's own params; not while its first page is loading. */
+/**
+ * The next page of the list stored under key, with that list's own params; not while its first page is loading.
+ * A cursor the server refuses (400: a tab or stored snapshot holding an older cursor shape, or one from another group or
+ * sort) is dropped and the list reloads from its first page, rows staying on screen; once per list load, so a server that
+ * refuses its own fresh cursor shows the error instead of looping.
+ */
 export async function nextPage(key: string) {
   const e = lists.get(key), st = e?.state.value;
   if (!e || !st?.nextAfter || e.paging || e.loading) return;
@@ -128,9 +140,22 @@ export async function nextPage(key: string) {
     const now = e.state.value;
     if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
     const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
-    setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter });
+    // A page error clears with the next page; a failed first-page load's error stays until a load lands.
+    setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter, error: e.pageError ? null : now.error });
+    e.pageError = false;
     putRows(rows, from); persist(key, e);
-  } catch (err: any) { if (isAccessCurrent(generation) && e.state.value) setList(key, e, { ...e.state.value, error: err.message }); } finally { e.paging = false; }
+  } catch (err: any) {
+    // A reload got there first, or is running and will replace the cursor.
+    if (!isAccessCurrent(generation) || !e.state.value || e.state.value.nextAfter !== st.nextAfter || e.loading) return;
+    if (err instanceof OpError && err.status === 400 && !e.cursorReset) {
+      await loadList(e.kind, key, e.view, undefined, true);
+      // The person is at the end: page on with the fresh cursor (the list may not grow, so nothing else would ask).
+      const fresh = e.state.value;
+      if (fresh && !fresh.error && fresh.nextAfter && fresh.nextAfter !== st.nextAfter) { e.paging = false; await nextPage(key); }
+      return;
+    }
+    setList(key, e, { ...e.state.value, error: err.message }); e.pageError = true;
+  } finally { e.paging = false; }
 }
 
 /** Ask list_membership about ids for the given lists (two lists per call), at the cursor of the changes. */

@@ -147,6 +147,12 @@ export function CostFigures({ cost, showUnavailable = false, empty }: { cost: re
   );
 }
 
+/** Re-render every ms while active (open layers whose ages count on; views that judge liveness by the clock). */
+export function useTick(ms: number, active = true) {
+  const [, set] = useState(0);
+  useEffect(() => { if (!active) return; const t = setInterval(() => set(n => n + 1), ms); return () => clearInterval(t); }, [ms, active]);
+}
+
 /** A past moment in compact form (OR-2): "4m", "2h", "12 Nov"; the exact time on hover, the long form as its name. */
 export function Ago({ t, now }: { t: number; now?: number }) {
   const a = age(t, now ?? Date.now());
