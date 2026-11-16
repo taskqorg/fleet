@@ -160,3 +160,24 @@ test('prepared scheduler shares active reads, coalesces bursts and retains uncha
   } catch (error) { one.release(); two.release(); throw error; }
   assert.equal(olderPreparedVersion('new:1', 'old:99'), false, 'a replacement epoch is distinct from revision order');
 });
+
+import { holdDoc, readDoc } from '../../app/src/store.ts';
+test('doc readers of one name share one read; a burst while it runs costs one trailing read with the latest answer', async () => {
+  const waiting: ((value: unknown) => void)[] = [];
+  const fetch = () => new Promise(ok => waiting.push(ok));
+  const name = 'shared-doc-' + Math.random(), focus = holdDoc(name, fetch), projects = holdDoc(name, fetch);
+  try {
+    await turn(); assert.equal(waiting.length, 1, 'the second reader joins the running read');
+    for (let i = 0; i < 100; i++) readDoc(name);
+    waiting[0]({ v: 1 }); await turn(); await turn();
+    assert.equal(waiting.length, 2, 'one trailing read for everything asked while the first ran');
+    readDoc(name); await turn(); assert.equal(waiting.length, 2, 'still one read in flight');
+    waiting[1]({ v: 2 }); await turn(); await turn();
+    assert.equal(waiting.length, 3, 'a request during the trailing read is not lost');
+    waiting[2]({ v: 3 }); await turn(); await turn();
+    assert.equal(waiting.length, 3, 'idle once answered');
+    focus(); readDoc(name); await turn(); assert.equal(waiting.length, 4, 'the remaining reader still reads');
+    projects(); waiting[3]({ v: 4 }); await turn();
+    readDoc(name); await turn(); assert.equal(waiting.length, 4, 'no reads once every reader released');
+  } finally { focus(); projects(); }
+});

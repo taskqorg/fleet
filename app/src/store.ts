@@ -209,35 +209,67 @@ export function useList(kind: Kind, urlView: View) {
   };
 }
 
+/**
+ * One read at a time per doc name, shared by every mounted reader of that name (the Focus control and Projects both read
+ * `projects`). A read asked for while one runs is not sent alongside it: one trailing read follows, so the last answer is
+ * never older than the last request, and a burst of feed changes costs at most two reads instead of one per change.
+ */
+type DocReader = { fetch: () => Promise<unknown> };
+type DocFlight = { readers: DocReader[]; running: boolean; again: boolean };
+const flights = new Map<string, DocFlight>();
+function docSignal(name: string) { let s = docs.get(name); if (!s) docs.set(name, s = signal(null)); return s; }
+function restoreDoc(name: string) {
+  const s = docSignal(name);
+  void load<unknown>('doc:' + name).then(v => { if (v && flights.has(name) && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
+}
+/** Ask for a fresh read of a mounted doc; joins the running read by scheduling one trailing read. */
+export function readDoc(name: string) {
+  const f = flights.get(name); if (!f) return;
+  if (f.running) { f.again = true; return; }
+  f.running = true;
+  void (async () => {
+    try {
+      do {
+        f.again = false;
+        const reader = f.readers[f.readers.length - 1]; if (!reader) return;
+        const generation = accessGeneration(), s = docSignal(name);
+        try {
+          await ensureAccessGeneration(); assertAccessGeneration(generation);
+          const d = await reader.fetch();
+          if (isAccessCurrent(generation) && flights.get(name) === f) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); }
+        } catch (e: any) {
+          if (!isAccessCurrent(generation) || flights.get(name) !== f) continue;
+          s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e.message };
+          if (s.value.data === null) restoreDoc(name); // offline: show what was stored
+        }
+      } while (f.again && flights.get(name) === f);
+    } finally { f.running = false; }
+  })();
+}
+/** Mount a reader of a doc: shows stored data first, then reads (or joins the running read). Returns the release. */
+export function holdDoc(name: string, fetch: () => Promise<unknown>) {
+  let f = flights.get(name); if (!f) flights.set(name, f = { readers: [], running: false, again: false });
+  const reader: DocReader = { fetch }, flight = f; flight.readers.push(reader);
+  if (!docSignal(name).value?.data) restoreDoc(name);
+  readDoc(name);
+  return () => { const i = flight.readers.indexOf(reader); if (i >= 0) flight.readers.splice(i, 1); if (!flight.readers.length && flights.get(name) === flight) flights.delete(name); };
+}
+
 /** Detail and page reads by name (task_get, session_get, overview, hosts). The last value stays visible while re-reading. */
 export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches: (c: Change) => boolean, refreshMs?: number) {
-  const reloadRef = useRef<() => void>(() => {});
   const fetchRef = useRef(fetch); fetchRef.current = fetch;
   const touchRef = useRef(touches); touchRef.current = touches;
-  const s = name ? (docs.get(name) ?? (docs.set(name, signal(null)), docs.get(name)!)) : null;
+  const s = name ? docSignal(name) : null;
   const gen = generation.value;
   useEffect(() => {
-    if (!name || !s) return;
-    let live = true, seq = 0;
-    const get = async () => {
-      const mine = ++seq, generation = accessGeneration();
-      try { await ensureAccessGeneration(); assertAccessGeneration(generation); const d = await fetchRef.current(); if (isAccessCurrent(generation) && live && mine === seq) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); } }
-      catch (e: any) {
-        if (!isAccessCurrent(generation) || !live || mine !== seq) return;
-        s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e.message };
-        if (s.value.data === null) restoreDoc(); // offline: show what was stored
-      }
-    };
-    const restoreDoc = () => load<T>('doc:' + name).then(v => { if (live && v && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
-    reloadRef.current = get;
-    if (!s.value?.data) restoreDoc();
-    get();
+    if (!name) return;
+    const release = holdDoc(name, () => fetchRef.current()), get = () => readDoc(name);
     const off = subscribe({ resync: get, changes: cs => { if (cs.some(c => touchRef.current(c))) get(); } });
     const timer = refreshMs ? setInterval(get, refreshMs) : 0;
-    return () => { live = false; reloadRef.current = () => {}; off(); clearInterval(timer); };
+    return () => { release(); off(); clearInterval(timer); };
   }, [name, refreshMs, gen]);
   const v = s?.value ?? null;
-  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => reloadRef.current() };
+  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => { if (name) readDoc(name); } };
 }
 
 /** For tests: the stored list under key and a record. */
