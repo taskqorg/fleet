@@ -1,7 +1,7 @@
 // Runners (docs/design-system/pages/runners.md): everything that executes work, grouped by host, each run on a 24-hour
 // time strip with its time and resources; spend today and this month per host and kind. Data: executions_runners.
 import { useLocation } from 'wouter-preact';
-import { StateBadge, HarnessMark, Num, CostFigures, Totals, EntityCode, AgeChip, TimeStrip, Empty, ErrorBanner, Skeleton, OfflineMarker, Icon, harnesses, type Harness, type Measured, type Kind, type TotalItem } from '../../../packages/ui/src/index.ts';
+import { StateBadge, HarnessMark, Num, CostFigures, Totals, EntityCode, AgeChip, TimeStrip, age, Empty, ErrorBanner, Skeleton, OfflineMarker, Icon, harnesses, type Harness, type Measured, type Kind, type TotalItem } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { mergeCosts } from './resources.tsx';
@@ -88,7 +88,7 @@ export function Runners() {
                 {r.cpuMs != null && <span class="hc" data-tip="CPU"><Icon name="gauge" label="CPU" /><Num m={m(r.cpuMs / 1000)} kind="duration" /></span>}
                 {r.peakMemoryBytes != null && <span class="hc" data-tip="Peak memory"><Num m={m(r.peakMemoryBytes)} kind="bytes" /></span>}
                 {r.cost?.length > 0 && <CostFigures cost={r.cost} />}</span>
-              <TimeStrip from={from} to={now} start={start} end={end} now={now} state={r.state} label={`${r.state}, started ${new Date(start).toISOString()}`} />
+              <TimeStrip from={from} to={now} start={start} end={end} now={now} state={r.state} label={`${r.state}, started ${age(start, now).long}`} />
               <span data-tip={active ? 'Running for' : 'Duration'}>{!active ? <Num m={m(secs)} kind="duration" /> : <AgeChip t={start} now={now} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}</span>
             </div>;
           })}
@@ -130,7 +130,7 @@ function Ci({ now }: { now: number }) {
         return <div key={j.id} role="row" class="vl-row static">
           <span class="lead"><StateBadge family="execution" state={st} compact /></span>
           <span class="tt"><a class="title row-link" href={j.url} target="_blank" rel="noopener">{j.name}</a><span class="id">{j.workflow}</span><span class="muted">{j.status === 'in_progress' ? j.runner : `not started · ${j.runner}`}</span></span>
-          <TimeStrip from={from} to={now} start={start} end={null} now={now} state={st} label={`${j.status}, since ${new Date(start).toISOString()}`} />
+          <TimeStrip from={from} to={now} start={start} end={null} now={now} state={st} label={`${j.status}, since ${age(start, now).long}`} />
           <span data-tip={j.status === 'queued' ? 'Queued for' : 'Running for'}><AgeChip t={start} now={now} alertAfter={3600} tone="attention" alertLabel="long" /></span>
         </div>; })}
     </div>
