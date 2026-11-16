@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -814,7 +813,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 // queueCommand: a tool command for a host's executor (copy, verify), in a program-worker execution of its own.
 func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error {
-		q := &Request{r: (&http.Request{}).WithContext(ctx), tx: tx}
+		q := backgroundRequest(ctx, a, tx) // carries app: putDocument wakes the host's held poll once the command commits
 		sid, id := newID(), newID()
 		if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
 			return err
