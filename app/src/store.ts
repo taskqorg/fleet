@@ -96,7 +96,8 @@ async function restore(key: string, e: Entry) {
 
 /**
  * Load the first page of a list. A superseded request is aborted through abort and leaves the list as it was.
- * `cursorReset` marks the reload nextPage starts after the server refused a stale cursor; any other load allows one again.
+ * `cursorReset` marks the reload nextPage starts after the server refused a stale cursor; any other load or an accepted next
+ * page allows one again. Resolves true when a newer membership answer made this load step aside.
  */
 export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal, cursorReset = false) {
   const e = entry(kind, key, view), from = cursorNow(), generation = accessGeneration();
@@ -105,7 +106,7 @@ export async function loadList(kind: Kind, key: string, view: View, abort?: Abor
     await ensureAccessGeneration(); assertAccessGeneration(generation);
     const r = await op(opName(kind), { ...e.params, limit: 100 }, { signal: abort });
     assertAccessGeneration(generation);
-    if (from < e.seq) return; // a newer membership answer already updated this list
+    if (from < e.seq) return true; // a newer membership answer already updated this list
     const rows = rowsOf(r);
     setList(key, e, { ...idsAndKeys(rows), counts: r.counts, total: r.total, groups: 'groups' in r ? r.groups : [], nextAfter: r.nextAfter, at: Date.now(), restored: false, error: null });
     putRows(rows, from); e.seq = from; persist(key, e); pruneRecords();
@@ -137,13 +138,13 @@ export async function nextPage(key: string) {
     if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
     const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
     setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter, error: null });
-    putRows(rows, from); persist(key, e);
+    putRows(rows, from); persist(key, e); e.cursorReset = false; // the server takes its cursors again
   } catch (err: any) {
-    if (!isAccessCurrent(generation) || !e.state.value || e.state.value.nextAfter !== st.nextAfter) return;
+    // A reload got there first, or is running and will replace the cursor.
+    if (!isAccessCurrent(generation) || !e.state.value || e.state.value.nextAfter !== st.nextAfter || e.loading) return;
     if (err instanceof OpError && err.status === 400 && !e.cursorReset) {
-      await loadList(e.kind, key, e.view, undefined, true);
-      // A membership answer that landed first makes the reload step aside; the refused cursor must not stay.
-      if (e.state.value?.nextAfter === st.nextAfter) await loadList(e.kind, key, e.view, undefined, true);
+      // A reload that steps aside for a newer membership answer keeps the refused cursor: load once more.
+      if (await loadList(e.kind, key, e.view, undefined, true)) await loadList(e.kind, key, e.view, undefined, true);
       return;
     }
     setList(key, e, { ...e.state.value, error: err.message });

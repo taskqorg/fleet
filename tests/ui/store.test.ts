@@ -59,6 +59,27 @@ test('a refused page cursor reloads the first page once, keeping rows; a second 
   assert.deepEqual(calls.map(c => !!c.body.after), [true], 'no second reload in the same list load');
   assert.equal(peek.list('C')!.error, 'Invalid after');
   assert.deepEqual(peek.list('C')!.ids, ['t1', 't3']);
+  // An accepted page clears the error and allows one recovery again (the next deploy may change the cursor shape again).
+  answer = async () => page([row('t4')], ['g', 's', 't4']); await nextPage('C');
+  assert.equal(peek.list('C')!.error, null); assert.deepEqual(peek.list('C')!.ids, ['t1', 't3', 't4']);
+  calls = []; answer = async (_n, b) => b.after ? refused : page([row('t1')]);
+  await nextPage('C');
+  assert.deepEqual(calls.map(c => !!c.body.after), [true, false]); assert.deepEqual(peek.list('C')!.ids, ['t1']);
+});
+
+test('a refused cursor while a reload runs leaves the cursor to that reload', async () => {
+  await clearAll();
+  const V = { view: 'conversations' as const };
+  answer = async () => page([row('t1')], ['old', 't1']);
+  await loadList('sessions', 'D', V);
+  const refusal = deferred(), slow = deferred(); calls = [];
+  answer = async (_n, b) => b.after ? refusal.p : slow.p;
+  const paging = nextPage('D'); await new Promise(r => setImmediate(r));
+  const reloading = loadList('sessions', 'D', V); await new Promise(r => setImmediate(r));
+  refusal.ok({ httpStatus: 400, message: 'Invalid after' }); await paging;
+  assert.equal(calls.length, 2, 'no extra first-page request on top of the running reload');
+  assert.equal(peek.list('D')!.error, null);
+  slow.ok(page([row('t1')], ['g', 's', 't1'])); await reloading;
 });
 
 test('review #33-3: an older page answer never overwrites a newer record; changes during a load are asked after it lands', async () => {
