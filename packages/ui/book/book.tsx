@@ -175,7 +175,7 @@ function PendingDemo() {
 }
 
 const BOOK_GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
-const BOOK_SORTS = [['changed', 'Changed'], ['created', 'Created'], ['title', 'Title', ['Z to A', 'A to Z']]] as const;
+const BOOK_SORTS = [['changed', 'Changed'], ['created', 'Created'], ['title', 'Title', ['Z to A', 'A to Z'], 'value']] as const;
 function GroupSortDemo() {
   const [group, setGroup] = useState<typeof BOOK_GROUPS[number][0]>('priority');
   const [sort, setSort] = useState('-changed');

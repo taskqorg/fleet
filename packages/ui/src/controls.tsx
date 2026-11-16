@@ -781,13 +781,16 @@ export function GroupControl<G extends string>({ value, options, onChange, none 
  * its icon), then the field, which opens the fields and the directions in a short menu. The value is the field, "-" before it for descending.
  * A field may name its directions (Newest first / Oldest first for times, the default).
  */
-export function SortControl({ value, fields, onChange }: { value: string; fields: readonly (readonly [string, string] | readonly [string, string, readonly [string, string]])[]; onChange: (v: string) => void }) {
+/** A sort field: value, name, direction names (descending, ascending; Newest first, Oldest first by default), and what the rows show:
+ *  'age' (default: a moment shown as 4m, 3d) or 'value' (a number or text shown as it is). */
+export type SortField = readonly [string, string] | readonly [string, string, readonly [string, string]] | readonly [string, string, readonly [string, string], 'age' | 'value'];
+export function SortControl({ value, fields, onChange }: { value: string; fields: readonly SortField[]; onChange: (v: string) => void }) {
   const m = usePickMenu();
   const desc = value.startsWith('-'), field = desc ? value.slice(1) : value, f = fields.find(x => x[0] === field) ?? fields[0];
   const [dDesc, dAsc] = (f[2] ?? ['Newest first', 'Oldest first']) as readonly [string, string];
-  // The icon's bars draw the values the rows show, top to bottom. A time field without its own labels shows ages
-  // (4m, 2h, 3d), so newest first is small ages first: the narrow-to-wide icon, the reverse of a number sorted high first.
-  const ages = !f[2], bigFirst = (d: boolean) => d !== ages, iconOf = (d: boolean) => bigFirst(d) ? actions.sortDesc : actions.sortAsc;
+  // The icon's bars draw the values the rows show, top to bottom. A moment shows as an age (4m, 2h, 3d), so newest
+  // first (descending) is small ages first: the narrow-to-wide icon, the reverse of a value sorted high first.
+  const ages = (f[3] ?? 'age') === 'age', bigFirst = (d: boolean) => d !== ages, iconOf = (d: boolean) => bigFirst(d) ? actions.sortDesc : actions.sortAsc;
   return <span class="pick" ref={m.ref} data-ui="sort-control">
     <button type="button" class="pick-x pick-dir" aria-label={desc ? dDesc : dAsc} data-tip={`${desc ? dDesc : dAsc}; click for ${(desc ? dAsc : dDesc).toLowerCase()}`}
       onClick={() => { m.setOpen(false); onChange(desc ? f[0] : '-' + f[0]); }}><Icon name={iconOf(desc)} /></button>
