@@ -420,7 +420,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .nav-toggle,.divider{display:none}
   .split-list>.page-h:first-child{padding-left:var(--space-4)}
   .rail .nm,.rail .rail-h,.rail .nav-pin,.rail .rail-menu:not(.up),.rail .rail-g:not(.pinned) .nav-i.pinned,.rail .brand,.rail .waiting,.rail-head{display:none}
-  .rail .rail-ver,.rail .rail-upd{display:none}.rail .menu-ver{display:flex}
+  .rail .rail-ver,.rail .rail-upd{display:none}.rail:not(.mini) .menu-ver{display:flex}
   .rail .nav-i a{padding:0 var(--space-2);position:relative}
   .rail .nav-count{position:absolute;top:0;right:0;padding:0 var(--space-1)}
   .shell-main,.shell-main:not(:has(>.split-view)){padding:var(--space-3)}
