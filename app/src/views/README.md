@@ -17,7 +17,7 @@ Each file exports one routed Preact screen. `main.tsx:SCREENS` maps the registry
 
 - The pipeline definition step list includes publication artifact input paths from `files` values, preserving nested paths and deduplicating references. Only relative paths bound to example inputs or an earlier step are shown; destination keys and malformed/internal paths do not become read facts.
 - Views call coordinator operations through `api.ts:op` or `api.ts:writeOnce`; they do not construct a second backend protocol.
-- List screens use server rows through `store.ts:useList`; `Tasks` retains server ordering and membership for the filtered page, reads accessible pinned tasks separately by ID in server-sized batches, and keeps those rows visible and selectable across filters. Pin-read failures remain visible and retryable.
+- List screens use server rows through `store.ts:useList`; `Tasks` and `Conversations` share `list-page.tsx:useListPage`, which retains server ordering and membership for the filtered page, reads accessible pinned rows separately by ID in server-sized batches (Tasks unfiltered, Conversations filtered by the archived list the view shows), and keeps those rows visible and selectable across filters. Pin-read failures remain visible and retryable.
 - Writes with uncertain outcomes preserve the existing request identity or retain an uncertain receipt for user review (`conversations.tsx:Conversation`, `lab-create.tsx:LabCreate`).
 - `LabCreate` does not launch an experiment: it creates a draft and validates a readback before navigating to it.
 

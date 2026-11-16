@@ -1,31 +1,27 @@
 // Conversations (docs/design-system/pages/conversations.md): sessions list and one conversation with its live transcript.
 // Actions use the same operations agents use: session_create, message_send, execution_stop, session_fork.
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  EntityCode, ListDetail, ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, RowFacts, Fact, AgeChip, ContextMenu, SelectBar, SelectToggle, RowPin, ProblemRow, copyText, actions,
-  RowCheck, VirtualList, StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
+  EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
+  StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
   Choice, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_,
   writeClip, zone,
   keyConnection,
 } from '../../../packages/ui/src/index.ts';
-import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
-import { useList, useDoc } from '../store.ts';
-import { chunks, compareKeys } from '../lists.ts';
-import { listKey, formatView, DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT, type View } from '../../../packages/view-url/view-url.ts';
-import { useUrlView, useSearchBox, nextUrl } from '../url.ts';
-import { focusIds, usePins, useViews } from '../prefs.ts';
+import { useDoc } from '../store.ts';
+import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/view-url/view-url.ts';
+import { nextUrl } from '../url.ts';
+import { focusIds } from '../prefs.ts';
+import { useListPage, ListPagePanel } from '../list-page.tsx';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
 import { ScopedRollupBar } from './resources.tsx';
 
-const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['none', 'None']] as const;
 const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
 type SessionRow = { id: string; code?: string | null; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; activityAt?: string | null; executions?: number; projectId?: string | null; sortKey: (string | number)[] };
-type Item = { kind: 'group'; key: string; label: string; count: number; icon?: 'pin' } | { kind: 'session'; s: SessionRow; pinned?: boolean };
-const PINNED = '\u0000pinned'; // group key of the pinned rows; never a server group key
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 const reqId = () => crypto.randomUUID();
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
@@ -36,99 +32,26 @@ const titleOf = (s: SessionRow) => s.title ?? 'New conversation';
 const SYSTEM_VIEWS = [{ name: 'Needs me', view: { view: 'conversations' as const, state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'conversations' as const, state: ['preparing', 'running', 'waiting'] } }];
 
 export function Conversations({ id }: { id?: string }) {
-  const { view, set, href } = useUrlView('conversations');
-  const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
-  const states = (view.state ?? []) as StateOf<'session'>[];
-  const [closed, setClosed] = useState<string[]>([]);
-  const pins = usePins('conversations');
-  const views = useViews('conversations', SYSTEM_VIEWS);
-  const list = useList('sessions', view);
-  const group = view.group ?? DEFAULT_SESSION_GROUP, sort = view.sort ?? DEFAULT_SESSION_SORT;
-  // Rows on screen may still be the previous list (pending): headers follow that list's own grouping.
-  const rowsGroup = list.shownView.group ?? DEFAULT_SESSION_GROUP;
-  const rows = list.rows as SessionRow[];
-  const sel = view.sel ?? [], selNow = useRef(sel), toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
-  selNow.current = sel;
-  // Selection mode (OR-37): a checkbox column left of the state, the action bar under the tools.
-  const [selectOn, setSelectOn] = useState(false);
-  const selecting = selectOn || sel.length > 0;
-  const [confirmArchive, setConfirmArchive] = useState<SessionRow[] | null>(null);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const leave = useCallback(() => { setSelectOn(false); setConfirmArchive(null); setBulkError(null); set({ sel: undefined }); }, [set]);
-  const [menu, setMenu] = useState<{ s: SessionRow; at: { x: number; y: number } } | null>(null);
-  const closeMenu = useCallback(() => setMenu(null), []);
   // Pinned conversations stay whatever the filter, search or grouping (OR-12): read by id with no filter but the archived
-  // list the view shows, so an archived pin never shows among active conversations or the other way round.
-  const pinnedDoc = useDoc<SessionRow[]>(pins.ids.length ? JSON.stringify(['session-pins', pins.ids, sort, !!view.archived]) : null,
-    async () => {
-      const found: SessionRow[] = [];
-      for (const ids of chunks(pins.ids, 1000)) { // the operation takes at most 1,000 ids
-        const reply = await op('list_membership', { ids, lists: [{ name: 'sessions', filter: { archived: !!view.archived }, group: 'none', sort }] });
-        found.push(...reply.lists[0].rows as unknown as SessionRow[]);
-      }
-      return found;
-    }, c => (c.kind === 'session' && pins.has(c.id)) || (!!c.sessionId && pins.has(c.sessionId)));
-  const byId = new Map((pinnedDoc.data ?? []).map(r => [r.id, r]));
-  // The page supplies a just-pinned row while its own read is pending. Its grouping key is irrelevant here.
-  const pinned = pins.ids.map(x => byId.get(x) ?? rows.find(r => r.id === x))
-    .filter((r): r is SessionRow => !!r).sort((a, b) => compareKeys(a.sortKey.slice(1), b.sortKey.slice(1)));
-  const rest = rows.filter(r => !pins.has(r.id)), displayed = [...pinned, ...rest];
-  const items: Item[] = [];
-  if (pinned.length) {
-    items.push({ kind: 'group', key: PINNED, label: 'Pinned', count: pinned.length, icon: 'pin' });
-    if (!closed.includes(PINNED)) for (const s of pinned) items.push({ kind: 'session', s, pinned: true });
-  }
-  let last: string | null = null;
-  for (const s of rest) {
-    const g = String(s.sortKey[0]);
-    if (rowsGroup !== 'none' && g !== last) { const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: groupLabel(rowsGroup, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
-    if (!closed.includes(g)) items.push({ kind: 'session', s });
-  }
-  const chosen = displayed.filter(r => sel.includes(r.id));
+  // list the view shows, so an archived pin never shows among active conversations or the other way round. Active and
+  // archived conversations are two lists: a switch by any path (the toggle, a saved view, Back) ends selection mode and a
+  // pending confirmation; the toggle and a saved view also drop the checked rows. The rows a bulk action finished leave
+  // the selection.
+  const page = useListPage<SessionRow>({
+    view: 'conversations', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS, groupLabel,
+    pinDoc: 'session-pins', pinRead: v => ({ key: [!!v.archived], filter: { archived: !!v.archived } }),
+    pinTouches: (c, has) => (c.kind === 'session' && has(c.id)) || (!!c.sessionId && has(c.sessionId)),
+    saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),
+    dropDone: true, listId: v => !!v.archived,
+  });
+  const { view, set, chosen, off, states, confirm } = page;
+  const archived = !!view.archived;
   const canArchive = (s: SessionRow) => s.state === 'idle' || TERMINAL.includes(s.state);
   // Archive and Unarchive are one operation per conversation. session_archive is refused while an execution is active;
-  // session_unarchive (owner or full access) returns the conversation to the active list and records a reason. The rows
-  // that succeeded leave the selection as it is now (not when the operation began), whatever the others did.
-  const bulk = async (ss: SessionRow[], name: 'session_archive' | 'session_unarchive', verb: string) => {
-    if (busy || !ss.length) return;
-    setBulkError(null); setBusy(true);
-    const r = await Promise.allSettled(ss.map(s => name === 'session_archive' ? op(name, { sessionId: s.id }) : op(name, { sessionId: s.id, reason: 'Unarchived from the Conversations list' })));
-    setBusy(false);
-    const failed = r.filter(x => x.status === 'rejected') as PromiseRejectedResult[];
-    if (failed.length) setBulkError(`${failed.length} of ${ss.length} not ${verb}: ${failed[0].reason?.message ?? failed[0].reason}`);
-    const done = ss.filter((_, i) => r[i].status === 'fulfilled').map(s => s.id);
-    if (done.length) set({ sel: selNow.current.filter(x => !done.includes(x)) });
-  };
-  const archive = (ss: SessionRow[]) => bulk(ss, 'session_archive', 'archived'), unarchive = (ss: SessionRow[]) => bulk(ss, 'session_unarchive', 'unarchived');
-  const archived = !!view.archived;
-  // Active and archived conversations are two lists: a switch by any path (the toggle, a saved view, Back) ends selection
-  // mode and a pending confirmation; the toggle and a saved view also drop the checked rows.
-  const firstList = useRef(true);
-  useEffect(() => { if (firstList.current) { firstList.current = false; return; } setSelectOn(false); setConfirmArchive(null); setBulkError(null); }, [archived]);
+  // session_unarchive (owner or full access) returns the conversation to the active list and records a reason.
+  const archive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_archive', { sessionId: s.id }), 'not archived');
+  const unarchive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_unarchive', { sessionId: s.id, reason: 'Unarchived from the Conversations list' }), 'not unarchived');
   const toggleArchived = () => set({ archived: archived ? undefined : true, sel: undefined, preset: undefined });
-  const off = !online.value ? 'offline' : busy ? 'Working' : undefined;
-  const pinAll = (on: boolean) => { for (const s of chosen) if (pins.has(s.id) !== on) pins.toggle(s.id); };
-  const select = (s: SessionRow) => { setSelectOn(true); setConfirmArchive(null); toggleSel(s.id); };
-  const rowMenu = (s: SessionRow): Parameters<typeof ContextMenu>[0]['items'] => [
-    { label: 'Open', icon: actions.open, onClick: () => set({ focus: s.id }) },
-    { label: pins.has(s.id) ? 'Unpin' : 'Pin', icon: pins.has(s.id) ? 'pin-off' : 'pin', onClick: () => pins.toggle(s.id) },
-    { label: sel.includes(s.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => select(s) },
-    { label: 'Copy code', icon: actions.copy, onClick: () => copyText(s.code ?? s.id) },
-    { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + formatView({ view: 'conversations', focus: s.id })) },
-    archived ? { label: 'Unarchive', icon: 'archive-restore', disabledReason: off, onClick: () => unarchive([s]) }
-      : { label: 'Archive', icon: 'archive', disabledReason: off ?? (canArchive(s) ? undefined : 'Execution active'), onClick: () => setConfirmArchive([s]) },
-  ];
-  // A personal view matches the whole view and wins over a system preset with the same states; a system preset matches the
-  // states alone (as on Tasks).
-  const presetKey = (v: View) => listKey({ ...v, view: 'conversations' });
-  const stateKey = (state?: string[]) => listKey({ view: 'conversations', state: state ?? [] });
-  const activePreset = views.list.find(v => !v.system && presetKey(v.view) === listKey(view))?.name
-    ?? (view.state?.length ? views.list.find(v => v.system && stateKey(v.view.state) === stateKey(view.state))?.name : undefined) ?? null;
-  const pick = (n: string) => {
-    const p = views.list.find(x => x.name === n)!;
-    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, archived: p.view.archived, preset: n, ...(!!p.view.archived !== archived ? { sel: undefined } : {}) });
-  };
   const filtered = !!(states.length || view.q || view.project?.length);
   const now = Date.now();
   // ?new=<project> opens the form once; the key leaves the URL so a reload does not open it again.
@@ -136,62 +59,27 @@ export function Conversations({ id }: { id?: string }) {
   useEffect(()=>{const u=new URL(location.href);if(u.searchParams.has('new')){u.searchParams.delete('new');history.replaceState(history.state,'',u.pathname+u.search);}},[]);
   const create=()=>setNewConversation(true);
   const pane = <>
-    <header class="page-h"><h1>Conversations</h1><OfflineMarker state={list.state} now={now} /><span class="grow" />
+    <header class="page-h"><h1>Conversations</h1><OfflineMarker state={page.list.state} now={now} /><span class="grow" />
       <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
     {newConversation&&<NewConversation onDone={sessionId=>{setNewConversation(false);set({focus:sessionId});}}/>}
-    <section class="panel">
-      <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery}
-        shown={states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total} total={list.total}
-        extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={activePreset} onPick={pick}
-          onSave={n => views.save({ name: n, view: { view: 'conversations', state: view.state, group: view.group, sort: view.sort, project: view.project, q: view.q, archived: view.archived } })} onUnpin={views.remove} />}
-        counters={<StateCounters family="session" label="Conversations by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [], preset: undefined })}
-          onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s], preset: undefined })} />}
-        tools={<>
-          <SelectToggle on={selecting} onClick={() => selecting ? leave() : setSelectOn(true)} />
-          <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ group: g, preset: undefined })} />
-          <SortControl value={sort} fields={SORTS} onChange={v => set({ sort: v, preset: undefined })} />
-          <Button label="Archived" icon="archive" iconOnly kind="quiet" pressed={archived} onClick={toggleArchived} />
-        </>}
-        selection={selecting && <SelectBar count={chosen.length} total={displayed.length} onAll={() => { setSelectOn(true); setConfirmArchive(null); set({ sel: displayed.map(r => r.id) }); }} onNone={() => { setSelectOn(true); setConfirmArchive(null); set({ sel: [] }); }} onExit={leave} actions={[
-          { label: 'Pin', icon: 'pin', onClick: () => pinAll(true), disabledReason: chosen.length && chosen.every(s => pins.has(s.id)) ? 'All pinned' : undefined },
-          { label: 'Unpin', icon: 'pin-off', onClick: () => pinAll(false), disabledReason: chosen.some(s => pins.has(s.id)) ? undefined : 'None pinned' },
-          archived ? { label: 'Unarchive', icon: 'archive-restore', onClick: () => unarchive(chosen), disabledReason: off }
-            : { label: 'Archive', icon: 'archive', danger: true, onClick: () => setConfirmArchive(chosen.filter(canArchive)), disabledReason: off ?? (chosen.some(canArchive) ? undefined : 'None can be archived') },
-        ]} />} />}>
-        {confirmArchive && <ProblemRow severity="warning" title={`Archive ${confirmArchive.length} ${confirmArchive.length === 1 ? 'conversation' : 'conversations'}?`} facts="Their worktrees are torn down; the owner can restore a conversation."
-          actions={[{ label: 'Yes, archive', primary: true, onClick: () => { const ss = confirmArchive; setConfirmArchive(null); archive(ss); } }, { label: 'Keep', onClick: () => setConfirmArchive(null) }]} />}
-        {bulkError && <ErrorBanner text={bulkError} />}
-        {list.error && <ErrorBanner text={`Conversations did not load: ${list.error}`} onRetry={list.reload} />}
-        {pinnedDoc.error && <ErrorBanner text={`Pinned conversations did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
-        {!displayed.length && (list.shownKey === null || list.pending || (pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
-          : !displayed.length ? (list.error || pinnedDoc.error ? null : <Empty text={filtered ? `No ${archived ? 'archived ' : ''}conversations match these filters.` : focusIds() && !view.project?.length ? `No ${archived ? 'archived ' : ''}conversations in the focused projects.` : archived ? 'No archived conversations.' : 'No conversations yet.'}
-            action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); }} />
-              : archived ? <Button label="Show active" onClick={toggleArchived} /> : <Button label="New conversation" onClick={create} />} />)
-          : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.s.id} rowHeight={ROW} follow="top" label={archived ? 'Archived conversations' : 'Conversations'} onEnd={list.more}
-            columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.s.id === id ? 'sel' : ''}${sel.includes(i.s.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
-            onRowMenu={(i, at) => { if (i.kind === 'session') setMenu({ s: i.s, at }); }}
-            render={i => i.kind === 'group'
-              ? <GroupHeader icon={i.icon ?? (rowsGroup === 'state' ? 'activity' : rowsGroup === 'agent' ? 'bot' : 'folder-open')} label={i.label} count={i.count} open={!closed.includes(i.key)} onToggle={() => setClosed(c => c.includes(i.key) ? c.filter(x => x !== i.key) : [...c, i.key])} />
-              : <>
-                {selecting && <span class="lead"><RowCheck checked={sel.includes(i.s.id)} label={'Select ' + titleOf(i.s)} onToggle={() => select(i.s)} /></span>}
-                {i.pinned && <span class="lead"><RowPin label={titleOf(i.s)} onUnpin={() => {
-                  // In selection mode the pin selects like the rest of the row; otherwise it unpins and focus follows the row to its group.
-                  if (selecting) return select(i.s);
-                  pins.toggle(i.s.id); requestAnimationFrame(() => document.querySelector<HTMLElement>(`.vl-row[data-key="${CSS.escape(i.s.id)}"] .row-link`)?.focus({ preventScroll: true }));
-                }} /></span>}
-                <span class="lead"><StateBadge family="session" state={i.s.state} compact /></span>
-                <span class="tt"><a class="title row-link" href={href({ focus: i.s.id })} aria-keyshortcuts="P X"
-                  onClick={e => { e.preventDefault(); if (selecting || e.shiftKey) select(i.s); else set({ focus: i.s.id }); }}
-                  onKeyDown={e => {
-                    if (e.altKey || e.ctrlKey || e.metaKey) return;
-                    if (e.key === 'p') { e.preventDefault(); pins.toggle(i.s.id); }
-                    else if (e.key === 'x') { e.preventDefault(); select(i.s); }
-                  }}>{titleOf(i.s)}</a><EntityCode code={i.s.code} id={i.s.id} /></span>
-                <span class="rz"><SessionFacts s={i.s} now={now} /></span>
-              </>} />}
-      </ListFrame>
-      {menu && <ContextMenu at={menu.at} label={titleOf(menu.s)} items={rowMenu(menu.s)} onClose={closeMenu} />}
-    </section>
+    <ListPagePanel page={page} noun="Conversations" placeholder="Search conversations" family="session" groups={GROUPS} sorts={SORTS} focused={id}
+      tools={<Button label="Archived" icon="archive" iconOnly kind="quiet" pressed={archived} onClick={toggleArchived} />}
+      actions={() => [
+        archived ? { label: 'Unarchive', icon: 'archive-restore', onClick: () => unarchive(chosen), disabledReason: off }
+          : { label: 'Archive', icon: 'archive', danger: true, onClick: () => page.setConfirm(chosen.filter(canArchive)), disabledReason: off ?? (chosen.some(canArchive) ? undefined : 'None can be archived') },
+      ]}
+      menu={s => [
+        archived ? { label: 'Unarchive', icon: 'archive-restore', disabledReason: off, onClick: () => unarchive([s]) }
+          : { label: 'Archive', icon: 'archive', disabledReason: off ?? (canArchive(s) ? undefined : 'Execution active'), onClick: () => page.setConfirm([s]) },
+      ]}
+      confirm={confirm && <ProblemRow severity="warning" title={`Archive ${confirm.length} ${confirm.length === 1 ? 'conversation' : 'conversations'}?`} facts="Their worktrees are torn down; the owner can restore a conversation."
+        actions={[{ label: 'Yes, archive', primary: true, onClick: () => { page.setConfirm(null); archive(confirm); } }, { label: 'Keep', onClick: () => page.setConfirm(null) }]} />}
+      empty={<Empty text={filtered ? `No ${archived ? 'archived ' : ''}conversations match these filters.` : focusIds() && !view.project?.length ? `No ${archived ? 'archived ' : ''}conversations in the focused projects.` : archived ? 'No archived conversations.' : 'No conversations yet.'}
+        action={filtered ? <Button label="Clear filters" onClick={() => { page.setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); }} />
+          : archived ? <Button label="Show active" onClick={toggleArchived} /> : <Button label="New conversation" onClick={create} />} />}
+      listLabel={archived ? 'Archived conversations' : 'Conversations'} title={titleOf} groupIcon={g => g === 'state' ? 'activity' : g === 'agent' ? 'bot' : 'folder-open'}
+      state={s => <StateBadge family="session" state={s.state} compact />}
+      facts={s => <SessionFacts s={s} now={now} />} />
   </>;
   return <ListDetail list={pane} detail={id ? <Conversation key={id} id={id} onClose={() => set({ focus: undefined })} /> : undefined} detailKey={id} />;
 }
