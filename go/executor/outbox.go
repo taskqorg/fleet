@@ -8,9 +8,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fleet/contract"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -46,10 +48,11 @@ const (
 )
 
 type answer struct {
-	kind   answerKind
-	value  json.RawMessage
-	status int
-	text   string // edge detail, reject body or retry error
+	kind    answerKind
+	value   json.RawMessage
+	status  int
+	text    string // edge detail, reject body or retry error
+	timeout bool   // a retry because the request ran out of time, not because the coordinator was unreachable
 }
 
 type class int
@@ -87,7 +90,8 @@ func location(r *http.Response) string {
 
 func classify(r *http.Response, err error) answer {
 	if err != nil {
-		return answer{kind: answerRetry, text: err.Error()}
+		var ne net.Error
+		return answer{kind: answerRetry, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout()}
 	}
 	defer r.Body.Close()
 	body, _ := io.ReadAll(r.Body) // drained so the pooled connection is reused
@@ -309,10 +313,40 @@ func queue(db execer, route string, v any) error {
 
 var heldOnly atomic.Bool
 
+// Rows that got a retry answer (5xx, 429, timeout), by outbox rowid: each waits out its own backoff while other rows flow.
+var (
+	retryMu   sync.Mutex
+	retryRows = map[int64]*edgeState{}
+)
+
+func retryWait(n int64) bool {
+	retryMu.Lock()
+	defer retryMu.Unlock()
+	r, ok := retryRows[n]
+	return ok && nowMs() < r.nextAt
+}
+
+func retryFailed(n int64) {
+	retryMu.Lock()
+	defer retryMu.Unlock()
+	attempts := 0
+	if r, ok := retryRows[n]; ok {
+		attempts = r.attempts + 1
+	}
+	retryRows[n] = &edgeState{attempts: attempts, nextAt: nowMs() + backoff(int64(attempts))}
+}
+
+func retryDone(n int64) {
+	retryMu.Lock()
+	defer retryMu.Unlock()
+	delete(retryRows, n)
+}
+
 // flush delivers queued rows in order. A 4xx row is moved to outbox_failed and reported as an executor event; the
-// following rows keep flowing. A row with an edge answer, a 5xx or a timeout stays queued and holds, for this flush, its
-// route and its execution, so one slow or failing route cannot stop every other route (16 Nov 2026: a cancelled
-// project operation held all events and receipts). A second network error without a status in one flush means the
+// following rows keep flowing. A row with an edge answer stays queued and holds, for this flush, its route and its
+// execution. A row with a 5xx, 429 or timeout stays queued with its own backoff and holds only its execution (its route
+// when it has none): one slow row must not stop other executions' events and receipts (16 Nov 2026: a cancelled
+// project operation at the head held 435 rows and the update drain). A network error that is not a timeout means the
 // coordinator is unreachable: the flush stops and retries later.
 func flush(db *sql.DB, url, token, host string) error {
 	type row struct {
@@ -336,7 +370,6 @@ func flush(db *sql.DB, url, token, host string) error {
 	routes, executions := map[string]bool{}, map[string]bool{}
 	held, sent, single := false, false, false
 	var retryErr error
-	networkErrors := 0
 	for i := 0; i < len(rows); {
 		r := rows[i]
 		value := decM(r.body)
@@ -349,6 +382,15 @@ func flush(db *sql.DB, url, token, host string) error {
 			held = true
 			i++
 		}
+		holdExecution := func() {
+			if hasExec && execution != "" {
+				executions[execution] = true
+			} else {
+				routes[r.route] = true
+			}
+			held = true
+			i++
+		}
 		// A row behind a held execution waits without holding its route.
 		if hasExec && executions[execution] {
 			i++
@@ -356,6 +398,10 @@ func flush(db *sql.DB, url, token, host string) error {
 		}
 		if routes[r.route] || edgeWait(r.route) {
 			hold()
+			continue
+		}
+		if retryWait(r.n) {
+			holdExecution()
 			continue
 		}
 		// Consecutive event rows of one execution go in one request.
@@ -378,19 +424,22 @@ func flush(db *sql.DB, url, token, host string) error {
 		case answerOK:
 			response = a.value
 		case answerRetry:
-			if len(batch) > 1 {
+			if a.status == 0 && !a.timeout {
+				heldOnly.Store(true) // unreachable: the next pass waits the longer interval
+				return fmt.Errorf("%s", a.text)
+			}
+			if len(batch) > 1 && a.timeout {
 				single = true // A large idempotent event batch may exceed the transport deadline; let individual rows progress.
 				continue
 			}
-			if a.status == 0 {
-				if networkErrors++; networkErrors > 1 {
-					return fmt.Errorf("%s", a.text)
-				}
+			for _, b := range batch {
+				retryFailed(b.n)
 			}
 			if retryErr == nil {
 				retryErr = fmt.Errorf("%s", a.text)
 			}
-			hold()
+			i += len(batch) - 1
+			holdExecution()
 			continue
 		case answerEdge:
 			hold()
@@ -448,9 +497,13 @@ func flush(db *sql.DB, url, token, host string) error {
 				if err := tx.Commit(); err != nil {
 					return err
 				}
+				retryDone(r.n)
 				i++
 				continue
 			}
+		}
+		for _, b := range batch {
+			retryDone(b.n)
 		}
 		i += len(batch)
 		sent = true
