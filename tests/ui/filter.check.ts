@@ -178,8 +178,10 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.locator('[data-ui=saved-views] button', { hasText: 'Running' }).click();
     await page.waitForFunction(() => new URLSearchParams(location.search).get('preset') === 'Running');
     await page.goto(origin + await url() + '&q=no-such-task-anywhere'); // a link: the preset stays with the query
-    await page.getByRole('button', { name: 'Clear filters', exact: true }).click({ timeout: 10000 }).catch(() => {});
-    await page.waitForFunction(() => !location.search.includes('q='), null, { timeout: 5000 }).catch(() => {});
+    const clear = page.getByRole('button', { name: 'Clear filters', exact: true });
+    const clearShown = await clear.waitFor({ timeout: 10000 }).then(() => true, () => false);
+    rule(N, clearShown, 'the empty state under a preset and a search shows no Clear filters button');
+    if (clearShown) { await clear.click(); await page.waitForFunction(() => !location.search.includes('q='), null, { timeout: 5000 }).catch(() => {}); }
     { const u = new URL(origin + await url()).searchParams; rule(N, !u.has('preset') && !u.has('q') && !u.has('state'), `Clear filters left filters or the preset: ${u}`); }
     // A bulk action that fails for one row: the rows that succeeded leave the selection, the failed row stays selected.
     await page.goto(origin + '/tasks?group=none&state=queued'); await page.waitForSelector('.vl-row .row-link');
@@ -189,9 +191,9 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     for (const k of [okId, badId]) await page.locator(`.vl-row[data-key="${k}"] .row-link`).click({ modifiers: ['Shift'] });
     await page.waitForFunction(() => document.querySelector('[data-ui=select-bar]')?.textContent?.includes('2 selected'));
     await page.locator('[data-ui=select-bar] button[aria-label=Pause]').click();
-    await page.waitForFunction(() => /did not pause/.test(document.querySelector('[data-ui=list-view]')?.textContent ?? ''), null, { timeout: 10000 }).catch(() => {});
+    const banner = await page.waitForFunction(() => /did not pause/.test(document.querySelector('[data-ui=list-view]')?.textContent ?? ''), null, { timeout: 10000 }).then(() => true, () => false);
     const bulkText = await page.locator('[data-ui=list-view]').textContent() ?? '';
-    rule(N, bulkText.includes('1 of 2 did not pause: forced failure'), 'partial bulk failure: no "1 of 2 did not pause" banner');
+    rule(N, banner && bulkText.includes('1 of 2 did not pause: forced failure'), `partial bulk failure: no "1 of 2 did not pause: forced failure" banner (banner shown: ${banner})`);
     await page.waitForFunction(b => new URLSearchParams(location.search).get('sel') === b, badId, { timeout: 5000 }).catch(() => {});
     { const sel = new URL(origin + await url()).searchParams.get('sel'); rule(N, sel === badId, `after a partial bulk failure sel should be only the failed row ${badId}, got ${sel}`); }
     await page.unroute('**/api/ops/task_update');

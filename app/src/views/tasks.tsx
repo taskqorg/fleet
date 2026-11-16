@@ -35,11 +35,11 @@ export function Tasks({ id }: { id?: string }) {
     pinDoc: 'task-pins', pinRead: () => ({ key: [], filter: {} }), pinTouches: (c, has) => c.kind === 'task' && has(c.id) || !!c.taskId && has(c.taskId),
     savedView, saveGroup: DEFAULT_TASK_GROUP,
   });
-  const { view, set, list, chosen, off, rowsGroup, states, confirm } = page;
+  const { view, set, list, chosen, off, rowsGroup, confirm } = page;
   const canPause = (t: TaskRow) => !TERMINAL.includes(t.state) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
   const bulk = (action: 'pause' | 'resume' | 'cancel', ts: TaskRow[]) => page.bulk(ts, t => op('task_update', { taskId: t.id, action }), `did not ${action}`);
   const now = Date.now();
-  const filtered = !!(states.length || view.q || view.project?.length), focused = !view.project?.length && !!withFocus(view).project?.length;
+  const { filtered } = page, focused = !view.project?.length && !!withFocus(view).project?.length;
   const listPane = <>
     <header class="page-h"><h1>Tasks</h1><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
     <ListPagePanel page={page} noun="Tasks" placeholder="Search tasks, agent:claude host:mac" family="task" groups={GROUPS} sorts={SORTS} focused={id}

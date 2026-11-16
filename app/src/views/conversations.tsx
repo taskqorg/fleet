@@ -44,7 +44,7 @@ export function Conversations({ id }: { id?: string }) {
     saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),
     listId: v => !!v.archived,
   });
-  const { view, set, chosen, off, states, confirm } = page;
+  const { view, set, chosen, off, confirm } = page;
   const archived = !!view.archived;
   const canArchive = (s: SessionRow) => s.state === 'idle' || TERMINAL.includes(s.state);
   // Archive and Unarchive are one operation per conversation. session_archive is refused while an execution is active;
@@ -52,7 +52,7 @@ export function Conversations({ id }: { id?: string }) {
   const archive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_archive', { sessionId: s.id }), 'not archived');
   const unarchive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_unarchive', { sessionId: s.id, reason: 'Unarchived from the Conversations list' }), 'not unarchived');
   const toggleArchived = () => set({ archived: archived ? undefined : true, sel: undefined, preset: undefined });
-  const filtered = !!(states.length || view.q || view.project?.length);
+  const { filtered } = page;
   const now = Date.now();
   // ?new=<project> opens the form once; the key leaves the URL so a reload does not open it again.
   const [newConversation,setNewConversation]=useState(()=>!!new URLSearchParams(location.search).get('new'));
