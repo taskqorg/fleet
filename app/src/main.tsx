@@ -4,12 +4,12 @@ import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
 import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
-import { access, accessGeneration, ensureAccessGeneration, invalidateAccess, registerAccessValidator } from './access.ts';
-import { op, accessControlOp, signedOut, type Ops } from './api.ts';
+import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator } from './access.ts';
+import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset, noteView, saveView, sectionPath } from './prefs.ts';
 import { useDoc } from './store.ts';
-import { startFeed, stopFeed } from './feed.ts';
+import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
 import { clearAll } from './offline.ts';
 import { Overview } from './views/overview.tsx';
@@ -78,7 +78,7 @@ function App() {
   const search = useRef((['task', 'question', 'conversation', 'project', 'host'] as const).map(k => found(k, go))).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   // Preferences load only after authorized baseline activation.
-  // Focus revalidates access before reloading changes from agents and other devices.
+  // Focus and online check the person quietly (below); preferences changed elsewhere arrive as setting-change events.
   const [user, setUser] = useState<string | null>(null);
   // OR-23: the shell shows once the first settings read answers, or after 1.5 s at most; a later store clear does not hide it again.
   const [shown, setShown] = useState(false);
@@ -99,9 +99,35 @@ function App() {
     });
     startFeed(null); startStore();
     const validate = () => { invalidateAccess('focus'); last = null; void ensureAccessGeneration('focus').then(() => loadPrefs()).catch(() => {}); };
-    validate(); addEventListener('focus', validate); addEventListener('online', validate);
+    // Focus and online check the person quietly: the same identity and grants keep everything on screen (the change
+    // stream brings what happened meanwhile); a different person, changed grants or a closed gate fence and validate as
+    // at start (docs/designs/fleet-analytics.md, the access gate). Offline keeps what is shown; signed out has its own path.
+    let checking = false, again = false;
+    const recheck = async (): Promise<void> => {
+      const s = access.value;
+      // Not open (closed, or a validation still running): validate as before, which restarts a running one.
+      if (s.state !== 'open' || !s.identity) return validate();
+      // A focus during a quiet check is checked right after it, so a change in between is never missed.
+      if (checking) { again = true; return; }
+      checking = true;
+      try {
+        const m = await accessControlOp('me', {}, { signal: AbortSignal.any([accessSignal(s.generation), AbortSignal.timeout(10000)]) });
+        const cur = access.value;
+        if (cur.generation !== s.generation || cur.state !== 'open') return;
+        // The same person: nothing to redo; preferences and data stay, and the change stream brings what changed.
+        if (m.email !== s.identity.identityKey || (m.grantsVersion ?? '') !== s.identity.grantsVersion) validate();
+      } catch (e) {
+        if (access.value.generation !== s.generation || access.value.state !== 'open') return;
+        // Offline keeps what is shown, and signed out has its own path; any other failure (a timeout, a 5xx, an
+        // incomplete reply) leaves the person unverified, so the gate validates as at start.
+        if (!(e instanceof OpError && (e.status === 0 && e.message === 'offline' || e.status === 401 || e.status === 403))) validate();
+      } finally { checking = false; if (again) { again = false; void recheck(); } }
+    };
+    // Preferences changed on another device or by an agent (person_settings_set writes a setting-change for this person).
+    const offPrefs = subscribe({ resync: () => { void loadPrefs(); }, changes: cs => { if (cs.some(c => c.kind === 'setting-change')) void loadPrefs(); } });
+    validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(r => r.addEventListener('updatefound', () => { if (navigator.serviceWorker.controller) setUpdate(true); })).catch(() => {});
-    return () => { unregister(); stopFeed(); removeEventListener('focus', validate); removeEventListener('online', validate); };
+    return () => { unregister(); stopFeed(); offPrefs(); removeEventListener('focus', recheck); removeEventListener('online', recheck); };
   }, []);
   useEffect(() => { if (signedOut.value) { invalidateAccess('signed out'); void clearAll(true); } }, [signedOut.value]);
   // Each section's list view is noted as it changes and saved when the person leaves the section or the tab hides, so the

@@ -84,3 +84,27 @@ test('the preferences gate opens on the current person\'s read, also with a save
   assert.equal(prefsRead.value, false);
   await loadPrefs(); assert.equal(prefsRead.value, true);
 });
+
+// Requirement: settings changed by another device stay current (OR-33/34).
+// Risk: an older response or an event during a local save permanently loses remote pins/focus.
+test('settings reads discard older replies and defer remote refresh until local saves settle', async () => {
+  await settle();
+  const { loadPrefs } = await import('../../app/src/prefs.ts');
+  const originalFetch = globalThis.fetch;
+  const replies: ((value: unknown) => void)[] = [];
+  globalThis.fetch = async () => new Promise<Response>(resolve => replies.push(value => resolve(new Response(JSON.stringify(value)))));
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+  try {
+    const old = loadPrefs(), recent = loadPrefs(); await tick();
+    replies[1]({ ...prefs.value, focus: ['new'] }); await recent;
+    replies[0]({ ...prefs.value, focus: ['old'] }); await old;
+    assert.deepEqual(prefs.value.focus, ['new'], 'late old read replaced newer settings');
+    savePrefs(() => ({ widths: { nav: 222 } }), { widths: { nav: 222 } }); await tick();
+    await loadPrefs();
+    assert.equal(replies.length, 3, 'refresh must wait for the pending save');
+    replies[2]({ ...prefs.value, focus: ['save-snapshot'] }); await tick();
+    assert.equal(replies.length, 4, 'setting-change during save must trigger a fresh read');
+    replies[3]({ ...prefs.value, focus: ['remote'] }); await tick();
+    assert.deepEqual(prefs.value.focus, ['remote']);
+  } finally { globalThis.fetch = originalFetch; }
+});

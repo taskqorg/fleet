@@ -56,6 +56,13 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     await p.waitForFunction(() => !!document.querySelector('[data-resource-project]')?.getAttribute('data-resource-version'));
     assert.equal(await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).count(), 1, 'summary preserves dirty fields');
     assert.deepEqual(await p.locator('[data-ui="list-detail"]').boundingBox(), geometry, 'summary does not move columns');
+    // Returning to the window with the same person keeps the page: nothing unmounts, nothing shows "Validating access".
+    await p.evaluate(() => { (window as any).__kept = document.querySelector('[data-ui="detail"]'); });
+    const meChecked = p.waitForResponse(r => r.url().endsWith('/api/ops/me'));
+    // A wrongful fence would start right after the reply (validate runs synchronously): two frames are enough to see it.
+    await focus(); await meChecked; await p.evaluate(() => new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+    assert.equal(await p.evaluate(() => (window as any).__kept?.isConnected === true), true, 'focus with the same person unmounted the page');
+    assert.equal(await p.getByText('Validating access…').count(), 0, 'focus with the same person showed Validating access');
     await focus();
     await p.getByRole('heading', { name: 'Browser dirty project', exact: true }).waitFor();
     assert.equal(await p.getByLabel('Name', { exact: true }).inputValue(), 'Browser dirty project', 'authored editor input survives a new authorized generation');
@@ -244,7 +251,8 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     let releaseThread!: () => void, threadStarted!: () => void;
     const threadWait = new Promise<void>(resolve => { releaseThread = resolve; }), threadPending = new Promise<void>(resolve => { threadStarted = resolve; });
     await p.route('**/api/ops/thread_entries', async route => { const response = await route.fetch(); threadStarted(); await threadWait; await route.fulfill({ response }).catch(() => {}); });
-    await focus(); await threadPending;
+    // A change-stream resync re-reads the mounted thread (focus with the same person no longer re-reads anything).
+    await resync(); await threadPending;
     const people = [ { email: 'owner@trial.test', name: 'Owner', owner: true, roles: ['operator', 'architect'] }, { email: 'member@trial.test', name: 'Member', roles: ['operator'], grants: [] }, { email: 'outsider@trial.test', name: 'Outsider', roles: ['operator'], grants: [] } ];
     await call('people_set', { people }); await resync(); releaseThread();
     await p.waitForFunction(() => !document.body.textContent?.includes('Private thread marker'));
@@ -261,8 +269,8 @@ export async function checkAccessGate(browser: Browser, coordinator: Coordinator
     let releaseResults!: () => void, resultsStarted!: () => void;
     const resultsWait = new Promise<void>(resolve => { releaseResults = resolve; }), resultsPending = new Promise<void>(resolve => { resultsStarted = resolve; });
     await p.route('**/api/ops/artifact_list', async route => { const response = await route.fetch(); resultsStarted(); await resultsWait; await route.fulfill({ response }).catch(() => {}); });
-    // Remount once under the allowed actor, then change identity during that exact read.
-    await focus(); await resultsPending; actor = 'outsider@trial.test'; await focus(); releaseResults();
+    // Re-read once under the allowed actor (a change-stream resync), then change identity during that exact read.
+    await resync(); await resultsPending; actor = 'outsider@trial.test'; await focus(); releaseResults();
     await p.getByText('Outsider', { exact: true }).waitFor();
     await p.unroute('**/api/ops/artifact_list');
     await p.waitForFunction(() => !document.body.textContent?.includes('Private result marker.txt'));
