@@ -16,7 +16,9 @@ const encoder = new TextEncoder(), decoder = new TextDecoder();
 export function trimBytes(s: string, max: number): string {
   const b = encoder.encode(s);
   if (b.length <= max) return s;
-  return decoder.decode(b.subarray(0, max)).replace(/�+$/, '');
+  let end = max;
+  while (end > 0 && (b[end] & 0xc0) === 0x80) end--; // back to the start of the character the cut falls in
+  return decoder.decode(b.subarray(0, end));
 }
 
 /**
@@ -32,15 +34,18 @@ export function reportPath(pathname: string, search: string): string {
   return formatView({ ...v, extra: Object.fromEntries(Object.entries(v.extra ?? {}).filter(([k]) => own.includes(k))) });
 }
 
+/** PostgreSQL text holds no NUL: the server refuses one, so the reporter replaces it. */
+const noNul = (s: string) => s.replace(/\u0000/g, '\uFFFD');
+
 /** The fields of an error-like value; a thrown non-Error becomes its text. */
 export function describe(error: unknown): { name: string; message: string; stack: string } {
   if (error instanceof Error || (error && typeof error === 'object' && 'message' in error)) {
     const e = error as { name?: unknown; message?: unknown; stack?: unknown };
-    return { name: String(e.name || 'Error'), message: String(e.message ?? ''), stack: typeof e.stack === 'string' ? e.stack : '' };
+    return { name: noNul(String(e.name || 'Error')), message: noNul(String(e.message ?? '')), stack: typeof e.stack === 'string' ? noNul(e.stack) : '' };
   }
   let message: string;
   try { message = typeof error === 'string' ? error : JSON.stringify(error) ?? String(error); } catch { message = String(error); }
-  return { name: 'NonError', message, stack: '' };
+  return { name: 'NonError', message: noNul(message), stack: '' };
 }
 
 // The server's clientFrameLine, anchored the same way.

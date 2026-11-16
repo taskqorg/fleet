@@ -58,6 +58,14 @@ test('fields fit the server limits and non-errors are described', () => {
   assert.deepEqual(sent.slice(1).map((s: any) => [s.name, s.message]), [['NonError', 'plain text'], ['NonError', '{"code":7}'], ['NonError', 'undefined']]);
 });
 
+test('NUL characters are replaced and a cut keeps real replacement characters', () => {
+  const { r, sent } = harness();
+  r.capture(new Error('a\u0000b'), 'error');
+  assert.equal(sent[0].message, 'a�b');
+  assert.equal(m.trimBytes('ab��ж', 8), 'ab��', 'only the cut character goes');
+  assert.equal(m.trimBytes('ab��', 8), 'ab��');
+});
+
 test('the reporter never throws', () => {
   const { r } = harness({ send: () => { throw new Error('network'); }, path: () => { throw new Error('location'); } });
   assert.doesNotThrow(() => r.capture(new Error('x'), 'error'));

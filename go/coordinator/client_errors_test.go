@@ -63,7 +63,7 @@ func TestClientErrorOps(t *testing.T) {
 	for name, over := range map[string]map[string]any{
 		"oversized stack": {"stack": strings.Repeat("x", 8193)}, "oversized message": {"message": strings.Repeat("x", 2001)},
 		"missing name": {"name": ""}, "absent name": {"name": nil}, "relative path": {"path": "delivery"}, "bad time": {"at": "yesterday"},
-		"zero count": {"count": 0}, "bad source": {"source": "console"}, "oversized agent": {"userAgent": strings.Repeat("x", 513)},
+		"nul message": {"message": "a\x00b"}, "zero count": {"count": 0}, "bad source": {"source": "console"}, "oversized agent": {"userAgent": strings.Repeat("x", 513)},
 	} {
 		if code, body := report(member, over); code != 400 {
 			t.Fatalf("%s: %d %v", name, code, body)

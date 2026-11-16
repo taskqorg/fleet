@@ -126,6 +126,9 @@ func clientFingerprint(name, message, top string) string {
 func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contract.ClientErrorReportReply, error) {
 	var rep contract.ClientErrorReportReply
 	for _, l := range clientErrorLimits {
+		if strings.ContainsRune(l.value(r), 0) {
+			return rep, fail(400, "Field "+l.field+" contains a NUL character")
+		}
 		if n := len(l.value(r)); n < l.min || n > l.max {
 			if n > l.max {
 				return rep, fail(400, "Field "+l.field+" is longer than "+itoa(l.max)+" bytes")
@@ -176,7 +179,9 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 					return rep, err
 				}
 			}
+			checked := false // the new-group path ran its limits under the lock
 			if !known && !over {
+				checked = true
 				// One lock orders concurrent new groups, so parallel tabs cannot all pass the same count; the same group
 				// opened meanwhile by another tab is then known.
 				if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
@@ -206,8 +211,8 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			var inserted bool
 			err = q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions,first_person,first_full)
 				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10::text='' THEN '{}'::text[] ELSE ARRAY[$10::text] END,CASE WHEN $7::text='' THEN '{}'::text[] ELSE ARRAY[$7::text] END,$10,$13)
-				ON CONFLICT (fingerprint) DO UPDATE SET last_seen=now(), count=c.count+EXCLUDED.count, last_version=EXCLUDED.last_version,
-				  last_path=EXCLUDED.last_path, last_user_agent=EXCLUDED.last_user_agent,
+				ON CONFLICT (fingerprint) DO UPDATE SET last_seen=now(), count=c.count+EXCLUDED.count, last_version=CASE WHEN EXCLUDED.last_version='' THEN c.last_version ELSE EXCLUDED.last_version END,
+				  last_path=EXCLUDED.last_path, last_user_agent=CASE WHEN EXCLUDED.last_user_agent='' THEN c.last_user_agent ELSE EXCLUDED.last_user_agent END,
 				  people=CASE WHEN $10::text='' OR $10::text=ANY(c.people) OR cardinality(c.people)>=$11 THEN c.people ELSE c.people||$10::text END,
 				  versions=CASE WHEN $7::text='' OR c.versions[cardinality(c.versions)]=$7::text THEN c.versions
 				    ELSE (SELECT v[greatest(1,cardinality(v)-$12+1):] FROM (SELECT array_remove(c.versions,$7::text)||$7::text AS v) s) END
@@ -225,7 +230,9 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			if err := exec(q, "DELETE FROM client_error_report WHERE fingerprint=$1 AND seq < (SELECT min(seq) FROM (SELECT seq FROM client_error_report WHERE fingerprint=$1 ORDER BY seq DESC LIMIT $2) k)", fp, clientErrorReportsKept); err != nil {
 				return rep, err
 			}
-			if !inserted {
+			// A group inserted without the checked path (the prune removed it between the lookup and the upsert) opens
+			// no problem: it bypassed the limits that bound problems.
+			if !inserted || (!checked && fp != clientErrorOverLimit) {
 				return rep, nil
 			}
 			if fp != clientErrorOverLimit {
