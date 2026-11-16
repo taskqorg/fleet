@@ -277,18 +277,17 @@ func clientErrorMayAsk(q *Request, fp, person string) (bool, error) {
 	return clientErrorBudget(q, fp, person)
 }
 
-// clientErrorBudget: the daily limits: clientErrorProblemsPerDay problems for the person whose report asks them (only client-error problems carry a
-// reporter), and one a day for the over-limit group, so a flood past the limits cannot re-ask it after every answer.
-// Containment uses the question data GIN index.
+// clientErrorBudget: the daily limits on client-error problems (their data names the cause, and the reporter):
+// clientErrorProblemsPerDay for the person whose report asks them (the over-limit group's excepted), and one a day for
+// each group, so an answer quiets a group for at least a day however many people repeat it. Containment uses the
+// question data GIN index.
 func clientErrorBudget(q *Request, fp, person string) (bool, error) {
-	match, limit := doc{"reporter": person}, clientErrorProblemsPerDay
-	if fp == clientErrorOverLimit {
-		match, limit = doc{"fingerprint": clientErrorOverLimit}, 1
-	}
-	var today int
-	err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE data->>'fingerprint'<>$2 OR $3) FROM question WHERE data @> $1::jsonb AND asked_at > now()-interval '24 hours'`,
-		js(match), clientErrorOverLimit, fp == clientErrorOverLimit).Scan(&today)
-	return today < limit, err
+	var mine, group int
+	err := q.tx.QueryRow(q.ctx(), `SELECT
+		  (SELECT count(*) FROM question WHERE data @> jsonb_build_object('reporter',$1::text) AND data->>'cause' LIKE $4 AND data->>'fingerprint'<>$3 AND asked_at > now()-interval '24 hours'),
+		  (SELECT count(*) FROM question WHERE data @> jsonb_build_object('fingerprint',$2::text) AND data->>'cause' LIKE $4 AND asked_at > now()-interval '24 hours')`,
+		person, fp, clientErrorOverLimit, clientErrorCause+"%").Scan(&mine, &group)
+	return group < 1 && (fp == clientErrorOverLimit || mine < clientErrorProblemsPerDay), err
 }
 
 // clientErrorProblem opens the group's needs-you problem for a report clientErrorMayAsk allowed, under the new-group

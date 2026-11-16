@@ -445,14 +445,29 @@ func TestClientErrorAnswerReleases(t *testing.T) {
 		t.Fatalf("a pruned group's answered question still holds its cause: %d %v", held, err)
 	}
 
-	// A repeat after the answer opens a new problem; the answered one lets go of the cause.
+	// The same day, a repeat after the answer asks nothing: an answer quiets its group for a day.
 	again := report("regressed")
 	answer(again)
+	report("regressed")
+	if open, ans := questions(again); open != 0 || ans != 1 {
+		t.Fatalf("re-asked the same day: %d open, %d answered", open, ans)
+	}
+	// A day later, a repeat after the answer opens a new problem; the answered one lets go of the cause.
+	dayLater := func(fp string) {
+		if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE question SET asked_at=now()-interval '25 hours' WHERE data->>'fingerprint'=$1", fp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dayLater(again)
 	if fp := report("regressed"); fp != again {
 		t.Fatal(fp)
 	}
 	if open, ans := questions(again); open != 1 || ans != 1 {
 		t.Fatalf("repeat after the answer: %d open, %d answered", open, ans)
+	}
+	var released int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM question WHERE data->>'fingerprint'=$1 AND state='answered' AND cause IS NULL", again).Scan(&released); err != nil || released != 1 {
+		t.Fatalf("answered question kept the cause: %d %v", released, err)
 	}
 	// A further repeat while that problem is open asks nothing.
 	report("regressed")
@@ -460,11 +475,15 @@ func TestClientErrorAnswerReleases(t *testing.T) {
 		t.Fatalf("open problem asked twice: %d", open)
 	}
 
-	// The daily problem limit still applies to repeats after an answer: 4 problems so far, the 5th is the last.
-	last := report("fifth")
-	answer(last)
+	// The person's daily problem limit still applies to repeats after an answer: with 5 problems asked today
+	// (answered, still open, regressed, fourth, fifth), a day-old answered group's repeat asks nothing.
+	old := report("day old")
+	answer(old)
+	dayLater(old)
+	report("fourth")
 	report("fifth")
-	if open, ans := questions(last); open != 0 || ans != 1 {
+	report("day old")
+	if open, ans := questions(old); open != 0 || ans != 1 {
 		t.Fatalf("daily limit: %d open, %d answered", open, ans)
 	}
 }
