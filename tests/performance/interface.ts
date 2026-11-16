@@ -537,6 +537,7 @@ async function parity(c: Coordinator, f: Fixture, out: string) {
 export async function browse(o: { origin: string; out: string; spec: Workload; placement: string }) {
   const url = new URL(o.origin);
   if (!['127.0.0.1', 'localhost'].includes(url.hostname) || !['http:', 'https:'].includes(url.protocol)) throw Error('use a loopback SSH tunnel to isolated server, never production');
+  mkdirSync(o.out, { recursive: true });
   // The https origin is the fixture's own ephemeral loopback certificate. Only the config read accepts it unverified;
   // its PEM then becomes the sole trusted CA, so every later request verifies the same key at handshake.
   let trusted: https.Agent | null = null;

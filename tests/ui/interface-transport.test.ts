@@ -75,3 +75,14 @@ test('Chromium uses HTTP/2 with only the pinned fixture key', { skip: !existsSyn
     await assert.rejects((await (await strict.newContext()).newPage()).goto(o.url + '/start'), /ERR_CERT/, 'an unpinned browser still rejects the certificate');
   } finally { await pinned.close(); await strict.close(); o.close(); }
 });
+
+test('browse creates its own output directory before anything else', async () => {
+  const { browse } = await import('../performance/interface.ts');
+  const stub = http.createServer((_req, res) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end('{"error":"stub"}'); });
+  await new Promise<void>(r => stub.listen(0, '127.0.0.1', r));
+  const out = join(mkdtempSync(join(tmpdir(), 'browse-out-')), 'nested', 'browser');
+  try {
+    await assert.rejects(browse({ origin: 'http://127.0.0.1:' + (stub.address() as any).port, out, placement: '/nonexistent', spec: {} as any }), /stub/);
+    assert.ok(existsSync(out), 'a fresh browser output path exists before evidence recorders open files in it');
+  } finally { stub.close(); }
+});
