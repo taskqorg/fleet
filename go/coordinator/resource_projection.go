@@ -1442,9 +1442,9 @@ func resourceSeedWork(q *Request, ids []string, origin string, generation, repai
 	// One SQL statement seeds identities AND all known old/current project scopes.
 	return exec(q, `WITH seeded AS (
  INSERT INTO resource_work(execution_id,origin,build_generation,repair_id)
- SELECT unnest($1::text[]),$2,$3::uuid,$4::uuid ON CONFLICT ON CONSTRAINT resource_work_source_key DO UPDATE SET execution_id=excluded.execution_id RETURNING work_id,execution_id)
- INSERT INTO resource_work_scope(work_id,project_id)
- SELECT w.work_id,v.project_id FROM seeded w CROSS JOIN LATERAL (
+ SELECT unnest($1::text[]),$2,$3::uuid,$4::uuid ON CONFLICT ON CONSTRAINT resource_work_source_key DO UPDATE SET execution_id=excluded.execution_id RETURNING work_id,execution_id,first_pending_at)
+ INSERT INTO resource_work_scope(work_id,project_id,first_pending_at)
+ SELECT w.work_id,v.project_id,w.first_pending_at FROM seeded w CROSS JOIN LATERAL (
  SELECT project_id FROM execution WHERE id=w.execution_id UNION SELECT project_id FROM resource_contribution WHERE execution_id=w.execution_id) v
  WHERE v.project_id IS NOT NULL ON CONFLICT DO NOTHING`, ids, origin, generation, repair)
 }
@@ -1653,9 +1653,10 @@ func resourceReadPrepared(q *Request, p string) (resourcePreparedState, error) {
     OR EXISTS(SELECT 1 FROM resource_repair_scope WHERE project_id=$1)
     OR EXISTS(SELECT 1 FROM resource_metadata_repair WHERE NOT done),
    (SELECT min(at) FROM (
-    SELECT min(first_pending_at) at FROM resource_work w JOIN resource_work_scope ws USING(work_id) WHERE ws.project_id=$1
+    (SELECT first_pending_at at FROM resource_work_scope WHERE project_id=$1 AND first_pending_at IS NOT NULL ORDER BY first_pending_at LIMIT 1)
+    UNION ALL SELECT min(w.first_pending_at) FROM resource_work_scope ws JOIN resource_work w USING(work_id) WHERE ws.project_id=$1 AND ws.first_pending_at IS NULL
     UNION ALL SELECT min(r.created_at) FROM resource_metadata_repair r WHERE NOT done OR EXISTS(SELECT 1 FROM resource_repair_scope rs WHERE rs.repair_id=r.repair_id AND rs.project_id=$1)) ages),
-   coalesce((SELECT w.last_error_class FROM resource_work w JOIN resource_work_scope ws USING(work_id) WHERE ws.project_id=$1 AND w.last_error_class IS NOT NULL ORDER BY w.first_pending_at,w.work_id LIMIT 1),
+   coalesce((SELECT w.last_error_class FROM resource_work w WHERE w.last_error_class IS NOT NULL AND EXISTS(SELECT 1 FROM resource_work_scope ws WHERE ws.work_id=w.work_id AND ws.project_id=$1) ORDER BY w.first_pending_at,w.work_id LIMIT 1),
     (SELECT r.last_error FROM resource_metadata_repair r WHERE r.last_error IS NOT NULL AND (NOT done OR EXISTS(SELECT 1 FROM resource_repair_scope rs WHERE rs.repair_id=r.repair_id AND rs.project_id=$1)) ORDER BY r.created_at,r.repair_id LIMIT 1))`, p).Scan(&out.Pending, &out.OldestPendingAt, &workError)
 		if out.ErrorClass == nil {
 			out.ErrorClass = workError

@@ -91,8 +91,8 @@ test('processor startup resumes durable initial-build pages and drains off-perio
   // Simulate a committed first build page, then a stopped process. Work and checkpoint are atomic.
   c.sql(`BEGIN; INSERT INTO resource_build(project_id,after_execution_id) VALUES('build-fixture','build-0100');
    INSERT INTO resource_project_summary(project_id,build_generation) SELECT project_id,generation FROM resource_build WHERE project_id='build-fixture';
-   WITH seeded AS (INSERT INTO resource_work(execution_id,origin,build_generation) SELECT id,'build',b.generation FROM execution e JOIN resource_build b ON b.project_id=e.project_id WHERE e.project_id='build-fixture' AND e.id<='build-0100' RETURNING work_id)
-   INSERT INTO resource_work_scope SELECT work_id,'build-fixture' FROM seeded; COMMIT;`);
+   WITH seeded AS (INSERT INTO resource_work(execution_id,origin,build_generation) SELECT id,'build',b.generation FROM execution e JOIN resource_build b ON b.project_id=e.project_id WHERE e.project_id='build-fixture' AND e.id<='build-0100' RETURNING work_id,first_pending_at)
+   INSERT INTO resource_work_scope SELECT work_id,'build-fixture',first_pending_at FROM seeded; COMMIT;`);
   await c.restart();
   assert.equal(c.sql("SELECT after_execution_id FROM resource_build WHERE project_id='build-fixture'").trim(),'build-0100');
   assert.equal(c.sql("SELECT count(*) FROM resource_work WHERE origin='build'").trim(),'100');
@@ -126,7 +126,7 @@ test('selected resource hints preserve scopes and avoid unrelated queue amplific
  try{
   // Retain real queue pages with zero live-row statistics before fresh arrivals.
   c.sql(`INSERT INTO resource_work(execution_id,origin) SELECT 'hint-drained-'||i,'build' FROM generate_series(1,1000)i;
-   INSERT INTO resource_work_scope SELECT work_id,'HINT_DRAINED' FROM resource_work;
+   INSERT INTO resource_work_scope SELECT work_id,'HINT_DRAINED',first_pending_at FROM resource_work;
    DELETE FROM resource_work; ANALYZE resource_work; ANALYZE resource_work_scope;`);
   const db=c.sql('SELECT current_database()').trim();
   const pg=process.env.FLEET_TRIAL_PGDATA||join(homedir(),'.cache/fleet-trial/pg');
