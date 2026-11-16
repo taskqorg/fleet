@@ -30,6 +30,24 @@ Declarations never substitute for readback. `server.json` and `browser.json` rec
 
 For the authorized WSL alternate profile, wrap the WHOLE server process tree, including PostgreSQL, in `systemd-run --user --scope -p CPUQuota=400% -p MemoryMax=8G`; read its effective `cpu.max` and `memory.max`. No global WSL settings/shutdown or unrelated service changes. An idle Fleet-only CI guest may be reserved for browser only after confirming runner scope/idle jobs and hosted routing fallback, preserving/restoring its prior state. Never run benchmark coordinator/database load on the production host/CI guest.
 
+## Windows SSH source connection limits
+
+An SSH forwarding endpoint can exhaust its own connection table before the isolated coordinator receives a request. Windows OpenSSH's [compatibility table](https://github.com/PowerShell/openssh-portable/blob/59aba65cf2e2f423c09d12ad825c3b32a11f408f/contrib/win32/win32compat/inc/sys/select.h#L9) has256 descriptor slots per process. Its [socket wrapper](https://github.com/PowerShell/openssh-portable/blob/59aba65cf2e2f423c09d12ad825c3b32a11f408f/contrib/win32/win32compat/w32fd.c#L293) can clear the exhaustion errno, producing `socket: No error` and an SSH `open failed` reply. Verify the actual endpoint/version and failed hop; a browser fetch error alone does not establish this cause.
+
+`relay-interface.ts` provides a task-owned loopback TCP bridge over exactly two independent SSH connections to the same source host. Each accepted stream chooses one source leg in round-robin order and stays on it. The bridge preserves bytes, backpressure and half-close in both directions. It does not replay a flow or move it to another leg after an error. A leg exit fails the relay, closes its active streams and stops both owned SSH children; partial startup and operator cancellation clean up the same children. It changes no global SSH configuration, resource limits, HTTP timeouts, application connection pools or qualification guards.
+
+On the existing relay machine, use two free private loopback ports and the authorized SSH alias for the same source host:
+
+```sh
+node tests/performance/relay-interface.ts --host=<source-ssh-alias> \
+  --source-port=9479 --listen-port=19493 --leg-ports=19494,19495 \
+  > .egm/interface-relay.jsonl 2>&1
+```
+
+The outer browser tunnel continues forwarding to loopback19493. The helper starts SSH with independent connections and waits for both children to confirm their own loopback listeners before accepting streams. Retain its ready/leg/flow/terminal metadata and exact helper revision, observe two distinct source SSH child processes and actual stream distribution, and read back the isolated fixture's candidate through the final browser origin. Metadata excludes payloads, credentials and authentication diagnostics. Stop the helper with SIGTERM and verify that its own children, streams and listeners disappear. Reserve these ports for this task; a bind or leg failure stays visible.
+
+Qualify the transport separately: reproduce the single-leg connection refusal with an isolated no-database source and the same declared fanout, then check response identities/completeness through both legs, one-leg exit and partial-start cleanup. A transport regression is not UI capacity acceptance. Record this topology change and all additional hop latency in the original bounds; review earlier evidence reuse against the changed path before resuming the full workload. No transport fix waives an incomplete run, missing render sample, source deadline or maximum5000ms breach.
+
 ## Run
 
 Build the exact candidate and retain its identity before copying artifacts to test machines. Go code is unchanged by this runner; a published coordinator may be reused only with verified release-commit/digest identity. Build the candidate app for the default-selection change. Record uncommitted diff identity for development; final qualification must use the accepted exact candidate and its actual binaries/bundle.
