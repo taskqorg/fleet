@@ -108,7 +108,7 @@ export async function checkConversationsList(browser: Browser, origin: string, s
     const archivedToggle = p.getByRole('button', { name: 'Archived', exact: true });
     assert.equal(await archivedToggle.getAttribute('aria-pressed'), 'false', 'Archived toggle off');
     await archivedToggle.click();
-    await settle(async () => url().searchParams.get('archived') === '1' && (await titles()).join() === 'Plan the next release train', 'archived list after the toggle: ' + (await titles()).join());
+    await settle(async () => url().searchParams.get('archived') === '1' && (await titles()).join() === 'Plan the next release train', 'only the archived conversation listed after the toggle');
     assert.equal(await archivedToggle.getAttribute('aria-pressed'), 'true', 'Archived toggle pressed');
     assert.equal(await p.locator('[data-ui=row-pin]').count(), 0, 'pinned active row not in the archived list');
     if (process.env.CONV_SHOTS) { await p.mouse.move(0, 0); await p.screenshot({ path: process.env.CONV_SHOTS + '/conv-archived.png' }); }

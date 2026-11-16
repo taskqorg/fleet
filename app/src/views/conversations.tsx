@@ -87,29 +87,26 @@ export function Conversations({ id }: { id?: string }) {
   }
   const chosen = displayed.filter(r => sel.includes(r.id));
   const canArchive = (s: SessionRow) => s.state === 'idle' || TERMINAL.includes(s.state);
-  // Archive is one operation per conversation (session_archive); a conversation with a running execution refuses it.
-  const archive = async (ss: SessionRow[]) => {
+  // Archive and Unarchive are one operation per conversation. session_archive is refused while an execution is active;
+  // session_unarchive (owner or full access) returns the conversation to the active list and records a reason. The rows
+  // that succeeded leave the selection as it is now (not when the operation began), whatever the others did.
+  const bulk = async (ss: SessionRow[], name: 'session_archive' | 'session_unarchive', verb: string) => {
     if (busy || !ss.length) return;
     setBulkError(null); setBusy(true);
-    const r = await Promise.allSettled(ss.map(s => op('session_archive', { sessionId: s.id })));
+    const r = await Promise.allSettled(ss.map(s => name === 'session_archive' ? op(name, { sessionId: s.id }) : op(name, { sessionId: s.id, reason: 'Unarchived from the Conversations list' })));
     setBusy(false);
     const failed = r.filter(x => x.status === 'rejected') as PromiseRejectedResult[];
-    if (failed.length) setBulkError(`${failed.length} of ${ss.length} not archived: ${failed[0].reason?.message ?? failed[0].reason}`);
-    else set({ sel: selNow.current.filter(x => !ss.some(s => s.id === x)) }); // the selection as it is now, not when archiving began
+    if (failed.length) setBulkError(`${failed.length} of ${ss.length} not ${verb}: ${failed[0].reason?.message ?? failed[0].reason}`);
+    const done = ss.filter((_, i) => r[i].status === 'fulfilled').map(s => s.id);
+    if (done.length) set({ sel: selNow.current.filter(x => !done.includes(x)) });
   };
-  // Unarchive returns archived conversations to the active list (session_unarchive, owner or full access; it records a reason).
-  const unarchive = async (ss: SessionRow[]) => {
-    if (busy || !ss.length) return;
-    setBulkError(null); setBusy(true);
-    const r = await Promise.allSettled(ss.map(s => op('session_unarchive', { sessionId: s.id, reason: 'Unarchived from the Conversations list' })));
-    setBusy(false);
-    const failed = r.filter(x => x.status === 'rejected') as PromiseRejectedResult[];
-    if (failed.length) setBulkError(`${failed.length} of ${ss.length} not unarchived: ${failed[0].reason?.message ?? failed[0].reason}`);
-    else set({ sel: selNow.current.filter(x => !ss.some(s => s.id === x)) });
-  };
+  const archive = (ss: SessionRow[]) => bulk(ss, 'session_archive', 'archived'), unarchive = (ss: SessionRow[]) => bulk(ss, 'session_unarchive', 'unarchived');
   const archived = !!view.archived;
-  // The Archived toggle switches between active and archived conversations; the selection belongs to one list, so it ends.
-  const toggleArchived = () => { setSelectOn(false); setConfirmArchive(null); setBulkError(null); set({ archived: archived ? undefined : true, sel: undefined, preset: undefined }); };
+  // Active and archived conversations are two lists: a switch by any path (the toggle, a saved view, Back) ends selection
+  // mode and a pending confirmation; the toggle and a saved view also drop the checked rows.
+  const firstList = useRef(true);
+  useEffect(() => { if (firstList.current) { firstList.current = false; return; } setSelectOn(false); setConfirmArchive(null); setBulkError(null); }, [archived]);
+  const toggleArchived = () => set({ archived: archived ? undefined : true, sel: undefined, preset: undefined });
   const off = !online.value ? 'offline' : busy ? 'Working' : undefined;
   const pinAll = (on: boolean) => { for (const s of chosen) if (pins.has(s.id) !== on) pins.toggle(s.id); };
   const select = (s: SessionRow) => { setSelectOn(true); setConfirmArchive(null); toggleSel(s.id); };
@@ -130,7 +127,7 @@ export function Conversations({ id }: { id?: string }) {
     ?? (view.state?.length ? views.list.find(v => v.system && stateKey(v.view.state) === stateKey(view.state))?.name : undefined) ?? null;
   const pick = (n: string) => {
     const p = views.list.find(x => x.name === n)!;
-    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, archived: p.view.archived, preset: n });
+    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, archived: p.view.archived, preset: n, ...(!!p.view.archived !== archived ? { sel: undefined } : {}) });
   };
   const filtered = !!(states.length || view.q || view.project?.length);
   const now = Date.now();
