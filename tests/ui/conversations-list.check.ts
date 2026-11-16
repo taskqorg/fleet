@@ -22,10 +22,10 @@ export async function checkConversationsList(browser: Browser, origin: string, s
     for (const [id, project, title, state, harness, hours] of rows) {
       seed.put('session', { id, ...(project ? { projectId: project } : {}), createdAt: Date.now() - hours * 3600e3, agentConfig: { harness: harness ?? 'claude' } });
       seed.put('message', { id: id + '-m', sessionId: id, ...(project ? { projectId: project } : {}), text: title });
-      // Inserted with their time: an update would move updated_at to now (execution_touch).
+      // Executions count as activity by their start time.
       const at = `now()-interval '${hours} hours'`;
       // The last one inserted (x0) gives the conversation its state.
-      if (state) for (let i = id === 'cl-1' ? 2 : 0; i >= 0; i--) seed.sql(`INSERT INTO execution(id,kind,state,project_id,session_id,host_id,harness,updated_at) VALUES('${id}-x${i}','agent_run','${i ? 'succeeded' : state}',${project ? `'${project}'` : 'NULL'},'${id}','pds18','${harness}',${at}-interval '${i} minutes')`);
+      if (state) for (let i = id === 'cl-1' ? 2 : 0; i >= 0; i--) seed.sql(`INSERT INTO execution(id,kind,state,project_id,session_id,host_id,harness,started_at) VALUES('${id}-x${i}','agent_run','${i ? 'succeeded' : state}',${project ? `'${project}'` : 'NULL'},'${id}','pds18','${harness}',${at}-interval '${i} minutes')`);
       seed.sql(`UPDATE document SET updated_at=${at} WHERE id IN ('${id}','${id}-m')`);
     }
   });
@@ -35,7 +35,7 @@ export async function checkConversationsList(browser: Browser, origin: string, s
   const errors: string[] = []; p.on('pageerror', e => errors.push(e.message));
   const titles = () => p.locator('.vl-row .row-link').allTextContents();
   const mine = async () => (await titles()).filter(t => rows.some(r => r[2] === t));
-  // The coordinator may touch live executions (running, waiting) at any time, which is activity: order is asserted on the others.
+  // Live executions (running, waiting) may still change while the check runs: order is asserted on the other rows.
   const settled = async () => (await mine()).filter(t => rows.some(r => r[2] === t && (r[3] === null || !['running', 'waiting'].includes(r[3]))));
   const groups = () => p.locator('.vl-row.grp').allTextContents();
   const url = () => new URL(p.url());

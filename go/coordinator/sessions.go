@@ -16,7 +16,8 @@ var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeed
 
 // Aggregate visible history once: under RLS, JSON sessionId predicates cannot become index conditions.
 // Correlating these document scans per session makes retained history multiply the list's work.
-// activity_at: the latest change of the session, its messages and events, or its executions (the default sort).
+// activity_at: the latest change of the session, its messages and events, or the start or end of its executions (the
+// default sort). Not execution.updated_at: host receipts touch it on every observation, which is not conversation activity.
 const sessionBase = `WITH session_messages AS MATERIALIZED (
  SELECT DISTINCT ON (data->>'sessionId') data->>'sessionId' AS session_id, data->>'text' AS first_message
  FROM document WHERE kind='message' ORDER BY data->>'sessionId',seq
@@ -31,7 +32,7 @@ const sessionBase = `WITH session_messages AS MATERIALIZED (
  coalesce(ex.n,0) AS executions,
  (SELECT count(*) FROM question q WHERE q.session_id=d.id AND q.state='open') AS open_questions
  FROM document d LEFT JOIN session_messages m ON m.session_id=d.id LEFT JOIN session_activity a ON a.session_id=d.id
- LEFT JOIN LATERAL (SELECT count(*) AS n,max(e.updated_at) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true
+ LEFT JOIN LATERAL (SELECT count(*) AS n,max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true
  WHERE d.kind='session')`
 
 // sessionAgent: the harness of the last execution, else the configured one (the row's harness mark and the agent group).
@@ -107,7 +108,7 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 		c = append(c, fmt.Sprintf("x.state=ANY($%d)", len(*p)))
 	}
 	if s, ok := f["search"].(string); ok { // the list search syntax (search.go searchWhere)
-		c = append(c, searchWhere(s, p, []string{"x.first_message", "x.id", "x.code"}, map[string]string{"agent": "coalesce(x.harness,x.data->'agentConfig'->>'harness')", "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.data->>'hostId')", "project": "x.project_id", "state": "x.state"}, withState)...)
+		c = append(c, searchWhere(s, p, []string{"x.first_message", "x.id", "x.code"}, map[string]string{"agent": sessionAgent, "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.data->>'hostId')", "project": "x.project_id", "state": "x.state"}, withState)...)
 	}
 	return c, nil
 }
@@ -127,33 +128,41 @@ func sessionRow(x doc) doc {
 		"activityAt": x["activity_at"], "executions": x["executions"], "openQuestions": x["open_questions"], "archivedAt": d["archivedAt"], "sortKey": []any{x["g"], num(x["sk"]), x["id"]}}
 }
 
-// sessionSummary: counts per state (without the state filter, for the quick filter) and the groups of the filtered list.
+// sessionSummary: counts per state (without the state filter, for the quick filter) and the groups of the filtered list,
+// in one pass over sessionBase: rows match the filter without states, and the groups count those that also match the states.
 func sessionSummary(q *Request, f doc, o sessionOrder) (doc, []doc, error) {
-	cp := []any{}
-	cc, err := sessionWhere(f, &cp, false)
+	p := []any{}
+	cc, err := sessionWhere(f, &p, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	counts := zeroCounts(sessionStates)
-	cr, err := rowsOf(q, sessionBase+" SELECT x.state,count(*) AS n FROM x WHERE "+strings.Join(cc, " AND ")+" GROUP BY 1", cp...)
+	gc, err := sessionWhere(f, &p, true)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, r := range cr {
-		counts[astr(r["state"])] = r["n"]
+	label := "NULL::text"
+	if l, ok := sessionGroupLabels[o.name]; ok {
+		label = l
 	}
-	groups := []doc{}
-	if o.name == "none" {
-		return counts, groups, nil
-	}
-	gp := []any{}
-	gc, _ := sessionWhere(f, &gp, true)
-	gr, err := rowsOf(q, sessionBase+" SELECT "+o.g+" AS g,min("+sessionGroupLabels[o.name]+") AS label,count(*) AS n FROM x WHERE "+strings.Join(gc, " AND ")+" GROUP BY 1 ORDER BY 1", gp...)
+	rs, err := rowsOf(q, sessionBase+" SELECT x.state,"+o.g+" AS g,min("+label+") AS label,count(*) AS n,count(*) FILTER (WHERE "+strings.Join(gc, " AND ")+") AS ng FROM x WHERE "+strings.Join(cc, " AND ")+" GROUP BY 1,2 ORDER BY 2", p...)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, r := range gr {
-		groups = append(groups, doc{"key": r["g"], "label": r["label"], "count": r["n"]})
+	counts, groups := zeroCounts(sessionStates), []doc{}
+	for _, r := range rs {
+		counts[astr(r["state"])] = num(counts[astr(r["state"])]) + num(r["n"])
+		if o.name == "none" || num(r["ng"]) == 0 {
+			continue
+		}
+		// Rows come ordered by group key, so a group's rows (one per state) are adjacent.
+		if n := len(groups); n > 0 && groups[n-1]["key"] == r["g"] {
+			groups[n-1]["count"] = num(groups[n-1]["count"]) + num(r["ng"])
+			if groups[n-1]["label"] == nil {
+				groups[n-1]["label"] = r["label"]
+			}
+			continue
+		}
+		groups = append(groups, doc{"key": r["g"], "label": r["label"], "count": num(r["ng"])})
 	}
 	return counts, groups, nil
 }

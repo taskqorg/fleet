@@ -620,7 +620,7 @@ func (v *SessionUnarchiveRequest) Validate() error {
 	return nil
 }
 
-// SessionsListReply: nextAfter: null on the last page, else the sort key to pass as after. Row sortKey: [group key, sort key, id]; rows carry activityAt (last change of the session, its messages, events and executions) and executions (their count). groups: key, label and count of each group of the filtered list (none for group none).
+// SessionsListReply: nextAfter: null on the last page, else the sort key to pass as after. Row sortKey: [group key, sort key, id]; rows carry activityAt (last change of the session, its messages and events, or the start or end of its executions) and executions (their count). groups: key, label and count of each group of the filtered list (none for group none).
 type SessionsListReply struct {
 	Counts    map[string]int64 `json:"counts"`
 	Groups    []ListGroup      `json:"groups"`

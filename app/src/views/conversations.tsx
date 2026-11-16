@@ -47,7 +47,8 @@ export function Conversations({ id }: { id?: string }) {
   // Rows on screen may still be the previous list (pending): headers follow that list's own grouping.
   const rowsGroup = list.shownView.group ?? DEFAULT_SESSION_GROUP;
   const rows = list.rows as SessionRow[];
-  const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
+  const sel = view.sel ?? [], selNow = useRef(sel), toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
+  selNow.current = sel;
   // Selection mode (OR-37): a checkbox column left of the state, the action bar under the tools.
   const [selectOn, setSelectOn] = useState(false);
   const selecting = selectOn || sel.length > 0;
@@ -57,12 +58,13 @@ export function Conversations({ id }: { id?: string }) {
   const leave = useCallback(() => { setSelectOn(false); setConfirmArchive(null); setBulkError(null); set({ sel: undefined }); }, [set]);
   const [menu, setMenu] = useState<{ s: SessionRow; at: { x: number; y: number } } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
-  // Pinned conversations stay whatever the filter, search or grouping (OR-12): read by id with an empty filter.
-  const pinnedDoc = useDoc<SessionRow[]>(pins.ids.length ? JSON.stringify(['session-pins', pins.ids, sort]) : null,
+  // Pinned conversations stay whatever the filter, search or grouping (OR-12): read by id with no filter but the archived
+  // list the view shows, so an archived pin never shows among active conversations or the other way round.
+  const pinnedDoc = useDoc<SessionRow[]>(pins.ids.length ? JSON.stringify(['session-pins', pins.ids, sort, !!view.archived]) : null,
     async () => {
       const found: SessionRow[] = [];
       for (const ids of chunks(pins.ids, 1000)) { // the operation takes at most 1,000 ids
-        const reply = await op('list_membership', { ids, lists: [{ name: 'sessions', filter: {}, group: 'none', sort }] });
+        const reply = await op('list_membership', { ids, lists: [{ name: 'sessions', filter: { archived: !!view.archived }, group: 'none', sort }] });
         found.push(...reply.lists[0].rows as unknown as SessionRow[]);
       }
       return found;
@@ -93,7 +95,7 @@ export function Conversations({ id }: { id?: string }) {
     setBusy(false);
     const failed = r.filter(x => x.status === 'rejected') as PromiseRejectedResult[];
     if (failed.length) setBulkError(`${failed.length} of ${ss.length} not archived: ${failed[0].reason?.message ?? failed[0].reason}`);
-    else set({ sel: sel.filter(x => !ss.some(s => s.id === x)) });
+    else set({ sel: selNow.current.filter(x => !ss.some(s => s.id === x)) }); // the selection as it is now, not when archiving began
   };
   const off = !online.value ? 'offline' : busy ? 'Working' : undefined;
   const pinAll = (on: boolean) => { for (const s of chosen) if (pins.has(s.id) !== on) pins.toggle(s.id); };

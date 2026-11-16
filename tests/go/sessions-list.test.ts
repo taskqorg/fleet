@@ -61,7 +61,8 @@ test('sessions_list groups, sorts and pages by last activity; membership answers
   const c = await startCoordinator({name: 'sessorder'}); t.after(() => c.stop());
   const send = (name: string, body: object) => fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: JSON.stringify(body)});
   const op = async (name: string, body: object) => { const r = await send(name, body); const d: any = await r.json(); assert.equal(r.status, 200, JSON.stringify(d)); return d; };
-  // Activity is the latest of the session document, its messages and events, and its executions.
+  // Activity is the latest of the session document, its messages and events, and the start or end of its executions;
+  // not an execution's updated_at, which host receipts move.
   c.sql(`INSERT INTO document(kind,id,project_id,data,updated_at) VALUES
       ('session','g-a','alpha','{"agentConfig":{"harness":"codex"}}','2026-11-01T10:00:00Z'),
       ('session','g-b','beta','{}','2026-11-01T11:00:00Z'),
@@ -69,7 +70,7 @@ test('sessions_list groups, sorts and pages by last activity; membership answers
       ('session','g-d',NULL,'{}','2026-11-01T08:00:00Z'),
       ('session','g-e','beta','{}','2026-11-01T07:00:00Z');
     INSERT INTO document(kind,id,project_id,data,updated_at) VALUES ('message','g-e-m','beta','{"sessionId":"g-e","text":"latest"}','2026-11-01T13:00:00Z');
-    INSERT INTO execution(id,kind,state,project_id,session_id,harness,updated_at) VALUES ('g-c-x','agent_run','waiting','alpha','g-c','claude','2026-11-01T12:00:00Z');`);
+    INSERT INTO execution(id,kind,state,project_id,session_id,harness,started_at,updated_at) VALUES ('g-c-x','agent_run','waiting','alpha','g-c','claude','2026-11-01T12:00:00Z','2026-11-01T14:00:00Z');`);
   const ids = (r: any) => r.sessions.map((s: any) => s.id);
   const all = async (body: object) => {
     const out: string[] = []; let after: unknown = undefined;
