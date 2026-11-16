@@ -101,7 +101,7 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 *   **Writers:** `problems.sync(source, causes)` for sources that compute a full set each run (`dispatch`, `rules`): given the full set of current causes from one source, open questions for new causes and withdraw open questions of that source whose cause is not in the set. A cause stays open until 2 consecutive runs without it (setting `problems.cleanRuns`, avoids flapping). One-off senders (span writer, backup pass, drill, update result in a poll) use `problems.open(cause, ...)` and `problems.close(cause)` and never withdraw each other. The question's `data` holds `cause`, `source`, `rule`, `exemplars`, `hostId`, `storeId`.
 *   **Changes to the existing helper (M4):** `openCauseQuestion` today hard-codes `options: ["ok"]`; it gains an options parameter, the extra `data` fields, and `dismissed_at`: a dismissed question stays withdrawn while its cause is present and the mark clears when the cause goes.
 *   **Recipient:** owner for system causes (no project); the project director for project causes; the cause's holder is named in the text, as the stall question does.
-*   **Answers:** `Investigate` (stage 2: the PM opens a task with exemplar links and its analysis; stage 1: a link to `telemetry_trace`) or `Dismiss` (withdraw; it reopens only after the cause clears and returns).
+*   **Answers:** `Investigate` (stage 2: the PM opens a task with exemplar links and its analysis; stage 1: a link to `telemetry_trace`) or `Dismiss` (withdraw; it reopens only after the cause clears and returns). Exception (owner decision 2026-11-17): a browser error problem releases its group on either answer, and the next repeat of the error asks again ([telemetry §9](fleet-telemetry.md#9-browser-errors)).
 *   **Grouping (Alertmanager-style inhibition):** before sync, findings whose subject depends on a firing absence cause fold into it: `problem:host:<id>:silent` absorbs every finding whose rule row carries that `host_id`; `problem:store:<id>:offline` absorbs store errors; `problem:telemetry:clickhouse` absorbs every rule (rules cannot run). Folded findings stay in `telemetry_findings` with `groupCause`.
 
 | Cause | Source | Fires | Recipient | Built |
@@ -116,7 +116,7 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 | `problem:backup:missing` | direct: backup pass | no good dump for 48 h | owner | stage 1 (M6) |
 | `problem:backup:drill-failed` | direct: drill | last drill failed | owner | stage 1 (M6) |
 | `problem:telemetry:clickhouse` | direct: span writer | 3 failed flushes | owner | stage 1 |
-| `problem:client-error:<fingerprint>` | direct: `client_error_report` ([telemetry §9](fleet-telemetry.md#9-browser-errors)) | a new browser error group | owner | built |
+| `problem:client-error:<fingerprint>` | direct: `client_error_report` ([telemetry §9](fleet-telemetry.md#9-browser-errors)) | a new browser error group, or a repeat after its problem was answered (at most 5 a reporter a day) | owner | built |
 | `problem:<rule>:<subject>` | other rules | see telemetry | owner or director | stage 1 and 2 |
 
 All numbers are settings with these defaults, tuned from the first week: `problems.cleanRuns` 2, `backup.missingHours` 48, `backup.at` 03:30, `backup.daily` 7, `backup.weekly` 4, `forge.prPollMinutes` 5, `system.confirmDelete` false. Web push later reads the same questions.
