@@ -42,6 +42,8 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
 * `lab-export.schema.json`: a project's export to Lab, version 1 (docs/designs/fleet-lab.md, Project data in examples);
   read by `scripts/lab-export.ts`; no Go code reads it, so it has no `go generate` line (TypeScript types only).
 
+`ops-sessions.schema.json:Change` keeps its required envelope and adds optional nullable `settingTarget` for `setting-change`: the exact server-derived audit target captured in the source transaction. `person:<email>` identifies the preference owner, independently of actor. Missing/null metadata is a legacy/unknown target and consumers keep their conservative reread/resync behavior. Definition change IDs retain the producer's `kind/id` scope; consumers may skip a known other project but must not treat an unknown/legacy ID as proof of irrelevance. Row visibility continues to come from the existing authorized feed and RLS.
+
 ## Generated types
 
 * TypeScript: `contracts/gen-ts.mjs` writes `contracts/generated/<name>.ts`. `pnpm run typecheck` and `pnpm run build`

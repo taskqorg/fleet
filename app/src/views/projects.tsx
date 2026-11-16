@@ -1,3 +1,4 @@
+import { projectDefinitionTouched } from '../invalidation.ts';
 // Projects configuration & resource analytics (docs/design-system/pages/projects.md).
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
@@ -218,7 +219,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
   const reload = useRef(load); reload.current = load;
   useEffect(() => {
     void reload.current();
-    return subscribe({ resync: () => { void reload.current(); }, changes: changes => { if (changes.some(c => c.kind === 'definition')) void reload.current(); } });
+    return subscribe({ resync: () => { void reload.current(); }, changes: changes => { if (projectDefinitionTouched(changes, id)) void reload.current(); } });
   }, [id, prepared]);
   const setting = (key: string, value: any) => setBundle(b => ({ ...b, settings: { ...b.settings, [key]: value } }));
   const field = (label: string, value: string, save: (s: string) => void) => (
