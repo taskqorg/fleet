@@ -16,8 +16,8 @@ let answer: (name: string, body: any) => Promise<any> = async () => ({});
 const realFetch = async (url: string, init: any) => {
   const name = url.split('/api/ops/')[1], body = JSON.parse(init.body);
   calls.push({ name, body });
-  const data = await answer(name, body);
-  return new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } });
+  const { status = 200, ...data } = await answer(name, body) ?? {};
+  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 };
 (globalThis as any).fetch = realFetch;
 const row = (id: string, title = id) => ({ id, title, sortKey: ['1', -Number(id.replace(/\D/g, '') || 0), id] });
@@ -40,6 +40,25 @@ test('review #33-1: paging uses the shown list\'s own params and waits while tha
   const slowA = deferred(); answer = async () => slowA.p; const reloading = loadList('tasks', 'A', A);
   calls = []; await nextPage('A'); assert.equal(calls.length, 0); // no page request while A reloads
   slowA.ok(page([row('t1')], ['1', -1, 't1'])); await reloading;
+});
+
+test('a refused page cursor reloads the first page once, keeping rows; a second refusal shows the error', async () => {
+  await clearAll();
+  const V = { view: 'conversations' as const }, refused = { status: 400, message: 'Invalid after' };
+  answer = async () => page([row('t1'), row('t2')], ['old', 't2']); // a cursor of an older shape
+  await loadList('sessions', 'C', V);
+  const slow = deferred(); calls = [];
+  answer = async (_n, b) => b.after ? refused : slow.p;
+  const paging = nextPage('C'); await new Promise(r => setImmediate(r));
+  assert.deepEqual(calls.map(c => !!c.body.after), [true, false], 'the refused cursor is followed by one first-page request');
+  assert.deepEqual(peek.list('C')!.ids, ['t1', 't2'], 'rows stay on screen while the first page reloads');
+  assert.equal(peek.list('C')!.error, null);
+  slow.ok(page([row('t1'), row('t3')], ['g', 's', 't3'])); await paging;
+  assert.deepEqual(peek.list('C')!.ids, ['t1', 't3']); assert.deepEqual(peek.list('C')!.nextAfter, ['g', 's', 't3']);
+  calls = []; await nextPage('C');
+  assert.deepEqual(calls.map(c => !!c.body.after), [true], 'no second reload in the same list load');
+  assert.equal(peek.list('C')!.error, 'Invalid after');
+  assert.deepEqual(peek.list('C')!.ids, ['t1', 't3']);
 });
 
 test('review #33-3: an older page answer never overwrites a newer record; changes during a load are asked after it lands', async () => {

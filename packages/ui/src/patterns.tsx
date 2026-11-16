@@ -227,13 +227,16 @@ function Divider({ name }: { name: 'rail' | 'ctl' }) {
 
 /** One part of Fleet in the version overview: the tab, the site's UI, the coordinator, the gateway, each host. */
 export type VersionRow = { key: string; part: string; icon: IconName; version: string | null; state: string; tone: Tone; note?: string;
-  /** Moments shown in compact form with the exact time on hover (OR-2), e.g. { label: 'last seen', at }. */ times?: { label: string; at: number; now?: number }[] };
+  /** Moments shown in compact form with the exact time on hover (OR-2), e.g. { label: 'last seen', at }; `now` is the present they count from (default: the panel's). */ times?: { label: string; at: number; now?: number }[] };
 /**
  * The installed version beside the person (nav-rail.md, Version): the Fleet release, toned when a part needs a look (OR-18).
  * A click shows the overview of every part. When the site serves a newer app than this tab, Update reloads into it at once.
  */
 export type VersionInfo = { current: string | null; tone: Tone;
-  /** Says in words what the tone shows (WCAG 1.4.1), e.g. "1 part needs a look"; absent when nothing does. */ summary?: string; updateReady: boolean; onUpdate: () => void; updating?: boolean; rows: VersionRow[]; onOpen?: () => void };
+  /** Says in words what the tone shows (WCAG 1.4.1), e.g. "1 part needs a look"; absent when nothing does. */ summary?: string; updateReady: boolean; onUpdate: () => void; updating?: boolean; rows: VersionRow[]; onOpen?: () => void;
+  /** The rows as of a moment: the open overview re-reads them on its timer, so states and ages move on together. Default: `rows`. */ rowsAt?: (now: number) => VersionRow[] };
+/** How often the open version overview recounts its ages and states. */
+const VERSION_TICK = 15_000;
 
 /** A floating layer fixed above its opener (OR-14 informational, OR-16): Esc, a click outside, a rail scroll or a resize closes it. */
 function useFloating(ref: { current: HTMLElement | null }, focusBack: string) {
@@ -275,14 +278,22 @@ function UserBlock({ name, onLogout, version }: { name: string; onLogout: () => 
       {v && <button type="button" role="menuitem" class="menu-ver" onClick={() => { const at = menu.open!; menu.setOpen(null); v.onOpen?.(); panel.setOpen(at); }}><Icon name="info" />Versions</button>}
       <button type="button" role="menuitem" onClick={() => { menu.setOpen(null); onLogout(); }}><Icon name="log-out" />Logout</button>
     </span>}
-    {v && panel.open && <div class="ver-panel float" data-ui="version-panel" role="group" aria-label="Versions" style={{ left: panel.open.left + 'px', bottom: panel.open.bottom + 'px', '--ver-bottom': panel.open.bottom + 'px' }}>
-      {v.updateReady && <div class="ver-update"><span>A newer app is on the site.</span><Button label={v.updating ? 'Updating' : 'Update'} icon="rotate-cw" kind="primary" busy={v.updating} onClick={v.onUpdate} /></div>}
-      <table class="ver-table"><tbody>{v.rows.map(r => <tr key={r.key}>
-        <th scope="row"><Icon name={r.icon} /><span>{r.part}</span></th>
-        <td class="mono">{r.version ?? '—'}</td>
-        <td><span class={`ver-state t-${r.tone}`}>{r.state}</span>{r.times?.map(x => <span class="muted" key={x.label}> {x.label} <Ago t={x.at} now={x.now} /></span>)}{r.note && <span class="muted"> {r.note}</span>}</td>
-      </tr>)}</tbody></table>
-    </div>}
+    {v && panel.open && <VersionPanel v={v} at={panel.open} />}
+  </div>;
+}
+
+/** The version overview while open: one present for every row, recounted every VERSION_TICK until it closes (OR-2). */
+function VersionPanel({ v, at }: { v: VersionInfo; at: { left: number; bottom: number } }) {
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick(n => n + 1), VERSION_TICK); return () => clearInterval(t); }, []);
+  const now = Date.now(), rows = v.rowsAt ? v.rowsAt(now) : v.rows;
+  return <div class="ver-panel float" data-ui="version-panel" role="group" aria-label="Versions" style={{ left: at.left + 'px', bottom: at.bottom + 'px', '--ver-bottom': at.bottom + 'px' }}>
+    {v.updateReady && <div class="ver-update"><span>A newer app is on the site.</span><Button label={v.updating ? 'Updating' : 'Update'} icon="rotate-cw" kind="primary" busy={v.updating} onClick={v.onUpdate} /></div>}
+    <table class="ver-table"><tbody>{rows.map(r => <tr key={r.key}>
+      <th scope="row"><Icon name={r.icon} /><span>{r.part}</span></th>
+      <td class="mono">{r.version ?? '—'}</td>
+      <td><span class={`ver-state t-${r.tone}`}>{r.state}</span>{r.times?.map(x => <span class="muted" key={x.label}> {x.label} <Ago t={x.at} now={x.now ?? now} /></span>)}{r.note && <span class="muted"> {r.note}</span>}</td>
+    </tr>)}</tbody></table>
   </div>;
 }
 
