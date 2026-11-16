@@ -13,6 +13,8 @@ export type TaskState = typeof TASK_STATES[number];
 export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
 export type SessionState = typeof SESSION_STATES[number];
 export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'none'] as const;
+/** Tasks are grouped by project unless the view says otherwise (owner, 2026-11-16). */
+export const DEFAULT_TASK_GROUP = 'project';
 /** Order inside a group (task_page sort): '-' is descending; the default is recently changed first. */
 export const TASK_SORTS = ['-changed', '-created', 'changed', 'created'] as const;
 export const DEFAULT_TASK_SORT = '-changed';
@@ -76,7 +78,7 @@ function sortProjects(ps: (string | null)[]): (string | null)[] {
 // One table per view: every key the view understands, with its parse and canonical format. Anything else goes to extra.
 const TABLE: Record<ViewName, Record<string, Key>> = {
   tasks: {
-    group: { parse: (v, raw) => { const g = dec(raw, true); if ((TASK_GROUPS as readonly string[]).includes(g)) v.group = g; }, format: v => v.group && v.group !== 'priority' ? v.group : undefined, list: true },
+    group: { parse: (v, raw) => { const g = dec(raw, true); if ((TASK_GROUPS as readonly string[]).includes(g)) v.group = g; }, format: v => v.group && v.group !== DEFAULT_TASK_GROUP ? v.group : undefined, list: true },
     preset: text('preset', false), project, q: text('q', true), sel: listKey_('sel'), state: listKey_('state', TASK_STATES),
     sort: { parse: (v, raw) => { const x = dec(raw, true); if ((TASK_SORTS as readonly string[]).includes(x)) v.sort = x; }, format: v => v.sort && v.sort !== DEFAULT_TASK_SORT ? enc(v.sort) : undefined, list: true },
   },
@@ -90,7 +92,7 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
   delivery: { q: text('q', true), state: listKey_('state', DELIVERY_STAGES) },
   hosts: {}, overview: {}, projects: {},
 };
-const DEFAULT_GROUP: Partial<Record<ViewName, string>> = { tasks: 'priority' };
+const DEFAULT_GROUP: Partial<Record<ViewName, string>> = { tasks: DEFAULT_TASK_GROUP };
 
 /**
  * Checks a view object from outside (an agent's view_link call): every field must be a known key of that view with a valid

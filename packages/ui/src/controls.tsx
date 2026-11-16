@@ -736,7 +736,8 @@ export function Presets({ system = [], presets, active, onPick, onSave, onUnpin 
         ? <Button label="Save view" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
         : <span class="naming"><input value={naming} placeholder="View name" aria-label="View name" ref={e => e?.focus()} onInput={e => setNaming((e.target as HTMLInputElement).value)}
             onKeyDown={e => { if (e.key === 'Enter' && naming.trim()) { onSave(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
-          <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSave(naming.trim()); setNaming(null); }} /></span>}
+          <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSave(naming.trim()); setNaming(null); }} />
+          <Button label="Cancel" icon={actions.clear} iconOnly kind="quiet" onClick={() => setNaming(null)} /></span>}
     </div>
   );
 }

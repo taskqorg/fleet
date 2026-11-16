@@ -111,8 +111,8 @@ test('review #34-3: a failed load still shows the stored rows (offline)', async 
     answer = async () => page([row('t8', 'stored')]);
     await loadList('tasks', 'O', { view: 'tasks', q: 'offline' });
     await new Promise(r => setTimeout(r, 1100)); // offline.save writes after 1 s
-    assert.ok(idb.data.has('list:O'));
-    await clearAll(); idb.data.set('list:O', { data: { ids: ['t8'], keys: { t8: ['1', -8, 't8'] }, counts: {}, total: 1, groups: [], nextAfter: null, at: 1, rows: [row('t8', 'stored')] }, cursor: 0, at: 1 });
+    assert.ok(idb.data.has('list:v2:O'));
+    await clearAll(); idb.data.set('list:v2:O', { data: { ids: ['t8'], keys: { t8: ['1', -8, 't8'] }, counts: {}, total: 1, groups: [], nextAfter: null, at: 1, rows: [row('t8', 'stored')] }, cursor: 0, at: 1 });
     answer = async () => { throw new Error('down'); };
     (globalThis as any).fetch = async () => { throw new TypeError('network'); };
     await loadList('tasks', 'O', { view: 'tasks', q: 'offline' }); await new Promise(r => setTimeout(r, 20));

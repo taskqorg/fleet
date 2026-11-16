@@ -356,7 +356,7 @@ func formatView(v view) string {
 		}
 		return strings.Join(out, ",")
 	}
-	if has("group") && v.Group != "" && v.Group != "priority" {
+	if has("group") && v.Group != "" && v.Group != defaultTaskGroup {
 		ps["group"] = v.Group
 	}
 	if has("sort") && v.Sort != "" && v.Sort != defaultTaskSort {

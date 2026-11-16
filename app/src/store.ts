@@ -75,14 +75,16 @@ function pruneRecords() { for (const id of records.keys()) if (!holders.get(id)?
 const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => ('tasks' in r ? r.tasks : r.sessions) as Row[];
 const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
 // The snapshot is built when the write happens (offline.save calls it at most once a second).
-const persist = (key: string, e: Entry) => save<Saved>('list:' + key, () => { const s = e.state.value!; return { ids: s.ids, keys: s.keys, counts: s.counts, total: s.total, groups: s.groups, nextAfter: s.nextAfter, at: s.at, rows: s.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) }; }, currentCursor());
+// Snapshot keys carry a version: 'v2' since a view without a group means project, not priority (stored groups differ).
+const SNAP = 'list:v2:';
+const persist = (key: string, e: Entry) => save<Saved>(SNAP + key, () => { const s = e.state.value!; return { ids: s.ids, keys: s.keys, counts: s.counts, total: s.total, groups: s.groups, nextAfter: s.nextAfter, at: s.at, rows: s.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) }; }, currentCursor());
 const idsAndKeys = (rows: Row[]) => ({ ids: rows.map(x => x.id), keys: Object.fromEntries(rows.map(x => [x.id, x.sortKey])) });
 
 /** Fill the first frame from IndexedDB unless the server has already answered (a failed load still restores). */
 async function restore(key: string, e: Entry) {
   if (e.state.value?.at) return;
   const generation = accessGeneration();
-  const saved = await load<Saved>('list:' + key);
+  const saved = await load<Saved>(SNAP + key);
   if (!isAccessCurrent(generation)) return;
   if (!saved || e.state.value?.at) return;
   const error = e.state.value?.error ?? null;

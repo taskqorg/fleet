@@ -779,11 +779,14 @@ var taskGroups = map[string]taskGroup{
 }
 
 // taskSorts: the second sort key inside a group (owner review P7), ascending numbers; "-" before a name is descending.
-// The default is recently changed first. Migration 47 indexes each sort for the priority grouping and for no grouping;
+// The default is recently changed first. Migrations 47 and 61 index each sort for the priority and project groupings and for no grouping;
 // ponytail: the other groupings sort the filtered tasks, add their indexes when those lists outgrow a scan.
 var taskSorts = map[string]string{"changed": "(extract(epoch FROM t.updated_at AT TIME ZONE 'UTC')*1000)::float8", "created": "(t.seq::float8)"}
 
 const defaultTaskSort = "-changed"
+
+// defaultTaskGroup is the grouping a view without one uses (view-url.ts DEFAULT_TASK_GROUP).
+const defaultTaskGroup = "project"
 
 func taskSortOf(v any) (string, error) {
 	s, ok := v.(string)

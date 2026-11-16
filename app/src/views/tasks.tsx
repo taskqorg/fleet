@@ -12,7 +12,7 @@ import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { chunks, compareKeys } from '../lists.ts';
-import { listKey, formatView, DEFAULT_TASK_SORT, type View } from '../../../packages/view-url/view-url.ts';
+import { listKey, formatView, DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 import { usePins, useViews, withFocus, setFocus } from '../prefs.ts';
 import { ScopedRollupDetails, buildExecTree, resourceTotals } from './resources.tsx';
@@ -28,18 +28,19 @@ const ms = (v: string | number | null | undefined) => (v === null || v === undef
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 
 // System presets (P5): fixed, shown before the person's saved views. Running: every non-terminal state.
+// A system preset sets the state filter only; grouping, sort, projects and search stay as the person set them.
 const SYSTEM_VIEWS = [{ name: 'Needs me', view: { view: 'tasks' as const, state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'tasks' as const, state: ['queued', 'in_progress', 'waiting', 'held', 'paused'] } }];
 
 export function Tasks({ id }: { id?: string }) {
   const { view, set, href } = useUrlView('tasks');
   const [closed, setClosed] = useState<string[]>([]);
-  const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
+  const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined, preset: undefined }, 'type'));
   const pins = usePins('tasks');
   const views = useViews('tasks', SYSTEM_VIEWS);
   const list = useList('tasks', view);
-  const group = view.group ?? 'priority', states = (view.state ?? []) as StateOf<'task'>[];
+  const group = view.group ?? DEFAULT_TASK_GROUP, states = (view.state ?? []) as StateOf<'task'>[];
   // Rows on screen may still be the previous list (pending): headers and chips follow that list's own grouping.
-  const rowsGroup = list.shownView.group ?? 'priority';
+  const rowsGroup = list.shownView.group ?? DEFAULT_TASK_GROUP;
   const rows = list.rows as TaskRow[];
   const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
   // Selection mode (OR-37): a checkbox column left of the state, the action bar in place of group and sort.
@@ -108,15 +109,24 @@ export function Tasks({ id }: { id?: string }) {
   const now = Date.now();
   const filtered = !!(states.length || view.q || view.project?.length), focused = !view.project?.length && !!withFocus(view).project?.length;
   const presetKey = (v: View) => listKey({ ...v, view: 'tasks' });
-  const activePreset = views.list.find(v => presetKey(v.view) === listKey(view))?.name ?? null;
-  const pick = (n: string) => { const p = views.list.find(x => x.name === n)!; set({ state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, preset: n }); };
+  // A personal view matches the whole view and wins over a system preset with the same states; a system preset matches the
+  // states alone. Saved views from before the project default kept no group: they were grouped by priority.
+  const stateKey = (state?: string[]) => listKey({ view: 'tasks', state: state ?? [] });
+  const savedView = (v: View): View => v.group ? v : { ...v, group: 'priority' };
+  const mine = views.list.filter(v => !v.system), system = views.list.filter(v => v.system);
+  const activePreset = mine.find(v => presetKey(savedView(v.view)) === listKey(view))?.name
+    ?? (view.state?.length ? system.find(v => stateKey(v.view.state) === stateKey(view.state))?.name : undefined) ?? null;
+  const pick = (n: string) => {
+    const p = views.list.find(x => x.name === n)!, sv = savedView(p.view);
+    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: sv.project ?? [], q: sv.q, preset: n });
+  };
   const listPane = <>
     <header class="page-h"><h1>Tasks</h1><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
     <section class="panel">
       <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search tasks, agent:claude host:mac" onQuery={setQuery} shown={shown} total={list.total}
         extra={<>
           <Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={activePreset} onPick={pick}
-            onSave={n => views.save({ name: n, view: { view: 'tasks', state: view.state, group: view.group, sort: view.sort, project: view.project, q: view.q } })} onUnpin={views.remove} />
+            onSave={n => views.save({ name: n, view: { view: 'tasks', state: view.state, group: view.group ?? DEFAULT_TASK_GROUP, sort: view.sort, project: view.project, q: view.q } })} onUnpin={views.remove} />
         </>}
         counters={
           <StateCounters family="task" label="Tasks by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [], preset: undefined })}
