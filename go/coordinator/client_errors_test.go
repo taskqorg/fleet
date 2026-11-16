@@ -226,6 +226,18 @@ func TestClientErrorLimits(t *testing.T) {
 	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM question WHERE cause LIKE 'problem:client-error:%' AND state='open'").Scan(&problems); err != nil || problems != clientErrorProblemsPerDay+1 {
 		t.Fatalf("problems: %d %v", problems, err)
 	}
+	// The over-limit problem, once answered, is not asked again the same day however many reports it refuses.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE question SET state='answered', answer='dismiss' WHERE cause=$1", clientErrorCause+clientErrorOverLimit); err != nil {
+		t.Fatal(err)
+	}
+	report(member, map[string]any{"message": "flood past the answer"})
+	var overOpen int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM question WHERE cause=$1 AND state='open'", clientErrorCause+clientErrorOverLimit).Scan(&overOpen); err != nil || overOpen != 0 {
+		t.Fatalf("over-limit re-asked the same day: %d %v", overOpen, err)
+	}
+	if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE question SET state='open', answer=NULL WHERE data->>'fingerprint'=$1", clientErrorOverLimit); err != nil {
+		t.Fatal(err)
+	}
 	// A known group still counts past the cap, and another person still opens new groups.
 	if r := report(member, map[string]any{"message": "flood 1"}); r["fingerprint"] == clientErrorOverLimit {
 		t.Fatal("a known group refused past the cap")
@@ -390,12 +402,12 @@ func TestClientErrorAnswerReleases(t *testing.T) {
 		}
 		return
 	}
-	answer := func(fp string) {
+	answer := func(fp string, choice ...string) {
 		var id string
 		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT id FROM question WHERE cause=$1 AND state='open'", clientErrorCause+fp).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
-		if code, body := e.callJSON(t, "POST", "/api/ops/questions_answer", map[string]any{"questionId": id, "answer": "dismiss"}, owner); code != 200 {
+		if code, body := e.callJSON(t, "POST", "/api/ops/questions_answer", map[string]any{"questionId": id, "answer": append(choice, "dismiss")[0]}, owner); code != 200 {
 			t.Fatalf("answer: %d %v", code, body)
 		}
 	}
@@ -423,7 +435,7 @@ func TestClientErrorAnswerReleases(t *testing.T) {
 
 	// An answered group ages out; an open one is still pinned.
 	answered, pinned := report("answered"), report("still open")
-	answer(answered)
+	answer(answered, "investigate")
 	age(answered, pinned)
 	if n := prune(); n != 1 || exists(answered) || !exists(pinned) {
 		t.Fatalf("prune %d: answered kept %v, open kept %v", n, exists(answered), exists(pinned))

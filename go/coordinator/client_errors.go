@@ -210,6 +210,21 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 				fp, top = clientErrorOverLimit, ""
 				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly or total new-group limit, or the members' group cap, was reached", "error"
 			}
+			// A report that may ask (a new group, the over-limit group, or a group whose problem was answered and none is
+			// open) takes the new-group lock before its row lock, the order every path uses, so asks never deadlock.
+			if !checked {
+				var mayAsk bool
+				if err := q.tx.QueryRow(q.ctx(), `SELECT $2 OR NOT EXISTS (SELECT 1 FROM client_error WHERE fingerprint=$1)
+					OR (EXISTS (SELECT 1 FROM question WHERE cause=$3 AND state='answered') AND NOT EXISTS (SELECT 1 FROM question WHERE cause=$3 AND state='open'))`,
+					fp, fp == clientErrorOverLimit, clientErrorCause+fp).Scan(&mayAsk); err != nil {
+					return rep, err
+				}
+				if mayAsk {
+					if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
+						return rep, err
+					}
+				}
+			}
 			var inserted bool
 			err = q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions,first_person,first_full)
 				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10::text='' THEN '{}'::text[] ELSE ARRAY[$10::text] END,CASE WHEN $7::text='' THEN '{}'::text[] ELSE ARRAY[$7::text] END,$10,$13)
@@ -256,12 +271,10 @@ func clientErrorProblem(q *Request, fp, person string, inserted, checked bool) e
 	if !due {
 		return nil
 	}
-	// One lock orders the asks, so two reports cannot both pass the checks below for one cause or one person's day. It is
-	// only tried: this transaction may already hold its group's row lock while a new-group report holds the advisory lock
-	// and waits for that row (over-limit), so waiting here could deadlock. A report that does not get it asks nothing;
-	// the next repeat does. The new-group path already holds it (re-entrant).
-	var got bool
-	if err := q.tx.QueryRow(q.ctx(), "SELECT pg_try_advisory_xact_lock(hashtextextended('client-error:new-group',0))").Scan(&got); err != nil || !got {
+	// One lock orders the asks, so two reports cannot both pass the checks below for one cause or one person's day. Every
+	// report that can get here took it before its row lock (clientErrorReport), so this is re-entrant and never waits
+	// behind a row lock.
+	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
 		return err
 	}
 	if held, err := has(q, "SELECT 1 FROM question WHERE cause=$1 AND state='open'", cause); err != nil || held {
