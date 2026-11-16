@@ -17,6 +17,6 @@ Rules:
 - `EventData` is an open object with named fields (`item`, `fleetNormalized`, `harnessVersion`, `children`); unnamed fields pass through. A closed union by `type` cannot cover native harness records, whose `type` is their own.
 - Types only, no generated runtime validator: the coordinator's hand checks at the three host routes stay the trust-boundary validation.
 - Command `payload` stays an open object; a command kind gets a schema when it is next changed. Other HTTP routes get schema types when they are next changed.
-- The outbox and store answer share one status table, `statusClass(status, hostToken)` (`go/executor/outbox.go`): a redirect is an edge condition; 401 is an edge condition for the coordinator and a rejection for a store; 429 and 5xx retry; other 4xx are rejected.
+- The outbox and store answer share one status table, `statusClass(status, hostToken)` (`go/executor/outbox.go`): a redirect is an edge condition; 401 is an edge condition for the coordinator and a rejection for a store; 429 and 5xx retry; other 4xx are rejected. In `flush`, an edge condition, a retry answer or a timeout holds only its own route and execution for that pass; other rows keep flowing. A second network error without a status in one pass stops the pass.
 
 The generators were checked against off-the-shelf output for the transcript event union before the choice ([`evidence/l3/`](../../evidence/l3/)).

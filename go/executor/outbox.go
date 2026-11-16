@@ -310,8 +310,10 @@ func queue(db execer, route string, v any) error {
 var heldOnly atomic.Bool
 
 // flush delivers queued rows in order. A 4xx row is moved to outbox_failed and reported as an executor event; the
-// following rows keep flowing. A row with an edge answer stays queued and holds, for this flush, its route and its
-// execution. 5xx and network errors stop the flush and retry later.
+// following rows keep flowing. A row with an edge answer, a 5xx or a timeout stays queued and holds, for this flush, its
+// route and its execution, so one slow or failing route cannot stop every other route (16 Nov 2026: a cancelled
+// project operation held all events and receipts). A second network error without a status in one flush means the
+// coordinator is unreachable: the flush stops and retries later.
 func flush(db *sql.DB, url, token, host string) error {
 	type row struct {
 		n           int64
@@ -333,6 +335,8 @@ func flush(db *sql.DB, url, token, host string) error {
 	rs.Close()
 	routes, executions := map[string]bool{}, map[string]bool{}
 	held, sent, single := false, false, false
+	var retryErr error
+	networkErrors := 0
 	for i := 0; i < len(rows); {
 		r := rows[i]
 		value := decM(r.body)
@@ -378,7 +382,16 @@ func flush(db *sql.DB, url, token, host string) error {
 				single = true // A large idempotent event batch may exceed the transport deadline; let individual rows progress.
 				continue
 			}
-			return fmt.Errorf("%s", a.text)
+			if a.status == 0 {
+				if networkErrors++; networkErrors > 1 {
+					return fmt.Errorf("%s", a.text)
+				}
+			}
+			if retryErr == nil {
+				retryErr = fmt.Errorf("%s", a.text)
+			}
+			hold()
+			continue
 		case answerEdge:
 			hold()
 			continue
@@ -459,7 +472,7 @@ func flush(db *sql.DB, url, token, host string) error {
 		}
 	}
 	heldOnly.Store(held && !sent)
-	return nil
+	return retryErr
 }
 
 // spawnOutbox runs delivery on its own goroutine until the process exits.
