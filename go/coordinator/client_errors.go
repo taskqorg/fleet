@@ -77,13 +77,14 @@ func clientErrorKept(p string) string {
 	return `(c.last_seen >= ` + p + ` OR EXISTS (SELECT 1 FROM question x WHERE x.cause='` + clientErrorCause + `'||c.fingerprint AND x.state='open'))`
 }
 
-// clientErrorsPrune: the scheduled retention (never a report): every group clientErrorKept does not keep.
+// clientErrorsPrune: the scheduled retention (never a report): every group clientErrorKept does not keep. The answered
+// questions of deleted groups let go of their causes, so no cause stays held for a group that no longer exists.
 func clientErrorsPrune(ctx context.Context, a *App, cutoff time.Time) (int64, error) {
 	var n int64
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		t, err := q.tx.Exec(q.ctx(), `DELETE FROM client_error c WHERE NOT `+clientErrorKept("$1"), cutoff)
-		n = t.RowsAffected()
-		return err
+		return q.tx.QueryRow(q.ctx(), `WITH gone AS (DELETE FROM client_error c WHERE NOT `+clientErrorKept("$1")+` RETURNING fingerprint),
+			released AS (UPDATE question SET cause=NULL WHERE state='answered' AND cause IN (SELECT '`+clientErrorCause+`'||fingerprint FROM gone) RETURNING 1)
+			SELECT count(*) FROM gone`, cutoff).Scan(&n)
 	})
 	return n, err
 }
@@ -227,7 +228,8 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 				fp, at, person, r.Version, r.Path, r.UserAgent, r.Count, string(r.Source), r.Stack); err != nil {
 				return rep, err
 			}
-			// The group's own oldest reports only; a report never deletes another group or closes a problem.
+			// The group's own oldest reports only; a report never deletes another group, and it closes no problem except
+			// letting an answered one of its own group go of the cause (clientErrorProblem).
 			if err := exec(q, "DELETE FROM client_error_report WHERE fingerprint=$1 AND seq < (SELECT min(seq) FROM (SELECT seq FROM client_error_report WHERE fingerprint=$1 ORDER BY seq DESC LIMIT $2) k)", fp, clientErrorReportsKept); err != nil {
 				return rep, err
 			}
@@ -254,22 +256,31 @@ func clientErrorProblem(q *Request, fp, person string, inserted, checked bool) e
 	if !due {
 		return nil
 	}
-	// One lock orders the asks, so two reports cannot both pass the checks below for one cause or one person's day.
-	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
+	// One lock orders the asks, so two reports cannot both pass the checks below for one cause or one person's day. It is
+	// only tried: this transaction may already hold its group's row lock while a new-group report holds the advisory lock
+	// and waits for that row (over-limit), so waiting here could deadlock. A report that does not get it asks nothing;
+	// the next repeat does. The new-group path already holds it (re-entrant).
+	var got bool
+	if err := q.tx.QueryRow(q.ctx(), "SELECT pg_try_advisory_xact_lock(hashtextextended('client-error:new-group',0))").Scan(&got); err != nil || !got {
 		return err
 	}
 	if held, err := has(q, "SELECT 1 FROM question WHERE cause=$1 AND state='open'", cause); err != nil || held {
 		return err
 	}
-	if fp != clientErrorOverLimit {
-		var today int
-		if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM question WHERE asked_by='fleet' AND data->>'reporter'=$1 AND data->>'fingerprint'<>$2
-			AND data->>'source'='direct' AND data->>'cause' LIKE $3 AND asked_at > now()-interval '24 hours'`, person, clientErrorOverLimit, clientErrorCause+"%").Scan(&today); err != nil {
-			return err
-		}
-		if today >= clientErrorProblemsPerDay {
-			return nil
-		}
+	// The daily limits: clientErrorProblemsPerDay a reporter (only client-error problems carry a reporter), and one a day
+	// for the over-limit group, so a flood past the limits cannot re-ask it after every answer. Containment uses the
+	// question data GIN index.
+	var today, limit int
+	match, limit := doc{"reporter": person}, clientErrorProblemsPerDay
+	if fp == clientErrorOverLimit {
+		match, limit = doc{"fingerprint": clientErrorOverLimit, "cause": cause}, 1
+	}
+	if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE data->>'fingerprint'<>$2 OR $3) FROM question WHERE data @> $1::jsonb AND asked_at > now()-interval '24 hours'`,
+		js(match), clientErrorOverLimit, fp == clientErrorOverLimit).Scan(&today); err != nil {
+		return err
+	}
+	if today >= limit {
+		return nil
 	}
 	// An answered problem lets go of the cause, then the group asks again.
 	if err := problemClose(q, cause); err != nil {

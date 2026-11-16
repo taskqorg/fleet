@@ -428,6 +428,10 @@ func TestClientErrorAnswerReleases(t *testing.T) {
 	if n := prune(); n != 1 || exists(answered) || !exists(pinned) {
 		t.Fatalf("prune %d: answered kept %v, open kept %v", n, exists(answered), exists(pinned))
 	}
+	var held int
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FROM question WHERE cause=$1", clientErrorCause+answered).Scan(&held); err != nil || held != 0 {
+		t.Fatalf("a pruned group's answered question still holds its cause: %d %v", held, err)
+	}
 
 	// A repeat after the answer opens a new problem; the answered one lets go of the cause.
 	again := report("regressed")
