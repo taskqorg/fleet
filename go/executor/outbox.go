@@ -48,11 +48,12 @@ const (
 )
 
 type answer struct {
-	kind    answerKind
-	value   json.RawMessage
-	status  int
-	text    string // edge detail, reject body or retry error
-	timeout bool   // a retry because the request ran out of time, not because the coordinator was unreachable
+	kind        answerKind
+	value       json.RawMessage
+	status      int
+	text        string // edge detail, reject body or retry error
+	timeout     bool   // the request ran out of time
+	unreachable bool   // no connection to the coordinator could be made (dial refused or timed out)
 }
 
 type class int
@@ -91,7 +92,8 @@ func location(r *http.Response) string {
 func classify(r *http.Response, err error) answer {
 	if err != nil {
 		var ne net.Error
-		return answer{kind: answerRetry, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout()}
+		var op *net.OpError
+		return answer{kind: answerRetry, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout(), unreachable: errors.As(err, &op) && op.Op == "dial"}
 	}
 	defer r.Body.Close()
 	body, _ := io.ReadAll(r.Body) // drained so the pooled connection is reused
@@ -346,8 +348,8 @@ func retryDone(n int64) {
 // following rows keep flowing. A row with an edge answer stays queued and holds, for this flush, its route and its
 // execution. A row with a 5xx, 429 or timeout stays queued with its own backoff and holds only its execution (its route
 // when it has none): one slow row must not stop other executions' events and receipts (16 Nov 2026: a cancelled
-// project operation at the head held 435 rows and the update drain). A network error that is not a timeout means the
-// coordinator is unreachable: the flush stops and retries later.
+// project operation at the head held 435 rows and the update drain). When the coordinator as a whole cannot be reached
+// (dial refused or timed out) or answers 429 or 503, the flush stops and retries later.
 func flush(db *sql.DB, url, token, host string) error {
 	type row struct {
 		n           int64
@@ -424,8 +426,8 @@ func flush(db *sql.DB, url, token, host string) error {
 		case answerOK:
 			response = a.value
 		case answerRetry:
-			if a.status == 0 && !a.timeout {
-				heldOnly.Store(true) // unreachable: the next pass waits the longer interval
+			if a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable {
+				heldOnly.Store(true) // the coordinator as a whole is unreachable or asks to slow down: the longer interval
 				return fmt.Errorf("%s", a.text)
 			}
 			if len(batch) > 1 && a.timeout {
@@ -438,7 +440,6 @@ func flush(db *sql.DB, url, token, host string) error {
 			if retryErr == nil {
 				retryErr = fmt.Errorf("%s", a.text)
 			}
-			i += len(batch) - 1
 			holdExecution()
 			continue
 		case answerEdge:

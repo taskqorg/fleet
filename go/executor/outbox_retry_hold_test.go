@@ -19,7 +19,8 @@ func resetRetryRows(t *testing.T) {
 		retryMu.Unlock()
 	}
 	clear()
-	t.Cleanup(clear)
+	heldOnly.Store(false)
+	t.Cleanup(func() { clear(); heldOnly.Store(false) })
 }
 
 func shortDelivery(t *testing.T) {
@@ -116,7 +117,51 @@ func TestRetryingRowBacksOff(t *testing.T) {
 	}
 }
 
-// Requirement: an unreachable coordinator (connection refused, not a timeout) stops the pass at once and keeps every row.
+// Requirement: a connection reset on one row is that row's retry, not an unreachable coordinator; 503 stops the pass.
+func TestResetRowRetriesAlone503StopsPass(t *testing.T) {
+	resetRetryRows(t)
+	shortDelivery(t)
+	var mu sync.Mutex
+	delivered, unavailable := 0, false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		down := unavailable
+		mu.Unlock()
+		if down {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if strings.Contains(string(b), "reset-me") {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		mu.Lock()
+		delivered++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, "{}")
+	}))
+	defer server.Close()
+	db := journal(t)
+	defer db.Close()
+	queue(db, "/api/hosts/agent-tools", M{"executionId": "reset", "commandId": "c", "agentToolKey": "reset-me"})
+	queue(db, "/api/hosts/receipts", M{"executionId": "fine", "commandId": "c", "status": "completed"})
+	if err := flush(db, server.URL, "invented-token", "fixture-host"); err == nil || delivered != 1 || count(db, "outbox") != 1 {
+		t.Fatalf("err=%v delivered=%d pending=%d, want the reset row kept and the other delivered", err, delivered, count(db, "outbox"))
+	}
+	mu.Lock()
+	unavailable = true
+	mu.Unlock()
+	resetRetryRows(t)
+	queue(db, "/api/hosts/receipts", M{"executionId": "later", "commandId": "c", "status": "completed"})
+	if err := flush(db, server.URL, "invented-token", "fixture-host"); err == nil || count(db, "outbox") != 2 || !heldOnly.Load() {
+		t.Fatalf("err=%v pending=%d heldOnly=%v, want 503 to stop the pass with every row kept", err, count(db, "outbox"), heldOnly.Load())
+	}
+}
+
+// Requirement: an unreachable coordinator (connection refused) stops the pass at once and keeps every row.
 func TestUnreachableCoordinatorStopsFlush(t *testing.T) {
 	resetRetryRows(t)
 	shortDelivery(t)
