@@ -116,7 +116,7 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 | `problem:backup:missing` | direct: backup pass | no good dump for 48 h | owner | stage 1 (M6) |
 | `problem:backup:drill-failed` | direct: drill | last drill failed | owner | stage 1 (M6) |
 | `problem:telemetry:clickhouse` | direct: span writer | 3 failed flushes | owner | stage 1 |
-| `problem:client-error:<fingerprint>` | direct: `client_error_report` ([telemetry §9](fleet-telemetry.md#9-browser-errors)) | a new browser error group | owner | built |
+| `problem:client-error:<fingerprint>` | direct: `client_error_report` ([telemetry §9](fleet-telemetry.md#9-browser-errors)) | a new browser error group, or a repeat after its problem was answered (at most 5 a reporter a day) | owner | built |
 | `problem:<rule>:<subject>` | other rules | see telemetry | owner or director | stage 1 and 2 |
 
 All numbers are settings with these defaults, tuned from the first week: `problems.cleanRuns` 2, `backup.missingHours` 48, `backup.at` 03:30, `backup.daily` 7, `backup.weekly` 4, `forge.prPollMinutes` 5, `system.confirmDelete` false. Web push later reads the same questions.

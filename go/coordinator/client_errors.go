@@ -5,8 +5,9 @@
 // fixed wording and the fingerprint. Storage is bounded without a report ever deleting another group: each group keeps
 // its latest clientErrorReportsKept reports; one person opens at most clientErrorNewPerHour groups an hour and
 // clientErrorPerPerson in all, people without full access at most clientErrorGroupsKept together; past a limit a report
-// counts into the fixed over-limit group. Only a person's first clientErrorProblemsPerDay groups a day open a problem;
-// the hourly client-errors pass deletes groups unseen for clientErrorRetention whose problem is not open or answered.
+// counts into the fixed over-limit group. At most clientErrorProblemsPerDay problems a day are opened for one reporter;
+// the hourly client-errors pass deletes groups unseen for clientErrorRetention without an open problem; answering a problem
+// releases its group, and its next repeat opens a new problem.
 package main
 
 import (
@@ -27,7 +28,7 @@ const (
 	clientErrorGroupsKept     = 1000                // clientErrors.groupsKept: groups opened by people without full access; past it they are refused (counted)
 	clientErrorNewPerHour     = 20                  // clientErrors.newGroupsPerHour, per person
 	clientErrorPerPerson      = 100                 // clientErrors.groupsPerPerson: total groups one person opened
-	clientErrorProblemsPerDay = 5                   // clientErrors.problemsPerDay: a person's groups a day that get a problem
+	clientErrorProblemsPerDay = 5                   // clientErrors.problemsPerDay: problems opened for one reporter a day
 	clientErrorOverLimit      = "over-limit"        // the group that counts reports refused a new group
 	clientErrorRetention      = 30 * 24 * time.Hour // clientErrors.retention
 	clientErrorPeopleKept     = 100
@@ -70,10 +71,10 @@ func init() {
 }
 
 // clientErrorKept: the SQL condition on client_error c (cutoff in parameter p) of a group retention keeps: seen since
-// the cutoff, or held by its problem (open, or answered by the owner). The caps count exactly these groups and the
-// prune deletes exactly the others, so the two always agree.
+// the cutoff, or pinned by an open problem. Answering the problem (Dismiss or Investigate) releases the group. The caps
+// count exactly these groups and the prune deletes exactly the others, so the two always agree.
 func clientErrorKept(p string) string {
-	return `(c.last_seen >= ` + p + ` OR EXISTS (SELECT 1 FROM question x WHERE x.cause='` + clientErrorCause + `'||c.fingerprint AND x.state IN ('open','answered')))`
+	return `(c.last_seen >= ` + p + ` OR EXISTS (SELECT 1 FROM question x WHERE x.cause='` + clientErrorCause + `'||c.fingerprint AND x.state='open'))`
 }
 
 // clientErrorsPrune: the scheduled retention (never a report): every group clientErrorKept does not keep.
@@ -230,29 +231,51 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			if err := exec(q, "DELETE FROM client_error_report WHERE fingerprint=$1 AND seq < (SELECT min(seq) FROM (SELECT seq FROM client_error_report WHERE fingerprint=$1 ORDER BY seq DESC LIMIT $2) k)", fp, clientErrorReportsKept); err != nil {
 				return rep, err
 			}
-			// A group inserted without the checked path (the prune removed it between the lookup and the upsert) opens
-			// no problem: it bypassed the limits that bound problems.
-			if !inserted || (!checked && fp != clientErrorOverLimit) {
-				return rep, nil
-			}
-			if fp != clientErrorOverLimit {
-				// Only a person's first groups of a day get a problem: later ones are stored unpinned and age out.
-				var today int
-				if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM client_error WHERE first_person=$1 AND first_seen > now()-interval '24 hours' AND fingerprint<>$2", person, clientErrorOverLimit).Scan(&today); err != nil {
-					return rep, err
-				}
-				if today > clientErrorProblemsPerDay {
-					return rep, nil
-				}
-			}
-			if h, err := problemHeld(q, clientErrorCause+fp); err != nil || h != nil {
-				return rep, err
-			}
-			return rep, problemAsk(q, "direct", Problem{Cause: clientErrorCause + fp, Text: clientErrorText(fp), Data: doc{"fingerprint": fp}})
+			return rep, clientErrorProblem(q, fp, person, inserted, checked)
 		})
 		return err
 	})
 	return rep, err
+}
+
+// clientErrorProblem opens the group's needs-you problem when one is due: for a new group that passed the locked
+// limits, and for a repeat of a group whose problem the owner answered (the answer released it; the repeat asks again).
+// An open problem is never asked twice; a group that never had one (past the daily limit) gets none. A person's
+// problems count against clientErrorProblemsPerDay, the over-limit group's excepted.
+func clientErrorProblem(q *Request, fp, person string, inserted, checked bool) error {
+	cause := clientErrorCause + fp
+	var open, answered bool
+	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(bool_or(state='open'),false), coalesce(bool_or(state='answered'),false) FROM question WHERE cause=$1", cause).Scan(&open, &answered); err != nil {
+		return err
+	}
+	// A group inserted without the checked path (the prune removed it between the lookup and the upsert) opens no
+	// problem: it bypassed the limits that bound problems.
+	due := !open && ((inserted && (checked || fp == clientErrorOverLimit)) || (!inserted && answered))
+	if !due {
+		return nil
+	}
+	// One lock orders the asks, so two reports cannot both pass the checks below for one cause or one person's day.
+	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
+		return err
+	}
+	if held, err := has(q, "SELECT 1 FROM question WHERE cause=$1 AND state='open'", cause); err != nil || held {
+		return err
+	}
+	if fp != clientErrorOverLimit {
+		var today int
+		if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM question WHERE asked_by='fleet' AND data->>'reporter'=$1 AND data->>'fingerprint'<>$2
+			AND data->>'source'='direct' AND data->>'cause' LIKE $3 AND asked_at > now()-interval '24 hours'`, person, clientErrorOverLimit, clientErrorCause+"%").Scan(&today); err != nil {
+			return err
+		}
+		if today >= clientErrorProblemsPerDay {
+			return nil
+		}
+	}
+	// An answered problem lets go of the cause, then the group asks again.
+	if err := problemClose(q, cause); err != nil {
+		return err
+	}
+	return problemAsk(q, "direct", Problem{Cause: cause, Text: clientErrorText(fp), Data: doc{"fingerprint": fp, "reporter": person}})
 }
 
 // clientErrorText: fixed wording and the fingerprint only. Reported strings are untrusted and never enter a question

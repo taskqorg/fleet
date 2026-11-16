@@ -292,7 +292,7 @@ func TestClientErrorPinnedGroupsCount(t *testing.T) {
 		return body["fingerprint"].(string)
 	}
 	age := func() {
-		if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE client_error SET first_seen=now()-interval '31 days', last_seen=now()-interval '31 days' WHERE first_person='member@trial.test'"); err != nil {
+		if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE client_error SET first_seen=now()-interval '31 days', last_seen=now()-interval '31 days' WHERE first_person='member@trial.test'; UPDATE question SET asked_at=now()-interval '2 days' WHERE cause LIKE 'problem:client-error:%'"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -367,5 +367,88 @@ func TestClientErrorParallelReports(t *testing.T) {
 	}
 	if groups != clientErrorNewPerHour || over != int64(n-clientErrorNewPerHour) {
 		t.Fatalf("parallel: %d groups, %d over-limit reports", groups, over)
+	}
+}
+
+// Requirement: fleet-telemetry.md section 9 (owner decision 2026-11-17): answering a problem (Dismiss or Investigate)
+// releases its group: it ages out of the caps and the prune like any unpinned group, and a repeat after the answer opens a
+// new problem within the person's daily problem limit; an open problem still pins. Risk: answered groups stay forever
+// and fill the caps, or a fixed-then-regressed error never asks again.
+func TestClientErrorAnswerReleases(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	owner, member := e.ownerHeaders(), personHeaders(e, "member@trial.test")
+	report := func(msg string) string {
+		code, body := e.callJSON(t, "POST", "/api/ops/client_error_report", clientReport(map[string]any{"message": msg}), member)
+		if code != 200 {
+			t.Fatalf("report: %d %v", code, body)
+		}
+		return body["fingerprint"].(string)
+	}
+	questions := func(fp string) (open, answered int) {
+		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FILTER (WHERE state='open' AND cause=$1), count(*) FILTER (WHERE state='answered') FROM question WHERE data->>'fingerprint'=$2", clientErrorCause+fp, fp).Scan(&open, &answered); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	answer := func(fp string) {
+		var id string
+		if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT id FROM question WHERE cause=$1 AND state='open'", clientErrorCause+fp).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if code, body := e.callJSON(t, "POST", "/api/ops/questions_answer", map[string]any{"questionId": id, "answer": "dismiss"}, owner); code != 200 {
+			t.Fatalf("answer: %d %v", code, body)
+		}
+	}
+	age := func(fps ...string) {
+		for _, fp := range fps {
+			if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE client_error SET last_seen=now()-interval '31 days' WHERE fingerprint=$1", fp); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	prune := func() int64 {
+		n, err := clientErrorsPrune(e.ctx, e.app, time.Now().Add(-clientErrorRetention))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	exists := func(fp string) bool {
+		ok, err := e.ownerStore.pool.Exec(e.ctx, "SELECT 1 FROM client_error WHERE fingerprint=$1", fp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok.RowsAffected() == 1
+	}
+
+	// An answered group ages out; an open one is still pinned.
+	answered, pinned := report("answered"), report("still open")
+	answer(answered)
+	age(answered, pinned)
+	if n := prune(); n != 1 || exists(answered) || !exists(pinned) {
+		t.Fatalf("prune %d: answered kept %v, open kept %v", n, exists(answered), exists(pinned))
+	}
+
+	// A repeat after the answer opens a new problem; the answered one lets go of the cause.
+	again := report("regressed")
+	answer(again)
+	if fp := report("regressed"); fp != again {
+		t.Fatal(fp)
+	}
+	if open, ans := questions(again); open != 1 || ans != 1 {
+		t.Fatalf("repeat after the answer: %d open, %d answered", open, ans)
+	}
+	// A further repeat while that problem is open asks nothing.
+	report("regressed")
+	if open, _ := questions(again); open != 1 {
+		t.Fatalf("open problem asked twice: %d", open)
+	}
+
+	// The daily problem limit still applies to repeats after an answer: 4 problems so far, the 5th is the last.
+	last := report("fifth")
+	answer(last)
+	report("fifth")
+	if open, ans := questions(last); open != 0 || ans != 1 {
+		t.Fatalf("daily limit: %d open, %d answered", open, ans)
 	}
 }
