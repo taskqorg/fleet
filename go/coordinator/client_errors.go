@@ -1,14 +1,19 @@
 // Browser errors of the operator app (docs/designs/fleet-telemetry.md section 9). The app reports uncaught errors,
 // unhandled rejections and render crashes with client_error_report; reports group by a fingerprint of name, message and
 // normalized top stack frame. A new group opens a needs-you problem for the owner; agents and the owner read groups with
-// client_errors_list and client_error_get. Storage is bounded: the latest clientErrorReportsKept reports per group, at
-// most clientErrorGroupsKept groups, and groups unseen for clientErrorRetention go (with their problem).
+// client_errors_list and client_error_get. Every reported string is untrusted browser data: the problem text holds only
+// fixed wording and the fingerprint. Storage is bounded without a report ever deleting another group: each group keeps
+// its latest clientErrorReportsKept reports; one person opens at most clientErrorNewPerHour groups an hour and the store
+// holds at most clientErrorGroupsKept groups, past either limit a report counts into the fixed over-limit group; the
+// hourly client-errors pass deletes groups unseen for clientErrorRetention whose problem is not open or answered.
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fleet/contract"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -18,7 +23,9 @@ import (
 
 const (
 	clientErrorReportsKept = 20                  // clientErrors.reportsKept
-	clientErrorGroupsKept  = 1000                // clientErrors.groupsKept
+	clientErrorGroupsKept  = 1000                // clientErrors.groupsKept: a hard cap; new groups past it are refused (counted)
+	clientErrorNewPerHour  = 20                  // clientErrors.newGroupsPerHour, per person
+	clientErrorOverLimit   = "over-limit"        // the group that counts reports refused a new group
 	clientErrorRetention   = 30 * 24 * time.Hour // clientErrors.retention
 	clientErrorPeopleKept  = 100
 	clientErrorVersions    = 20
@@ -44,11 +51,35 @@ func init() {
 	operation("client_error_report", false, typedOp(clientErrorReport))
 	operation("client_errors_list", true, ownerFirst("Browser errors need full access", typedOp(clientErrorsList)))
 	operation("client_error_get", true, ownerFirst("Browser errors need full access", typedOp(clientErrorGet)))
+	onStart(func(ctx context.Context, a *App) {
+		every(ctx, "client-errors", envMs("FLEET_CLIENT_ERRORS_TICK_MS", 3600_000), func(ctx context.Context) error {
+			n, err := clientErrorsPrune(ctx, a, time.Now().Add(-clientErrorRetention))
+			if err != nil {
+				log.Printf("client errors prune: %v", err)
+			} else if n > 0 {
+				log.Printf("client errors prune: %d groups", n)
+			}
+			return err
+		})
+	})
+}
+
+// clientErrorsPrune: the scheduled retention (never a report): groups unseen since before cutoff, unless a problem
+// question holds their cause (open, or answered by the owner).
+func clientErrorsPrune(ctx context.Context, a *App, cutoff time.Time) (int64, error) {
+	var n int64
+	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		t, err := q.tx.Exec(q.ctx(), `DELETE FROM client_error c WHERE c.last_seen < $1
+			AND NOT EXISTS (SELECT 1 FROM question x WHERE x.cause='`+clientErrorCause+`'||c.fingerprint AND x.state IN ('open','answered'))`, cutoff)
+		n = t.RowsAffected()
+		return err
+	})
+	return n, err
 }
 
 var (
-	// A V8 frame ("at fn (url:1:2)", "at url:1:2") or a Firefox/Safari one ("fn@url:1:2").
-	clientFrameLine   = regexp.MustCompile(`^(at\s.+|\S*@\S+:\d+(:\d+)?)$`)
+	// A V8 frame ("at fn (url:1:2)", "at url:1:2") or a Firefox/Safari one ("fn@url:1:2", "global code@url:1:2").
+	clientFrameLine   = regexp.MustCompile(`^(at\s.+|[^@\s][^@]*@\S+:\d+(:\d+)?|@\S+:\d+(:\d+)?)$`)
 	clientFrameOrigin = regexp.MustCompile(`[a-z][a-z0-9+.-]*://[^/\s)]+`)
 	clientFrameHash   = regexp.MustCompile(`-[A-Za-z0-9]{8,}\.(m?js|css)\b`)
 	clientFramePos    = regexp.MustCompile(`(:\d+)+`)
@@ -110,16 +141,32 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 	fp := clientFingerprint(r.Name, r.Message, top)
 	// The groups are system data the reporting person may not read: written in the coordinator's own scope.
 	return unscoped(q, func() (contract.ClientErrorReportReply, error) {
+		name, message, source := r.Name, r.Message, string(r.Source)
+		known, err := has(q, "SELECT 1 FROM client_error WHERE fingerprint=$1", fp)
+		if err != nil {
+			return rep, err
+		}
+		if !known {
+			// A new group: within the person's hourly allowance and the global cap, else counted in the over-limit group.
+			var mine, all int
+			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FILTER (WHERE first_person=$1 AND first_seen > now()-interval '1 hour'),count(*) FROM client_error", person).Scan(&mine, &all); err != nil {
+				return rep, err
+			}
+			if mine >= clientErrorNewPerHour || all >= clientErrorGroupsKept {
+				fp, top = clientErrorOverLimit, ""
+				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly new-group limit or the global group cap was reached", "error"
+			}
+		}
 		var inserted bool
-		err := q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10::text='' THEN '{}'::text[] ELSE ARRAY[$10::text] END,CASE WHEN $7::text='' THEN '{}'::text[] ELSE ARRAY[$7::text] END)
+		err = q.tx.QueryRow(q.ctx(), `INSERT INTO client_error AS c(fingerprint,name,message,top_frame,source,count,last_version,last_path,last_user_agent,people,versions,first_person)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $10::text='' THEN '{}'::text[] ELSE ARRAY[$10::text] END,CASE WHEN $7::text='' THEN '{}'::text[] ELSE ARRAY[$7::text] END,$10)
 			ON CONFLICT (fingerprint) DO UPDATE SET last_seen=now(), count=c.count+EXCLUDED.count, last_version=EXCLUDED.last_version,
 			  last_path=EXCLUDED.last_path, last_user_agent=EXCLUDED.last_user_agent,
 			  people=CASE WHEN $10::text='' OR $10::text=ANY(c.people) OR cardinality(c.people)>=$11 THEN c.people ELSE c.people||$10::text END,
 			  versions=CASE WHEN $7::text='' OR c.versions[cardinality(c.versions)]=$7::text THEN c.versions
 			    ELSE (SELECT v[greatest(1,cardinality(v)-$12+1):] FROM (SELECT array_remove(c.versions,$7::text)||$7::text AS v) s) END
 			RETURNING count,(xmax=0)`,
-			fp, r.Name, r.Message, top, string(r.Source), r.Count, r.Version, r.Path, r.UserAgent, person, clientErrorPeopleKept, clientErrorVersions).Scan(&rep.Count, &inserted)
+			fp, name, message, top, source, r.Count, r.Version, r.Path, r.UserAgent, person, clientErrorPeopleKept, clientErrorVersions).Scan(&rep.Count, &inserted)
 		if err != nil {
 			return rep, err
 		}
@@ -128,37 +175,27 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			fp, at, person, r.Version, r.Path, r.UserAgent, r.Count, string(r.Source), r.Stack); err != nil {
 			return rep, err
 		}
+		// The group's own oldest reports only; a report never deletes another group or closes a problem.
 		if err := exec(q, "DELETE FROM client_error_report WHERE fingerprint=$1 AND seq < (SELECT min(seq) FROM (SELECT seq FROM client_error_report WHERE fingerprint=$1 ORDER BY seq DESC LIMIT $2) k)", fp, clientErrorReportsKept); err != nil {
 			return rep, err
 		}
 		if !inserted {
 			return rep, nil
 		}
-		// Only a new group can push the store past its bounds; pruned groups take their problem with them.
-		gone, err := queryRows(q, `DELETE FROM client_error WHERE last_seen < $1
-			OR fingerprint IN (SELECT fingerprint FROM client_error ORDER BY last_seen DESC, fingerprint OFFSET $2) RETURNING fingerprint`,
-			time.Now().Add(-clientErrorRetention), clientErrorGroupsKept)
-		if err != nil {
-			return rep, err
-		}
-		for _, g := range gone {
-			if err := problemClose(q, clientErrorCause+astr(g["fingerprint"])); err != nil {
-				return rep, err
-			}
-		}
 		if h, err := problemHeld(q, clientErrorCause+fp); err != nil || h != nil {
 			return rep, err
 		}
-		return rep, problemAsk(q, "direct", Problem{Cause: clientErrorCause + fp, Text: clientErrorText(r, fp), Data: doc{"fingerprint": fp}})
+		return rep, problemAsk(q, "direct", Problem{Cause: clientErrorCause + fp, Text: clientErrorText(fp), Data: doc{"fingerprint": fp}})
 	})
 }
 
-func clientErrorText(r *contract.ClientErrorReportRequest, fp string) string {
-	msg := r.Message
-	if len(msg) > 200 {
-		msg = strings.ToValidUTF8(msg[:200], "") + "…"
+// clientErrorText: fixed wording and the fingerprint only. Reported strings are untrusted and never enter a question
+// that people and agents read as Fleet's own words.
+func clientErrorText(fp string) string {
+	if fp == clientErrorOverLimit {
+		return "Browser error reports exceed the new-group limits; they are counted in one group: client_error_get {\"fingerprint\": \"" + fp + "\"}."
 	}
-	return "Browser error on " + r.Path + ": " + r.Name + ": " + msg + ". Details: client_error_get {\"fingerprint\": \"" + fp + "\"}."
+	return "A browser error group appeared: client_error_get {\"fingerprint\": \"" + fp + "\"}."
 }
 
 const clientErrorColumns = `c.fingerprint,c.name,c.message,c.top_frame,c.source,c.first_seen,c.last_seen,c.count,c.last_version,c.last_path,c.last_user_agent,c.people,c.versions,

@@ -1,6 +1,6 @@
 // Browser error reporter (docs/designs/fleet-telemetry.md section 9): uncaught errors, unhandled rejections and render
 // crashes go to client_error_report. One error (name, message, top frame) is sent once per window with the repeats
-// counted; a tab sends at most maxReports reports, so a render loop cannot flood the coordinator. Sends use keepalive, so
+// counted; a tab sends at most maxReports first reports and maxRepeats repeat counts, so a render loop cannot flood the coordinator. Sends use keepalive, so
 // an error right before unload still arrives. The person comes from the session on the server; the reporter never throws.
 import type { Ops } from '../../contracts/generated/ops.ts';
 import { parseView, formatView, VIEW_EXTRA } from '../../packages/view-url/view-url.ts';
@@ -42,7 +42,16 @@ export function describe(error: unknown): { name: string; message: string; stack
   return { name: 'NonError', message, stack: '' };
 }
 
-const frameOf = (stack: string) => stack.split('\n').map(l => l.trim()).find(l => /^at\s|@\S+:\d+/.test(l)) ?? '';
+/** The top frame as the server's fingerprint takes it: the first script frame, else the first built-in one. */
+export function frameOf(stack: string): string {
+  const frames = stack.split('\n').map(l => l.trim()).filter(l => /^at\s|^[^@\s][^@]*@\S+:\d+|^@\S+:\d+/.test(l));
+  return frames.find(l => l.includes('/')) ?? frames[0] ?? '';
+}
+
+/** The server's repeat count limit; more repeats in one window are counted in dropped. */
+const MAX_COUNT = 1_000_000;
+/** A repeat-count send carries only the stack's head: enough for the top frame, small enough for the keepalive quota. */
+const REPEAT_STACK = 1024;
 
 export type ReporterOptions = {
   send: (report: ClientErrorReport) => void;
@@ -50,28 +59,35 @@ export type ReporterOptions = {
   version: () => string;
   userAgent: string;
   now?: () => number;
-  /** One error is sent once per window; repeats inside it go out with the next report or flush as a count. */
+  /** One error is sent once per window; repeats inside it go out as a count when it ends or on flush. */
   windowMs?: number;
-  /** The most reports one tab sends; later errors are counted in dropped only. */
+  /** The most first reports (one per new error) a tab sends; later new errors are counted in dropped only. */
   maxReports?: number;
+  /** The most repeat-count sends a tab makes (window ends and flushes); later repeats are counted in dropped only. */
+  maxRepeats?: number;
+  /** The most repeat counts one flush sends (keepalive bodies share a 64 KiB budget on unload). */
+  flushEntries?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
 };
 
-type Entry = { sentAt: number; pending: number; firstAt: number; report: Omit<ClientErrorReport, 'count' | 'at'> };
+type Entry = { sentAt: number; pending: number; firstAt: number; timer: number; report: Omit<ClientErrorReport, 'count' | 'at'> };
 
 export function createReporter(o: ReporterOptions) {
-  const now = o.now ?? Date.now, windowMs = o.windowMs ?? 5 * 60_000, max = o.maxReports ?? 30;
+  const now = o.now ?? Date.now, windowMs = o.windowMs ?? 5 * 60_000, max = o.maxReports ?? 30, maxRepeats = o.maxRepeats ?? 100, perFlush = o.flushEntries ?? 10;
   const setTimer = o.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const entries = new Map<string, Entry>();
-  let sent = 0, dropped = 0;
-  const emit = (e: Entry, count: number, at: number) => {
-    if (sent >= max) { dropped += count; return; }
-    sent++;
-    try { o.send({ ...e.report, count, at: new Date(at).toISOString() }); } catch { /* never throws */ }
+  let sent = 0, repeats = 0, dropped = 0;
+  const send = (report: ClientErrorReport) => { try { o.send(report); } catch { /* never throws */ } };
+  const emitFirst = (e: Entry) => {
+    if (sent >= max) { dropped++; return; }
+    sent++; send({ ...e.report, count: 1, at: new Date(e.firstAt).toISOString() });
   };
   const flushEntry = (e: Entry) => {
     if (e.pending <= 0) return;
-    const n = e.pending; e.pending = 0; e.sentAt = now(); emit(e, n, e.firstAt);
+    const n = Math.min(e.pending, MAX_COUNT);
+    dropped += e.pending - n; e.pending = 0; e.timer++; e.sentAt = now();
+    if (repeats >= maxRepeats) { dropped += n; return; }
+    repeats++; send({ ...e.report, stack: trimBytes(e.report.stack, REPEAT_STACK), count: n, at: new Date(e.firstAt).toISOString() });
   };
   return {
     capture(error: unknown, source: ClientErrorSource) {
@@ -82,20 +98,23 @@ export function createReporter(o: ReporterOptions) {
         const report = { name, message, stack: trimBytes(d.stack, LIMITS.stack), source, path: trimBytes(o.path(), LIMITS.path) || '/',
           version: trimBytes(o.version(), LIMITS.version), userAgent: trimBytes(o.userAgent, LIMITS.userAgent) };
         const e = entries.get(key);
-        if (e && t - e.sentAt < windowMs) {
-          e.report = report;
-          if (e.pending++ === 0) { e.firstAt = t; setTimer(() => { try { flushEntry(e); } catch { /* never throws */ } }, e.sentAt + windowMs - t); }
-          return;
+        if (!e) {
+          const next: Entry = { sentAt: t, pending: 0, firstAt: t, timer: 0, report };
+          entries.set(key, next); emitFirst(next); return;
         }
-        const next: Entry = { sentAt: t, pending: 0, firstAt: t, report }, carried = e?.pending ?? 0;
-        if (e) e.pending = 0; // its timer, if still due, then sends nothing
-        entries.set(key, next);
-        emit(next, 1 + carried, carried ? e!.firstAt : t);
+        e.report = report;
+        if (t - e.sentAt >= windowMs && e.pending === 0) { e.sentAt = t; e.firstAt = t; e.pending = 1; flushEntry(e); return; }
+        if (e.pending++ === 0) {
+          e.firstAt = t;
+          const token = ++e.timer;
+          // A flush in between (tab hidden) moves the window: this timer then sends nothing.
+          setTimer(() => { try { if (e.timer === token) flushEntry(e); } catch { /* never throws */ } }, Math.max(0, e.sentAt + windowMs - t));
+        }
       } catch { /* never throws */ }
     },
-    /** Sends every counted repeat now (the tab is hidden or unloading). */
-    flush() { try { for (const e of entries.values()) flushEntry(e); } catch { /* never throws */ } },
-    stats: () => ({ sent, dropped }),
+    /** Sends the largest counted repeats now (the tab is hidden or unloading). */
+    flush() { try { [...entries.values()].filter(e => e.pending > 0).sort((a, b) => b.pending - a.pending).slice(0, perFlush).forEach(flushEntry); } catch { /* never throws */ } },
+    stats: () => ({ sent, repeats, dropped }),
   };
 }
 

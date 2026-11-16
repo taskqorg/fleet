@@ -43,7 +43,7 @@ test('a tab sends at most maxReports reports', () => {
   const { r, sent } = harness({ maxReports: 3 });
   for (let i = 0; i < 100; i++) r.capture(new Error('loop ' + i), 'render');
   assert.equal(sent.length, 3);
-  assert.deepEqual(r.stats(), { sent: 3, dropped: 97 });
+  assert.deepEqual(r.stats(), { sent: 3, repeats: 0, dropped: 97 });
 });
 
 test('fields fit the server limits and non-errors are described', () => {
@@ -69,4 +69,28 @@ test('the path keeps only what the app writes', () => {
   assert.equal(m.reportPath('/tasks/T-1', '?state=failed&code=abc'), '/tasks/T-1?state=failed');
   assert.equal(m.reportPath('/agents/x', '?access_token=abc'), '/agents/x', 'a path outside the view grammar drops its query');
   assert.equal(m.reportPath('', ''), '/');
+});
+
+test('a flush moves the window: the older timer sends nothing, and counts and stacks stay within limits', () => {
+  const { r, sent, advance } = harness();
+  const e = new Error('hidden'); e.stack = 'Error: hidden\n    at Date.toISOString (<anonymous>)\n    at f (https://h/assets/main-AAAA1111.js:1:2)\n' + '    at g (https://h/x.js:1:1)\n'.repeat(400);
+  r.capture(e, 'error'); advance(60_000); r.capture(e, 'error');
+  r.flush();
+  assert.equal(sent.length, 2);
+  assert.ok(new TextEncoder().encode(sent[1].stack).length <= 1024, 'a repeat count carries only the stack head');
+  assert.equal(m.frameOf(sent[1].stack), 'at f (https://h/assets/main-AAAA1111.js:1:2)', 'the head keeps the top script frame');
+  advance(5 * 60_000);
+  assert.equal(sent.length, 2, 'the timer of the moved window sent a second report');
+  const loop = harness();
+  loop.r.capture(e, 'render');
+  for (let i = 0; i < 1_000_005; i++) loop.r.capture(e, 'render');
+  loop.r.flush();
+  assert.equal(loop.sent[1].count, 1_000_000);
+  assert.equal(loop.r.stats().dropped, 5);
+});
+
+test('the top frame skips built-ins like the server fingerprint', () => {
+  assert.equal(m.frameOf('RangeError: x\n    at Date.toISOString (<anonymous>)\n    at a (https://h/assets/main-X.js:1:2)'), 'at a (https://h/assets/main-X.js:1:2)');
+  assert.equal(m.frameOf('TypeError: x\nglobal code@https://h/main.js:3:9'), 'global code@https://h/main.js:3:9');
+  assert.equal(m.frameOf('TypeError: x\n    at Array.map (<anonymous>)'), 'at Array.map (<anonymous>)');
 });

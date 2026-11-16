@@ -28,9 +28,9 @@ import { Delivery } from './views/delivery.tsx';
 
 // Browser errors reach the coordinator (client_error_report); an operation's own failure (OpError) is already in its
 // spans, and an access change aborts reads on purpose, so neither is reported again.
-const mainAsset = () => document.querySelector<HTMLScriptElement>('script[src*="/assets/main-"]')?.getAttribute('src')?.match(/main-([^./]+)/)?.[1];
+const mainAsset = document.querySelector<HTMLScriptElement>('script[src*="/assets/main-"]')?.getAttribute('src')?.match(/main-([^./]+)/)?.[1];
 const reporter = createReporter({ send: sendReport, path: () => reportPath(location.pathname, location.search), userAgent: navigator.userAgent,
-  version: () => tabVersion.value ?? (mainAsset() ? 'main-' + mainAsset() : '') });
+  version: () => tabVersion.value ?? (mainAsset ? 'main-' + mainAsset : '') });
 installReporter(reporter, e => e instanceof OpError || e instanceof AccessChanged);
 
 /** A render crash shows a recoverable error in the work area instead of a blank page; navigating away clears it. */
@@ -174,7 +174,7 @@ function App() {
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
-    {access.value.state === 'open' ? <RenderBoundary at={loc}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
+    {access.value.state === 'open' ? <RenderBoundary at={loc + '?' + query}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
   </AppShell>;
 }
 

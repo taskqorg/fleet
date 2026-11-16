@@ -6,7 +6,7 @@
 
 ## Interface
 
-- [`client-errors.ts`](client-errors.ts) reports uncaught errors, unhandled rejections and render crashes to `client_error_report`: once per error per 5 minutes with a repeat count, at most 30 reports per tab, keepalive sends, only app-produced URL parts; it never throws. `main.tsx:RenderBoundary` shows a crashed page as an error with Reload ([telemetry §9](../../docs/designs/fleet-telemetry.md#9-browser-errors)).
+- [`client-errors.ts`](client-errors.ts) reports uncaught errors, unhandled rejections and render crashes to `client_error_report`: once per error per 5 minutes with a repeat count, at most 30 first reports and 100 repeat counts per tab, keepalive sends, only app-produced URL parts; it never throws. `main.tsx:RenderBoundary` shows a crashed page as an error with Reload ([telemetry §9](../../docs/designs/fleet-telemetry.md#9-browser-errors)).
 - [`version.ts`](version.ts) reads `system_versions`, clears private version snapshots on access invalidation, keeps unknown/stale observations explicit, and detects and activates app updates.
 - [`main.tsx`](main.tsx) defines `SCREENS` and `App`, connects `AppShell`, identity/grant checks, preferences, feed/store startup, service worker registration, and routes.
 - [`api.ts`](api.ts) exports typed `op`, `writeOnce`, `addRequestedKey`, `sendingId`, `useAlive`, `online`, and `signedOut`.
