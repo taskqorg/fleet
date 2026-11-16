@@ -1,3 +1,5 @@
+// Requirement: authoritative notifications preserve preferences, editor state and access transitions.
+// Risk: false fanout or over-filtering hides remote updates, queued writes or private draft fencing.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -6,7 +8,7 @@ import {resolve} from 'node:path';
 import {chromium,type Page} from 'playwright';
 import {startCoordinator,lit} from '../harness.ts';
 test('scoped notifications retain mounted preferences, editor and access semantics',{skip:!process.env.FLEET_CONTROL_BROWSER,timeout:60000},async()=>{
-mkdirSync(resolve('.egm'),{recursive:true});const out=mkdtempSync(resolve('.egm/scoped-invalidation-')); 
+mkdirSync(resolve('.egm'),{recursive:true});const out=mkdtempSync(resolve('.egm/scoped-invalidation-'));
 const people=[{email:'owner@trial.test',name:'Owner',roles:['operator','architect'],owner:true},{email:'member@trial.test',name:'Member',roles:['operator'],grants:[{kind:'project',id:'protocol-pref-a'}]}];
 writeFileSync(out+'/people.json',JSON.stringify(people));
 const c=await startCoordinator({name:'scoped-invalidation',people:out+'/people.json',env:{FLEET_RESOURCE_READS:'on',FLEET_RESOURCE_PROCESSOR:'on',FLEET_LOST_AFTER_MS:'864000000'}});
