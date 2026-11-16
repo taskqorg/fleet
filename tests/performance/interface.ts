@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {Writer} from './sql-writer-interface.ts';
 import {installEventSourceCapture,EventSourceRecorder} from './eventsource-interface.ts';
 import { execFileSync, spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import http from 'node:http';
+import http2 from 'node:http2';
+import https from 'node:https';
 import { cpus, freemem, hostname, platform, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { once } from 'node:events';
@@ -161,7 +163,37 @@ type SampleBound = {fact: Fact; reader: string; browser: RenderObservation; publ
 type Run = { id: string; spec: Workload; start: number; done: boolean; abort: AbortController; producer?: Promise<void>; finalization?: Promise<void>; phaseWindows: PhaseWindow[]; facts: Map<string, Fact[]>; seen: Map<string, Set<string>>; history: PublicationHistory; observations: ObservationBook; bounds: RenderBounds<SampleBound>; processedReceipt: Map<string,number>; unseen: Map<string, Map<string, Fact>>; metrics: { lags: number[]; writes: number[]; schedule: number[]; controls: number[] }; errors: string[]; readers: Map<string, { project: string; visible: boolean }>; count: number; finish?: unknown };
 const pgSnapshot = (c: Coordinator) => JSON.parse(c.sql(`SELECT json_build_object('at',clock_timestamp(),'database',current_database(),'pg',version(),'settings',(SELECT json_object_agg(name,setting) FROM pg_settings WHERE name IN ('shared_buffers','work_mem','max_connections','fsync','synchronous_commit','track_io_timing','track_commit_timestamp','max_wal_size','effective_cache_size')),'databaseStats',(SELECT row_to_json(s) FROM pg_stat_database s WHERE datname=current_database()),'activity',(SELECT coalesce(json_agg(a),'[]') FROM (SELECT pid,state,wait_event_type,wait_event,query_start,left(query,250) query FROM pg_stat_activity WHERE datname=current_database()) a),'backlog',(SELECT count(*) FROM resource_work),'oldestPending',(SELECT min(first_pending_at) FROM resource_work),'builds',(SELECT coalesce(json_agg(b),'[]') FROM resource_build b))`).trim());
 
-export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number }) {
+// Production serves the app over HTTP/2 (Cloudflare). `h2` gives the measurement origin the same multiplexed transport
+// with an ephemeral self-signed loopback certificate; `h1` keeps the HTTP/1.1 per-origin socket queue of earlier cases.
+export type Transport = 'h1' | 'h2';
+const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'http2-settings', 'te', 'host']);
+/** Drop pseudo, hop-by-hop and Connection-listed headers (RFC 9110 7.6.1), which HTTP/2 forbids. */
+const endToEnd = (headers: http.IncomingHttpHeaders) => {
+  const listed = new Set(String(headers.connection ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+  return Object.fromEntries(Object.entries(headers).filter(([k]) => !k.startsWith(':') && !HOP_BY_HOP.has(k.toLowerCase()) && !listed.has(k.toLowerCase())));
+};
+/**
+ * Forward one origin request to the coordinator over HTTP/1.1. HTTP/1.1 requests and answers pass unchanged; HTTP/2 ones
+ * lose only connection-specific headers. A closed client stream (an EventSource closed, a page navigated) also ends
+ * the coordinator request, so no abandoned subscription keeps streaming.
+ */
+export function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse, base: string, extra: Record<string, string>, onError: (e: Error) => void) {
+  const target = new URL(base), h2 = req.httpVersionMajor === 2;
+  let answer: http.IncomingMessage | null = null, closed = false;
+  const upstream = http.request({ hostname: target.hostname, port: target.port, method: req.method, path: req.url, headers: { ...(h2 ? endToEnd(req.headers) : req.headers), host: target.host, origin: base, ...extra } }, response => { answer = response; res.writeHead(response.statusCode!, h2 ? endToEnd(response.headers) : response.headers); response.pipe(res); });
+  // HTTP/2 compatibility marks a reset stream's response finished, so completeness is read from the coordinator answer.
+  res.on('close', () => { closed = true; if (!answer?.complete) upstream.destroy(); });
+  upstream.on('error', e => { if (closed) return; // the client went away first; not a coordinator failure
+    onError(e); if (!res.headersSent) res.writeHead(502); res.end(); }); req.pipe(upstream);
+}
+export function ephemeralCertificate(out: string) {
+  const key = resolve(out, 'origin-key.pem'), cert = resolve(out, 'origin-cert.pem');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-keyout', key, '-out', cert], { stdio: ['ignore', 'ignore', 'pipe'] }); // a failure carries openssl's stderr
+  const pem = readFileSync(cert); return { key: readFileSync(key), cert: pem, fingerprint256: new X509Certificate(pem).fingerprint256 };
+}
+export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number; transport?: Transport }) {
+  const transport: Transport = o.transport ?? 'h1';
+  if (!['h1', 'h2'].includes(transport)) throw Error('transport must be h1 or h2');
   const f = fixture(o.history, o.projects, o.cardinality), ids = projectIDs(f);
   if (!o.development && platform() !== 'linux') throw Error('heavy qualification requires isolated Linux placement');
   if (o.development && (f.history > 618 || f.projects !== 1 || f.cardinality > 3)) throw Error('development fixture exceeds small smoke');
@@ -174,6 +206,7 @@ export async function serve(o: { out: string; history: number; projects: number;
     if (!cpu || cpu[0] / cpu[1] !== 4 || effective.memoryMax !== String(8 * 1024 ** 3)) throw Error('actual server cgroup must constrain the whole process tree to4CPU/8GiB: ' + JSON.stringify(effective));
   }
   mkdirSync(o.out, { recursive: true });
+  const tls = transport === 'h2' ? ephemeralCertificate(o.out) : null; // before any process starts: a failure leaves nothing running
   const baselineManifest = manifest(f), sourceCandidate = candidate();
   writeFileSync(resolve(o.out, 'manifest.json'), JSON.stringify(baselineManifest, null, 2));
   writeFileSync(resolve(o.out, 'server.json'), JSON.stringify({ at: new Date().toISOString(), development: o.development, placement, hardware: hardware(), candidate: sourceCandidate, clock: 'server monotonic milliseconds; lower before source submission, upper after commit; render receipt is a conservative actual-render upper bound including return network' }, null, 2));
@@ -207,7 +240,9 @@ export async function serve(o: { out: string; history: number; projects: number;
   };
   const writers: Writer[] = [];
   const sourceWriters: Writer[] = [];
-  const server = http.createServer();
+  const server: http.Server | http2.Http2SecureServer = tls ? http2.createSecureServer({ key: tls.key, cert: tls.cert, allowHTTP1: true }) : http.createServer();
+  const sessions = new Set<http2.ServerHttp2Session>();
+  if (tls) (server as http2.Http2SecureServer).on('session', session => { sessions.add(session); session.once('close', () => sessions.delete(session)); });
   let monitor: ReturnType<typeof setInterval> | undefined, closing = false;
   const close = async () => {
     if (closing) return; closing = true;
@@ -217,7 +252,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       await run.producer;
       await run.finalization;
     }
-    server.close(); await Promise.all(writers.map(w=>w.close())); await c.stop(); sink.close();
+    server.close(); for (const session of sessions) session.destroy(); if (!tls) (server as http.Server).closeAllConnections(); await Promise.all(writers.map(w=>w.close())); await c.stop(); sink.close();
     execFileSync('pg_ctl', ['-D', pgdata, '-m', 'fast', '-w', 'stop'], { stdio: 'ignore' });
     log.end(); sqlLog.end(); spans.end();
   };
@@ -406,14 +441,14 @@ export async function serve(o: { out: string; history: number; projects: number;
       finally { await Promise.allSettled(tasks);r.abort.signal.removeEventListener('abort',cancel);if(r.abort.signal.aborted)await Promise.all(sourceWriters.map(w=>w.stopped)); }
       await delay(r.spec.recovery * 1000, undefined, { signal: r.abort.signal }); await finish(r);
     };
-    server.on('request', async (req, res) => {
+    (server as http.Server).on('request', async (req: http.IncomingMessage, res: http.ServerResponse) => {
       const requestReceived = stamp();
       try {
         if (req.url?.startsWith('/__interface/')) {
           const path = req.url.split('?')[0]; let b: any = {};
           if (req.method === 'POST') { const chunks: Buffer[] = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > 1024 * 1024) throw Error('measurement body too large'); chunks.push(chunk); } b = JSON.parse(Buffer.concat(chunks).toString()); }
           let result: unknown;
-          if (path === '/__interface/config') result = { fixture: f, projects: ids, marker, longEvents: o.longEvents ?? 0, development: o.development, hostname: hostname(), candidate: sourceCandidate.sha, run: run?.id };
+          if (path === '/__interface/config') result = { fixture: f, projects: ids, marker, longEvents: o.longEvents ?? 0, development: o.development, hostname: hostname(), candidate: sourceCandidate.sha, run: run?.id, transport, certificatePEM: tls?.cert.toString() ?? null };
           else if (path === '/__interface/clock') result = { monotonic: stamp(), wall: Date.now() };
           else if (path === '/__interface/start') {
             if (run && !run.done) throw Error('run already active');
@@ -474,13 +509,11 @@ export async function serve(o: { out: string; history: number; projects: number;
           else throw Error('unknown measurement route');
           res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result)); return;
         }
-        const target = new URL(c.base);
-        const upstream = http.request({ hostname: target.hostname, port: target.port, method: req.method, path: req.url, headers: { ...req.headers, host: target.host, origin: c.base, authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test' } }, response => { res.writeHead(response.statusCode!, response.headers); response.pipe(res); });
-        upstream.on('error', e => { errors.push(String(e)); if (!res.headersSent) res.writeHead(502); res.end(); }); req.pipe(upstream);
+        proxyRequest(req, res, c.base, { authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test' }, e => errors.push(String(e)));
       } catch (e) { emit('request-error', { error: String(e), path: req.url }); res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: String(e) })); }
     });
     await new Promise<void>(r => server.listen(o.port, '127.0.0.1', r));
-    console.log(JSON.stringify({ ready: true, port: (server.address() as any).port, projects: ids, out: o.out, development: o.development }));
+    console.log(JSON.stringify({ ready: true, port: (server.address() as any).port, projects: ids, out: o.out, development: o.development, transport, certificateSHA256: tls?.fingerprint256 ?? null }));
   } catch (e) { await close(); throw e; }
 }
 
@@ -503,16 +536,34 @@ async function parity(c: Coordinator, f: Fixture, out: string) {
 
 export async function browse(o: { origin: string; out: string; spec: Workload; placement: string }) {
   const url = new URL(o.origin);
-  if (!['127.0.0.1', 'localhost'].includes(url.hostname) || url.protocol !== 'http:') throw Error('use a loopback SSH tunnel to isolated server, never production');
-  mkdirSync(o.out, { recursive: true });
-  const request = async (path: string, body?: object) => { const r = await fetch(o.origin + '/__interface/' + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}); const b = await r.json() as any; if (!r.ok) throw Error(JSON.stringify(b)); return b; };
-  const config = await request('config'), spec = workload(o.spec, config.development);
+  if (!['127.0.0.1', 'localhost'].includes(url.hostname) || !['http:', 'https:'].includes(url.protocol)) throw Error('use a loopback SSH tunnel to isolated server, never production');
+  // The https origin is the fixture's own ephemeral loopback certificate. Only the config read accepts it unverified;
+  // its PEM then becomes the sole trusted CA, so every later request verifies the same key at handshake.
+  let trusted: https.Agent | null = null;
+  const fetchOrigin = (target: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) => url.protocol === 'http:' ? fetch(target, init) : new Promise<{ ok: boolean; status: number; json(): Promise<any>; fingerprint256: string }>((ok, fail) => {
+    const r = https.request(target, { method: init.method ?? 'GET', headers: init.headers, ...(trusted ? { agent: trusted } : { agent: false, rejectUnauthorized: false }) }, response => {
+      const fingerprint256 = (response.socket as import('node:tls').TLSSocket).getPeerCertificate().fingerprint256;
+      const chunks: Buffer[] = []; response.on('data', c => chunks.push(c)); response.on('error', fail);
+      response.on('end', () => { const text = Buffer.concat(chunks).toString(); ok({ ok: response.statusCode! < 400, status: response.statusCode!, fingerprint256, json: async () => JSON.parse(text) }); });
+    });
+    r.on('error', fail); r.end(init.body);
+  });
+  const request = async (path: string, body?: object) => { const r = await fetchOrigin(o.origin + '/__interface/' + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}); const b = await r.json() as any; if (!r.ok) throw Error(JSON.stringify(b)); return b; };
+  const transport: Transport = url.protocol === 'https:' ? 'h2' : 'h1';
+  const first = await fetchOrigin(o.origin + '/__interface/config'), config = await first.json();
+  if (!first.ok) throw Error(JSON.stringify(config));
+  const spec = workload(o.spec, config.development);
+  const certificate = transport === 'h2' ? new X509Certificate(config.certificatePEM) : null;
+  if ((config.transport ?? 'h1') !== transport || (certificate && certificate.fingerprint256 !== (first as any).fingerprint256)) throw Error('origin transport or certificate does not match the fixture');
+  if (certificate) trusted = new https.Agent({ keepAlive: true, ca: config.certificatePEM });
   const placement = JSON.parse(readFileSync(o.placement, 'utf8'));
   if (!config.development && (hostname() === config.hostname || placement.separateMachine !== true || !placement.reservation)) throw Error('separate reserved Chromium machine required');
   const { chromium } = await import('playwright');
-  const browser = await chromium.launch({ headless: true, args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
+  // Chromium accepts exactly the fixture's public key; every other certificate error still fails.
+  const spki = certificate ? createHash('sha256').update(certificate.publicKey.export({ type: 'spki', format: 'der' })).digest('base64') : null;
+  const browser = await chromium.launch({ headless: true, args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', ...(spki ? ['--ignore-certificate-errors-spki-list=' + spki] : [])] });
   const notifications=new EventSourceRecorder(o.out);
-  const evidence: any = { spec, placement, hardware: hardware(), chromium: browser.version(), server: config, navigation: [], networkProbes: [] };
+  const evidence: any = { spec, placement, transport, hardware: hardware(), chromium: browser.version(), server: config, navigation: [], networkProbes: [] };
   const readers: { id: string; project: string; page: import('playwright').Page }[] = [];
   let browserComplete = false;
   const reportError = async (body: object) => { try { await request('error', body); } catch (e) { (evidence.reportingErrors ??= []).push(String(e)); } };
@@ -649,14 +700,14 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       evidence.notificationCapture=notifications.snapshot();
       try { writeFileSync(resolve(o.out, 'browser-incomplete.json'), JSON.stringify(evidence, null, 2)); } catch (e) { console.error('incomplete browser evidence persistence failed:', e); }
     }
-    try { await notifications.finish(false); } finally { await browser.close(); }
+    try { await notifications.finish(false); } finally { await browser.close(); trusted?.destroy(); }
   }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = Object.fromEntries(process.argv.slice(3).map(a => { const [k, v] = a.replace(/^--/, '').split('='); return [k, v ?? 'true']; }));
   const out = resolve(args.out ?? '.egm/interface-performance-run');
-  if (process.argv[2] === 'serve') await serve({ out, history: Number(args.history ?? 618), projects: Number(args.projects ?? 1), cardinality: Number(args.cardinality ?? 3), longEvents: Number(args['long-events'] ?? 0), port: Number(args.port ?? 9479), development: args.development === 'true', placement: args.placement });
+  if (process.argv[2] === 'serve') await serve({ out, history: Number(args.history ?? 618), projects: Number(args.projects ?? 1), cardinality: Number(args.cardinality ?? 3), longEvents: Number(args['long-events'] ?? 0), port: Number(args.port ?? 9479), development: args.development === 'true', placement: args.placement, transport: (args.transport ?? 'h1') as Transport });
   else if (process.argv[2] === 'browse') await browse({ origin: args.origin ?? 'http://127.0.0.1:9479', out, placement: args.placement, spec: { readers: Number(args.readers ?? 1), rate: Number(args.rate ?? 1), warmup: Number(args.warmup ?? 60), duration: Number(args.duration ?? 600), burst: Number(args.burst ?? 1000), recovery: Number(args.recovery ?? 60), sourceDistribution: (args['source-distribution'] ?? 'hot') as SourceDistribution, mode: args.mode as Workload['mode'] ?? 'connected', network: args.network as Workload['network'] ?? 'unshaped' } });
   else throw Error('usage: interface.ts serve|browse --placement=<json> --out=<ignored directory> [--key=value]');
 }
