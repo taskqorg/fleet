@@ -713,7 +713,9 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 	}
 }
 
-const resourceCohortSize = 16
+// A cohort may hold every same-project leaf of one pass (the pass selects at most 100 due IDs): each extra transaction
+// costs a lock set, scope hint, summary lock, publication and COMMIT, which dominated burst publication age at 16.
+const resourceCohortSize = 100
 
 // The selected-ID union avoids repeating an unrelated pending-scope scan per leaf.
 const resourceBatchHintsSQL = `WITH candidates AS MATERIALIZED (
