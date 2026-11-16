@@ -1026,18 +1026,6 @@ func repairTotalsOwnership(ctx context.Context, a *App, id string) error {
 	}
 }
 
-// resourceApply applies or subtracts one contribution's support on its own (tests; replacements use resourceDelta).
-func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) error {
-	if !c.Included || c.ProjectId == nil {
-		return nil
-	}
-	d := newResourceDelta(*c.ProjectId)
-	if err := d.add(c, sign); err != nil {
-		return err
-	}
-	return d.flush(q)
-}
-
 // resourcePreparedHeader reads only fixed-size metric support and indexed extremes. Detail support
 // counts are maintained during replacement, so high-cardinality tools/prices never expand the header.
 func resourcePreparedHeader(q *Request, p string) (out contract.PreparedHeaderV1, resultErr error) {

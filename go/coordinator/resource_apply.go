@@ -32,6 +32,7 @@ type resourceDelta struct {
 type resourceMetricDelta struct {
 	present, expected int64
 	sum               string
+	scale             int // numeric addition keeps the larger scale; the net sum keeps it too
 	reasons           map[string]int64
 }
 type resourceExtremeKey struct {
@@ -46,6 +47,7 @@ type resourceCostOp struct {
 }
 type resourceCostDelta struct {
 	value        string
+	scale        int
 	usages, refs int64
 	ops          []resourceCostOp // every change in order
 	sequential   bool             // an unknown amount or a subtract: written one by one, see resourceDelta
@@ -58,6 +60,25 @@ type resourcePriceKey struct {
 func newResourceDelta(project string) *resourceDelta {
 	return &resourceDelta{project: project, metrics: map[[2]string]*resourceMetricDelta{}, extremes: map[resourceExtremeKey]int64{},
 		tools: map[[2]string]*resourceCountDelta{}, costs: map[[2]string]*resourceCostDelta{}, prices: map[resourcePriceKey]int64{}}
+}
+
+// resourceScale is the number of fraction digits of a decimal string.
+func resourceScale(v string) int {
+	if i := strings.IndexByte(v, '.'); i >= 0 {
+		return len(v) - i - 1
+	}
+	return 0
+}
+
+// resourceAtScale pads a trimmed decimal to scale fraction digits, as PostgreSQL numeric addition would store it.
+func resourceAtScale(v string, scale int) string {
+	if have := resourceScale(v); have < scale {
+		if have == 0 {
+			v += "."
+		}
+		v += strings.Repeat("0", scale-have)
+	}
+	return v
 }
 
 func resourceSigned(v string, sign int64) string {
@@ -103,7 +124,7 @@ func (d *resourceDelta) add(c contract.ResourceContributionV1, sign int64) error
 			if err != nil {
 				return err
 			}
-			x.sum = s
+			x.sum, x.scale = s, max(x.scale, resourceScale(*m.Value))
 		}
 		if m.Expected {
 			x.expected += sign
@@ -140,7 +161,7 @@ func (d *resourceDelta) add(c contract.ResourceContributionV1, sign int64) error
 			d.costs[key] = x
 		}
 		x.ops = append(x.ops, resourceCostOp{cost.Amount, cost.UnpricedCount, sign})
-		if cost.Amount == nil || sign < 0 {
+		if cost.Amount == nil || sign < 0 || cost.UnpricedCount < 0 {
 			x.sequential = true
 		}
 		if cost.Amount != nil {
@@ -148,7 +169,7 @@ func (d *resourceDelta) add(c contract.ResourceContributionV1, sign int64) error
 			if err != nil {
 				return err
 			}
-			x.value = s
+			x.value, x.scale = s, max(x.scale, resourceScale(*cost.Amount))
 		}
 		x.usages += sign * cost.UnpricedCount
 		x.refs += sign
@@ -259,23 +280,25 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 		if gains {
 			t = &up
 		}
-		t.m, t.b, t.p, t.e, t.s, t.r = append(t.m, k[0]), append(t.b, k[1]), append(t.p, x.present), append(t.e, x.expected), append(t.s, x.sum), append(t.r, string(jsonBytes(reasons)))
+		t.m, t.b, t.p, t.e, t.s, t.r = append(t.m, k[0]), append(t.b, k[1]), append(t.p, x.present), append(t.e, x.expected), append(t.s, resourceAtScale(x.sum, x.scale)), append(t.r, string(jsonBytes(reasons)))
 	}
 	if len(up.m) > 0 {
 		w.exec(`INSERT INTO resource_metric AS r(project_id,metric,basis,present_count,expected_count,sum_value,reasons)
  SELECT $1,d.m::resource_metric_name,d.b,d.p,d.e,d.s::numeric,d.r::jsonb FROM unnest($2::text[],$3::text[],$4::bigint[],$5::bigint[],$6::text[],$7::text[]) d(m,b,p,e,s,r)
  ON CONFLICT(project_id,metric,basis) DO UPDATE SET present_count=r.present_count+excluded.present_count,
-  expected_count=r.expected_count+excluded.expected_count,sum_value=r.sum_value+excluded.sum_value,reasons=resource_reasons_merge(r.reasons,excluded.reasons)`,
+  expected_count=r.expected_count+excluded.expected_count,sum_value=r.sum_value+excluded.sum_value,reasons=CASE WHEN excluded.reasons='{}' THEN r.reasons ELSE resource_reasons_merge(r.reasons,excluded.reasons) END`,
 			p, up.m, up.b, up.p, up.e, up.s, up.r)
 	}
 	if len(down.m) > 0 {
 		w.exec(`UPDATE resource_metric r SET present_count=r.present_count+d.p,expected_count=r.expected_count+d.e,sum_value=r.sum_value+d.s::numeric,
-  reasons=resource_reasons_merge(r.reasons,d.r::jsonb)
+  reasons=CASE WHEN d.r='{}' THEN r.reasons ELSE resource_reasons_merge(r.reasons,d.r::jsonb) END
  FROM unnest($2::text[],$3::text[],$4::bigint[],$5::bigint[],$6::text[],$7::text[]) d(m,b,p,e,s,r)
  WHERE r.project_id=$1 AND r.metric=d.m::resource_metric_name AND r.basis=d.b`, p, down.m, down.b, down.p, down.e, down.s, down.r)
-		// Only a key that lost something can become empty.
+	}
+	if touched := append(append([]string{}, up.m...), down.m...); len(touched) > 0 {
 		w.exec(`DELETE FROM resource_metric r USING unnest($2::text[],$3::text[]) d(m,b)
- WHERE r.project_id=$1 AND r.metric=d.m::resource_metric_name AND r.basis=d.b AND r.present_count=0 AND r.expected_count=0 AND r.reasons='{}'`, p, down.m, down.b)
+ WHERE r.project_id=$1 AND r.metric=d.m::resource_metric_name AND r.basis=d.b AND r.present_count=0 AND r.expected_count=0 AND r.reasons='{}'`,
+			p, touched, append(append([]string{}, up.b...), down.b...))
 	}
 
 	ekeys := make([]resourceExtremeKey, 0, len(d.extremes))
@@ -338,7 +361,7 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 		c, b, v      []string
 		usages, refs []int64
 	}
-	var cUp, cRest costRows
+	var cUp costRows
 	for _, k := range pairKeys(d.costs) {
 		x := d.costs[k]
 		if x.sequential {
@@ -356,13 +379,8 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 			}
 			continue
 		}
-		t := &cRest
-		if x.refs > 0 && x.usages >= 0 {
-			t = &cUp
-		} else if x.refs == 0 && x.usages == 0 && x.value == "0" {
-			continue
-		}
-		t.c, t.b, t.v, t.usages, t.refs = append(t.c, k[0]), append(t.b, k[1]), append(t.v, x.value), append(t.usages, x.usages), append(t.refs, x.refs)
+		t := &cUp // only known additions remain netted (see resourceDelta)
+		t.c, t.b, t.v, t.usages, t.refs = append(t.c, k[0]), append(t.b, k[1]), append(t.v, resourceAtScale(x.value, x.scale)), append(t.usages, x.usages), append(t.refs, x.refs)
 	}
 	if len(cUp.c) > 0 {
 		w.inserted(&costCount, `INSERT INTO resource_cost AS r(project_id,currency,basis,value,usages,references_count)
@@ -370,14 +388,6 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
  ON CONFLICT(project_id,currency,basis) DO UPDATE SET value=r.value+excluded.value,usages=r.usages+excluded.usages,references_count=r.references_count+excluded.references_count
  RETURNING (xmax=0)`, p, cUp.c, cUp.b, cUp.v, cUp.usages, cUp.refs)
 	}
-	if len(cRest.c) > 0 {
-		w.count(&costCount, -1, `DELETE FROM resource_cost r USING unnest($2::text[],$3::text[],$4::bigint[]) d(c,b,refs)
- WHERE r.project_id=$1 AND r.currency=d.c AND r.basis=d.b AND r.references_count+d.refs=0`, p, cRest.c, cRest.b, cRest.refs)
-		w.exec(`UPDATE resource_cost r SET value=r.value+d.v::numeric,usages=r.usages+d.u,references_count=r.references_count+d.refs
- FROM unnest($2::text[],$3::text[],$4::text[],$5::bigint[],$6::bigint[]) d(c,b,v,u,refs)
- WHERE r.project_id=$1 AND r.currency=d.c AND r.basis=d.b`, p, cRest.c, cRest.b, cRest.v, cRest.usages, cRest.refs)
-	}
-
 	pkeys := make([]resourcePriceKey, 0, len(d.prices))
 	for k := range d.prices {
 		pkeys = append(pkeys, k)

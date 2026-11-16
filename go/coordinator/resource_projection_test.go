@@ -1107,10 +1107,12 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	type simMetric struct {
 		present, expected int64
 		sum               string
+		scale             int
 		reasons           map[string]int64
 	}
 	type simCost struct {
 		value        *string
+		scale        int
 		usages, refs int64
 	}
 	var sum = func(a, b string) string {
@@ -1143,7 +1145,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 			}
 			if m.Value != nil {
 				x.present += sign
-				x.sum = sum(x.sum, resourceSigned(*m.Value, sign))
+				x.sum, x.scale = sum(x.sum, resourceSigned(*m.Value, sign)), max(x.scale, resourceScale(*m.Value))
 			}
 			if m.Expected {
 				x.expected += sign
@@ -1183,12 +1185,15 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 			x := costs[key]
 			if x == nil {
 				costs[key] = &simCost{value: cost.Amount, usages: cost.UnpricedCount, refs: 1}
+				if cost.Amount != nil {
+					costs[key].scale = resourceScale(*cost.Amount)
+				}
 			} else if sign < 0 && x.refs == 1 {
 				delete(costs, key)
 			} else {
 				if x.value != nil && cost.Amount != nil {
 					v := sum(*x.value, resourceSigned(*cost.Amount, sign))
-					x.value = &v
+					x.value, x.scale = &v, max(x.scale, resourceScale(*cost.Amount))
 				} else {
 					x.value = nil
 				}
@@ -1207,7 +1212,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	var mRows, eRows, tRows, cRows, pRows []any
 	for _, k := range pairKeys(metrics) {
 		x := metrics[k]
-		mRows = append(mRows, []any{k[0], k[1], x.present, x.expected, x.sum, x.reasons})
+		mRows = append(mRows, []any{k[0], k[1], x.present, x.expected, resourceAtScale(x.sum, x.scale), x.reasons})
 	}
 	for _, k := range pairKeys(extremes) {
 		mult := extremes[k]
@@ -1224,7 +1229,12 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	}
 	for _, k := range pairKeys(costs) {
 		x := costs[k]
-		cRows = append(cRows, []any{k[0], k[1], x.value, x.usages, x.refs})
+		var v *string
+		if x.value != nil {
+			padded := resourceAtScale(*x.value, x.scale)
+			v = &padded
+		}
+		cRows = append(cRows, []any{k[0], k[1], v, x.usages, x.refs})
 	}
 	pk := make([]string, 0, len(prices))
 	for k := range prices {
@@ -1252,10 +1262,10 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 		var out any
 		if e := json.Unmarshal([]byte(scalar(`SELECT jsonb_build_object(
  'summary',(SELECT jsonb_build_object('e',executions,'h',history_incomplete,'oc',other_calls,'oe',other_errors,'t',tool_count,'c',cost_count,'p',price_count) FROM resource_project_summary WHERE project_id='`+p+`'),
- 'metric',(SELECT jsonb_agg(jsonb_build_array(metric::text,basis,present_count,expected_count,trim_scale(sum_value)::text,reasons) ORDER BY metric::text COLLATE "C",basis COLLATE "C") FROM resource_metric WHERE project_id='`+p+`'),
+ 'metric',(SELECT jsonb_agg(jsonb_build_array(metric::text,basis,present_count,expected_count,sum_value::text,reasons) ORDER BY metric::text COLLATE "C",basis COLLATE "C") FROM resource_metric WHERE project_id='`+p+`'),
  'extreme',(SELECT jsonb_agg(jsonb_build_array(metric,value,multiplicity) ORDER BY metric COLLATE "C",value) FROM resource_extreme WHERE project_id='`+p+`'),
  'tool',(SELECT jsonb_agg(jsonb_build_array(connection,name,calls,errors,references_count) ORDER BY connection COLLATE "C",name COLLATE "C") FROM resource_tool WHERE project_id='`+p+`'),
- 'cost',(SELECT jsonb_agg(jsonb_build_array(currency,basis,trim_scale(value)::text,usages,references_count) ORDER BY currency COLLATE "C",basis COLLATE "C") FROM resource_cost WHERE project_id='`+p+`'),
+ 'cost',(SELECT jsonb_agg(jsonb_build_array(currency,basis,value::text,usages,references_count) ORDER BY currency COLLATE "C",basis COLLATE "C") FROM resource_cost WHERE project_id='`+p+`'),
  'price',(SELECT jsonb_agg(jsonb_build_array(currency,basis,price_id,observed_at,references_count) ORDER BY currency COLLATE "C",basis COLLATE "C",price_id COLLATE "C",observed_at) FROM resource_price_ref WHERE project_id='`+p+`'))::text`)), &out); e != nil {
 			t.Fatal(e)
 		}
@@ -1871,4 +1881,16 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 		t.Fatal("empty hints used database or invented rows", empty, e)
 	}
 	t.Logf("selected100/16 scopes equivalent; actual work-scope rows examined %.0f of %d, retained empty-page statistics; NULL/missing/moving/multi/duplicate exclusion, authoritative rejection, fallback and FORCE RLS passed", scopeRows, queueScopes)
+}
+
+// resourceApply applies or subtracts one contribution's support on its own (replacements use resourceDelta).
+func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) error {
+	if !c.Included || c.ProjectId == nil {
+		return nil
+	}
+	d := newResourceDelta(*c.ProjectId)
+	if err := d.add(c, sign); err != nil {
+		return err
+	}
+	return d.flush(q)
 }
