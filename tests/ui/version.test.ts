@@ -108,7 +108,7 @@ test('the open version overview recounts its ages on a timer', { skip: !process.
   const { chromium } = await import('playwright');
   const fixture = await build({ stdin: { contents: `
     import {render} from 'preact';import {AppShell} from './packages/ui/src/index.ts';
-    const version={current:'1.261115.5',tone:'neutral',updateReady:false,onUpdate:()=>{},rows:[{key:'gateway',part:'Gateway',icon:'shield',version:'1.261115.5',state:'ok',tone:'success',times:[{label:'checked',at:Date.now()-40000}]}]};
+    const checked=Date.now()-40000, info=now=>({current:'1.261115.5',tone:'neutral',updateReady:false,onUpdate:()=>{},at:info,rows:[{key:'gateway',part:'Gateway',icon:'shield',version:'1.261115.5',state:now-checked>60000?'unknown':'ok',tone:'success',times:[{label:'checked',at:checked,now}]}]}), version=info(Date.now());
     render(<AppShell nav={[]} current="tasks" onGo={()=>{}} waiting={0} user={{name:'Fixture person',onLogout:()=>{},version}}><p>Fixture work</p></AppShell>,document.body);
   `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
   const browser = await chromium.launch({ headless: true });
@@ -123,5 +123,6 @@ test('the open version overview recounts its ages on a timer', { skip: !process.
     await page.clock.runFor(10 * 60_000);
     assert.notEqual(await age.innerText(), first, 'the age moved on while the overview stayed open');
     assert.equal(await age.innerText(), '10m');
+    assert.equal(await page.locator('.ver-state').innerText(), 'unknown', 'the state counts from the same present as the age');
   } finally { await browser.close(); }
 });

@@ -137,7 +137,7 @@ export async function nextPage(key: string) {
     const now = e.state.value;
     if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
     const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
-    setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter, error: null });
+    setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter });
     putRows(rows, from); persist(key, e);
   } catch (err: any) {
     // A reload got there first, or is running and will replace the cursor.
@@ -145,6 +145,9 @@ export async function nextPage(key: string) {
     if (err instanceof OpError && err.status === 400 && !e.cursorReset) {
       // A reload that steps aside for a newer membership answer keeps the refused cursor: load once more.
       if (await loadList(e.kind, key, e.view, undefined, true)) await loadList(e.kind, key, e.view, undefined, true);
+      // The person is at the end: page on with the fresh cursor (the list may not grow, so nothing else would ask).
+      const fresh = e.state.value;
+      if (fresh && !fresh.error && fresh.nextAfter && fresh.nextAfter !== st.nextAfter) { e.paging = false; await nextPage(key); }
       return;
     }
     setList(key, e, { ...e.state.value, error: err.message });
