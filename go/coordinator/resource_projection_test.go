@@ -59,6 +59,11 @@ func TestResourceBisectCohort(t *testing.T) {
 	if batches > 2*7 {
 		t.Fatalf("one poison leaf in %d took %d cohort transactions", len(ids), batches)
 	}
+	batches, singles = 0, 0
+	err = resourceBisectCohort(ids, func([]string) error { batches++; return errResourceClearing }, func(string) error { singles++; return nil })
+	if err != nil || batches != 1 || singles != len(ids) {
+		t.Fatalf("a failure of every leaf must not bisect: err=%v batches=%d singles=%d", err, batches, singles)
+	}
 	if !strings.Contains(resourceCandidatesSQL, "LIMIT "+strconv.Itoa(resourceCohortSize)+") candidates") {
 		t.Fatal("cohort size must equal the pass bound in resourceCandidatesSQL")
 	}

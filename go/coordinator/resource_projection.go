@@ -921,23 +921,28 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 	return finalErr
 }
 
-// A failed/uncertain cohort left no acknowledged subset; durable UUID claims make replay safe even if
-// COMMIT succeeded but its response was lost. Halves are retried as cohorts, so one poison leaf costs about
-// 2*log2(n) transactions and the healthy rest keeps its amortization; a single leaf takes the bounded
-// independent path with its own attempts and backoff.
+// A failed/uncertain cohort left no acknowledged subset; durable UUID claims make replay safe even if COMMIT
+// succeeded but its response was lost. A leaf-attributable failure is retried in halves, so one poison leaf costs
+// about 2*log2(n) cohort transactions and the healthy rest keeps its amortization. A failure that hits every leaf
+// (clearing, cancellation) goes straight to the single path, as before; a single leaf takes the bounded independent
+// path with its own attempts and backoff.
 func resourceBisectCohort(ids []string, batch func([]string) error, single func(string) error) error {
 	if len(ids) == 1 {
 		return single(ids[0])
 	}
-	if batch(ids) == nil {
+	err := batch(ids)
+	if err == nil {
 		return nil
 	}
-	mid := len(ids) / 2
-	first, second := resourceBisectCohort(ids[:mid], batch, single), resourceBisectCohort(ids[mid:], batch, single)
-	if second != nil {
-		return second
+	if errors.Is(err, errResourceClearing) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		var all []error
+		for _, id := range ids {
+			all = append(all, single(id))
+		}
+		return errors.Join(all...)
 	}
-	return first
+	mid := len(ids) / 2
+	return errors.Join(resourceBisectCohort(ids[:mid], batch, single), resourceBisectCohort(ids[mid:], batch, single))
 }
 
 func resourceErrorClass(err error) string {
