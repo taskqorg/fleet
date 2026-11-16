@@ -8,6 +8,7 @@ The component groups its implementation by domain: projects, tasks, sessions and
 
 ## Interface
 
+- [`client_errors.go`](client_errors.go) owns browser errors ([telemetry §9](../../docs/designs/fleet-telemetry.md#9-browser-errors)): `client_error_report` (any signed-in person, strict byte limits, person from the session) upserts a `client_error` group by fingerprint and keeps its latest 20 `client_error_report` rows in the coordinator's own scope; a new group prunes groups unseen for 30 days or beyond 1,000 and opens the owner problem `problem:client-error:<fingerprint>`. `client_errors_list` and `client_error_get` need full access.
 - [`versions.go`](versions.go) exposes `system_versions`: installed and offered releases, the selected UI, RLS-visible hosts and timestamped asynchronous gateway probes. Missing release comparisons and pending probes remain unknown.
 
 - [`main`](./main.go) starts `App` after migration and serves only on `127.0.0.1`; [`App.routes`](./registry.go) is the HTTP entry point. [`ops.go`](./ops.go) registers named operations and HTTP routes, applies request decoding, authorization and transactions.

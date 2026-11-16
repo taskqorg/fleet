@@ -6,6 +6,174 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// ClientError: One browser error group (docs/designs/fleet-telemetry.md section 9): reports with the same fingerprint (name, message and normalized top stack frame). firstSeen and lastSeen are RFC 3339 server receive times; count sums the reports' repeat counts; people are the signed-in people who hit it (at most 100), versions the app versions it was seen in (latest last, at most 20). questionId: the needs-you problem question that holds its cause, null when none.
+type ClientError struct {
+	Count         int64             `json:"count"`
+	Fingerprint   string            `json:"fingerprint"`
+	FirstSeen     string            `json:"firstSeen"`
+	LastPath      string            `json:"lastPath"`
+	LastSeen      string            `json:"lastSeen"`
+	LastUserAgent string            `json:"lastUserAgent"`
+	LastVersion   string            `json:"lastVersion"`
+	Message       string            `json:"message"`
+	Name          string            `json:"name"`
+	People        []string          `json:"people"`
+	QuestionId    *string           `json:"questionId"`
+	Source        ClientErrorSource `json:"source"`
+	TopFrame      string            `json:"topFrame"`
+	Versions      []string          `json:"versions"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ClientError) Validate() error {
+	if v.People == nil {
+		return Missing("people")
+	}
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	if v.Versions == nil {
+		return Missing("versions")
+	}
+	return nil
+}
+
+// ClientErrorGetReply: reports: the latest retained reports of the group (at most 20), newest first.
+type ClientErrorGetReply struct {
+	Error   ClientError         `json:"error"`
+	Reports []ClientErrorReport `json:"reports"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ClientErrorGetReply) Validate() error {
+	if err := Check(&v.Error, "error"); err != nil {
+		return err
+	}
+	if v.Reports == nil {
+		return Missing("reports")
+	}
+	for i := range v.Reports {
+		if err := Check(&v.Reports[i], "reports"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type ClientErrorGetRequest struct {
+	Fingerprint string `json:"fingerprint"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ClientErrorGetRequest) Validate() error {
+	return nil
+}
+
+// ClientErrorReport: One received report: at is the server receive time, clientAt the tab's time of the first occurrence it counts; person comes from the session, never from the body.
+type ClientErrorReport struct {
+	At        string            `json:"at"`
+	ClientAt  string            `json:"clientAt"`
+	Count     int64             `json:"count"`
+	Path      string            `json:"path"`
+	Person    string            `json:"person"`
+	Source    ClientErrorSource `json:"source"`
+	Stack     string            `json:"stack"`
+	UserAgent string            `json:"userAgent"`
+	Version   string            `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ClientErrorReport) Validate() error {
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ClientErrorReportReply: count: the group's total after this report; first: this report created the group (and its needs-you problem).
+type ClientErrorReportReply struct {
+	Count       int64  `json:"count"`
+	Fingerprint string `json:"fingerprint"`
+	First       bool   `json:"first"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ClientErrorReportReply) Validate() error {
+	return nil
+}
+
+// ClientErrorReportRequest: Sent by the operator app for an uncaught error, an unhandled rejection or a render crash. Bytes: name 1..200, message <= 2000, stack <= 8192, path 1..2048 starting with /, version <= 200, userAgent <= 512; at RFC 3339; count 1..1000000 (repeats in the tab since its last report of this fingerprint). A larger field is 400, never truncated by the server. The person is the session's.
+type ClientErrorReportRequest struct {
+	At        string            `json:"at"`
+	Count     int64             `json:"count"`
+	Message   string            `json:"message"`
+	Name      string            `json:"name"`
+	Path      string            `json:"path"`
+	Source    ClientErrorSource `json:"source"`
+	Stack     string            `json:"stack"`
+	UserAgent string            `json:"userAgent"`
+	Version   string            `json:"version"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ClientErrorReportRequest) Validate() error {
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ClientErrorSource string
+
+const (
+	ClientErrorSourceError     ClientErrorSource = "error"
+	ClientErrorSourceRejection ClientErrorSource = "rejection"
+	ClientErrorSourceRender    ClientErrorSource = "render"
+)
+
+// ClientErrorSourceValues lists every ClientErrorSource in schema order.
+var ClientErrorSourceValues = []ClientErrorSource{ClientErrorSourceError, ClientErrorSourceRejection, ClientErrorSourceRender}
+
+// Valid: v is one of the schema's values.
+func (v ClientErrorSource) Valid() bool {
+	for _, x := range ClientErrorSourceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+type ClientErrorsListReply struct {
+	Errors []ClientError `json:"errors"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ClientErrorsListReply) Validate() error {
+	if v.Errors == nil {
+		return Missing("errors")
+	}
+	for i := range v.Errors {
+		if err := Check(&v.Errors[i], "errors"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ClientErrorsListRequest: Newest lastSeen first. since: RFC 3339, groups seen at or after it; version: groups seen in that app version; limit defaults to 50, at most 500.
+type ClientErrorsListRequest struct {
+	Fingerprint *string `json:"fingerprint,omitempty"`
+	Limit       *int64  `json:"limit,omitempty"`
+	Since       *string `json:"since,omitempty"`
+	Version     *string `json:"version,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ClientErrorsListRequest) Validate() error {
+	return nil
+}
+
 // Finding: One rule result of the last rules pass (fleet-telemetry.md section 6). since: when the rule first fired for this cause (RFC 3339). exemplars: trace ids. groupCause: the absence cause it folds into (no question of its own).
 type Finding struct {
 	Baseline    *float64 `json:"baseline,omitempty"`
@@ -335,9 +503,12 @@ func (v TelemetryWindow) Valid() bool {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"telemetry_findings": {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"client_error_get":    {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"properties\":{\"fingerprint\":{\"type\":\"string\"}},\"required\":[\"fingerprint\"],\"type\":\"object\"}")},
+		"client_error_report": {Read: false, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"Sent by the operator app for an uncaught error, an unhandled rejection or a render crash. Bytes: name 1..200, message \\u003c= 2000, stack \\u003c= 8192, path 1..2048 starting with /, version \\u003c= 200, userAgent \\u003c= 512; at RFC 3339; count 1..1000000 (repeats in the tab since its last report of this fingerprint). A larger field is 400, never truncated by the server. The person is the session's.\",\"properties\":{\"at\":{\"type\":\"string\"},\"count\":{\"minimum\":1,\"type\":\"integer\"},\"message\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"},\"source\":{\"enum\":[\"error\",\"rejection\",\"render\"],\"type\":\"string\"},\"stack\":{\"type\":\"string\"},\"userAgent\":{\"type\":\"string\"},\"version\":{\"type\":\"string\"}},\"required\":[\"name\",\"message\",\"stack\",\"path\",\"version\",\"userAgent\",\"at\",\"count\",\"source\"],\"type\":\"object\"}")},
+		"client_errors_list":  {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"Newest lastSeen first. since: RFC 3339, groups seen at or after it; version: groups seen in that app version; limit defaults to 50, at most 500.\",\"properties\":{\"fingerprint\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"since\":{\"type\":\"string\"},\"version\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_findings":  {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_summary":   {Read: false, Long: true, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_trace":     {Read: false, Long: true, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}
