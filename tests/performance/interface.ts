@@ -165,6 +165,25 @@ const pgSnapshot = (c: Coordinator) => JSON.parse(c.sql(`SELECT json_build_objec
 
 // Production serves the app over HTTP/2 (Cloudflare). `h2` gives the measurement origin the same multiplexed transport
 // with an ephemeral self-signed loopback certificate; `h1` keeps the HTTP/1.1 per-origin socket queue of earlier cases.
+/**
+ * Span exporter sink. Each complete INSERT body is written in one piece; an exporter request that aborts (it can time out
+ * while a synchronous seed step holds the event loop) is reported and dropped, never left as partial JSON or an
+ * unhandled error that ends the fixture.
+ */
+export function spanSink(spans: NodeJS.WritableStream, incomplete: (error: string) => void) {
+  return http.createServer(async (req, res) => {
+    try {
+      const insert = (new URL(req.url!, 'http://localhost').searchParams.get('query') ?? '').startsWith('INSERT INTO span ');
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) if (insert) chunks.push(Buffer.from(chunk));
+      if (insert) spans.write(Buffer.concat(chunks));
+      res.end();
+    } catch (error) {
+      incomplete(String(error));
+      res.destroy();
+    }
+  });
+}
 export type Transport = 'h1' | 'h2';
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'http2-settings', 'te', 'host']);
 /** Drop pseudo, hop-by-hop and Connection-listed headers (RFC 9110 7.6.1), which HTTP/2 forbids. */
@@ -216,11 +235,7 @@ export async function serve(o: { out: string; history: number; projects: number;
   const spans = createWriteStream(resolve(o.out, 'spans.jsonl'), { flags: 'a' });
   // Capture REAL coordinator spans through its normal wire exporter. SELECT/schema calls get
   // empty success; this sink is not a ClickHouse correctness/performance qualification.
-  const sink = http.createServer(async (req, res) => {
-    const query = new URL(req.url!, 'http://localhost').searchParams.get('query') ?? '';
-    for await (const chunk of req) if (query.startsWith('INSERT INTO span ')) spans.write(chunk);
-    res.end();
-  });
+  const sink = spanSink(spans, error => { if (!log.writableEnded && !log.destroyed) emit('span-export-incomplete', { error }); });
   await new Promise<void>(r => sink.listen(0, '127.0.0.1', r));
   const pgdata = process.env.FLEET_TRIAL_PGDATA!;
   if (!existsSync(resolve(pgdata, 'PG_VERSION'))) {

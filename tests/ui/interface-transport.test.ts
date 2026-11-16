@@ -86,3 +86,23 @@ test('browse creates its own output directory before anything else', async () =>
     assert.ok(existsSync(out), 'a fresh browser output path exists before evidence recorders open files in it');
   } finally { stub.close(); }
 });
+
+test('span sink keeps complete exporter bodies and survives an aborted one', async () => {
+  const { spanSink } = await import('../performance/interface.ts');
+  const { PassThrough } = await import('node:stream');
+  const spans = new PassThrough(), written: string[] = [], incomplete: string[] = [];
+  spans.on('data', c => written.push(String(c)));
+  const sink = spanSink(spans, e => incomplete.push(e));
+  await new Promise<void>(r => sink.listen(0, '127.0.0.1', r));
+  const port = (sink.address() as any).port, path = '/?query=' + encodeURIComponent('INSERT INTO span FORMAT JSONEachRow');
+  try {
+    const ok = await fetch('http://127.0.0.1:' + port + path, { method: 'POST', body: '{"a":1}\n{"a":2}\n' });
+    assert.equal(ok.status, 200);
+    const aborted = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-length': '1000' } });
+    aborted.on('error', () => {}); aborted.write('{"partial":'); await new Promise(r => setTimeout(r, 50)); aborted.destroy();
+    for (let i = 0; i < 100 && !incomplete.length; i++) await new Promise(r => setTimeout(r, 10));
+    assert.equal(incomplete.length, 1, 'the aborted exporter request is reported');
+    assert.deepEqual(written, ['{"a":1}\n{"a":2}\n'], 'only the complete body is written, in one piece');
+    assert.equal((await fetch('http://127.0.0.1:' + port + path, { method: 'POST', body: '{"a":3}\n' })).status, 200, 'the sink keeps serving');
+  } finally { sink.close(); }
+});
