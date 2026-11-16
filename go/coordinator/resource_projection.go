@@ -912,17 +912,32 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 			if e := resourceReplace(ctx, a, cohort[0]); e != nil {
 				finalErr = e
 			}
-		} else if e := resourceReplaceBatch(ctx, a, cohort); e != nil {
-			// A failed/uncertain cohort left no acknowledged subset. Durable UUID claims make
-			// replay safe even if COMMIT succeeded but its response was lost.
-			for _, id := range cohort {
-				if e := resourceReplaceAttempt(ctx, a, id, true); e != nil {
-					finalErr = e
-				}
-			}
+		} else if e := resourceBisectCohort(cohort,
+			func(part []string) error { return resourceReplaceBatch(ctx, a, part) },
+			func(id string) error { return resourceReplaceAttempt(ctx, a, id, true) }); e != nil {
+			finalErr = e
 		}
 	}
 	return finalErr
+}
+
+// A failed/uncertain cohort left no acknowledged subset; durable UUID claims make replay safe even if
+// COMMIT succeeded but its response was lost. Halves are retried as cohorts, so one poison leaf costs about
+// 2*log2(n) transactions and the healthy rest keeps its amortization; a single leaf takes the bounded
+// independent path with its own attempts and backoff.
+func resourceBisectCohort(ids []string, batch func([]string) error, single func(string) error) error {
+	if len(ids) == 1 {
+		return single(ids[0])
+	}
+	if batch(ids) == nil {
+		return nil
+	}
+	mid := len(ids) / 2
+	first, second := resourceBisectCohort(ids[:mid], batch, single), resourceBisectCohort(ids[mid:], batch, single)
+	if second != nil {
+		return second
+	}
+	return first
 }
 
 func resourceErrorClass(err error) string {

@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,46 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// Requirement: one poison leaf in a full cohort must not send every healthy leaf to a single transaction;
+// risk: a large failed cohort replays as one transaction per leaf, the overhead batching removes.
+func TestResourceBisectCohort(t *testing.T) {
+	ids := make([]string, resourceCohortSize)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("leaf-%03d", i)
+	}
+	var batches, singles int
+	committed := map[string]bool{}
+	poison := map[string]bool{ids[37]: true}
+	err := resourceBisectCohort(ids, func(part []string) error {
+		batches++
+		for _, id := range part {
+			if poison[id] {
+				return errors.New("poison")
+			}
+		}
+		for _, id := range part {
+			committed[id] = true
+		}
+		return nil
+	}, func(id string) error {
+		singles++
+		if poison[id] {
+			return errors.New("poison")
+		}
+		committed[id] = true
+		return nil
+	})
+	if err == nil || singles != 1 || len(committed) != len(ids)-1 || committed[ids[37]] {
+		t.Fatalf("err=%v singles=%d committed=%d", err, singles, len(committed))
+	}
+	if batches > 2*7 {
+		t.Fatalf("one poison leaf in %d took %d cohort transactions", len(ids), batches)
+	}
+	if !strings.Contains(resourceCandidatesSQL, "LIMIT "+strconv.Itoa(resourceCohortSize)+") candidates") {
+		t.Fatal("cohort size must equal the pass bound in resourceCandidatesSQL")
+	}
+}
 
 // Requirement: bounded cohorts preserve project order and every selected candidate;
 // risk: interleaving removes amortization, mixes uncertain scopes or starves later work.
