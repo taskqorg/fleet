@@ -18,9 +18,7 @@ func init() {
 	longRoute("POST /api/hosts/accounts/report", func(q *Request) (any, error) {
 		return typedReceipt(q, noEnd(accountReceiptIn))
 	})
-	longRoute("POST /api/hosts/project-operations", func(q *Request) (any, error) {
-		return typedReceipt(q, noEnd(projectReceiptIn))
-	})
+	longRoute("POST /api/hosts/project-operations", projectReceiptRoute)
 	longRoute("POST /api/hosts/delegations", func(q *Request) (any, error) {
 		return typedReceipt(q, noEnd(q.app.childReceiptIn))
 	})
@@ -163,6 +161,40 @@ func accountReceiptIn(q *Request, b *contract.AccountReceipt) (any, error) {
 		return accountCatalogue(q, b.AccountCatalogue, astr(p["nativeHostId"]))
 	}
 	return accountReport(q, b.AccountObservation, astr(p["nativeHostId"]))
+}
+
+// projectReceiptRoute: a registered read operation (project_context, project_list, catalogue, ...) runs in a read
+// transaction without GLOBAL, as on the ops and agent-tool paths; a slow read must not queue every host poll and receipt
+// behind it. Every other operation keeps the GLOBAL write transaction.
+func projectReceiptRoute(q *Request) (any, error) {
+	b, err := decodeValid[contract.ProjectReceipt](q.body, true)
+	if err != nil {
+		return nil, err
+	}
+	if !readProjectOperation(string(b.Delegation.Operation)) {
+		return typedReceipt(q, noEnd(projectReceiptIn))
+	}
+	var out any
+	err = q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error {
+		q.tx = tx
+		defer func() { q.tx = nil }()
+		var err error
+		out, err = projectReceiptIn(q, b)
+		return err
+	})
+	return out, err
+}
+
+// readProjectOperation: the operation is registered as a read (account_list has its own native-agent path).
+func readProjectOperation(name string) bool {
+	if name == "account_list" {
+		return false
+	}
+	if op, ok := projectOps[name]; ok {
+		return op.read
+	}
+	op, ok := operations[name]
+	return ok && op.read
 }
 
 // projectReceiptIn: POST /api/hosts/project-operations (contract.ProjectReceipt), a project operation of a native agent.
