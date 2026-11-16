@@ -1,6 +1,6 @@
 # List view
 
-**Code.** `TaskListView`. It is a pattern because results, executions and trials reuse the same composition with their own columns.
+**Code.** `TaskListView`. It is a pattern because conversations, results, executions and trials reuse the same composition with their own columns. Conversations use the whole composition with their own presets, groupings, sorts and row facts ([conversations](../pages/conversations.md)).
 
 **Job.** Find, triage and act on many items fast, with the view each person prefers (D9, OR-4, OR-9, OR-11, OR-12).
 

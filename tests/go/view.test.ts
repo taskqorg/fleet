@@ -4,7 +4,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startCoordinator} from '../harness.ts';
-import {formatView, parseView, TASK_SORTS, type View} from '../../packages/view-url/view-url.ts';
+import {formatView, parseView, TASK_SORTS, SESSION_SORTS, SESSION_GROUPS, type View} from '../../packages/view-url/view-url.ts';
 
 const ORIGIN = 'https://fleet.trial.test';
 
@@ -22,6 +22,7 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
       {view: 'tasks', group: 'priority'}, {view: 'tasks', group: 'project'},
       {view: 'tasks', sort: 'created'}, {view: 'tasks', sort: '-changed'},
       {view: 'conversations', archived: true, state: ['running'], q: 'x+y', extra: {tab: 'log', 'odd key': 'é'}},
+      {view: 'conversations', group: 'state', sort: 'created'}, {view: 'conversations', group: 'project', sort: '-activity'}, {view: 'conversations', group: 'none', sort: '-created'},
       {view: 'results', state: ['stored'], project: ['p1']},
       {view: 'hosts', focus: 'pds18'},
       {view: 'hosts', focus: '..'},
@@ -40,6 +41,8 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
       [{view: {view: 'tasks', state: ['nope']}}, /state must be a list of/],
       [{view: {view: 'hosts', q: 'x'}}, /q is not a key of the hosts view/],
       [{view: {view: 'tasks', sort: 'title'}}, new RegExp('sort must be one of ' + [...TASK_SORTS].sort().join(', ') + '$')],
+      [{view: {view: 'conversations', sort: 'changed'}}, new RegExp('sort must be one of ' + [...SESSION_SORTS].sort().join(', ') + '$')],
+      [{view: {view: 'conversations', group: 'priority'}}, new RegExp('group must be one of ' + [...SESSION_GROUPS].sort().join(', ') + '$')],
       [{url: 'https://elsewhere.test/tasks'}, /Not a Fleet view URL/],
       [{url: '/settings'}, /Not a Fleet view URL/],
       [{}, /exactly one of view or url/],
