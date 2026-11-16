@@ -2285,13 +2285,19 @@ CREATE INDEX question_cause ON question(cause, seq) WHERE cause IS NOT NULL;
 
 -- migration 63: every prepared read reports its project's oldest pending work. Joining all of a project's pending scopes
 -- to resource_work made that read cost grow with the backlog, and 50 readers' reads then starved the processor that
--- drains it. first_pending_at is immutable per work identity, so each scope row carries it, indexed per project; failed
--- work (normally none) has its own partial index.
+-- drains it. first_pending_at does not change in normal operation, so each scope row carries a copy (kept equal by a
+-- trigger), indexed per project. Rows written by an older coordinator during a rolling start keep NULL and are read through the old join
+-- over their own small partial index; failed work (normally none) has its own partial index.
+SELECT set_config('fleet.project_ids','*',true);
 ALTER TABLE resource_work_scope ADD COLUMN first_pending_at timestamptz;
 UPDATE resource_work_scope ws SET first_pending_at=w.first_pending_at FROM resource_work w WHERE w.work_id=ws.work_id;
-ALTER TABLE resource_work_scope ALTER COLUMN first_pending_at SET NOT NULL;
-CREATE INDEX resource_work_scope_oldest ON resource_work_scope(project_id,first_pending_at);
+CREATE INDEX resource_work_scope_oldest ON resource_work_scope(project_id,first_pending_at) WHERE first_pending_at IS NOT NULL;
+CREATE INDEX resource_work_scope_unstamped ON resource_work_scope(project_id) WHERE first_pending_at IS NULL;
 CREATE INDEX resource_work_failed ON resource_work(first_pending_at,work_id) WHERE last_error_class IS NOT NULL;
+CREATE FUNCTION resource_work_pending_copy() RETURNS trigger LANGUAGE plpgsql SET search_path=public AS $$
+BEGIN UPDATE resource_work_scope SET first_pending_at=NEW.first_pending_at WHERE work_id=NEW.work_id; RETURN NULL; END $$;
+CREATE TRIGGER resource_work_pending_copy AFTER UPDATE OF first_pending_at ON resource_work FOR EACH ROW
+ WHEN (NEW.first_pending_at IS DISTINCT FROM OLD.first_pending_at) EXECUTE FUNCTION resource_work_pending_copy();
 CREATE OR REPLACE FUNCTION resource_enqueue_source(eid text, old_project text, new_project text) RETURNS void
 LANGUAGE plpgsql SET search_path=public AS $$
 DECLARE wid uuid; pending timestamptz;

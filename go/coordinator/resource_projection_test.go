@@ -328,9 +328,26 @@ func TestResourcePostgres(t *testing.T) {
 	})
 	// The application role cannot ANALYZE here, so the plan shape follows stale statistics; it must still read
 	// one table through the per-project index instead of joining every pending scope to resource_work.
-	if !strings.Contains(plan, "resource_work_scope_oldest") || strings.Contains(plan, `"resource_work"`) {
-		t.Fatalf("oldest pending read does not use the per-project index alone: %s", plan)
+	if strings.Contains(plan, `"resource_work"`) {
+		t.Fatalf("oldest pending read joins resource_work: %s", plan)
 	}
+	// An older coordinator's unstamped scope row is still counted, and the copied time cannot drift.
+	tx(func(q *Request) error {
+		return exec(q, `WITH w AS (INSERT INTO resource_work(execution_id,first_pending_at) VALUES('legacy-unstamped',$1::timestamptz-interval '1 hour') RETURNING work_id)
+ INSERT INTO resource_work_scope(work_id,project_id) SELECT work_id,'A' FROM w`, oldest)
+	})
+	if v := read(true); v.OldestPendingAt == nil || !v.OldestPendingAt.Equal(oldest.Add(-time.Hour)) {
+		t.Fatalf("unstamped legacy scope lost: %+v", v)
+	}
+	tx(func(q *Request) error {
+		return exec(q, `UPDATE resource_work SET first_pending_at=$1::timestamptz-interval '2 hours' WHERE execution_id='p-e'`, oldest)
+	})
+	if v := read(true); v.OldestPendingAt == nil || !v.OldestPendingAt.Equal(oldest.Add(-2*time.Hour)) {
+		t.Fatalf("scope copy drifted from resource_work: %+v", v)
+	}
+	tx(func(q *Request) error {
+		return exec(q, `DELETE FROM resource_work WHERE execution_id='legacy-unstamped'`)
+	})
 	tx(func(q *Request) error {
 		return exec(q, `DELETE FROM resource_work WHERE execution_id LIKE 'backlog-%'`)
 	})
