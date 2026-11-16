@@ -12,7 +12,7 @@ import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
 import { chunks, compareKeys } from '../lists.ts';
-import { listKey, formatView, DEFAULT_TASK_SORT, type View } from '../../../packages/view-url/view-url.ts';
+import { listKey, formatView, DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 import { usePins, useViews, withFocus, setFocus } from '../prefs.ts';
 import { ScopedRollupDetails, buildExecTree, resourceTotals } from './resources.tsx';
@@ -28,6 +28,7 @@ const ms = (v: string | number | null | undefined) => (v === null || v === undef
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 
 // System presets (P5): fixed, shown before the person's saved views. Running: every non-terminal state.
+// A system preset sets the state filter only; grouping, sort, projects and search stay as the person set them.
 const SYSTEM_VIEWS = [{ name: 'Needs me', view: { view: 'tasks' as const, state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'tasks' as const, state: ['queued', 'in_progress', 'waiting', 'held', 'paused'] } }];
 
 export function Tasks({ id }: { id?: string }) {
@@ -37,9 +38,9 @@ export function Tasks({ id }: { id?: string }) {
   const pins = usePins('tasks');
   const views = useViews('tasks', SYSTEM_VIEWS);
   const list = useList('tasks', view);
-  const group = view.group ?? 'priority', states = (view.state ?? []) as StateOf<'task'>[];
+  const group = view.group ?? DEFAULT_TASK_GROUP, states = (view.state ?? []) as StateOf<'task'>[];
   // Rows on screen may still be the previous list (pending): headers and chips follow that list's own grouping.
-  const rowsGroup = list.shownView.group ?? 'priority';
+  const rowsGroup = list.shownView.group ?? DEFAULT_TASK_GROUP;
   const rows = list.rows as TaskRow[];
   const sel = view.sel ?? [], toggleSel = (x: string) => set({ sel: sel.includes(x) ? sel.filter(i => i !== x) : [...sel, x] });
   // Selection mode (OR-37): a checkbox column left of the state, the action bar in place of group and sort.
@@ -108,8 +109,12 @@ export function Tasks({ id }: { id?: string }) {
   const now = Date.now();
   const filtered = !!(states.length || view.q || view.project?.length), focused = !view.project?.length && !!withFocus(view).project?.length;
   const presetKey = (v: View) => listKey({ ...v, view: 'tasks' });
-  const activePreset = views.list.find(v => presetKey(v.view) === listKey(view))?.name ?? null;
-  const pick = (n: string) => { const p = views.list.find(x => x.name === n)!; set({ state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, preset: n }); };
+  const sameStates = (a?: string[], b?: string[]) => [...a ?? []].sort().join() === [...b ?? []].sort().join();
+  const activePreset = views.list.find(v => v.system ? sameStates(v.view.state, view.state) && !!view.state?.length : presetKey(v.view) === listKey(view))?.name ?? null;
+  const pick = (n: string) => {
+    const p = views.list.find(x => x.name === n)!;
+    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, preset: n });
+  };
   const listPane = <>
     <header class="page-h"><h1>Tasks</h1><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
     <section class="panel">

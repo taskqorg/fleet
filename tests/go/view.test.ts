@@ -19,7 +19,7 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
       {url: ORIGIN + '/tasks?project=fleet&state=failed', path: '/tasks?project=fleet&state=failed'});
     const views: View[] = [
       {view: 'tasks', state: ['held', 'failed', 'failed'], project: [null, 'b', 'a', '-'], group: 'state', q: 'hero name, 100% & more', sel: ['t2', 't1'], preset: 'mine', focus: 'a/b:c@d'},
-      {view: 'tasks', group: 'priority'},
+      {view: 'tasks', group: 'priority'}, {view: 'tasks', group: 'project'},
       {view: 'tasks', sort: 'created'}, {view: 'tasks', sort: '-changed'},
       {view: 'conversations', archived: true, state: ['running'], q: 'x+y', extra: {tab: 'log', 'odd key': 'é'}},
       {view: 'results', state: ['stored'], project: ['p1']},

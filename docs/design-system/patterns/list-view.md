@@ -7,7 +7,7 @@
 **Composition, from top to bottom:**
 1. **[Filter bar](../controls/filter-bar.md), first line:** search as an icon (OR-31) that takes the query syntax (OR-36), chips of filters that came with a link, Clear, and the count "84 of 1,240".
 2. **Second line:**
-   * saved views (OR-33): system presets first (Tasks "Running": every state that is not terminal), then the person's own with remove, plus "Save view";
+   * saved views (OR-33): system presets first (Tasks "Needs me" and "Running": every state that is not terminal), then the person's own with remove, plus "Save view" (its name field closes with Esc or its cross). A system preset sets only the state filter and leaves grouping, sort, projects and search as they are; it shows active whenever the states match. A personal view restores everything it saved;
    * [state counters](../controls/state-counters.md): totals per state, click to filter;
    * Group (registry icon with tooltip, OR-35): priority, state, project, agent, host, or none (D11);
    * Sort (OR-35): changed or created, with a direction toggle; Tasks default to recently changed first. A saved view stores grouping and sort.
@@ -19,7 +19,7 @@
    * a Pinned group at the top holds pinned rows (OR-12), whatever the filter, search or grouping (they are read by id, unfiltered); each pinned row shows `RowPin` before its state icon, and a click on it unpins. Only pinned rows have this column (row class `pin-row`); other rows do not move.
 
 **Behaviour.**
-* Default grouping is by priority (D11). Grouping by state uses attention order: waiting, failed, in progress, queued, paused, completed, cancelled. Completed and cancelled start collapsed.
+* Tasks default to grouping by project and sorting by most recently changed first (owner, 2026-11-16); priority is a grouping (D11). Grouping by state uses attention order: waiting, failed, in progress, queued, paused, completed, cancelled. Completed and cancelled start collapsed.
 * Pinned items come first within their group.
 * The project focus (OR-34) narrows every list whose view names no projects.
 * The whole view (filters, states, grouping, sort, search) is in the URL; saved views and focus are stored on the server per person (`person_settings_*`, so agents use them too) ([principles §4](../principles.md#4-filters-and-search)).

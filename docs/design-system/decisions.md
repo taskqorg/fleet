@@ -114,7 +114,7 @@ Append only. Each entry: date, question, options, choice, reason.
 
 ## 2026-11-10 D11: Owner picks on open questions (a)–(c), task row order, harness counts
 
-* **(a) Priority:** A2, generalised. The operator chooses the grouping: priority, state, project, agent, host or none, alongside quick state filters and saved views ([list view](patterns/list-view.md)). Default grouping is priority. The `p0` marker appears in rows only when the list is not grouped by priority (OR-17).
+* **(a) Priority:** A2, generalised. The operator chooses the grouping: priority, state, project, agent, host or none, alongside quick state filters and saved views ([list view](patterns/list-view.md)). Default grouping was priority; since 2026-11-16 it is project (owner). The `p0` marker appears in rows only when the list is not grouped by priority (OR-17).
 * **New rule OR-22:**
   * The state icon is the leftmost column.
   * The ID sits right after the title.

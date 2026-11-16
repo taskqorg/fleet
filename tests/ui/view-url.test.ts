@@ -7,7 +7,7 @@ const p = (u: string): View => { const v = parseView(u); assert.ok(v, 'not a vie
 const canon = (u: string) => formatView(p(u));
 
 test('round trip per view, canonical order of keys and values, defaults omitted', () => {
-  assert.equal(canon('/tasks?state=waiting,failed&group=priority&q=hero'), '/tasks?q=hero&state=failed,waiting');
+  assert.equal(canon('/tasks?state=waiting,failed&group=project&q=hero'), '/tasks?q=hero&state=failed,waiting');
   assert.equal(canon('/tasks/u1?sel=b,a,a&group=agent'), '/tasks/u1?group=agent&sel=a,b');
   assert.equal(canon('/conversations?archived=1&state=running'), '/conversations?archived=1&state=running');
   assert.equal(canon('/hosts/mac'), '/hosts/mac');
@@ -71,12 +71,12 @@ test('unknown keys kept in extra, written back, not part of the list key', () =>
 
 test('list key ignores focus, sel and preset; equal views give equal keys', () => {
   assert.equal(listKey(p('/tasks/x?sel=a&preset=P&state=b,a')), listKey(p('/tasks?state=a,b')));
-  assert.equal(listKey(p('/tasks?group=priority')), 'tasks');
+  assert.equal(listKey(p('/tasks?group=project')), 'tasks');
   assert.notEqual(listKey(p('/tasks?group=agent')), listKey(p('/tasks')));
 });
 
 test('page params map onto task_page and sessions_list inputs', () => {
-  assert.deepEqual(toPageParams(p('/tasks?q=hero&project=-&state=failed')), { filter: { state: ['failed'], search: 'hero', projectId: [null] }, group: 'priority', sort: '-changed' });
+  assert.deepEqual(toPageParams(p('/tasks?q=hero&project=-&state=failed')), { filter: { state: ['failed'], search: 'hero', projectId: [null] }, group: 'project', sort: '-changed' });
   assert.deepEqual(toPageParams(p('/conversations?state=running')), { filter: { state: ['running'], archived: false } });
 });
 

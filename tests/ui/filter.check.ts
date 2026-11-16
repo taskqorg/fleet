@@ -105,7 +105,12 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await step('flip sort back', `document.querySelector('[data-ui=sort-control] .pick-dir').click()`);
     rule(N, !new URL(origin + await url()).searchParams.has('sort'), 'sort direction did not flip back');
     rule(N, await page.$eval('[data-ui=sort-control] .pick-dir svg', e => e.getAttribute('class') ?? '').then(c => c.includes('narrow-wide')), 'newest-first icon does not show small ages first');
+    // A system preset sets the state filter only: the grouping and sort the person chose stay.
+    const groupBefore = new URL(origin + await url()).searchParams.get('group');
+    rule(N, !!groupBefore && groupBefore !== 'project', `the check needs a non-default grouping before the preset: ${groupBefore}`);
     await step('pick preset', `[...document.querySelectorAll('[data-ui=saved-views] button')].find(b=>/Running/.test(b.textContent)).click()`);
+    { const u = new URL(origin + await url()).searchParams; rule(N, u.get('group') === groupBefore && !!u.get('state'), `system preset changed the grouping: ${u}`); }
+    rule(N, await page.$eval('[data-ui=saved-views] .preset.on', e => /Running/.test(e.textContent ?? '')).catch(() => false), 'Running is not shown active with another grouping');
     const beforeFocus = await url();
     await step('focus first row', `document.querySelector('.vl-row .row-link').click()`, false);
     const focused = await url();
