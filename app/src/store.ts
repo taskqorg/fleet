@@ -44,7 +44,7 @@ const cursorNow = () => currentCursor() ?? 0;
 export function clearMemory() {
   records.clear(); holders.clear();
   for (const [key, e] of lists) { e.state.value = null; e.seq = 0; e.touchedWhileLoading.clear(); if (!e.mounted) lists.delete(key); else if (isAccessCurrent(accessGeneration())) void loadList(e.kind, key, e.view); }
-  for (const s of docs.values()) s.value = null;
+  discardDocReads(); for (const s of docs.values()) s.value = null;
   generation.value++;
 }
 onClear.add(clearMemory);
@@ -209,39 +209,75 @@ export function useList(kind: Kind, urlView: View) {
   };
 }
 
+/**
+ * Readers of one doc name share its reads; a doc name identifies its read, so they pass equivalent fetches (the Focus
+ * control and Projects both read `projects`). Every request for a read in one task (one feed batch reaching all readers,
+ * mounts in one render) becomes one request. Reads are never held back by a running one, and an answer is shown when it
+ * started after the one on screen, so a stalled or slow request neither blocks nor overwrites newer data; a later read's
+ * failure stays visible over an older answer. Clearing memory discards running reads and pending restores.
+ */
+type DocReader = { fetch: () => Promise<unknown> };
+type DocFlight = { readers: Set<DocReader>; started: number; shown: number; failed: number; scheduled: boolean; cleared: number };
+const flights = new Map<string, DocFlight>();
+function docSignal(name: string) { let s = docs.get(name); if (!s) docs.set(name, s = signal(null)); return s; }
+function restoreDoc(name: string, f: DocFlight) {
+  const s = docSignal(name), cleared = f.cleared;
+  void load<unknown>('doc:' + name).then(v => { if (v && flights.get(name) === f && f.cleared === cleared && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
+}
+async function startDoc(name: string, f: DocFlight) {
+  const reader = [...f.readers].pop(); if (!reader) return;
+  const read = ++f.started, generation = accessGeneration(), s = docSignal(name);
+  const newest = () => flights.get(name) === f && read > f.shown && isAccessCurrent(generation);
+  try {
+    await ensureAccessGeneration(); assertAccessGeneration(generation);
+    const d = await reader.fetch();
+    // A later read's failure stays visible over this older answer.
+    if (newest()) { f.shown = read; s.value = { data: d, restored: false, error: f.failed > read ? s.value?.error ?? null : null }; save('doc:' + name, d, currentCursor()); }
+  } catch (e: any) {
+    if (!newest() || read < f.failed) return; // newer data or a newer failure is already shown
+    f.failed = read;
+    s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e?.message ?? String(e) };
+    if (s.value.data === null) restoreDoc(name, f); // offline: show what was stored
+  }
+}
+/** Ask for a fresh read of a mounted doc; every ask in the same task sends one request. */
+export function readDoc(name: string) {
+  const f = flights.get(name); if (!f || f.scheduled) return;
+  f.scheduled = true;
+  queueMicrotask(() => { f.scheduled = false; void startDoc(name, f); });
+}
+/** Mount a reader: shows stored data first, then reads. Returns the release. */
+export function holdDoc(name: string, fetch: () => Promise<unknown>) {
+  let f = flights.get(name); if (!f) flights.set(name, f = { readers: new Set(), started: 0, shown: 0, failed: 0, scheduled: false, cleared: 0 });
+  const flight = f, reader: DocReader = { fetch }; flight.readers.add(reader);
+  if (!docSignal(name).value?.data) restoreDoc(name, flight);
+  readDoc(name);
+  // An effect re-run releases and mounts in one task; the flight and its running read survive that.
+  return () => { flight.readers.delete(reader); queueMicrotask(() => { if (!flight.readers.size && flights.get(name) === flight) flights.delete(name); }); };
+}
+function discardDocReads() { for (const f of flights.values()) { f.shown = f.failed = f.started; f.cleared++; } }
+
 /** Detail and page reads by name (task_get, session_get, overview, hosts). The last value stays visible while re-reading. */
 export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches: (c: Change) => boolean, refreshMs?: number) {
-  const reloadRef = useRef<() => void>(() => {});
   const fetchRef = useRef(fetch); fetchRef.current = fetch;
   const touchRef = useRef(touches); touchRef.current = touches;
-  const s = name ? (docs.get(name) ?? (docs.set(name, signal(null)), docs.get(name)!)) : null;
+  const reloadRef = useRef<() => void>(() => {});
+  const s = name ? docSignal(name) : null;
   const gen = generation.value;
   useEffect(() => {
-    if (!name || !s) return;
-    let live = true, seq = 0;
-    const get = async () => {
-      const mine = ++seq, generation = accessGeneration();
-      try { await ensureAccessGeneration(); assertAccessGeneration(generation); const d = await fetchRef.current(); if (isAccessCurrent(generation) && live && mine === seq) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); } }
-      catch (e: any) {
-        if (!isAccessCurrent(generation) || !live || mine !== seq) return;
-        s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e.message };
-        if (s.value.data === null) restoreDoc(); // offline: show what was stored
-      }
-    };
-    const restoreDoc = () => load<T>('doc:' + name).then(v => { if (live && v && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
-    reloadRef.current = get;
-    if (!s.value?.data) restoreDoc();
-    get();
-    const off = subscribe({ resync: get, changes: cs => { if (cs.some(c => touchRef.current(c))) get(); } });
-    const timer = refreshMs ? setInterval(get, refreshMs) : 0;
-    return () => { live = false; reloadRef.current = () => {}; off(); clearInterval(timer); };
+    if (!name) return;
+    const release = holdDoc(name, () => fetchRef.current());
+    reloadRef.current = () => readDoc(name);
+    const off = subscribe({ resync: () => readDoc(name), changes: cs => { if (cs.some(c => touchRef.current(c))) readDoc(name); } });
+    const timer = refreshMs ? setInterval(() => readDoc(name), refreshMs) : 0;
+    return () => { reloadRef.current = () => {}; release(); off(); clearInterval(timer); };
   }, [name, refreshMs, gen]);
   const v = s?.value ?? null;
   return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => reloadRef.current() };
 }
 
 /** For tests: the stored list under key and a record. */
-export const peek = { generation: () => generation.value, list: (key: string) => lists.get(key)?.state.value ?? null, record: (id: string) => records.get(id) ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
+export const peek = { generation: () => generation.value, doc: (name: string) => docs.get(name)?.value ?? null, list: (key: string) => lists.get(key)?.state.value ?? null, record: (id: string) => records.get(id) ?? null, mount: (kind: Kind, key: string, view: View) => { entry(kind, key, view).mounted++; } };
 
 // Prepared readers share scheduling by normalized request AND access generation.
 import type { ProjectResourcesReply, ProjectResourceItemsReply, ResourceProgress, ProjectResourceItemsRequest } from '../../contracts/generated/ops.ts';
