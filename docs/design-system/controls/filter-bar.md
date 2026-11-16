@@ -4,7 +4,7 @@
 
 **Purpose.** Narrows a list by project, task, experiment, host, account, agent or harness, state, kind, time range and cost. Remembers, saves and shares the view.
 
-**Anatomy.** First line: [search](search.md) as an icon (OR-31); chips of filters that came with a link ("task: 3f…  ×"); "Clear" (quiet, only with chips); the count "84 of 1,240" in `font-mono`, right aligned, shown only while a filter narrows the list (the Σ counter already gives the total, OR-17). Saved views follow the search on the first line. Second line: the [state counters](state-counters.md) quick filter (`counters`), alone. Third line: Group and Sort (`tools`).
+**Anatomy.** First line: [search](search.md) as an icon (OR-31); chips of filters that came with a link ("task: 3f…  ×"); "Clear" (quiet, only with chips); the count "84 of 1,240" in `font-mono`, right aligned, shown only while a filter narrows the list (the Σ counter already gives the total, OR-17). Saved views follow the search on the first line. Second line: the [state counters](state-counters.md) quick filter (`counters`), alone. Third line: Group and Sort (`tools`), then any switch between two lists of the same items, last: an icon-only toggle [button](button.md) pressed while on (Conversations "Archived", `archived=1`). Such a switch is part of the view (URL and saved views), not a preset.
 
 **Filters are typed (OR-36).** There is no Filter button. A filter is a `key:value` word in the search: `agent:claude host:mac state:failed project:fleet` on Tasks, `media:image since:7d` on Results; the rest is free text. The server reads the same syntax (`task_page` filter.search), so an agent's search and a person's give the same list. A key the list does not know stays text.
 
