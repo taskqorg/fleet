@@ -96,8 +96,8 @@ async function restore(key: string, e: Entry) {
 
 /**
  * Load the first page of a list. A superseded request is aborted through abort and leaves the list as it was.
- * `cursorReset` marks the reload nextPage starts after the server refused a stale cursor; any other load or an accepted next
- * page allows one again. Resolves true when a newer membership answer made this load step aside.
+ * `cursorReset` marks the reload nextPage starts after the server refused a stale cursor; any other load allows one again
+ * (an accepted page does not: a server refusing its own deeper cursor would snap the list back to page 1 on every scroll). Resolves true when a newer membership answer made this load step aside.
  */
 export async function loadList(kind: Kind, key: string, view: View, abort?: AbortSignal, cursorReset = false) {
   const e = entry(kind, key, view), from = cursorNow(), generation = accessGeneration();
@@ -138,7 +138,7 @@ export async function nextPage(key: string) {
     if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
     const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
     setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter, error: null });
-    putRows(rows, from); persist(key, e); e.cursorReset = false; // the server takes its cursors again
+    putRows(rows, from); persist(key, e);
   } catch (err: any) {
     // A reload got there first, or is running and will replace the cursor.
     if (!isAccessCurrent(generation) || !e.state.value || e.state.value.nextAfter !== st.nextAfter || e.loading) return;

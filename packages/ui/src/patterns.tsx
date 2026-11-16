@@ -265,9 +265,9 @@ function useFloating(ref: { current: HTMLElement | null }, focusBack: string) {
 function UserBlock({ name, onLogout, version }: { name: string; onLogout: () => void; version?: VersionInfo }) {
   const ref = useRef<HTMLDivElement>(null);
   const menu = useFloating(ref, '.rail-user-b'), panel = useFloating(ref, '.rail-ver, .rail-user-b');
-  // While the overview is open, one present every VERSION_TICK for the mark and every row (OR-2); closing clears the timer.
+  // One present for the mark and every row (OR-2), recounted every VERSION_TICK while the overview is open; closing clears the timer.
   useTick(VERSION_TICK, !!panel.open);
-  const now = Date.now(), v = panel.open && version?.at ? version.at(now) : version, attention = !!v && (v.updateReady || v.tone !== 'neutral');
+  const now = Date.now(), v = version?.at ? version.at(now) : version, attention = !!v && (v.updateReady || v.tone !== 'neutral');
   return <div class="rail-user" ref={ref}>
     <button type="button" class="rail-user-b" aria-label={name} aria-haspopup="menu" aria-expanded={!!menu.open} onClick={e => { panel.setOpen(null); menu.toggle(e); }} onContextMenu={e => { panel.setOpen(null); menu.toggle(e); }}>
       <span class={`avatar${attention ? ` dot t-${v!.updateReady ? 'running' : v!.tone}` : ''}`} aria-hidden="true" data-tip={name} data-tip-narrow>{name.slice(0, 1).toUpperCase()}</span><span class="nm">{name}</span>

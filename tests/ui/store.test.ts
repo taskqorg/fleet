@@ -59,12 +59,13 @@ test('a refused page cursor reloads the first page once, keeping rows; a second 
   assert.deepEqual(calls.map(c => !!c.body.after), [true], 'no second reload in the same list load');
   assert.equal(peek.list('C')!.error, 'Invalid after');
   assert.deepEqual(peek.list('C')!.ids, ['t1', 't3']);
-  // An accepted page clears the error and allows one recovery again (the next deploy may change the cursor shape again).
+  // An accepted page clears the error but does not allow another reload in the same list load; a new load does.
   answer = async () => page([row('t4')], ['g', 's', 't4']); await nextPage('C');
   assert.equal(peek.list('C')!.error, null); assert.deepEqual(peek.list('C')!.ids, ['t1', 't3', 't4']);
-  calls = []; answer = async (_n, b) => b.after ? refused : page([row('t1')]);
-  await nextPage('C');
-  assert.deepEqual(calls.map(c => !!c.body.after), [true, false]); assert.deepEqual(peek.list('C')!.ids, ['t1']);
+  calls = []; answer = async (_n, b) => b.after ? refused : page([row('t1')], ['g', 's', 't1']);
+  await nextPage('C'); assert.deepEqual(calls.map(c => !!c.body.after), [true]);
+  await loadList('sessions', 'C', V); calls = []; await nextPage('C');
+  assert.deepEqual(calls.map(c => !!c.body.after), [true, false], 'a new list load allows one recovery again');
 });
 
 test('a refused cursor while a reload runs leaves the cursor to that reload', async () => {
