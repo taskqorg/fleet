@@ -55,13 +55,14 @@ func (v *BoundaryBlock) Validate() error {
 
 // Change: One committed change (the change table), as GET /api/stream and changes_since deliver it.
 type Change struct {
-	HostId    *string    `json:"hostId"`
-	Id        string     `json:"id"`
-	Kind      ChangeKind `json:"kind"`
-	Op        string     `json:"op"`
-	Seq       int64      `json:"seq"`
-	SessionId *string    `json:"sessionId"`
-	TaskId    *string    `json:"taskId"`
+	HostId        *string    `json:"hostId"`
+	Id            string     `json:"id"`
+	Kind          ChangeKind `json:"kind"`
+	Op            string     `json:"op"`
+	Seq           int64      `json:"seq"`
+	SessionId     *string    `json:"sessionId"`
+	SettingTarget *string    `json:"settingTarget,omitempty"`
+	TaskId        *string    `json:"taskId"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

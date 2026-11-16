@@ -119,7 +119,7 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 			return
 		}
 	}
-	q := "SELECT seq,kind,id,task_id,session_id,host_id,op,project_id,actor FROM change WHERE " + visible
+	q := "SELECT seq,kind,id,task_id,session_id,host_id,op,project_id,actor,setting_target FROM change WHERE " + visible
 	args := []any{}
 	if xid != "" {
 		q += " AND (xid, seq) > ($1::xid8, $2::bigint)"
@@ -131,7 +131,7 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 	}
 	out, err = pgx.CollectRows(rs, func(r pgx.CollectableRow) (change, error) {
 		var c change
-		return c, r.Scan(&c.Seq, &c.Kind, &c.Id, &c.TaskId, &c.SessionId, &c.HostId, &c.Op, &c.ProjectID, &c.Actor)
+		return c, r.Scan(&c.Seq, &c.Kind, &c.Id, &c.TaskId, &c.SessionId, &c.HostId, &c.Op, &c.ProjectID, &c.Actor, &c.SettingTarget)
 	})
 	if err != nil {
 		return

@@ -16,7 +16,7 @@ import { checkDeliveryAvailability } from './delivery-availability.check.ts';
 import { checkSpotlight } from './spotlight.check.ts';
 import { checkPublicationInputs } from './publication-inputs.check.ts';
 
-execFileSync(process.execPath, ['--test', 'tests/ui/composer.test.ts', 'tests/ui/virtual-list.test.ts', 'tests/ui/interface-browser-failure.test.ts', 'tests/ui/interface-eventsource.test.ts', 'tests/ui/version.test.ts'], { stdio: 'inherit', env: { ...process.env, FLEET_CONTROL_BROWSER: '1' } });
+execFileSync(process.execPath, ['--test', 'tests/ui/composer.test.ts', 'tests/ui/virtual-list.test.ts', 'tests/ui/interface-browser-failure.test.ts', 'tests/ui/interface-eventsource.test.ts', 'tests/ui/scoped-invalidation.test.ts', 'tests/ui/version.test.ts'], { stdio: 'inherit', env: { ...process.env, FLEET_CONTROL_BROWSER: '1' } });
 
 const failures: string[] = [], timings: string[] = [];
 const check = (ok: boolean, what: string) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failures.push(what); };

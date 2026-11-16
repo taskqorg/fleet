@@ -10,6 +10,7 @@
 - [`main.tsx`](main.tsx) defines `SCREENS` and `App`, connects `AppShell`, identity/grant checks, preferences, feed/store startup, service worker registration, and routes.
 - [`api.ts`](api.ts) exports typed `op`, `writeOnce`, `addRequestedKey`, `sendingId`, `useAlive`, `online`, and `signedOut`.
 - [`feed.ts`](feed.ts) exports `startFeed`, `subscribe`, `currentCursor`, and `feedState`; [`store.ts`](store.ts) exports `useList`, `useDoc`, list loading, and live-change application.
+- [`invalidation.ts`](invalidation.ts) supplies the personal-preference and mounted-project definition predicates over authoritative change metadata, retaining conservative unknown/legacy fallbacks.
 - [`lists.ts`](lists.ts), [`threads.ts`](threads.ts), [`selection.ts`](selection.ts), and [`url.ts`](url.ts) hold pure list/thread/selection logic and URL hooks.
 - [`offline.ts`](offline.ts) owns the IndexedDB read cache; [`prefs.ts`](prefs.ts) reads and patches per-person settings.
 - [`views`](views/README.md) exports the routed screen components.
@@ -20,6 +21,7 @@
 - `writeOnce` retries only unknown write outcomes with the same request body and stops on a definite error or aborted signal (`api.ts:writeOnce`).
 - The server decides list membership and ordering; `applyMembership` only merges returned rows, and `store.ts` bounds `list_membership` calls to 1,000 IDs and two lists.
 - Feed delivery de-duplicates sequence numbers and batches subscribers per animation frame (`feed.ts:deliver`).
+- Preference invalidation uses the server's audit `settingTarget`, not the actor or an inferred project: current-person changes reread, other known targets do not, and legacy missing/null targets plus resync remain conservative. Mounted project detail skips only a known other `project/<id>` definition; own, legacy, unknown and non-project dependency changes still reread.
 - Stored app data is cleared when the grants version changes or the browser is signed out (`offline.ts:checkGrants`, `main.tsx:App`).
 
 ## Side Effects
