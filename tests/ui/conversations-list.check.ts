@@ -1,7 +1,9 @@
 // Conversations list controls (docs/design-system/pages/conversations.md, list-view pattern; OR-12, OR-33, OR-35, OR-37):
 // a system preset sets only the state filter and keeps the grouping, group and sort change the server order, a pinned row
-// stays under a filter that does not match it, and checkboxes show only in selection mode. Called by conversations.check.ts.
-// With CONV_SHOTS=<dir> it also saves two dark screenshots: the grouped list (conv-a.png) and selection mode (conv-b.png).
+// stays under a filter that does not match it, checkboxes show only in selection mode, and the Archived toggle switches to
+// archived conversations, where the bar offers Unarchive. Called by conversations.check.ts.
+// With CONV_SHOTS=<dir> it also saves three dark screenshots: the grouped list (conv-a.png), selection mode (conv-b.png) and
+// the archived list (conv-archived.png).
 import assert from 'node:assert/strict';
 import type { Browser } from 'playwright';
 import type { seeder } from './seed.ts';
@@ -101,11 +103,28 @@ export async function checkConversationsList(browser: Browser, origin: string, s
     await p.locator('[data-ui=select-bar] button[aria-label=Archive]').click();
     await p.getByRole('button', { name: 'Yes, archive' }).click();
     await settle(async () => !(await mine()).includes('Plan the next release train'), 'archived conversation left the list');
-    await p.goto(origin + '/conversations?archived=1'); await settle(async () => (await titles()).includes('Plan the next release train'), 'archived conversation in the archived list');
+    // The Archived toggle (pressed while on) puts archived=1 in the URL and lists the archived conversation; the pinned
+    // active row stays out of it.
+    const archivedToggle = p.getByRole('button', { name: 'Archived', exact: true });
+    assert.equal(await archivedToggle.getAttribute('aria-pressed'), 'false', 'Archived toggle off');
+    await archivedToggle.click();
+    await settle(async () => url().searchParams.get('archived') === '1' && (await titles()).join() === 'Plan the next release train', 'only the archived conversation listed after the toggle');
+    assert.equal(await archivedToggle.getAttribute('aria-pressed'), 'true', 'Archived toggle pressed');
+    assert.equal(await p.locator('[data-ui=row-pin]').count(), 0, 'pinned active row not in the archived list');
+    if (process.env.CONV_SHOTS) { await p.mouse.move(0, 0); await p.screenshot({ path: process.env.CONV_SHOTS + '/conv-archived.png' }); }
+    // In the archived list the bar offers Unarchive (session_unarchive) instead of Archive; the list then has none left.
+    await p.locator('.vl-row .row-link', { hasText: 'Plan the next release train' }).click({ modifiers: ['Shift'] });
+    assert.equal(await p.locator('[data-ui=select-bar] button[aria-label=Archive]').count(), 0, 'no Archive in the archived list');
+    await p.locator('[data-ui=select-bar] button[aria-label=Unarchive]').click();
+    await settle(async () => await p.locator('.empty p', { hasText: 'No archived conversations.' }).count() === 1, 'archived list empty after Unarchive');
+    // Toggle off: the key leaves the URL and the conversation is back among the active ones.
+    await archivedToggle.click();
+    await settle(async () => !url().searchParams.has('archived') && (await mine()).includes('Plan the next release train'), 'active list after the toggle off');
+    assert.equal(await archivedToggle.getAttribute('aria-pressed'), 'false', 'Archived toggle off again');
     // Unpin, so other checks see the list as seeded.
-    await p.goto(origin + '/conversations'); await p.waitForSelector('[data-ui=row-pin]'); await p.locator('[data-ui=row-pin]').first().click();
+    await p.waitForSelector('[data-ui=row-pin]'); await p.locator('[data-ui=row-pin]').first().click();
     await settle(async () => await p.locator('[data-ui=row-pin]').count() === 0, 'unpinned');
     assert.deepEqual(errors, []);
-    console.log('ok Conversations list: project groups, preset keeps grouping, group and sort order, pin under a filter, selection mode, archive');
+    console.log('ok Conversations list: project groups, preset keeps grouping, group and sort order, pin under a filter, selection mode, archive, archived toggle and unarchive');
   } finally { await context.close(); }
 }

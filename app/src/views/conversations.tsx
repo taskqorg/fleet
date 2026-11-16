@@ -87,16 +87,26 @@ export function Conversations({ id }: { id?: string }) {
   }
   const chosen = displayed.filter(r => sel.includes(r.id));
   const canArchive = (s: SessionRow) => s.state === 'idle' || TERMINAL.includes(s.state);
-  // Archive is one operation per conversation (session_archive); a conversation with a running execution refuses it.
-  const archive = async (ss: SessionRow[]) => {
+  // Archive and Unarchive are one operation per conversation. session_archive is refused while an execution is active;
+  // session_unarchive (owner or full access) returns the conversation to the active list and records a reason. The rows
+  // that succeeded leave the selection as it is now (not when the operation began), whatever the others did.
+  const bulk = async (ss: SessionRow[], name: 'session_archive' | 'session_unarchive', verb: string) => {
     if (busy || !ss.length) return;
     setBulkError(null); setBusy(true);
-    const r = await Promise.allSettled(ss.map(s => op('session_archive', { sessionId: s.id })));
+    const r = await Promise.allSettled(ss.map(s => name === 'session_archive' ? op(name, { sessionId: s.id }) : op(name, { sessionId: s.id, reason: 'Unarchived from the Conversations list' })));
     setBusy(false);
     const failed = r.filter(x => x.status === 'rejected') as PromiseRejectedResult[];
-    if (failed.length) setBulkError(`${failed.length} of ${ss.length} not archived: ${failed[0].reason?.message ?? failed[0].reason}`);
-    else set({ sel: selNow.current.filter(x => !ss.some(s => s.id === x)) }); // the selection as it is now, not when archiving began
+    if (failed.length) setBulkError(`${failed.length} of ${ss.length} not ${verb}: ${failed[0].reason?.message ?? failed[0].reason}`);
+    const done = ss.filter((_, i) => r[i].status === 'fulfilled').map(s => s.id);
+    if (done.length) set({ sel: selNow.current.filter(x => !done.includes(x)) });
   };
+  const archive = (ss: SessionRow[]) => bulk(ss, 'session_archive', 'archived'), unarchive = (ss: SessionRow[]) => bulk(ss, 'session_unarchive', 'unarchived');
+  const archived = !!view.archived;
+  // Active and archived conversations are two lists: a switch by any path (the toggle, a saved view, Back) ends selection
+  // mode and a pending confirmation; the toggle and a saved view also drop the checked rows.
+  const firstList = useRef(true);
+  useEffect(() => { if (firstList.current) { firstList.current = false; return; } setSelectOn(false); setConfirmArchive(null); setBulkError(null); }, [archived]);
+  const toggleArchived = () => set({ archived: archived ? undefined : true, sel: undefined, preset: undefined });
   const off = !online.value ? 'offline' : busy ? 'Working' : undefined;
   const pinAll = (on: boolean) => { for (const s of chosen) if (pins.has(s.id) !== on) pins.toggle(s.id); };
   const select = (s: SessionRow) => { setSelectOn(true); setConfirmArchive(null); toggleSel(s.id); };
@@ -106,7 +116,8 @@ export function Conversations({ id }: { id?: string }) {
     { label: sel.includes(s.id) ? 'Deselect' : 'Select', icon: 'square', onClick: () => select(s) },
     { label: 'Copy code', icon: actions.copy, onClick: () => copyText(s.code ?? s.id) },
     { label: 'Copy link', icon: 'link', onClick: () => copyText(location.origin + formatView({ view: 'conversations', focus: s.id })) },
-    ...(!view.archived ? [{ label: 'Archive', icon: 'archive' as const, disabledReason: off ?? (canArchive(s) ? undefined : 'Execution active'), onClick: () => setConfirmArchive([s]) }] : []),
+    archived ? { label: 'Unarchive', icon: 'archive-restore', disabledReason: off, onClick: () => unarchive([s]) }
+      : { label: 'Archive', icon: 'archive', disabledReason: off ?? (canArchive(s) ? undefined : 'Execution active'), onClick: () => setConfirmArchive([s]) },
   ];
   // A personal view matches the whole view and wins over a system preset with the same states; a system preset matches the
   // states alone (as on Tasks).
@@ -116,7 +127,7 @@ export function Conversations({ id }: { id?: string }) {
     ?? (view.state?.length ? views.list.find(v => v.system && stateKey(v.view.state) === stateKey(view.state))?.name : undefined) ?? null;
   const pick = (n: string) => {
     const p = views.list.find(x => x.name === n)!;
-    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, preset: n });
+    set(p.system ? { state: p.view.state ?? [], preset: n } : { state: p.view.state ?? [], group: p.view.group, sort: p.view.sort, project: p.view.project ?? [], q: p.view.q, archived: p.view.archived, preset: n, ...(!!p.view.archived !== archived ? { sel: undefined } : {}) });
   };
   const filtered = !!(states.length || view.q || view.project?.length);
   const now = Date.now();
@@ -132,18 +143,20 @@ export function Conversations({ id }: { id?: string }) {
       <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery}
         shown={states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total} total={list.total}
         extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={activePreset} onPick={pick}
-          onSave={n => views.save({ name: n, view: { view: 'conversations', state: view.state, group: view.group, sort: view.sort, project: view.project, q: view.q } })} onUnpin={views.remove} />}
+          onSave={n => views.save({ name: n, view: { view: 'conversations', state: view.state, group: view.group, sort: view.sort, project: view.project, q: view.q, archived: view.archived } })} onUnpin={views.remove} />}
         counters={<StateCounters family="session" label="Conversations by state" pending={list.pending} counts={list.counts as any} active={states} onAll={() => set({ state: [], preset: undefined })}
           onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s], preset: undefined })} />}
         tools={<>
           <SelectToggle on={selecting} onClick={() => selecting ? leave() : setSelectOn(true)} />
           <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ group: g, preset: undefined })} />
           <SortControl value={sort} fields={SORTS} onChange={v => set({ sort: v, preset: undefined })} />
+          <Button label="Archived" icon="archive" iconOnly kind="quiet" pressed={archived} onClick={toggleArchived} />
         </>}
         selection={selecting && <SelectBar count={chosen.length} total={displayed.length} onAll={() => { setSelectOn(true); setConfirmArchive(null); set({ sel: displayed.map(r => r.id) }); }} onNone={() => { setSelectOn(true); setConfirmArchive(null); set({ sel: [] }); }} onExit={leave} actions={[
           { label: 'Pin', icon: 'pin', onClick: () => pinAll(true), disabledReason: chosen.length && chosen.every(s => pins.has(s.id)) ? 'All pinned' : undefined },
           { label: 'Unpin', icon: 'pin-off', onClick: () => pinAll(false), disabledReason: chosen.some(s => pins.has(s.id)) ? undefined : 'None pinned' },
-          { label: 'Archive', icon: 'archive', danger: true, onClick: () => setConfirmArchive(chosen.filter(canArchive)), disabledReason: off ?? (view.archived ? 'Already archived' : chosen.some(canArchive) ? undefined : 'None can be archived') },
+          archived ? { label: 'Unarchive', icon: 'archive-restore', onClick: () => unarchive(chosen), disabledReason: off }
+            : { label: 'Archive', icon: 'archive', danger: true, onClick: () => setConfirmArchive(chosen.filter(canArchive)), disabledReason: off ?? (chosen.some(canArchive) ? undefined : 'None can be archived') },
         ]} />} />}>
         {confirmArchive && <ProblemRow severity="warning" title={`Archive ${confirmArchive.length} ${confirmArchive.length === 1 ? 'conversation' : 'conversations'}?`} facts="Their worktrees are torn down; the owner can restore a conversation."
           actions={[{ label: 'Yes, archive', primary: true, onClick: () => { const ss = confirmArchive; setConfirmArchive(null); archive(ss); } }, { label: 'Keep', onClick: () => setConfirmArchive(null) }]} />}
@@ -151,9 +164,10 @@ export function Conversations({ id }: { id?: string }) {
         {list.error && <ErrorBanner text={`Conversations did not load: ${list.error}`} onRetry={list.reload} />}
         {pinnedDoc.error && <ErrorBanner text={`Pinned conversations did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
         {!displayed.length && (list.shownKey === null || list.pending || (pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
-          : !displayed.length ? (list.error || pinnedDoc.error ? null : <Empty text={filtered ? 'No conversations match these filters.' : focusIds() && !view.project?.length ? 'No conversations in the focused projects.' : 'No conversations yet.'}
-            action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); }} /> : <Button label="New conversation" onClick={create} />} />)
-          : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.s.id} rowHeight={ROW} follow="top" label="Conversations" onEnd={list.more}
+          : !displayed.length ? (list.error || pinnedDoc.error ? null : <Empty text={filtered ? `No ${archived ? 'archived ' : ''}conversations match these filters.` : focusIds() && !view.project?.length ? `No ${archived ? 'archived ' : ''}conversations in the focused projects.` : archived ? 'No archived conversations.' : 'No conversations yet.'}
+            action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); }} />
+              : archived ? <Button label="Show active" onClick={toggleArchived} /> : <Button label="New conversation" onClick={create} />} />)
+          : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.s.id} rowHeight={ROW} follow="top" label={archived ? 'Archived conversations' : 'Conversations'} onEnd={list.more}
             columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.s.id === id ? 'sel' : ''}${sel.includes(i.s.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
             onRowMenu={(i, at) => { if (i.kind === 'session') setMenu({ s: i.s, at }); }}
             render={i => i.kind === 'group'
