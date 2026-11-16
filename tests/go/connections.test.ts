@@ -124,6 +124,44 @@ const s3 = (async () => {
 })();
 after(async () => (await s3).close());
 
+test('C-Anthropic catalogue, two separate keys and native specs (requirement: docs/designs/fleet-connections.md Anthropic operations; risk: provider registration never reaches secure standard connection operations or collapses two key identities)', async () => {
+  const c = name('anthropic');
+  const catalogue = ok(await op('connections_list')).providers.anthropic;
+  assert.equal(catalogue.baseUrl, 'https://api.anthropic.com');
+  assert.equal(catalogue.keyHeader, 'x-api-key');
+  assert.equal(catalogue.tools.create_message.idempotent, false);
+  assert.equal(catalogue.tools.create_message.headers['anthropic-version'], '2026-10-21');
+  assert.equal(catalogue.tools.create_message.inputSchema.additionalProperties, false);
+  assert.deepEqual(catalogue.tools.create_message.inputSchema.properties.stream.enum, [false]);
+  ok(await op('connections_create', {name: c, provider: 'anthropic'}));
+  ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
+  ok(await op('connections_set_tools', {connection: c, tools: ['list_models', 'create_message']}));
+  assert.equal((await op('connections_set_tools', {connection: c, tools: ['arbitrary_proxy']})).status, 400);
+  const values = ['invented-primary-' + randomUUID(), 'invented-secondary-' + randomUUID()];
+  const keys = [];
+  for (const value of values) {
+    const k = ok(await op('connections_key_add', {connection: c, value}));
+    assert.equal(k.fingerprint, sha(value).slice(0, 12));
+    assert.equal(k.state, 'active');
+    const file = join(SECRET_DIR, 'connections', c, k.fingerprint);
+    assert.equal(readFileSync(file, 'utf8').trim(), value);
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+    keys.push(k.fingerprint);
+  }
+  assert.notEqual(keys[0], keys[1]);
+  const listed = ok(await op('connections_list'));
+  const row = listed.connections.find((x: any) => x.name === c);
+  assert.deepEqual(row.keys.map((x: any) => x.fingerprint).sort(), [...keys].sort());
+  const s = await until(() => snapshot().connections[c]?.keys?.length === 2 ? snapshot() : undefined, 'two Anthropic keys');
+  assert.deepEqual(s.connections[c].keys.map((x: any) => x.id).sort(), [...keys].sort());
+  assert.equal(s.providers.anthropic.keyHeader, 'x-api-key');
+  const token = ok(await op('connections_token_create', {name: name('anthropic-token'), connections: [c]}));
+  assert.deepEqual(token.connections[0].tools.map((x: any) => x.name).sort(), ['create_message', 'list_models']);
+  for (const value of values) {
+    assert.ok(!JSON.stringify({listed, s, token}).includes(value));
+  }
+});
+
 test('C1 key value stays in the secret file (requirement: docs/designs/fleet-connections.md; risk: a key value in a row, a reply or the gateway snapshot)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily'}));

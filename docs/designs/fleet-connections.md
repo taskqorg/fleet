@@ -32,6 +32,15 @@ Agents reach `fleet-executor mcp connection`, coordinator API steps call HTTP in
 *   **Delete.** `connections_delete {connection}` (owner or full-access person; agents are denied it) removes a connection once every key is retired: the connection row, its key rows, its history (an audit row `deleted-connection:<name>` stays) and its value directory. Run tokens drop its name and open key requests for it are withdrawn, so a new connection of the same name inherits nothing. An active, draining or disabled key refuses it (409).
 *   The connection carries `holder`; key operations resolve it through `connectionId`, using the same holder/owner and audit model as subscriptions.
 
+### Anthropic operations
+
+The `anthropic` catalogue entry uses native [Messages](https://platform.claude.com/docs/en/api/messages/create) and [Models](https://platform.claude.com/docs/en/api/models/list) at `https://api.anthropic.com`. Fixed headers are `x-api-key` and `anthropic-version: 2026-10-21`, per [authentication](https://platform.claude.com/docs/en/api/overview#authentication) and [versioning](https://platform.claude.com/docs/en/api/versioning). Keys requiring an explicit workspace header are unsupported.
+
+- `create_message`: non-idempotent `POST /v1/messages`; requires `model`, positive integer `max_tokens` and nonempty `messages`. Optional fields: `system`, `metadata`, `stop_sequences`, `tools`, `tool_choice`, `thinking`, `output_config`, `cache_control`, `service_tier`, `stream: false`. Anthropic validates native nested content and model-specific parameters. Streaming and other top-level fields are refused before sending. Callers cannot select headers or a URL. Native JSON replies retain existing secret redaction.
+- `list_models`: idempotent `GET /v1/models`; only query parameters `limit` (1–1000), `after_id`, `before_id`. Returns one native page; omitted pages and failed reads do not establish availability.
+- Messages usage is `tokens`: reported input + output + cache creation + cache read tokens. Missing input/output or malformed counts leave usage unavailable; absent/null cache counts contribute zero. Other usage and breakdowns remain in the native reply. This sum is not a price or billing weight; no Anthropic price or per-key reconciliation is supplied.
+- Existing key-pool rules below apply: quota/429 passes through without switching; 401/402 disables only the selected key. Uncertain Messages calls never replay, including HTTP 5xx whose completion remains unknown. This does not promise another client's failover behavior.
+
 ### 2. Keys
 
 *   **Values.** `<FLEET_SECRET_DIR>/connections/<connection>/<fingerprint>` on PDS18, one value per file, mode 0600, coordinator user. Added through `connections_key_add` (owner or full-access person only), which writes the file and the metadata row in one step and returns only the fingerprint. Screens, agents, executors and profiles never receive a value.

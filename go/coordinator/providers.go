@@ -29,6 +29,113 @@ func providerTools(name string) doc { return mapOf(mapOf(providers[name])["tools
 
 const providersJSON = `
 {
+ "anthropic": {
+  "baseUrl": "https://api.anthropic.com",
+  "keyHeader": "x-api-key",
+  "instructions": "Native Anthropic API, version 2026-10-21. list_models returns one page, not a guarantee of availability. create_message is nonstreaming only; never repeat an uncertain call (including HTTP 5xx). Quota replies do not switch keys. Fleet holds keys; use references only. Token counts do not establish monetary cost. Keys needing an explicit workspace header are unsupported.",
+  "tools": {
+    "create_message": {
+      "method": "POST",
+      "path": "/v1/messages",
+      "unit": "tokens",
+      "idempotent": false,
+      "headers": {
+        "anthropic-version": "2026-10-21"
+      },
+      "description": "Create a native nonstreaming Message. Returns the native Message JSON. No automatic replay after unknown completion. Supports the listed top-level fields; provider validates nested content.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "model",
+          "max_tokens",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object"
+            }
+          },
+          "system": {},
+          "metadata": {
+            "type": "object"
+          },
+          "stop_sequences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "tool_choice": {
+            "type": "object"
+          },
+          "thinking": {
+            "type": "object"
+          },
+          "output_config": {
+            "type": "object"
+          },
+          "cache_control": {
+            "type": "object"
+          },
+          "service_tier": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "list_models": {
+      "method": "GET",
+      "path": "/v1/models",
+      "unit": "tokens",
+      "idempotent": true,
+      "headers": {
+        "anthropic-version": "2026-10-21"
+      },
+      "description": "Read one native page of available models. Errors and unrequested pages leave availability unknown.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "after_id": {
+            "type": "string"
+          },
+          "before_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+},
  "tavily": {
   "baseUrl": "https://api.tavily.com",
   "usage": {

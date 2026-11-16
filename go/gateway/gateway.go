@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -587,6 +588,16 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		if status < 200 || status > 299 {
 			a.outcome, a.err = "error", fmt.Sprintf("provider-%d", status)
 		}
+		if c.Provider == "anthropic" && t.Path == "/v1/messages" {
+			a.usage = nil
+			if status >= 200 && status <= 299 {
+				if amount, ok := anthropicTokens(data); ok {
+					a.usage = &amount
+				}
+			} else if status >= 500 {
+				a.outcome = "unknown"
+			}
+		}
 		if status == 403 {
 			// Redact over the whole body first, so a key cut at the 500-character mark cannot leave a prefix behind.
 			message := []rune(strings.ReplaceAll(strings.ToValidUTF8(string(data), "�"), value, "[key]"))
@@ -766,6 +777,13 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			a = refusal(400, "error", "bad-request", "a path field is missing or not an id")
 			break
 		}
+		if c.Provider == "anthropic" {
+			path, ok = anthropicPath(t.Path, body)
+			if !ok {
+				a = refusal(400, "error", "bad-request", "Anthropic input is invalid or unsupported; only nonstreaming Messages and model pages are supported")
+				break
+			}
+		}
 		var sent []byte
 		if t.Method != "GET" {
 			sent, _ = json.Marshal(body)
@@ -864,6 +882,83 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 		delete(body, field)
 		path = path[:start] + value + path[start+length+1:]
 	}
+}
+
+// Anthropic's fixed native routes need no caller-selected URL or headers.
+func anthropicPath(path string, body map[string]json.RawMessage) (string, bool) {
+	if path == "/v1/models" {
+		query := url.Values{}
+		for field, raw := range body {
+			switch field {
+			case "limit":
+				var n int64
+				if json.Unmarshal(raw, &n) != nil || n < 1 || n > 1000 {
+					return "", false
+				}
+				query.Set(field, strconv.FormatInt(n, 10))
+			case "after_id", "before_id":
+				var value string
+				if json.Unmarshal(raw, &value) != nil || value == "" {
+					return "", false
+				}
+				query.Set(field, value)
+			default:
+				return "", false
+			}
+		}
+		if len(query) != 0 {
+			path += "?" + query.Encode()
+		}
+		return path, true
+	}
+	if path != "/v1/messages" {
+		return "", false
+	}
+	for field, raw := range body {
+		switch field {
+		case "model", "max_tokens", "messages", "system", "metadata", "stop_sequences", "tools", "tool_choice", "thinking", "output_config", "cache_control", "service_tier":
+			// The provider validates native content and model-specific options.
+		case "stream":
+			if string(raw) != "false" {
+				return "", false
+			}
+		default:
+			return "", false
+		}
+	}
+	var model string
+	var maxTokens int64
+	var messages []json.RawMessage
+	if json.Unmarshal(body["model"], &model) != nil || model == "" ||
+		json.Unmarshal(body["max_tokens"], &maxTokens) != nil || maxTokens < 1 ||
+		json.Unmarshal(body["messages"], &messages) != nil || len(messages) == 0 {
+		return "", false
+	}
+	return path, true
+}
+
+// Total reported tokens, not monetary cost. Do not count nested cache/think
+// breakdowns again: they are subsets of the four top-level usage counts.
+func anthropicTokens(data []byte) (int64, bool) {
+	var reply struct {
+		Usage map[string]json.RawMessage `json:"usage"`
+	}
+	if json.Unmarshal(data, &reply) != nil {
+		return 0, false
+	}
+	var total int64
+	for _, field := range []string{"input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"} {
+		raw := reply.Usage[field]
+		if (len(raw) == 0 || string(raw) == "null") && strings.HasPrefix(field, "cache_") {
+			continue
+		}
+		var count int64
+		if len(raw) == 0 || string(raw) == "null" || json.Unmarshal(raw, &count) != nil || count < 0 || count > (1<<63-1)-total {
+			return 0, false
+		}
+		total += count
+	}
+	return total, true
 }
 
 // usageAt reads a non-negative integer at a dotted field of a JSON reply.
