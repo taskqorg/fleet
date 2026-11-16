@@ -1071,7 +1071,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	if err = resourceReplace(ctx, a, "cohort-00"); err != nil {
 		t.Fatal(err)
 	}
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "22")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7))
 	equal(`SELECT method_sha FROM resource_valuation WHERE execution_id='cohort-00'`, method)
 	revision := scalar(`SELECT revision::text FROM resource_project_summary WHERE project_id='COHORT'`)
 	// Durable replay also covers retry after the caller loses acknowledgement: already
@@ -1098,12 +1098,12 @@ func TestResourceCohortPostgres(t *testing.T) {
 	equal(`SELECT execution_id FROM resource_work WHERE execution_id=ANY($1::text[])`, "cohort-01", ids)
 	equal(`SELECT count(*)::text FROM resource_contribution WHERE execution_id='cohort-poison-other'`, "1")
 	equal(`SELECT attempts::text||':'||(next_attempt_at>first_pending_at+interval '90 milliseconds')::text FROM resource_work WHERE execution_id='cohort-01'`, "1:true")
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "37")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7+resourceCohortSize-1)) // every leaf +1 except the poison
 	sql(`DELETE FROM resource_fixture_cohort_fault; UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='cohort-01'`)
 	if err = resourceReplace(ctx, a, "cohort-01"); err != nil {
 		t.Fatal(err)
 	}
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "38")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7+resourceCohortSize))
 
 	// Lose the actual server COMMIT response, not an invented callback error. The
 	// independent connection must observe all committed leaves before durable replay.
@@ -1134,7 +1134,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	if drop.Load() {
 		t.Fatalf("test did not intercept committed response: %v", e)
 	}
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "54")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7+2*resourceCohortSize))
 	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", ids)
 	afterPub := scalar(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`)
 	equal(`SELECT (count(*)=$1::bigint+1)::text FROM interface_publication WHERE project='COHORT'`, "true", beforePub)
@@ -1176,7 +1176,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	if e = resourceReplaceCandidates(ctx, a, ids); e != nil {
 		t.Fatal(e)
 	}
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "45")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7+2*resourceCohortSize-9)) // cohort-00 (0+7+1+1) moved away
 	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT_ALT' AND metric='input'`, "10")
 	sql(`UPDATE execution SET project_id=NULL WHERE id='cohort-00'`)
 	if e = resourceReplaceCandidates(ctx, a, ids); e != nil {
