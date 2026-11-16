@@ -163,42 +163,35 @@ test('prepared scheduler shares active reads, coalesces bursts and retains uncha
 
 import { holdDoc, readDoc, clearMemory } from '../../app/src/store.ts';
 const docData = (name: string) => (peek.doc(name) as any)?.data;
-test('doc readers of one name share one read; changes during it cost one trailing read whose answer is shown', async () => {
+test('doc readers of one name send one request per task; a newer answer is never overwritten by an older one', async () => {
   const waiting: ((value: unknown) => void)[] = [];
   const fetch = () => new Promise(ok => waiting.push(ok));
   const name = 'shared-doc-' + Math.random(), focus = holdDoc(name, fetch), projects = holdDoc(name, fetch);
   try {
-    await turn(); assert.equal(waiting.length, 1, 'the second reader joins the running read');
+    await turn(); assert.equal(waiting.length, 1, 'two mounts in one task send one request');
     for (let i = 0; i < 100; i++) readDoc(name);
-    waiting[0]({ v: 1 }); await turn(); await turn();
-    assert.equal(docData(name).v, 1); assert.equal(waiting.length, 2, 'one trailing read for every change during the first');
-    readDoc(name); await turn(); assert.equal(waiting.length, 2, 'still one read running');
-    waiting[1]({ v: 2 }); await turn(); await turn();
-    assert.equal(docData(name).v, 2); assert.equal(waiting.length, 3, 'a change during the trailing read is not lost');
-    waiting[2]({ v: 3 }); await turn(); await turn();
-    assert.equal(docData(name).v, 3); assert.equal(waiting.length, 3, 'idle once answered');
-    focus(); readDoc(name); await turn(); assert.equal(waiting.length, 4, 'the remaining reader still reads');
-    projects(); waiting[3]({ v: 4 }); await turn();
-    assert.equal(docData(name).v, 3, 'an answer after the last release is discarded');
-    readDoc(name); await turn(); assert.equal(waiting.length, 4, 'no reads once every reader released');
+    await turn(); assert.equal(waiting.length, 2, 'one feed batch reaching every reader sends one request, beside the running one');
+    waiting[1]({ v: 'newer' }); await turn(); assert.equal(docData(name).v, 'newer');
+    waiting[0]({ v: 'older' }); await turn(); assert.equal(docData(name).v, 'newer', 'the older answer arriving later is discarded');
+    focus(); focus(); readDoc(name); await turn(); assert.equal(waiting.length, 3, 'a repeated release does not drop the remaining reader');
+    projects(); waiting[2]({ v: 'after release' }); await turn();
+    assert.equal(docData(name).v, 'newer', 'an answer after the last release is discarded');
+    readDoc(name); await turn(); assert.equal(waiting.length, 3, 'no reads once every reader released');
   } finally { focus(); projects(); }
 });
 
-test('a stalled doc read never blocks a reload; a failure keeps the trailing read; clearing discards running reads', async () => {
+test('a stalled doc read never blocks later reads; failures show only for the latest read; clearing discards running reads', async () => {
   const waiting: { ok: (value: unknown) => void; fail: (e: unknown) => void }[] = [];
   const fetch = () => new Promise((ok, fail) => waiting.push({ ok, fail }));
   const name = 'stalled-doc-' + Math.random(), release = holdDoc(name, fetch);
   try {
-    await turn(); assert.equal(waiting.length, 1);
-    readDoc(name, 0); await turn(); assert.equal(waiting.length, 2, 'a reload starts a fresh read beside the stalled one');
-    waiting[1].ok({ v: 'fresh' }); await turn(); await turn(); assert.equal(docData(name).v, 'fresh');
-    waiting[0].ok({ v: 'stalled' }); await turn(); await turn(); assert.equal(docData(name).v, 'fresh', 'the superseded answer is discarded');
-    readDoc(name); await turn(); assert.equal(waiting.length, 3);
-    readDoc(name); waiting[2].fail('not an Error'); await turn(); await turn();
-    assert.equal((peek.doc(name) as any).error, 'not an Error'); assert.equal(waiting.length, 4, 'the change asked for during a failed read still reads');
-    clearMemory(); waiting[3].ok({ v: 'before clear' }); await turn(); await turn();
+    await turn(); readDoc(name); await turn(); assert.equal(waiting.length, 2, 'a change while one read is stalled still reads');
+    waiting[1].ok({ v: 'fresh' }); await turn(); assert.equal(docData(name).v, 'fresh');
+    waiting[0].fail(Error('stalled')); await turn(); assert.equal((peek.doc(name) as any).error, null, 'an older failure does not mark newer data failed');
+    readDoc(name); await turn(); waiting[2].fail('not an Error'); await turn();
+    assert.equal((peek.doc(name) as any).error, 'not an Error'); assert.equal(docData(name).v, 'fresh', 'the last data stays visible');
+    readDoc(name); await turn(); clearMemory(); waiting[3].ok({ v: 'before clear' }); await turn();
     assert.equal(peek.doc(name), null, 'a read started before clearing does not write back');
-    readDoc(name); await turn(); assert.equal(waiting.length, 5, 'after clearing the next read starts at once');
-    waiting[4].ok({ v: 'after clear' }); await turn(); await turn(); assert.equal(docData(name).v, 'after clear');
+    readDoc(name); await turn(); waiting[4].ok({ v: 'after clear' }); await turn(); assert.equal(docData(name).v, 'after clear');
   } finally { release(); }
 });

@@ -210,56 +210,49 @@ export function useList(kind: Kind, urlView: View) {
 }
 
 /**
- * One running read per mounted doc name, shared by every reader of that name (the Focus control and Projects both read
- * `projects`); a doc name identifies its read, so readers of one name pass equivalent fetches. A feed change asked for
- * while a read runs becomes one trailing read, so the last answer is never older than the last change. A reload, a
- * resync, or a refresh tick that finds the running read older than its own period starts a fresh read instead and the
- * superseded answer is discarded, so a stalled request never blocks recovery. Clearing memory discards running reads.
+ * Readers of one doc name share its reads; a doc name identifies its read, so they pass equivalent fetches (the Focus
+ * control and Projects both read `projects`). Every request for a read in one task (one feed batch reaching all readers,
+ * mounts in one render) becomes one request. Reads are never held back by a running one, and an answer is shown when it
+ * started after the one on screen, so a stalled or slow request neither blocks nor overwrites newer data. Clearing memory
+ * discards running reads and pending restores.
  */
-type DocFlight = { readers: number; fetch: () => Promise<unknown>; epoch: number; running: boolean; startedAt: number; again: boolean };
+type DocReader = { fetch: () => Promise<unknown> };
+type DocFlight = { readers: Set<DocReader>; started: number; shown: number; scheduled: boolean; cleared: number };
 const flights = new Map<string, DocFlight>();
 function docSignal(name: string) { let s = docs.get(name); if (!s) docs.set(name, s = signal(null)); return s; }
 function restoreDoc(name: string, f: DocFlight) {
-  const s = docSignal(name);
-  void load<unknown>('doc:' + name).then(v => { if (v && flights.get(name) === f && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
+  const s = docSignal(name), cleared = f.cleared;
+  void load<unknown>('doc:' + name).then(v => { if (v && flights.get(name) === f && f.cleared === cleared && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
 }
-async function runDoc(name: string, f: DocFlight, epoch: number) {
-  const current = () => flights.get(name) === f && f.epoch === epoch;
+async function startDoc(name: string, f: DocFlight) {
+  const reader = [...f.readers].pop(); if (!reader) return;
+  const read = ++f.started, generation = accessGeneration(), s = docSignal(name);
+  const newest = () => flights.get(name) === f && read > f.shown && isAccessCurrent(generation);
   try {
-    do {
-      f.again = false;
-      const generation = accessGeneration(), s = docSignal(name);
-      try {
-        await ensureAccessGeneration(); assertAccessGeneration(generation);
-        const d = await f.fetch();
-        if (!current()) return;
-        if (isAccessCurrent(generation)) { s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); }
-      } catch (e: any) {
-        if (!current()) return;
-        if (isAccessCurrent(generation)) {
-          s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e?.message ?? String(e) };
-          if (s.value.data === null) restoreDoc(name, f); // offline: show what was stored
-        }
-      }
-    } while (f.again && current());
-  } finally { if (current()) f.running = false; }
+    await ensureAccessGeneration(); assertAccessGeneration(generation);
+    const d = await reader.fetch();
+    if (newest()) { f.shown = read; s.value = { data: d, restored: false, error: null }; save('doc:' + name, d, currentCursor()); }
+  } catch (e: any) {
+    if (!newest() || read !== f.started) return; // a later read is still running or already shown
+    s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e?.message ?? String(e) };
+    if (s.value.data === null) restoreDoc(name, f); // offline: show what was stored
+  }
 }
-/** Read a mounted doc. While a read runs, ask for one trailing read; `supersedeAfterMs` starts a fresh read instead once the running one is that old (0: now). */
-export function readDoc(name: string, supersedeAfterMs?: number) {
-  const f = flights.get(name); if (!f) return;
-  if (f.running && (supersedeAfterMs === undefined || performance.now() - f.startedAt < supersedeAfterMs)) { f.again = true; return; }
-  f.running = true; f.startedAt = performance.now();
-  void runDoc(name, f, ++f.epoch);
+/** Ask for a fresh read of a mounted doc; every ask in the same task sends one request. */
+export function readDoc(name: string) {
+  const f = flights.get(name); if (!f || f.scheduled) return;
+  f.scheduled = true;
+  queueMicrotask(() => { f.scheduled = false; void startDoc(name, f); });
 }
-/** Mount a reader: shows stored data first, then reads, or joins the running read. Returns the release. */
+/** Mount a reader: shows stored data first, then reads. Returns the release. */
 export function holdDoc(name: string, fetch: () => Promise<unknown>) {
-  let f = flights.get(name); if (!f) flights.set(name, f = { readers: 0, fetch, epoch: 0, running: false, startedAt: 0, again: false });
-  const flight = f; flight.readers++; flight.fetch = fetch;
+  let f = flights.get(name); if (!f) flights.set(name, f = { readers: new Set(), started: 0, shown: 0, scheduled: false, cleared: 0 });
+  const flight = f, reader: DocReader = { fetch }; flight.readers.add(reader);
   if (!docSignal(name).value?.data) restoreDoc(name, flight);
-  if (!flight.running) readDoc(name);
-  return () => { if (--flight.readers === 0 && flights.get(name) === flight) flights.delete(name); };
+  readDoc(name);
+  return () => { flight.readers.delete(reader); if (!flight.readers.size && flights.get(name) === flight) flights.delete(name); };
 }
-function discardDocReads() { for (const f of flights.values()) { f.epoch++; f.running = false; f.again = false; } }
+function discardDocReads() { for (const f of flights.values()) { f.shown = f.started; f.cleared++; } }
 
 /** Detail and page reads by name (task_get, session_get, overview, hosts). The last value stays visible while re-reading. */
 export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches: (c: Change) => boolean, refreshMs?: number) {
@@ -270,12 +263,12 @@ export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches:
   useEffect(() => {
     if (!name) return;
     const release = holdDoc(name, () => fetchRef.current());
-    const off = subscribe({ resync: () => readDoc(name, 0), changes: cs => { if (cs.some(c => touchRef.current(c))) readDoc(name); } });
-    const timer = refreshMs ? setInterval(() => readDoc(name, refreshMs), refreshMs) : 0;
+    const off = subscribe({ resync: () => readDoc(name), changes: cs => { if (cs.some(c => touchRef.current(c))) readDoc(name); } });
+    const timer = refreshMs ? setInterval(() => readDoc(name), refreshMs) : 0;
     return () => { release(); off(); clearInterval(timer); };
   }, [name, refreshMs, gen]);
   const v = s?.value ?? null;
-  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => { if (name) readDoc(name, 0); } };
+  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => { if (name) readDoc(name); } };
 }
 
 /** For tests: the stored list under key and a record. */
