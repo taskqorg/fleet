@@ -166,7 +166,7 @@ func accountReceiptIn(q *Request, b *contract.AccountReceipt) (any, error) {
 	return accountReport(q, b.AccountObservation, astr(p["nativeHostId"]))
 }
 
-// projectReceiptRoute: a registered read operation (project_context, catalogue, pipeline_get, ...) runs in a read
+// projectReceiptRoute: an operation registered with read=true (project_context, catalogue, ...) runs in a read
 // transaction without GLOBAL, as on the ops and agent-tool paths; a slow read must not queue every host poll and receipt
 // behind it. Every other operation keeps the GLOBAL write transaction.
 func projectReceiptRoute(q *Request) (any, error) {

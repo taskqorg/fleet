@@ -113,21 +113,23 @@ func TestHostReadProjectOperationSkipsGlobal(t *testing.T) {
 		return answered
 	}
 	write := send("question_ask", doc{"requestId": "q-read-test", "text": "still serialized?"})
-	select {
-	case code := <-send("project_context", doc{}):
-		if code != 200 {
+	for _, op := range []string{"project_context", "catalogue", "pipeline_history", "question_history"} {
+		select {
+		case code := <-send(op, doc{}):
+			if code != 200 {
+				close(release)
+				t.Fatalf("%s under held GLOBAL = %d", op, code)
+			}
+		case <-time.After(4 * time.Second):
 			close(release)
-			t.Fatalf("project_context under held GLOBAL = %d", code)
+			t.Fatalf("host %s waited for the GLOBAL lock", op)
 		}
-	case <-time.After(4 * time.Second):
-		close(release)
-		t.Fatal("host project_context waited for the GLOBAL lock")
 	}
 	select {
 	case code := <-write:
 		close(release)
 		t.Fatalf("question_ask answered %d while GLOBAL was held", code)
-	default:
+	case <-time.After(300 * time.Millisecond):
 	}
 	close(release)
 	select {
