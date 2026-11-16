@@ -75,8 +75,9 @@ function pruneRecords() { for (const id of records.keys()) if (!holders.get(id)?
 const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => ('tasks' in r ? r.tasks : r.sessions) as Row[];
 const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
 // The snapshot is built when the write happens (offline.save calls it at most once a second).
-// Snapshot keys carry a version: 'v2' since a view without a group means project, not priority (stored groups differ).
-const SNAP = 'list:v2:';
+// Snapshot keys carry a version: 'v2' since a view without a group means project, not priority (stored groups differ);
+// 'v3' since conversation rows are keyed [group, sort, id] (a stored two-part cursor would be refused).
+const SNAP = 'list:v3:';
 const persist = (key: string, e: Entry) => save<Saved>(SNAP + key, () => { const s = e.state.value!; return { ids: s.ids, keys: s.keys, counts: s.counts, total: s.total, groups: s.groups, nextAfter: s.nextAfter, at: s.at, rows: s.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) }; }, currentCursor());
 const idsAndKeys = (rows: Row[]) => ({ ids: rows.map(x => x.id), keys: Object.fromEntries(rows.map(x => [x.id, x.sortKey])) });
 
