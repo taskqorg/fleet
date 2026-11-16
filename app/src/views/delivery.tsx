@@ -12,6 +12,7 @@ import {
 import { op, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
+import { parseView } from '../../../packages/view-url/view-url.ts';
 import { focusIds, prefsRead } from '../prefs.ts';
 import type { Change } from '../../../contracts/generated/ops.ts';
 
@@ -43,9 +44,20 @@ const NONE = 'none' as const; // no history kept (404): known, unlike still load
 const p = (xs: number[], q: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)]; };
 const sec = (v: number | null | undefined) => ({ value: v == null ? null : v / 1000, basis: v == null ? 'unavailable' as const : 'measured' as const, reason: v == null ? 'no pull requests' : undefined });
 
+type DeliveryExtra = { group?: string; sort?: string; range?: string; at?: string };
+/** The Delivery keys of a link: valid values other than the defaults. A link may carry anything (an old one has the text "undefined"). */
+export function deliveryExtra(x: Record<string, string | undefined> | undefined): DeliveryExtra {
+  const out: DeliveryExtra = {};
+  if (x?.group && x.group !== 'stage' && GROUPS.some(g => g[0] === x.group)) out.group = x.group;
+  if (x?.sort && x.sort !== 'since' && /^-?[a-z]+$/.test(x.sort) && SORTS.some(f => f[0] === x.sort!.replace(/^-/, ''))) out.sort = x.sort;
+  if (x?.range && x.range !== '7d' && RANGES.some(r => r.id === x.range)) out.range = x.range;
+  if (x?.at && /^[1-9]\d*$/.test(x.at)) out.at = x.at;
+  return out;
+}
+
 export function Delivery({ id }: { id?: string }) {
   const { view, set, href } = useUrlView('delivery');
-  const ex = view.extra ?? {};
+  const ex = deliveryExtra(view.extra);
   const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
   const focus = focusIds() ?? [];
   const status = useDoc<Status>(prefsRead.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
@@ -64,6 +76,8 @@ export function Delivery({ id }: { id?: string }) {
   const incomplete = !!data?.error;
   const stages = (view.state ?? []) as Stage[];
   const group = ex.group ?? 'stage', sort = ex.sort ?? 'since';
+  // Built from the URL at the moment of the change (url.ts), keeping only valid values that are not the defaults.
+  const setExtra = (patch: Partial<Record<keyof DeliveryExtra, string | undefined>>) => set({ extra: deliveryExtra({ ...parseView(location.pathname + location.search)?.extra, ...patch }) });
   // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows.
   const at = ex.at ? Number(ex.at) : null;
   const picked: Item[] | null = at !== null && pace.data ? pace.data.h.prs.filter(x => ms(x.merged) >= at && ms(x.merged) < at + range.bucket).map(fromHistory) : null;
@@ -94,12 +108,12 @@ export function Delivery({ id }: { id?: string }) {
       {data?.refreshedAt && <AgeChip t={ms(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}</header>
     <section class="panel">
       <ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search pull requests, state:mq_wait project:fleet" shown={shown.length} total={source.length}
-        chips={picked && at !== null ? [{ field: 'Merged', value: bucketLabel(at, range.bucket) }] : []} onRemove={() => set({ extra: { ...ex, at: undefined as any } })}
+        chips={picked && at !== null ? [{ field: 'Merged', value: bucketLabel(at, range.bucket) }] : []} onRemove={() => setExtra({ at: undefined })}
         counters={<StateCounters family="delivery" label="Pull requests by stage" counts={counts} active={stages} onAll={() => set({ state: [] })}
           onToggle={s => set({ state: stages.includes(s) ? stages.filter(x => x !== s) : [...stages, s] })} />}
         tools={<>
-          <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ extra: { ...ex, group: g === 'stage' ? undefined as any : g } })} />
-          <SortControl value={sort} fields={SORTS} onChange={v => set({ extra: { ...ex, sort: v === 'since' ? undefined as any : v } })} />
+          <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => setExtra({ group: g === 'stage' ? undefined : g })} />
+          <SortControl value={sort} fields={SORTS} onChange={v => setExtra({ sort: v === 'since' ? undefined : v })} />
         </>} />}>
         {status.error && !data ? <ErrorBanner text={`Delivery did not load: ${status.error}`} />
           : !data ? <Skeleton rows={6} />
@@ -116,7 +130,7 @@ export function Delivery({ id }: { id?: string }) {
   </>;
   return <ListDetail list={list} detailKey={id}
     idle={<Overview now={now} items={items} incomplete={incomplete} pace={pace.data ?? null} paceError={pace.error} fleetShown={fleetShown && !pace.none} range={range} at={at} href={it => href({ focus: idOf(it) })}
-      onRange={r => set({ extra: { ...ex, range: r === '7d' ? undefined as any : r, at: undefined as any } })} onAt={a => set({ extra: { ...ex, at: a === null ? undefined as any : String(a) } })} onOpen={go} />}
+      onRange={r => setExtra({ range: r === '7d' ? undefined : r, at: undefined })} onAt={a => setExtra({ at: a === null ? undefined : String(a) })} onOpen={go} />}
     detail={id ? <PrDetail key={id} id={id} item={open} now={now} onClose={() => go()} /> : undefined} />;
 }
 

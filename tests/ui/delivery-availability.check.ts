@@ -45,6 +45,20 @@ export async function checkDeliveryAvailability(browser: Browser, origin: string
         if (fixture.items.length === 0) { await page.getByText('No pull requests in flight.', {exact: true}).waitFor(); await overview.getByText('Nothing in flight.', {exact: true}).waitFor(); }
         else await page.getByRole('link', {name: /Retained pull request/}).first().waitFor();
       }
+      if (fixture.name === 'healthy real') {
+        // Back to a default value drops the key from the link; it never writes the text "undefined" (sort=undefined broke sorting).
+        const flip = page.locator('[data-ui=sort-control] .pick-dir');
+        await flip.click(); await page.waitForURL(u => u.searchParams.get('sort') === '-since');
+        await flip.click(); await page.waitForURL(u => !u.searchParams.has('sort'));
+        assert.ok(!page.url().includes('undefined'), page.url());
+        // A link saved while the bug was live: the controls show the defaults, and the next change writes a clean link.
+        await page.goto(origin + '/delivery?group=undefined&sort=undefined&range=undefined&at=undefined');
+        await page.locator('[data-ui=sort-control]').waitFor();
+        assert.equal((await page.locator('[data-ui=sort-control] .pick-b').textContent())?.trim(), 'In stage since');
+        assert.equal(await page.getByText(/id Dat|Invalid Date/).count(), 0, 'a stale at shows as a date chip');
+        await flip.click(); await page.waitForURL(u => u.searchParams.get('sort') === '-since');
+        assert.equal(new URL(page.url()).search, '?sort=-since', 'stale keys stay in the link');
+      }
       await page.unroute('**/api/ops/delivery_status');
     }
     assert.deepEqual(errors, []);

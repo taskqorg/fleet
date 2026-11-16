@@ -3,7 +3,7 @@
 export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results' | 'projects' | 'delivery';
 export type View = {
   view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
-  q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean; extra?: Record<string, string>;
+  q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean; extra?: Record<string, string | undefined>;
 };
 export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string; sort?: string };
 
@@ -154,7 +154,8 @@ const known = (v: View, keep: (k: Key) => boolean): [string, string][] =>
 
 export function formatView(v: View): string {
   const ps = known(v, () => true), table = TABLE[v.view];
-  for (const [k, x] of Object.entries(v.extra ?? {})) if (!Object.hasOwn(table, k)) ps.push([enc(k), enc(x)]);
+  // An absent value (undefined) is no parameter, never the text "undefined".
+  for (const [k, x] of Object.entries(v.extra ?? {})) if (x !== undefined && !Object.hasOwn(table, k)) ps.push([enc(k), enc(x)]);
   const q = join(ps);
   // A dot segment ('.', '..') would be resolved away by the browser, so its dots are escaped.
   const focus = v.focus === '.' || v.focus === '..' ? v.focus.replace(/\./g, '%2E') : v.focus && enc(v.focus);

@@ -106,3 +106,10 @@ test('review #31-10: a full URL is accepted only on the given origin', () => {
   assert.equal(parseView('https://fleet.example/tasks', { origin: null }), null);
   assert.ok(parseView('/tasks', { origin: null }));
 });
+
+test('an undefined extra value leaves the link, never the text "undefined"', () => {
+  const v: View = { view: 'delivery', extra: { range: '24h', at: undefined, sort: undefined } };
+  const s = formatView(v);
+  assert.ok(!s.includes('undefined'), s);
+  assert.deepEqual(parseView(s)!.extra, { range: '24h' });
+});
