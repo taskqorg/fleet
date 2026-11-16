@@ -65,6 +65,36 @@ test('a refused page cursor reloads the first page once, keeping rows, and pages
   calls = []; await nextPage('C'); assert.deepEqual(calls.map(c => !!c.body.after), [true], 'scrolling again does not reload');
 });
 
+test('a recovery reload that steps aside for a newer membership answer still drops the refused cursor', async () => {
+  await clearAll();
+  const V = { view: 'conversations' as const };
+  answer = async () => page([row('t1')], ['old', 't1']);
+  peek.mount('sessions', 'E', V); await loadList('sessions', 'E', V);
+  const member = deferred(), first = deferred();
+  answer = async (n, b) => n === 'list_membership' ? member.p : b.after?.[0] === 'old' ? { httpStatus: 400, message: 'Invalid after' } : b.after ? page([row('t5')]) : first.p;
+  const changing = applyChanges([{ seq: 10, kind: 'session', id: 't2', taskId: null, sessionId: 't2', hostId: null, op: 'I' } as any]);
+  await new Promise(r => setImmediate(r));
+  const paging = nextPage('E'); await new Promise(r => setImmediate(r));
+  member.ok({ lists: [{ rows: [row('t2')], counts: { queued: 2 }, groups: [] }] }); await changing;
+  first.ok(page([row('t1')], ['g', 's', 't1'])); await paging;
+  assert.ok(peek.list('E')!.ids.includes('t2'), 'the newer membership answer is kept');
+  assert.ok(peek.list('E')!.ids.includes('t5'), 'paged on with the fresh cursor'); assert.equal(peek.list('E')!.error, null);
+});
+
+test('a page error clears with the next page; a failed first-page load keeps its error', async () => {
+  await clearAll();
+  const V = { view: 'conversations' as const };
+  answer = async () => page([row('t1')], ['g', 's', 't1']);
+  await loadList('sessions', 'F', V);
+  answer = async () => ({ httpStatus: 500, message: 'busy' }); await nextPage('F');
+  assert.equal(peek.list('F')!.error, 'busy');
+  answer = async () => page([row('t2')], ['g', 's', 't2']); await nextPage('F');
+  assert.equal(peek.list('F')!.error, null);
+  answer = async (_n, b) => b.after ? page([row('t3')]) : { httpStatus: 500, message: 'down' };
+  await loadList('sessions', 'F', V); await nextPage('F');
+  assert.equal(peek.list('F')!.error, 'down', 'a page does not hide the failed load from the back-online reload');
+});
+
 test('a refused cursor while a reload runs leaves the cursor to that reload', async () => {
   await clearAll();
   const V = { view: 'conversations' as const };
