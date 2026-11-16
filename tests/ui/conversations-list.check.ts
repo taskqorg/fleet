@@ -1,6 +1,6 @@
 // Conversations list controls (docs/design-system/pages/conversations.md, list-view pattern; OR-12, OR-33, OR-35, OR-37):
 // a system preset sets only the state filter and keeps the grouping, group and sort change the server order, a pinned row
-// stays under a filter that does not match it, checkboxes show only in selection mode, and the Archived toggle switches to
+// stays under a filter that does not match it, a search ends the preset, checkboxes show only in selection mode, and the Archived toggle switches to
 // archived conversations, where the bar offers Unarchive. Called by conversations.check.ts.
 // With CONV_SHOTS=<dir> it also saves three dark screenshots: the grouped list (conv-a.png), selection mode (conv-b.png) and
 // the archived list (conv-archived.png).
@@ -66,6 +66,11 @@ export async function checkConversationsList(browser: Browser, origin: string, s
     assert.equal(url().searchParams.get('group'), 'state', 'Needs me kept the grouping');
     await settle(async () => (await mine()).join() === 'Compare three pricing layouts,Fix the invoice rounding bug', 'Needs me lists waiting and failed');
     assert.ok(await p.locator('[data-ui=saved-views] button[aria-pressed=true]', { hasText: 'Needs me' }).count() === 1, 'Needs me shows active');
+    // A new search query ends the active preset; the states stay.
+    await p.locator('.fbar button[aria-label^="Search"]').first().click();
+    await p.locator('.fbar input').first().pressSequentially('pricing', { delay: 60 });
+    await settle(async () => url().searchParams.get('q') === 'pricing', 'search in the URL');
+    assert.ok(!url().searchParams.has('preset') && url().searchParams.get('state') === 'failed,waiting', 'a search ended the preset and kept the states: ' + url().search);
 
     // No grouping, then the sort direction: the server order flips (oldest activity first).
     await p.goto(origin + '/conversations?group=none'); await p.waitForSelector('.vl-row .row-link');

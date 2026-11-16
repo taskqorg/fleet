@@ -1,6 +1,7 @@
 // Filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4). For each size: a fresh Go coordinator (tests/harness.ts) with
 // that many tasks, operation latency over HTTP, then in Chromium every list change (state counter, grouping,
-// "All", preset, focus, row check, search, Back) watched each animation frame. Prints a report. With --assert it exits 1
+// "All", preset, focus, row check, search, Back) watched each animation frame; then a search and Clear filters end the
+// preset, and a bulk action that fails for one row keeps only that row selected. Prints a report. With --assert it exits 1
 // when a rule fails at a size up to 20,000 tasks; larger sizes are report-only (growth factor).
 // Run: pnpm run build && node tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]
 import { chromium, type Page } from 'playwright';
@@ -165,6 +166,35 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.locator('.fbar input').first().fill(''); await page.locator('.fbar input').first().pressSequentially('copy', { delay: 60 }); await page.waitForTimeout(800);
     await page.goBack(); await page.waitForTimeout(300);
     rule(N, (await url()) === '/tasks', `a search after Back replaced the entry Back returned to (Back now at ${await url()})`);
+    // A new search query ends the active preset (OR-33): the states stay, the preset leaves the URL.
+    await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
+    await page.locator('[data-ui=saved-views] button', { hasText: 'Running' }).click();
+    await page.waitForFunction(() => new URLSearchParams(location.search).get('preset') === 'Running');
+    if (!await page.locator('.fbar input').count()) await page.locator('.fbar button[aria-label^="Search"]').first().click();
+    await page.locator('.fbar input').first().pressSequentially('hero', { delay: 60 });
+    await page.waitForFunction(() => new URLSearchParams(location.search).get('q') === 'hero', null, { timeout: 5000 }).catch(() => {});
+    { const u = new URL(origin + await url()).searchParams; rule(N, u.get('q') === 'hero' && !u.has('preset') && !!u.get('state'), `a search kept the preset or lost the states: ${u}`); }
+    // The empty state's Clear filters clears states, search, projects and the preset.
+    await page.locator('[data-ui=saved-views] button', { hasText: 'Running' }).click();
+    await page.waitForFunction(() => new URLSearchParams(location.search).get('preset') === 'Running');
+    await page.goto(origin + await url() + '&q=no-such-task-anywhere'); // a link: the preset stays with the query
+    await page.getByRole('button', { name: 'Clear filters', exact: true }).click({ timeout: 10000 }).catch(() => {});
+    await page.waitForFunction(() => !location.search.includes('q='), null, { timeout: 5000 }).catch(() => {});
+    { const u = new URL(origin + await url()).searchParams; rule(N, !u.has('preset') && !u.has('q') && !u.has('state'), `Clear filters left filters or the preset: ${u}`); }
+    // A bulk action that fails for one row: the rows that succeeded leave the selection, the failed row stays selected.
+    await page.goto(origin + '/tasks?group=none&state=queued'); await page.waitForSelector('.vl-row .row-link');
+    const [okId, badId] = await page.$$eval('.vl-row:not(.grp)', rs => rs.slice(0, 2).map(r => r.getAttribute('data-key')!));
+    await page.route('**/api/ops/task_update', route => JSON.parse(route.request().postData() ?? '{}').taskId === badId
+      ? route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ message: 'forced failure' }) }) : route.continue());
+    for (const k of [okId, badId]) await page.locator(`.vl-row[data-key="${k}"] .row-link`).click({ modifiers: ['Shift'] });
+    await page.waitForFunction(() => document.querySelector('[data-ui=select-bar]')?.textContent?.includes('2 selected'));
+    await page.locator('[data-ui=select-bar] button[aria-label=Pause]').click();
+    await page.waitForFunction(() => /did not pause/.test(document.querySelector('[data-ui=list-view]')?.textContent ?? ''), null, { timeout: 10000 }).catch(() => {});
+    const bulkText = await page.locator('[data-ui=list-view]').textContent() ?? '';
+    rule(N, bulkText.includes('1 of 2 did not pause: forced failure'), 'partial bulk failure: no "1 of 2 did not pause" banner');
+    await page.waitForFunction(b => new URLSearchParams(location.search).get('sel') === b, badId, { timeout: 5000 }).catch(() => {});
+    { const sel = new URL(origin + await url()).searchParams.get('sel'); rule(N, sel === badId, `after a partial bulk failure sel should be only the failed row ${badId}, got ${sel}`); }
+    await page.unroute('**/api/ops/task_update');
   } finally { await page.close(); await close(); }
 }
 
