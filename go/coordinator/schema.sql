@@ -2286,8 +2286,9 @@ CREATE INDEX question_cause ON question(cause, seq) WHERE cause IS NOT NULL;
 -- migration 63: every prepared read reports its project's oldest pending work. Joining all of a project's pending scopes
 -- to resource_work made that read cost grow with the backlog, and 50 readers' reads then starved the processor that
 -- drains it. first_pending_at does not change in normal operation, so each scope row carries a copy (kept equal by a
--- trigger), indexed per project. Rows written by an older coordinator during a rolling start keep NULL and are read through the old join
--- over their own small partial index; failed work (normally none) has its own partial index.
+-- trigger), indexed per project. A scope row whose work row is not yet visible to its
+-- insert (an older coordinator's single-statement seeding) keeps NULL and is read through the old join over its own
+-- partial index; failed work (normally none) has its own partial index and drives the error lookup.
 SELECT set_config('fleet.project_ids','*',true);
 ALTER TABLE resource_work_scope ADD COLUMN first_pending_at timestamptz;
 UPDATE resource_work_scope ws SET first_pending_at=w.first_pending_at FROM resource_work w WHERE w.work_id=ws.work_id;
@@ -2298,6 +2299,14 @@ CREATE FUNCTION resource_work_pending_copy() RETURNS trigger LANGUAGE plpgsql SE
 BEGIN UPDATE resource_work_scope SET first_pending_at=NEW.first_pending_at WHERE work_id=NEW.work_id; RETURN NULL; END $$;
 CREATE TRIGGER resource_work_pending_copy AFTER UPDATE OF first_pending_at ON resource_work FOR EACH ROW
  WHEN (NEW.first_pending_at IS DISTINCT FROM OLD.first_pending_at) EXECUTE FUNCTION resource_work_pending_copy();
+-- Writers pass the copy; an insert without it (an older coordinator) takes it from an already visible work row.
+CREATE FUNCTION resource_work_scope_stamp() RETURNS trigger LANGUAGE plpgsql SET search_path=public AS $$
+BEGIN
+ IF NEW.first_pending_at IS NULL THEN SELECT first_pending_at INTO NEW.first_pending_at FROM resource_work WHERE work_id=NEW.work_id; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER resource_work_scope_stamp BEFORE INSERT ON resource_work_scope FOR EACH ROW
+ WHEN (NEW.first_pending_at IS NULL) EXECUTE FUNCTION resource_work_scope_stamp();
 CREATE OR REPLACE FUNCTION resource_enqueue_source(eid text, old_project text, new_project text) RETURNS void
 LANGUAGE plpgsql SET search_path=public AS $$
 DECLARE wid uuid; pending timestamptz;
