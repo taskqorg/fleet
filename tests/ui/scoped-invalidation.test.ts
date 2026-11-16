@@ -7,6 +7,8 @@ import {mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {chromium,type Page} from 'playwright';
 import {startCoordinator,lit} from '../harness.ts';
+// Requirement: scoped audit/definition changes retain authorized current data and legacy behavior.
+// Risk: wrong target filtering leaks metadata, loses remote updates or repeats irrelevant reads.
 test('scoped notifications retain mounted preferences, editor and access semantics',{skip:!process.env.FLEET_CONTROL_BROWSER,timeout:60000},async()=>{
 mkdirSync(resolve('.egm'),{recursive:true});const out=mkdtempSync(resolve('.egm/scoped-invalidation-'));
 const people=[{email:'owner@trial.test',name:'Owner',roles:['operator','architect'],owner:true},{email:'member@trial.test',name:'Member',roles:['operator'],grants:[{kind:'project',id:'protocol-pref-a'}]}];

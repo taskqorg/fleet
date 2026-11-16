@@ -3,6 +3,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startCoordinator,lit} from '../harness.ts';
+// Requirement: scoped audit/definition changes retain authorized current data and legacy behavior.
+// Risk: wrong target filtering leaks metadata, loses remote updates or repeats irrelevant reads.
 test('committed setting target survives audit deletion, rollback and legacy rows without changing RLS',{timeout:30000},async()=>{
  const c=await startCoordinator({name:'change-target'});
  const call=async(actor:string,name:string,body:object={})=>{const r=await fetch(c.base+'/api/ops/'+name,{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':actor,'content-type':'application/json'},body:JSON.stringify(body)});assert.equal(r.status,200,await r.clone().text());return r.json() as Promise<any>;};
