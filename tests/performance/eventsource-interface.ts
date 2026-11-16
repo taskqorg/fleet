@@ -43,11 +43,11 @@ export function installEventSourceCapture({projects,maxBytes=64*1024*1024}:{proj
   drain(acknowledged:number,freeze=false){
    if(!Number.isSafeInteger(acknowledged)||acknowledged<ack||acknowledged>=next){errors.push('invalid capture acknowledgement');}
    // Acknowledged rows leave by a head index (rows.shift() made each drain quadratic in the backlog); the array is
-   // compacted once most of it is acknowledged.
-   else {ack=acknowledged;while(head<rows.length&&rows[head].ordinal<=ack){bytes-=rows[head].bytes;head++;}if(head>4096&&head*2>rows.length){rows.splice(0,head);head=0;}}
+   // compacted once half of it is acknowledged, so retained strings stay within twice the unacknowledged bound.
+   else {ack=acknowledged;while(head<rows.length&&rows[head].ordinal<=ack){bytes-=rows[head].bytes;head++;}if(head>0&&head*2>=rows.length){rows.splice(0,head);head=0;}}
    if(freeze&&!frozen){frozen=true;for(const source of sources)source.remove();}
-   // Up to 4 MiB per call: one evaluate round trip carries thousands of events instead of 256.
-   const batch:typeof rows=[];for(let i=head,size=0;i<rows.length&&(batch.length===0||size+rows[i].bytes<=4*1024*1024);i++){batch.push(rows[i]);size+=rows[i].bytes;}
+   // Up to 1 MiB per call: one evaluate round trip carries thousands of events instead of 256.
+   const batch:typeof rows=[];for(let i=head,size=0;i<rows.length&&(batch.length===0||size+rows[i].bytes<=1024*1024);i++){batch.push(rows[i]);size+=rows[i].bytes;}
    return {documentId,first:batch[0]?.ordinal??null,last:batch.at(-1)?.ordinal??ack,events:batch.map(r=>r.line).join(''),notifications:batch.filter(r=>r.notification).map(r=>r.line).join(''),count:batch.length,notificationCount:batch.filter(r=>r.notification).length,remaining:rows.length-head-batch.length,observed,nativeErrors,acknowledged:ack,bufferBytes:bytes,maxBytes,frozen,errors:[...errors],lost,firstLost,sources:sources.map(s=>({sourceId:s.id,openGeneration:s.opens,url:urlOf.call(s.native),withCredentials:credentialsOf.call(s.native),readyState:stateOf.call(s.native)}))};
   }
  };
@@ -64,6 +64,9 @@ export class EventSourceRecorder {
  private cursors=new Map<string,{documentId:string;last:number}>();
  private documents=new Map<string,any>();
  private errors:string[]=[];
+ private noted=new Set<string>();
+ // Each distinct failure is kept once: drains repeat every second per reader and would otherwise repeat it.
+ private note(error:string){if(!this.noted.has(error)){this.noted.add(error);this.errors.push(error);}}
  private eventCount=0;
  private notificationCount=0;
  private timer:ReturnType<typeof setInterval>|undefined;
@@ -99,9 +102,9 @@ export class EventSourceRecorder {
     this.eventCount+=batch.count;this.notificationCount+=batch.notificationCount;
     current.last=batch.last;this.cursors.set(reader.id,current);
    }
-   if(batch.errors.length||batch.lost){this.errors.push(reader.id+': '+JSON.stringify({errors:batch.errors,lost:batch.lost,firstLost:batch.firstLost}));if(!batch.count||!batch.remaining)return;}
+   if(batch.errors.length||batch.lost){this.note(reader.id+': '+JSON.stringify({errors:batch.errors,lost:batch.lost,firstLost:batch.firstLost}));if(!batch.count||!batch.remaining)return;}
    if(freeze){if(!batch.count)return;}else if(!batch.count||current.last>=target!)return;
-  }}catch(e){this.errors.push(reader.id+': '+String(e));throw e;}
+  }}catch(e){this.note(reader.id+': '+String(e));throw e;}
  }
  // Every reader drains concurrently (one serial pass over 50 busy readers took minutes and overflowed the page buffer);
  // each reader's own drains stay ordered, and each write is one whole batch, so lines never interleave mid-record.
