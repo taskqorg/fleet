@@ -158,7 +158,7 @@ export function AgeChip({ t, now, alertAfter, tone = 'danger', alertLabel = 'nee
   const a = age(t, now);
   const alert = alertAfter !== undefined && now - t >= alertAfter * 1000;
   // D14/M3: the alert is never colour only: icon + meaning in the name and tooltip.
-  return <span data-ui="number" class={`chip-age${alert ? ` t-${tone} alert` : ''}`} aria-label={alert ? `${a.long}, ${alertLabel}` : a.long} data-tip={alert ? `${alertLabel}, ${exact(t)}` : exact(t)}>
+  return <span data-ui="number" class={`chip-age${alert ? ` t-${tone} alert` : ''}`} aria-label={alert ? `${a.long}, ${alertLabel}` : a.long} data-tip={alert ? alertLabel : undefined}>
     {alert && <Icon name="triangle-alert" />}{a.text}</span>;
 }
 

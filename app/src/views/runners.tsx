@@ -130,7 +130,7 @@ function Ci({ now }: { now: number }) {
         return <div key={j.id} role="row" class="vl-row static">
           <span class="lead"><StateBadge family="execution" state={st} compact /></span>
           <span class="tt"><a class="title row-link" href={j.url} target="_blank" rel="noopener">{j.name}</a><span class="id">{j.workflow}</span><span class="muted">{j.status === 'in_progress' ? j.runner : `not started · ${j.runner}`}</span></span>
-          <TimeStrip from={from} to={now} start={start} end={null} now={now} state={st} label={`${j.status}, started ${age(start, now).long}`} />
+          <TimeStrip from={from} to={now} start={start} end={null} now={now} state={st} label={`${j.status}, since ${age(start, now).long}`} />
           <span data-tip={j.status === 'queued' ? 'Queued for' : 'Running for'}><AgeChip t={start} now={now} alertAfter={3600} tone="attention" alertLabel="long" /></span>
         </div>; })}
     </div>

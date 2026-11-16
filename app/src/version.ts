@@ -117,22 +117,22 @@ export function versionInfo(now = Date.now()): VersionInfo {
   const v = versions.value, rows: VersionRow[] = [];
   rows.push({ key: 'tab', part: 'This tab', icon: 'panels-top-left', version: tabVersion.value, state: updateChecked.value ? (updateReady.value ? 'update ready' : 'current') : 'unknown', tone: updateChecked.value ? (updateReady.value ? 'running' : 'success') : 'attention' });
   if (v) {
-    // Server moments shift by the clock offset seen when the reply arrived, so ages count on this tab's clock.
-    const skew = (versionObservedAt.value ?? now) - v.serverNow, serverNow = now - skew, local = (t: number) => t + skew;
+    // Server moments keep their true time (the tooltip); their age counts from the server's present as this tab estimates it.
+    const serverNow = v.serverNow + Math.max(0, now - (versionObservedAt.value ?? now)), at = (label: string, t: number) => [{ label, at: t, now: serverNow }];
     rows.push({ key: 'ui', part: 'Site app', icon: 'house', version: v.ui.version, state: v.ui.kind === 'ui' ? 'UI release' : 'bundled', tone: 'neutral' });
     const started = Date.parse(v.coordinator.started);
     rows.push({ key: 'coordinator', part: 'Coordinator', icon: 'network', version: v.coordinator.version, state: 'running', tone: 'success',
-      times: Number.isFinite(started) ? [{ label: 'started', at: local(started) }] : undefined,
+      times: Number.isFinite(started) ? at('started', started) : undefined,
       note: v.coordinator.offered && v.coordinator.offered !== v.coordinator.version ? `offers ${v.coordinator.offered}` : undefined });
     if (v.gateway) {
-      const g = v.gateway, stale = g.observedAt === null || serverNow - g.observedAt > 60_000;
+      const g = v.gateway, stale = g.observedAt == null || serverNow - g.observedAt > 60_000;
       rows.push({ key: 'gateway', part: 'Gateway', icon: 'shield', version: g.version ?? null, state: stale ? 'unknown (probe pending)' : g.state,
-        times: g.observedAt ? [{ label: 'checked', at: local(g.observedAt) }] : undefined, note: g.observedAt ? undefined : 'No probe result yet',
+        times: g.observedAt != null ? at('checked', g.observedAt) : undefined, note: g.observedAt != null ? undefined : 'No probe result yet',
         tone: stale ? 'attention' : g.state === 'ok' ? 'success' : g.state === 'draining' || g.state === 'pending' ? 'attention' : 'danger' });
     }
     for (const h of v.hosts) {
-      const s = hostState(h, serverNow, v.staleAfterMs);
-      rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...s, times: s.seen ? [{ label: 'last seen', at: local(s.seen) }] : undefined });
+      const { seen, ...s } = hostState(h, serverNow, v.staleAfterMs);
+      rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...s, times: seen !== undefined ? at('last seen', seen) : undefined });
     }
   }
   if (v && (versionError.value || versionObservedAt.value === null || now - versionObservedAt.value > 300_000)) {
