@@ -1,7 +1,7 @@
 // View URL codec (docs/designs/fleet-view-urls-and-list-path.md §1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseView, formatView, listKey, toPageParams, viewProblem, TASK_GROUPS, type View } from '../../packages/view-url/view-url.ts';
+import { parseView, formatView, listKey, toPageParams, viewProblem, type View } from '../../packages/view-url/view-url.ts';
 
 const p = (u: string): View => { const v = parseView(u); assert.ok(v, 'not a view: ' + u); return v!; };
 const canon = (u: string) => formatView(p(u));

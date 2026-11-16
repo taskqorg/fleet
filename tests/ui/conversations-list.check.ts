@@ -3,7 +3,7 @@
 // stays under a filter that does not match it, and checkboxes show only in selection mode. Called by conversations.check.ts.
 // With CONV_SHOTS=<dir> it also saves two dark screenshots: the grouped list (conv-a.png) and selection mode (conv-b.png).
 import assert from 'node:assert/strict';
-import type { Browser, Page } from 'playwright';
+import type { Browser } from 'playwright';
 import type { seeder } from './seed.ts';
 
 const until = async (f: () => Promise<boolean>, ms = 8000) => { const s = Date.now(); while (Date.now() - s < ms) { if (await f()) return true; await new Promise(r => setTimeout(r, 50)); } return false; };

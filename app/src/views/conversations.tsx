@@ -36,11 +36,9 @@ const titleOf = (s: SessionRow) => s.title ?? 'New conversation';
 const SYSTEM_VIEWS = [{ name: 'Needs me', view: { view: 'conversations' as const, state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'conversations' as const, state: ['preparing', 'running', 'waiting'] } }];
 
 export function Conversations({ id }: { id?: string }) {
-  const [, go] = useLocation();
   const { view, set, href } = useUrlView('conversations');
   const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
   const states = (view.state ?? []) as StateOf<'session'>[];
-  const [failure, setFailure] = useState<string | null>(null);
   const [closed, setClosed] = useState<string[]>([]);
   const pins = usePins('conversations');
   const views = useViews('conversations', SYSTEM_VIEWS);
@@ -127,7 +125,6 @@ export function Conversations({ id }: { id?: string }) {
   const pane = <>
     <header class="page-h"><h1>Conversations</h1><OfflineMarker state={list.state} now={now} /><span class="grow" />
       <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
-    {failure && <ErrorBanner text={failure} />}
     {newConversation&&<NewConversation onDone={sessionId=>{setNewConversation(false);set({focus:sessionId});}}/>}
     <section class="panel">
       <ListFrame pending={list.pending} bar={<FilterBar query={query} placeholder="Search conversations" onQuery={setQuery}

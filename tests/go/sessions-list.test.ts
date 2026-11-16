@@ -1,12 +1,12 @@
 // Requirement: R2 shared core and R3 reliability/authority: Conversations lists and membership remain scoped and complete under retained history.
 // Risk: RLS prevents a JSON sessionId index condition, so correlated history scans multiply by every session.
-import {test} from 'node:test';
+import {test, type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {startCoordinator} from '../harness.ts';
 
 // R2, R3; risk: RLS turns per-session JSON history lookups into repeated scans and hides/leaks list membership.
 // Fixture watchdog owns cleanup; this is not a product latency threshold or a coordinator timeout change.
-test('sessions_list and membership with production-shaped RLS history retain title, activity, counts and actor secrecy', {timeout: 30_000}, async t => {
+test('sessions_list and membership with production-shaped RLS history retain title, activity, counts and actor secrecy', {timeout: 30_000}, async (t: TestContext) => {
   const c = await startCoordinator({name: 'sesslist'}); t.after(() => c.stop());
   const owner = 'owner@trial.test', member = 'member@trial.test', outsider = 'outsider@trial.test';
   const op = async (name: string, body: object, who = member) => {
@@ -57,7 +57,7 @@ test('sessions_list and membership with production-shaped RLS history retain tit
 
 // R2 shared core (OR-35, OR-37); risk: the Conversations list groups or pages differently from what the client merges, so rows
 // repeat or vanish between pages, and an unknown group or sort silently falls back to another order.
-test('sessions_list groups, sorts and pages by last activity; membership answers with the same keys and groups', {timeout: 30_000}, async t => {
+test('sessions_list groups, sorts and pages by last activity; membership answers with the same keys and groups', {timeout: 30_000}, async (t: TestContext) => {
   const c = await startCoordinator({name: 'sessorder'}); t.after(() => c.stop());
   const send = (name: string, body: object) => fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: JSON.stringify(body)});
   const op = async (name: string, body: object) => { const r = await send(name, body); const d: any = await r.json(); assert.equal(r.status, 200, JSON.stringify(d)); return d; };
