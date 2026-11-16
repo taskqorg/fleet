@@ -713,7 +713,9 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 	}
 }
 
-const resourceCohortSize = 16
+// A cohort may hold every same-project leaf of one pass (the pass selects at most 100 due IDs): each extra transaction
+// costs a lock set, scope hint, summary lock, publication and COMMIT, which dominated burst publication age at 16.
+const resourceCohortSize = 100
 
 // The selected-ID union avoids repeating an unrelated pending-scope scan per leaf.
 const resourceBatchHintsSQL = `WITH candidates AS MATERIALIZED (
@@ -910,17 +912,37 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 			if e := resourceReplace(ctx, a, cohort[0]); e != nil {
 				finalErr = e
 			}
-		} else if e := resourceReplaceBatch(ctx, a, cohort); e != nil {
-			// A failed/uncertain cohort left no acknowledged subset. Durable UUID claims make
-			// replay safe even if COMMIT succeeded but its response was lost.
-			for _, id := range cohort {
-				if e := resourceReplaceAttempt(ctx, a, id, true); e != nil {
-					finalErr = e
-				}
-			}
+		} else if e := resourceBisectCohort(cohort,
+			func(part []string) error { return resourceReplaceBatch(ctx, a, part) },
+			func(id string) error { return resourceReplaceAttempt(ctx, a, id, true) }); e != nil {
+			finalErr = e
 		}
 	}
 	return finalErr
+}
+
+// A failed/uncertain cohort left no acknowledged subset; durable UUID claims make replay safe even if COMMIT
+// succeeded but its response was lost. A leaf-attributable failure is retried in halves, so one poison leaf costs
+// about 2*log2(n) cohort transactions and the healthy rest keeps its amortization. A failure that hits every leaf
+// (clearing, cancellation) goes straight to the single path, as before; a single leaf takes the bounded independent
+// path with its own attempts and backoff.
+func resourceBisectCohort(ids []string, batch func([]string) error, single func(string) error) error {
+	if len(ids) == 1 {
+		return single(ids[0])
+	}
+	err := batch(ids)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errResourceClearing) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		var all []error
+		for _, id := range ids {
+			all = append(all, single(id))
+		}
+		return errors.Join(all...)
+	}
+	mid := len(ids) / 2
+	return errors.Join(resourceBisectCohort(ids[:mid], batch, single), resourceBisectCohort(ids[mid:], batch, single))
 }
 
 func resourceErrorClass(err error) string {

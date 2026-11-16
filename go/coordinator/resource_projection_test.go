@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,51 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Requirement: one poison leaf in a full cohort must not send every healthy leaf to a single transaction;
+// risk: a large failed cohort replays as one transaction per leaf, the overhead batching removes.
+func TestResourceBisectCohort(t *testing.T) {
+	ids := make([]string, resourceCohortSize)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("leaf-%03d", i)
+	}
+	var batches, singles int
+	committed := map[string]bool{}
+	poison := map[string]bool{ids[37]: true}
+	err := resourceBisectCohort(ids, func(part []string) error {
+		batches++
+		for _, id := range part {
+			if poison[id] {
+				return errors.New("poison")
+			}
+		}
+		for _, id := range part {
+			committed[id] = true
+		}
+		return nil
+	}, func(id string) error {
+		singles++
+		if poison[id] {
+			return errors.New("poison")
+		}
+		committed[id] = true
+		return nil
+	})
+	if err == nil || singles != 1 || len(committed) != len(ids)-1 || committed[ids[37]] {
+		t.Fatalf("err=%v singles=%d committed=%d", err, singles, len(committed))
+	}
+	if batches > 2*7 {
+		t.Fatalf("one poison leaf in %d took %d cohort transactions", len(ids), batches)
+	}
+	batches, singles = 0, 0
+	err = resourceBisectCohort(ids, func([]string) error { batches++; return errResourceClearing }, func(string) error { singles++; return nil })
+	if err != nil || batches != 1 || singles != len(ids) {
+		t.Fatalf("a failure of every leaf must not bisect: err=%v batches=%d singles=%d", err, batches, singles)
+	}
+	if !strings.Contains(resourceCandidatesSQL, "LIMIT "+strconv.Itoa(resourceCohortSize)+") candidates") {
+		t.Fatal("cohort size must equal the pass bound in resourceCandidatesSQL")
+	}
+}
+
 // Requirement: bounded cohorts preserve project order and every selected candidate;
 // risk: interleaving removes amortization, mixes uncertain scopes or starves later work.
 func TestResourceCandidateCohorts(t *testing.T) {
@@ -33,14 +79,12 @@ func TestResourceCandidateCohorts(t *testing.T) {
 		hints[interleaved[i]] = fmt.Sprint(i % 5)
 	}
 	var wantInterleaved [][]string
-	for block := 0; block < 2; block++ {
-		for project := 0; project < 5; project++ {
-			var group []string
-			for member := block * 16; member < (block+1)*16 && member < 20; member++ {
-				group = append(group, interleaved[project+5*member])
-			}
-			wantInterleaved = append(wantInterleaved, group)
+	for project := 0; project < 5; project++ {
+		var group []string
+		for member := 0; member < 20; member++ {
+			group = append(group, interleaved[project+5*member])
 		}
+		wantInterleaved = append(wantInterleaved, group)
 	}
 	for _, tc := range []struct {
 		name  string
@@ -54,7 +98,7 @@ func TestResourceCandidateCohorts(t *testing.T) {
 			ids:   []string{"a", "unknown", "b", "a2", "b2", "missing"},
 			hints: map[string]string{"a": "P", "a2": "P", "b": "Q", "b2": "Q", "unknown": ""},
 			want:  [][]string{{"a", "a2"}, {"unknown"}, {"b", "b2"}, {"missing"}}},
-		{name: "five interleaved projects keep16 then4 each", ids: interleaved, hints: hints, want: wantInterleaved},
+		{name: "five interleaved projects keep one cohort each", ids: interleaved, hints: hints, want: wantInterleaved},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := slices.Clone(tc.ids)
@@ -1008,22 +1052,26 @@ func TestResourceCohortPostgres(t *testing.T) {
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
-	equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id='COHORT'`, "16")
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "15")
-	equal(`SELECT present_count::text||':'||expected_count::text FROM resource_metric WHERE project_id='COHORT' AND metric='input' AND basis='measured'`, "16:16")
-	equal(`SELECT count(*)::text FROM resource_valuation WHERE execution_id=ANY($1::text[])`, "16", ids)
+	size, inputSum := fmt.Sprint(resourceCohortSize), 0
+	for i := range ids {
+		inputSum += i % 3
+	}
+	equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id='COHORT'`, size)
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum))
+	equal(`SELECT present_count::text||':'||expected_count::text FROM resource_metric WHERE project_id='COHORT' AND metric='input' AND basis='measured'`, size+":"+size)
+	equal(`SELECT count(*)::text FROM resource_valuation WHERE execution_id=ANY($1::text[])`, size, ids)
 	equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id='COHORT' AND facts#>>'{metrics,cpuMs,value}' IS NOT NULL`, "0")
 	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "1", ids)
 	equal(`SELECT work_id::text FROM resource_work WHERE execution_id='cohort-00'`, late)
 	equal(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`, "1")
-	equal(`SELECT jsonb_array_length(leaves)::text FROM interface_publication WHERE project='COHORT'`, "16")
+	equal(`SELECT jsonb_array_length(leaves)::text FROM interface_publication WHERE project='COHORT'`, size)
 	equal(`SELECT count(*)::text FROM change c JOIN interface_publication p ON p.publication_xid=c.xid WHERE c.kind='resource_summary' AND c.id='COHORT'`, "1")
 	method := scalar(`SELECT method_sha FROM resource_valuation WHERE execution_id='cohort-00'`)
 	sql(`DELETE FROM resource_fixture_cohort_fault; INSERT INTO price_entry(id,subject,unit,price,currency,effective_from,observed_at,source) VALUES('cohort-late','cohort-model','input_tokens',9,'USD','2020-01-01','2025-01-01','owner')`)
 	if err = resourceReplace(ctx, a, "cohort-00"); err != nil {
 		t.Fatal(err)
 	}
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "22")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7))
 	equal(`SELECT method_sha FROM resource_valuation WHERE execution_id='cohort-00'`, method)
 	revision := scalar(`SELECT revision::text FROM resource_project_summary WHERE project_id='COHORT'`)
 	// Durable replay also covers retry after the caller loses acknowledgement: already
@@ -1050,12 +1098,12 @@ func TestResourceCohortPostgres(t *testing.T) {
 	equal(`SELECT execution_id FROM resource_work WHERE execution_id=ANY($1::text[])`, "cohort-01", ids)
 	equal(`SELECT count(*)::text FROM resource_contribution WHERE execution_id='cohort-poison-other'`, "1")
 	equal(`SELECT attempts::text||':'||(next_attempt_at>first_pending_at+interval '90 milliseconds')::text FROM resource_work WHERE execution_id='cohort-01'`, "1:true")
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "37")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7+resourceCohortSize-1)) // every leaf +1 except the poison
 	sql(`DELETE FROM resource_fixture_cohort_fault; UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='cohort-01'`)
 	if err = resourceReplace(ctx, a, "cohort-01"); err != nil {
 		t.Fatal(err)
 	}
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "38")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7+resourceCohortSize))
 
 	// Lose the actual server COMMIT response, not an invented callback error. The
 	// independent connection must observe all committed leaves before durable replay.
@@ -1086,7 +1134,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	if drop.Load() {
 		t.Fatalf("test did not intercept committed response: %v", e)
 	}
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "54")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7+2*resourceCohortSize))
 	equal(`SELECT count(*)::text FROM resource_work WHERE execution_id=ANY($1::text[])`, "0", ids)
 	afterPub := scalar(`SELECT count(*)::text FROM interface_publication WHERE project='COHORT'`)
 	equal(`SELECT (count(*)=$1::bigint+1)::text FROM interface_publication WHERE project='COHORT'`, "true", beforePub)
@@ -1128,7 +1176,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	if e = resourceReplaceCandidates(ctx, a, ids); e != nil {
 		t.Fatal(e)
 	}
-	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, "45")
+	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT' AND metric='input'`, fmt.Sprint(inputSum+7+2*resourceCohortSize-9)) // cohort-00 (0+7+1+1) moved away
 	equal(`SELECT sum_value::text FROM resource_metric WHERE project_id='COHORT_ALT' AND metric='input'`, "10")
 	sql(`UPDATE execution SET project_id=NULL WHERE id='cohort-00'`)
 	if e = resourceReplaceCandidates(ctx, a, ids); e != nil {
@@ -1174,7 +1222,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 	if !found {
 		t.Fatal("clearing hints starved a healthy project outside the first 100 rows")
 	}
-	t.Logf("16 independent leaves/one publication; SQL and backend %d rollback; late UUID retained; frozen method; lost COMMIT response/replay; bounded poison isolation; locked scope change/NULL/RLS passed", backend)
+	t.Logf("%d independent leaves/one publication; SQL and backend %d rollback; late UUID retained; frozen method; lost COMMIT response/replay; bounded poison isolation; locked scope change/NULL/RLS passed", resourceCohortSize, backend)
 
 	// Requirement: interleaved projects retain bounded amortization and fair work coverage;
 	// risk: adjacent-only cohorts degrade to one transaction/publication per selected leaf.
@@ -1231,10 +1279,10 @@ func TestResourceCohortPostgres(t *testing.T) {
 		equal(`SELECT count(*)::text FROM resource_work WHERE execution_id LIKE 'cohort-clear-%'`, "105")
 		equal(`SELECT work_id::text FROM resource_work WHERE execution_id='cohort-interleaved-later'`, laterWork)
 		for p, project := range projects {
-			equal(`SELECT count(*)::text FROM interface_publication WHERE project=$1`, "2", project)
-			equal(`SELECT string_agg(jsonb_array_length(leaves)::text,',' ORDER BY revision) FROM interface_publication WHERE project=$1`, "16,4", project)
+			equal(`SELECT count(*)::text FROM interface_publication WHERE project=$1`, "1", project)
+			equal(`SELECT string_agg(jsonb_array_length(leaves)::text,',' ORDER BY revision) FROM interface_publication WHERE project=$1`, "20", project)
 			equal(`SELECT count(*)::text FROM change c JOIN interface_publication p ON p.publication_xid=c.xid AND p.project=c.id
- WHERE c.kind='resource_summary' AND c.id=$1`, "2", project)
+ WHERE c.kind='resource_summary' AND c.id=$1`, "1", project)
 			equal(`SELECT count(*)::text FROM resource_contribution WHERE project_id=$1 AND included`, "20", project)
 			equal(`SELECT sum_value::text FROM resource_metric WHERE project_id=$1 AND metric='input'`, fmt.Sprint(inputs[p]), project)
 			equal(`SELECT present_count::text||':'||expected_count::text FROM resource_metric WHERE project_id=$1 AND metric='input' AND basis='measured'`, "20:20", project)
@@ -1300,7 +1348,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 		}); e != nil {
 			t.Fatal(e)
 		}
-		t.Log("100 selected interleaved leaves,16/4 publications per project, retained outside/clearing UUIDs,99 healthy poison updates, frozen methods, moving/NULL/RLS")
+		t.Log("100 selected interleaved leaves, one 20-leaf publication per project, retained outside/clearing UUIDs,99 healthy poison updates, frozen methods, moving/NULL/RLS")
 	}
 }
 
