@@ -1,12 +1,13 @@
 // Isolated, two-machine qualification. No arbitrary origin/database target is accepted.
 import assert from 'node:assert/strict';
+import {Writer} from './sql-writer-interface.ts';
+import {installEventSourceCapture,EventSourceRecorder} from './eventsource-interface.ts';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import http from 'node:http';
 import { cpus, freemem, hostname, platform, totalmem } from 'node:os';
 import { resolve } from 'node:path';
-import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { pipeline, finished } from 'node:stream/promises';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -99,32 +100,10 @@ function candidate() {
   const status = command('git', ['status', '--porcelain']);
   const binary = process.env.FLEET_TRIAL_SERVER ?? 'go/bin/fleet-coordinator';
   if (!existsSync(binary)) throw Error('build candidate coordinator first: ' + binary);
-  const files = ['tests/performance/interface.ts', 'tests/performance/seed-interface.ts', 'tests/performance/publication-proof.ts', 'tests/harness.ts', 'app/src/api.ts'];
+  const files = ['tests/performance/interface.ts', 'tests/performance/seed-interface.ts', 'tests/performance/publication-proof.ts','tests/performance/eventsource-interface.ts','tests/performance/sql-writer-interface.ts', 'tests/harness.ts', 'app/src/api.ts'];
   return { sha, dirty: status, diffSHA256: createHash('sha256').update(command('git', ['diff', 'HEAD']) ?? '').digest('hex'), sourceFiles: Object.fromEntries(files.map(p => [p, createHash('sha256').update(readFileSync(p)).digest('hex')])), binarySHA256: createHash('sha256').update(readFileSync(binary)).digest('hex'), builtAssets: command('sh', ['-c', 'find dist/app -type f -name "*.js" -exec shasum -a 256 {} \\;']) };
 }
 
-// One persistent psql session per project. No process spawn per fact and no synchronous psql
-// on the measured source-write path. The lower bound precedes submission; the receipt follows COMMIT.
-class Writer {
-  child: ReturnType<typeof spawn>;
-  pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
-  constructor(db: string, log: NodeJS.WritableStream) {
-    this.child = spawn('psql', ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', process.env.FLEET_TRIAL_PGDATA!, '-p', process.env.FLEET_TRIAL_PGPORT ?? '54329', '-U', 'fleet', '-d', db], { stdio: ['pipe', 'pipe', 'pipe'] });
-    this.child.stderr!.pipe(log, { end: false });
-    createInterface({ input: this.child.stdout! }).on('line', line => {
-      if (!line.startsWith('{')) return;
-      try { const v = JSON.parse(line), p = this.pending.get(v.tag); if (p) { this.pending.delete(v.tag); p.resolve(v); } } catch { this.fail(new Error('invalid SQL receipt')); }
-    });
-    this.child.on('error', e => this.fail(e)); this.child.on('exit', code => this.fail(new Error('writer exited ' + code)));
-    this.child.stdin!.write("SET fleet.project_ids='*';\n");
-  }
-  fail(e: Error) { for (const p of this.pending.values()) p.reject(e); this.pending.clear(); }
-  run(sql: string, payload = 'NULL'): Promise<any> {
-    const tag = randomUUID();
-    return new Promise((resolve, reject) => { this.pending.set(tag, { resolve, reject }); this.child.stdin!.write(sql + `\nSELECT json_build_object('tag',${literal(tag)},'afterCommit',clock_timestamp(),'backend',pg_backend_pid(),'payload',${payload});\n`); });
-  }
-  close() { this.child.stdin!.end(); }
-}
 export type Publication = { epoch: string; revision: string; calls: number; errors: number };
 export type Fact = { id: string; execution: string; project: string; n: number; calls: number; errors: number; lower: number; upper: number | null; phase: string; due: number; transaction?: string; error?: string; proof?: Publication };
 // Both endpoints use performance.now() in this process. Round outward by one millisecond
@@ -238,7 +217,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       await run.producer;
       await run.finalization;
     }
-    server.close(); for (const w of writers) w.close(); await c.stop(); sink.close();
+    server.close(); await Promise.all(writers.map(w=>w.close())); await c.stop(); sink.close();
     execFileSync('pg_ctl', ['-D', pgdata, '-m', 'fast', '-w', 'stop'], { stdio: 'ignore' });
     log.end(); sqlLog.end(); spans.end();
   };
@@ -415,14 +394,16 @@ export async function serve(o: { out: string; history: number; projects: number;
       // its own persistent transaction session. Hot keeps one ordered lane/project.
       if (r.spec.sourceDistribution === 'distinct') for (let i = sourceWriters.length; i < ids.length * 8; i++) { const writer = new Writer(db, sqlLog); writers.push(writer); sourceWriters.push(writer); }
       emit('source-lanes', { run: r.id, distribution: r.spec.sourceDistribution, lanes: sourceWriters.length });
-      const chains = sourceWriters.map(() => Promise.resolve());
+      const chains=sourceWriters.map(()=>Promise.resolve());
+      const cancel=()=>{for(const writer of sourceWriters)void writer.cancel(Error('source run cancelled'));};
+      r.abort.signal.addEventListener('abort',cancel,{once:true});
       const schedule = (phase: SourcePhase, due: number) => {
         const n = ordinal++, slot = n % sourceWriters.length, project = ids[n % ids.length];
         emit('source-offered', { run: r.id, id: `${r.id}-${n}`, execution: r.spec.sourceDistribution === 'hot' ? project + '-marker' : `${project}-${r.id}-leaf-${n}`, project, phase, due, offeredAt: stamp(), lane: slot });
-        const p = chains[slot].then(() => writeFact(r, n, phase, due)); chains[slot] = p; tasks.add(p); void p.finally(() => tasks.delete(p));
+        const p = r.spec.sourceDistribution==='distinct'?writeFact(r,n,phase,due):chains[slot].then(()=>writeFact(r,n,phase,due));if(r.spec.sourceDistribution==='hot')chains[slot]=p; tasks.add(p); void p.finally(() => tasks.delete(p));
       };
       try { r.phaseWindows = await scheduleSourcePhases(r.spec, schedule, (event, window) => emit('source-phase-' + event, { run: r.id, window }), { now: stamp, sleep: ms => delay(ms, undefined, { signal: r.abort.signal }) }); }
-      finally { await Promise.allSettled(tasks); }
+      finally { await Promise.allSettled(tasks);r.abort.signal.removeEventListener('abort',cancel);if(r.abort.signal.aborted)await Promise.all(sourceWriters.map(w=>w.stopped)); }
       await delay(r.spec.recovery * 1000, undefined, { signal: r.abort.signal }); await finish(r);
     };
     server.on('request', async (req, res) => {
@@ -530,9 +511,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
   if (!config.development && (hostname() === config.hostname || placement.separateMachine !== true || !placement.reservation)) throw Error('separate reserved Chromium machine required');
   const { chromium } = await import('playwright');
   const browser = await chromium.launch({ headless: true, args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
-  const notificationLog=createWriteStream(resolve(o.out,'notifications-received.jsonl'));
-  const notificationErrors:string[]=[];let notificationCount=0,notificationBufferMax=0,capturing=true;
-  notificationLog.on('error',e=>notificationErrors.push(String(e)));
+  const notifications=new EventSourceRecorder(o.out);
   const evidence: any = { spec, placement, hardware: hardware(), chromium: browser.version(), server: config, navigation: [], networkProbes: [] };
   const readers: { id: string; project: string; page: import('playwright').Page }[] = [];
   let browserComplete = false;
@@ -543,13 +522,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
       const page = await context.newPage(), project = config.projects[i % config.projects.length], id = 'reader-' + i;
       const session = await context.newCDPSession(page);
-      await session.send('Network.enable');
-      session.on('Network.eventSourceMessageReceived',event=>{
-        if(!capturing)return;
-        try{const change=JSON.parse(event.data);if(change.kind!=='resource_summary'||!config.projects.includes(change.id))return;
-          notificationCount++;notificationLog.write(JSON.stringify({reader:id,cdpMonotonicMs:event.timestamp*1000,receivedAt:stamp(),eventId:event.eventId,change:{sequence:String(change.seq),project:change.id,op:change.op}})+'\n');notificationBufferMax=Math.max(notificationBufferMax,notificationLog.writableLength);
-        }catch{notificationErrors.push('unparseable event-source message');}
-      });
+      await page.addInitScript(installEventSourceCapture,{projects:config.projects});
       if (spec.network === '80ms-10Mbps') { await session.send('Network.emulateNetworkConditions', { offline: false, latency: 80, downloadThroughput: 10_000_000 / 8, uploadThroughput: 10_000_000 / 8 }); }
       page.on('pageerror', error => void reportError({ reader: id, type: 'pageerror', error: error.message }));
       page.on('response', response => { if (response.status() >= 400) void reportError({ reader: id, type: 'http', status: response.status(), path: new URL(response.url()).pathname }); });
@@ -573,6 +546,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       const editableMs = stamp() - start;
       await page.waitForFunction(() => !!document.querySelector('[data-resource-project]')?.getAttribute('data-resource-version'));
       const summaryMs = stamp() - start;
+      await notifications.capture({id,page},true);
       const warmStart = stamp(); await page.goto(o.origin + '/projects/' + project);
       await page.getByRole('button', { name: 'Save project', exact: true }).waitFor();
       const warmEditableMs = stamp() - warmStart;
@@ -592,6 +566,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       (evidence.clockBridges??=[]).push({reader:id,cdpBeforeSeconds:before,browser:browserClock,cdpAfterSeconds:after,note:'raw same-browser clock bracket; no estimated cross-machine offset subtracted'});
       readers.push({ id, project, page });
     }
+    notifications.start(readers);
     const { id: run } = await request('start', { spec, readers: readers.map(({ id, project }) => ({ id, project })), browser: evidence });
     for (const reader of readers) {
       await reader.page.evaluate(({ run, reader, project, marker }) => {
@@ -651,8 +626,10 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     clearInterval(controls); controls = undefined;
     await Promise.all(readers.map(r => r.page.evaluate(() => (window as any).__interfaceStopObservation?.())));
     writeFileSync(resolve(o.out,'api-traces.json'),JSON.stringify(await Promise.all(readers.map(async r=>({reader:r.id,requests:await r.page.evaluate(()=>(window as any).__interfaceAPIs)}))),null,2));
-    evidence.notificationCapture={count:notificationCount,bufferMaxBytes:notificationBufferMax,errors:notificationErrors};
-    if(notificationErrors.length)throw Error('notification capture failed: '+notificationErrors.join(','));
+    await notifications.stop();
+    for(const reader of readers)await notifications.capture(reader,true);
+    await notifications.finish(true);
+    evidence.notificationCapture=notifications.snapshot();
     evidence.result = result;
     await readers[0].page.screenshot({ path: resolve(o.out, 'rendered.png') });
     writeFileSync(resolve(o.out, 'browser.json'), JSON.stringify(evidence, null, 2)); browserComplete = true;
@@ -661,15 +638,18 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
   } catch (e) { evidence.failure = String(e); throw e; }
   finally {
     if (controls) clearInterval(controls);
+    await notifications.stop();
     if (!browserComplete) {
       evidence.incomplete = true; evidence.visualAcceptance = false;
       const partial = await Promise.all(readers.map(async r => { try { return { reader: r.id, requests: await r.page.evaluate(() => (window as any).__interfaceAPIs) }; } catch (e) { return { reader: r.id, unavailable: String(e) }; } }));
       try { writeFileSync(resolve(o.out, 'api-traces-incomplete.json'), JSON.stringify(partial, null, 2)); } catch (e) { evidence.tracePersistenceError = String(e); }
       try { if (readers[0]) await readers[0].page.screenshot({ path: resolve(o.out, 'rendered-incomplete.png') }); else evidence.screenshotError = 'no reader available'; } catch (e) { evidence.screenshotError = String(e); }
-      evidence.notificationCapture = { count: notificationCount, bufferMaxBytes: notificationBufferMax, errors: notificationErrors };
+      for(const reader of readers)try{await notifications.capture(reader,true);}catch{}
+      await notifications.finish(false);
+      evidence.notificationCapture=notifications.snapshot();
       try { writeFileSync(resolve(o.out, 'browser-incomplete.json'), JSON.stringify(evidence, null, 2)); } catch (e) { console.error('incomplete browser evidence persistence failed:', e); }
     }
-    try { await browser.close(); } finally { capturing = false; notificationLog.end(); if (!notificationLog.errored) await once(notificationLog, 'finish'); }
+    try { await notifications.finish(false); } finally { await browser.close(); }
   }
 }
 
