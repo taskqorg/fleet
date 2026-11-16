@@ -572,10 +572,22 @@ func resourceLockSummaries(q *Request, projects []string) error {
 	return nil
 }
 
-func resourceApplyReplacement(q *Request, w *resourceReplacement) (map[string]bool, error) {
+// resourceApplyReplacement records the leaf's support changes in deltas (one per project, written once by the caller
+// after every leaf of the transaction) or, with nil deltas, writes them before returning.
+func resourceApplyReplacement(q *Request, w *resourceReplacement, deltas map[string]*resourceDelta) (map[string]bool, error) {
 	id, projects, s, c, m := w.id, w.projects, w.snapshot, w.contribution, w.method
 	changed := map[string]bool{}
 	var e error
+	flush := deltas == nil
+	if flush {
+		deltas = map[string]*resourceDelta{}
+	}
+	delta := func(p string) *resourceDelta {
+		if deltas[p] == nil {
+			deltas[p] = newResourceDelta(p)
+		}
+		return deltas[p]
+	}
 	sha, msha := resourceSHA(s.Fingerprint), resourceSHA(m)
 	sourceExists := string(s.Leaf) != "null"
 	equal := s.Old != nil && sourceExists && s.Old.SourceSHA == sha && s.Old.MethodSHA == msha && s.Old.Facts.Included == c.Included
@@ -583,14 +595,19 @@ func resourceApplyReplacement(q *Request, w *resourceReplacement) (map[string]bo
 		// Summary rows are already locked in project order; all support writes are deterministic.
 		for _, p := range projects {
 			if s.Old != nil && s.Old.Facts.ProjectId != nil && *s.Old.Facts.ProjectId == p {
-				if e = resourceApply(q, s.Old.Facts, -1); e != nil {
+				if e = delta(p).add(s.Old.Facts, -1); e != nil {
 					return nil, e
 				}
 			}
 			if sourceExists && c.ProjectId != nil && *c.ProjectId == p {
-				if e = resourceApply(q, c, 1); e != nil {
+				if e = delta(p).add(c, 1); e != nil {
 					return nil, e
 				}
+			}
+		}
+		if flush {
+			if e = resourceFlushDeltas(q, projects, deltas); e != nil {
+				return nil, e
 			}
 		}
 		if sourceExists {
@@ -621,6 +638,18 @@ func resourceApplyReplacement(q *Request, w *resourceReplacement) (map[string]bo
 		return nil, err
 	}
 	return changed, nil
+}
+
+// resourceFlushDeltas writes accumulated support changes in the already locked project order.
+func resourceFlushDeltas(q *Request, projects []string, deltas map[string]*resourceDelta) error {
+	for _, p := range projects {
+		if d := deltas[p]; d != nil {
+			if err := d.flush(q); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // resourceReplace consumes only the UUIDs claimed by this attempt. The callback is replayable:
@@ -667,7 +696,7 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 				return e
 			}
 			span.Set("fleet.resource.project_setup_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
-			changed, e := resourceApplyReplacement(q, w)
+			changed, e := resourceApplyReplacement(q, w, nil)
 			if e != nil {
 				return e
 			}
@@ -840,6 +869,7 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 		}
 		setup := strconv.FormatInt(time.Since(stage).Microseconds(), 10)
 		changed := false
+		deltas := map[string]*resourceDelta{}
 		for i := range members {
 			member := &members[i]
 			member.span.Set("fleet.resource.project_setup_us", setup)
@@ -848,11 +878,15 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 			}
 			sub := *q
 			sub.r = q.r.WithContext(member.ctx)
-			affected, e := resourceApplyReplacement(&sub, member.work)
+			affected, e := resourceApplyReplacement(&sub, member.work, deltas)
 			if e != nil {
 				return e
 			}
 			changed = changed || affected[project]
+		}
+		// The whole cohort's support changes are one set of writes (every member is this project's).
+		if e := resourceFlushDeltas(q, []string{project}, deltas); e != nil {
+			return e
 		}
 		if changed {
 			return resourcePublish(q, project)
@@ -987,186 +1021,16 @@ func repairTotalsOwnership(ctx context.Context, a *App, id string) error {
 	}
 }
 
-func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) (resultErr error) {
-	_, stageSpan := obs.Start(q.ctx(), "resource.apply", "internal")
-	defer func() { stageSpan.End(resultErr) }()
-	stage := time.Now()
-	mark := func(name string) {
-		stageSpan.Set("fleet.resource."+name+"_us", strconv.FormatInt(time.Since(stage).Microseconds(), 10))
-		stage = time.Now()
-	}
-
+// resourceApply applies or subtracts one contribution's support on its own (tests and single replacements).
+func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) error {
 	if !c.Included || c.ProjectId == nil {
 		return nil
 	}
-	p := *c.ProjectId
-	history := int64(0)
-	if c.HistoryIncomplete {
-		history = sign
-	}
-	if err := exec(q, `UPDATE resource_project_summary SET executions=executions+$2,history_incomplete=history_incomplete+$3,
-  other_calls=other_calls+$4,other_errors=other_errors+$5 WHERE project_id=$1`, p, sign, history, sign*c.OtherCalls, sign*c.OtherErrors); err != nil {
+	d := newResourceDelta(*c.ProjectId)
+	if err := d.add(c, sign); err != nil {
 		return err
 	}
-	mark("apply_summary")
-	keys := make([]string, 0, len(c.Metrics))
-	for k := range c.Metrics {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	batch := &pgx.Batch{}
-	for _, k := range keys {
-		m := c.Metrics[k]
-		if !contract.ResourceMetricNameV1(k).Valid() {
-			return errors.New("unknown contribution metric")
-		}
-		present, expected := int64(0), int64(0)
-		value := "0"
-		if m.Value != nil {
-			present = sign
-			value = *m.Value
-		}
-		if m.Expected {
-			expected = sign
-		}
-		reason := deref(m.Reason)
-		// Only the entire zero support tuple is a no-op. Measured zero, expected
-		// missing values and reasons retain their presence/coverage/reference deltas.
-		if m.Value == nil && !m.Expected && reason == "" && m.Basis.Valid() {
-			continue
-		}
-		// A subtract updates an existing support row; constraints deliberately reject corrupt ledgers.
-		if sign > 0 {
-			batch.Queue(`INSERT INTO resource_metric(project_id,metric,basis,present_count,expected_count,sum_value,reasons)
-    VALUES($1,$2,$3,$4,$5,$6::numeric,CASE WHEN $7='' THEN '{}'::jsonb ELSE jsonb_build_object($7,1) END)
-    ON CONFLICT(project_id,metric,basis) DO UPDATE SET present_count=resource_metric.present_count+excluded.present_count,
-     expected_count=resource_metric.expected_count+excluded.expected_count,sum_value=resource_metric.sum_value+excluded.sum_value,
-     reasons=CASE WHEN $7='' THEN resource_metric.reasons ELSE jsonb_set(resource_metric.reasons,ARRAY[$7],to_jsonb(coalesce((resource_metric.reasons->>$7)::bigint,0)+1)) END`, p, k, m.Basis, present, expected, value, reason)
-		} else {
-			batch.Queue(`UPDATE resource_metric SET present_count=present_count+$4,expected_count=expected_count+$5,sum_value=sum_value-$6::numeric,
-    reasons=CASE WHEN $7='' THEN reasons WHEN (reasons->>$7)::bigint=1 THEN reasons-$7 ELSE jsonb_set(reasons,ARRAY[$7],to_jsonb((reasons->>$7)::bigint-1)) END
-    WHERE project_id=$1 AND metric=$2 AND basis=$3`, p, k, m.Basis, present, expected, value, reason)
-		}
-		batch.Queue(`DELETE FROM resource_metric WHERE project_id=$1 AND metric=$2 AND basis=$3 AND present_count=0 AND expected_count=0 AND reasons='{}'`, p, k, m.Basis)
-	}
-	// Close consumes every queued result and returns the first SQL error. The caller
-	// must roll back the enclosing replacement before publication on any failure.
-	if err := q.tx.SendBatch(q.ctx(), batch).Close(); err != nil {
-		return err
-	}
-	mark("apply_metrics")
-	for _, v := range []struct {
-		metric string
-		value  *int64
-	}{{"start", c.StartedMs}, {"end", c.EndedMs}, {"peakMemory", resourceInt(json.Number(deref(c.Metrics["peakMemoryBytes"].Value)))}} {
-		if v.value == nil {
-			continue
-		}
-		if sign > 0 {
-			if err := exec(q, `INSERT INTO resource_extreme(project_id,metric,value,multiplicity) VALUES($1,$2,$3,1)
-   ON CONFLICT(project_id,metric,value) DO UPDATE SET multiplicity=resource_extreme.multiplicity+1`, p, v.metric, *v.value); err != nil {
-				return err
-			}
-		} else {
-			ct, err := q.tx.Exec(q.ctx(), `DELETE FROM resource_extreme WHERE project_id=$1 AND metric=$2 AND value=$3 AND multiplicity=1`, p, v.metric, *v.value)
-			if err != nil {
-				return err
-			}
-			if ct.RowsAffected() == 0 {
-				if err = exec(q, `UPDATE resource_extreme SET multiplicity=multiplicity-1 WHERE project_id=$1 AND metric=$2 AND value=$3`, p, v.metric, *v.value); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	mark("apply_extremes")
-	for _, t := range c.Tools {
-		delta := int64(0)
-		if sign > 0 {
-			var inserted bool
-			if err := q.tx.QueryRow(q.ctx(), `INSERT INTO resource_tool(project_id,connection,name,calls,errors,references_count) VALUES($1,$2,$3,$4,$5,1)
-    ON CONFLICT(project_id,connection,name) DO UPDATE SET calls=resource_tool.calls+excluded.calls,errors=resource_tool.errors+excluded.errors,references_count=resource_tool.references_count+1 RETURNING (xmax=0)`, p, t.Connection, t.Name, t.Calls, t.Errors).Scan(&inserted); err != nil {
-				return err
-			}
-			if inserted {
-				delta = 1
-			}
-		} else {
-			ct, err := q.tx.Exec(q.ctx(), `DELETE FROM resource_tool WHERE project_id=$1 AND connection=$2 AND name=$3 AND references_count=1`, p, t.Connection, t.Name)
-			if err != nil {
-				return err
-			}
-			if ct.RowsAffected() > 0 {
-				delta = -1
-			} else if err = exec(q, `UPDATE resource_tool SET calls=calls-$4,errors=errors-$5,references_count=references_count-1 WHERE project_id=$1 AND connection=$2 AND name=$3`, p, t.Connection, t.Name, t.Calls, t.Errors); err != nil {
-				return err
-			}
-		}
-		if delta != 0 {
-			if err := exec(q, `UPDATE resource_project_summary SET tool_count=tool_count+$2 WHERE project_id=$1`, p, delta); err != nil {
-				return err
-			}
-		}
-	}
-	mark("apply_tools")
-	for _, cost := range c.Costs {
-		delta := int64(0)
-		if sign > 0 {
-			var inserted bool
-			if err := q.tx.QueryRow(q.ctx(), `INSERT INTO resource_cost(project_id,currency,basis,value,usages,references_count) VALUES($1,$2,$3,$4::numeric,$5,1)
-    ON CONFLICT(project_id,currency,basis) DO UPDATE SET value=resource_cost.value+excluded.value,usages=resource_cost.usages+excluded.usages,references_count=resource_cost.references_count+1 RETURNING (xmax=0)`, p, deref(cost.Currency), cost.Basis, cost.Amount, cost.UnpricedCount).Scan(&inserted); err != nil {
-				return err
-			}
-			if inserted {
-				delta = 1
-			}
-		} else {
-			ct, err := q.tx.Exec(q.ctx(), `DELETE FROM resource_cost WHERE project_id=$1 AND currency=$2 AND basis=$3 AND references_count=1`, p, deref(cost.Currency), cost.Basis)
-			if err != nil {
-				return err
-			}
-			if ct.RowsAffected() > 0 {
-				delta = -1
-			} else if err = exec(q, `UPDATE resource_cost SET value=value-$4::numeric,usages=usages-$5,references_count=references_count-1 WHERE project_id=$1 AND currency=$2 AND basis=$3`, p, deref(cost.Currency), cost.Basis, cost.Amount, cost.UnpricedCount); err != nil {
-				return err
-			}
-		}
-		if delta != 0 {
-			if err := exec(q, `UPDATE resource_project_summary SET cost_count=cost_count+$2 WHERE project_id=$1`, p, delta); err != nil {
-				return err
-			}
-		}
-		for _, r := range cost.PriceRefs {
-			delta = 0
-			if sign > 0 {
-				var inserted bool
-				if err := q.tx.QueryRow(q.ctx(), `INSERT INTO resource_price_ref(project_id,currency,basis,price_id,observed_at,references_count) VALUES($1,$2,$3,$4,$5,1)
-     ON CONFLICT(project_id,currency,basis,price_id,observed_at) DO UPDATE SET references_count=resource_price_ref.references_count+1 RETURNING (xmax=0)`, p, deref(cost.Currency), cost.Basis, r.PriceId, r.ObservedAt).Scan(&inserted); err != nil {
-					return err
-				}
-				if inserted {
-					delta = 1
-				}
-			} else {
-				ct, err := q.tx.Exec(q.ctx(), `DELETE FROM resource_price_ref WHERE project_id=$1 AND currency=$2 AND basis=$3 AND price_id=$4 AND observed_at=$5 AND references_count=1`, p, deref(cost.Currency), cost.Basis, r.PriceId, r.ObservedAt)
-				if err != nil {
-					return err
-				}
-				if ct.RowsAffected() > 0 {
-					delta = -1
-				} else if err = exec(q, `UPDATE resource_price_ref SET references_count=references_count-1 WHERE project_id=$1 AND currency=$2 AND basis=$3 AND price_id=$4 AND observed_at=$5`, p, deref(cost.Currency), cost.Basis, r.PriceId, r.ObservedAt); err != nil {
-					return err
-				}
-			}
-			if delta != 0 {
-				if err := exec(q, `UPDATE resource_project_summary SET price_count=price_count+$2 WHERE project_id=$1`, p, delta); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	mark("apply_costs_and_prices")
-	return nil
+	return d.flush(q)
 }
 
 // resourcePreparedHeader reads only fixed-size metric support and indexed extremes. Detail support
