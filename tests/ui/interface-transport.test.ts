@@ -15,12 +15,13 @@ async function origin() {
   let streamsClosed = 0;
   const upstream = http.createServer((req, res) => {
     seen.push(req.headers);
+    if (req.url === '/api/slow') { res.on('close', () => streamsClosed++); return; } // never answers
     if (req.url === '/api/stream') { res.on('close', () => streamsClosed++); res.writeHead(200, { 'content-type': 'text/event-stream', connection: 'keep-alive, x-hop' , 'x-hop': 'connection-only' }); res.write('event: ready\ndata: {"cursor":7}\n\n'); return; }
     res.writeHead(200, { 'content-type': 'application/json', connection: 'keep-alive' }); res.end(JSON.stringify({ path: req.url }));
   });
   await new Promise<void>(r => upstream.listen(0, '127.0.0.1', r));
   const tls = ephemeralCertificate(mkdtempSync(join(tmpdir(), 'h2-origin-')));
-  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert, allowHTTP1: true }, (req, res) => proxyRequest(req as any, res as any, 'http://127.0.0.1:' + (upstream.address() as any).port, { 'x-fleet-person': 'owner@trial.test' }, true, e => errors.push(e)));
+  const server = http2.createSecureServer({ key: tls.key, cert: tls.cert, allowHTTP1: true }, (req, res) => proxyRequest(req as any, res as any, 'http://127.0.0.1:' + (upstream.address() as any).port, { 'x-fleet-person': 'owner@trial.test' }, e => errors.push(e)));
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   return { seen, errors, streamsClosed: () => streamsClosed, tls, url: 'https://127.0.0.1:' + (server.address() as any).port, close: () => { server.close(); upstream.closeAllConnections(); upstream.close(); } };
 }
@@ -41,6 +42,12 @@ test('h2 origin forwards JSON and an open event stream, dropping only connection
     assert.equal(stream.headers['x-hop'], undefined, 'a Connection-listed header is connection-specific');
     for (let i = 0; i < 100 && o.streamsClosed() < 1; i++) await new Promise(r => setTimeout(r, 10));
     assert.equal(o.streamsClosed(), 1, 'closing the client stream ends the coordinator subscription');
+    const slow = session.request({ ':path': '/api/slow', ':method': 'GET' }); slow.on('error', () => {}); slow.end();
+    for (let i = 0; i < 100 && o.seen.length < 3; i++) await new Promise(r => setTimeout(r, 10));
+    slow.close(http2.constants.NGHTTP2_CANCEL);
+    for (let i = 0; i < 100 && o.streamsClosed() < 2; i++) await new Promise(r => setTimeout(r, 10));
+    assert.equal(o.streamsClosed(), 2, 'a stream reset before the coordinator answered also ends its request');
+    await new Promise(r => setTimeout(r, 50));
     assert.deepEqual(o.errors, []);
     assert.equal(new X509Certificate(o.tls.cert).fingerprint256, o.tls.fingerprint256);
   } finally { session.close(); o.close(); }

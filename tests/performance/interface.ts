@@ -177,13 +177,14 @@ const endToEnd = (headers: http.IncomingHttpHeaders) => {
  * lose only connection-specific headers. A closed client stream (an EventSource closed, a page navigated) also ends
  * the coordinator request, so no abandoned subscription keeps streaming.
  */
-export function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse, base: string, extra: Record<string, string>, h2: boolean, onError: (e: Error) => void) {
-  const target = new URL(base);
-  let answer: http.IncomingMessage | null = null;
+export function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse, base: string, extra: Record<string, string>, onError: (e: Error) => void) {
+  const target = new URL(base), h2 = req.httpVersionMajor === 2;
+  let answer: http.IncomingMessage | null = null, closed = false;
   const upstream = http.request({ hostname: target.hostname, port: target.port, method: req.method, path: req.url, headers: { ...(h2 ? endToEnd(req.headers) : req.headers), host: target.host, origin: base, ...extra } }, response => { answer = response; res.writeHead(response.statusCode!, h2 ? endToEnd(response.headers) : response.headers); response.pipe(res); });
   // HTTP/2 compatibility marks a reset stream's response finished, so completeness is read from the coordinator answer.
-  res.on('close', () => { if (!answer?.complete) upstream.destroy(); });
-  upstream.on('error', e => { if (res.destroyed) return; onError(e); if (!res.headersSent) res.writeHead(502); res.end(); }); req.pipe(upstream);
+  res.on('close', () => { closed = true; if (!answer?.complete) upstream.destroy(); });
+  upstream.on('error', e => { if (closed) return; // the client went away first; not a coordinator failure
+    onError(e); if (!res.headersSent) res.writeHead(502); res.end(); }); req.pipe(upstream);
 }
 export function ephemeralCertificate(out: string) {
   const key = resolve(out, 'origin-key.pem'), cert = resolve(out, 'origin-cert.pem');
@@ -205,6 +206,7 @@ export async function serve(o: { out: string; history: number; projects: number;
     if (!cpu || cpu[0] / cpu[1] !== 4 || effective.memoryMax !== String(8 * 1024 ** 3)) throw Error('actual server cgroup must constrain the whole process tree to4CPU/8GiB: ' + JSON.stringify(effective));
   }
   mkdirSync(o.out, { recursive: true });
+  const tls = transport === 'h2' ? ephemeralCertificate(o.out) : null; // before any process starts: a failure leaves nothing running
   const baselineManifest = manifest(f), sourceCandidate = candidate();
   writeFileSync(resolve(o.out, 'manifest.json'), JSON.stringify(baselineManifest, null, 2));
   writeFileSync(resolve(o.out, 'server.json'), JSON.stringify({ at: new Date().toISOString(), development: o.development, placement, hardware: hardware(), candidate: sourceCandidate, clock: 'server monotonic milliseconds; lower before source submission, upper after commit; render receipt is a conservative actual-render upper bound including return network' }, null, 2));
@@ -238,9 +240,9 @@ export async function serve(o: { out: string; history: number; projects: number;
   };
   const writers: Writer[] = [];
   const sourceWriters: Writer[] = [];
-  mkdirSync(o.out, { recursive: true });
-  const tls = transport === 'h2' ? ephemeralCertificate(o.out) : null;
   const server: http.Server | http2.Http2SecureServer = tls ? http2.createSecureServer({ key: tls.key, cert: tls.cert, allowHTTP1: true }) : http.createServer();
+  const sessions = new Set<http2.ServerHttp2Session>();
+  if (tls) (server as http2.Http2SecureServer).on('session', session => { sessions.add(session); session.once('close', () => sessions.delete(session)); });
   let monitor: ReturnType<typeof setInterval> | undefined, closing = false;
   const close = async () => {
     if (closing) return; closing = true;
@@ -250,7 +252,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       await run.producer;
       await run.finalization;
     }
-    server.close(); await Promise.all(writers.map(w=>w.close())); await c.stop(); sink.close();
+    server.close(); for (const session of sessions) session.destroy(); if (!tls) (server as http.Server).closeAllConnections(); await Promise.all(writers.map(w=>w.close())); await c.stop(); sink.close();
     execFileSync('pg_ctl', ['-D', pgdata, '-m', 'fast', '-w', 'stop'], { stdio: 'ignore' });
     log.end(); sqlLog.end(); spans.end();
   };
@@ -507,7 +509,7 @@ export async function serve(o: { out: string; history: number; projects: number;
           else throw Error('unknown measurement route');
           res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result)); return;
         }
-        proxyRequest(req, res, c.base, { authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test' }, !!tls, e => errors.push(String(e)));
+        proxyRequest(req, res, c.base, { authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test' }, e => errors.push(String(e)));
       } catch (e) { emit('request-error', { error: String(e), path: req.url }); res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: String(e) })); }
     });
     await new Promise<void>(r => server.listen(o.port, '127.0.0.1', r));
@@ -548,8 +550,9 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
   });
   const request = async (path: string, body?: object) => { const r = await fetchOrigin(o.origin + '/__interface/' + path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}); const b = await r.json() as any; if (!r.ok) throw Error(JSON.stringify(b)); return b; };
   const transport: Transport = url.protocol === 'https:' ? 'h2' : 'h1';
-  const first = await fetchOrigin(o.origin + '/__interface/config'), config = await first.json(), spec = workload(o.spec, config.development);
+  const first = await fetchOrigin(o.origin + '/__interface/config'), config = await first.json();
   if (!first.ok) throw Error(JSON.stringify(config));
+  const spec = workload(o.spec, config.development);
   const certificate = transport === 'h2' ? new X509Certificate(config.certificatePEM) : null;
   if ((config.transport ?? 'h1') !== transport || (certificate && certificate.fingerprint256 !== (first as any).fingerprint256)) throw Error('origin transport or certificate does not match the fixture');
   if (certificate) trusted = new https.Agent({ keepAlive: true, ca: config.certificatePEM });
