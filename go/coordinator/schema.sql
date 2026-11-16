@@ -2319,3 +2319,11 @@ BEGIN
  ON CONFLICT DO NOTHING;
  PERFORM fleet_enqueue_wake('fleet_resource_work','');
 END $$;
+
+-- migration 64: resource_work, its scopes and wake_outbox are queues: every row is inserted, then deleted within seconds.
+-- The default autovacuum waits for 20% of the table to be dead, so under sustained capture the processor's ordered
+-- candidate and claim scans walk thousands of dead index entries and their commit status. Vacuum them by row count.
+ALTER TABLE resource_work SET (autovacuum_vacuum_scale_factor=0, autovacuum_vacuum_threshold=1000, autovacuum_vacuum_insert_scale_factor=0, autovacuum_vacuum_insert_threshold=1000, autovacuum_analyze_scale_factor=0, autovacuum_analyze_threshold=1000, autovacuum_vacuum_cost_delay=0);
+ALTER TABLE resource_work_scope SET (autovacuum_vacuum_scale_factor=0, autovacuum_vacuum_threshold=1000, autovacuum_vacuum_insert_scale_factor=0, autovacuum_vacuum_insert_threshold=1000, autovacuum_analyze_scale_factor=0, autovacuum_analyze_threshold=1000, autovacuum_vacuum_cost_delay=0);
+ALTER TABLE wake_outbox SET (autovacuum_vacuum_scale_factor=0, autovacuum_vacuum_threshold=1000, autovacuum_vacuum_insert_scale_factor=0, autovacuum_vacuum_insert_threshold=1000, autovacuum_vacuum_cost_delay=0);
+
