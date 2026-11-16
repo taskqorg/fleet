@@ -69,3 +69,25 @@ test('native SSE evidence equals actual messages and fails closed on reconnect/f
   for(const key of ['native','observed','overflow','broken','untrusted'])assert.ok(closed.has(key),'native cancellation closes server response '+key);
  }finally{await browser.close();for(const res of responses)res.end();await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});}
 });
+
+// Requirement: a large native SSE backlog drains completely in few page round trips with exact ordinals.
+// Risk: per-row shift and 256-row drains let a busy reader's 64 MiB capture overflow before the run ends.
+test('native SSE capture drains a 30000-event backlog in few round trips',{skip:!process.env.FLEET_CONTROL_BROWSER,timeout:60000},async()=>{
+ const total=30000,streams=new Set<http.ServerResponse>();
+ const server=http.createServer((req,res)=>{
+  if(req.url!.startsWith('/api/stream')){res.writeHead(200,{'content-type':'text/event-stream'});let body='';for(let i=1;i<=total;i++)body+=`id: ${i}\ndata: ${JSON.stringify(i%10?{kind:'execution',id:'x'+i,seq:i}:{kind:'resource_summary',id:'owned',seq:i,op:'U'})}\n\n`;res.write(body);streams.add(res);return;} // left open: an ended stream would reconnect
+  res.setHeader('content-type','text/html');res.end('<html><body>bulk</body></html>');
+ });
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+(server.address() as any).port,dir=mkdtempSync(join(tmpdir(),'fleet-bulk-sse-')),browser=await chromium.launch({headless:true});
+ try{
+  const page=await (await browser.newContext()).newPage();await page.goto(origin);await page.evaluate(installEventSourceCapture,{projects:['owned']});
+  await page.evaluate((url)=>new Promise<void>(ok=>{let n=0;const es=new EventSource(url);es.onmessage=()=>{if(++n===30000){es.close();ok();}};}),origin+'/api/stream');
+  let calls=0;const evaluate=page.evaluate.bind(page);(page as any).evaluate=(...a:any[])=>{calls++;return (evaluate as any)(...a);};
+  const recorder=new EventSourceRecorder(dir);await recorder.capture({id:'bulk',page},true);
+  const snapshot=recorder.snapshot();assert.equal(snapshot.eventCount,total+1,'every message plus the open event');assert.deepEqual(snapshot.errors,[]);
+  assert.ok(calls<=20,`drained in ${calls} page round trips`);
+  const lines=readFileSync(join(dir,'eventsource-events.jsonl.partial'),'utf8').trim().split('\n').map(l=>JSON.parse(l).ordinal);
+  assert.deepEqual(lines,Array.from({length:total+1},(_,i)=>i+1),'exact contiguous ordinals');
+  assert.equal(snapshot.count,total/10,'every project notification is in the notification evidence');
+ }finally{for(const s of streams)s.destroy();await browser.close();server.close();rmSync(dir,{recursive:true,force:true});}
+});

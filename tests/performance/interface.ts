@@ -694,7 +694,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
     await Promise.all(readers.map(r => r.page.evaluate(() => (window as any).__interfaceStopObservation?.())));
     writeFileSync(resolve(o.out,'api-traces.json'),JSON.stringify(await Promise.all(readers.map(async r=>({reader:r.id,requests:await r.page.evaluate(()=>(window as any).__interfaceAPIs)}))),null,2));
     await notifications.stop();
-    for(const reader of readers)await notifications.capture(reader,true);
+    await Promise.all(readers.map(reader=>notifications.capture(reader,true))); // freeze every reader at once; a serial freeze lets later pages keep filling
     await notifications.finish(true);
     evidence.notificationCapture=notifications.snapshot();
     evidence.result = result;
@@ -711,7 +711,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
       const partial = await Promise.all(readers.map(async r => { try { return { reader: r.id, requests: await r.page.evaluate(() => (window as any).__interfaceAPIs) }; } catch (e) { return { reader: r.id, unavailable: String(e) }; } }));
       try { writeFileSync(resolve(o.out, 'api-traces-incomplete.json'), JSON.stringify(partial, null, 2)); } catch (e) { evidence.tracePersistenceError = String(e); }
       try { if (readers[0]) await readers[0].page.screenshot({ path: resolve(o.out, 'rendered-incomplete.png') }); else evidence.screenshotError = 'no reader available'; } catch (e) { evidence.screenshotError = String(e); }
-      for(const reader of readers)try{await notifications.capture(reader,true);}catch{}
+      await Promise.allSettled(readers.map(reader=>notifications.capture(reader,true)));
       await notifications.finish(false);
       evidence.notificationCapture=notifications.snapshot();
       try { writeFileSync(resolve(o.out, 'browser-incomplete.json'), JSON.stringify(evidence, null, 2)); } catch (e) { console.error('incomplete browser evidence persistence failed:', e); }
