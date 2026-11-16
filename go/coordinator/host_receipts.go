@@ -18,9 +18,7 @@ func init() {
 	longRoute("POST /api/hosts/accounts/report", func(q *Request) (any, error) {
 		return typedReceipt(q, noEnd(accountReceiptIn))
 	})
-	longRoute("POST /api/hosts/project-operations", func(q *Request) (any, error) {
-		return typedReceipt(q, noEnd(projectReceiptIn))
-	})
+	longRoute("POST /api/hosts/project-operations", projectReceiptRoute)
 	longRoute("POST /api/hosts/delegations", func(q *Request) (any, error) {
 		return typedReceipt(q, noEnd(q.app.childReceiptIn))
 	})
@@ -57,13 +55,19 @@ func typedReceiptLocks[T any, P interface {
 	if locksFn != nil {
 		locks = locksFn(t)
 	}
+	return receiptTx(q, true, locks, func() (any, string, error) { return fn(q, t) })
+}
+
+// receiptTx runs fn in one transaction: a write transaction acquiring locks, or a read transaction without advisory
+// locks; an execution fn names as ended starts its pipeline step.
+func receiptTx(q *Request, write bool, locks []string, fn func() (any, string, error)) (any, error) {
 	var out any
 	var ended string
-	err = q.app.store.TxLocks(q.ctx(), nil, true, locks, func(tx pgx.Tx) error {
+	err := q.app.store.TxLocks(q.ctx(), nil, write, locks, func(tx pgx.Tx) error {
 		q.tx = tx
 		defer func() { q.tx = nil }()
 		var err error
-		out, ended, err = fn(q, t)
+		out, ended, err = fn()
 		return err
 	})
 	if err != nil {
@@ -91,10 +95,7 @@ func projectReceipt(q *Request, operation string, args doc, agent doc) (any, err
 	if operation == "account_list" {
 		return agentAccountList(q, args, agent)
 	}
-	op, ok := projectOps[operation]
-	if !ok {
-		op, ok = operations[operation]
-	}
+	op, ok := projectOperation(operation)
 	if !ok {
 		return nil, fail(404, "Unknown operation")
 	}
@@ -163,6 +164,39 @@ func accountReceiptIn(q *Request, b *contract.AccountReceipt) (any, error) {
 		return accountCatalogue(q, b.AccountCatalogue, astr(p["nativeHostId"]))
 	}
 	return accountReport(q, b.AccountObservation, astr(p["nativeHostId"]))
+}
+
+// projectReceiptRoute: an operation registered with read=true (project_context, catalogue, ...) runs in a read
+// transaction without GLOBAL, as on the ops and agent-tool paths; a slow read must not queue every host poll and receipt
+// behind it. Every other operation keeps the GLOBAL write transaction.
+func projectReceiptRoute(q *Request) (any, error) {
+	b, err := decodeValid[contract.ProjectReceipt](q.body, true)
+	if err != nil {
+		return nil, err
+	}
+	op, ok := projectOperation(string(b.Delegation.Operation))
+	read := ok && op.read
+	locks := []string{GLOBAL}
+	if read {
+		locks = nil
+	}
+	return receiptTx(q, !read, locks, func() (any, string, error) {
+		r, err := projectReceiptIn(q, b)
+		return r, "", err
+	})
+}
+
+// projectOperation: the registered operation a native agent's project operation runs (projects area first, then the
+// shared operation table). account_list has its own native-agent path and is not registered here.
+func projectOperation(name string) (registeredOp, bool) {
+	if name == "account_list" {
+		return registeredOp{}, false
+	}
+	if op, ok := projectOps[name]; ok {
+		return op, true
+	}
+	op, ok := operations[name]
+	return op, ok
 }
 
 // projectReceiptIn: POST /api/hosts/project-operations (contract.ProjectReceipt), a project operation of a native agent.
