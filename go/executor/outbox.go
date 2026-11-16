@@ -243,11 +243,17 @@ func edgeProblems(except string) []contract.EdgeProblem {
 
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-// One pooled client: keep-alive avoids a TLS handshake per row; redirects are not followed.
+// One pooled client: keep-alive avoids a TLS handshake per row; redirects are not followed. Its 5s deadline keeps
+// heartbeat polls and one-off posts (span batches included) responsive.
 var outboxClient = &http.Client{Timeout: 5 * time.Second, CheckRedirect: noRedirect}
 
-// pollClient allows 25s coordinator long-polls plus network margin while preserving outboxClient's 5s timeout for heartbeats and receipts.
+// pollClient allows 25s coordinator long-polls plus network margin.
 var pollClient = &http.Client{Timeout: 35 * time.Second, CheckRedirect: noRedirect}
+
+// deliveryClient delivers journaled outbox rows with the held-poll deadline. A cancelled row is rolled back by the
+// coordinator and resent whole, so a deadline shorter than its ingest never lets it through and holds every row
+// behind it, the terminal receipt included.
+var deliveryClient = pollClient
 
 func postJSON(c *http.Client, url, token string, v any) (*http.Response, error) {
 	return postJSONCtx(context.Background(), c, url, token, v)
@@ -362,7 +368,7 @@ func flush(db *sql.DB, url, token, host string) error {
 				batch = append(batch, nx)
 			}
 		}
-		a := send(url, token, r.route, value)
+		a := sendWithClient(context.Background(), deliveryClient, url, token, r.route, r.route, value)
 		var response any
 		switch a.kind {
 		case answerOK:

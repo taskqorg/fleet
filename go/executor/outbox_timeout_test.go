@@ -11,9 +11,9 @@ import (
 
 // Requirement: terminal receipts follow acknowledged events; risk: an oversized slow batch retries forever and leaves a physically closed execution running.
 func TestEventBatchTimeoutFallsBackWithoutLosingTerminal(t *testing.T) {
-	old := outboxClient
-	outboxClient = &http.Client{Timeout: 40 * time.Millisecond, CheckRedirect: noRedirect}
-	defer func() { outboxClient = old }()
+	old := deliveryClient
+	deliveryClient = &http.Client{Timeout: 40 * time.Millisecond, CheckRedirect: noRedirect}
+	defer func() { deliveryClient = old }()
 	var mu sync.Mutex
 	seen := map[string]bool{}
 	terminal := false
