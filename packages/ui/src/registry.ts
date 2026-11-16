@@ -165,7 +165,7 @@ export const actions = {
   pin: 'pin', unpin: 'pin-off', filter: 'list-filter', search: 'search', clear: 'x', retry: 'rotate-ccw',
   open: 'external-link', copy: 'copy', download: 'download', settings: 'settings', more: 'ellipsis',
   expand: 'chevron-down', back: 'arrow-left', share: 'paperclip', save: 'save', remove: 'trash-2', info: 'info',
-  group: 'layers-2', sort: 'arrow-down-wide-narrow', sortDesc: 'arrow-down', sortAsc: 'arrow-up', runs: 'repeat',
+  group: 'layers-2', sortDesc: 'arrow-down-wide-narrow', sortAsc: 'arrow-up-narrow-wide', runs: 'repeat',
 } as const satisfies Record<string, IconName>;
 
 /** Harnesses (agents' programs), shown as their mark (OR-1). */
