@@ -17,6 +17,7 @@
 - A snapshot is adopted only when valid; the last valid copy remains usable after an invalid coordinator snapshot ([gateway.go](gateway.go)).
 - Key files are selected by snapshot fingerprint and their values must hash to that fingerprint. Values are not returned to callers and are redacted from provider replies ([gateway.go](gateway.go)).
 - Redirects are not followed. A non-idempotent call with no provider answer is not retried; the outcome is `unknown` when a provider-side charge may have happened ([gateway.go](gateway.go)).
+- Anthropic uses fixed native Messages and Models routes. `anthropicPath` validates the supported request fields and refuses streaming; `anthropicTokens` counts reported tokens without pricing them. Messages 5xx completion stays unknown ([operation scope](../../docs/designs/fleet-connections.md#anthropic-operations)).
 - The spool acknowledges a call record only after its JSON line is fsynced. Spool-loss accounting is persisted separately when possible ([gateway.go](gateway.go)).
 - The guard accepts only one RS256 Cloudflare Access assertion with the configured issuer, audience, required time claims, and identity. It returns 503 when signing keys cannot be obtained and 403 for invalid assertions ([guard.go](guard.go)).
 
