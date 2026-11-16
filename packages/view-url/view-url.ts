@@ -3,7 +3,7 @@
 export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results' | 'projects' | 'delivery';
 export type View = {
   view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
-  q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean; extra?: Record<string, string>;
+  q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean; extra?: Record<string, string | undefined>;
 };
 export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string; sort?: string };
 
@@ -106,7 +106,7 @@ export function viewProblem(v: unknown): string | null {
   for (const [k, x] of Object.entries(o)) {
     if (k === 'view' || x === undefined) continue;
     if (k === 'focus') { if (typeof x !== 'string' || !x) return 'focus must be a non-empty string'; continue; }
-    if (k === 'extra') { if (!x || typeof x !== 'object' || Object.values(x).some(i => i !== undefined && typeof i !== 'string')) return 'extra must map keys to strings'; continue; }
+    if (k === 'extra') { if (!x || typeof x !== 'object' || Object.values(x).some(i => typeof i !== 'string')) return 'extra must map keys to strings'; continue; }
     if (!Object.hasOwn(table, k)) return `${k} is not a key of the ${name} view`;
     if (k === 'state') { if (!strs(x) || !(x as string[]).every(i => states.includes(i))) return 'state must be a list of: ' + states.join(', '); }
     else if (k === 'group') { if (!(TASK_GROUPS as readonly unknown[]).includes(x)) return 'group must be one of ' + TASK_GROUPS.join(', '); }

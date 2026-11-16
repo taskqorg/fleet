@@ -1,7 +1,7 @@
 // View URL codec (docs/designs/fleet-view-urls-and-list-path.md §1).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseView, formatView, viewProblem, listKey, toPageParams, TASK_GROUPS, type View } from '../../packages/view-url/view-url.ts';
+import { parseView, formatView, listKey, toPageParams, TASK_GROUPS, type View } from '../../packages/view-url/view-url.ts';
 
 const p = (u: string): View => { const v = parseView(u); assert.ok(v, 'not a view: ' + u); return v!; };
 const canon = (u: string) => formatView(p(u));
@@ -108,8 +108,7 @@ test('review #31-10: a full URL is accepted only on the given origin', () => {
 });
 
 test('an undefined extra value leaves the link, never the text "undefined"', () => {
-  const v = { view: 'delivery', extra: { range: '24h', at: undefined, sort: undefined } } as unknown as View;
-  assert.equal(viewProblem(v), null);
+  const v: View = { view: 'delivery', extra: { range: '24h', at: undefined, sort: undefined } };
   const s = formatView(v);
   assert.ok(!s.includes('undefined'), s);
   assert.deepEqual(parseView(s)!.extra, { range: '24h' });

@@ -12,6 +12,7 @@ import {
 import { op, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
+import { parseView } from '../../../packages/view-url/view-url.ts';
 import { focusIds, prefsRead } from '../prefs.ts';
 import type { Change } from '../../../contracts/generated/ops.ts';
 
@@ -43,9 +44,20 @@ const NONE = 'none' as const; // no history kept (404): known, unlike still load
 const p = (xs: number[], q: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)]; };
 const sec = (v: number | null | undefined) => ({ value: v == null ? null : v / 1000, basis: v == null ? 'unavailable' as const : 'measured' as const, reason: v == null ? 'no pull requests' : undefined });
 
+type DeliveryExtra = { group?: string; sort?: string; range?: string; at?: string };
+/** The Delivery keys of a link: valid values other than the defaults. A link may carry anything (an old one has the text "undefined"). */
+export function deliveryExtra(x: Record<string, string | undefined> | undefined): DeliveryExtra {
+  const out: DeliveryExtra = {};
+  if (x?.group && x.group !== 'stage' && GROUPS.some(g => g[0] === x.group)) out.group = x.group;
+  if (x?.sort && x.sort !== 'since' && /^-?[a-z]+$/.test(x.sort) && SORTS.some(f => f[0] === x.sort!.replace(/^-/, ''))) out.sort = x.sort;
+  if (x?.range && x.range !== '7d' && RANGES.some(r => r.id === x.range)) out.range = x.range;
+  if (x?.at && /^[1-9]\d*$/.test(x.at)) out.at = x.at;
+  return out;
+}
+
 export function Delivery({ id }: { id?: string }) {
   const { view, set, href } = useUrlView('delivery');
-  const ex = view.extra ?? {};
+  const ex = deliveryExtra(view.extra);
   const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
   const focus = focusIds() ?? [];
   const status = useDoc<Status>(prefsRead.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
@@ -63,12 +75,11 @@ export function Delivery({ id }: { id?: string }) {
   const items = data?.items ?? [];
   const incomplete = !!data?.error;
   const stages = (view.state ?? []) as Stage[];
-  // Links saved before the fix may carry the text "undefined": unknown values fall back to the defaults.
-  const group = GROUPS.some(g => g[0] === ex.group) ? ex.group! : 'stage', sort = SORTS.some(f => f[0] === ex.sort?.replace(/^-/, '')) ? ex.sort! : 'since';
-  // Default values leave the link (undefined drops the key).
-  const setExtra = (patch: Record<string, string | undefined>) => { const next: Record<string, string> = {}; for (const [k, x] of Object.entries({ ...ex, ...patch })) if (x !== undefined) next[k] = x; set({ extra: next }); };
+  const group = ex.group ?? 'stage', sort = ex.sort ?? 'since';
+  // Built from the URL at the moment of the change (url.ts), keeping only valid values that are not the defaults.
+  const setExtra = (patch: Partial<Record<keyof DeliveryExtra, string | undefined>>) => set({ extra: deliveryExtra({ ...parseView(location.pathname + location.search)?.extra, ...patch }) });
   // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows.
-  const at = ex.at && Number.isFinite(Number(ex.at)) ? Number(ex.at) : null;
+  const at = ex.at ? Number(ex.at) : null;
   const picked: Item[] | null = at !== null && pace.data ? pace.data.h.prs.filter(x => ms(x.merged) >= at && ms(x.merged) < at + range.bucket).map(fromHistory) : null;
   const source = picked ?? items;
   const shown = source.filter(it => (!stages.length || stages.includes(it.stage)) && matchSearch(query, `${it.title} #${it.number} ${it.repo}`, { state: it.stage, project: it.projectId }));
