@@ -29,18 +29,19 @@ func systemVersions(q *Request) (any, error) {
 		return nil, err
 	}
 	list := hl.(doc)
+	target := healthyTarget()
 	hosts := []doc{}
 	for _, h := range list["hosts"].([]doc) {
 		v, _ := h["version"].(string)
 		hosts = append(hosts, doc{"id": h["id"], "version": h["version"], "autoUpdate": h["autoUpdate"], "update": h["update"], "lastSeenAt": h["lastSeenAt"],
-			"behind": v != "" && olderVersion(v, version)})
+			"behind": versionBehindTarget(v, target)})
 	}
 	coord := doc{"version": version, "started": coordinatorStarted.Format(time.RFC3339)}
 	if p := ownRelease().Previous; p != "" {
 		coord["previous"] = p
 	}
-	if t := healthyTarget(); t != nil {
-		coord["offered"] = *t
+	if target != nil {
+		coord["offered"] = *target
 	}
 	if c := buildCommit(); c != "" {
 		coord["commit"] = c
@@ -50,6 +51,14 @@ func systemVersions(q *Request) (any, error) {
 		out["gateway"] = gw
 	}
 	return out, nil
+}
+
+// Missing or non-release values do not establish an update comparison.
+func versionBehindTarget(installed string, offered *string) any {
+	if offered == nil || !releaseVersionRe.MatchString(installed) || !releaseVersionRe.MatchString(*offered) {
+		return nil
+	}
+	return olderVersion(installed, *offered)
 }
 
 func buildCommit() string {
@@ -119,9 +128,13 @@ func gatewayVersion(_ context.Context) doc {
 		go func() {
 			d := probeGateway()
 			gatewayProbe.Lock()
+			d["observedAt"] = time.Now().UnixMilli()
 			gatewayProbe.last, gatewayProbe.at, gatewayProbe.running = d, time.Now(), false
 			gatewayProbe.Unlock()
 		}()
+	}
+	if gatewayProbe.last == nil {
+		return doc{"state": "pending", "observedAt": nil}
 	}
 	return gatewayProbe.last
 }

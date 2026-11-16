@@ -8,6 +8,8 @@ The component groups its implementation by domain: projects, tasks, sessions and
 
 ## Interface
 
+- [`versions.go`](versions.go) exposes `system_versions`: installed and offered releases, the selected UI, RLS-visible hosts and timestamped asynchronous gateway probes. Missing release comparisons and pending probes remain unknown.
+
 - [`main`](./main.go) starts `App` after migration and serves only on `127.0.0.1`; [`App.routes`](./registry.go) is the HTTP entry point. [`ops.go`](./ops.go) registers named operations and HTTP routes, applies request decoding, authorization and transactions.
 - [`authorize`](./main.go) distinguishes host-secret calls under `/api/hosts/` from browser calls carrying a browser secret and `X-Fleet-Person`; [`checkOrigin`](./browser_checks.go) applies the browser-origin check.
 - [`Store.Tx`](./store.go) is the database boundary. [`event_batch.go`](./event_batch.go) batches transport validation and inserts; after a complete closing event commits, chunk payloads are replaced by immutable retry hash/sequence identities. [`schema.sql`](./schema.sql) defines documents, tasks, executions, questions, artifacts, stores, definitions and the row-level security policies they use.

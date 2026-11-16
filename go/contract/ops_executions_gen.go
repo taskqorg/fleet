@@ -937,10 +937,11 @@ const (
 	GatewayStateOk          GatewayState = "ok"
 	GatewayStateDraining    GatewayState = "draining"
 	GatewayStateUnreachable GatewayState = "unreachable"
+	GatewayStatePending     GatewayState = "pending"
 )
 
 // GatewayStateValues lists every GatewayState in schema order.
-var GatewayStateValues = []GatewayState{GatewayStateOk, GatewayStateDraining, GatewayStateUnreachable}
+var GatewayStateValues = []GatewayState{GatewayStateOk, GatewayStateDraining, GatewayStateUnreachable, GatewayStatePending}
 
 // Valid: v is one of the schema's values.
 func (v GatewayState) Valid() bool {
@@ -953,8 +954,9 @@ func (v GatewayState) Valid() bool {
 }
 
 type GatewayVersion struct {
-	State   GatewayState `json:"state"`
-	Version *string      `json:"version,omitempty"`
+	ObservedAt *float64     `json:"observedAt"`
+	State      GatewayState `json:"state"`
+	Version    *string      `json:"version,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1032,7 +1034,7 @@ func (v *HostRow) Validate() error {
 
 type HostVersion struct {
 	AutoUpdate json.RawMessage `json:"autoUpdate"`
-	Behind     bool            `json:"behind"`
+	Behind     *bool           `json:"behind"`
 	Id         string          `json:"id"`
 	LastSeenAt *float64        `json:"lastSeenAt"`
 	Update     json.RawMessage `json:"update"`

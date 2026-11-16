@@ -270,7 +270,7 @@ function UserBlock({ name, onLogout, version }: { name: string; onLogout: () => 
       {v && <button type="button" role="menuitem" class="menu-ver" onClick={() => { const at = menu.open!; menu.setOpen(null); v.onOpen?.(); panel.setOpen(at); }}><Icon name="info" />Versions</button>}
       <button type="button" role="menuitem" onClick={() => { menu.setOpen(null); onLogout(); }}><Icon name="log-out" />Logout</button>
     </span>}
-    {v && panel.open && <div class="ver-panel float" data-ui="version-panel" role="group" aria-label="Versions" style={{ left: panel.open.left + 'px', bottom: panel.open.bottom + 'px' }}>
+    {v && panel.open && <div class="ver-panel float" data-ui="version-panel" role="group" aria-label="Versions" style={{ left: panel.open.left + 'px', bottom: panel.open.bottom + 'px', '--ver-bottom': panel.open.bottom + 'px' }}>
       {v.updateReady && <div class="ver-update"><span>A newer app is on the site.</span><Button label={v.updating ? 'Updating' : 'Update'} icon="rotate-cw" kind="primary" busy={v.updating} onClick={v.onUpdate} /></div>}
       <table class="ver-table"><tbody>{v.rows.map(r => <tr key={r.key}>
         <th scope="row"><Icon name={r.icon} /><span>{r.part}</span></th>
