@@ -59,7 +59,12 @@ func problemOpen(q *Request, cause string, projectID any, text string) error {
 
 // problemClose: the cause is gone: an open question is withdrawn, an answered one lets go of the cause.
 func problemClose(q *Request, cause string) error {
-	return exec(q, "UPDATE question SET state=CASE WHEN state='open' THEN 'withdrawn'::question_state ELSE state END, cause=NULL WHERE cause=$1 AND state IN ('open','answered')", cause)
+	return problemsClose(q, []string{cause})
+}
+
+// problemsClose: problemClose for many causes in one statement.
+func problemsClose(q *Request, causes []string) error {
+	return exec(q, "UPDATE question SET state=CASE WHEN state='open' THEN 'withdrawn'::question_state ELSE state END, cause=NULL WHERE cause=ANY($1) AND state IN ('open','answered')", causes)
 }
 
 // problemsSync: the full current set of one source (rules): new causes are asked; a held cause absent for

@@ -87,12 +87,11 @@ func clientErrorsPrune(ctx context.Context, a *App, cutoff time.Time) (int64, er
 			return err
 		}
 		n = int64(len(gone))
+		causes := make([]string, 0, len(gone))
 		for _, g := range gone {
-			if err := problemClose(q, clientErrorCause+astr(g["fingerprint"])); err != nil {
-				return err
-			}
+			causes = append(causes, clientErrorCause+astr(g["fingerprint"]))
 		}
-		return nil
+		return problemsClose(q, causes)
 	})
 	return n, err
 }
@@ -218,11 +217,11 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 				fp, top = clientErrorOverLimit, ""
 				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly or total new-group limit, or the members' group cap, was reached", "error"
 			}
-			// Whether this report may ask a problem is decided once, before the upsert: no open problem, and the group is
-			// missing (new, or the over-limit group's first) or its problem was answered. The budget is the group's reporter
-			// (its first person; the reporter itself for a new group). A report that may ask takes the new-group lock before
-			// its row lock, the order every path uses, so asks never deadlock; one past the daily limit takes no lock.
-			ask, budget, err := clientErrorMayAsk(q, fp, person)
+			// Whether this report may ask a problem is decided before the upsert: no open problem, the group is missing (new,
+			// the over-limit group's first, or recreated after a concurrent prune) or its problem was answered, and the
+			// reporting person's daily budget is not spent. A report that may ask takes the new-group lock before its row
+			// lock, the order every path uses, so asks never deadlock; one that may not takes no lock.
+			ask, err := clientErrorMayAsk(q, fp, person)
 			if err != nil {
 				return rep, err
 			}
@@ -257,39 +256,32 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			if !ask {
 				return rep, nil
 			}
-			return rep, clientErrorProblem(q, fp, budget)
+			return rep, clientErrorProblem(q, fp, person)
 		})
 		return err
 	})
 	return rep, err
 }
 
-// clientErrorMayAsk: whether a report of fp may open a problem (see clientErrorReport), and the person whose daily
-// problem budget it uses. A group that never had a problem (past the daily limit when new) gets none later.
-func clientErrorMayAsk(q *Request, fp, person string) (bool, string, error) {
-	cause := clientErrorCause + fp
+// clientErrorMayAsk: whether a report of fp by person may open a problem (see clientErrorReport). A group that never
+// had a problem (past the daily limit when new) gets none later.
+func clientErrorMayAsk(q *Request, fp, person string) (bool, error) {
 	var open, answered, missing bool
-	var first *string
-	if err := q.tx.QueryRow(q.ctx(), `SELECT EXISTS (SELECT 1 FROM question WHERE cause=$2 AND state='open'), EXISTS (SELECT 1 FROM question WHERE cause=$2 AND state='answered'),
-		NOT EXISTS (SELECT 1 FROM client_error WHERE fingerprint=$1), (SELECT first_person FROM client_error WHERE fingerprint=$1)`, fp, cause).Scan(&open, &answered, &missing, &first); err != nil {
-		return false, "", err
-	}
-	budget := person
-	if first != nil && *first != "" && fp != clientErrorOverLimit {
-		budget = *first
+	if err := q.tx.QueryRow(q.ctx(), `SELECT coalesce(bool_or(state='open'),false), coalesce(bool_or(state='answered'),false),
+		NOT EXISTS (SELECT 1 FROM client_error WHERE fingerprint=$1) FROM question WHERE cause=$2`, fp, clientErrorCause+fp).Scan(&open, &answered, &missing); err != nil {
+		return false, err
 	}
 	if open || !(missing || answered) {
-		return false, budget, nil
+		return false, nil
 	}
-	ok, err := clientErrorBudget(q, fp, budget)
-	return ok, budget, err
+	return clientErrorBudget(q, fp, person)
 }
 
-// clientErrorBudget: the daily limits: clientErrorProblemsPerDay problems a reporter (only client-error problems carry a
+// clientErrorBudget: the daily limits: clientErrorProblemsPerDay problems for the person whose report asks them (only client-error problems carry a
 // reporter), and one a day for the over-limit group, so a flood past the limits cannot re-ask it after every answer.
 // Containment uses the question data GIN index.
-func clientErrorBudget(q *Request, fp, budget string) (bool, error) {
-	match, limit := doc{"reporter": budget}, clientErrorProblemsPerDay
+func clientErrorBudget(q *Request, fp, person string) (bool, error) {
+	match, limit := doc{"reporter": person}, clientErrorProblemsPerDay
 	if fp == clientErrorOverLimit {
 		match, limit = doc{"fingerprint": clientErrorOverLimit}, 1
 	}
@@ -302,19 +294,19 @@ func clientErrorBudget(q *Request, fp, budget string) (bool, error) {
 // clientErrorProblem opens the group's needs-you problem for a report clientErrorMayAsk allowed, under the new-group
 // lock it holds: for a new group, and for a repeat of a group whose problem the owner answered (the answer released it;
 // the repeat asks again). An open problem is never asked twice, and the daily budget is checked again under the lock.
-func clientErrorProblem(q *Request, fp, budget string) error {
+func clientErrorProblem(q *Request, fp, person string) error {
 	cause := clientErrorCause + fp
 	if held, err := has(q, "SELECT 1 FROM question WHERE cause=$1 AND state='open'", cause); err != nil || held {
 		return err
 	}
-	if ok, err := clientErrorBudget(q, fp, budget); err != nil || !ok {
+	if ok, err := clientErrorBudget(q, fp, person); err != nil || !ok {
 		return err
 	}
 	// An answered problem lets go of the cause, then the group asks again.
 	if err := problemClose(q, cause); err != nil {
 		return err
 	}
-	return problemAsk(q, "direct", Problem{Cause: cause, Text: clientErrorText(fp), Data: doc{"fingerprint": fp, "reporter": budget}})
+	return problemAsk(q, "direct", Problem{Cause: cause, Text: clientErrorText(fp), Data: doc{"fingerprint": fp, "reporter": person}})
 }
 
 // clientErrorText: fixed wording and the fingerprint only. Reported strings are untrusted and never enter a question
