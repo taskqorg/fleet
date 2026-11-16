@@ -100,8 +100,11 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // The sort chip's leading icon flips the direction: oldest first puts sort=changed in the URL, a second click removes it.
     await step('flip sort', `document.querySelector('[data-ui=sort-control] .pick-dir').click()`);
     rule(N, new URL(origin + await url()).searchParams.get('sort') === 'changed', 'sort direction did not flip');
+    // The icon draws the ages the rows show: oldest first lists big ages first, so its bars go wide to narrow.
+    rule(N, await page.$eval('[data-ui=sort-control] .pick-dir svg', e => e.getAttribute('class') ?? '').then(c => c.includes('wide-narrow')), 'oldest-first icon does not show big ages first');
     await step('flip sort back', `document.querySelector('[data-ui=sort-control] .pick-dir').click()`);
     rule(N, !new URL(origin + await url()).searchParams.has('sort'), 'sort direction did not flip back');
+    rule(N, await page.$eval('[data-ui=sort-control] .pick-dir svg', e => e.getAttribute('class') ?? '').then(c => c.includes('narrow-wide')), 'newest-first icon does not show small ages first');
     await step('pick preset', `[...document.querySelectorAll('[data-ui=saved-views] button')].find(b=>/Running/.test(b.textContent)).click()`);
     const beforeFocus = await url();
     await step('focus first row', `document.querySelector('.vl-row .row-link').click()`, false);
