@@ -2282,3 +2282,25 @@ ALTER TABLE client_error_report FORCE ROW LEVEL SECURITY;
 CREATE POLICY operator_scope ON client_error_report USING (current_setting('fleet.project_ids', true) = '*');
 -- client_errors_list names the problem question holding each group's cause, open or answered (dismissed).
 CREATE INDEX question_cause ON question(cause, seq) WHERE cause IS NOT NULL;
+
+-- migration 63: every prepared read reports its project's oldest pending work. Joining all of a project's pending scopes
+-- to resource_work made that read cost grow with the backlog, and 50 readers' reads then starved the processor that
+-- drains it. first_pending_at is immutable per work identity, so each scope row carries it, indexed per project; failed
+-- work (normally none) has its own partial index.
+ALTER TABLE resource_work_scope ADD COLUMN first_pending_at timestamptz;
+UPDATE resource_work_scope ws SET first_pending_at=w.first_pending_at FROM resource_work w WHERE w.work_id=ws.work_id;
+ALTER TABLE resource_work_scope ALTER COLUMN first_pending_at SET NOT NULL;
+CREATE INDEX resource_work_scope_oldest ON resource_work_scope(project_id,first_pending_at);
+CREATE INDEX resource_work_failed ON resource_work(first_pending_at,work_id) WHERE last_error_class IS NOT NULL;
+CREATE OR REPLACE FUNCTION resource_enqueue_source(eid text, old_project text, new_project text) RETURNS void
+LANGUAGE plpgsql SET search_path=public AS $$
+DECLARE wid uuid; pending timestamptz;
+BEGIN
+ INSERT INTO resource_work(execution_id) VALUES(eid)
+ ON CONFLICT ON CONSTRAINT resource_work_source_key DO UPDATE SET execution_id=excluded.execution_id
+ RETURNING work_id,first_pending_at INTO wid,pending;
+ INSERT INTO resource_work_scope(work_id,project_id,first_pending_at)
+ SELECT wid,p,pending FROM (VALUES(old_project),(new_project)) v(p) WHERE p IS NOT NULL
+ ON CONFLICT DO NOTHING;
+ PERFORM fleet_enqueue_wake('fleet_resource_work','');
+END $$;

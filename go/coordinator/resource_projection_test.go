@@ -307,11 +307,33 @@ func TestResourcePostgres(t *testing.T) {
 	}
 	sql(`INSERT INTO resource_work(execution_id) VALUES('p-e')`)
 	tx(func(q *Request) error {
-		return exec(q, `INSERT INTO resource_work_scope SELECT work_id,'A' FROM resource_work WHERE execution_id='p-e' ON CONFLICT DO NOTHING`)
+		return exec(q, `INSERT INTO resource_work_scope SELECT work_id,'A',first_pending_at FROM resource_work WHERE execution_id='p-e' ON CONFLICT DO NOTHING`)
 	})
 	if v := read(true); !v.Ready || !v.Pending || v.OldestPendingAt == nil || v.Revision != rev {
 		t.Fatalf("pending read %+v", v)
 	}
+	// Requirement: a prepared read's oldest-pending age costs the same with a large backlog; risk: the per-read
+	// join over every pending scope grows with the backlog and starves the processor that drains it.
+	oldest := *read(true).OldestPendingAt
+	tx(func(q *Request) error {
+		return exec(q, `WITH w AS (INSERT INTO resource_work(execution_id) SELECT 'backlog-'||i FROM generate_series(1,5000) i RETURNING work_id,first_pending_at)
+ INSERT INTO resource_work_scope SELECT work_id,'A',first_pending_at FROM w`)
+	})
+	if v := read(true); v.OldestPendingAt == nil || !v.OldestPendingAt.Equal(oldest) {
+		t.Fatalf("oldest pending moved with a newer backlog: %+v want %v", v, oldest)
+	}
+	var plan string
+	tx(func(q *Request) error {
+		return q.tx.QueryRow(q.ctx(), `EXPLAIN (ANALYZE, FORMAT JSON) SELECT first_pending_at FROM resource_work_scope WHERE project_id='A' ORDER BY first_pending_at LIMIT 1`).Scan(&plan)
+	})
+	// The application role cannot ANALYZE here, so the plan shape follows stale statistics; it must still read
+	// one table through the per-project index instead of joining every pending scope to resource_work.
+	if !strings.Contains(plan, "resource_work_scope_oldest") || strings.Contains(plan, `"resource_work"`) {
+		t.Fatalf("oldest pending read does not use the per-project index alone: %s", plan)
+	}
+	tx(func(q *Request) error {
+		return exec(q, `DELETE FROM resource_work WHERE execution_id LIKE 'backlog-%'`)
+	})
 	replace("p-e")
 
 	sql(`UPDATE execution_totals SET computed_at=clock_timestamp() WHERE execution_id='p-e'`)
