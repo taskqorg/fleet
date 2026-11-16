@@ -71,7 +71,7 @@ test('worker activation timeout remains retryable and does not reload', async ()
 test('narrow rail exposes Versions and a long overview stays within the viewport', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
   const { chromium } = await import('playwright');
   const { readFileSync } = await import('node:fs');
-  const { tokensCss } = await import('../../packages/ui/scripts/tokens.mjs');
+  const { tokensCss } = await import(new URL('../../packages/ui/scripts/tokens.mjs', import.meta.url).href) as { tokensCss: () => string };
   const fixture = await build({ stdin: { contents: `
     import {render} from 'preact';import {AppShell} from './packages/ui/src/index.ts';
     const version={current:'1.261115.5',tone:'neutral',updateReady:false,onUpdate:()=>{},rows:Array.from({length:50},(_,i)=>({key:String(i),part:'host '+i,icon:'terminal',version:'1.261115.5',state:'unknown',tone:'attention'}))};
