@@ -11,6 +11,7 @@ import {
 import tokens from '../../../packages/ui/tokens.json';
 import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useList, useDoc } from '../store.ts';
+import { chunks, compareKeys } from '../lists.ts';
 import { listKey, formatView, DEFAULT_TASK_SORT, type View } from '../../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 import { usePins, useViews, withFocus, setFocus } from '../prefs.ts';
@@ -52,11 +53,22 @@ export function Tasks({ id }: { id?: string }) {
   const closeMenu = useCallback(() => setMenu(null), []);
   // Pinned tasks stay in the list whatever the filter, search or grouping (OR-12): they are read by id, unfiltered,
   // and live through task changes; the filtered page supplies the rest.
-  const pinnedDoc = useDoc<TaskRow[]>(pins.ids.length ? 'task-pins:' + pins.ids.join(',') : null,
-    () => op('list_membership', { ids: pins.ids, lists: [{ name: 'tasks', filter: {}, sort: view.sort ?? DEFAULT_TASK_SORT }] }).then(r => r.lists[0].rows as unknown as TaskRow[]),
-    c => c.kind === 'task' && pins.has(c.id));
+  const pinSort = view.sort ?? DEFAULT_TASK_SORT;
+  const pinnedDoc = useDoc<TaskRow[]>(pins.ids.length ? JSON.stringify(['task-pins', pins.ids, pinSort]) : null,
+    async () => {
+      const found: TaskRow[] = [];
+      // The operation accepts at most 1,000 IDs; sequential batches avoid a request burst for a large pin collection.
+      for (const ids of chunks(pins.ids, 1000)) {
+        const reply = await op('list_membership', { ids, lists: [{ name: 'tasks', filter: {}, group: 'none', sort: pinSort }] });
+        found.push(...reply.lists[0].rows as unknown as TaskRow[]);
+      }
+      return found;
+    }, c => c.kind === 'task' && pins.has(c.id) || !!c.taskId && pins.has(c.taskId));
   const byId = new Map((pinnedDoc.data ?? []).map(r => [r.id, r]));
-  const pinned = pins.ids.map(id => byId.get(id) ?? rows.find(r => r.id === id)).filter((r): r is TaskRow => !!r), rest = rows.filter(r => !pins.has(r.id));
+  // The page supplies a just-pinned row while its independent read is pending. Its grouping key is irrelevant here.
+  const pinned = pins.ids.map(id => byId.get(id) ?? rows.find(r => r.id === id))
+    .filter((r): r is TaskRow => !!r).sort((a, b) => compareKeys(a.sortKey.slice(1), b.sortKey.slice(1)));
+  const rest = rows.filter(r => !pins.has(r.id)), displayed = [...pinned, ...rest];
   const groupOf = (r: TaskRow) => String(r.sortKey[0]);
   const items: Item[] = [];
   // Pinned rows come first, as a group of their own (OR-12); each shows its pin before the state (RowPin).
@@ -70,7 +82,7 @@ export function Tasks({ id }: { id?: string }) {
     if (rowsGroup !== 'none' && g !== last) { const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: groupLabel(rowsGroup, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
     if (!closed.includes(g)) items.push({ kind: 'task', t });
   }
-  const chosen = rows.filter(r => sel.includes(r.id));
+  const chosen = displayed.filter(r => sel.includes(r.id));
   const canPause = (t: TaskRow) => !TERMINAL.includes(t.state) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
   const bulk = async (action: 'pause' | 'resume' | 'cancel', ts: TaskRow[]) => {
     if (busy || !ts.length) return;
@@ -114,7 +126,7 @@ export function Tasks({ id }: { id?: string }) {
           <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => set({ group: g, preset: undefined })} />
           <SortControl value={view.sort ?? DEFAULT_TASK_SORT} fields={SORTS} onChange={v => set({ sort: v, preset: undefined })} />
         </>}
-        selection={selecting && <SelectBar count={chosen.length} total={rows.length} onAll={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: rows.map(r => r.id) }); }} onNone={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: [] }); }} onExit={leave} actions={[
+        selection={selecting && <SelectBar count={chosen.length} total={displayed.length} onAll={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: displayed.map(r => r.id) }); }} onNone={() => { setSelectOn(true); setConfirmCancel(null); set({ sel: [] }); }} onExit={leave} actions={[
               { label: 'Pin', icon: 'pin', onClick: () => pinAll(true), disabledReason: chosen.length && chosen.every(t => pins.has(t.id)) ? 'All pinned' : undefined },
               { label: 'Unpin', icon: 'pin-off', onClick: () => pinAll(false), disabledReason: chosen.some(t => pins.has(t.id)) ? undefined : 'None pinned' },
               { label: 'Pause', icon: 'pause', onClick: () => bulk('pause', chosen.filter(canPause)), disabledReason: off ?? (chosen.some(canPause) ? undefined : 'None can pause') },
@@ -124,9 +136,10 @@ export function Tasks({ id }: { id?: string }) {
         {confirmCancel && <ProblemRow severity="warning" title={`Cancel ${confirmCancel.length} ${confirmCancel.length === 1 ? 'task' : 'tasks'}?`} facts="Running work is asked to stop; finished external effects stay."
           actions={[{ label: 'Yes, cancel', primary: true, onClick: () => { const ts = confirmCancel; setConfirmCancel(null); bulk('cancel', ts); } }, { label: 'Keep', onClick: () => setConfirmCancel(null) }]} />}
         {bulkError && <ErrorBanner text={bulkError} />}
-        {list.error && !rows.length ? <ErrorBanner text={`Tasks did not load: ${list.error}`} onRetry={list.reload} />
-          : list.shownKey === null ? <Skeleton rows={8} />
-          : !rows.length && !pinned.length ? (list.pending ? <Skeleton rows={8} /> : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />)
+        {list.error && <ErrorBanner text={`Tasks did not load: ${list.error}`} onRetry={list.reload} />}
+        {pinnedDoc.error && <ErrorBanner text={`Pinned tasks did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
+        {!displayed.length && (list.shownKey === null || list.pending || (pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
+          : !displayed.length ? (list.error || pinnedDoc.error ? null : <Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />)
           : <VirtualList items={items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.t.id} rowHeight={ROW} follow="top" label="Tasks" onEnd={list.more}
             columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.t.id === id ? 'sel' : ''}${sel.includes(i.t.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
             onRowMenu={(i, at) => { if (i.kind === 'task') setMenu({ t: i.t, at }); }}

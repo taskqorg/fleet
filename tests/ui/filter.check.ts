@@ -136,7 +136,13 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.locator('.vl-row .row-link').first().focus(); await page.keyboard.press('p'); await page.waitForSelector('[data-ui=row-pin]');
     await page.goto(origin + '/tasks?q=no-such-task-anywhere'); await page.waitForSelector('[data-ui=row-pin]', { timeout: 10000 }).catch(() => {});
     rule(N, await page.locator('.vl-row:has([data-ui=row-pin]) .row-link').first().textContent().catch(() => null) === pinnedTitle, 'a pinned task left the list under a search that does not match it');
-    await page.locator('[data-ui=row-pin]').first().click(); await page.waitForFunction(() => !document.querySelector('[data-ui=row-pin]'));
+    // A pinned row outside the filtered page is still part of selection and its actions.
+    await page.locator('.vl-row:has([data-ui=row-pin]) .row-link').first().focus(); await page.keyboard.press('x');
+    await page.waitForFunction(() => document.querySelector('[data-ui=select-bar]')?.textContent?.includes('1 selected'));
+    rule(N, await page.locator('[data-ui=select-bar] button[aria-label=Unpin]').isEnabled(), 'the visible pinned row was excluded from selection');
+    await page.locator('[data-ui=select-bar] button[aria-label=Unpin]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-ui=row-pin]'));
+    await page.getByRole('button', { name: 'Leave selection', exact: true }).click();
     // Search: one request per typing pause, one Back leaves the search.
     await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
     await page.locator('.fbar button[aria-label^="Search"]').first().click(); // search is an icon until used (OR-31)

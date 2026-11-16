@@ -211,6 +211,7 @@ export function useList(kind: Kind, urlView: View) {
 
 /** Detail and page reads by name (task_get, session_get, overview, hosts). The last value stays visible while re-reading. */
 export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches: (c: Change) => boolean, refreshMs?: number) {
+  const reloadRef = useRef<() => void>(() => {});
   const fetchRef = useRef(fetch); fetchRef.current = fetch;
   const touchRef = useRef(touches); touchRef.current = touches;
   const s = name ? (docs.get(name) ?? (docs.set(name, signal(null)), docs.get(name)!)) : null;
@@ -228,14 +229,15 @@ export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches:
       }
     };
     const restoreDoc = () => load<T>('doc:' + name).then(v => { if (live && v && s.value?.data == null) s.value = { data: v.data, restored: true, error: s.value?.error ?? null }; });
+    reloadRef.current = get;
     if (!s.value?.data) restoreDoc();
     get();
     const off = subscribe({ resync: get, changes: cs => { if (cs.some(c => touchRef.current(c))) get(); } });
     const timer = refreshMs ? setInterval(get, refreshMs) : 0;
-    return () => { live = false; off(); clearInterval(timer); };
+    return () => { live = false; reloadRef.current = () => {}; off(); clearInterval(timer); };
   }, [name, refreshMs, gen]);
   const v = s?.value ?? null;
-  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored) };
+  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => reloadRef.current() };
 }
 
 /** For tests: the stored list under key and a record. */
