@@ -26,7 +26,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-sessions` | `session`, `sessions`, `thread`, `message`, `reply`, `ask`, `direct`, `watch`, `worker`, `changes`, `recommendation` |
   | `ops-projects` | `project_create`, `project_update`, `project_initial_access_revoke` (shared versioned writes) |
   | `ops-tasks` | `task`, `question`, `questions`, remaining `project` reads |
-  | `ops-telemetry` | `telemetry` |
+  | `ops-telemetry` | `telemetry`, `client` |
 
   A new first word joins the closest row here. A new domain file also needs its `go:generate` line in `go/contract/contract.go`.
   `operations` lists every operation (`read`, `long`, `errors`: the statuses its handler returns besides 401, 403 and 500);

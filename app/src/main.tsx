@@ -1,11 +1,12 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
 import { Projects } from './views/projects.tsx';
-import { render } from 'preact';
+import { render, Component, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
 import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
-import { startVersionChecks, versionInfo } from './version.ts';
-import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator } from './access.ts';
+import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
+import { createReporter, installReporter, reportPath, sendReport } from './client-errors.ts';
+import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
 import { preferencesTouched } from './invalidation.ts';
@@ -24,6 +25,24 @@ import { Keys } from './views/keys.tsx';
 import { Results } from './views/results.tsx';
 import { Definitions } from './views/definitions.tsx';
 import { Delivery } from './views/delivery.tsx';
+
+// Browser errors reach the coordinator (client_error_report); an operation's own failure (OpError) is already in its
+// spans, and an access change aborts reads on purpose, so neither is reported again.
+const mainAsset = document.querySelector<HTMLScriptElement>('script[src*="/assets/main-"]')?.getAttribute('src')?.match(/main-([^./]+)/)?.[1];
+const reporter = createReporter({ send: sendReport, path: () => reportPath(location.pathname, location.search), userAgent: navigator.userAgent,
+  version: () => tabVersion.value ?? (mainAsset ? 'main-' + mainAsset : '') });
+const ignoreError = (e: unknown) => e instanceof OpError || e instanceof AccessChanged;
+installReporter(reporter, ignoreError);
+
+/** A render crash shows a recoverable error in the work area instead of a blank page; navigating away clears it. */
+class RenderBoundary extends Component<{ at: string; children: ComponentChildren }, { failed: boolean }> {
+  state = { failed: false };
+  componentDidCatch(error: unknown) { if (!ignoreError(error)) reporter.capture(error, 'render'); this.setState({ failed: true }); }
+  componentDidUpdate(prev: { at: string }) { if (prev.at !== this.props.at && this.state.failed) this.setState({ failed: false }); }
+  render() {
+    return this.state.failed ? <Empty text="This page failed to render." action={<Button label="Reload" icon="rotate-ccw" onClick={() => location.reload()} />} /> : this.props.children;
+  }
+}
 
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
@@ -156,7 +175,7 @@ function App() {
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
-    {access.value.state === 'open' ? <PrivateRoutes key={access.value.generation} go={go} /> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
+    {access.value.state === 'open' ? <RenderBoundary at={access.value.generation + ':' + loc + '?' + query}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
   </AppShell>;
 }
 

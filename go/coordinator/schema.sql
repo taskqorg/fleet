@@ -2236,3 +2236,49 @@ CREATE INDEX task_sort_project_changed_desc ON task((coalesce(project_id,'~')), 
 CREATE INDEX task_sort_project_changed ON task((coalesce(project_id,'~')), ((extract(epoch FROM updated_at AT TIME ZONE 'UTC')*1000)::float8), id);
 CREATE INDEX task_sort_project_created_desc ON task((coalesce(project_id,'~')), (-(seq::float8)), id);
 CREATE INDEX task_sort_project_created ON task((coalesce(project_id,'~')), (seq::float8), id);
+
+-- migration 62: browser errors of the operator app (client_error_report, docs/designs/fleet-telemetry.md section 9):
+-- one group per fingerprint (name, message, normalized top frame) and its latest reports (at most 20 per group);
+-- first_person and first_full bound the new groups one person, and people without full access together, open.
+-- System data: only the unrestricted scope sees it; the report operation writes it in the coordinator's own scope.
+CREATE TABLE client_error(
+  fingerprint text PRIMARY KEY,
+  name text NOT NULL,
+  message text NOT NULL,
+  top_frame text NOT NULL,
+  source text NOT NULL,
+  first_seen timestamptz NOT NULL DEFAULT now(),
+  last_seen timestamptz NOT NULL DEFAULT now(),
+  count bigint NOT NULL,
+  last_version text NOT NULL,
+  last_path text NOT NULL,
+  last_user_agent text NOT NULL,
+  people text[] NOT NULL DEFAULT '{}',
+  versions text[] NOT NULL DEFAULT '{}',
+  first_person text NOT NULL DEFAULT '',
+  first_full boolean NOT NULL DEFAULT false
+);
+CREATE INDEX client_error_last_seen ON client_error(last_seen DESC, fingerprint);
+CREATE INDEX client_error_first_person ON client_error(first_person, first_seen);
+CREATE TABLE client_error_report(
+  seq bigserial PRIMARY KEY,
+  fingerprint text NOT NULL REFERENCES client_error(fingerprint) ON DELETE CASCADE,
+  at timestamptz NOT NULL DEFAULT now(),
+  client_at timestamptz NOT NULL,
+  person text NOT NULL,
+  version text NOT NULL,
+  path text NOT NULL,
+  user_agent text NOT NULL,
+  count bigint NOT NULL,
+  source text NOT NULL,
+  stack text NOT NULL
+);
+CREATE INDEX client_error_report_fingerprint ON client_error_report(fingerprint, seq DESC);
+ALTER TABLE client_error ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_error FORCE ROW LEVEL SECURITY;
+CREATE POLICY operator_scope ON client_error USING (current_setting('fleet.project_ids', true) = '*');
+ALTER TABLE client_error_report ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_error_report FORCE ROW LEVEL SECURITY;
+CREATE POLICY operator_scope ON client_error_report USING (current_setting('fleet.project_ids', true) = '*');
+-- client_errors_list names the problem question holding each group's cause, open or answered (dismissed).
+CREATE INDEX question_cause ON question(cause, seq) WHERE cause IS NOT NULL;

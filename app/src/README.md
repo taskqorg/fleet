@@ -6,6 +6,7 @@
 
 ## Interface
 
+- [`client-errors.ts`](client-errors.ts) reports uncaught errors, unhandled rejections and render crashes to `client_error_report`: once per error per 5 minutes with a repeat count, at most 30 first reports and 100 repeat counts per tab, keepalive sends, only app-produced URL parts; it never throws. `main.tsx:RenderBoundary` shows a crashed page as an error with Reload ([telemetry §9](../../docs/designs/fleet-telemetry.md#9-browser-errors)).
 - [`version.ts`](version.ts) reads `system_versions`, clears private version snapshots on access invalidation, keeps unknown/stale observations explicit, and detects and activates app updates.
 - [`main.tsx`](main.tsx) defines `SCREENS` and `App`, connects `AppShell`, identity/grant checks, preferences, feed/store startup, service worker registration, and routes.
 - [`api.ts`](api.ts) exports typed `op`, `writeOnce`, `addRequestedKey`, `sendingId`, `useAlive`, `online`, and `signedOut`.
@@ -28,6 +29,7 @@
 
 ## Side Effects
 
+- `client-errors.ts` sends same-origin keepalive `POST /api/ops/client_error_report` requests outside `op()` (no access fence, no offline or signed-out marking).
 - `api.ts` sends same-origin `POST /api/ops/:name` requests; `feed.ts` opens `EventSource('/api/stream…')` and polls `changes_since` after repeated failures.
 - `offline.ts` reads, writes, and deletes IndexedDB cache entries; `prefs.ts` writes person settings through coordinator operations.
 - `main.tsx` registers `/sw.js`, changes browser history, and can redirect to Cloudflare Access logout.
