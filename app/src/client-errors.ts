@@ -20,9 +20,10 @@ export function trimBytes(s: string, max: number): string {
 }
 
 /**
- * The page path the report carries: an operator-app view keeps its path and the query keys the app itself writes
- * (view-url's table and VIEW_EXTRA, values as found, so a malformed one that broke the page stays visible); any other
- * key is dropped, and so is the whole query of a path that is not a view.
+ * The page path the report carries: an operator-app view keeps its path and the query keys the app itself writes:
+ * view-url's table keys as parsed (a value the table does not allow is dropped) and VIEW_EXTRA keys as found (so a
+ * malformed one that broke the page stays visible); any other key is dropped, and so is the whole query of a path
+ * that is not a view.
  */
 export function reportPath(pathname: string, search: string): string {
   const v = parseView(pathname + search);
@@ -70,7 +71,7 @@ export type ReporterOptions = {
   maxReports?: number;
   /** The most repeat-count sends a tab makes (window ends and flushes); later repeats are counted in dropped only. */
   maxRepeats?: number;
-  /** The most repeat counts one flush sends (keepalive bodies share a 64 KiB budget on unload; each is under about 5 KB). */
+  /** The most repeat counts one flush sends: keepalive bodies share a 64 KiB budget on unload, and one is at most about 13 KB. */
   flushEntries?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
 };
@@ -78,7 +79,7 @@ export type ReporterOptions = {
 type Entry = { sentAt: number; pending: number; firstAt: number; timer: number; report: Omit<ClientErrorReport, 'count' | 'at'> };
 
 export function createReporter(o: ReporterOptions) {
-  const now = o.now ?? Date.now, windowMs = o.windowMs ?? 5 * 60_000, max = o.maxReports ?? 30, maxRepeats = o.maxRepeats ?? 100, perFlush = o.flushEntries ?? 10;
+  const now = o.now ?? Date.now, windowMs = o.windowMs ?? 5 * 60_000, max = o.maxReports ?? 30, maxRepeats = o.maxRepeats ?? 100, perFlush = o.flushEntries ?? 4;
   const setTimer = o.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const entries = new Map<string, Entry>();
   let sent = 0, repeats = 0, dropped = 0;

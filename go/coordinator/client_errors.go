@@ -161,16 +161,20 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			// A new group: within the person's hourly and total allowances and, for a person without full access, the
 			// members' cap; else counted in the over-limit group. The caps count the groups retention keeps
 			// (clientErrorKept): a quiet group pinned by its problem holds its slot until the problem lets go.
-			kept, cutoff := clientErrorKept("$3"), time.Now().Add(-clientErrorRetention)
+			cutoff := time.Now().Add(-clientErrorRetention)
+			// personOver: the person's hourly or total limit is reached (first_person index; the kept groups only).
+			personOver := func() (bool, error) {
+				var hour, mine int
+				err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE first_seen > now()-interval '1 hour'), count(*) FROM client_error c
+					WHERE first_person=$1 AND fingerprint<>$2 AND `+clientErrorKept("$3"), person, clientErrorOverLimit, cutoff).Scan(&hour, &mine)
+				return hour >= clientErrorNewPerHour || mine >= clientErrorPerPerson, err
+			}
 			over := false
 			if !known {
-				// The person's own counts first (first_person index), so a person past their limits never waits on the lock.
-				var hour, mine int
-				if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE first_seen > now()-interval '1 hour'), count(*) FROM client_error c
-					WHERE first_person=$1 AND fingerprint<>$2 AND `+kept, person, clientErrorOverLimit, cutoff).Scan(&hour, &mine); err != nil {
+				// A fast reject before the lock: a person past their limits never waits on it.
+				if over, err = personOver(); err != nil {
 					return rep, err
 				}
-				over = hour >= clientErrorNewPerHour || mine >= clientErrorPerPerson
 			}
 			if !known && !over {
 				// One lock orders concurrent new groups, so parallel tabs cannot all pass the same count; the same group
@@ -181,7 +185,13 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 				if known, err = has(q, "SELECT 1 FROM client_error WHERE fingerprint=$1", fp); err != nil {
 					return rep, err
 				}
-				if !known && !full {
+				if !known {
+					// Every limit again under the lock: concurrent reports of one person cannot all pass the same count.
+					if over, err = personOver(); err != nil {
+						return rep, err
+					}
+				}
+				if !known && !over && !full {
 					var members int
 					if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM client_error c WHERE NOT first_full AND fingerprint<>$1 AND `+clientErrorKept("$2"), clientErrorOverLimit, cutoff).Scan(&members); err != nil {
 						return rep, err

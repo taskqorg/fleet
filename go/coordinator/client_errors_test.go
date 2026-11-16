@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -334,5 +335,37 @@ func TestClientErrorPinnedGroupsCount(t *testing.T) {
 	release("pinned 1")
 	if fp := report(outsider, "outsider after a release"); fp == clientErrorOverLimit {
 		t.Fatal("a released members' slot stayed taken")
+	}
+}
+
+// Requirement: fleet-telemetry.md section 9: the per-person limits are counted again under the new-group lock, so
+// parallel reports of one person with distinct new errors never open more groups than the hourly cap. Risk: a person's
+// tabs all pass the same unlocked count and exceed the cap (TOCTOU).
+func TestClientErrorParallelReports(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	member := personHeaders(e, "member@trial.test")
+	const n = 3 * clientErrorNewPerHour
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes[i], _ = e.callJSON(t, "POST", "/api/ops/client_error_report", clientReport(map[string]any{"message": "parallel " + itoa(i)}), member)
+		}(i)
+	}
+	wg.Wait()
+	for i, c := range codes {
+		if c != 200 {
+			t.Fatalf("report %d: %d", i, c)
+		}
+	}
+	var groups int
+	var over int64
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT count(*) FILTER (WHERE fingerprint<>$1), coalesce(sum(count) FILTER (WHERE fingerprint=$1),0) FROM client_error WHERE first_person='member@trial.test' OR fingerprint=$1", clientErrorOverLimit).Scan(&groups, &over); err != nil {
+		t.Fatal(err)
+	}
+	if groups != clientErrorNewPerHour || over != int64(n-clientErrorNewPerHour) {
+		t.Fatalf("parallel: %d groups, %d over-limit reports", groups, over)
 	}
 }
