@@ -1107,7 +1107,6 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	type simMetric struct {
 		present, expected int64
 		sum               string
-		scale             int
 		reasons           map[string]int64
 	}
 	type simCost struct {
@@ -1145,7 +1144,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 			}
 			if m.Value != nil {
 				x.present += sign
-				x.sum, x.scale = sum(x.sum, resourceSigned(*m.Value, sign)), max(x.scale, resourceScale(*m.Value))
+				x.sum = sum(x.sum, resourceSigned(*m.Value, sign))
 			}
 			if m.Expected {
 				x.expected += sign
@@ -1212,7 +1211,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 	var mRows, eRows, tRows, cRows, pRows []any
 	for _, k := range pairKeys(metrics) {
 		x := metrics[k]
-		mRows = append(mRows, []any{k[0], k[1], x.present, x.expected, resourceAtScale(x.sum, x.scale), x.reasons})
+		mRows = append(mRows, []any{k[0], k[1], x.present, x.expected, x.sum, x.reasons})
 	}
 	for _, k := range pairKeys(extremes) {
 		mult := extremes[k]
@@ -1262,7 +1261,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 		var out any
 		if e := json.Unmarshal([]byte(scalar(`SELECT jsonb_build_object(
  'summary',(SELECT jsonb_build_object('e',executions,'h',history_incomplete,'oc',other_calls,'oe',other_errors,'t',tool_count,'c',cost_count,'p',price_count) FROM resource_project_summary WHERE project_id='`+p+`'),
- 'metric',(SELECT jsonb_agg(jsonb_build_array(metric::text,basis,present_count,expected_count,sum_value::text,reasons) ORDER BY metric::text COLLATE "C",basis COLLATE "C") FROM resource_metric WHERE project_id='`+p+`'),
+ 'metric',(SELECT jsonb_agg(jsonb_build_array(metric::text,basis,present_count,expected_count,trim_scale(sum_value)::text,reasons) ORDER BY metric::text COLLATE "C",basis COLLATE "C") FROM resource_metric WHERE project_id='`+p+`'),
  'extreme',(SELECT jsonb_agg(jsonb_build_array(metric,value,multiplicity) ORDER BY metric COLLATE "C",value) FROM resource_extreme WHERE project_id='`+p+`'),
  'tool',(SELECT jsonb_agg(jsonb_build_array(connection,name,calls,errors,references_count) ORDER BY connection COLLATE "C",name COLLATE "C") FROM resource_tool WHERE project_id='`+p+`'),
  'cost',(SELECT jsonb_agg(jsonb_build_array(currency,basis,value::text,usages,references_count) ORDER BY currency COLLATE "C",basis COLLATE "C") FROM resource_cost WHERE project_id='`+p+`'),

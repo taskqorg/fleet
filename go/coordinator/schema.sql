@@ -2322,7 +2322,7 @@ END $$;
 
 -- migration 64: a replacement transaction writes its net reason-count changes per metric row at once. Merging keeps a
 -- reason while its count is positive, drops it at zero and rejects a negative count as a corrupt ledger.
-CREATE FUNCTION resource_reasons_merge(old jsonb, delta jsonb) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $$
+CREATE FUNCTION resource_reasons_merge(old jsonb, delta jsonb) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE SET search_path=public AS $$
 DECLARE merged jsonb;
 BEGIN
  SELECT coalesce(jsonb_object_agg(k,v),'{}'::jsonb) INTO merged FROM (

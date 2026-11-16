@@ -31,8 +31,7 @@ type resourceDelta struct {
 }
 type resourceMetricDelta struct {
 	present, expected int64
-	sum               string
-	scale             int // numeric addition keeps the larger scale; the net sum keeps it too
+	sum               string // stored trimmed: a row deleted and recreated mid-transaction resets its scale, and every metric reader normalizes it
 	reasons           map[string]int64
 }
 type resourceExtremeKey struct {
@@ -47,7 +46,7 @@ type resourceCostOp struct {
 }
 type resourceCostDelta struct {
 	value        string
-	scale        int
+	scale        int // cost items return the stored value as is, so a netted (additions-only) value keeps numeric's scale
 	usages, refs int64
 	ops          []resourceCostOp // every change in order
 	sequential   bool             // an unknown amount or a subtract: written one by one, see resourceDelta
@@ -62,12 +61,20 @@ func newResourceDelta(project string) *resourceDelta {
 		tools: map[[2]string]*resourceCountDelta{}, costs: map[[2]string]*resourceCostDelta{}, prices: map[resourcePriceKey]int64{}}
 }
 
-// resourceScale is the number of fraction digits of a decimal string.
+// resourceScale is the scale PostgreSQL numeric gives a decimal literal: fraction digits minus a decimal exponent.
 func resourceScale(v string) int {
-	if i := strings.IndexByte(v, '.'); i >= 0 {
-		return len(v) - i - 1
+	mantissa, exponent := v, 0
+	if i := strings.IndexAny(v, "eE"); i >= 0 {
+		mantissa = v[:i]
+		if n, err := strconv.Atoi(v[i+1:]); err == nil {
+			exponent = n
+		}
 	}
-	return 0
+	scale := 0
+	if i := strings.IndexByte(mantissa, '.'); i >= 0 {
+		scale = len(mantissa) - i - 1
+	}
+	return max(0, scale-exponent)
 }
 
 // resourceAtScale pads a trimmed decimal to scale fraction digits, as PostgreSQL numeric addition would store it.
@@ -124,7 +131,7 @@ func (d *resourceDelta) add(c contract.ResourceContributionV1, sign int64) error
 			if err != nil {
 				return err
 			}
-			x.sum, x.scale = s, max(x.scale, resourceScale(*m.Value))
+			x.sum = s
 		}
 		if m.Expected {
 			x.expected += sign
@@ -280,7 +287,7 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 		if gains {
 			t = &up
 		}
-		t.m, t.b, t.p, t.e, t.s, t.r = append(t.m, k[0]), append(t.b, k[1]), append(t.p, x.present), append(t.e, x.expected), append(t.s, resourceAtScale(x.sum, x.scale)), append(t.r, string(jsonBytes(reasons)))
+		t.m, t.b, t.p, t.e, t.s, t.r = append(t.m, k[0]), append(t.b, k[1]), append(t.p, x.present), append(t.e, x.expected), append(t.s, x.sum), append(t.r, string(jsonBytes(reasons)))
 	}
 	if len(up.m) > 0 {
 		w.exec(`INSERT INTO resource_metric AS r(project_id,metric,basis,present_count,expected_count,sum_value,reasons)
