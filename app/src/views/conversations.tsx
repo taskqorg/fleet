@@ -36,15 +36,15 @@ export function Conversations({ id }: { id?: string }) {
   // list the view shows, so an archived pin never shows among active conversations or the other way round. Active and
   // archived conversations are two lists: a switch by any path (the toggle, a saved view, Back) ends selection mode and a
   // pending confirmation; the toggle and a saved view also drop the checked rows. The rows a bulk action finished leave
-  // the selection.
+  // the selection (list-page.tsx).
   const page = useListPage<SessionRow>({
     view: 'conversations', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS, groupLabel,
     pinDoc: 'session-pins', pinRead: v => ({ key: [!!v.archived], filter: { archived: !!v.archived } }),
     pinTouches: (c, has) => (c.kind === 'session' && has(c.id)) || (!!c.sessionId && has(c.sessionId)),
     saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),
-    dropDone: true, listId: v => !!v.archived,
+    listId: v => !!v.archived,
   });
-  const { view, set, chosen, off, states, confirm } = page;
+  const { view, set, chosen, off, confirm } = page;
   const archived = !!view.archived;
   const canArchive = (s: SessionRow) => s.state === 'idle' || TERMINAL.includes(s.state);
   // Archive and Unarchive are one operation per conversation. session_archive is refused while an execution is active;
@@ -52,7 +52,7 @@ export function Conversations({ id }: { id?: string }) {
   const archive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_archive', { sessionId: s.id }), 'not archived');
   const unarchive = (ss: SessionRow[]) => page.bulk(ss, s => op('session_unarchive', { sessionId: s.id, reason: 'Unarchived from the Conversations list' }), 'not unarchived');
   const toggleArchived = () => set({ archived: archived ? undefined : true, sel: undefined, preset: undefined });
-  const filtered = !!(states.length || view.q || view.project?.length);
+  const { filtered } = page;
   const now = Date.now();
   // ?new=<project> opens the form once; the key leaves the URL so a reload does not open it again.
   const [newConversation,setNewConversation]=useState(()=>!!new URLSearchParams(location.search).get('new'));
@@ -75,7 +75,7 @@ export function Conversations({ id }: { id?: string }) {
       confirm={confirm && <ProblemRow severity="warning" title={`Archive ${confirm.length} ${confirm.length === 1 ? 'conversation' : 'conversations'}?`} facts="Their worktrees are torn down; the owner can restore a conversation."
         actions={[{ label: 'Yes, archive', primary: true, onClick: () => { page.setConfirm(null); archive(confirm); } }, { label: 'Keep', onClick: () => page.setConfirm(null) }]} />}
       empty={<Empty text={filtered ? `No ${archived ? 'archived ' : ''}conversations match these filters.` : focusIds() && !view.project?.length ? `No ${archived ? 'archived ' : ''}conversations in the focused projects.` : archived ? 'No archived conversations.' : 'No conversations yet.'}
-        action={filtered ? <Button label="Clear filters" onClick={() => { page.setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); }} />
+        action={filtered ? <Button label="Clear filters" onClick={page.clearFilters} />
           : archived ? <Button label="Show active" onClick={toggleArchived} /> : <Button label="New conversation" onClick={create} />} />}
       listLabel={archived ? 'Archived conversations' : 'Conversations'} title={titleOf} groupIcon={g => g === 'state' ? 'activity' : g === 'agent' ? 'bot' : 'folder-open'}
       state={s => <StateBadge family="session" state={s.state} compact />}

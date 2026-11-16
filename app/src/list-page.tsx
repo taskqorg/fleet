@@ -11,7 +11,7 @@ import tokens from '../../packages/ui/tokens.json';
 import { op, online } from './api.ts';
 import { useList, useDoc, type Kind } from './store.ts';
 import { chunks, compareKeys } from './lists.ts';
-import { listKey, formatView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
+import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
 import { usePins, useViews, type SavedView } from './prefs.ts';
 import type { Change } from './feed.ts';
@@ -40,8 +40,6 @@ export type ListPageOptions = {
   /** Whether a change touches a pinned row. */
   pinTouches: (c: Change, pinned: (id: string) => boolean) => boolean;
   groupLabel: (group: string, label: string | null) => string;
-  /** Whether a search also clears the active preset. */
-  searchClearsPreset?: boolean;
   /** A saved personal view as it is matched and restored (e.g. a default for a key older views lack). */
   savedView?: (v: View) => View;
   /** The grouping saved with a view when the URL names none. */
@@ -50,8 +48,6 @@ export type ListPageOptions = {
   saveExtra?: (v: View) => Partial<View>;
   /** Further view keys a personal view restores. */
   pickExtra?: (saved: View) => Partial<View>;
-  /** Rows a bulk action finished leave the selection. */
-  dropDone?: boolean;
   /** A change of this value is a switch to another list: it ends selection mode and a pending confirmation; a saved view
    * that switches lists also drops the checked rows. */
   listId?: (v: View) => unknown;
@@ -60,7 +56,14 @@ export type ListPageOptions = {
 export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const { view, set, href } = useUrlView(o.view);
   const [closed, setClosed] = useState<string[]>([]);
-  const [query, setQuery] = useSearchBox(view.q, q => set(o.searchClearsPreset ? { q: q || undefined, preset: undefined } : { q: q || undefined }, 'type'));
+  // A new query ends the preset that was active when the person typed it. A preset picked while the debounced query waits
+  // stays: the commit reads the URL as it is then (url.ts) and leaves a different preset alone.
+  const typedPreset = useRef<string | undefined>(undefined);
+  const [query, setText] = useSearchBox(view.q, q => {
+    const now = parseView(location.pathname + location.search)?.preset;
+    set({ q: q || undefined, ...(now === typedPreset.current ? { preset: undefined } : {}) }, 'type');
+  });
+  const setQuery = (t: string) => { typedPreset.current = view.preset; setText(t); };
   const pins = usePins(o.view);
   const views = useViews(o.view, o.system);
   const list = useList(o.kind, view);
@@ -114,8 +117,11 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   }
   const toggleGroup = (key: string) => setClosed(c => c.includes(key) ? c.filter(x => x !== key) : [...c, key]);
   const chosen = displayed.filter(r => sel.includes(r.id));
-  // One operation per row; failures are counted in one banner. With dropDone, the rows that succeeded leave the selection
-  // as it is now (not when the operation began), whatever the others did.
+  // One operation per row; failures are counted in one banner. The rows that succeeded leave the selection as it is now
+  // (not when the operation began), whatever the others did; failed rows stay selected.
+  // A bulk action that settles after the page closed leaves the URL alone: set() would write into whatever view is open then.
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
   const bulk = async (rs: R[], run: (r: R) => Promise<unknown>, failText: string) => {
     if (busy || !rs.length) return;
     setBulkError(null); setBusy(true);
@@ -123,10 +129,8 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
     setBusy(false);
     const failed = r.filter(x => x.status === 'rejected') as PromiseRejectedResult[];
     if (failed.length) setBulkError(`${failed.length} of ${rs.length} ${failText}: ${failed[0].reason?.message ?? failed[0].reason}`);
-    if (o.dropDone) {
-      const done = rs.filter((_, i) => r[i].status === 'fulfilled').map(x => x.id);
-      if (done.length) set({ sel: selNow.current.filter(x => !done.includes(x)) });
-    }
+    const done = rs.filter((_, i) => r[i].status === 'fulfilled').map(x => x.id);
+    if (done.length && mounted.current) set({ sel: selNow.current.filter(x => !done.includes(x)) });
   };
   const off = !online.value ? 'offline' : busy ? 'Working' : undefined;
   const pinAll = (on: boolean) => { for (const r of chosen) if (pins.has(r.id) !== on) pins.toggle(r.id); };
@@ -144,11 +148,15 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
     set(p.system ? { state: p.view.state ?? [], preset: n } : { state: sv.state ?? [], group: sv.group, sort: sv.sort, project: sv.project ?? [], q: sv.q, ...o.pickExtra?.(sv), preset: n, ...(o.listId && o.listId(sv) !== o.listId(view) ? { sel: undefined } : {}) });
   };
   const save = (n: string) => views.save({ name: n, view: { view: o.view, state: view.state, group: view.group ?? o.saveGroup, sort: view.sort, project: view.project, q: view.q, ...o.saveExtra?.(view) } });
+  // The empty state's Clear filters: states, search, projects and the active preset.
+  // setQuery('') also drops a typed query not yet committed, which the URL sync alone would leave in the box.
+  const filtered = !!(states.length || view.q || view.project?.length);
+  const clearFilters = () => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); };
   const shown = states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
   return {
     view, set, href, query, setQuery, pins, views, list, group, sort, states, rowsGroup, rows, items, displayed, chosen, closed, toggleGroup,
     sel, selecting, setSelectOn, select, leave, confirm, setConfirm, bulkError, busy, bulk, off, pinAll, menu, setMenu, closeMenu,
-    pinnedDoc, activePreset, pick, save, shown,
+    pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown,
   };
 }
 export type ListPage<R extends ListRow> = ReturnType<typeof useListPage<R>>;

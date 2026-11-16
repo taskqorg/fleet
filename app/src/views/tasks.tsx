@@ -33,13 +33,13 @@ export function Tasks({ id }: { id?: string }) {
   const page = useListPage<TaskRow>({
     view: 'tasks', kind: 'tasks', defaultGroup: DEFAULT_TASK_GROUP, defaultSort: DEFAULT_TASK_SORT, system: SYSTEM_VIEWS, groupLabel,
     pinDoc: 'task-pins', pinRead: () => ({ key: [], filter: {} }), pinTouches: (c, has) => c.kind === 'task' && has(c.id) || !!c.taskId && has(c.taskId),
-    searchClearsPreset: true, savedView, saveGroup: DEFAULT_TASK_GROUP,
+    savedView, saveGroup: DEFAULT_TASK_GROUP,
   });
-  const { view, set, list, chosen, off, rowsGroup, states, confirm } = page;
+  const { view, set, list, chosen, off, rowsGroup, confirm } = page;
   const canPause = (t: TaskRow) => !TERMINAL.includes(t.state) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
   const bulk = (action: 'pause' | 'resume' | 'cancel', ts: TaskRow[]) => page.bulk(ts, t => op('task_update', { taskId: t.id, action }), `did not ${action}`);
   const now = Date.now();
-  const filtered = !!(states.length || view.q || view.project?.length), focused = !view.project?.length && !!withFocus(view).project?.length;
+  const { filtered } = page, focused = !view.project?.length && !!withFocus(view).project?.length;
   const listPane = <>
     <header class="page-h"><h1>Tasks</h1><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
     <ListPagePanel page={page} noun="Tasks" placeholder="Search tasks, agent:claude host:mac" family="task" groups={GROUPS} sorts={SORTS} focused={id}
@@ -54,7 +54,7 @@ export function Tasks({ id }: { id?: string }) {
       ]}
       confirm={confirm && <ProblemRow severity="warning" title={`Cancel ${confirm.length} ${confirm.length === 1 ? 'task' : 'tasks'}?`} facts="Running work is asked to stop; finished external effects stay."
         actions={[{ label: 'Yes, cancel', primary: true, onClick: () => { page.setConfirm(null); bulk('cancel', confirm); } }, { label: 'Keep', onClick: () => page.setConfirm(null) }]} />}
-      empty={<Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={() => { page.setQuery(''); set({ state: [], q: undefined, project: [] }); }} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />}
+      empty={<Empty text={filtered ? 'No tasks match these filters.' : focused ? 'No tasks in the focused projects.' : 'No tasks yet.'} action={filtered ? <Button label="Clear filters" onClick={page.clearFilters} /> : focused ? <Button label="Show all projects" onClick={() => setFocus([])} /> : undefined} />}
       listLabel="Tasks" title={t => t.title} groupIcon={g => g === 'priority' ? 'list-ordered' : 'folder-open'}
       state={t => <StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} compact />}
       before={t => rowsGroup !== 'priority' && <PriorityChip p={t.priority} />}
