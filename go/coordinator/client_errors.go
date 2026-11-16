@@ -82,9 +82,17 @@ func clientErrorKept(p string) string {
 func clientErrorsPrune(ctx context.Context, a *App, cutoff time.Time) (int64, error) {
 	var n int64
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		return q.tx.QueryRow(q.ctx(), `WITH gone AS (DELETE FROM client_error c WHERE NOT `+clientErrorKept("$1")+` RETURNING fingerprint),
-			released AS (UPDATE question SET cause=NULL WHERE state='answered' AND cause IN (SELECT '`+clientErrorCause+`'||fingerprint FROM gone) RETURNING 1)
-			SELECT count(*) FROM gone`, cutoff).Scan(&n)
+		gone, err := queryRows(q, `DELETE FROM client_error c WHERE NOT `+clientErrorKept("$1")+` RETURNING fingerprint`, cutoff)
+		if err != nil {
+			return err
+		}
+		n = int64(len(gone))
+		for _, g := range gone {
+			if err := problemClose(q, clientErrorCause+astr(g["fingerprint"])); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	return n, err
 }
@@ -210,19 +218,17 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 				fp, top = clientErrorOverLimit, ""
 				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly or total new-group limit, or the members' group cap, was reached", "error"
 			}
-			// A report that may ask (a new group, the over-limit group, or a group whose problem was answered and none is
-			// open) takes the new-group lock before its row lock, the order every path uses, so asks never deadlock.
-			if !checked {
-				var mayAsk bool
-				if err := q.tx.QueryRow(q.ctx(), `SELECT $2 OR NOT EXISTS (SELECT 1 FROM client_error WHERE fingerprint=$1)
-					OR (EXISTS (SELECT 1 FROM question WHERE cause=$3 AND state='answered') AND NOT EXISTS (SELECT 1 FROM question WHERE cause=$3 AND state='open'))`,
-					fp, fp == clientErrorOverLimit, clientErrorCause+fp).Scan(&mayAsk); err != nil {
+			// Whether this report may ask a problem is decided once, before the upsert: no open problem, and the group is
+			// missing (new, or the over-limit group's first) or its problem was answered. The budget is the group's reporter
+			// (its first person; the reporter itself for a new group). A report that may ask takes the new-group lock before
+			// its row lock, the order every path uses, so asks never deadlock; one past the daily limit takes no lock.
+			ask, budget, err := clientErrorMayAsk(q, fp, person)
+			if err != nil {
+				return rep, err
+			}
+			if ask && !checked {
+				if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
 					return rep, err
-				}
-				if mayAsk {
-					if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
-						return rep, err
-					}
 				}
 			}
 			var inserted bool
@@ -248,58 +254,67 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 			if err := exec(q, "DELETE FROM client_error_report WHERE fingerprint=$1 AND seq < (SELECT min(seq) FROM (SELECT seq FROM client_error_report WHERE fingerprint=$1 ORDER BY seq DESC LIMIT $2) k)", fp, clientErrorReportsKept); err != nil {
 				return rep, err
 			}
-			return rep, clientErrorProblem(q, fp, person, inserted, checked)
+			if !ask {
+				return rep, nil
+			}
+			return rep, clientErrorProblem(q, fp, budget)
 		})
 		return err
 	})
 	return rep, err
 }
 
-// clientErrorProblem opens the group's needs-you problem when one is due: for a new group that passed the locked
-// limits, and for a repeat of a group whose problem the owner answered (the answer released it; the repeat asks again).
-// An open problem is never asked twice; a group that never had one (past the daily limit) gets none. A person's
-// problems count against clientErrorProblemsPerDay, the over-limit group's excepted.
-func clientErrorProblem(q *Request, fp, person string, inserted, checked bool) error {
+// clientErrorMayAsk: whether a report of fp may open a problem (see clientErrorReport), and the person whose daily
+// problem budget it uses. A group that never had a problem (past the daily limit when new) gets none later.
+func clientErrorMayAsk(q *Request, fp, person string) (bool, string, error) {
 	cause := clientErrorCause + fp
-	var open, answered bool
-	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(bool_or(state='open'),false), coalesce(bool_or(state='answered'),false) FROM question WHERE cause=$1", cause).Scan(&open, &answered); err != nil {
-		return err
+	var open, answered, missing bool
+	var first *string
+	if err := q.tx.QueryRow(q.ctx(), `SELECT EXISTS (SELECT 1 FROM question WHERE cause=$2 AND state='open'), EXISTS (SELECT 1 FROM question WHERE cause=$2 AND state='answered'),
+		NOT EXISTS (SELECT 1 FROM client_error WHERE fingerprint=$1), (SELECT first_person FROM client_error WHERE fingerprint=$1)`, fp, cause).Scan(&open, &answered, &missing, &first); err != nil {
+		return false, "", err
 	}
-	// A group inserted without the checked path (the prune removed it between the lookup and the upsert) opens no
-	// problem: it bypassed the limits that bound problems.
-	due := !open && ((inserted && (checked || fp == clientErrorOverLimit)) || (!inserted && answered))
-	if !due {
-		return nil
+	budget := person
+	if first != nil && *first != "" && fp != clientErrorOverLimit {
+		budget = *first
 	}
-	// One lock orders the asks, so two reports cannot both pass the checks below for one cause or one person's day. Every
-	// report that can get here took it before its row lock (clientErrorReport), so this is re-entrant and never waits
-	// behind a row lock.
-	if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
-		return err
+	if open || !(missing || answered) {
+		return false, budget, nil
 	}
+	ok, err := clientErrorBudget(q, fp, budget)
+	return ok, budget, err
+}
+
+// clientErrorBudget: the daily limits: clientErrorProblemsPerDay problems a reporter (only client-error problems carry a
+// reporter), and one a day for the over-limit group, so a flood past the limits cannot re-ask it after every answer.
+// Containment uses the question data GIN index.
+func clientErrorBudget(q *Request, fp, budget string) (bool, error) {
+	match, limit := doc{"reporter": budget}, clientErrorProblemsPerDay
+	if fp == clientErrorOverLimit {
+		match, limit = doc{"fingerprint": clientErrorOverLimit}, 1
+	}
+	var today int
+	err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE data->>'fingerprint'<>$2 OR $3) FROM question WHERE data @> $1::jsonb AND asked_at > now()-interval '24 hours'`,
+		js(match), clientErrorOverLimit, fp == clientErrorOverLimit).Scan(&today)
+	return today < limit, err
+}
+
+// clientErrorProblem opens the group's needs-you problem for a report clientErrorMayAsk allowed, under the new-group
+// lock it holds: for a new group, and for a repeat of a group whose problem the owner answered (the answer released it;
+// the repeat asks again). An open problem is never asked twice, and the daily budget is checked again under the lock.
+func clientErrorProblem(q *Request, fp, budget string) error {
+	cause := clientErrorCause + fp
 	if held, err := has(q, "SELECT 1 FROM question WHERE cause=$1 AND state='open'", cause); err != nil || held {
 		return err
 	}
-	// The daily limits: clientErrorProblemsPerDay a reporter (only client-error problems carry a reporter), and one a day
-	// for the over-limit group, so a flood past the limits cannot re-ask it after every answer. Containment uses the
-	// question data GIN index.
-	var today, limit int
-	match, limit := doc{"reporter": person}, clientErrorProblemsPerDay
-	if fp == clientErrorOverLimit {
-		match, limit = doc{"fingerprint": clientErrorOverLimit, "cause": cause}, 1
-	}
-	if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE data->>'fingerprint'<>$2 OR $3) FROM question WHERE data @> $1::jsonb AND asked_at > now()-interval '24 hours'`,
-		js(match), clientErrorOverLimit, fp == clientErrorOverLimit).Scan(&today); err != nil {
+	if ok, err := clientErrorBudget(q, fp, budget); err != nil || !ok {
 		return err
-	}
-	if today >= limit {
-		return nil
 	}
 	// An answered problem lets go of the cause, then the group asks again.
 	if err := problemClose(q, cause); err != nil {
 		return err
 	}
-	return problemAsk(q, "direct", Problem{Cause: cause, Text: clientErrorText(fp), Data: doc{"fingerprint": fp, "reporter": person}})
+	return problemAsk(q, "direct", Problem{Cause: cause, Text: clientErrorText(fp), Data: doc{"fingerprint": fp, "reporter": budget}})
 }
 
 // clientErrorText: fixed wording and the fingerprint only. Reported strings are untrusted and never enter a question
