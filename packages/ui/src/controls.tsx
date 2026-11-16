@@ -785,14 +785,17 @@ export function SortControl({ value, fields, onChange }: { value: string; fields
   const m = usePickMenu();
   const desc = value.startsWith('-'), field = desc ? value.slice(1) : value, f = fields.find(x => x[0] === field) ?? fields[0];
   const [dDesc, dAsc] = (f[2] ?? ['Newest first', 'Oldest first']) as readonly [string, string];
+  // The icon's bars draw the values the rows show, top to bottom. A time field without its own labels shows ages
+  // (4m, 2h, 3d), so newest first is small ages first: the narrow-to-wide icon, the reverse of a number sorted high first.
+  const ages = !f[2], bigFirst = (d: boolean) => d !== ages, iconOf = (d: boolean) => bigFirst(d) ? actions.sortDesc : actions.sortAsc;
   return <span class="pick" ref={m.ref} data-ui="sort-control">
     <button type="button" class="pick-x pick-dir" aria-label={desc ? dDesc : dAsc} data-tip={`${desc ? dDesc : dAsc}; click for ${(desc ? dAsc : dDesc).toLowerCase()}`}
-      onClick={() => { m.setOpen(false); onChange(desc ? f[0] : '-' + f[0]); }}><Icon name={desc ? actions.sortDesc : actions.sortAsc} /></button>
+      onClick={() => { m.setOpen(false); onChange(desc ? f[0] : '-' + f[0]); }}><Icon name={iconOf(desc)} /></button>
     <button type="button" class="pick-b on" aria-haspopup="menu" aria-expanded={m.open} aria-label={`Sort by ${f[1]}`} data-tip="Sort by" onClick={() => m.setOpen(!m.open)}>
       <span>{f[1]}</span><Icon name="chevron-down" /></button>
     {m.menu('Sort', [{ head: 'Sort by' }, ...fields.map(x => ({ key: x[0], label: x[1], on: x[0] === f[0], onPick: () => onChange((desc ? '-' : '') + x[0]) })), 'sep',
-      { key: 'desc', label: dDesc, icon: actions.sortDesc, on: desc, onPick: () => onChange('-' + f[0]) },
-      { key: 'asc', label: dAsc, icon: actions.sortAsc, on: !desc, onPick: () => onChange(f[0]) }])}
+      { key: 'desc', label: dDesc, icon: iconOf(true), on: desc, onPick: () => onChange('-' + f[0]) },
+      { key: 'asc', label: dAsc, icon: iconOf(false), on: !desc, onPick: () => onChange(f[0]) }])}
   </span>;
 }
 
