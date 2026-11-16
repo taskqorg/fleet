@@ -41,7 +41,7 @@ test('the open overview recounts ages and states from one later present', () => 
   v.versions.value = data; v.versionObservedAt.value = now; v.versionError.value = null;
   const info = v.versionInfo(now), gateway = (rows: any[]) => rows.find((r: any) => r.key === 'gateway');
   assert.equal(gateway(info.rows).state, 'ok'); assert.equal(gateway(info.rows).times[0].now - gateway(info.rows).times[0].at, 40_000);
-  const later = info.rowsAt!(now + 30_000);
+  const later = info.at!(now + 30_000).rows;
   assert.equal(gateway(later).times[0].now - gateway(later).times[0].at, 70_000, 'the age moves on with the present');
   assert.match(gateway(later).state, /unknown/, 'and the state next to it reflects the same present');
 });

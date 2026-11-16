@@ -16,7 +16,7 @@ let answer: (name: string, body: any) => Promise<any> = async () => ({});
 const realFetch = async (url: string, init: any) => {
   const name = url.split('/api/ops/')[1], body = JSON.parse(init.body);
   calls.push({ name, body });
-  const { status = 200, ...data } = await answer(name, body) ?? {};
+  const { httpStatus: status = 200, ...data } = await answer(name, body) ?? {};
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 };
 (globalThis as any).fetch = realFetch;
@@ -44,7 +44,7 @@ test('review #33-1: paging uses the shown list\'s own params and waits while tha
 
 test('a refused page cursor reloads the first page once, keeping rows; a second refusal shows the error', async () => {
   await clearAll();
-  const V = { view: 'conversations' as const }, refused = { status: 400, message: 'Invalid after' };
+  const V = { view: 'conversations' as const }, refused = { httpStatus: 400, message: 'Invalid after' };
   answer = async () => page([row('t1'), row('t2')], ['old', 't2']); // a cursor of an older shape
   await loadList('sessions', 'C', V);
   const slow = deferred(); calls = [];

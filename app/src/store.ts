@@ -136,11 +136,16 @@ export async function nextPage(key: string) {
     const now = e.state.value;
     if (!now || now.nextAfter !== st.nextAfter) return; // a reload or another page got there first
     const rows = rowsOf(r), have = new Set(now.ids), add = idsAndKeys(rows.filter(x => !have.has(x.id)));
-    setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter });
+    setList(key, e, { ...now, ids: [...now.ids, ...add.ids], keys: { ...now.keys, ...add.keys }, nextAfter: r.nextAfter, error: null });
     putRows(rows, from); persist(key, e);
   } catch (err: any) {
     if (!isAccessCurrent(generation) || !e.state.value || e.state.value.nextAfter !== st.nextAfter) return;
-    if (err instanceof OpError && err.status === 400 && !e.cursorReset) { await loadList(e.kind, key, e.view, undefined, true); return; }
+    if (err instanceof OpError && err.status === 400 && !e.cursorReset) {
+      await loadList(e.kind, key, e.view, undefined, true);
+      // A membership answer that landed first makes the reload step aside; the refused cursor must not stay.
+      if (e.state.value?.nextAfter === st.nextAfter) await loadList(e.kind, key, e.view, undefined, true);
+      return;
+    }
     setList(key, e, { ...e.state.value, error: err.message });
   } finally { e.paging = false; }
 }
