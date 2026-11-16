@@ -55,7 +55,7 @@ export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Pat
 
 export function usePins(list: string) {
   const ids = prefs.value.rowPins[list] ?? [], set = new Set(ids);
-  return { has: (id: string) => set.has(id), toggle: (id: string) => {
+  return { ids, has: (id: string) => set.has(id), toggle: (id: string) => {
     const pinned = !(prefs.value.rowPins[list] ?? []).includes(id); // the live state, not the render's
     savePrefs(s => { const xs = (s.rowPins[list] ?? []).filter(x => x !== id); return { rowPins: { ...s.rowPins, [list]: pinned ? [...xs, id] : xs } }; }, { rowPin: { list, id, pinned } });
   } };

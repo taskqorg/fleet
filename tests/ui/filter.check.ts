@@ -130,6 +130,19 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // Back: rows are on screen in the first frame after popstate.
     const back = await page.evaluate(async () => { history.back(); await new Promise(r => addEventListener('popstate', r, { once: true })); await new Promise(r => requestAnimationFrame(r)); return document.querySelectorAll('.vl-row .row-link').length; });
     rule(N, back > 0, 'Back: no rows in the first frame');
+    // Pinned rows stay whatever the filter (OR-12): pin the first task, search for nothing, the pinned task is still listed.
+    await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
+    const pinnedTitle = await page.locator('.vl-row .row-link').first().textContent();
+    await page.locator('.vl-row .row-link').first().focus(); await page.keyboard.press('p'); await page.waitForSelector('[data-ui=row-pin]');
+    await page.goto(origin + '/tasks?q=no-such-task-anywhere'); await page.waitForSelector('[data-ui=row-pin]', { timeout: 10000 }).catch(() => {});
+    rule(N, await page.locator('.vl-row:has([data-ui=row-pin]) .row-link').first().textContent().catch(() => null) === pinnedTitle, 'a pinned task left the list under a search that does not match it');
+    // A pinned row outside the filtered page is still part of selection and its actions.
+    await page.locator('.vl-row:has([data-ui=row-pin]) .row-link').first().focus(); await page.keyboard.press('x');
+    await page.waitForFunction(() => document.querySelector('[data-ui=select-bar]')?.textContent?.includes('1 selected'));
+    rule(N, await page.locator('[data-ui=select-bar] button[aria-label=Unpin]').isEnabled(), 'the visible pinned row was excluded from selection');
+    await page.locator('[data-ui=select-bar] button[aria-label=Unpin]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-ui=row-pin]'));
+    await page.getByRole('button', { name: 'Leave selection', exact: true }).click();
     // Search: one request per typing pause, one Back leaves the search.
     await page.goto(origin + '/tasks'); await page.waitForSelector('.vl-row .row-link');
     await page.locator('.fbar button[aria-label^="Search"]').first().click(); // search is an icon until used (OR-31)
