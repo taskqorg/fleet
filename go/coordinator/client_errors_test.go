@@ -267,4 +267,11 @@ func TestClientErrorLimits(t *testing.T) {
 	if r := report(owner, map[string]any{"message": "owner past every member cap"}); r["fingerprint"] == clientErrorOverLimit || r["first"] != true {
 		t.Fatalf("owner refused: %v", r)
 	}
+	// Quiet groups (kept only by their problems) no longer take slots: the caps count groups seen within the retention.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, "UPDATE client_error SET last_seen=now()-interval '31 days' WHERE fingerprint LIKE 'fill-%' OR fingerprint LIKE 'old-%'"); err != nil {
+		t.Fatal(err)
+	}
+	if r := report(outsider, map[string]any{"message": "after the quiet groups"}); r["fingerprint"] == clientErrorOverLimit {
+		t.Fatalf("quiet groups still hold the caps: %v", r)
+	}
 }

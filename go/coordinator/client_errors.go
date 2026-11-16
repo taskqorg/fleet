@@ -136,7 +136,7 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 	if err != nil {
 		return rep, fail(400, "Invalid at: expected RFC 3339")
 	}
-	person, full := "", fullAccess(q.person)
+	person, full := "", q.person != nil && fullAccess(q.person)
 	if q.person != nil {
 		person = q.person.Email
 	}
@@ -151,19 +151,21 @@ func clientErrorReport(q *Request, r *contract.ClientErrorReportRequest) (contra
 		}
 		if !known {
 			// A new group: within the person's hourly and total allowances and, for a person without full access, the
-			// members' global cap; else counted in the over-limit group. One lock orders concurrent new groups, so
+			// members' global cap; else counted in the over-limit group. The caps count groups seen within the retention:
+			// a quiet group kept by its problem no longer takes a slot. One lock orders concurrent new groups, so
 			// parallel tabs cannot all pass the same count.
 			if err := exec(q, "SELECT pg_advisory_xact_lock(hashtextextended('client-error:new-group',0))"); err != nil {
 				return rep, err
 			}
 			var hour, mine, members int
 			if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE first_person=$1 AND first_seen > now()-interval '1 hour'),
-				count(*) FILTER (WHERE first_person=$1), count(*) FILTER (WHERE NOT first_full) FROM client_error WHERE fingerprint<>$2`, person, clientErrorOverLimit).Scan(&hour, &mine, &members); err != nil {
+				count(*) FILTER (WHERE first_person=$1), count(*) FILTER (WHERE NOT first_full) FROM client_error WHERE fingerprint<>$2 AND last_seen >= $3`,
+				person, clientErrorOverLimit, time.Now().Add(-clientErrorRetention)).Scan(&hour, &mine, &members); err != nil {
 				return rep, err
 			}
 			if hour >= clientErrorNewPerHour || mine >= clientErrorPerPerson || (!full && members >= clientErrorGroupsKept) {
 				fp, top = clientErrorOverLimit, ""
-				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly new-group limit or the global group cap was reached", "error"
+				name, message, source = "OverLimit", "Reports refused a new group: the reporter's hourly or total new-group limit, or the members' group cap, was reached", "error"
 			}
 		}
 		var inserted bool

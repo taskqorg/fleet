@@ -59,7 +59,8 @@ const REPEAT_STACK = 1024;
 const MAX_ENTRIES = 500;
 
 export type ReporterOptions = {
-  send: (report: ClientErrorReport) => void;
+  /** unloading: the tab is hidden or unloading (flush), so the send must outlive the page. */
+  send: (report: ClientErrorReport, unloading: boolean) => void;
   path: () => string;
   version: () => string;
   userAgent: string;
@@ -82,7 +83,8 @@ export function createReporter(o: ReporterOptions) {
   const setTimer = o.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const entries = new Map<string, Entry>();
   let sent = 0, repeats = 0, dropped = 0;
-  const send = (report: ClientErrorReport) => { try { o.send(report); } catch { /* never throws */ } };
+  let unloading = false;
+  const send = (report: ClientErrorReport) => { try { o.send(report, unloading); } catch { /* never throws */ } };
   const emitFirst = (e: Entry) => {
     sent++; send({ ...e.report, count: 1, at: new Date(e.firstAt).toISOString() });
   };
@@ -99,7 +101,11 @@ export function createReporter(o: ReporterOptions) {
         const d = describe(error), t = now();
         const name = trimBytes(d.name, LIMITS.name) || 'Error', message = trimBytes(d.message, LIMITS.message);
         const key = name + '\n' + message + '\n' + frameKey(d.stack);
-        const report = { name, message, stack: trimBytes(d.stack, LIMITS.stack), source, path: trimBytes(o.path(), LIMITS.path) || '/',
+        // A message longer than the limit would push every frame out of the trimmed stack: then only the frames go, so the
+        // server reads the same top frame as for the repeats.
+        let stack = trimBytes(d.stack, LIMITS.stack);
+        if (frameOf(stack) !== frameOf(d.stack)) stack = trimBytes(frames(d.stack).join('\n'), LIMITS.stack);
+        const report = { name, message, stack, source, path: trimBytes(o.path(), LIMITS.path) || '/',
           version: trimBytes(o.version(), LIMITS.version), userAgent: trimBytes(o.userAgent, LIMITS.userAgent) };
         const e = entries.get(key);
         if (!e) {
@@ -128,7 +134,7 @@ export function createReporter(o: ReporterOptions) {
       } catch { /* never throws */ }
     },
     /** Sends the largest counted repeats now (the tab is hidden or unloading). */
-    flush() { try { [...entries.values()].filter(e => e.pending > 0).sort((a, b) => b.pending - a.pending).slice(0, perFlush).forEach(flushEntry); } catch { /* never throws */ } },
+    flush() { unloading = true; try { [...entries.values()].filter(e => e.pending > 0).sort((a, b) => b.pending - a.pending).slice(0, perFlush).forEach(flushEntry); } catch { /* never throws */ } finally { unloading = false; } },
     stats: () => ({ sent, repeats, dropped }),
   };
 }
@@ -136,11 +142,11 @@ export function createReporter(o: ReporterOptions) {
 export type Reporter = ReturnType<typeof createReporter>;
 
 /** Same-origin keepalive POST: not op(), so a report neither waits for access validation nor marks the app offline or signed out. */
-export function sendReport(report: ClientErrorReport) {
+export function sendReport(report: ClientErrorReport, unloading = false) {
   try {
     fetch('/api/ops/client_error_report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(report),
       // keepalive only while the tab is hidden or unloading: its bodies share a 64 KiB budget a burst would exceed.
-      credentials: 'same-origin', redirect: 'manual', keepalive: typeof document !== 'undefined' && document.visibilityState === 'hidden' }).catch(() => {});
+      credentials: 'same-origin', redirect: 'manual', keepalive: unloading || (typeof document !== 'undefined' && document.visibilityState === 'hidden') }).catch(() => {});
   } catch { /* never throws */ }
 }
 

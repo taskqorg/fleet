@@ -102,6 +102,13 @@ test('a long message does not push the top frame out of a repeat count', () => {
   const e = new Error('x'.repeat(1900)); e.stack = 'Error: ' + 'x'.repeat(1900) + '\n    at f (https://h/assets/main-AAAA1111.js:1:2)';
   r.capture(e, 'error'); r.capture(e, 'error'); r.flush();
   assert.equal(m.frameOf(sent[1].stack), 'at f (https://h/assets/main-AAAA1111.js:1:2)');
+  const huge = new Error('z'.repeat(1900)); huge.stack = 'Error: ' + 'z'.repeat(9000) + '\n    at h (https://h/assets/main-AAAA1111.js:1:2)';
+  const big = harness(); big.r.capture(huge, 'error');
+  assert.equal(m.frameOf(big.sent[0].stack), 'at h (https://h/assets/main-AAAA1111.js:1:2)', 'a first report keeps its top frame past a long message');
+  const flags: boolean[] = [];
+  const u = m.createReporter({ send: (_: any, unloading: boolean) => flags.push(unloading), path: () => '/', version: () => '', userAgent: '', setTimer: () => 0 });
+  u.capture(new Error('q'), 'error'); u.capture(new Error('q'), 'error'); u.flush();
+  assert.deepEqual(flags, [false, true], 'a flush asks for a send that outlives the page');
   const moved = Object.assign(new Error('y'), { stack: 'Error: y\n    at f (http://other:9/assets/main-ZZZZ9999.js:7:1)' });
   r.capture(Object.assign(new Error('y'), { stack: 'Error: y\n    at f (https://h/assets/main-AAAA1111.js:1:2)' }), 'error'); r.capture(moved, 'error');
   assert.equal(sent.length, 3, 'another build or column of one error is the same tab key');
