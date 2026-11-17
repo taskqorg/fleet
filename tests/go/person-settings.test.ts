@@ -123,6 +123,9 @@ test('P6 ignored projects are a person setting: ignored and restored one at a ti
     const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify(bad)});
     assert.equal(b.status, 400, JSON.stringify(bad));
   }
+  // Ignoring the only focused project would make the focus every project: refused unless the change sets the focus too.
+  const only = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify({ignore: {project: 'ign-a', ignored: true}})});
+  assert.equal(only.status, 400, 'the only focused project cannot be ignored');
   s = await op('person_settings_set', {ignored: []}); assert.deepEqual(s.ignored, []);
   // An agent writes its director's ignore through the same operation, which agents get as a tool.
   const host = await op('hosts_register', {id: 'h-prefs', holder: 'owner@trial.test'});

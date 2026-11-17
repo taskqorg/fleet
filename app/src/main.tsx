@@ -195,24 +195,31 @@ function Focus({ go }: { go: (to: string) => void }) {
   const projects = useDoc<any>('projects', () => op('project_list', {}), c => c.kind === 'definition');
   const list: { id: string; name: string }[] = (projects.data?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.id }));
   const ids = list.map(p => p.id).join('\n');
-  useEffect(() => { knownProjects.value = projects.data ? ids ? ids.split('\n') : [] : projects.error ? 'failed' : null; }, [ids, !!projects.data, !!projects.error]);
+  // Every render: a store clear resets knownProjects while this chip stays mounted, so it is written again whenever it differs.
+  useEffect(() => {
+    const next = projects.data ? ids ? ids.split('\n') : [] : projects.error ? 'failed' : null, cur = knownProjects.value;
+    if (JSON.stringify(cur) !== JSON.stringify(next)) knownProjects.value = next;
+  });
   const { focus, focusPresets, ignored } = prefs.value;
   // Not shown where it leads: the Overview with every project.
-  const [loc] = useLocation(), here = loc === '/overview' && new URLSearchParams(useSearch()).has('all'), outside = useOutside();
+  const [loc] = useLocation(), search = useSearch(), here = loc === '/overview' && new URLSearchParams(search).has('all'), outside = useOutside();
   return <FocusControl projects={list} value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} outside={{ n: here ? 0 : outside, onOpen: () => go('/overview?all') }}
     onChange={setFocus} onSavePreset={n => saveFocusPreset(n)} onRemovePreset={removeFocusPreset} onIgnore={setIgnored} />;
 }
 
 /**
  * How many items need the person (open questions and Needs-you problems, the Overview's set) in projects outside the
- * focus, ignored ones too; 0 while lists show every project. Read only while the scope is narrowed.
+ * focus, ignored ones too; 0 while lists show every project. Read only while the scope is narrowed; a new problem shows
+ * within a minute.
  */
 function useOutside() {
   const scope = focusIds();
   const all = useDoc<{ projects: (string | null)[] }>(scope ? 'needs-you-all' : null, async () => {
     const [q, e] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { needsYou: true })]);
     return { projects: [...q.questions, ...e.executions].map((x: any) => x.projectId ?? null) };
-  }, c => c.kind === 'question' || c.kind === 'execution');
+  // Questions change rarely and are read at once; executions change many times a second (gateway calls), so problems are
+  // read again once a minute instead of on each change.
+  }, c => c.kind === 'question', 60_000);
   return scope ? (all.data?.projects ?? []).filter(p => outsideScope(p, scope)).length : 0;
 }
 
