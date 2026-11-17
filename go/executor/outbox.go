@@ -182,6 +182,11 @@ func edgeRedirect(route string, status int, detail string) {
 	defer edgeMu.Unlock()
 	attempts := 0
 	if e, ok := edges[route]; ok {
+		// An answer inside the route's backoff (lanes that asked together, a transfer retrying) is the same attempt.
+		if route != pollRoute && nowMs() < e.nextAt {
+			e.status, e.detail = status, detail
+			return
+		}
 		attempts = e.attempts + 1
 	}
 	if attempts == 0 {
@@ -207,27 +212,7 @@ func edgeOK(route string) {
 	}
 }
 
-// edgeChanged: when each route's edge state last changed, in Unix nanoseconds.
-var edgeChanged = map[string]int64{}
-
-func observe(route string, a answer) { observeSent(route, a, time.Now().UnixNano()) }
-
-// observeSent: an answer to a request sent before the route's edge state last changed is stale: lanes that asked the
-// route together count as one attempt, and a late redirect does not undo a newer success (nor a late success a newer
-// redirect).
-func observeSent(route string, a answer, sentAt int64) {
-	if a.kind == answerRetry {
-		return
-	}
-	edgeMu.Lock()
-	stale := sentAt < edgeChanged[route]
-	if !stale {
-		edgeChanged[route] = time.Now().UnixNano()
-	}
-	edgeMu.Unlock()
-	if stale {
-		return
-	}
+func observe(route string, a answer) {
 	switch a.kind {
 	case answerEdge:
 		edgeRedirect(route, a.status, a.text)
@@ -330,9 +315,8 @@ func postJSONCtx(ctx context.Context, c *http.Client, url, token string, v any) 
 }
 
 func sendWithClient(ctx context.Context, c *http.Client, url, token, reqRoute, metricRoute string, v any) answer {
-	sentAt := time.Now().UnixNano()
 	a := classify(postJSONCtx(ctx, c, url+reqRoute, token, v))
-	observeSent(metricRoute, a, sentAt)
+	observe(metricRoute, a)
 	return a
 }
 
@@ -418,8 +402,20 @@ var (
 	laneMu   sync.Mutex
 	laneBusy = map[laneID]bool{}
 	// stopUntil, by journal: a lane got unreachable, 429 or 503; until then every lane, of any pass, holds.
+	stopMu    sync.Mutex
 	stopUntil = map[*sql.DB]int64{}
+	// lastSent: when a row was last delivered (Unix ms); the longer interval needs a quiet outbox.
+	lastSent atomic.Int64
 )
+
+func stoppedUntil(db *sql.DB) bool {
+	stopMu.Lock()
+	defer stopMu.Unlock()
+	if until, ok := stopUntil[db]; ok && nowMs() >= until {
+		delete(stopUntil, db)
+	}
+	return nowMs() < stopUntil[db]
+}
 
 // outboxPass is one scan's state, shared by the lanes it started.
 type outboxPass struct {
@@ -439,12 +435,7 @@ func (p *outboxPass) stopped() bool {
 	if p.stopErr != nil || p.failErr != nil {
 		return true
 	}
-	laneMu.Lock()
-	defer laneMu.Unlock()
-	if until, ok := stopUntil[p.db]; ok && nowMs() >= until {
-		delete(stopUntil, p.db)
-	}
-	return nowMs() < stopUntil[p.db]
+	return stoppedUntil(p.db)
 }
 
 func (p *outboxPass) routeHeld(route string) bool {
@@ -533,13 +524,11 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 		case p.stopErr != nil:
 			// The coordinator as a whole is unreachable or asks to slow down: the longer interval, unless the stop
 			// ended while a slow lane of this pass was still delivering.
-			laneMu.Lock()
-			heldOnly.Store(nowMs() < stopUntil[db])
-			laneMu.Unlock()
+			heldOnly.Store(stoppedUntil(db))
 			return p.stopErr
 		}
-		// The longer interval only when nothing moved and no other lane of the journal is still delivering; a scan that
-		// found only busy lanes sets none.
+		// The longer interval only when nothing moved, no other lane of the journal is still delivering and no row was
+		// delivered within that interval; a scan that found only busy lanes sets none.
 		if p.started > 0 || empty {
 			laneMu.Lock()
 			others := false
@@ -547,7 +536,7 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 				others = others || k.db == db
 			}
 			laneMu.Unlock()
-			heldOnly.Store(p.held && !p.sent && !others)
+			heldOnly.Store(p.held && !p.sent && !others && nowMs()-lastSent.Load() > 2000)
 		}
 		return p.retryErr
 	}, nil
@@ -598,7 +587,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			return nil
 		}
 		r := rows[i]
-		execution, hasExec := r.execution, r.execution != ""
+		hasExec := r.execution != ""
 		hold := func() {
 			p.mu.Lock()
 			p.routes[r.route] = true
@@ -613,7 +602,6 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			p.held = true
 			p.mu.Unlock()
 		}
-		checked := time.Now().UnixNano() // the edge state this send is based on
 		if p.routeHeld(r.route) || edgeWait(r.route) {
 			hold()
 			return nil
@@ -646,17 +634,16 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 				batch = append(batch, nx)
 			}
 		}
-		a := classify(postJSONCtx(context.Background(), deliveryClient, p.url+r.route, p.token, value))
-		observeSent(r.route, a, checked)
+		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
 		var response any
 		switch a.kind {
 		case answerOK:
 			response = a.value
 		case answerRetry:
 			if a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable {
-				laneMu.Lock()
+				stopMu.Lock()
 				stopUntil[p.db] = nowMs() + 2000
-				laneMu.Unlock()
+				stopMu.Unlock()
 				p.mu.Lock()
 				if p.stopErr == nil {
 					p.stopErr = fmt.Errorf("%s", a.text)
@@ -695,7 +682,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 				single = true // retry this batch row by row so only the poisoned row is set aside
 				continue
 			} else {
-				if err := p.poisoned(r, value, execution, hasExec, a, reason); err != nil {
+				if err := p.poisoned(r, value, a, reason); err != nil {
 					return err
 				}
 				retryDone(r.n)
@@ -710,6 +697,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 		p.mu.Lock()
 		p.sent = true
 		p.mu.Unlock()
+		lastSent.Store(nowMs())
 		k, hasKey := value["agentToolKey"].(string)
 		if !hasKey {
 			if d, ok := value["delegation"]; ok {
@@ -731,7 +719,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 }
 
 // poisoned moves a rejected row to outbox_failed and reports it as an event of its execution.
-func (p *outboxPass) poisoned(r outboxRow, value M, execution string, hasExec bool, a answer, reason string) error {
+func (p *outboxPass) poisoned(r outboxRow, value M, a answer, reason string) error {
 	now := nowMs()
 	tx, err := p.db.Begin()
 	if err != nil {
@@ -758,12 +746,12 @@ func (p *outboxPass) poisoned(r outboxRow, value M, execution string, hasExec bo
 			own = true
 		}
 	}
-	if hasExec && !own {
+	if r.execution != "" && !own {
 		// ponytail: seq offset 1e12+rowid keeps clear of harness sequences.
 		data := contract.OutboxFailed{Route: r.route, Status: int64(a.status), Reason: reason}
 		ev := contract.HostEvent{Id: fmt.Sprintf("outbox-failed-%d", r.n), Seq: 1_000_000_000_000 + r.n, Type: string(contract.FleetEventTypeOutboxFailed),
 			Timestamp: now, Data: json.RawMessage(enc(data))}
-		if err := queue(tx, "/api/hosts/events", contract.HostEvents{HostId: p.host, ExecutionId: execution, Events: []contract.HostEvent{ev}}); err != nil {
+		if err := queue(tx, "/api/hosts/events", contract.HostEvents{HostId: p.host, ExecutionId: r.execution, Events: []contract.HostEvent{ev}}); err != nil {
 			tx.Rollback()
 			return err
 		}
