@@ -174,7 +174,8 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const lastFiles: string[] = (last?.attachments ?? []).map((a: any) => a.artifactId).filter(Boolean);
   // The stored title (set by a person or an agent, or generated after the first reply); until then the first message,
   // as the list shows it.
-  const title: string = s.title || [...((s.messages ?? [])[0]?.text ?? '')].slice(0, 200).join('') || 'New conversation';
+  const fallback = ((s.messages ?? [])[0]?.text ?? '').replace(new RegExp(titleUUID.source, 'gi'), '').trim();
+  const title: string = s.title || [...fallback].slice(0, 200).join('') || 'New conversation';
   return <article class="detail conversation" data-ui="detail" tabIndex={-1} aria-label="Conversation">
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
@@ -235,13 +236,15 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
 
 /** Rename (session_rename): an inline field, never a floating form (OR-14). The title it sets is kept; a generated one
  *  never replaces it. */
+const titleUUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
 function RenamePanel({ sessionId, current, onDone, onSaved, run, onUnknown }: { sessionId: string; current: string; onDone: () => void; onSaved: () => void; run: (fn: () => Promise<unknown>) => Promise<void>; onUnknown: () => void }) {
   // A rename still retrying stops when the panel closes (Cancel, Escape, another panel), so it never lands later.
   const signal = useAlive();
   const [v, setV] = useState(current), [busy, setBusy] = useState(false), off = !online.value, clean = v.trim().replace(/\s+/g, ' '), chars = [...clean].length;
   // The server's checks (session_titles.go sessionRename), said before sending.
   const reason = off ? 'offline' : !clean ? 'type a title' : chars > 200 ? 'at most 200 characters' : !/[\p{L}\p{N}]/u.test(clean) ? 'a title holds a word'
-    : /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(clean) ? 'no UUID in a title' : undefined;
+    : titleUUID.test(clean) ? 'no UUID in a title' : undefined;
   const save = () => {
     if (busy) return;
     setBusy(true);

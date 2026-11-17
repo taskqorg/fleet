@@ -145,12 +145,13 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 /* Copy tools show on hover or focus, always on touch (the navigation pin's rule); hovering moves nothing (OR-23) */
 .th-copy,.th-row .md .code-copy{opacity:0}
 .th-row:hover .th-copy,.th-copy:focus-within,.th-row .md .code:hover .code-copy,.th-row .code-copy:focus-within{opacity:1}
-@media (pointer:coarse){.th-copy,.th-row .md .code-copy{opacity:1}}
+@media (any-pointer:coarse){.th-copy,.th-row .md .code-copy{opacity:1}}
 /* Conversation detail header: the title first, then the code and profile muted; one line, an ellipsis when long */
 .detail-h .conv-title{display:block;flex:0 1 auto;min-width:0;font-size:var(--font-size-lg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .detail-h .conv-profile{flex:none}
 /* Narrow: the title takes the first line of the header, the tools wrap below it, nothing scrolls sideways */
-@media (max-width:760px){.conversation>.detail-h{flex-wrap:wrap;row-gap:var(--space-1)}.detail-h .conv-title{order:-1;flex:1 0 100%}}
+.conversation{container-type:inline-size}
+@container (max-width:760px){.conversation>.detail-h{flex-wrap:wrap;row-gap:var(--space-1)}.detail-h .conv-title{order:-1;flex:1 0 100%}}
 .th-q{display:block}
 .agent-mark{display:inline-flex;align-items:center;gap:var(--space-1);font-family:var(--font-mono)}
 .vl-row.marked{background:var(--selected)}

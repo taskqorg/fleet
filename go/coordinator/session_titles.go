@@ -54,9 +54,11 @@ var errTitleShared = errors.New("title model unavailable")
 // Session writers read the whole document and put it back; the title fields are the only ones updated in place.
 // ponytail: one kind-specific upsert; if more session fields get in-place writers, move the session writers to a
 // merge (data || patch) instead.
-const sessionTitleKeep = `(excluded.data-'title'-'titleBy'-'titleCall'-'titleAttemptAt'-'titleAttempts'-'titleUnknownCall')||jsonb_strip_nulls(jsonb_build_object(` +
+const sessionTitleKeep = `(excluded.data-'title'-'titleBy'-'titleCall'-'titleAttemptAt'-'titleAttempts'-'titleUnknownCall')||` +
+	`CASE WHEN document.project_id IS NOT DISTINCT FROM excluded.project_id THEN jsonb_strip_nulls(jsonb_build_object(` +
 	`'title',document.data->'title','titleBy',document.data->'titleBy','titleCall',document.data->'titleCall',` +
-	`'titleAttemptAt',document.data->'titleAttemptAt','titleAttempts',document.data->'titleAttempts','titleUnknownCall',document.data->'titleUnknownCall'))`
+	`'titleAttemptAt',document.data->'titleAttemptAt','titleAttempts',document.data->'titleAttempts','titleUnknownCall',document.data->'titleUnknownCall'))` +
+	` ELSE '{}'::jsonb END`
 
 // titleReady: whether a title can be asked for at all (a gateway is configured); tests answer without one.
 var titleReady = func() bool { return gatewayURL() != "" }
@@ -259,11 +261,19 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 				err = fmt.Errorf("reply: %w", err)
 			}
 		}
-		raw, callID := "", ""
+		raw, callID, attempt := "", "", ""
 		if err == nil && strings.TrimSpace(strings.Join(reply, "")) == "" {
 			continue // The execution changed or had an incomplete stream; wait for readable reply text.
 		}
 		if err == nil {
+			attempt = newID()
+			claimed, claimErr := claimTitleAttempt(ctx, a, id, attempt, r["project_id"])
+			if claimErr != nil {
+				return errors.Join(failed, claimErr)
+			}
+			if !claimed {
+				continue
+			}
 			prompt := "First message:\n" + headTail(astr(r["first_message"]), 3000) + "\n\nFirst reply:\n" + clip(strings.Join(reply, "\n\n"), 1500)
 			raw, callID, err = sessionTitleCall(ctx, a, astr(r["project_id"]), prompt)
 		}
@@ -277,7 +287,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		}
 		werr := runTx(context.WithoutCancel(ctx), a, nil, true, NOLOCK, func(q *Request) error {
 			if errors.Is(err, errTitleUnknown) {
-				return exec(q, `UPDATE document SET data=data||jsonb_build_object('titleUnknownCall',$2::text) WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $3`, id, callID, r["project_id"])
+				return exec(q, `UPDATE document SET data=data||jsonb_build_object('titleUnknownCall',$2::text) WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $3 AND data->>'titleUnknownCall'=$4`, id, callID, r["project_id"], attempt)
 			}
 			if err != nil {
 				at, used := nowMs(), 1
@@ -286,7 +296,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 				} else if errors.Is(err, errConnUnavailable) {
 					used = 0
 				}
-				return exec(q, `UPDATE document SET data=data||jsonb_build_object('titleAttemptAt',$2::bigint,'titleAttempts',coalesce((data->>'titleAttempts')::int,0)+$3::int) WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $4`, id, at, used, r["project_id"])
+				return exec(q, `UPDATE document SET data=(data-'titleUnknownCall')||jsonb_build_object('titleAttemptAt',$2::bigint,'titleAttempts',coalesce((data->>'titleAttempts')::int,0)+$3::int) WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $4 AND coalesce(data->>'titleUnknownCall','')=$5`, id, at, used, r["project_id"], attempt)
 			}
 			// updated_at stays: a title is no conversation activity, so a backfill does not reorder the list.
 			set := doc{"title": title, "titleBy": "auto"}
@@ -294,7 +304,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 				set["titleCall"] = "call:" + callID
 			}
 			// A rename during the call keeps its title; the call stays a tool_run of system activity.
-			return exec(q, `UPDATE document SET data=(data-'titleAttemptAt'-'titleAttempts')||$2::jsonb WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $3`, id, jsonBytes(set), r["project_id"])
+			return exec(q, `UPDATE document SET data=(data-'titleAttemptAt'-'titleAttempts'-'titleUnknownCall')||$2::jsonb WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $3 AND data->>'titleUnknownCall'=$4`, id, jsonBytes(set), r["project_id"], attempt)
 		})
 		if err != nil {
 			log.Printf("session title %s: %v", id, err)
@@ -312,6 +322,19 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		}
 	}
 	return failed
+}
+
+// Reserve before sending. A crash or lost result leaves the reservation visible and cannot cause another call.
+func claimTitleAttempt(ctx context.Context, a *App, id, attempt string, project any) (bool, error) {
+	claimed := false
+	err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+		tag, err := q.tx.Exec(q.ctx(), `UPDATE document SET data=data||jsonb_build_object('titleUnknownCall',$2::text)
+		 WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND NOT data ? 'titleUnknownCall'
+		 AND NOT data ? 'archivedAt' AND project_id IS NOT DISTINCT FROM $3`, id, attempt, project)
+		claimed = err == nil && tag.RowsAffected() == 1
+		return err
+	})
+	return claimed, err
 }
 
 // sessionRename: the explicit title of a session (a person who directs it, the owner, or an agent bound to it by
