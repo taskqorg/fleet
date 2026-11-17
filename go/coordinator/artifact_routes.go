@@ -345,7 +345,7 @@ const hostArtifactListPage = 50
 // hostArtifactList: artifact_list for an agent: its own project's artifacts, or its own execution's without a project;
 // newest first, one page per call, so no listing returns an unbounded reply.
 func hostArtifactList(q *Request, b *contract.HostArtifactListRequest) (any, error) {
-	a, ctx := q.app, q.ctx()
+	a, ctx := q.app, withTx(q)
 	e, err := execGet(ctx, a, truncate(b.ExecutionId, 200))
 	if err != nil {
 		return nil, err

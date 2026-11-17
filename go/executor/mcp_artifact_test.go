@@ -60,11 +60,12 @@ func TestArtifactSaveAbsolutePath(t *testing.T) {
 		{work, "output/report.md", true},
 		{work, filepath.Join(work, "output", "report.md"), true},
 		{work, work + "/./output//report.md", true},
-		{work, "/output/report.md", true},                                     // rooted at the working area, as before
-		{work + "/../work", filepath.Join(work, "output", "report.md"), true}, // a configured root that is not clean
-		{linkedWork, filepath.Join(linkedWork, "output", "report.md"), true},  // as configured
-		{linkedWork, filepath.Join(work, "output", "report.md"), true},        // resolved
-		{work, filepath.Join(linkedWork, "output", "report.md"), false},       // a link spelling the configured root does not name
+		{work, "/output/report.md", false},                                               // not the working area's root
+		{work + "/../work", filepath.Join(work, "output", "report.md"), true},            // a configured root that is not clean
+		{linkedWork, filepath.Join(linkedWork, "output", "report.md"), true},             // as configured
+		{linkedWork, filepath.Join(work, "output", "report.md"), true},                   // resolved
+		{work, filepath.Join(linkedWork, "output", "report.md"), true},                   // configured resolved, named through the link
+		{work, filepath.Join(work, "out", "real", "work", "output", "report.md"), false}, // through a link below the root
 		{work, filepath.Join(base, "secret.txt"), false},
 		{work, filepath.Join(work, "out", "secret.txt"), false},
 		{work, work + "/../secret.txt", false},
@@ -99,6 +100,7 @@ func TestArtifactListDefaultsToOwnExecution(t *testing.T) {
 	}{
 		{M{}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":null}`},
 		{M{"scope": "execution"}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":null}`},
+		{M{"execution_id": "", "task_id": true}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":true}`}, // empty or not text is no filter
 		{M{"scope": "project", "cursor": "17"}, `{"cursor":"17","executionId":null,"mediaType":null,"taskId":null}`},
 		{M{"task_id": "t"}, `{"cursor":null,"executionId":null,"mediaType":null,"taskId":"t"}`},
 		{M{"execution_id": "other", "media_type": "text/plain"}, `{"cursor":null,"executionId":"other","mediaType":"text/plain","taskId":null}`},

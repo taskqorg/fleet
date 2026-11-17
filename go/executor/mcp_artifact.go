@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 
@@ -95,20 +94,19 @@ func pathParts(path string) []string {
 	return parts
 }
 
-// insideParts: an absolute path's components below the working area, which it may name as given or resolved (a root
-// reached through a link, such as /var and /private/var on macOS); nil when the path does not name the area's root.
-// Only the root's spelling is resolved: the components below it are still opened one by one without following a link.
+// insideParts: an absolute path's components below the working area; nil when no leading part of it is the working
+// area's directory. The leading part may spell the area any way that reaches the same directory (a root through a link,
+// such as /var and /private/var on macOS, either way round); the components below it are still opened one by one
+// without following a link.
 func insideParts(workdir string, parts []string) []string {
-	roots := []string{filepath.Clean(workdir)}
-	if r, err := filepath.EvalSymlinks(workdir); err == nil {
-		roots = append(roots, r)
+	root, err := os.Stat(workdir)
+	if err != nil {
+		return nil
 	}
-	for _, root := range roots {
-		rp := pathParts(root)
-		if len(rp) == 0 || len(parts) <= len(rp) || !slices.Equal(parts[:len(rp)], rp) {
-			continue
+	for i := range parts {
+		if st, err := os.Stat("/" + strings.Join(parts[:i], "/")); err == nil && os.SameFile(st, root) {
+			return parts[i:]
 		}
-		return parts[len(rp):]
 	}
 	return nil
 }
@@ -123,21 +121,15 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		return nil, refusal("workdir")
 	}
 	parts := pathParts(path)
-	rooted := false // an absolute path outside the area's root keeps its former meaning: below the working area
-	if strings.HasPrefix(path, "/") {
-		if inside := insideParts(workdir, parts); inside != nil {
-			parts = inside
-		} else {
-			rooted = true
+	if strings.HasPrefix(path, "/") && parts != nil {
+		if parts = insideParts(workdir, parts); parts == nil {
+			return nil, refusal("path must be relative to your working area " + workdir + " or absolute inside it")
 		}
 	}
 	if len(parts) == 0 {
 		return nil, refusal("path must be a file inside your working area")
 	}
 	f, err := openInside(workdir, parts)
-	if err != nil && rooted {
-		return nil, refusal("path must be relative to your working area " + workdir + " or absolute inside it, not a link")
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -236,11 +228,11 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 				return mcpText(M{"error": "artifact tool refused: scope goes without execution_id and task_id"}, &yes), nil
 			}
 			// Without a filter an agent lists its own execution's artifacts; the whole project only on request.
-			execution := jAt(q, "execution_id")
-			if execution == nil && jAt(q, "task_id") == nil && scope != "project" {
-				execution = jAt(ctx, "executionId")
+			execution := jStr(q, "execution_id") // empty or not text is absent, as the transfer drops it
+			if execution == "" && jStr(q, "task_id") == "" && scope != "project" {
+				execution = jStr(ctx, "executionId")
 			}
-			body = M{"executionId": jAt(ctx, "executionId"), "filter": M{"executionId": execution, "taskId": jAt(q, "task_id"), "mediaType": jAt(q, "media_type"), "cursor": jAt(q, "cursor")}}
+			body = M{"executionId": jAt(ctx, "executionId"), "filter": M{"executionId": optStr(execution), "taskId": jAt(q, "task_id"), "mediaType": jAt(q, "media_type"), "cursor": jAt(q, "cursor")}}
 		}
 		if _, err := db.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", key, kind, enc(body), nowMs()); err != nil {
 			return nil, dbe(err)

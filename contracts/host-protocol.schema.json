@@ -1436,7 +1436,7 @@
           "$comment": "nextCursor of the previous page"
         }
       },
-      "$comment": "Optional narrowing of /api/hosts/artifacts/list. Without executionId or taskId it lists the execution's project; the executor sends its own executionId unless the agent asked for the project."
+      "$comment": "Optional narrowing of /api/hosts/artifacts/list. Without executionId or taskId it lists the execution's project (an execution without a project: only itself); the executor sends its own executionId unless the agent asked for the project."
     },
     "Platform": {
       "type": "string",

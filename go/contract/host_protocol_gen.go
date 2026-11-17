@@ -665,7 +665,7 @@ func (v *HostArtifactGetRequest) Validate() error {
 	return nil
 }
 
-// HostArtifactListFilter: Optional narrowing of /api/hosts/artifacts/list. Without executionId or taskId it lists the execution's project; the executor sends its own executionId unless the agent asked for the project.
+// HostArtifactListFilter: Optional narrowing of /api/hosts/artifacts/list. Without executionId or taskId it lists the execution's project (an execution without a project: only itself); the executor sends its own executionId unless the agent asked for the project.
 type HostArtifactListFilter struct {
 	Cursor      *string `json:"cursor,omitempty"`
 	ExecutionId *string `json:"executionId,omitempty"`
