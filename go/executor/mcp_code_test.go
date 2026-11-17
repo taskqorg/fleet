@@ -555,6 +555,8 @@ func TestCodeModeReplyAndLastExpression(t *testing.T) {
 		"const ok = false\n!ok": "true",
 		"const r = helper(2)\nasync function helper(x) { return x * 2 }\nr": "4",
 		"print(1)\nfunction f() {}":                                         "null",
+		"const r = f(2);\n// helper\nfunction f(x) { return x * 2 }":        "null",
+		"const r = f(2);\n/** doc */ function f(x) { return x * 2 }\nr":     "4",
 		"1 + 1\n// todo; cleanup":                                           "2",
 		"const q = 2\nq // a;b":                                             "2",
 		"const a = 1\na\n!== 2":                                             "true",
@@ -618,10 +620,12 @@ func TestCodeModeFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("[core]\n"), 0o644)
 	os.Link(filepath.Join(dir, ".git", "config"), filepath.Join(dir, "hard"))
 	os.WriteFile(filepath.Join(dir, "run.sh"), []byte("x"), 0o755)
+	os.MkdirAll(filepath.Join(dir, ".github"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".github", "ci.yml"), []byte("on: push"), 0o644)
 	r, bad = c.code(`const fail = async (f) => { try { await f(); return "allowed" } catch (e) { return e.code } }
 		;[await fail(() => write("hard", "evil")), await fail(() => write("sub/.git/hooks/x", "")), await fail(() => edit("run.sh", "x", "y")),
-			(await grep("n", {glob: "*.txt"})).map(h => h.file).sort()]`)
-	if bad || enc(r["value"]) != `["allowed","outside-worktree","allowed",["a/n.txt"]]` {
+			(await grep("n", {glob: "*.txt"})).map(h => h.file).sort(), await glob("**/*.yml")]`)
+	if bad || enc(r["value"]) != `["allowed","outside-worktree","allowed",["a/n.txt"],[".github/ci.yml"]]` {
 		t.Fatalf("hard link, nested .git, grep glob: %v %v", bad, r)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, ".git", "config")); string(b) != "[core]\n" {
@@ -704,6 +708,9 @@ func TestCodeModeShell(t *testing.T) {
 	}
 	// A timeout kills the command; reset kills a running one, so its job ends.
 	start := time.Now()
+	if r, _ := c.code(`(await sh("true", {timeoutMs: 1e300})).code`); enc(r["value"]) != "0" {
+		t.Fatalf("huge timeout: %v", r)
+	}
 	if r, _ := c.code(`await sh("sleep 20", {timeoutMs: 200})`); jAt(r, "value", "timedOut") != true || time.Since(start) > 5*time.Second {
 		t.Fatalf("timeout: %v after %v", r, time.Since(start))
 	}

@@ -59,7 +59,8 @@ const resolve = (p) => path.resolve(root, String(p));
 const shown = (abs) => { const r = path.relative(root, abs); return r.startsWith('..') || path.isAbsolute(r) ? abs : r; };
 // Asynchronous, so a walk or grep inside Promise.all lets other calls and jobs run between its reads.
 async function walk(dir, out) {
-  for (const d of await fs.promises.readdir(dir, { withFileTypes: true })) {
+  // A directory that cannot be read (removed meanwhile, no permission) is skipped, as by ripgrep.
+  for (const d of await fs.promises.readdir(dir, { withFileTypes: true }).catch(() => [])) {
     const p = path.join(dir, d.name);
     if (d.isDirectory()) {
       if (d.name !== '.git' && d.name !== 'node_modules') await walk(p, out);
@@ -67,13 +68,34 @@ async function walk(dir, out) {
   }
   return out;
 }
+// A glob as a regular expression: `**/` any directories (none too), `**` anything, `*` and `?` within one name, `{a,b}`
+// and `[...]`. Dot files match like any other (path.matchesGlob would skip .github).
+function globRe(g) {
+  const lit = (s) => s.replace(/[.+^$()|\\]/g, '\\$&');
+  const part = (s) => lit(s).replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]');
+  let re = '';
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    const end = c === '{' ? g.indexOf('}', i) : c === '[' ? g.indexOf(']', i) : -1;
+    if (c === '*' && g[i + 1] === '*') {
+      i++;
+      if (g[i + 1] === '/') { i++; re += '(?:.*/)?'; } else re += '.*';
+    } else if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else if (c === '{' && end > i) { re += '(?:' + g.slice(i + 1, end).split(',').map(part).join('|') + ')'; i = end; }
+    else if (c === '[' && end > i) { re += g.slice(i, end + 1); i = end; }
+    else re += lit(c).replace(/[[\]{}*?]/g, '\\$&');
+  }
+  return new RegExp('^' + re + '$');
+}
 // Each entry relative to the walk's start, as a glob pattern sees it; returned relative to the worktree.
 async function files(opts, pattern) {
   const start = resolve(opts?.path ?? '.');
   const dir = (await fs.promises.stat(start)).isDirectory();
   const all = dir ? await walk(start, []) : [start];
   // A file given as path matches by its name.
-  return all.filter((f) => pattern == null || path.matchesGlob(dir ? path.relative(start, f) : path.basename(f), pattern));
+  const re = pattern == null ? null : globRe(String(pattern));
+  return all.filter((f) => re == null || re.test(dir ? path.relative(start, f) : path.basename(f)));
 }
 // A file's text, or null when its first 8 KiB hold a NUL byte (binary): then the rest is not read.
 async function textOf(f) {
@@ -175,7 +197,8 @@ function body(source) {
     if (i > 0 && source[i - 1] !== '\n' && source[i - 1] !== ';') continue;
     const tail = source.slice(i).replace(/[\s;]+$/, '');
     if (tail.trim() === '' || i > 0 && source[i - 1] === '\n' && continues.test(tail)) continue;
-    if (declaration.test(tail)) continue; // `return (function f() {})` would no longer hoist f
+    // `return (function f() {})` would no longer hoist f, also after a comment.
+    if (declaration.test(tail.replace(/^(\s|\/\/[^\n]*(\n|$)|\/\*[\s\S]*?\*\/)*/, ''))) continue;
     // The tail alone first: most tails fail at their first tokens, so a script without a last expression costs about
     // one parse, not one per line.
     if (!compiles('return (' + tail + '\n)')) continue;

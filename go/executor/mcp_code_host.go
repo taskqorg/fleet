@@ -72,7 +72,7 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	p := &shProc{cmd: cmd}
 	s.procs[p] = true
 	s.mu.Unlock()
-	if ms, ok := num(jAt(args, "timeoutMs")); ok && ms > 0 {
+	if ms, ok := num(jAt(args, "timeoutMs")); ok && ms > 0 && ms < 1e12 { // beyond 30 years: no timeout, not an overflow
 		t := time.AfterFunc(time.Duration(ms*float64(time.Millisecond)), p.timeout)
 		defer t.Stop()
 	}
@@ -86,8 +86,11 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 		p.kill()
 		p.reap()
 	} else {
-		// No waitid: Wait blocks while the command runs, so a timeout, reset or shutdown can still kill it; its group is
-		// not killed after the reap.
+		// No waitid: Wait blocks while the command runs, so a timeout, reset or shutdown can still kill it, through the
+		// leader only (os.Process refuses a reaped one), never a group id that may be reused.
+		p.mu.Lock()
+		p.leaderOnly = true
+		p.mu.Unlock()
 		p.cmd.Wait()
 		p.mu.Lock()
 		p.exited, p.reaped = true, true
@@ -97,13 +100,13 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	delete(s.procs, p)
 	s.mu.Unlock()
 	r := M{"code": nil, "stdout": stdout.String(), "stderr": stderr.String()}
-	p.mu.Lock()
-	if p.timedOut {
-		r["timedOut"] = true
-	}
-	p.mu.Unlock()
 	if st, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && st.Signaled() {
 		r["signal"] = st.Signal().String()
+		p.mu.Lock()
+		if p.timedOut { // a command that ended by itself just before the timer is no timeout
+			r["timedOut"] = true
+		}
+		p.mu.Unlock()
 	} else {
 		r["code"] = cmd.ProcessState.ExitCode()
 	}
@@ -115,6 +118,7 @@ type shProc struct {
 	cmd                      *exec.Cmd
 	mu                       sync.Mutex
 	exited, reaped, timedOut bool
+	leaderOnly               bool
 }
 
 // timeout kills a command whose leader still runs and marks it timed out, in one step with that check.
@@ -123,6 +127,15 @@ func (p *shProc) timeout() {
 	defer p.mu.Unlock()
 	if !p.exited && !p.reaped {
 		p.timedOut = true
+		p.signal()
+	}
+}
+
+// signal kills the group, or only the leader when the group id could be reused (no waitid). The caller holds p.mu.
+func (p *shProc) signal() {
+	if p.leaderOnly {
+		p.cmd.Process.Kill()
+	} else {
 		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 	}
 }
@@ -132,7 +145,7 @@ func (p *shProc) kill() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.reaped {
-		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+		p.signal()
 	}
 }
 
