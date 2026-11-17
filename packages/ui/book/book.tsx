@@ -5,7 +5,7 @@ import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
   Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, spotlightMemory, FocusPresets, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
-  Composer, DropZone, TextRow, type ComposerAttachment, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, StartFacts, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
+  Composer, DropZone, TextRow, type ComposerAttachment, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage, type SpotlightProvider, type SpotlightItem,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
@@ -422,13 +422,13 @@ function StartDemo() {
   return <div class="stack">
     <ProjectPick value={project} onChange={setProject} n={4} projects={[{ id: 'fleet', name: 'fleet' }, { id: 'cs', name: 'cyprus.bz' }, { id: 'desiign', name: 'desiign' }, { id: 'specq', name: 'specq' }, { id: 'pilotq', name: 'pilotq' }, { id: 'assetq', name: 'assetq' }]} />
     <PresetPicker value={preset} onChange={id => { setPreset(id); setRead(null); setBranch(null); }} presets={START_PRESETS.map(x => ({ ...x, facts: [...x.facts] }))} />
-    <div class="pane"><Composer onSend={() => {}} placeholder="Describe the work in cyprus.bz" /></div>
-    <StartFacts facts={[
-      { key: 'project', icon: 'folder-open', text: project ? 'cyprus.bz' : 'No project', tip: 'Project' },
-      { key: 'agent', harness: p.id === 'review' ? 'claude' : 'codex', text: p.facts[0].replace(/^(Codex|Claude) /, ''), tip: 'Profile pm, a system profile' },
-      { key: 'access', icon: 'shield', text: access ? 'Code read only' : 'Can edit', tip: access ? 'Click to let it edit' : 'Click for read only', onClick: () => setRead(!access) },
-      { key: 'branch', icon: 'git-pull-request', text: br ? 'fleet-test/new' : 'No branch', tip: br ? 'A new branch from origin/main' : 'A detached copy of origin/main', onClick: () => setBranch(!br) },
-    ]} />
+    {/* The start facts are the composer's chips, as a conversation shows its profile and permissions. */}
+    <div class="pane new-conversation"><Composer onSend={() => {}} onAttach={() => {}} placeholder="Describe the work in cyprus.bz" chipsLabel="Start settings" chips={[
+      { key: 'project', icon: 'folder-open', label: project ? 'cyprus.bz' : 'No project', tip: 'Project' },
+      { key: 'agent', harness: p.id === 'review' ? 'claude' : 'codex', label: p.facts[0].replace(/^(Codex|Claude) /, ''), tip: 'Profile pm, a system profile' },
+      { key: 'access', icon: 'shield', label: access ? 'Code read only' : 'Can edit', tip: access ? 'Click to let it edit' : 'Click for read only', onClick: () => setRead(!access) },
+      { key: 'branch', icon: 'git-pull-request', label: br ? 'fleet-test/new' : 'No branch', tip: br ? 'A new branch from origin/main' : 'A detached copy of origin/main', onClick: () => setBranch(!br) },
+    ]} /></div>
   </div>;
 }
 

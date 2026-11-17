@@ -42,7 +42,7 @@ export async function checkNewConversation(browser: Browser, origin: string) {
       assert.equal(await projects.getByRole('button', { name: 'No project' }).count(), 1, '"No project" is one project choice');
       assert.equal(await p.getByRole('button', { name: 'Projectless conversation' }).count(), 0);
       await projects.getByRole('button', { name: 'cyprus.bz' }).click();
-      const cards = form.locator('[data-ui=preset-pick] .preset-card'), facts = form.locator('[data-ui=start-facts]');
+      const cards = form.locator('[data-ui=preset-pick] .preset-card'), facts = form.locator('[data-ui=composer] .composer-row');
       assert.ok(await until(async () => await cards.count() === 5), 'cs (no roles) shows the five system presets');
       assert.deepEqual(await cards.locator('b').allTextContents(), ['Discuss', 'Design', 'Fix / build', 'Review', 'Investigate a problem']);
       assert.equal(await cards.first().getAttribute('aria-pressed'), 'true', 'the first preset is picked');

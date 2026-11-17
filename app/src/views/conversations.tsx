@@ -58,7 +58,13 @@ export function Conversations({ id }: { id?: string }) {
   // New conversation (fleet-conversations.md "Start a conversation") is its own URL in the work area, /conversations/new,
   // with the list view kept; ?in=<project> preselects a project. The old ?new=<project> link opens it once.
   const isNew = id === 'new', initial = new URLSearchParams(location.search);
-  const create = () => set({ focus: 'new', extra: { ...view.extra, in: undefined, role: undefined } });
+  // On the new page already, + goes to its composer (the draft and the choices stay).
+  // The field when it takes input, else the page itself (presets loading, offline): never a dead click.
+  const create = () => {
+    if (!isNew) return set({ focus: 'new', extra: { ...view.extra, in: undefined, role: undefined } });
+    const page = document.querySelector<HTMLElement>('[data-ui=detail][aria-label="New conversation"]'), field = page?.querySelector<HTMLTextAreaElement>('[data-ui=composer] textarea');
+    (field && !field.disabled ? field : page)?.focus();
+  };
   useEffect(() => { const p = initial.get('new'); if (p !== null && !isNew) set({ focus: 'new', extra: { ...view.extra, new: undefined, in: p || undefined } }); }, []);
   const pane = <>
     <ShellStatus><OfflineMarker state={page.list.state} now={now} /></ShellStatus>

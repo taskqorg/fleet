@@ -23,7 +23,7 @@
 
 **Accessibility.** The text area is labelled by its placeholder ("Message", or "Steer" while the agent runs). Every icon button has its name as tooltip and accessible name ("Attach files", "Send", "Stop", "Remove <file>"). On touch screens the text area, the chips and × are at least 44 px high.
 
-**Used in.** Conversations: a conversation and the new-conversation page ([start picker](start-picker.md)).
+**Used in.** Conversations: a conversation and the new-conversation page ([start picker](start-picker.md)), the same way: on the new page the start facts (project, agent, access, branch) are the chips of the bottom row, files upload into the chosen project before the session exists and go with the first message (`session_start.attachments`), and the header `+` there focuses the text.
 
 **Do and don't.** Do keep one button for Send and Stop. Don't add a second Stop above the composer; a boundary row keeps its own Stop for that execution (CUJ 5). Don't upload when the message is sent: the files are already stored by then.
 

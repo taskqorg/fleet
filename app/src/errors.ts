@@ -20,6 +20,8 @@ export function configureErrors(o: { ignore: (e: unknown) => boolean; release: (
 if (bugsink.web) {
   init({
     dsn: bugsink.web, tunnel: '/api/errors', environment: 'production',
+    // A browser notice, not an error: the layout settled in the next frame (Chromium reports it through window.onerror).
+    ignoreErrors: [/ResizeObserver loop (completed with undelivered notifications|limit exceeded)/],
     // No personal data from the browser (SDK 11's form of sendDefaultPii off): no user fields, cookies or bodies.
     dataCollection: { userInfo: false, cookies: false, httpBodies: [] },
     // Errors only: no sessions, tracing or replay.

@@ -38,7 +38,7 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   await p.getByRole('button',{name:'Open PM conversation',exact:true}).click();await p.waitForURL(u=>new URL(u).pathname==='/conversations/new');
   await p.getByRole('group',{name:'Preset',exact:true}).locator('.preset-card[aria-pressed=true]',{hasText:'Discuss'}).waitFor();
   assert.equal(await p.getByRole('group',{name:'Project',exact:true}).getByRole('button',{name:'UI edited project',exact:true}).getAttribute('aria-pressed'),'true');
-  assert.match(await p.locator('[data-ui=start-facts] [data-fact=agent]').getAttribute('data-tip')??'',/the project's pm role/);
+  assert.match(await p.locator('[data-ui=composer] [data-fact=agent]').getAttribute('data-tip')??'',/the project's pm role/);
   // Analytics query & interactive AreaChart / multi-currency / unknown+hidden indicators on /projects/:id.
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);

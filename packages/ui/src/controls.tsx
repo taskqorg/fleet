@@ -1292,12 +1292,14 @@ export type ComposerPersistence = { key: string; read(): string; write(text: str
 /** A file on its way to the message: uploading with progress 0..1, ready, or failed with the reason. */
 export type ComposerAttachment = { id: string; name: string; size: number; mediaType: string; state: 'uploading' | 'ready' | 'failed'; progress?: number; error?: string; preview?: string };
 /** A fact of the composer's target in its bottom row (agent profile, permissions); a click acts when onClick is given. */
-export type ComposerChip = { icon?: IconName; harness?: string | null; label: string; tip?: string; onClick?: () => void };
+export type ComposerChip = { key?: string; icon?: IconName; harness?: string | null; label: string; tip?: string; onClick?: () => void };
 export type ComposerProps = {
   onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftPersistence?: ComposerPersistence;
   /** Files from the "+" picker or a paste (images, files, and text longer than longPaste characters as a .txt file). */
   onAttach?: (files: File[]) => void; attachments?: ComposerAttachment[]; onRemoveAttachment?: (id: string) => void;
   chips?: ComposerChip[];
+  /** The accessible name of the chips' group (the new page: "Start settings"). */
+  chipsLabel?: string;
   /** While the agent runs: the one button of an empty composer is Stop. */
   onStop?: () => void; stopReason?: string;
   longPaste?: number;
@@ -1306,7 +1308,7 @@ export type ComposerProps = {
 export const LONG_PASTE = 4000;
 /** App-owned scoped persistence; a target change resets private input and busy state synchronously. */
 export function Composer(props: ComposerProps) { return <ScopedComposer key={props.draftPersistence?.key ?? 'memory'} {...props} />; }
-function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draftPersistence, onAttach, attachments = [], onRemoveAttachment, chips = [], onStop, stopReason, longPaste = LONG_PASTE }: ComposerProps) {
+function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draftPersistence, onAttach, attachments = [], onRemoveAttachment, chips = [], chipsLabel = 'Agent and permissions', onStop, stopReason, longPaste = LONG_PASTE }: ComposerProps) {
   const [text, setText] = useState(''), [busy, setBusy] = useState(false), [warning, setWarning] = useState('');
   const current = useRef({ text, key: draftPersistence?.key }); current.current = { text, key: draftPersistence?.key };
   const picker = useRef<HTMLInputElement>(null);
@@ -1350,11 +1352,11 @@ function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draft
     <div class="composer-row">
       {onAttach && <><Button label="Attach files" icon="plus" iconOnly kind="quiet" disabledReason={disabledReason} onClick={() => picker.current?.click()} />
         <input ref={picker} type="file" multiple hidden aria-hidden="true" tabIndex={-1} onChange={e => { const t = e.target as HTMLInputElement; if (t.files?.length) onAttach([...t.files]); t.value = ''; }} /></>}
-      {chips.map(c => {
+      {chips.length > 0 && <span class="composer-chips" role="group" aria-label={chipsLabel}>{chips.map(c => {
         const body = <>{c.harness && c.harness in harnesses ? <HarnessMark h={c.harness as Harness} /> : c.icon ? <Icon name={c.icon} /> : null}<span>{c.label}</span></>;
-        return c.onClick ? <button key={c.label} type="button" class="composer-chip" data-tip={c.tip} disabled={!!disabledReason} onClick={c.onClick}>{body}</button>
-          : <span key={c.label} class="composer-chip" data-tip={c.tip}>{body}</span>;
-      })}
+        return c.onClick ? <button key={c.key ?? c.label} type="button" class="composer-chip" data-fact={c.key} data-tip={c.tip} disabled={!!disabledReason} onClick={c.onClick}>{body}</button>
+          : <span key={c.key ?? c.label} class="composer-chip" data-fact={c.key} data-tip={c.tip}>{body}</span>;
+      })}</span>}
       <span class="grow" />
       {warning && <span role="status" class="muted">{warning}</span>}
       {/* Stop stays in reach while a draft is in the box: a quiet Stop beside Send. */}
