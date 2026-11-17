@@ -3,10 +3,10 @@ import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
-  Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
+  Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, spotlightMemory, FocusPresets, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
   Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
-  type ThreadBlock, type TreeNode, type Family, type Stage,
+  type ThreadBlock, type TreeNode, type Family, type Stage, type SpotlightProvider, type SpotlightItem,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
 import { FocusDemo } from './focus-demo.tsx';
@@ -222,10 +222,38 @@ function TranscriptDemo() {
     <div class="bar"><Button label={on ? 'Stop' : 'Stream'} icon={on ? 'pause' : 'activity'} pressed={on} onClick={() => setOn(!on)} /><span class="muted type-sm">Tool and reasoning rows open downward. At the bottom it follows; scroll up and it holds still.</span></div></div>;
 }
 
+// Spotlight demo kinds (controls/spotlight.md): invented hits with states, ages and projects; the focus is "fleet".
+const SPOT_HITS: { kind: 'tasks' | 'conversations' | 'projects'; family?: Family; state?: string; label: string; code?: string; project: string; ago: number }[] = [
+  { kind: 'tasks', family: 'task', state: 'in_progress', label: 'Deploy pipeline flaky on the release step', code: 'T-FLT-42', project: 'fleet', ago: 4 * min },
+  { kind: 'tasks', family: 'task', state: 'failed', label: 'Deploy docs to the site', code: 'T-FLT-39', project: 'fleet', ago: 2 * hr },
+  { kind: 'tasks', family: 'task', state: 'completed', label: 'Deploy preview builds for every pull request', code: 'T-WEB-7', project: 'website', ago: 30 * hr },
+  { kind: 'conversations', family: 'session', state: 'waiting', label: 'Plan the deploy window with the PM', code: 'C-FLT-12', project: 'fleet', ago: 15 * min },
+  { kind: 'projects', label: 'Website', project: 'website', ago: 0 },
+];
+function spotDemo(focus: string[], onFocus: (f: string[]) => void): SpotlightProvider[] {
+  return (['tasks', 'conversations', 'projects'] as const).map(kind => ({ id: kind, label: workspaces.find(w => w.id === kind)!.label, find: (q: string) => {
+    const items: SpotlightItem[] = SPOT_HITS.filter(h => h.kind === kind && `${h.label} ${h.code ?? ''}`.toLowerCase().includes(q.toLowerCase().split(' ')[0])).map(h => ({
+      key: kind + h.label, icon: workspaces.find(w => w.id === kind)!.icon, label: h.label, code: h.code, sub: kind === 'projects' ? undefined : h.project,
+      state: h.family && h.state ? { family: h.family, state: h.state } : undefined, at: h.ago ? NOW - h.ago : undefined, outside: !!focus.length && !focus.includes(h.project), run: () => {},
+      action: kind === 'projects' ? { label: focus.includes(h.project) ? 'Remove from focus' : 'Add to focus', icon: 'focus', pressed: focus.includes(h.project), run: () => onFocus(focus.includes(h.project) ? focus.filter(x => x !== h.project) : [...focus, h.project]) } : undefined }));
+    if (kind === 'tasks' && items.length) items.push({ key: 'tasks:all', icon: 'list', label: 'All 24 in Tasks', more: true, run: () => {} });
+    return items;
+  } }));
+}
+
 function RailDemo() {
   const [cur, setCur] = useState('tasks');
   const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
   return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPins={setPinned} /></div>;
+}
+
+/** The palette as the header's search icon opens it; the focus is "fleet", "assetq" is ignored. */
+function SpotlightDemo() {
+  const [spot, setSpot] = useState(false), [focus, setFocus] = useState<string[]>(['fleet']), [mem] = useState(spotlightMemory);
+  const presets = [{ name: 'Fleet', projects: ['fleet'] }, { name: 'Web', projects: ['website'] }, { name: 'Muted', projects: ['assetq'] }];
+  return <div class="pane"><Button label="Search ⌘K" icon="search" onClick={() => setSpot(true)} />
+    {spot && <Spotlight providers={[sectionProvider(NAV, () => {}), ...spotDemo(focus, setFocus)]} memory={mem}
+      idle={<FocusPresets icon value={focus} presets={presets} ignored={['assetq']} onChange={setFocus} />} onClose={() => setSpot(false)} />}</div>;
 }
 
 /** The focus chip as it sits on the right of the shell header: neutral with every project, toned with a focus. */
@@ -380,6 +408,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, <>OR-3: one stable icon per workspace, from the registry.</>],
   ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, <>Hover a section and pin it: it moves to the pinned group at the top (D9). Counters show what needs a look. Search is the icon in the shell header (OR-31, OR-43).</>],
+  ['spotlight', 'Spotlight palette', 'spotlight', () => <SpotlightDemo />, <>OR-32. Empty, it shows the focus presets (a preset of only ignored projects is not offered), recent items and the terms; type <code>deploy</code> for state icons, ages, the results outside the focus and the "All N" row. Close and reopen: the query and the highlighted row stay.</>],
   ['focus-control', 'Focus chip in the shell header', 'focus-control', () => <div class="stack"><HeaderDemo start={[]} /><HeaderDemo start={['fleet', 'desiign', 'cs']} /></div>, <>OR-34, OR-43. Neutral with every project; toned with a focus, names two projects then +N. The bell counts what needs you outside the focus. The panel floats under the chip: presets, projects with an ignore action, and the folded Ignored section to restore them.</>],
   ['split-button', 'Split button', 'split-button', () => <SplitDemo />, <>Click runs the default action; the chevron opens a short menu of alternatives for the same place (allowed by OR-14).</>],
   ['button', 'Button', 'button', () => <ButtonsDemo />],

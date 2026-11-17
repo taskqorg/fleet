@@ -326,6 +326,16 @@ func definitionContent(kind string, raw []byte) (contract.DefinitionContent, err
 	return c, err
 }
 
+// profileHarness: an agent profile's harness; codex when the profile names none (definition_list, search agent:).
+func profileHarness(content []byte) string {
+	var p contract.Profile
+	json.Unmarshal(content, &p)
+	if p.Harness != nil {
+		return string(*p.Harness)
+	}
+	return "codex"
+}
+
 // definitionName: the title a list shows (a profile or method name when it has one, else the id).
 func definitionName(x definitionRow) string {
 	var v map[string]any
@@ -418,11 +428,8 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 		if x.Kind == "agent" {
 			var p contract.Profile
 			json.Unmarshal(x.Content, &p)
-			f := contract.AgentListFacts{Harness: "codex", Model: p.Model, Effort: p.Effort, Roles: append([]string{}, roles[x.ID]...)}
+			f := contract.AgentListFacts{Harness: profileHarness(x.Content), Model: p.Model, Effort: p.Effort, Roles: append([]string{}, roles[x.ID]...)}
 			sort.Strings(f.Roles)
-			if p.Harness != nil {
-				f.Harness = string(*p.Harness)
-			}
 			item.Agent = &f
 		}
 		out.Items = append(out.Items, item)

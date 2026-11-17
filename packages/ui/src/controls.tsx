@@ -4,7 +4,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hook
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
 import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, bytes, exact, stamp, percent, duration, agentLabel, actor } from './format.ts';
 import type { Block as ThreadBlock, ResourceSummary } from '../../../contracts/generated/ops.ts';
-import { matchSearch } from './search.ts';
+import { matchSearch, searchFields } from './search.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import { parse, renderBlocks } from './markdown.tsx';
 import { author, clipMessage, writeClip } from './clip.ts';
@@ -900,6 +900,25 @@ export const focusOnMount = (el: HTMLElement | null) => el?.focus();
 /* ---------- Focus: one project multi-select for the whole app, with presets and ignore (OR-34, controls/focus-control.md) ---------- */
 
 export type FocusProject = { id: string; name: string };
+export type FocusPreset = { name: string; projects: string[] };
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x));
+
+/** The focus presets as one-click chips: "All projects" (the system preset, an empty focus) and the saved ones. The
+ *  focus control and the empty Spotlight palette show them; children follow on the same line. */
+export function FocusPresets({ value, presets, ignored = [], onChange, onRemove, icon, children }: {
+  value: string[]; presets: FocusPreset[]; onChange: (ids: string[]) => void; onRemove?: (name: string) => void;
+  /** Ignored projects (OR-34): left out of each preset; a preset of only ignored projects is not offered. */ ignored?: string[];
+  /** Leads with the focus icon, where nothing else says what the chips are. */ icon?: boolean; children?: ComponentChildren;
+}) {
+  return <div class="presets" role="group" aria-label="Focus presets" data-ui="focus-presets">
+    {icon && <span class="presets-h" data-tip="Focus"><Icon name="focus" label="Focus" /></span>}
+    <span class={`preset${value.length === 0 ? ' on' : ''}`}><button type="button" aria-pressed={value.length === 0} onClick={() => onChange([])}>All projects</button></span>
+    {presets.map(p => ({ ...p, projects: p.projects.filter(x => !ignored.includes(x)) })).filter(p => p.projects.length).map(p => <span key={p.name} class={`preset${sameSet(p.projects, value) && value.length ? ' on' : ''}`}>
+      <button type="button" aria-pressed={!!value.length && sameSet(p.projects, value)} onClick={() => onChange(p.projects)}>{p.name}</button>
+      {onRemove && <button type="button" class="x" aria-label={`Remove focus preset ${p.name}`} data-tip="Remove" onClick={() => onRemove(p.name)}><Icon name="x" /></button>}</span>)}
+    {children}
+  </div>;
+}
 /**
  * The focus chip in the shell header (OR-43): the focused project names (two, then +N), toned when a focus is set, and a
  * panel anchored under it (an overlay that moves nothing, an OR-14 exception like Spotlight). The panel holds the presets
@@ -1036,68 +1055,148 @@ export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, he
 
 /* ---------- Spotlight palette (OR-32, controls/spotlight.md) ---------- */
 
-/** One found item: run opens it. code is the human entity code (D17), shown mono after the label. */
-export type SpotlightItem = { key: string; icon: IconName; label: string; code?: string; sub?: string; run: () => void };
+/**
+ * One found item: run opens it. code is the human entity code (D17), shown mono after the label. state is the item's
+ * registry state, shown instead of the kind icon where the kind has states; at is its last change (OR-2). outside: not in
+ * the person's project focus (OR-34), listed after the focused results. action: a row button (also Alt+Enter) that keeps
+ * the palette open. more: the "All N in <Section>" row that opens the section's list with the query.
+ */
+export type SpotlightItem = {
+  key: string; icon: IconName; label: string; code?: string; sub?: string; run: () => void;
+  state?: { family: Family; state: string }; at?: number; outside?: boolean; more?: boolean;
+  action?: { label: string; icon: IconName; pressed?: boolean; run: () => void };
+};
 /** One kind of thing the palette finds. A new kind is one more provider; providers answer in their order. */
 export type SpotlightProvider = { id: string; label: string; find: (q: string, signal: AbortSignal) => SpotlightItem[] | Promise<SpotlightItem[]> };
+type SpotGroup = { id: string; label: string; items: SpotlightItem[]; out?: boolean };
+/** What the palette keeps while it is closed: the query, its results, the highlighted row and the recently opened items.
+ *  The shell holds one per tab and access generation, in memory only. */
+export type SpotlightMemory = { q: string; found: SpotGroup[]; key?: string; recent: SpotlightItem[] };
+export const spotlightMemory = (): SpotlightMemory => ({ q: '', found: [], recent: [] });
+const RECENT = 6;
 
-/** The palette: the only floating working tool (OR-32). Arrow keys move, Enter opens, Escape or a click outside closes. */
-export function Spotlight({ providers, onClose }: { providers: SpotlightProvider[]; onClose: () => void }) {
-  const [q, setQ] = useState('');
-  const [found, setFound] = useState<{ p: SpotlightProvider; items: SpotlightItem[] }[]>([]);
-  const [at, setAt] = useState(0);
-  // answered: the query every provider has answered, so its results are complete; failed: one of them failed, so
-  // "nothing found" would be a guess. enter: the field's text when Enter was pressed before its results were complete.
-  const [answered, setAnswered] = useState<string | null>(''), [failed, setFailed] = useState(false);
-  const [enter, setEnter] = useState<string | null>(null);
+// The focused results of every kind first, then the ones outside the focus under one heading.
+const splitFocus = (found: SpotGroup[]): SpotGroup[] => [
+  ...found.map(g => ({ ...g, items: g.items.filter(i => !i.outside) })),
+  ...found.map(g => ({ ...g, id: 'out:' + g.id, out: true, items: g.items.filter(i => i.outside) })),
+].filter(g => g.items.length);
+
+/** The palette: the only floating working tool (OR-32). Arrow keys move, Enter opens, Alt+Enter runs the row's action,
+ *  Escape or a click outside closes. With an empty query it shows idle (the focus presets), recent items and the terms. */
+export function Spotlight({ providers, onClose, memory, idle, terms = searchFields }: {
+  providers: SpotlightProvider[]; onClose: () => void;
+  /** Kept between openings; without it the palette opens empty. */ memory?: SpotlightMemory;
+  /** Shown while the query is empty, above the recent items. */ idle?: ComponentChildren;
+  /** Field terms suggested while the query is empty; a click adds one to the query. */ terms?: readonly string[];
+}) {
+  const mem = useRef(memory ?? spotlightMemory()).current;
+  const [q, setQ] = useState(mem.q);
+  const [found, setFound] = useState<SpotGroup[]>(mem.found);
+  const shownOf = (q: string, found: SpotGroup[]) => q.trim() ? splitFocus(found) : mem.recent.length ? [{ id: 'recent', label: 'Recent', items: mem.recent }] : [];
+  const [at, setAt] = useState(() => Math.max(0, shownOf(mem.q, mem.found).flatMap(g => g.items).findIndex(i => i.key === mem.key)));
+  // keep: the highlighted row's key, found again when results change (a reopened palette, an action); typing clears it.
+  // typed: the query changed by typing, so the old rows go; a reopen or a refresh keeps them until their provider answers.
+  const keep = useRef(mem.key), typed = useRef(false), [refresh, setRefresh] = useState(0);
+  // waiting: providers not answered yet; failed: one of them failed, so "nothing found" would be a guess.
+  const [waiting, setWaiting] = useState(0), [failed, setFailed] = useState(false);
+  // asked: the query the providers were last asked; until it is the field's query, results belong to an older one.
+  const [asked, setAsked] = useState(mem.q);
   // Focus returns to where it was only when the palette closes without opening an item.
   const back = useRef<Element | null>(document.activeElement), opened = useRef(false);
+  // The field has focus with its text selected when the palette opens: typing replaces the query, arrows browse the old
+  // results. It keeps focus while open (aria-modal): a page that focuses its own element as it loads behind the palette
+  // gives it back. Declared before the focus return, so the trap is gone when focus goes back.
+  const field = useRef<HTMLInputElement | null>(null), box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { // a layout effect: attached in the same commit as the field's focus, so no focus slips in between
+    const trap = (e: FocusEvent) => { if (!box.current?.contains(e.target as Node)) field.current?.focus(); };
+    document.addEventListener('focusin', trap); return () => document.removeEventListener('focusin', trap);
+  }, []);
   useEffect(() => () => { if (!opened.current) (back.current as HTMLElement | null)?.focus?.(); }, []);
+  const bind = useRef((el: HTMLInputElement | null) => { field.current = el; focusOnMount(el); el?.select(); }).current;
   useEffect(() => {
     // Each provider's results show as they arrive, in provider order; local ones are not held back by the server.
     const c = new AbortController(), text = q.trim(), got: (SpotlightItem[] | undefined)[] = providers.map(() => undefined);
-    const show = () => { if (!c.signal.aborted) setFound(providers.map((p, i) => ({ p, items: got[i] ?? [] })).filter(g => g.items.length)); };
-    setFailed(false); setAt(0); setEnter(e => e === q ? e : null);
-    if (!text) { setFound([]); setAnswered(q); return; }
+    const restore = !typed.current, before = found;
+    typed.current = false;
+    const show = () => {
+      if (c.signal.aborted) return;
+      const next = providers.map((p, i) => ({ id: p.id, label: p.label, items: got[i] ?? (restore ? before.find(g => g.id === p.id)?.items ?? [] : []) })).filter(g => g.items.length);
+      setFound(next);
+      const i = keep.current ? splitFocus(next).flatMap(g => g.items).findIndex(x => x.key === keep.current) : -1;
+      if (i >= 0) setAt(i);
+      else if (keep.current) { keep.current = undefined; setAt(0); } // the kept row is gone: the first row, never a neighbour by position
+    };
+    setFailed(false);
+    if (!restore) setAt(0);
+    setAsked(q);
+    if (!text) { setFound([]); setWaiting(0); return; }
     let left = 0;
     providers.forEach((p, i) => {
       const r = p.find(text, c.signal);
       if (Array.isArray(r)) { got[i] = r; return; }
       left++;
-      r.then(x => { got[i] = x; }, () => { if (!c.signal.aborted) setFailed(true); }).then(() => { if (!c.signal.aborted) { show(); if (!--left) setAnswered(q); } });
+      r.then(x => { got[i] = x; }, () => { got[i] = []; if (!c.signal.aborted) setFailed(true); }).then(() => { if (!c.signal.aborted) { setWaiting(--left); show(); } });
     });
-    show(); setAnswered(left ? null : q);
+    setWaiting(left); show();
     return () => c.abort();
-  }, [q]);
-  const flat = found.flatMap(g => g.items);
-  const open = (i: SpotlightItem | undefined) => { if (i) { opened.current = true; onClose(); i.run(); } };
-  // Enter before every provider answered opens the first result once they have, not a section that happened to answer first.
-  // A key typed just before Enter may not have rendered yet, so the press waits for the field's text; typing on cancels it.
-  useEffect(() => { if (enter !== null && enter === q && answered === q) { setEnter(null); open(flat[at]); } }, [enter, answered, q]);
+  }, [q, refresh]);
+  const groups = shownOf(q, found), flat = groups.flatMap(g => g.items), cur = Math.min(at, flat.length - 1);
+  mem.q = q; mem.found = found; mem.key = flat[cur]?.key;
+  const move = (k: number) => { setAt(k); keep.current = flat[k]?.key; };
+  const open = (i: SpotlightItem | undefined) => {
+    if (!i) return;
+    // A recent item is a way back, not a live row: its state and age at the time it was opened would be stale.
+    if (!i.more) mem.recent = [{ ...i, outside: false, action: undefined, state: undefined, at: undefined }, ...mem.recent.filter(x => x.key !== i.key)].slice(0, RECENT);
+    opened.current = true; onClose(); i.run();
+  };
+  // An action changes what the results show (a project added to the focus): they are asked again, the row stays highlighted.
+  const act = (i: SpotlightItem) => { i.action?.run(); keep.current = i.key; setRefresh(n => n + 1); field.current?.focus(); };
+  // An unchanged value asks nothing (no effect runs), so it marks nothing as typed.
+  const type = (v: string) => { if (v === q) return; typed.current = true; keep.current = undefined; setEnter(false); setQ(v); };
+  const addTerm = (t: string) => { type(q.trim() ? `${q.trimEnd()} ${t}:` : `${t}:`); field.current?.focus(); };
+  // Enter before every provider answered opens the first result once they have, not a section that happened to answer
+  // first, and not a result of the query before the last keys (the providers are asked after the next paint).
+  const [enter, setEnter] = useState(false);
+  useEffect(() => { if (enter && !waiting && asked === q) { setEnter(false); open(flat[cur]); } }, [enter, waiting, asked]);
   const key = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
     else if (e.key === 'Tab') e.preventDefault(); // aria-modal: focus stays on the field
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (flat.length) setAt((at + (e.key === 'ArrowDown' ? 1 : -1) + flat.length) % flat.length); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (flat.length) move((cur + (e.key === 'ArrowDown' ? 1 : -1) + flat.length) % flat.length); }
+    else if (e.key === 'Enter' && e.altKey && !e.isComposing && flat[cur]?.action) { e.preventDefault(); act(flat[cur]); }
     else if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { // 229: Safari's Enter that ends an IME composition
       e.preventDefault();
-      const typed = e.target instanceof HTMLInputElement ? e.target.value : q;
-      if (typed === q && answered === q) open(flat[at]); else setEnter(typed);
+      // A key typed just before Enter may not have rendered yet: the field's own text tells, and the press waits for it.
+      const typedNow = e.target instanceof HTMLInputElement ? e.target.value : q;
+      if (waiting || asked !== q || typedNow !== q) setEnter(true); else open(flat[cur]);
     }
   };
-  const list = useId();
+  const list = useId(), text = q.trim(), now = Date.now();
   let n = -1;
+  const row = (i: SpotlightItem) => {
+    const k = ++n, st = i.state && (states[i.state.family] as Record<string, StateDef>)[i.state.state] ? i.state : undefined;
+    return <li key={i.key} id={`${list}-${k}`} role="option" aria-selected={k === cur} aria-keyshortcuts={i.action ? "Alt+Enter" : undefined} aria-description={i.action ? `Alt+Enter: ${i.action.label}` : undefined} class={[k === cur && 'cur', i.outside && 'out', i.more && 'more'].filter(Boolean).join(' ')}
+      onPointerMove={() => k !== cur && move(k)} onClick={() => open(i)}>
+      {st ? <StateBadge family={st.family} state={st.state as never} compact /> : <Icon name={i.icon} />}
+      <span class="title">{i.label}</span>{i.code && <span class="id">{i.code}</span>}<span class="grow" />{i.sub && <span class="sub">{i.sub}</span>}
+      {i.at !== undefined && <Ago t={i.at} now={now} />}
+      {i.action && <button type="button" class="btn quiet icon-only" tabIndex={-1} aria-pressed={i.action.pressed} aria-label={i.action.label} data-tip={`${i.action.label}  ⌥⏎`}
+        onPointerDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); act(i); }}><Icon name={i.action.icon} /></button>}
+      {i.more && <Icon name="arrow-right" />}
+    </li>;
+  };
   return <div class="spot-back" onPointerDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-    <div class="spotlight" data-ui="spotlight" role="dialog" aria-modal="true" aria-label="Search" onKeyDown={key}>
-      <label class="search"><Icon name={actions.search} /><input type="search" ref={focusOnMount} placeholder="Code, task, section, project, host · agent:claude host:mac" aria-label="Search"
-        role="combobox" list={undefined} aria-expanded={flat.length > 0} aria-controls={list} aria-activedescendant={flat[at] ? `${list}-${at}` : undefined}
-        value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} /></label>
-      {flat.length > 0 && <ul class="spot-list" id={list} role="listbox" aria-label="Results">{found.map(g => <Fragment key={g.p.id}>
-        <li key={g.p.id} class="rail-h" role="presentation">{g.p.label}</li>
-        {g.items.map(i => { const k = ++n; return <li key={i.key} id={`${list}-${k}`} role="option" aria-selected={k === at} class={k === at ? 'cur' : ''}
-          onPointerMove={() => k !== at && setAt(k)} onClick={() => open(i)}>
-          <Icon name={i.icon} /><span class="title">{i.label}</span>{i.code && <span class="id">{i.code}</span>}{i.sub && <span class="muted">{i.sub}</span>}</li>; })}
+    <div class="spotlight" data-ui="spotlight" ref={box} role="dialog" aria-modal="true" aria-label="Search" onKeyDown={key}>
+      <label class="search"><Icon name={actions.search} /><input type="search" ref={bind} placeholder="Code, task, conversation, result, project, agent · agent:claude host:mac" aria-label="Search"
+        role="combobox" list={undefined} aria-expanded={flat.length > 0} aria-controls={list} aria-activedescendant={flat[cur] ? `${list}-${cur}` : undefined}
+        value={q} onInput={e => type((e.target as HTMLInputElement).value)} /></label>
+      {!text && idle && <div class="spot-idle" onClick={() => field.current?.focus()}>{idle}</div>}
+      {flat.length > 0 && <ul class="spot-list" id={list} role="listbox" aria-label={text ? 'Results' : 'Recent'}>{groups.map((g, gi) => <Fragment key={g.id}>
+        {g.out && !groups[gi - 1]?.out && <li class="rail-h spot-out" role="presentation"><Icon name="focus" />Outside focus</li>}
+        <li class="rail-h" role="presentation">{g.label}</li>
+        {g.items.map(row)}
       </Fragment>)}</ul>}
-      {q.trim() && !flat.length && answered === q && <p class="muted spot-none" role="status">{failed ? 'Search failed; try again' : 'Nothing found'}</p>}
+      {!text && terms.length > 0 && <p class="spot-terms muted">{terms.map(t => <button key={t} type="button" tabIndex={-1} class="id" onPointerDown={e => e.preventDefault()} onClick={() => addTerm(t)}>{t}:</button>)}<span>narrow the search</span></p>}
+      {text && !waiting && (failed || !flat.length) && <p class="muted spot-none" role="status">{failed ? flat.length ? 'Some kinds failed; try again' : 'Search failed; try again' : 'Nothing found'}</p>}
     </div>
   </div>;
 }

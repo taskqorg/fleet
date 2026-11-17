@@ -36,4 +36,4 @@ At phone width (760 px and below) the toggle hides (the rail is always collapsed
 * Routes are stable URLs (`#/tasks/9989` in mockups, real paths in the app; specq F7). Back restores the list position and selection.
 * Every page renders `AppShell`. The traceability check in `pnpm run check:design` reports any page that does not.
 
-**Private transient state.** Access invalidation removes Spotlight results as well as routed/focus data. `AppShell` keeps its non-private geometry, but closes private search content while validation is pending and keys Spotlight by access generation. The caller also clears its shared search-result cache before identity validation.
+**Private transient state.** Access invalidation removes Spotlight results as well as routed/focus data. `AppShell` keeps its non-private geometry, but closes private search content while validation is pending and keys Spotlight by access generation. The palette's kept query, results, highlighted row and recent items ([Spotlight](../controls/spotlight.md)) belong to one access generation: a new generation starts them empty. The caller also clears its shared search-result cache before identity validation.

@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, render, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -159,9 +159,10 @@ export function ShellStatus({ children }: { children: ComponentChildren }) {
   return null;
 }
 
-export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus, title, privateReady = true, privateGeneration = 0 }: {
+export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], searchIdle, user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus, title, privateReady = true, privateGeneration = 0 }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
   /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
+  /** What the palette shows while its query is empty, above the recent items (the app's focus presets). */ searchIdle?: ComponentChildren;
   /** The project focus chip (OR-34), on the right of the shell header (OR-43). */ focus?: ComponentChildren;
   /** The section title in the shell header; default: the current section's label. */ title?: string;
   /** The person's pinned sections (person settings); without them the shell keeps its own demo pins. */ pins?: string[]; onPins?: (ids: string[]) => void;
@@ -179,6 +180,9 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   const ownSet = useRef((k: string, px: number) => setOwnWidths(w => { const n = { ...w }; if (px) n[k] = px; else delete n[k]; return n; })).current;
   const setWidth = onWidth ?? ownSet;
   const [spot, setSpot] = useState<number | null>(null), [slot, setSlot] = useState<HTMLElement | null>(null);
+  // The palette's query, results, highlighted row and recent items, kept while it is closed: per tab and access generation, in memory only.
+  const spotMem = useRef({ gen: privateGeneration, m: spotlightMemory() });
+  if (spotMem.current.gen !== privateGeneration) spotMem.current = { gen: privateGeneration, m: spotlightMemory() };
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (privateReady && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.repeat && (e.key.toLowerCase() === 'k' || (e.code === 'KeyK' && !/^[a-z]$/i.test(e.key)))) { e.preventDefault(); setSpot(s => s === privateGeneration ? null : privateGeneration); } };
     addEventListener('keydown', k); return () => removeEventListener('keydown', k);
@@ -215,7 +219,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
         </header>
         <main class="shell-main" id="main" tabIndex={-1}><StatusSlot.Provider value={slot}>{children}</StatusSlot.Provider></main>
       </div>
-      {spot === privateGeneration && privateReady && <Spotlight key={privateGeneration} providers={[sectionProvider(nav, onGo), ...search]} onClose={() => setSpot(null)} />}
+      {spot === privateGeneration && privateReady && <Spotlight key={privateGeneration} providers={[sectionProvider(nav, onGo), ...search]} memory={spotMem.current.m} idle={searchIdle} onClose={() => setSpot(null)} />}
       <TooltipLayer />
     </div></Widths.Provider>
   );

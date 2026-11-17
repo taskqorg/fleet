@@ -79,13 +79,15 @@ func (v *FocusSetRequest) Validate() error {
 	return nil
 }
 
-// Found: One found entity; the app opens /<kind>s/<id>, a question its task.
+// Found: One found entity; the app opens /<kind>s/<id>, a question its task. state is the kind's own state (task, question, session or artifact states; none for projects, hosts, agents, pipelines).
 type Found struct {
 	Agent     *string   `json:"agent,omitempty"`
+	At        *string   `json:"at,omitempty"`
 	Code      *string   `json:"code,omitempty"`
 	Host      *string   `json:"host,omitempty"`
 	Id        string    `json:"id"`
 	Kind      FoundKind `json:"kind"`
+	Outside   *bool     `json:"outside,omitempty"`
 	ProjectId *string   `json:"projectId,omitempty"`
 	SessionId *string   `json:"sessionId,omitempty"`
 	State     *string   `json:"state,omitempty"`
@@ -107,12 +109,15 @@ const (
 	FoundKindTask         FoundKind = "task"
 	FoundKindQuestion     FoundKind = "question"
 	FoundKindConversation FoundKind = "conversation"
+	FoundKindResult       FoundKind = "result"
 	FoundKindProject      FoundKind = "project"
 	FoundKindHost         FoundKind = "host"
+	FoundKindAgent        FoundKind = "agent"
+	FoundKindPipeline     FoundKind = "pipeline"
 )
 
 // FoundKindValues lists every FoundKind in schema order.
-var FoundKindValues = []FoundKind{FoundKindTask, FoundKindQuestion, FoundKindConversation, FoundKindProject, FoundKindHost}
+var FoundKindValues = []FoundKind{FoundKindTask, FoundKindQuestion, FoundKindConversation, FoundKindResult, FoundKindProject, FoundKindHost, FoundKindAgent, FoundKindPipeline}
 
 // Valid: v is one of the schema's values.
 func (v FoundKind) Valid() bool {
@@ -442,13 +447,17 @@ func (v *SavedView) Validate() error {
 	return nil
 }
 
-// SearchReply: Hits of every provider in registry order: a query of only T-, Q- and C- codes resolved (old codes too, with the current code), then tasks (an id or code starting with the text first, then recently changed), questions (open first), projects, hosts. Each word of the text narrows the hits.
+// SearchReply: Hits of every provider in registry order: a query of only T-, Q- and C- codes resolved (old codes too, with the current code), then tasks (an id or code starting with the text first), questions (open first, answered and withdrawn after), conversations, results, projects, hosts, agents, pipelines. Inside each kind hits in the focus come before all others, then that kind's order, then recently changed. Each word of the text narrows the hits.
 type SearchReply struct {
-	Hits []Found `json:"hits"`
+	Counts map[string]int64 `json:"counts"`
+	Hits   []Found          `json:"hits"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SearchReply) Validate() error {
+	if v.Counts == nil {
+		return Missing("counts")
+	}
 	if v.Hits == nil {
 		return Missing("hits")
 	}
@@ -461,8 +470,9 @@ func (v *SearchReply) Validate() error {
 }
 
 type SearchRequest struct {
-	Limit *int64 `json:"limit,omitempty"`
-	Query string `json:"query"`
+	Limit      *int64   `json:"limit,omitempty"`
+	ProjectIds []string `json:"projectIds,omitempty"`
+	Query      string   `json:"query"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -512,7 +522,7 @@ func init() {
 		"people_set":          {Read: false, Long: true, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only: the whole people.json list, written atomically and reloaded.\",\"additionalProperties\":true,\"properties\":{\"people\":{}},\"required\":[\"people\"],\"type\":\"object\"}")},
 		"person_settings_get": {Read: true, Long: false, Errors: []int{403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"person_settings_set": {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"},\"focus\":{\"$comment\":\"omitted: unchanged; [] clears the focus\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"focusPresetDelete\":{\"$comment\":\"remove one focus preset by name\",\"type\":\"string\"},\"focusPresetPut\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"focusPresets\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one\",\"items\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"type\":\"array\"},\"ignore\":{\"additionalProperties\":false,\"properties\":{\"ignored\":{\"type\":\"boolean\"},\"project\":{\"type\":\"string\"}},\"required\":[\"project\",\"ignored\"],\"type\":\"object\"},\"ignored\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one; a newly ignored project leaves the focus\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"lastViews\":{\"$comment\":\"omitted: unchanged; merged by section id; an empty string removes it; each value is that section's app path (/\\u003cid\\u003e...)\",\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"listGroups\":{\"$comment\":\"omitted: unchanged; merged by \\u003csection\\u003e:\\u003cgrouping\\u003e; [] removes it; the whole group key list of that list replaces the stored one\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"navCollapsed\":{\"$comment\":\"omitted: unchanged\",\"type\":\"boolean\"},\"order\":{\"$comment\":\"list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)\",\"enum\":[\"list\",\"soonest_reset\"],\"type\":\"string\"},\"pins\":{\"$comment\":\"omitted: unchanged; the full ordered list replaces the previous one\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"rowPin\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"list\":{\"type\":\"string\"},\"pinned\":{\"type\":\"boolean\"}},\"required\":[\"list\",\"id\",\"pinned\"],\"type\":\"object\"},\"rowPins\":{\"$comment\":\"omitted: unchanged; merged by list name; [] clears that list\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"viewDelete\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"}},\"required\":[\"list\",\"name\"],\"type\":\"object\"},\"viewPut\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"views\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one; names are unique per list\",\"items\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"type\":\"array\"},\"widths\":{\"$comment\":\"omitted: unchanged; merged by key; a value of 0 removes the key (double-click reset)\",\"additionalProperties\":{\"type\":\"integer\"},\"type\":\"object\"}},\"type\":\"object\"}")},
-		"search":              {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"limit\":{\"$comment\":\"Per provider; default 8, at most 50.\",\"minimum\":1,\"type\":\"integer\"},\"query\":{\"$comment\":\"Free text plus field:value terms (agent, host, state, project), the list search syntax; a provider that cannot apply a term finds nothing.\",\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")},
+		"search":              {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"limit\":{\"$comment\":\"Per provider; default 8, at most 50.\",\"minimum\":1,\"type\":\"integer\"},\"projectIds\":{\"$comment\":\"At most 1000. The caller's project focus (OR-34; '-' is work outside projects): hits in it come first and counts count only them. Absent or empty: every project.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"query\":{\"$comment\":\"Free text plus field:value terms (agent, host, state, project), the list search syntax; a provider that cannot apply a term finds nothing.\",\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")},
 		"view_link":           {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of view (a view state to link) or url (a Fleet URL to read back).\",\"additionalProperties\":true,\"properties\":{\"url\":{},\"view\":{}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

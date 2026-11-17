@@ -468,7 +468,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 @media (max-width:760px){.rail .nav-count{top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1))}}
 /* M2: 44 px targets on touch for row pins, row links, nav links (owner exception) */
 @media (pointer:coarse){
-  .vl-row .btn.icon-only,.row-pin,.nav-i a,.rail-user-b,.nav-pin,.counter,.seg,.preset button,.saved-chip,.tabs button,.menu button{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}
+  .vl-row .btn.icon-only,.row-pin,.nav-i a,.rail-user-b,.nav-pin,.counter,.seg,.preset button,.saved-chip,.tabs button,.menu button,.spot-list [role=option] .btn.icon-only,.spot-terms button{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}
+  .spot-list [role=option]{height:auto;min-height:var(--size-hit-phone)}
   .row-link{display:inline-flex;align-items:center;min-height:var(--size-hit-phone)}
   .vl-row.static,.vl-head{height:auto;min-height:var(--size-row-phone)}
 }
@@ -692,10 +693,25 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .spot-list{flex:1 1 auto;min-height:0;overflow-y:auto;margin:0;padding:0;list-style:none}
 .spot-list [role=option]{display:flex;align-items:center;gap:var(--space-2);height:var(--size-control);padding:0 var(--space-2);border-radius:var(--radius-sm);cursor:pointer}
 .spot-list [role=option] .title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.spot-list [role=option] .muted{margin-left:auto;white-space:nowrap}
-.spot-list [role=option] .id{flex:none;white-space:nowrap}
+.spot-list [role=option] .sub{flex:0 1 auto;min-width:0;max-width:12rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spot-list [role=option] .id,.spot-list [role=option] .when,.spot-list [role=option] .icon,.spot-list [role=option] .state{flex:none;white-space:nowrap}
+.spot-list [role=option] .when{min-width:3ch;text-align:right;font-family:var(--font-mono);font-size:var(--font-size-sm);font-variant-numeric:tabular-nums;color:var(--fg-muted)}
+.spot-list [role=option] .btn.icon-only{flex:none;height:var(--size-chip);padding:0 var(--space-1)}
+.spot-list [role=option] .btn[aria-pressed=true]{color:var(--fg);background:var(--selected)}
 .spot-list [role=option].cur{background:var(--hover)}
+/* Outside the focus (OR-34): after the focused results, muted; the state colour stays readable. */
+.spot-list [role=option].out{color:var(--fg-muted)}
+.spot-list [role=option].out .badge{opacity:.75}
+.spot-list [role=option].more{color:var(--accent)}
+.spot-out{display:flex;align-items:center;gap:var(--space-1);margin-top:var(--space-1);border-top:1px solid var(--line)}
+.spot-out .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.spot-idle{flex:none}
+.presets-h{display:inline-flex;align-items:center;padding:0 var(--space-1);color:var(--fg-muted)}
+.spot-terms{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1);margin:0;padding:0 var(--space-2);font-size:var(--font-size-sm)}
+.spot-terms button{height:var(--size-chip);padding:0 var(--space-1);border:1px solid var(--line);border-radius:var(--radius-sm);background:none;color:var(--fg);cursor:pointer}
+.spot-terms button:hover{background:var(--hover)}
 .spot-none{margin:0;padding:var(--space-2)}
+@media (max-width:600px){.spot-list [role=option] .sub{max-width:6rem}}
 
 /* Entity codes never wrap (OR-38): T-FLT-42 is one token everywhere */
 [data-ui=entity-code]{white-space:nowrap;flex:none}
