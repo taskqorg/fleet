@@ -248,9 +248,9 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 	if stale.UiOnSite != nil {
 		t.Fatal("a newer UI seen well before publication says nothing of this one", stale)
 	}
-	// ... but while the site serves it, the release is on the site from this read on, as delivery_status says.
+	// ... but while the site still serves it, the release has been on the site since its publication, as delivery_status says.
 	deliveryInstalls(&stale, dhState{UISeen: map[string]string{"1.261117.30": "2026-11-17T16:50:00Z"}}, nil, hostVersion{"1.261117.30", "2026-11-17T17:04:00Z"}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
-	if deref(stale.UiOnSite) != "2026-11-17T17:04:00Z" {
+	if deref(stale.UiOnSite) != "2026-11-17T17:00:01Z" {
 		t.Fatal(stale)
 	}
 	odd := contract.DeliveryRelease{Tag: "ui-kit-v1.2", Published: "2026-11-17T17:00:01Z"}

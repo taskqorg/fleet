@@ -169,6 +169,10 @@ type ghRepo struct {
 }
 
 func deliveryPass(ctx context.Context, a *App) error {
+	// The UI the site serves, read once per pass like the host versions; noted first, so a failed read below still keeps
+	// the minute's sighting (a UI-only release's UI on site).
+	ui := uiServed()
+	noteUISeen(ui, time.Now())
 	type target struct {
 		projects    []string
 		owner, repo string
@@ -223,8 +227,6 @@ func deliveryPass(ctx context.Context, a *App) error {
 		return err
 	}
 	now := time.Now().UTC()
-	ui := uiServed() // once per pass, like the host versions
-	noteUISeen(ui, now)
 	deliveryMu.Lock()
 	prev := deliveryLast
 	// Keyless reads share GitHub's 60 an hour per address: a keyless repository is read at most every 6 minutes even
@@ -482,14 +484,15 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 	}
 	var rels []rel
 	for _, r := range g.releases {
-		if r.Draft || !strings.HasPrefix(r.Tag, "v") && !(fleetRepo && uiOnlyRelease(r.Tag)) || r.Published == "" {
+		uiOnly := fleetRepo && uiOnlyRelease(r.Tag)
+		if r.Draft || r.Published == "" || !uiOnly && !strings.HasPrefix(r.Tag, "v") {
 			continue
 		}
 		c := mergedAt[r.Target]
 		if c == "" {
 			continue // the target's merge time is unknown: guessing it could claim merges the release lacks
 		}
-		rels = append(rels, rel{r.Tag, releaseVersionOf(r.Tag), c, r.Published, uiOnlyRelease(r.Tag)})
+		rels = append(rels, rel{r.Tag, releaseVersionOf(r.Tag), c, r.Published, uiOnly})
 	}
 	sort.Slice(rels, func(i, j int) bool { return rels[i].published < rels[j].published })
 	day := now.Add(-24 * time.Hour).Format(time.RFC3339)

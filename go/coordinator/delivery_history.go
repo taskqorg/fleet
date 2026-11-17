@@ -722,8 +722,14 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 				r.UiOnSite = ptr(at)
 			}
 		}
+		// The UI served now has been served since its first sighting, and this release was on the site from then or from its
+		// publication, whichever is later.
 		if r.UiOnSite == nil && served.version != "" && !versionLess(served.version, v) && served.at >= r.Published {
-			r.UiOnSite = ptr(served.at)
+			at := served.at
+			if s := st.UISeen[served.version]; s != "" && s < at {
+				at = s
+			}
+			r.UiOnSite = ptr(max(at, r.Published))
 		}
 	}
 }
