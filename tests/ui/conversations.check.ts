@@ -201,7 +201,7 @@ try {
   await p.goto(`${origin}/conversations/task-a`); await until(() => visible(p, 'Alpha reply'));
   await p.getByRole('button', { name: 'Actions' }).click();
   const items = (await p.locator('[role=menu] [role=menuitem]').allTextContents()).map(t => t.trim());
-  check(items.join('|') === 'Retry last message|Switch profile or model|Hand off to another agent|Fork' && await p.locator('[role=menu] [role=menuitem] .icon').count() === 4, 'action menu: four items with icons');
+  check(items.join('|') === 'Rename|Retry last message|Switch profile or model|Hand off to another agent|Fork' && await p.locator('[role=menu] [role=menuitem] .icon').count() === 5, 'action menu includes Rename and preserves its existing actions and icons');
   const before = seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").length;
   await p.getByRole('menuitem', { name: 'Retry last message' }).click();
   check(await until(async () => seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").length === before + 1 && seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").at(-1).text === 'Alpha question'), 'Retry sends the last operator message again');
