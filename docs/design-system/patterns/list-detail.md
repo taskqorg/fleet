@@ -20,7 +20,7 @@
 
 The work area scrolls as a whole. A conversation is the exception: its transcript is the scroller and the composer stays at the bottom (OR-25).
 
-**Narrow widths.** At 1100 px and below only one of the two columns shows: the catalogue, or the opened item with its Close icon. Opening an item moves focus to it (WCAG 2.4.3).
+**Narrow widths.** At 1100 px and below only one of the two columns shows: the catalogue, or the opened item with its Close icon. Opening an item moves focus to it (WCAG 2.4.3). Known limitation (owner, 2026-11-17): with nothing open, a narrow window shows only the catalogue, so a section's own reference page in the work area (for example Delivery's Pace) is not reachable there. Kept as is.
 
 **Rules.**
 * The item's URL includes the item.
