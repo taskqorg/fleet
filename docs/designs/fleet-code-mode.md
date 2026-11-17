@@ -68,7 +68,9 @@ Code mode adds no authority. The code server bridges only the tools that the exe
 - The runtime runs with Node's permission model: `node --permission`. It reads the worktree and the execution input directory. It writes nothing, starts no child process, and loads no native addon or worker. Writes and commands go through the native harness tools under their own sandbox.
 - A Claude profile whose `tools` list has none of `Read`, `Grep`, `Glob` or `Bash` gets no file reads in the runtime.
 - The runtime environment has no run token, gateway URL or Access file. The code server keeps them, as the connection servers do ([per-run tokens](fleet-connections.md#4-per-run-tokens)).
-- Not built: network restriction. Node 22's permission model has no network rule, so code can open network connections even when the harness has no network, as with Codex without `gitNetwork`. Bridged calls are unaffected; they use the gateway and the journal.
+- The runtime has no network. Bridged calls go through the code server, so the runtime needs none, and a harness without network (Codex without `gitNetwork`) gets none through code. Node 22's permission model has no network rule, so a module hook refuses `net`, `http`, `https`, `http2`, `tls`, `dgram`, `dns` and `inspector` for both `require` and `import`, and the runtime deletes `fetch`, `WebSocket` and `EventSource`. `--permission` already refuses `process.binding`. This is a runtime rule, not an OS boundary.
+- File reads follow symlinks inside the read roots. That adds no authority: the same files are readable through the harness's own read tools, and the run file is readable by the same OS user anyway ([threat model](fleet-connections.md#4-per-run-tokens)).
+- The host needs Node 22.15 or later for that module hook. Without it, the launch fails with `code-mode-unready: node ...`. Not built: Node on PDS18, which has none today.
 
 ## Unknown outcomes
 
@@ -123,4 +125,4 @@ Run from `go/`:
 go test ./executor -run CodeMode
 ```
 
-The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes and commands, a restarted runtime, and the launch servers for `add` and `only`. The tests skip when `node` is missing.
+The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes and commands, refused network modules, a restarted runtime, and the launch servers for `add` and `only`. The runtime tests skip when the host has no Node 22.15 or later.

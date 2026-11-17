@@ -427,6 +427,21 @@ func mcpValue(r any) (any, M) {
 	return v, nil
 }
 
+// codeNode finds the host's Node for the runtime: 22.15 or later, for module.registerHooks (the network refusal).
+var codeNode = func() (string, error) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		return "", errors.New("code-mode-unready: node is not installed")
+	}
+	out, err := exec.Command(node, "--version").Output()
+	v := strings.TrimSpace(string(out))
+	var major, minor int
+	if _, scanErr := fmt.Sscanf(v, "v%d.%d", &major, &minor); err != nil || scanErr != nil || major < 22 || major == 22 && minor < 15 {
+		return "", fmt.Errorf("code-mode-unready: node %s, needs 22.15 or later", v)
+	}
+	return node, nil
+}
+
 // addCodeServer adds the `code` server to a launch's servers; mode `only` removes the fleet and connection servers it
 // bridges. A Claude profile without Read, Grep, Glob or Bash gets no file reads in the runtime.
 func addCodeServer(servers M, mode, harness string, profile any, journal string, fleetContext any, granted []any, gatewayConns map[string]bool, runFile string, read []string) error {
@@ -447,9 +462,11 @@ func addCodeServer(servers M, mode, harness string, profile any, journal string,
 		return errors.New("MCP server name collides with the code server")
 	}
 	spec["connections"] = conns
-	if node, err := exec.LookPath("node"); err == nil {
-		spec["node"] = node
+	node, err := codeNode()
+	if err != nil {
+		return err
 	}
+	spec["node"] = node
 	native, _ := claudeNativeTools(profile)
 	if harness != "claude" || slices.ContainsFunc(native, func(t string) bool { return t == "Read" || t == "Grep" || t == "Glob" || t == "Bash" }) {
 		for _, r := range read {

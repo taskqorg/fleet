@@ -2,10 +2,10 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -23,8 +23,8 @@ type codeClient struct {
 
 func newCodeClient(t *testing.T, spec M) *codeClient {
 	t.Helper()
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("node is not installed")
+	if _, err := codeNode(); err != nil {
+		t.Skip(err.Error())
 	}
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
@@ -157,7 +157,7 @@ func TestCodeModeDetachAndPoll(t *testing.T) {
 	}
 }
 
-// Risk: code writes or runs commands outside the harness sandbox, so code mode adds authority
+// Risk: code writes, runs commands or opens the network outside the harness sandbox, so code mode adds authority
 // (fleet-code-mode.md, authority).
 func TestCodeModePermissions(t *testing.T) {
 	dir := t.TempDir()
@@ -166,9 +166,14 @@ func TestCodeModePermissions(t *testing.T) {
 		try { fs.writeFileSync(` + enc(filepath.Join(dir, "x")) + `, "1"); out.write = "allowed" } catch (e) { out.write = e.code }
 		try { require("node:child_process").execSync("true"); out.exec = "allowed" } catch (e) { out.exec = e.code }
 		out.read = fs.readdirSync(` + enc(dir) + `).length
+		for (const m of ["node:net", "http", "node:dns"]) try { require(m); out[m] = "allowed" } catch (e) { out[m] = e.code }
+		try { await import("node:https"); out.import = "allowed" } catch (e) { out.import = e.code }
+		out.fetch = typeof fetch
+		try { process.binding("tcp_wrap"); out.binding = "allowed" } catch (e) { out.binding = e.code }
 		return out`
 	r, bad := c.code(src)
-	if bad || enc(r["value"]) != `{"exec":"ERR_ACCESS_DENIED","read":0,"write":"ERR_ACCESS_DENIED"}` {
+	const denied = `"ERR_ACCESS_DENIED"`
+	if bad || enc(r["value"]) != `{"binding":`+denied+`,"exec":`+denied+`,"fetch":"undefined","http":`+denied+`,"import":`+denied+`,"node:dns":`+denied+`,"node:net":`+denied+`,"read":0,"write":`+denied+`}` {
 		t.Fatalf("permissions: %v %v", bad, r)
 	}
 }
@@ -217,6 +222,9 @@ func TestCodeModeFleetResults(t *testing.T) {
 // Risk: `only` leaves the direct servers, a read-restricted Claude profile reads files through code, or code mode starts
 // with nothing to bridge (fleet-code-mode.md, profile setting).
 func TestCodeModeLaunchServers(t *testing.T) {
+	old := codeNode
+	defer func() { codeNode = old }()
+	codeNode = func() (string, error) { return "/node", nil }
 	granted := []any{M{"name": "web", "tools": []any{M{"name": "search"}}}}
 	launch := func(mode, harness string, profile M, journal string) (M, M, error) {
 		servers := M{"fleet": M{}, "web": M{}, "serena": M{}}
@@ -244,5 +252,9 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	granted = nil
 	if _, _, err := launch("add", "codex", M{}, ""); err == nil || err.Error() != "codeMode needs Fleet tools or a connection" {
 		t.Fatalf("empty: %v", err)
+	}
+	codeNode = func() (string, error) { return "", errors.New("code-mode-unready: node is not installed") }
+	if _, _, err := launch("add", "codex", M{}, "/journal"); err == nil || !strings.HasPrefix(err.Error(), "code-mode-unready") {
+		t.Fatalf("no node: %v", err)
 	}
 }
