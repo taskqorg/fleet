@@ -131,8 +131,9 @@ export function versionInfo(now = Date.now()): VersionInfo {
         tone: stale ? 'attention' : g.state === 'ok' ? 'success' : g.state === 'draining' || g.state === 'pending' ? 'attention' : 'danger' });
     }
     for (const h of v.hosts) {
-      const { seen, ...s } = hostState(h, serverNow, v.staleAfterMs);
-      rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...s, times: seen !== undefined ? at('last seen', seen) : undefined });
+      const { seen, failingSince, ...s } = hostState(h, serverNow, v.staleAfterMs);
+      const times = [...seen !== undefined ? at('last seen', seen) : [], ...failingSince !== undefined ? at('failing since', failingSince) : []];
+      rows.push({ key: 'host:' + h.id, part: h.id, icon: 'terminal', version: h.version, ...s, times: times.length ? times : undefined });
     }
   }
   if (v && (versionError.value || versionObservedAt.value === null || now - versionObservedAt.value > 300_000)) {
@@ -147,8 +148,12 @@ export function versionInfo(now = Date.now()): VersionInfo {
   return { current: v?.coordinator.version ?? null, tone: RANK[worst] > 0 ? worst : 'neutral', summary: n ? `${n} ${n === 1 ? 'part needs' : 'parts need'} a look` : undefined, updateReady: updateChecked.value && updateReady.value, updating: updating.value, onUpdate: applyUpdate, rows, at: versionInfo, onOpen: () => { void loadVersions(); void checkUpdate(); } };
 }
 
-export function hostState(h: Versions['hosts'][number], now: number, staleMs: number): { state: string; tone: Tone; note?: string; seen?: number } {
+export function hostState(h: Versions['hosts'][number], now: number, staleMs: number): { state: string; tone: Tone; note?: string; seen?: number; failingSince?: number } {
   const offline = h.lastSeenAt === null || now - h.lastSeenAt > staleMs, seen = offline && h.lastSeenAt !== null ? h.lastSeenAt : undefined;
+  // The coordinator answers this host's polls with an error (go/coordinator/host_poll_health.go): it gets no commands and
+  // no update target while lastSeenAt still moves. The note is the reason code, never the message.
+  const pe = h.pollError;
+  if (pe) return { state: `${offline ? 'offline; ' : ''}polls failing`, tone: 'danger', seen, failingSince: pe.since, note: `${pe.reason} (${pe.status})` };
   const u = (h.update ?? null) as { state?: string; version?: string; error?: string } | null;
   // A failed update stops mattering once the host runs that release or a newer one another way.
   const stale = olderThan(h.version, u?.version) === false;

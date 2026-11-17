@@ -33,8 +33,12 @@ func systemVersions(q *Request) (any, error) {
 	hosts := []doc{}
 	for _, h := range list["hosts"].([]doc) {
 		v, _ := h["version"].(string)
-		hosts = append(hosts, doc{"id": h["id"], "version": h["version"], "autoUpdate": h["autoUpdate"], "update": h["update"], "lastSeenAt": h["lastSeenAt"],
-			"behind": versionBehindTarget(v, target)})
+		row := doc{"id": h["id"], "version": h["version"], "autoUpdate": h["autoUpdate"], "update": h["update"], "lastSeenAt": h["lastSeenAt"],
+			"behind": versionBehindTarget(v, target)}
+		if h["pollError"] != nil {
+			row["pollError"] = h["pollError"]
+		}
+		hosts = append(hosts, row)
 	}
 	coord := doc{"version": version, "started": coordinatorStarted.Format(time.RFC3339)}
 	if p := ownRelease().Previous; p != "" {
