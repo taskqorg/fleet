@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -36,6 +37,7 @@ type hostHeartbeat struct {
 	pollClean    bool
 	pollProblem  bool
 	pollFailures uint64
+	pollRecorded *pollRecord // the failure last written, so a repeat within a minute needs no transaction
 }
 
 type hostWakeEntry struct {
@@ -325,10 +327,10 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 					return err
 				}
 				if outcome == pollRetriesCommand {
-					log.Printf("host %s command %s waits: %v", host, astr(c["id"]), err)
-					// It stays pending for the next poll. A failure that keeps coming is a bug: one Bugsink event per
-					// command and error (its issue reaches Needs you), not one per poll.
-					if _, seen := pollCommandErrors.LoadOrStore(astr(c["id"])+"\x00"+err.Error(), true); !seen {
+					// It stays pending for the next poll. A failure that keeps coming is a bug: one log line and one
+					// Bugsink event (its issue reaches Needs you) per command and error class, not one per poll.
+					if pollCommandWaits.note(astr(c["id"]), errorClass(err)) {
+						log.Printf("host %s command %s waits: %v", host, astr(c["id"]), err)
 						cerr, kind := err, astr(c["kind"])
 						onEnd(wq.tx, func(bool) {
 							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
@@ -336,6 +338,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 					}
 					continue
 				}
+				pollCommandWaits.forget(astr(c["id"]))
 				if err := a.refusePollCommand(wq, c, reason); err != nil {
 					return err
 				}
@@ -353,6 +356,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			if err := exec(wq, "RELEASE SAVEPOINT poll_command"); err != nil {
 				return err
 			}
+			pollCommandWaits.forget(astr(c["id"])) // prepared: no longer waiting on an error
 			if fresh != nil {
 				out = append(out, fresh)
 			}
@@ -423,8 +427,56 @@ func pollCommandRefusal(err error) (string, pollCommandOutcome) {
 	return "", pollRetriesCommand
 }
 
-// pollCommandErrors: the (command, error) pairs already sent to Bugsink by this process.
-var pollCommandErrors sync.Map
+// commandWaits: the error class each waiting command was last reported with (pollCommandWaits), so a command that keeps
+// failing is logged and sent to Bugsink once per class, not once per poll. An entry goes when its command prepares or
+// is stopped; the map holds at most commandWaitsCap entries (when full it starts over, which only repeats reports).
+type commandWaits struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+const commandWaitsCap = 4096
+
+var pollCommandWaits = &commandWaits{m: map[string]string{}}
+
+// note records that command id waits on class; true when that is new (report it).
+func (w *commandWaits) note(id, class string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.m[id] == class {
+		return false
+	}
+	if _, ok := w.m[id]; !ok && len(w.m) >= commandWaitsCap {
+		w.m = map[string]string{}
+	}
+	w.m[id] = class
+	return true
+}
+
+func (w *commandWaits) forget(id string) {
+	w.mu.Lock()
+	delete(w.m, id)
+	w.mu.Unlock()
+}
+
+func (w *commandWaits) size() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.m)
+}
+
+// errorClass: a stable class of err (its HTTP status and reason code, or its SQLSTATE), never its text.
+func errorClass(err error) string {
+	var he *HTTPError
+	if errors.As(err, &he) {
+		r, _ := he.extraReason()
+		return fmt.Sprintf("http_%d:%s", he.Code, r)
+	}
+	if code := pgCode(err); code != "" {
+		return "sqlstate_" + code
+	}
+	return fmt.Sprintf("go_%T", errors.Unwrap(err))
+}
 
 type pollCommandOutcome int
 
@@ -464,7 +516,8 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	if d := mapOf(pipelinePlanEntry(run, index)["dispatch"]); d["phase"] != "prepared" || d["commandId"] != c["id"] {
 		return nil
 	}
-	e["state"], e["stopDetail"] = "cancelled", reason
+	now := nowMs()
+	e["state"], e["stopDetail"], e["finishedAt"], e["updatedAt"] = "cancelled", reason, now, now
 	delete(e, "waitReason")
 	delete(e, "waitDetail")
 	if err := put(wq, "execution", e); err != nil {
@@ -477,7 +530,9 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 // with) is recorded here, and the next success clears it (host_poll_health.go).
 func (a *App) poll(q *Request) (any, error) {
 	out, err := a.pollOnce(q)
-	if host := hostOf(q); err != nil {
+	if host := hostOf(q); err != nil && q.ctx().Err() != nil {
+		// The host left (a restart mid long-poll): whatever error that surfaced as, it is not a failure to record.
+	} else if err != nil {
 		a.notePollFailure(q.ctx(), host, q.host["holder"], err)
 	} else {
 		a.notePollSuccess(q.ctx(), host)

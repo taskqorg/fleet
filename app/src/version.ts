@@ -151,10 +151,10 @@ export function versionInfo(now = Date.now()): VersionInfo {
 export function hostState(h: Versions['hosts'][number], now: number, staleMs: number): { state: string; tone: Tone; note?: string; seen?: number; failingSince?: number } {
   const offline = h.lastSeenAt === null || now - h.lastSeenAt > staleMs, seen = offline && h.lastSeenAt !== null ? h.lastSeenAt : undefined;
   // The coordinator answers this host's polls with an error (go/coordinator/host_poll_health.go): it gets no commands and
-  // no update target while lastSeenAt still moves (the server sends it only while the host polls). The note is the
-  // reason code, never the message.
+  // no update target while lastSeenAt still moves (the server sends it only while the host polls; an aged snapshot of a
+  // host gone since shows offline). The note is the reason code, never the message.
   const pe = h.pollError;
-  if (pe) return { state: 'polls failing', tone: 'danger', failingSince: pe.since, note: `${pe.reason} (${pe.status})` };
+  if (pe && !offline) return { state: 'polls failing', tone: 'danger', failingSince: pe.since, note: `${pe.reason} (${pe.status})` };
   const u = (h.update ?? null) as { state?: string; version?: string; error?: string } | null;
   // A failed update stops mattering once the host runs that release or a newer one another way.
   const stale = olderThan(h.version, u?.version) === false;

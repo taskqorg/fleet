@@ -25,6 +25,7 @@ test('unknown comparisons preserve failed and pending updates', () => {
   assert.equal(v.hostState({ ...host, version: '1.261115.6', behind: false, update: { state: 'error', version: '1.261115.5' } }, 10, 100).state, 'current');
   const failing = v.hostState({ ...host, version: '1.261115.6', behind: false, pollError: { status: 409, reason: 'pipeline_format_unsupported', message: 'Unsupported pipeline run format', since: 4 } }, 10, 100);
   assert.deepEqual(failing, { state: 'polls failing', tone: 'danger', failingSince: 4, note: 'pipeline_format_unsupported (409)' }, 'a host whose polls fail is danger with its reason code and first-failure time, never the message');
+  assert.equal(v.hostState({ ...host, lastSeenAt: 1, pollError: { status: 409, reason: 'pipeline_format_unsupported', message: 'x', since: 1 } }, 500, 100).state, 'offline', 'a snapshot aged past staleness shows the host offline, not its old failure');
 });
 
 test('failed refresh retains a timestamped snapshot with unknown status', () => {

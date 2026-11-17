@@ -137,6 +137,29 @@ func TestPollCommandRefusal(t *testing.T) {
 	}
 }
 
+// Requirement: a waiting command is reported once per error class, its entry goes when it prepares or stops, and the
+// map is bounded. Risk: error text with ids or times grows the dedup map without bound and floods Bugsink.
+func TestCommandWaitsBoundAndCleanup(t *testing.T) {
+	w := &commandWaits{m: map[string]string{}}
+	a, b := fail(409, "Pipeline plan changed at revision 7"), fail(409, "Pipeline plan changed at revision 8")
+	if !w.note("c1", errorClass(a)) || w.note("c1", errorClass(b)) {
+		t.Fatal("the same status reported twice for varying text, or a new wait not reported")
+	}
+	if !w.note("c1", errorClass(&pgconn.PgError{Code: "55P03", Message: "lock at 12:00"})) {
+		t.Fatal("a new error class was not reported")
+	}
+	w.forget("c1")
+	if w.size() != 0 || !w.note("c1", errorClass(a)) {
+		t.Fatal("a prepared command's entry stayed")
+	}
+	for i := 0; i < commandWaitsCap*2; i++ {
+		w.note(fmt.Sprint("x", i), errorClass(a))
+	}
+	if n := w.size(); n > commandWaitsCap {
+		t.Fatalf("map holds %d entries, cap %d", n, commandWaitsCap)
+	}
+}
+
 func TestPollFailureOf(t *testing.T) {
 	f, ok := pollFailureOf(&HTTPError{Code: 409, Msg: "Unsupported", Extra: doc{"reason": "pipeline_format_unsupported"}})
 	if !ok || f.status != 409 || f.reason != "pipeline_format_unsupported" || !internalPollError(f) {
@@ -269,6 +292,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	env.app.clearHostCache("sick-host") // the coordinator's memory of its last write is gone too (a restart)
 	env.app.notePollFailure(env.ctx, "sick-host", testOwnerEmail, failure)
 	if pe := pollError("hosts_list"); pe == nil || num(pe["since"]) <= old {
 		t.Fatalf("an old run's first failure was kept: %v", pe)

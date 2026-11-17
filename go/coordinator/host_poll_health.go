@@ -93,12 +93,21 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	}
 	ctx = context.WithoutCancel(ctx)
 	a.ensureRuntime()
+	now := nowMs()
 	a.pollMu.Lock()
 	hb := a.heartbeatOf(host)
 	hb.pollClean = false
 	hb.pollFailures = pollFailureSeq.Add(1)
+	// The same failure recorded under a minute ago: nothing to write, no transaction (a host retries every few seconds).
+	last := hb.pollRecorded
+	same := last != nil && last.status == f.status && last.reason == f.reason && last.message == f.message && float64(now)-last.at < hostPollAtEveryMs
 	a.pollMu.Unlock()
-	now := nowMs()
+	if same {
+		if float64(now)-last.since >= hostPollProblemAfterMs {
+			a.openPollProblem(ctx, host, f.reason)
+		}
+		return
+	}
 	var since float64
 	var changed bool
 	werr := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
@@ -107,7 +116,7 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 			return err
 		}
 		if o == nil {
-			o = doc{"id": host, "holder": holder}
+			return nil // never observed: no observation is made up for it (its existence means an observed host)
 		}
 		prev := mapOf(o["pollError"])
 		// A run of failures continues while they keep coming; a record left by a host that stopped polling while it
@@ -123,6 +132,11 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 		o["pollError"] = doc{"status": f.status, "reason": f.reason, "message": f.message, "since": since, "at": float64(now)}
 		return put(wq, "host-observation", o)
 	})
+	if werr == nil {
+		a.pollMu.Lock()
+		a.heartbeatOf(host).pollRecorded = &pollRecord{f, since, float64(now)}
+		a.pollMu.Unlock()
+	}
 	if werr != nil {
 		log.Printf("host %s poll failure not recorded: %v", host, werr)
 	}
@@ -133,13 +147,24 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	if werr != nil || float64(now)-since < hostPollProblemAfterMs {
 		return
 	}
+	a.openPollProblem(ctx, host, f.reason)
+}
+
+// pollRecord: the failure last written for a host (hostHeartbeat.pollRecorded).
+type pollRecord struct {
+	pollFailure
+	since, at float64
+}
+
+// openPollProblem opens the host's poll problem once, naming the reason of the failure that reached the threshold.
+func (a *App) openPollProblem(ctx context.Context, host, reason string) {
 	a.pollMu.Lock()
 	opened := a.heartbeatOf(host).pollProblem
 	a.pollMu.Unlock()
 	if opened {
 		return
 	}
-	text := fmt.Sprintf("Host %s: its polls fail with %s, so it gets no commands and no update target.", host, f.reason)
+	text := fmt.Sprintf("Host %s: its polls fail with %s, so it gets no commands and no update target.", host, reason)
 	// Under GLOBAL and the host's lock: a success clears under the host's lock, so the problem opens only while the
 	// record it describes is still there, and a success after it closes it. The flag is set only for a problem held.
 	held := false
@@ -154,7 +179,7 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 			return err
 		}
 		held = true
-		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: doc{"hostId": host, "reason": f.reason}})
+		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: doc{"hostId": host, "reason": reason}})
 	}); err != nil {
 		log.Printf("host %s poll problem: %v", host, err)
 		return
@@ -206,7 +231,7 @@ func (a *App) notePollSuccess(ctx context.Context, host string) {
 	}
 	a.pollMu.Lock()
 	if hb = a.heartbeatOf(host); hb.pollFailures == gen { // no failure recorded meanwhile
-		hb.pollClean, hb.pollProblem = true, false
+		hb.pollClean, hb.pollProblem, hb.pollRecorded = true, false, nil
 	}
 	a.pollMu.Unlock()
 }

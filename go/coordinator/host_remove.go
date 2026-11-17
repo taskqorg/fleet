@@ -79,7 +79,8 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 		}
 	}
 	// A removed host polls no more: its poll-failure problem goes with it (host_poll_health.go).
-	if err := problemClose(q, hostPollCause(b.Id)); err != nil {
+	// Unscoped: a holder removing their own host cannot see the owner's question under row-level security.
+	if _, err := unscoped(q, func() (struct{}, error) { return struct{}{}, problemClose(q, hostPollCause(b.Id)) }); err != nil {
 		return none, err
 	}
 	// Commands the host will never fetch (teardown, readiness, stops of finished runs) are settled.
