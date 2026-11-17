@@ -138,8 +138,7 @@ func navList(v map[string]any, states []string, s navScope) doc {
 
 // navSessionBase: the sessions as sessionBase gives them to sessionWhere without a search (id, code, data, project and
 // the state of the latest execution).
-const navSessionBase = `WITH x AS (SELECT d.id, d.code, d.data, d.project_id,
- coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state
+const navSessionBase = `WITH x AS (SELECT d.id, d.code, d.data, d.project_id, ` + sessionState + ` AS state
  FROM document d WHERE d.kind='session')`
 
 func splitCount(q *Request, sql string, p []any) (int64, int64, error) {

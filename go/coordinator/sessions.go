@@ -18,6 +18,9 @@ var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeed
 // Correlating these document scans per session makes retained history multiply the list's work.
 // activity_at: the latest change of the session, its messages and events, or the start or end of its executions (the
 // default sort). Not execution.updated_at: host receipts touch it on every observation, which is not conversation activity.
+// sessionState: a session's state, its latest execution's (idle without one); nav_counts.go navSessionBase shares it.
+const sessionState = `coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle')`
+
 const sessionBase = `WITH session_messages AS MATERIALIZED (
  SELECT DISTINCT ON (data->>'sessionId') data->>'sessionId' AS session_id, data->>'text' AS first_message
  FROM document WHERE kind='message' ORDER BY data->>'sessionId',seq
@@ -25,7 +28,7 @@ const sessionBase = `WITH session_messages AS MATERIALIZED (
  SELECT data->>'sessionId' AS session_id,max(updated_at) AS last_at
  FROM document WHERE kind IN ('message','event') GROUP BY data->>'sessionId'
 ), x AS (SELECT d.id, d.code, d.data, d.project_id, d.seq,
- coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
+ ` + sessionState + ` AS state,
  (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
  m.first_message,
  greatest(d.updated_at,ex.last_at,a.last_at) AS activity_at,
