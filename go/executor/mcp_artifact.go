@@ -97,18 +97,21 @@ func pathParts(path string) []string {
 
 // insideParts: an absolute path's components below the working area; nil when no leading part of it is the working
 // area's directory. The leading part may spell the area any way that reaches the same directory (a root through a link,
-// such as /var and /private/var on macOS, either way round; the configured and resolved spellings are compared first,
+// such as /var and /private/var on macOS, either way round; the configured, then the resolved spelling is compared first,
 // other prefixes are compared by directory identity); the components below it are still opened one by one
 // without following a link.
 func insideParts(workdir string, parts []string) []string {
-	spellings := []string{filepath.Clean(workdir)} // the usual spellings first, without touching the filesystem
-	if r, err := filepath.EvalSymlinks(workdir); err == nil {
-		spellings = append(spellings, r)
-	}
-	for _, w := range spellings {
+	below := func(w string) []string { // parts below the spelling w of the working area, or nil
 		if wp := pathParts(w); len(wp) > 0 && len(parts) > len(wp) && slices.Equal(parts[:len(wp)], wp) {
 			return parts[len(wp):]
 		}
+		return nil
+	}
+	if p := below(filepath.Clean(workdir)); p != nil { // as configured: no filesystem call
+		return p
+	}
+	if r, err := filepath.EvalSymlinks(workdir); err == nil && below(r) != nil {
+		return below(r)
 	}
 	root, err := os.Stat(workdir)
 	if err != nil {
@@ -145,7 +148,7 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 	}
 	f, err := openInside(workdir, parts)
 	if err != nil && rooted {
-		return nil, refusal("path must be relative to your working area " + workdir + " or absolute inside it, not a link")
+		return nil, refusal("path must be a regular file inside your working area " + workdir + " (relative, or absolute through it), not a link")
 	}
 	if err != nil {
 		return nil, err
@@ -242,7 +245,10 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 					return mcpText(M{"error": "artifact tool refused: " + k + " must be text"}, &yes), nil
 				}
 			}
-			scope := jAt(q, "scope")
+			var scope any
+			if s := jStr(q, "scope"); s != "" { // empty is absent, as for the filters
+				scope = s
+			}
 			if scope != nil && scope != "execution" && scope != "project" {
 				return mcpText(M{"error": `artifact tool refused: scope must be "execution" or "project"`}, &yes), nil
 			}
