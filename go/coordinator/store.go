@@ -39,6 +39,10 @@ type Scope struct{ ProjectIDs, Person string }
 // fleet.actor from it, which fleet_change() records as change.actor (docs/designs/fleet-pm-agent.md §1).
 type actorKey struct{}
 
+// showDeletedKey: the context value of a host's own call (true); its transactions set fleet.deleted=on, so the stop,
+// teardown and receipts of deleted work still land (migration 67). An agent acting for its director clears it.
+type showDeletedKey struct{}
+
 // Canonical advisory-lock hierarchy. Within any transaction, requested locks are sorted and deduplicated by (rank, key),
 // and dynamic lock acquisition rejects any lock ordered before or equal to a lock already held in the transaction:
 //
@@ -350,6 +354,11 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, sortedLocks []s
 		}
 		if sc != nil {
 			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)", sc.ProjectIDs, sc.Person); err != nil {
+				return err
+			}
+		}
+		if show, _ := ctx.Value(showDeletedKey{}).(bool); show {
+			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.deleted','on',true)"); err != nil {
 				return err
 			}
 		}

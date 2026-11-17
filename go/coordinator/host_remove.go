@@ -1,7 +1,7 @@
 // Host remove and purge (docs/designs/fleet-system-management.md, Hosts; Archive, delete, purge). A removed host keeps
 // its record as a tombstone (state removed) so history stays attributable; its secret hash moves to removedSecretHash
-// so a poll with the old secret is answered 410 host-removed and the executor stops. system_purge deletes a removed
-// host's record once nothing references it.
+// so a poll with the old secret is answered 410 host-removed and the executor stops. system_purge (cleanup.go) deletes a
+// removed host's record once nothing references it.
 package main
 
 import (
@@ -12,7 +12,6 @@ import (
 
 func init() {
 	operation("hosts_remove", false, typedOp(hostsRemove))
-	operation("system_purge", false, ownerFirst("Only the owner purges", typedOp(systemPurge)))
 }
 
 func hostRemoved(h doc) bool { return astr(h["state"]) == "removed" }
@@ -132,32 +131,27 @@ func purgeableHosts(q *Request) (gone, kept []string, err error) {
 	return gone, kept, nil
 }
 
-func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPurgeReply, error) {
-	out := contract.SystemPurgeReply{Removed: []contract.PurgeCount{}, Kept: []contract.PurgeCount{}}
-	for _, k := range b.Kinds {
-		if k != contract.PurgeKindHost {
-			return out, fail(400, "kinds: host")
-		}
-	}
-	gone, kept, err := purgeableHosts(q)
+// purgeHosts: the host part of system_purge, in the caller's transaction.
+func purgeHosts(q *Request, preview bool) (removed, kept contract.PurgeCount, err error) {
+	gone, held, err := purgeableHosts(q)
 	if err != nil {
-		return out, err
+		return removed, kept, err
 	}
-	out.Removed = append(out.Removed, contract.PurgeCount{Kind: contract.PurgeKindHost, Count: int64(len(gone)), Ids: nonNilStrs(gone)})
-	out.Kept = append(out.Kept, contract.PurgeCount{Kind: contract.PurgeKindHost, Count: int64(len(kept)), Ids: nonNilStrs(kept)})
-	if b.Preview || len(gone) == 0 {
-		return out, nil
+	removed = contract.PurgeCount{Kind: contract.PurgeKindHost, Count: int64(len(gone)), Ids: nonNilStrs(gone)}
+	kept = contract.PurgeCount{Kind: contract.PurgeKindHost, Count: int64(len(held)), Ids: nonNilStrs(held)}
+	if preview || len(gone) == 0 {
+		return removed, kept, nil
 	}
 	for _, id := range gone {
 		// Only deleted copies (the ones hosts_remove dropped) still name these stores; they go with them.
 		if err := exec(q, "DELETE FROM artifact_copy WHERE state='deleted' AND store_id IN (SELECT id FROM store WHERE host_id=$1)", id); err != nil {
-			return out, err
+			return removed, kept, err
 		}
 		if err := exec(q, "DELETE FROM store WHERE host_id=$1", id); err != nil {
-			return out, err
+			return removed, kept, err
 		}
 		if err := exec(q, "DELETE FROM document WHERE (kind='host' AND id='host:'||$1) OR (kind='host-observation' AND id=$1)", id); err != nil {
-			return out, err
+			return removed, kept, err
 		}
 		hid := id
 		onEnd(q.tx, func(committed bool) {
@@ -166,11 +160,8 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 			}
 		})
 	}
-	if err := put(q, "setting-change", doc{"id": newID(), "target": "system", "field": "purge", "value": doc{"host": gone}, "actor": q.person.Email, "at": nowMs()}); err != nil {
-		return out, err
-	}
-	out.Purged = true
-	return out, nil
+	err = put(q, "setting-change", doc{"id": newID(), "target": "system", "field": "purge", "value": doc{"host": gone}, "actor": actor(q, "operator"), "at": nowMs()})
+	return removed, kept, err
 }
 
 func nonNilStrs(s []string) []string {

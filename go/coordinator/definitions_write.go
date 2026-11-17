@@ -358,7 +358,7 @@ func appendRevision(q *Request, kind, id string, head int64, text, repoBase *str
 	}
 	// A save decides a definition whose file is gone: it is the store's own from now (store-only, exportable), and a
 	// retired one is back.
-	if err := exec(q, "UPDATE definition SET head=$3,retired_at=NULL,ever_shipped=ever_shipped AND repo_sha IS NOT NULL WHERE kind=$1 AND id=$2", kind, id, n); err != nil {
+	if err := exec(q, "UPDATE definition SET head=$3,retired_at=CASE WHEN deleted_at IS NULL THEN NULL ELSE retired_at END,ever_shipped=ever_shipped AND repo_sha IS NOT NULL WHERE kind=$1 AND id=$2", kind, id, n); err != nil {
 		return contract.Revision{}, err
 	}
 	if source == "lab" { // a Lab promote is not the saver's draft: leave their draft as it is

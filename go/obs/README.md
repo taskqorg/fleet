@@ -10,7 +10,7 @@
 - `Span.Set`, `Fail`, and `End` record attributes, error class, timing, and completion.
 - `Handler` and `Transport` wrap HTTP server and client paths. `Recorder` captures response status and access-refusal state; `MarkRefused` marks an access refusal.
 - `SetFailHook` receives a recovered panic of `Handler` or `Pass` (before it is re-raised) and a failed `Pass`, with the span name; `errtrack` sets it.
-- `ClickHouse` migrates, inserts, and queries over HTTP. `Writer` buffers spans, exposes dropped count, and flushes in `Run`.
+- `ClickHouse` migrates, inserts, queries and runs row-less statements (`Exec`, the purge's lightweight `DELETE`) over HTTP. `Writer` buffers spans, exposes dropped count, and flushes in `Run`.
 
 ## Invariants
 
@@ -22,7 +22,7 @@
 
 - `SetSink` invokes a process-wide span sink when spans end; `SetFailHook` a process-wide failure hook ([obs.go](obs.go)).
 - HTTP wrappers add trace headers and record response results ([obs.go](obs.go)).
-- `ClickHouse` sends HTTP migrations, inserts, and queries; `Writer.Run` flushes buffered spans until its context ends ([clickhouse.go](clickhouse.go)).
+- `ClickHouse` sends HTTP migrations, inserts, queries and deletes; `Writer.Run` flushes buffered spans until its context ends ([clickhouse.go](clickhouse.go)).
 
 ## Verification
 

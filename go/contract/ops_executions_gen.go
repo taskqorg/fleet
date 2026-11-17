@@ -66,6 +66,27 @@ func (v *CoordinatorVersion) Validate() error {
 	return nil
 }
 
+// DeleteKind: Kinds object_delete deletes.
+type DeleteKind string
+
+const (
+	DeleteKindProject    DeleteKind = "project"
+	DeleteKindExperiment DeleteKind = "experiment"
+)
+
+// DeleteKindValues lists every DeleteKind in schema order.
+var DeleteKindValues = []DeleteKind{DeleteKindProject, DeleteKindExperiment}
+
+// Valid: v is one of the schema's values.
+func (v DeleteKind) Valid() bool {
+	for _, x := range DeleteKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // DeliveryBaseline: P50/P90 over a window (nearest rank); a named one is a stored snapshot.
 type DeliveryBaseline struct {
 	At          *string        `json:"at,omitempty"`
@@ -1176,6 +1197,89 @@ func (v *HostsUpdateRequest) Validate() error {
 	return nil
 }
 
+// KindCount: bytes: stored bytes (artifacts only).
+type KindCount struct {
+	Bytes *int64     `json:"bytes,omitempty"`
+	Count int64      `json:"count"`
+	Kind  ObjectKind `json:"kind"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *KindCount) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ObjectDeleteReply: affected: per kind, what goes with the object, the object itself included (artifacts with their stored bytes). running: executions not finished, which the confirm stops. teardowns: worktree teardowns the confirm sent.
+type ObjectDeleteReply struct {
+	Affected  []KindCount `json:"affected"`
+	Deleted   bool        `json:"deleted"`
+	Id        string      `json:"id"`
+	Kind      DeleteKind  `json:"kind"`
+	Running   int64       `json:"running"`
+	Teardowns int64       `json:"teardowns"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ObjectDeleteReply) Validate() error {
+	if v.Affected == nil {
+		return Missing("affected")
+	}
+	for i := range v.Affected {
+		if err := Check(&v.Affected[i], "affected"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ObjectDeleteRequest: Owner only (fleet-system-management.md, Archive, delete, purge). preview true changes nothing and returns what goes with the object. false tombstones it with its tasks, executions (and their child runs), sessions, experiments, questions and artifacts: running work is stopped (pipeline runs cancelled, agent runs stopped with stopDetail deleted), run tokens revoked, open questions withdrawn, worktrees of its sessions get a teardown; a project's connections no other project uses are removed as project_archive does. Deleted objects leave every list, detail, search, queue, dispatch and analytics read; system_purge removes their rows later.
+type ObjectDeleteRequest struct {
+	Id      string     `json:"id"`
+	Kind    DeleteKind `json:"kind"`
+	Preview bool       `json:"preview"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ObjectDeleteRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ObjectKind: The object kinds of the reference map (fleet-system-management.md, Archive, delete, purge).
+type ObjectKind string
+
+const (
+	ObjectKindHost       ObjectKind = "host"
+	ObjectKindProject    ObjectKind = "project"
+	ObjectKindTask       ObjectKind = "task"
+	ObjectKindExecution  ObjectKind = "execution"
+	ObjectKindSession    ObjectKind = "session"
+	ObjectKindExperiment ObjectKind = "experiment"
+	ObjectKindQuestion   ObjectKind = "question"
+	ObjectKindArtifact   ObjectKind = "artifact"
+)
+
+// ObjectKindValues lists every ObjectKind in schema order.
+var ObjectKindValues = []ObjectKind{ObjectKindHost, ObjectKindProject, ObjectKindTask, ObjectKindExecution, ObjectKindSession, ObjectKindExperiment, ObjectKindQuestion, ObjectKindArtifact}
+
+// Valid: v is one of the schema's values.
+func (v ObjectKind) Valid() bool {
+	for _, x := range ObjectKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type PipelineActivation string
 
 const (
@@ -1928,7 +2032,9 @@ func (v *PipelineRunRequest) Validate() error {
 	return nil
 }
 
+// PurgeCount: bytes: stored artifact bytes of the objects (project and experiment).
 type PurgeCount struct {
+	Bytes *int64    `json:"bytes,omitempty"`
 	Count int64     `json:"count"`
 	Ids   []string  `json:"ids"`
 	Kind  PurgeKind `json:"kind"`
@@ -1945,15 +2051,17 @@ func (v *PurgeCount) Validate() error {
 	return nil
 }
 
-// PurgeKind: Kinds system_purge removes; the other object kinds of fleet-system-management.md join with their delete operations.
+// PurgeKind: Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects and experiments deleted by object_delete.
 type PurgeKind string
 
 const (
-	PurgeKindHost PurgeKind = "host"
+	PurgeKindHost       PurgeKind = "host"
+	PurgeKindProject    PurgeKind = "project"
+	PurgeKindExperiment PurgeKind = "experiment"
 )
 
 // PurgeKindValues lists every PurgeKind in schema order.
-var PurgeKindValues = []PurgeKind{PurgeKindHost}
+var PurgeKindValues = []PurgeKind{PurgeKindHost, PurgeKindProject, PurgeKindExperiment}
 
 // Valid: v is one of the schema's values.
 func (v PurgeKind) Valid() bool {
@@ -2146,11 +2254,13 @@ func (v *StopOutcome) Validate() error {
 	return nil
 }
 
-// SystemPurgeReply: kept: tombstoned rows still referenced by history; they stay.
+// SystemPurgeReply: removed and kept: one entry per requested kind, host first; kept are tombstoned objects a live row still references, they stay. rows: what goes with the removed projects and experiments, per kind. retryLater: store object and span deletions not done yet; the next purge retries them.
 type SystemPurgeReply struct {
-	Kept    []PurgeCount `json:"kept,omitempty"`
-	Purged  bool         `json:"purged"`
-	Removed []PurgeCount `json:"removed"`
+	Kept       []PurgeCount `json:"kept,omitempty"`
+	Purged     bool         `json:"purged"`
+	Removed    []PurgeCount `json:"removed"`
+	RetryLater *int64       `json:"retryLater,omitempty"`
+	Rows       []KindCount  `json:"rows,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2168,10 +2278,15 @@ func (v *SystemPurgeReply) Validate() error {
 			return err
 		}
 	}
+	for i := range v.Rows {
+		if err := Check(&v.Rows[i], "rows"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// SystemPurgeRequest: Owner only. Removes tombstoned rows no live or tombstoned row references (a removed host with no execution, session, command, store or artifact copy naming it). preview true counts them and changes nothing; the confirm recomputes with the same query.
+// SystemPurgeRequest: Owner only. Removes tombstoned objects (kinds, default all) that no live row references, with every row that goes with them (the reference map in go/coordinator/cleanup.go): a removed host with no execution, session, command, store or artifact copy naming it; a deleted experiment or project whose rows no row outside it names. A purged project keeps its definition row, so its id is never reused. preview true counts them and changes nothing; the confirm recomputes with the same queries, deletes the rows, then the store objects no remaining artifact shares and the ClickHouse spans of the removed executions.
 type SystemPurgeRequest struct {
 	Kinds   []PurgeKind `json:"kinds,omitempty"`
 	Preview bool        `json:"preview"`
@@ -2297,6 +2412,7 @@ func init() {
 		"hosts_remove":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host (fleet-system-management.md, Hosts). preview true changes nothing and returns the counts; false removes: running work is cancelled, the secret and settings are dropped, the host record stays as a tombstone (state removed) for history.\",\"properties\":{\"id\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"id\",\"preview\"],\"type\":\"object\"}")},
 		"hosts_rotate_secret":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"id\":{\"type\":\"string\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"hosts_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host.\",\"additionalProperties\":true,\"properties\":{\"autoUpdate\":{},\"harnesses\":{},\"id\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
+		"object_delete":         {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only (fleet-system-management.md, Archive, delete, purge). preview true changes nothing and returns what goes with the object. false tombstones it with its tasks, executions (and their child runs), sessions, experiments, questions and artifacts: running work is stopped (pipeline runs cancelled, agent runs stopped with stopDetail deleted), run tokens revoked, open questions withdrawn, worktrees of its sessions get a teardown; a project's connections no other project uses are removed as project_archive does. Deleted objects leave every list, detail, search, queue, dispatch and analytics read; system_purge removes their rows later.\",\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"Kinds object_delete deletes.\",\"enum\":[\"project\",\"experiment\"],\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"kind\",\"id\",\"preview\"],\"type\":\"object\"}")},
 		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\"],\"type\":\"object\"}")},
 		"pipeline_history":      {Read: true, Long: false, Errors: []int{404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"pipeline_rerun":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"mode\":{\"enum\":[\"failed\",\"all\"],\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\",\"mode\"],\"type\":\"object\"}")},
@@ -2304,7 +2420,7 @@ func init() {
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
-		"system_purge":          {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Removes tombstoned rows no live or tombstoned row references (a removed host with no execution, session, command, store or artifact copy naming it). preview true counts them and changes nothing; the confirm recomputes with the same query.\",\"properties\":{\"kinds\":{\"items\":{\"$comment\":\"Kinds system_purge removes; the other object kinds of fleet-system-management.md join with their delete operations.\",\"enum\":[\"host\"],\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"preview\"],\"type\":\"object\"}")},
+		"system_purge":          {Read: false, Long: true, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Removes tombstoned objects (kinds, default all) that no live row references, with every row that goes with them (the reference map in go/coordinator/cleanup.go): a removed host with no execution, session, command, store or artifact copy naming it; a deleted experiment or project whose rows no row outside it names. A purged project keeps its definition row, so its id is never reused. preview true counts them and changes nothing; the confirm recomputes with the same queries, deletes the rows, then the store objects no remaining artifact shares and the ClickHouse spans of the removed executions.\",\"properties\":{\"kinds\":{\"items\":{\"$comment\":\"Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects and experiments deleted by object_delete.\",\"enum\":[\"host\",\"project\",\"experiment\"],\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"preview\"],\"type\":\"object\"}")},
 		"system_versions":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

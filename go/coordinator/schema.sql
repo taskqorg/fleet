@@ -2348,3 +2348,38 @@ UPDATE question SET state=CASE WHEN state='open' THEN 'withdrawn'::question_stat
  WHERE cause LIKE 'problem:client-error:%' AND state IN ('open','answered');
 DROP TABLE client_error_report;
 DROP TABLE client_error;
+
+-- migration 67: delete and purge (docs/designs/fleet-system-management.md, Archive, delete, purge). object_delete
+-- tombstones an object with every row that goes with it (cleanup.go, reference map): a deleted project keeps its
+-- definition row (deleted_at and retired_at; purged_at once system_purge removed its rows), so its id is never reused;
+-- every other row of the cascade gets tombstoned_at (artifact.deleted_at already means "bytes removed by retention").
+-- A restrictive SELECT policy on every project-owned table hides tombstoned rows and every row of a deleted project
+-- from every read, the owner's and the coordinator's own passes included. fleet.deleted=on shows them: host calls, so
+-- the stop and teardown of deleted work still land, and delete and purge themselves. The change feed (pruned after a
+-- day) and the resource tables (read only after a project check) keep their own lifecycle.
+ALTER TABLE definition ADD COLUMN deleted_at timestamptz NULL, ADD COLUMN purged_at timestamptz NULL;
+ALTER TABLE execution ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE task ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE experiment ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE question ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE artifact ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE document ADD COLUMN tombstoned_at timestamptz NULL;
+CREATE FUNCTION fleet_show_deleted() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT coalesce(current_setting('fleet.deleted', true), '') = 'on' $$;
+CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql STABLE AS
+ $$ SELECT coalesce(array_agg(id), '{}') FROM definition WHERE kind = 'project' AND deleted_at IS NOT NULL $$;
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY ARRAY['execution','task','experiment','question','artifact','document'] LOOP
+  EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted() OR (tombstoned_at IS NULL'
+   ' AND (project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))))', t);
+ END LOOP;
+ FOREACH t IN ARRAY ARRAY['artifact_copy','artifact_rule_confirmation','entity_code','execution_totals','experiment_note',
+  'purged_hash','route_decision','score','task_dependency','task_derived'] LOOP
+  EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted()'
+   ' OR project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))', t);
+ END LOOP;
+END $$;
+-- Notes stay append-only for every writer but system_purge, which removes a deleted experiment with its notes.
+CREATE OR REPLACE FUNCTION fleet_note_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF TG_OP = 'DELETE' AND coalesce(current_setting('fleet.purge', true), '') = 'on' THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'experiment notes are append-only';
+END $$;

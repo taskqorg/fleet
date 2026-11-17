@@ -96,7 +96,7 @@ function SystemPanels({ tele, found, now }: { tele: any; found: any; now: number
   const [, go] = useLocation();
   const [purge, setPurge] = useState<any>(null);
   const [purgeErr, setPurgeErr] = useState('');
-  const runPurge = (preview: boolean) => { setPurgeErr(''); op('system_purge', { preview }).then(setPurge, e => setPurgeErr(String(e.message ?? e))); };
+  const runPurge = (preview: boolean) => { setPurgeErr(''); op('system_purge', { preview, kinds: ['host'] }).then(setPurge, e => setPurgeErr(String(e.message ?? e))); };
   if (!tele) return <Empty text="Loading…" />;
   if (!tele.enabled) return <Empty text="Telemetry is off: no span store is configured." />;
   const ops = [...tele.operations].sort((a: any, b: any) => b.errors - a.errors || b.count - a.count);

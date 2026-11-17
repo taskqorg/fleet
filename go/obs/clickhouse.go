@@ -53,6 +53,16 @@ func (c *ClickHouse) Insert(ctx context.Context, table string, rows []byte, toke
 	return err
 }
 
+// Exec runs a statement without rows (a lightweight DELETE) with {name:Type} parameters.
+func (c *ClickHouse) Exec(ctx context.Context, sql string, params map[string]string) error {
+	p := url.Values{}
+	for k, v := range params {
+		p.Set("param_"+k, v)
+	}
+	_, err := c.do(ctx, sql, p, nil)
+	return err
+}
+
 // Query runs a SELECT with {name:Type} parameters and decodes its JSONEachRow rows into out (a pointer to a slice).
 func (c *ClickHouse) Query(ctx context.Context, sql string, params map[string]string, out any) error {
 	p := url.Values{}
