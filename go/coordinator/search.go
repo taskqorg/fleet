@@ -12,11 +12,16 @@ import (
 // search: one find-anything operation for the Spotlight palette and for agents (OR-32). The query is free text plus
 // field:value terms, the list search syntax. Each entity kind is one provider in searchProviders; a new kind plugs in
 // by appending a provider. A provider that cannot apply a term of the query finds nothing, so `agent:claude` lists tasks only.
+// A person's ignored projects (OR-34) are left out of tasks, questions and projects; a query that names a project
+// (`project:x`) or is a code jump names its target itself and finds it anyway, as a list whose view names a project
+// shows it. An agent's search sees every project its grants allow.
 
 type searchQuery struct {
 	raw    string
 	text   string
 	fields map[string]string
+	// ignored: the calling person's ignored project ids ('-' is no project), left out of the hits.
+	ignored []string
 }
 
 // searchFields: the field:value terms the syntax knows; any other `word:rest` stays free text (a URL, a time).
@@ -101,6 +106,21 @@ func searchWhere(raw string, p *[]any, text []string, fields map[string]string, 
 	return c
 }
 
+// projectNotIn: the condition "col is not one of ids" ('-' is no project) appended to c; none when ids is empty. A row
+// without a project stays unless '-' is among ids.
+func projectNotIn(c []string, p *[]any, col string, ids []string) []string {
+	if len(ids) == 0 {
+		return c
+	}
+	named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
+	*p = append(*p, named)
+	cond := fmt.Sprintf("NOT coalesce(%s=ANY($%d),false)", col, len(*p))
+	if len(named) < len(ids) {
+		cond += " AND " + col + " IS NOT NULL"
+	}
+	return append(c, cond)
+}
+
 // Task columns of the search syntax; agent and host are subqueries, so every task query can use them without a join.
 // agent: the harness of the task's latest execution (task_derived.last_agent; task_derived.agent is set only while one runs).
 var taskSearchText = []string{"t.title", "t.id", "t.code"}
@@ -124,7 +144,7 @@ func searchTasks(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 	if s.text != "" {
 		p, first = append(p, strings.TrimSuffix(likePattern(s.text)[1:], "%")+"%"), "(lower(t.id) LIKE $1 OR lower(coalesce(t.code,'')) LIKE $1)"
 	}
-	c := searchWhere(s.raw, &p, taskSearchText, taskSearchFields, true)
+	c := projectNotIn(searchWhere(s.raw, &p, taskSearchText, taskSearchFields, true), &p, "t.project_id", s.ignored)
 	rs, err := rowsOf(q, taskHitCols+where(c)+" ORDER BY "+first+" DESC,t.updated_at DESC,t.id LIMIT "+fmt.Sprint(limit), p...)
 	return taskHits(rs), err
 }
@@ -147,7 +167,7 @@ func searchQuestions(q *Request, s searchQuery, limit int) ([]contract.Found, er
 		return nil, nil
 	}
 	p := []any{}
-	c := searchWhere(s.raw, &p, []string{"x.text", "x.code"}, map[string]string{"project": "x.project_id", "state": "x.state::text"}, true)
+	c := projectNotIn(searchWhere(s.raw, &p, []string{"x.text", "x.code"}, map[string]string{"project": "x.project_id", "state": "x.state::text"}, true), &p, "x.project_id", s.ignored)
 	rs, err := rowsOf(q, questionHitCols+where(c)+" ORDER BY x.state='open' DESC,x.seq DESC LIMIT "+fmt.Sprint(limit), p...)
 	return questionHits(rs), err
 }
@@ -224,7 +244,7 @@ func searchProjects(q *Request, s searchQuery, limit int) ([]contract.Found, err
 		if len(out) >= limit {
 			break
 		}
-		if q.person != nil && !mayAccessProjectID(q.person, r.id) {
+		if q.person != nil && !mayAccessProjectID(q.person, r.id) || slices.Contains(s.ignored, r.id) {
 			continue
 		}
 		var b doc
@@ -269,6 +289,13 @@ func init() {
 		hits := []contract.Found{}
 		if s.text == "" && len(s.fields) == 0 {
 			return contract.SearchReply{Hits: hits}, nil
+		}
+		if _, named := s.fields["project"]; !named && q.person != nil && q.agent == "" {
+			ps, err := personSettings(q, q.person.Email)
+			if err != nil {
+				return contract.SearchReply{}, err
+			}
+			s.ignored = ps.Ignored
 		}
 		for _, p := range searchProviders {
 			h, err := p(q, s, limit)
