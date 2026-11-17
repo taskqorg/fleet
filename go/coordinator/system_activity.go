@@ -25,20 +25,21 @@ func init() {
 	})
 }
 
-// spoolCallIDs: the execution ids (call:<callId>) every spool file still names.
-func spoolCallIDs() ([]string, error) {
+// spoolCallIDs: the execution ids (call:<callId>) every spool file still names; ok false when the spool cannot be seen
+// (no gateway directory, no spool directory): any row may then be named by a line a later start ingests.
+func spoolCallIDs() (ids []string, ok bool, err error) {
 	if gatewayDir() == "" {
-		return nil, nil
+		return nil, false, nil
 	}
 	dir := filepath.Join(gatewayDir(), "state", "spool")
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	ids := []string{}
+	ids = []string{}
 	for _, e := range entries {
 		if !spoolFile.MatchString(e.Name()) {
 			continue
@@ -48,7 +49,7 @@ func spoolCallIDs() ([]string, error) {
 			continue // ingest removed a fully imported past day meanwhile
 		}
 		if err != nil {
-			return nil, err // an unreadable file may name any row: delete nothing this time
+			return nil, false, err // an unreadable file may name any row: delete nothing this time
 		}
 		for _, line := range bytes.Split(b, []byte{'\n'}) {
 			var l struct {
@@ -59,7 +60,7 @@ func spoolCallIDs() ([]string, error) {
 			}
 		}
 	}
-	return ids, nil
+	return ids, true, nil
 }
 
 // systemReadsCleanup deletes the legacy rows no spool line names, 1000 per transaction, totals first (foreign key).
@@ -75,12 +76,9 @@ func systemReadsCleanup(ctx context.Context, a *App) (int, error) {
 	}); err != nil || !left {
 		return 0, err
 	}
-	keep, err := spoolCallIDs()
-	if err != nil {
-		return 0, err
-	}
-	if keep == nil {
-		keep = []string{} // = ANY(NULL) would match nothing
+	keep, ok, err := spoolCallIDs()
+	if err != nil || !ok {
+		return 0, err // the spool unseen: delete nothing this time
 	}
 	deleted := 0
 	for {

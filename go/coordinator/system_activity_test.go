@@ -226,6 +226,11 @@ func TestMigration69RemovesLegacySystemReads(t *testing.T) {
 	if len(left) != 8 || !slices.Equal(system, legacy) || totals != 2 || !marked || !unmarked || work != 3 {
 		t.Fatalf("after migration 69: executions %v, system %v, totals %d, read tokens marked %v, agent token unmarked %v, resource work %d", left, system, totals, marked, unmarked, work)
 	}
+	// The spool unseen (no gateway directory): any row may be named by a line a later start ingests, so none goes.
+	t.Setenv("FLEET_GATEWAY_DIR", "")
+	if n, err := systemReadsCleanup(e.ctx, e.app); err != nil || n != 0 {
+		t.Fatalf("cleanup without a spool deleted %d rows, err %v", n, err)
+	}
 	// One spool line still names a legacy call: that row stays, so ingest never takes the line as new.
 	dir := t.TempDir()
 	t.Setenv("FLEET_GATEWAY_DIR", dir)
