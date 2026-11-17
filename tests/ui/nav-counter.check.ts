@@ -86,8 +86,8 @@ export async function checkNavCounter(browser: Browser, origin: string, seed: Re
     assert.ok(await until(async () => { const x = await server(); return x.label === 'need me' && (x.inFocus + x.outside === 0 ? await count.count() === 0 : /need me in focus/.test(await count.getAttribute('aria-label') ?? '')); }), 'the counter counts the chosen view');
     await needs.click({ button: 'right' });
     await p.getByRole('menuitem', { name: 'Stop counting in navigation' }).click();
+    assert.ok(await until(async () => (await call('person_settings_get', {})).navCounters.tasks === '-'), 'off is stored on the server');
     assert.ok(await until(async () => await count.count() === 0), 'a counter turned off shows nothing');
-    assert.equal((await call('person_settings_get', {})).navCounters.tasks, '-');
     const running = p.locator('[data-ui=saved-views] button', { hasText: 'Running' });
     await running.click({ button: 'right' });
     await p.getByRole('menuitem', { name: 'Count in navigation' }).click();
