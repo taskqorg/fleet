@@ -20,7 +20,7 @@ func TestDeliveryStages(t *testing.T) {
 			}{"h2"}},
 			{Number: 3, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 4, CreatedAt: "2026-11-12T10:00:00Z"},
-			{Number: 5, CreatedAt: "2026-11-12T09:00:00Z", UpdatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}},
+			{Number: 5, CreatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}},
 			{Number: 6, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
 				SHA string `json:"sha"`
 			}{"h6"}},
@@ -104,7 +104,7 @@ func TestDeliveryStages(t *testing.T) {
 		if it.Number == 6 && it.Since != "2026-11-12T11:30:00Z" || it.Number == 8 && it.Since != "2026-11-12T11:15:00Z" || it.Number == 14 && it.Since != "2026-11-12T10:50:00Z" || it.Number == 5 && it.Since != "2026-11-12T10:00:00Z" {
 			t.Errorf("#%d failed since %s", it.Number, it.Since)
 		}
-		if it.Number < 10 && it.Number != 5 && deref(it.Opened) != "2026-11-12T10:00:00Z" || it.Number == 12 && deref(it.Merged) != "2026-11-12T11:00:00Z" {
+		if it.Number < 10 && deref(it.Opened) != "2026-11-12T10:00:00Z" || it.Number == 12 && deref(it.Merged) != "2026-11-12T11:00:00Z" {
 			t.Errorf("#%d opened %v merged %v", it.Number, deref(it.Opened), deref(it.Merged))
 		}
 	}

@@ -99,7 +99,8 @@ export function Delivery({ id }: { id?: string }) {
   };
   // The recorded history covers the fleet repository only; a 404 (no history kept) or a focus away from fleet hides Pace.
   const fleetShown = !focus.length || focus.includes('fleet');
-  const data = status.data, items = data?.items ?? [], incomplete = !!data?.error;
+  // A stage this app does not know yet (a newer coordinator) is left out rather than breaking the page.
+  const data = status.data, items = (data?.items ?? []).filter(it => it.stage in states.delivery), incomplete = !!data?.error;
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
   const urlRange = deliveryExtra(useUrlView('delivery').view.extra).range ?? '7d';
   // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
@@ -117,7 +118,7 @@ export function Delivery({ id }: { id?: string }) {
     const { picked } = paceOf(v);
     // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows; none
     // while the history loads.
-    const source = !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(fromHistory) : [];
+    const source = !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(x => fromHistory(x, hist.h.installsFrom)) : [];
     const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
     const rowsOf = source.map(row);
     const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo}`, { state: r.it.stage, project: r.it.projectId }));
@@ -148,7 +149,7 @@ export function Delivery({ id }: { id?: string }) {
   const { ex, range, buckets, picked } = paceOf(view);
   // A link saved while the "undefined" bug was live, or one with an old range, carries keys the page ignores: drop them.
   // So does a picked bucket outside the range, or one with no history to show (none kept, or focused away from fleet).
-  const keep: DeliveryExtra = { ...ex, at: ex.at && (picked && (hist || histLoading)) ? ex.at : undefined };
+  const keep: DeliveryExtra = { ...ex, at: ex.at && (picked && (hist || histLoading || histDoc.error)) ? ex.at : undefined };
   useEffect(() => { const x = view.extra ?? {}; if (Object.keys(x).some(k => (x as Record<string, string | undefined>)[k] !== (keep as Record<string, string | undefined>)[k])) set({ extra: deliveryExtra(keep) }, 'type'); }, [JSON.stringify(view.extra), !!hist, histLoading]);
   // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
   // most installed) or a filter to installed rows opens it.
@@ -156,7 +157,7 @@ export function Delivery({ id }: { id?: string }) {
   useEffect(() => { if ((ex.at || doneOnly) && page.closed.includes('installed')) page.toggleGroup('installed'); }, [ex.at, doneOnly]);
   const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
-  const open = !id ? undefined : items.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(fromHistory)[0] : undefined);
+  const open = !id ? undefined : items.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, hist.h.installsFrom))[0] : undefined);
   const p = keep.at ? picked : null;
 
   const list = <>
@@ -189,8 +190,10 @@ export function Delivery({ id }: { id?: string }) {
 const alertOf = (n: Norms, it: Item) => { const x = n.stage(it.stage, it.repo); return x ? x[1] / 1000 : undefined; };
 
 /** A recorded (merged) pull request as a list row: its stage from how far it got. */
-function fromHistory(x: HistoryPr): Item {
-  const installed = !!x.installed?.coordinator, stage: Stage = installed ? 'installed' : x.released ? 'installing' : 'releasing';
+function fromHistory(x: HistoryPr, installsFrom?: string): Item {
+  // Released before installs were recorded: its install is unknown, so it is done (merged), not installing for weeks.
+  const unrecorded = !!x.released && !!installsFrom && x.released < installsFrom;
+  const installed = !!x.installed?.coordinator, stage: Stage = installed ? 'installed' : unrecorded ? 'merged' : x.released ? 'installing' : 'releasing';
   return { projectId: 'fleet', repo: FLEET, number: x.number, title: x.title, url: x.url, stage, since: (installed ? x.installed.coordinator : x.released ?? x.merged) as string, opened: x.opened, merged: x.merged, release: x.release };
 }
 
