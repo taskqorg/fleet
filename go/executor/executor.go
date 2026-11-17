@@ -180,6 +180,7 @@ type live struct {
 	state          *os.ProcessState
 	command        M
 	native         string
+	nativeObserved bool
 	seq            uint64
 	completed      bool
 	stopped        bool
@@ -1782,7 +1783,9 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			if l.blocks != nil {
 				projection = l.blocks.Project(name, event, uint64(atMs))
 			}
-			if n, ok := projection["session"].(string); ok {
+			// A harness may repeat its native identity on every event. Publish the first
+			// observation and changes so ordinary event traffic can batch in the outbox.
+			if n := jStr(projection, "session"); n != "" && (!l.nativeObserved || n != l.native) {
 				sid, err := cmdID(l.command, "sessionId")
 				if err != nil {
 					return false, err
@@ -1790,10 +1793,10 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 				if _, err := e.db.Exec("INSERT OR REPLACE INTO sessions(id,native) VALUES(?,?)", sid, n); err != nil {
 					return false, err
 				}
-				l.native = n
 				if err := e.receipt(l.command, "started", n); err != nil {
 					return false, err
 				}
+				l.native, l.nativeObserved = n, true
 			}
 			if jStr(event, "type") == "steer.result" {
 				if b, ok := e.commandBody(jStr(event, "commandId"), true); ok {
