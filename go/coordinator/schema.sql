@@ -2441,8 +2441,4 @@ CREATE TEMP TABLE system_read ON COMMIT DROP AS
   AND (parent_execution_id ~ '^[a-z0-9-]+-read:[0-9a-f-]{36}$'
    OR (parent_execution_id IS NULL AND data->>'tokenName' = 'github-read' AND project_id IS NOT NULL AND directed_by IS NULL));
 UPDATE execution SET system_actor = 'coordinator', data = data || '{"legacySystemRead": true}' WHERE id IN (SELECT id FROM system_read);
-WITH w AS (INSERT INTO resource_work(execution_id) SELECT id FROM system_read
-  ON CONFLICT ON CONSTRAINT resource_work_source_key DO UPDATE SET execution_id = excluded.execution_id RETURNING work_id, execution_id)
- INSERT INTO resource_work_scope(work_id, project_id) SELECT w.work_id, r.project_id FROM w JOIN system_read r ON r.id = w.execution_id
-  WHERE r.project_id IS NOT NULL ON CONFLICT DO NOTHING;
-SELECT pg_notify('fleet_resource_work', '');
+SELECT resource_enqueue_source(id, project_id, project_id) FROM system_read;
