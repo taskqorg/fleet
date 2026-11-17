@@ -1444,3 +1444,44 @@ func TestUploadAdmittedAgainBeforePost(t *testing.T) {
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 0, "provider requests")
 }
+
+// Requirement: §9 stall: an empty file's body check is bounded by stallMs like every other provider read.
+// Risk: a provider that answers a zero-size attachment and then sends nothing holds the call and its connection forever.
+func TestDownloadEmptyFileProviderStalls(t *testing.T) {
+	gw, p := newFileFixture(t, map[string]any{"stallMs": 300})
+	release := make(chan struct{})
+	defer close(release)
+	p.meta = func() map[string]any {
+		return map[string]any{"name": "empty.txt", "size": 0, "mimeType": "text/plain", "url": "/blob/85-1"}
+	}
+	p.blob = func(w http.ResponseWriter) {
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush() // chunked, no length: the body is still to come
+		<-release
+	}
+	answered := make(chan []any, 1)
+	go func() {
+		response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+		if err != nil {
+			answered <- []any{0, err.Error()}
+			return
+		}
+		response.Body.Close()
+		answered <- []any{response.StatusCode, response.Header.Get("X-Fleet-Error")}
+	}()
+	select {
+	case got := <-answered:
+		expect(t, got, []any{504, "provider-stalled"}, "stalled empty file")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the download of an empty file hangs on a silent provider")
+	}
+	// An empty file the provider ends at once is a whole download.
+	p.blob = func(w http.ResponseWriter) { w.Header().Set("Content-Length", "0") }
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	expect(t, []any{response.StatusCode, len(data), err == nil, field(lastLine(t, gw), "transfer", "sha256")}, []any{200, 0, true, shaHex(nil)}, "empty file")
+}

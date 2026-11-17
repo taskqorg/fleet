@@ -536,17 +536,16 @@ type body struct {
 // errUnsent: the timeout came before the provider read any byte of the file body, so it cannot have stored it.
 var errStalled, errUnsent = errors.New("provider stalled"), errors.New("provider read nothing")
 
-// progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end. Once
-// the provider's answer began (a first response byte, also a 1xx), a late read by the transport no longer touches the
-// timer; each response progress resets it to the stall limit, so a provider that starts answering and stops is still
-// cut after stallMs.
+// progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end. Each
+// response progress (a first byte, every 1xx) resets it to the stall limit, so a provider that starts answering and
+// stops is still cut after stallMs. Once the request returned (done), reads no longer touch the timer.
 type progress struct {
 	io.Reader
-	timer           *time.Timer
-	stall, answer   time.Duration
-	lock            sync.Mutex
-	read, answering bool
-	done            bool // the request returned: later reads no longer touch the timer
+	timer         *time.Timer
+	stall, answer time.Duration
+	lock          sync.Mutex
+	read          bool
+	done          bool // the request returned: later reads no longer touch the timer
 }
 
 func (p *progress) Read(b []byte) (int, error) {
@@ -561,10 +560,8 @@ func (p *progress) Read(b []byte) (int, error) {
 	case p.done:
 	case err == io.EOF:
 		p.timer.Reset(p.answer)
-	case p.answering:
-		p.timer.Reset(p.stall) // a body still sent while the provider answers is progress too
 	default:
-		p.timer.Reset(p.stall)
+		p.timer.Reset(p.stall) // also while the provider already answers: a body still sent is progress
 	}
 	return n, err
 }
@@ -580,7 +577,6 @@ func (p *progress) reopen(r io.Reader) {
 func (p *progress) answered() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.answering = true
 	p.timer.Reset(p.stall)
 }
 
@@ -639,11 +635,15 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 		request.Header.Set("Content-Type", b.contentType)
 	}
 	response, err := g.client.Do(request)
-	if file != nil && !file.sent() && err != nil && timedOut.Load() {
-		return nil, nil, errUnsent
-	}
-	if file != nil && err != nil && timedOut.Load() {
-		return nil, nil, errStalled
+	if file != nil {
+		// Always called: it also stops late body reads from touching the timer re-armed for the reply below.
+		sent := file.sent()
+		switch {
+		case err != nil && timedOut.Load() && !sent:
+			return nil, nil, errUnsent
+		case err != nil && timedOut.Load():
+			return nil, nil, errStalled
+		}
 	}
 	if err != nil {
 		if timedOut.Load() {
@@ -1446,8 +1446,19 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 	if size == 0 {
 		// A 0-byte answer is whole at once: an empty file is checked before any header leaves.
 		var one [1]byte
-		if k, _ := response.Body.Read(one[:]); k > 0 {
+		timer.Reset(stall)
+		k, err := response.Body.Read(one[:])
+		for k == 0 && err == nil {
+			k, err = response.Body.Read(one[:])
+		}
+		timer.Stop()
+		switch {
+		case k > 0:
 			return fail(502, "error", "provider-body", "the file is longer than the lookup size")
+		case err != io.EOF && stalled.Load():
+			return fail(504, "error", "provider-stalled", "the provider stopped sending the file")
+		case err != io.EOF:
+			return fail(502, "error", "provider-body", "the file request was cut off")
 		}
 	}
 	started := g.line(q, &answer{status: 200, outcome: "unknown", err: "download-unfinished", key: lookup.key, usage: lookup.usage})
