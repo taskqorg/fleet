@@ -121,12 +121,9 @@ The host functions mirror what the harness's own tools may do in this execution:
 |---|---|---|---|
 | `codex` | Read roots. | Yes. | Sandboxed. Writes: the worktree, the profile's writable roots (with `gitNetwork`, the checkout's Git directories) and the temporary directories. Network only with `gitNetwork`. |
 | `claude` | With `Read`, `Grep`, `Glob` or `Bash` in `tools`. | `write` with `Write`, `edit` with `Edit`. | With `Bash`, without a sandbox, because Fleet runs Claude's own `Bash` without one (`--permission-mode dontAsk`). |
-| `antigravity` | Read roots. | Not in `plan` mode. | None in `plan` mode. Without a sandbox with `settings.sandbox: false`. Otherwise sandboxed: writes to the worktree and the temporary directories, no network. |
-| `acp` | Read roots. | Not in `plan` mode. | None in `plan` mode. Otherwise sandboxed: writes to the worktree and the temporary directories, no network. |
+| `antigravity`, `acp` | Read roots. | Unavailable. | Unavailable. |
 
-A read-only start (`readOnly`, [conversations](fleet-conversations.md)) narrows them the same way as the native tools: Codex gets no `write` or `edit` and a sandboxed `sh` that writes nothing, not even the temporary directories, and has no network; Claude keeps `read`, `glob` and `grep` only; Antigravity and ACP agents run in plan mode and get no `write`, `edit` or `sh`.
-
-Fleet does not know the exact rules of Antigravity's or another ACP agent's own sandbox. A sandboxed `sh` there gets only the worktree and no network: less authority, never more.
+A read-only start (`readOnly`, [conversations](fleet-conversations.md)) narrows the grants: Codex gets only the read functions and sandboxed `sh` with no writes or network. Claude keeps `read`, `glob` and `grep` within its read roots. Antigravity and other ACP agents use the same read functions in both modes, consistent with Fleet's denial of ACP client file and terminal operations.
 
 The shell sandbox reads files as Codex's sandbox does and reaches no host Unix socket:
 

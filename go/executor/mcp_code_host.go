@@ -456,7 +456,8 @@ func codeFile(dir, tool string, args any) (any, M) {
 	name := filepath.Base(rel)
 	mode := os.FileMode(0o644)
 	var b []byte
-	if f, err := cur.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0); err == nil {
+	// Open without waiting on a FIFO. Only regular files pass the check below.
+	if f, err := cur.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0); err == nil {
 		st, err := f.Stat()
 		if err == nil && isGit(st) {
 			err = errors.New(rel + " is .git")

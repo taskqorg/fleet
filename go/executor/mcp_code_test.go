@@ -466,15 +466,12 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	if _, spec, _ := launch("add", "claude", M{}, "/journal"); enc(spec["read"]) != `["/work","/input"]` || enc(spec["shell"]) != `{"sandbox":false}` || spec["write"] != true {
 		t.Fatalf("default claude: %v", spec)
 	}
-	// Antigravity and acp: a sandboxed sh with the worktree only and no network; nothing writes in plan mode.
-	if _, spec, _ := launch("add", "acp", M{}, "/journal"); enc(spec["shell"]) != `{"hide":["/exec"],"network":false,"read":["/work","/input"],"sandbox":true,"write":["/work"]}` {
-		t.Fatalf("acp: %v", spec)
-	}
-	if _, spec, _ := launch("add", "antigravity", M{"settings": M{"sandbox": false}}, "/journal"); enc(spec["shell"]) != `{"sandbox":false}` {
-		t.Fatalf("antigravity without sandbox: %v", spec)
-	}
-	if _, spec, _ := launch("add", "antigravity", M{"settings": M{"mode": "plan"}}, "/journal"); has(spec, "shell") || spec["write"] != false || spec["edit"] != false {
-		t.Fatalf("antigravity plan: %v", spec)
+	// ACP refuses client file and terminal operations, including Antigravity with its own sandbox disabled.
+	for _, harness := range []string{"acp", "antigravity"} {
+		_, spec, err := launch("only", harness, M{"settings": M{"sandbox": false}}, "/journal")
+		if err != nil || has(spec, "shell") || spec["write"] != false || spec["edit"] != false || len(jArr(spec, "read")) != 2 {
+			t.Fatalf("%s authority: %v %v", harness, spec, err)
+		}
 	}
 	// A read-only start: Codex's sh runs read-only, Claude keeps reads only, ACP agents get nothing that writes.
 	if _, spec, _ := launch("add", "codex", M{"readOnly": true}, "/journal"); enc(spec["shell"]) != `{"hide":["/exec"],"network":false,"read":["/work","/input"],"readOnly":true,"sandbox":true,"write":["/work"]}` || spec["write"] != false || spec["edit"] != false {

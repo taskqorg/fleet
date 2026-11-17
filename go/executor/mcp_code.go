@@ -989,8 +989,9 @@ type codeAuthority struct {
 
 // codeAuthorityFor mirrors the harness's own tools for this execution, never more. work is the worktree; writable are
 // Codex's extra writable roots and network its sandbox network (gitNetwork); readOnly is a read-only start
-// (StartPayload.readOnly): Codex's read-only sandbox, Claude's Read, Glob and Grep, plan mode for ACP agents. A
-// sandboxed sh on Linux sees an empty executor data directory (root: its MCP sockets) except the read roots.
+// (StartPayload.readOnly): Codex's read-only sandbox and Claude's Read, Glob and Grep. ACP denies client file
+// and terminal operations, so its code mode keeps only the existing read roots. A sandboxed sh on Linux sees
+// an empty executor data directory (root: its MCP sockets) except the read roots.
 func codeAuthorityFor(harness string, profile any, work string, read []string, writable []any, network, readOnly bool, root string) codeAuthority {
 	a := codeAuthority{read: slices.DeleteFunc(slices.Clone(read), func(r string) bool { return r == "" })}
 	sandboxed := func(extra []any, net bool) M {
@@ -1021,14 +1022,6 @@ func codeAuthorityFor(harness string, profile any, work string, read []string, w
 			return a
 		}
 		a.write, a.edit, a.shell = true, true, sandboxed(writable, network)
-	default: // antigravity, acp: their own sandbox rules are unknown here, so a sandboxed sh gets the worktree, no network
-		if readOnly || jStr(profile, "settings", "mode") == "plan" {
-			return a
-		}
-		a.write, a.edit, a.shell = true, true, sandboxed(nil, false)
-		if harness == "antigravity" && jAt(profile, "settings", "sandbox") == false {
-			a.shell = M{"sandbox": false}
-		}
 	}
 	return a
 }
