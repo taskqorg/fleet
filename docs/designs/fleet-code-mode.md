@@ -56,7 +56,7 @@ Input: `{jobId: string, waitSeconds?: number}`.
 - Each reply for a job carries only the output and `calls` added since that job's previous reply.
 - A final result is returned once. The code server then drops the job, so it keeps no delivered output or value, and a later `poll` of that `jobId` answers `unknown jobId`. An undelivered job keeps its output until it is polled or the execution ends.
 - `poll` without `jobId` lists the unfinished and undelivered jobs with their status.
-- `poll {reset: true}` stops the runtime, for code that never yields (`while (true) {}`). Every running job fails with `runtime-exited`, and `state` is lost.
+- `poll {reset: true}` stops the runtime, for code that never yields (`while (true) {}`). Every running job fails with `runtime-exited` once its bridged calls in flight end, and `state` is lost.
 
 ## Bridge functions
 
@@ -94,11 +94,12 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 - Arguments that do not serialize (a `BigInt`, a cycle) reject with `code: "bad-arguments"`.
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
 - A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent. A stored reply that does not decode is such a failure.
-- An unawaited rejection or a throw inside a timer is printed into the output of the job that made the failed call, not fatal: the runtime, its other jobs and `state` survive.
+- An unawaited rejection or a throw inside a timer is not fatal: the runtime, its other jobs and `state` survive. The text goes into the output of the job that made the failed call while that job runs, else to the code server's log; the call's outcome is always in `calls`.
+- The runtime's own code is one closure: user code sees only `fleet`, `conn`, `state`, `print`, `require` and `FleetCallError`, so it cannot reuse call ids or forge another job's reply.
 - The runtime talks to the code server over its own pipe (fd 3). A raw write to fd 1 cannot corrupt that protocol; it goes to the code server's log, not to a job's output.
 - A reply from a call that started a runtime carries `newRuntime: true`: its `state` is empty. That is the first call of each code server, so a resumed session in a new execution sees that earlier `state` is gone, and the first call after a crash or reset.
-- When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. A job with bridged calls still in flight ends when they do, with their outcomes in `calls`, so no effect goes unreported. The next `code` call starts a new runtime.
-- When the harness closes the code server, the runtime stops and calls still in flight end with the process. A journal write is one SQLite transaction, so it is recorded or not, and the agent sees no reply, as for any lost reply.
+- When the runtime process dies, every running job ends with `runtime-exited`, with the end of the runtime's stderr (for example a sandbox that cannot start), and `state` is lost. A job with bridged calls still in flight ends when they do, with their outcomes in `calls`, so no effect goes unreported. The next `code` call starts a new runtime.
+- When the harness closes the code server, the runtime stops, every job ends at once, and calls still in flight end with the process. A journal write is one SQLite transaction, so it is recorded or not, and the agent sees no reply, as for any lost reply.
 
 ## Observability
 

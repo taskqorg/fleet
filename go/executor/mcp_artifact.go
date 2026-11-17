@@ -208,11 +208,12 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 		}
 	}
 	var de dbError
+	var ur unreadReply
 	var rf refusal
 	switch {
 	case err == nil:
 		return mcpText(result, nil), nil
-	case errors.As(err, &de):
+	case errors.As(err, &de), errors.As(err, &ur): // a stored reply that does not decode is no refusal: outcome unknown
 		return nil, err
 	case errors.As(err, &rf):
 		return mcpText(M{"error": "artifact tool refused: " + string(rf)}, &yes), nil

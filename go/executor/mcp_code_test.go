@@ -91,6 +91,10 @@ func TestCodeModeStatePersists(t *testing.T) {
 	if r, bad := c.code(`return state.n + 1`); bad || enc(r["value"]) != "42" || r["newRuntime"] != nil {
 		t.Fatalf("state lost: %v %v", bad, r)
 	}
+	// The runtime's own bindings are out of reach: code cannot reuse call ids or forge another job's reply.
+	if r, bad := c.code(`return [typeof nextId, typeof send, typeof pending, typeof job]`); bad || enc(r["value"]) != `["undefined","undefined","undefined","undefined"]` {
+		t.Fatalf("state lost: %v %v", bad, r)
+	}
 	// A plain declaration lives only inside its call.
 	c.code(`const local = 1`)
 	if r, bad := c.code(`return typeof local`); bad || r["value"] != "undefined" {
@@ -312,8 +316,8 @@ func TestCodeModeLargeValueAndConcurrentRequests(t *testing.T) {
 func TestCodeModeRuntimeRestart(t *testing.T) {
 	c := newCodeClient(t, M{"dir": t.TempDir()})
 	c.code(`state.kept = 1`)
-	r, bad := c.code(`process.exit(3)`)
-	if !bad || !strings.HasPrefix(jStr(r, "error", "message"), "runtime-exited") {
+	r, bad := c.code(`require("node:fs").writeSync(2, "the reason"); process.exit(3)`)
+	if !bad || !strings.HasPrefix(jStr(r, "error", "message"), "runtime-exited") || jStr(r, "error", "stderr") != "the reason" {
 		t.Fatalf("exit: %v %v", bad, r)
 	}
 	r, bad = c.code(`return state.kept ?? "gone"`)

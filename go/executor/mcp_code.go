@@ -30,7 +30,7 @@ var codeRuntimeJS string
 var codeTools = []any{
 	M{"name": "code", "description": "Run JavaScript: the body of an async function (await, return, Promise.all). Fleet tools are fleet.<tool>(args); granted connections are conn[\"<name>\"].<tool>(args); fleet.$tools() and conn[\"<name>\"].$tools() list names and input schemas. A failed call throws FleetCallError {tool, outcome, code, output}; outcome unknown means it may have happened: inspect, never repeat. `state` keeps values between calls; let/const/var do not. print() or console.log add to output. Only the returned value and printed text reach you, so filter in code. Files under the working directory are readable with require('node:fs'); writes, commands and network use your own tools. Still running after detachAfterSeconds (default 25): replies with a jobId for poll.",
 		"inputSchema": M{"type": "object", "properties": M{"source": M{"type": "string"}, "detachAfterSeconds": M{"type": "number"}}, "required": []any{"source"}, "additionalProperties": false}},
-	M{"name": "poll", "description": "Wait for a detached code job: its final output and value (returned once), or its output so far after waitSeconds (default 25). Without jobId: list the unfinished and undelivered jobs. reset: true stops the runtime (for a job that never yields): every running job fails and state is lost.",
+	M{"name": "poll", "description": "Wait for a detached code job: its final output and value (returned once), or its output so far after waitSeconds (default 25). Without jobId: list the unfinished and undelivered jobs. reset: true stops the runtime (for a job that never yields): state is lost, and every running job fails once its bridged calls in flight end.",
 		"inputSchema": M{"type": "object", "properties": M{"jobId": M{"type": "string"}, "waitSeconds": M{"type": "number"}, "reset": M{"type": "boolean"}}, "additionalProperties": false}},
 }
 
@@ -62,7 +62,8 @@ type codeServer struct {
 }
 
 type codeRuntime struct {
-	gone bool // its stdout ended (under codeServer.mu)
+	gone bool    // its stdout ended (under codeServer.mu)
+	tail tailBuf // the end of its stderr, for the runtime-exited reason
 	cmd  *exec.Cmd
 	mu   sync.Mutex // serializes writes to stdin
 	in   io.WriteCloser
@@ -104,6 +105,16 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 		s.closed = true
 		s.mu.Unlock()
 		s.stop()
+		// Nobody reads these replies any more: end every job now, calls in flight included, so no request waits.
+		s.mu.Lock()
+		var open []*codeJob
+		for _, j := range s.jobs {
+			open = append(open, j)
+		}
+		s.mu.Unlock()
+		for _, j := range open {
+			s.finish(j, false, nil, runtimeExited())
+		}
 	}()
 	out := bufio.NewWriter(w)
 	write := func(m M) {
@@ -255,6 +266,28 @@ func jobStatus(j *codeJob) string {
 	}
 }
 
+// tailBuf keeps the last 4 KiB written to it: the reason a runtime stopped, not its whole log.
+type tailBuf struct {
+	mu sync.Mutex
+	b  []byte
+}
+
+func (t *tailBuf) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.b = append(t.b, p...)
+	if len(t.b) > 4096 {
+		t.b = t.b[len(t.b)-4096:]
+	}
+	return len(p), nil
+}
+
+func (t *tailBuf) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(t.b)
+}
+
 func runtimeExited() M { return M{"message": "runtime-exited: the runtime stopped; state is lost"} }
 
 // callLabel names a bridged call as in `calls` and FleetCallError.tool: `<connection>.<tool>` or the Fleet tool.
@@ -333,7 +366,8 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "NODE_NO_WARNINGS=1"}
 	// The protocol has its own pipe (fd 3): a raw write to fd 1 (fs.writeSync(1, ...)) cannot corrupt a protocol line; it
 	// goes to this server's stderr log.
-	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	rt := &codeRuntime{dead: make(chan struct{})}
+	cmd.Stdout, cmd.Stderr = os.Stderr, io.MultiWriter(os.Stderr, &rt.tail)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, false, err
@@ -349,7 +383,7 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 		stdout.Close()
 		return nil, false, err
 	}
-	rt := &codeRuntime{cmd: cmd, in: in, dead: make(chan struct{})}
+	rt.cmd, rt.in = cmd, in
 	s.rt = rt
 	go s.read(rt, stdout)
 	// The granted names become real properties of `fleet` and `conn`: a typo or a probe (`then`, `toJSON`) is undefined
@@ -454,6 +488,9 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.Reader) {
 	rt.cmd.Process.Kill()
 	rt.cmd.Wait()
 	exited := runtimeExited()
+	if t := strings.TrimSpace(rt.tail.String()); t != "" {
+		exited["stderr"] = t // why it stopped: a sandbox that cannot start, a crash
+	}
 	s.mu.Lock()
 	var open []*codeJob
 	for _, j := range s.jobs {

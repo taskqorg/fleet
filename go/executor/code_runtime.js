@@ -2,6 +2,8 @@
 // Code mode runtime (docs/designs/fleet-code-mode.md): one Node process per code server. Each `run` line is the body of
 // an async function; globals (`state`, `fleet`, `conn`) persist between runs. Bridged calls go to the code server as
 // `call` lines on stdout and come back as `reply` lines on stdin.
+// One closure: user code (built with the AsyncFunction constructor, global scope) sees only what is put on globalThis.
+(() => {
 const readline = require('node:readline');
 const util = require('node:util');
 const { AsyncLocalStorage } = require('node:async_hooks');
@@ -107,3 +109,4 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     }
   });
 });
+})();

@@ -1111,11 +1111,12 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		gatewayConns[conn] = true
 	}
 	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
-	if mode := codeMode; mode != "" {
+	if codeMode != "" {
+		mode := codeMode
 		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), []string{work, inputDir}); err != nil {
 			return fail(1, err.Error())
 		}
-		observed["codeMode"], observed["codeTools"] = mode, mcpToolNames(M{"tools": codeTools})
+		observed["codeMode"], observed["codeTools"] = mode, jAt(servers, "code", "tools")
 		if mode == "only" {
 			connectionTools, fleetMCP = nil, []any{} // the fleet server is gone; its tools are reached through code
 		}
