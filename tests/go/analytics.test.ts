@@ -288,9 +288,12 @@ test('R4 task_get, session_get, threads, definition_usage, executions_runners, p
         ('ex-child', 'child_agent', 'succeeded', 'desiign', 'sess-1', 'task-1', 'ex-own', 'claude', 'm1', ${lit(iso(base + 100))}, ${lit(iso(base + 200))}, '[]'::jsonb),
         ('ex-del', 'agent_run', 'succeeded', 'desiign', 'sess-del', NULL, NULL, 'claude', 'm1', ${lit(iso(base + 110))}, ${lit(iso(base + 210))}, '[]'::jsonb),
         ('ex-spawn', 'agent_run', 'succeeded', 'desiign', 'sess-spawn', 'task-2', NULL, 'claude', 'm1', ${lit(iso(base + 300))}, ${lit(iso(base + 500))}, '[]'::jsonb),
+        -- The spawned task's other two paths: a turn of its session before attachment (task_id NULL), a tool_run child of its run.
+        ('ex-spawn-pre', 'agent_run', 'succeeded', 'desiign', 'sess-spawn', NULL, NULL, 'claude', 'm1', ${lit(iso(base + 300))}, ${lit(iso(base + 350))}, '[]'::jsonb),
+        ('ex-spawn-tool', 'tool_run', 'succeeded', 'desiign', NULL, NULL, 'ex-spawn', NULL, NULL, ${lit(iso(base + 400))}, ${lit(iso(base + 410))}, '[]'::jsonb),
         ('ex-draft', 'agent_run', 'succeeded', 'desiign', NULL, NULL, NULL, 'claude', 'm1', ${lit(iso(base + 600))}, ${lit(iso(base + 1600))}, '[{"kind":"pipeline","id":"pipe-1","revision":1,"draft":true}]'::jsonb);
 
-      UPDATE execution SET data = '{"connection":"gh","tool":"pr"}'::jsonb WHERE id = 'ex-tool';
+      UPDATE execution SET data = '{"connection":"gh","tool":"pr"}'::jsonb WHERE id IN ('ex-tool', 'ex-spawn-tool');
       UPDATE execution SET account_id = 'acc-sub' WHERE id = 'ex-del';
 
       INSERT INTO execution_totals(execution_id, project_id, tokens_input, tokens_input_basis, wall_ms, wall_ms_basis) VALUES
@@ -301,6 +304,8 @@ test('R4 task_get, session_get, threads, definition_usage, executions_runners, p
         ('ex-child', 'desiign', 300, 'measured', 100, 'measured'),
         ('ex-del', 'desiign', 50, 'subscription', 100, 'measured'),
         ('ex-spawn', 'desiign', 400, 'measured', 200, 'measured'),
+        ('ex-spawn-pre', 'desiign', 20, 'measured', 50, 'measured'),
+        ('ex-spawn-tool', 'desiign', NULL, 'unavailable', 10, 'measured'),
         ('ex-draft', 'desiign', 8000, 'measured', 1000, 'measured');
     `);
 
@@ -311,10 +316,12 @@ test('R4 task_get, session_get, threads, definition_usage, executions_runners, p
     assert.equal(tGet.resources.own.durations.executionWallMs, 330, 'sum(wall_ms) = 100 + 200 + 30');
     assert.equal(tGet.resources.own.tools.totalCalls, 1);
     assert.equal(tGet.resources.delegated.tokens.input, 350, 'delegated = ex-child(300) + ex-del(50); ex-pre did NOT leak!');
-    assert.equal(tGet.resources.spawned.tokens.input, 400, 'spawned = ex-spawn(400)');
+    assert.equal(tGet.resources.spawned.tokens.input, 420, 'spawned = ex-spawn(400) + its session turn ex-spawn-pre(20)');
+    assert.equal(tGet.resources.spawned.durations.executionWallMs, 260, 'spawned wall = 200 + 50 + its tool_run child ex-spawn-tool(10)');
+    assert.equal(tGet.resources.spawned.tools.totalCalls, 1, 'the spawned run\'s tool_run child counts once');
     assert.equal(tGet.resources.spawnedTasks.length, 1);
     assert.equal(tGet.resources.spawnedTasks[0].taskId, 'task-2');
-    assert.equal(tGet.resources.total.tokens.input, 1050, 'own(300) + delegated(350) + spawned(400)');
+    assert.equal(tGet.resources.total.tokens.input, 1070, 'own(300) + delegated(350) + spawned(420)');
     assert.ok(!tGet.executions.some((e: any) => e.kind === 'tool_run'), 'task_get filters tool_run rows out of task.executions');
 
     const execList = await op(c, 'executions_list', {taskId: 'task-1'});
@@ -322,15 +329,16 @@ test('R4 task_get, session_get, threads, definition_usage, executions_runners, p
 
     // Cost basis separation in task_get.
     const tCost = new Map<string, any>(tGet.cost.map((f: any) => [`${f.currency}:${f.basis}`, f]));
-    assert.equal(tCost.get('USD:estimated')?.value, 10, '(100+200+300+400)*0.01 = 10 USD metered');
+    assert.equal(tCost.get('USD:estimated')?.value, 10.2, '(100+200+300+400+20)*0.01 = 10.2 USD metered');
     assert.equal(tCost.get('USD:subscription')?.value, 0.5, 'ex-del 50*0.01 = 0.50 USD subscription kept separate');
 
     // 2. session_get matches non-overlapping lineage for sess-1.
     const sGet = await op(c, 'session_get', {sessionId: 'sess-1'});
     assert.equal(sGet.resources.own.tokens.input, 300);
     assert.equal(sGet.resources.delegated.tokens.input, 350);
-    assert.equal(sGet.resources.spawned.tokens.input, 400);
-    assert.equal(sGet.resources.total.tokens.input, 1050);
+    assert.equal(sGet.resources.spawned.tokens.input, 420);
+    assert.equal(sGet.resources.spawned.tools.totalCalls, 1);
+    assert.equal(sGet.resources.total.tokens.input, 1070);
 
     // 3. thread_entries & thread_blocks boundary blocks carry .resources.
     const th = await op(c, 'thread_entries', {key: {session: 'sess-1'}, limit: 20});
@@ -359,7 +367,7 @@ test('R4 task_get, session_get, threads, definition_usage, executions_runners, p
     // 6. project_context includes ResourceSummary.
     const pCtx = await op(c, 'project_context', {projectId: 'desiign'});
     assert.ok(pCtx.resources, 'project_context includes resources');
-    assert.equal(pCtx.resources.tokens.input, 9050, 'all visible leaves in desiign (ex-pipe excluded)');
+    assert.equal(pCtx.resources.tokens.input, 9070, 'all visible leaves in desiign (ex-pipe excluded)');
 
     // 7. view_link supports 'projects' view parity.
     const vLink = await op(c, 'view_link', {view: {view: 'projects'}});

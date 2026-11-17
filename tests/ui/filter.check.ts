@@ -41,6 +41,9 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // Two completed tasks: the Completed group of state grouping (collapsed by default) for the remembered-groups check.
     for (let i = 0; i < 2; i++) seed.task({ title: 'Shipped notes ' + i, projectId: 'fleet', priority: 'normal', state: 'completed' });
   });
+  // Statistics as a store of this size has them: without this, autoanalyze landing mid-check switched the plans the
+  // checks below ran with (a task_update of 40 s, flaky bulk-pause and remembered-groups rules in CI).
+  seed.sql('ANALYZE');
   console.log(`fixture load: ${((performance.now() - t) / 1000).toFixed(1)} s`);
   httpMedians[N] = {};
   for (const [name, b] of CASES) {
@@ -204,7 +207,8 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // progress (3) and Queued (4) are collapsed by the person, Completed (7, collapsed by default) is opened. Leaving the
     // section and coming back, and a reload, show them so from the first frame the headers are on screen.
     const header = (k: string) => page.locator(`.vl-row[data-key="g:${k}"] .group-h`);
-    await page.goto(origin + '/tasks?group=state'); await header('3').waitFor();
+    // The successful bulk pause introduced a Paused group. Limit this scenario to the three groups it verifies.
+    await page.goto(origin + '/tasks?group=state&state=completed,in_progress,queued'); await header('3').waitFor();
     rule(N, await header('3').getAttribute('aria-expanded') === 'true', 'In progress is not open by default');
     await header('3').click(); await header('4').click(); await header('7').waitFor();
     rule(N, await header('7').getAttribute('aria-expanded') === 'false', 'Completed does not start collapsed under state grouping');

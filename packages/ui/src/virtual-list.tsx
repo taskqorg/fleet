@@ -52,37 +52,55 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   // Anchor = first visible item and its distance from the viewport top, captured before each update.
   const anchor = useRef<{ key: string; delta: number } | null>(null);
   const requested = useRef<{ key: string; offsetPx?: number; align?: 'start' | 'center' | 'end' } | null>(null);
-  const prev = useRef<{ keys: Set<string>; atEdge: boolean }>({ keys: new Set(p.items.map(p.getKey)), atEdge: true });
-
-  const opts = {
-    count: p.items.length,
-    getScrollElement: () => scroller.current,
-    estimateSize: () => p.rowHeight,
-    getItemKey: (i: number) => p.getKey(p.items[i]),
-    overscan: 10,
-    scrollToFn: elementScroll,
-    observeElementRect,
-    observeElementOffset,
-    onChange: () => rerender(0),
-  };
-  const [v] = useState(() => new Virtualizer<HTMLDivElement, HTMLDivElement>(opts));
-  v.setOptions(opts);
-  useLayoutEffect(() => v._didMount(), []);
-  useLayoutEffect(() => { v._willUpdate(); });
+  const prev = useRef<{ keys: Set<string>; atEdge: boolean; top: number }>({ keys: new Set(p.items.map(p.getKey)), atEdge: true, top: 0 });
 
   const atEdge = () => {
     const el = scroller.current;
     if (!el) return true;
     return p.follow === 'top' ? el.scrollTop < 2 : el.scrollHeight - el.scrollTop - el.clientHeight < 2;
   };
+  // TanStack also scrolls to compensate for measured rows. Record those writes before their scroll events.
+  const scrollTo: typeof elementScroll = (offset, options, instance) => {
+    elementScroll(offset, options, instance);
+    const el = instance.scrollElement;
+    if (el) prev.current.top = el.scrollTop;
+  };
+  const opts = {
+    count: p.items.length,
+    getScrollElement: () => scroller.current,
+    estimateSize: () => p.rowHeight,
+    getItemKey: (i: number) => p.getKey(p.items[i]),
+    overscan: 10,
+    scrollToFn: scrollTo,
+    observeElementRect,
+    observeElementOffset,
+    onChange: () => rerender(0),
+  };
+  const [v] = useState(() => new Virtualizer<HTMLDivElement, HTMLDivElement>(opts));
+  // Read the old DOM before rendering the new window. A scroll event may still be pending, and shrinking the
+  // window can clamp scrollTop during the DOM update. Clamping must not be counted as a second scroll.
+  const elBeforeRender = scroller.current;
+  if (elBeforeRender) {
+    const top = elBeforeRender.scrollTop;
+    if (top !== prev.current.top) {
+      const row = v.getVirtualItemForOffset(top);
+      anchor.current = row ? { key: String(row.key), delta: row.start - top } : null;
+      prev.current.atEdge = atEdge();
+      prev.current.top = top;
+    }
+  }
+  v.setOptions(opts);
+  useLayoutEffect(() => v._didMount(), []);
+  useLayoutEffect(() => { v._willUpdate(); });
+
   const capture = () => {
     const el = scroller.current;
     const first = el ? v.getVirtualItemForOffset(el.scrollTop) : undefined;
     if (el && first) anchor.current = { key: String(first.key), delta: first.start - el.scrollTop };
     prev.current.atEdge = atEdge();
+    if (el) prev.current.top = el.scrollTop;
     if (prev.current.atEdge && unseen) setUnseen(0);
   };
-
   // Runs before paint whenever items change: keep the anchor row where it was, or follow the edge.
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -121,6 +139,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     setUnseen(0);
     if (p.follow === 'top') scroller.current?.scrollTo({ top: 0 });
     else if (p.items.length) v.scrollToIndex(p.items.length - 1, { align: 'end' });
+    capture();
   };
 
   // Apply imperative restoration after this control's own anchor/layout work, before edge loading.
