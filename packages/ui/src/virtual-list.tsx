@@ -59,18 +59,6 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (!el) return true;
     return p.follow === 'top' ? el.scrollTop < 2 : el.scrollHeight - el.scrollTop - el.clientHeight < 2;
   };
-  // Read the old DOM before rendering the new window. A scroll event may still be pending, and shrinking the
-  // window can clamp scrollTop during the DOM update. Clamping must not be counted as a second scroll.
-  const elBeforeRender = scroller.current;
-  if (elBeforeRender) {
-    const top = elBeforeRender.scrollTop;
-    if (Math.abs(top - prev.current.top) > 1) {
-      if (anchor.current) anchor.current.delta -= top - prev.current.top;
-      prev.current.atEdge = atEdge();
-      prev.current.top = top;
-    }
-  }
-
   const opts = {
     count: p.items.length,
     getScrollElement: () => scroller.current,
@@ -83,6 +71,18 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     onChange: () => rerender(0),
   };
   const [v] = useState(() => new Virtualizer<HTMLDivElement, HTMLDivElement>(opts));
+  // Read the old DOM before rendering the new window. A scroll event may still be pending, and shrinking the
+  // window can clamp scrollTop during the DOM update. Clamping must not be counted as a second scroll.
+  const elBeforeRender = scroller.current;
+  if (elBeforeRender) {
+    const top = elBeforeRender.scrollTop;
+    if (Math.abs(top - prev.current.top) > 1) {
+      const row = v.getVirtualItemForOffset(top);
+      anchor.current = row ? { key: String(row.key), delta: row.start - top } : null;
+      prev.current.atEdge = atEdge();
+      prev.current.top = top;
+    }
+  }
   v.setOptions(opts);
   useLayoutEffect(() => v._didMount(), []);
   useLayoutEffect(() => { v._willUpdate(); });

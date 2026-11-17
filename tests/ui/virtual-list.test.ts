@@ -90,5 +90,19 @@ test('mounted top VirtualList keeps the row being read when an insert overtakes 
       const row = grid.querySelector('[data-key="row-179"]');
       return row && Math.abs(row.getBoundingClientRect().top - grid.getBoundingClientRect().top) <= 1;
     }, null, {timeout: 1500});
+    await grid.evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await grid.locator('[data-key="new"]').waitFor();
+    // The update moves the old anchor to the end while the reader scrolls to a different row.
+    await grid.evaluate(el => {
+      el.scrollTop = 640;
+      const w = window as any;
+      w.items = [...w.items.slice(1), w.items[0]];
+      w.draw();
+    });
+    await page.waitForFunction(() => {
+      const grid = document.querySelector('.vl')!;
+      const row = grid.querySelector('[data-key="row-79"]');
+      return row && Math.abs(row.getBoundingClientRect().top - grid.getBoundingClientRect().top) <= 1;
+    }, null, { timeout: 1500 });
   } finally { await browser.close(); }
 });
