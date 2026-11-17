@@ -139,6 +139,9 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 	n, _ := f.ReadAt(head, 0)
 	// The opened file's name, in the gateway's file-name rules (no quote, backslash, control or bidi character).
 	fileName := strings.ReplaceAll(contract.SafeName(filepath.Base(f.Name())), `"`, "_") // the file opened, not a link to it
+	if strings.TrimSpace(fileName) == "" {
+		fileName = "file" // the gateway refuses a blank name
+	}
 	return contract.GatewayUpload(context.Background(), t, connection, tool, args, contract.Upload{File: f, Size: info.Size(),
 		Name: fileName, MediaType: mediaTypeOf(fileName, head[:n]), Sha256: sum})
 }

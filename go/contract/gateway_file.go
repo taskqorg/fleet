@@ -161,7 +161,6 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		x.fail(CallOutcomeError, "invalid-response") // the tool may be repeated: nothing is lost
 		return x.line
 	}
-	x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionDownload, Bytes: size, MediaType: meta.MediaType, Name: meta.Name}
 	folder, path, err := openFolder(d)
 	if err != nil {
 		x.fail(CallOutcomeError, "path-refused")
@@ -185,6 +184,8 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		x.fail(CallOutcomeError, "write-failed")
 		return x.line
 	}
+	// From here bytes are read: the transfer counts what arrived.
+	x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionDownload, Bytes: size, MediaType: meta.MediaType, Name: meta.Name}
 	kept := false
 	defer func() {
 		if !kept {

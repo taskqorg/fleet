@@ -142,7 +142,7 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 	}
 	guardBeforeOpen()
 	deny := deniedIdents()
-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	fd, err := unix.Open("/", dirSearch|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, nil, guardError{"the file cannot be opened"}
 	}
@@ -181,7 +181,7 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 		// O_NONBLOCK: opening a FIFO never waits for a writer; it is refused above as not a regular file.
 		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
 		if i < len(parts)-1 {
-			flags |= unix.O_DIRECTORY
+			flags = dirSearch | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC // a folder needs search permission only
 		}
 		next, err := unix.Openat(fd, parts[i], flags, 0)
 		unix.Close(fd)

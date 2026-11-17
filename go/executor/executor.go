@@ -1082,7 +1082,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		// The run token, gateway URL and Access file path reach only the connection servers, through a private run file
 		// in the executor's data directory; the harness environment never carries them. The work and input folders are
 		// the base of relative upload paths and the parent of downloaded attachments (fleet-connections.md §9).
-		if strings.ContainsAny(work+inputDir+gateway+str0(sp.RunToken), "\n\r") {
+		if strings.ContainsAny(work+inputDir+gateway+str0(sp.RunToken)+accessFile(), "\n\r") {
 			return fail(1, "a run file value holds a line break") // it would add a key line of its own
 		}
 		lines := "FLEET_RUN_TOKEN=" + str0(sp.RunToken) + "\nFLEET_GATEWAY_URL=" + gateway + "\nFLEET_WORK_DIR=" + work + "\nFLEET_INPUT_DIR=" + inputDir + "\n"

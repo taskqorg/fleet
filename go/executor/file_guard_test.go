@@ -124,6 +124,15 @@ func TestGuardRefuses(t *testing.T) {
 			f.Close()
 		}
 	}
+	// A folder that may be entered but not listed (mode 0311) still lets its readable file through.
+	hidden := write(t, filepath.Join(work, "searchonly", "s.png"), "s")
+	os.Chmod(filepath.Dir(hidden), 0o311)
+	t.Cleanup(func() { os.Chmod(filepath.Dir(hidden), 0o700) })
+	if f, _, err := openForUpload(hidden, work); err != nil {
+		t.Fatalf("a file under a search-only folder: %v", err)
+	} else {
+		f.Close()
+	}
 	// A root of / holds every path.
 	t.Setenv("FLEET_FILES_ROOTS", "/")
 	if f, _, err := openForUpload(write(t, filepath.Join(work, "plain.png"), "p"), work); err != nil {
