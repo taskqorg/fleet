@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,21 +33,49 @@ func TestStoreEdgeLogsReachableAgain(t *testing.T) {
 // A heartbeat poll cancelled after its headers arrived (its exchange ended) leaves a cut JSON body: a transport retry,
 // never an edge answer that is not JSON (17 Nov 2026: owner-mac logged one with nearly every exchange).
 func TestCutBodyIsRetryNotEdge(t *testing.T) {
+	for _, status := range []int{200, 400} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			io.WriteString(w, `{"pad":"xx`)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done() // the rest never comes
+		}))
+		ctx, cancel := context.WithCancel(context.Background())
+		r, err := postJSONCtx(ctx, outboxClient, srv.URL, "t", M{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		a := classify(r, err)
+		srv.Close()
+		if a.kind != answerRetry || a.status != 0 || a.timeout || !strings.Contains(a.text, fmt.Sprintf("%d answer cut after", status)) {
+			t.Fatalf("cut %d body: %+v", status, a)
+		}
+		if ok, perr := pollSignal(a); ok || perr != "network" {
+			t.Fatalf("poll signal = %v %q", ok, perr)
+		}
+	}
+}
+
+// The exchange's own cancelled heartbeat poll leaves update.json as the last real poll wrote it.
+func TestCancelledPollKeepsUpdateSignal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"pad":"`+strings.Repeat("x", 200_000)+`"}`)
+		io.WriteString(w, `{"pad":"xx`)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
 	}))
 	defer srv.Close()
+	root := t.TempDir()
+	e := &executor{url: srv.URL, token: "t", host: "h", root: root}
 	ctx, cancel := context.WithCancel(context.Background())
-	r, err := postJSONCtx(ctx, outboxClient, srv.URL, "t", M{})
-	cancel()
-	time.Sleep(20 * time.Millisecond)
-	a := classify(r, err)
-	if a.kind != answerRetry || a.status != 0 || !strings.Contains(a.text, "200 answer cut after") {
-		t.Fatalf("cut body: %+v", a)
+	time.AfterFunc(200*time.Millisecond, cancel)
+	if _, err := e.pollWait(ctx, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
 	}
-	if ok, perr := pollSignal(a); ok || perr != "network" {
-		t.Fatalf("poll signal = %v %q", ok, perr)
+	if _, err := os.Stat(filepath.Join(root, "update", "update.json")); !os.IsNotExist(err) {
+		t.Fatalf("update.json written for a cancelled poll: %v", err)
 	}
 }
 
@@ -56,7 +87,7 @@ func TestNotJSONNamesTheAnswer(t *testing.T) {
 	}))
 	defer srv.Close()
 	a := classify(postJSON(outboxClient, srv.URL, "t", M{}))
-	want := `an answer that is not JSON: text/html, 38 bytes: "<!doctype html> <title>Sign in</title>"`
+	want := `an answer that is not JSON: text/html, 38 bytes: "<!doctype html>\n<title>Sign in</title>"`
 	if a.kind != answerEdge || a.status != 200 || a.text != want {
 		t.Fatalf("got %+v, want text %s", a, want)
 	}

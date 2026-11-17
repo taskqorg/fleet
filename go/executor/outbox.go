@@ -89,33 +89,29 @@ func location(r *http.Response) string {
 	return l
 }
 
-func transportAnswer(err error) answer {
-	var ne net.Error
-	var op *net.OpError
-	return answer{kind: answerRetry, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout(), unreachable: errors.As(err, &op) && op.Op == "dial"}
-}
-
 func classify(r *http.Response, err error) answer {
 	if err != nil {
-		return transportAnswer(err)
+		var ne net.Error
+		var op *net.OpError
+		return answer{kind: answerRetry, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout(), unreachable: errors.As(err, &op) && op.Op == "dial"}
 	}
 	defer r.Body.Close()
 	body, rerr := io.ReadAll(r.Body) // drained so the pooled connection is reused
 	s := r.StatusCode
-	switch statusClass(s, true) {
+	c := statusClass(s, true)
+	if rerr != nil && c != classEdge {
+		// A body cut while it is read (the request deadline, or a heartbeat poll cancelled when its exchange ends) is a
+		// transport failure: its partial JSON is not an edge page, and a cut reject body is no reason to set a row aside.
+		// It is resent whole (not split, as a slow ingest is): the coordinator had already answered.
+		return answer{kind: answerRetry, text: fmt.Sprintf("%d answer cut after %d bytes read: %v", s, len(body), rerr)}
+	}
+	switch c {
 	case classEdge:
 		if s == 401 {
 			return answer{kind: answerEdge, status: 401, text: "the host token is not accepted"}
 		}
 		return answer{kind: answerEdge, status: s, text: location(r)}
 	case classOK:
-		// A body cut while it is read (the request deadline, or a heartbeat poll cancelled when its exchange ends) is a
-		// transport failure, not an edge answer: its partial JSON is not a login or app page.
-		if rerr != nil {
-			a := transportAnswer(rerr)
-			a.text = fmt.Sprintf("%d answer cut after %d bytes: %v", s, len(body), rerr)
-			return a
-		}
 		if !json.Valid(body) {
 			return answer{kind: answerEdge, status: s, text: notJSON(r, body)}
 		}
@@ -127,20 +123,13 @@ func classify(r *http.Response, err error) answer {
 }
 
 // notJSON describes a complete 2xx answer that is not JSON (an Access login page, the app shell, a proxy page) by its
-// content type, length and first bytes as printable text, so the log names what answered.
+// content type, length and first bytes (quoted), so the log names what answered.
 func notJSON(r *http.Response, body []byte) string {
-	var b strings.Builder
-	for _, c := range string(body[:min(len(body), 120)]) {
-		if c < 0x20 || c == 0x7f {
-			c = ' '
-		}
-		b.WriteRune(c)
-	}
 	ct := r.Header.Get("Content-Type")
 	if ct == "" {
 		ct = "no content type"
 	}
-	return fmt.Sprintf("an answer that is not JSON: %s, %d bytes: %q", ct, len(body), b.String())
+	return fmt.Sprintf("an answer that is not JSON: %s, %d bytes: %q", ct, len(body), body[:min(len(body), 120)])
 }
 
 // redirected is the poll's edge answer, as an error the exchange loop recognizes.
