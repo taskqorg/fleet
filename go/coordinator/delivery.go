@@ -116,6 +116,7 @@ type ghPull struct {
 	Title     string  `json:"title"`
 	URL       string  `json:"html_url"`
 	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
 	MergedAt  *string `json:"merged_at"`
 	MergeSHA  string  `json:"merge_commit_sha"`
 	AutoMerge any     `json:"auto_merge"`
@@ -433,8 +434,13 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			// Removed from the queue and not set to enter it again, and its head is no newer: it waits on a person.
 			out = append(out, item(p, contract.DeliveryStageMqFailed, at))
 		} else if p.AutoMerge != nil {
-			// Waiting to enter the queue since its head's checks finished (the enqueue norm's start), else since it opened.
-			out = append(out, item(p, contract.DeliveryStageMqWait, max(p.CreatedAt, checkedAt[p.Head.SHA])))
+			// Waiting to enter the queue since its head's checks finished or its last queue failure; when neither is in the
+			// reads, since its last update (turning auto-merge on is one), never since it opened days ago.
+			since := max(p.CreatedAt, checkedAt[p.Head.SHA], queueFailedAt[p.Number])
+			if checkedAt[p.Head.SHA] == "" && queueFailedAt[p.Number] == "" {
+				since = max(since, p.UpdatedAt)
+			}
+			out = append(out, item(p, contract.DeliveryStageMqWait, since))
 		} else {
 			out = append(out, item(p, contract.DeliveryStagePrOpen, p.CreatedAt))
 		}

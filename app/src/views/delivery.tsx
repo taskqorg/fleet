@@ -35,7 +35,8 @@ const DONE: Stage[] = ['installed', 'merged'];
 const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
 // Each stage's norm is its P50 and P90 in delivery_baseline (the last 14 days): the key of the history duration it is.
 // Open, Checks failed and Queue failed have none: people work there, and a failure needs a look at once.
-const NORM_KEY: Partial<Record<Stage, string>> = { pr_ci: 'pr_ci', mq_wait: 'enqueue', mq_ci: 'queue', releasing: 'release', installing: 'install' };
+// Waiting in queue is both "set to enter" and "in the queue, waiting for a runner": the queue's norm covers both.
+const NORM_KEY: Partial<Record<Stage, string>> = { pr_ci: 'pr_ci', mq_wait: 'queue', mq_ci: 'queue', releasing: 'release', installing: 'install' };
 /** The norms are the fleet repository's history: other repositories' pull requests have none. */
 type Norms = { stage: (s: Stage, repo?: string) => [number, number] | null; total: [number, number] | null };
 const GROUPS = [['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const;
@@ -101,7 +102,8 @@ export function Delivery({ id }: { id?: string }) {
   const data = status.data, items = data?.items ?? [], incomplete = !!data?.error;
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
   const urlRange = deliveryExtra(useUrlView('delivery').view.extra).range ?? '7d';
-  const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange : null,
+  // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
+  const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
     () => no404(op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }).then(h => ({ h }))), touchesHistory, 600000);
   const hist = histDoc.data === NONE ? null : histDoc.data;
   const regDoc = useDoc<Regressions | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
@@ -154,7 +156,7 @@ export function Delivery({ id }: { id?: string }) {
   useEffect(() => { if ((ex.at || doneOnly) && page.closed.includes('installed')) page.toggleGroup('installed'); }, [ex.at, doneOnly]);
   const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
-  const open = items.find(it => idOf(it) === id) ?? hist?.h.prs.map(fromHistory).find(it => idOf(it) === id);
+  const open = !id ? undefined : items.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(fromHistory)[0] : undefined);
   const p = keep.at ? picked : null;
 
   const list = <>
