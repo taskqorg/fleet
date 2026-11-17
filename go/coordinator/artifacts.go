@@ -611,7 +611,15 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 	}
 	gone := false
 	if same != nil || size == 0 {
-		err := txCtx(ctx, a, func(tx pgx.Tx) error {
+		// Without the GLOBAL lock when this is the request's own transaction: an empty file's store write happens in it,
+		// and the object lock (writeObject, objectLock) is what serializes these rows with a purge of the content.
+		tx := func(fn func(pgx.Tx) error) error {
+			if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+				return fn(tx)
+			}
+			return a.store.Tx(ctx, nil, true, NOLOCK, fn)
+		}
+		err := tx(func(tx pgx.Tx) error {
 			// An empty file has nothing to upload (stores refuse an empty multipart part): the coordinator writes it
 			// itself, under the object lock (writeObject: a Head, and a Put only when the object is missing).
 			if size == 0 && same == nil {
