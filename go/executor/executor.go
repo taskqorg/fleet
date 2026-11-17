@@ -791,7 +791,7 @@ func (e *executor) run(c M) error {
 			case err != nil:
 				data = refusedTeardown(err.Error())
 			case ok && !created:
-				data = teardown(dir, workspaceSession(session, p), top, jAt(p, "project"), jIsTrue(p, "deleteBranch"))
+				data = teardown(dir, workspaceSession(session, p), top, jAt(p, "project"), jIsTrue(p, "deleteBranch"), jAt(p, "branch") == false)
 			}
 		}
 		reason := str0(data.Reason)

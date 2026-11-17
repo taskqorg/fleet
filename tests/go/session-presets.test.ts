@@ -52,6 +52,7 @@ test('P2 session_start with a preset starts its profile with its access, branch 
   const override = ok(await op('session_start', {projectId: 'cs', preset: 'discuss', access: 'write', branch: true, requestId: randomUUID()}));
   assert.deepEqual([override.profileId, override.access, override.branch], ['pm', 'write', true]);
   assert.deepEqual(ok(await op('session_start', {projectId: 'cs', preset: 'review', access: 'write', requestId: randomUUID()})).branch, true, 'write without a branch field gets a branch');
+  assert.equal(ok(await op('session_start', {projectId: 'cs', preset: 'fix', access: 'read', requestId: randomUUID()})).branch, false, 'read without a branch field gets none');
   const explicit = ok(await op('session_start', {projectId: 'desiign', preset: 'fix', profileId: 'pm', requestId: randomUUID()}));
   assert.deepEqual([explicit.profileId, explicit.access], ['pm', 'write'], 'an explicit profile wins over the preset');
   const id = randomUUID(), again = [await op('session_start', {projectId: 'cs', preset: 'review', requestId: id}), await op('session_start', {projectId: 'cs', preset: 'review', requestId: id})].map(ok);

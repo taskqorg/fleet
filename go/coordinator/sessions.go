@@ -407,6 +407,9 @@ func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 	if w := astr(workingDirectory); w != "" {
 		payload["workingDirectory"] = w
 	}
+	if s["branch"] == false { // a session started without a branch (presets.go): its worktree was detached
+		payload["branch"] = false
+	}
 	c := doc{"id": newID(), "executionId": last["id"], "sessionId": sid, "hostId": last["hostId"], "kind": "teardown", "payload": payload, "status": "pending"}
 	return c, put(q, "command", c)
 }

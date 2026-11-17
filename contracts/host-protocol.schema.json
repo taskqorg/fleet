@@ -811,6 +811,10 @@
           "type": "object",
           "additionalProperties": true
         },
+        "branch": {
+          "$comment": "teardown: false when the session started without a branch (a detached worktree); then commits the checkout's own branches hold are not its unpushed work.",
+          "type": "boolean"
+        },
         "deleteBranch": {
           "$comment": "teardown only: the work was delivered (its task accepted), so the local branch is deleted with git branch -D",
           "type": "boolean"

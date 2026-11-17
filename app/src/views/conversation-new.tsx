@@ -41,6 +41,9 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   const rank = (id: string) => focus.includes(id) ? focus.indexOf(id) : seen.includes(id) ? 1000 + seen.indexOf(id) : 100000;
   const ordered = all.filter(p => !ignored.includes(p.id) || p.id === initialProject).sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
 
+  // Without ?in= the page starts on the first focused or recent project, once the projects are known.
+  const [touched, setTouched] = useState(initialProject !== null);
+  useEffect(() => { if (!touched && projects.data && recent.data && ordered.length && (focus.length || seen.length)) { setProject(ordered[0].id); setTouched(true); } }, [touched, projects.data, recent.data]);
   const list: Preset[] = presets.data?.presets ?? [];
   // The picked preset while it can start; else the first one for the asked role (?role=pm), else the first that can start.
   const chosen = list.find(p => p.id === picked[key] && !p.unavailable) ?? list.find(p => !p.unavailable && !!initialRole && p.role === initialRole) ?? list.find(p => !p.unavailable);
@@ -81,7 +84,7 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   };
   return <article class="detail new-conversation" data-ui="detail" tabIndex={-1} aria-label="New conversation">
     <DetailSection title="Project">
-      {projects.data ? <ProjectPick projects={ordered} value={project} onChange={setProject} /> : <Skeleton rows={1} />}
+      {projects.data ? <ProjectPick projects={ordered} value={project} onChange={p => { setTouched(true); setProject(p); }} /> : <Skeleton rows={1} />}
     </DetailSection>
     <DetailSection title="What are we doing">
       {presets.error ? <ErrorBanner text={`Presets did not load: ${presets.error}`} /> : presets.data ? <PresetPicker presets={options} value={chosen?.id ?? null} onChange={id => setPicked(p => ({ ...p, [key]: id }))} /> : <Skeleton rows={2} />}

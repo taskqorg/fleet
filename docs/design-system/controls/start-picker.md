@@ -9,7 +9,7 @@
 * *Preset picker:* one card per preset, in a grid that wraps. A card has the preset's icon (system presets only) and name, its description, and a line of what it sets in words: agent (harness, model, effort), "Code read only" or "Can edit", "New branch" or "No branch", "Starter instruction". Never a raw profile id alone. A preset that cannot start here stays visible, disabled, and its line says why.
 * *Start facts:* chips under the composer: the project, the agent (harness mark and `model · effort`; the tooltip names the profile and whether it is the project's role or a system profile), access (shield) and branch (`<prefix>/new` or "No branch"; the tooltip names the base). Access and branch are buttons: a click flips them for this start. Branch flips only while access is read; edits always get their own branch.
 
-**Behaviour.** Picking a project loads its presets (`session_presets`); the first available preset is picked. Picking another preset resets the flipped access and branch. Outside projects there is no branch chip. The composer keeps one draft for the page, so switching project or preset keeps the text. When no preset can start, the composer says so.
+**Behaviour.** Without `?in=` the page starts on the first focused or recent project. Picking a project loads its presets (`session_presets`); the first available preset is picked. Picking another preset resets the flipped access and branch. Outside projects there is no branch chip. The composer keeps one draft for the page, so switching project or preset keeps the text. When no preset can start, the composer says so.
 
 **Keyboard.** `Tab` to each chip and card; `Enter` or `Space` picks or flips.
 

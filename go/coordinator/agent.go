@@ -1549,8 +1549,8 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		if access = astr(v); access != "read" && access != "write" {
 			return nil, fail(400, "Expected access read|write")
 		}
-		if _, branchGiven := b["branch"]; access == "write" && !branchGiven {
-			branch = true // write work gets its own branch unless the call says otherwise
+		if _, branchGiven := b["branch"]; !branchGiven {
+			branch = access == "write" // write work gets its own branch, read work none, unless the call says otherwise
 		}
 	}
 	if v, given := b["branch"]; given {

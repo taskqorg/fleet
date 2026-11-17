@@ -309,6 +309,10 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			if astr(mapOf(c["payload"])["workspaceKey"]) != "" && !inList(caps, "workspace-key-v1") {
 				continue
 			}
+			// A read-only or branchless start waits for an executor that honours it, also if this host went back a release.
+			if pl := mapOf(c["payload"]); c["kind"] == "start" && (pl["readOnly"] == true || pl["branch"] == false) && !inList(caps, "start-access-v1") {
+				continue
+			}
 			// Each command is prepared under its own savepoint: one command that cannot be handed off is stopped with
 			// its reason, and the rest of the poll goes on (2026-11-17: one stored run failed every poll for 2.5 h).
 			if err := exec(wq, "SAVEPOINT poll_command"); err != nil {

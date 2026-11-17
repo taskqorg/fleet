@@ -338,7 +338,7 @@ func keepReasons(project any) map[string]bool {
 // teardown: teardown script, then remove the worktree unless a cleanup.keepWhen reason holds (uncommitted changes,
 // commits on no remote branch, a failed teardown script). The branch goes with -d (merged only), or -D
 // when the work was delivered (deleteBranch: the task was accepted).
-func teardown(dir, session, top string, project any, deleteBranch bool) contract.Teardown {
+func teardown(dir, session, top string, project any, deleteBranch, detached bool) contract.Teardown {
 	keep := keepReasons(project)
 	w := filepath.Join(dir, "worktree")
 	if !exists(filepath.Join(w, ".git")) {
@@ -379,9 +379,9 @@ func teardown(dir, session, top string, project any, deleteBranch bool) contract
 		// Commits on no remote-tracking branch (session branches are created --no-track, so there is no @{u} to ask). A
 		// detached worktree (a session with no branch) also started from the checkout's own branches: what they hold is not
 		// its work, so a local unpushed commit of the checkout never keeps it.
-		// Branchless by how it started: no session branch exists (a branch session keeps its own even when detached later).
+		// Branchless by how it started (the teardown command's branch: false), never by the refs it finds now.
 		not := []string{"-C", w, "rev-list", "-n", "1", "HEAD", "--not", "--remotes"}
-		if hardenedGit("-C", top, "rev-parse", "--verify", "--quiet", "refs/heads/"+sessionBranch(project, session)).Run() != nil {
+		if detached {
 			not = append(not, "--branches")
 		}
 		ahead, err := hardenedGit(not...).Output()
