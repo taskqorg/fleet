@@ -96,10 +96,10 @@ func pathParts(path string) []string {
 }
 
 // insideParts: an absolute path's components below the working area, which it may name as given or resolved (a root
-// reached through a link, such as /var and /private/var on macOS); nil when the path is outside it. Only the root's
-// spelling is resolved: the components below it are still opened one by one without following any link.
+// reached through a link, such as /var and /private/var on macOS); nil when the path does not name the area's root.
+// Only the root's spelling is resolved: the components below it are still opened one by one without following a link.
 func insideParts(workdir string, parts []string) []string {
-	roots := []string{workdir}
+	roots := []string{filepath.Clean(workdir)}
 	if r, err := filepath.EvalSymlinks(workdir); err == nil {
 		roots = append(roots, r)
 	}
@@ -123,13 +123,21 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		return nil, refusal("workdir")
 	}
 	parts := pathParts(path)
+	rooted := false // an absolute path outside the area's root keeps its former meaning: below the working area
 	if strings.HasPrefix(path, "/") {
-		parts = insideParts(workdir, parts)
+		if inside := insideParts(workdir, parts); inside != nil {
+			parts = inside
+		} else {
+			rooted = true
+		}
 	}
 	if len(parts) == 0 {
 		return nil, refusal("path must be a file inside your working area")
 	}
 	f, err := openInside(workdir, parts)
+	if err != nil && rooted {
+		return nil, refusal("path must be relative to your working area " + workdir + " or absolute inside it, not a link")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -223,6 +231,9 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 			scope := jAt(q, "scope")
 			if scope != nil && scope != "execution" && scope != "project" {
 				return mcpText(M{"error": `artifact tool refused: scope must be "execution" or "project"`}, &yes), nil
+			}
+			if scope != nil && (jAt(q, "execution_id") != nil || jAt(q, "task_id") != nil) {
+				return mcpText(M{"error": "artifact tool refused: scope goes without execution_id and task_id"}, &yes), nil
 			}
 			// Without a filter an agent lists its own execution's artifacts; the whole project only on request.
 			execution := jAt(q, "execution_id")

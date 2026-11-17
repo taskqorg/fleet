@@ -11,9 +11,10 @@ import (
 
 // answerTransfers plays the transfer lane: every queued transfer gets reply until the test ends.
 func answerTransfers(t *testing.T, db *sql.DB, reply string) {
-	stop := make(chan struct{})
-	t.Cleanup(func() { close(stop) })
+	stop, done := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() { close(stop); <-done }) // before the journal closes: cleanups run last first
 	go func() {
+		defer close(done)
 		for {
 			select {
 			case <-stop:
@@ -58,13 +59,16 @@ func TestArtifactSaveAbsolutePath(t *testing.T) {
 	}{
 		{work, "output/report.md", true},
 		{work, filepath.Join(work, "output", "report.md"), true},
-		{work, filepath.Join(work, ".", "output", "", "report.md"), true},
-		{linkedWork, filepath.Join(linkedWork, "output", "report.md"), true}, // as configured
-		{linkedWork, filepath.Join(work, "output", "report.md"), true},       // resolved
-		{work, filepath.Join(linkedWork, "output", "report.md"), false},      // a link spelling the configured root does not name
+		{work, work + "/./output//report.md", true},
+		{work, "/output/report.md", true},                                     // rooted at the working area, as before
+		{work + "/../work", filepath.Join(work, "output", "report.md"), true}, // a configured root that is not clean
+		{linkedWork, filepath.Join(linkedWork, "output", "report.md"), true},  // as configured
+		{linkedWork, filepath.Join(work, "output", "report.md"), true},        // resolved
+		{work, filepath.Join(linkedWork, "output", "report.md"), false},       // a link spelling the configured root does not name
 		{work, filepath.Join(base, "secret.txt"), false},
 		{work, filepath.Join(work, "out", "secret.txt"), false},
-		{work, filepath.Join(work, "..", "secret.txt"), false},
+		{work, work + "/../secret.txt", false},
+		{work, work + "/output/../output/report.md", false},
 		{work, work, false},
 		{work, work + "x/output/report.md", false},
 	} {
@@ -109,8 +113,10 @@ func TestArtifactListDefaultsToOwnExecution(t *testing.T) {
 			t.Fatalf("%v: filter %s, want %s", c.args, got, c.filter)
 		}
 	}
-	if r, _ := artifactCall(ctx, "artifact_list", M{"scope": "everything"}, dbExec{db}); !refused(r) || !strings.Contains(enc(r), "scope") {
-		t.Fatalf("an unknown scope is refused: %v", r)
+	for _, args := range []M{{"scope": "everything"}, {"scope": "project", "execution_id": "x"}, {"scope": "execution", "task_id": "t"}} {
+		if r, _ := artifactCall(ctx, "artifact_list", args, dbExec{db}); !refused(r) || !strings.Contains(enc(r), "scope") {
+			t.Fatalf("%v: an unknown scope, or one beside a filter, is refused: %v", args, r)
+		}
 	}
 	var schema any
 	for _, tool := range mcpTools(ctx)["tools"].([]any) {

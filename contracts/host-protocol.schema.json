@@ -1831,6 +1831,10 @@
           "items": {
             "$ref": "ops-artifacts.schema.json#/$defs/ArtifactRow"
           }
+        },
+        "nextCursor": {
+          "type": "string",
+          "$comment": "present while older artifacts remain: the filter cursor of the next page"
         }
       }
     },

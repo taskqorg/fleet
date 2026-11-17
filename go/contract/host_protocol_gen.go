@@ -679,7 +679,8 @@ func (v *HostArtifactListFilter) Validate() error {
 }
 
 type HostArtifactListReply struct {
-	Artifacts []ArtifactRow `json:"artifacts"`
+	Artifacts  []ArtifactRow `json:"artifacts"`
+	NextCursor *string       `json:"nextCursor,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
