@@ -26,7 +26,10 @@ func TestInternalMCPActualOuterSelection(t *testing.T) {
 	if _, err := o.db.Exec("INSERT INTO delegation_requests(id,body,response) VALUES(?,?,?)", key, enc(M{"commandId": "command", "executionId": "execution", "request": M{}}), enc(M{"result": M{"content": []any{M{"type": "text", "text": "original-ack"}}}})); err != nil {
 		t.Fatal(err)
 	}
-	fleet := delegationServer(ctx, journal)
+	fleet, err := delegationServer(ctx, journal, filepath.Join(t.TempDir(), "fleet-context.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if enc(jArr(fleet, "tools")) != enc(mcpToolNames(mcpTools(ctx))) {
 		t.Fatal("discovery/selection drift")
 	}

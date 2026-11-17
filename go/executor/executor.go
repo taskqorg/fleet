@@ -1044,7 +1044,10 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if fleetTools {
 		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
 		journal := filepath.Join(e.root, "journal.sqlite")
-		server := delegationServer(context, journal)
+		server, err := delegationServer(context, journal, filepath.Join(dir, execution+".fleet-context.json"))
+		if err != nil {
+			return fail(1, "fleet MCP context: "+err.Error())
+		}
 		codeFleetTools = &codeFleet{journal, context}
 		fleetMCP = jArr(server, "tools")
 		servers["fleet"] = server

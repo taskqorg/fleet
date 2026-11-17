@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -437,5 +438,39 @@ func TestReadOnlyStart(t *testing.T) {
 	}
 	if a := newACPSession("/w", "", M{"readOnly": true, "agentConfig": M{"settings": M{"mode": "accept-edits"}}}, nil); a.mode != "plan" {
 		t.Fatal(a.mode)
+	}
+}
+
+// Requirement: a codex or claude start launches on Linux, whose kernel refuses any one argument over 128 KiB
+// (MAX_ARG_STRLEN). Risk (live 2026-11-17): the director's operation list with schemas, escaped through the MCP
+// wrappers, outgrew it and every codex PM start on a Linux host failed at exec with no event.
+func TestFleetMCPContextStaysOutOfArgv(t *testing.T) {
+	ops := []any{}
+	for n, o := range contract.Operations {
+		var s any
+		json.Unmarshal(o.InputSchema, &s)
+		ops = append(ops, M{"name": n, "inputSchema": s, "description": strings.Repeat("Describes the operation. ", 40)})
+	}
+	dir := t.TempDir()
+	ctx := M{"hostId": "h", "commandId": "c", "executionId": "e", "projectId": "p", "workdir": dir, "operations": ops}
+	fleet, err := delegationServer(ctx, filepath.Join(dir, "journal.sqlite"), filepath.Join(dir, "e.fleet-context.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "e.fleet-context.json")); err != nil || len(b) < 100000 {
+		t.Fatalf("the context file holds the operations: %d bytes, %v", len(b), err)
+	}
+	servers, err := wrapMCPServers(M{"fleet": fleet}, filepath.Join(dir, "s.sock"), dir, filepath.Join(dir, "r"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"codex", "claude"} {
+		cmd := exec.Command(name)
+		harness{name: name}.WireMCP(cmd, M{}, servers, nil)
+		for _, a := range cmd.Args {
+			if len(a) > 64<<10 {
+				t.Fatalf("%s: one argument is %d bytes", name, len(a))
+			}
+		}
 	}
 }
