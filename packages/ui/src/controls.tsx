@@ -893,6 +893,10 @@ export function SelectBar({ count, total, onAll, onNone, actions: acts, onExit }
 export const SelectToggle = ({ on, onClick }: { on: boolean; onClick: () => void }) =>
   <span class="sel-toggle"><Button label="Select" icon="square" iconOnly kind="quiet" pressed={on} onClick={onClick} /></span>;
 
+/** Focuses an element when it mounts. Preact does not do this for `autoFocus`, and browsers honour the attribute
+ *  only while the page loads, so a dialog or menu opened later kept focus on its opener. One stable function, so it runs once. */
+export const focusOnMount = (el: HTMLElement | null) => el?.focus();
+
 /* ---------- Focus: one project multi-select for the whole app, with presets (OR-34) ---------- */
 
 export type FocusProject = { id: string; name: string };
@@ -923,7 +927,7 @@ export function FocusControl({ projects, value, presets, onChange, onSavePreset,
           <button type="button" class="x" aria-label={`Remove focus preset ${p.name}`} data-tip="Remove" onClick={() => onRemovePreset(p.name)}><Icon name="x" /></button></span>)}
         {value.length > 0 && (naming === null
           ? <Button label="Save focus preset" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
-          : <span class="naming"><input value={naming} placeholder="Preset name" aria-label="Preset name" autoFocus onInput={e => setNaming((e.target as HTMLInputElement).value)}
+          : <span class="naming"><input value={naming} placeholder="Preset name" aria-label="Preset name" ref={focusOnMount} onInput={e => setNaming((e.target as HTMLInputElement).value)}
               onKeyDown={e => { if (e.key === 'Enter' && naming.trim()) { onSavePreset(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
               <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSavePreset(naming.trim()); setNaming(null); }} /></span>)}
       </div>
@@ -991,7 +995,7 @@ export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, he
       <button type="button" class={`nav-pin${isPinned ? ' on' : ''}`} aria-pressed={isPinned} aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${it.label}`} data-tip={isPinned ? 'Unpin' : 'Pin'} onClick={() => toggle(it.id, inPinned)}>
         <Icon name="pin" /></button>
       {menu === `${inPinned ? 'p' : 'g'}:${it.id}` && <span class="menu rail-menu" role="menu" aria-label={it.label}>
-        <button type="button" role="menuitem" autoFocus onClick={act(() => toggle(it.id, inPinned))}><Icon name={i < 0 ? 'pin' : 'pin-off'} />{i < 0 ? 'Pin' : 'Unpin'}</button>
+        <button type="button" role="menuitem" ref={focusOnMount} onClick={act(() => toggle(it.id, inPinned))}><Icon name={i < 0 ? 'pin' : 'pin-off'} />{i < 0 ? 'Pin' : 'Unpin'}</button>
         {i > 0 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i - 1, true))}><Icon name="arrow-up" />Move up</button>}
         {i >= 0 && i < pinned.length - 1 && <button type="button" role="menuitem" onClick={act(() => move(it.id, i + 1, true))}><Icon name="arrow-down" />Move down</button>}
       </span>}
@@ -1061,7 +1065,7 @@ export function Spotlight({ providers, onClose }: { providers: SpotlightProvider
   let n = -1;
   return <div class="spot-back" onPointerDown={e => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="spotlight" data-ui="spotlight" role="dialog" aria-modal="true" aria-label="Search" onKeyDown={key}>
-      <label class="search"><Icon name={actions.search} /><input type="search" autoFocus placeholder="Code, task, section, project, host · agent:claude host:mac" aria-label="Search"
+      <label class="search"><Icon name={actions.search} /><input type="search" ref={focusOnMount} placeholder="Code, task, section, project, host · agent:claude host:mac" aria-label="Search"
         role="combobox" list={undefined} aria-expanded={flat.length > 0} aria-controls={list} aria-activedescendant={flat[at] ? `${list}-${at}` : undefined}
         value={q} onInput={e => setQ((e.target as HTMLInputElement).value)} /></label>
       {flat.length > 0 && <ul class="spot-list" id={list} role="listbox" aria-label="Results">{found.map(g => <Fragment key={g.p.id}>
