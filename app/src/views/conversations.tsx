@@ -195,7 +195,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         { label: 'Fork', icon: 'git-merge', onClick: () => { const requestId = reqId(); run(async () => { const f = await writeOnce('session_fork', { sessionId: id, requestId }, unknown, { signal: alive.current.signal }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); } },
       ]} />
     </header>
-    {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => setPanel(null)} onSaved={() => { setFailure(null); reloadSession(); }} run={run} unknown={unknown} />}
+    {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => setPanel(null)} onSaved={() => { setFailure(null); reloadSession(); }} run={run} onUnknown={() => { setFailure({ text: 'Rename outcome unknown. Check the current title.' }); reloadSession(); }} />}
     {panel && panel !== 'rename' && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
     <ScopedRollupBar rollup={s.resources} cost={s.cost} />
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
@@ -235,15 +235,29 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
 
 /** Rename (session_rename): an inline field, never a floating form (OR-14). The title it sets is kept; a generated one
  *  never replaces it. */
-function RenamePanel({ sessionId, current, onDone, onSaved, run, unknown }: { sessionId: string; current: string; onDone: () => void; onSaved: () => void; run: (fn: () => Promise<unknown>) => Promise<void>; unknown: () => void }) {
+function RenamePanel({ sessionId, current, onDone, onSaved, run, onUnknown }: { sessionId: string; current: string; onDone: () => void; onSaved: () => void; run: (fn: () => Promise<unknown>) => Promise<void>; onUnknown: () => void }) {
   // A rename still retrying stops when the panel closes (Cancel, Escape, another panel), so it never lands later.
   const signal = useAlive();
   const [v, setV] = useState(current), [busy, setBusy] = useState(false), off = !online.value, clean = v.trim().replace(/\s+/g, ' '), chars = [...clean].length;
   // The server's checks (session_titles.go sessionRename), said before sending.
   const reason = off ? 'offline' : !clean ? 'type a title' : chars > 200 ? 'at most 200 characters' : !/[\p{L}\p{N}]/u.test(clean) ? 'a title holds a word'
-    : /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(clean) ? 'no UUID in a title' : undefined;
-  // A rename is idempotent: the same title again changes nothing, so an unknown outcome is simply retried. One at a time.
-  const save = () => { if (busy) return; setBusy(true); run(async () => { try { await writeOnce('session_rename', { sessionId, title: clean }, unknown, { signal }); onDone(); onSaved(); /* not only the change feed: it may not be connected yet */ } catch (e) { if (!(e instanceof OpError && e.message === 'aborted')) throw e; /* closed while retrying: nothing to report */ } finally { setBusy(false); } }); };
+    : /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(clean) ? 'no UUID in a title' : undefined;
+  const save = () => {
+    if (busy) return;
+    setBusy(true);
+    run(async () => {
+      try {
+        await op('session_rename', { sessionId, title: clean }, { signal });
+        onDone();
+        onSaved();
+      } catch (error) {
+        if (signal.aborted || error instanceof AccessChanged) return;
+        if (!unknownOutcome(error)) throw error;
+        onDone();
+        onUnknown();
+      } finally { setBusy(false); }
+    });
+  };
   return <DetailSection title="Rename">
     <form class="answers" onSubmit={e => { e.preventDefault(); if (!reason) save(); }} onKeyDown={e => { if (e.key === 'Escape') onDone(); }}>
       <TextField label="Title" value={v} onChange={setV} />

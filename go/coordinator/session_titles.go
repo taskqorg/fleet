@@ -40,6 +40,8 @@ var errNoGateway = errors.New("no gateway configured")
 // gateway's answer).
 var errConnUnavailable = errors.New("connection-unavailable")
 
+var errTitleUnknown = errors.New("title call outcome unknown")
+
 // errTitleShared: a failure that is not this session's own (token, gateway, key, timeout, rate, any provider error,
 // a database conflict): the batch stops, the pass fails, and the session is tried again after titleRetryShared, using
 // no try.
@@ -52,9 +54,9 @@ var errTitleShared = errors.New("title model unavailable")
 // Session writers read the whole document and put it back; the title fields are the only ones updated in place.
 // ponytail: one kind-specific upsert; if more session fields get in-place writers, move the session writers to a
 // merge (data || patch) instead.
-const sessionTitleKeep = `(excluded.data-'title'-'titleBy'-'titleCall'-'titleAttemptAt'-'titleAttempts')||jsonb_strip_nulls(jsonb_build_object(` +
+const sessionTitleKeep = `(excluded.data-'title'-'titleBy'-'titleCall'-'titleAttemptAt'-'titleAttempts'-'titleUnknownCall')||jsonb_strip_nulls(jsonb_build_object(` +
 	`'title',document.data->'title','titleBy',document.data->'titleBy','titleCall',document.data->'titleCall',` +
-	`'titleAttemptAt',document.data->'titleAttemptAt','titleAttempts',document.data->'titleAttempts'))`
+	`'titleAttemptAt',document.data->'titleAttemptAt','titleAttempts',document.data->'titleAttempts','titleUnknownCall',document.data->'titleUnknownCall'))`
 
 // titleReady: whether a title can be asked for at all (a gateway is configured); tests answer without one.
 var titleReady = func() bool { return gatewayURL() != "" }
@@ -81,6 +83,9 @@ var sessionTitleCall = func(ctx context.Context, a *App, project, prompt string)
 	if line.Outcome != contract.CallOutcomeOk {
 		code := deref(line.ErrorCode)
 		err := fmt.Errorf("%s/%s: %s %s", titleConnection, titleTool, line.Outcome, code)
+		if line.Outcome == contract.CallOutcomeUnknown {
+			return "", line.CallId, fmt.Errorf("%w: %w", errTitleUnknown, err)
+		}
 		switch code {
 		case "connection-unavailable", "not-granted", "intake-paused", "budget-reached": // the gateway's refusals for the project
 			err = fmt.Errorf("%w: %w", errConnUnavailable, err)
@@ -128,7 +133,7 @@ var titleQuotes = map[rune]string{'"': `"`, '\'': `'`, '`': "`", '«': "»", '�
 
 // uuidRe: a UUID, with the brackets around it and what they hold when it is inside brackets ("(see <uuid>)" goes
 // whole, so a removed UUID leaves no "(see )").
-var uuidRe = regexp.MustCompile(`(?i)\s*[(\[][^()\[\]]*\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b[^()\[\]]*[)\]]|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+var uuidRe = regexp.MustCompile(`(?i)\s*[(\[][^()\[\]]*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[^()\[\]]*[)\]]|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 // hasWord: a cleaned line that holds a letter or a digit (a code fence or a bare label line does not).
 var hasWord = regexp.MustCompile(`[\p{L}\p{N}]`)
@@ -184,17 +189,29 @@ func clip(s string, n int) string {
 	return s
 }
 
-// titleCandidates: unarchived sessions with no title whose first agent run has ended (or has run titleWaitReply) and
+// titleCandidates: unarchived sessions with no title with a reply from a finished run or a run older than titleWaitReply and
 // that have a first message, not host command sessions, not tried within titleRetry nor titleTries times; newest first,
 // so a new conversation gets its title in the next pass. Messages are found by session_ref (document_session_ref),
 // executions by session_id: indexed under RLS. ponytail: every untitled session (no message, no agent run, tries used)
 // is walked each pass; give the query a partial index or a terminal mark if the session count makes that slow.
 var titleCandidates = `SELECT s.id, s.project_id, m.text AS first_message, r.id AS reply_execution
  FROM document s
- JOIN LATERAL (SELECT e.id, e.ended_at, e.started_at FROM execution e WHERE e.session_id=s.id AND e.kind='agent_run' ORDER BY e.seq LIMIT 1) r
-  ON r.ended_at IS NOT NULL OR r.started_at < now()-interval '` + titleWaitReply + `'
- JOIN LATERAL (SELECT x.data->>'text' AS text FROM document x WHERE x.session_ref=s.id AND x.kind='message' ORDER BY x.seq LIMIT 1) m ON true
- WHERE s.kind='session' AND NOT s.data ? 'title' AND NOT s.data ? 'archivedAt' AND coalesce(s.data->>'actor','')<>'program-worker'
+ JOIN LATERAL (
+  SELECT e.id FROM execution e WHERE e.session_id=s.id AND e.kind='agent_run'
+   AND e.project_id IS NOT DISTINCT FROM s.project_id
+   AND EXISTS (
+    SELECT 1 FROM document d
+     WHERE d.kind IN ('event','event-delta') AND d.data->>'executionId'=e.id
+      AND d.project_id IS NOT DISTINCT FROM s.project_id
+      AND jsonb_path_exists(d.data, '$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && (!exists(@.role) || @.role == "agent") && @.markdown like_regex "[^[:space:]]")')
+   )
+   AND (e.ended_at IS NOT NULL OR e.started_at < now()-interval '` + titleWaitReply + `')
+  ORDER BY e.seq LIMIT 1
+ ) r ON true
+ JOIN LATERAL (
+  SELECT x.data->>'text' AS text, x.project_id FROM document x WHERE x.session_ref=s.id AND x.kind='message' ORDER BY x.seq LIMIT 1
+ ) m ON m.project_id IS NOT DISTINCT FROM s.project_id
+ WHERE s.kind='session' AND NOT s.data ? 'title' AND NOT s.data ? 'archivedAt' AND NOT s.data ? 'titleUnknownCall' AND coalesce(s.data->>'actor','')<>'program-worker'
   AND coalesce((s.data->>'titleAttemptAt')::bigint,0) < $1 AND coalesce((s.data->>'titleAttempts')::int,0) < ` + fmt.Sprint(titleTries) + `
  ORDER BY s.seq DESC LIMIT $2`
 
@@ -228,6 +245,9 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		if ungranted[astr(r["project_id"])] {
 			err = errConnUnavailable
 		} else if err = runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+			if err := exec(q, "SELECT set_config('fleet.project_ids',$1,true)", firstString(r["project_id"], ",")); err != nil {
+				return err
+			}
 			reply, err = replyTextUpTo(q, astr(r["reply_execution"]), 1500)
 			return err
 		}); err != nil {
@@ -240,11 +260,14 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 			}
 		}
 		raw, callID := "", ""
+		if err == nil && strings.TrimSpace(strings.Join(reply, "")) == "" {
+			continue // The execution changed or had an incomplete stream; wait for readable reply text.
+		}
 		if err == nil {
 			prompt := "First message:\n" + headTail(astr(r["first_message"]), 3000) + "\n\nFirst reply:\n" + clip(strings.Join(reply, "\n\n"), 1500)
 			raw, callID, err = sessionTitleCall(ctx, a, astr(r["project_id"]), prompt)
 		}
-		if err != nil && ctx.Err() != nil {
+		if err != nil && ctx.Err() != nil && !errors.Is(err, errTitleUnknown) {
 			return failed
 		}
 
@@ -253,6 +276,9 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 			err = fmt.Errorf("empty title from %s", titleModel)
 		}
 		werr := runTx(context.WithoutCancel(ctx), a, nil, true, NOLOCK, func(q *Request) error {
+			if errors.Is(err, errTitleUnknown) {
+				return exec(q, `UPDATE document SET data=data||jsonb_build_object('titleUnknownCall',$2::text) WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $3`, id, callID, r["project_id"])
+			}
 			if err != nil {
 				at, used := nowMs(), 1
 				if errors.Is(err, errTitleShared) { // tried again after titleRetryShared, not titleRetry
@@ -260,7 +286,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 				} else if errors.Is(err, errConnUnavailable) {
 					used = 0
 				}
-				return exec(q, `UPDATE document SET data=data||jsonb_build_object('titleAttemptAt',$2::bigint,'titleAttempts',coalesce((data->>'titleAttempts')::int,0)+$3::int) WHERE id=$1 AND kind='session' AND NOT data ? 'title'`, id, at, used)
+				return exec(q, `UPDATE document SET data=data||jsonb_build_object('titleAttemptAt',$2::bigint,'titleAttempts',coalesce((data->>'titleAttempts')::int,0)+$3::int) WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $4`, id, at, used, r["project_id"])
 			}
 			// updated_at stays: a title is no conversation activity, so a backfill does not reorder the list.
 			set := doc{"title": title, "titleBy": "auto"}
@@ -268,7 +294,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 				set["titleCall"] = "call:" + callID
 			}
 			// A rename during the call keeps its title; the call stays a tool_run of system activity.
-			return exec(q, `UPDATE document SET data=(data-'titleAttemptAt'-'titleAttempts')||$2::jsonb WHERE id=$1 AND kind='session' AND NOT data ? 'title'`, id, jsonBytes(set))
+			return exec(q, `UPDATE document SET data=(data-'titleAttemptAt'-'titleAttempts')||$2::jsonb WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND project_id IS NOT DISTINCT FROM $3`, id, jsonBytes(set), r["project_id"])
 		})
 		if err != nil {
 			log.Printf("session title %s: %v", id, err)
@@ -276,12 +302,12 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 			// (its reply read, an empty answer) are logged.
 			if errors.Is(err, errConnUnavailable) {
 				ungranted[astr(r["project_id"])] = true
-			} else if errors.Is(err, errTitleShared) {
+			} else if errors.Is(err, errTitleShared) || errors.Is(err, errTitleUnknown) {
 				failed = errors.Join(failed, err) // one message per cause, not per session, so the error tracker groups it
 			}
 		}
 		failed = errors.Join(failed, werr)
-		if errors.Is(err, errTitleShared) {
+		if errors.Is(err, errTitleShared) || errors.Is(err, errTitleUnknown) {
 			return failed // the next sessions would most likely fail the same way
 		}
 	}
@@ -313,7 +339,7 @@ func sessionRename(q *Request, b *contract.SessionRenameRequest) (contract.Sessi
 	}
 	by := actor(q, "operator")
 	set := doc{"title": title, "titleBy": by}
-	tag, err := q.tx.Exec(q.ctx(), `UPDATE document SET data=(data-'titleAttemptAt'-'titleAttempts'-'titleCall')||$2::jsonb WHERE id=$1 AND kind='session'`, sid, jsonBytes(set))
+	tag, err := q.tx.Exec(q.ctx(), `UPDATE document SET data=(data-'titleAttemptAt'-'titleAttempts'-'titleCall'-'titleUnknownCall')||$2::jsonb WHERE id=$1 AND kind='session'`, sid, jsonBytes(set))
 	if err != nil {
 		return contract.SessionRenameReply{}, err
 	}

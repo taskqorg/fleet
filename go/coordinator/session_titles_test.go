@@ -48,6 +48,15 @@ INSERT INTO execution(id,kind,state,session_id,started_at,ended_at,data) VALUES
  ('e-agent','agent_run','succeeded','s-agent',now()-interval '2 min',now()-interval '1 min','{"id":"e-agent"}');
 `
 
+func insertTitleReplies(t *testing.T, e *testCoordEnv, ids string) {
+	t.Helper()
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+	 INSERT INTO document(kind,id,project_id,data)
+	 SELECT 'event', e.id||'-reply', e.project_id,
+	  jsonb_build_object('executionId',e.id,'data','{"fleetNormalized":{"blocks":[{"kind":"text","markdown":"First agent reply"}]}}'::jsonb)
+	 FROM execution e WHERE e.id IN (`+ids+`)`)
+}
+
 func migrationBody(t *testing.T, version string) string {
 	t.Helper()
 	m := regexp.MustCompile(`(?s)\n-- migration ` + version + `:.*?(\n-- migration \d+|$)`).FindString(schemaSQL)
@@ -66,6 +75,7 @@ func migrationBody(t *testing.T, version string) string {
 func TestSessionTitles(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", titleFixture)
+	insertTitleReplies(t, e, "'e-done','e-named','e-running','e-long','e-child-sub','e-fail','e-agent','e-arch'")
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", migrationBody(t, "72"))
 	owner := e.ownerHeaders()
 
@@ -119,7 +129,7 @@ func TestSessionTitles(t *testing.T) {
 	if got := after["s-done"]["title"]; got != "Fix the login redirect loop" {
 		t.Fatalf("generated title %q", got)
 	}
-	if !strings.Contains(prompts["#"], "First reply:") {
+	if !strings.Contains(prompts["#"], "First reply:\nFirst agent reply") {
 		t.Fatalf("prompt %q", prompts["#"])
 	}
 	if after["s-done"]["activityAt"] != before["s-done"]["activityAt"] {
@@ -191,16 +201,36 @@ func TestSessionTitles(t *testing.T) {
 		t.Fatalf("renamed session asked again: %v", calls)
 	}
 
+	// A failed first run with no reply does not win. A session moved after its first message does not send it to the new project.
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+	 INSERT INTO document(kind,id,project_id,data) VALUES
+	 ('session','s-resumed',NULL,'{"id":"s-resumed"}'),
+	 ('message','m-resumed',NULL,'{"sessionId":"s-resumed","text":"Resumed execution"}'),
+	 ('session','s-moved','prj-new','{"id":"s-moved","projectId":"prj-new"}'),
+	 ('message','m-moved','prj-old','{"sessionId":"s-moved","text":"Old project text"}');
+	 INSERT INTO execution(id,kind,state,session_id,project_id,started_at,ended_at,data) VALUES
+	 ('e-resumed-failed','agent_run','failed','s-resumed',NULL,now()-interval '3 min',now(),'{}'),
+	 ('e-resumed-success','agent_run','succeeded','s-resumed',NULL,now()-interval '1 min',now(),'{}'),
+	 ('e-moved','agent_run','succeeded','s-moved','prj-new',now()-interval '2 min',now(),'{}')`)
+	insertTitleReplies(t, e, "'e-resumed-success','e-moved'")
+	if err := sessionTitlePass(e.ctx, e.app); err != nil {
+		t.Fatal(err)
+	}
+	if calls["Resumed"] != 1 || calls["Old"] != 0 {
+		t.Fatalf("reply selection or project isolation: %v", calls)
+	}
+
 	// A failure the same for every session (the model unreachable) stops the batch after one call and uses no try.
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `INSERT INTO document(kind,id,data) VALUES
 	 ('session','s-o1','{"id":"s-o1"}'),('session','s-o2','{"id":"s-o2"}'),
 	 ('message','m-o1','{"id":"m-o1","sessionId":"s-o1","text":"Outage one"}'),('message','m-o2','{"id":"m-o2","sessionId":"s-o2","text":"Outage two"}');
 	 INSERT INTO execution(id,kind,state,session_id,started_at,ended_at,data) VALUES
 	 ('e-o1','agent_run','succeeded','s-o1',now()-interval '2 min',now(),'{"id":"e-o1"}'),('e-o2','agent_run','succeeded','s-o2',now()-interval '2 min',now(),'{"id":"e-o2"}')`)
+	insertTitleReplies(t, e, "'e-o1','e-o2'")
 	outage := 0
 	sessionTitleCall = func(context.Context, *App, string, string) (string, string, error) {
 		outage++
-		return "", "", fmt.Errorf("%w: google-ai/generate_content: unknown client-timeout", errTitleShared)
+		return "", "", fmt.Errorf("%w: google-ai/generate_content: gateway unavailable", errTitleShared)
 	}
 	if err := sessionTitlePass(e.ctx, e.app); err == nil || outage != 1 {
 		t.Fatalf("outage: %d calls, pass error %v", outage, err)
@@ -209,34 +239,48 @@ func TestSessionTitles(t *testing.T) {
 	if got := psqlLines(t, e, `SELECT id||'|'||coalesce(data->>'titleAttempts','0')||'|'||coalesce(((data->>'titleAttemptAt')::bigint < (extract(epoch FROM now())*1000)::bigint-3000000)::text,'unmarked') FROM document WHERE id IN ('s-o1','s-o2') ORDER BY id`); strings.Join(got, ",") != "s-o1|0|unmarked,s-o2|0|true" {
 		t.Fatalf("an outage: %v", got)
 	}
+	sessionTitleCall = func(context.Context, *App, string, string) (string, string, error) {
+		return "", "uncertain-call", errTitleUnknown
+	}
+	if err := sessionTitlePass(e.ctx, e.app); !errors.Is(err, errTitleUnknown) {
+		t.Fatalf("unknown call: %v", err)
+	}
+	if got := psqlLines(t, e, `SELECT data->>'titleUnknownCall' FROM document WHERE id='s-o1'`); len(got) != 1 || got[0] != "uncertain-call" {
+		t.Fatalf("unknown call receipt: %v", got)
+	}
+	if err := sessionTitlePass(e.ctx, e.app); err != nil {
+		t.Fatalf("unknown provider call was retried: %v", err)
+	}
+
 }
 
 // Requirement: fleet-conversations.md, Titles: a model reply becomes one short line without quotes, markdown marks, a
 // final period or a UUID (OR-38). Risk: a title carries a whole paragraph, a UUID or the model's quoting.
 func TestCleanTitle(t *testing.T) {
 	for in, want := range map[string]string{
-		"\"Fix the login loop.\"\n\nBecause...":                    "Fix the login loop",
-		"## **Review run 5d370c31-c765-479f-b72c-87b55d36ed46**":   "Review run",
-		"  «Добавить ключ Anthropic»  ":                            "Добавить ключ Anthropic",
-		"1. Fix the login loop":                                    "Fix the login loop",
-		"Support for \"dark mode\"":                                "Support for \"dark mode\"",
-		"Title: Fix login redirect":                                "Fix login redirect",
-		"Fix session (3f2a0c1d-1111-4222-8333-444455556666) crash": "Fix session crash",
-		"```text\nFix login\n```":                                  "Fix login",
-		"```\nFix login\n```":                                      "Fix login",
-		"Title:\nFix login":                                        "Fix login",
-		"Название: Починить вход":                                  "Починить вход",
-		"Fix bug (see 123e4567-e89b-12d3-a456-426614174000)":       "Fix bug",
-		"Fix useEffect() cleanup":                                  "Fix useEffect() cleanup",
-		"'a' vs 'b'":                                               "'a' vs 'b'",
-		"#635 Fix dispatch":                                        "#635 Fix dispatch",
-		"-v flag in CLI":                                           "-v flag in CLI",
-		"- Fix the flag":                                           "Fix the flag",
-		"Update the users'":                                        "Update the users'",
-		"'Quoted title'":                                           "Quoted title",
-		"\"Fix login loop\".":                                      "Fix login loop",
-		"\n\n":                                                     "",
-		strings.Repeat("слово ", 30):                               strings.TrimSpace(string([]rune(strings.Repeat("слово ", 30))[:79])) + "…",
+		"\"Fix the login loop.\"\n\nBecause...":                       "Fix the login loop",
+		"## **Review run 5d370c31-c765-479f-b72c-87b55d36ed46**":      "Review run",
+		"  «Добавить ключ Anthropic»  ":                               "Добавить ключ Anthropic",
+		"1. Fix the login loop":                                       "Fix the login loop",
+		"Support for \"dark mode\"":                                   "Support for \"dark mode\"",
+		"Fix session_123e4567-e89b-12d3-a456-426614174000_transcript": "Fix session__transcript",
+		"Title: Fix login redirect":                                   "Fix login redirect",
+		"Fix session (3f2a0c1d-1111-4222-8333-444455556666) crash":    "Fix session crash",
+		"```text\nFix login\n```":                                     "Fix login",
+		"```\nFix login\n```":                                         "Fix login",
+		"Title:\nFix login":                                           "Fix login",
+		"Название: Починить вход":                                     "Починить вход",
+		"Fix bug (see 123e4567-e89b-12d3-a456-426614174000)":          "Fix bug",
+		"Fix useEffect() cleanup":                                     "Fix useEffect() cleanup",
+		"'a' vs 'b'":                                                  "'a' vs 'b'",
+		"#635 Fix dispatch":                                           "#635 Fix dispatch",
+		"-v flag in CLI":                                              "-v flag in CLI",
+		"- Fix the flag":                                              "Fix the flag",
+		"Update the users'":                                           "Update the users'",
+		"'Quoted title'":                                              "Quoted title",
+		"\"Fix login loop\".":                                         "Fix login loop",
+		"\n\n":                                                        "",
+		strings.Repeat("слово ", 30):                                  strings.TrimSpace(string([]rune(strings.Repeat("слово ", 30))[:79])) + "…",
 	} {
 		if got := cleanTitle(in); got != want {
 			t.Errorf("cleanTitle(%q) = %q, want %q", in, got, want)
