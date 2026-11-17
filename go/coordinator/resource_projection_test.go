@@ -1938,7 +1938,9 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	// Replay migration 68 over a row written before it, with its totals and the pending work it enqueued.
 	ownerURL := fmt.Sprintf("postgresql://fleet@/%s?host=%s&port=%d", env.dbName, env.sockDir, env.pgPort)
 	if _, err := env.ownerStore.pool.Exec(ctx, `ALTER TABLE execution DROP CONSTRAINT execution_project_id_not_empty;
-	 DELETE FROM schema_migration WHERE version=68; UPDATE execution SET project_id='' WHERE id='`+id+`'`); err != nil {
+	 DELETE FROM schema_migration WHERE version=68; UPDATE execution SET project_id='' WHERE id='`+id+`';
+	 WITH r AS (INSERT INTO resource_metadata_repair(metadata_id,old_class,new_class) VALUES('projectless','{}','{}') RETURNING repair_id)
+	 INSERT INTO resource_repair_scope(repair_id,project_id) SELECT repair_id,'' FROM r`); err != nil {
 		t.Fatal(err)
 	}
 	if err := resourceReplace(ctx, a, id); err == nil || !strings.Contains(err.Error(), `unknown advisory lock scope "project:"`) {
@@ -1949,7 +1951,7 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	}
 	var left int
 	if err := env.ownerStore.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM execution WHERE project_id='')+(SELECT count(*) FROM execution_totals WHERE project_id='')
-	 +(SELECT count(*) FROM resource_work_scope WHERE project_id='')`).Scan(&left); err != nil || left != 0 {
+	 +(SELECT count(*) FROM resource_work_scope WHERE project_id='')+(SELECT count(*) FROM resource_repair_scope WHERE project_id='')`).Scan(&left); err != nil || left != 0 {
 		t.Fatal("after migration 68", err, left)
 	}
 	if err := resourceReplace(ctx, a, id); err != nil {
