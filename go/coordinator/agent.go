@@ -1522,11 +1522,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		// An agent starts only the profiles its project maps to roles (agentArgs checks an explicit profileId the same
 		// way): a preset never gives it a system profile it could not request directly.
 		if q.agent != "" {
-			mapped := false
-			for _, v := range mapOf(project["roles"]) {
-				mapped = mapped || v == profileID
-			}
-			if !mapped {
+			if !profileInRoles(project, profileID) {
 				return nil, fail(403, "Profile not in project roles")
 			}
 		}
@@ -1535,13 +1531,27 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	if profileID == "" || profile == nil {
 		return nil, fail(400, "Expected profileId, a role mapped to a profile, or a preset")
 	}
+	// A read-only conversation stays read-only one hop later: the sessions its agent starts are read-only too, by default
+	// and by rule.
+	callerRead := false
+	if c := astr(b["callerSessionId"]); c != "" {
+		if caller, _ := maybe(q, c, "session"); caller != nil {
+			callerRead = caller["access"] == "read"
+		}
+	}
 	access, branch := "write", true
 	if pre != nil {
 		access, branch = pre.Access, pre.Branch
 	}
+	if callerRead {
+		access = "read"
+	}
 	if v, given := b["access"]; given {
 		if access = astr(v); access != "read" && access != "write" {
 			return nil, fail(400, "Expected access read|write")
+		}
+		if _, branchGiven := b["branch"]; access == "write" && !branchGiven {
+			branch = true // write work gets its own branch unless the call says otherwise
 		}
 	}
 	if v, given := b["branch"]; given {
@@ -1554,11 +1564,8 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	if access == "write" && !branch {
 		return nil, fail(400, "Write access needs a branch")
 	}
-	// A read-only conversation stays read-only one hop later: the sessions its agent starts are read-only too.
-	if c := astr(b["callerSessionId"]); c != "" && access == "write" {
-		if caller, _ := maybe(q, c, "session"); caller != nil && caller["access"] == "read" {
-			return nil, fail(403, "A read-only conversation starts read-only sessions only")
-		}
+	if callerRead && access == "write" {
+		return nil, fail(403, "A read-only conversation starts read-only sessions only")
 	}
 	if st, ok := b["setup"]; ok && st != "run" && st != "skip" {
 		return nil, fail(400, "Expected setup run|skip")
@@ -2162,11 +2169,7 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 		}
 		a["projectId"], a["callerSessionId"], a["callerExecutionId"] = p, own, executionID
 		if pid, ok := a["profileId"]; ok {
-			roles := []any{}
-			for _, v := range mapOf(projectSettingsOf(q, p)["roles"]) {
-				roles = append(roles, v)
-			}
-			if !slices.Contains(roles, pid) {
+			if id, _ := pid.(string); !profileInRoles(projectSettingsOf(q, p), id) {
 				return nil, fail(403, "Profile not in project roles")
 			}
 		}

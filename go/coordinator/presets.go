@@ -102,6 +102,16 @@ func resolvePreset(q *Request, p preset, settings doc) (role, profileID string, 
 	return role, profileID, profile, ""
 }
 
+// profileInRoles: the project maps some role to this profile; an agent starts only such profiles.
+func profileInRoles(settings doc, profileID string) bool {
+	for _, v := range mapOf(settings["roles"]) {
+		if v == profileID && profileID != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.SessionPresetsReply, error) {
 	out := contract.SessionPresetsReply{Presets: []contract.SessionPreset{}}
 	var settings doc
@@ -124,6 +134,9 @@ func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.Ses
 	}
 	for _, p := range ps {
 		role, profileID, profile, unavailable := resolvePreset(q, p, settings)
+		if unavailable == "" && q.agent != "" && !profileInRoles(settings, profileID) { // what session_start refuses an agent
+			unavailable = "Your project maps no role to profile " + profileID
+		}
 		x := contract.SessionPreset{Id: p.ID, Name: p.Name, Description: p.Description, Access: contract.SessionAccess(p.Access), Branch: p.Branch, Source: source,
 			Role: optStr(role), ProfileId: optStr(profileID), Starter: optStr(p.Starter), Unavailable: optStr(unavailable)}
 		if profile != nil {
@@ -143,5 +156,5 @@ func firstOf(xs []any) any {
 
 func init() {
 	agentTypedOp("session_presets", true, sessionPresets)
-	agentDescriptions["session_presets"] = "Presets for starting a session in a project (projectId; absent: outside projects): id, name, what it does, the role or profile it resolves to (a system profile when the project does not map the role), access read|write, branch, starter instruction; unavailable says why one cannot start. Start with session_start preset=<id>"
+	agentDescriptions["session_presets"] = "Presets for starting a session in a project (projectId; absent: outside projects): id, name, what it does, the role or profile it resolves to (a system profile when the project does not map the role; an agent starts only profiles its project maps), access read|write, branch, starter instruction; unavailable says why one cannot start. Start with session_start preset=<id>"
 }

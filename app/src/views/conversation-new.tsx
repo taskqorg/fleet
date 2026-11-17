@@ -56,8 +56,9 @@ export function NewConversation({ initialProject, onStarted }: { initialProject:
       onClick: access === 'write' ? undefined : () => setOverride(o => ({ ...o, branch: !branch })) }] : []),
   ] : [];
 
-  // One draft for the page: switching project or preset keeps the text (api.ts takes 'new' as any start from here).
-  const target = { kind: 'project' as const, id: 'new', roleId: 'new' };
+  // One draft text for the page, so switching project or preset keeps it; a submission's identity stays per project and
+  // preset (api.ts), so a retry never sends an earlier target's body.
+  const page = { kind: 'project' as const, id: 'new', roleId: 'new' }, target = { kind: 'project' as const, id: key, roleId: chosen?.id ?? '' };
   const reason = !online.value ? 'offline' : !chosen ? (presets.error ? 'Presets did not load' : presets.data ? 'No preset can start here' : 'Loading presets') : undefined;
   const send = async (text: string) => {
     const scope = authorizedDraftScope(target);
@@ -80,7 +81,7 @@ export function NewConversation({ initialProject, onStarted }: { initialProject:
       {presets.error ? <ErrorBanner text={`Presets did not load: ${presets.error}`} /> : presets.data ? <PresetPicker presets={options} value={chosen?.id ?? null} onChange={id => setPicked(p => ({ ...p, [key]: id }))} /> : <Skeleton rows={2} />}
     </DetailSection>
     {error && <ErrorBanner text={error} />}
-    <Composer draftPersistence={chosen ? createDraftPersistence(authorizedDraftScope(target)) : undefined} placeholder={project ? `Describe the work in ${name}` : 'Describe the work'} disabledReason={reason} onSend={send} />
+    <Composer draftPersistence={createDraftPersistence(authorizedDraftScope(page))} placeholder={project ? `Describe the work in ${name}` : 'Describe the work'} disabledReason={reason} onSend={send} />
     <StartFacts facts={facts} />
   </article>;
 }

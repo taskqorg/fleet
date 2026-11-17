@@ -51,6 +51,7 @@ test('P2 session_start with a preset starts its profile with its access, branch 
   assert.match(start(design.sessionId).instructions, /Design: Design work\. .*packages\/ui/s, 'the starter instruction is in the turn');
   const override = ok(await op('session_start', {projectId: 'cs', preset: 'discuss', access: 'write', branch: true, requestId: randomUUID()}));
   assert.deepEqual([override.profileId, override.access, override.branch], ['pm', 'write', true]);
+  assert.deepEqual(ok(await op('session_start', {projectId: 'cs', preset: 'review', access: 'write', requestId: randomUUID()})).branch, true, 'write without a branch field gets a branch');
   const explicit = ok(await op('session_start', {projectId: 'desiign', preset: 'fix', profileId: 'pm', requestId: randomUUID()}));
   assert.deepEqual([explicit.profileId, explicit.access], ['pm', 'write'], 'an explicit profile wins over the preset');
   const id = randomUUID(), again = [await op('session_start', {projectId: 'cs', preset: 'review', requestId: id}), await op('session_start', {projectId: 'cs', preset: 'review', requestId: id})].map(ok);
@@ -99,11 +100,12 @@ test('P4 an agent starts only profiles its project maps, also through a preset, 
   assert.ok(!ok(await host('/api/hosts/poll', {...poll, capabilities: []})).commands.some((c: any) => c.executionId === waiting.executionId), 'no read-only start on a host that would ignore it');
   const writer = await agent({role: 'pm'});
   const listed = ok(await writer.tool('session_presets', {}));
-  assert.equal(listed.presets.find((p: any) => p.id === 'review').profileId, 'claude-reviewer', 'the agent sees its own project\'s presets');
+  const review = listed.presets.find((p: any) => p.id === 'review');
+  assert.deepEqual([review.profileId, review.unavailable], ['claude-reviewer', 'Your project maps no role to profile claude-reviewer'], 'the agent sees which presets it cannot start');
   assert.equal((await writer.tool('session_start', {preset: 'review', requestId: randomUUID()})).status, 403, 'no system profile the project does not map');
   assert.equal((await writer.tool('session_start', {preset: 'fix', requestId: randomUUID()})).status, 403, 'no fallback worker either');
   assert.equal(ok(await writer.tool('session_start', {preset: 'discuss', requestId: randomUUID()})).profileId, 'pm', 'a mapped role starts');
   const reader = await agent({preset: 'discuss'});
-  assert.equal((await reader.tool('session_start', {role: 'pm', requestId: randomUUID()})).status, 403, 'a read-only conversation cannot start a writer');
-  assert.equal(ok(await reader.tool('session_start', {role: 'pm', access: 'read', requestId: randomUUID()})).access, 'read');
+  assert.equal((await reader.tool('session_start', {role: 'pm', access: 'write', requestId: randomUUID()})).status, 403, 'a read-only conversation cannot start a writer');
+  assert.equal(ok(await reader.tool('session_start', {role: 'pm', requestId: randomUUID()})).access, 'read', 'its starts are read by default');
 });

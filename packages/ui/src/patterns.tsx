@@ -152,8 +152,10 @@ const StatusSlot = createContext<HTMLElement | null>(null);
  * A page's status (its offline marker, a data-age chip) in the shell header after the section title (OR-43), so a page
  * needs no head row of its own for it and nothing moves when it appears (OR-23). One page at a time fills it.
  */
-export function ShellStatus({ children }: { children: ComponentChildren }) {
-  const slot = useContext(StatusSlot);
+export function ShellStatus({ children }: { children: ComponentChildren }) { return useHeaderSlot(StatusSlot, children); }
+/** Renders children into a shell-header slot while the page is mounted. */
+function useHeaderSlot(ctx: typeof StatusSlot, children: ComponentChildren) {
+  const slot = useContext(ctx);
   useLayoutEffect(() => { if (slot) render(<>{children}</>, slot); });
   useLayoutEffect(() => () => { if (slot) render(null, slot); }, [slot]);
   return null;
@@ -163,12 +165,7 @@ const ActionsSlot = createContext<HTMLElement | null>(null);
  * A section's own actions (Conversations: New conversation) in the shell header, right after the section title (OR-43),
  * so the control column needs no head row for them. Icon buttons; at phone width they stay. One page at a time fills it.
  */
-export function ShellActions({ children }: { children: ComponentChildren }) {
-  const slot = useContext(ActionsSlot);
-  useLayoutEffect(() => { if (slot) render(<>{children}</>, slot); });
-  useLayoutEffect(() => () => { if (slot) render(null, slot); }, [slot]);
-  return null;
-}
+export function ShellActions({ children }: { children: ComponentChildren }) { return useHeaderSlot(ActionsSlot, children); }
 
 export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], searchIdle, user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus, title, privateReady = true, privateGeneration = 0 }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
