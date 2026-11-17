@@ -16,6 +16,7 @@ import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/v
 import { nextUrl } from '../url.ts';
 import { prefs } from '../prefs.ts';
 import { useListPage, ListPagePanel } from '../list-page.tsx';
+import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
 import { ScopedRollupBar } from './resources.tsx';
@@ -28,10 +29,6 @@ const reqId = () => crypto.randomUUID();
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
 const titleOf = (s: SessionRow) => s.title ?? 'New conversation';
 
-// System presets (OR-33): fixed, shown before the person's saved views. A system preset sets the state filter only;
-// grouping, sort, projects and search stay as the person set them.
-const SYSTEM_VIEWS = [{ name: 'Needs me', view: { view: 'conversations' as const, state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'conversations' as const, state: ['preparing', 'running', 'waiting'] } }];
-
 export function Conversations({ id }: { id?: string }) {
   // Pinned conversations stay whatever the filter, search or grouping (OR-12): read by id with no filter but the archived
   // list the view shows, so an archived pin never shows among active conversations or the other way round. Active and
@@ -39,7 +36,7 @@ export function Conversations({ id }: { id?: string }) {
   // pending confirmation; the toggle and a saved view also drop the checked rows. The rows a bulk action finished leave
   // the selection (list-page.tsx).
   const page = useListPage<SessionRow>({
-    view: 'conversations', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS, groupLabel,
+    view: 'conversations', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS.conversations, groupLabel,
     pinDoc: 'session-pins', pinRead: v => ({ key: [!!v.archived], filter: { archived: !!v.archived } }),
     pinTouches: (c, has) => (c.kind === 'session' && has(c.id)) || (!!c.sessionId && has(c.sessionId)),
     saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),

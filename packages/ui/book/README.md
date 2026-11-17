@@ -8,7 +8,7 @@
 
 - `book.tsx:Book` mounts the control and pattern demonstrations.
 - `pages.tsx:App` renders page mockups; `open-questions.tsx:Page` renders recorded visual alternatives.
-- `fixtures.ts` exports example tasks, hosts, transcript blocks, and timing constants; `nav.ts:NAV` supplies demo navigation.
+- `fixtures.ts` exports example tasks, hosts, transcript blocks, and timing constants; `nav.ts:NAV` and `NAV_FOCUS` supply demo navigation with counters without and with a focus.
 - `focus-demo.tsx:FocusDemo` is the focus chip with local state, shared by the book and the mockups' shell header.
 
 ## Invariants

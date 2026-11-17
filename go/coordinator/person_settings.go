@@ -2,7 +2,7 @@ package main
 
 // Person settings (fleet-people-access.md section 8 "Dispatch"): order list | soonest_reset on the director, default
 // list. The same document holds the person's app preferences: pins, saved views, focus and focus presets, ignored projects,
-// column widths and row pins (fleet-people-access.md section 8 "Preferences"). One person-setting document per email; each change writes setting-change.
+// column widths, row pins and the navigation counter views (fleet-people-access.md section 8 "Preferences"). One person-setting document per email; each change writes setting-change.
 
 import (
 	"encoding/json"
@@ -88,6 +88,9 @@ func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 	}
 	if ps.ListGroups == nil {
 		ps.ListGroups = map[string][]string{}
+	}
+	if ps.NavCounters == nil {
+		ps.NavCounters = map[string]string{}
 	}
 	return ps, nil
 }
@@ -276,6 +279,30 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.NavCollapsed != nil {
 		next.NavCollapsed = *r.NavCollapsed
 	}
+	// The navigation counter views (nav_counts.go): merged by section; a saved view must be in the views after this change,
+	// and a removed one leaves its counter (the default counts again), so a later view of the same name is not counted
+	// unchosen.
+	if r.NavCounters != nil || r.Views != nil || r.ViewDelete != nil {
+		next.NavCounters = maps.Clone(prev.NavCounters)
+		for k, v := range next.NavCounters {
+			if _, isSystem := navSystemView(k, v); v != navCounterOff && !isSystem &&
+				!slices.ContainsFunc(next.Views, func(x contract.SavedView) bool { return x.List == k && x.Name == v }) {
+				delete(next.NavCounters, k)
+			}
+		}
+	}
+	if r.NavCounters != nil {
+		if err := checkNavCounters(r.NavCounters, next.Views); err != nil {
+			return contract.PersonSettings{}, err
+		}
+		for k, v := range r.NavCounters {
+			if v == "" {
+				delete(next.NavCounters, k)
+			} else {
+				next.NavCounters[k] = v
+			}
+		}
+	}
 	if r.RowPins != nil {
 		next.RowPins = maps.Clone(prev.RowPins)
 		for k, ids := range r.RowPins {
@@ -303,7 +330,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	by := actor(q, "operator")
 	_, err = unscoped(q, func() (struct{}, error) {
 		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(next.Order), "pins": next.Pins,
-			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "ignored": next.Ignored, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed, "lastViews": next.LastViews, "listGroups": next.ListGroups}); err != nil {
+			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "ignored": next.Ignored, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed, "navCounters": next.NavCounters, "lastViews": next.LastViews, "listGroups": next.ListGroups}); err != nil {
 			return struct{}{}, err
 		}
 		change := func(field string, previous, value any) error {
@@ -318,7 +345,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			name            string
 			previous, value any
 		}{{"pins", prev.Pins, next.Pins}, {"views", prev.Views, next.Views}, {"focus", prev.Focus, next.Focus},
-			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}} {
+			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}, {"navCounters", prev.NavCounters, next.NavCounters}} {
 			// lastViews is where the person was and listGroups which groups they folded, not settings: they change as the person
 			// moves around a list and are not audited.
 			a, _ := json.Marshal(f.previous)

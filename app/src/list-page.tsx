@@ -13,7 +13,9 @@ import { useList, useDoc, type Kind } from './store.ts';
 import { chunks, compareKeys, closedGroups, flipGroup } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
-import { usePins, useViews, listGroups, setListGroups, type SavedView } from './prefs.ts';
+import { usePins, useViews, listGroups, setListGroups, setNavCounter, type SavedView } from './prefs.ts';
+import { navCounted } from './nav-counts.ts';
+import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 import type { Change } from './feed.ts';
 
 /** A server list row: its id, code and the server sort key whose first part is the group key. */
@@ -265,7 +267,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   return <section class="panel">
     <ListFrame pending={list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={list.total} chips={p.chips} onRemove={p.onRemoveChip}
       extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
-        onSave={g.save} onUnpin={views.remove} />}
+        onSave={g.save} onUnpin={views.remove} counted={navCounted(view.view, views.list.map(v => v.name))} onCount={view.view in NAV_COUNTER_DEFAULTS ? n => setNavCounter(view.view, n) : undefined} />}
       counters={<StateCounters family={p.family} label={p.countersLabel ?? `${p.noun} by state`} pending={list.pending} counts={(p.countsUnknown ? Object.fromEntries(Object.keys(list.counts).map(k => [k, null])) : list.counts) as any} active={g.states as StateOf<F>[]} onAll={() => set({ state: [], preset: undefined })}
         onToggle={(x: StateOf<F>) => { const s = String(x); set({ state: g.states.includes(s) ? g.states.filter(y => y !== s) : [...g.states, s], preset: undefined }); }} />}
       tools={<>

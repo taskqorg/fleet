@@ -7,7 +7,7 @@
 **Composition, from top to bottom:**
 1. **[Filter bar](../controls/filter-bar.md), first line:** search as an icon (OR-31) that takes the query syntax (OR-36), chips of filters that came with a link, Clear, and the count "84 of 1,240".
 2. **Second line:**
-   * saved views (OR-33): system presets first (Tasks "Needs me" and "Running": every state that is not terminal), then the person's own with remove, plus "Save view" (its name field closes with Esc or its cross). A system preset sets only the state filter and leaves grouping, sort, projects and search as they are; it shows active whenever the states match. A personal view restores everything it saved;
+   * saved views (OR-33): system presets first (Tasks "Needs me" and "Running": every state that is not terminal), then the person's own with remove, plus "Save view" (its name field closes with Esc or its cross). A view chip's menu (right click, Menu key or Shift+F10) chooses the view the section's navigation counter counts, or stops it ([nav rail counters](../controls/nav-rail.md)). A system preset sets only the state filter and leaves grouping, sort, projects and search as they are; it shows active whenever the states match. A personal view restores everything it saved;
    * [state counters](../controls/state-counters.md): totals per state, click to filter;
    * Group (registry icon with tooltip, OR-35): priority, state, project, agent, host, or none (D11);
    * Sort (OR-35): changed or created, with a direction toggle; Tasks default to recently changed first. A saved view stores grouping and sort.

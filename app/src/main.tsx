@@ -13,6 +13,7 @@ import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view
 import { preferencesTouched } from './invalidation.ts';
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
 import { useDoc } from './store.ts';
+import { useNavCounts } from './nav-counts.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
 import { clearAll } from './offline.ts';
@@ -195,7 +196,10 @@ function App() {
   // The project focus and ignored projects (OR-34) are person settings; lists apply them where their view names no projects.
   // The empty palette offers the same presets as the focus chip, without ignored projects.
   const { focus, focusPresets, ignored } = prefs.value;
-  return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={NAV} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
+  // Each section's counter (nav-rail.md, Counters); Needs you is the head chip, not a counter.
+  const counts = useNavCounts(access.value.state === 'open');
+  const nav = NAV.map(n => counts[n.id] ? { ...n, count: counts[n.id] } : n);
+  return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={nav} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
     searchIdle={<FocusPresets icon value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} onChange={setFocus} />}
     focus={access.value.state === 'open' ? <Focus go={go} /> : undefined}
     widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}

@@ -14,6 +14,9 @@ import (
 
 var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
 
+// sessionState: a session's state, its latest execution's (idle without one); nav_counts.go navSessionBase shares it.
+const sessionState = `coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle')`
+
 // Aggregate visible history once: under RLS, JSON sessionId predicates cannot become index conditions.
 // Correlating these document scans per session makes retained history multiply the list's work.
 // activity_at: the latest change of the session, its messages and events, or the start or end of its executions (the
@@ -25,7 +28,7 @@ const sessionBase = `WITH session_messages AS MATERIALIZED (
  SELECT data->>'sessionId' AS session_id,max(updated_at) AS last_at
  FROM document WHERE kind IN ('message','event') GROUP BY data->>'sessionId'
 ), x AS (SELECT d.id, d.code, d.data, d.project_id, d.seq,
- coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
+ ` + sessionState + ` AS state,
  (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
  m.first_message,
  greatest(d.updated_at,ex.last_at,a.last_at) AS activity_at,

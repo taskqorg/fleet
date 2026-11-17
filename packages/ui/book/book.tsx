@@ -8,7 +8,7 @@ import {
   Composer, DropZone, TextRow, type ComposerAttachment, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage, type SpotlightProvider, type SpotlightItem,
 } from '../src/index.ts';
-import { NAV } from './nav.ts';
+import { NAV, NAV_FOCUS } from './nav.ts';
 import { FocusDemo } from './focus-demo.tsx';
 import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures.ts';
 
@@ -247,7 +247,9 @@ function spotDemo(focus: string[], onFocus: (f: string[]) => void): SpotlightPro
 function RailDemo() {
   const [cur, setCur] = useState('tasks');
   const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
-  return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPins={setPinned} /></div>;
+  // Counters (nav-rail.md): without a focus, with a focus (in focus bright, outside dim) and collapsed (the in-focus badge only).
+  return <div class="rail-demos">{([['No focus', NAV, false], ['Focus', NAV_FOCUS, false], ['Collapsed, focus', NAV_FOCUS, true]] as const).map(([t, items, mini]) =>
+    <figure key={t} class="pane rail-demo"><figcaption class="muted type-sm">{t}</figcaption><NavRail items={items} pinned={pinned} current={cur} onGo={setCur} onPins={setPinned} mini={mini} /></figure>)}</div>;
 }
 
 /** The palette as the header's search icon opens it; the focus is "fleet", "assetq" is ignored. */
@@ -435,7 +437,7 @@ function StartDemo() {
 const SECTIONS: [string, string, string | undefined, () => ComponentChildren, ComponentChildren?][] = [
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, <>OR-3: one stable icon per workspace, from the registry.</>],
-  ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, <>Hover a section and pin it: it moves to the pinned group at the top (D9). Counters show what needs a look. Search is the icon in the shell header (OR-31, OR-43).</>],
+  ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, <>Hover a section and pin it: it moves to the pinned group at the top (D9). Counters count each section's counter view; with a focus they split into in focus and outside, collapsed only the in-focus badge stays. Search is the icon in the shell header (OR-31, OR-43).</>],
   ['spotlight', 'Spotlight palette', 'spotlight', () => <SpotlightDemo />, <>OR-32. Empty, it shows the focus presets (a preset of only ignored projects is not offered), recent items and the terms; type <code>deploy</code> for state icons, ages, the results outside the focus and the "All N" row. Close and reopen: the query and the highlighted row stay.</>],
   ['focus-control', 'Focus chip in the shell header', 'focus-control', () => <div class="stack"><HeaderDemo start={[]} /><HeaderDemo start={['fleet', 'desiign', 'cs']} /></div>, <>OR-34, OR-43. Neutral with every project; toned with a focus, names two projects then +N. The bell counts what needs you outside the focus. The panel floats under the chip: presets, projects with an ignore action, and the folded Ignored section to restore them.</>],
   ['split-button', 'Split button', 'split-button', () => <SplitDemo />, <>Click runs the default action; the chevron opens a short menu of alternatives for the same place (allowed by OR-14).</>],

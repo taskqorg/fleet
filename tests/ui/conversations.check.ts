@@ -15,6 +15,7 @@ import { checkTaskStory } from './task-story.check.ts';
 import { checkDeliveryAvailability, checkDeliveryList } from './delivery-availability.check.ts';
 import { checkSpotlight } from './spotlight.check.ts';
 import { checkShellHeader } from './shell-header.check.ts';
+import { checkNavCounter } from './nav-counter.check.ts';
 import { checkConversationsList } from './conversations-list.check.ts';
 import { checkNewConversation } from './conversation-new.check.ts';
 import { checkAttachments } from './attachments.check.ts';
@@ -329,6 +330,7 @@ try {
   await checkAccessGate(b, c, seed);
   await checkSpotlight(b, origin);
   await checkShellHeader(b, origin, seed);
+  await checkNavCounter(b, origin, seed);
   await checkTaskStory(b, origin);
   await checkDeliveryAvailability(b, origin);
   await checkDeliveryList(b, origin);

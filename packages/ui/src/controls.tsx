@@ -1,6 +1,6 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
 import { Fragment, type ComponentChildren, type TargetedMouseEvent } from 'preact';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
 import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, bytes, exact, stamp, percent, duration, agentLabel, actor } from './format.ts';
 import type { Block as ThreadBlock, ResourceSummary } from '../../../contracts/generated/ops.ts';
@@ -739,18 +739,35 @@ export function GroupHeader({ icon, label, count, open, onToggle, tone = 'neutra
 
 /* ---------- Saved views: system presets and the person's own (OR-33) ---------- */
 
-export function Presets({ system = [], presets, active, onPick, onSave, onUnpin }: {
+export function Presets({ system = [], presets, active, onPick, onSave, onUnpin, counted, onCount }: {
   /** Views every person has (Tasks "Running"); they cannot be removed. */
   system?: string[];
   presets: string[]; active: string | null; onPick: (name: string) => void; onSave: (name: string) => void; onUnpin: (name: string) => void;
+  /**
+   * The view the section's navigation counter counts (nav-rail.md, Counters), null when the counter is off. With onCount,
+   * each view's menu (right click, Menu key or Shift+F10) offers to count it, or to stop counting it.
+   */
+  counted?: string | null; onCount?: (name: string | null) => void;
 }) {
   const [naming, setNaming] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ name: string; at: { x: number; y: number } } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  // The view's menu: at the pointer, or under the chip from the keyboard.
+  // '-' is the setting's off value, so a view of that name cannot be counted.
+  const menuOn = (n: string) => !onCount || n === '-' ? {} : {
+    'aria-keyshortcuts': 'Shift+F10',
+    onContextMenu: (e: MouseEvent) => { e.preventDefault(); setMenu({ name: n, at: { x: e.clientX, y: e.clientY } }); },
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+      e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setMenu({ name: n, at: { x: r.left, y: r.bottom } });
+    },
+  };
   return (
     <div class="presets" data-ui="saved-views" role="group" aria-label="Views">
       {system.map(n => <span key={'s:' + n} class={`preset${n === active ? ' on' : ''}`}>
-        <button type="button" aria-pressed={n === active} onClick={() => onPick(n)}>{n}</button></span>)}
+        <button type="button" aria-pressed={n === active} onClick={() => onPick(n)} {...menuOn(n)}>{n}</button></span>)}
       {presets.map(n => <span key={n} class={`preset${n === active ? ' on' : ''}`}>
-        <button type="button" aria-pressed={n === active} onClick={() => onPick(n)}><Icon name="pin" />{n}</button>
+        <button type="button" aria-pressed={n === active} onClick={() => onPick(n)} {...menuOn(n)}><Icon name="pin" />{n}</button>
         <button type="button" class="x" aria-label={`Remove view ${n}`} data-tip="Remove" onClick={() => onUnpin(n)}><Icon name="x" /></button></span>)}
       {naming === null
         ? <Button label="Save view" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
@@ -758,6 +775,10 @@ export function Presets({ system = [], presets, active, onPick, onSave, onUnpin 
             onKeyDown={e => { if (e.key === 'Enter' && naming.trim()) { onSave(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
           <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSave(naming.trim()); setNaming(null); }} />
           <Button label="Cancel" icon={actions.clear} iconOnly kind="quiet" onClick={() => setNaming(null)} /></span>}
+      {menu && onCount && <ContextMenu at={menu.at} label={menu.name} onClose={closeMenu}
+        items={[counted === menu.name
+          ? { label: 'Stop counting in navigation', icon: 'circle-slash', onClick: () => onCount(null) }
+          : { label: 'Count in navigation', icon: 'list-ordered', onClick: () => onCount(menu.name) }]} />}
     </div>
   );
 }
@@ -996,7 +1017,20 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
 
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
 
-export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
+/**
+ * A section of the rail. count: its counter (nav-rail.md, Counters): n in the person's focus (every item without one), and
+ * outside, the rest outside the focus (undefined without a focus); label names what is counted ("running").
+ */
+export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: NavCount };
+export type NavCount = { n: number; outside?: number; tone: Tone; label: string };
+/** The counter after a section name: `12·30` (in focus bright, outside dim), `·30` with none in focus, `12` without a focus; nothing at zero. */
+function NavCounter({ c }: { c: NavCount }) {
+  const out = c.outside ?? 0;
+  if (c.n <= 0 && out <= 0) return null;
+  const words = c.outside === undefined ? `${c.n} ${c.label}` : `${c.n > 0 ? c.n : 'none'} ${c.label} in focus, ${out} outside`;
+  return <span class={`nav-count t-${c.tone}${c.n > 0 ? '' : ' out-only'}`} aria-label={words}>
+    {c.n > 0 && <span class="nav-in">{c.n.toLocaleString('en')}</span>}{out > 0 && <span class="nav-out">·{out.toLocaleString('en')}</span>}</span>;
+}
 export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, foot }: {
   items: NavItem[]; current: string; onGo: (id: string) => void;
   /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
@@ -1044,7 +1078,7 @@ export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, he
           else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); setMenu(`${inPinned ? 'p' : 'g'}:${it.id}`); }
         }}>
         <span data-tip={it.label} data-tip-narrow class="nav-ic"><Icon name={it.icon} /></span><span class="nm">{it.label}</span>
-        {it.count && it.count.n > 0 && <span class={`nav-count t-${it.count.tone}`} aria-label={`${it.count.n} ${it.count.label}`}>{it.count.n}</span>}
+        {it.count && <NavCounter c={it.count} />}
       </a>
       <button type="button" class={`nav-pin${isPinned ? ' on' : ''}`} aria-pressed={isPinned} aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${it.label}`} data-tip={isPinned ? 'Unpin' : 'Pin'} onClick={() => toggle(it.id, inPinned)}>
         <Icon name="pin" /></button>

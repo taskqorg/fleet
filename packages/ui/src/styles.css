@@ -341,7 +341,12 @@ button.start-fact:hover{background:var(--hover);color:var(--fg)}
 .nav-i .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav-i:hover{background:var(--hover)}
 .nav-i.cur{background:var(--selected)}.nav-i.cur a{color:var(--fg)}
-.nav-count{padding:0 var(--space-2);border-radius:var(--radius-pill);background:var(--tone-bg);color:var(--tone-fg);font-family:var(--font-mono);font-size:var(--font-size-xs)}
+.nav-count{padding:0 var(--space-2);border-radius:var(--radius-pill);background:var(--tone-bg);color:var(--tone-fg);font-family:var(--font-mono);font-size:var(--font-size-xs);font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Counters (nav-rail.md): the outside-focus remainder is dim after a separator; with none in focus the chip has no fill.
+   Collapsed, only the number in focus stays, as a badge on the icon. */
+.nav-out{color:var(--fg-muted)}.nav-count.t-neutral .nav-in{color:var(--fg)}
+.nav-count.out-only{background:none}
+.rail.mini .nav-out,.rail.mini .nav-count.out-only{display:none}
 .nav-pin{display:inline-flex;align-items:center;justify-content:center;width:var(--size-control);height:var(--size-control);border:0;background:none;color:var(--fg-muted);cursor:pointer;opacity:0}
 .nav-pin .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
 .nav-i:hover .nav-pin,.nav-pin:focus-visible,.nav-i:focus-within .nav-pin,.nav-pin.on{opacity:1}
@@ -444,6 +449,7 @@ button.start-fact:hover{background:var(--hover);color:var(--fg)}
   .rail .rail-ver,.rail .rail-upd{display:none}.rail:not(.mini) .menu-ver{display:flex}
   .rail .nav-i a{padding:0 var(--space-2);position:relative}
   .rail .nav-count{position:absolute;top:0;right:0;padding:0 var(--space-1)}
+  .rail .nav-out,.rail .nav-count.out-only{display:none}
   .shell-main,.shell-main:not(:has(>.split-view)){padding:var(--space-3)}
 }
 .vl-head .r{text-align:right}
