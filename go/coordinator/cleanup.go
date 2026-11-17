@@ -404,12 +404,13 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 	// (one refused by the last transaction, after a new citing score, leaves the experiment stopped; delete it again).
 	// ponytail: a pipeline run a task starts between these transactions is tombstoned uncancelled; receipts of its
 	// steps (host calls see deleted rows) could still advance it. Cancel it in the last transaction if that is seen.
-	runs := []string{}
+	runs, running := []string{}, int64(0)
 	if err := runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
 		var err error
 		if c, out, err = deletePreview(q, b); err != nil {
 			return err
 		}
+		running = out.Running
 		if err := exec(q, "UPDATE experiment SET state='stopped',stop_reason='deleted' WHERE id=ANY($1) AND state IN ('running','paused')", c.sets["experiment"]); err != nil {
 			return err
 		}
@@ -437,6 +438,7 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 		if c, out, err = deletePreview(q, b); err != nil {
 			return err
 		}
+		out.Running = running // what this confirm stops, counted before the pipeline cancels above
 		if err := showDeleted(q); err != nil {
 			return err
 		}
@@ -588,7 +590,7 @@ func addPurgeTask(q *Request, t doc) error {
 // purgeCascade: delete every row of a cascade, in purgeOrder; the store objects no remaining artifact shares and the
 // spans of its executions become purge tasks.
 func purgeCascade(q *Request, c *cascade) error {
-	objects, err := queryRows(q, `SELECT DISTINCT c.store_id,a.project_id,a.scope,a.content_hash,c.staging_key FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id
+	objects, err := queryRows(q, `SELECT DISTINCT c.store_id,a.project_id,a.scope,a.content_hash,c.staging_key,c.upload_id FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id
 	  WHERE a.id=ANY($1) AND c.state<>'deleted'`, c.sets["artifact"])
 	if err != nil {
 		return err
@@ -604,15 +606,17 @@ func purgeCascade(q *Request, c *cascade) error {
 		}
 	}
 	// An object is content-addressed (project/scope/hash) and may be shared: runPurgeTasks decides under the write lock.
-	keys := map[string][]any{}
+	keys, seen := map[string][]any{}, map[string]bool{}
 	for _, o := range objects {
 		store := astr(o["store_id"])
 		if k := astr(o["staging_key"]); k != "" {
-			keys[store] = append(keys[store], doc{"key": k})
+			// An upload in progress: its multipart parts are aborted, then its staging object deleted.
+			keys[store] = append(keys[store], doc{"key": k, "uploadId": o["upload_id"]})
 		}
 		x := doc{"key": keyOf(&Artifact{ProjectID: strp(o, "project_id"), Scope: astr(o["scope"]), ContentHash: astr(o["content_hash"])}),
 			"projectId": o["project_id"], "scope": o["scope"], "hash": o["content_hash"]}
-		if !slices.ContainsFunc(keys[store], func(y any) bool { return mapOf(y)["key"] == x["key"] }) {
+		if k := store + "\x00" + astr(x["key"]); !seen[k] {
+			seen[k] = true
 			keys[store] = append(keys[store], x)
 		}
 	}
@@ -722,34 +726,32 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 			}
 			roots = free
 		}
-		{
-			left := []string{}
-			for _, id := range roots {
-				rs, n, blocked, err := purgeRootTx(q, kind, id, b.Preview)
-				if err != nil {
-					return out, fmt.Errorf("purge %s %s: %w", kind, id, err)
+		left := []string{}
+		for _, id := range roots {
+			rs, n, blocked, err := purgeRootTx(q, kind, id, b.Preview)
+			if err != nil {
+				return out, fmt.Errorf("purge %s %s: %w", kind, id, err)
+			}
+			if blocked != "" {
+				left = append(left, id)
+				continue
+			}
+			removed.Ids, bytes = append(removed.Ids, id), bytes+n
+			for _, r := range rs {
+				if rows[r.Kind] == nil {
+					rows[r.Kind] = &contract.KindCount{Kind: r.Kind}
 				}
-				if blocked != "" {
-					left = append(left, id)
-					continue
-				}
-				removed.Ids, bytes = append(removed.Ids, id), bytes+n
-				for _, r := range rs {
-					if rows[r.Kind] == nil {
-						rows[r.Kind] = &contract.KindCount{Kind: r.Kind}
+				rows[r.Kind].Count += r.Count
+				if r.Bytes != nil {
+					sum := *r.Bytes
+					if rows[r.Kind].Bytes != nil {
+						sum += *rows[r.Kind].Bytes
 					}
-					rows[r.Kind].Count += r.Count
-					if r.Bytes != nil {
-						sum := *r.Bytes
-						if rows[r.Kind].Bytes != nil {
-							sum += *rows[r.Kind].Bytes
-						}
-						rows[r.Kind].Bytes = &sum
-					}
+					rows[r.Kind].Bytes = &sum
 				}
 			}
-			roots = left
 		}
+		roots = left
 		removed.Count, removed.Bytes = int64(len(removed.Ids)), &bytes
 		kept.Ids = append(kept.Ids, roots...)
 		kept.Count = int64(len(kept.Ids))
@@ -774,10 +776,11 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	return out, err
 }
 
-// runPurgeTasks: delete the store objects and spans of earlier purges; a task that fails stays for the next purge.
-// Returns the tasks left. A store object is deleted holding its object lock (objectLock, which artifact_reserve's
-// copy inserts take too) after checking that no copy on that store maps to it again: an upload that deduplicated onto
-// it, or started a new copy of the same content, since the purge keeps it. Span deletes run outside any transaction.
+// runPurgeTasks: delete the store objects and spans of earlier purges; what fails stays for the next purge, and a
+// failed task does not stop the others. Returns the tasks left. Each store object is deleted in its own transaction
+// holding its object lock (objectLock, which every copy insert of that content takes too), after checking that no
+// copy on that store maps to it again: an upload or a write that deduplicated onto it since the purge keeps it. Span
+// deletes run outside any transaction.
 func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 	var tasks []doc
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
@@ -790,45 +793,46 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 	left := int64(0)
 	for _, t := range tasks {
 		rest := []any{}
-		var err error
 		if store := astr(t["storeId"]); store != "" {
-			err = runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
-				rest = []any{}
-				if err := showDeleted(q); err != nil {
-					return err
+			s, err := storeGet(ctx, a, store)
+			var s3 *S3
+			if err == nil && s.State != "unreachable" {
+				s3, err = tunnel(s)
+			}
+			if err != nil && !isNotFound(err) { // a store gone with its host has nothing left to delete
+				slog.Warn("purge: store", "store", store, "err", err)
+			}
+			for _, x := range anys(t["objects"]) {
+				o := mapOf(x)
+				if isNotFound(err) {
+					break
 				}
-				s, err := storeGet(ctx, a, store)
-				if isNotFound(err) { // the store went with its host: nothing to delete
-					return nil
+				if s3 == nil {
+					rest = append(rest, o)
+					continue
 				}
-				var s3 *S3
-				if err == nil && s.State != "unreachable" {
-					s3, err = tunnel(s)
-				}
-				if err != nil {
-					slog.Warn("purge: store", "store", store, "err", err)
-				}
-				for _, x := range anys(t["objects"]) {
-					o := mapOf(x)
+				if e := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+					if err := showDeleted(q); err != nil {
+						return err
+					}
 					if err := objectLock(ctx, q.tx, store, astr(o["key"])); err != nil {
 						return err
 					}
 					if o["hash"] != nil {
-						used, err := has(q, `SELECT 1 FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.store_id=$1 AND c.state<>'deleted'
-						  AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4`, store, o["projectId"], o["scope"], o["hash"])
-						if err != nil {
+						if used, err := has(q, `SELECT 1 FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.store_id=$1 AND c.state<>'deleted'
+						  AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4`, store, o["projectId"], o["scope"], o["hash"]); err != nil || used {
 							return err
 						}
-						if used {
-							continue
-						}
 					}
-					if s3 == nil || s3.Delete(s.Bucket, astr(o["key"])) != nil {
-						rest = append(rest, o)
+					if u := astr(o["uploadId"]); u != "" {
+						s3.AbortMultipartUpload(s.Bucket, astr(o["key"]), u) // an upload already finished or aborted answers an error
 					}
+					return s3.Delete(s.Bucket, astr(o["key"]))
+				}); e != nil {
+					slog.Warn("purge: object", "store", store, "key", o["key"], "err", e)
+					rest = append(rest, o)
 				}
-				return nil
-			})
+			}
 			t["objects"] = rest
 		} else if ids := strs(t["executionIds"]); len(ids) > 0 && spanStore != nil {
 			for i := 0; i < len(ids); i += 200 {
@@ -843,15 +847,12 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 			}
 			t["executionIds"] = rest
 		}
-		if err == nil {
-			err = runTx(ctx, a, nil, true, "", func(q *Request) error {
-				if len(rest) == 0 {
-					return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
-				}
-				return put(q, "purge-task", t)
-			})
-		}
-		if err != nil {
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			if len(rest) == 0 {
+				return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
+			}
+			return put(q, "purge-task", t)
+		}); err != nil {
 			return left, err
 		}
 		if len(rest) > 0 {

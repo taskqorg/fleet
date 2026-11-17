@@ -1494,7 +1494,7 @@ func saveObject(ctx context.Context, a *App, projectID *string, scope, execution
 		}
 	}
 	id, hash := "", ""
-	err := txCtx(ctx, a, func(tx pgx.Tx) error {
+	write := func(tx pgx.Tx) error {
 		target, h, err := writeObject(context.WithValue(ctx, txKey{}, tx), a, projectID, scope, data, media)
 		if err != nil {
 			return err
@@ -1505,7 +1505,15 @@ func saveObject(ctx context.Context, a *App, projectID *string, scope, execution
 		}
 		_, err = tx.Exec(ctx, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", id, target.ID, projectID)
 		return err
-	})
+	}
+	var err error
+	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+		err = write(tx)
+	} else {
+		// No GLOBAL lock: two new rows; the object lock (writeObject) is what serializes this write with a purge, so
+		// the Head under it does not hold every other write.
+		err = a.store.Tx(ctx, nil, true, NOLOCK, write)
+	}
 	return id, hash, err
 }
 
