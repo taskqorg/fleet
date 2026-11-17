@@ -212,18 +212,16 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 			return nil, fmt.Errorf("connection %s names an unknown provider", name)
 		}
 		if l := c.Limits; l != nil {
+			// A value below 1 takes its default; the other limits and connections stay as published.
+			for _, v := range []**int64{&l.FileBytes, &l.ReplyBytes, &l.StallMs, &l.AnswerMs} {
+				if *v != nil && **v < 1 {
+					logf("connection %s: a limit below 1 is ignored; its default applies", name)
+					*v = nil
+				}
+			}
 			if *l == (contract.GatewayLimits{}) {
 				c.Limits = nil // no limits: defaults everywhere
 				s.Connections[name] = c
-			}
-			for _, v := range []*int64{l.FileBytes, l.ReplyBytes, l.StallMs, l.AnswerMs} {
-				if v != nil && *v < 1 {
-					// Defaults for this connection only: one bad value never holds back every other connection.
-					logf("connection %s: a limit below 1 is ignored; defaults apply", name)
-					c.Limits = nil
-					s.Connections[name] = c
-					break
-				}
 			}
 		}
 		if c.Intake == "" {
@@ -970,6 +968,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A pause, budget block or tool change published while the body arrived applies to this call.
 	g.resolve(q)
 	a := admit(q)
+	if a == nil && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload {
+		// The tool became an upload tool while this JSON body arrived.
+		a = refusal(400, "error", "file-expected", "an upload tool takes the file bytes as application/octet-stream with X-Fleet-Args")
+	}
 	if a == nil {
 		if a = g.serveJSON(w, r, q, raw, readErr); a == nil {
 			return // a download streamed, with its started and completed spool lines
@@ -1295,7 +1297,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		refuse(a, transfer)
 		return
 	}
-	if fileBytes, _, _, _ = limits(again.c); fileBytes > 0 && staged > fileBytes {
+	if fileBytes, _, stall, answerWait = limits(again.c); fileBytes > 0 && staged > fileBytes {
 		refuse(refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), transfer)
 		return
 	}
