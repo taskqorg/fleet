@@ -343,7 +343,7 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 	env.registerHost(t, "plan-host")
 	ids := map[string]string{}
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		for _, id := range []string{"legacy", "current"} {
+		for _, id := range []string{"legacy", "removed", "current"} {
 			run := planFixture(t, id)
 			if err := putRun(q, run); err != nil {
 				return err
@@ -370,7 +370,21 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 			if err := put(q, "command", teardown); err != nil {
 				return err
 			}
-			ids[id+":script"], ids[id+":teardown"] = astr(commands[0]["id"]), astr(teardown["id"])
+			ids[id+":script"], ids[id+":teardown"], ids[id+":native"] = astr(commands[0]["id"]), astr(teardown["id"]), nativeID
+			for _, kind := range []string{"steer", "input"} {
+				c := doc{"id": newID(), "executionId": nativeID, "hostId": "plan-host", "kind": kind, "payload": doc{}, "status": "pending"}
+				if err := put(q, "command", c); err != nil {
+					return err
+				}
+				ids[id+":"+kind] = astr(c["id"])
+			}
+		}
+		if err := exec(q, "DELETE FROM execution WHERE id='removed'"); err != nil {
+			return err
+		}
+		// As on PDS18: the legacy run and its native execution ended long ago; only commands are pending.
+		if err := exec(q, "UPDATE execution SET state='succeeded',ended_at=now() WHERE id=$1", ids["legacy:native"]); err != nil {
+			return err
 		}
 		return exec(q, "UPDATE execution SET data=data-'planVersion' WHERE id='legacy'")
 	}); err != nil {
@@ -384,21 +398,37 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 	for _, c := range out {
 		got[astr(c["id"])] = true
 	}
-	for _, want := range []string{"legacy:teardown", "current:teardown", "current:script"} {
+	for _, want := range []string{"legacy:teardown", "current:teardown", "current:script", "current:steer", "current:input"} {
 		if !got[ids[want]] {
 			t.Fatal("not delivered:", want, out)
 		}
 	}
-	if got[ids["legacy:script"]] {
-		t.Fatal("legacy run's script was delivered")
+	for _, kind := range []string{"teardown", "steer", "input"} {
+		if got[ids["removed:"+kind]] {
+			t.Fatal("abandoned execution's", kind, "was delivered")
+		}
+	}
+	for _, id := range []string{"legacy", "removed"} {
+		if got[ids[id+":script"]] {
+			t.Fatal(id, "run's script was delivered")
+		}
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-		c, err := get(q, ids["legacy:script"], "command")
-		if err != nil {
-			return err
-		}
-		if c["status"] != "stopped" {
-			return fmt.Errorf("legacy script command is %v, want stopped", c["status"])
+		for _, id := range []string{"legacy", "removed"} {
+			c, err := get(q, ids[id+":script"], "command")
+			if err != nil {
+				return err
+			}
+			if c["status"] != "stopped" || c["stopDetail"] == nil {
+				return fmt.Errorf("%s script command is %v (%v), want stopped with a reason", id, c["status"], c["stopDetail"])
+			}
+			e, err := get(q, ids[id+":native"], "execution")
+			if err != nil {
+				return err
+			}
+			if !terminal(e) {
+				return fmt.Errorf("%s native execution stays %v", id, e["state"])
+			}
 		}
 		return nil
 	}); err != nil {

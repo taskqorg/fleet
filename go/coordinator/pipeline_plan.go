@@ -6,6 +6,7 @@ import (
 	"fleet/contract"
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -83,9 +84,18 @@ func pipelineFormatUnsupported(err error) bool {
 	return errors.As(err, &he) && he.Extra["reason"] == "pipeline_format_unsupported"
 }
 
-// pipelineDispatchKind: the command kinds a pipeline plan dispatches (preparePipelineCommand, startScript).
+// pipelineDispatchKinds: the command kinds a pipeline plan dispatches (preparePipelineCommand, startScript); the
+// poll preflight takes the GLOBAL lock for them (pollReadyCommands).
+var pipelineDispatchKinds = []string{string(contract.CommandKindStart), string(contract.CommandKindScript)}
+
 func pipelineDispatchKind(kind any) bool {
-	return kind == string(contract.CommandKindStart) || kind == string(contract.CommandKindScript)
+	k, _ := kind.(string)
+	return slices.Contains(pipelineDispatchKinds, k)
+}
+
+// stopPipelineCommand settles a still pending command that will never be handed off, with the reason.
+func stopPipelineCommand(q *Request, command doc, reason string) error {
+	return exec(q, `UPDATE document SET data=data||jsonb_build_object('status','stopped','stopDetail',$2::text), updated_at=now() WHERE kind='command' AND id=$1 AND data->>'status'='pending'`, command["id"], reason)
 }
 
 type pipelineWriteKey struct {
@@ -318,13 +328,21 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 	if !txHasLock(q.tx, GLOBAL) {
 		return false, nil // a stale poll preflight waits for the next correctly fenced poll
 	}
+	// A command that can never be handed off is settled here, never answered as an error: an error fails the
+	// whole poll, so the host would get no other command and no update target.
 	run, err := getRun(q, astr(execution["pipelineRunId"]))
-	if pipelineFormatUnsupported(err) {
-		// A run from before plans never starts work; stopping its command keeps the host's poll going.
-		command["status"] = "stopped"
-		return false, put(q, "command", command)
+	if pipelineFormatUnsupported(err) || err == nil && run == nil {
+		// No engine will advance a run from before plans or a removed run: its execution is abandoned too.
+		reason := "pipeline run format unsupported"
+		if err == nil {
+			reason = "pipeline run removed"
+		}
+		if _, err := executionAbandon(q, astr(execution["id"]), reason, "fleet"); err != nil {
+			return false, err
+		}
+		return false, stopPipelineCommand(q, command, reason)
 	}
-	if err != nil || run == nil {
+	if err != nil {
 		return false, err
 	}
 	index := pipelineStepIndex(run, astr(execution["pipelineStepId"]))
@@ -333,11 +351,11 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 	}
 	step := mapOf(anys(run["steps"])[index])
 	if step["executionId"] != execution["id"] {
-		return false, fail(409, "Pipeline command execution differs")
+		return false, stopPipelineCommand(q, command, "pipeline command execution differs")
 	}
 	dispatch := mapOf(pipelinePlanEntry(run, index)["dispatch"])
 	if dispatch["commandId"] != command["id"] || dispatch["nativeExecutionId"] != execution["id"] || dispatch["hostId"] != command["hostId"] {
-		return false, fail(409, "Pipeline command binding differs")
+		return false, stopPipelineCommand(q, command, "pipeline command binding differs")
 	}
 	stamp, connections, err := pipelineAuthorityStamp(q, run, index, "", "", astr(command["hostId"]))
 	if err != nil {
