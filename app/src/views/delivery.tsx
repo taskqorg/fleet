@@ -4,7 +4,7 @@
 // delivery_status (GitHub read by the coordinator every minute with a key), delivery_history, delivery_baseline and
 // delivery_regressions (the fleet repository's recorded history). Both reach the page through the change stream (kind
 // delivery), so nothing here waits for a poll. Red everywhere means past the stage's P90 over the last 14 days.
-import { useCallback, useEffect } from 'preact/hooks';
+import { useCallback, useEffect, useRef } from 'preact/hooks';
 import {
   ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
   Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
@@ -139,7 +139,9 @@ export function Delivery({ id }: { id?: string }) {
     // Pinned rows stay whatever the filter or the picked day (OR-12): the current rows and the day's, in the page's order.
     const current = items.map(row), ids = new Set(current.map(r => r.id));
     const all = [...current, ...rowsOf.filter(r => !ids.has(r.id))].map(keyed);
-    return { rows, all, counts, groups, total: rowsOf.length, pending: !data && !status.error || !!picked && histLoading, error: status.error && !data ? status.error : null, reload: status.reload };
+    // The rows come from the history while a day is picked: its failure is the list's, never "none merged then".
+    const error = picked ? (hist ? null : histDoc.error && `history: ${histDoc.error}`) : status.error && !data ? status.error : null;
+    return { rows, all, counts, groups, total: rowsOf.length, pending: !picked && !data && !status.error || !!picked && histLoading, error, reload: picked ? histDoc.reload : status.reload };
   };
   const page = useListPage<Row>({
     view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: ['installed'],
@@ -154,7 +156,13 @@ export function Delivery({ id }: { id?: string }) {
   // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
   // most installed) or a filter to installed rows opens it.
   const doneOnly = !!view.state?.length && view.state.every(s => DONE.includes(s as Stage));
-  useEffect(() => { if ((ex.at || doneOnly) && page.closed.includes('installed')) page.toggleGroup('installed'); }, [ex.at, doneOnly]);
+  // The page's default (closedGroups) holds again once the day or the filter goes, unless the person opened it.
+  const opened = useRef(false);
+  useEffect(() => {
+    const want = !(ex.at || doneOnly), shut = page.closed.includes('installed');
+    if (!want && shut) { page.toggleGroup('installed'); opened.current = true; }
+    else if (want && !shut && opened.current) { page.toggleGroup('installed'); opened.current = false; }
+  }, [ex.at, doneOnly]);
   const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
   const open = !id ? undefined : items.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, hist.h.installsFrom))[0] : undefined);

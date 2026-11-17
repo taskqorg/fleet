@@ -30,9 +30,11 @@ export function day(t: number, now = Date.now()): string {
 
 /** Start of the calendar day of `t` in the viewer's zone, `n` days later (negative: earlier). */
 export function dayStart(t: number, n = 0): number {
+  // The date moves first: in a zone whose clocks skip midnight, the day then starts at its first real hour.
   const d = new Date(t);
-  d.setHours(0, 0, 0, 0);
+  d.setHours(12, 0, 0, 0);
   d.setDate(d.getDate() + n);
+  d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 

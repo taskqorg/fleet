@@ -45,6 +45,10 @@ func TestDeliveryStages(t *testing.T) {
 			{Number: 18, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
 				SHA string `json:"sha"`
 			}{"h18"}},
+			// #19: a new head pushed at 10:00 while a group of the old head ran; that group failed at 10:03.
+			{Number: 19, CreatedAt: "2026-11-12T09:00:00Z", Head: struct {
+				SHA string `json:"sha"`
+			}{"h19"}},
 		},
 		queueDone: []ghRun{
 			{Event: "merge_group", Conclusion: "success", Branch: "gh-readonly-queue/main/pr-8-a", UpdatedAt: "2026-11-12T10:40:00Z"},
@@ -59,6 +63,7 @@ func TestDeliveryStages(t *testing.T) {
 			{Event: "merge_group", Conclusion: "failure", Branch: "gh-readonly-queue/main/pr-17-a", UpdatedAt: "2026-11-12T10:40:00Z", Workflow: 1},
 			{Event: "merge_group", Conclusion: "success", Branch: "gh-readonly-queue/main/pr-17-a", UpdatedAt: "2026-11-12T10:45:00Z", Workflow: 2},
 			{Event: "merge_group", Conclusion: "failure", Branch: "gh-readonly-queue/main/pr-18-a", UpdatedAt: "2026-11-12T11:00:00Z"},
+			{Event: "merge_group", Conclusion: "failure", Branch: "gh-readonly-queue/main/pr-19-a", CreatedAt: "2026-11-12T09:50:00Z", UpdatedAt: "2026-11-12T10:03:00Z"},
 		},
 		// The latest finished run per head and workflow decides: #6 failed after an older success, #7 passed after an older failure.
 		finished: []ghRun{
@@ -72,6 +77,7 @@ func TestDeliveryStages(t *testing.T) {
 			{Event: "pull_request", Conclusion: "success", HeadSHA: "h9", CreatedAt: "2026-11-12T11:00:00Z", UpdatedAt: "2026-11-12T11:05:00Z"},
 			{Event: "pull_request", Conclusion: "success", HeadSHA: "h18", CreatedAt: "2026-11-12T10:05:00Z", UpdatedAt: "2026-11-12T11:30:00Z"},
 			{Event: "pull_request", Conclusion: "success", HeadSHA: "h14", CreatedAt: "2026-11-12T10:05:00Z", UpdatedAt: "2026-11-12T10:20:00Z"},
+			{Event: "pull_request", Conclusion: "success", HeadSHA: "h19", CreatedAt: "2026-11-12T10:00:00Z", UpdatedAt: "2026-11-12T10:10:00Z"},
 		},
 		runs: []ghRun{
 			{Event: "pull_request", Status: "in_progress", HeadSHA: "h2", CreatedAt: "2026-11-12T11:00:00Z"},
@@ -93,7 +99,7 @@ func TestDeliveryStages(t *testing.T) {
 	}
 	items, landing := deliveryStages("fleet", "o/r", g, []string{"1.2.9", "1.2.10"}, now)
 	want := map[int64]contract.DeliveryStage{1: "pr_open", 2: "pr_ci", 3: "mq_wait", 4: "mq_ci", 5: "mq_wait", 6: "pr_failed", 7: "pr_open", 8: "mq_failed", 9: "pr_open",
-		14: "mq_wait", 15: "pr_open", 16: "pr_open", 17: "mq_failed", 18: "mq_failed", 10: "installed", 11: "installing", 12: "releasing"}
+		14: "mq_wait", 15: "pr_open", 16: "pr_open", 17: "mq_failed", 18: "mq_failed", 19: "pr_open", 10: "installed", 11: "installing", 12: "releasing"}
 	if len(items) != len(want) {
 		t.Fatalf("items = %+v", items)
 	}
@@ -104,7 +110,7 @@ func TestDeliveryStages(t *testing.T) {
 		if it.Number == 6 && it.Since != "2026-11-12T11:30:00Z" || it.Number == 8 && it.Since != "2026-11-12T11:15:00Z" || it.Number == 14 && it.Since != "2026-11-12T10:50:00Z" || it.Number == 5 && it.Since != "2026-11-12T10:00:00Z" {
 			t.Errorf("#%d failed since %s", it.Number, it.Since)
 		}
-		if it.Number < 10 && deref(it.Opened) != "2026-11-12T10:00:00Z" || it.Number == 12 && deref(it.Merged) != "2026-11-12T11:00:00Z" {
+		if it.Number < 10 && deref(it.Opened) != "2026-11-12T10:00:00Z" && it.Number != 19 || it.Number == 12 && deref(it.Merged) != "2026-11-12T11:00:00Z" {
 			t.Errorf("#%d opened %v merged %v", it.Number, deref(it.Opened), deref(it.Merged))
 		}
 	}

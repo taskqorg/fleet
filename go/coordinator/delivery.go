@@ -10,6 +10,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log"
@@ -386,10 +387,12 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			queueLatest[k] = r
 		}
 	}
-	queueFailedAt := map[int64]string{}
+	// queueFailedAt: when the latest failure ended (the stage's since); queueFailedFrom: when that group started, so a
+	// failure of a group started before a new head was pushed belongs to the old head.
+	queueFailedAt, queueFailedFrom := map[int64]string{}, map[int64]string{}
 	for k, r := range queueLatest {
 		if (r.Conclusion == "failure" || r.Conclusion == "timed_out") && r.UpdatedAt > queueFailedAt[k.pr] {
-			queueFailedAt[k.pr] = r.UpdatedAt
+			queueFailedAt[k.pr], queueFailedFrom[k.pr] = r.UpdatedAt, cmp.Or(r.CreatedAt, r.UpdatedAt)
 		}
 	}
 	// The earliest active run per pull request: pull_request runs by head commit, merge_group runs by queue branch.
@@ -429,7 +432,7 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			out = append(out, item(p, contract.DeliveryStagePrCi, r.at))
 		} else if at, ok := failedAt[p.Head.SHA]; ok {
 			out = append(out, item(p, contract.DeliveryStagePrFailed, at))
-		} else if at, ok := queueFailedAt[p.Number]; ok && p.AutoMerge == nil && headFrom[p.Head.SHA] < at {
+		} else if at, ok := queueFailedAt[p.Number]; ok && p.AutoMerge == nil && headFrom[p.Head.SHA] < queueFailedFrom[p.Number] {
 			// Removed from the queue and not set to enter it again, and its head is no newer: it waits on a person.
 			out = append(out, item(p, contract.DeliveryStageMqFailed, at))
 		} else if p.AutoMerge != nil {
