@@ -311,6 +311,18 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 // blockedBy: the first live row outside the cascade that keeps one of its objects, "" when none:
 // "<table>.<column> by <document kind or table> <row id>". One scan per table: its refKeep columns are ORed.
 func (c *cascade) blockedBy(q *Request) (string, error) {
+	// An open session working for a task depends on it (an archived one outlives it; the reference goes stale).
+	if len(c.sets["task"]) > 0 {
+		row, err := first(q, `SELECT id FROM document WHERE kind='session' AND data->>'taskId'=ANY($1) AND NOT data ? 'archivedAt'
+		  AND tombstoned_at IS NULL AND NOT id=ANY($2::text[]) AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) LIMIT 1`,
+			c.sets["task"], nonNilStrs(c.sets["session"]))
+		if err != nil {
+			return "", err
+		}
+		if row != nil {
+			return "document.data->>'taskId' by open session " + astr(row["id"]) + " (archive it first)", nil
+		}
+	}
 	// Executions of the cascade that belong to live work outside it stay with that work: runs of a live task (delete
 	// the task first), trials of a live experiment, children of an unfinished parent run that waits for them.
 	if len(c.sets["execution"]) > 0 {
@@ -634,8 +646,9 @@ func purgeRoots(q *Request, kind contract.PurgeKind) ([]string, error) {
 	case contract.PurgeKindTask:
 		sql = "SELECT id FROM task WHERE tombstoned_at IS NOT NULL AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) ORDER BY tombstoned_at,id"
 	case contract.PurgeKindSession:
-		// A trial step's session goes with its experiment (pipelineRunId), not as a root of its own.
-		sql = `SELECT id FROM document WHERE kind='session' AND tombstoned_at IS NOT NULL AND NOT data ? 'pipelineRunId'
+		// A trial step's session goes with its experiment (its pipeline run is a trial), not as a root of its own.
+		sql = `SELECT id FROM document d WHERE kind='session' AND tombstoned_at IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.id=d.data->>'pipelineRunId' AND r.experiment_id IS NOT NULL)
 		  AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) ORDER BY tombstoned_at,id`
 	}
 	rs, err := queryRows(q, sql)

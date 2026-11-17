@@ -405,6 +405,10 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execu
 	if c, b := call(doc{"kind": "session", "id": "s2", "preview": true}); c != 409 || !strings.Contains(astr(b["message"]), "sourceSessionId") {
 		t.Fatalf("a session a live session forked from = %d %v", c, b)
 	}
+	if c, b := call(doc{"kind": "task", "id": "t1", "preview": true}); c != 409 || !strings.Contains(astr(b["message"]), "open session s1") {
+		t.Fatalf("a task an open session works for = %d %v", c, b)
+	}
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET data=data||'{"archivedAt":1}' WHERE id='s1'`)
 	c, b := call(doc{"kind": "task", "id": "t1", "preview": false})
 	if want := map[string]float64{"task": 1, "execution": 1, "question": 1, "artifact": 1, "artifact.bytes": 4}; c != 200 || !mapsEqual(kindCounts(b["affected"]), want) {
 		t.Fatalf("task delete = %d %v", c, b)

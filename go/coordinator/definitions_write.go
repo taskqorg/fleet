@@ -499,6 +499,13 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 		roles = byProfile[r.Id]
 		sort.Strings(roles)
 	}
+	// An open session whose profile it is would take no further turn.
+	var sessions int64
+	if r.Kind == contract.DefinitionKindAgent {
+		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM document WHERE kind='session' AND data->'agentConfig'->>'id'=$1 AND NOT data ? 'archivedAt'", r.Id).Scan(&sessions); err != nil {
+			return out, err
+		}
+	}
 	refused := ""
 	switch {
 	case out.State != contract.DefinitionStateStoreOnly && out.State != contract.DefinitionStateRepositoryDeleted:
@@ -511,6 +518,8 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 			names = append(names, string(k.Kind)+"/"+k.Id)
 		}
 		refused = "used by " + strings.Join(names, ", ")
+	case sessions > 0:
+		refused = fmt.Sprintf("%d open sessions use it as their profile", sessions)
 	case out.Running > 0:
 		refused = fmt.Sprintf("%d unfinished executions run it", out.Running)
 	case len(out.Experiments) > 0:
