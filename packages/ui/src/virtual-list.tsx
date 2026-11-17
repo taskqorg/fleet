@@ -87,6 +87,9 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   // render in between must not read the old atEdge and pull the view back to the end. Rows appended below and a resized
   // viewport leave scrollTop as it was; only a scroll moves it up.
   const leftBottom = () => { const el = scroller.current; return !!el && p.follow === 'bottom' && prev.current.atEdge && el.scrollTop < prev.current.top - 1; };
+  // This control's own scroll to the end moves the position too, before its scroll event: record it, or a scroll up
+  // right after it would compare against the older position.
+  const followed = () => { const el = scroller.current; if (el && prev.current.atEdge) prev.current.top = el.scrollTop; };
 
   // Runs before paint whenever items change: keep the anchor row where it was, or follow the edge.
   useLayoutEffect(() => {
@@ -105,7 +108,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const wasAtEdge = prev.current.atEdge;
     prev.current.keys = new Set(p.items.map(p.getKey));
     if (wasAtEdge) {
-      if (p.follow === 'bottom' && p.items.length) v.scrollToIndex(p.items.length - 1, { align: 'end' });
+      if (p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); followed(); }
       return;
     }
     const a = anchor.current;
@@ -113,7 +116,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
       const i = p.items.findIndex(it => p.getKey(it) === a.key);
       if (i >= 0) v.scrollToOffset(v.getOffsetForIndex(i, 'start')![0] - a.delta);
       // The anchor left with the old window (reload to newest): show the followed edge.
-      else if (replaced && p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); prev.current.atEdge = true; }
+      else if (replaced && p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); prev.current.atEdge = true; followed(); }
     }
     if (added) setUnseen(n => n + added);
   }, [p.items]);
@@ -121,7 +124,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   // Viewport and measured heights can change without a new items array.
   useLayoutEffect(() => {
     if (leftBottom()) { capture(); return; }
-    if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) v.scrollToEnd();
+    if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) { v.scrollToEnd(); followed(); }
   });
 
   const jump = () => {
