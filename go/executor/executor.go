@@ -984,6 +984,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if err := e.event(c, 0, contract.FleetEventTypePreparation, evidence); err != nil {
 		return err
 	}
+	var gitAccess []string
 	if jObj(p, "project") != nil {
 		// Repo of this host's environment (env.repo), else the project's single/first repo.
 		var envRepo any
@@ -997,6 +998,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if err != nil {
 			return fail(1, err.Error())
 		}
+		gitAccess = access
 		gitApply(cmd, access)
 	}
 	requirements := projectRequirements(jAt(p, "project"), jStr(p, "agentConfig", "id"))
@@ -1119,14 +1121,60 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		gatewayConns[conn] = true
 	}
 	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
+	// gitNetwork: Codex's sandbox network on and the checkout's common .git writable; code mode's sh gets the same.
+	var gitRoots []any
+	if name == "codex" && sp.GitNetwork != nil && *sp.GitNetwork && checkoutTop != "" {
+		if gitRoots, err = nativeGitRoots(checkoutTop, work); err != nil {
+			return fail(1, err.Error())
+		}
+	}
 	if codeMode != "" {
-		read := codeReadRoots(name, jAt(p, "agentConfig"), work, inputDir)
-		if err := addCodeServer(servers, codeMode, codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), work, read); err != nil {
+		auth := codeAuthorityFor(name, jAt(p, "agentConfig"), work, []string{work, inputDir}, gitRoots, p["gitNetwork"] == true, jIsTrue(p, "readOnly"), e.root)
+		auth.env = M{"FLEET_INPUT_DIR": inputDir, "FLEET_OUTPUT_DIR": outputDir}
+		if jObj(p, "project") != nil {
+			auth.gitEnv = anyStrings(gitAccess)
+		}
+		// The worktree's Git directories stay readable to a sandboxed sh that hides the data directory. They come from the
+		// checkout the executor made, now, never from .git files the sandboxed commands can rewrite.
+		if jAt(auth.shell, "sandbox") == true && checkoutTop != "" {
+			roots := gitRoots
+			if roots == nil {
+				roots, _ = nativeGitRoots(checkoutTop, work) // on a failure no extra read: sh lacks Git, nothing more
+			}
+			auth.shell["read"] = append(jArr(auth.shell, "read"), roots...)
+		}
+		if jAt(auth.shell, "sandbox") == true {
+			auth.shell["pinned"] = true
+			workRoot, err := canon(work)
+			if err != nil {
+				return fail(1, "code-mode work root: "+err.Error())
+			}
+			for _, key := range []string{"read", "write", "hide"} {
+				var paths []any
+				for _, path := range jArr(auth.shell, key) {
+					c, err := canon(jStr(path))
+					if err != nil {
+						return fail(1, "code-mode shell root: "+err.Error())
+					}
+					// The work root already covers its children. Avoid a separate bind of a movable descendant.
+					if key == "read" && c != workRoot && under(c, workRoot) {
+						continue
+					}
+					paths = append(paths, c)
+				}
+				auth.shell[key] = paths
+			}
+		}
+		if err := addCodeServer(servers, codeMode, codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), work, auth); err != nil {
 			return fail(1, err.Error())
 		}
 		observed["codeMode"], observed["codeTools"] = codeMode, jAt(servers, "code", "tools")
 		if codeMode == "only" {
 			connectionTools, fleetMCP = nil, []any{} // the fleet server is gone; its tools are reached through code
+			if name == "codex" {
+				// The shell is hidden: sh in code replaces it. Codex 0.167 has no switch for apply_patch.
+				cmd.Args = append(cmd.Args, "--disable", "shell_tool", "--disable", "unified_exec")
+			}
 		}
 	}
 	// Codex: the fleet server's tools; other harnesses: the launch's servers without the connection servers.
@@ -1185,14 +1233,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		root = w
 	}
 	pp := p
-	if name == "codex" && sp.GitNetwork != nil && *sp.GitNetwork && checkoutTop != "" {
-		// gitNetwork: sandbox network on and the checkout's common .git writable.
+	if gitRoots != nil {
 		pp = jObj(jClone(p))
-		roots, err := nativeGitRoots(checkoutTop, root)
-		if err != nil {
-			return fail(1, err.Error())
-		}
-		pp["writableRoots"] = roots
+		pp["writableRoots"] = gitRoots
 	}
 	cmd, sess := h.Protocol(cmd, root, native, pp, servers)
 	protocol := sess != nil

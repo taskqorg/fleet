@@ -28,10 +28,136 @@ import (
 var codeRuntimeJS string
 
 var codeTools = []any{
-	M{"name": "code", "description": "Run JavaScript: the body of an async function (await, return, Promise.all). Fleet tools are fleet.<tool>(args); granted connections are conn[\"<name>\"].<tool>(args); fleet.$tools() and conn[\"<name>\"].$tools() list names and input schemas. A failed call throws FleetCallError {tool, outcome, code, output}; outcome unknown means it may have happened: inspect, never repeat. `state` keeps values between calls; let/const/var do not. print() or console.log add to output. Only the returned value and printed text reach you, so filter in code. Files under the working directory are readable with require('node:fs'); writes, commands and network use your own tools. Still running after detachAfterSeconds (default 25): replies with a jobId for poll.",
-		"inputSchema": M{"type": "object", "properties": M{"source": M{"type": "string"}, "detachAfterSeconds": M{"type": "number"}}, "required": []any{"source"}, "additionalProperties": false}},
-	M{"name": "poll", "description": "Wait for a detached code job: its final output and value (returned once), or its output so far after waitSeconds (default 25). Without jobId: list the unfinished and undelivered jobs. reset: true stops the runtime (for a job that never yields): state is lost, and every running job fails once its bridged calls in flight end.",
+	M{"name": "code", "inputSchema": M{"type": "object", "properties": M{"source": M{"type": "string"}, "detachAfterSeconds": M{"type": "number"}}, "required": []any{"source"}, "additionalProperties": false}},
+	M{"name": "poll", "description": "Wait for a detached code job: its final output and value (returned once), or its output so far after waitSeconds (default 25). Without jobId: list the unfinished and undelivered jobs. reset: true stops the runtime (for a job that never yields) and kills running sh commands: state is lost, and every running job fails once its bridged calls in flight end.",
 		"inputSchema": M{"type": "object", "properties": M{"jobId": M{"type": "string"}, "waitSeconds": M{"type": "number"}, "reset": M{"type": "boolean"}}, "additionalProperties": false}},
+}
+
+// codeHostNames are the host functions this execution has (fleet-code-mode.md, host functions).
+func codeHostNames(spec any) []string {
+	var names []string
+	if len(jArr(spec, "read")) > 0 {
+		names = append(names, "read", "glob", "grep")
+	}
+	for _, n := range []string{"write", "edit"} {
+		if jAt(spec, n) == true {
+			names = append(names, n)
+		}
+	}
+	if jAt(spec, "shell") != nil {
+		names = append(names, "sh")
+	}
+	return names
+}
+
+// codeDescription is the code tool's description for this execution: Claude Code's REPL rules, the functions it has, and
+// an example built from them.
+func codeDescription(spec any) string {
+	host := codeHostNames(spec)
+	can := func(n string) bool { return slices.Contains(host, n) }
+	var b strings.Builder
+	b.WriteString("Run JavaScript in this execution's persistent Node runtime: the body of an async function. The last expression is the result (or return one); return values themselves, not JSON.stringify(...).\n\n" +
+		"Few, full scripts: do a step's investigating in as few code calls as the dependencies between its steps allow, reading and searching more widely than you strictly need, because each extra call is a round trip and each extra read inside one is nearly free. IMPORTANT: batch ALL operations of a step into ONE code call. Use Promise.all() for parallel operations. Only the result and print() output reach you: filter in code and return a compact object.\n\nFunctions (paths are relative to the working directory):\n")
+	if can("read") {
+		b.WriteString("- read(path) -> text; glob(pattern, {path}) -> paths, pattern like \"**/*.go\"; grep(regex, {path, glob, ignoreCase}) -> [{file, line, text}].\n")
+	} else {
+		b.WriteString("- No file reads.\n")
+	}
+	if can("write") {
+		b.WriteString("- write(path, text) creates or replaces a file.\n")
+	}
+	if can("edit") {
+		b.WriteString("- edit(path, old, new, {all}) replaces old, which must occur once unless all: true.\n")
+	}
+	if can("sh") {
+		b.WriteString("- sh`cmd` or sh(cmd, {cwd, timeoutMs, args}) -> {code, stdout, stderr} with .text(), .json(), .lines(). For dynamic values pass args and reference them in the command as \"$1\", \"$2\", etc. A non-zero code does not throw.")
+		if shell := jAt(spec, "shell"); jAt(shell, "sandbox") == true {
+			if jAt(shell, "readOnly") == true {
+				b.WriteString(" Commands write nothing")
+			} else {
+				b.WriteString(" Commands write only under the working directory and temporary directories")
+			}
+			if jAt(shell, "network") != true {
+				b.WriteString(" and have no network")
+			}
+			b.WriteString(".")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("- fleet.<tool>(args) calls a Fleet tool; conn[\"<name>\"].<tool>(args) a granted connection. fleet.$tools() and conn[\"<name>\"].$tools() return names and input schemas: use them only to look up what you do not know.\n" +
+		"- A failed call throws FleetCallError {tool, outcome, code, output}; outcome unknown means it may have happened: inspect, never repeat.\n" +
+		"- `state` keeps values between calls; let/const/var do not. print() and console.log add to the output.\n" +
+		"- Still running after detachAfterSeconds (default 25): replies with a jobId for poll.\n\nExample (invented names):\n")
+	var lines, fields []string
+	if can("read") {
+		lines = append(lines, `const [mod, readme] = await Promise.all([read("go.mod"), read("README.md")])`, `const todos = await grep("TODO", {glob: "**/*.go"})`)
+		fields = append(fields, `module: mod.split("\n")[0]`, `readmeLines: readme.split("\n").length`, `todos: todos.slice(0, 5)`)
+	}
+	if can("sh") {
+		lines = append(lines, "const log = await sh`git log --oneline -3`")
+		fields = append(fields, "log: log.lines()")
+	}
+	if len(jArr(spec, "connections")) > 0 {
+		lines = append(lines, `const bugs = await conn["tracker"].search({query: "open bugs"})`)
+		fields = append(fields, "bugs: bugs.map(b => b.id)")
+	} else if jStr(spec, "journal") != "" { // Fleet tools
+		lines = append(lines, `const me = await fleet.execution_status({})`)
+		fields = append(fields, "status: me.status")
+	}
+	b.WriteString(strings.Join(lines, "\n") + "\n({" + strings.Join(fields, ", ") + "})")
+	return b.String()
+}
+
+// codeReply renders a job reply (fleet-code-mode.md, reply): the printed output, a finished job's value as itself (a
+// string as is, other values as JSON), and a `[code] ` part only when it carries something. A reply that is no job's
+// result is one `[code] ` part.
+func codeReply(r M) M {
+	status := jStr(r, "status")
+	if status == "" {
+		return codeNote(r, has(r, "error"))
+	}
+	var parts []any
+	add := func(t string) { parts = append(parts, M{"type": "text", "text": t}) }
+	if out := jStr(r, "output"); out != "" {
+		add(out)
+	}
+	meta := M{}
+	if status == "done" {
+		if v, ok := r["value"].(string); ok && v != "" {
+			add(v)
+		} else if ok {
+			add(`""`) // an empty text part is refused by the Claude API
+		} else {
+			add(enc(r["value"]))
+		}
+	} else {
+		meta["status"] = status
+		if status == "running" {
+			meta["jobId"] = r["jobId"]
+		}
+		if has(r, "error") {
+			meta["error"] = r["error"]
+		}
+	}
+	if r["newRuntime"] == true {
+		meta["newRuntime"] = true
+	}
+	calls := jArr(r, "calls")
+	if status != "done" && len(calls) > 0 || slices.ContainsFunc(calls, func(c any) bool { return jStr(c, "outcome") != "ok" }) {
+		meta["calls"] = calls
+	}
+	if len(meta) > 0 || len(parts) == 0 {
+		add("[code] " + enc(meta))
+	}
+	reply := M{"content": parts, "isError": status == "failed"}
+	if len(meta) > 0 {
+		reply["structuredContent"] = meta
+	}
+	return reply
+}
+
+func codeNote(v M, isError bool) M {
+	return M{"content": []any{M{"type": "text", "text": "[code] " + enc(v)}}, "structuredContent": v, "isError": isError}
 }
 
 type codeJob struct {
@@ -58,12 +184,15 @@ type codeServer struct {
 	order  []string
 	rt     *codeRuntime
 	seq    int
-	closed bool // the server is shutting down: no new runtime
+	closed bool             // the server is shutting down: no new runtime
+	procs  map[*shProc]bool // running sh commands, killed by reset and shutdown
+	tmp    string           // the private /tmp of Linux sh commands, removed at shutdown
 }
 
 type codeRuntime struct {
 	awaiting map[string]*codeJob // replies sent, not yet settled by the runtime (under codeServer.mu)
 	gone     bool                // its stdout ended (under codeServer.mu)
+	stopped  bool                // a reset or shutdown stopped it: no new sh for its jobs (under codeServer.mu)
 	tail     tailBuf             // the end of its stderr, for the runtime-exited reason
 	cmd      *exec.Cmd
 	mu       sync.Mutex // serializes writes to stdin
@@ -72,7 +201,7 @@ type codeRuntime struct {
 }
 
 func codeMCP(spec any, in io.Reader, w io.Writer) error {
-	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}}
+	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}, procs: map[*shProc]bool{}}
 	if journal := jStr(spec, "journal"); journal != "" {
 		db, err := openJournal(journal)
 		if err != nil {
@@ -99,6 +228,13 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 	// writes are serialized.
 	var wmu sync.Mutex
 	var wg sync.WaitGroup
+	defer func() { // last: the commands are killed by then
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.tmp != "" {
+			os.RemoveAll(s.tmp)
+		}
+	}()
 	// On stdin end the runtime stops first, so waiting requests return with runtime-exited instead of their full wait.
 	defer wg.Wait()
 	defer func() {
@@ -169,10 +305,7 @@ func (s *codeServer) serve(m any) M {
 		reply["result"] = M{}
 	case "tools/list":
 		tools := jClone(codeTools).([]any)
-		if len(jArr(s.spec, "read")) == 0 { // a profile without read tools gets no file reads in code either
-			d := tools[0].(M)
-			d["description"] = strings.Replace(jStr(d, "description"), "Files under the working directory are readable with require('node:fs'); writes", "No file reads; writes", 1)
-		}
+		tools[0].(M)["description"] = codeDescription(s.spec)
 		reply["result"] = M{"tools": tools}
 	case "tools/call":
 		args := jAt(params, "arguments")
@@ -182,7 +315,7 @@ func (s *codeServer) serve(m any) M {
 		case "poll":
 			if jAt(args, "reset") == true {
 				s.stop()
-				reply["result"] = codeResult(M{"reset": true}, false)
+				reply["result"] = codeNote(M{"reset": true}, false)
 			} else {
 				reply["result"] = s.poll(jStr(args, "jobId"), seconds(jAt(args, "waitSeconds")))
 			}
@@ -205,17 +338,15 @@ func seconds(v any) time.Duration {
 	return 25 * time.Second
 }
 
-func codeResult(v M, isError bool) M { return mcpText(v, &isError) }
-
 func (s *codeServer) code(source string, detach time.Duration) M {
 	if strings.TrimSpace(source) == "" {
-		return codeResult(M{"error": "source required"}, true)
+		return codeNote(M{"error": "source required"}, true)
 	}
 	s.mu.Lock()
 	rt, started, err := s.runtime()
 	if err != nil {
 		s.mu.Unlock()
-		return codeResult(M{"error": "runtime did not start: " + err.Error()}, true)
+		return codeNote(M{"error": "runtime did not start: " + err.Error()}, true)
 	}
 	s.seq++
 	j := &codeJob{id: fmt.Sprintf("job-%d", s.seq), rt: rt, done: make(chan struct{})}
@@ -233,7 +364,7 @@ func (s *codeServer) code(source string, detach time.Duration) M {
 	if started {
 		r["newRuntime"] = true
 	}
-	return codeResult(r, has(r, "error"))
+	return codeReply(r)
 }
 
 func (s *codeServer) poll(id string, wait time.Duration) M {
@@ -244,15 +375,14 @@ func (s *codeServer) poll(id string, wait time.Duration) M {
 			list = append(list, M{"jobId": k, "status": jobStatus(s.jobs[k])})
 		}
 		s.mu.Unlock()
-		return codeResult(M{"jobs": list}, false)
+		return codeNote(M{"jobs": list}, false)
 	}
 	j := s.jobs[id]
 	s.mu.Unlock()
 	if j == nil {
-		return codeResult(M{"error": "unknown jobId: never started or already returned"}, true)
+		return codeNote(M{"error": "unknown jobId: never started or already returned"}, true)
 	}
-	r := s.wait(j, wait)
-	return codeResult(r, has(r, "error"))
+	return codeReply(s.wait(j, wait))
 }
 
 func jobStatus(j *codeJob) string {
@@ -342,6 +472,9 @@ func (s *codeServer) finish(j *codeJob, ok bool, value, err any) {
 		return
 	default:
 	}
+	if j.rt != nil && j.rt.stopped {
+		ok, value, err = false, nil, runtimeExited()
+	}
 	j.ok, j.value, j.err = ok, value, err
 	close(j.done)
 }
@@ -397,7 +530,7 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	}
 	// The tools line goes first: rt.mu is taken here and released after the write, so every later send (run lines,
 	// replies) waits for it, and s.mu is not held while a slow runtime starts reading.
-	tools := enc(M{"type": "tools", "fleet": anyStrings(sortedKeysOf(s.fleet)), "conns": names}) + "\n"
+	tools := enc(M{"type": "tools", "fleet": anyStrings(sortedKeysOf(s.fleet)), "conns": names, "host": anyStrings(codeHostNames(s.spec)), "dir": jStr(s.spec, "dir")}) + "\n"
 	rt.mu.Lock()
 	go func() {
 		defer rt.mu.Unlock()
@@ -466,6 +599,12 @@ func (rt *codeRuntime) send(m M) error {
 func (s *codeServer) stop() {
 	s.mu.Lock()
 	rt := s.rt
+	if rt != nil {
+		rt.stopped = true
+	}
+	for p := range s.procs {
+		p.kill()
+	}
 	s.mu.Unlock()
 	if rt != nil {
 		rt.in.Close()
@@ -586,7 +725,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		s.mu.Lock()
 		// After the code returned, a call is still part of the job while another of its calls is in flight (a chain such as
 		// fleet.a().then(fleet.b)); once none is, a call (a timer) is late.
-		ended := j == nil || jobStatus(j) != "running" || j.ended != nil && j.busy == 0
+		ended := j == nil || rt.stopped || jobStatus(j) != "running" || j.ended != nil && j.busy == 0
 		if !ended {
 			j.busy++
 		}
@@ -606,7 +745,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 func (s *codeServer) call(rt *codeRuntime, j *codeJob, m any) {
 	start := time.Now()
 	server, tool, args := jStr(m, "server"), jStr(m, "tool"), jAt(m, "args")
-	value, fail := s.bridge(server, tool, args)
+	value, fail := s.bridge(rt, server, tool, args)
 	label := callLabel(server, tool)
 	outcome := "ok"
 	if fail != nil {
@@ -651,9 +790,21 @@ func callError(outcome, code string, output any) M {
 	return M{"outcome": outcome, "code": code, "output": output}
 }
 
-func (s *codeServer) bridge(server, tool string, args any) (any, M) {
+func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any, M) {
 	if !truth(args) {
 		args = M{}
+	}
+	if server == "host" {
+		if !slices.Contains(codeHostNames(s.spec), tool) {
+			return nil, callError("error", "tool-not-granted", nil)
+		}
+		switch tool {
+		case "sh":
+			return s.sh(rt, args)
+		case "write", "edit":
+			return codeFile(jStr(s.spec, "dir"), tool, args)
+		}
+		return nil, callError("error", "tool-not-granted", nil) // read, glob and grep run in the runtime
 	}
 	if name, ok := strings.CutPrefix(server, "conn:"); ok {
 		spec, granted := s.conns[name]
@@ -834,20 +985,72 @@ type codeFleet struct {
 	context any
 }
 
-// codeReadRoots are the roots the runtime may read: none for a Claude profile without Read, Grep, Glob or Bash.
-func codeReadRoots(harness string, profile any, roots ...string) []string {
-	native, _ := claudeNativeTools(profile)
-	if harness == "claude" && !slices.ContainsFunc(native, func(t string) bool { return t == "Read" || t == "Grep" || t == "Glob" || t == "Bash" }) {
-		return nil
+// codeAuthority is what the host functions may do in one execution (fleet-code-mode.md, authority per harness): the
+// runtime's read roots, write and edit, and the sh policy (nil: no sh) {sandbox, write roots, network}.
+type codeAuthority struct {
+	read        []string
+	write, edit bool
+	shell       M
+	env         M // FLEET_INPUT_DIR and FLEET_OUTPUT_DIR for sh, as the harness has them
+	gitEnv      []any
+}
+
+// codeAuthorityFor mirrors the harness's own tools for this execution, never more. work is the worktree; writable are
+// Codex's extra writable roots and network its sandbox network (gitNetwork); readOnly is a read-only start
+// (StartPayload.readOnly): Codex's read-only sandbox and Claude's Read, Glob and Grep. ACP denies client file
+// and terminal operations, so its code mode keeps only the existing read roots. A sandboxed sh on Linux sees
+// an empty executor data directory (root: its MCP sockets) except the read roots.
+func codeAuthorityFor(harness string, profile any, work string, read []string, writable []any, network, readOnly bool, root string) codeAuthority {
+	a := codeAuthority{read: slices.DeleteFunc(slices.Clone(read), func(r string) bool { return r == "" })}
+	sandboxed := func(extra []any, net bool) M {
+		m := M{"sandbox": true, "write": append([]any{work}, extra...), "network": net, "read": anyStrings(a.read)}
+		if root != "" {
+			m["hide"] = []any{root}
+		}
+		return m
 	}
-	return slices.DeleteFunc(roots, func(r string) bool { return r == "" })
+	switch harness {
+	case "claude":
+		native, _ := claudeNativeTools(profile)
+		if readOnly {
+			native = readOnlyTools(native)
+		}
+		granted := func(t string) bool { return slices.Contains(native, t) }
+		if !granted("Read") && !granted("Grep") && !granted("Glob") && !granted("Bash") {
+			a.read = nil
+		}
+		a.write, a.edit = granted("Write"), granted("Edit")
+		if granted("Bash") {
+			a.shell = M{"sandbox": false} // Fleet runs Claude's own Bash without a sandbox
+		}
+	case "codex":
+		if readOnly { // Codex's read-only sandbox: commands run, nothing is written, no network
+			a.shell = sandboxed(nil, false)
+			a.shell["readOnly"] = true
+			return a
+		}
+		a.write, a.edit, a.shell = true, true, sandboxed(writable, network)
+	}
+	return a
+}
+
+// codeCovered are the native Claude tools that host functions cover: `codeMode: only` hides them. Read stays: it is
+// the only way the agent sees an attached image or PDF, which read() returns as text.
+var codeCovered = []string{"Bash", "Write", "Edit", "Glob", "Grep"}
+
+// codeVisible is the Claude tool grant without the covered tools when the profile's code mode is `only`.
+func codeVisible(tools []string, codeMode string) []string {
+	if codeMode != "only" {
+		return tools
+	}
+	return slices.DeleteFunc(slices.Clone(tools), func(t string) bool { return slices.Contains(codeCovered, t) })
 }
 
 // addCodeServer adds the `code` server to a launch's servers; mode `only` removes the fleet and connection servers it
 // bridges.
 // The spec goes to specFile (0600), not argv: fleet operations and connection schemas can exceed one argv string.
 // conns are the launch's connection servers' specs, with the tools those servers expose.
-func addCodeServer(servers M, mode string, fleet *codeFleet, conns []any, runFile, specFile, dir string, read []string) error {
+func addCodeServer(servers M, mode string, fleet *codeFleet, conns []any, runFile, specFile, dir string, auth codeAuthority) error {
 	if conns == nil {
 		conns = []any{}
 	}
@@ -861,7 +1064,13 @@ func addCodeServer(servers M, mode string, fleet *codeFleet, conns []any, runFil
 	if err != nil {
 		return err
 	}
-	spec := M{"dir": dir, "read": anyStrings(read), "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox, "instructions": []any{}}
+	spec := M{"dir": dir, "read": anyStrings(auth.read), "write": auth.write, "edit": auth.edit, "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox, "instructions": []any{}}
+	if auth.shell != nil {
+		spec["shell"], spec["env"] = auth.shell, auth.env
+		if auth.gitEnv != nil {
+			spec["gitEnv"] = auth.gitEnv
+		}
+	}
 	if mode == "only" {
 		instr := []any{}
 		for _, c := range conns {

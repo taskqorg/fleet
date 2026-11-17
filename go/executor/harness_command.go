@@ -380,7 +380,7 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		if err != nil {
 			return fail(err.Error())
 		}
-		tools = append(tools, claudeExtraTools(p)...)
+		tools = append(codeVisible(tools, jStr(p0, "agentConfig", "codeMode")), claudeExtraTools(p)...)
 		if jIsTrue(p, "readOnly") {
 			tools = readOnlyTools(tools)
 		}

@@ -146,6 +146,7 @@ var subcommands = map[string]func(args []string) error{
 	"mcp":          func(args []string) error { return runMCP(args) }, // part E2
 	"qualify-mcp":  qualifyMCP,
 	"mcp-guardian": mcpGuardian,
+	"code-shell":   codeShellGuardian,
 	"reproject":    func([]string) error { return reproject() },
 	"selftest":     selftest,
 }

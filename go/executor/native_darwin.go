@@ -7,17 +7,25 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/ebitengine/purego"
 )
+
+// Seatbelt already enforces the socket policy on macOS.
+func shellSocketFilter() (*os.File, error) { return nil, nil }
 
 // libproc through purego (no cgo): proc_pidinfo, and the private proc_signal_with_audittoken looked up at run time.
 var (
 	procPidinfo func(pid, flavor int32, arg uint64, buf *byte, size int32) int32
 	procPidpath func(pid int32, buffer *byte, size uint32) int32
 	procSignal  func(token *[8]uint32, sig int32) int32
+	waitid      func(idtype, id int32, info *byte, options int32) int32
+	errnoPtr    func() *int32
 )
 
 func init() {
@@ -30,6 +38,12 @@ func init() {
 	}
 	if sym, err := purego.Dlsym(lib, "proc_pidinfo"); err == nil {
 		purego.RegisterFunc(&procPidinfo, sym)
+	}
+	if sym, err := purego.Dlsym(lib, "waitid"); err == nil {
+		purego.RegisterFunc(&waitid, sym)
+	}
+	if sym, err := purego.Dlsym(lib, "__error"); err == nil {
+		purego.RegisterFunc(&errnoPtr, sym)
 	}
 	if sym, err := purego.Dlsym(lib, "proc_signal_with_audittoken"); err == nil {
 		purego.RegisterFunc(&procSignal, sym)
@@ -87,4 +101,29 @@ func processExecutable(pid int) (string, error) {
 		return "", errors.New("process executable unavailable")
 	}
 	return filepath.EvalSymlinks(string(bytes.TrimRight(b[:n], "\x00")))
+}
+
+// waitExited blocks until pid exits without reaping it (waitid with WNOWAIT): its PID stays taken until the caller
+// reaps it. It reports false, at once, without waitid or when waitid fails: the process may still run.
+func waitExited(pid int) bool {
+	if waitid == nil || errnoPtr == nil {
+		return false
+	}
+	runtime.LockOSThread() // errno is per thread
+	defer runtime.UnlockOSThread()
+	var info [104]byte // siginfo_t
+	for {
+		if waitid(1 /* P_PID */, int32(pid), &info[0], 0x4|0x20 /* WEXITED|WNOWAIT */) == 0 {
+			// macOS also reports a stopped child here (golang/go#19314): only an exit (si_code at offset 8: CLD_EXITED 1,
+			// CLD_KILLED 2, CLD_DUMPED 3) counts; otherwise wait again.
+			if code := binary.LittleEndian.Uint32(info[8:]); code >= 1 && code <= 3 {
+				return true
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if *errnoPtr() != int32(syscall.EINTR) {
+			return false
+		}
+	}
 }

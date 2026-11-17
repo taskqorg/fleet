@@ -150,6 +150,7 @@ func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any
 // claudeMCP passes the servers as --mcp-config and grants their Fleet tools with --allowedTools.
 func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 	allowed, _ := claudeNativeTools(profile) // Command validates the selection before MCP wiring.
+	allowed = codeVisible(allowed, jStr(profile, "codeMode"))
 	allowed = append(allowed, extra...)
 	if jIsTrue(profile, "readOnly") {
 		allowed = readOnlyTools(allowed)
