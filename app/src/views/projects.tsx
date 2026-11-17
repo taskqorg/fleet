@@ -320,7 +320,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
               )}
             </>
           )}
-          <Button label="Open PM conversation" icon="messages-square" onClick={() => location.assign('/conversations?new=' + encodeURIComponent(id))} />
+          <Button label="Open PM conversation" icon="messages-square" onClick={() => location.assign('/conversations/new?in=' + encodeURIComponent(id) + '&role=pm')} />
         </DetailSection>
       )}
       {access && (

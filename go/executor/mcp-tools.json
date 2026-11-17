@@ -350,7 +350,7 @@
   },
   {
     "name": "session_start",
-    "description": "Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.",
+    "description": "Start a new Fleet session in your project: requestId, preset (an id from session_presets) or role (pm|worker|reviewer from the project roles) or profileId, optional access read|write and branch true|false (override the preset; write needs a branch), text (first turn), setup run|skip. You are woken with a message when it finishes.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -377,11 +377,39 @@
         },
         "setup": {
           "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "branch": {
+          "type": "boolean"
         }
       },
       "required": [
         "requestId"
       ]
+    }
+  },
+  {
+    "name": "session_presets",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "description": "List your own project's presets for session_start: id, name, what it does, the profile it starts (only profiles your project maps to roles can start), access read|write, branch, starter instruction; unavailable says why one cannot start.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
     }
   },
   {

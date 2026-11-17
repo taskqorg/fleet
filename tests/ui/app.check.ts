@@ -43,6 +43,7 @@ try {
     [`/tasks/${running}`, ['detail', 'execution-tree']],
     ['/conversations', ['list-view', 'data-list', 'state-counters']],
     ['/conversations/sess-1', ['detail', 'transcript-viewer', 'composer']],
+    ['/conversations/new', ['detail', 'project-pick', 'preset-pick', 'composer', 'start-facts']],
     ['/hosts', ['list-detail', 'harness-counts', 'state-badge']],
     ['/hosts/mac', ['detail', 'detail-section', 'fill-bar']],
     ['/projects', ['list-detail', 'area-chart']],

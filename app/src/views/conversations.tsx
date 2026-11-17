@@ -1,14 +1,15 @@
 // Conversations (docs/design-system/pages/conversations.md): sessions list and one conversation with its live transcript.
-// Actions use the same operations agents use: session_create, message_send, execution_stop, session_fork.
+// Actions use the same operations agents use: session_start (conversation-new.tsx), message_send, execution_stop, session_fork.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
   StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
-  Choice, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_,
+  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_,
   writeClip, zone,
-  keyConnection, ShellStatus } from '../../../packages/ui/src/index.ts';
-import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
+  keyConnection, ShellStatus, ShellActions } from '../../../packages/ui/src/index.ts';
+import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, type Ops } from '../api.ts';
+import { NewConversation } from './conversation-new.tsx';
 import { useDoc } from '../store.ts';
 import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/view-url/view-url.ts';
 import { nextUrl } from '../url.ts';
@@ -53,16 +54,15 @@ export function Conversations({ id }: { id?: string }) {
   const toggleArchived = () => set({ archived: archived ? undefined : true, sel: undefined, preset: undefined });
   const { filtered } = page;
   const now = Date.now();
-  // ?new=<project> opens the form once; the key leaves the URL so a reload does not open it again.
-  const [newConversation,setNewConversation]=useState(()=>!!new URLSearchParams(location.search).get('new'));
-  useEffect(()=>{const u=new URL(location.href);if(u.searchParams.has('new')){u.searchParams.delete('new');history.replaceState(history.state,'',u.pathname+u.search);}},[]);
-  const create=()=>setNewConversation(true);
+  // New conversation (fleet-conversations.md "Start a conversation") is its own URL in the work area, /conversations/new,
+  // with the list view kept; ?in=<project> preselects a project. The old ?new=<project> link opens it once.
+  const isNew = id === 'new', initial = new URLSearchParams(location.search);
+  const create = () => set({ focus: 'new', extra: { ...view.extra, in: undefined, role: undefined } });
+  useEffect(() => { const p = initial.get('new'); if (p !== null && !isNew) set({ focus: 'new', extra: { ...view.extra, new: undefined, in: p || undefined } }); }, []);
   const pane = <>
     <ShellStatus><OfflineMarker state={page.list.state} now={now} /></ShellStatus>
-    <header class="page-h"><span class="grow" />
-      <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
-    {newConversation&&<NewConversation onDone={sessionId=>{setNewConversation(false);set({focus:sessionId});}}/>}
-    <ListPagePanel page={page} noun="Conversations" placeholder="Search conversations" family="session" groups={GROUPS} sorts={SORTS} focused={id}
+    <ShellActions><Button label="New conversation" icon="plus" iconOnly kind="primary" pressed={isNew} disabledReason={online.value ? undefined : 'offline'} onClick={create} /></ShellActions>
+    <ListPagePanel page={page} noun="Conversations" placeholder="Search conversations" family="session" groups={GROUPS} sorts={SORTS} focused={isNew ? undefined : id}
       tools={<Button label="Archived" icon="archive" iconOnly kind="quiet" pressed={archived} onClick={toggleArchived} />}
       actions={() => [
         archived ? { label: 'Unarchive', icon: 'archive-restore', onClick: () => unarchive(chosen), disabledReason: off }
@@ -81,7 +81,9 @@ export function Conversations({ id }: { id?: string }) {
       state={s => <StateBadge family="session" state={s.state} compact />}
       facts={s => <SessionFacts s={s} now={now} />} />
   </>;
-  return <ListDetail list={pane} detail={id ? <Conversation key={id} id={id} onClose={() => set({ focus: undefined })} /> : undefined} detailKey={id} />;
+  const detail = isNew ? <NewConversation key="new" initialProject={initial.get('in')} initialRole={initial.get('role')} onStarted={sessionId => set({ focus: sessionId, extra: { ...view.extra, in: undefined, role: undefined } })} />
+    : id ? <Conversation key={id} id={id} onClose={() => set({ focus: undefined })} /> : undefined;
+  return <ListDetail list={pane} detail={detail} detailKey={id} />;
 }
 
 /** Row facts of a conversation (OR-37): time since the last activity, open questions, executions, agent. */
@@ -227,18 +229,4 @@ function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: 
     {handoff && <div class="answers" role="group" aria-label="Account">{named.map(a => <Button key={a.id} label={`${a.name} · ${a.harness ?? 'codex'}`} pressed={account === a.name} onClick={() => setAccount(account === a.name ? null : a.name)} />)}</div>}
     <div class="answers"><Button label={handoff ? 'Hand off' : 'Switch'} kind="primary" disabledReason={profile ? undefined : 'pick a profile'} onClick={go} /><Button label="Close" kind="quiet" onClick={() => onDone(done ?? undefined)} />{done && <span class="muted" role="status">{done}</span>}{next && <a class="row-link" href={`/conversations/${encodeURIComponent(next)}`} onClick={e => { e.preventDefault(); onDone(done ?? undefined); nav(`/conversations/${encodeURIComponent(next)}`); }}>Open the new conversation</a>}</div>
   </DetailSection>;
-}
-
-function NewConversation({onDone}:{onDone:(sessionId:string)=>void}){
- const alive=useAlive();
- const [verifiedProject,setVerifiedProject]=useState<string|null>(null);
- const projects=useDoc<any>('conversation-projects',()=>op('project_list',{}),c=>c.kind==='definition');
- const [project,setProject]=useState(new URLSearchParams(location.search).get('new')??''),[role,setRole]=useState('pm'),[error,setError]=useState('');
- const detail=useDoc<any>(project?'conversation-project:'+project:null,()=>op('project_detail',{projectId:project}).catch(e=>{if(e instanceof OpError&&[404,503].includes(e.status))return op('project_context',{projectId:project});throw e;}).then(reply=>{setVerifiedProject(project);return reply;}),c=>c.kind==='definition');
- const selected=detail.restored||verifiedProject!==project?null:detail.data?.settings;
- const roles=Object.entries(selected?.roles??{}).map(([id,profile])=>({id,label:`${id} · ${String(profile)}`}));
- return <DetailSection title="New conversation"><Choice label="Project" value={project} onChange={p=>{setProject(p);setRole('pm');}} options={(projects.data?.projects??[]).map((p:any)=>({id:p.id,label:p.name}))}/>
- {project&&<Choice label="Role / configuration" value={role} onChange={setRole} options={roles}/>}
- {error&&<ErrorBanner text={error}/>}<Composer draftPersistence={selected&&roles.some(r=>r.id===role)?createDraftPersistence(authorizedDraftScope({kind:'project',id:project,roleId:role})):undefined} placeholder="Describe the work for this project" disabledReason={!project||!roles.some(r=>r.id===role)?'Choose a project and a mapped role':undefined} onSend={async text=>{const scope=authorizedDraftScope({kind:'project',id:project,roleId:role});try{setError('');const request=await prepareSending(scope,'session_start',{projectId:project,role,text});const r=await writeOnce('session_start',request,()=>setError('unknown, retrying'),{signal:alive});sendingId(scope,null,text);onDone(r.sessionId);}catch(e:any){if(!(e instanceof AccessChanged)&&!unknownOutcome(e)&&!(e instanceof OpError&&e.message==='aborted'))sendingId(scope,null,text);setError(e.message);throw e;}}}/>
- <Button label="Projectless conversation" icon="messages-square" onClick={()=>op('session_create',{}).then(r=>onDone(r.sessionId),e=>setError(e.message))}/></DetailSection>;
 }

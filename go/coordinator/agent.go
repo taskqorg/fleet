@@ -130,7 +130,7 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	}
 	id := newID()
 	e := doc{"id": id, "executionId": id, "sessionId": s["id"], "hostId": nil, "state": "preparing", "createdAt": nowMs(), "directedBy": s["directedBy"], "model": "gpt-6.1-sol", "effort": "low",
-		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "workspaceKey": s["workspaceKey"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
+		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "workspaceKey": s["workspaceKey"], "account": s["account"], "access": s["access"], "branch": s["branch"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
 	if ac != nil {
 		e["agentConfig"], e["profileSha256"], e["model"], e["effort"] = ac, frameHash(ac), firstString(ac["model"], "gpt-6.1-sol"), ac["effort"]
 		ref, err := definitionRef(q, "agent", astr(ac["id"]), ac)
@@ -926,7 +926,7 @@ func sessionFork(q *Request, b doc) (doc, error) {
 		fo["executionId"], fo["sourceState"] = last["id"], last["state"]
 	}
 	s := doc{"id": newID(), "createdAt": nowMs(), "forkOf": fo, "directedBy": source["directedBy"]}
-	for _, k := range []string{"agentConfig", "account", "projectId"} {
+	for _, k := range []string{"agentConfig", "account", "projectId", "preset", "access", "branch", "starter"} { // a fork keeps its preset (presets.go)
 		if source[k] != nil && source[k] != "" {
 			s[k] = source[k]
 		}
@@ -1461,32 +1461,113 @@ func sessionAttach(q *Request, b doc) (doc, error) {
 }
 
 func sessionStart(q *Request, b doc) (doc, error) {
-	pid, err := strArg(b, "projectId", "projectId", 0)
-	if err != nil {
-		return nil, err
+	// A person with full access may start outside projects (no projectId); an agent's call always names its project (agentArgs).
+	pid := ""
+	var err error
+	if _, given := b["projectId"]; given || q.person == nil || q.agent != "" {
+		if pid, err = strArg(b, "projectId", "projectId", 0); err != nil {
+			return nil, err
+		}
 	}
 	rid, err := strArg(b, "requestId", "requestId", 0)
 	if err != nil {
 		return nil, err
 	}
-	project := projectSettingsOf(q, pid)
-	if project == nil {
-		return nil, fail(404, "Unknown project")
-	}
+	var project doc
 	key := pid + ":" + rid
+	if pid != "" {
+		if project = projectSettingsOf(q, pid); project == nil {
+			return nil, fail(404, "Unknown project")
+		}
+	} else {
+		// Outside projects: the same rule as other projectless work (full access), and the request identity is the
+		// caller's own, so two people never collide on or replay each other's start.
+		if !mayAccessProjectID(q.person, "") {
+			return nil, fail(403, "Starting outside projects needs full access")
+		}
+		key = "-:" + q.person.Email + ":" + rid
+	}
 	if old, err := all(q, "session", doc{"startRequest": key}); err != nil {
 		return nil, err
 	} else if len(old) > 0 {
 		o := old[0]
-		return doc{"sessionId": o["id"], "projectId": pid, "role": o["role"], "profileId": mapOf(o["agentConfig"])["id"], "account": o["account"], "existing": true}, nil
+		for _, k := range []string{"preset", "access", "branch", "role"} {
+			if v, given := b[k]; given && o[k] != nil && v != o[k] {
+				return nil, fail(409, "requestId already started a session with another "+k)
+			}
+		}
+		if v, given := b["profileId"]; given && v != mapOf(o["agentConfig"])["id"] {
+			return nil, fail(409, "requestId already started a session with another profileId")
+		}
+		return doc{"sessionId": o["id"], "projectId": nilIf(pid), "role": o["role"], "profileId": mapOf(o["agentConfig"])["id"], "account": o["account"], "preset": o["preset"], "access": o["access"], "branch": o["branch"], "existing": true}, nil
 	}
-	profileID := astr(b["profileId"])
-	if _, given := b["profileId"]; !given && astr(b["role"]) != "" {
-		profileID = astr(mapOf(project["roles"])[astr(b["role"])])
+	// A preset (presets.go) gives the role or profile, access, branch and starter; explicit fields win over it.
+	var pre *preset
+	if id := astr(b["preset"]); id != "" {
+		ps, _, err := presetsOf(project)
+		if err != nil {
+			return nil, err
+		}
+		i := slices.IndexFunc(ps, func(p preset) bool { return p.ID == id })
+		if i < 0 {
+			return nil, fail(400, "Unknown preset "+id)
+		}
+		pre = &ps[i]
+	}
+	role, profileID := astr(b["role"]), astr(b["profileId"])
+	_, givenProfile := b["profileId"]
+	if !givenProfile && role != "" {
+		profileID = astr(mapOf(project["roles"])[role])
+	} else if !givenProfile && pre != nil {
+		r, id, _, unavailable := resolvePreset(q, *pre, project)
+		if unavailable != "" {
+			return nil, fail(400, unavailable)
+		}
+		role, profileID = r, id
+		// An agent starts only the profiles its project maps to roles (agentArgs checks an explicit profileId the same
+		// way): a preset never gives it a system profile it could not request directly.
+		if q.agent != "" {
+			if !profileInRoles(project, profileID) {
+				return nil, fail(403, "Profile not in project roles")
+			}
+		}
 	}
 	profile := roleProfile(q, profileID)
 	if profileID == "" || profile == nil {
-		return nil, fail(400, "Expected profileId or a role mapped to a profile")
+		return nil, fail(400, "Expected profileId, a role mapped to a profile, or a preset")
+	}
+	// A read-only conversation stays read-only one hop later: the sessions its agent starts are read-only too, by default
+	// and by rule.
+	callerRead := callerReadOnly(q)
+	access, branch := "write", true
+	if pre != nil {
+		access, branch = pre.Access, pre.Branch
+	}
+	if _, branchGiven := b["branch"]; callerRead && !branchGiven {
+		access, branch = "read", false
+	} else if callerRead {
+		access = "read"
+	}
+	if v, given := b["access"]; given {
+		if access = astr(v); access != "read" && access != "write" {
+			return nil, fail(400, "Expected access read|write")
+		}
+		if _, branchGiven := b["branch"]; !branchGiven {
+			branch = access == "write" // write work gets its own branch, read work none, unless the call says otherwise
+		}
+	}
+	if v, given := b["branch"]; given {
+		var ok bool
+		if branch, ok = v.(bool); !ok {
+			return nil, fail(400, "Expected branch true|false")
+		}
+	}
+	// Write work needs its own branch: commits on a detached worktree could never be delivered.
+	if access == "write" && !branch {
+		return nil, fail(400, "Write access needs a branch")
+	}
+	if callerRead && access == "write" {
+		return nil, fail(403, "A read-only conversation starts read-only sessions only")
 	}
 	if st, ok := b["setup"]; ok && st != "run" && st != "skip" {
 		return nil, fail(400, "Expected setup run|skip")
@@ -1501,7 +1582,9 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	}
 	account := astr(b["account"])
 	taskID := ""
-	if _, ok := b["taskId"]; ok {
+	if _, ok := b["taskId"]; ok && pid == "" {
+		return nil, fail(400, "taskId needs the task's projectId")
+	} else if ok {
 		if taskID, err = taskFor(q, b["taskId"], pid, true); err != nil {
 			return nil, err
 		}
@@ -1511,8 +1594,15 @@ func sessionStart(q *Request, b doc) (doc, error) {
 			return nil, fail(409, "Task is Held: release it first")
 		}
 	}
-	s := doc{"id": newID(), "createdAt": nowMs(), "projectId": pid, "agentConfig": profile, "startRequest": key}
-	for k, v := range map[string]string{"taskId": taskID, "directedBy": directedBy, "role": astr(b["role"]), "account": account, "setup": astr(b["setup"]), "hostId": astr(b["hostId"]), "createdBySessionId": astr(b["callerSessionId"]), "createdByExecutionId": astr(b["callerExecutionId"])} {
+	s := doc{"id": newID(), "createdAt": nowMs(), "agentConfig": profile, "startRequest": key, "access": access, "branch": branch}
+	presetID := ""
+	if pre != nil {
+		presetID = pre.ID
+		if pre.Starter != "" {
+			s["starter"] = pre.Name + ": " + pre.Starter
+		}
+	}
+	for k, v := range map[string]string{"projectId": pid, "preset": presetID, "taskId": taskID, "directedBy": directedBy, "role": role, "account": account, "setup": astr(b["setup"]), "hostId": astr(b["hostId"]), "createdBySessionId": astr(b["callerSessionId"]), "createdByExecutionId": astr(b["callerExecutionId"])} {
 		if v != "" {
 			s[k] = v
 		}
@@ -1520,7 +1610,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	if err := put(q, "session", s); err != nil {
 		return nil, err
 	}
-	out := doc{"sessionId": s["id"], "projectId": pid, "taskId": nilIf(taskID), "role": b["role"], "profileId": profile["id"], "account": nilIf(account), "executionId": nil, "hostId": nil}
+	out := doc{"sessionId": s["id"], "projectId": nilIf(pid), "taskId": nilIf(taskID), "role": nilIf(role), "profileId": profile["id"], "account": nilIf(account), "preset": nilIf(presetID), "access": access, "branch": branch, "executionId": nil, "hostId": nil}
 	if t, _ := b["text"].(string); t != "" {
 		first, err := submit(q, doc{"sessionId": s["id"], "requestId": "start:" + rid, "text": t})
 		if err != nil {
@@ -1543,7 +1633,7 @@ var agentDescriptions = map[string]string{
 	"session_fork":           "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown",
 	"session_resume":         "Native resume/fork argv and captured native sessions for a session",
 	"session_handoffs":       "Context handoffs of a session with delivery state",
-	"session_start":          "Start a new session in a project: projectId, requestId, role (project roles map) or profileId, optional account/hostId, taskId (the session works for that task of the project), text, setup run|skip. The creator is woken when it finishes",
+	"session_start":          "Start a new session in a project: projectId, requestId, preset (an id from session_presets: its role or profile, access, branch and starter) or role (project roles map) or profileId, optional access read|write and branch true|false (override the preset; default write with a branch), account/hostId, taskId (the session works for that task of the project), text, setup run|skip. The creator is woken when it finishes",
 	"session_task_attach":    "Attach a taskless session to a task (sessionId, taskId): it joins the task thread; earlier turns join without copying",
 	"project_detail":         "Read a project definition and revision independently of resource statistics; requires projectId",
 	"project_resources":      "Read prepared project resource figures/version and current progress; requires projectId",
@@ -2064,7 +2154,7 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 		}
 	case name == "reconcile":
 		return nil, fail(403, "Not available to host agents")
-	case name == "project_readiness" || name == "project_context" || name == "project_update" || isResourceRead(name):
+	case name == "project_readiness" || name == "project_context" || name == "project_update" || name == "session_presets" || isResourceRead(name):
 		// Bound to the caller's own project: another project's readiness is not the agent's to read.
 		p, err := ownProject()
 		if err != nil {
@@ -2081,11 +2171,7 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 		}
 		a["projectId"], a["callerSessionId"], a["callerExecutionId"] = p, own, executionID
 		if pid, ok := a["profileId"]; ok {
-			roles := []any{}
-			for _, v := range mapOf(projectSettingsOf(q, p)["roles"]) {
-				roles = append(roles, v)
-			}
-			if !slices.Contains(roles, pid) {
+			if id, _ := pid.(string); !profileInRoles(projectSettingsOf(q, p), id) {
 				return nil, fail(403, "Profile not in project roles")
 			}
 		}

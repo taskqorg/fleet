@@ -126,6 +126,20 @@ func projectWrite(q *Request, create bool) (any, error) {
 			return nil, fail(400, "Unknown role configuration")
 		}
 	}
+	// A preset starts with its role's profile or its own: both must be trusted profiles, so a saved preset can start.
+	presets, err := parsePresets(nonNil(mapOf(bundle["settings"])["presets"], []any{}))
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range presets {
+		if p.Profile != "" {
+			if _, err := readTrustedProfile(q, p.Profile); err != nil {
+				return nil, fail(400, "Unknown preset profile "+p.Profile)
+			}
+		} else if astr(mapOf(mapOf(bundle["settings"])["roles"])[p.Role]) == "" {
+			return nil, fail(400, "Preset "+p.ID+" names role "+p.Role+", which the project does not map, and no profile")
+		}
+	}
 	for _, profile := range anys(mapOf(mapOf(bundle["settings"])["execution"])["profiles"]) {
 		if _, err := readTrustedProfile(q, astr(profile)); err != nil {
 			return nil, fail(400, "Unknown execution profile")

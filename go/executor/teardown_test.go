@@ -28,26 +28,26 @@ func TestTeardownUnpushedAndDelivered(t *testing.T) {
 	w := filepath.Join(dir, "worktree")
 	add := func() { git(top, "worktree", "add", "-q", "--no-track", "-b", "fleet/s1", w, "main") }
 	add()
-	if r := teardown(dir, "s1", top, M{}, false); !r.Removed {
+	if r := teardown(dir, "s1", top, M{}, false, false); !r.Removed {
 		t.Fatalf("no commits of its own: removed: %+v", r)
 	}
 	add()
 	git(w, "commit", "-q", "--allow-empty", "-m", "work")
-	if r := teardown(dir, "s1", top, M{}, false); r.Removed || str0(r.Reason) != "unpushed" {
+	if r := teardown(dir, "s1", top, M{}, false, false); r.Removed || str0(r.Reason) != "unpushed" {
 		t.Fatalf("local commit: kept: %+v", r)
 	}
 	os.WriteFile(filepath.Join(w, "x"), []byte("x"), 0o600)
-	if r := teardown(dir, "s1", top, M{}, true); r.Removed || str0(r.Reason) != "uncommitted" {
+	if r := teardown(dir, "s1", top, M{}, true, false); r.Removed || str0(r.Reason) != "uncommitted" {
 		t.Fatalf("dirty: kept: %+v", r)
 	}
 	os.Remove(filepath.Join(w, "x"))
 	git(top, "update-ref", "refs/remotes/origin/fleet/s1", "fleet/s1") // pushed (git push origin HEAD), squash-merged elsewhere
-	if r := teardown(dir, "s1", top, M{}, false); !r.Removed || r.BranchDeleted == nil || *r.BranchDeleted {
+	if r := teardown(dir, "s1", top, M{}, false, false); !r.Removed || r.BranchDeleted == nil || *r.BranchDeleted {
 		t.Fatalf("not delivered: removed, -d keeps the unmerged branch: %+v", r)
 	}
 	git(top, "worktree", "add", "-q", w, "fleet/s1")
 	git(top, "update-ref", "-d", "refs/remotes/origin/fleet/s1") // the remote branch deleted on merge and pruned
-	if r := teardown(dir, "s1", top, M{}, true); !r.Removed || r.BranchDeleted == nil || !*r.BranchDeleted {
+	if r := teardown(dir, "s1", top, M{}, true, false); !r.Removed || r.BranchDeleted == nil || !*r.BranchDeleted {
 		t.Fatalf("delivered: removed with its branch: %+v", r)
 	}
 }
@@ -72,16 +72,16 @@ func TestTransitionWorkspacesPreserveDirtyOldCheckout(t *testing.T) {
 	oldDir, newDir := e.commandDir("session", old), e.commandDir("session", newer)
 	os.MkdirAll(oldDir, 0o755)
 	os.MkdirAll(newDir, 0o755)
-	w, _, _, ok, err := worktree(oldDir, workspaceSession("session", old), top, true, []string{top}, nil, M{})
+	w, _, _, ok, err := worktree(oldDir, workspaceSession("session", old), top, true, []string{top}, nil, M{}, false)
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(w, "dirty"), []byte("keep"), 0o600)
-	fresh, _, _, ok, err := worktree(newDir, workspaceSession("session", newer), top, true, []string{top}, nil, M{})
+	fresh, _, _, ok, err := worktree(newDir, workspaceSession("session", newer), top, true, []string{top}, nil, M{}, false)
 	if err != nil || !ok || fresh == w {
 		t.Fatal(err, fresh, w)
 	}
-	if result := teardown(oldDir, workspaceSession("session", old), top, M{}, false); result.Removed || str0(result.Reason) != "uncommitted" {
+	if result := teardown(oldDir, workspaceSession("session", old), top, M{}, false, false); result.Removed || str0(result.Reason) != "uncommitted" {
 		t.Fatal(result)
 	}
 	if !exists(filepath.Join(fresh, ".git")) || !exists(filepath.Join(w, "dirty")) {
@@ -130,5 +130,53 @@ func TestTransitionFailureRetainsProcessClosedStderr(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("process.closed omitted transitioned stderr")
+	}
+}
+
+// Requirement: fleet-conversations.md "Start a conversation": a preset without a branch gets a worktree detached at the
+// base, so no session branch is created; the teardown removes it. Risk: every read-only conversation leaves a branch.
+func TestDetachedWorktreeHasNoBranch(t *testing.T) {
+	top, dir := t.TempDir(), t.TempDir()
+	top, _ = filepath.EvalSymlinks(top)
+	run := func(d string, args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", d, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatal(args, err, string(out))
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(top, "init", "-q", "-b", "main")
+	run(top, "commit", "-q", "--allow-empty", "-m", "base")
+	run(top, "remote", "add", "origin", "https://example.invalid/r.git")
+	run(top, "update-ref", "refs/remotes/origin/main", "main")
+	w, _, created, ok, err := worktree(dir, "s1", top, true, []string{top}, nil, M{"worktree": M{"startFromOrigin": false}}, true)
+	if err != nil || !ok || !created {
+		t.Fatal(err, ok, created)
+	}
+	if b := run(w, "branch", "--show-current"); b != "" {
+		t.Fatalf("detached worktree is on branch %q", b)
+	}
+	if run(top, "branch", "--list", "fleet/s1") != "" {
+		t.Fatal("a session branch was created")
+	}
+	if r := teardown(dir, "s1", top, M{}, false, false); !r.Removed {
+		t.Fatalf("removed: %+v", r)
+	}
+	// Based on a local commit the remote lacks: still not the session's own work, so it goes.
+	run(top, "commit", "-q", "--allow-empty", "-m", "local only")
+	if _, _, _, _, err := worktree(dir, "s2", top, true, []string{top}, nil, M{"worktree": M{"startFromOrigin": false}}, true); err != nil {
+		t.Fatal(err)
+	}
+	if r := teardown(dir, "s2", top, M{}, false, true); !r.Removed {
+		t.Fatalf("a checkout's local commit kept the detached worktree: %+v", r)
+	}
+	// Its own commit keeps it.
+	if _, _, _, _, err := worktree(dir, "s3", top, true, []string{top}, nil, M{"worktree": M{"startFromOrigin": false}}, true); err != nil {
+		t.Fatal(err)
+	}
+	run(filepath.Join(dir, "worktree"), "commit", "-q", "--allow-empty", "-m", "work")
+	if r := teardown(dir, "s3", top, M{}, false, true); r.Removed || str0(r.Reason) != "unpushed" {
+		t.Fatalf("its own commit keeps it: %+v", r)
 	}
 }

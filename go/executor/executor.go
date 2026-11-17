@@ -89,7 +89,7 @@ func platform() string {
 }
 
 func capabilities() []string {
-	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1"}
+	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1"}
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}
@@ -786,12 +786,12 @@ func (e *executor) run(c M) error {
 		repo, hasRepo := repoPath(p, e.host)
 		data := refusedTeardown("no-worktree")
 		if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
-			_, top, created, ok, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
+			_, top, created, ok, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"), false)
 			switch {
 			case err != nil:
 				data = refusedTeardown(err.Error())
 			case ok && !created:
-				data = teardown(dir, workspaceSession(session, p), top, jAt(p, "project"), jIsTrue(p, "deleteBranch"))
+				data = teardown(dir, workspaceSession(session, p), top, jAt(p, "project"), jIsTrue(p, "deleteBranch"), jAt(p, "branch") == false)
 			}
 		}
 		reason := str0(data.Reason)
@@ -944,7 +944,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	repo, hasRepo := repoPath(p, e.host)
 	checkoutTop := ""
-	w, top, created, hasW, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
+	w, top, created, hasW, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"), jAt(p, "branch") == false)
 	if err != nil {
 		return fail(1, err.Error())
 	}

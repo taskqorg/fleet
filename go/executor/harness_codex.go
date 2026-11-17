@@ -137,6 +137,11 @@ func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any
 		profile := any(p)
 		if has(p, "agentConfig") {
 			profile = p["agentConfig"]
+			if jIsTrue(p, "readOnly") { // the start's read-only grant narrows the profile's (claudeMCP)
+				c := jObj(jClone(profile))
+				c["readOnly"] = true
+				profile = c
+			}
 		}
 		claudeMCP(cmd, profile, servers, extra)
 	}
@@ -146,6 +151,9 @@ func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any
 func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 	allowed, _ := claudeNativeTools(profile) // Command validates the selection before MCP wiring.
 	allowed = append(allowed, extra...)
+	if jIsTrue(profile, "readOnly") {
+		allowed = readOnlyTools(allowed)
+	}
 	if has(servers, "design-rules") {
 		allowed = append(allowed, "mcp__design-rules__get_design_rules")
 	}
@@ -164,7 +172,7 @@ func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 		config[name] = M{"command": jAt(s, "command"), "args": jAt(s, "args")}
 	}
 	if has(servers, "fleet") {
-		for _, t := range []string{"session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status", "artifact_save", "artifact_list", "artifact_get"} {
+		for _, t := range []string{"session_presets", "session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status", "artifact_save", "artifact_list", "artifact_get"} {
 			allowed = append(allowed, "mcp__fleet__"+t)
 		}
 		if d, _ := jAt(profile, "delegationProfiles").([]any); len(d) > 0 {
@@ -251,7 +259,9 @@ func (s *codexSession) config() any {
 func (s *codexSession) turnRequest() M {
 	params := M{"threadId": s.thread, "model": s.profile["model"], "effort": s.profile["effort"],
 		"input": []any{M{"type": "text", "text": s.profile["text"], "text_elements": []any{}}}}
-	if has(s.profile, "writableRoots") {
+	if jIsTrue(s.profile, "readOnly") {
+		params["sandboxPolicy"] = M{"type": "readOnly"}
+	} else if has(s.profile, "writableRoots") {
 		params["sandboxPolicy"] = M{"type": "workspaceWrite", "writableRoots": s.profile["writableRoots"], "networkAccess": s.profile["gitNetwork"] == true}
 	}
 	return M{"id": 3, "method": "turn/start", "params": params}
@@ -280,7 +290,9 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 		p := s.profile
 		params := M{"cwd": s.root, "model": p["model"], "approvalPolicy": "never", "sandbox": "workspace-write", "developerInstructions": instructions,
 			"config": M{"model_reasoning_effort": p["effort"], "sandbox_workspace_write.network_access": p["gitNetwork"] == true}}
-		if has(p, "writableRoots") {
+		if jIsTrue(p, "readOnly") {
+			params["sandbox"] = "read-only"
+		} else if has(p, "writableRoots") {
 			params["config"].(M)["sandbox_workspace_write.writable_roots"] = p["writableRoots"]
 		}
 		method := "thread/start"

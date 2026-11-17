@@ -122,9 +122,11 @@ var settingsDefaults = map[string]any{"contextSources": []any{}, "repos": []any{
 	"integration": doc{"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "syncCheckoutAfterMerge": true},
 	"cleanup":     doc{"keepWhen": []any{"uncommitted", "unpushed", "teardown-failed"}}, "identity": nil, "subscriptions": []any{},
 	// errors.bugsink: the Bugsink projects (names) holding this project's errors (docs/designs/fleet-error-tracking.md).
-	"errors": doc{"bugsink": []any{}}}
+	"errors": doc{"bugsink": []any{}},
+	// presets: what a new conversation does (presets.go); empty: the system presets.
+	"presets": []any{}}
 
-var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution", "errors"}
+var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution", "errors", "presets"}
 var itemKeys = map[string][]string{"repos": {"id", "remote", "forge", "defaultBranch", "connection", "path"}, "environments": {"hostId", "checkoutPath", "repo"}, "identity": {"name", "email"}}
 var settingEnums = map[string][]any{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}}
 
@@ -180,6 +182,11 @@ func projectSettings(p doc) (doc, []string, error) {
 		case k == "contextSources":
 			if _, err := contract.ContextSources(v); err != nil {
 				return nil, nil, fail(400, "Invalid contextSources: "+err.Error())
+			}
+			out[k] = v
+		case k == "presets":
+			if _, err := parsePresets(v); err != nil {
+				return nil, nil, err
 			}
 			out[k] = v
 		case k == "subscriptions":

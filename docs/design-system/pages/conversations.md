@@ -1,17 +1,20 @@
 # Conversations (operator)
 
-**App routes:** `/conversations` and `/conversations/:id` in the operator app (`app/src/views/conversations.tsx`). The app check (`tests/ui/app.check.ts`) verifies them. There is no static mockup.
+**App routes:** `/conversations`, `/conversations/:id` and `/conversations/new` in the operator app (`app/src/views/conversations.tsx`, `app/src/views/conversation-new.tsx`). The app check (`tests/ui/app.check.ts`) verifies them; `tests/ui/conversation-new.check.ts` the new-conversation page. There is no static mockup.
 
 **Purpose.** Talk to agents and steer running work. This page replaces the removed legacy session page.
 
 **Layout.** [App shell](../patterns/app-shell.md), then [list and detail](../patterns/list-detail.md):
 * **Left:** a list of conversations, using the [list view](../patterns/list-view.md) and [state counters](../controls/state-counters.md) with the `session` state family.
+* **Header:** New conversation is the `plus` icon right after the section title in the [shell header](../patterns/app-shell.md) (OR-43); it opens `/conversations/new`.
+* **Right, new conversation** (`/conversations/new`, linkable, Back returns; `?in=<project>` preselects a project, `?role=<role>` the first preset on that role): the [start picker](../controls/start-picker.md) in the work area (OR-27), like the new-session screens of Claude Code, Codex and Orca. Top to bottom: the project (focused, then recent, then the rest; ignored left out; "No project" is one choice), the presets under "What are we doing" (`session_presets`: the project's own or the system ones), the [composer](../controls/composer.md), and the start facts under it: project, agent, access and branch, the last two flipped by a click. Send calls `session_start` with the preset, access and branch shown, then opens the new conversation. The list stays as it is.
 * **Right:** the conversation, showing a compact header resource summary bar (expandable in-place without shrinking the thread below available height or creating nested scrollers per `OR-25`), any open [decision blocks](../controls/decision-block.md), the [live transcript](../controls/transcript-viewer.md) with per-boundary resource stats (`BoundaryRow`), and the [composer](../controls/composer.md).
 
 | Inventory item (Conversations) | Shown by |
 |---|---|
 | Messages, tool activity, execution boundary stats (duration, tokens, tools, multi-currency/subscription cost) and questions with answer options | The transcript (`Thread` / `BoundaryRow`), plus decision blocks for open questions. |
 | Scoped resource rollup (`own`, `delegated`, `spawned`, `total`, `elapsedMs` vs `executionWallMs`, `spawnedTasks` links, `hidden > 0`) | Expandable resource summary panel in detail (`ScopedResourceRollup`, `Totals`, `CostFigures`), preserving full transcript height by default. |
+| Start a conversation: project, what it does (preset: agent, access, branch, starter) | `/conversations/new`: the [start picker](../controls/start-picker.md) and the composer (`session_presets`, `session_start`). |
 | Attach materials; assign work; create tasks | Not in this slice. |
 | Continue with another agent or account: hand off and fork | "Fork" is an icon in the detail head (`session_fork`). Handoff and profile switch are not in this slice. |
 | Steer or queue a message to a running agent | The composer (`message_send`), and Stop for the running execution (`execution_stop`). |

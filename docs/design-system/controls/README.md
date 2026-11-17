@@ -40,6 +40,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [outcome-block](outcome-block.md) | Task outcome, requirements and inputs |
 | [detail-section](detail-section.md) | Stacked detail areas |
 | [composer](composer.md) | Message an agent |
+| [start-picker](start-picker.md) | Start a conversation: project, preset, what the start uses |
 | [offline-marker](offline-marker.md) | Data freshness: offline, updating, signed out |
 | [problem-row](problem-row.md) | Signals with cause and actions |
 | [status-states](status-states.md) | Empty, loading, error and stale |

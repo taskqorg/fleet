@@ -128,9 +128,10 @@ func gitFetch(top string, project any) bool {
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 // worktree: a project session whose working directory is a git repository runs in its own worktree (branch
-// <prefix>/<session>). The payload path is untrusted: it must resolve under a configured project root and outside the
-// executor and session dirs. Returns (worktree, checkout toplevel, created); ok false means no worktree.
-func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string, project any) (w, top string, created, ok bool, err error) {
+// <prefix>/<session>, or detached at the same base when the start says branch false: a session with no branch). The
+// payload path is untrusted: it must resolve under a configured project root and outside the executor and session dirs.
+// Returns (worktree, checkout toplevel, created); ok false means no worktree.
+func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string, project any, detached bool) (w, top string, created, ok bool, err error) {
 	if !hasRepo {
 		return
 	}
@@ -182,19 +183,19 @@ func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string
 		return w, top, false, true, nil
 	}
 	wt := jObj(project, "worktree")
-	prefix := "fleet"
-	if jIsStr(wt, "branchPrefix") {
-		prefix = jStr(wt, "branchPrefix")
-	}
-	branch := prefix + "/" + session
+	branch := sessionBranch(project, session)
 	ceil := "GIT_CEILING_DIRECTORIES=" + root
 	v := hardenedGit("-C", top, "rev-parse", "--verify", "--quiet", branch)
 	v.Env = append(v.Env, ceil)
 	args := []string{"-C", top, "worktree", "add"}
-	if v.Run() == nil {
+	if !detached && v.Run() == nil {
 		args = append(args, w, branch)
 	} else {
-		args = append(args, "--no-track", "-b", branch, w)
+		if detached {
+			args = append(args, "--detach", w)
+		} else {
+			args = append(args, "--no-track", "-b", branch, w)
+		}
 		// Base: explicit baseRef, else fresh origin/<defaultBranch> when startFromOrigin, else HEAD.
 		if jIsStr(wt, "baseRef") {
 			args = append(args, jStr(wt, "baseRef"))
@@ -337,7 +338,7 @@ func keepReasons(project any) map[string]bool {
 // teardown: teardown script, then remove the worktree unless a cleanup.keepWhen reason holds (uncommitted changes,
 // commits on no remote branch, a failed teardown script). The branch goes with -d (merged only), or -D
 // when the work was delivered (deleteBranch: the task was accepted).
-func teardown(dir, session, top string, project any, deleteBranch bool) contract.Teardown {
+func teardown(dir, session, top string, project any, deleteBranch, detached bool) contract.Teardown {
 	keep := keepReasons(project)
 	w := filepath.Join(dir, "worktree")
 	if !exists(filepath.Join(w, ".git")) {
@@ -375,8 +376,15 @@ func teardown(dir, session, top string, project any, deleteBranch bool) contract
 	// Delivered work (deleteBranch: the task was accepted) is not unpushed even when its squash-merged remote branch
 	// was deleted and pruned; uncommitted changes still keep the worktree.
 	if keep["unpushed"] && !deleteBranch {
-		// Commits on no remote-tracking branch (session branches are created --no-track, so there is no @{u} to ask).
-		ahead, err := hardenedGit("-C", w, "rev-list", "-n", "1", "HEAD", "--not", "--remotes").Output()
+		// Commits on no remote-tracking branch (session branches are created --no-track, so there is no @{u} to ask). A
+		// detached worktree (a session with no branch) also started from the checkout's own branches: what they hold is not
+		// its work, so a local unpushed commit of the checkout never keeps it.
+		// Branchless by how it started (the teardown command's branch: false), never by the refs it finds now.
+		not := []string{"-C", w, "rev-list", "-n", "1", "HEAD", "--not", "--remotes"}
+		if detached {
+			not = append(not, "--branches")
+		}
+		ahead, err := hardenedGit(not...).Output()
 		if err != nil || len(strings.TrimSpace(string(ahead))) > 0 {
 			out.Reason = new("unpushed")
 			return out
@@ -391,17 +399,25 @@ func teardown(dir, session, top string, project any, deleteBranch bool) contract
 		out.Reason = new("worktree-remove-failed")
 		return out
 	}
-	prefix := "fleet"
-	if jIsStr(project, "worktree", "branchPrefix") {
-		prefix = jStr(project, "worktree", "branchPrefix")
+	if detached { // no session branch was ever made: nothing to delete or report
+		return out
 	}
 	flag := "-d"
 	if deleteBranch {
 		flag = "-D"
 	}
-	deleted := hardenedGit("-C", top, "branch", flag, prefix+"/"+session).Run() == nil
+	deleted := hardenedGit("-C", top, "branch", flag, sessionBranch(project, session)).Run() == nil
 	out.BranchDeleted = &deleted
 	return out
+}
+
+// sessionBranch: <prefix>/<session>, the branch a session with a branch works on.
+func sessionBranch(project any, session string) string {
+	prefix := "fleet"
+	if jIsStr(project, "worktree", "branchPrefix") {
+		prefix = jStr(project, "worktree", "branchPrefix")
+	}
+	return prefix + "/" + session
 }
 
 // refusedTeardown: a teardown that removed nothing, with its reason.

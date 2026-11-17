@@ -25,6 +25,7 @@ Thread membership is derived from tasks and sessions rather than stored as a sec
 *   Question cards in the thread: open questions are answerable there or from Tasks with the same effect; answered questions stay, collapsed, with the answer.
 *   Result cards in the thread and one shared artifact viewer (any file, plus image and video views). A Results page lists results and artifacts with Tasks-like filters.
 *   Stop, steer and answer are always visible. Retry, fork, hand off and switch profile or model are in one menu.
+*   A new conversation starts in the work area at `/conversations/new`: a project, a preset of what we are doing now (agent, access, branch, starter instruction), the composer. A conversation can start in every project, also one without roles, and outside projects; agents start with the same presets.
 *   Server-side search over the whole thread that can drive a jump.
 *   An asserting browser check over real-shape fixtures that also measures and reports timings.
 
@@ -83,6 +84,12 @@ These are the existing presentation and membership defaults; this cleanup introd
 *   **Given**: An execution produced a screenshot and a log file.
 *   **When**: The operator clicks the result card in the thread.
 *   **Then**: The artifact viewer opens in the work area. The image shows in a fixed-ratio frame; the log shows as text, read in `Range` pages, with a download link. The Results page lists both under the task.
+
+### CUJ 7: Start a conversation in a project without roles
+
+*   **Given**: Project `cs` maps no roles and defines no presets.
+*   **When**: The operator clicks New conversation in the shell header, picks `cyprus.bz`, picks "Fix / build" and sends "Fix the hero".
+*   **Then**: `/conversations/new` shows the system presets; "Fix / build" shows the coding worker, "Can edit" and the branch `fleet-test/new`. Send calls `session_start({ projectId: 'cs', preset: 'fix', access: 'write', branch: true, text })`, which falls back on the system profile `coding-worker`, and the new conversation opens. Back returns to `/conversations/new`.
 
 ## Technical Plan (Architecture)
 
@@ -252,6 +259,28 @@ Menu actions:
 
 Hand off is the existing context handoff (`makeHandoff`, `go/coordinator/agent.go`). Quota-driven handoff is not part of this design (it is also out of scope in [fleet-data-foundation.md](fleet-data-foundation.md)).
 
+### Start a conversation
+
+A preset is what a new conversation does now. It names a project role and a system profile to fall back on, the access, whether the session gets its own branch, and a starter instruction. Presets live in the project definition, `settings.presets` ([configuration](../configuration.md#project-settings)), so people and agents edit them with `project_update`; a project with none gets the system presets (`go/coordinator/presets.go`):
+
+| Preset | Role, else system profile | Access | Branch | Starter |
+|---|---|---|---|---|
+| `discuss` Discuss | `pm`, else `pm` | read | no | none |
+| `design` Design | `worker`, else `coding-worker` | write | yes | read the design rules (`docs/design-system/owner-rules.md`, the book) where the project has them; build from `packages/ui`; `pnpm run check:design` |
+| `fix` Fix / build | `worker`, else `coding-worker` | write | yes | none |
+| `review` Review | `reviewer`, else `claude-reviewer` | read | no | none |
+| `investigate` Investigate a problem | `pm`, else `pm` | read | no | read the project's Bugsink errors (`errors.bugsink`), execution logs, telemetry and code; report the cause; do not change the code (a task for the fix may be written) |
+
+*   **Resolution.** A preset starts with the project's profile for its role when the project maps the role, else with its own profile. A project without roles (cs) therefore starts every system preset on a system profile. A preset that resolves to no trusted profile is listed with `unavailable` and refused at start. A project preset names a role the project maps, or a profile; `project_update` refuses one that names neither a mapped role nor a trusted profile.
+*   **`session_presets({ projectId? })`** lists the resolved presets: id, name, description, role (null on a fallback), profile, harness, model, effort, access, branch, starter, source (`project` or `system`), `unavailable`; plus the project's branch prefix and the base a worktree starts from. Without `projectId` it lists the system presets for a conversation outside projects. It is an agent tool too; a host agent reads its own project.
+*   **`session_start`** takes `preset`, and `access` (`read`, `write`) and `branch` (boolean) that override it; an explicit `role` or `profileId` wins over the preset's profile. Defaults without a preset are today's: write, with a branch. A person with full access may omit `projectId` (for others `session_presets` marks every preset outside projects unavailable) to start outside projects (no task; the request identity is scoped to that person); an agent's start stays in its own project. An agent starts only profiles its project maps to roles: a preset that would fall back on a system profile is refused for it (403), as an explicit `profileId` outside the roles is. A session started from a read conversation (`callerSessionId` with access read) is read by default and refused as write (403); a `request_child` child of a read session is read too, and so is a session its agent makes with `session_create`. Such sessions also go without a branch. Read access means the code does not change: it limits files and the sessions the conversation starts. Fleet operations stay allowed with the director's authority (owner decision 2026-11-18): a Discuss or Investigate PM can write tasks, start pipelines and message existing sessions. The cards and the access chip say "Code read only" and "The code does not change", never "Nothing changes". An explicit `access` without `branch` gets a branch for write and none for read. A host takes a read or branchless start only while it reports `start-access-v1`, checked at placement and again at poll (also for the teardown of a branchless worktree); the teardown command carries `branch: false`, so the executor never guesses it from refs. Write access needs a branch (400 for `access: write, branch: false`, and a project preset cannot say it): commits on a detached worktree could never be delivered. A repeated `requestId` with another preset, access or branch is 409, never the earlier session. The session records `preset`, `access`, `branch` and the starter; `session_get` returns them and a fork keeps them.
+*   **Access.** A read session's start command carries `readOnly: true` ([host protocol](../../contracts/host-protocol.schema.json) `StartPayload`): codex runs its read-only sandbox for the thread and each turn, claude gets only Read, Glob and Grep (plus Skill and web tools the run grants), antigravity and ACP agents run in plan mode, and an ACP agent without a plan mode refuses the start. Fleet operations keep their own authority. Hosts that honour `readOnly` and `branch` report the capability `start-access-v1`; dispatch places a read start, or a branchless one in a project, only on such a host, and otherwise it waits with "executor lacks start-access-v1", so an older host never runs it with write tools.
+*   **Branch.** `branch: false` reaches the host as `branch: false`: the session worktree is detached at the same base (`worktree.baseRef`, else fresh `origin/<defaultBranch>`), so no session branch is created and the host checkout stays untouched; teardown removes it as usual, and commits the checkout's own branches hold never count as its unpushed work. Only read sessions go without a branch.
+*   **Starter.** The coordinator adds the starter to every turn's instructions after the project context, as "This conversation's preset. <name>: <starter>". The executor delivers it with that frozen context block (after the profile's instructions), also outside projects.
+*   **Model and effort.** A preset sets none of its own: every profile fixes its model and effort, and the coordinator refuses a model that differs from the profile. A different model is another profile, or a switch in the conversation (`session_transition`).
+
+The page `/conversations/new` ([conversations page](../design-system/pages/conversations.md), [start picker](../design-system/controls/start-picker.md)) shows the project, the presets of that project, the composer and the chips of what the start uses; Send is `session_start` with the shown preset, access and branch. The New conversation button sits in the shell header next to the section title (`ShellActions`).
+
 ### Data flow
 
 ```text
@@ -306,4 +335,5 @@ Owning implementation: block projection in `go/executor/harness_blocks.go`; `thr
 
 *   Build: `pnpm run build`; `cd go && go vet ./... && go test ./...`; `pnpm run check:design`.
 *   Tests: every block kind, every paging direction, the join of a taskless session, `event-delta` replay, and the repeated and conflicting answer (`tests/ui/threads.test.ts`, `tests/go`).
-*   Browser: `pnpm run check:conversations` runs the assertions in "Browser check" and prints the timing report.
+*   Browser: `pnpm run check:conversations` runs the assertions in "Browser check" and prints the timing report; `tests/ui/conversation-new.check.ts` (also run by it) checks the header button, `/conversations/new` in the work area with Back, the presets and a start in `cs`.
+*   Start a conversation: `go/coordinator/presets_test.go` (preset validation and the system presets' profiles), `tests/go/session-presets.test.ts` (fallback on a project without roles, overrides, outside projects, project presets), `go/executor` `TestReadOnlyStart` and `TestDetachedWorktreeHasNoBranch`.

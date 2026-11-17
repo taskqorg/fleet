@@ -14,7 +14,7 @@
 
 **Accessibility.** The text area is labelled by its placeholder ("Message", or "Steer or queue a message" while the agent runs). On touch screens it is at least 44 px high.
 
-**Used in.** Conversations.
+**Used in.** Conversations: a conversation and the new-conversation page ([start picker](start-picker.md)).
 
 ## Authorized persistence
 

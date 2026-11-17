@@ -34,9 +34,11 @@ export async function checkProjects(browser:Browser,origin:string,host:(id:strin
   const check=(await (await queued).json()).hosts[0];assert.ok(check.executionId);
   const posted=await sendHost('/api/hosts/events',{executionId:check.executionId,events:[{id:'late-ready',seq:0,type:'readiness',timestamp:Date.now(),data:{hostId:'project-readiness-ui',ok:false,checks:[{check:'checkout',target:'/tmp/ui-readiness',status:'failed',reason:'checkout-missing'}]}}]});assert.equal(posted.status,200);
   await p.locator('.kv-row').filter({hasText:/Not ready$/}).waitFor();await p.getByText('/tmp/ui-readiness · checkout-missing',{exact:true}).waitFor();
-  await p.getByRole('button',{name:'Open PM conversation',exact:true}).click();await p.getByRole('group',{name:'Role / configuration'}).getByRole('button',{name:'pm · pm',exact:true}).waitFor();
+  // The PM conversation opens the new-conversation page with this project and the Discuss preset (its pm role).
+  await p.getByRole('button',{name:'Open PM conversation',exact:true}).click();await p.waitForURL(u=>new URL(u).pathname==='/conversations/new');
+  await p.getByRole('group',{name:'Preset',exact:true}).locator('.preset-card[aria-pressed=true]',{hasText:'Discuss'}).waitFor();
   assert.equal(await p.getByRole('group',{name:'Project',exact:true}).getByRole('button',{name:'UI edited project',exact:true}).getAttribute('aria-pressed'),'true');
-  assert.equal(await p.getByRole('group',{name:'Role / configuration'}).getByRole('button',{name:'pm · pm',exact:true}).getAttribute('aria-pressed'),'true');
+  assert.match(await p.locator('[data-ui=start-facts] [data-fact=agent]').getAttribute('data-tip')??'',/the project's pm role/);
   // Analytics query & interactive AreaChart / multi-currency / unknown+hidden indicators on /projects/:id.
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);

@@ -407,6 +407,9 @@ func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 	if w := astr(workingDirectory); w != "" {
 		payload["workingDirectory"] = w
 	}
+	if s["branch"] == false { // a session started without a branch (presets.go): its worktree was detached
+		payload["branch"] = false
+	}
 	c := doc{"id": newID(), "executionId": last["id"], "sessionId": sid, "hostId": last["hostId"], "kind": "teardown", "payload": payload, "status": "pending"}
 	return c, put(q, "command", c)
 }
@@ -459,6 +462,9 @@ func sessionCreate(q *Request) (doc, error) {
 		return nil, fail(400, "session_create takes no identity or linkage fields")
 	}
 	s := doc{"id": newID(), "createdAt": nowMs(), "directedBy": director(q)}
+	if callerReadOnly(q) { // an agent of a read-only conversation creates read-only sessions (presets.go)
+		s["access"], s["branch"] = "read", false
+	}
 	if err := put(q, "session", s); err != nil {
 		return nil, err
 	}

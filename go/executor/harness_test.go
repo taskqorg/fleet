@@ -411,3 +411,31 @@ func TestRunMetricsPerHarnessAndOverflow(t *testing.T) {
 		t.Fatalf("unexpected ToolCallsOther: %+v want {Calls:25 Errors:0}", oout.ToolCallsOther)
 	}
 }
+
+// Requirement: fleet-conversations.md "Start a conversation": a read-only preset starts the agent without write tools.
+// Risk: a Discuss or Review conversation edits the repository.
+func TestReadOnlyStart(t *testing.T) {
+	if got := strings.Join(readOnlyTools([]string{"Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "TaskStop", "Skill"}), ","); got != "Read,Glob,Grep,Skill" {
+		t.Fatal(got)
+	}
+	c := exec.Command("not-executed")
+	claudeMCP(c, M{"readOnly": true}, M{}, nil)
+	if c.Args[len(c.Args)-1] != "Read,Glob,Grep" {
+		t.Fatalf("read-only grant: %v", c.Args)
+	}
+	s := &codexSession{root: "/w", profile: j(`{"model":"m","readOnly":true,"writableRoots":["/w/.git"],"text":"t"}`), nextID: 100}
+	r, _, _, _ := s.Receive(j(`{"id":1,"result":{}}`))
+	if jAt(r[1], "params", "sandbox") != "read-only" {
+		t.Fatal(r[1])
+	}
+	if jAt(s.turnRequest(), "params", "sandboxPolicy", "type") != "readOnly" {
+		t.Fatal(s.turnRequest())
+	}
+	w := &codexSession{root: "/w", profile: j(`{"model":"m","text":"t"}`), nextID: 100}
+	if r, _, _, _ := w.Receive(j(`{"id":1,"result":{}}`)); jAt(r[1], "params", "sandbox") != "workspace-write" {
+		t.Fatal("a write start keeps the workspace sandbox", r[1])
+	}
+	if a := newACPSession("/w", "", M{"readOnly": true, "agentConfig": M{"settings": M{"mode": "accept-edits"}}}, nil); a.mode != "plan" {
+		t.Fatal(a.mode)
+	}
+}

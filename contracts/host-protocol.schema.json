@@ -731,6 +731,14 @@
         },
         "workingDirectory": {
           "type": "string"
+        },
+        "readOnly": {
+          "$comment": "The session was started read-only (a preset's access read): codex runs in its read-only sandbox, claude gets only Read, Glob and Grep (and the Skill and web tools the run grants), antigravity and acp run in plan mode (an agent without one refuses the start). Absent or false: the grant of the profile.",
+          "type": "boolean"
+        },
+        "branch": {
+          "$comment": "false: the session worktree is detached at its base, so no session branch is created. Absent or true: branch <prefix>/<session>.",
+          "type": "boolean"
         }
       },
       "$comment": "start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them."
@@ -802,6 +810,10 @@
         "project": {
           "type": "object",
           "additionalProperties": true
+        },
+        "branch": {
+          "$comment": "teardown: false when the session started without a branch (a detached worktree); then commits the checkout's own branches hold are not its unpushed work.",
+          "type": "boolean"
         },
         "deleteBranch": {
           "$comment": "teardown only: the work was delivered (its task accepted), so the local branch is deleted with git branch -D",

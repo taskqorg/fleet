@@ -522,6 +522,11 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip("coding tool unavailable: "+missingTool+" on "+id, "host:"+id+":tool:"+missingTool)
 				continue
 			}
+			// A read-only or branchless start (a preset) runs only where the executor honours it (start-access-v1).
+			if (x["access"] == "read" || x["branch"] == false && projectID != nil) && !inList(k.caps[id], "start-access-v1") {
+				skip(id+" executor lacks start-access-v1 for a read-only or branchless start; update required", "host:"+id+":start-access")
+				continue
+			}
 			if astr(x["workspaceKey"]) != "" && !inList(k.caps[id], "workspace-key-v1") {
 				skip(id+" executor lacks workspace-key-v1; update required", "host:"+id+":workspace-version")
 				continue
@@ -991,6 +996,16 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 			}
 		}
 		e["workspaceSnapshot"] = workspaces[key]
+	}
+	// The session's preset (presets.go): read access, no branch and its starter instruction, on every turn.
+	if s["access"] == "read" {
+		p.ReadOnly = ptr(true)
+	}
+	if s["branch"] == false {
+		p.Branch = ptr(false)
+	}
+	if st := astr(s["starter"]); st != "" {
+		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\nThis conversation's preset. " + st))
 	}
 	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending"}
 	if err := agentDecorate(q, s, e, p); err != nil {

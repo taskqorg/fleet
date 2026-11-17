@@ -152,12 +152,20 @@ const StatusSlot = createContext<HTMLElement | null>(null);
  * A page's status (its offline marker, a data-age chip) in the shell header after the section title (OR-43), so a page
  * needs no head row of its own for it and nothing moves when it appears (OR-23). One page at a time fills it.
  */
-export function ShellStatus({ children }: { children: ComponentChildren }) {
-  const slot = useContext(StatusSlot);
+export function ShellStatus({ children }: { children: ComponentChildren }) { return useHeaderSlot(StatusSlot, children); }
+/** Renders children into a shell-header slot while the page is mounted. */
+function useHeaderSlot(ctx: typeof StatusSlot, children: ComponentChildren) {
+  const slot = useContext(ctx);
   useLayoutEffect(() => { if (slot) render(<>{children}</>, slot); });
   useLayoutEffect(() => () => { if (slot) render(null, slot); }, [slot]);
   return null;
 }
+const ActionsSlot = createContext<HTMLElement | null>(null);
+/**
+ * A section's own actions (Conversations: New conversation) in the shell header, right after the section title (OR-43),
+ * so the control column needs no head row for them. Icon buttons; at phone width they stay. One page at a time fills it.
+ */
+export function ShellActions({ children }: { children: ComponentChildren }) { return useHeaderSlot(ActionsSlot, children); }
 
 export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], searchIdle, user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus, title, privateReady = true, privateGeneration = 0 }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
@@ -179,7 +187,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   const mini = collapsed ?? ownMini, widths = stored ?? ownWidths;
   const ownSet = useRef((k: string, px: number) => setOwnWidths(w => { const n = { ...w }; if (px) n[k] = px; else delete n[k]; return n; })).current;
   const setWidth = onWidth ?? ownSet;
-  const [spot, setSpot] = useState<number | null>(null), [slot, setSlot] = useState<HTMLElement | null>(null);
+  const [spot, setSpot] = useState<number | null>(null), [slot, setSlot] = useState<HTMLElement | null>(null), [acts, setActs] = useState<HTMLElement | null>(null);
   // The palette's query, results, highlighted row and recent items, kept while it is closed: per tab and access generation, in memory only.
   const spotMem = useRef({ gen: privateGeneration, m: spotlightMemory() });
   if (spotMem.current.gen !== privateGeneration) spotMem.current = { gen: privateGeneration, m: spotlightMemory() };
@@ -205,19 +213,20 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
         foot={user && <UserBlock {...user} />} />
       <div class="shell-col">
         {!mini && <Divider name="rail" />}
-        {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42)
-            and the section title on the left; the focus chip and search on the right. A right-panel toggle goes last, after
+        {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42),
+            the section title and the section's actions (ShellActions) on the left; the focus chip and search on the right. A right-panel toggle goes last, after
             search, once a right panel exists (app-shell.md); until then nothing is rendered for it. */}
         <header class="shell-h" data-ui="shell-header">
           <span class="nav-toggle"><Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon={mini ? 'panel-left-open' : 'panel-left-close'} iconOnly pressed={mini} onClick={toggle} /></span>
           <h1 class="shell-title">{title ?? nav.find(n => n.id === current)?.label ?? ''}</h1>
+          <span class="shell-actions" ref={setActs} />
           <span class="shell-status" ref={setSlot} />
           <span class="grow" />
           {focus}
           <button type="button" class="btn quiet icon-only shell-search" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" data-tip="Search ⌘K" aria-disabled={!privateReady || undefined}
             onClick={() => { if (privateReady) setSpot(privateGeneration); }}><Icon name={actions.search} /></button>
         </header>
-        <main class="shell-main" id="main" tabIndex={-1}><StatusSlot.Provider value={slot}>{children}</StatusSlot.Provider></main>
+        <main class="shell-main" id="main" tabIndex={-1}><ActionsSlot.Provider value={acts}><StatusSlot.Provider value={slot}>{children}</StatusSlot.Provider></ActionsSlot.Provider></main>
       </div>
       {spot === privateGeneration && privateReady && <Spotlight key={privateGeneration} providers={[sectionProvider(nav, onGo), ...search]} memory={spotMem.current.m} idle={searchIdle} onClose={() => setSpot(null)} />}
       <TooltipLayer />
