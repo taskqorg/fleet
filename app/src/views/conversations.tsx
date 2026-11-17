@@ -57,7 +57,7 @@ export function Conversations({ id }: { id?: string }) {
   // New conversation (fleet-conversations.md "Start a conversation") is its own URL in the work area, /conversations/new,
   // with the list view kept; ?in=<project> preselects a project. The old ?new=<project> link opens it once.
   const isNew = id === 'new', initial = new URLSearchParams(location.search);
-  const create = () => set({ focus: 'new', extra: { ...view.extra, in: undefined } });
+  const create = () => set({ focus: 'new', extra: { ...view.extra, in: undefined, role: undefined } });
   useEffect(() => { const p = initial.get('new'); if (p !== null && !isNew) set({ focus: 'new', extra: { ...view.extra, new: undefined, in: p || undefined } }); }, []);
   const pane = <>
     <ShellStatus><OfflineMarker state={page.list.state} now={now} /></ShellStatus>
@@ -81,7 +81,7 @@ export function Conversations({ id }: { id?: string }) {
       state={s => <StateBadge family="session" state={s.state} compact />}
       facts={s => <SessionFacts s={s} now={now} />} />
   </>;
-  const detail = isNew ? <NewConversation key="new" initialProject={initial.get('in')} onStarted={sessionId => set({ focus: sessionId, extra: { ...view.extra, in: undefined } })} />
+  const detail = isNew ? <NewConversation key="new" initialProject={initial.get('in')} initialRole={initial.get('role')} onStarted={sessionId => set({ focus: sessionId, extra: { ...view.extra, in: undefined, role: undefined } })} />
     : id ? <Conversation key={id} id={id} onClose={() => set({ focus: undefined })} /> : undefined;
   return <ListDetail list={pane} detail={detail} detailKey={id} />;
 }

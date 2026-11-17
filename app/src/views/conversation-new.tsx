@@ -21,7 +21,7 @@ function factsOf(p: Preset, inProject: boolean): string[] {
   return [agent || p.profileId || '', p.access === 'read' ? 'Read only' : 'Can edit', inProject ? (p.branch ? 'New branch' : 'No branch') : '', p.starter ? 'Starter instruction' : ''].filter(Boolean);
 }
 
-export function NewConversation({ initialProject, onStarted }: { initialProject: string | null; onStarted: (sessionId: string) => void }) {
+export function NewConversation({ initialProject, initialRole, onStarted }: { initialProject: string | null; initialRole?: string | null; onStarted: (sessionId: string) => void }) {
   const alive = useAlive();
   const projects = useDoc<any>('conversation-projects', () => op('project_list', {}), c => c.kind === 'definition');
   // Recent: the projects of the latest conversations, newest first (sessions_list, latest activity first).
@@ -42,7 +42,8 @@ export function NewConversation({ initialProject, onStarted }: { initialProject:
   const ordered = all.filter(p => !ignored.includes(p.id) || p.id === initialProject).sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
 
   const list: Preset[] = presets.data?.presets ?? [];
-  const chosen = list.find(p => p.id === picked[key]) ?? list.find(p => !p.unavailable);
+  // The picked preset while it can start; else the first one for the asked role (?role=pm), else the first that can start.
+  const chosen = list.find(p => p.id === picked[key] && !p.unavailable) ?? list.find(p => !p.unavailable && !!initialRole && p.role === initialRole) ?? list.find(p => !p.unavailable);
   // Write work always has its own branch (session_start refuses write without one); read may go without.
   const access = override.access ?? chosen?.access ?? 'write', branch = access === 'write' || (override.branch ?? chosen?.branch ?? true);
   const options: PresetOption[] = list.map(p => ({ id: p.id, name: p.name, description: p.description, icon: p.source === 'system' ? ICONS[p.id] : undefined, facts: factsOf(p, !!project), unavailable: p.unavailable ?? undefined }));

@@ -183,11 +183,7 @@ func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string
 		return w, top, false, true, nil
 	}
 	wt := jObj(project, "worktree")
-	prefix := "fleet"
-	if jIsStr(wt, "branchPrefix") {
-		prefix = jStr(wt, "branchPrefix")
-	}
-	branch := prefix + "/" + session
+	branch := sessionBranch(project, session)
 	ceil := "GIT_CEILING_DIRECTORIES=" + root
 	v := hardenedGit("-C", top, "rev-parse", "--verify", "--quiet", branch)
 	v.Env = append(v.Env, ceil)

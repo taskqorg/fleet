@@ -56,6 +56,7 @@ test('P2 session_start with a preset starts its profile with its access, branch 
   assert.deepEqual([explicit.profileId, explicit.access], ['pm', 'write'], 'an explicit profile wins over the preset');
   const id = randomUUID(), again = [await op('session_start', {projectId: 'cs', preset: 'review', requestId: id}), await op('session_start', {projectId: 'cs', preset: 'review', requestId: id})].map(ok);
   assert.deepEqual([again[1].sessionId, again[1].existing, again[1].preset, again[1].access], [again[0].sessionId, true, 'review', 'read']);
+  assert.equal((await op('session_start', {projectId: 'cs', preset: 'review', access: 'write', requestId: id})).status, 409, 'the same requestId with other settings is a conflict');
   assert.equal((await op('session_start', {projectId: 'cs', preset: 'nope', requestId: randomUUID()})).status, 400);
   assert.equal((await op('session_start', {projectId: 'cs', preset: 'discuss', access: 'admin', requestId: randomUUID()})).status, 400);
   assert.equal((await op('session_start', {projectId: 'cs', preset: 'fix', branch: false, requestId: randomUUID()})).status, 400, 'write work needs its own branch');
