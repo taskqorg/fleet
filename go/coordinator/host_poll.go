@@ -31,7 +31,8 @@ type hostHeartbeat struct {
 	stateSig        string
 	storesSig       string
 	// Poll health (host_poll_health.go): pollClean, no failure is recorded in the database; pollProblem, its
-	// needs-you problem is open; pollFailures counts failed polls, so a success does not mark clean over a later failure.
+	// needs-you problem is open; pollFailures is the sequence number of its last failed poll (pollFailureSeq, never
+	// reused after a cache clear), so a success does not mark clean over a later failure.
 	pollClean    bool
 	pollProblem  bool
 	pollFailures uint64
@@ -378,43 +379,37 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
 	return get(wq, c["id"], "command")
 }
 
-// pollCommandRefusal: what a command's failed preparation does. The command's own failure (an authorization refusal, a
-// missing or inconsistent stored row, a statement error) stops it with the reason; a busy dependency leaves it pending
-// for the next poll; a serialization failure, a deadlock, a lost connection or the request leaving fail the poll as
-// before (and are retried).
+// pollCommandRefusal: what a command's failed preparation does. The command's own lasting failure (an authorization
+// refusal, a missing or malformed stored row, a data or statement error) stops it with the reason; anything else (a
+// conflict, a race, a busy dependency, an error without a status) leaves it pending for the next poll; a serialization
+// failure, a deadlock, a lost connection or the request leaving fail the poll as before (and are retried).
 func pollCommandRefusal(err error) (string, pollCommandOutcome) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "", pollFails
 	}
 	var he *HTTPError
 	if errors.As(err, &he) {
-		switch {
-		case he.Code == 403:
+		switch he.Code {
+		case 403:
 			return "refused: " + he.Msg, pollStopsCommand // an authorization refusal: never handed over, never widened
-		case he.Code == 429 || he.Code > 500:
-			return "", pollRetriesCommand // a busy or unreachable dependency
+		case 400, 404, 410, 422:
+			return "handoff failed: " + he.Msg, pollStopsCommand // a missing or malformed stored row
 		}
-		return "handoff failed: " + he.Msg, pollStopsCommand
+		return "", pollRetriesCommand // a conflict, a race or a busy dependency: the next poll tries again
 	}
 	code := pgCode(err)
-	if code == "42501" {
+	switch {
+	case code == "42501":
 		return "refused: not in scope", pollStopsCommand
-	}
 	// Class 40 (serialization, deadlock), 08 (connection) and 57 (operator intervention, statement timeout) fail the
-	// poll for its retry; a lost connection without a code fails the savepoint rollback, and with it the poll. Class 53
-	// (resources), 55 (lock not available) and a unique-key race (23505) are retried with the command's next poll.
-	for _, class := range []string{"40", "08", "57"} {
-		if strings.HasPrefix(code, class) {
-			return "", pollFails
-		}
+	// poll for its retry; a lost connection without a code fails the savepoint rollback, and with it the poll.
+	case strings.HasPrefix(code, "40") || strings.HasPrefix(code, "08") || strings.HasPrefix(code, "57"):
+		return "", pollFails
+	// Data exceptions, constraint violations (but a unique-key race) and statement errors are the stored row's own.
+	case strings.HasPrefix(code, "22") || strings.HasPrefix(code, "42") || strings.HasPrefix(code, "23") && code != "23505":
+		return "handoff failed: database error " + code, pollStopsCommand
 	}
-	if strings.HasPrefix(code, "53") || strings.HasPrefix(code, "55") || code == "23505" {
-		return "", pollRetriesCommand
-	}
-	if code == "" {
-		return "handoff failed: internal error", pollStopsCommand
-	}
-	return "handoff failed: database error " + code, pollStopsCommand
+	return "", pollRetriesCommand
 }
 
 type pollCommandOutcome int
@@ -440,7 +435,12 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 		return err
 	}
 	e["state"], e["stopDetail"] = "cancelled", reason
-	return put(wq, "execution", e)
+	delete(e, "waitReason")
+	delete(e, "waitDetail")
+	if err := put(wq, "execution", e); err != nil {
+		return err
+	}
+	return exec(wq, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"])
 }
 
 // poll answers one host poll and records its health: a failure the host cannot report (it gets no reply to report
@@ -456,13 +456,14 @@ func (a *App) poll(q *Request) (any, error) {
 }
 
 func (a *App) pollOnce(q *Request) (any, error) {
+	// The host is seen before its body is read: a host whose every poll fails still shows as polling (with pollError).
+	host := hostOf(q)
+	a.enterHostPoll(host)
+	defer a.exitHostPoll(host)
 	var b contract.PollRequest
 	if err := decode(q.body, &b); err != nil {
 		return nil, err
 	}
-	host := hostOf(q)
-	a.enterHostPoll(host)
-	defer a.exitHostPoll(host)
 
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
 	now := nowMs()

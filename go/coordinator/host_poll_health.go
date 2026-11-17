@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sync/atomic"
 
 	"fleet/errtrack"
 )
@@ -36,15 +37,13 @@ func pollFailureOf(err error) (pollFailure, bool) {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return pollFailure{}, false
 	}
-	f := pollFailure{status: 500, reason: "internal", message: err.Error()}
-	var he *HTTPError
-	if errors.As(err, &he) {
-		f.status, f.reason = he.Code, fmt.Sprintf("http_%d", he.Code)
-		if r, ok := he.Extra["reason"].(string); ok && pollReasonCode.MatchString(r) {
-			f.reason = r
-		}
-	} else if pgCode(err) == "42501" {
-		f.status, f.reason, f.message = 403, "http_403", "Not in your scope" // as writeError answers it
+	code, msg, he := errorAnswer(err) // what the host was answered
+	f := pollFailure{status: code, reason: fmt.Sprintf("http_%d", code), message: msg}
+	if he == nil && code == 500 {
+		f.reason = "internal"
+	}
+	if r, ok := he.extraReason(); ok && pollReasonCode.MatchString(r) {
+		f.reason = r
 	}
 	if f.status == 410 {
 		return pollFailure{}, false // a removed host: the executor exits; nothing to surface
@@ -56,8 +55,20 @@ func pollFailureOf(err error) (pollFailure, bool) {
 }
 
 // internalPollError: a 4xx the request did not cause (a 409 of a stored row, a 403 of a stored authority), for Bugsink.
-// A bad body (400) is the request's; a 5xx is captured by writeError; a bad credential never reaches the handler.
-func internalPollError(f pollFailure) bool { return f.status > 400 && f.status < 500 }
+// A bad body (400) and a bad credential (401) are the request's; a 5xx is captured by writeError.
+func internalPollError(f pollFailure) bool { return f.status > 401 && f.status < 500 }
+
+// extraReason: the error body's reason code, if it has one; a nil error has none.
+func (e *HTTPError) extraReason() (string, bool) {
+	if e == nil {
+		return "", false
+	}
+	r, ok := e.Extra["reason"].(string)
+	return r, ok
+}
+
+// pollFailureSeq numbers failed polls across hosts; a host's entry keeps the last one (hostHeartbeat.pollFailures).
+var pollFailureSeq atomic.Uint64
 
 // heartbeatOf: the host's cache entry, created when missing; the caller holds pollMu.
 func (a *App) heartbeatOf(host string) *hostHeartbeat {
@@ -81,7 +92,7 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	a.pollMu.Lock()
 	hb := a.heartbeatOf(host)
 	hb.pollClean = false
-	hb.pollFailures++
+	hb.pollFailures = pollFailureSeq.Add(1)
 	a.pollMu.Unlock()
 	now := nowMs()
 	var since float64
@@ -110,7 +121,7 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 		log.Printf("host %s poll failure not recorded: %v", host, werr)
 	}
 	// One Bugsink event per run of one failure, not one per poll (a host retries every few seconds).
-	if internalPollError(f) && (changed || werr != nil) {
+	if internalPollError(f) && changed {
 		errtrack.Capture(err, map[string]string{"route": "POST /api/hosts/poll", "host": host, "status": fmt.Sprint(f.status), "reason": f.reason})
 	}
 	if werr != nil {
@@ -128,7 +139,13 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 		return
 	}
 	text := fmt.Sprintf("Host %s: its polls fail with %s, so it gets no commands and no update target.", host, f.reason)
-	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+	// Under GLOBAL and the host's lock: a success clears under the host's lock, so the problem opens only while the
+	// record it describes is still there, and a success after it closes it.
+	if err := runTxLocks(ctx, a, nil, true, []string{GLOBAL, "host:" + host}, func(q *Request) error {
+		o, err := maybe(q, host, "host-observation")
+		if err != nil || o == nil || o["pollError"] == nil {
+			return err
+		}
 		if h, err := problemHeld(q, hostPollCause(host)); err != nil || h != nil {
 			return err
 		}
