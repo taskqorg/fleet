@@ -245,15 +245,23 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 // Risk: a long run hits the harness MCP timeout (Codex: 60 s) and its result is lost (fleet-code-mode.md, poll).
 func TestCodeModeDetachAndPoll(t *testing.T) {
 	c := newCodeClient(t, M{"dir": t.TempDir()})
-	r, bad := c.call("code", M{"source": `print("started"); await new Promise(r => setTimeout(r, 800)); return "late"`, "detachAfterSeconds": 0.2})
-	if bad || r["status"] != "running" || r["output"] != "started\n" {
+	r, bad := c.call("code", M{"source": `
+		print("started")
+		while (!state.release) await new Promise(r => setTimeout(r, 10))
+		return "late"
+	`, "detachAfterSeconds": 0})
+	if bad || r["status"] != "running" {
 		t.Fatalf("detach: %v %v", bad, r)
 	}
 	id := jStr(r, "jobId")
+	output := jStr(r, "output")
 	if r, _ := c.call("poll", M{}); jStr(jArr(r, "jobs")[0], "status") != "running" {
 		t.Fatalf("list: %v", r)
 	}
-	if r, bad := c.call("poll", M{"jobId": id, "waitSeconds": 5}); bad || r["status"] != "done" || r["value"] != "late" || r["output"] != "" {
+	if r, bad := c.code(`state.release = true; return true`); bad || r["value"] != true {
+		t.Fatalf("release: %v %v", bad, r)
+	}
+	if r, bad := c.call("poll", M{"jobId": id, "waitSeconds": 5}); bad || r["status"] != "done" || r["value"] != "late" || output+jStr(r, "output") != "started\n" {
 		t.Fatalf("poll: %v %v", bad, r)
 	}
 	// A final result is returned once; the server keeps nothing of it.
