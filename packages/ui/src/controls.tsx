@@ -1098,8 +1098,8 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
   // keep: the highlighted row's key, found again when results change (a reopened palette, an action); typing clears it.
   // typed: the query changed by typing, so the old rows go; a reopen or a refresh keeps them until their provider answers.
   const keep = useRef(mem.key), typed = useRef(false), [refresh, setRefresh] = useState(0);
-  // waiting: providers not answered yet; failed: one of them failed, so "nothing found" would be a guess.
-  const [waiting, setWaiting] = useState(0), [failed, setFailed] = useState(false);
+  // waiting: providers not answered yet (a kept query counts as asked from the start, so "Nothing found" never flickers); failed: one of them failed, so "nothing found" would be a guess.
+  const [waiting, setWaiting] = useState(mem.q.trim() ? 1 : 0), [failed, setFailed] = useState(false);
   // asked: the query the providers were last asked; until it is the field's query, results belong to an older one.
   const [asked, setAsked] = useState(mem.q);
   // Focus returns to where it was only when the palette closes without opening an item.
@@ -1154,7 +1154,9 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
   // An action changes what the results show (a project added to the focus): they are asked again, the row stays highlighted.
   const act = (i: SpotlightItem) => { i.action?.run(); keep.current = i.key; setRefresh(n => n + 1); field.current?.focus(); };
   // An unchanged value asks nothing (no effect runs), so it marks nothing as typed.
-  const type = (v: string) => { if (v === q) return; typed.current = true; keep.current = undefined; setEnter(false); setQ(v); };
+  // Compared with the last input, not the render's q: two inputs can arrive before one render.
+  const input = useRef(mem.q);
+  const type = (v: string) => { if (v === input.current) return; input.current = v; typed.current = true; keep.current = undefined; setEnter(false); setQ(v); };
   const addTerm = (t: string) => { type(q.trim() ? `${q.trimEnd()} ${t}:` : `${t}:`); field.current?.focus(); };
   // Enter before every provider answered opens the first result once they have, not a section that happened to answer
   // first, and not a result of the query before the last keys (the providers are asked after the next paint).
