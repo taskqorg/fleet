@@ -60,7 +60,7 @@ func TestArtifactSaveAbsolutePath(t *testing.T) {
 		{work, "output/report.md", true},
 		{work, filepath.Join(work, "output", "report.md"), true},
 		{work, work + "/./output//report.md", true},
-		{work, "/output/report.md", false},                                               // not the working area's root
+		{work, "/output/report.md", true},                                                // not through the working area: below it, as before
 		{work + "/../work", filepath.Join(work, "output", "report.md"), true},            // a configured root that is not clean
 		{linkedWork, filepath.Join(linkedWork, "output", "report.md"), true},             // as configured
 		{linkedWork, filepath.Join(work, "output", "report.md"), true},                   // resolved
@@ -100,7 +100,7 @@ func TestArtifactListDefaultsToOwnExecution(t *testing.T) {
 	}{
 		{M{}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":null}`},
 		{M{"scope": "execution"}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":null}`},
-		{M{"execution_id": "", "task_id": true}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":true}`}, // empty or not text is no filter
+		{M{"execution_id": ""}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":null}`}, // empty is no filter
 		{M{"scope": "project", "cursor": "17"}, `{"cursor":"17","executionId":null,"mediaType":null,"taskId":null}`},
 		{M{"task_id": "t"}, `{"cursor":null,"executionId":null,"mediaType":null,"taskId":"t"}`},
 		{M{"execution_id": "other", "media_type": "text/plain"}, `{"cursor":null,"executionId":"other","mediaType":"text/plain","taskId":null}`},
@@ -115,9 +115,12 @@ func TestArtifactListDefaultsToOwnExecution(t *testing.T) {
 			t.Fatalf("%v: filter %s, want %s", c.args, got, c.filter)
 		}
 	}
-	for _, args := range []M{{"scope": "everything"}, {"scope": "project", "execution_id": "x"}, {"scope": "execution", "task_id": "t"}} {
-		if r, _ := artifactCall(ctx, "artifact_list", args, dbExec{db}); !refused(r) || !strings.Contains(enc(r), "scope") {
-			t.Fatalf("%v: an unknown scope, or one beside a filter, is refused: %v", args, r)
+	for _, c := range []struct {
+		args M
+		word string
+	}{{M{"scope": "everything"}, "scope"}, {M{"scope": "project", "execution_id": "x"}, "scope"}, {M{"scope": "execution", "task_id": "t"}, "scope"}, {M{"cursor": true}, "cursor"}, {M{"task_id": true}, "task_id"}} {
+		if r, _ := artifactCall(ctx, "artifact_list", c.args, dbExec{db}); !refused(r) || !strings.Contains(enc(r), c.word) {
+			t.Fatalf("%v: an unknown scope, one beside a filter, or a value that is not text is refused: %v", c.args, r)
 		}
 	}
 	var schema any

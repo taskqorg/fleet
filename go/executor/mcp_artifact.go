@@ -121,15 +121,21 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		return nil, refusal("workdir")
 	}
 	parts := pathParts(path)
+	rooted := false // an absolute path not through the working area keeps its former meaning: below the working area
 	if strings.HasPrefix(path, "/") && parts != nil {
-		if parts = insideParts(workdir, parts); parts == nil {
-			return nil, refusal("path must be relative to your working area " + workdir + " or absolute inside it")
+		if inside := insideParts(workdir, parts); inside != nil {
+			parts = inside
+		} else {
+			rooted = true
 		}
 	}
 	if len(parts) == 0 {
 		return nil, refusal("path must be a file inside your working area")
 	}
 	f, err := openInside(workdir, parts)
+	if err != nil && rooted {
+		return nil, refusal("path must be relative to your working area " + workdir + " or absolute inside it, not a link")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +226,11 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 		body := M{"executionId": jAt(ctx, "executionId"), "artifactId": jAt(q, "artifact_id"), "inputDir": jAt(ctx, "inputDir")}
 		if name == "artifact_list" {
 			kind, seconds = "list", 20
+			for k, v := range qo {
+				if _, ok := v.(string); !ok {
+					return mcpText(M{"error": "artifact tool refused: " + k + " must be text"}, &yes), nil
+				}
+			}
 			scope := jAt(q, "scope")
 			if scope != nil && scope != "execution" && scope != "project" {
 				return mcpText(M{"error": `artifact tool refused: scope must be "execution" or "project"`}, &yes), nil
@@ -228,7 +239,7 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 				return mcpText(M{"error": "artifact tool refused: scope goes without execution_id and task_id"}, &yes), nil
 			}
 			// Without a filter an agent lists its own execution's artifacts; the whole project only on request.
-			execution := jStr(q, "execution_id") // empty or not text is absent, as the transfer drops it
+			execution := jStr(q, "execution_id") // empty is absent, as the transfer drops it
 			if execution == "" && jStr(q, "task_id") == "" && scope != "project" {
 				execution = jStr(ctx, "executionId")
 			}
