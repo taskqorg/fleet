@@ -182,6 +182,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	keyedRepo := map[string]bool{}
 	keyed := false // any repository read with a key
 	var versions []string
+	var recordedUI []ghRelease
 	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		ids, err := projectIDs(q)
 		if err != nil {
@@ -216,15 +217,37 @@ func deliveryPass(ctx context.Context, a *App) error {
 			}
 		}
 		obs, err := all(q, "host-observation", nil)
+		if err != nil {
+			return err
+		}
 		for _, o := range obs {
 			if seen := a.effectiveHostSeen(astr(o["id"]), num(o["lastSeenAt"])); nowMs()-int64(seen) < 3600_000 && astr(o["version"]) != "" {
 				versions = append(versions, astr(o["version"]))
 			}
 		}
-		return err
+		return nil
 	})
 	if err != nil {
 		return err
+	}
+	// The UI-only releases the delivery history recorded (it reads 100 releases a pass): GitHub's release list is not by
+	// date, and a ui-* tag sorts among older native ones, past the 30 the releases read returns (#626). Extra evidence
+	// only, in its own transaction: a failed read leaves the pass as it was.
+	if byKey[strings.ToLower(githubPublicRepo)] != nil {
+		if rerr := runTx(ctx, a, nil, false, "", func(q *Request) error {
+			recordedUI = nil // a retried transaction starts over
+			rs, err := rows(q, "SELECT data FROM document WHERE kind='delivery-release' AND id LIKE 'delivery-release:ui-%'")
+			for _, r := range rs {
+				var x contract.DeliveryRelease
+				if json.Unmarshal(jsonBytes(r), &x) == nil && uiOnlyRelease(x.Tag) {
+					recordedUI = append(recordedUI, ghRelease{Tag: x.Tag, Target: x.Target, Published: x.Published})
+				}
+			}
+			return err
+		}); rerr != nil {
+			recordedUI = nil
+			log.Printf("delivery: recorded UI releases unread: %v", rerr)
+		}
 	}
 	now := time.Now().UTC()
 	deliveryMu.Lock()
@@ -294,6 +317,9 @@ func deliveryPass(ctx context.Context, a *App) error {
 			}
 		}
 		g.runs, g.finished, g.queueDone = append(active.Runs, queued.Runs...), finished.Runs, queueDone.Runs
+		if strings.EqualFold(name, githubPublicRepo) {
+			g.releases = withReleases(g.releases, recordedUI)
+		}
 		its, l := deliveryStages(t.projects[0], name, g, versions, ui, now)
 		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l}
 		c := map[string]int64{}
@@ -528,6 +554,24 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 		}
 	}
 	return out, landing
+}
+
+// withReleases: read plus the recorded releases it lacks (by tag), only those published since the oldest one read: an
+// older one would reach back past the native releases read and claim merges a release not read delivered.
+func withReleases(read, recorded []ghRelease) []ghRelease {
+	out := slices.Clone(read)
+	oldest := ""
+	for _, r := range read {
+		if r.Published != "" && (oldest == "" || r.Published < oldest) {
+			oldest = r.Published
+		}
+	}
+	for _, r := range recorded {
+		if oldest != "" && r.Published >= oldest && !slices.ContainsFunc(out, func(x ghRelease) bool { return x.Tag == r.Tag }) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // installed: every host runs version or newer (1.261112.31 compares part by part); no host known is not installed.
