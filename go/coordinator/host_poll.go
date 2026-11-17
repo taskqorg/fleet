@@ -264,7 +264,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			return nil
 		}
 		var cnt int
-		if err := rq.tx.QueryRow(rq.ctx(), "SELECT count(*),coalesce(bool_or(e.data ? 'pipelineRunId'),false) FROM document c LEFT JOIN execution e ON e.id=c.data->>'executionId' WHERE c.kind='command' AND c.data->>'hostId'=$1 AND c.data->>'status'='pending'", host).Scan(&cnt, &pipelinePending); err != nil {
+		if err := rq.tx.QueryRow(rq.ctx(), "SELECT count(*),coalesce(bool_or(e.data ? 'pipelineRunId' AND c.data->>'kind' IN ('start','script')),false) FROM document c LEFT JOIN execution e ON e.id=c.data->>'executionId' WHERE c.kind='command' AND c.data->>'hostId'=$1 AND c.data->>'status'='pending'", host).Scan(&cnt, &pipelinePending); err != nil {
 			return err
 		}
 		hasPending = cnt > 0

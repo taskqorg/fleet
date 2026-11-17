@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fleet/contract"
 	"fmt"
 	"path"
 	"sort"
@@ -74,6 +76,16 @@ func requirePipelinePlan(run doc) error {
 		return &HTTPError{Code: 409, Msg: "Unsupported pipeline run format; a clean start is required", Extra: doc{"reason": "pipeline_format_unsupported"}}
 	}
 	return nil
+}
+
+func pipelineFormatUnsupported(err error) bool {
+	var he *HTTPError
+	return errors.As(err, &he) && he.Extra["reason"] == "pipeline_format_unsupported"
+}
+
+// pipelineDispatchKind: the command kinds a pipeline plan dispatches (preparePipelineCommand, startScript).
+func pipelineDispatchKind(kind any) bool {
+	return kind == string(contract.CommandKindStart) || kind == string(contract.CommandKindScript)
 }
 
 type pipelineWriteKey struct {
@@ -297,14 +309,21 @@ func preparePipelineCommand(q *Request, execution, command doc) error {
 
 // handoffPipelineCommand is the last authorization point before a host sees the
 // command. Redelivery keeps its exact stored body and the executor's journal ID.
+// Only the command the plan dispatched (an agent start or a script) is gated; the
+// execution's later commands (stop, steer, input, teardown) go like any other.
 func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
-	if execution["pipelineRunId"] == nil || command["kind"] == "stop" {
+	if execution["pipelineRunId"] == nil || !pipelineDispatchKind(command["kind"]) {
 		return true, nil
 	}
 	if !txHasLock(q.tx, GLOBAL) {
 		return false, nil // a stale poll preflight waits for the next correctly fenced poll
 	}
 	run, err := getRun(q, astr(execution["pipelineRunId"]))
+	if pipelineFormatUnsupported(err) {
+		// A run from before plans never starts work; stopping its command keeps the host's poll going.
+		command["status"] = "stopped"
+		return false, put(q, "command", command)
+	}
 	if err != nil || run == nil {
 		return false, err
 	}
