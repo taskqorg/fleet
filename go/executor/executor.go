@@ -2381,8 +2381,8 @@ func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply
 	if a.status == 410 && strings.Contains(a.text, "host-removed") {
 		return nil, errHostRemoved
 	}
-	if err := ctx.Err(); err != nil && a.kind != answerOK {
-		// The exchange cancelled its own heartbeat poll: not a poll failure for update.json.
+	if err := ctx.Err(); err != nil && a.kind == answerRetry {
+		// The exchange cancelled its own heartbeat poll (or the executor stops): not a poll failure for update.json.
 		return nil, err
 	}
 	signalMu.Lock()

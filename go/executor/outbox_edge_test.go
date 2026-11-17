@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,17 +29,27 @@ func TestStoreEdgeLogsReachableAgain(t *testing.T) {
 	}
 }
 
+// cutBodyServer answers status with the start of a JSON body and holds the rest until the request ends; flushed is
+// closed once that start is sent.
+func cutBodyServer(status int) (*httptest.Server, chan struct{}) {
+	flushed := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		io.WriteString(w, `{"pad":"xx`)
+		w.(http.Flusher).Flush()
+		close(flushed)
+		<-r.Context().Done() // the rest never comes
+	}))
+	return srv, flushed
+}
+
 // A heartbeat poll cancelled after its headers arrived (its exchange ended) leaves a cut JSON body: a transport retry,
-// never an edge answer that is not JSON (17 Nov 2026: owner-mac logged one with nearly every exchange).
+// never an edge answer that is not JSON (17 Nov 2026: owner-mac logged one with nearly every exchange). A cut 503 keeps
+// its status, so the flush still slows down.
 func TestCutBodyIsRetryNotEdge(t *testing.T) {
-	for _, status := range []int{200, 400} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			io.WriteString(w, `{"pad":"xx`)
-			w.(http.Flusher).Flush()
-			<-r.Context().Done() // the rest never comes
-		}))
+	for _, status := range []int{200, 503} {
+		srv, _ := cutBodyServer(status)
 		ctx, cancel := context.WithCancel(context.Background())
 		r, err := postJSONCtx(ctx, outboxClient, srv.URL, "t", M{})
 		if err != nil {
@@ -49,8 +58,14 @@ func TestCutBodyIsRetryNotEdge(t *testing.T) {
 		cancel()
 		a := classify(r, err)
 		srv.Close()
-		if a.kind != answerRetry || a.status != 0 || a.timeout || !strings.Contains(a.text, fmt.Sprintf("%d answer cut after", status)) {
-			t.Fatalf("cut %d body: %+v", status, a)
+		if status == 503 {
+			if a.kind != answerRetry || a.status != 503 {
+				t.Fatalf("cut 503 body: %+v", a)
+			}
+			continue
+		}
+		if a.kind != answerRetry || a.status != 0 || !strings.Contains(a.text, "200 answer cut after") {
+			t.Fatalf("cut 200 body: %+v", a)
 		}
 		if ok, perr := pollSignal(a); ok || perr != "network" {
 			t.Fatalf("poll signal = %v %q", ok, perr)
@@ -60,17 +75,12 @@ func TestCutBodyIsRetryNotEdge(t *testing.T) {
 
 // The exchange's own cancelled heartbeat poll leaves update.json as the last real poll wrote it.
 func TestCancelledPollKeepsUpdateSignal(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"pad":"xx`)
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
-	}))
+	srv, flushed := cutBodyServer(200)
 	defer srv.Close()
 	root := t.TempDir()
 	e := &executor{url: srv.URL, token: "t", host: "h", root: root}
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(200*time.Millisecond, cancel)
+	go func() { <-flushed; time.Sleep(50 * time.Millisecond); cancel() }()
 	if _, err := e.pollWait(ctx, 0); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}

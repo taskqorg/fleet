@@ -89,29 +89,35 @@ func location(r *http.Response) string {
 	return l
 }
 
+// transportAnswer: a request or body read that failed in transport.
+func transportAnswer(err error) answer {
+	var ne net.Error
+	var op *net.OpError
+	return answer{kind: answerRetry, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout(), unreachable: errors.As(err, &op) && op.Op == "dial"}
+}
+
 func classify(r *http.Response, err error) answer {
 	if err != nil {
-		var ne net.Error
-		var op *net.OpError
-		return answer{kind: answerRetry, text: err.Error(), timeout: errors.As(err, &ne) && ne.Timeout(), unreachable: errors.As(err, &op) && op.Op == "dial"}
+		return transportAnswer(err)
 	}
 	defer r.Body.Close()
 	body, rerr := io.ReadAll(r.Body) // drained so the pooled connection is reused
 	s := r.StatusCode
-	c := statusClass(s, true)
-	if rerr != nil && c != classEdge {
-		// A body cut while it is read (the request deadline, or a heartbeat poll cancelled when its exchange ends) is a
-		// transport failure: its partial JSON is not an edge page, and a cut reject body is no reason to set a row aside.
-		// It is resent whole (not split, as a slow ingest is): the coordinator had already answered.
-		return answer{kind: answerRetry, text: fmt.Sprintf("%d answer cut after %d bytes read: %v", s, len(body), rerr)}
-	}
-	switch c {
+	switch statusClass(s, true) {
 	case classEdge:
 		if s == 401 {
 			return answer{kind: answerEdge, status: 401, text: "the host token is not accepted"}
 		}
 		return answer{kind: answerEdge, status: s, text: location(r)}
 	case classOK:
+		// A 2xx body cut while it is read (the request deadline, or a heartbeat poll cancelled when its exchange ends) is
+		// a transport failure, not an edge answer: its partial JSON is no login or app page. Other statuses keep their
+		// class; their body is only the reason text.
+		if rerr != nil {
+			a := transportAnswer(rerr)
+			a.text = fmt.Sprintf("%d answer cut after %d bytes read: %v", s, len(body), rerr)
+			return a
+		}
 		if !json.Valid(body) {
 			return answer{kind: answerEdge, status: s, text: notJSON(r, body)}
 		}
