@@ -107,7 +107,7 @@ const found = (kind: Hit['kind'], go: (to: string) => void): SpotlightProvider =
     });
     // "All N in <Section>": the list holds more than the focused rows shown; it opens with the same query (OR-36).
     const total = r.counts[kind] ?? 0, shown = items.filter(i => !i.outside).length;
-    if (w.list && total > shown) items.push({ key: kind + ':all', icon: w.icon, label: `All ${total.toLocaleString('en')} in ${w.label}`, more: true, run: () => go(formatView({ view: w.list!, q: query })) });
+    if (w.list && total > shown) items.push({ key: 'all:' + kind, icon: w.icon, label: `All ${total.toLocaleString('en')} in ${w.label}`, more: true, run: () => go(formatView({ view: w.list!, q: query })) });
     return items;
   } };
 };

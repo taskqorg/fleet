@@ -1197,7 +1197,7 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
         {g.items.map(row)}
       </Fragment>)}</ul>}
       {!text && terms.length > 0 && <p class="spot-terms muted">{terms.map(t => <button key={t} type="button" tabIndex={-1} class="id" onPointerDown={e => e.preventDefault()} onClick={() => addTerm(t)}>{t}:</button>)}<span>narrow the search</span></p>}
-      {text && !waiting && (failed || !flat.length) && <p class="muted spot-none" role="status">{failed ? flat.length ? 'Some kinds failed; try again' : 'Search failed; try again' : 'Nothing found'}</p>}
+      {text && !waiting && asked === q && (failed || !flat.length) && <p class="muted spot-none" role="status">{failed ? flat.length ? 'Some kinds failed; try again' : 'Search failed; try again' : 'Nothing found'}</p>}
     </div>
   </div>;
 }
