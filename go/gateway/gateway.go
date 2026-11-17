@@ -287,11 +287,13 @@ func openSpool(stateDir string) (*spool, error) {
 	return s, nil
 }
 
-func (s *spool) append(line contract.CallLine) {
+// append reports whether the line is durable.
+func (s *spool) append(line contract.CallLine) bool {
 	s.write.Lock()
 	defer s.write.Unlock()
 	data, _ := json.Marshal(line)
-	if err := s.appendDurably(append(data, '\n')); err != nil {
+	err := s.appendDurably(append(data, '\n'))
+	if err != nil {
 		lost := s.lost.Add(1)
 		logf("spool write failed (%v); lost %d", err, lost)
 		path := filepath.Join(filepath.Dir(s.dir), "spool-lost")
@@ -302,6 +304,7 @@ func (s *spool) append(line contract.CallLine) {
 			s.lostRecorded.Store(true)
 		}
 	}
+	return err == nil
 }
 
 func (s *spool) appendDurably(data []byte) error {
@@ -547,20 +550,30 @@ type progress struct {
 }
 
 func (p *progress) Read(b []byte) (int, error) {
-	n, err := p.Reader.Read(b)
+	p.lock.Lock()
+	reader := p.Reader
+	p.lock.Unlock()
+	n, err := reader.Read(b)
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	p.read = true
 	switch {
 	case p.done:
-	case p.answering:
-		p.timer.Reset(p.stall) // a body still sent while the provider answers is progress too
 	case err == io.EOF:
 		p.timer.Reset(p.answer)
+	case p.answering:
+		p.timer.Reset(p.stall) // a body still sent while the provider answers is progress too
 	default:
 		p.timer.Reset(p.stall)
 	}
 	return n, err
+}
+
+// reopen starts the body again for a transport retry.
+func (p *progress) reopen(r io.Reader) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.Reader = r
 }
 
 // answered: the provider sent response bytes; the rest of its headers must follow within the stall limit.
@@ -621,6 +634,8 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 	if file != nil {
 		// After the tool's headers: the multipart boundary is never replaced.
 		request.ContentLength = b.length
+		// A kept-alive connection the provider closed before any byte was written is retried by the transport.
+		request.GetBody = func() (io.ReadCloser, error) { file.reopen(b.open()); return io.NopCloser(file), nil }
 		request.Header.Set("Content-Type", b.contentType)
 	}
 	response, err := g.client.Do(request)
@@ -1425,13 +1440,23 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 		return fail(502, "error", "provider-redirect", fmt.Sprintf("the file request answered HTTP %d; the redirect is not followed", status))
 	case status < 200 || status > 299:
 		return fail(502, "error", fmt.Sprintf("provider-%d", status), fmt.Sprintf("the file request answered HTTP %d", status))
-	case response.ContentLength >= 0 && response.ContentLength != size, size == 0 && response.ContentLength != 0:
+	case response.ContentLength >= 0 && response.ContentLength != size:
 		return fail(502, "error", "provider-body", "the file's length differs from the lookup size")
+	}
+	if size == 0 {
+		// A 0-byte answer is whole at once: an empty file is checked before any header leaves.
+		var one [1]byte
+		if k, _ := response.Body.Read(one[:]); k > 0 {
+			return fail(502, "error", "provider-body", "the file is longer than the lookup size")
+		}
 	}
 	started := g.line(q, &answer{status: 200, outcome: "unknown", err: "download-unfinished", key: lookup.key, usage: lookup.usage})
 	started.Phase = ptr(contract.CallPhaseStarted)
 	started.Transfer = &contract.CallTransfer{Direction: contract.CallTransferDirectionDownload, Bytes: size, MediaType: mediaType, Name: name}
-	g.spool.append(started)
+	if !g.spool.append(started) {
+		// No byte leaves before the call is on record.
+		return fail(503, "error", "spool-failed", "the call could not be recorded; the file was not sent")
+	}
 	meta, _ := json.Marshal(map[string]any{"name": name, "mediaType": mediaType, "bytes": size})
 	writeRaw(w, size, map[string]string{"X-Fleet-Call-Id": q.id, "X-Fleet-Outcome": "ok", "X-Fleet-File": base64.RawURLEncoding.EncodeToString(meta)})
 	control := http.NewResponseController(w)
