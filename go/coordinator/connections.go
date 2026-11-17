@@ -128,11 +128,12 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 		}
 		gc := contract.GatewayConnection{Provider: astr(c["provider"]), Tools: strs(c["tools"]), Intake: astr(c["intake"]), Keys: keys, Blocked: bl}
 		if l, ok := c["limits"].(map[string]any); ok && len(l) > 0 {
-			limits, err := asT[contract.GatewayLimits](l)
-			if err != nil {
-				return snap, err
+			// A value that does not decode leaves this connection at its defaults; it never blocks every other one.
+			if limits, err := asT[contract.GatewayLimits](l); err != nil {
+				log.Printf("connection %s: limits not published: %v", name, err)
+			} else {
+				gc.Limits = &limits
 			}
-			gc.Limits = &limits
 		}
 		snap.Connections[name] = gc
 	}

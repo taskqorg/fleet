@@ -177,9 +177,10 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 				switch {
 				case !t.File.Valid():
 					return nil, fmt.Errorf("tool %s file mode is unknown", toolName)
-				case *t.File == contract.GatewayFileModeUpload && (t.Method != "POST" || len(t.Inject) > 0):
-					// The multipart body holds the file part only: an inject field would be dropped.
-					return nil, fmt.Errorf("upload tool %s must POST and inject nothing", toolName)
+				case *t.File == contract.GatewayFileModeUpload && (t.Method != "POST" || len(t.Inject) > 0 || t.Idempotent):
+					// The multipart body holds the file part only (an inject field would be dropped); an upload is never
+					// sent twice, so it fails over to no other key.
+					return nil, fmt.Errorf("upload tool %s must POST, inject nothing and not be idempotent", toolName)
 				case *t.File == contract.GatewayFileModeDownload && t.FileFrom == nil:
 					return nil, fmt.Errorf("download tool %s needs fileFrom", toolName)
 				}
@@ -370,7 +371,7 @@ type gateway struct {
 	// File calls in flight (/healthz transfers), and the cancel of each upload still staging, by call id: a stop
 	// refuses those with draining, since nothing reached the provider yet.
 	transfers   atomic.Int64
-	handling    atomic.Int64 // /v1/call requests in their handler
+	handling    sync.WaitGroup // /v1/call requests in their handler
 	stagingLock sync.Mutex
 	staging     map[string]func()
 }
@@ -923,7 +924,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.handling.Add(1)
-	defer g.handling.Add(-1)
+	defer g.handling.Done()
 	startedMs := nowMs()
 	q := &request{id: fmt.Sprintf("%x-%x-%x", startedMs, os.Getpid(), g.calls.Add(1)-1), connection: connectionName, tool: toolName,
 		startedMs: startedMs, begun: time.Now()}
@@ -1265,11 +1266,23 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		refuse(refusal(422, "error", "secret-found", "the file or its name contains a key value or the caller's token; nothing was sent"), transfer)
 		return
 	}
+	// Staging can take minutes: the call is admitted again on the current snapshot before the key is attached.
+	now := g.snapshot.Load()
+	again := *q
+	again.run = now.tokens[q.run.Sha256]
+	again.c, again.offered = now.Connections[q.connection]
+	again.p = now.Providers[again.c.Provider]
+	again.t, ok = again.p.Tools[q.tool]
+	again.offered = again.offered && ok && contains(again.c.Tools, q.tool) && again.t.File != nil && *again.t.File == contract.GatewayFileModeUpload
+	if a := admit(&again); a != nil {
+		refuse(a, transfer)
+		return
+	}
 	// One file part with the caller's name; the name rules keep it inside the quotes (RFC 7578 allows UTF-8).
 	boundary := randomHex(16)
 	head := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + name + "\"\r\nContent-Type: " + mediaType + "\r\n\r\n"
 	tail := "\r\n--" + boundary + "--\r\n"
-	a := g.call(r.Context(), q.connection, q.c, q.p, q.t, path, body{
+	a := g.call(r.Context(), q.connection, again.c, again.p, again.t, path, body{
 		open: func() io.Reader {
 			return io.MultiReader(strings.NewReader(head), io.NewSectionReader(file, 0, staged), strings.NewReader(tail))
 		},
@@ -1304,6 +1317,7 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 	from := q.t.FileFrom
 	rel, name, mediaType := stringAt(lookup.body, from.Url), stringAt(lookup.body, from.Name), stringAt(lookup.body, from.MediaType)
 	size, sized := usageAt(lookup.body, from.Bytes)
+	sized = sized && size < math.MaxInt64/2 // a size near the int64 limit is not a file
 	base, err := url.Parse(q.p.BaseUrl)
 	if err != nil {
 		return fail(502, "error", "provider-body", "the provider base URL is invalid")
@@ -1681,8 +1695,11 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 		logf("drain timed out; remaining calls are cut")
 		server.Close()
 		// A cut call still writes its spool line (a post cut at the drain end may have been stored).
-		for end := time.Now().Add(5 * time.Second); g.handling.Load() > 0 && time.Now().Before(end); {
-			time.Sleep(10 * time.Millisecond)
+		handled := make(chan struct{})
+		go func() { g.handling.Wait(); close(handled) }()
+		select {
+		case <-handled:
+		case <-time.After(5 * time.Second):
 		}
 	}
 	fmt.Printf("fleet-gateway: drained, lost spool lines: %d\n", g.spool.lost.Load())

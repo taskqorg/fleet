@@ -800,7 +800,13 @@ func (p *fileProvider) seen() ([]seenUpload, []string, []string) {
 func newFileFixture(t *testing.T, limits map[string]any) (*fixture, *fileProvider) {
 	p := newFileProvider(t)
 	gw := newFixture(t, p.url, "invented-key-a")
-	snap := testSnapshot(p.url, []keyState{{"invented-key-a", "active"}}, []string{testToken}, "all")
+	gw.write(fileSnapshot(p.url, limits, "all"))
+	gw.adoptWritten()
+	return gw, p
+}
+
+func fileSnapshot(url string, limits map[string]any, intake string) map[string]any {
+	snap := testSnapshot(url, []keyState{{"invented-key-a", "active"}}, []string{testToken}, intake)
 	tools := field(snap, "providers", "tavily", "tools").(map[string]any)
 	tools["attach"] = map[string]any{"method": "POST", "path": "/files/{issue}/attachments?fields=id,name", "unit": "calls", "idempotent": false, "file": "upload", "forbiddenIsCall": true}
 	tools["fetch"] = map[string]any{"method": "GET", "path": "/files/{issue}/meta/{attachment}", "unit": "calls", "idempotent": true, "file": "download",
@@ -810,9 +816,7 @@ func newFileFixture(t *testing.T, limits map[string]any) (*fixture, *fileProvide
 	if limits != nil {
 		conn["limits"] = limits
 	}
-	gw.write(snap)
-	gw.adoptWritten()
-	return gw, p
+	return snap
 }
 
 func shaHex(data []byte) string {
@@ -1415,4 +1419,25 @@ func TestUploadProviderStallsAfterFirstByte(t *testing.T) {
 		}
 		expect(t, lastLine(t, gw)["outcome"], "unknown", "outcome")
 	}
+}
+
+// Requirement: §9 upload: a call admitted before a long staging is admitted again before the key is attached.
+// Risk: a token revoked, intake paused or budget reached while the file was arriving still posts it with the key.
+func TestUploadAdmittedAgainBeforePost(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	data := []byte("a file that arrives slowly")
+	reader, writer := io.Pipe()
+	answered := make(chan []any, 1)
+	go func() {
+		status, _, v, _ := gw.upload(reader, int64(len(data)), shaHex(data), map[string]any{"issue": "TGT-12", "name": "slow.txt"}, nil)
+		answered <- []any{status, v["error"]}
+	}()
+	writer.Write(data[:5])
+	gw.write(fileSnapshot(p.url, nil, "paused"))
+	gw.adoptWritten()
+	writer.Write(data[5:])
+	writer.Close()
+	expect(t, <-answered, []any{403, "intake-paused"}, "paused while staging")
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider requests")
 }
