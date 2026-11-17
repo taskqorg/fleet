@@ -749,6 +749,12 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, kept)
 	}
 	rows := map[contract.ObjectKind]*contract.KindCount{}
+	// Store objects and spans of earlier purges first, with a third of the budget: roots that stay kept cannot starve them.
+	if !b.Preview {
+		if _, err := runPurgeTasks(q.ctx(), q.app, start.Add(purgeBudget/3)); err != nil {
+			return out, err
+		}
+	}
 	// Every root of every kind is checked before any goes, as the preview sees them: a root kept only by another
 	// tombstoned root goes at the next purge, so the confirm removes what the preview listed. The roots of all kinds
 	// go in one random order: a call that stops at its budget reaches others next time, so roots a live row keeps
