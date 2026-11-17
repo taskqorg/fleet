@@ -921,7 +921,7 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 			refused = append(refused, n)
 		}
 	}
-	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": run["executionId"], "directedBy": run["directedBy"], "projectId": run["projectId"],
+	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": run["executionId"], "directedBy": run["directedBy"], "projectId": projectOrNil(run["projectId"]),
 		"experimentId": run["experimentId"], "pipelineRunId": run["pipelineRunId"], "connections": names, "createdAt": nowMs()}
 	if run["step"] == true {
 		row["step"] = true
@@ -1130,7 +1130,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		}
 	}
 	inserted, err := insertExecution(q, doc{
-		"id": id, "kind": "tool_run", "state": state, "projectId": nilIf(astr(t["projectId"])), "parentExecutionId": parent,
+		"id": id, "kind": "tool_run", "state": state, "projectId": t["projectId"], "parentExecutionId": parent,
 		"experimentId": t["experimentId"], "taskId": pTask, "sessionId": pSession,
 		"directedBy": nilIf(firstString(t["directedBy"], deref(pDir))), "startedAt": startedAt, "endedAt": endedAt,
 		"pipelineId": pPipe, "pipelineRevision": pPipeRev, "stepId": pStep, "profileId": pProf, "profileRevision": pProfRev,

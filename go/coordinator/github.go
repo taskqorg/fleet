@@ -253,7 +253,7 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	exec := connection + "-read:" + newID()
 	var token string
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		m, err := mint(q, doc{"executionId": exec, "projectId": nilIf(project), "step": true}, []string{connection})
+		m, err := mint(q, doc{"executionId": exec, "projectId": project, "step": true}, []string{connection})
 		if err == nil {
 			token, _ = m["token"].(string)
 		}
