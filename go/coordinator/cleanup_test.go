@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"fleet/contract"
 
@@ -233,10 +234,13 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 
 	// The stop and teardown the host fetched but has not finished keep the project: purging them would leave the agent
 	// running. The host's receipts settle them.
-	if c, p := call("system_purge", doc{"preview": true, "kinds": []string{"project"}}, owner); c != 200 || !slices.Equal(strs(mapOf(anys(p["kept"])[0])["ids"]), []string{"acc"}) {
-		t.Fatalf("a project with pending commands is purgeable: %d %v", c, p)
+	if c, p := call("system_purge", doc{"preview": true, "kinds": []string{"project"}}, owner); c != 200 || !slices.Equal(strs(mapOf(anys(p["kept"])[0])["ids"]), []string{"acc"}) ||
+		!strings.HasPrefix(astr(mapOf(anys(mapOf(anys(p["kept"])[0])["reasons"])[0])["reason"]), "pending stop command ") {
+		t.Fatalf("a project with pending commands is purgeable, or no reason given: %d %v", c, p)
 	}
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET data=data||'{"status":"completed"}' WHERE kind='command' AND data->>'executionId'='e2'`)
+	// The host settles them; a command for a host that is gone (removed, then purged) never is, and does not keep it.
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET data=data||'{"status":"completed"}' WHERE kind='command' AND data->>'executionId'='e2';
+INSERT INTO document(kind,id,data) VALUES ('command','c-ghost','{"id":"c-ghost","kind":"teardown","executionId":"e2","hostId":"h-ghost","status":"pending"}')`)
 	c, p := call("system_purge", doc{"preview": true}, owner)
 	removed, kept := map[string][]string{}, map[string][]string{}
 	for _, x := range anys(p["removed"]) {
@@ -245,12 +249,29 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 	for _, x := range anys(p["kept"]) {
 		kept[astr(mapOf(x)["kind"])] = strs(mapOf(x)["ids"])
 	}
+	reasons := map[string]string{}
+	for _, x := range anys(p["kept"]) {
+		for _, r := range anys(mapOf(x)["reasons"]) {
+			reasons[astr(mapOf(r)["id"])] = astr(mapOf(r)["reason"])
+		}
+	}
+	if reasons["x1"] != "score.trial_ids by score sc3" {
+		t.Fatalf("kept reason of x1 = %q", reasons["x1"])
+	}
 	if c != 200 || astr(mapOf(anys(p["removed"])[0])["kind"]) != "host" || !slices.Equal(removed["project"], []string{"acc"}) || !slices.Equal(kept["experiment"], []string{"x1"}) || p["purged"] != false {
 		t.Fatalf("purge preview = %d %v", c, p)
 	}
 	if c, _ := call("system_purge", doc{"preview": false}, map[string]string{"Authorization": "Bearer " + e.browserSecret, "X-Fleet-Person": "member@trial.test"}); c != 403 {
 		t.Fatalf("a member purges: %d", c)
 	}
+	// A call past its time budget checks nothing more and says so.
+	prev := purgeBudget
+	t.Cleanup(func() { purgeBudget = prev })
+	purgeBudget = 0
+	if c, p := call("system_purge", doc{"preview": true, "kinds": []string{"project"}}, owner); c != 200 || p["more"] != true || !strings.HasPrefix(astr(mapOf(anys(mapOf(anys(p["kept"])[0])["reasons"])[0])["reason"]), "deferred") {
+		t.Fatalf("budget = %d %v", c, p)
+	}
+	purgeBudget = prev
 	c, purged := call("system_purge", doc{"preview": false}, owner)
 	if c != 200 || purged["purged"] != true || num(purged["retryLater"]) != 0 {
 		t.Fatalf("purge = %d %v", c, purged)
@@ -259,6 +280,9 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 		if n := psqlLines(t, e, "SELECT count(*) FROM "+tbl+" WHERE project_id='acc'"); n[0] != "0" {
 			t.Errorf("purged project rows left in %s: %v", tbl, n)
 		}
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM document WHERE id='c-ghost'"); n[0] != "0" {
+		t.Fatalf("the dead host's command stays")
 	}
 	if n := psqlLines(t, e, "SELECT count(*) FROM definition WHERE kind='project' AND id='acc' AND purged_at IS NOT NULL AND deleted_at IS NOT NULL"); n[0] != "1" {
 		t.Fatalf("the purged project's definition row must stay (its id is never reused)")
@@ -326,7 +350,7 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,state
 INSERT INTO artifact_copy(artifact_id,store_id,project_id,state) VALUES ('a3','st1','keep','verified');
 INSERT INTO document(kind,id,data) VALUES ('purge-task','pt1','{"id":"pt1","storeId":"st1","objects":[
  {"key":"keep/prod/h3","projectId":"keep","scope":"prod","hash":"h3"},{"key":"gone/prod/h4","projectId":"gone","scope":"prod","hash":"h4"},{"key":"gone/prod/.pending/a4.st1"}]}');`)
-	left, err := runPurgeTasks(e.ctx, e.app)
+	left, err := runPurgeTasks(e.ctx, e.app, time.Now().Add(time.Minute))
 	if err != nil || left != 0 {
 		t.Fatalf("runPurgeTasks = %d, %v", left, err)
 	}

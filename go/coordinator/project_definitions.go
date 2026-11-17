@@ -396,11 +396,21 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	removed, err := queryRows(q, "SELECT data->>'hostId' AS id FROM document WHERE kind='host' AND data->>'state'='removed'")
+	if err != nil {
+		return nil, err
+	}
+	live := []doc{} // a removed host never fetches a removal
+	for _, o := range obs {
+		if !slices.ContainsFunc(removed, func(r doc) bool { return r["id"] == o["id"] }) {
+			live = append(live, o)
+		}
+	}
 	for _, c := range conns {
 		if used[c] {
 			continue
 		}
-		for _, o := range obs {
+		for _, o := range live {
 			host := astr(o["id"])
 			if !slices.Contains(strs(o["gitConnections"]), c) {
 				continue

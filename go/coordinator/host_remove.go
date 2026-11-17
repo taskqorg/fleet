@@ -116,19 +116,20 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 
 // purgeableHosts: removed hosts and whether anything still references them. The reference list is every table and
 // document field that names a host id; its stores go with it when only deleted copies name them.
-func purgeableHosts(q *Request) (gone, kept []string, err error) {
-	rows, err := queryRows(q, `SELECT d.data->>'hostId' AS id, (
-	EXISTS (SELECT 1 FROM execution e WHERE e.host_id=d.data->>'hostId')
-	OR EXISTS (SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=d.data->>'hostId' AND c.state<>'deleted')
-	OR EXISTS (SELECT 1 FROM route_decision r WHERE r.host_id=d.data->>'hostId')
-	OR EXISTS (SELECT 1 FROM document x WHERE x.kind IN ('session','command') AND x.data->>'hostId'=d.data->>'hostId')) AS referenced
+func purgeableHosts(q *Request) (gone []string, kept []contract.PurgeReason, err error) {
+	rows, err := queryRows(q, `SELECT d.data->>'hostId' AS id, CASE
+	WHEN EXISTS (SELECT 1 FROM execution e WHERE e.host_id=d.data->>'hostId') THEN 'execution.host_id'
+	WHEN EXISTS (SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=d.data->>'hostId' AND c.state<>'deleted') THEN 'artifact_copy on its store'
+	WHEN EXISTS (SELECT 1 FROM route_decision r WHERE r.host_id=d.data->>'hostId') THEN 'route_decision.host_id'
+	WHEN EXISTS (SELECT 1 FROM document x WHERE x.kind='session' AND x.data->>'hostId'=d.data->>'hostId') THEN 'document.data->>''hostId'' by session'
+	WHEN EXISTS (SELECT 1 FROM document x WHERE x.kind='command' AND x.data->>'hostId'=d.data->>'hostId') THEN 'document.data->>''hostId'' by command' END AS referenced
 	FROM document d WHERE d.kind='host' AND d.data->>'state'='removed' ORDER BY d.seq`)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, r := range rows {
-		if r["referenced"] == true {
-			kept = append(kept, astr(r["id"]))
+		if by := astr(r["referenced"]); by != "" {
+			kept = append(kept, contract.PurgeReason{Id: astr(r["id"]), Reason: by + " (a removed host stays while any row names it)"})
 		} else {
 			gone = append(gone, astr(r["id"]))
 		}
@@ -143,7 +144,7 @@ func purgeHosts(q *Request, preview bool) (removed, kept contract.PurgeCount, er
 		return removed, kept, err
 	}
 	removed = contract.PurgeCount{Kind: contract.PurgeKindHost, Count: int64(len(gone)), Ids: nonNilStrs(gone)}
-	kept = contract.PurgeCount{Kind: contract.PurgeKindHost, Count: int64(len(held)), Ids: nonNilStrs(held)}
+	kept = keptCount(contract.PurgeKindHost, held)
 	if preview || len(gone) == 0 {
 		return removed, kept, nil
 	}
