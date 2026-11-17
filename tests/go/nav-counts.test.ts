@@ -96,7 +96,13 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   for (const bad of [{navCounters: {overview: 'Running'}}, {navCounters: {tasks: 'No such view'}}, {navCounters: {results: 'Running'}}, {navCounters: {hosts: 'Mine'}}])
     assert.equal((await call('person_settings_set', bad)).status, 400, JSON.stringify(bad));
 
-  // Every system preset counts what its list shows with the app's own states.
+  // Every system preset counts what its list shows with the app's own states: a task and a conversation in every state
+  // inside the focus, so a state missing from either side's preset changes a count.
+  c.sql(`INSERT INTO task(id,project_id,title,state,pause_reason) VALUES ('t-x-q','alpha','x','queued',NULL),('t-x-i','alpha','x','in_progress',NULL),
+      ('t-x-w','alpha','x','waiting',NULL),('t-x-h','alpha','x','paused','held'),('t-x-p','alpha','x','paused',NULL),('t-x-c','alpha','x','completed',NULL),
+      ('t-x-f','alpha','x','failed',NULL),('t-x-x','alpha','x','cancelled',NULL);
+    INSERT INTO document(kind,id,project_id,data) SELECT 'session','s-x-'||s,'alpha','{}' FROM unnest(ARRAY['preparing','running','waiting','succeeded','failed','cancelled']) s;
+    INSERT INTO execution(id,kind,state,project_id,session_id,data) SELECT 'e-x-'||s,'agent_run',s::execution_state,'alpha','s-x-'||s,'{}' FROM unnest(ARRAY['preparing','running','waiting','succeeded','failed','cancelled']) s;`);
   for (const list of ['tasks', 'conversations', 'delivery'] as const) for (const v of SYSTEM_VIEWS[list]) {
     await op('person_settings_set', {navCounters: {[list]: v.name}});
     const x = (await counts())[list], st = v.view.state as string[];

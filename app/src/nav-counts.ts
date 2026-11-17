@@ -18,7 +18,9 @@ const QUIET = 5000, REFRESH = 30_000;
 // Execution changes come also with every token and cost total; a session's state moves with them, so they count, but
 // a batch of only those waits longer.
 const QUIET_EXECUTIONS = 15_000;
-const COUNTED: Change['kind'][] = ['task', 'session', 'artifact', 'delivery', 'host'];
+const COUNTED: Change['kind'][] = ['task', 'session', 'artifact', 'host'];
+// Delivery: the current rows (delivery-state:<project>) only, not the recorded history (delivery.tsx touchesStatus).
+const counted = (c: Change) => COUNTED.includes(c.kind) || c.kind === 'delivery' && c.id.startsWith('delivery-state:');
 /** The last read, for the saved-views menu: which view each counter counts as the server resolved it. */
 const lastRead = signal<Read | null>(null);
 // Hosts offline needs a look (OR-18); the other counters are plain amounts of work.
@@ -30,7 +32,7 @@ const stable = (v: unknown) => JSON.stringify(v, (_k, x) => x && typeof x === 'o
 export function useNavCounts(ready: boolean): Record<string, NavCount> {
   const { focus, ignored, navCounters, views } = prefs.value;
   // The counted saved views' definitions too: editing one reads at once.
-  const saved = Object.entries(navCounters ?? {}).map(([list, name]) => [list, name, views.find(v => v.list === list && v.name === name)?.view ?? null]);
+  const saved = Object.entries(navCounters ?? {}).sort().map(([list, name]) => [list, name, views.find(v => v.list === list && v.name === name)?.view ?? null]);
   const key = ready && prefsRead.value ? 'nav-counts:' + stable([focus, ignored, saved]) : null;
   // A changed focus or counter view shows at once in prefs; the read waits for its save, so it counts the new settings.
   const doc = useDoc<Read>(key, () => prefsSaved().then(async () => {
@@ -43,7 +45,7 @@ export function useNavCounts(ready: boolean): Record<string, NavCount> {
     // One pending read; a counted change brings a later one forward.
     let timer: ReturnType<typeof setTimeout> | undefined, due = Infinity;
     const off = subscribe({ resync: () => {}, changes: cs => {
-      const wait = cs.some(c => COUNTED.includes(c.kind)) ? QUIET : cs.some(c => c.kind === 'execution') ? QUIET_EXECUTIONS : 0;
+      const wait = cs.some(counted) ? QUIET : cs.some(c => c.kind === 'execution') ? QUIET_EXECUTIONS : 0;
       if (!wait || Date.now() + wait >= due) return;
       clearTimeout(timer); due = Date.now() + wait;
       timer = setTimeout(() => { timer = undefined; due = Infinity; reload.current(); }, wait);

@@ -5,7 +5,7 @@
     "focus_set": {"read": false, "errors": [400, 403, 404, 409]},
     "list_membership": {"read": true, "errors": [400]},
     "me": {"read": true, "errors": []},
-    "nav_counts": {"read": true, "errors": [403]},
+    "nav_counts": {"read": true, "errors": [400, 403]},
     "people_list": {"read": true, "errors": []},
     "people_set": {"read": false, "long": true, "errors": [400, 403, 409]},
     "search": {"read": true, "errors": [400]},
