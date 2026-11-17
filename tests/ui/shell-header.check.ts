@@ -93,13 +93,16 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     // The outside indicator opens the Overview without the focus.
     await call('person_settings_set', { focus: ['hdr-alpha'] });
     await p.reload(); assert.ok(await until(async () => await outside.count() === 1), 'the indicator shows after a reload');
+    // Other checks of the same run leave needs-you items of their own (some outside projects): compare counts, not zero.
+    const n = async () => await outside.count() ? Number((await outside.getAttribute('aria-label'))?.split(' ')[0]) : 0;
+    const before = await n();
     await outside.click(); await p.waitForURL('**/overview?all');
     await p.getByText('Ship Charlie today?').waitFor();
     assert.ok(await p.getByText('Focus not applied').count() === 1, 'its head says the focus is off');
     // Ignore is full silence: an ignored project's question is not counted outside the focus.
     await call('person_settings_set', { ignore: { project: 'hdr-charlie', ignored: true } });
     await p.goto(origin + '/tasks'); await row('Alpha').waitFor();
-    assert.ok(await until(async () => await outside.count() === 0, 3000) && !await until(async () => await outside.count() > 0, 1500), 'an ignored project is not counted');
+    assert.ok(await until(async () => await n() === before - 1, 5000), `an ignored project is not counted (${before} before, ${await n()} after)`);
     assert.deepEqual(errors, []);
     console.log('ok Shell header: title, search icon opens Spotlight, focus chip toned, ignore hides a project from list and picker and restores, outside-focus indicator opens the Overview');
   } finally {
