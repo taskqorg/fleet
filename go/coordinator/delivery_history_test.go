@@ -195,13 +195,14 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 	}
 	deliveryDerive(prs, nil, rels)
 	p := prs[0]
-	if deref(p.Release) != "ui-1.261117.26-v1.261117.27" || releaseVersionOf(deref(p.Release)) != "1.261117.27" || p.Durations["release"] != 49000 || p.Durations["ui"] != 153000 {
+	if deref(p.Release) != "ui-1.261117.26-v1.261117.27" || releaseVersionOf(deref(p.Release)) != "1.261117.27" || p.Durations["release"] != 49000 {
 		t.Fatalf("matched release: %+v", p)
 	}
 	if p.Durations["total"] != 632000 || p.Durations["ui_install"] != 153000 { // 16:01:47 to 16:12:19
 		t.Fatalf("total is opened to UI on site: %+v", p.Durations)
 	}
-	for _, k := range []string{"install", "availability", "time_to_available"} {
+	// ui is native releases' UI on site only; a UI-only one's is ui_install.
+	for _, k := range []string{"install", "availability", "time_to_available", "ui"} {
 		if _, ok := p.Durations[k]; ok {
 			t.Fatalf("a UI-only release has no %s: %+v", k, p.Durations)
 		}
@@ -225,6 +226,17 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 20, 0, 0, time.UTC))
 	if uiSeenSnapshot()["9.9.9"] != "2026-11-17T16:12:00Z" {
 		t.Fatal(uiSeenSnapshot())
+	}
+	// Its own UI seen a second before GitHub's publication time (clock skew) is on the site at publication, not never.
+	r := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
+	deliveryInstalls(&r, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T17:00:00Z", "1.261117.28": "2026-11-17T16:59:00Z"}}, nil, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	if deref(r.UiOnSite) != "2026-11-17T17:00:01Z" {
+		t.Fatal(r)
+	}
+	odd := contract.DeliveryRelease{Tag: "ui-kit-v1.2", Published: "2026-11-17T17:00:01Z"}
+	deliveryInstalls(&odd, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T17:01:00Z"}}, nil, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	if odd.UiOnSite != nil {
+		t.Fatal("a tag that is no Fleet release records nothing", odd)
 	}
 	for tag, want := range map[string]bool{"ui-1.261117.26-v1.261117.27": true, "ui-kit-1.0": false, "ui-v2.0.0": false, "v1.2.3": false} {
 		if uiOnlyRelease(tag) != want || deliveryReleaseTag(tag) != (want || tag[0] == 'v') {

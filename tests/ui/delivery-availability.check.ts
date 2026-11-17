@@ -101,7 +101,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     // Installed, but its install time was not matched to its release: unmeasured, so yesterday is partly measured.
     {...pr(662, 'Merged yesterday, no install time', dayStart(1) + 15 * 3600e3, {pr_ci: 9 * min, queue: 6 * min, release: 2 * min}), installed: {coordinator: iso(dayStart(1) + 16 * 3600e3)}},
     // Two days ago: UI-only, no host install; delivered (and measured) when the site served its UI.
-    {...pr(670, 'UI-only, on site', dayStart(2) + 12 * 3600e3, {pr_ci: 5 * min, queue: 4 * min, release: min, ui: 2 * min, total: 12 * min}), installed: {},
+    {...pr(670, 'UI-only, on site', dayStart(2) + 12 * 3600e3, {pr_ci: 5 * min, queue: 4 * min, release: min, ui_install: 2 * min, total: 12 * min}), installed: {},
       release: 'ui-1.1.1-v1.1.2', uiOnSite: iso(dayStart(2) + 12 * 3600e3 + 3 * min)},
     // Merged minutes ago and still on its way: pending, never "unmeasured".
     {...pr(663, 'Merged just now', Math.max(now - 10 * min, dayStart(0)), {pr_ci: 9 * min, queue: 6 * min}), released: iso(now)},

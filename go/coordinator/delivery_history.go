@@ -487,7 +487,8 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		st.UISeen = map[string]string{}
 	}
 	// The earliest this process saw each UI served: delivery_status's pass notes it every minute, so a UI-only release's
-	// UI on site (its total's end) is not up to this pass's 10 minutes late.
+	// UI on site (its total's end) is not up to this pass's 10 minutes late. Noted here too for a coordinator whose
+	// delivery_status pass is off (FLEET_DELIVERY_TICK_MS=0).
 	noteUISeen(uiServed(), now)
 	for v, at := range uiSeenSnapshot() {
 		if st.UISeen[v] == "" || at < st.UISeen[v] {
@@ -669,7 +670,7 @@ func deliveryObservation(tag, published string, hv hostVersion, now time.Time) (
 // deliveryInstalls: a release published since installsFrom is installed on a host when the host runs it or newer
 // (the first time seen); its UI is on the site when the site first served a UI of its version or newer.
 func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]hostVersion, now time.Time) {
-	if r.Published < st.InstallsFrom {
+	if r.Published < st.InstallsFrom || !deliveryReleaseTag(r.Tag) {
 		return
 	}
 	v := releaseVersionOf(r.Tag)
@@ -702,6 +703,10 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 	}
 	if r.UiOnSite == nil {
 		for uv, at := range st.UISeen {
+			// Its own version exists only once published: seen earlier is the coordinator's clock behind GitHub's.
+			if uv == v && at < r.Published {
+				at = r.Published
+			}
 			if !versionLess(uv, v) && at >= r.Published && (r.UiOnSite == nil || at < *r.UiOnSite) {
 				r.UiOnSite = ptr(at)
 			}
@@ -828,17 +833,17 @@ func deliveryDerive(prs []contract.DeliveryPr, runs []contract.DeliveryRun, rele
 		}
 		// Delivered: on the PDS18 coordinator, or, for a UI-only release, when the site serves its UI (no install stage).
 		// Every pass derives this again from the stored records, so records stored before UI-only releases counted get it too.
-		// ui_install: the UI-only release's own install (publication to the site serving it), apart from ui, which for a
-		// native release is mostly the coordinator's install and restart.
-		done, uiInstall := installed, (*int64)(nil)
+		// UI on site is ui for a native release (mostly its coordinator install and restart) and ui_install for a UI-only
+		// one (its own install by the UI updater): two populations, two keys, so neither baseline moves with the mix.
+		done, uiKey := installed, "ui"
 		if uiOnlyRelease(deref(p.Release)) {
-			done, uiInstall = p.UiOnSite, msBetween(p.Released, p.UiOnSite)
+			done, uiKey = p.UiOnSite, "ui_install"
 		}
 		d := map[string]*int64{
 			"availability": msBetween(p.Released, available), "time_to_available": msBetween(&p.Opened, available),
 			"pr_ci": msBetween(&p.Opened, p.PrCiDone), "enqueue": msBetween(p.PrCiDone, p.Enqueued), "queue": msBetween(p.Enqueued, p.MqCiDone),
 			"merge": msBetween(p.MqCiDone, &p.Merged), "release": msBetween(&p.Merged, p.Released), "install": msBetween(p.Released, installed),
-			"ui": msBetween(p.Released, p.UiOnSite), "ui_install": uiInstall, "lead": msBetween(&p.Opened, &p.Merged), "total": msBetween(&p.Opened, done),
+			uiKey: msBetween(p.Released, p.UiOnSite), "lead": msBetween(&p.Opened, &p.Merged), "total": msBetween(&p.Opened, done),
 		}
 		p.Durations = map[string]int64{}
 		for k, v := range d {

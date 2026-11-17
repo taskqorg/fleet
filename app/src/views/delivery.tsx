@@ -207,7 +207,7 @@ const due = (x: HistoryPr, installsFrom: number | null) => typeof x.durations.to
 /** When it was delivered: on the PDS18 coordinator, or for a UI-only release when the site served its UI. */
 const doneAt = (x: HistoryPr) => uiOnly(x.release) ? x.uiOnSite : x.installed?.coordinator;
 /** A stage duration, a UI-only release's UI on site standing for the install it does not have. */
-const stageMs = (x: HistoryPr, k: string) => k === 'install' && uiOnly(x.release) ? x.durations.ui : x.durations[k];
+const stageMs = (x: HistoryPr, k: string) => k === 'install' && uiOnly(x.release) ? x.durations.ui_install : x.durations[k];
 
 /** A recorded (merged) pull request as a list row: its stage from how far it got. */
 function fromHistory(x: HistoryPr, installsFrom?: string): Item {
@@ -255,7 +255,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
   </div>;
 }
 const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available', run: 'Queue run',
-  availability_wait: 'Waiting for availability', ui_wait: 'Waiting for the UI on site', ui_install: 'UI-only install' };
+  availability_wait: 'Waiting for availability', ui_wait: 'Waiting for the UI on site', ui_install: 'UI on site (UI-only release)' };
 const keyLabel = (k: string) => KEYS[k] ?? k;
 
 // Where the time goes: a pull request's stage durations folded into four parts, in pipeline order; a UI-only release's
