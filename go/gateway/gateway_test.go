@@ -4,13 +4,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -696,4 +703,785 @@ func TestPathPatternsAndUsageField(t *testing.T) {
 	if _, ok := usageAt([]byte(`{"usageMetadata":{}}`), field); ok {
 		t.Fatal("missing usage read")
 	}
+}
+
+// ---------------------------------------------------------------- file tools (fleet-connections.md §9)
+
+// A fixture catalogue with one upload and one download tool on the tavily provider (the YouTrack catalogue gains
+// them in its own change). The provider is fake: it stores uploads, answers lookups and serves blobs.
+
+type seenUpload struct {
+	auth, contentType  string
+	length, read       int64 // Content-Length and the bytes the provider read
+	parts              int
+	field, name, media string
+	sha                string
+}
+
+type fileProvider struct {
+	url     string
+	lock    sync.Mutex
+	uploads []seenUpload
+	lookups []string // Authorization of each lookup
+	fetches []string // Authorization of each blob fetch
+	other   atomic.Int32
+	// Overrides; nil keeps the default behaviour.
+	meta     func() map[string]any                    // lookup reply
+	blob     func(w http.ResponseWriter)              // the file at /blob
+	onUpload func(w http.ResponseWriter, read func()) // the upload handler: read() reads the multipart
+}
+
+var blobBytes = []byte(strings.Repeat("invented file bytes ", 50))
+
+func newFileProvider(t *testing.T) *fileProvider {
+	p := &fileProvider{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/attachments"):
+			u := seenUpload{auth: r.Header.Get("Authorization"), contentType: r.Header.Get("Content-Type"), length: r.ContentLength}
+			read := func() {
+				if reader, err := r.MultipartReader(); err == nil {
+					for {
+						part, err := reader.NextPart()
+						if err != nil {
+							break
+						}
+						hash := sha256.New()
+						n, _ := io.Copy(hash, part)
+						u.parts++
+						u.field, u.name, u.media, u.sha, u.read = part.FormName(), part.FileName(), part.Header.Get("Content-Type"), hex.EncodeToString(hash.Sum(nil)), n
+					}
+				}
+				p.lock.Lock()
+				p.uploads = append(p.uploads, u)
+				p.lock.Unlock()
+			}
+			if p.onUpload != nil {
+				p.onUpload(w, read)
+				return
+			}
+			read()
+			io.WriteString(w, `[{"id":"85-1","name":"stored","size":1,"mimeType":"image/png"}]`)
+		case strings.Contains(r.URL.Path, "/meta/"):
+			p.lock.Lock()
+			p.lookups = append(p.lookups, r.Header.Get("Authorization"))
+			p.lock.Unlock()
+			meta := map[string]any{"id": "85-1", "name": "экран 1.png", "size": len(blobBytes), "mimeType": "image/png", "url": "/blob/85-1?sign=invented"}
+			if p.meta != nil {
+				meta = p.meta()
+			}
+			json.NewEncoder(w).Encode(meta)
+		case r.URL.Path == "/blob/85-1":
+			p.lock.Lock()
+			p.fetches = append(p.fetches, r.Header.Get("Authorization"))
+			p.lock.Unlock()
+			if p.blob != nil {
+				p.blob(w)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(blobBytes)))
+			w.Write(blobBytes)
+		default:
+			p.other.Add(1)
+			io.WriteString(w, "elsewhere")
+		}
+	}))
+	t.Cleanup(server.Close)
+	p.url = server.URL
+	return p
+}
+
+func (p *fileProvider) seen() ([]seenUpload, []string, []string) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return append([]seenUpload(nil), p.uploads...), append([]string(nil), p.lookups...), append([]string(nil), p.fetches...)
+}
+
+func newFileFixture(t *testing.T, limits map[string]any) (*fixture, *fileProvider) {
+	p := newFileProvider(t)
+	gw := newFixture(t, p.url, "invented-key-a")
+	gw.write(fileSnapshot(p.url, limits, "all"))
+	gw.adoptWritten()
+	return gw, p
+}
+
+func fileSnapshot(url string, limits map[string]any, intake string) map[string]any {
+	snap := testSnapshot(url, []keyState{{"invented-key-a", "active"}}, []string{testToken}, intake)
+	tools := field(snap, "providers", "tavily", "tools").(map[string]any)
+	tools["attach"] = map[string]any{"method": "POST", "path": "/files/{issue}/attachments?fields=id,name", "unit": "calls", "idempotent": false, "file": "upload", "forbiddenIsCall": true}
+	tools["fetch"] = map[string]any{"method": "GET", "path": "/files/{issue}/meta/{attachment}", "unit": "calls", "idempotent": true, "file": "download",
+		"pathPatterns": map[string]any{"attachment": "^[0-9]{1,9}-[0-9]{1,12}$"}, "fileFrom": map[string]any{"url": "url", "bytes": "size", "name": "name", "mediaType": "mimeType"}}
+	conn := field(snap, "connections", "tavily").(map[string]any)
+	conn["tools"] = append(conn["tools"].([]string), "attach", "fetch")
+	if limits != nil {
+		conn["limits"] = limits
+	}
+	return snap
+}
+
+func shaHex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// upload posts body as a file; length -1 sends it chunked (no Content-Length).
+func (f *fixture) upload(body io.Reader, length int64, sum string, args map[string]any, header map[string]string) (int, http.Header, map[string]any, error) {
+	request, _ := http.NewRequest("POST", "http://"+f.address+"/v1/call/tavily/attach", body)
+	request.ContentLength = length
+	encoded, _ := json.Marshal(args)
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Header.Set("X-Fleet-Args", base64.RawURLEncoding.EncodeToString(encoded))
+	request.Header.Set("X-Fleet-Sha256", sum)
+	for k, v := range header {
+		request.Header.Set(k, v)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer response.Body.Close()
+	var v map[string]any
+	json.NewDecoder(response.Body).Decode(&v)
+	return response.StatusCode, response.Header, v, nil
+}
+
+func (f *fixture) uploadBytes(data []byte, args map[string]any) (int, map[string]any) {
+	status, _, v, err := f.upload(bytes.NewReader(data), int64(len(data)), shaHex(data), args, nil)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return status, v
+}
+
+func (f *fixture) parts() []string {
+	left, _ := filepath.Glob(filepath.Join(f.dir, "state/files/*.part"))
+	return left
+}
+
+func (f *fixture) download(args string, accept bool) (*http.Response, error) {
+	request, _ := http.NewRequest("POST", "http://"+f.address+"/v1/call/tavily/fetch", strings.NewReader(args))
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	if accept {
+		request.Header.Set("Accept", "application/octet-stream")
+	}
+	return http.DefaultClient.Do(request)
+}
+
+func lastLine(t *testing.T, gw *fixture) map[string]any {
+	t.Helper()
+	lines, _ := gw.spool()
+	if len(lines) == 0 {
+		t.Fatal("no spool line")
+	}
+	return lines[len(lines)-1]
+}
+
+// Requirement: §9 upload: the staged file reaches the provider as one multipart part with the caller's UTF-8 name,
+// its exact bytes, a correct Content-Length and the key as bearer; the spool line records the transfer and its sha256.
+// Risk: a second part, a mangled Cyrillic name, a body the provider reads short, or an upload with no byte record.
+func TestUploadMultipartHasOneFilePart(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	data := bytes.Repeat([]byte("png bytes\x00\xff"), 10_000)
+	name := "запись экрана 1.png"
+	status, reply := gw.uploadBytes(data, map[string]any{"issue": "TGT-12", "name": name, "mediaType": "image/png"})
+	expect(t, status, 200, "status")
+	if reply != nil {
+		t.Fatalf("a list reply decodes as no object: %v", reply)
+	}
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 1, "provider requests")
+	u := uploads[0]
+	expect(t, []any{u.parts, u.field, u.name, u.media, u.sha, u.read}, []any{1, "file", name, "image/png", shaHex(data), len(data)}, "part")
+	expect(t, u.auth, "Bearer invented-key-a", "key")
+	if !strings.HasPrefix(u.contentType, "multipart/form-data; boundary=") || u.length <= int64(len(data)) {
+		t.Fatalf("request: %s, length %d", u.contentType, u.length)
+	}
+	line := lastLine(t, gw)
+	expect(t, []any{line["outcome"], line["transfer"]}, []any{"ok", map[string]any{"direction": "upload", "bytes": len(data), "mediaType": "image/png", "name": name, "sha256": shaHex(data)}}, "spool transfer")
+	expect(t, len(gw.parts()), 0, "staged files")
+}
+
+// pattern is a deterministic body that holds no key value.
+type pattern struct{ left, at int64 }
+
+func (r *pattern) Read(b []byte) (int, error) {
+	if r.left == 0 {
+		return 0, io.EOF
+	}
+	n := min(int64(len(b)), r.left)
+	for i := range n {
+		b[i] = byte('a' + (r.at+i)%26)
+	}
+	r.at += n
+	r.left -= n
+	return int(n), nil
+}
+
+// Requirement: §9 upload memory: a 63 MB recording sits on disk once and in memory only as copy buffers.
+// Risk: a buffered body (io.ReadAll or a bytes.Buffer) that grows with each concurrent upload.
+func TestUploadLargeBodyFlatMemory(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	const size = 64 << 20
+	hash := sha256.New()
+	io.Copy(hash, &pattern{left: size})
+	sum := hex.EncodeToString(hash.Sum(nil))
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+	var peak atomic.Uint64
+	done := make(chan struct{})
+	go func() {
+		var m runtime.MemStats
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(20 * time.Millisecond):
+				runtime.ReadMemStats(&m)
+				if m.HeapInuse > peak.Load() {
+					peak.Store(m.HeapInuse)
+				}
+			}
+		}
+	}()
+	status, _, _, err := gw.upload(&pattern{left: size}, size, sum, map[string]any{"issue": "TGT-12", "name": "screen.mov", "mediaType": "video/quicktime"}, nil)
+	close(done)
+	if err != nil || status != 200 {
+		t.Fatalf("upload: %d %v", status, err)
+	}
+	uploads, _, _ := p.seen()
+	expect(t, []any{uploads[0].sha, uploads[0].read}, []any{sum, size}, "provider bytes")
+	if growth := int64(peak.Load()) - int64(before.HeapInuse); growth > 8<<20 {
+		t.Fatalf("heap in use grew by %d bytes during a %d byte upload", growth, size)
+	}
+}
+
+// Requirement: §9 limits: an upload over the connection's fileBytes, or without Content-Length, is refused before its
+// body is read. Risk: the gateway stages (or sends) a file it must refuse, or waits for a body of unknown length.
+func TestUploadOversizeRefusedBeforeProvider(t *testing.T) {
+	gw, p := newFileFixture(t, map[string]any{"fileBytes": 1000})
+	data := bytes.Repeat([]byte("x"), 2000)
+	status, _, v, err := gw.upload(bytes.NewReader(data), int64(len(data)), shaHex(data), map[string]any{"issue": "TGT-12", "name": "big.bin"}, map[string]string{"Expect": "100-continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, []any{status, v["error"]}, []any{413, "file-too-large"}, "oversize")
+	status, _, v, err = gw.upload(io.MultiReader(bytes.NewReader(data[:10])), -1, shaHex(data[:10]), map[string]any{"issue": "TGT-12", "name": "small.bin"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, []any{status, v["error"]}, []any{411, "length-required"}, "no length")
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider requests")
+	expect(t, len(gw.parts()), 0, "staged files")
+}
+
+// Requirement: §9 stall: a caller that stops sending is refused after stallMs and nothing reaches the provider.
+// Risk: a half-sent file held open forever, a temp file left behind, or a partial file posted.
+func TestUploadStallRemovesTempFile(t *testing.T) {
+	gw, p := newFileFixture(t, map[string]any{"stallMs": 300})
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	go writer.Write(bytes.Repeat([]byte("y"), 1000))
+	status, _, v, err := gw.upload(reader, 5000, strings.Repeat("0", 64), map[string]any{"issue": "TGT-12", "name": "slow.bin"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, []any{status, v["error"]}, []any{408, "stalled"}, "stall")
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider requests")
+	expect(t, len(gw.parts()), 0, "staged files")
+	expect(t, lastLine(t, gw)["errorCode"], "stalled", "spool")
+}
+
+// Requirement: §9 stall is a progress timeout, not a total deadline. Risk: a slow but steady upload over a poor link
+// is cut although bytes keep arriving.
+func TestUploadSlowSteadySucceeds(t *testing.T) {
+	gw, p := newFileFixture(t, map[string]any{"stallMs": 1000})
+	data := bytes.Repeat([]byte("z"), 300)
+	reader, writer := io.Pipe()
+	go func() {
+		for i := 0; i < len(data); i += 10 {
+			writer.Write(data[i : i+10])
+			time.Sleep(50 * time.Millisecond)
+		}
+		writer.Close()
+	}()
+	status, _, _, err := gw.upload(reader, int64(len(data)), shaHex(data), map[string]any{"issue": "TGT-12", "name": "steady.bin"}, nil)
+	if err != nil || status != 200 {
+		t.Fatalf("steady upload: %d %v", status, err)
+	}
+	uploads, _, _ := p.seen()
+	expect(t, uploads[0].sha, shaHex(data), "provider bytes")
+}
+
+// Requirement: §9 key scan: a file holding a key value the gateway holds, or the caller's own token, is refused,
+// also when the value is split across two reads. Risk: the file tool becomes a way to post a key to YouTrack.
+func TestUploadKeySplitAcrossReadsRefused(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	for _, secret := range []string{"invented-key-a", testToken} {
+		data := append(append(bytes.Repeat([]byte("."), 32<<10-5), secret...), bytes.Repeat([]byte("."), 1000)...)
+		reader, writer := io.Pipe()
+		go func() {
+			writer.Write(data[:32<<10]) // ends inside the value
+			time.Sleep(100 * time.Millisecond)
+			writer.Write(data[32<<10:])
+			writer.Close()
+		}()
+		status, _, v, err := gw.upload(reader, int64(len(data)), shaHex(data), map[string]any{"issue": "TGT-12", "name": "log.txt"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expect(t, []any{status, v["error"]}, []any{422, "secret-found"}, secret)
+		if strings.Contains(fmt.Sprint(v), secret) {
+			t.Fatal("the refusal names the value")
+		}
+	}
+	// The name goes to the provider too.
+	status, v := gw.uploadBytes([]byte("clean"), map[string]any{"issue": "TGT-12", "name": testToken + ".txt"})
+	expect(t, []any{status, v["error"]}, []any{422, "secret-found"}, "a token in the name")
+	if _, text := gw.spool(); strings.Contains(text, testToken) {
+		t.Fatal("the caller's token in the spool")
+	}
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider requests")
+	expect(t, len(gw.parts()), 0, "staged files")
+	if _, text := gw.spool(); strings.Contains(text, "invented-key-a") {
+		t.Fatal("key value in the spool")
+	}
+}
+
+// Requirement: §9: the staged bytes must match the client's X-Fleet-Sha256. Risk: a file changed between the client's
+// hash and its send is posted, so tool_run records a sha of other bytes.
+func TestUploadShaMismatchRefused(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	data := []byte("invented report")
+	status, _, v, err := gw.upload(bytes.NewReader(data), int64(len(data)), shaHex([]byte("other bytes")), map[string]any{"issue": "TGT-12", "name": "r.txt"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, []any{status, v["error"]}, []any{400, "sha-mismatch"}, "mismatch")
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider requests")
+}
+
+// Requirement: §9: an old JSON client that reaches a file tool gets file-expected, for an upload sent as JSON and for
+// a download without Accept: application/octet-stream. Risk: an old client posts JSON as a file, or reads raw bytes as
+// an invalid reply after the provider was called.
+func TestJSONToFileToolRefused(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	_, _, v := gw.raw("POST", "/v1/call/tavily/attach", "Bearer "+testToken, `{"issue":"TGT-12","path":"/tmp/x"}`)
+	expect(t, v["error"], "file-expected", "upload as JSON")
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	expect(t, []any{response.StatusCode, response.Header.Get("X-Fleet-Error")}, []any{400, "file-expected"}, "download without Accept")
+	uploads, lookups, _ := p.seen()
+	expect(t, []int{len(uploads), len(lookups)}, []int{0, 0}, "provider requests")
+}
+
+// Requirement: §9 name rules: the name goes into a quoted multipart header, so CR, LF, control characters, ", / and
+// names over 255 bytes are refused. Risk: a crafted name adds a header or a part, or names a path.
+func TestUploadBadFileNameRefused(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	for _, name := range []string{"", "a\rb", "a\nb", "a\x01b", `a"b`, `notes\`, "invoice\u202efdp.exe", "a\u0085b", "..", "  ", "a/b", strings.Repeat("я", 128)} {
+		status, v := gw.uploadBytes([]byte("x"), map[string]any{"issue": "TGT-12", "name": name})
+		expect(t, []any{status, v["error"]}, []any{400, "bad-file-name"}, fmt.Sprintf("%q", name))
+	}
+	status, v := gw.uploadBytes([]byte("x"), map[string]any{"issue": "TGT-12", "name": "ok.txt", "extra": 1})
+	expect(t, []any{status, v["error"]}, []any{400, "bad-request"}, "an argument outside the path fields")
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider requests")
+}
+
+// Requirement: §9: an upload is not idempotent; a provider that read the file and gave no answer leaves the outcome
+// unknown, and the file is not sent again. Risk: a retry or failover creates a duplicate attachment.
+func TestUploadProviderCutIsUnknown(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	p.onUpload = func(w http.ResponseWriter, read func()) {
+		read()
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		conn.Close()
+	}
+	status, v := gw.uploadBytes([]byte("invented"), map[string]any{"issue": "TGT-12", "name": "a.txt"})
+	expect(t, []any{status, v["error"]}, []any{502, "provider-unreachable"}, "cut")
+	expect(t, lastLine(t, gw)["outcome"], "unknown", "outcome")
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 1, "provider requests")
+}
+
+// Requirement: §9 download: the lookup carries the key; the file fetch from the signed URL carries none.
+// Risk: the key leaves the gateway on a request it does not need, to a URL the provider's reply chose.
+func TestDownloadFetchCarriesNoKey(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || !bytes.Equal(data, blobBytes) {
+		t.Fatalf("download: %v %d bytes", err, len(data))
+	}
+	meta, _ := base64.RawURLEncoding.DecodeString(response.Header.Get("X-Fleet-File"))
+	expect(t, string(meta), `{"bytes":1000,"mediaType":"image/png","name":"экран 1.png"}`, "file header")
+	_, lookups, fetches := p.seen()
+	expect(t, []any{lookups, fetches}, []any{[]string{"Bearer invented-key-a"}, []string{""}}, "authorization")
+}
+
+// Requirement: §9 download URL: only a path on the provider's own host is fetched. Risk: a lookup reply with an
+// absolute or protocol-relative URL makes the gateway fetch from another host.
+func TestDownloadAbsoluteURLRefused(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	for _, link := range []string{"http://other/x", "//other/x", "blob/85-1"} {
+		p.meta = func() map[string]any {
+			return map[string]any{"name": "a", "size": 3, "mimeType": "text/plain", "url": link}
+		}
+		response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		expect(t, []any{response.StatusCode, response.Header.Get("X-Fleet-Error")}, []any{502, "provider-body"}, link)
+	}
+	_, _, fetches := p.seen()
+	expect(t, []any{len(fetches), p.other.Load()}, []any{0, 0}, "fetches")
+}
+
+// Requirement: §9 download: a redirect of the file fetch is not followed. Risk: the provider (or a crafted signed
+// URL) sends the gateway to another URL.
+func TestDownloadRedirectNotFollowed(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	p.blob = func(w http.ResponseWriter) { w.Header().Set("Location", "/elsewhere"); w.WriteHeader(302) }
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	expect(t, []any{response.StatusCode, response.Header.Get("X-Fleet-Error")}, []any{502, "provider-redirect"}, "redirect")
+	expect(t, p.other.Load(), int32(0), "redirect target requests")
+}
+
+// Requirement: §9 limits: a download over replyBytes is refused from the lookup size, before the fetch.
+// Risk: the gateway streams a file the connection's limit excludes.
+func TestDownloadOversizeRefusedBeforeFetch(t *testing.T) {
+	gw, p := newFileFixture(t, map[string]any{"replyBytes": 10})
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	expect(t, []any{response.StatusCode, response.Header.Get("X-Fleet-Error")}, []any{413, "reply-too-large"}, "oversize")
+	_, _, fetches := p.seen()
+	expect(t, len(fetches), 0, "fetches")
+}
+
+// Requirement: §9: a provider body shorter than the lookup size aborts the caller's connection, and the completed line
+// records download-cut with the bytes actually sent. Risk: the caller receives a short file that ends cleanly.
+func TestDownloadShortBodyAborts(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	p.blob = func(w http.ResponseWriter) {
+		w.Write(blobBytes[:300])
+		w.(http.Flusher).Flush() // chunked: no Content-Length to compare
+	}
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err == nil {
+		t.Fatalf("a short file ended cleanly after %d bytes", len(data))
+	}
+	line := lastLine(t, gw)
+	expect(t, []any{line["phase"], line["outcome"], line["errorCode"], field(line, "transfer", "bytes"), field(line, "transfer", "sha256")},
+		[]any{"completed", "error", "download-cut", 300, nil}, "completed line")
+	// A chunked body longer than the lookup size is not this file either: the caller never gets all its bytes.
+	p.blob = func(w http.ResponseWriter) {
+		w.Write(blobBytes)
+		w.(http.Flusher).Flush()
+		time.Sleep(100 * time.Millisecond) // the file's bytes arrive alone first
+		w.Write([]byte("more"))
+	}
+	if response, err = gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err = io.ReadAll(response.Body)
+	response.Body.Close()
+	if err == nil {
+		t.Fatalf("a longer body ended cleanly after %d bytes", len(data))
+	}
+	line = lastLine(t, gw)
+	expect(t, []any{line["outcome"], line["errorCode"], field(line, "transfer", "sha256")}, []any{"error", "provider-body", nil}, "longer body")
+}
+
+// Requirement: §9: file bytes are never redacted; the sha256 in the completed line is that of the bytes sent.
+// Risk: key redaction rewrites a binary file that happens to contain the key's bytes.
+func TestDownloadBytesUnchanged(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	data := []byte("before invented-key-a after")
+	p.meta = func() map[string]any {
+		return map[string]any{"name": "k.bin", "size": len(data), "mimeType": "application/octet-stream", "url": "/blob/85-1"}
+	}
+	p.blob = func(w http.ResponseWriter) { w.Write(data) }
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	expect(t, string(got), string(data), "bytes")
+	expect(t, field(lastLine(t, gw), "transfer", "sha256"), shaHex(data), "sha")
+}
+
+// Requirement: §9: staged uploads a crash left behind are removed when the gateway starts. Risk: files fill state_dir.
+func TestStagingLeftoversRemovedAtStart(t *testing.T) {
+	gw, _ := newFileFixture(t, nil)
+	gw.halt()
+	os.WriteFile(filepath.Join(gw.dir, "state/files/left.part"), []byte("x"), 0o600)
+	gw.start()
+	expect(t, len(gw.parts()), 0, "staged files")
+}
+
+// Requirement: §9 download accounting: the started line (outcome unknown, lookup bytes, no sha) is durable before the
+// caller gets the first header; the completed line has the same callId, ok, bytes and sha256 and nothing counted twice.
+// Risk: a deploy cut mid-stream leaves no tool_run, or ingest counts usage or key problems twice.
+func TestDownloadWritesTwoLines(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	release := make(chan struct{})
+	p.blob = func(w http.ResponseWriter) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(blobBytes)))
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		<-release
+		w.Write(blobBytes)
+	}
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+	if err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	started := lastLine(t, gw)
+	close(release)
+	data, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	expect(t, len(data), len(blobBytes), "bytes")
+	expect(t, []any{started["callId"], started["phase"], started["outcome"], started["errorCode"], started["status"], field(started, "transfer", "bytes"), field(started, "transfer", "sha256"), started["keyFingerprint"]},
+		[]any{response.Header.Get("X-Fleet-Call-Id"), "started", "unknown", "download-unfinished", 200, len(blobBytes), nil, fp("invented-key-a")}, "started line")
+	lines, _ := gw.spool()
+	expect(t, len(lines), 2, "lines")
+	done := lines[1]
+	expect(t, []any{done["callId"], done["phase"], done["outcome"], done["errorCode"], done["transfer"], done["usage"], done["disabled"], done["keyProblem"]},
+		[]any{started["callId"], "completed", "ok", nil, map[string]any{"direction": "download", "bytes": len(blobBytes), "mediaType": "image/png", "name": "экран 1.png", "sha256": shaHex(blobBytes)}, nil, nil, nil}, "completed line")
+}
+
+// Requirement: §9 drain: a stop cancels uploads still staging with 503 draining; nothing reaches the provider and the
+// temp file goes. Risk: a deploy waits for a slow upload or posts half a file.
+func TestDrainCancelsStagingUpload(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	go writer.Write([]byte("partial"))
+	type result struct {
+		status int
+		v      map[string]any
+		err    error
+	}
+	answered := make(chan result, 1)
+	go func() {
+		status, _, v, err := gw.upload(reader, 5000, strings.Repeat("0", 64), map[string]any{"issue": "TGT-12", "name": "big.mov"}, nil)
+		answered <- result{status, v, err}
+	}()
+	for end := time.Now().Add(5 * time.Second); len(gw.parts()) == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the upload did not start staging")
+		}
+	}
+	begun := time.Now()
+	gw.halt()
+	writer.Close() // a client blocked writing its body reads its answer only once the body ends
+	r := <-answered
+	if r.err == nil {
+		expect(t, []any{r.status, r.v["error"]}, []any{503, "draining"}, "drained upload")
+	}
+	if held := time.Since(begun); held > 2*time.Second {
+		t.Fatalf("the stop waited %v for a staging upload", held)
+	}
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider requests")
+	expect(t, len(gw.parts()), 0, "staged files")
+}
+
+// Requirement: §9 drain: an upload whose post to the provider is in flight finishes within the drain, while one still
+// staging at the stop is refused with draining and never posted. Risk: a deploy cuts a post (unknown outcome) it
+// could have let finish, or posts an upload after the stop.
+func TestDrainLetsPostFinish(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	p.onUpload = func(w http.ResponseWriter, read func()) {
+		close(entered)
+		<-release
+		read()
+		io.WriteString(w, `[{"id":"85-2"}]`)
+	}
+	posted := make(chan int, 1)
+	go func() {
+		first := []byte("first file")
+		status, _, _, _ := gw.upload(bytes.NewReader(first), int64(len(first)), shaHex(first), map[string]any{"issue": "TGT-12", "name": "a.txt"}, nil)
+		posted <- status
+	}()
+	<-entered
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	go writer.Write([]byte("second"))
+	staged := make(chan int, 1)
+	go func() {
+		status, _, _, _ := gw.upload(reader, 5000, strings.Repeat("0", 64), map[string]any{"issue": "TGT-12", "name": "b.txt"}, nil)
+		staged <- status
+	}()
+	for end := time.Now().Add(5 * time.Second); len(gw.parts()) < 2; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the second upload did not start staging")
+		}
+	}
+	stopped := make(chan struct{})
+	go func() { close(gw.stop); <-gw.done; gw.stop = nil; close(stopped) }()
+	var status int
+	select {
+	case status = <-staged:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("the staging upload was not refused at the stop")
+	}
+	writer.Close()
+	if status != 503 {
+		t.Fatalf("the staging upload answered %d, not draining", status)
+	}
+	close(release)
+	expect(t, <-posted, 200, "the post in flight")
+	<-stopped
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 1, "provider requests")
+}
+
+// Requirement: §9 key scan finds a value wherever the reads split it, also over several short reads.
+// Risk: a value cut by a read boundary, or spread over reads shorter than itself, passes the scan.
+func TestScannerFindsValueAcrossAnySplit(t *testing.T) {
+	value := []byte("invented-key-value")
+	data := append(append(bytes.Repeat([]byte("."), 40), value...), bytes.Repeat([]byte("."), 40)...)
+	for size := 1; size <= len(data); size++ {
+		for offset := 0; offset < size; offset++ {
+			s := newScanner([][]byte{[]byte("other-pattern-longer-than-the-value"), value})
+			found := s.write(data[:offset])
+			for i := offset; i < len(data) && !found; i += size {
+				found = s.write(data[i:min(i+size, len(data))])
+			}
+			if !found {
+				t.Fatalf("missed with reads of %d after %d", size, offset)
+			}
+		}
+	}
+	if s := newScanner([][]byte{value}); s.write(data[:57]) || s.write(data[58:]) {
+		t.Fatal("found a value with a byte missing")
+	}
+}
+
+// Requirement: §9 stall: once the provider starts answering an upload (a 1xx, or part of its status line), the rest of
+// its answer must still progress within stallMs. Risk: a provider that sends one byte or a 100 Continue and stops holds
+// the call, its staged file and the caller's connection forever.
+func TestUploadProviderStallsAfterFirstByte(t *testing.T) {
+	gw, p := newFileFixture(t, map[string]any{"stallMs": 300})
+	done := make(chan struct{})
+	defer close(done)
+	for _, start := range []string{"HTTP/1.1 100 Continue\r\n\r\n", "HTTP/1.1 2"} {
+		p.onUpload = func(w http.ResponseWriter, read func()) {
+			read()
+			conn, buffered, _ := w.(http.Hijacker).Hijack()
+			buffered.WriteString(start)
+			buffered.Flush()
+			<-done
+			conn.Close()
+		}
+		begun, answered := time.Now(), make(chan []any, 1)
+		go func() {
+			data := []byte("invented")
+			status, _, v, _ := gw.upload(bytes.NewReader(data), int64(len(data)), shaHex(data), map[string]any{"issue": "TGT-12", "name": "a.txt"}, nil)
+			answered <- []any{status, v["error"]}
+		}()
+		select {
+		case got := <-answered:
+			expect(t, got, []any{504, "provider-stalled"}, fmt.Sprintf("%q", start))
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%q: the call hangs after the provider's first byte", start)
+		}
+		if held := time.Since(begun); held > 1200*time.Millisecond {
+			t.Fatalf("%q: the call took %v with stallMs 300", start, held)
+		}
+		expect(t, lastLine(t, gw)["outcome"], "unknown", "outcome")
+	}
+}
+
+// Requirement: §9 upload: a call admitted before a long staging is admitted again before the key is attached.
+// Risk: a token revoked, intake paused or budget reached while the file was arriving still posts it with the key.
+func TestUploadAdmittedAgainBeforePost(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	data := []byte("a file that arrives slowly")
+	reader, writer := io.Pipe()
+	answered := make(chan []any, 1)
+	go func() {
+		status, _, v, _ := gw.upload(reader, int64(len(data)), shaHex(data), map[string]any{"issue": "TGT-12", "name": "slow.txt"}, nil)
+		answered <- []any{status, v["error"]}
+	}()
+	writer.Write(data[:5])
+	gw.write(fileSnapshot(p.url, nil, "paused"))
+	gw.adoptWritten()
+	writer.Write(data[5:])
+	writer.Close()
+	expect(t, <-answered, []any{403, "intake-paused"}, "paused while staging")
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider requests")
+}
+
+// Requirement: §9 stall: an empty file's body check is bounded by stallMs like every other provider read.
+// Risk: a provider that answers a zero-size attachment and then sends nothing holds the call and its connection forever.
+func TestDownloadEmptyFileProviderStalls(t *testing.T) {
+	gw, p := newFileFixture(t, map[string]any{"stallMs": 300})
+	release := make(chan struct{})
+	defer close(release)
+	p.meta = func() map[string]any {
+		return map[string]any{"name": "empty.txt", "size": 0, "mimeType": "text/plain", "url": "/blob/85-1"}
+	}
+	p.blob = func(w http.ResponseWriter) {
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush() // chunked, no length: the body is still to come
+		<-release
+	}
+	answered := make(chan []any, 1)
+	go func() {
+		response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+		if err != nil {
+			answered <- []any{0, err.Error()}
+			return
+		}
+		response.Body.Close()
+		answered <- []any{response.StatusCode, response.Header.Get("X-Fleet-Error")}
+	}()
+	select {
+	case got := <-answered:
+		expect(t, got, []any{504, "provider-stalled"}, "stalled empty file")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the download of an empty file hangs on a silent provider")
+	}
+	// An empty file the provider ends at once is a whole download.
+	p.blob = func(w http.ResponseWriter) { w.Header().Set("Content-Length", "0") }
+	response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	expect(t, []any{response.StatusCode, len(data), err == nil, field(lastLine(t, gw), "transfer", "sha256")}, []any{200, 0, true, shaHex(nil)}, "empty file")
 }

@@ -126,7 +126,16 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 		if blocked[name] {
 			bl = append(bl, "connection")
 		}
-		snap.Connections[name] = contract.GatewayConnection{Provider: astr(c["provider"]), Tools: strs(c["tools"]), Intake: astr(c["intake"]), Keys: keys, Blocked: bl}
+		gc := contract.GatewayConnection{Provider: astr(c["provider"]), Tools: strs(c["tools"]), Intake: astr(c["intake"]), Keys: keys, Blocked: bl}
+		if l, ok := c["limits"].(map[string]any); ok && len(l) > 0 {
+			// A value that does not decode leaves this connection at its defaults; it never blocks every other one.
+			if limits, err := asT[contract.GatewayLimits](l); err != nil {
+				log.Printf("connection %s: limits not published: %v", name, err)
+			} else {
+				gc.Limits = &limits
+			}
+		}
+		snap.Connections[name] = gc
 	}
 	toks, err := all(q, "run-token", nil)
 	if err != nil {
@@ -725,6 +734,47 @@ func init() {
 		}
 		return c, nil
 	}))
+	// File tool limits (§9): the stored object is replaced as a whole; an omitted field takes the gateway's default.
+	gatedOp("connections_set_limits", false, shaped[contract.ConnectionsSetLimitsRequest, contract.ConnectionView](func(q *Request) (any, error) {
+		b := body(q)
+		c, err := connByName(q, b["connection"])
+		if err != nil {
+			return nil, err
+		}
+		if err := connHolderOrOwner(q, c); err != nil {
+			return nil, err
+		}
+		given := mapOf(b["limits"])
+		if !keysOnly(b, "connection", "limits") || given == nil || !keysOnly(given, "fileBytes", "replyBytes", "stallMs", "answerMs") {
+			return nil, fail(400, "limits: {fileBytes, replyBytes, stallMs, answerMs}")
+		}
+		next := doc{}
+		for k, v := range given {
+			n, ok := v.(float64)
+			if !ok || n < 1 || n > 1<<53 || n != float64(int64(n)) {
+				return nil, fail(400, "limits."+k+" must be a positive integer")
+			}
+			next[k] = n
+		}
+		previous, _ := c["limits"].(map[string]any)
+		if previous == nil {
+			previous = doc{}
+		}
+		if canonical(next) != canonical(previous) {
+			if err := connChange(q, c, "limits", previous, next); err != nil {
+				return nil, err
+			}
+			c["limits"], c["updatedAt"] = next, nowMs()
+			if len(next) == 0 {
+				delete(c, "limits")
+			}
+			if err := put(q, "api-connection", c); err != nil {
+				return nil, err
+			}
+			publish(q)
+		}
+		return c, nil
+	}))
 	// Owner connection tokens (§4): a long-lived bearer for the owner's interactive sessions; the value is answered once.
 	gatedOp("connections_token_create", false, checkFirst(connOwner, shaped[contract.ConnectionsTokenCreateRequest, contract.ConnectionsTokenCreateReply](func(q *Request) (any, error) {
 		// Full access (owner, grant "*" such as site-agents) mints during development; directedBy records the real actor.
@@ -1031,15 +1081,16 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 				callIDs = append(callIDs, "call:"+l.CallId)
 			}
 		}
-		existing := map[string]bool{}
+		// Rows already recorded, with their download phase ("" for a one-line call).
+		existing := map[string]string{}
 		if len(callIDs) > 0 {
 			if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-				rs, err := queryRows(q, "SELECT id FROM execution WHERE id = ANY($1)", callIDs)
+				rs, err := queryRows(q, "SELECT id, coalesce(data->>'phase','') AS phase FROM execution WHERE id = ANY($1)", callIDs)
 				if err != nil {
 					return err
 				}
 				for _, r := range rs {
-					existing[astr(r["id"])] = true
+					existing[astr(r["id"])] = astr(r["phase"])
 				}
 				return nil
 			}); err != nil {
@@ -1047,7 +1098,21 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 			}
 		}
 		for _, l := range parsed {
-			if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil || existing["call:"+l.CallId] {
+			if l.CallId == "" || l.TokenSha256 == nil || l.ExecutionId == nil {
+				continue
+			}
+			phase, recorded := existing["call:"+l.CallId]
+			if l.Phase != nil && *l.Phase == contract.CallPhaseCompleted {
+				// A download's completion line updates its started row, also one this pass just inserted from the same file.
+				if phase == string(contract.CallPhaseCompleted) {
+					continue
+				}
+				if err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error { return connComplete(q, l) }); err != nil {
+					return added, err
+				}
+				continue
+			}
+			if recorded {
 				continue
 			}
 			lock := NOLOCK
@@ -1096,6 +1161,12 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	}
 	data := doc{"tool": l.Tool, "connection": l.Connection, "outcome": l.Outcome, "errorCode": l.ErrorCode, "status": l.Status,
 		"keyFingerprint": l.KeyFingerprint, "usage": l.Usage, "directedBy": t["directedBy"], "startedAt": l.StartedAt, "ms": l.Ms}
+	if l.Transfer != nil {
+		data["transfer"] = l.Transfer
+	}
+	if l.Phase != nil {
+		data["phase"] = *l.Phase
+	}
 	if t["personal"] != nil {
 		data["tokenName"] = t["personal"]
 	}
@@ -1201,6 +1272,41 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// connComplete applies a download's completed line (§9) to its started row: state, end, problem and the transfer of the
+// finished stream. A row already completed stays as it is (each pass reads the whole day file again). Without a row (the
+// started line was lost and counted in the gateway's lost spool lines) the completed line is recorded alone.
+func connComplete(q *Request, l contract.CallLine) error {
+	id := "call:" + l.CallId
+	state, problem := "failed", any(problemOf(string(l.Outcome), deref(l.ErrorCode)))
+	if l.Outcome == contract.CallOutcomeOk {
+		state, problem = "succeeded", nil
+	}
+	ms := max(l.Ms, 0)
+	patch := doc{"outcome": l.Outcome, "status": l.Status, "errorCode": l.ErrorCode, "ms": ms, "transfer": l.Transfer, "phase": contract.CallPhaseCompleted}
+	tag, err := q.tx.Exec(q.ctx(), `UPDATE execution SET state=$2, problem=$4, data=data||$5::jsonb,
+	 ended_at=started_at+make_interval(secs => $3::bigint/1000.0) WHERE id=$1 AND data->>'phase'='started'`, id, state, ms, problem, jsonBytes(patch))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		if err := exec(q, `UPDATE execution_totals SET wall_ms=$2,wall_ms_basis='measured',active_ms=$2,active_ms_basis='measured',computed_at=now()
+		 WHERE execution_id=$1 AND EXISTS (SELECT 1 FROM execution e WHERE e.id=$1 AND e.started_at IS NOT NULL)`, id, ms); err != nil {
+			return err
+		}
+		publish(q)
+		return nil
+	}
+	var exists bool
+	if err := q.tx.QueryRow(q.ctx(), "SELECT EXISTS(SELECT 1 FROM execution WHERE id=$1)", id).Scan(&exists); err != nil || exists {
+		return err
+	}
+	ok, err := connRecord(q, l)
+	if ok {
+		publish(q)
+	}
+	return err
 }
 
 func connDisable(q *Request, fp string, status int64) error {

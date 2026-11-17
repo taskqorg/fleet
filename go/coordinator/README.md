@@ -73,7 +73,7 @@ The three independent fixed-header reads use one ordered batch under the same pr
 
 - Starts a loopback HTTP server, PostgreSQL listener and periodic passes through [`startAll`](./registry.go); writes telemetry through [`startTelemetry`](./telemetry.go).
 - Mutates PostgreSQL state, emits `fleet_change` notifications, and may queue host commands. [`onEnd`](./store.go) delays registered filesystem effects until a transaction is known committed.
-- Reads people, release/configuration and Lab files; [`connections.go`](./connections.go) can ingest gateway spool files and remove fully imported past-day files only after commit.
+- Reads people, release/configuration and Lab files; [`connections.go`](./connections.go) can ingest gateway spool files and remove fully imported past-day files only after commit. A spool line becomes one `tool_run` (with `data.transfer` for a file tool); a download's `phase: completed` line updates the row its `started` line made (`connComplete`: state, end, problem, transfer), once, and inserts the row alone when the started line was lost. `connections_set_limits` (holder or owner) stores a connection's file limits and republishes the snapshot.
 - Reads, writes, copies and deletes S3-compatible objects through [`S3`](./s3.go). Artifact deletion and retention routines keep tombstones and avoid deletion while a verified copy is unreachable.
 - [`runChecks`](./lab.go) executes approved Lab check commands in a temporary directory; on Unix it kills the check process group after completion or cancellation.
 
