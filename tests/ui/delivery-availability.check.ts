@@ -137,9 +137,15 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     assert.ok(await page.locator('.dc-vals .alert').count() >= 1, 'the P90 above the norm is red in the values row');
     // A picked day filters the list to the pull requests merged that day, with a removable chip.
     await cols.nth(5).click();
-    await page.waitForURL(u => u.searchParams.get('at') === String(dayStart(1)));
+    const y = new Date(dayStart(1)), pad = (n: number) => String(n).padStart(2, '0');
+    await page.waitForURL(u => u.searchParams.get('at') === `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`);
     await list.getByRole('link', {name: 'Merged yesterday A'}).waitFor();
     assert.equal(await list.getByRole('link', {name: 'Checks failed here'}).count(), 0, 'the current rows give way to the day');
+    // A link to the day opens it once the history is in, and keeps it in the link.
+    const at = new URL(page.url()).searchParams.get('at')!;
+    await page.goto(origin + '/delivery?at=' + at);
+    await list.getByRole('link', {name: 'Merged yesterday B'}).waitFor();
+    assert.equal(new URL(page.url()).searchParams.get('at'), at, 'the picked day stays in the link');
     await page.getByRole('button', {name: /Remove filter Merged/}).click();
     await page.waitForURL(u => !u.searchParams.has('at'));
     // The ranges: 24 h is twelve two-hour buckets, 30 days starts at the first recorded day.

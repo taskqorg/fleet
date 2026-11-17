@@ -7,7 +7,7 @@
 import { useCallback, useEffect } from 'preact/hooks';
 import {
   ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
-  Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, duration, actions, DELIVERY_ORDER,
+  Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
   type StateOf, type DayCol, type DayMark, type SharePart,
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
@@ -38,7 +38,7 @@ const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
 const NORM_KEY: Partial<Record<Stage, string>> = { pr_ci: 'pr_ci', mq_wait: 'enqueue', mq_ci: 'queue', releasing: 'release', installing: 'install' };
 type Norms = { stage: (s: Stage) => [number, number] | null; total: [number, number] | null };
 const GROUPS = [['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const;
-const SORTS = [['since', 'In stage since', ['Newest first', 'Oldest first']], ['opened', 'Opened', ['Newest first', 'Oldest first']]] as const;
+const SORTS = [['since', 'In stage since'], ['opened', 'Opened']] as const;
 // System presets (OR-33) set the stage filter only; grouping, sort and search stay.
 const SYSTEM_VIEWS: SavedView[] = [
   { name: 'Needs me', view: { view: 'delivery', state: [...FAILED] } },
@@ -63,7 +63,7 @@ type DeliveryExtra = { range?: string; at?: string };
 export function deliveryExtra(x: Record<string, string | undefined> | undefined): DeliveryExtra {
   const out: DeliveryExtra = {};
   if (x?.range && x.range !== '7d' && RANGES.some(r => r.id === x.range)) out.range = x.range;
-  if (x?.at && /^[1-9]\d*$/.test(x.at)) out.at = x.at;
+  if (x?.at && /^\d{4}-\d{2}-\d{2}(T\d{2})?$/.test(x.at)) out.at = x.at;
   return out;
 }
 
@@ -74,12 +74,12 @@ type Bucket = DayCol & { start: number; end: number; today: boolean };
 export function bucketsOf(range: string, now: number, first?: number): Bucket[] {
   if (range === '24h') {
     return Array.from({ length: 12 }, (_, i) => { const s = slotStart(now, 2, i - 11), e = slotStart(now, 2, i - 10);
-      return { key: String(s), start: s, end: e, label: hourLabel(s), tip: `${day(s, now)} ${hourLabel(s)}–${hourLabel(e)}${e > now ? ', so far' : ''}`, today: e > now }; });
+      return { key: dateKey(s, true), start: s, end: e, label: hourLabel(s), tip: `${day(s, now)} ${hourLabel(s)}–${hourLabel(e)}${e > now ? ', so far' : ''}`, today: e > now }; });
   }
   const out: Bucket[] = [];
   let s = dayStart(now, range === '30d' ? -29 : -6);
   if (first && first > s) s = dayStart(first);
-  for (; s <= now; s = dayStart(s, 1)) { const t = s === dayStart(now); out.push({ key: String(s), start: s, end: dayStart(s, 1), label: day(s, now), tip: t ? `${day(s, now)}, today so far` : day(s, now), today: t }); }
+  for (; s <= now; s = dayStart(s, 1)) { const t = s === dayStart(now); out.push({ key: dateKey(s), start: s, end: dayStart(s, 1), label: day(s, now), tip: t ? `${day(s, now)}, today so far` : day(s, now), today: t }); }
   return out;
 }
 
@@ -103,14 +103,16 @@ export function Delivery({ id }: { id?: string }) {
   const histDoc = useDoc<{ h: History; r: Regressions } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange : null,
     () => no404(Promise.all([op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }), op('delivery_regressions', {})]).then(([h, r]) => ({ h, r }))), touchesHistory, 600000);
   const hist = histDoc.data === NONE ? null : histDoc.data;
+  const histLoading = !prefsRead.value || fleetShown && histDoc.data === null && !histDoc.error;
   const paceOf = (v: View) => {
     const ex = deliveryExtra(v.extra), range = ex.range ?? '7d', buckets = bucketsOf(range, now, hist?.h.backfilledFrom ? ms(hist.h.backfilledFrom) : undefined);
     return { ex, range, buckets, picked: ex.at ? buckets.find(b => b.key === ex.at) ?? null : null };
   };
   const local = (v: View): LocalList<Row> => {
     const { picked } = paceOf(v);
-    // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows.
-    const source = picked && hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(fromHistory) : items;
+    // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows; none
+    // while the history loads.
+    const source = !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(fromHistory) : [];
     const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
     const rowsOf = source.map(row);
     const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo}`, { state: r.it.stage, project: r.it.projectId }));
@@ -121,13 +123,15 @@ export function Delivery({ id }: { id?: string }) {
     const key = (r: Row) => ms(field === 'opened' ? r.it.opened : r.it.since) || 0;
     const gkey = (r: Row) => group === 'stage' ? r.it.stage : group === 'project' ? r.it.projectId || '' : '';
     const order = group === 'stage' ? ORDER as string[] : [...new Set(searched.map(gkey))].sort();
-    const rows = searched.filter(r => !st.length || st.includes(r.it.stage)).map(r => ({ ...r, sortKey: [gkey(r), key(r)] }))
-      .sort((a, b) => order.indexOf(String(a.sortKey[0])) - order.indexOf(String(b.sortKey[0])) || (desc ? key(b) - key(a) : key(a) - key(b)));
+    // The order key carries the direction, as a server list's does, so pinned rows (compareKeys) follow it too.
+    const keyed = (r: Row): Row => ({ ...r, sortKey: [gkey(r), desc ? -key(r) : key(r)] });
+    const rows = searched.filter(r => !st.length || st.includes(r.it.stage)).map(keyed)
+      .sort((a, b) => order.indexOf(String(a.sortKey[0])) - order.indexOf(String(b.sortKey[0])) || (a.sortKey[1] as number) - (b.sortKey[1] as number));
     const groups = order.map(k => ({ key: k, label: group === 'stage' ? states.delivery[k as Stage].label : k || 'No project', count: rows.filter(r => r.sortKey[0] === k).length })).filter(g => g.count);
     // Pinned rows stay whatever the filter or the picked day (OR-12): the current rows and the day's, in the page's order.
-    const keyed = (r: Row) => ({ ...r, sortKey: [gkey(r), key(r)] });
-    const all = [...items.map(row), ...rowsOf.filter(r => !items.some(it => idOf(it) === r.id))].map(keyed);
-    return { rows, all, counts, groups, pending: !data && !status.error, error: status.error && !data ? status.error : null, reload: status.reload };
+    const current = items.map(row), ids = new Set(current.map(r => r.id));
+    const all = [...current, ...rowsOf.filter(r => !ids.has(r.id))].map(keyed);
+    return { rows, all, counts, groups, pending: !data && !status.error || !!picked && histLoading, error: status.error && !data ? status.error : null, reload: status.reload };
   };
   const page = useListPage<Row>({
     view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: ['installed'],
@@ -137,7 +141,9 @@ export function Delivery({ id }: { id?: string }) {
   const { view, set } = page;
   const { ex, range, buckets, picked } = paceOf(view);
   // A link saved while the "undefined" bug was live, or one with an old range, carries keys the page ignores: drop them.
-  useEffect(() => { const x = view.extra ?? {}; if (Object.keys(x).some(k => (x as Record<string, string | undefined>)[k] !== (ex as Record<string, string | undefined>)[k])) set({ extra: ex }, 'type'); }, [JSON.stringify(view.extra)]);
+  // So does a picked bucket outside the range, or one with no history to show (none kept, or focused away from fleet).
+  const keep: DeliveryExtra = { ...ex, at: ex.at && (picked && (hist || histLoading)) ? ex.at : undefined };
+  useEffect(() => { const x = view.extra ?? {}; if (Object.keys(x).some(k => (x as Record<string, string | undefined>)[k] !== (keep as Record<string, string | undefined>)[k])) set({ extra: deliveryExtra(keep) }, 'type'); }, [JSON.stringify(view.extra), !!hist, histLoading]);
   // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
   // most installed) or a filter to installed rows opens it.
   const doneOnly = !!view.state?.length && view.state.every(s => DONE.includes(s as Stage));
@@ -145,7 +151,7 @@ export function Delivery({ id }: { id?: string }) {
   const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
   const open = items.find(it => idOf(it) === id) ?? hist?.h.prs.map(fromHistory).find(it => idOf(it) === id);
-  const p = picked;
+  const p = keep.at ? picked : null;
 
   const list = <>
     <header class="page-h"><h1>Delivery</h1><span class="grow" />

@@ -23,7 +23,7 @@ export function stamp(t: number, now: number): string {
 }
 
 /** Calendar day in the viewer's zone: "16 Nov" (the year when it is not the year of `now`). */
-export function day(t: number, now = t): string {
+export function day(t: number, now = Date.now()): string {
   const d = new Date(t);
   return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() === new Date(now).getFullYear() ? '' : ' ' + d.getFullYear()}`;
 }
@@ -41,6 +41,13 @@ export function slotStart(t: number, hours: number, n = 0): number {
   const d = new Date(t);
   d.setHours(d.getHours() - d.getHours() % hours + n * hours, 0, 0, 0);
   return d.getTime();
+}
+
+/** A link key of a local calendar day ("2026-11-16") or, with `hour`, of a local hour slot ("2026-11-16T14"): the same
+ *  calendar day or hour in every zone, and stable while the page stays open. */
+export function dateKey(t: number, hour = false): string {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}${hour ? 'T' + pad(d.getHours()) : ''}`;
 }
 
 /** Hour of the day in the viewer's zone, for buckets shorter than a day: "14:00". */
