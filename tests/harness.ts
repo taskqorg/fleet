@@ -6,7 +6,7 @@
 // (default ~/.cache/fleet-trial/pg; created with initdb and started on first use), FLEET_TRIAL_PGPORT (default 54329).
 import {execFileSync, spawn} from 'node:child_process';
 import {createHash, randomBytes} from 'node:crypto';
-import {copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync} from 'node:fs';
+import {copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {homedir, tmpdir} from 'node:os';
 import {basename, join} from 'node:path';
@@ -23,7 +23,7 @@ export const freePort = () => new Promise<number>(r => { const s = createServer(
 // tests/fixtures/projects, in a fresh directory per coordinator: definition writes never touch the checkout.
 export function testConfig(): string {
   const dir = mkdtempSync(join(tmpdir(), 'fleet-config-'));
-  cpSync(join(root, 'config'), dir, {recursive: true, filter: src => !src.startsWith(join(root, 'config/lab'))});
+  cpSync(join(root, 'config'), dir, {recursive: true, filter: src => src !== join(root, 'config/lab')});
   cpSync(join(root, 'tests/fixtures/projects'), join(dir, 'projects'), {recursive: true});
   return dir;
 }
@@ -76,7 +76,7 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
   // A crashed caller must not leave the coordinator running (it holds the caller's stdout open).
   process.on('exit', () => { if (!exited) try { process.kill(-server.pid!, 'SIGKILL'); } catch {} });
   const kill = async () => { if (!exited) { try { process.kill(-server.pid!, 'SIGTERM'); } catch {} for (let i = 0; i < 50 && !exited; i++) await new Promise(r => setTimeout(r, 100)); if (!exited) try { process.kill(-server.pid!, 'SIGKILL'); } catch {} await gone; } };
-  const stop = async () => { await kill(); dropDb(); };
+  const stop = async () => { await kill(); dropDb(); rmSync(config, {recursive: true, force: true}); };
   // restart: a new coordinator process on the same database (what a deploy does).
   const restart = async () => { await kill(); await launch(); };
   await launch();

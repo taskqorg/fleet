@@ -1202,6 +1202,10 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	failNow := func(problem, message string) (bool, error) {
 		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
 	}
+	// A run keeps the definition it started with: a step of a kind no longer run (publication) fails, never runs as a script.
+	if kind != "api" && kind != "agent" && kind != "script" {
+		return failNow("step:unknown-kind", "Step kind "+kind+" is no longer run")
+	}
 	connection := astr(def["connection"])
 
 	if s["state"] == "preparing" {

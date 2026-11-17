@@ -197,7 +197,7 @@ func TestBugsinkAlert(t *testing.T) {
 	if code, _ := e.post(t, path+"s3cret", alertBody("NEW", issue), nil); code != 404 {
 		t.Fatalf("unconfigured: %d", code)
 	}
-	// hello-world (a shipped project) names the Bugsink project fleet-web: its revision is the {settings, contextFiles}
+	// hello-world (a fixture project, tests/fixtures/projects) names the Bugsink project fleet-web: its revision is the {settings, contextFiles}
 	// bundle every project write stores.
 	if _, err := e.ownerStore.pool.Exec(e.ctx, `UPDATE definition_revision r SET content=jsonb_set(r.content::jsonb,'{settings,errors}','{"bugsink":["fleet-web"]}')::text
 		FROM definition d WHERE d.kind='project' AND d.id='hello-world' AND r.kind=d.kind AND r.id=d.id AND r.revision=d.head`); err != nil {
