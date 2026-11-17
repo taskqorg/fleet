@@ -212,13 +212,14 @@ SELECT ... FROM change WHERE (xid, seq) > ($cursor_xid, $cursor_seq)
   AND xid < (SELECT coalesce(min(x), pg_snapshot_xmax(pg_current_snapshot()))
              FROM pg_snapshot_xip(pg_current_snapshot()) x
              WHERE NOT EXISTS (SELECT FROM pg_stat_activity a
-                               WHERE a.backend_xid = xid(x) AND a.datname IS DISTINCT FROM current_database()))
+                               WHERE a.backend_xid = xid(x)
+                                 AND a.datid IS DISTINCT FROM (SELECT oid FROM pg_database WHERE datname = current_database())))
   ORDER BY xid, seq
 ```
 
 * Transaction ids are server-wide, so `pg_snapshot_xmin` alone counts transactions of every database on the server. A transaction left open in another database (`pg_dump`, another service's session, another test file's database) then held every Fleet stream back; no second `NOTIFY` arrives when it ends. Such a transaction can never write Fleet's `change` table, because a backend never changes database. The horizon therefore leaves out each running xid whose backend `pg_stat_activity` shows in another database.
 * Only that proof leaves an xid out. An xid that ended after the snapshot, a prepared transaction and a backend not listed still count; the next look, at most `heldWait` (250 ms) later, passes them. Every role connected to Fleet's database counts too: the `PUBLIC`-executable `SECURITY DEFINER` functions let any of them write change rows.
-* The horizon is uncorrelated, so it runs once per statement as an InitPlan and bounds the `change_order` index. `pg_stat_activity` is copied once per transaction, from shared memory; `backend_xid` and `datid` are shown to every role.
+* The horizon is uncorrelated, so it runs once per statement as an InitPlan and bounds the `change_order` index. `pg_stat_activity` is read only while some xid runs, and copied from shared memory once per transaction (about 0.1 ms); `backend_xid` and `datid` are shown to every role.
 Kinds are always the client kinds above, never legacy kinds (design-system D15). Rows are read in `(xid, seq)` order, so a transaction's rows stay together.
 
 * The cursor is the `seq` of the last row returned in `(xid, seq)` order; the next read looks up its xid. It is not the numeric maximum `seq`. No row is skipped, because a row from a transaction that is still open blocks the cursor until it commits or rolls back. A rolled-back transaction leaves no rows.

@@ -1,6 +1,6 @@
 // The Go coordinator under test (go/bin/fleet-coordinator, or FLEET_TRIAL_SERVER): a fresh Postgres database with the PDS18
-// roles on one shared local server (also for the parallel files of tests/go/run-files.ts), the binary started against it on
-// a free port. Used by tests/trial/run.ts and the app checks in tests/ui. Node standard library and the PostgreSQL client programs only; seed data goes in through sql().
+// roles on one shared local server (tests/go/run-files.ts gives each of its parallel slots a server of its own), the
+// binary started against it on a free port. Used by tests/trial/run.ts and the app checks in tests/ui. Node standard library and the PostgreSQL client programs only; seed data goes in through sql().
 //
 // Environment (all optional): FLEET_TRIAL_SERVER (shell command, default go/bin/fleet-coordinator), FLEET_TRIAL_PGDATA
 // (default ~/.cache/fleet-trial/pg; created with initdb and started on first use), FLEET_TRIAL_PGPORT (default 54329).
@@ -34,18 +34,13 @@ export const lit = (v: unknown): string => v === null || v === undefined ? 'NULL
 
 export type Coordinator = {base: string, secret: string, pid: number, sql: (text: string) => string, exited: () => boolean, stop: () => Promise<void>, restart: () => Promise<void>};
 
-// ensurePostgres: the shared server, created and started on first use. One caller at a time: parallel callers start it once
-// first (tests/go/run-files.ts).
-export function ensurePostgres() {
-  if (ready()) return;
-  if (!existsSync(join(pgdata, 'PG_VERSION'))) { mkdirSync(pgdata, {recursive: true}); sh('initdb', ['-D', pgdata, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions']); }
-  // ponytail: max_connections 400 fits N=4 worktrees with one pool each; raise it for more parallel worktrees.
-  sh('pg_ctl', ['-D', pgdata, '-l', join(pgdata, 'server.log'), '-w', '-o', `-k ${pgdata} -p ${pgport} -c listen_addresses= -c max_connections=400`, 'start']);
-}
-
 // name: a database name suffix, so parallel users in one worktree do not share a database.
 export async function startCoordinator(o: {name?: string, env?: Record<string, string>, people?: string} = {}): Promise<Coordinator> {
-  ensurePostgres();
+  if (!ready()) {
+    if (!existsSync(join(pgdata, 'PG_VERSION'))) { mkdirSync(pgdata, {recursive: true}); sh('initdb', ['-D', pgdata, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions']); }
+    // ponytail: max_connections 400 fits N=4 worktrees with one pool each; raise it for more parallel worktrees.
+    sh('pg_ctl', ['-D', pgdata, '-l', join(pgdata, 'server.log'), '-w', '-o', `-k ${pgdata} -p ${pgport} -c listen_addresses= -c max_connections=400`, 'start']);
+  }
   // deploy/infrastructure/fleet-postgres.sql itself, with only the database name changed (roles are per server).
   const db = 'fleet_trial_' + basename(root.replace(/\/$/, '')).replace(/\W/g, '_').toLowerCase().slice(0, 24) + '_' + createHash('sha256').update(root + (o.name ?? '')).digest('hex').slice(0, 6) + (o.name ? '_' + o.name.replace(/\W/g, '_').slice(0, 10) : '');
   const psql = (args: string[], input?: string) => sh('psql', [...pgArgs, '-v', 'ON_ERROR_STOP=1', '-q', ...args], input);

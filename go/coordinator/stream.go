@@ -110,9 +110,10 @@ type change struct {
 // another test file's database) would hold the stream back. So a running xid is left out when pg_stat_activity shows its
 // backend in another database; a backend never changes database, so that xid can never write here. An xid that has ended
 // since the snapshot, a prepared transaction or an unlisted backend still counts (the next look passes it). Uncorrelated,
-// so one InitPlan per statement, an index bound on change_order.
+// so one InitPlan per statement, an index bound on change_order; pg_stat_activity is read only while xids run (about
+// 0.1 ms, a copy of the backend table once per transaction).
 const horizon = `(SELECT coalesce(min(x), pg_snapshot_xmax(pg_current_snapshot())) FROM pg_snapshot_xip(pg_current_snapshot()) x
- WHERE NOT EXISTS (SELECT FROM pg_stat_activity a WHERE a.backend_xid = xid(x) AND a.datname IS DISTINCT FROM current_database()))`
+ WHERE NOT EXISTS (SELECT FROM pg_stat_activity a WHERE a.backend_xid = xid(x) AND a.datid IS DISTINCT FROM (SELECT oid FROM pg_database WHERE datname = current_database())))`
 
 // visible: rows of transactions older than the horizon; no later commit can sort before them.
 const visible = "xid < " + horizon
@@ -151,8 +152,7 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 		next = out[len(out)-1].Seq
 	}
 	if len(out) < limit {
-		// ORDER BY keeps the horizon an index bound; NOT visible as a bare filter plans a sequential scan of change.
-		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM change WHERE xid >= "+horizon+" ORDER BY xid LIMIT 1)").Scan(&held)
+		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM change WHERE xid >= "+horizon+")").Scan(&held)
 	}
 	return
 }
