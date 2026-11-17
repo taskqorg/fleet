@@ -70,8 +70,10 @@ async function walk(dir, out) {
 // Each entry relative to the walk's start, as a glob pattern sees it; returned relative to the worktree.
 async function files(opts, pattern) {
   const start = resolve(opts?.path ?? '.');
-  const all = (await fs.promises.stat(start)).isDirectory() ? await walk(start, []) : [start];
-  return all.filter((f) => pattern == null || path.matchesGlob(path.relative(start, f), pattern));
+  const dir = (await fs.promises.stat(start)).isDirectory();
+  const all = dir ? await walk(start, []) : [start];
+  // A file given as path matches by its name.
+  return all.filter((f) => pattern == null || path.matchesGlob(dir ? path.relative(start, f) : path.basename(f), pattern));
 }
 // A file's text, or null when its first 8 KiB hold a NUL byte (binary): then the rest is not read.
 async function textOf(f) {
@@ -89,7 +91,8 @@ const host = {
   read: (p) => fs.promises.readFile(resolve(p), 'utf8'),
   glob: async (pattern, opts) => (await files(opts, pattern)).map(shown),
   grep: async (pattern, opts) => {
-    const re = pattern instanceof RegExp ? new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, '')) : new RegExp(String(pattern), opts?.ignoreCase ? 'i' : '');
+    const flags = (pattern instanceof RegExp ? pattern.flags.replace(/[gyi]/g, '') : '') + (opts?.ignoreCase || pattern?.flags?.includes('i') ? 'i' : '');
+    const re = new RegExp(pattern instanceof RegExp ? pattern.source : String(pattern), flags);
     const hits = [];
     for (const f of await files(opts, opts?.glob)) {
       const t = await textOf(f);

@@ -595,6 +595,15 @@ func TestCodeModeFiles(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Join(dir, ".git")); len(entries) != 0 {
 		t.Fatalf("written under .git: %v", entries)
 	}
+	// Parallel edits of one file both land; a final symlink is not followed; grep's ignoreCase and a file path with glob.
+	os.Symlink(filepath.Join(dir, "a", "b.txt"), filepath.Join(dir, "lnk"))
+	r, bad = c.code(`await write("c.txt", "a b")
+		const fail = async (f) => { try { await f(); return "allowed" } catch (e) { return e.code } }
+		await Promise.all([edit("c.txt", "a", "A"), edit("c.txt", "b", "B")])
+		;[await read("c.txt"), await fail(() => write("lnk", "x")), (await grep(/a B/, {ignoreCase: true})).length, (await glob("*.txt", {path: "c.txt"})).length]`)
+	if bad || enc(r["value"]) != `["A B","outside-worktree",1,1]` {
+		t.Fatalf("parallel edits, symlink, grep: %v %v", bad, r)
+	}
 	if runtime.GOOS == "darwin" { // a case-insensitive file system: .GIT through a symlink is the same directory
 		os.Symlink(filepath.Join(dir, ".GIT"), filepath.Join(dir, "g2"))
 		if _, fail := codeFile(dir, "write", M{"path": "g2/config", "text": ""}); jStr(fail, "code") != "outside-worktree" {
@@ -706,6 +715,7 @@ func TestCodeModeShellHost(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	sock := filepath.Join(sockDir, "s")
+	os.WriteFile(filepath.Join(sockDir, "run.env"), []byte("FLEET_RUN_TOKEN=invented\n"), 0o600) // like the executor data directory
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -728,11 +738,13 @@ func TestCodeModeShellHost(t *testing.T) {
 	probe := `const run = async (cmd) => (await sh(cmd)).code
 		await sh("echo kept > /tmp/` + name + `")
 		return {socket: await run(` + enc(connect) + `), tmp: (await sh("cat /tmp/` + name + `")).text(), upper: await run("echo x >> .GIT"),
-			launchd: await run("launchctl submit -l ` + name + ` -- /usr/bin/true"), run: (await sh("ls -A /run | wc -l")).text().trim()}`
+			launchd: await run("launchctl submit -l ` + name + ` -- /usr/bin/true"), run: (await sh("ls -A /run | wc -l")).text().trim(),
+			runFile: await run("cat ` + filepath.Join(sockDir, "run.env") + `"), input: (await sh("echo $FLEET_INPUT_DIR")).text()}`
 	// With network, as with gitNetwork: IP yes, host Unix sockets no.
-	c := newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": true, "write": []any{dir}, "network": true, "hide": []any{sockDir}}})
+	c := newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": true, "write": []any{dir}, "network": true, "hide": []any{sockDir}}, "env": M{"FLEET_INPUT_DIR": "/in"}})
 	r, bad := c.code(probe)
-	if bad || enc(jAt(r, "value", "socket")) == "0" || accepted.Load() != 0 || jStr(r, "value", "tmp") != "kept" {
+	if bad || enc(jAt(r, "value", "socket")) == "0" || accepted.Load() != 0 || jStr(r, "value", "tmp") != "kept" ||
+		enc(jAt(r, "value", "runFile")) == "0" || jStr(r, "value", "input") != "/in" {
 		t.Fatalf("socket or /tmp: %v %v, accepted %d", bad, r, accepted.Load())
 	}
 	switch runtime.GOOS {

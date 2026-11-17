@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -51,7 +53,7 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = cwd
-	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "FLEET_") })
+	cmd.Env = shellEnv(jAt(s.spec, "env"), jAt(s.spec, "shell"))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -72,7 +74,7 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	timedOut := false
 	if ms, ok := num(jAt(args, "timeoutMs")); ok && ms > 0 {
 		t := time.AfterFunc(time.Duration(ms*float64(time.Millisecond)), func() {
-			if p.kill() {
+			if p.timeout() {
 				s.mu.Lock()
 				timedOut = true
 				s.mu.Unlock()
@@ -83,6 +85,9 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	// Until cmd.Wait reaps it, the exited leader stays a zombie, so its PID and process group id cannot be reused: what
 	// the command left running in its group is killed before then, never another command's group.
 	waitExited(cmd.Process.Pid)
+	p.mu.Lock()
+	p.exited = true // a timeout from here on comes too late: the command had ended
+	p.mu.Unlock()
 	p.kill()
 	p.reap()
 	s.mu.Lock()
@@ -102,9 +107,17 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 
 // shProc is one running sh command. Its group is killed only while the leader is unreaped.
 type shProc struct {
-	cmd    *exec.Cmd
-	mu     sync.Mutex
-	reaped bool
+	cmd            *exec.Cmd
+	mu             sync.Mutex
+	exited, reaped bool
+}
+
+// timeout kills a command whose leader still runs; it reports whether it did.
+func (p *shProc) timeout() bool {
+	p.mu.Lock()
+	exited := p.exited
+	p.mu.Unlock()
+	return !exited && p.kill()
 }
 
 // kill kills the command's process group unless the leader was already reaped; it reports whether it did.
@@ -123,6 +136,35 @@ func (p *shProc) reap() {
 	p.reaped = true // set before the reap: a kill after this could hit a reused process group id
 	p.mu.Unlock()
 	p.cmd.Wait()
+}
+
+// shellEnv is a command's environment: the code server's, without the run token, gateway URL, Access file and MCP owner
+// (FLEET_RUN_TOKEN, FLEET_GATEWAY_URL, FLEET_CF_ACCESS_FILE, FLEET_MCP_*), plus the execution's own variables (extra:
+// FLEET_INPUT_DIR, FLEET_OUTPUT_DIR), USER and LOGNAME as the harness has them, and TMPDIR=/tmp in a Linux sandbox,
+// whose /tmp is private.
+func shellEnv(extra, policy any) []string {
+	linuxSandbox := runtime.GOOS == "linux" && jAt(policy, "sandbox") == true
+	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return k == "FLEET_RUN_TOKEN" || k == "FLEET_GATEWAY_URL" || k == "FLEET_CF_ACCESS_FILE" || strings.HasPrefix(k, "FLEET_MCP_") ||
+			linuxSandbox && k == "TMPDIR"
+	})
+	if linuxSandbox {
+		env = append(env, "TMPDIR=/tmp")
+	}
+	if u, err := user.Current(); err == nil {
+		for _, k := range []string{"USER", "LOGNAME"} {
+			if os.Getenv(k) == "" {
+				env = append(env, k+"="+u.Username)
+			}
+		}
+	}
+	for _, k := range sortedKeys(jObj(extra)) {
+		if v := jStr(extra, k); strings.HasPrefix(k, "FLEET_") && v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
 }
 
 // shellTmp is the code server's private /tmp for Linux sh commands, made on first use and kept for the execution, so
@@ -145,7 +187,7 @@ func (s *codeServer) shellTmp() (string, error) {
 // only under the write roots, the system services ordinary commands need (user lookup, notifications, logging), no
 // other Mach service (so no launchd job or app runs outside the sandbox for it), signals only inside the sandbox, and
 // network (IP and the DNS socket, no other Unix socket) only when the policy has it.
-func darwinShellProfile(roots, protected []string, network bool) string {
+func darwinShellProfile(roots, protected, hidden, visible []string, network bool) string {
 	q := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace
 	var b strings.Builder
 	b.WriteString("(version 1)(deny default)(allow process-exec)(allow process-fork)(allow signal (target same-sandbox))" +
@@ -157,6 +199,16 @@ func darwinShellProfile(roots, protected []string, network bool) string {
 		`(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.opendirectoryd.membership")` +
 		` (global-name "com.apple.system.notification_center") (global-name "com.apple.logd") (global-name "com.apple.system.logger")` +
 		` (global-name "com.apple.sysmond") (global-name "com.apple.bsd.dirhelper") (global-name "com.apple.securityd.xpc"))`)
+	for _, h := range hidden {
+		b.WriteString(`(deny file-read* (subpath "` + q(h) + `"))`)
+	}
+	if len(hidden) > 0 && len(visible) > 0 {
+		b.WriteString("(allow file-read*")
+		for _, v := range visible {
+			b.WriteString(` (subpath "` + q(v) + `")`)
+		}
+		b.WriteString(")")
+	}
 	if len(roots) > 0 {
 		b.WriteString("(allow file-write*")
 		for _, r := range roots {
@@ -201,11 +253,26 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) 
 		}
 		return out
 	}
+	// hide: the executor's data directory (run files with run tokens, MCP sockets), unreadable but for the read roots, the
+	// write roots and a HOME inside it (a harness home: its Git configuration).
+	hide, read := paths(jArr(policy, "hide")), paths(jArr(policy, "read"))
+	if home, err := canon(os.Getenv("HOME")); err == nil && os.Getenv("HOME") != "" && slices.ContainsFunc(hide, func(h string) bool { return under(home, h) }) {
+		read = append(read, home)
+	}
+	if len(hide) > 0 { // a worktree's Git directories stay readable wherever they are
+		for _, r := range paths(jArr(policy, "write")) {
+			read = append(read, paths(gitDirs(r))...)
+		}
+	}
 	var roots []string // none for a read-only start, not even the temporary directories
 	if !readOnly {
-		roots = paths(append(jArr(policy, "write"), os.Getenv("TMPDIR")))
-		if runtime.GOOS == "darwin" {
-			roots = append(roots, "/private/tmp")
+		roots = paths(jArr(policy, "write"))
+		if runtime.GOOS == "darwin" { // on Linux /tmp is private and TMPDIR points there
+			for _, r := range paths([]any{os.Getenv("TMPDIR"), "/private/tmp"}) {
+				if !slices.Contains(roots, r) {
+					roots = append(roots, r)
+				}
+			}
 		}
 	}
 	var protected []string
@@ -217,7 +284,9 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) 
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		return append([]string{sandbox, "-p", darwinShellProfile(roots, protected, network)}, run...), nil
+		// The executor's data directory (run files with run tokens, MCP sockets) is unreadable except the read and write
+		// roots in it, as on Linux.
+		return append([]string{sandbox, "-p", darwinShellProfile(roots, protected, hide, append(read, roots...), network)}, run...), nil
 	case "linux":
 		argv := []string{sandbox, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"}
 		// Host Unix sockets live under /run (/var/run, XDG_RUNTIME_DIR, docker.sock, D-Bus), /tmp and the executor's data
@@ -232,7 +301,7 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) 
 				hidden = append(hidden, x)
 			}
 		}
-		hidden = append(hidden, paths(jArr(policy, "hide"))...)
+		hidden = append(hidden, hide...)
 		for _, h := range hidden {
 			argv = append(argv, "--tmpfs", h)
 		}
@@ -246,7 +315,7 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) 
 				argv = append(argv, "--ro-bind", r, r)
 			}
 		}
-		for _, r := range paths(jArr(policy, "read")) { // read roots under a hidden directory stay readable
+		for _, r := range read { // read roots under a hidden directory stay readable
 			argv = append(argv, "--ro-bind", r, r)
 		}
 		for _, r := range roots {
@@ -267,43 +336,93 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) 
 	return nil, errors.New("no shell sandbox on " + runtime.GOOS)
 }
 
-// codeFile serves write and edit inside the worktree dir. os.Root keeps the path, symlinks included, inside it; a path
-// that resolves under the worktree's .git is refused as well.
-func codeFile(dir, tool string, args any) (any, M) {
-	rel, err := worktreePath(dir, jStr(args, "path"))
-	if err == nil {
-		err = underGitDir(dir, rel)
+// gitDirs are a linked worktree's Git directory and common directory, read from its .git file ("gitdir: <dir>") and
+// that directory's commondir file; none for a checkout whose .git is a directory inside it.
+func gitDirs(work string) []any {
+	b, err := os.ReadFile(filepath.Join(work, ".git"))
+	d, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
+	if err != nil || !ok {
+		return nil
 	}
+	if !filepath.IsAbs(d) {
+		d = filepath.Join(work, d)
+	}
+	dirs := []any{d}
+	if c, err := os.ReadFile(filepath.Join(d, "commondir")); err == nil {
+		common := strings.TrimSpace(string(c))
+		if !filepath.IsAbs(common) {
+			common = filepath.Join(d, common)
+		}
+		dirs = append(dirs, common)
+	}
+	return dirs
+}
+
+// codeFileMu makes each write and edit one step: an edit's read and write never interleave with another's.
+var codeFileMu sync.Mutex
+
+// codeFile serves write and edit inside the worktree dir. It walks the path by directory handle (os.Root: no step leaves
+// the directory it is in) and compares each directory, and the file, with the worktree's .git by file identity, so no
+// symlink, other spelling (macOS ignores case) or concurrent rename reaches .git. The file itself is opened without
+// following a symlink.
+func codeFile(dir, tool string, args any) (any, M) {
+	codeFileMu.Lock()
+	defer codeFileMu.Unlock()
+	rel, err := worktreePath(dir, jStr(args, "path"))
 	if err != nil {
 		return nil, callError("error", "outside-worktree", err.Error())
 	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, callError("error", "io", err.Error())
+	old := jStr(args, "old")
+	if tool == "edit" && old == "" {
+		return nil, callError("error", "bad-arguments", "old required")
 	}
-	defer root.Close()
 	fail := func(err error) (any, M) {
 		if strings.Contains(err.Error(), "path escapes") {
 			return nil, callError("error", "outside-worktree", err.Error())
 		}
 		return nil, callError("error", "io", err.Error())
 	}
-	var data []byte
-	replaced := 0
-	switch tool {
-	case "write":
-		data = []byte(jStr(args, "text"))
-		if d := filepath.Dir(rel); d != "." {
-			if err := root.MkdirAll(d, 0o755); err != nil {
+	cur, err := os.OpenRoot(dir)
+	if err != nil {
+		return fail(err)
+	}
+	defer func() { cur.Close() }()
+	git, gitErr := cur.Lstat(".git")
+	isGit := func(st os.FileInfo) bool { return gitErr == nil && os.SameFile(st, git) }
+	if d := filepath.Dir(rel); d != "." {
+		for _, c := range strings.Split(d, "/") {
+			if tool == "write" {
+				if err := cur.Mkdir(c, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+					return fail(err)
+				}
+			}
+			next, err := cur.OpenRoot(c)
+			if err != nil {
 				return fail(err)
 			}
+			cur.Close()
+			cur = next
+			if st, err := cur.Stat("."); err != nil || isGit(st) {
+				return nil, callError("error", "outside-worktree", rel+" is under .git")
+			}
 		}
-	case "edit":
-		old := jStr(args, "old")
-		if old == "" {
-			return nil, callError("error", "bad-arguments", "old required")
-		}
-		b, err := root.ReadFile(rel)
+	}
+	flags := os.O_RDWR | syscall.O_NOFOLLOW
+	if tool == "write" {
+		flags |= os.O_CREATE
+	}
+	f, err := cur.OpenFile(filepath.Base(rel), flags, 0o644)
+	if err != nil {
+		return fail(err)
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || isGit(st) {
+		return nil, callError("error", "outside-worktree", rel+" is .git")
+	}
+	data := []byte(jStr(args, "text"))
+	replaced := 0
+	if tool == "edit" {
+		b, err := io.ReadAll(f)
 		if err != nil {
 			return fail(err)
 		}
@@ -316,7 +435,10 @@ func codeFile(dir, tool string, args any) (any, M) {
 		}
 		data = []byte(strings.ReplaceAll(string(b), old, jStr(args, "new")))
 	}
-	if err := root.WriteFile(rel, data, 0o644); err != nil {
+	if err := f.Truncate(0); err != nil {
+		return fail(err)
+	}
+	if _, err := f.WriteAt(data, 0); err != nil {
 		return fail(err)
 	}
 	if tool == "edit" {
@@ -347,34 +469,4 @@ func worktreePath(dir, p string) (string, error) {
 		}
 	}
 	return "", errors.New(p + " is outside the working directory")
-}
-
-// underGitDir refuses a path whose existing part resolves, through a symlink inside the worktree, under its .git.
-func underGitDir(dir, rel string) error {
-	real, err := canon(dir)
-	if err != nil {
-		return err
-	}
-	git, err := os.Stat(filepath.Join(real, ".git"))
-	if err != nil {
-		return nil // no .git in the worktree
-	}
-	p := filepath.Join(real, rel)
-	for {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			// By file identity, not by name: another spelling (macOS ignores case) resolves to the same directory.
-			for a := r; ; a = filepath.Dir(a) {
-				if st, err := os.Stat(a); err == nil && os.SameFile(st, git) {
-					return errors.New(rel + " resolves under .git")
-				}
-				if a == filepath.Dir(a) {
-					return nil
-				}
-			}
-		}
-		if p == real {
-			return nil
-		}
-		p = filepath.Dir(p)
-	}
 }

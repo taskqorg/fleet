@@ -982,6 +982,7 @@ type codeAuthority struct {
 	read        []string
 	write, edit bool
 	shell       M
+	env         M // FLEET_INPUT_DIR and FLEET_OUTPUT_DIR for sh, as the harness has them
 }
 
 // codeAuthorityFor mirrors the harness's own tools for this execution, never more. work is the worktree; writable are
@@ -1061,7 +1062,7 @@ func addCodeServer(servers M, mode string, fleet *codeFleet, conns []any, runFil
 	}
 	spec := M{"dir": dir, "read": anyStrings(auth.read), "write": auth.write, "edit": auth.edit, "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox, "instructions": []any{}}
 	if auth.shell != nil {
-		spec["shell"] = auth.shell
+		spec["shell"], spec["env"] = auth.shell, auth.env
 	}
 	if mode == "only" {
 		instr := []any{}

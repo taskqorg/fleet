@@ -1128,6 +1128,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	if codeMode != "" {
 		auth := codeAuthorityFor(name, jAt(p, "agentConfig"), work, []string{work, inputDir}, gitRoots, p["gitNetwork"] == true, jIsTrue(p, "readOnly"), e.root)
+		auth.env = M{"FLEET_INPUT_DIR": inputDir, "FLEET_OUTPUT_DIR": outputDir}
 		if err := addCodeServer(servers, codeMode, codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), work, auth); err != nil {
 			return fail(1, err.Error())
 		}
