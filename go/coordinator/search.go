@@ -257,13 +257,13 @@ func searchQuestions(q *Request, s searchQuery, limit int) ([]contract.Found, er
 	return questionHits(rs), err
 }
 
-const sessionHitCols = sessionBase + " SELECT x.id,x.code,x.first_message,x.state,x.project_id," + sessionAgent + " AS agent,x.activity_at AS at FROM x"
+const sessionHitCols = sessionBase + " SELECT x.id,x.code,x.title,x.first_message,x.state,x.project_id," + sessionAgent + " AS agent,x.activity_at AS at FROM x"
 
 // sessionHits: conversation hits; words (the query's free text) give each the snippet of its first message around them.
 func sessionHits(rs []doc, words string) []contract.Found {
 	out := []contract.Found{}
 	for _, r := range rs {
-		t := []rune(firstString(astr(r["first_message"]), astr(r["code"]), astr(r["id"])))
+		t := []rune(firstString(astr(r["title"]), astr(r["first_message"]), astr(r["code"]), astr(r["id"])))
 		out = append(out, contract.Found{Kind: contract.FoundKindConversation, Id: astr(r["id"]), Code: optStr(astr(r["code"])), Title: string(t[:min(200, len(t))]),
 			State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"])), Agent: optStr(astr(r["agent"])), At: optStr(astr(r["at"])),
 			Snippet: optStr(matchSnippet(astr(r["first_message"]), words))})
@@ -403,7 +403,7 @@ func searchCodes(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 	if err != nil {
 		return nil, err
 	}
-	cs, err := rowsOf(q, sessionHitCols+" WHERE x.id=ANY($1)", sessions)
+	cs, err := rowsOf(q, sessionHitCols+" WHERE x.id=ANY($1) AND coalesce(x.data->>'actor','')<>'program-worker'", sessions) // host command sessions are no conversations
 	if err != nil {
 		return nil, err
 	}

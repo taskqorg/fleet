@@ -2689,3 +2689,13 @@ BEGIN
  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
  RETURN greatest(0::bigint, all_n - vis_n);
 END $$;
+-- migration 73: a pipeline script step ran in a session of its own with no actor, so the Conversations list showed each
+-- one as an empty "New conversation" (project cs: 140 of them on 2026-11-16). startScript now marks the session
+-- program-worker like every other host command session, and the list leaves those out. The earlier ones get the mark:
+-- a pipeline session with no message, at least one host job and no other execution.
+SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+UPDATE document d SET data = d.data || '{"actor": "program-worker"}'
+ WHERE d.kind = 'session' AND d.data ? 'pipelineRunId' AND NOT d.data ? 'actor'
+  AND NOT EXISTS (SELECT 1 FROM document m WHERE m.session_ref = d.id AND m.kind = 'message')
+  AND EXISTS (SELECT 1 FROM execution e WHERE e.session_id = d.id AND e.data->>'actor' = 'program-worker')
+  AND NOT EXISTS (SELECT 1 FROM execution e WHERE e.session_id = d.id AND coalesce(e.data->>'actor', '') <> 'program-worker');

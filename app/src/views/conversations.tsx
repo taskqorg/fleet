@@ -5,7 +5,7 @@ import { useLocation } from 'wouter-preact';
 import {
   EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
   StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
-  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_,
+  Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_, TextField,
   writeClip, zone, DropZone, agentLabel, type ComposerChip,
   keyConnection, ShellStatus, ShellActions } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, type Ops } from '../api.ts';
@@ -149,7 +149,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   // Writes in flight stop when the conversation closes.
   const alive = useRef(new AbortController()); useEffect(() => () => alive.current.abort(), []);
   const unknown = () => setFailure({ text: 'unknown, retrying' });
-  const [panel, setPanel] = useState<'switch' | 'handoff' | null>(null);
+  const [panel, setPanel] = useState<'switch' | 'handoff' | 'rename' | null>(null);
   const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
   const handle = useRef<VirtualListHandle | null>(null);
   // Files for the next message: uploaded as they are added (picker, paste, drop over the conversation).
@@ -172,10 +172,14 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const w = thread.win;
   const last = (s.messages ?? []).at(-1), lastMessage: string | undefined = last?.text;
   const lastFiles: string[] = (last?.attachments ?? []).map((a: any) => a.artifactId).filter(Boolean);
+  // The stored title (set by a person or an agent, or generated after the first reply); until then the first message,
+  // as the list shows it.
+  const title: string = s.title || [...((s.messages ?? [])[0]?.text ?? '')].slice(0, 200).join('') || 'New conversation';
   return <article class="detail conversation" data-ui="detail" tabIndex={-1} aria-label="Conversation">
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
-      <EntityCode code={s.code} id={id} what="Conversation" />{s.agentConfig?.id && <span class="muted mono">{s.agentConfig.id}</span>}<span class="grow" />
+      <h2 class="detail-title conv-title" data-tip={title}>{title}</h2>
+      <EntityCode code={s.code} id={id} what="Conversation" />{s.agentConfig?.id && <span class="muted mono conv-profile">{s.agentConfig.id}</span>}<span class="grow" />
       <SearchField label="Search thread" value={q} onInput={setQ} onSearch={search} />
       <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
       <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />
@@ -184,13 +188,15 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <Button label="Copy thread as markdown" icon="file-text" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => copySel(all()!)} />
       {/* Menu actions (design "Controls"): each calls the existing operation; the result shows as a new boundary in this thread. */}
       <ActionMenu label="Actions" disabledReason={off ? 'offline' : undefined} items={[
+        { label: 'Rename', icon: 'type', onClick: () => setPanel('rename') },
         { label: 'Retry last message', icon: 'rotate-ccw', disabledReason: lastMessage || lastFiles.length ? undefined : 'no message yet', onClick: () => { const requestId = reqId(); run(() => writeOnce('message_send', { sessionId: id, requestId, text: lastMessage ?? '', ...(lastFiles.length ? { attachments: lastFiles } : {}) }, unknown, { signal: alive.current.signal })); } },
         { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel('switch') },
         { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel('handoff') },
         { label: 'Fork', icon: 'git-merge', onClick: () => { const requestId = reqId(); run(async () => { const f = await writeOnce('session_fork', { sessionId: id, requestId }, unknown, { signal: alive.current.signal }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); } },
       ]} />
     </header>
-    {panel && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
+    {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => setPanel(null)} run={run} unknown={unknown} signal={alive.current.signal} />}
+    {panel && panel !== 'rename' && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
     <ScopedRollupBar rollup={s.resources} cost={s.cost} />
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
     <div class="pane"><DropZone onFiles={files.add} disabledReason={off ? 'offline' : undefined}>
@@ -225,6 +231,20 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
           catch (e: any) { if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) { if (!unknownOutcome(e)) sendingId(scope, null, key); setFailure({ text: e.message }); } throw e; } }} />
     </DropZone></div>
   </article>;
+}
+
+/** Rename (session_rename): an inline field, never a floating form (OR-14). The title it sets is kept; a generated one
+ *  never replaces it. */
+function RenamePanel({ sessionId, current, onDone, run, unknown, signal }: { sessionId: string; current: string; onDone: () => void; run: (fn: () => Promise<unknown>) => Promise<void>; unknown: () => void; signal: AbortSignal }) {
+  const [v, setV] = useState(current), [busy, setBusy] = useState(false), off = !online.value, clean = v.trim().replace(/\s+/g, ' '), chars = [...clean].length;
+  // A rename is idempotent: the same title again changes nothing, so an unknown outcome is simply retried. One at a time.
+  const save = () => { if (busy) return; setBusy(true); run(async () => { try { await writeOnce('session_rename', { sessionId, title: clean }, unknown, { signal }); onDone(); } finally { setBusy(false); } }); };
+  return <DetailSection title="Rename">
+    <form class="answers" onSubmit={e => { e.preventDefault(); if (clean && chars <= 200 && !off) save(); }} onKeyDown={e => { if (e.key === 'Escape') onDone(); }}>
+      <TextField label="Title" value={v} onChange={setV} />
+      <Button label="Save" kind="primary" busy={busy} disabledReason={off ? 'offline' : !clean ? 'type a title' : chars > 200 ? 'at most 200 characters' : undefined} onClick={save} />
+      <Button label="Cancel" kind="quiet" onClick={onDone} /></form>
+  </DetailSection>;
 }
 
 /**

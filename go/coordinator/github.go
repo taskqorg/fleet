@@ -263,7 +263,7 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 		return "", fmt.Errorf("token for %s: %w", connection, err)
 	}
 	if token == "" {
-		return "", fmt.Errorf("%s: connection-unavailable (not granted to %s, or intake closed)", connection, project)
+		return "", fmt.Errorf("%s: %w (not granted to %s, or intake closed)", connection, errConnUnavailable, project)
 	}
 	revoke := func() {
 		if err := runTx(context.Background(), a, nil, true, "", func(q *Request) error {

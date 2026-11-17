@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"fleet/contract"
 
@@ -899,24 +900,33 @@ func markdownOf(b doc, from, to *point, loc *time.Location) string {
 
 // replyText: the agent's reply text of one execution (final text blocks and cut-off streams), in order.
 func replyText(q *Request, executionID string) ([]string, error) {
+	return replyTextUpTo(q, executionID, 0)
+}
+
+// replyTextUpTo: replyText that stops paging once the texts hold at least maxRunes runes (0: no bound).
+func replyTextUpTo(q *Request, executionID string, maxRunes int) ([]string, error) {
 	e, err := first(q, "SELECT id,session_id,harness,model,config_ref->>'effort' AS effort,state::text AS state,started_at,ended_at,seq FROM execution WHERE id=$1", executionID)
 	if err != nil || e == nil {
 		return []string{}, err
 	}
 	m, ids := map[string]member{executionID: {e, int64(num(e["seq"]))}}, []string{executionID}
-	out := []string{}
+	out, runes, page := []string{}, 0, 500
+	if maxRunes > 0 {
+		page = 200 // a bounded excerpt stops after the page that completes it
+	}
 	var after *bkey
 	for {
-		bs, more, err := side(q, m, ids, ">", after, 500, false)
+		bs, more, err := side(q, m, ids, ">", after, page, false)
 		if err != nil {
 			return nil, err
 		}
 		for _, b := range bs {
 			if astr(b["kind"]) == "text" && astr(b["role"]) == "agent" && astr(b["markdown"]) != "" {
 				out = append(out, astr(b["markdown"]))
+				runes += utf8.RuneCountInString(astr(b["markdown"]))
 			}
 		}
-		if !more {
+		if !more || (maxRunes > 0 && runes >= maxRunes) {
 			return out, nil
 		}
 		k := mustKey(bs[len(bs)-1]["key"])

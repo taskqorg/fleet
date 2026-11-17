@@ -586,7 +586,13 @@ func putDocument(q *Request, kind string, v doc) error {
 	if p, ok := v["projectId"].(string); ok {
 		project = p
 	}
-	_, err := q.tx.Exec(q.ctx(), "INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind", kind, v["id"], b, project)
+	upsert := "excluded.data"
+	if kind == "session" {
+		// The title fields belong to session_rename and the title pass (session_titles.go), which update them in place; a
+		// writer that read the session before them and puts it back keeps the stored ones.
+		upsert = sessionTitleKeep
+	}
+	_, err := q.tx.Exec(q.ctx(), "INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data="+upsert+",project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind", kind, v["id"], b, project)
 	if err == nil && q.app != nil {
 		switch kind {
 		case "command":

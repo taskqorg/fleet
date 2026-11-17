@@ -33,7 +33,7 @@ var (
 		}
 		return out
 	}()
-	agentTools    = []string{"session_start", "session_presets", "session_deliver", "session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status"}
+	agentTools    = []string{"session_start", "session_presets", "session_deliver", "session_transition", "session_fork", "session_resume", "session_handoffs", "session_rename", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status"}
 	artifactTools = []string{"artifact_save", "artifact_list", "artifact_get"}
 )
 

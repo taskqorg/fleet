@@ -27,7 +27,7 @@ const sessionBase = `WITH session_messages AS MATERIALIZED (
 ), session_activity AS MATERIALIZED (
  SELECT data->>'sessionId' AS session_id,max(updated_at) AS last_at
  FROM document WHERE kind IN ('message','event') GROUP BY data->>'sessionId'
-), x AS (SELECT d.id, d.code, d.data, d.project_id, d.seq,
+), x AS (SELECT d.id, d.code, d.data, d.project_id, d.seq, nullif(d.data->>'title','') AS title,
  ` + sessionState + ` AS state,
  (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
  m.first_message,
@@ -90,7 +90,9 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 	if err := filterFields(f, "projectId", "excludeProjectId", "state", "search", "archived"); err != nil {
 		return nil, err
 	}
-	c := []string{"NOT (x.data ? 'archivedAt')"}
+	// Host command sessions (program-worker: pipeline script steps, readiness checks, host tools) hold one host job and
+	// no conversation; Runners and executions list them, the Conversations list does not.
+	c := []string{"NOT (x.data ? 'archivedAt')", "coalesce(x.data->>'actor','')<>'program-worker'"}
 	if f["archived"] == true {
 		c[0] = "x.data ? 'archivedAt'"
 	}
@@ -111,7 +113,7 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 		c = append(c, fmt.Sprintf("x.state=ANY($%d)", len(*p)))
 	}
 	if s, ok := f["search"].(string); ok { // the list search syntax (search.go searchWhere)
-		c = append(c, searchWhere(s, p, []string{"x.first_message", "x.id", "x.code"}, map[string]string{"agent": sessionAgent, "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.data->>'hostId')", "project": "x.project_id", "state": "x.state"}, withState)...)
+		c = append(c, searchWhere(s, p, []string{"x.title", "x.first_message", "x.id", "x.code"}, map[string]string{"agent": sessionAgent, "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.data->>'hostId')", "project": "x.project_id", "state": "x.state"}, withState)...)
 	}
 	return c, nil
 }
@@ -119,8 +121,9 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 func sessionRow(x doc) doc {
 	d := mapOf(x["data"])
 	ac := mapOf(d["agentConfig"])
+	// The stored title (session_rename, or the generated one: session_titles.go); until it exists, the first message.
 	title := any(nil)
-	if t := []rune(astr(x["first_message"])); len(t) > 0 {
+	if t := []rune(firstString(x["title"], x["first_message"])); len(t) > 0 {
 		title = string(t[:min(200, len(t))])
 	}
 	harness := x["harness"]
