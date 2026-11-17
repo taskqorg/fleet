@@ -141,8 +141,7 @@ function totalMark(b: Bucket): DayMark {
   const all = inB(b), xs = all.map(h => h.d.total).filter((v): v is number => v !== undefined);
   if (!all.length) return { v: null, missing: 'nothing merged' };
   if (!xs.length) return { v: null, missing: b.start < D0 + 5 * DAY ? `install times recorded from ${day(D0 + 5 * DAY)}` : 'no install recorded' };
-  const part = [xs.length < all.length ? `${xs.length} of ${all.length} measured` : '', b.today ? 'so far' : ''].filter(Boolean).join(', ');
-  return { v: q(xs, 0.5), hi: q(xs, 0.9), partial: part || undefined };
+  return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < all.length ? `${xs.length} of ${all.length} measured` : undefined, partial: b.today ? 'so far' : undefined };
 }
 const mergedMark = (b: Bucket): DayMark => ({ v: inB(b).length, partial: b.today ? 'so far' : undefined });
 const STAGES: { label: string; key: 'pr_ci' | 'queue' | 'release' | 'install'; tone: SharePart['tone'] }[] = [

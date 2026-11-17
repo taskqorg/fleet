@@ -242,7 +242,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
     {fleetShown && <Pace hist={hist?.h ?? null} error={histError} now={now} norms={norms} range={range} buckets={buckets} picked={picked} onRange={onRange} onPick={onPick} />}
   </div>;
 }
-const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available' };
+const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available', run: 'Queue run' };
 const keyLabel = (k: string) => KEYS[k] ?? k;
 
 // Where the time goes: a pull request's stage durations folded into four parts, in pipeline order.
@@ -258,9 +258,8 @@ const complete = (x: HistoryPr) => ['pr_ci', 'queue', 'release', 'install'].ever
 export function totalMark(prs: HistoryPr[], b: Bucket, installsFrom: number | null): DayMark {
   const xs = prs.map(x => x.durations.total).filter((v): v is number => typeof v === 'number');
   if (!prs.length) return { v: null, missing: 'nothing merged' };
-  if (!xs.length) return { v: null, missing: installsFrom && b.end <= installsFrom ? `install times recorded from ${day(installsFrom)}` : 'not installed yet' };
-  const part = [xs.length < prs.length ? `${xs.length} of ${prs.length} measured` : '', b.today ? 'so far' : ''].filter(Boolean).join(', ');
-  return { v: q(xs, 0.5), hi: q(xs, 0.9), partial: part || undefined };
+  if (!xs.length) return { v: null, missing: installsFrom && b.start < installsFrom ? `install times recorded from ${day(installsFrom)} ${hourLabel(installsFrom)}` : 'not installed yet' };
+  return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < prs.length ? `${xs.length} of ${prs.length} measured` : undefined, partial: b.today ? 'so far' : undefined };
 }
 
 function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick }: {

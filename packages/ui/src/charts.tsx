@@ -7,9 +7,10 @@ export type DataTone = 'd1' | 'd2' | 'd3' | 'd4';
 export type DayCol = { key: string; label: string; tip?: string };
 /**
  * One column's figure. `v` is the value (a median or a count); `hi` an upper mark (P90). `v: null` is "not measured"
- * (`missing` says why), never zero. `partial` says the figure covers part of the column ("9 of 18 measured", "so far").
+ * (`missing` says why), never zero. `partial` says the column is not over yet (today "so far"); `some` says only some of
+ * its items were measured ("9 of 18 measured"): two different states with their own look.
  */
-export type DayMark = { v: number | null; hi?: number | null; partial?: string; missing?: string };
+export type DayMark = { v: number | null; hi?: number | null; partial?: string; some?: string; missing?: string };
 
 /**
  * Scale top for a set of values: their `q` quantile (P95 by default), rounded up to a clean step, so one outlier never
@@ -63,20 +64,21 @@ export function DayChart(p: DayChartProps) {
   const tone = p.tone ?? 'd1', [lo, hi] = p.names ?? [''];
   const over = (v: number | null | undefined) => v != null && p.alertAbove !== undefined && v > p.alertAbove;
   const tipOf = (c: DayCol, m: DayMark) => m.v === null ? `${c.tip ?? c.label}: not measured${m.missing ? ` (${m.missing})` : ''}`
-    : `${c.tip ?? c.label}: ${lo ? lo + ' ' : ''}${p.value(m.v)}${m.hi != null && hi ? `, ${hi} ${p.value(m.hi)}` : ''}${m.partial ? ` · ${m.partial}` : ''}`
+    : `${c.tip ?? c.label}: ${lo ? lo + ' ' : ''}${p.value(m.v)}${m.hi != null && hi ? `, ${hi} ${p.value(m.hi)}` : ''}${m.some ? ` · ${m.some}` : ''}${m.partial ? ` · ${m.partial}` : ''}`
       + (over(m.v) || over(m.hi) ? ` · ${p.alertLabel ?? 'above the norm'}` : '');
-  const anyPartial = p.marks.some(m => m.v !== null && m.partial), anyMissing = p.marks.some(m => m.v === null), anyClip = p.marks.some(m => (m.v ?? 0) > p.cap || (m.hi ?? 0) > p.cap);
+  const anyPartial = p.marks.some(m => m.v !== null && m.partial), anySome = p.marks.some(m => m.v !== null && m.some), anyMissing = p.marks.some(m => m.v === null), anyClip = p.marks.some(m => (m.v ?? 0) > p.cap || (m.hi ?? 0) > p.cap);
   const pick = p.onSelect, dense = p.cols.length > 16, every = dense ? Math.ceil(p.cols.length / 8) : 1;
   return <div class={`dc dc-${p.size ?? 'md'}`} data-ui="day-chart" style={{ '--n': String(p.cols.length) }}>
     <div class="dc-head">{p.title && <b>{p.title}</b>}<span class="grow" />
       {anyClip && <span class="dc-key"><i class="dc-sw clip" />above the scale</span>}
+      {anySome && <span class="dc-key"><i class={`dc-sw some ${tone}`} />partly measured</span>}
       {anyPartial && <span class="dc-key"><i class={`dc-sw part ${tone}`} />part of the day</span>}
       {anyMissing && <span class="dc-key"><i class="dc-sw none" />not measured</span>}</div>
     <div class="dc-plot" role="group" aria-label={p.label}>
       <span class="dc-y mono" data-tip={p.capNote ? `Scale top: ${p.capNote}` : undefined}>{p.value(p.cap)}</span>
       {p.cols.map((c, i) => {
         const m = p.marks[i], on = p.selected === c.key, clipV = (m.v ?? 0) > p.cap, clipH = (m.hi ?? 0) > p.cap;
-        return <button key={c.key} type="button" class={`dc-col${on ? ' on' : ''}${m.v === null ? ' none' : ''}${m.partial && m.v !== null ? ' part' : ''}`}
+        return <button key={c.key} type="button" class={`dc-col${on ? ' on' : ''}${m.v === null ? ' none' : ''}${m.partial && m.v !== null ? ' part' : ''}${m.some && m.v !== null ? ' some' : ''}`}
           aria-pressed={pick ? on : undefined} aria-label={tipOf(c, m)} data-tip={tipOf(c, m)} tabIndex={pick ? 0 : -1} onClick={() => pick?.(c.key)}>
           <span class="dc-area">
             {m.v === null ? <i class="dc-none" />
@@ -92,7 +94,7 @@ export function DayChart(p: DayChartProps) {
       })}
     </div>
     {p.values && !dense && <div class="dc-vals mono" aria-hidden="true">
-      <span class="dc-g">{lo}</span>{p.marks.map((m, i) => <span key={i} class={`${m.partial ? 'muted' : ''}${p.selected === p.cols[i].key ? ' on' : ''}${over(m.v) ? ' alert' : ''}`}>{m.v === null ? '—' : p.value(m.v)}</span>)}
+      <span class="dc-g">{lo}</span>{p.marks.map((m, i) => <span key={i} class={`${m.partial || m.some ? 'muted' : ''}${p.selected === p.cols[i].key ? ' on' : ''}${over(m.v) ? ' alert' : ''}`}>{m.v === null ? '—' : p.value(m.v)}</span>)}
       {hi && <><span class="dc-g">{hi}</span>{p.marks.map((m, i) => <span key={'h' + i} class={`muted${over(m.hi) && m.v !== null ? ' alert' : ''}`}>{m.v === null || m.hi == null ? '' : p.value(m.hi)}</span>)}</>}
     </div>}
     {p.axis && <div class="dc-axis" aria-hidden="true"><span />{p.cols.map((c, i) => <span key={c.key} class={p.selected === c.key ? 'on' : undefined}>{i % every === 0 || p.selected === c.key ? c.label : ''}</span>)}</div>}
