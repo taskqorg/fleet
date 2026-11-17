@@ -97,8 +97,8 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 - An unawaited rejection or a throw inside a timer is printed into the output of the job that made the failed call, not fatal: the runtime, its other jobs and `state` survive.
 - The runtime talks to the code server over its own pipe (fd 3). A raw write to fd 1 cannot corrupt that protocol; it goes to the code server's log, not to a job's output.
 - A reply from a call that started a runtime carries `newRuntime: true`: its `state` is empty. That is the first call of each code server, so a resumed session in a new execution sees that earlier `state` is gone, and the first call after a crash or reset.
-- When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. A job with bridged calls still in flight ends when they do, with their outcomes in `calls`, so no effect goes unreported.
-- When the harness closes the code server, the runtime stops and calls still in flight end with the process. A journal write is one SQLite transaction, so it is recorded or not, and the agent sees no reply, as for any lost reply. The next `code` call starts a new runtime, and its reply says so with `newRuntime: true`.
+- When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. A job with bridged calls still in flight ends when they do, with their outcomes in `calls`, so no effect goes unreported. The next `code` call starts a new runtime.
+- When the harness closes the code server, the runtime stops and calls still in flight end with the process. A journal write is one SQLite transaction, so it is recorded or not, and the agent sees no reply, as for any lost reply.
 
 ## Observability
 
