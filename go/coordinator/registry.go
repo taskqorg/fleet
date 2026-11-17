@@ -19,6 +19,7 @@ import (
 //   route        one transaction around the handler: GET a read snapshot, otherwise one GLOBAL write.
 //   longRoute    no surrounding transaction (q.tx nil); the handler opens its own through q.app.store.Tx.
 //   publicRoute  matched before the credential check; a plain http.HandlerFunc.
+//   rawRoute     a plain handler of the App: it runs its own credential check and reads its own body (not JSON).
 //   operation    POST /api/ops/{name}: read selects a read snapshot or one GLOBAL write.
 //   onStart      called by main after the store opens; background tickers stop on ctx.
 // A handler may return a raw value instead of JSON.
@@ -37,6 +38,7 @@ type registeredRoute struct {
 	h       handler
 	tx      int // txRead, txWrite or txNone
 	public  http.HandlerFunc
+	raw     func(*App, http.ResponseWriter, *http.Request)
 }
 
 type registeredOp struct {
@@ -58,13 +60,16 @@ func txOf(pattern string) int {
 }
 
 func route(pattern string, h handler) {
-	routeTable = append(routeTable, registeredRoute{pattern, h, txOf(pattern), nil})
+	routeTable = append(routeTable, registeredRoute{pattern: pattern, h: h, tx: txOf(pattern)})
 }
 func longRoute(pattern string, h handler) {
-	routeTable = append(routeTable, registeredRoute{pattern, h, txNone, nil})
+	routeTable = append(routeTable, registeredRoute{pattern: pattern, h: h, tx: txNone})
 }
 func publicRoute(pattern string, h http.HandlerFunc) {
-	routeTable = append(routeTable, registeredRoute{pattern, nil, txNone, h})
+	routeTable = append(routeTable, registeredRoute{pattern: pattern, tx: txNone, public: h})
+}
+func rawRoute(pattern string, h func(*App, http.ResponseWriter, *http.Request)) {
+	routeTable = append(routeTable, registeredRoute{pattern: pattern, tx: txNone, raw: h})
 }
 func operation(name string, read bool, h handler) { operations[name] = registeredOp{read, h} }
 
@@ -259,6 +264,11 @@ func (a *App) registered() *http.ServeMux {
 	for _, rt := range routeTable {
 		if rt.public != nil {
 			mux.HandleFunc(rt.pattern, rt.public)
+			continue
+		}
+		if rt.raw != nil {
+			h := rt.raw
+			mux.HandleFunc(rt.pattern, func(w http.ResponseWriter, hr *http.Request) { h(a, w, hr) })
 			continue
 		}
 		rt := rt

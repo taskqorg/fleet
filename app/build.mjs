@@ -3,18 +3,37 @@
 import { build } from 'esbuild';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { tokensCss, tokens } from '../packages/ui/scripts/tokens.mjs';
 
 const root = new URL('..', import.meta.url), out = new URL('../dist/app/', import.meta.url);
-rmSync(out, { recursive: true, force: true });
+// Source maps stay out of the served directory: the release uploads them to Bugsink (docs/designs/fleet-error-tracking.md).
+const maps = new URL('../dist/app-sourcemaps/', import.meta.url);
+rmSync(out, { recursive: true, force: true }); rmSync(maps, { recursive: true, force: true });
+mkdirSync(new URL('assets/', maps), { recursive: true });
 mkdirSync(new URL('assets/', out), { recursive: true }); mkdirSync(new URL('manifests/', out), { recursive: true }); mkdirSync(new URL('icons/', out), { recursive: true });
 
 const res = await build({
   entryPoints: [new URL('app/src/main.tsx', root).pathname], bundle: true, splitting: true, format: 'esm', minify: true, target: 'es2022',
   outdir: new URL('assets/', out).pathname, entryNames: 'main-[hash]', chunkNames: 'chunk-[hash]', jsx: 'automatic', jsxImportSource: 'preact',
-  loader: { '.json': 'json' }, legalComments: 'none', metafile: true, write: true,
+  loader: { '.json': 'json' }, legalComments: 'none', metafile: true, write: false, sourcemap: 'external', sourcesContent: true,
 });
+// Each script gets a debug ID (the form `sentry-cli sourcemaps inject` writes): a stack frame of the script names its
+// source map in Bugsink without guessing by release or path. The ID is derived from the script, so a rebuild of the same
+// commit gives the same IDs. The snippet is appended, so the map's lines stay valid.
+const debugId = text => { const h = createHash('sha256').update(text).digest('hex'); return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${(8 | parseInt(h[16], 16) & 3).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`; };
+const ids = {};
+for (const f of res.outputFiles) if (f.path.endsWith('.js')) {
+  const id = ids[f.path] = debugId(f.text);
+  const js = f.text + `!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="${id}",e._sentryDebugIdIdentifier="sentry-dbid-${id}")}catch(e){}}();\n//# debugId=${id}\n`;
+  writeFileSync(f.path, js); writeFileSync(new URL('assets/' + basename(f.path), maps), js);
+}
+for (const f of res.outputFiles) if (f.path.endsWith('.js.map')) {
+  const id = ids[f.path.slice(0, -4)], map = JSON.parse(f.text);
+  writeFileSync(new URL('assets/' + basename(f.path), maps), JSON.stringify({ ...map, debug_id: id, debugId: id }));
+}
+for (const p of Object.keys(res.metafile.outputs)) if (p.endsWith('.map')) delete res.metafile.outputs[p];
 const files = Object.keys(res.metafile.outputs).map(p => p.split('/dist/app/')[1] ?? p.replace(/^.*dist\/app\//, ''));
 const main = files.find(f => /assets\/main-.*\.js$/.test(f));
 

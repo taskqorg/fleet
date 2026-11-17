@@ -28,6 +28,7 @@ Every module that Go code imports has a row here.
 | Module | Replaces | Why the standard library does not cover it |
 | --- | --- | --- |
 | `github.com/jackc/pgx/v5` (closure: `pgpassfile`, `pgservicefile`, `puddle/v2`, `x/crypto`, `x/sync`, `x/text`) | `pg` | The standard library has no Postgres driver. `database/sql` would still need a driver and hides LISTEN, connection startup options and the simple protocol for multi-statement migrations. |
+| `github.com/getsentry/sentry-go` (closure: `x/text`, `x/sys`) | the Sentry SDK of the TypeScript services | The coordinator and the executor report unexpected errors and panics to Bugsink in the Sentry protocol: envelopes, stack frames of a panic and of an error, batching and rate-limit handling, kept current by the protocol's owner. A hand-written sender would track the protocol itself ([error tracking](fleet-error-tracking.md#3-server-errors)). Owner decision 2026-11-17. |
 
 Not added:
 
@@ -47,7 +48,7 @@ Allowed for the executor port (Not built: no Go code imports them yet):
 
 The coordinator was rewritten in Go in one pass (owner direction 2026-11-11: no live users and no data to keep). There was no reverse proxy, no mixed TypeScript and Go setup, no fallback switch and no data migration. Behaviour that looked like a bug was fixed and noted in the pull request of its area.
 
-- Four areas worked in parallel in `go/coordinator`. Each area's files are named `<area>_*.go`. Routes register from `init()` through `registry.go`: `route`, `longRoute` (no surrounding transaction), `publicRoute` (before the credential check), `operation` (`/api/ops/{name}`) and `onStart` (background tickers).
+- Four areas worked in parallel in `go/coordinator`. Each area's files are named `<area>_*.go`. Routes register from `init()` through `registry.go`: `route`, `longRoute` (no surrounding transaction), `publicRoute` (before the credential check), `rawRoute` (its own credential check and body, for the Sentry tunnel and the Bugsink webhook), `operation` (`/api/ops/{name}`) and `onStart` (background tickers).
 - The seams were `packages/coordinator/db/schema.sql` and `contracts/*.schema.json`; both stayed unchanged.
 - Tests are outside tests over HTTP: `tests/trial`, `tests/go` and the app checks in `tests/ui`. All of them start the binary through `tests/harness.ts` on a fresh database with the PDS18 roles.
 - The cutover deleted `packages/coordinator` (except `db/schema.sql`), PGlite, `pg`, Fastify, the esbuild server bundle and `tests/coordinator`. The release is the Go binaries plus `dist/app`.

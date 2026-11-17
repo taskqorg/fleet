@@ -1,4 +1,9 @@
 {
-  "$comment": "Release defaults of the executor (docs/designs/fleet-self-update.md section 5); FLEET_STORE_ENDPOINT_HOSTS overrides storeEndpointHosts.",
-  "storeEndpointHosts": ["fleet-store-pds18.ufobe.com", "fleet-store-mac.ufobe.com", "fleet-store-windows.ufobe.com"]
+  "$comment": "Release defaults of the executor (docs/designs/fleet-self-update.md section 5); FLEET_STORE_ENDPOINT_HOSTS overrides storeEndpointHosts, FLEET_BUGSINK_DSN overrides bugsinkDsn (the fleet-executor Bugsink project, docs/designs/fleet-error-tracking.md; a DSN is not a secret).",
+  "storeEndpointHosts": [
+    "fleet-store-pds18.ufobe.com",
+    "fleet-store-mac.ufobe.com",
+    "fleet-store-windows.ufobe.com"
+  ],
+  "bugsinkDsn": "https://f337515ede0f443488a5a224ea08f58b@bugsink.ufobe.com/3"
 }

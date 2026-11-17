@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"fleet/contract"
+	"fleet/errtrack"
 	"fleet/obs"
 )
 
@@ -36,6 +38,11 @@ var (
 
 func startTelemetry(root, url, token, host string) {
 	obs.Service, obs.HostID, obs.Version = "executor", host, version
+	// Unexpected errors and panics go to Bugsink (docs/designs/fleet-error-tracking.md): FLEET_BUGSINK_DSN, else the
+	// release default; none, no events.
+	if err := errtrack.Start(bugsinkDSN(), "executor", host, version); err != nil {
+		log.Printf("error tracking off: %v", err)
+	}
 	spanDir = filepath.Join(root, "spans")
 	if os.MkdirAll(spanDir, 0o700) != nil {
 		return

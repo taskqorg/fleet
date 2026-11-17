@@ -577,6 +577,10 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		// Success and every other provider reply, quota and 429 included, reach the caller unchanged, except that a key
 		// value the provider echoed is replaced: the caller never sees a key.
 		data = bytes.ReplaceAll(data, []byte(value), []byte("[key]"))
+		// A text reply (Bugsink's Markdown stacktrace) reaches the caller as {"text": ...}: callers read JSON only.
+		if strings.HasPrefix(response.Header.Get("Content-Type"), "text/") && !json.Valid(data) {
+			data, _ = json.Marshal(map[string]string{"text": strings.ToValidUTF8(string(data), "�")})
+		}
 		a := &answer{status: status, body: data, retryAfter: response.Header.Get("Retry-After"), outcome: "ok", key: id}
 		field := "usage." + t.Unit
 		if t.UsageField != nil {

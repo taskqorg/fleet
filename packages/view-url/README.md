@@ -10,7 +10,6 @@
 - `parseView(input, opts)` validates a supported path and query into `View` or returns `null`.
 - `formatView(view)` produces the canonical path/query representation; `listKey(view)` and `toPageParams(view)` adapt it for list reads.
 - `splitTerms` parses field-qualified text, and `viewProblem` reports an unsupported view value.
-- `VIEW_EXTRA` names the extra query keys a view's own page writes (Results, Delivery); the browser error reporter keeps only table keys and these.
 
 ## Invariants
 

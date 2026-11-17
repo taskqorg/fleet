@@ -46,6 +46,7 @@ func defaultSecretFile() string {
 // releaseDefaults: config/executor-defaults.json of the running release, read once.
 var releaseDefaults = sync.OnceValue(func() (d struct {
 	StoreEndpointHosts []string `json:"storeEndpointHosts"`
+	BugsinkDSN         string   `json:"bugsinkDsn"`
 }) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -66,6 +67,14 @@ func storeEndpointHosts() []string {
 		return strings.Split(v, ",")
 	}
 	return releaseDefaults().StoreEndpointHosts
+}
+
+// bugsinkDSN: FLEET_BUGSINK_DSN, else the release default (the fleet-executor Bugsink project); a DSN is not a secret.
+func bugsinkDSN() string {
+	if v := os.Getenv("FLEET_BUGSINK_DSN"); v != "" {
+		return v
+	}
+	return releaseDefaults().BugsinkDSN
 }
 
 // updateSignal is update.json; written only when a value other than at changes, durably (temp file, then rename).

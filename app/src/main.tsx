@@ -1,11 +1,12 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
+// errors.ts first: error tracking starts before the other modules run.
+import { captureRender } from './errors.ts';
 import { Projects } from './views/projects.tsx';
 import { render, Component, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
 import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
-import { createReporter, installReporter, reportPath, sendReport } from './client-errors.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
@@ -26,18 +27,10 @@ import { Results } from './views/results.tsx';
 import { Definitions } from './views/definitions.tsx';
 import { Delivery } from './views/delivery.tsx';
 
-// Browser errors reach the coordinator (client_error_report); an operation's own failure (OpError) is already in its
-// spans, and an access change aborts reads on purpose, so neither is reported again.
-const mainAsset = document.querySelector<HTMLScriptElement>('script[src*="/assets/main-"]')?.getAttribute('src')?.match(/main-([^./]+)/)?.[1];
-const reporter = createReporter({ send: sendReport, path: () => reportPath(location.pathname, location.search), userAgent: navigator.userAgent,
-  version: () => tabVersion.value ?? (mainAsset ? 'main-' + mainAsset : '') });
-const ignoreError = (e: unknown) => e instanceof OpError || e instanceof AccessChanged;
-installReporter(reporter, ignoreError);
-
 /** A render crash shows a recoverable error in the work area instead of a blank page; navigating away clears it. */
 class RenderBoundary extends Component<{ at: string; children: ComponentChildren }, { failed: boolean }> {
   state = { failed: false };
-  componentDidCatch(error: unknown) { if (!ignoreError(error)) reporter.capture(error, 'render'); this.setState({ failed: true }); }
+  componentDidCatch(error: unknown) { captureRender(error); this.setState({ failed: true }); }
   componentDidUpdate(prev: { at: string }) { if (prev.at !== this.props.at && this.state.failed) this.setState({ failed: false }); }
   render() {
     return this.state.failed ? <Empty text="This page failed to render." action={<Button label="Reload" icon="rotate-ccw" onClick={() => location.reload()} />} /> : this.props.children;

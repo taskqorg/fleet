@@ -25,6 +25,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"fleet/errtrack"
 	"fleet/obs"
 )
 
@@ -345,6 +346,7 @@ func writeError(w http.ResponseWriter, err error) {
 		obs.MarkRefused(w)
 	} else {
 		log.Printf("error: %v", err)
+		errtrack.Capture(err, map[string]string{"status": "500"}) // an unexpected 5xx (fleet-error-tracking.md)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)

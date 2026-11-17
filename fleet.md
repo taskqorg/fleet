@@ -221,6 +221,7 @@ Go rules:
 - Standard library first: `net/http` (routing, SSE), `encoding/json`, `log/slog`. Each third-party module has one row in the [module table](docs/designs/fleet-go-code.md#third-party-go-modules): module, what it replaces, why the standard library does not cover it.
 - Allowed now: `github.com/jackc/pgx/v5`, used directly, not through `database/sql`, because LISTEN and connection options need its own API. ClickHouse through its HTTP interface with `net/http`. S3 (Garage) through a hand-written SigV4 signer; `minio-go` would add 19 compiled-in modules.
 - Allowed for the executor: `modernc.org/sqlite` (SQLite without cgo, keeps `journal.sqlite`) and `github.com/ebitengine/purego` (macOS libproc calls without cgo).
+- Allowed for error reporting: `github.com/getsentry/sentry-go`, the Sentry protocol of Bugsink, Fleet's error tracker ([error tracking](docs/designs/fleet-error-tracking.md)).
 - Not built: a Linux run of the executor probe's signal and crash checks in CI; it precedes the executor port.
 - `CGO_ENABLED=0` for every binary, checked in CI. Any need for C is a stop-and-ask.
 - One Go module (`go/`), one `go.sum`; builds use `-mod=readonly`; the default checksum database stays on; `govulncheck` runs in CI as a warning.

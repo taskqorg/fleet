@@ -1,8 +1,8 @@
 // Problems (docs/designs/fleet-system-management.md, Problems): rule findings and direct signals as needs-you
 // questions keyed by cause, on the dispatch cause mechanism. Keys start with problem: so the dispatch sweep never
 // touches them. An open or answered question holds its cause: an answered one (Dismiss) is not asked again while the
-// cause is present; when the cause goes, the cause is cleared and an open question withdrawn. Exception, owner decision
-// 2026-11-17: browser error problems (client_errors.go) release their group on an answer, and a repeat asks again.
+// cause is present; when the cause goes, the cause is cleared and an open question withdrawn. A Bugsink issue that comes
+// back (regression, unmute) asks again whatever the earlier answer (bugsink.go).
 package main
 
 import (

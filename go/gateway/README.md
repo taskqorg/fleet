@@ -16,6 +16,7 @@
 - Listeners must be loopback TCP sockets, including systemd-activated sockets ([main.go](main.go)).
 - A snapshot is adopted only when valid; the last valid copy remains usable after an invalid coordinator snapshot ([gateway.go](gateway.go)).
 - Key files are selected by snapshot fingerprint and their values must hash to that fingerprint. Values are not returned to callers and are redacted from provider replies ([gateway.go](gateway.go)).
+- A provider's 2xx text reply (`Content-Type: text/*`, not JSON) reaches the caller as `{"text": ...}` after key redaction (Bugsink's Markdown stacktrace) ([gateway.go](gateway.go)).
 - Redirects are not followed. A non-idempotent call with no provider answer is not retried; the outcome is `unknown` when a provider-side charge may have happened ([gateway.go](gateway.go)).
 - Anthropic uses fixed native Messages and Models routes. `anthropicPath` validates the supported request fields and refuses streaming; `anthropicTokens` counts reported tokens without pricing them. Messages 5xx completion stays unknown ([operation scope](../../docs/designs/fleet-connections.md#anthropic-operations)).
 - The spool acknowledges a call record only after its JSON line is fsynced. Spool-loss accounting is persisted separately when possible ([gateway.go](gateway.go)).

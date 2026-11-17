@@ -60,6 +60,7 @@ Every setting is per project; absent key means the default below. The coordinato
 | `integration.autoMerge` | `true` | Fleet merges the pull request itself after checks pass (`gh pr merge --<method>`); `false` leaves it open for a reviewer or the owner. |
 | `integration.syncCheckoutAfterMerge` | `true` | After a verified merge each environment host fast-forwards its clean checkout (`base-updated`); see [Checkout sync](#checkout-sync). |
 | `identity` | `null` | `{name, email}` for `GIT_AUTHOR_*`/`GIT_COMMITTER_*` of agent and delivery commits. |
+| `errors.bugsink` | `[]` | Names of the Bugsink projects holding this project's errors (`^[a-z0-9][a-z0-9_-]{0,63}$`, else 400 `Invalid project setting errors.bugsink`); a Bugsink alert's problem belongs to the project that names its Bugsink project ([error tracking](designs/fleet-error-tracking.md#4-agent-read-access)). |
 | `artifact_locations`, `artifact_rules` | `null`, `[]` | Hosts that must hold the project's artifacts and retention rules ([data foundation](designs/fleet-data-foundation.md)). |
 
 Not built: `integration.mode: direct` for agent sessions (`session_deliver` always opens a pull request; `direct` applies to artifact delivery only); `integration.mode: pr` on GitLab (the program worker uses `gh`); a merge method read from the repository default.
@@ -98,8 +99,9 @@ Needs seen in the owner's repositories with no setting yet: submodules (pilotq);
    A GitHub connection needs these read tools: for the Delivery page `pulls_open`, `pulls_closed`, `runs_in_progress`, `runs_queued`, `runs_completed_pr` and `releases`; for delivery history (fleet repository) also `pulls_closed_page`, `releases_page`, `workflow_runs_day`, `workflow_runs_sha` and `run_jobs`; for CI runners `org_runners` and `runs_recent`. A new connection gets every provider tool. An existing connection does not get a tool that a later release adds to the provider: grant it with `connections_set_tools`. For example, without `runs_completed_pr` Delivery never shows a failed pull request.
 3. Prepare each environment in its own terminal: clone the repo to `checkoutPath`, install toolchains, place the connection credential. Fleet never accepts the secret.
 4. Bind harness accounts per role on the chosen hosts (`account_*` operations; a missing binding is a login handoff).
-5. Run `project_readiness {projectId}`; read results with `execution_status`.
-6. Run a smoke task: edit, commit with the project identity, push the branch, deliver.
+5. Create the project's Bugsink projects (team `fleet`), put their DSNs in the project's runtime config, map them in `project.json` `errors.bugsink`, and grant the `bugsink` connection to the project ([error tracking](designs/fleet-error-tracking.md#7-onboarding-a-project)).
+6. Run `project_readiness {projectId}`; read results with `execution_status`.
+7. Run a smoke task: edit, commit with the project identity, push the branch, deliver.
 
 ### Repository access
 

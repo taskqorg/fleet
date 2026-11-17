@@ -14,7 +14,8 @@ case $1 in
   # Filter path (fleet-view-urls-and-list-path.md §4), Conversations (fleet-conversations.md "Browser check"), Lab-create.
   browser-0)
     pnpm exec playwright install chromium
-    node tests/ui/filter.check.ts --assert --sizes 20000 ;;
+    node tests/ui/filter.check.ts --assert --sizes 20000
+    node tests/ui/errors.check.ts ;;
   browser-1)
     pnpm exec playwright install chromium
     node tests/ui/filter.check.ts --assert --sizes 3000

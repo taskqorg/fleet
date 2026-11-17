@@ -488,6 +488,88 @@ func TestCallerCancellationReachesProvider(t *testing.T) {
 	t.Fatal("no spool line")
 }
 
+// Requirement: fleet-connections.md §5: a provider's text reply (Bugsink's Markdown stacktrace) reaches the caller as
+// {"text": ...}, with the key still redacted. Risk: the caller's JSON-only client marks every such read invalid-response.
+func TestTextReplyBecomesJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		io.WriteString(w, "# Error\n  at f (main.tsx:3) invented-key-a\n")
+	}))
+	t.Cleanup(server.Close)
+	gw := newFixture(t, server.URL, "invented-key-a")
+	status, _, v := gw.raw("POST", "/v1/call/tavily/status", "Bearer "+testToken, `{"jobId":"j1"}`)
+	expect(t, []any{status, v}, []any{200, map[string]any{"text": "# Error\n  at f (main.tsx:3) [key]\n"}}, "text reply")
+}
+
+// Requirement: fleet-error-tracking.md, agent read access: each bugsink catalogue tool (coordinator providers.go) reaches
+// the Bugsink API path it names with the key as bearer, and refuses ids that are not ids. Risk: a tool reads the wrong
+// endpoint, or a crafted id walks to another API path with the read token.
+func TestBugsinkCatalogue(t *testing.T) {
+	src, err := os.ReadFile("../coordinator/providers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	text = text[strings.Index(text, "const providersJSON = `")+len("const providersJSON = `"):]
+	var catalogue map[string]map[string]any
+	if err := json.Unmarshal([]byte(text[:strings.Index(text, "`")]), &catalogue); err != nil {
+		t.Fatal(err)
+	}
+	type seen struct{ uri, auth, accept string }
+	got := make(chan seen, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- seen{r.URL.RequestURI(), r.Header.Get("Authorization"), r.Header.Get("Accept")}
+		if r.Header.Get("Accept") == "text/markdown" {
+			w.Header().Set("Content-Type", "text/markdown")
+			io.WriteString(w, "frames")
+			return
+		}
+		io.WriteString(w, `{"results":[]}`)
+	}))
+	t.Cleanup(server.Close)
+	bugsink := catalogue["bugsink"]
+	bugsink["baseUrl"] = server.URL
+	tools := []string{}
+	for name := range bugsink["tools"].(map[string]any) {
+		tools = append(tools, name)
+	}
+	gw := newFixture(t, server.URL, "invented-bugsink-key")
+	os.MkdirAll(filepath.Join(gw.dir, "keys/bugsink"), 0o700)
+	os.WriteFile(filepath.Join(gw.dir, "keys/bugsink", fp("invented-bugsink-key")), []byte("invented-bugsink-key\n"), 0o600)
+	snap := testSnapshot(server.URL, []keyState{{"invented-bugsink-key", "active"}}, nil, "all")
+	snap["providers"].(map[string]any)["bugsink"] = bugsink
+	snap["connections"].(map[string]any)["bugsink"] = map[string]any{"provider": "bugsink", "tools": tools, "intake": "all",
+		"keys": []map[string]any{{"id": fp("invented-bugsink-key"), "state": "active"}}, "blocked": []string{}}
+	snap["tokens"] = []map[string]any{{"sha256": sha(testToken), "executionId": "exec-1", "projectId": "fleet", "connections": []string{"bugsink"}}}
+	gw.write(snap)
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
+
+	issue, event := "0f8fad5b-d9cb-469f-a165-70867728950e", "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+	for tool, c := range map[string]struct{ body, uri, accept string }{
+		"projects":         {`{}`, "/api/canonical/0/projects/", "application/json"},
+		"issues":           {`{"project":"3","state":"unresolved"}`, "/api/canonical/0/issues/?project=3&state=unresolved&sort=last_seen&order=desc", "application/json"},
+		"issue_get":        {`{"issue":"` + issue + `"}`, "/api/canonical/0/issues/" + issue + "/", "application/json"},
+		"issue_events":     {`{"issue":"` + issue + `"}`, "/api/canonical/0/events/?issue=" + issue + "&order=desc", "application/json"},
+		"event_get":        {`{"event":"` + event + `"}`, "/api/canonical/0/events/" + event + "/", "application/json"},
+		"event_stacktrace": {`{"event":"` + event + `"}`, "/api/canonical/0/events/" + event + "/stacktrace/", "text/markdown"},
+	} {
+		status, _, v := gw.raw("POST", "/v1/call/bugsink/"+tool, "Bearer "+testToken, c.body)
+		if status != 200 || v == nil {
+			t.Fatalf("%s: %d %v", tool, status, v)
+		}
+		s := <-got
+		expect(t, s, seen{c.uri, "Bearer invented-bugsink-key", c.accept}, tool)
+	}
+	for tool, body := range map[string]string{"issue_get": `{"issue":"../projects"}`, "issues": `{"project":"3&x=1","state":"open"}`, "event_get": `{"event":"1"}`} {
+		if status, _, _ := gw.raw("POST", "/v1/call/bugsink/"+tool, "Bearer "+testToken, body); status != 400 {
+			t.Fatalf("%s %s: %d", tool, body, status)
+		}
+	}
+	if len(tools) != 6 {
+		t.Fatalf("bugsink tools: %v", tools)
+	}
+}
+
 func TestPathPatternsAndUsageField(t *testing.T) {
 	model := "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
 	field := "usageMetadata.totalTokenCount"

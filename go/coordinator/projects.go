@@ -120,9 +120,11 @@ var settingsDefaults = map[string]any{"contextSources": []any{}, "repos": []any{
 	"scripts":  doc{"setup": nil, "teardown": nil}, "setupStart": "wait",
 	"execution":   doc{"tools": []any{}, "forge": false, "profiles": []any{}},
 	"integration": doc{"mode": "pr", "mergeMethod": "squash", "autoMerge": true, "syncCheckoutAfterMerge": true},
-	"cleanup":     doc{"keepWhen": []any{"uncommitted", "unpushed", "teardown-failed"}}, "identity": nil, "subscriptions": []any{}}
+	"cleanup":     doc{"keepWhen": []any{"uncommitted", "unpushed", "teardown-failed"}}, "identity": nil, "subscriptions": []any{},
+	// errors.bugsink: the Bugsink projects (names) holding this project's errors (docs/designs/fleet-error-tracking.md).
+	"errors": doc{"bugsink": []any{}}}
 
-var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution"}
+var settingsOrder = []string{"contextSources", "repos", "environments", "roles", "worktree", "scripts", "setupStart", "integration", "cleanup", "identity", "subscriptions", "execution", "errors"}
 var itemKeys = map[string][]string{"repos": {"id", "remote", "forge", "defaultBranch", "connection", "path"}, "environments": {"hostId", "checkoutPath", "repo"}, "identity": {"name", "email"}}
 var settingEnums = map[string][]any{"worktree.envMode": {"worktree", "local"}, "setupStart": {"wait", "background"}, "integration.mode": {"pr", "direct"}, "integration.mergeMethod": {"squash", "merge", "rebase"}, "repos.forge": {"github", "gitlab"}}
 
@@ -143,7 +145,7 @@ func jsType(v any) string {
 func projectSettings(p doc) (doc, []string, error) {
 	unknown := []string{}
 	bad := func(k string) error {
-		if k == "execution.profiles" {
+		if k == "execution.profiles" || k == "errors.bugsink" {
 			return fail(400, "Invalid project setting "+k)
 		}
 		return fail(500, "Invalid project setting "+k)
@@ -274,6 +276,13 @@ func projectSettings(p doc) (doc, []string, error) {
 							return nil, nil, bad("execution.profiles")
 						}
 						seen[id] = true
+					}
+				}
+				if k == "errors" && x == "bugsink" {
+					for _, name := range anys(y) {
+						if !bugsinkProjectName.MatchString(astr(name)) {
+							return nil, nil, bad("errors.bugsink")
+						}
 					}
 				}
 				if k == "execution" && x == "tools" {

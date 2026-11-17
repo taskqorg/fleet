@@ -11,6 +11,9 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"fleet/errtrack"
 
 	_ "modernc.org/sqlite"
 )
@@ -159,7 +162,16 @@ func main() {
 		}
 		run = func() error { return h(os.Args[2:]) }
 	}
+	// Error tracking runs only once the executor itself started it (startTelemetry); elsewhere these are no-ops.
+	defer func() {
+		if p := recover(); p != nil {
+			errtrack.Panic(p, map[string]string{"span": "main"})
+			panic(p)
+		}
+	}()
 	if err := run(); err != nil {
+		errtrack.Capture(err, map[string]string{"span": "main"})
+		errtrack.Flush(2 * time.Second)
 		fmt.Fprintln(os.Stderr, "executor:", err)
 		os.Exit(1)
 	}
