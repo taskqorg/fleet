@@ -52,6 +52,45 @@ func count(db *sql.DB, table string) (n int) {
 	return
 }
 
+// Repeated native session IDs must not split consecutive events into separate outbox requests.
+func TestNativeSessionReceiptOnlyOnObservationChange(t *testing.T) {
+	e, _ := scriptExecutor(t)
+	lines := make(chan string, 4)
+	for _, native := range []string{"known", "known", "learned", "learned"} {
+		lines <- enc(M{"type": "system", "session_id": native})
+	}
+	l := &live{command: M{"id": "c", "sessionId": "s", "executionId": "x", "kind": "start",
+		"payload": M{"harness": "claude"}}, native: "known", lines: lines}
+	if _, err := e.tickOne("x", l); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := e.db.Query("SELECT route,body FROM outbox ORDER BY rowid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var receipts []string
+	events := 0
+	for rows.Next() {
+		var route, body string
+		if err := rows.Scan(&route, &body); err != nil {
+			t.Fatal(err)
+		}
+		switch route {
+		case "/api/hosts/receipts":
+			receipts = append(receipts, jStr(decM(body), "nativeSessionId"))
+		case "/api/hosts/events":
+			events++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if events != 4 || enc(receipts) != `["known","learned"]` || l.native != "learned" {
+		t.Fatalf("events=%d, native receipts=%v, final native=%q", events, receipts, l.native)
+	}
+}
+
 // Requirement: a 4xx row is set aside and reported, never blocking the rows behind it. Risk: one poisoned receipt stops
 // every later receipt of the host.
 func TestRejectedRowIsSetAsideAndDoesNotBlock(t *testing.T) {
