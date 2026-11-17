@@ -75,10 +75,11 @@ Code mode adds no authority. The code server bridges only the tools that the exe
 - A Claude profile whose `tools` list has none of `Read`, `Grep`, `Glob` or `Bash` gets no file reads in the runtime.
 - The runtime environment has no run token, gateway URL or Access file. The code server keeps them, as the connection servers do ([per-run tokens](fleet-connections.md#4-per-run-tokens)).
 - The runtime has no network. Bridged calls go through the code server, so the runtime needs none, and a harness without network (Codex without `gitNetwork`) gets none through code. Node 22's permission model has no network rule, so the runtime runs inside an OS sandbox. Its stdin and stdout pipes to the code server still work.
-  - macOS: `sandbox-exec` with `(deny network*)`, which also refuses Unix sockets.
-  - Linux: `bwrap --unshare-net --unshare-ipc`. The sandbox sees only the system directories, Node's own install directory and the read roots, all read-only, with its own `/tmp`, `/proc` and `/dev`, so host Unix sockets outside the read roots are unreachable.
+  - macOS: `sandbox-exec` with `(deny network*)`, which also refuses Unix sockets, plus `(deny file-write*)` except `/dev/null` and `(deny signal)` except to itself.
+  - Linux: `bwrap --unshare-net --unshare-ipc --unshare-pid`. The sandbox sees only the system directories, Node's own install directory and the read roots, all read-only, with its own `/tmp`, `/proc` and `/dev`. Host Unix sockets outside the read roots are unreachable, and other processes are invisible to signals.
+- The OS sandbox, not only Node's permission model, refuses writes and signals: Node documents its model as a seat belt against mistakes, not a boundary against hostile code.
 - File reads follow symlinks inside the read roots. That adds no authority: the same files are readable through the harness's own read tools, and the run file is readable by the same OS user anyway ([threat model](fleet-connections.md#4-per-run-tokens)).
-- The host needs Node 22.13 or later (for `--permission`) and a sandbox that starts. The executor runs the sandbox once per process to check it. Without them, the launch fails with `code-mode-unready: <reason>`, for example on Linux without user namespaces. Hosts without such a sandbox, such as Windows, cannot use code mode.
+- The host needs a Node with `--permission` (22.13 or later in 22, 23.5 or later in 23, any later major) and a sandbox that starts. The executor runs the sandbox to check it and keeps only a ready result, so a host made ready later needs no executor restart. Without them, the launch fails with `code-mode-unready: <reason>`, for example on Linux without user namespaces. Hosts without such a sandbox, such as Windows, cannot use code mode.
 - Not built: Node on PDS18, which has none today; `bwrap --unshare-net` works there for the `fleet-agent` user.
 
 ## Unknown outcomes
@@ -89,6 +90,7 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 - A bridged call made after its job ended (an unawaited promise or a timer) is refused with `code: "job-ended"` and never sent: its effect would reach no reply. Code awaits every call it starts.
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
 - A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent. A stored reply that does not decode is such a failure.
+- An unawaited rejection or a throw inside a timer is printed, not fatal: the runtime, its other jobs and `state` survive.
 - When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. The next `code` call starts a new runtime, and its reply says so: `restarted: true`.
 
 ## Observability
@@ -137,4 +139,4 @@ Run from `go/`:
 go test ./executor -run CodeMode
 ```
 
-The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes, commands and network (`fetch` and the internal `_http_client` reach no server), a 70 MB value, `poll` reset of a spinning job, a result returned once, probes that send no call, a restarted runtime, a journal error as `unknown`, and the launch servers for `add` and `only`. The runtime tests skip when the host has no Node 22.13 or later or no sandbox tool.
+The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes, commands, signals to another process and network (`fetch` and the internal `_http_client` reach no server), a timer throw that keeps `state`, a 70 MB value, `poll` reset of a spinning job, a result returned once, probes that send no call, a restarted runtime, a journal error as `unknown`, and the launch servers for `add` and `only`. The runtime tests skip when the host has no such Node or no sandbox that starts.

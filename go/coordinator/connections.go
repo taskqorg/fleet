@@ -38,10 +38,6 @@ var (
 	processStarted = nowMs()
 )
 
-// executorServers: MCP server names the executor gives a launch; a connection with one of them would collide
-// (go/executor/executor.go, docs/designs/fleet-code-mode.md).
-var executorServers = map[string]bool{"fleet": true, "code": true, "design-rules": true, "project-browser": true, "project-forge": true}
-
 func randomToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
@@ -357,7 +353,7 @@ func init() {
 		if !connName.MatchString(name) || providers[provider] == nil || !keysOnly(b, "name", "provider", "holder", "comment") {
 			return nil, fail(400, "Expected name and a known provider")
 		}
-		if executorServers[name] {
+		if slices.Contains(contract.ExecutorMCPServers, name) {
 			return nil, fail(400, "Connection name "+name+" is an executor MCP server name")
 		}
 		if old, err := maybe(q, "connection:"+name, "api-connection"); err != nil {

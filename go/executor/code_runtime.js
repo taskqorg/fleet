@@ -35,15 +35,21 @@ const tools = (server) => new Proxy({}, { get: (_, tool) => (typeof tool === 'st
 const print = (...xs) => send({ type: 'print', job: job.getStore() ?? null, text: util.format(...xs) + '\n' });
 
 globalThis.fleet = tools('fleet');
-globalThis.conn = new Proxy({}, { get: (_, name) => (typeof name === 'string' && name !== 'then' ? tools('conn:' + name) : undefined) });
+globalThis.conn = new Proxy({}, { get: (_, name) => (typeof name === 'string' && !probed.has(name) ? tools('conn:' + name) : undefined) });
 globalThis.state = {};
 globalThis.print = print;
 globalThis.require = require;
 globalThis.FleetCallError = FleetCallError;
 for (const k of ['log', 'info', 'warn', 'error', 'debug']) console[k] = print;
-process.stdout.write = (chunk) => (print(String(chunk).replace(/\n$/, '')), true);
-// An unawaited rejection is reported, not fatal: the runtime and its `state` survive it.
+process.stdout.write = (chunk, encoding, callback) => {
+  print(String(chunk).replace(/\n$/, ''));
+  const done = typeof encoding === 'function' ? encoding : callback;
+  if (typeof done === 'function') process.nextTick(done);
+  return true;
+};
+// An unawaited rejection or a throw in a timer is reported, not fatal: the runtime, its other jobs and `state` survive.
 process.on('unhandledRejection', (e) => print('Unhandled rejection:', e));
+process.on('uncaughtException', (e) => print('Uncaught exception:', e));
 
 function plain(v) {
   if (v === undefined) return null;

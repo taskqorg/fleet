@@ -3,13 +3,16 @@ package main
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -207,8 +210,8 @@ func TestCodeModeReset(t *testing.T) {
 // Risk: printing or returning a bridge object sends real tool calls (fleet-code-mode.md, bridge functions).
 func TestCodeModeProbesSendNoCalls(t *testing.T) {
 	c := newCodeClient(t, M{"dir": t.TempDir()})
-	r, bad := c.code(`print(fleet); return [JSON.stringify({f: fleet, c: conn.web}), String(typeof fleet.then)]`)
-	if bad || len(jArr(r, "calls")) != 0 || strings.Contains(jStr(r, "output"), "Unhandled") || enc(r["value"]) != `["{\"f\":{},\"c\":{}}","undefined"]` {
+	r, bad := c.code(`print(fleet); return [JSON.stringify({f: fleet, c: conn.web, n: conn}), String(typeof fleet.then), typeof conn.toString]`)
+	if bad || len(jArr(r, "calls")) != 0 || strings.Contains(jStr(r, "output"), "Unhandled") || enc(r["value"]) != `["{\"f\":{},\"c\":{},\"n\":{}}","undefined","undefined"]` {
 		t.Fatalf("probes: %v %v", bad, r)
 	}
 }
@@ -219,9 +222,15 @@ func TestCodeModePermissions(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
 	defer srv.Close()
+	sleeper := exec.Command("sleep", "30")
+	if err := sleeper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sleeper.Process.Kill()
 	dir := t.TempDir()
 	c := newCodeClient(t, M{"dir": dir, "read": []any{dir}})
 	src := `const fs = require("node:fs"); const out = {}
+		try { process.kill(` + fmt.Sprint(sleeper.Process.Pid) + `, "SIGTERM"); out.signal = "allowed" } catch (e) { out.signal = e.code === "EPERM" || e.code === "ESRCH" ? "refused" : e.code }
 		try { fs.writeFileSync(` + enc(filepath.Join(dir, "x")) + `, "1"); out.write = "allowed" } catch (e) { out.write = e.code }
 		try { require("node:child_process").execSync("true"); out.exec = "allowed" } catch (e) { out.exec = e.code }
 		out.read = fs.readdirSync(` + enc(dir) + `).length
@@ -231,8 +240,11 @@ func TestCodeModePermissions(t *testing.T) {
 			r.on("error", () => done("refused")); r.end() })
 		return out`
 	r, bad := c.code(src)
-	if bad || enc(r["value"]) != `{"exec":"ERR_ACCESS_DENIED","fetch":"refused","raw":"refused","read":0,"write":"ERR_ACCESS_DENIED"}` || hits.Load() != 0 {
+	if bad || enc(r["value"]) != `{"exec":"ERR_ACCESS_DENIED","fetch":"refused","raw":"refused","read":0,"signal":"refused","write":"ERR_ACCESS_DENIED"}` || hits.Load() != 0 {
 		t.Fatalf("permissions: %v %v, server hits %d", bad, r, hits.Load())
+	}
+	if sleeper.Process.Signal(syscall.Signal(0)) != nil {
+		t.Fatal("the other process was signalled")
 	}
 }
 
@@ -273,6 +285,12 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 	}
 	if r, bad := c.code(`throw new Error("boom")`); !bad || jStr(r, "error", "message") != "boom" || r["restarted"] != nil {
 		t.Fatalf("throw: %v %v", bad, r)
+	}
+	// A throw in a timer and a write callback keep the runtime and its state.
+	c.code(`state.n = 2; setTimeout(() => { throw new Error("late") }, 10)`)
+	r, bad = c.code(`await new Promise(r => setTimeout(r, 100)); await new Promise(r => process.stdout.write("w", r)); return state.n`)
+	if bad || enc(r["value"]) != "2" || r["restarted"] != nil || r["output"] != "w\n" {
+		t.Fatalf("after timer throw: %v %v", bad, r)
 	}
 }
 

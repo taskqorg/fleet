@@ -36,10 +36,8 @@ var codeTools = []any{
 type codeJob struct {
 	id     string
 	rt     *codeRuntime
-	output strings.Builder
-	calls  []any
-	sent   int // bytes of output already replied
-	sentC  int // calls already replied
+	output strings.Builder // output not yet replied
+	calls  []any           // calls not yet replied
 	done   chan struct{}
 	ok     bool
 	value  any
@@ -103,24 +101,28 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 		fmt.Fprintln(out, enc(m))
 		out.Flush()
 	}
-	sc := bufio.NewScanner(in)
-	sc.Buffer(nil, 64<<20)
-	for sc.Scan() {
-		m, err := dec(sc.Text())
-		if err != nil {
-			write(M{"jsonrpc": "2.0", "id": nil, "error": M{"code": -32700, "message": "Parse error"}})
-			continue
+	r := bufio.NewReader(in) // no line cap: a request may carry a large source
+	for {
+		line, rerr := r.ReadBytes('\n')
+		if len(strings.TrimSpace(string(line))) > 0 {
+			m, err := dec(string(line))
+			if err != nil {
+				write(M{"jsonrpc": "2.0", "id": nil, "error": M{"code": -32700, "message": "Parse error"}})
+			} else if has(m, "id") {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					write(s.serve(m))
+				}()
+			}
 		}
-		if !has(m, "id") {
-			continue
+		if rerr == io.EOF {
+			return nil
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			write(s.serve(m))
-		}()
+		if rerr != nil {
+			return rerr
+		}
 	}
-	return sc.Err()
 }
 
 func (s *codeServer) serve(m any) M {
@@ -239,9 +241,10 @@ func (s *codeServer) wait(j *codeJob, d time.Duration) M {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Each reply carries only the output and calls since the job's previous reply.
-	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String()[j.sent:], "calls": append([]any{}, j.calls[j.sentC:]...)}
-	j.sent, j.sentC = j.output.Len(), len(j.calls)
+	// Each reply carries only the output and calls since the job's previous reply; the server keeps nothing replied.
+	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String(), "calls": append([]any{}, j.calls...)}
+	j.output.Reset()
+	j.calls = nil
 	if r["status"] == "running" {
 		return r
 	}
@@ -323,14 +326,19 @@ func codeArgv(spec any) ([]string, error) {
 	return sandboxArgv(jStr(spec, "sandbox"), node, jArr(spec, "read"), args)
 }
 
-// sandboxArgv wraps a command in the OS sandbox: no network, including Unix sockets. On Linux the sandbox sees only the
-// system directories, Node's own install and the read roots, read-only, with its own /tmp, /proc and /dev.
+// codeProfile is the macOS sandbox for the runtime: no network (Unix sockets included), no file writes except /dev/null,
+// and signals only to itself.
+const codeProfile = noNetworkProfile + `(deny file-write*)(allow file-write-data (literal "/dev/null"))(deny signal)(allow signal (target self))`
+
+// sandboxArgv wraps a command in the OS sandbox: no network (Unix sockets included), no writes, no signals to other
+// processes. On Linux the sandbox has its own PID namespace and sees only the system directories, Node's own install and
+// the read roots, read-only, with its own /tmp, /proc and /dev.
 func sandboxArgv(sandbox, node string, read []any, args []string) ([]string, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		return append([]string{sandbox, "-p", noNetworkProfile}, args...), nil
+		return append([]string{sandbox, "-p", codeProfile}, args...), nil
 	case "linux":
-		argv := []string{sandbox, "--unshare-net", "--unshare-ipc", "--die-with-parent", "--new-session"}
+		argv := []string{sandbox, "--unshare-net", "--unshare-ipc", "--unshare-pid", "--die-with-parent", "--new-session"}
 		for _, d := range []string{"/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc"} {
 			argv = append(argv, "--ro-bind-try", d, d)
 		}
@@ -537,8 +545,7 @@ func mcpValue(r any) (any, M) {
 	return v, nil
 }
 
-// codeHost finds the host's Node (22.13 or later, for --permission) and network sandbox for the runtime. The probe runs
-// once per executor process, like unshareWorks.
+// codeHost finds the host's Node (with --permission) and sandbox for the runtime.
 var codeHost = func() (string, string, error) {
 	r := codeHostProbe()
 	if r.err != nil {
@@ -552,10 +559,25 @@ type codeHostResult struct {
 	err           error
 }
 
-var codeHostProbe = sync.OnceValue(func() codeHostResult {
-	node, sandbox, err := probeCodeHost()
-	return codeHostResult{node, sandbox, err}
-})
+// codeHostProbe keeps only a ready result: a failed probe runs again at the next launch, so a host made ready later (or
+// a transient failure) does not need an executor restart.
+var codeHostProbe = func() func() codeHostResult {
+	var mu sync.Mutex
+	var ready *codeHostResult
+	return func() codeHostResult {
+		mu.Lock()
+		defer mu.Unlock()
+		if ready != nil {
+			return *ready
+		}
+		node, sandbox, err := probeCodeHost()
+		r := codeHostResult{node, sandbox, err}
+		if err == nil {
+			ready = &r
+		}
+		return r
+	}
+}()
 
 func probeCodeHost() (node, sandbox string, err error) {
 	node, err = exec.LookPath("node")
@@ -565,8 +587,9 @@ func probeCodeHost() (node, sandbox string, err error) {
 	out, err := exec.Command(node, "--version").Output()
 	v := strings.TrimSpace(string(out))
 	var major, minor int
-	if _, scanErr := fmt.Sscanf(v, "v%d.%d", &major, &minor); err != nil || scanErr != nil || major < 22 || major == 22 && minor < 13 {
-		return "", "", fmt.Errorf("code-mode-unready: node %s, needs 22.13 or later", v)
+	// --permission (not only --experimental-permission): 22.13 or later in 22, 23.5 or later in 23, every later major.
+	if _, scanErr := fmt.Sscanf(v, "v%d.%d", &major, &minor); err != nil || scanErr != nil || major < 22 || major == 22 && minor < 13 || major == 23 && minor < 5 {
+		return "", "", fmt.Errorf("code-mode-unready: node %s, needs 22.13, 23.5 or later", v)
 	}
 	tool := map[string]string{"darwin": "sandbox-exec", "linux": "bwrap"}[runtime.GOOS]
 	if tool == "" {
