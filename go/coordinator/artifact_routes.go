@@ -339,7 +339,11 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 	return nil, fail(403, "Artifact not readable by this host")
 }
 
-// hostArtifactList: artifact_list for an agent: its own project's artifacts, or its own execution's without a project.
+// hostArtifactListPage: the artifacts of one host listing; an agent pages on with nextCursor.
+const hostArtifactListPage = 50
+
+// hostArtifactList: artifact_list for an agent: its own project's artifacts, or its own execution's without a project;
+// newest first, one page per call, so no listing returns an unbounded reply.
 func hostArtifactList(q *Request, b *contract.HostArtifactListRequest) (any, error) {
 	a, ctx := q.app, q.ctx()
 	e, err := execGet(ctx, a, truncate(b.ExecutionId, 200))
@@ -350,14 +354,30 @@ func hostArtifactList(q *Request, b *contract.HostArtifactListRequest) (any, err
 	if b.Filter != nil {
 		bf = *b.Filter
 	}
-	f := listFilter{TaskID: bf.TaskId, MediaType: bf.MediaType, ProjectID: e.ProjectID, NoExamples: true}
+	limit := int64(hostArtifactListPage)
+	f := listFilter{TaskID: bf.TaskId, MediaType: bf.MediaType, ProjectID: e.ProjectID, NoExamples: true, Limit: &limit}
 	if e.ProjectID == nil {
 		f.ExecutionID = &e.ID
 	} else {
 		f.ExecutionID = bf.ExecutionId
 	}
+	if bf.Cursor != nil {
+		before, err := strconv.ParseInt(*bf.Cursor, 10, 64)
+		if err != nil || before <= 0 {
+			return nil, fail(400, "Expected cursor from nextCursor")
+		}
+		f.Before = &before
+	}
 	l, err := artifactList(ctx, a, f)
-	return doc{"artifacts": l}, err
+	if err != nil {
+		return nil, err
+	}
+	out := doc{"artifacts": l}
+	if int64(len(l)) > limit {
+		l = l[:limit]
+		out["artifacts"], out["nextCursor"] = l, strconv.FormatInt(l[len(l)-1]["seq"].(int64), 10)
+	}
+	return out, nil
 }
 
 func opArtifactList(q *Request) (any, error) {

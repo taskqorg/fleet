@@ -302,7 +302,7 @@
   },
   {
     "name": "artifact_list",
-    "description": "List artifact metadata of this project (or of an execution or task). Never returns content.",
+    "description": "List artifact metadata, newest first, 50 per call; never returns content. Without arguments: this execution's artifacts. scope=\"project\" lists the whole project; execution_id or task_id list another execution or task. A reply with nextCursor has more: call again with cursor set to it.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -319,6 +319,16 @@
           "type": "string"
         },
         "media_type": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "execution",
+            "project"
+          ]
+        },
+        "cursor": {
           "type": "string"
         }
       },

@@ -665,8 +665,9 @@ func (v *HostArtifactGetRequest) Validate() error {
 	return nil
 }
 
-// HostArtifactListFilter: Optional narrowing of /api/hosts/artifacts/list.
+// HostArtifactListFilter: Optional narrowing of /api/hosts/artifacts/list. Without executionId or taskId it lists the execution's project; the executor sends its own executionId unless the agent asked for the project.
 type HostArtifactListFilter struct {
+	Cursor      *string `json:"cursor,omitempty"`
 	ExecutionId *string `json:"executionId,omitempty"`
 	MediaType   *string `json:"mediaType,omitempty"`
 	TaskId      *string `json:"taskId,omitempty"`
@@ -694,7 +695,7 @@ func (v *HostArtifactListReply) Validate() error {
 	return nil
 }
 
-// HostArtifactListRequest: POST /api/hosts/artifacts/list: the artifacts the execution may read.
+// HostArtifactListRequest: POST /api/hosts/artifacts/list: the artifacts the execution may read, newest first, in pages of 50 (reply {artifacts, nextCursor?}).
 type HostArtifactListRequest struct {
 	ExecutionId string                  `json:"executionId"`
 	Filter      *HostArtifactListFilter `json:"filter,omitempty"`

@@ -23,8 +23,10 @@ const ok = (r: Reply) => { assert.equal(r.status, 200, JSON.stringify(r.body)); 
 const {port: s3port, close: closeS3} = await fakeS3();
 after(closeS3);
 
+const secrets = new Map<string, string>(); // a host registers once; later tests reuse its secret
 async function host(id: string) {
-  const {secret} = ok(await call('POST', '/api/ops/hosts_register', {id}, owner));
+  if (!secrets.has(id)) secrets.set(id, ok(await call('POST', '/api/ops/hosts_register', {id}, owner)).secret);
+  const secret = secrets.get(id)!;
   return (path: string, body: unknown) => call('POST', path, body, {authorization: 'Bearer ' + secret});
 }
 
@@ -55,6 +57,26 @@ test('Artifact write protocol and result bytes (artifacts.ts reserve/parts/commi
   assert.equal(part.status, 206); assert.equal(part.body, 'artifact'); assert.equal(part.headers.get('content-range'), `bytes 6-13/${bytes.length}`);
   const listed = ok(await call('POST', '/api/ops/artifact_list', {executionId: execution.id, limit: 10}, owner));
   assert.deepEqual(listed.artifacts.map((a: any) => a.state), ['stored']);
+});
+
+test('Agent artifact listing pages (artifact_routes.go hostArtifactList). Requirement: one artifact_list call never returns an unbounded reply; the agent pages on with nextCursor. Risk: a project of many artifacts returns one ~220k-character reply, over the harness tool-output limit (Lab trial 2026-11-17).', {timeout: 60_000}, async () => {
+  const h = await host('trial-host');
+  const {sessionId} = ok(await call('POST', '/api/sessions', {}, owner));
+  const execution = ok(await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'many'}, owner));
+  ok(await h('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}));
+  const ids: string[] = [];
+  for (let i = 0; i < 51; i++) {
+    const bytes = Buffer.from(`page ${i}\n`);
+    ids.push(ok(await h('/api/hosts/artifacts/reserve', {executionId: execution.id, name: `out/${i}.txt`, mediaType: 'text/plain', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex')})).artifactId);
+  }
+  const first = ok(await h('/api/hosts/artifacts/list', {executionId: execution.id}));
+  assert.equal(first.artifacts.length, 50, 'one page');
+  assert.equal(first.artifacts[0].id, ids[50], 'newest first');
+  assert.equal(typeof first.nextCursor, 'string');
+  const rest = ok(await h('/api/hosts/artifacts/list', {executionId: execution.id, filter: {cursor: first.nextCursor}}));
+  assert.deepEqual(rest.artifacts.map((a: any) => a.id), [ids[0]]);
+  assert.equal(rest.nextCursor, undefined, 'the last page has no cursor');
+  assert.equal((await h('/api/hosts/artifacts/list', {executionId: execution.id, filter: {cursor: 'x'}})).status, 400);
 });
 
 test('Store registry: only an allowed endpoint host, and the free-space warning marks a store full (stores.ts). Requirement: docs/designs/fleet-data-foundation.md stores. Risk: a host points the coordinator and its signatures at any URL, or a full store keeps receiving uploads.', async () => {
