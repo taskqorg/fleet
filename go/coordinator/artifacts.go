@@ -1196,6 +1196,19 @@ type listFilter struct {
 	NoExamples                                   bool
 }
 
+// splitNull: project ids and whether null (work outside projects) is among them.
+func splitNull(xs []*string) ([]string, bool) {
+	named, null := []string{}, false
+	for _, x := range xs {
+		if x == nil {
+			null = true
+		} else {
+			named = append(named, *x)
+		}
+	}
+	return named, null
+}
+
 // artifactList: mediaType ending in '/' matches a family, newest-first pages by seq when limit is given.
 func artifactList(ctx context.Context, a *App, f listFilter) ([]doc, error) {
 	c, p := []string{}, []any{}
@@ -1220,25 +1233,15 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]doc, error) {
 		}
 	}
 	if len(f.ProjectIDs) > 0 {
-		named, null := []string{}, ""
-		for _, x := range f.ProjectIDs {
-			if x == nil {
-				null = " OR project_id IS NULL"
-			} else {
-				named = append(named, *x)
-			}
+		named, null := splitNull(f.ProjectIDs)
+		cond := "(project_id=ANY($?))"
+		if null {
+			cond = "(project_id=ANY($?) OR project_id IS NULL)"
 		}
-		add("(project_id=ANY($?)"+null+")", named)
+		add(cond, named)
 	}
 	if len(f.ExcludeProjectIDs) > 0 { // the person's ignored projects (OR-34); null is work outside projects
-		named, null := []string{}, false
-		for _, x := range f.ExcludeProjectIDs {
-			if x == nil {
-				null = true
-			} else {
-				named = append(named, *x)
-			}
-		}
+		named, null := splitNull(f.ExcludeProjectIDs)
 		c = notInProjects(c, &p, "project_id", named, null)
 	}
 	if len(f.States) > 0 {

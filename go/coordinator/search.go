@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"fleet/contract"
 )
@@ -70,21 +71,30 @@ func (s searchQuery) focusFirst(p *[]any, col string) string {
 	return s.inFocus(p, col) + " DESC,"
 }
 
-// listFilter: the search and the focus as a list's own filter (task_page, sessions_list: a null projectId is no project).
+// listFilter: the search, the focus and the ignored projects as a list's own filter (task_page, sessions_list: a null
+// projectId or excludeProjectId is no project), as the app builds it for the list "All N" opens.
 func (s searchQuery) listFilter() doc {
 	f := doc{"search": s.raw}
 	if len(s.focus) > 0 {
-		ps := []any{}
-		for _, x := range s.focus {
-			if x == "-" {
-				ps = append(ps, nil)
-			} else {
-				ps = append(ps, x)
-			}
-		}
-		f["projectId"] = ps
+		f["projectId"] = nullProjects(s.focus)
+	}
+	if len(s.listIgnored) > 0 {
+		f["excludeProjectId"] = nullProjects(s.listIgnored)
 	}
 	return f
+}
+
+// nullProjects: project ids with '-' (no project) as null, the list filter's form.
+func nullProjects(ids []string) []any {
+	ps := []any{}
+	for _, x := range ids {
+		if x == "-" {
+			ps = append(ps, nil)
+		} else {
+			ps = append(ps, x)
+		}
+	}
+	return ps
 }
 
 // focused: a hit is in the focus. Every hit is without a focus, and so is a kind that has no project (host, agent, pipeline).
@@ -114,7 +124,6 @@ var searchCounters = map[contract.FoundKind]func(q *Request, s searchQuery) (int
 		if err != nil {
 			return 0, err
 		}
-		c = projectNotIn(c, &p, "t.project_id", s.listIgnored)
 		return countOf(q, "SELECT count(*) FROM task t"+where(c), p...)
 	},
 	contract.FoundKindConversation: func(q *Request, s searchQuery) (int64, error) {
@@ -123,7 +132,6 @@ var searchCounters = map[contract.FoundKind]func(q *Request, s searchQuery) (int
 		if err != nil {
 			return 0, err
 		}
-		c = projectNotIn(c, &p, "x.project_id", s.listIgnored)
 		return countOf(q, sessionBase+" SELECT count(*) FROM x"+where(c), p...)
 	},
 	contract.FoundKindResult: func(q *Request, s searchQuery) (int64, error) {
@@ -264,49 +272,37 @@ func sessionHits(rs []doc, words string) []contract.Found {
 }
 
 // Snippet geometry: a match within the first snippetShown characters is in the title's visible start, so no snippet; a
-// snippet is snippetLen characters from the word start at most snippetLead characters before the match, so the match
-// stays in the part a phone-width row shows.
+// snippet is up to snippetLen characters from the word start at most snippetLead characters before the match, so the
+// match stays in the part a phone-width row shows.
 const snippetShown, snippetLen, snippetLead = 40, 80, 16
 
-// matchSnippet: about snippetLen characters of text (whitespace collapsed) around the first place a word of words is
-// found, with an ellipsis where it is cut; "" when no word is found or the first one found is near the start.
+// matchSnippet: up to snippetLen characters of text (whitespace collapsed) from just before the first place a word of
+// words is found, with an ellipsis where it is cut; "" when no word is found or the first one found is near the start.
 func matchSnippet(text, words string) string {
-	t := []rune(strings.Join(strings.Fields(text), " "))
-	low := []rune(strings.ToLower(string(t)))
-	if len(low) != len(t) { // a lower-case form of another length: compare the text as it is
-		low = t
-	}
+	c := strings.Join(strings.Fields(text), " ")
+	low := strings.ToLower(c) // rune by rune: the same rune offsets as c
 	at := -1
 	for _, w := range strings.Fields(strings.ToLower(words)) {
-		if i := runeIndex(low, []rune(w)); i >= 0 && (at < 0 || i < at) {
-			at = i
+		if i := strings.Index(low, w); i >= 0 {
+			if r := utf8.RuneCountInString(low[:i]); at < 0 || r < at {
+				at = r
+			}
 		}
 	}
 	if at < snippetShown {
 		return ""
 	}
-	from := max(0, min(at-snippetLead, len(t)-snippetLen))
-	if i := slices.Index(t[from:at], ' '); from > 0 && i >= 0 {
+	t := []rune(c)
+	from := at - snippetLead
+	if i := slices.Index(t[from:at], ' '); i >= 0 {
 		from += i + 1
 	}
 	to := min(len(t), from+snippetLen)
-	out := strings.TrimSpace(string(t[from:to]))
-	if from > 0 {
-		out = "…" + out
-	}
+	out := "…" + strings.TrimSpace(string(t[from:to]))
 	if to < len(t) {
 		out += "…"
 	}
 	return out
-}
-
-func runeIndex(hay, needle []rune) int {
-	for i := 0; i+len(needle) <= len(hay); i++ {
-		if slices.Equal(hay[i:i+len(needle)], needle) {
-			return i
-		}
-	}
-	return -1
 }
 
 // searchConversations: conversations (sessions) with the sessions_list search: every field term applies, and archived

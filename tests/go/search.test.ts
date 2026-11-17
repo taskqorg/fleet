@@ -148,7 +148,7 @@ test('search finds conversations, results, agents and pipelines; the focus leads
   assert.deepEqual(kinds(await search({query: 'rocket'}, 'searcher@trial.test'), 'task').map((h: any) => h.id).sort(), ['rocket-0', 'rocket-1', 'rocket-2', 'rocket-3']);
 });
 
-// Spotlight (spotlight.md); risk: a conversation found by a word deep in a long first message shows a title without it.
+// R2, R7, OR-32 (spotlight.md); risk: a conversation found by a word deep in a long first message shows a title without it.
 test('search gives a conversation found by words its title does not show a snippet of the matching text', {timeout: 30_000}, async t => {
   const c = await startCoordinator({name: 'search-snippet'}); t.after(() => c.stop());
   const op = async (name: string, body: object) => {

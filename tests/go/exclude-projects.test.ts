@@ -6,6 +6,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startCoordinator} from '../harness.ts';
 
+// R2, OR-34; risk: an ignored project's rows stay in a list or its live membership, or work outside projects and in an undefined project is left out too.
 test('excludeProjectId(s) leave out only the named projects in task_page, sessions_list, list_membership, questions_list, executions_list and artifact_list', {timeout: 30_000}, async t => {
   const c = await startCoordinator({name: 'exclude'}); t.after(() => c.stop());
   const call = async (name: string, body: object) => {

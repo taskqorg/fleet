@@ -88,7 +88,7 @@ export function bucketsOf(range: string, now: number, first?: number): Bucket[] 
 export function Delivery({ id }: { id?: string }) {
   const scope = scopeIds(), focus = scope.projectIds ?? [];
   const now = Date.now();
-  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + JSON.stringify(scope) : null, () => op('delivery_status', scopeIds()), touchesStatus, 300000);
+  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + JSON.stringify(scope) : null, () => op('delivery_status', scope), touchesStatus, 300000);
   // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
   const baseDoc = useDoc<Baseline | typeof NONE>(prefsRead.value ? 'delivery-baseline:14' : null, () => no404(op('delivery_baseline', { days: 14 })), touchesHistory, 600000);
   const base = baseDoc.data === NONE ? null : baseDoc.data;

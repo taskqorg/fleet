@@ -11,7 +11,7 @@ import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalid
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view-url/view-url.ts';
 import { preferencesTouched } from './invalidation.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
 import { useDoc } from './store.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
@@ -232,8 +232,10 @@ function Focus({ go }: { go: (to: string) => void }) {
  */
 function useOutside() {
   const { focus, ignored } = prefs.value, focused = focus.some(p => !ignored.includes(p));
-  const all = useDoc<{ projects: (string | null)[] }>(focused ? 'needs-you-all' : null, async () => {
-    const [q, e] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { needsYou: true })]);
+  // The server leaves ignored projects out (scopeIds without the focus); outsideFocus drops the focused ones.
+  const scope = scopeIds(false);
+  const all = useDoc<{ projects: (string | null)[] }>(focused ? 'needs-you-all:' + JSON.stringify(scope) : null, async () => {
+    const [q, e] = await Promise.all([op('questions_list', { state: 'open', ...scope }), op('executions_list', { needsYou: true, ...scope })]);
     return { projects: [...q.questions, ...e.executions].map((x: any) => x.projectId ?? null) };
   // Questions change rarely and are read at once; executions change many times a second (gateway calls), so problems are
   // read again once a minute instead of on each change.
