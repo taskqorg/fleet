@@ -128,6 +128,10 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   if (listGroups(pinList).includes('pinned')) closed.add(PINNED);
   const toggleGroup = (key: string) => key === PINNED ? setListGroups(pinList, flipGroup(listGroups(pinList), 'pinned'))
     : setListGroups(groupsList, flipGroup(listGroups(groupsList), key));
+  // A project group is labelled with the project's name, as the focus control names it; its key stays the project id.
+  const projects = useDoc<any>(rowsGroup === 'project' ? 'projects' : null, () => op('project_list', {}), c => c.kind === 'definition');
+  const names = new Map<string, string>((projects.data?.projects ?? []).map((p: any) => [p.id, p.name ?? p.id]));
+  const label = (key: string, meta: string | null) => o.groupLabel(rowsGroup, rowsGroup === 'project' ? names.get(key) ?? meta : meta);
   const items: ListItem<R>[] = [];
   // Pinned rows come first, as a group of their own (OR-12); each shows its pin before the state (RowPin).
   if (pinned.length) {
@@ -138,7 +142,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const shownGroups = new Set<string>();
   for (const r of rest) {
     const g = String(r.sortKey[0]);
-    if (rowsGroup !== 'none' && g !== last) { shownGroups.add(g); const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: o.groupLabel(rowsGroup, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
+    if (rowsGroup !== 'none' && g !== last) { shownGroups.add(g); const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: label(g, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
     if (!closed.has(g)) items.push({ kind: 'row', r });
   }
   // Loaded rows that end inside a collapsed group show no new items, so the list end would stop asking for pages. The
@@ -152,7 +156,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
     if (at < 0) endKey = String(rows.length); // the group counts do not know the tail yet: keep loading
     for (const meta of at < 0 ? [] : list.groups.slice(at + 1)) {
       if (shownGroups.has(meta.key)) continue; // a live row placed it already
-      items.push({ kind: 'group', key: meta.key, label: o.groupLabel(rowsGroup, meta.label ?? null), count: meta.count });
+      items.push({ kind: 'group', key: meta.key, label: label(meta.key, meta.label ?? null), count: meta.count });
       if (!closed.has(meta.key)) { endKey = String(rows.length); break; }
     }
   }
