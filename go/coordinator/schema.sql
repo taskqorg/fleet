@@ -2710,4 +2710,4 @@ ALTER TABLE resource_build ADD COLUMN attempts integer NOT NULL DEFAULT 0 CHECK 
 ALTER TABLE resource_metadata_repair ADD COLUMN attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0);
 -- Work attempts counted under the old 1 s cap start the new ramp, so no row starts at the maximum pause or asks at once.
 SELECT set_config('fleet.project_ids', '*', true);
-UPDATE resource_work SET attempts = 0 WHERE attempts > 0;
+UPDATE resource_work SET attempts = 0, next_attempt_at = least(next_attempt_at, clock_timestamp()) WHERE attempts > 0;

@@ -38,6 +38,9 @@ var errResourceClearing = errors.New("resource build clearing")
 // errResourceStall: the pass could not select its work; the processor loop pauses.
 var errResourceStall = errors.New("resource processor stalled")
 
+// errResourceHint: an execution's scope hint could not be read (the shared read pool).
+var errResourceHint = errors.New("resource scope hint unreadable")
+
 func init() { onStart(startResourceProcessor) }
 
 func startResourceProcessor(ctx context.Context, a *App) {
@@ -875,7 +878,7 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 			if ctx.Err() == nil {
 				resourceHeld.fail("scope:"+id, 0)
 			}
-			return err
+			return fmt.Errorf("%w: %w", errResourceHint, err)
 		}
 		// A scope expansion that teaches no new scope set would repeat at once: it fails like any other error.
 		key := strings.Join(ps, "\x00")
@@ -1167,16 +1170,20 @@ func resourceCandidateCohorts(ids []string, hints map[string]string) [][]string 
 // Consume only this selected set before the existing build/metadata pass boundary.
 func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error {
 	hints, err := resourceBatchHints(ctx, a, ids)
-	if err != nil {
-		// The hints are one read of the shared pool: when it fails, every execution's own scope read would fail too,
-		// so the pass stalls (the processor pauses) instead of failing and holding each candidate alone.
-		return fmt.Errorf("%w: %w", errResourceStall, err)
-	}
 	var finalErr error
+	if err != nil {
+		// Every candidate goes alone. If its own scope read fails too, the shared read pool is failing: the pass
+		// stalls there (the processor pauses) rather than failing and holding each candidate in turn. A failure of
+		// one candidate alone holds only that one, so the others still go on the next pass.
+		hints, finalErr = nil, err
+	}
 	for _, cohort := range resourceCandidateCohorts(ids, hints) {
 		if len(cohort) == 1 {
 			if e := resourceReplace(ctx, a, cohort[0]); e != nil {
 				finalErr = errors.Join(finalErr, e)
+				if hints == nil && errors.Is(e, errResourceHint) {
+					return fmt.Errorf("%w: %w", errResourceStall, finalErr)
+				}
 			}
 		} else if e := resourceBisectCohort(cohort,
 			func(part []string) error { return resourceReplaceBatch(ctx, a, part) },
@@ -1663,8 +1670,7 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 			resourceHeld.forget("project:" + p)
 		}
 		finalErr = resourceCreateBuilds(ctx, a, projects)
-	}
-	if err != nil {
+	} else {
 		finalErr = fmt.Errorf("%w: %w", errResourceStall, err)
 		return finalErr
 	}
@@ -1764,10 +1770,13 @@ func resourceCreateBuilds(ctx context.Context, a *App, projects []string) error 
  INSERT INTO resource_project_summary(project_id,build_generation) SELECT project_id,generation FROM builds ON CONFLICT DO NOTHING`, ps)
 		})
 	}
-	if len(projects) == 0 || create(projects) == nil || ctx.Err() != nil {
+	if len(projects) == 0 {
 		return nil
 	}
-	var errs error
+	errs := create(projects)
+	if errs == nil || ctx.Err() != nil {
+		return nil
+	}
 	for _, p := range projects {
 		if err := create([]string{p}); err != nil {
 			resourceHeld.fail("project:"+p, 0)
@@ -1776,7 +1785,7 @@ func resourceCreateBuilds(ctx context.Context, a *App, projects []string) error 
 			resourceHeld.forget("project:" + p)
 		}
 	}
-	return errs
+	return errs // the batch error too, even when every project then went alone
 }
 
 // resourcePreparedState is an INTERNAL read seam. The caller must authorize a non-null project
