@@ -537,8 +537,8 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		// The executor passes the run token, gateway URL and Access file path in a private run file (argument 3), never in
-		// the harness environment; they become this server's own environment.
+		// The executor passes the run token, gateway URL, Access file path and the run's work and input folders in a
+		// private run file (argument 3), never in the harness environment; they become this server's own environment.
 		if f, err := arg(3, "run file"); err == nil {
 			if err := loadRunFile(f); err != nil {
 				return err

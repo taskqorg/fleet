@@ -202,6 +202,12 @@ type codeRuntime struct {
 
 func codeMCP(spec any, in io.Reader, w io.Writer) error {
 	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}, procs: map[*shProc]bool{}}
+	// A bridged upload reads only what the sandbox may read; without read roots it reads nothing.
+	roots := []string{}
+	for _, root := range jArr(spec, "read") {
+		roots = append(roots, jStr(root))
+	}
+	uploadRoots = pinUploadRoots(roots)
 	if journal := jStr(spec, "journal"); journal != "" {
 		db, err := openJournal(journal)
 		if err != nil {
@@ -215,6 +221,7 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 	}
 	for _, c := range jArr(spec, "connections") {
 		s.conns[jStr(c, "name")] = c
+		connectionLimits[jStr(c, "name")] = jAt(c, "limits")
 	}
 	if f := jStr(spec, "runFile"); f != "" {
 		if err := loadRunFile(f); err != nil {
@@ -812,15 +819,20 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 			return nil, callError("error", "connection-not-granted", nil)
 		}
 		if tool == "$tools" {
-			return jArr(spec, "tools"), nil
+			listed := []any{}
+			for _, t := range jArr(spec, "tools") {
+				listed = append(listed, modelTool(t))
+			}
+			return listed, nil
 		}
-		if !slices.ContainsFunc(jArr(spec, "tools"), func(t any) bool { return jStr(t, "name") == tool }) {
+		i := slices.IndexFunc(jArr(spec, "tools"), func(t any) bool { return jStr(t, "name") == tool })
+		if i < 0 {
 			return nil, callError("error", "tool-not-granted", nil)
 		}
-		line := connectionCall(name, tool, args)
+		line := connectionCall(name, jArr(spec, "tools")[i], args)
 		var output any
-		if len(line.Output) > 0 {
-			output, _ = dec(string(line.Output))
+		if raw := callErrorOutput(line); len(raw) > 0 {
+			output, _ = dec(string(raw))
 		}
 		if string(line.Outcome) != "ok" {
 			code := ""

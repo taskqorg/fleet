@@ -43,13 +43,13 @@ func TestConnectionCallOutcomes(t *testing.T) {
 		return *r.ErrorCode
 	}
 	for tool, want := range map[string][2]string{"ok": {"ok", ""}, "garbled": {"unknown", "invalid-response"}, "provider": {"error", "http-502"}, "timeout": {"unknown", "provider-timeout"}} {
-		r := connectionCall("web", tool, M{})
+		r := connectionCall("web", M{"name": tool}, M{})
 		if string(r.Outcome) != want[0] || code(r) != want[1] || r.CallId != "c1" {
 			t.Fatal(tool, r)
 		}
 	}
 	gw.Close()
-	if r := connectionCall("web", "ok", M{}); r.Outcome != contract.CallOutcomeError || code(r) != "unreachable" {
+	if r := connectionCall("web", M{"name": "ok"}, M{}); r.Outcome != contract.CallOutcomeError || code(r) != "unreachable" {
 		t.Fatal("refused connection", r)
 	}
 }

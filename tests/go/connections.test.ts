@@ -971,6 +971,35 @@ test('C9 connections_set_limits: holder (an architect) or owner only, one histor
   assert.equal(ok(await op('connections_list')).connections.find((x: any) => x.name === c).limits, undefined);
 });
 
+test('C11 minted spec carries file and idempotent (requirement: docs/designs/fleet-connections.md §9, the client picks the transfer mode and reads an edge 5xx by the tool\'s flags; risk: an upload sent as JSON, or an edge error on a write read as safe to retry)', async () => {
+  const c = name('youtrack');
+  ok(await op('connections_create', {name: c, provider: 'youtrack'}));
+  ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
+  const issuePath = () => {
+    const s = snapshot();
+    return s.providers[s.connections[c].provider].tools.issue_get.path;
+  };
+  const existingTools = ['issue_get', 'issue_comments'];
+  ok(await op('connections_set_tools', {connection: c, tools: existingTools}));
+  await until(() => issuePath().includes('attachments(name,url,size)') || undefined, 'legacy reads before granting download');
+  const old = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  ok(await op('connections_set_tools', {connection: c, tools: [...existingTools, 'attachment_add', 'attachment_get']}));
+  await until(() => issuePath().includes('attachments(id,name,size,mimeType,comment(id))') || undefined, 'attachment IDs after granting download');
+  const m = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  const token = (value: string) => snapshot().tokens.find((entry: any) => entry.sha256 === sha(value));
+  await until(() => token(m.token)?.fileDownloads?.includes(c) || undefined, 'new token can use attachment IDs');
+  assert.equal(token(old.token).fileDownloads, undefined);
+  const tools = Object.fromEntries(m.connections[0].tools.map((x: any) => [x.name, x]));
+  assert.deepEqual([tools.attachment_add.file, tools.attachment_add.idempotent], ['upload', false]);
+  assert.deepEqual([tools.attachment_get.file, tools.attachment_get.idempotent], ['download', true]);
+  assert.deepEqual([tools.issue_get.file, tools.issue_get.idempotent], [undefined, true]);
+  assert.deepEqual(tools.attachment_add.inputSchema.required, ['issue', 'path']);
+  assert.equal(m.connections[0].limits, undefined, 'no limits set: the client keeps its own waits');
+  ok(await op('connections_set_limits', {connection: c, limits: {answerMs: 300000}}));
+  const raised = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  assert.deepEqual(raised.connections[0].limits, {answerMs: 300000}, 'the client outwaits a raised gateway wait');
+});
+
 // Coordinator phases and real local shell/HTTP receipts; the gateway/S3 are synthetic, no provider call.
 test('Pipeline step terminal ends agree across sequential API/script success, failure, cancellation and retry (requirement: observed pipeline-step timing; risk: finished steps read unfinished, retry rewrites history or containers count as work)', async () => {
   const read = async (id: string) => ok(await op('pipeline_get', {runId: id}));

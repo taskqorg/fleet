@@ -233,57 +233,72 @@ func pipelineStepIndex(run doc, executionID string) int {
 
 // claimPipelineAPI mints once in the transaction that wins the persisted claim.
 // Status/recent-task reads observe the existing job and never create a new effect.
-func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (doc, string, bool, error) {
+// errFileTool: a pipeline api step names a file tool (file: upload|download), which only a host client can call.
+var errFileTool = errors.New("file tool")
+
+// claimPipelineAPI also answers the tool's idempotent flag from the minted spec (how an edge error reads).
+func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (doc, string, bool, bool, error) {
 	if _, err := first(q, "SELECT id FROM execution WHERE id=$1 FOR UPDATE", runID); err != nil {
-		return nil, "", false, err
+		return nil, "", false, false, err
 	}
 	run, err := getRun(q, runID)
 	if err != nil || run == nil {
-		return run, "", false, err
+		return run, "", false, false, err
 	}
 	index := pipelineStepIndex(run, executionID)
 	if run["state"] != "running" || index < 0 {
-		return run, "", false, nil
+		return run, "", false, false, nil
 	}
 	entry := pipelinePlanEntry(run, index)
 	def := mapOf(anys(mapOf(run["definition"])["steps"])[index])
 	dispatch := mapOf(entry["dispatch"])
 	if def["kind"] != "api" || def["connection"] != connection {
-		return run, "", false, fail(409, "Pipeline call does not match its declared API step")
+		return run, "", false, false, fail(409, "Pipeline call does not match its declared API step")
 	}
 	observe := def["mode"] == "job" && tool != astr(def["tool"]) && (tool == jobTool(def, "job_status") || tool == jobTool(def, "recent_tasks"))
 	if observe {
 		c, err := connByName(q, connection)
 		if err != nil {
-			return run, "", false, err
+			return run, "", false, false, err
 		}
 		meta := mapOf(providerTools(astr(c["provider"]))[tool])
 		if meta["method"] != "GET" || meta["idempotent"] != true || dispatch["phase"] != "handed_off" {
-			return run, "", false, fail(409, "Pipeline observation is not a granted idempotent job read")
+			return run, "", false, false, fail(409, "Pipeline observation is not a granted idempotent job read")
 		}
 	} else if dispatch["phase"] != "reserved" {
-		return run, "", false, nil
+		return run, "", false, false, nil
 	}
 	stamp, _, err := pipelineAuthorityStamp(q, run, index, connection, tool, "")
 	if err != nil {
-		return run, "", false, err
+		return run, "", false, false, err
 	}
 	m, err := mint(q, doc{"executionId": executionID, "directedBy": mapOf(run["authority"])["actorEmail"], "projectId": run["projectId"], "experimentId": run["experimentId"], "step": true}, []string{connection})
 	if err != nil {
-		return run, "", false, err
+		return run, "", false, false, err
 	}
 	token := astr(m["token"])
+	idempotent := false
+	for _, c := range anys(m["connections"]) {
+		for _, t := range anys(mapOf(c)["tools"]) {
+			if mapOf(t)["name"] == tool {
+				idempotent = mapOf(t)["idempotent"] == true
+				if mapOf(t)["file"] != nil {
+					return run, "", false, false, errFileTool // the coordinator calls JSON tools only
+				}
+			}
+		}
+	}
 	if token == "" {
-		return run, "", false, fail(403, "Pipeline token was not granted")
+		return run, "", false, false, fail(403, "Pipeline token was not granted")
 	}
 	if !observe {
 		dispatch["phase"], dispatch["claimId"], dispatch["ownerBootId"] = "handed_off", newID(), pipelineBootID
 		dispatch["handedOffAtMs"], dispatch["authoritySha256"] = nowMs(), stamp
 		if err := putRun(q, run); err != nil {
-			return run, "", false, err
+			return run, "", false, false, err
 		}
 	}
-	return run, token, true, nil
+	return run, token, true, idempotent, nil
 }
 
 func preparePipelineCommand(q *Request, execution, command doc) error {

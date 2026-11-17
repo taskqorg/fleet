@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -135,6 +136,22 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 				gc.Limits = &limits
 			}
 		}
+		if gc.Provider == "youtrack" {
+			// Keep issue_get URLs for connections and existing tokens without the replacement download tool.
+			const legacyProvider = "youtrack-legacy-attachments"
+			if _, ok := snap.Providers[legacyProvider]; !ok {
+				p := snap.Providers[gc.Provider]
+				p.Tools = maps.Clone(p.Tools)
+				issue := p.Tools["issue_get"]
+				issue.Path = strings.Replace(issue.Path, "attachments(id,name,size,mimeType,comment(id))", "attachments(name,url,size)", 1)
+				p.Tools["issue_get"] = issue
+				snap.Providers = maps.Clone(snap.Providers)
+				snap.Providers[legacyProvider] = p
+			}
+			if !slices.Contains(gc.Tools, "attachment_get") {
+				gc.Provider = legacyProvider
+			}
+		}
 		snap.Connections[name] = gc
 	}
 	toks, err := all(q, "run-token", nil)
@@ -146,7 +163,7 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 			continue
 		}
 		snap.Tokens = append(snap.Tokens, contract.GatewayRunToken{Sha256: astr(t["sha256"]), ExecutionId: astr(t["executionId"]), DirectedBy: astr(t["directedBy"]),
-			ProjectId: astr(t["projectId"]), ExperimentId: astr(t["experimentId"]), Connections: strs(t["connections"])})
+			ProjectId: astr(t["projectId"]), ExperimentId: astr(t["experimentId"]), Connections: strs(t["connections"]), FileDownloads: strs(t["fileDownloads"])})
 	}
 	return snap, nil
 }
@@ -954,16 +971,37 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 	token := randomToken()
 	sha := sha256hex([]byte(token))
 	names, specs, refused := []any{}, []any{}, []string{}
+	var fileDownloads []string
 	for _, c := range granted {
 		names = append(names, c["name"])
 		p := mapOf(providers[astr(c["provider"])])
 		tools := []any{}
 		for _, t := range anys(c["tools"]) {
 			if spec := mapOf(mapOf(p["tools"])[astr(t)]); spec != nil {
-				tools = append(tools, doc{"name": t, "description": spec["description"], "inputSchema": spec["inputSchema"]})
+				// file and idempotent tell the client the transfer mode and how an edge error reads; its MCP server
+				// keeps them from the model.
+				entry := doc{"name": t, "description": spec["description"], "inputSchema": spec["inputSchema"], "idempotent": spec["idempotent"] == true}
+				if spec["file"] != nil {
+					entry["file"] = spec["file"]
+				}
+				if spec["file"] == "download" && !slices.Contains(fileDownloads, astr(c["name"])) {
+					fileDownloads = append(fileDownloads, astr(c["name"]))
+				}
+				tools = append(tools, entry)
 			}
 		}
-		specs = append(specs, doc{"name": c["name"], "instructions": p["instructions"], "tools": tools})
+		spec := doc{"name": c["name"], "instructions": p["instructions"], "tools": tools}
+		// The configured waits let the client outwait the gateway (§9).
+		waits := doc{}
+		for _, k := range []string{"stallMs", "answerMs"} {
+			if v := mapOf(c["limits"])[k]; v != nil {
+				waits[k] = v
+			}
+		}
+		if len(waits) > 0 {
+			spec["limits"] = waits
+		}
+		specs = append(specs, spec)
 	}
 	for _, n := range uniq {
 		ok := false
@@ -976,6 +1014,9 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 	}
 	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": run["executionId"], "directedBy": run["directedBy"], "projectId": projectOrNil(run["projectId"]),
 		"experimentId": run["experimentId"], "pipelineRunId": run["pipelineRunId"], "connections": names, "createdAt": nowMs()}
+	if len(fileDownloads) > 0 {
+		row["fileDownloads"] = fileDownloads
+	}
 	if run["step"] == true {
 		row["step"] = true
 	}
@@ -1471,13 +1512,14 @@ func connReconcile(ctx context.Context, a *App) {
 	}
 }
 
-// gatewayCall: one in-process call through fleet-gateway (contract.GatewayCall).
-func gatewayCall(ctx context.Context, token, connection, tool string, args any) contract.CallLine {
-	var header map[string]string
-	if strings.HasPrefix(gatewayURL(), "https://") {
-		header = cfAccessHeaders()
+// gatewayCall: one in-process call through fleet-gateway (contract.GatewayCall). idempotent is the catalogue tool's
+// flag: an edge 5xx (no gateway call id) on a tool that may not be repeated reads unknown.
+func gatewayCall(ctx context.Context, token, connection, tool string, args any, idempotent bool) contract.CallLine {
+	t := contract.GatewayTarget{URL: gatewayURL(), Token: token, Idempotent: idempotent}
+	if strings.HasPrefix(t.URL, "https://") {
+		t.Header = cfAccessHeaders()
 	}
-	return contract.GatewayCall(ctx, gatewayURL(), token, connection, tool, jsonBytes(args), header)
+	return contract.GatewayCall(ctx, t, connection, tool, jsonBytes(args))
 }
 
 func cfAccessHeaders() map[string]string {

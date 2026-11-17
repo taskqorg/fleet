@@ -774,6 +774,9 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		if status < 200 || status > 299 {
 			a.outcome, a.err = "error", fmt.Sprintf("provider-%d", status)
 		}
+		if status >= 500 && b.open != nil {
+			a.outcome = "unknown" // a failing upload reply does not establish whether the provider saved the file
+		}
 		if c.Provider == "anthropic" && t.Path == "/v1/messages" {
 			a.usage = nil
 			if status >= 200 && status <= 299 {
@@ -917,6 +920,7 @@ type request struct {
 	p                    provider
 	t                    tool
 	offered              bool
+	fileClient           bool
 	usageKey             string
 	startedMs            int64
 	begun                time.Time
@@ -927,11 +931,16 @@ func (g *gateway) resolve(q *request) {
 	s := g.snapshot.Load()
 	c, known := s.Connections[q.connection]
 	q.c, q.p = c, s.Providers[c.Provider]
-	q.t, q.offered = q.p.Tools[q.tool]
-	q.offered = q.offered && known && contains(c.Tools, q.tool)
 	if q.run != nil {
 		q.run = s.tokens[q.run.Sha256] // nil once revoked
 	}
+	if q.tool == "issue_get" && c.Provider == "youtrack" && q.run != nil && (!q.fileClient || !contains(q.run.FileDownloads, q.connection)) {
+		if legacy, ok := s.Providers["youtrack-legacy-attachments"]; ok {
+			q.p = legacy
+		}
+	}
+	q.t, q.offered = q.p.Tools[q.tool]
+	q.offered = q.offered && known && contains(c.Tools, q.tool)
 }
 
 // admit refuses a call its token, grant, tool, intake or budget does not allow; nil admits it.
@@ -983,6 +992,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		q.run, q.bearer = g.authenticate(t), t
 	}
 	// The tool is resolved before the body is read: an upload's body is the file, read only once the call is admitted.
+	q.fileClient = r.Header.Get("X-Fleet-File-Client") == "1"
 	g.resolve(q)
 	if q.offered && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload {
 		g.serveUpload(w, r, q)

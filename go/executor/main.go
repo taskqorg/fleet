@@ -149,6 +149,7 @@ var subcommands = map[string]func(args []string) error{
 	"code-shell":   codeShellGuardian,
 	"reproject":    func([]string) error { return reproject() },
 	"selftest":     selftest,
+	"connection":   connectionCLI, // connection call <connection> <tool> [spec file]
 }
 
 func main() {
