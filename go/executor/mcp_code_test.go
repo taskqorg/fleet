@@ -837,7 +837,7 @@ func TestCodeModeShellHost(t *testing.T) {
 	probe := `const run = async (cmd) => (await sh(cmd)).code
 		await sh("echo kept > /tmp/` + name + `")
 		return {socket: await run(` + enc(connect) + `), tmp: (await sh("cat /tmp/` + name + `")).text(), upper: await run("echo x >> .GIT"),
-			launchd: await run("launchctl submit -l ` + name + ` -- /usr/bin/true"), run: (await sh("ls -A /run | wc -l")).text().trim(),
+			launchd: await run("launchctl submit -l ` + name + ` -- /usr/bin/true"), run: (await sh("find /run ! -type d -print")).text(),
 			runFile: await run("cat ` + filepath.Join(sockDir, "run.env") + `"), input: (await sh("echo $FLEET_INPUT_DIR")).text()}`
 	// With network, as with gitNetwork: IP yes, host Unix sockets no.
 	c := newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": true, "write": []any{dir}, "network": true, "hide": []any{sockDir}}, "env": M{"FLEET_INPUT_DIR": "/in"}})
@@ -856,8 +856,12 @@ func TestCodeModeShellHost(t *testing.T) {
 			t.Fatalf(".git changed through .GIT: %q", b)
 		}
 	case "linux":
-		if jStr(r, "value", "run") != "0" {
-			t.Fatalf("/run is visible: %v", r["value"])
+		want := ""
+		if file, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && under(file, "/run") {
+			want = file
+		}
+		if got := jStr(r, "value", "run"); got != want {
+			t.Fatalf("unexpected files in /run: got %q, want %q", got, want)
 		}
 	}
 	// The listener works: an unsandboxed command reaches it.
