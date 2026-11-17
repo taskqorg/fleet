@@ -12,7 +12,7 @@ import (
 
 // titleFixture: conversations as the list sees them: a first message and a finished first reply (s-done), the same with
 // a title a person set (s-named), one whose reply is still running (s-running), one whose call fails (s-fail), a host
-// command session (s-host) and a pipeline script session from before migration 71 (s-legacy) beside a pipeline agent
+// command session (s-host) and a pipeline script session from before migration 72 (s-legacy) beside a pipeline agent
 // session with a message (s-agent).
 const titleFixture = `
 INSERT INTO document(kind,id,data) VALUES
@@ -60,13 +60,13 @@ func migrationBody(t *testing.T, version string) string {
 // Requirement: fleet-conversations.md, Titles: a conversation gets a short title from a small model after its first reply,
 // stored on the session; a title a person or an agent set is never replaced, renaming is session_rename, the backfill is
 // the same pass, a failed call is retried later, and a title is no activity. Host command sessions are no conversations
-// (migration 71 marks the old pipeline ones). Risk: titles stay the first message (boilerplate) or "New conversation",
+// (migration 72 marks the old pipeline ones). Risk: titles stay the first message (boilerplate) or "New conversation",
 // a generated title overwrites a chosen one, the backfill reorders the list, a failing provider is called every pass,
 // or empty host job sessions fill the Conversations list.
 func TestSessionTitles(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", titleFixture)
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", migrationBody(t, "71"))
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", migrationBody(t, "72"))
 	owner := e.ownerHeaders()
 
 	var mu sync.Mutex

@@ -110,7 +110,7 @@ function groupLabel(group: string, label: string | null) {
 function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
   const [verifiedTarget, setVerifiedTarget] = useState<string | null>(null);
-  const { data: s, error, state, restored } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }).then(reply => { setVerifiedTarget(id); return reply; }), c => c.sessionId === id && c.kind !== 'event');
+  const { data: s, error, state, restored, reload: reloadSession } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }).then(reply => { setVerifiedTarget(id); return reply; }), c => c.sessionId === id && c.kind !== 'event');
   // A session that got a task shows the task's thread (design "Thread scope"): the first page resolves it and returns the key.
   const thread = useThread({ session: id });
   const key: ThreadKey = thread.win?.key ?? { session: id };
@@ -195,7 +195,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         { label: 'Fork', icon: 'git-merge', onClick: () => { const requestId = reqId(); run(async () => { const f = await writeOnce('session_fork', { sessionId: id, requestId }, unknown, { signal: alive.current.signal }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); } },
       ]} />
     </header>
-    {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => setPanel(null)} run={run} unknown={unknown} signal={alive.current.signal} />}
+    {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => { setPanel(null); reloadSession(); }} run={run} unknown={unknown} signal={alive.current.signal} />}
     {panel && panel !== 'rename' && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
     <ScopedRollupBar rollup={s.resources} cost={s.cost} />
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
