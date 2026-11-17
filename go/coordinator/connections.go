@@ -929,6 +929,9 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 	if run["personal"] != nil {
 		row["personal"] = run["personal"]
 	}
+	if run["systemActor"] != nil {
+		row["systemActor"] = run["systemActor"] // its calls are Fleet's own activity (connRecord)
+	}
 	err := put(q, "run-token", row)
 	if err != nil {
 		return nil, err
@@ -1134,7 +1137,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		"experimentId": t["experimentId"], "taskId": pTask, "sessionId": pSession,
 		"directedBy": nilIf(firstString(t["directedBy"], deref(pDir))), "startedAt": startedAt, "endedAt": endedAt,
 		"pipelineId": pPipe, "pipelineRevision": pPipeRev, "stepId": pStep, "profileId": pProf, "profileRevision": pProfRev,
-		"data": data,
+		"systemActor": t["systemActor"], "data": data,
 	})
 	if err != nil || !inserted {
 		return false, err

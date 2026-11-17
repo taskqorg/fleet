@@ -625,7 +625,7 @@ const executionEndSQL = `CASE WHEN kind<>'pipeline_step' THEN ended_at
 
 const executionCols = `id,kind,state,observation,last_seen_at AS "lastSeenAt",project_id AS "projectId",task_id AS "taskId",experiment_id AS "experimentId",variant,parent_execution_id AS "parentExecutionId",
  session_id AS "sessionId",account_id AS "accountId",host_id AS "hostId",environment_id AS "environmentId",harness,harness_version AS "harnessVersion",model,config_ref AS "configRef",problem,
- started_at AS "startedAt",` + executionEndSQL + ` AS "endedAt",definitions,data->'report' AS report`
+ started_at AS "startedAt",` + executionEndSQL + ` AS "endedAt",definitions,data->'report' AS report,system_actor AS "systemActor"`
 
 func executionsList(q *Request, f contract.ExecutionsListRequest) ([]contract.ExecutionRow, error) {
 	page, err := executionsPage(q, f)
@@ -650,6 +650,7 @@ func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.Exec
 			c = append(c, fmt.Sprintf("%s=$%d", x.col, len(p)))
 		}
 	}
+	c = append(c, systemFilter(systemOf(f.System, deref(f.ParentExecutionId) != ""), "system_actor"))
 	if f.Problem != nil && *f.Problem {
 		c = append(c, "problem IS NOT NULL")
 	}

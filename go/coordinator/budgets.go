@@ -57,7 +57,8 @@ func spend(q *Request, b map[string]any) (any, string, error) {
 	if b["scope"] == "project" {
 		col = "e.project_id"
 	}
-	err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(sum("+expr+"),0)::float8 FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE "+col+"=$1 "+since, b["scope_id"]).Scan(&v)
+	// A person or project budget counts their work, not Fleet's own calls (a connection budget, above, counts every call).
+	err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(sum("+expr+"),0)::float8 FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE "+col+"=$1 AND "+systemFilter(nil, "e.system_actor")+" "+since, b["scope_id"]).Scan(&v)
 	return v, "measured", err
 }
 

@@ -1044,7 +1044,7 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 // becomes the step's tool_run (ingested here, so the row exists when the step moves on).
 func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, tool string, args any) contract.CallLine {
 	unavailable := contract.CallLine{Tool: tool, Connection: connection, Outcome: contract.CallOutcomeError, ErrorCode: ptr("connection-unavailable")}
-	if gatewayURL() == "" || !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(connection) {
+	if gatewayURL() == "" || !connName.MatchString(connection) {
 		return unavailable
 	}
 	var token string

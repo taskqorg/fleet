@@ -120,7 +120,8 @@
         "dimensions": {"type": "array", "items": {"$ref": "#/$defs/AnalyticsDimension"}},
         "measures": {"type": "array", "items": {"$ref": "#/$defs/AnalyticsMeasure"}},
         "filters": {"$ref": "#/$defs/AnalyticsFilter"},
-        "projectId": {"type": "string"}
+        "projectId": {"type": "string"},
+        "system": {"$ref": "ops.schema.json#/$defs/SystemActivity"}
       },
       "additionalProperties": false
     },

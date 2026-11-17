@@ -244,7 +244,8 @@ func resourceContribution(id string, s resourceSnapshot) (contract.ResourceContr
 	c.Kind = astr(l["kind"])
 	c.State = astr(l["state"])
 	c.HasTotals, _ = l["has_totals"].(bool)
-	c.Included = c.ProjectId != nil && c.Kind != "pipeline_run" && c.Kind != "pipeline_step" && (c.Kind != "child_agent" || c.HasTotals)
+	// Fleet's own background calls (system_actor) are not the project's work (docs/designs/fleet-analytics.md, System activity).
+	c.Included = c.ProjectId != nil && c.Kind != "pipeline_run" && c.Kind != "pipeline_step" && (c.Kind != "child_agent" || c.HasTotals) && l["system_actor"] == nil
 	c.StartedMs = resourceInt(l["started_ms"])
 	c.EndedMs = resourceInt(l["ended_ms"])
 	c.TokenActor = c.Kind == "agent_run" || c.Kind == "child_agent"

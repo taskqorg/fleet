@@ -13,12 +13,13 @@ Status: accepted design; schema, coordinator `analytics_query`, entity resource 
 | Basis | How a figure was obtained: `measured`, `estimated`, `subscription` or `unavailable`. |
 | Time spans | `elapsed_ms = MAX(ended_at) - MIN(started_at)` across participating leaf executions (turnaround wall span); `execution_wall_ms = SUM(wall_ms)` (parallel effort sum); `cpu_ms = SUM(cpu_ms)` (measured OS CPU time). |
 | Price entry | One row of the price table: what one unit of one model or connection tool costs, from one source, on one date. |
+| System activity | An execution Fleet makes on its own, not as a project's work: `execution.system_actor` names the component (`coordinator`). See [system activity](#system-activity). |
 
 ## `analytics_query`
 
 One operation under the [data foundation §6](fleet-data-foundation.md#6-operations-for-people-and-agents) permission model, for people, the PM agent and the Lab screen (`contracts/ops-analytics.schema.json`). No raw SQL.
 
-**Request.** `{window: {from, to}, dimensions[], measures[], filters{}}`. The window `[from, to)` (timestamps as epoch milliseconds, RFC 3339, or `YYYY-MM-DD`) is required; there is no default window and no cap on its length.
+**Request.** `{window: {from, to}, dimensions[], measures[], filters{}, projectId?, system?}`. `system` is `exclude` (default), `include` or `only` ([system activity](#system-activity)). The window `[from, to)` (timestamps as epoch milliseconds, RFC 3339, or `YYYY-MM-DD`) is required; there is no default window and no cap on its length.
 
 | Dimensions (fixed list) | Measures (fixed list) |
 |---|---|
@@ -42,6 +43,16 @@ One operation under the [data foundation §6](fleet-data-foundation.md#6-operati
 - `usage_summary` is not an implemented operation; cost totals come from `analytics_query` and shared `CostFigure[]` rollups.
 
 **Lab use.** The Lab comparison reads trials through the same contract with `experiment` and `variant` as dimensions; the statistics on top are Lab's ([statistics](fleet-lab.md#statistics)).
+
+## System activity
+
+Fleet's own background calls are observable, attributed to the component that made them, and never counted as a project's work.
+
+- The coordinator reads GitHub (Delivery poll, CI runners screen) and Bugsink (resolution pass) through the gateway with a read token minted for the project whose connection grant allows the read ([connections](fleet-connections.md)). Each call is a `tool_run` with `system_actor = coordinator`. It keeps `project_id`, so row-level security and the grant still decide who sees it, and its connection and tool name what was read.
+- `analytics_query`, `executions_list`, project resources (`project_context`, prepared project resources) and person or project budgets leave these rows out by default. `system: include` adds them; `system: only` keeps them alone. A request that names a parent (`executions_list` `parentExecutionId`, `analytics_query` `filters.parent`) and no `system` covers all of that parent's children, so a read token's calls are listed under its id. `hidden` still compares unfiltered windows.
+- Connection usage keeps them: connection budgets and the Runners screen (host `coordinator`) count every call on a connection, whoever made it; `analytics_query` with `system: include` and the `connection` dimension gives the same full count. A grouping dimension never changes which rows count.
+- `system_actor` is written when the row is inserted, so resource capture needs no trigger on it; migration 69 queues the replacement of the rows it marks. `executions_list {system: only}` reads the partial index `execution_system`.
+- Migration 69 marks the rows these reads recorded before the mark (`legacySystemRead` in data): every `tool_run` whose parent is a read token id (`<connection>-read:<uuid>`), and the first reads (2026-11-12), made with a personal token named `github-read` for a project and no person (no parent, `tokenName` in data); a person's own token of that name keeps its calls. Every read token gets the mark too. At each start the coordinator deletes these rows with their totals (`systemReadsCleanup`), except those a gateway spool line still names: ingest takes a line whose row is missing as new and would replay its key side effects (a refused key disabled again); such a row goes at a later start, once its spool file is gone. No span names these calls: a gateway call runs under no run context (`telemetry_trace` answers 409 for them), so ClickHouse holds nothing to delete for them.
 
 ## Price table
 
