@@ -146,7 +146,7 @@ export function LabCreate() {
     if (picker) document.querySelector<HTMLInputElement>('.split-list .search input')?.focus();
     else { const trigger = invoker.current; invoker.current = null; if (trigger) (trigger.isConnected ? trigger : startPanel.current?.querySelector<HTMLButtonElement>('button'))?.focus(); }
   }, [picker?.label]);
-  const list = <><header class="page-h" data-ui={picker ? 'lab-picker' : undefined}><h1>{picker?.label ?? 'New experiment'}</h1><span class="grow" /><Button label={picker ? 'Done choosing' : 'Experiments'} icon="x" iconOnly onClick={() => picker ? closePicker() : go('/lab')} /></header>
+  const list = <><header class="page-h" data-ui={picker ? 'lab-picker' : undefined}><h2>{picker?.label ?? 'New experiment'}</h2><span class="grow" /><Button label={picker ? 'Done choosing' : 'Experiments'} icon="x" iconOnly onClick={() => picker ? closePicker() : go('/lab')} /></header>
     {picker ? <><SearchField label={`Search ${picker.label}`} value={query} onInput={setQuery} onSearch={() => {}} always /><VirtualList items={matching} getKey={x => x.id} rowHeight={ROW2} follow="top" label={picker.label} columns="1.25rem minmax(0,1fr) auto"
       render={x => <><StateBadge family="source" state="current" compact /><span class="tt"><Button label={x.name} rowLink kind="quiet" onClick={() => choose(x.id)} /><span class="id">{x.id}</span></span>{picker.multiple && <RowCheck label={`Choose ${x.name}`} checked={picker.selected.includes(x.id)} onToggle={() => choose(x.id)} />}</>} />
       {matching.length === 0 && <Empty text={available.length === 0 ? "No available choices. Check access and the required definitions or approved examples." : "No choices match this search. Clear the search to see available choices."} />}</>

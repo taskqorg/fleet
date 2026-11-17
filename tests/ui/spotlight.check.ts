@@ -8,18 +8,18 @@ export async function checkSpotlight(browser: Browser, origin: string) {
   const r = await fetch(origin + '/api/ops/task_create', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({title: 'Spotlight needle task'})});
   assert.equal(r.status, 200, await r.clone().text()); const created = await r.json() as any, task = created.id;
   try {
-    await p.goto(origin + '/overview'); await p.getByRole('link', {name: 'Search'}).waitFor();
+    await p.goto(origin + '/overview'); await p.getByRole('button', {name: 'Search', exact: true}).waitFor();
     const dialog = p.getByRole('dialog', {name: 'Search'});
     await p.keyboard.press('ControlOrMeta+k'); await dialog.waitFor();
     const input = dialog.getByRole('combobox', {name: 'Search'});
     // The field has focus when the palette opens: typing right after the shortcut goes into it.
     await p.keyboard.type('host'); await dialog.getByRole('option', {name: 'Hosts'}).waitFor();
     await input.press('Enter'); await p.waitForURL('**/hosts'); assert.equal(await dialog.count(), 0);
-    await p.getByRole('link', {name: 'Search'}).click(); await input.fill('needle');
+    await p.getByRole('button', {name: 'Search', exact: true}).click(); await input.fill('needle');
     await dialog.getByRole('option', {name: /Spotlight needle task/}).waitFor();
     await input.press('Enter'); await p.waitForURL('**/tasks/' + task);
     // Code jump (D17): the code finds the task, shown with its code; Enter opens it.
-    await p.goto(origin + '/overview'); await p.getByRole('link', {name: 'Search'}).waitFor();
+    await p.goto(origin + '/overview'); await p.getByRole('button', {name: 'Search', exact: true}).waitFor();
     // The shortcut listener mounts after the first paint; press again until the palette shows (a race in the check, not the app).
     for (let i = 0; i < 10 && !await dialog.isVisible(); i++) { await p.keyboard.press('ControlOrMeta+k'); await dialog.waitFor({timeout: 1000}).catch(() => {}); }
     await input.fill(created.code.toLowerCase());

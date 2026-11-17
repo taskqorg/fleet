@@ -38,3 +38,30 @@ test('search finds tasks by title and id prefix, applies field terms, keeps gran
   assert.deepEqual(ids(await op({query: 'a_c'})), []);
   assert.deepEqual(ids(await op({query: 'deploy fix'})), ['abc12345-flaky']);
 });
+
+// Requirement: OR-34 ignore; risk: an ignored project's tasks or project hit still show in the person's Spotlight, or one person's
+// ignore hides hits from another or from a query that names the project.
+test('search leaves out the projects the person ignores, unless the query names the project', {timeout: 30_000}, async t => {
+  const c = await startCoordinator({name: 'search-ignore'}); t.after(() => c.stop());
+  const call = async (name: string, body: object, who = 'owner@trial.test') => {
+    const r = await fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': who, 'content-type': 'application/json'}, body: JSON.stringify(body)});
+    const d: any = await r.json(); assert.equal(r.status, 200, JSON.stringify(d)); return d;
+  };
+  for (const id of ['keep', 'muted'])
+    await call('project_create', {id, requestId: 'ignore-' + id, content: {settings: {id, name: id === 'keep' ? 'Keep' : 'Muted', contextFiles: ['rules.md'], roles: {pm: 'pm'}}, contextFiles: [{path: 'rules.md', text: 'x'}]}});
+  c.sql(`INSERT INTO task(id,project_id,title,updated_at) VALUES ('t-keep','keep','Ship zebra',now()),('t-muted','muted','Ship zebra too',now()),('t-free',NULL,'Ship zebra free',now());`);
+  const hits = async (query: string, who?: string) => (await call('search', {query}, who)).hits.map((h: any) => h.kind + ':' + h.id).sort();
+  assert.deepEqual(await hits('zebra'), ['task:t-free', 'task:t-keep', 'task:t-muted']);
+  await call('person_settings_set', {ignore: {project: 'muted', ignored: true}});
+  assert.deepEqual(await hits('zebra'), ['task:t-free', 'task:t-keep']);
+  assert.deepEqual(await hits('muted'), [], 'the ignored project is not a project hit either');
+  assert.deepEqual(await hits('zebra project:muted'), ['task:t-muted'], 'a query naming the project still finds it');
+  assert.deepEqual(await hits('zebra project:mut'), [], 'only a term that names the ignored project exactly lifts the ignore');
+  const people = (await call('people_list', {})).people;
+  await call('people_set', {people: [...people.filter((p: any) => p.email !== 'other@trial.test'), {email: 'other@trial.test', name: 'Other', roles: ['operator'], grants: [{kind: 'project', id: 'keep'}, {kind: 'project', id: 'muted'}]}]});
+  assert.ok((await hits('zebra', 'other@trial.test')).includes('task:t-muted'), "one person's ignore does not hide hits from another");
+  await call('person_settings_set', {ignored: ['muted', '-']});
+  assert.deepEqual(await hits('zebra'), ['task:t-keep'], "'-' ignores work outside projects");
+  await call('person_settings_set', {ignored: []});
+  assert.deepEqual(await hits('zebra'), ['task:t-free', 'task:t-keep', 'task:t-muted']);
+});

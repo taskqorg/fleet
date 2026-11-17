@@ -13,13 +13,12 @@ export function Keys({ id }: { id?: string }) {
   const [error, setError] = useState<string | null>(null);
   const { data } = useDoc<any>('api-keys', () => op('connections_list', {}), c => c.kind === 'api-connection' || c.kind === 'connection-key' || c.kind === 'setting-change');
   const now = Date.now();
-  if (!data) return <><header class="page-h"><h1>API keys</h1></header><Empty text="Loading…" /></>;
+  if (!data) return <Empty text="Loading…" />;
   const run = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then(() => { setError(null); }, e => setError(String(e.message ?? e)));
   // The reply omits empty lists (keys, tools, access lists): a connection without keys yet must still render.
   const conns = data.connections.map((c: any) => ({ ...c, keys: c.keys ?? [], tools: c.tools ?? [], access: { people: [], projects: [], experiments: [], ...c.access } }));
   const sel = conns.find((c: any) => c.name === id);
   const list = <>
-    <header class="page-h"><h1>API keys</h1></header>
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
         {conns.length === 0 && <Empty text="No API keys yet" />}

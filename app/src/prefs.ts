@@ -1,14 +1,14 @@
 // Per-person preferences, stored server-side in the person's settings (person_settings_get / person_settings_set,
-// docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus and focus
-// presets, column widths, the collapsed navigation, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
-import { signal } from '@preact/signals';
+// docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus, focus
+// presets and ignored projects, column widths, the collapsed navigation, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
+import { signal, computed } from '@preact/signals';
 import { op, type Ops } from './api.ts';
 import { onClear } from './offline.ts';
 import type { View } from '../../packages/view-url/view-url.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
-const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {}, listGroups: {} };
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], ignored: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {}, listGroups: {} };
 export const prefs = signal<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
@@ -82,16 +82,54 @@ export function useViews(list: string, system: SavedView[]) {
   };
 }
 
-/** The focused projects ('-' is no project); empty: every project. */
-export const setFocus = (projects: string[]) => savePrefs(() => ({ focus: projects }), { focus: projects });
-/** The focus as the projectIds filter of an operation (questions_list, executions_list, delivery_status); undefined: all. */
-export const focusIds = () => prefs.value.focus.length ? prefs.value.focus : undefined;
+/** The focused projects ('-' is no project); empty: every project. An ignored project is never focused. */
+export const setFocus = (projects: string[]) => { const f = projects.filter(p => !prefs.value.ignored.includes(p)); savePrefs(() => ({ focus: f }), { focus: f }); };
+/** Ignore a project (OR-34): hidden from this person's lists, counts, focus picker and search; it leaves the focus. Or restore it. */
+export const setIgnored = (project: string, ignored: boolean) => savePrefs(s => {
+  const rest = s.ignored.filter(x => x !== project);
+  return { ignored: ignored ? [...rest, project] : rest, focus: ignored ? s.focus.filter(x => x !== project) : s.focus };
+}, { ignore: { project, ignored } });
+/**
+ * The ids of the projects the person can see (project_list), kept by the shell's focus control; null until it answers,
+ * 'failed' when it could not be read. With no focus, "every project but the ignored ones" is this list.
+ */
+export const knownProjects = signal<string[] | null | 'failed'>(null);
+onClear.add(() => { knownProjects.value = null; });
+/** Matches no project: every project the person sees is ignored. */
+const NO_PROJECT = '(none)';
+/**
+ * The projects lists and feeds show, as the projectIds filter of an operation (questions_list, executions_list,
+ * delivery_status, the project filter of task_page, sessions_list and artifact_list); undefined: every project. It is the
+ * focus without ignored projects; with no focus, every visible project except the ignored ones, and work outside projects
+ * unless '-' is ignored. ponytail: a project with tasks but no definition the person sees is left out while anything is
+ * ignored; a server-side exclusion filter if that matters. The project list not read: nothing is left out, never nothing shown.
+ */
+// withFocus false: every project but the ignored ones (the Overview's ?all, which the outside-focus count opens).
+export function focusIds(withFocus = true): string[] | undefined {
+  const { focus, ignored } = prefs.value, f = withFocus ? focus.filter(p => !ignored.includes(p)) : [];
+  if (f.length) return f;
+  const known = knownProjects.value;
+  if (!ignored.length || !Array.isArray(known)) return undefined;
+  const ids = [...known.filter(p => !ignored.includes(p)), ...(ignored.includes('-') ? [] : ['-'])];
+  return ids.length ? ids : [NO_PROJECT];
+}
+/** The scope is known: preferences are read and, while a project is ignored with no focus, the project list too (or it failed). */
+export const scopeReady = computed(() => { const { focus, ignored } = prefs.value;
+  return prefsRead.value && (!ignored.length || focus.some(p => !ignored.includes(p)) || knownProjects.value !== null); });
+/**
+ * The project of an item that needs the person lies outside the focus (the "N need you outside focus" count): a focus is
+ * set and does not hold it, and it is not ignored. Ignore is full silence; with no focus (All projects) nothing is outside.
+ */
+export function outsideFocus(project: string | null | undefined) {
+  const { focus, ignored } = prefs.value, p = project ?? '-', f = focus.filter(x => !ignored.includes(x));
+  return f.length > 0 && !f.includes(p) && !ignored.includes(p);
+}
 // Views whose URL codec has a project key, so the focus is part of the list key (store and IndexedDB identity).
 const FOCUSED = ['tasks', 'results', 'conversations'];
-/** A view with the focus as its project filter when the view names no project itself. */
+/** A view with the focus and ignore as its project filter when the view names no project itself (an explicit project wins). */
 export function withFocus(v: View): View {
-  const f = prefs.value.focus;
-  return v.project?.length || !f.length || !FOCUSED.includes(v.view) ? v : { ...v, project: f.map(p => p === '-' ? null : p) };
+  const f = focusIds();
+  return v.project?.length || !f || !FOCUSED.includes(v.view) ? v : { ...v, project: f.map(p => p === '-' ? null : p) };
 }
 export function saveFocusPreset(name: string, projects = prefs.value.focus) {
   const item = { name, projects };

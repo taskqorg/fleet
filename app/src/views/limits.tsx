@@ -55,7 +55,7 @@ export function Limits() {
   const periods: string[] = data ? [...new Set<string>(data.subscriptions.flatMap((s: any) => s.periods.map((p: any) => p.period)))].sort() : [];
   const pct = (v: number) => `${Math.round(v)}%`;
   return <section class="limits" aria-label="Limits">
-    <header class="page-h"><h1><Icon name="gauge" /> Limits</h1><span class="grow" />
+    <header class="page-h"><h2><Icon name="gauge" /> Limits</h2><span class="grow" />
       <Choice label="Burn window" options={[{ id: '1', label: '1h' }, { id: '3', label: '3h' }, { id: '6', label: '6h' }]} value={win} onChange={setWin} />
       <Choice label="Chart" options={[{ id: 'left', label: 'Left' }, { id: 'burn', label: 'Burn' }]} value={mode} onChange={setMode} />
       <Button label="Earlier" icon="arrow-left" iconOnly onClick={() => setShift(shift - 1)} />

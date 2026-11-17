@@ -11,5 +11,5 @@ Each item names the work that waits ("T-9989 Write release notes 95"), which lin
 **Rules.**
 * It is the same record as the decision inside the task. Answering here updates the task at once, and the reverse.
 * An answered item collapses to its answered line, then leaves the list on the next refresh.
-* The top-bar chip "N need you" counts this list.
+* The navigation's "N need you" chip counts this list. The focus chip's "N need you outside focus" counts the items of this list outside the focus, never those of ignored projects ([focus chip](../controls/focus-control.md)); it opens the Overview without the focus (`/overview?all`).
 * An empty list says "Nothing is waiting for you."

@@ -1,5 +1,5 @@
 // Layout rules checked on a rendered page (docs/design-system/owner-rules.md, "How each rule is checked").
-// Requirement: OR-41 resizable columns, OR-42 collapse without a jump; OR-28 one format per value (prose never in mono, headers never wrap); OR-24 three columns and no top bar, OR-25 one scroll per column, OR-26 the whole row opens, OR-27 open in the work area.
+// Requirement: OR-41 resizable columns, OR-42 collapse without a jump; OR-28 one format per value (prose never in mono, headers never wrap); OR-24 three columns and no top bar, OR-25 one scroll per column, OR-26 the whole row opens, OR-27 open in the work area, OR-43 one shell header right of the navigation.
 // Risk: these cannot be seen in source text, so a page breaks them while every source check stays quiet (D19).
 // Used by ux.check.mjs (mockups) and app.check.ts (built app). Call it last for a page: the row click navigates.
 import type { Page } from 'playwright';
@@ -17,6 +17,20 @@ export async function layoutFindings(p: Page): Promise<string[]> {
     if (!shown(document.querySelector('[data-ui=nav-rail]'))) out.push('OR-24 navigation column missing');
     if (innerWidth >= 1100 && ld && [...ld.children].filter(e => shown(e) && e.getAttribute('role') !== 'separator').length < 2) out.push('OR-24 control column or work area missing');
     if (document.querySelector('[data-ui=app-shell]') && !document.querySelector('[data-ui=nav-rail] .brand')) out.push('OR-24 the product name is not in the navigation');
+    // OR-43: one header right of the navigation, over the control column and the work area: the section title, then the
+    // search icon on the right; it never scrolls sideways (phone width included).
+    const head = document.querySelector('[data-ui=shell-header]'), rail = document.querySelector('[data-ui=nav-rail]'), main = document.querySelector('.shell-main');
+    if (document.querySelector('[data-ui=app-shell]')) {
+      if (!head || document.querySelectorAll('[data-ui=shell-header]').length !== 1) out.push('OR-43 not exactly one shell header');
+      else {
+        const h = head.getBoundingClientRect();
+        if (rail && h.left < rail.getBoundingClientRect().right - 1 || h.right < innerWidth - 1 || main && h.bottom > main.getBoundingClientRect().top + 1) out.push('OR-43 the shell header does not span the area right of the navigation, above the page');
+        if (!head.querySelector('h1')?.textContent?.trim()) out.push('OR-43 no section title in the shell header');
+        if (!head.querySelector('button[aria-keyshortcuts*="Meta+K"]')) out.push('OR-43 no search icon in the shell header');
+        if (head.scrollWidth > head.clientWidth + 1 || [...head.children].some(c => c.getBoundingClientRect().right > h.right + 1)) out.push('OR-43 the shell header overflows sideways');
+        if (document.querySelectorAll('[data-ui=app-shell] h1').length > 1) out.push('OR-43 a page heading besides the section title');
+      }
+    }
     if (document.documentElement.scrollHeight > innerHeight + 1) out.push(`OR-25 the page itself scrolls (${document.documentElement.scrollHeight} px in a ${innerHeight} px window)`);
     for (const e of document.querySelectorAll('[data-ui=app-shell] *')) {
       // The outer one counts as a scroller by its style alone: it scrolls as soon as its column grows.
@@ -38,13 +52,8 @@ export async function layoutFindings(p: Page): Promise<string[]> {
   if (await p.evaluate(() => innerWidth > 760 && !!document.querySelector('[data-ui=app-shell]'))) {
     out.push(...await p.evaluate(() => {
       const o: string[] = [], rail = document.querySelector('[data-ui=nav-rail]')!, t = document.querySelector('.nav-toggle');
-      if (!t || rail.contains(t) || t.getBoundingClientRect().left < rail.getBoundingClientRect().right) o.push('OR-42 collapse toggle is not at the top of the column after the navigation');
-      // The toggle covers nothing: no text or control under its box.
-      const tb = t?.getBoundingClientRect();
-      if (tb) for (const e of document.querySelectorAll('.shell-main :is(h1, h2, b, a, button, input, span)')) {
-        const r = e.getBoundingClientRect();
-        if (r.width && !e.closest('.nav-toggle') && r.left < tb.right && r.right > tb.left && r.top < tb.bottom && r.bottom > tb.top) { o.push(`OR-42 collapse toggle covers ${e.tagName.toLowerCase()} "${(e.textContent ?? "").trim().slice(0, 30)}"`); break; }
-      }
+      // OR-42, OR-43: the toggle is the first item of the shell header, right after the navigation.
+      if (!t || rail.contains(t) || t !== document.querySelector('[data-ui=shell-header]')?.firstElementChild || t.getBoundingClientRect().left < rail.getBoundingClientRect().right) o.push('OR-42 collapse toggle is not first in the shell header after the navigation');
       for (const d of document.querySelectorAll('[role=separator]')) { const w = d.getBoundingClientRect().width; if (w && w < 8) o.push(`OR-41 divider hit zone ${Math.round(w)} px, under 8`); }
       if (!rail.classList.contains('mini') && !document.querySelector('.shell-col > [role=separator]')) o.push('OR-41 navigation has no divider');
       if (innerWidth >= 1100 && document.querySelector('[data-ui=list-detail]:not(:has(> [role=separator]))')) o.push('OR-41 control column has no divider');

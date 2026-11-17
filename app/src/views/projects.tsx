@@ -86,7 +86,6 @@ export function Projects({ id }: { id?: string }) {
   const pane = (
     <>
       <header class="page-h">
-        <h1>Projects</h1>
         <span class="grow" />
         <Button label="Analytics" icon="chart-no-axes-column" kind="quiet" onClick={() => { setCreating(false); setMobileAnalytics(true); go('/projects'); }} />
         <Button label="Create project" icon="plus" onClick={() => { setMobileAnalytics(false); setCreating(true); }} />

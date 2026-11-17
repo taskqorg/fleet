@@ -11,6 +11,7 @@ import {
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
 import { Delivery } from './delivery.tsx';
+import { FocusDemo } from './focus-demo.tsx';
 import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtures.ts';
 import tokens from '../tokens.json';
 
@@ -26,9 +27,12 @@ const BOOK_VERSION = { current: '1.261115.6', tone: 'attention' as const, summar
   { key: 'host:windows', part: 'windows', icon: 'terminal' as const, version: '1.261114.3', state: 'behind', tone: 'attention' as const, note: 'auto-update off' },
 ] };
 
+/** A page's own tools under the shell header, which holds the section title (OR-43); none: no head. */
 function PageHead({ title, children }: { title: string; children?: ComponentChildren }) {
-  return <header class="page-h"><h1>{title}</h1><span class="grow" />{children}</header>;
+  return children ? <header class="page-h" aria-label={title}><span class="grow" />{children}</header> : null;
 }
+
+
 const Panel = ({ title, actions, children, class: c }: { title?: string; actions?: ComponentChildren; children: ComponentChildren; class?: string }) => (
   <section class={`panel ${c ?? ''}`}>{title && <header class="panel-h"><h2>{title}</h2><span class="grow" />{actions}</header>}{children}</section>
 );
@@ -539,7 +543,7 @@ function Catalogue() {
 function App() {
   const [loc, go] = useLocation();
   const cur = loc.split('/')[1] || 'overview';
-  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
+  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} focus={<FocusDemo />} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
     <Switch>
       <Route path="/tasks/:id">{(p: { id: string }) => <Tasks id={p.id} />}</Route>
       <Route path="/tasks"><Tasks /></Route>

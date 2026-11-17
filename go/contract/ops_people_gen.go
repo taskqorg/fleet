@@ -272,6 +272,7 @@ type PersonSettings struct {
 	Email        string              `json:"email"`
 	Focus        []string            `json:"focus"`
 	FocusPresets []FocusPreset       `json:"focusPresets"`
+	Ignored      []string            `json:"ignored"`
 	LastViews    map[string]string   `json:"lastViews"`
 	ListGroups   map[string][]string `json:"listGroups"`
 	NavCollapsed bool                `json:"navCollapsed"`
@@ -294,6 +295,9 @@ func (v *PersonSettings) Validate() error {
 		if err := Check(&v.FocusPresets[i], "focusPresets"); err != nil {
 			return err
 		}
+	}
+	if v.Ignored == nil {
+		return Missing("ignored")
 	}
 	if v.LastViews == nil {
 		return Missing("lastViews")
@@ -343,6 +347,8 @@ type PersonSettingsSetRequest struct {
 	FocusPresetDelete *string             `json:"focusPresetDelete,omitempty"`
 	FocusPresetPut    *FocusPreset        `json:"focusPresetPut,omitempty"`
 	FocusPresets      []FocusPreset       `json:"focusPresets,omitempty"`
+	Ignore            *ProjectIgnore      `json:"ignore,omitempty"`
+	Ignored           []string            `json:"ignored,omitempty"`
 	LastViews         map[string]string   `json:"lastViews,omitempty"`
 	ListGroups        map[string][]string `json:"listGroups,omitempty"`
 	NavCollapsed      *bool               `json:"navCollapsed,omitempty"`
@@ -365,6 +371,11 @@ func (v *PersonSettingsSetRequest) Validate() error {
 	}
 	for i := range v.FocusPresets {
 		if err := Check(&v.FocusPresets[i], "focusPresets"); err != nil {
+			return err
+		}
+	}
+	if v.Ignore != nil {
+		if err := Check(v.Ignore, "ignore"); err != nil {
 			return err
 		}
 	}
@@ -393,6 +404,16 @@ func (v *PersonSettingsSetRequest) Validate() error {
 			return err
 		}
 	}
+	return nil
+}
+
+type ProjectIgnore struct {
+	Ignored bool   `json:"ignored"`
+	Project string `json:"project"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ProjectIgnore) Validate() error {
 	return nil
 }
 
@@ -490,7 +511,7 @@ func init() {
 		"people_list":         {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"people_set":          {Read: false, Long: true, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only: the whole people.json list, written atomically and reloaded.\",\"additionalProperties\":true,\"properties\":{\"people\":{}},\"required\":[\"people\"],\"type\":\"object\"}")},
 		"person_settings_get": {Read: true, Long: false, Errors: []int{403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"}},\"type\":\"object\"}")},
-		"person_settings_set": {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"},\"focus\":{\"$comment\":\"omitted: unchanged; [] clears the focus\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"focusPresetDelete\":{\"$comment\":\"remove one focus preset by name\",\"type\":\"string\"},\"focusPresetPut\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"focusPresets\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one\",\"items\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"type\":\"array\"},\"lastViews\":{\"$comment\":\"omitted: unchanged; merged by section id; an empty string removes it; each value is that section's app path (/\\u003cid\\u003e...)\",\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"listGroups\":{\"$comment\":\"omitted: unchanged; merged by \\u003csection\\u003e:\\u003cgrouping\\u003e; [] removes it; the whole group key list of that list replaces the stored one\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"navCollapsed\":{\"$comment\":\"omitted: unchanged\",\"type\":\"boolean\"},\"order\":{\"$comment\":\"list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)\",\"enum\":[\"list\",\"soonest_reset\"],\"type\":\"string\"},\"pins\":{\"$comment\":\"omitted: unchanged; the full ordered list replaces the previous one\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"rowPin\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"list\":{\"type\":\"string\"},\"pinned\":{\"type\":\"boolean\"}},\"required\":[\"list\",\"id\",\"pinned\"],\"type\":\"object\"},\"rowPins\":{\"$comment\":\"omitted: unchanged; merged by list name; [] clears that list\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"viewDelete\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"}},\"required\":[\"list\",\"name\"],\"type\":\"object\"},\"viewPut\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"views\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one; names are unique per list\",\"items\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"type\":\"array\"},\"widths\":{\"$comment\":\"omitted: unchanged; merged by key; a value of 0 removes the key (double-click reset)\",\"additionalProperties\":{\"type\":\"integer\"},\"type\":\"object\"}},\"type\":\"object\"}")},
+		"person_settings_set": {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"email\":{\"$comment\":\"default: the caller; another person: the owner only\",\"type\":\"string\"},\"focus\":{\"$comment\":\"omitted: unchanged; [] clears the focus\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"focusPresetDelete\":{\"$comment\":\"remove one focus preset by name\",\"type\":\"string\"},\"focusPresetPut\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"focusPresets\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one\",\"items\":{\"additionalProperties\":false,\"properties\":{\"name\":{\"type\":\"string\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"name\",\"projects\"],\"type\":\"object\"},\"type\":\"array\"},\"ignore\":{\"additionalProperties\":false,\"properties\":{\"ignored\":{\"type\":\"boolean\"},\"project\":{\"type\":\"string\"}},\"required\":[\"project\",\"ignored\"],\"type\":\"object\"},\"ignored\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one; a newly ignored project leaves the focus\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"lastViews\":{\"$comment\":\"omitted: unchanged; merged by section id; an empty string removes it; each value is that section's app path (/\\u003cid\\u003e...)\",\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"listGroups\":{\"$comment\":\"omitted: unchanged; merged by \\u003csection\\u003e:\\u003cgrouping\\u003e; [] removes it; the whole group key list of that list replaces the stored one\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"navCollapsed\":{\"$comment\":\"omitted: unchanged\",\"type\":\"boolean\"},\"order\":{\"$comment\":\"list: the section 6 order list; soonest_reset: ready candidates by earliest weekly reset among those with weekly left above 0 (fleet-people-access.md section 8)\",\"enum\":[\"list\",\"soonest_reset\"],\"type\":\"string\"},\"pins\":{\"$comment\":\"omitted: unchanged; the full ordered list replaces the previous one\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"rowPin\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"list\":{\"type\":\"string\"},\"pinned\":{\"type\":\"boolean\"}},\"required\":[\"list\",\"id\",\"pinned\"],\"type\":\"object\"},\"rowPins\":{\"$comment\":\"omitted: unchanged; merged by list name; [] clears that list\",\"additionalProperties\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"type\":\"object\"},\"viewDelete\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"}},\"required\":[\"list\",\"name\"],\"type\":\"object\"},\"viewPut\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"views\":{\"$comment\":\"omitted: unchanged; the full list replaces the previous one; names are unique per list\",\"items\":{\"additionalProperties\":false,\"properties\":{\"list\":{\"$comment\":\"the list the view belongs to, e.g. tasks\",\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"view\":{\"$comment\":\"the view state (packages/view-url View: state, group, project, q, ...)\",\"type\":\"object\"}},\"required\":[\"list\",\"name\",\"view\"],\"type\":\"object\"},\"type\":\"array\"},\"widths\":{\"$comment\":\"omitted: unchanged; merged by key; a value of 0 removes the key (double-click reset)\",\"additionalProperties\":{\"type\":\"integer\"},\"type\":\"object\"}},\"type\":\"object\"}")},
 		"search":              {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"limit\":{\"$comment\":\"Per provider; default 8, at most 50.\",\"minimum\":1,\"type\":\"integer\"},\"query\":{\"$comment\":\"Free text plus field:value terms (agent, host, state, project), the list search syntax; a provider that cannot apply a term finds nothing.\",\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")},
 		"view_link":           {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of view (a view state to link) or url (a Fleet URL to read back).\",\"additionalProperties\":true,\"properties\":{\"url\":{},\"view\":{}},\"type\":\"object\"}")},
 	} {

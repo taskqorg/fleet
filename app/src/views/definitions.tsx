@@ -21,7 +21,7 @@ export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
   const { data } = useDoc<Ops['definition_list']['reply']>(`definitions:${kind}`, () => op('definition_list', { kind }), c => c.kind === 'definition');
   const items = data?.items ?? [];
   const list = <>
-    <header class="page-h"><h1>{title}</h1><span class="muted mono">{items.length}</span></header>
+    <header class="page-h"><span class="muted mono" aria-label={`${items.length} ${title.toLowerCase()}`}>{items.length}</span></header>
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
         {data && items.length === 0 && <Empty text={`No ${title.toLowerCase()} yet`} />}

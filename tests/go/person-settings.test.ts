@@ -2,6 +2,7 @@
 // binary and Postgres:   FLEET_TRIAL_TESTS=tests/go/person-settings.test.ts node tests/trial/run.ts   (or tests/go/run.sh)
 import {test as nodeTest} from 'node:test';
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const test = (name: string, fn: () => Promise<void>) => nodeTest(name, {timeout: 30_000}, fn);
@@ -104,4 +105,41 @@ test('P4 questions_list, executions_list and delivery_status keep only projectId
   }
   const d = await op('delivery_status', {projectIds: ['no-such']});
   assert.deepEqual([d.items.length, d.samples.length], [0, 0]);
+});
+
+test('P6 ignored projects are a person setting: ignored and restored one at a time or as a whole list, an ignored project leaves the focus, only visible projects, audited, and agents write it through their tools (requirement: OR-34 ignore stored on the server per person, agents can write it; risk: an ignore is lost between devices, an ignored project stays in the focus, or an agent cannot hide a project for its director)', async () => {
+  for (const id of ['ign-a', 'ign-b'])
+    await op('project_create', {id, requestId: 'prefs-' + id, content: {settings: {id, name: id.toUpperCase(), contextFiles: ['rules.md'], roles: {pm: 'pm'}}, contextFiles: [{path: 'rules.md', text: 'x'}]}});
+  assert.deepEqual((await op('person_settings_get')).ignored, []);
+  await op('person_settings_set', {focus: ['ign-a', 'ign-b', '-']});
+  await Promise.all([op('person_settings_set', {ignore: {project: 'ign-a', ignored: true}}), op('person_settings_set', {ignore: {project: 'ign-b', ignored: true}})]);
+  let s = await op('person_settings_get');
+  assert.deepEqual([...s.ignored].sort(), ['ign-a', 'ign-b']); assert.deepEqual(s.focus, ['-'], 'ignored projects left the focus');
+  s = await op('person_settings_set', {ignore: {project: 'ign-a', ignored: false}, focus: ['ign-a', 'ign-b']});
+  assert.deepEqual(s.ignored, ['ign-b']); assert.deepEqual(s.focus, ['ign-a'], 'a focus never holds an ignored project');
+  const fields = (await op('setting_changes', {target: 'person:' + s.email})).changes.map((c: any) => c.field);
+  assert.ok(fields.includes('ignored'), 'an ignore is audited');
+  for (const bad of [{ignore: {project: 'no-such-project', ignored: true}}, {ignored: ['no-such-project']}, {ignore: {project: '', ignored: true}}, {ignore: {project: 'ign-a'}}]) {
+    const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify(bad)});
+    assert.equal(b.status, 400, JSON.stringify(bad));
+  }
+  // Ignoring the only focused project would make the focus every project: refused unless the change sets the focus too.
+  const only = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify({ignore: {project: 'ign-a', ignored: true}})});
+  assert.equal(only.status, 400, 'the only focused project cannot be ignored');
+  const refocus = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify({focus: ['ign-a'], ignore: {project: 'ign-a', ignored: true}})});
+  assert.equal(refocus.status, 400, 'a change that focuses only the project it ignores is refused too');
+  s = await op('person_settings_set', {ignored: []}); assert.deepEqual(s.ignored, []);
+  // An agent writes its director's ignore through the same operation, which agents get as a tool.
+  const host = await op('hosts_register', {id: 'h-prefs', holder: 'owner@trial.test'});
+  const poll = async () => (await (await fetch(BASE + '/api/hosts/poll', {method: 'POST', headers: {authorization: 'Bearer ' + host.secret, 'content-type': 'application/json'}, body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []})})).json()) as any;
+  await poll();
+  const sess = await op('session_start', {projectId: 'ign-a', role: 'pm', requestId: randomUUID(), text: 'Hide ign-b for me'});
+  const cmd = (await poll()).commands.find((x: any) => x.sessionId === sess.sessionId && x.kind === 'start');
+  assert.ok(cmd, 'start command issued');
+  const r = await fetch(BASE + '/api/hosts/agent-tools', {method: 'POST', headers: {authorization: 'Bearer ' + host.secret, 'content-type': 'application/json'}, body: JSON.stringify({hostId: 'h-prefs', commandId: cmd.id, executionId: cmd.executionId, agentToolKey: cmd.payload.agentToolKey,
+    request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'person_settings_set', arguments: {ignore: {project: 'ign-b', ignored: true}}}}})});
+  const body: any = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(body)); assert.ok(!body.error && !body.result?.isError, JSON.stringify(body));
+  assert.deepEqual((await op('person_settings_get')).ignored, ['ign-b']);
+  await op('person_settings_set', {ignored: [], focus: []});
 });

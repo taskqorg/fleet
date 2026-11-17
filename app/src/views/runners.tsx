@@ -1,7 +1,7 @@
 // Runners (docs/design-system/pages/runners.md): everything that executes work, grouped by host, each run on a 24-hour
 // time strip with its time and resources; spend today and this month per host and kind. Data: executions_runners.
 import { useLocation } from 'wouter-preact';
-import { StateBadge, HarnessMark, Num, CostFigures, Totals, EntityCode, AgeChip, TimeStrip, age, Empty, ErrorBanner, Skeleton, OfflineMarker, Icon, harnesses, type Harness, type Measured, type Kind, type TotalItem } from '../../../packages/ui/src/index.ts';
+import { StateBadge, HarnessMark, Num, CostFigures, Totals, EntityCode, AgeChip, TimeStrip, age, Empty, ErrorBanner, Skeleton, OfflineMarker, Icon, harnesses, type Harness, type Measured, type Kind, type TotalItem, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { mergeCosts } from './resources.tsx';
@@ -37,7 +37,7 @@ function spendTotals(spend: any[]): TotalItem[] {
 export function Runners() {
   const [, go] = useLocation();
   const { data, state, error } = useDoc<any>('runners', async () => ({ ...(await op('executions_runners', {})), fetchedAt: Date.now() }), () => false, 15000); // timer only: gateway calls change executions many times a second
-  if (!data) return <><header class="page-h"><h1>Runners</h1></header>{error ? <ErrorBanner text={`Runners did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
+  if (!data) return <>{error ? <ErrorBanner text={`Runners did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
   const now = data.serverNow + (Date.now() - data.fetchedAt), from = now - DAY;
   const hosts = [...new Set<string | null>([...data.runs.map((r: any) => r.hostId), ...data.spend.map((s: any) => s.hostId)])]
     .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
@@ -46,7 +46,7 @@ export function Runners() {
   const open = (r: any) => r.taskId ? `/tasks/${r.taskId}` : r.sessionId ? `/conversations/${r.sessionId}` : null;
   const summary = spendTotals(data.spend);
   return <section class="runners" aria-label="Runners">
-    <header class="page-h"><h1>Runners</h1><span class="grow" /><OfflineMarker state={state} now={now} /></header>
+    <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
     <section class="panel" aria-label="Spend">
       <header class="panel-h"><h2>Spend</h2><span class="muted">UTC</span></header>
       {summary.length > 0 && <div class="stack-pad"><Totals items={summary} /></div>}

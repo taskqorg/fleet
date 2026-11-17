@@ -7,13 +7,12 @@ import {
   StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
   Choice, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_,
   writeClip, zone,
-  keyConnection,
-} from '../../../packages/ui/src/index.ts';
+  keyConnection, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/view-url/view-url.ts';
 import { nextUrl } from '../url.ts';
-import { focusIds } from '../prefs.ts';
+import { prefs } from '../prefs.ts';
 import { useListPage, ListPagePanel } from '../list-page.tsx';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
@@ -59,7 +58,8 @@ export function Conversations({ id }: { id?: string }) {
   useEffect(()=>{const u=new URL(location.href);if(u.searchParams.has('new')){u.searchParams.delete('new');history.replaceState(history.state,'',u.pathname+u.search);}},[]);
   const create=()=>setNewConversation(true);
   const pane = <>
-    <header class="page-h"><h1>Conversations</h1><OfflineMarker state={page.list.state} now={now} /><span class="grow" />
+    <ShellStatus><OfflineMarker state={page.list.state} now={now} /></ShellStatus>
+    <header class="page-h"><span class="grow" />
       <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
     {newConversation&&<NewConversation onDone={sessionId=>{setNewConversation(false);set({focus:sessionId});}}/>}
     <ListPagePanel page={page} noun="Conversations" placeholder="Search conversations" family="session" groups={GROUPS} sorts={SORTS} focused={id}
@@ -74,7 +74,7 @@ export function Conversations({ id }: { id?: string }) {
       ]}
       confirm={confirm && <ProblemRow severity="warning" title={`Archive ${confirm.length} ${confirm.length === 1 ? 'conversation' : 'conversations'}?`} facts="Their worktrees are torn down; the owner can restore a conversation."
         actions={[{ label: 'Yes, archive', primary: true, onClick: () => { page.setConfirm(null); archive(confirm); } }, { label: 'Keep', onClick: () => page.setConfirm(null) }]} />}
-      empty={<Empty text={filtered ? `No ${archived ? 'archived ' : ''}conversations match these filters.` : focusIds() && !view.project?.length ? `No ${archived ? 'archived ' : ''}conversations in the focused projects.` : archived ? 'No archived conversations.' : 'No conversations yet.'}
+      empty={<Empty text={filtered ? `No ${archived ? 'archived ' : ''}conversations match these filters.` : prefs.value.focus.length && !view.project?.length ? `No ${archived ? 'archived ' : ''}conversations in the focused projects.` : archived ? 'No archived conversations.' : 'No conversations yet.'}
         action={filtered ? <Button label="Clear filters" onClick={page.clearFilters} />
           : archived ? <Button label="Show active" onClick={toggleArchived} /> : <Button label="New conversation" onClick={create} />} />}
       listLabel={archived ? 'Archived conversations' : 'Conversations'} title={titleOf} groupIcon={g => g === 'state' ? 'activity' : g === 'agent' ? 'bot' : 'folder-open'}

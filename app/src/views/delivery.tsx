@@ -8,14 +8,13 @@ import { useCallback, useEffect } from 'preact/hooks';
 import {
   ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
   Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
-  type StateOf, type DayCol, type DayMark, type SharePart,
-} from '../../../packages/ui/src/index.ts';
+  type StateOf, type DayCol, type DayMark, type SharePart, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { useListPage, ListPagePanel, type LocalList } from '../list-page.tsx';
 import { useUrlView } from '../url.ts';
 import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, DELIVERY_STAGES, type View } from '../../../packages/view-url/view-url.ts';
-import { focusIds, prefsRead, type SavedView } from '../prefs.ts';
+import { focusIds, prefsRead, scopeReady, type SavedView } from '../prefs.ts';
 import type { Change } from '../../../contracts/generated/ops.ts';
 
 type Stage = StateOf<'delivery'>;
@@ -89,7 +88,7 @@ export function bucketsOf(range: string, now: number, first?: number): Bucket[] 
 export function Delivery({ id }: { id?: string }) {
   const focus = focusIds() ?? [];
   const now = Date.now();
-  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
+  const status = useDoc<Status>(scopeReady.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
   // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
   const baseDoc = useDoc<Baseline | typeof NONE>(prefsRead.value ? 'delivery-baseline:14' : null, () => no404(op('delivery_baseline', { days: 14 })), touchesHistory, 600000);
   const base = baseDoc.data === NONE ? null : baseDoc.data;
@@ -105,12 +104,12 @@ export function Delivery({ id }: { id?: string }) {
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
   const urlRange = deliveryExtra(useUrlView('delivery').view.extra).range ?? '7d';
   // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
-  const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
+  const histDoc = useDoc<{ h: History } | typeof NONE>(scopeReady.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
     () => no404(op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }).then(h => ({ h }))), touchesHistory, 600000);
   const hist = histDoc.data === NONE ? null : histDoc.data;
-  const regDoc = useDoc<Regressions | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
+  const regDoc = useDoc<Regressions | typeof NONE>(scopeReady.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
   const regressions = regDoc.data === NONE ? [] : regDoc.data?.regressions ?? [];
-  const histLoading = !prefsRead.value || fleetShown && histDoc.data === null && !histDoc.error;
+  const histLoading = !scopeReady.value || fleetShown && histDoc.data === null && !histDoc.error;
   const paceOf = (v: View) => {
     const ex = deliveryExtra(v.extra), range = ex.range ?? '7d', buckets = bucketsOf(range, now, hist?.h.backfilledFrom ? ms(hist.h.backfilledFrom) : undefined);
     return { ex, range, buckets, picked: ex.at ? buckets.find(b => b.key === ex.at) ?? null : null };
@@ -164,9 +163,9 @@ export function Delivery({ id }: { id?: string }) {
   const p = keep.at ? picked : null;
 
   const list = <>
-    <header class="page-h"><h1>Delivery</h1><span class="grow" />
+    <ShellStatus>
       {data?.source === 'public' && <span class="chip-age t-attention" data-tip="No github key in API keys: unauthenticated reads of the fleet repository every 6 minutes">public GitHub</span>}
-      {data?.refreshedAt && <AgeChip t={ms(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}</header>
+      {data?.refreshedAt && <AgeChip t={ms(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}</ShellStatus>
     {data?.error && <ErrorBanner text={`GitHub: ${data.error}`} />}
     {incomplete && <p class="muted type-sm stack-pad">Some GitHub data is unavailable: current totals are unknown; the rows are the last ones read.</p>}
     <ListPagePanel page={page} noun="Pull requests" placeholder="Search pull requests, state:mq_wait project:fleet" family="delivery" groups={GROUPS} sorts={SORTS} focused={id} countersLabel="Pull requests by stage"

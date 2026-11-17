@@ -1,13 +1,13 @@
 // Overview (docs/design-system/pages/overview.md): what needs the operator, operational counts, workers per host, projects.
-import { useLocation } from 'wouter-preact';
-import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection, actor } from '../../../packages/ui/src/index.ts';
+import { useLocation, useSearch } from 'wouter-preact';
+import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, Button, keyConnection, actor, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { focusIds, prefsRead } from '../prefs.ts';
+import { focusIds, scopeReady, prefs, knownProjects } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
-// The focus (OR-34) narrows every part: questions, problems, counts and project rows.
+// The focus and ignored projects (OR-34) narrow every part: questions, problems, counts and project rows.
 async function fetchOverview(projectIds?: string[]): Promise<Overview> {
   const [q, p, page] = await Promise.all([op('questions_list', { state: 'open', projectIds }), op('executions_list', { needsYou: true, projectIds }),
     op('task_page', { group: 'project', groupCounts: true, limit: 1, filter: projectIds ? { projectId: projectIds.map(x => x === '-' ? null : x) } : {} })]);
@@ -17,26 +17,30 @@ async function fetchOverview(projectIds?: string[]): Promise<Overview> {
 }
 
 export function Overview() {
-  const focus = focusIds();
+  // ?all: every project, focus and ignore not applied; the header's "need you outside focus" opens it (app-shell.md).
+  const all = new URLSearchParams(useSearch()).has('all');
+  // ?all drops the focus, not the ignore: ignore is full silence (OR-34).
+  const focus = focusIds(!all);
   const alive = useAlive();
   const [, go] = useLocation();
-  const { data, state, error } = useDoc<Overview>(prefsRead.value ? 'overview:' + (focus ?? []).join(',') : null, () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
+  const { data, state, error } = useDoc<Overview>(scopeReady.value && (!all || !prefs.value.ignored.length || knownProjects.value !== null) ? 'overview:' + (all ? '*:' : '') + (focus ?? []).join(',') : null, () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
   const hostsRec = useDoc<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = Date.now();
   const hosts = hostsRec.data, hostNow = hosts ? hosts.serverNow + (now - hosts.fetchedAt) : now;
-  if (!data) return <><header class="page-h"><h1>Overview</h1></header>{error ? <ErrorBanner text={`Overview did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
+  if (!data) return <>{error ? <ErrorBanner text={`Overview did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
   const ops = ([
         { label: 'failed', icon: 'octagon-x', value: { value: data.counts.failed ?? 0, basis: 'measured' }, tone: data.counts.failed ? 'danger' : undefined, href: '/tasks?state=failed' },
         { label: 'running', icon: 'activity', value: { value: data.counts.in_progress ?? 0, basis: 'measured' }, href: '/tasks?state=in_progress' },
         { label: 'queued', icon: 'list-ordered', value: { value: data.counts.queued ?? 0, basis: 'measured' }, href: '/tasks?state=queued' },
   ] as const).filter(x => x.value.value > 0);
   return <>
-    <header class="page-h"><h1>Overview</h1><span class="grow" /><OfflineMarker state={state} now={now} /></header>
+    <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
+    {all && <header class="page-h"><span class="muted">Focus not applied</span><Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} /></header>}
     <OpsSummary>
       {ops.length > 0 && <StatStrip label="Operations" stats={ops} />}
       <div class="cols">
         <NeedsYou>
-          {!data.questions.length && !data.problems.length && <Empty text={focus ? 'Nothing is waiting for you in the focused projects.' : 'Nothing is waiting for you.'} />}
+          {!data.questions.length && !data.problems.length && <Empty text={!all && prefs.value.focus.length ? 'Nothing is waiting for you in the focused projects.' : 'Nothing is waiting for you.'} />}
           <Latest items={needsYou(data, now).map(x => x.q ? <DecisionBlock key={x.q.id} question={x.q.text} askedBy={actor(x.q.askedBy) || x.q.kind} addressedTo="you" since={x.at} now={now}
             waits={x.q.taskId ? <a class="row-link" href={`/tasks/${encodeURIComponent(x.q.taskId)}`} aria-label="Open task" data-tip="Open task" onClick={ev => { ev.preventDefault(); go(`/tasks/${encodeURIComponent(x.q.taskId)}`); }}><Icon name="external-link" /></a> : undefined}
             options={(Array.isArray(x.q.options) ? x.q.options : x.q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(x.q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}

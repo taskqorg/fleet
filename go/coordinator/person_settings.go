@@ -1,8 +1,8 @@
 package main
 
 // Person settings (fleet-people-access.md section 8 "Dispatch"): order list | soonest_reset on the director, default
-// list. The same document holds the person's app preferences: pins, saved views, focus and focus presets, column widths
-// and row pins (fleet-people-access.md section 8 "Preferences"). One person-setting document per email; each change writes setting-change.
+// list. The same document holds the person's app preferences: pins, saved views, focus and focus presets, ignored projects,
+// column widths and row pins (fleet-people-access.md section 8 "Preferences"). One person-setting document per email; each change writes setting-change.
 
 import (
 	"encoding/json"
@@ -70,6 +70,7 @@ func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 	}
 	ps.Pins = orEmpty(ps.Pins)
 	ps.Focus = orEmpty(ps.Focus)
+	ps.Ignored = orEmpty(ps.Ignored)
 	if ps.Views == nil {
 		ps.Views = []contract.SavedView{}
 	}
@@ -147,13 +148,16 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.Order != nil && *r.Order != prev.Order && q.agent != "" {
 		return contract.PersonSettings{}, fail(403, "Only a person may change the dispatch order")
 	}
-	// A newly named project (focus or a focus preset) must exist and be visible to the caller; one already stored may since
-	// be gone and stays.
-	known := slices.Clone(prev.Focus)
+	// A newly named project (focus, a focus preset or an ignored one) must exist and be visible to the caller; one already
+	// stored may since be gone and stays.
+	known := append(slices.Clone(prev.Focus), prev.Ignored...)
 	for _, p := range prev.FocusPresets {
 		known = append(known, p.Projects...)
 	}
-	named := slices.Clone(r.Focus)
+	named := append(slices.Clone(r.Focus), r.Ignored...)
+	if r.Ignore != nil && r.Ignore.Ignored {
+		named = append(named, r.Ignore.Project)
+	}
 	if r.FocusPresetPut != nil {
 		named = append(named, r.FocusPresetPut.Projects...)
 	}
@@ -177,6 +181,25 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	}
 	if r.Views != nil {
 		next.Views = r.Views
+	}
+	// Ignored projects (OR-34): an ignored project leaves the focus, so the focus never holds one.
+	if r.Ignored != nil {
+		next.Ignored = unique(r.Ignored)
+	}
+	if r.Ignore != nil {
+		had := slices.Contains(next.Ignored, r.Ignore.Project)
+		if r.Ignore.Ignored && !had {
+			next.Ignored = append(slices.Clone(next.Ignored), r.Ignore.Project)
+		} else if !r.Ignore.Ignored {
+			next.Ignored = slices.DeleteFunc(slices.Clone(next.Ignored), func(x string) bool { return x == r.Ignore.Project })
+		}
+	}
+	focused := len(next.Focus) > 0
+	next.Focus = slices.DeleteFunc(slices.Clone(next.Focus), func(x string) bool { return slices.Contains(next.Ignored, x) })
+	// An empty focus is every project: ignoring the last focused projects would widen the person's lists, not narrow them.
+	// Only a change that clears the focus itself (focus: []) may do it.
+	if focused && len(next.Focus) == 0 {
+		return contract.PersonSettings{}, fail(400, "focus: every project in it is ignored, and an empty focus is every project; focus another project first")
 	}
 	if r.FocusPresets != nil {
 		next.FocusPresets = r.FocusPresets
@@ -280,7 +303,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	by := actor(q, "operator")
 	_, err = unscoped(q, func() (struct{}, error) {
 		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(next.Order), "pins": next.Pins,
-			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed, "lastViews": next.LastViews, "listGroups": next.ListGroups}); err != nil {
+			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "ignored": next.Ignored, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed, "lastViews": next.LastViews, "listGroups": next.ListGroups}); err != nil {
 			return struct{}{}, err
 		}
 		change := func(field string, previous, value any) error {
@@ -295,7 +318,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			name            string
 			previous, value any
 		}{{"pins", prev.Pins, next.Pins}, {"views", prev.Views, next.Views}, {"focus", prev.Focus, next.Focus},
-			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}} {
+			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"ignored", prev.Ignored, next.Ignored}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}} {
 			// lastViews is where the person was and listGroups which groups they folded, not settings: they change as the person
 			// moves around a list and are not audited.
 			a, _ := json.Marshal(f.previous)
@@ -345,6 +368,20 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 	}
 	if r.FocusPresetPut != nil && strings.TrimSpace(r.FocusPresetPut.Name) == "" {
 		return fail(400, "focusPresetPut: name is required")
+	}
+	if r.Ignore != nil && r.Ignore.Project == "" {
+		return fail(400, "ignore: project is required")
+	}
+	// ignore.ignored decodes to false when absent, which would restore the project: it must be given.
+	if r.Ignore != nil {
+		var raw struct {
+			Ignore struct {
+				Ignored *bool `json:"ignored"`
+			} `json:"ignore"`
+		}
+		if json.Unmarshal(q.body, &raw) != nil || raw.Ignore.Ignored == nil {
+			return fail(400, "ignore: ignored is required")
+		}
 	}
 	if r.RowPin != nil && (r.RowPin.List == "" || r.RowPin.Id == "") {
 		return fail(400, "rowPin: list and id are required")

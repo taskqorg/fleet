@@ -3,12 +3,13 @@ import { render, type ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
-  Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, StatStrip,
+  Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
   Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
+import { FocusDemo } from './focus-demo.tsx';
 import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures.ts';
 
 const BOOK_TREE: TreeNode[] = [
@@ -224,10 +225,12 @@ function TranscriptDemo() {
 function RailDemo() {
   const [cur, setCur] = useState('tasks');
   const [pinned, setPinned] = useState<string[]>(['tasks', 'hosts']);
-  const [spot, setSpot] = useState(false);
-  return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPins={setPinned} onSearch={() => setSpot(true)} />
-    {spot && <Spotlight providers={[sectionProvider(NAV, setCur)]} onClose={() => setSpot(false)} />}</div>;
+  return <div class="pane rail-demo"><NavRail items={NAV} pinned={pinned} current={cur} onGo={setCur} onPins={setPinned} /></div>;
 }
+
+/** The focus chip as it sits on the right of the shell header: neutral with every project, toned with a focus. */
+const HeaderDemo = ({ start }: { start: string[] }) => <div class="shell-h"><h1 class="shell-title">Tasks</h1><span class="grow" />
+  <FocusDemo start={start} ignored={['assetq']} /><Button label="Search ⌘K" icon="search" iconOnly kind="quiet" /></div>;
 
 function SplitDemo() {
   const [last, setLast] = useState('');
@@ -376,7 +379,8 @@ function DraftDemo() {
 const SECTIONS: [string, string, string | undefined, () => ComponentChildren, ComponentChildren?][] = [
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, <>OR-3: one stable icon per workspace, from the registry.</>],
-  ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, <>Hover a section and pin it: it moves to the pinned group at the top (D9). Counters show what needs a look. Search finds any section.</>],
+  ['nav-rail', 'Navigation rail with pinned sections', 'nav-rail', () => <RailDemo />, <>Hover a section and pin it: it moves to the pinned group at the top (D9). Counters show what needs a look. Search is the icon in the shell header (OR-31, OR-43).</>],
+  ['focus-control', 'Focus chip in the shell header', 'focus-control', () => <div class="stack"><HeaderDemo start={[]} /><HeaderDemo start={['fleet', 'desiign', 'cs']} /></div>, <>OR-34, OR-43. Neutral with every project; toned with a focus, names two projects then +N. The bell counts what needs you outside the focus. The panel floats under the chip: presets, projects with an ignore action, and the folded Ignored section to restore them.</>],
   ['split-button', 'Split button', 'split-button', () => <SplitDemo />, <>Click runs the default action; the chevron opens a short menu of alternatives for the same place (allowed by OR-14).</>],
   ['button', 'Button', 'button', () => <ButtonsDemo />],
   ['state-badge', 'State badge', 'state-badge', () => <BadgesDemo />, <>Left: icon and word, for detail views. Right: icon only, the form lists use (B1); hover or focus for the name and reason.</>],
