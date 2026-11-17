@@ -96,7 +96,9 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       const value = await new AsyncFunction(m.source)();
       send({ type: 'done', job: m.job, ok: true, value: plain(value) });
     } catch (e) {
-      const error = { message: String(e?.message ?? e), stack: e?.stack ?? null };
+      // Any thrown value ends the job, even one that cannot be turned into a string.
+      const text = (f) => { try { const v = f(); return v == null ? null : String(v); } catch { return null; } };
+      const error = { message: text(() => e?.message ?? e) ?? 'unprintable thrown value', stack: text(() => e?.stack) };
       if (e instanceof FleetCallError) Object.assign(error, { tool: e.tool, outcome: e.outcome, code: e.code ?? null, output: e.output ?? null });
       send({ type: 'done', job: m.job, ok: false, error });
     }

@@ -112,8 +112,14 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	defer gw.Close()
 	t.Setenv("FLEET_GATEWAY_URL", gw.URL)
 	t.Setenv("FLEET_RUN_TOKEN", "tok")
-	web := M{"name": "web", "tools": []any{M{"name": "search", "description": "find"}, M{"name": "broken"}}}
+	web := M{"name": "web", "instructions": "Use short queries.", "tools": []any{M{"name": "search", "description": "find"}, M{"name": "broken"}}}
 	c := newCodeClient(t, M{"dir": t.TempDir(), "connections": []any{web}})
+	c.id++
+	io.WriteString(c.in, enc(M{"jsonrpc": "2.0", "id": c.id, "method": "initialize", "params": M{}})+"\n")
+	c.out.Scan()
+	if init, _ := dec(c.out.Text()); jStr(init, "result", "instructions") != `conn["web"]: Use short queries.` {
+		t.Fatalf("instructions: %v", init)
+	}
 
 	start := time.Now()
 	r, bad := c.code(`const xs = await Promise.all([1,2,3,4].map(() => conn.web.search({q: "x"})));
@@ -157,6 +163,11 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	// Arguments that do not serialize reject as FleetCallError, not a raw TypeError.
 	if r, _ := c.code(`try { await conn.web.search({n: 1n}) } catch (e) { return [e.name, e.code, e.tool] }`); enc(r["value"]) != `["FleetCallError","bad-arguments","web.search"]` {
 		t.Fatalf("bigint: %v", r["value"])
+	}
+	// The runtime dies while a call runs: the job ends after the call, with its outcome listed, not as a bare failure.
+	r, bad = c.code(`conn.web.search({}); await new Promise(r => setTimeout(r, 50)); process.exit(1)`)
+	if !bad || !strings.HasPrefix(jStr(r, "error", "message"), "runtime-exited") || len(jArr(r, "calls")) != 1 || jStr(jArr(r, "calls")[0], "outcome") != "ok" {
+		t.Fatalf("exit with a call in flight: %v %v", bad, r)
 	}
 	// A call made after its job ended is refused, not sent.
 	before = calls.Load()
@@ -297,6 +308,9 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 	}
 	if r, bad := c.code(`throw new Error("boom")`); !bad || jStr(r, "error", "message") != "boom" || r["restarted"] != nil {
 		t.Fatalf("throw: %v %v", bad, r)
+	}
+	if r, bad := c.code(`throw Object.create(null)`); !bad || jStr(r, "error", "message") != "unprintable thrown value" {
+		t.Fatalf("unprintable throw: %v %v", bad, r)
 	}
 	// A throw in a timer and a write callback keep the runtime and its state.
 	c.code(`state.n = 2; setTimeout(() => { throw new Error("late") }, 10)`)

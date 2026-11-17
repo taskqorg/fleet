@@ -48,17 +48,19 @@ type codeJob struct {
 }
 
 type codeServer struct {
-	spec   any
-	ctx    any     // the fleet server context, nil without Fleet tools
-	db     *sql.DB // the executor journal, nil without Fleet tools
-	fleet  map[string]bool
-	conns  map[string]any // connection name -> spec
-	mu     sync.Mutex
-	jobs   map[string]*codeJob
-	order  []string
-	rt     *codeRuntime
-	starts int
-	seq    int
+	spec     any
+	ctx      any     // the fleet server context, nil without Fleet tools
+	db       *sql.DB // the executor journal, nil without Fleet tools
+	fleet    map[string]bool
+	conns    map[string]any // connection name -> spec
+	mu       sync.Mutex
+	jobs     map[string]*codeJob
+	order    []string
+	rt       *codeRuntime
+	starts   int
+	seq      int
+	closed   bool           // the server is shutting down: no new runtime
+	inflight sync.WaitGroup // bridged calls in flight
 }
 
 type codeRuntime struct {
@@ -80,7 +82,6 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 		for _, t := range jArr(mcpTools(s.ctx), "tools") {
 			s.fleet[jStr(t, "name")] = true
 		}
-		s.fleet["agent_tool_result"] = true
 	}
 	for _, c := range jArr(spec, "connections") {
 		s.conns[jStr(c, "name")] = c
@@ -90,13 +91,21 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 			return err
 		}
 	}
+	// Shutdown order (defers run in reverse): mark closed and stop the runtime, wait for the requests, then for the bridged
+	// calls in flight, and only then close the journal they use.
+	defer s.inflight.Wait()
 	// Requests are served concurrently, so a long `code` call never delays a ping, a poll or a second call; only the
 	// writes are serialized.
 	var wmu sync.Mutex
 	var wg sync.WaitGroup
 	// On stdin end the runtime stops first, so waiting requests return with runtime-exited instead of their full wait.
 	defer wg.Wait()
-	defer s.stop()
+	defer func() {
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
+		s.stop()
+	}()
 	out := bufio.NewWriter(w)
 	write := func(m M) {
 		wmu.Lock()
@@ -137,7 +146,14 @@ func (s *codeServer) serve(m any) M {
 		if has(params, "protocolVersion") {
 			pv = jAt(params, "protocolVersion")
 		}
-		reply["result"] = M{"protocolVersion": pv, "capabilities": M{"tools": M{}}, "serverInfo": M{"name": "fleet-code", "version": "1"}}
+		// The direct connection servers' instructions (query syntax, limits) reach the agent here too.
+		var instr []string
+		for _, c := range jArr(s.spec, "connections") {
+			if i := jStr(c, "instructions"); i != "" {
+				instr = append(instr, "conn[\""+jStr(c, "name")+"\"]: "+i)
+			}
+		}
+		reply["result"] = M{"protocolVersion": pv, "capabilities": M{"tools": M{}}, "serverInfo": M{"name": "fleet-code", "version": "1"}, "instructions": strings.Join(instr, "\n\n")}
 	case "ping":
 		reply["result"] = M{}
 	case "tools/list":
@@ -173,9 +189,7 @@ func seconds(v any) time.Duration {
 	return 25 * time.Second
 }
 
-func codeResult(v M, isError bool) M {
-	return M{"content": []any{M{"type": "text", "text": enc(v)}}, "isError": isError}
-}
+func codeResult(v M, isError bool) M { return mcpText(v, &isError) }
 
 func (s *codeServer) code(source string, detach time.Duration) M {
 	if strings.TrimSpace(source) == "" {
@@ -280,6 +294,9 @@ func (s *codeServer) finish(j *codeJob, ok bool, value, err any) {
 // runtime returns the live Node process, starting one if none runs; restarted reports a replaced runtime whose state
 // is gone. The caller holds s.mu.
 func (s *codeServer) runtime() (*codeRuntime, bool, error) {
+	if s.closed {
+		return nil, false, errors.New("the code server is stopping")
+	}
 	if s.rt != nil {
 		select {
 		case <-s.rt.dead:
@@ -394,16 +411,26 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.Reader) {
 	}
 	rt.cmd.Process.Kill()
 	rt.cmd.Wait()
+	exited := M{"message": "runtime-exited: the runtime stopped; state is lost"}
 	s.mu.Lock()
 	var open []*codeJob
 	for _, j := range s.jobs {
-		if j.rt == rt && jobStatus(j) == "running" {
-			open = append(open, j)
+		if j.rt != rt || jobStatus(j) != "running" {
+			continue
 		}
+		if j.busy > 0 {
+			// Bridged calls still run in the code server: the job ends when they do, with their outcomes in `calls`.
+			// A job that had returned keeps its value.
+			if j.ended == nil {
+				j.ended = &[3]any{false, nil, exited}
+			}
+			continue
+		}
+		open = append(open, j)
 	}
 	s.mu.Unlock()
 	for _, j := range open {
-		s.finish(j, false, nil, M{"message": "runtime-exited: the runtime stopped; state is lost"})
+		s.finish(j, false, nil, exited)
 	}
 	close(rt.dead)
 }
@@ -442,7 +469,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		}
 	case "call":
 		s.mu.Lock()
-		ended := j == nil || jobStatus(j) != "running"
+		ended := j == nil || jobStatus(j) != "running" || j.ended != nil // the code returned: a timer's call is late
 		s.mu.Unlock()
 		if ended {
 			// A call made after its job ended (an unawaited promise or a timer) would have an effect nobody sees.
@@ -457,7 +484,11 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		s.mu.Lock()
 		j.busy++
 		s.mu.Unlock()
-		go s.call(rt, j, m)
+		s.inflight.Add(1)
+		go func() {
+			defer s.inflight.Done()
+			s.call(rt, j, m)
+		}()
 	}
 }
 

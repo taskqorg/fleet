@@ -62,6 +62,7 @@ Input: `{jobId: string, waitSeconds?: number}`.
 
 - `fleet.<tool>(args)` calls each tool of the `fleet` server for this execution: `session_start`, `session_fork`, `message_send`, `ask`, `execution_status`, `artifact_save`, the project operations, the director's operations and the others ([tool list](../../go/executor/mcp-tools.json)). The code server runs the same handler as the `fleet` server, with the same context and journal.
 - `conn["<connection>"].<tool>(args)` calls a granted connection's tool through the gateway with this run's token ([call methods](fleet-connections.md#5-call-methods)). The bridge offers the same tools as the direct connection server: names of letters, digits and `_`.
+- The code server's MCP `instructions` carry each granted connection's instructions, as the direct connection servers do.
 - `fleet.$tools()` and `conn["<connection>"].$tools()` return the names, descriptions and input schemas. The agent looks up a tool there instead of loading every schema into its context.
 - A bridge function returns the tool's result, parsed from JSON when the result is JSON. A tool error rejects the promise with `FleetCallError {tool, outcome, code, output}`.
 - Calls may run in parallel. The code server serves each bridge call on its own goroutine.
@@ -88,12 +89,12 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 
 - A Fleet mutation without an answer rejects with `FleetCallError` with `outcome: "unknown"`, `code: "pending"` and `output: {status: "pending", requestKey}`. A `request_child` without a host answer (`status: "pending-or-rejected"` and no `response`) rejects the same way; a retry with the same `requestId` is the same request. A host refusal rejects with `outcome: "error"`. The code reads it later with `fleet.agent_tool_result({requestKey})`. The bridge never retries it.
 - A bridged call started before the code returns is part of its job, awaited or not: the final reply waits for it and lists its outcome in `calls`.
-- A bridged call made after its job ended (a timer) is refused with `code: "job-ended"` and never sent: its effect would reach no reply.
+- A bridged call made after the code returned (a timer) is refused with `code: "job-ended"` and never sent: its effect would reach no reply.
 - Arguments that do not serialize (a `BigInt`, a cycle) reject with `code: "bad-arguments"`.
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
 - A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent. A stored reply that does not decode is such a failure.
 - An unawaited rejection or a throw inside a timer is printed, not fatal: the runtime, its other jobs and `state` survive.
-- When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. The next `code` call starts a new runtime, and its reply says so: `restarted: true`.
+- When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. A job with bridged calls still in flight ends when they do, with their outcomes in `calls`, so no effect goes unreported. The next `code` call starts a new runtime, and its reply says so: `restarted: true`.
 
 ## Observability
 
@@ -141,4 +142,4 @@ Run from `go/`:
 go test ./executor -run CodeMode
 ```
 
-The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes, commands, signals to another process and network (`fetch` and the internal `_http_client` reach no server), a timer throw that keeps `state`, a 70 MB value, `poll` reset of a spinning job, a result returned once, probes that send no call, a restarted runtime, a journal error as `unknown`, and the launch servers for `add` and `only`. The runtime tests skip when the host has no such Node or no sandbox that starts.
+The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes, commands, signals to another process and network (`fetch` and the internal `_http_client` reach no server), a timer throw that keeps `state`, a 70 MB value, `poll` reset of a spinning job, a result returned once, probes that send no call, a restarted runtime, a journal error as `unknown`, and the launch servers for `add` and `only`. The runtime tests skip when the host has no such Node or no sandbox that starts. CI's hosted unit job installs `bubblewrap` and lifts Ubuntu 24.04's user-namespace restriction, so they run there.
