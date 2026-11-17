@@ -535,7 +535,7 @@ export function TextRow({ who, markdown, mark, by, at, now, onCopyFail, attachme
         {at ? <Ago t={at} now={t} /> : null}</div>
       {markdown && <Markdown text={markdown} onCopyFail={onCopyFail} />}
       {attachments?.length ? <MessageFiles files={attachments} onOpen={onOpen} src={src} /> : null}</div>
-    <span class="th-svc"><Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, [markdown, ...(attachments ?? []).map(a => `Attachment: ${a.name}`)].filter(Boolean).join('\n\n'))).catch(e => onCopyFail?.(e))} /></span>
+    <span class="th-svc th-copy"><Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, [markdown, ...(attachments ?? []).map(a => `Attachment: ${a.name}`)].filter(Boolean).join('\n\n'))).catch(e => onCopyFail?.(e))} /></span>
   </div>;
 }
 
@@ -560,7 +560,7 @@ function CodeBlock({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknow
 function Fold({ icon, head, body, open, onToggle, copy, onCopyFail }: { icon: IconName; head: ComponentChildren; body: ComponentChildren; open: boolean; onToggle: () => void; copy: string; onCopyFail?: (e: unknown) => void }) {
   return <div class={`th-row th-fold${open ? ' open' : ''}`} data-ui="thread-row">
     <button type="button" class="th-head" aria-expanded={open} onClick={onToggle}><span class={`chev${open ? ' open' : ''}`}><Icon name="chevron-down" /></span><Icon name={icon} />{head}</button>
-    <span class="th-svc"><Button label="Copy" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(copy).catch(e => onCopyFail?.(e))} /></span>
+    <span class="th-svc th-copy"><Button label="Copy" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(copy).catch(e => onCopyFail?.(e))} /></span>
     {open && <div class="th-body">{body}</div>}
   </div>;
 }
@@ -586,10 +586,11 @@ export const keyConnection = (options: unknown): string | undefined => {
   const c = options && !Array.isArray(options) && typeof options === 'object' ? (options as { connection?: unknown }).connection : undefined;
   return typeof c === 'string' ? c : undefined;
 };
-/** Results of an execution end: artifact names linking to their Results page entry. */
+/** Results of an execution end: artifact names linking to their Results page entry. Names wrap to new lines and a long
+ *  one ends in an ellipsis inside the column; the tooltip has the full name, type and size. */
 export function ResultRow({ artifacts, onOpen }: { artifacts: ArtifactMeta[]; onOpen?: (id: string) => void }) {
-  return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line">{artifacts.map(a =>
-    <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.mediaType} · ${bytes(a.size).text}`} onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>{a.name}</a>)}</span></div>;
+  return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line th-links">{artifacts.map(a =>
+    <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.name} · ${a.mediaType} · ${bytes(a.size).text}`} onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>{a.name}</a>)}</span></div>;
 }
 /** An execution start: state, agent mark, duration chip, resource stats, and Stop while it runs (CUJ 5). */
 export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, resources, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; resources?: ResourceSummary; onStop?: () => void; stopReason?: string }) {

@@ -541,6 +541,24 @@
                 "name": "session_handoffs"
               },
               {
+                "name": "session_rename",
+                "description": "Name this conversation: title (up to 200 characters after whitespace is collapsed, never a UUID). An explicit title is kept; the generated title never replaces it",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ]
+                }
+              },
+              {
                 "description": "Fleet agent session tool message_send (bound to this session by the host)",
                 "inputSchema": {
                   "properties": {
@@ -2001,6 +2019,24 @@
                   "type": "object"
                 },
                 "name": "session_handoffs"
+              },
+              {
+                "name": "session_rename",
+                "description": "Name this conversation: title (up to 200 characters after whitespace is collapsed, never a UUID). An explicit title is kept; the generated title never replaces it",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ]
+                }
               },
               {
                 "description": "Fleet agent session tool message_send (bound to this session by the host)",

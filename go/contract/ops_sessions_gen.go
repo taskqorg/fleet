@@ -395,6 +395,9 @@ type SessionGetReply struct {
 	StartRequest            json.RawMessage              `json:"startRequest,omitempty"`
 	Starter                 *string                      `json:"starter,omitempty"`
 	TaskId                  *string                      `json:"taskId,omitempty"`
+	Title                   *string                      `json:"title,omitempty"`
+	TitleBy                 *string                      `json:"titleBy,omitempty"`
+	TitleCall               *string                      `json:"titleCall,omitempty"`
 	Transitions             []map[string]json.RawMessage `json:"transitions"`
 	UpdatedAt               *int64                       `json:"updatedAt,omitempty"`
 	WorkingDirectory        *string                      `json:"workingDirectory,omitempty"`
@@ -573,6 +576,28 @@ type SessionProfileRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionProfileRequest) Validate() error {
+	return nil
+}
+
+type SessionRenameReply struct {
+	SessionId string `json:"sessionId"`
+	Title     string `json:"title"`
+	TitleBy   string `json:"titleBy"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionRenameReply) Validate() error {
+	return nil
+}
+
+// SessionRenameRequest: The explicit title of a conversation; a person renames one they direct (403 otherwise; the owner any). A generated title (titleBy auto) never replaces it and is never written over it.
+type SessionRenameRequest struct {
+	SessionId *string `json:"sessionId,omitempty"`
+	Title     string  `json:"title"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionRenameRequest) Validate() error {
 	return nil
 }
 
@@ -1159,6 +1184,7 @@ func init() {
 		"session_handoffs":    {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_presets":     {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"$comment\":\"Absent: the system presets for a conversation outside projects.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_profile":     {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"workingDirectory\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"profileId\"],\"type\":\"object\"}")},
+		"session_rename":      {Read: false, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"$comment\":\"The explicit title of a conversation; a person renames one they direct (403 otherwise; the owner any). A generated title (titleBy auto) never replaces it and is never written over it.\",\"additionalProperties\":false,\"properties\":{\"sessionId\":{\"$comment\":\"Required from people; a host agent's call defaults to its own session.\",\"type\":\"string\"},\"title\":{\"$comment\":\"1 to 200 characters after whitespace is collapsed; no UUID (OR-38).\",\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}")},
 		"session_resume":      {Read: false, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_start":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"read: the agent may read and run read-only tools but not change files (StartPayload.readOnly); write: the profile's own grant.\",\"enum\":[\"read\",\"write\"],\"type\":\"string\"},\"account\":{\"type\":\"string\"},\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"branch\":{\"$comment\":\"false: no session branch (a detached worktree); default true, or the preset's.\",\"type\":\"boolean\"},\"callerExecutionId\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"preset\":{\"$comment\":\"A preset id of session_presets for this project: its role or profile, access, branch and starter apply; explicit role, profileId, access and branch override it.\",\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"$comment\":\"Absent (people only): a conversation outside projects, with the system presets.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"role\":{\"type\":\"string\"},\"setup\":{},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_task_attach": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"boundProject\":{},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},

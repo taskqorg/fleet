@@ -10,6 +10,8 @@
 
 **Implementation.** `VirtualList` with measured rows and `follow="bottom"`, `onStart` for older pages, `scrollToKey` for search hits. Each row: content first, service zone (agent mark, copy, Stop) on the right (OR-21); tool and reasoning rows are one line and open downward (OR-23).
 
+**Copy and result names.** The copy icon of a message, tool or reasoning row (`.th-copy`) and of a code block (`.code-copy`) shows while its row or block is hovered or the icon has focus, and always on a touch screen (`pointer: coarse`), like the navigation pin; it keeps its space, so showing it moves nothing (OR-23). The agent mark, duration and Stop of a boundary row always show. Result names (`ResultRow`) wrap onto new lines inside the column; a name longer than the column ends in an ellipsis, and its tooltip has the full name, media type and size.
+
 **Behaviour.**
 * Virtualised with measured, cached entry heights; older pages load when scrolling up, keeping the anchor entry in place.
 * Follow mode: at the bottom, new entries stick to the bottom. Scrolling up turns follow off; the pill turns it back on.
@@ -23,4 +25,4 @@
 
 **Do.** Keep native harness detail (images, tool output). **Don't.** Auto-scroll when the person has scrolled up.
 
-**Used in.** Task detail, Conversations, Laboratory trials, History.
+**Used in.** Task detail, Conversations (its header: the conversation title first, then the code and profile muted, one line with an ellipsis; on a phone the title takes its own line), Laboratory trials, History.

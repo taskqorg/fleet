@@ -1015,7 +1015,8 @@ func inputsFor(q *Request, run doc, i int) ([]any, error) {
 func startScript(q *Request, run doc, stepExecutionID, command string, timeout any, hostID string, inputs []any) (string, error) {
 	sid := newID()
 	dir := nilIf(firstString(run["directedBy"], mapOf(run["requestedBy"])["email"]))
-	s := doc{"id": sid, "createdAt": nowMs(), "pipelineRunId": run["id"]}
+	// A host command session like the others (actor program-worker): it holds the step's host job, not a conversation.
+	s := doc{"id": sid, "createdAt": nowMs(), "pipelineRunId": run["id"], "actor": "program-worker"}
 	if dir != nil {
 		s["directedBy"] = dir
 	}
