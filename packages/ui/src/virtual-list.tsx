@@ -82,7 +82,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   const elBeforeRender = scroller.current;
   if (elBeforeRender) {
     const top = elBeforeRender.scrollTop;
-    if (Math.abs(top - prev.current.top) > 1) {
+    if (top !== prev.current.top) {
       const row = v.getVirtualItemForOffset(top);
       anchor.current = row ? { key: String(row.key), delta: row.start - top } : null;
       prev.current.atEdge = atEdge();
