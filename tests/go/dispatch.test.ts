@@ -87,8 +87,9 @@ test('A4 an event whose seq another event holds is retained as a blocked transpo
 });
 
 test('A5 stopping work no host has taken settles it as stopped with its stop command (requirement: fleet.md task states; risk: a stop before dispatch leaves the execution open forever)', {timeout: 30_000}, async (t) => {
-  // No host may take it: the earlier tests leave trial-host polled with intake open (all or paused; all is their state),
-  // and the dispatch pass woken by the message would otherwise claim it first (the stop then waits for that host).
+  // No host may take it: trial-host, the only host registered so far in this file, is polled with intake all, and the
+  // dispatch pass woken by the message would otherwise claim it first (the stop then waits for that host). t.after
+  // reopens it when an assertion fails before the reopen below.
   const h = await host('trial-host');
   ok(await op('hosts_update', {id: 'trial-host', intake: 'paused'}));
   t.after(async () => { ok(await op('hosts_update', {id: 'trial-host', intake: 'all'})); });

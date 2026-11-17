@@ -778,8 +778,8 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				continue
 			}
 			// Lock the row and read it again before the claim: a stop (or any writer) committed since the read above
-			// wins, and none commits between here and this claim. Only here: a row lock gives the pass a transaction id,
-			// which holds back the change stream until it ends (stream.go visible).
+			// wins, and none commits between here and this claim. Only before a write, never per candidate: a row lock
+			// gives the pass a transaction id, which holds back the change stream until it ends (stream.go visible).
 			if e, err = claimRow(q, id); err != nil {
 				return err
 			}
@@ -857,6 +857,9 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if e == nil {
 				continue
 			}
+		}
+		// Checked again on the locked row: an overlapping pass may have written the same wait meanwhile.
+		if e["waitDetail"] != reason {
 			e["waitReason"], e["waitDetail"] = waitKindOf(cause), reason
 			if err := put(q, "execution", e); err != nil {
 				return err
