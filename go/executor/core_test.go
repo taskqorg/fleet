@@ -95,6 +95,7 @@ func TestUnauthorizedRowStaysQueued(t *testing.T) {
 // Requirement: an edge redirect holds its route and its execution only; order holds within each. Risk: one route behind
 // an Access login blocks every execution, or a receipt overtakes its own declaration.
 func TestRedirectHoldsOnlyItsRouteAndExecution(t *testing.T) {
+	edgeOK("/api/hosts/artifacts/declare")
 	url, s := serve(t, func(p string, _ M) int {
 		if p == "/api/hosts/artifacts/declare" {
 			return 302
@@ -111,9 +112,35 @@ func TestRedirectHoldsOnlyItsRouteAndExecution(t *testing.T) {
 	if err := flush(db, url, "t", "mac"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/api/hosts/artifacts/declare e1", "/api/hosts/receipts e3", "/api/hosts/receipts e4", "/api/hosts/events e3"}
-	if enc(s.rows) != enc(want) || count(db, "outbox") != 3 || count(db, "outbox_failed") != 0 {
+	// Executions are delivered concurrently: e1's and e2's declarations are asked together, or one waits for the
+	// other's edge answer; order holds within each execution, and e1's receipt never overtakes its declaration.
+	byExecution := map[string][]string{}
+	for _, r := range s.rows {
+		route, execution, _ := strings.Cut(r, " ")
+		byExecution[execution] = append(byExecution[execution], route)
+	}
+	want := map[string][]string{"e3": {"/api/hosts/receipts", "/api/hosts/events"}, "e4": {"/api/hosts/receipts"}}
+	for _, x := range []string{"e1", "e2"} {
+		if len(byExecution[x]) == 1 && byExecution[x][0] == "/api/hosts/artifacts/declare" {
+			want[x] = byExecution[x]
+		}
+	}
+	if len(want) == 2 {
+		t.Fatalf("got %v: no declaration was asked", s.rows)
+	}
+	if enc(byExecution) != enc(want) || count(db, "outbox") != 3 || count(db, "outbox_failed") != 0 {
 		t.Fatalf("got %v, left %d", s.rows, count(db, "outbox"))
+	}
+	edgeMu.Lock()
+	attempts := edges["/api/hosts/artifacts/declare"].attempts
+	edgeMu.Unlock()
+	if attempts != 0 {
+		t.Fatalf("edge attempts %d: answers asked together count as one attempt", attempts)
+	}
+	// The edge holds its route: the next pass does not ask it again within the backoff.
+	sent := len(s.rows)
+	if err := flush(db, url, "t", "mac"); err != nil || len(s.rows) != sent {
+		t.Fatalf("err=%v rows %v: the held route was asked again", err, s.rows[sent:])
 	}
 	for _, p := range edgeProblems("") {
 		if p.Route == "/api/hosts/artifacts/declare" && (p.Location == nil || *p.Location != "https://login.example/cdn-cgi/access/login") {
