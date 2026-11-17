@@ -1374,9 +1374,10 @@ export function DropZone({ onFiles, label = 'Drop files to attach', disabledReas
   const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
   return <div class="drop-zone" data-ui="drop-zone"
     onDragEnter={e => { if (!hasFiles(e) || disabledReason) return; e.preventDefault(); depth.current++; setOver(true); }}
-    onDragOver={e => { if (!hasFiles(e) || disabledReason) return; e.preventDefault(); e.dataTransfer!.dropEffect = 'copy'; }}
+    // Disabled (offline), a drop is refused here, never left to the browser, which would open the file in the tab.
+    onDragOver={e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer!.dropEffect = disabledReason ? 'none' : 'copy'; }}
     onDragLeave={e => { if (!hasFiles(e)) return; depth.current = Math.max(0, depth.current - 1); if (!depth.current) setOver(false); }}
-    onDrop={e => { if (!hasFiles(e) || disabledReason) return; e.preventDefault(); depth.current = 0; setOver(false); const f = [...(e.dataTransfer?.files ?? [])]; if (f.length) onFiles(f); }}>
+    onDrop={e => { if (!hasFiles(e)) return; e.preventDefault(); if (disabledReason) return; depth.current = 0; setOver(false); const f = [...(e.dataTransfer?.files ?? [])]; if (f.length) onFiles(f); }}>
     {children}
     {over && <div class="drop-over" aria-hidden="true"><Icon name="paperclip" /><span>{label}</span></div>}
   </div>;

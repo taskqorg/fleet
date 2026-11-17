@@ -106,10 +106,13 @@ test('Uploads follow the project grant (requirement: docs/designs/fleet-conversa
   const cross = await op('message_send', {sessionId: other2, requestId: randomUUID(), text: 'x', attachments: [mine.id]});
   assert.equal(cross.status, 400, "an upload of one conversation is not sent in another"); assert.match(cross.body.message, /another conversation/);
   // A repeated request answers what was sent, even when its file is gone meanwhile (a lost reply is retried).
-  const gone = ok((await upload(Buffer.from('purged later ' + randomUUID()), 'g.txt', 'text/plain', {sessionId})).last);
+  const goneBytes = Buffer.from('purged later ' + randomUUID());
+  const gone = ok((await upload(goneBytes, 'g.txt', 'text/plain', {sessionId})).last);
   const rid = randomUUID(), first = ok(await op('message_send', {sessionId, requestId: rid, text: 'with g', attachments: [gone.id]}));
   ok(await op('artifact_purge', {contentHash: gone.sha256, reason: 'attachments test'}));
   assert.equal(ok(await op('message_send', {sessionId, requestId: rid, text: 'with g', attachments: [gone.id]})).id, first.id, 'the retry answers the message already sent');
+  const refused = (await upload(goneBytes, 'g2.txt', 'text/plain', {sessionId})).last;
+  assert.equal(refused.status, 409, 'purged content is not stored again by an upload'); assert.match(refused.body.message, /purged/);
   assert.equal((await op('message_send', {sessionId, requestId: randomUUID(), text: 'x', attachments: 'nope'})).status, 400);
 });
 

@@ -315,8 +315,11 @@ func sweepUploadsNow(ctx context.Context, a *App) {
 			// The store lets go of an unfinished upload first; a record whose abort failed stays for the next sweep.
 			if u["artifactId"] == nil && astr(u["multipart"]) != "" {
 				s, err := storeGet(ctx, a, astr(u["storeId"]))
-				if err != nil || s == nil {
+				if err != nil {
 					continue
+				}
+				if s == nil { // the store is gone, and its uploads with it: only the record is left
+					goto drop
 				}
 				t, err := tunnel(s)
 				if err != nil {
@@ -330,6 +333,7 @@ func sweepUploadsNow(ctx context.Context, a *App) {
 				}
 				t.Delete(s.Bucket, astr(u["staging"]))
 			}
+		drop:
 			a.store.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
 				_, err := tx.Exec(ctx, "DELETE FROM document WHERE kind='upload' AND id=$1 AND updated_at < now() - $2::interval", u["id"], age)
 				return err
@@ -627,12 +631,25 @@ func (a *App) finishNow(ctx context.Context, p *Person, u doc) (any, error) {
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
 	projectID := strPtr(u["projectId"])
-	if err := promote(t, s.Bucket, staging, keyOf(&Artifact{ProjectID: projectID, Scope: "prod", ContentHash: sum}), size); err != nil {
+	// As artifactReserve: purged content is never stored again.
+	if r, err := oneCtx(ctx, a, "SELECT 1 AS x FROM purged_hash WHERE project_id=$1 AND scope='prod' AND content_hash=$2", projectKey(projectID), sum); err != nil {
 		return nil, err
+	} else if r != nil {
+		t.Delete(s.Bucket, staging)
+		return nil, failCode(409, "Content was purged", "purged")
 	}
+	key := keyOf(&Artifact{ProjectID: projectID, Scope: "prod", ContentHash: sum})
 	id := newID()
 	u["artifactId"] = id
 	err = a.saveUpload(ctx, p, u, size, func(tx pgx.Tx) error {
+		// Under the object lock until the copy row commits, as writeObject: a purge of this content either finished
+		// before the Head in promote (the object is written again) or waits and then sees the copy (cleanup.go).
+		if err := objectLock(ctx, tx, s.ID, key); err != nil {
+			return err
+		}
+		if err := promote(t, s.Bucket, staging, key, size); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, "INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,session_id,role,state) VALUES($1,$2,'prod',$3,$4,$5,$6,$7,'attachment','stored')", id, projectID, sum, size, astr(u["mediaType"]), astr(u["name"]), strPtr(u["sessionId"])); err != nil {
 			return err
 		}
