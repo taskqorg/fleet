@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"fleet/contract"
 )
 
 const testToken = "invented-run-token"
@@ -743,6 +745,33 @@ func TestYouTrackCatalogue(t *testing.T) {
 	files.Unlock()
 	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/attachment_get", "Bearer "+testToken, `{"issue":"TGT-12","attachment":"../x"}`); status != 400 {
 		t.Fatalf("attachment id pattern: %d", status)
+	}
+}
+
+// Requirement: old executors and tokens retain attachment URLs during the file-client rollout.
+// Risk: issue_get removes the only available way for those clients to open attachments.
+func TestYouTrackAttachmentFieldsFollowClient(t *testing.T) {
+	g := &gateway{}
+	run := &token{GatewayRunToken: contract.GatewayRunToken{Sha256: "current", FileDownloads: []string{"tracker"}}}
+	old := &token{GatewayRunToken: contract.GatewayRunToken{Sha256: "old"}}
+	g.snapshot.Store(&snapshot{
+		GatewaySnapshot: contract.GatewaySnapshot{
+			Connections: map[string]connection{"tracker": {Provider: "youtrack", Tools: []string{"issue_get", "attachment_get"}}},
+			Providers: map[string]provider{
+				"youtrack":                    {Tools: map[string]tool{"issue_get": {Path: "/id"}}},
+				"youtrack-legacy-attachments": {Tools: map[string]tool{"issue_get": {Path: "/url"}}},
+			},
+		},
+		tokens: map[string]*token{"current": run, "old": old},
+	})
+	for _, scenario := range []struct {
+		run    *token
+		client bool
+		path   string
+	}{{old, false, "/url"}, {old, true, "/url"}, {run, false, "/url"}, {run, true, "/id"}} {
+		q := &request{connection: "tracker", tool: "issue_get", run: scenario.run, fileClient: scenario.client}
+		g.resolve(q)
+		expect(t, []any{q.offered, q.t.Path}, []any{true, scenario.path}, "attachment fields")
 	}
 }
 

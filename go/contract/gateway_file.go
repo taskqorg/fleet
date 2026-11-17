@@ -235,6 +235,12 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		x.fail(CallOutcomeError, "write-failed")
 		return x.line
 	}
+	rootHandle, err := root.Stat(".")
+	rootPath, rootErr := os.Lstat(d.Root)
+	if err != nil || rootErr != nil || !os.SameFile(rootHandle, rootPath) {
+		x.fail(CallOutcomeError, "path-refused")
+		return x.line
+	}
 	original, err := folder.Stat(".")
 	current, statErr := root.Lstat(filepath.Join(".", relative))
 	if err != nil || statErr != nil || !os.SameFile(original, current) {

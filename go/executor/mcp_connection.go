@@ -80,6 +80,10 @@ func connectionCall(connection string, tool any, arguments any) contract.CallLin
 	name := jStr(tool, "name")
 	t := gatewayTarget()
 	t.Idempotent = jAt(tool, "idempotent") == true
+	if t.Header == nil {
+		t.Header = map[string]string{}
+	}
+	t.Header["X-Fleet-File-Client"] = "1"
 	// The client outwaits the gateway: its stall wait at least the connection's, its answer wait a minute beyond.
 	ms := func(k string) time.Duration {
 		n, _ := num(jAt(connectionLimits[connection], k))
@@ -123,13 +127,10 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 		return refusedLine(connection, tool, "path-refused", err.Error())
 	}
 	defer f.Close()
-	if limit, _ := num(jAt(connectionLimits[connection], "fileBytes")); limit > 0 && info.Size() > int64(limit) {
-		return refusedLine(connection, tool, "file-too-large", fmt.Sprintf("the file exceeds the connection's limit of %d bytes", int64(limit)))
-	}
 	// The tripwire: this caller's own bearer and Access secret never leave in a file.
 	patterns := [][]byte{[]byte(t.Token)}
 	secret := t.Header["CF-Access-Client-Secret"]
-	if t.Header == nil {
+	if secret == "" {
 		secret = accessHeaders()["CF-Access-Client-Secret"]
 	}
 	if secret != "" {

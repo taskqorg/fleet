@@ -165,8 +165,10 @@ func TestGuardRefuses(t *testing.T) {
 	guardRefused(t, "sub/id_ed25519", work, "folder swapped for a symlink")
 	guardBeforeOpen = func() {}
 	// Code mode: a bridged upload reads only inside the sandbox's read roots.
-	uploadRoots = []string{filepath.Join(work, "allowed")}
-	write(t, filepath.Join(work, "allowed", "a.txt"), "a")
+	allowed := filepath.Join(work, "allowed")
+	write(t, filepath.Join(allowed, "a.txt"), "a")
+	uploadRoots = pinUploadRoots([]string{allowed})
+	t.Cleanup(func() { uploadRoots = nil })
 	write(t, filepath.Join(work, "elsewhere.txt"), "e")
 	guardRefused(t, "elsewhere.txt", work, "outside the code read roots")
 	if f, _, err := openForUpload("allowed/a.txt", work); err != nil {
@@ -174,6 +176,11 @@ func TestGuardRefuses(t *testing.T) {
 	} else {
 		f.Close()
 	}
+	if err := os.Rename(allowed, allowed+"-moved"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(allowed, "a.txt"), "replacement")
+	guardRefused(t, "allowed/a.txt", work, "replacement code read root")
 	uploadRoots = nil
 	// Roots: a link inside a root to a file outside it, and .. that leaves the root.
 	t.Setenv("FLEET_FILES_ROOTS", work)
@@ -345,14 +352,6 @@ func TestClientTripwire(t *testing.T) {
 		t.Fatalf("clean file: %s", enc(l))
 	}
 
-	// Refuse before the upload copy or request. The local cap comes from the minted spec.
-	connectionLimits["youtrack"] = M{"fileBytes": json.Number("2")}
-	t.Cleanup(func() { delete(connectionLimits, "youtrack") })
-	before := gw.requests.Load()
-	result := connectionCall("youtrack", tool, M{"issue": "TGT-1", "path": "clean.txt"})
-	if result.ErrorCode == nil || *result.ErrorCode != "file-too-large" || gw.requests.Load() != before {
-		t.Fatalf("limited upload: %s", enc(result))
-	}
 }
 
 // Requirement: §9 `connection call` CLI replaces connection_call.py call: JSON arguments on stdin, one CallLine on stdout;

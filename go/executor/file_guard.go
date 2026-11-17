@@ -25,7 +25,7 @@ var runFilePath string
 
 // uploadRoots, when not nil, are folders an upload must lie in, besides FLEET_FILES_ROOTS: the code server's sandbox
 // read roots, so a bridged upload reads nothing the sandbox could not.
-var uploadRoots []string
+var uploadRoots map[string]ident
 
 // dataStores are the credential stores inside an executor data folder: the journal (start commands with run tokens),
 // the run files, the spool and the account registry copy. Sessions and worktrees in it stay uploadable.
@@ -161,6 +161,22 @@ func resolveUploadPath(path string, deny map[ident]string) (string, error) {
 	return resolved, nil
 }
 
+// pinUploadRoots saves the path and identity of every code-mode read root before any tool call.
+func pinUploadRoots(roots []string) map[string]ident {
+	pinned := map[string]ident{}
+	for _, root := range roots {
+		path, err := canon(root)
+		if err != nil {
+			continue
+		}
+		var st unix.Stat_t
+		if unix.Stat(path, &st) == nil && st.Mode&unix.S_IFMT == unix.S_IFDIR {
+			pinned[path] = identOf(&st)
+		}
+	}
+	return pinned
+}
+
 // openForUpload resolves path (relative to base) and opens it when it is one regular file with a single link, outside
 // every denylisted entry and inside FLEET_FILES_ROOTS (and uploadRoots) when set. The resolved path is walked from / one
 // component at a time with O_NOFOLLOW, so a folder or the file swapped for a symlink after resolving is refused, and
@@ -183,15 +199,13 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 	if roots := os.Getenv("FLEET_FILES_ROOTS"); roots != "" && !inRoots(resolved, filepath.SplitList(roots)) {
 		return nil, nil, guardError{"the file is outside FLEET_FILES_ROOTS"}
 	}
-	if uploadRoots != nil && !inRoots(resolved, uploadRoots) {
-		return nil, nil, guardError{"the file is outside the folders this session may read"}
-	}
 	guardBeforeOpen()
 	fd, err := unix.Open("/", dirSearch|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, nil, guardError{"the file cannot be opened"}
 	}
 	parts := strings.Split(strings.TrimPrefix(resolved, "/"), "/")
+	walked, inside := "/", uploadRoots == nil
 	for i := 0; ; i++ {
 		var st unix.Stat_t
 		if err := unix.Fstat(fd, &st); err != nil {
@@ -202,8 +216,14 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 			unix.Close(fd)
 			return nil, nil, guardError{"the file is in a credential store (" + entry + ")"}
 		}
+		if id, ok := uploadRoots[walked]; ok && id == identOf(&st) {
+			inside = true
+		}
 		if i == len(parts) {
 			switch {
+			case !inside:
+				unix.Close(fd)
+				return nil, nil, guardError{"the file is outside the folders this session may read"}
 			case st.Mode&unix.S_IFMT != unix.S_IFREG:
 				unix.Close(fd)
 				return nil, nil, guardError{"not a regular file"}
@@ -238,6 +258,7 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 		case err != nil:
 			return nil, nil, guardError{"a part of the path is a symlink, or changed while it was opened"}
 		}
+		walked = filepath.Join(walked, parts[i])
 		fd = next
 	}
 }

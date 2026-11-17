@@ -920,6 +920,7 @@ type request struct {
 	p                    provider
 	t                    tool
 	offered              bool
+	fileClient           bool
 	usageKey             string
 	startedMs            int64
 	begun                time.Time
@@ -933,7 +934,7 @@ func (g *gateway) resolve(q *request) {
 	if q.run != nil {
 		q.run = s.tokens[q.run.Sha256] // nil once revoked
 	}
-	if q.tool == "issue_get" && c.Provider == "youtrack" && q.run != nil && !contains(q.run.FileDownloads, q.connection) {
+	if q.tool == "issue_get" && c.Provider == "youtrack" && q.run != nil && (!q.fileClient || !contains(q.run.FileDownloads, q.connection)) {
 		if legacy, ok := s.Providers["youtrack-legacy-attachments"]; ok {
 			q.p = legacy
 		}
@@ -991,6 +992,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		q.run, q.bearer = g.authenticate(t), t
 	}
 	// The tool is resolved before the body is read: an upload's body is the file, read only once the call is admitted.
+	q.fileClient = r.Header.Get("X-Fleet-File-Client") == "1"
 	g.resolve(q)
 	if q.offered && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload {
 		g.serveUpload(w, r, q)

@@ -81,7 +81,7 @@ var sessionTitleCall = func(ctx context.Context, a *App, project, prompt string)
 		"systemInstruction": doc{"parts": []any{doc{"text": titleSystem}}},
 		"contents":          []any{doc{"role": "user", "parts": []any{doc{"text": prompt}}}},
 		"generationConfig":  doc{"maxOutputTokens": 256, "thinkingConfig": doc{"thinkingLevel": "minimal"}},
-	})
+	}, false)
 	if line.Outcome != contract.CallOutcomeOk {
 		code := deref(line.ErrorCode)
 		err := fmt.Errorf("%s/%s: %s %s", titleConnection, titleTool, line.Outcome, code)

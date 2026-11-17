@@ -991,9 +991,9 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 			}
 		}
 		spec := doc{"name": c["name"], "instructions": p["instructions"], "tools": tools}
-		// The configured upload cap and waits let the client refuse early and outwait the gateway (§9).
+		// The configured waits let the client outwait the gateway (§9).
 		waits := doc{}
-		for _, k := range []string{"fileBytes", "stallMs", "answerMs"} {
+		for _, k := range []string{"stallMs", "answerMs"} {
 			if v := mapOf(c["limits"])[k]; v != nil {
 				waits[k] = v
 			}

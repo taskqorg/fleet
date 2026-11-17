@@ -203,10 +203,11 @@ type codeRuntime struct {
 func codeMCP(spec any, in io.Reader, w io.Writer) error {
 	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}, procs: map[*shProc]bool{}}
 	// A bridged upload reads only what the sandbox may read; without read roots it reads nothing.
-	uploadRoots = []string{}
-	for _, r := range jArr(spec, "read") {
-		uploadRoots = append(uploadRoots, jStr(r))
+	roots := []string{}
+	for _, root := range jArr(spec, "read") {
+		roots = append(roots, jStr(root))
 	}
+	uploadRoots = pinUploadRoots(roots)
 	if journal := jStr(spec, "journal"); journal != "" {
 		db, err := openJournal(journal)
 		if err != nil {
