@@ -17,8 +17,10 @@ export function cardTouched(kind: EntityRef['kind'], id: string | undefined, c: 
     case 'conversation': return c.sessionId === id && c.kind !== 'event';
     case 'execution': return c.kind === 'execution' && c.id === id;
     case 'result': return c.kind === 'artifact' && c.id === id;
+    // Its trials are executions, whose changes name no experiment: Trials is read again when the card opens (holdDoc).
     case 'experiment': return c.kind === 'experiment' && c.id === id;
-    case 'host': return c.kind === 'host' && (c.id === id || c.hostId === id);
+    // Its observation, and the runs and commands on it (Running, Queued).
+    case 'host': return c.hostId === id || c.kind === 'host' && c.id === id;
     // A change names no project, so counts are read again when the card opens (holdDoc), not on every task change.
     case 'project': return c.kind === 'definition' && c.id === 'project/' + id;
     case 'agent': case 'pipeline': return c.kind === 'definition' && c.id === `${kind}/${id}`;

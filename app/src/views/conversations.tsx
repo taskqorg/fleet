@@ -180,7 +180,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
       <h2 class="detail-title conv-title" data-tip={title}>{title}</h2>
-      <EntityCode code={s.code} id={id} kind="conversation" />{s.agentConfig?.id && <EntityCode code={s.agentConfig.id} id={s.agentConfig.id} kind="agent" cls="conv-profile" />}<span class="grow" />
+      <EntityCode code={s.code} id={id} kind="conversation" />{s.agentConfig?.id && <span class="muted mono conv-profile">{s.agentConfig.id}</span>}<span class="grow" />
       <SearchField label="Search thread" value={q} onInput={setQ} onSearch={search} />
       <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
       <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />

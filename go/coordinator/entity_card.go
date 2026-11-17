@@ -88,11 +88,8 @@ func count(v any) string { return strconv.FormatInt(int64(num(v)), 10) }
 
 func itemPath(section, id string) *string { return ptr("/" + section + "/" + url.PathEscape(id)) }
 
-// cardRow: one row of sql, nil when the caller sees none.
-func cardRow(q *Request, sql string, args ...any) (doc, error) { return first(q, sql, args...) }
-
 func cardTask(q *Request, id string) (*contract.EntityCardReply, error) {
-	r, err := cardRow(q, `SELECT t.id,t.code,t.title,`+stateSQL+` AS state,t.project_id,t.updated_at,t.wait_reason,t.priority,
+	r, err := first(q, `SELECT t.id,t.code,t.title,`+stateSQL+` AS state,t.project_id,t.updated_at,t.wait_reason,t.priority,
 	 coalesce(d.agent,d.last_agent) AS agent,d.host,d.open_questions,d.executions AS runs
 	 FROM task t LEFT JOIN task_derived d ON d.task_id=t.id WHERE t.id=$1`, id)
 	if r == nil || err != nil {
@@ -114,7 +111,7 @@ func cardTask(q *Request, id string) (*contract.EntityCardReply, error) {
 }
 
 func cardQuestion(q *Request, id string) (*contract.EntityCardReply, error) {
-	r, err := cardRow(q, `SELECT x.id,x.code,x.text,x.state::text AS state,x.project_id,x.task_id,x.session_id,x.asked_by,x.asked_at,x.answered_by,x.answer,t.code AS task_code
+	r, err := first(q, `SELECT x.id,x.code,x.text,x.state::text AS state,x.project_id,x.task_id,x.session_id,x.asked_by,x.asked_at,x.answered_by,x.answer,t.code AS task_code
 	 FROM question x LEFT JOIN task t ON t.id=x.task_id WHERE x.id=$1`, id)
 	if r == nil || err != nil {
 		return nil, err
@@ -135,15 +132,15 @@ func cardQuestion(q *Request, id string) (*contract.EntityCardReply, error) {
 
 // cardConversation: one session with the sessions_list columns, read for this session only (sessionBase reads all).
 func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) {
-	r, err := cardRow(q, `SELECT d.id,d.code,d.project_id,d.data->'agentConfig'->>'id' AS profile,t.code AS task_code,
-	 coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
-	 coalesce((SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),d.data->'agentConfig'->>'harness') AS harness,
+	r, err := first(q, `SELECT d.id,d.code,d.project_id,d.data->'agentConfig'->>'id' AS profile,t.code AS task_code,
+	 coalesce(last.state,'idle') AS state,coalesce(last.harness,d.data->'agentConfig'->>'harness') AS harness,
 	 (SELECT m.data->>'text' FROM document m WHERE m.kind='message' AND m.data->>'sessionId'=d.id ORDER BY m.seq LIMIT 1) AS first_message,
-	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM document a WHERE a.kind IN ('message','event') AND a.data->>'sessionId'=d.id),
-	  (SELECT max(greatest(e.started_at,e.ended_at)) FROM execution e WHERE e.session_id=d.id)) AS activity_at,
-	 (SELECT count(*) FROM execution e WHERE e.session_id=d.id) AS runs,
-	 (SELECT count(*) FROM question x WHERE x.session_id=d.id AND x.state='open') AS open_questions
-	 FROM document d LEFT JOIN task t ON t.id=d.data->>'taskId' WHERE d.kind='session' AND d.id=$1`, id)
+	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM document a WHERE a.kind IN ('message','event') AND a.data->>'sessionId'=d.id),ex.last_at) AS activity_at,
+	 ex.n AS runs,(SELECT count(*) FROM question x WHERE x.session_id=d.id AND x.state='open') AS open_questions
+	 FROM document d LEFT JOIN task t ON t.id=d.data->>'taskId'
+	 LEFT JOIN LATERAL (SELECT e.state::text AS state,e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) last ON true
+	 LEFT JOIN LATERAL (SELECT count(*) AS n,max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true
+	 WHERE d.kind='session' AND d.id=$1`, id)
 	if r == nil || err != nil {
 		return nil, err
 	}
@@ -157,7 +154,7 @@ func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) 
 var executionKindLabel = map[string]string{"agent_run": "Agent run", "pipeline_run": "Pipeline run", "pipeline_step": "Pipeline step", "child_agent": "Child agent", "tool_run": "Tool run", "host_job": "Host job"}
 
 func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
-	r, err := cardRow(q, `SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.project_id,e.task_id,e.session_id,e.experiment_id,e.host_id,e.harness,e.model,e.problem,
+	r, err := first(q, `SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.project_id,e.task_id,e.session_id,e.experiment_id,e.host_id,e.harness,e.model,e.problem,
 	 e.started_at,e.ended_at,e.updated_at,extract(epoch FROM e.ended_at-e.started_at) AS secs,t.code AS task_code,t.title AS task_title,s.code AS session_code
 	 FROM execution e LEFT JOIN task t ON t.id=e.task_id LEFT JOIN document s ON s.kind='session' AND s.id=e.session_id WHERE e.id=$1`, id)
 	if r == nil || err != nil {
@@ -190,10 +187,10 @@ func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
 }
 
 func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
-	r, err := cardRow(q, `SELECT a.id,a.name,a.state,a.project_id,a.media_type,a.size,a.content_hash,a.created_at,t.code AS task_code
+	r, err := first(q, `SELECT a.id,a.name,a.state,a.project_id,a.media_type,a.size,a.content_hash,a.created_at,t.code AS task_code
 	 FROM artifact a LEFT JOIN task t ON t.id=coalesce(a.task_id,(SELECT e.task_id FROM execution e WHERE e.id=a.execution_id)) WHERE a.id=$1 OR a.legacy_id=$1`, id)
 	if r == nil && err == nil { // a legacy result kept as a document (task_view's latest_result reads both)
-		r, err = cardRow(q, `SELECT d.id,coalesce(d.data->>'path',d.data->>'name') AS name,'stored' AS state,coalesce(d.project_id,d.data->>'projectId') AS project_id,
+		r, err = first(q, `SELECT d.id,coalesce(d.data->>'path',d.data->>'name') AS name,'stored' AS state,coalesce(d.project_id,d.data->>'projectId') AS project_id,
 		 d.data->>'mediaType' AS media_type,d.data->>'size' AS size,d.data->>'sha256' AS content_hash,d.updated_at AS created_at,t.code AS task_code
 		 FROM document d LEFT JOIN execution e ON e.id=d.data->>'executionId' LEFT JOIN task t ON t.id=e.task_id WHERE d.kind='artifact' AND d.id=$1`, id)
 	}
@@ -216,7 +213,7 @@ func cardExperiment(q *Request, id string) (*contract.EntityCardReply, error) {
 	if !architect(q) {
 		return nil, nil
 	}
-	r, err := cardRow(q, `SELECT x.id,x.kind,x.state,x.project_id,x.pipeline_id,x.goal,x.decision,x.created_at,coalesce(x.launched_at,x.created_at) AS at,
+	r, err := first(q, `SELECT x.id,x.kind,x.state,x.project_id,x.pipeline_id,x.goal,x.decision,x.created_at,coalesce(x.launched_at,x.created_at) AS at,
 	 jsonb_array_length(x.variants) AS variants,(SELECT count(*) FROM execution e WHERE e.experiment_id=x.id AND e.kind='pipeline_run') AS trials
 	 FROM experiment x WHERE x.id=$1`, id)
 	if r == nil || err != nil {
@@ -242,7 +239,7 @@ func cardProject(q *Request, id string) (*contract.EntityCardReply, error) {
 	}
 	var b doc
 	_ = json.Unmarshal(xs[0].Content, &b)
-	r, err := cardRow(q, `SELECT (SELECT code FROM project_code WHERE project_id=$1 AND current) AS code,
+	r, err := first(q, `SELECT (SELECT code FROM project_code WHERE project_id=$1 AND current) AS code,
 	 (SELECT count(*) FROM task WHERE project_id=$1 AND state IN ('queued','in_progress','waiting','paused')) AS open,
 	 (SELECT count(*) FROM execution WHERE project_id=$1 AND state IN ('preparing','running')) AS running,
 	 (SELECT count(*) FROM question WHERE project_id=$1 AND state='open') AS questions`, id)
@@ -313,10 +310,8 @@ func cardDefinition(kind string) cardReader {
 
 // deliveryVisible: the last delivery pass as delivery_status shows it to the caller (every project the caller sees).
 func deliveryVisible(q *Request) contract.DeliveryStatusReply {
-	deliveryMu.Lock()
-	last := deliveryLast
-	deliveryMu.Unlock()
-	return deliveryReply(last, func(p string) bool { return fullAccess(q.person) || mayAccessProjectID(q.person, p) })
+	r, _ := deliveryStatus(q, &contract.DeliveryStatusRequest{}) // fails only on its own excludeProjectIds, none here
+	return r
 }
 
 // cardPullRequest: a pull request of the delivery pass by owner/repo#number (the Delivery list's owner~repo~number too).
@@ -350,7 +345,7 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 	if !strings.EqualFold(repo, ciOwner+"/"+ciRepo) || deliveryMay(q) != nil {
 		return nil, nil
 	}
-	d, err := cardRow(q, "SELECT data FROM document WHERE kind='delivery-pr' AND data->>'number'=$1", strconv.FormatInt(number, 10))
+	d, err := first(q, "SELECT data FROM document WHERE kind='delivery-pr' AND data->>'number'=$1", strconv.FormatInt(number, 10))
 	if d == nil || err != nil {
 		return nil, err
 	}

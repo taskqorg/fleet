@@ -526,6 +526,8 @@ const CARD_ID = 'entity-card';
 export function EntityCode({ code, id, kind, cls }: { code?: string | null; id?: string | null; kind?: EntityKind; cls?: string }) {
   const el = useRef<HTMLButtonElement>(null);
   const cur = useShownCard(el);
+  // A code that leaves the page (its row recycled by a virtual list, the view changed) takes its card with it.
+  useEffect(() => { const b = el.current; return () => { if (b && shown?.anchor === b) showCard(null); }; }, []);
   const k = kind ?? (code ? codeKind[code[0]] : undefined);
   if (!k || !id && !code) return null;
   const open = !!cur && !!el.current && cur.anchor === el.current;
@@ -578,15 +580,14 @@ export function EntityCardLayer() {
     const down = (e: PointerEvent) => { if (!inside(e.target)) close(false); };
     const out = (e: FocusEvent) => { if (e.relatedTarget && !inside(e.relatedTarget)) close(false); };
     // A scroll (the person's, or a live list keeping its anchor) moves the card with its code; the size changes too (the
-    // loaded card is taller than the skeleton). The card closes once its code is out of sight (clipped by its column,
-    // scrolled out of a virtual list, or gone with the view).
+    // loaded card is taller than the skeleton). The card closes once its code is out of sight (clipped by its column or
+    // scrolled away); EntityCode closes it when the code unmounts.
     const sized = new ResizeObserver(place); sized.observe(el);
     const seen = new IntersectionObserver(es => { if (es.some(x => !x.isIntersecting)) close(false); }); seen.observe(cur.anchor);
-    const watch = setInterval(() => { if (!cur.anchor.isConnected) close(false); }, 250);
     document.addEventListener('keydown', key, true); document.addEventListener('pointerdown', down, true); document.addEventListener('scroll', place, true);
     document.addEventListener('focusout', out, true); addEventListener('resize', place);
     return () => { document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', down, true); document.removeEventListener('scroll', place, true);
-      document.removeEventListener('focusout', out, true); removeEventListener('resize', place); sized.disconnect(); seen.disconnect(); clearInterval(watch); };
+      document.removeEventListener('focusout', out, true); removeEventListener('resize', place); sized.disconnect(); seen.disconnect(); };
   }, [cur]);
   // Opened by a key: focus goes to Open, which stays the same element while the card loads.
   useEffect(() => { if (cur?.keyboard) box.current?.querySelector<HTMLElement>('.ec-open')?.focus({ preventScroll: true }); }, [cur]);

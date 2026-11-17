@@ -41,6 +41,8 @@ Not covered, by decision:
 
 * Spec rule codes (`S-FLT-D3`): rules, not entities; nothing in Fleet stores them yet.
 * Spotlight rows: the palette is its own floating tool (OR-32); its rows open the entity directly.
+* The profile id in the conversation header stays text: agent definitions are the architect's to read, so an operator's card would only say "not visible". The agent card serves architects and agents (Agents section references, MCP).
+* Live counts that no change names: a project's and an experiment's counts are read again each time the card opens, not on every task or run change.
 * The author avatar of the GitHub card: Fleet does not keep pull request authors in the delivery pass; the Delivery detail shows the author from history.
 * Pull request checks beyond the stage: the stage already says PR checks, Checks failed, Queue checks or Queue failed; a check list would need a GitHub read per card.
 * Needs-you and problem rows: their text names hosts and harnesses as words, not codes; they open their item already.
@@ -52,4 +54,4 @@ Not covered, by decision:
 
 **Do.** Render every reference to another object with `EntityCode` and its `kind`, so it gets the card. **Don't.** Show a UUID or hash as text (OR-38); open the row from the code; put inputs in the card.
 
-**Used in.** List rows (Tasks, Conversations, Delivery), task detail (code, result, dependencies), conversation header (code, profile, active run), transcript boundary rows (conversation, run), agent messages, Results rows (task), Resources (spawned tasks), Hosts (runs), Runners (parent run), Lab (experiment, trial), Delivery detail (release).
+**Used in.** List rows (Tasks, Conversations, Delivery), task detail (code, result, dependencies), conversation header (code, active run), transcript boundary rows (conversation, run), agent messages, Results rows (task), Resources (spawned tasks), Hosts (runs), Runners (parent run), Lab (experiment, trial), Delivery detail (release).

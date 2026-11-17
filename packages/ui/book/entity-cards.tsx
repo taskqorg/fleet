@@ -1,7 +1,7 @@
 // Entity references and their cards in the book: one fixture card per kind (synthetic data), a reference that stays
 // loading and one that fails, served through EntityCards as the app serves entity_card.
 import type { ComponentChildren } from 'preact';
-import { EntityCode, EntityCards, type EntityCardData, type EntityCardSource, type EntityRef, Markdown } from '../src/index.ts';
+import { EntityCode, EntityCards, entityKinds, type EntityCardData, type EntityCardSource, type EntityRef, Markdown } from '../src/index.ts';
 
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 const PR = '#' + 643; // built: a literal reads as a colour to check-design
@@ -40,7 +40,9 @@ const find = (r: EntityRef) => CARDS.find(c => c.kind === r.kind && (c.id === r.
 
 /** The book's card source: fixtures; `slow` stays loading, anything unknown fails like a 404. */
 export const bookCards: EntityCardSource = {
-  useCard: r => key(r) === 'slow' ? { data: null, error: null } : { data: find(r) ?? null, error: find(r) ? null : 'Not found, or not visible to you', retry: () => {} },
+  useCard: r => key(r) === 'slow' ? { data: null, error: null } : key(r) === 'gone' ? { data: null, error: 'Not found, or not visible to you', retry: () => {} }
+    // A mockup's code without a fixture: its kind and code only.
+    : { data: find(r) ?? { kind: r.kind, id: key(r)!, code: r.code ?? null, title: `${entityKinds[r.kind].label} ${r.code ?? ''}`.trim(), facts: [], path: null }, error: null },
   open: () => {},
 };
 
