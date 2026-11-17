@@ -1546,7 +1546,7 @@ func TestResourceCohortPostgres(t *testing.T) {
  INSERT INTO execution(id,kind,state,project_id) VALUES('cohort-healthy-other','tool_run','succeeded','COHORT_OTHER')`)
 	var candidates []string
 	if e = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-		rows, e := q.tx.Query(ctx, resourceCandidatesSQL)
+		rows, e := q.tx.Query(ctx, resourceCandidatesSQL, []string{})
 		if e != nil {
 			return e
 		}
@@ -1596,7 +1596,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 			t.Helper()
 			var ids []string
 			if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-				rows, e := q.tx.Query(q.ctx(), resourceCandidatesSQL)
+				rows, e := q.tx.Query(q.ctx(), resourceCandidatesSQL, []string{})
 				if e != nil {
 					return e
 				}

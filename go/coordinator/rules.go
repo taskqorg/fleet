@@ -277,6 +277,48 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 			text(&f, fmt.Sprintf("Execution %s has shown no activity for %d minutes.", id, int(num(s["idle"])/60)))
 			out = append(out, f)
 		}
+		// resource-failing: resource work whose retry pause reached its maximum (resource_projection.go): an
+		// execution's work, a project build or a metadata repair, and items the processor holds in memory
+		// (resourceHeld). One system question names them; it closes once they succeed.
+		failing, err := queryRows(q, `SELECT 'execution '||execution_id AS item FROM (SELECT DISTINCT execution_id FROM resource_work WHERE last_error_class IS NOT NULL AND attempts>=$1) w
+			UNION ALL SELECT 'build of project '||project_id FROM resource_build WHERE attempts>=$1
+			UNION ALL SELECT 'metadata repair '||repair_id::text FROM resource_metadata_repair WHERE attempts>=$1 ORDER BY 1`, resourceFailingAttempts())
+		if err != nil {
+			return err
+		}
+		items := []string{}
+		for _, r := range failing {
+			items = append(items, astr(r["item"]))
+		}
+		// Held items: the row's own label (as in the query above), and why the processor holds it in memory.
+		labels := map[string][2]string{"execution": {"execution ", " (held: its pause cannot be written)"}, "scope": {"execution ", " (held: its scope cannot be read)"},
+			"build": {"build of project ", " (held: its pause cannot be written)"}, "repair": {"metadata repair ", " (held: its pause cannot be written)"},
+			"project": {"setup of project ", " (held: its build row cannot be created)"}}
+		named := map[string]bool{}
+		for _, it := range items {
+			named[it] = true
+		}
+		for _, k := range resourceHeld.failing(resourceFailingAttempts()) {
+			kind, id, _ := strings.Cut(k, ":")
+			if l := labels[kind]; !named[l[0]+id] { // one item counts once, by its row or its first hold
+				named[l[0]+id] = true
+				items = append(items, l[0]+id+l[1])
+			}
+		}
+		if len(items) > 0 {
+			f := contract.Finding{Rule: "resource-failing", Subject: "resource processor", Value: float64(len(items)), Cause: "problem:resource:failing", Exemplars: []string{}}
+			shown := items[:min(len(items), 5)]
+			more := ""
+			if len(items) > len(shown) {
+				more = fmt.Sprintf(" and %d more", len(items)-len(shown))
+			}
+			noun := "items"
+			if len(items) == 1 {
+				noun = "item"
+			}
+			text(&f, fmt.Sprintf("Resource processing keeps failing for %d %s (%s%s); each retries every %s.", len(items), noun, strings.Join(shown, ", "), more, resourceRetryEvery()))
+			out = append(out, f)
+		}
 		// Hosts the span rules may name: not removed, intake not paused.
 		hosts, err := queryRows(q, "SELECT data->>'hostId' AS id FROM document WHERE kind='host' AND coalesce(data->>'state','')<>'removed' AND coalesce(data->>'intake','all')<>'paused'")
 		if err != nil {

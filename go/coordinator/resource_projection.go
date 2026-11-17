@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/big"
+	"math/rand/v2"
 	"os"
 	"reflect"
 	"regexp"
@@ -21,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fleet/contract"
@@ -31,6 +34,9 @@ import (
 var errResourceScope = errors.New("resource scope expanded")
 var errResourceOwnership = errors.New("ownership_mismatch")
 var errResourceClearing = errors.New("resource build clearing")
+
+// errResourceStall: the pass could not select its work; the processor loop pauses.
+var errResourceStall = errors.New("resource processor stalled")
 
 func init() { onStart(startResourceProcessor) }
 
@@ -45,10 +51,40 @@ func startResourceProcessor(ctx context.Context, a *App) {
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
+		failures := 0
+		// asked: this process holds the stall question open. closeOnce: a question an earlier process left is
+		// withdrawn by the first good pass after a start.
+		asked, closeOnce := false, true
+		closeFailures, closeAt := 0, time.Time{}
 		for ctx.Err() == nil {
-			if err := resourceProcessorPass(ctx, a); err != nil && ctx.Err() == nil {
+			err := resourceProcessorPass(ctx, a)
+			if err != nil && ctx.Err() == nil {
 				log.Printf("resource processor: %v", err)
 			}
+			// A pass that could not select its work (database down, a broken query) pauses the whole processor; a wake
+			// does not cut the pause short. Failing items pause on their own.
+			if errors.Is(err, errResourceStall) {
+				failures++
+				if failures >= resourceFailingAttempts() && !asked {
+					asked = resourceStallProblem(ctx, a, true)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(resourceRetryDelay(failures - 1)):
+				}
+				continue
+			}
+			if (asked || closeOnce) && !time.Now().Before(closeAt) {
+				// A close that fails is tried again with the same pause, not on every pass.
+				if resourceStallProblem(ctx, a, false) {
+					asked, closeOnce, closeFailures = false, false, 0
+				} else {
+					closeAt = time.Now().Add(resourceRetryDelay(closeFailures))
+					closeFailures++
+				}
+			}
+			failures = 0
 			select {
 			case <-ctx.Done():
 				return
@@ -57,6 +93,169 @@ func startResourceProcessor(ctx context.Context, a *App) {
 			}
 		}
 	}()
+}
+
+// resourceStallProblem opens or closes problem:resource:stalled: the processor paused at its maximum because passes
+// keep failing to select work, which no item's attempts can show. It reports whether the write
+// succeeded; a failed open is tried again on the next stalled pass, since the database may be what fails.
+func resourceStallProblem(ctx context.Context, a *App, open bool) bool {
+	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+		if !open {
+			return problemClose(q, "problem:resource:stalled")
+		}
+		return problemOpen(q, "problem:resource:stalled", nil, fmt.Sprintf("The resource processor keeps failing to select its work; it retries every %s.", resourceRetryEvery()))
+	})
+	if err != nil && ctx.Err() == nil {
+		log.Printf("resource processor stall problem: %v", err)
+	}
+	return err == nil
+}
+
+// resourceRetryEvery: the maximum pause as the owner reads it.
+func resourceRetryEvery() string {
+	n, unit := resourceRetryMax.Seconds(), "second"
+	if resourceRetryMax >= time.Minute {
+		n, unit = resourceRetryMax.Minutes(), "minute"
+	}
+	if n != 1 {
+		unit += "s"
+	}
+	return strconv.FormatFloat(n, 'f', -1, 64) + " " + unit
+}
+
+// Retry pause of failing resource work, per item (an execution's work rows, a project build, a metadata repair) and
+// for a pass that cannot select work: the client-go workqueue ItemExponentialFailureRateLimiter (base*2^failures,
+// never above the maximum) with up to half a step of jitter added, as wait.Jitter does, so equal failures spread
+// (at the maximum, up to a quarter below it). Success
+// resets it: consumed work rows are deleted, a build or repair page sets attempts back to 0.
+var (
+	resourceRetryBase = max(envMs("FLEET_RESOURCE_RETRY_BASE_MS", 100), time.Millisecond)
+	resourceRetryMax  = max(envMs("FLEET_RESOURCE_RETRY_MAX_MS", 5*60*1000), resourceRetryBase)
+)
+
+func resourceRetryDelay(failures int) time.Duration {
+	d := float64(resourceRetryBase) * math.Pow(2, float64(min(max(failures, 0), 62)))
+	if j := d * (1 + rand.Float64()/2); j <= float64(resourceRetryMax) {
+		return time.Duration(j)
+	}
+	// At the maximum the jitter goes below it (up to a quarter), so items paused at the maximum still spread.
+	return time.Duration(float64(resourceRetryMax) * (1 - rand.Float64()/4))
+}
+
+// resourcePause records one more failure of the item key names, in its own transaction under locks. selectSQL reads
+// the item's attempts ($1 item, locking its row); updateSQL gets $1 the item, $2 the new attempts and $3 the pause in
+// microseconds (resourceRetryDelay of the earlier attempts), plus extra. A hold's count carries over into the row. A
+// pause that cannot be written holds the item in memory instead (resourceHeld) and returns the write's error; a
+// written one releases any hold.
+func resourcePause(ctx context.Context, a *App, locks []string, key, selectSQL, updateSQL, item string, extra ...any) error {
+	attempts := resourceHeld.count(key)
+	err := runTxLocks(ctx, a, nil, true, locks, func(q *Request) error {
+		var durable int
+		if err := q.tx.QueryRow(q.ctx(), selectSQL, item).Scan(&durable); errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		attempts = max(attempts, durable)
+		return exec(q, updateSQL, append([]any{item, attempts + 1, resourceRetryDelay(attempts).Microseconds()}, extra...)...)
+	})
+	if err != nil {
+		resourceHeld.fail(key, attempts)
+		return err
+	}
+	if id, ok := strings.CutPrefix(key, "execution:"); ok {
+		resourceHeld.forgetExecution(id) // the row now holds the execution's pause and its reason
+	} else {
+		resourceHeld.forget(key)
+	}
+	return nil
+}
+
+// resourceHolds keeps the pause of an item whose durable pause could not be written (an execution, build or repair
+// whose row refuses the update, an execution whose scope hint cannot be read) or that has no row yet (a project whose
+// build row cannot be created), so it neither spins nor
+// stalls the others; like client-go's workqueue limiter it lives in the processor's process. Keys are
+// "execution:<id>", "scope:<execution>", "build:<project>", "repair:<id>" and "project:<id>".
+type resourceHolds struct {
+	mu    sync.Mutex
+	items map[string]resourceHold
+}
+
+type resourceHold struct {
+	failures int
+	until    time.Time
+}
+
+var resourceHeld = &resourceHolds{items: map[string]resourceHold{}}
+
+// fail records one more failure; the count starts from durable, the attempts the item's row already holds, so a hold
+// continues the pause where the row left it.
+func (h *resourceHolds) fail(key string, durable int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	it := h.items[key]
+	it.failures = max(it.failures, durable)
+	it.until = time.Now().Add(resourceRetryDelay(it.failures))
+	it.failures++
+	h.items[key] = it
+}
+
+func (h *resourceHolds) forget(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.items, key)
+}
+
+// forgetExecution drops both holds of an execution: its unwritable pause and its unreadable scope hint.
+func (h *resourceHolds) forgetExecution(id string) {
+	h.forget("execution:" + id)
+	h.forget("scope:" + id)
+}
+
+// ids: the ids under prefix whose hold is still on (held true) or has ended (held false), sorted.
+func (h *resourceHolds) ids(prefix string, held bool) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := []string{}
+	now := time.Now()
+	for k, it := range h.items {
+		if strings.HasPrefix(k, prefix) && now.Before(it.until) == held {
+			out = append(out, strings.TrimPrefix(k, prefix))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// count: the failures recorded for key (0 when none).
+func (h *resourceHolds) count(key string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.items[key].failures
+}
+
+// failing: the held keys whose failures reached n, sorted.
+func (h *resourceHolds) failing(n int) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []string
+	for k, it := range h.items {
+		if it.failures >= n {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// resourceFailingAttempts: the attempts after which an item's pause has reached the maximum; from then on it is a
+// persistently failing item, and the resource-failing rule (rules.go) asks about it once.
+func resourceFailingAttempts() int {
+	n := 0
+	for n < 62 && float64(resourceRetryBase)*math.Pow(2, float64(n)) < float64(resourceRetryMax) {
+		n++
+	}
+	return n + 1
 }
 
 // One listener per opted-in process; a failed listener is only a scheduling degradation.
@@ -663,16 +862,25 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 	ctx, span := obs.Start(obs.WithRun(ctx, obs.Run{ExecutionID: id}), "resource.replace", "internal")
 	var finalErr error
 	defer func() { span.End(finalErr) }()
-	projects := []string{}
+	var projects []string
+	hinted := map[string]bool{}
 	claimed := []string{}
 	for {
 		scopeStart := time.Now()
 		ps, err := resourceScopeHint(ctx, a, id)
-		projects = ps
 		if err != nil {
+			// The hint is a read of the shared pool: its failure is held in memory under its own key, so it neither
+			// raises the durable attempts of every execution while the pool fails nor retries this one at once.
 			finalErr = err
+			if ctx.Err() == nil {
+				resourceHeld.fail("scope:"+id, 0)
+			}
 			return err
 		}
+		// A scope expansion that teaches no new scope set would repeat at once: it fails like any other error.
+		key := strings.Join(ps, "\x00")
+		learned := !hinted[key]
+		projects, hinted[key] = ps, true
 		span.Set("fleet.resource.scope_hint_us", strconv.FormatInt(time.Since(scopeStart).Microseconds(), 10))
 		locks := []string{"execution:" + id}
 		for _, p := range projects {
@@ -716,7 +924,7 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 		if err == nil && len(claimed) > 0 {
 			span.Set("fleet.resource.commit_confirmed_at_unix_us", strconv.FormatInt(time.Now().UnixMicro(), 10))
 		}
-		if errors.Is(err, errResourceScope) {
+		if errors.Is(err, errResourceScope) && learned {
 			continue
 		}
 		if errors.Is(err, errResourceClearing) {
@@ -724,23 +932,37 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 		} // Clearing preserves every claimed UUID.
 		if err != nil {
 			finalErr = err
-			// Retry state is separate: rollback must never commit a half replacement.
-			if len(claimed) > 0 && ctx.Err() == nil {
-				stateErr := runTxLocks(ctx, a, nil, true, locks, func(q *Request) error {
-					return exec(q, `UPDATE resource_work SET attempts=attempts+1,
-     next_attempt_at=clock_timestamp()+least(1000,100*power(2,least(attempts,4))) * interval '1 millisecond',last_error_class=$2
-     WHERE work_id=ANY($1::uuid[])`, claimed, resourceErrorClass(err))
-				})
-				if stateErr != nil {
-					return stateErr
-				}
-			}
+			pauseErr := resourceReplaceFailed(ctx, a, id, err)
 			if errors.Is(err, errResourceOwnership) {
-				return repairTotalsOwnership(ctx, a, id)
+				// The repair's success must not hide a pause that could not be written.
+				if repairErr := repairTotalsOwnership(ctx, a, id); pauseErr != nil || repairErr != nil {
+					return errors.Join(err, pauseErr, repairErr)
+				}
+				return nil
 			}
+			err = errors.Join(err, pauseErr)
+		}
+		if err == nil {
+			resourceHeld.forgetExecution(id)
 		}
 		return err
 	}
+}
+
+// resourceReplaceFailed pauses the failed execution's work (resourceRetryDelay) in its own transaction: rollback must
+// never commit a half replacement. The execution is the item: every work row of it, claimed or not, gets the next
+// attempt count of the execution and one pause, so a failure before the claim (scope read, lock set) pauses it as well
+// and new rows do not restart its count. Only the execution's own lock is taken: a refused project lock must not keep
+// the pause from being written. A pause that cannot be written holds the execution in memory (resourceHeld); its
+// error is returned.
+func resourceReplaceFailed(ctx context.Context, a *App, id string, err error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return resourcePause(ctx, a, []string{"execution:" + id}, "execution:"+id,
+		`SELECT coalesce(max(attempts),0) FROM resource_work WHERE execution_id=$1`,
+		`UPDATE resource_work SET attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',last_error_class=$4 WHERE execution_id=$1`,
+		id, resourceErrorClass(err))
 }
 
 // A cohort may hold every same-project leaf of one pass (the pass selects at most 100 due IDs): each extra transaction
@@ -900,7 +1122,7 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 		return nil
 	})
 	ended := time.Now()
-	for _, member := range members {
+	for i, member := range members {
 		if !bodyFinished.IsZero() {
 			member.span.Set("fleet.resource.transaction_end_us", strconv.FormatInt(ended.Sub(bodyFinished).Microseconds(), 10))
 		}
@@ -911,6 +1133,9 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 			}
 		}
 		member.span.End(resultErr)
+		if resultErr == nil {
+			resourceHeld.forgetExecution(ids[i]) // a success ends a hold on every path
+		}
 	}
 	return resultErr
 }
@@ -950,12 +1175,12 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 	for _, cohort := range resourceCandidateCohorts(ids, hints) {
 		if len(cohort) == 1 {
 			if e := resourceReplace(ctx, a, cohort[0]); e != nil {
-				finalErr = e
+				finalErr = errors.Join(finalErr, e)
 			}
 		} else if e := resourceBisectCohort(cohort,
 			func(part []string) error { return resourceReplaceBatch(ctx, a, part) },
 			func(id string) error { return resourceReplaceAttempt(ctx, a, id, true) }); e != nil {
-			finalErr = e
+			finalErr = errors.Join(finalErr, e)
 		}
 	}
 	return finalErr
@@ -994,11 +1219,18 @@ func resourceErrorClass(err error) string {
 
 // repairTotalsOwnership is a separate source transaction, parent FIRST. It never runs in replacement.
 func repairTotalsOwnership(ctx context.Context, a *App, id string) error {
+	seen := map[string]bool{}
 	for {
 		var projects []string
 		if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error { var e error; projects, e = resourceScopes(q, id); return e }); err != nil {
 			return err
 		}
+		// Like resourceReplaceAttempt: a scope set already tried would repeat at once, so it is an error.
+		key := strings.Join(projects, "\x00")
+		if seen[key] {
+			return errResourceScope
+		}
+		seen[key] = true
 		locks := []string{"execution:" + id}
 		for _, p := range projects {
 			locks = append(locks, "project:"+p)
@@ -1240,9 +1472,9 @@ func resourceBuildPage(ctx context.Context, a *App, p string) error {
 				if err := exec(q, `UPDATE resource_project_summary SET executions=0,history_incomplete=0,other_calls=0,other_errors=0,tool_count=0,cost_count=0,price_count=0,header='{}',revision=0,published_at=NULL WHERE project_id=$1`, p); err != nil {
 					return err
 				}
-				return exec(q, `UPDATE resource_build SET phase='scanning',after_execution_id=NULL,scan_done=false,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p)
+				return exec(q, `UPDATE resource_build SET attempts=0,phase='scanning',after_execution_id=NULL,scan_done=false,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p)
 			}
-			return exec(q, `UPDATE resource_build SET updated_at=clock_timestamp() WHERE project_id=$1`, p)
+			return exec(q, `UPDATE resource_build SET attempts=0,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p)
 		}
 		if !scanDone {
 			op, start := ">=", ""
@@ -1263,16 +1495,16 @@ func resourceBuildPage(ctx context.Context, a *App, p string) error {
 			if len(ids) > 0 {
 				after = &ids[len(ids)-1]
 			}
-			return exec(q, `UPDATE resource_build SET after_execution_id=$2,scan_done=$3,phase=CASE WHEN $3 THEN 'draining' ELSE 'scanning' END,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p, after, len(ids) == 0)
+			return exec(q, `UPDATE resource_build SET attempts=0,after_execution_id=$2,scan_done=$3,phase=CASE WHEN $3 THEN 'draining' ELSE 'scanning' END,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p, after, len(ids) == 0)
 		}
 		var pending bool
 		if err := q.tx.QueryRow(q.ctx(), resourceProgressSQL, p).Scan(&pending); err != nil {
 			return err
 		}
 		if pending {
-			return exec(q, `UPDATE resource_build SET updated_at=clock_timestamp() WHERE project_id=$1`, p)
+			return exec(q, `UPDATE resource_build SET attempts=0,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p)
 		}
-		if err := exec(q, `UPDATE resource_build SET phase='ready',ready=true,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p); err != nil {
+		if err := exec(q, `UPDATE resource_build SET attempts=0,phase='ready',ready=true,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p); err != nil {
 			return err
 		}
 		if err := exec(q, `UPDATE resource_project_summary SET ready=true WHERE project_id=$1`, p); err != nil {
@@ -1285,15 +1517,19 @@ func resourceBuildPage(ctx context.Context, a *App, p string) error {
 // resourceRebuild is internal maintenance, never called by a reader. The new epoch stays
 // preparing until clearing, scan and drain complete. No frozen valuation or source work is erased.
 func resourceRebuild(ctx context.Context, a *App, p string) error {
-	return runTxLocks(ctx, a, nil, true, []string{"project:" + p}, func(q *Request) error {
+	err := runTxLocks(ctx, a, nil, true, []string{"project:" + p}, func(q *Request) error {
 		if err := resourceEnsureProject(q, p); err != nil {
 			return err
 		}
-		if err := exec(q, `UPDATE resource_build SET generation=gen_random_uuid(),phase='clearing',ready=false,scan_done=false,after_execution_id=NULL,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p); err != nil {
+		if err := exec(q, `UPDATE resource_build SET generation=gen_random_uuid(),attempts=0,next_attempt_at=clock_timestamp(),phase='clearing',ready=false,scan_done=false,after_execution_id=NULL,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p); err != nil {
 			return err
 		}
 		return exec(q, `UPDATE resource_project_summary SET epoch=gen_random_uuid(),ready=false,build_generation=(SELECT generation FROM resource_build WHERE project_id=$1) WHERE project_id=$1`, p)
 	})
+	if err == nil {
+		resourceHeld.forget("build:" + p) // a committed rebuild starts the build's pause afresh, as it does its row
+	}
+	return err
 }
 
 func resourceSeedWork(q *Request, ids []string, origin string, generation, repair *string) error {
@@ -1373,12 +1609,16 @@ func resourceMetadataPage(ctx context.Context, a *App, repair string) error {
 		if len(ids) > 0 {
 			after = &ids[len(ids)-1]
 		}
-		return exec(q, `UPDATE resource_metadata_repair SET after_execution_id=$2,done=$3,last_error=NULL,next_attempt_at=clock_timestamp() WHERE repair_id=$1::uuid`, repair, after, len(ids) == 0)
+		return exec(q, `UPDATE resource_metadata_repair SET after_execution_id=$2,done=$3,last_error=NULL,attempts=0,next_attempt_at=clock_timestamp() WHERE repair_id=$1::uuid`, repair, after, len(ids) == 0)
 	})
 }
 
+// A paused execution (a failed row still waiting) is no candidate, even through a new due row: the execution is one item,
+// and when it is picked every failed row is due, so a success consumes them all.
+// $1: the executions held in memory (resourceHeld), left out inside the page limit so they cannot take every slot.
 const resourceCandidatesSQL = `SELECT execution_id FROM (SELECT execution_id,next_attempt_at,first_pending_at FROM resource_work candidate
- WHERE next_attempt_at<=clock_timestamp()
+ WHERE next_attempt_at<=clock_timestamp() AND execution_id<>ALL($1::text[])
+ AND NOT EXISTS(SELECT 1 FROM resource_work paused WHERE paused.execution_id=candidate.execution_id AND paused.attempts>0 AND paused.next_attempt_at>clock_timestamp())
  AND (NOT EXISTS(SELECT 1 FROM resource_build WHERE phase='clearing') OR NOT EXISTS(
   SELECT 1 FROM resource_work blocked JOIN resource_work_scope scope USING(work_id)
   JOIN resource_build build ON build.project_id=scope.project_id
@@ -1392,35 +1632,53 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 	defer func() { span.End(finalErr) }()
 	// Discover projects from the configuration catalogue, never by rescanning execution history.
 	var projects, repairs, ids []string
+	var build, generation string
+	var gone, workless []string
 	err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-		rs, e := q.tx.Query(q.ctx(), `SELECT id FROM definition d WHERE kind='project' AND NOT EXISTS(SELECT 1 FROM resource_build b WHERE b.project_id=d.id) ORDER BY id COLLATE "C" LIMIT 100`)
+		// Held projects are left out here, so they cannot take every slot of the page.
+		rs, e := q.tx.Query(q.ctx(), `SELECT id FROM definition d WHERE kind='project' AND NOT EXISTS(SELECT 1 FROM resource_build b WHERE b.project_id=d.id)
+ AND id<>ALL($1::text[]) ORDER BY id COLLATE "C" LIMIT 100`, resourceHeld.ids("project:", true))
 		if e != nil {
 			return e
 		}
-		projects, e = pgx.CollectRows(rs, pgx.RowTo[string])
+		if projects, e = pgx.CollectRows(rs, pgx.RowTo[string]); e != nil {
+			return e
+		}
+		// A held project that got its build row some other way, or is no project any more, is let go.
+		held := append(resourceHeld.ids("project:", true), resourceHeld.ids("project:", false)...)
+		if len(held) == 0 {
+			return nil
+		}
+		rs, e = q.tx.Query(q.ctx(), `SELECT p FROM unnest($1::text[]) p WHERE EXISTS(SELECT 1 FROM resource_build b WHERE b.project_id=p)
+ OR NOT EXISTS(SELECT 1 FROM definition d WHERE d.kind='project' AND d.id=p)`, held)
+		if e != nil {
+			return e
+		}
+		gone, e = pgx.CollectRows(rs, pgx.RowTo[string])
 		return e
 	})
-	if err != nil {
-		finalErr = err
-		return err
-	}
-	for _, p := range projects {
-		if err = runTxLocks(ctx, a, nil, true, []string{"project:" + p}, func(q *Request) error { return resourceEnsureProject(q, p) }); err != nil {
-			finalErr = err
+	if err == nil {
+		for _, p := range gone {
+			resourceHeld.forget("project:" + p)
 		}
+		finalErr = resourceCreateBuilds(ctx, a, projects)
+	}
+	if err != nil {
+		finalErr = fmt.Errorf("%w: %w", errResourceStall, err)
+		return finalErr
 	}
 	err = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-		rs, e := q.tx.Query(q.ctx(), `SELECT project_id FROM resource_build WHERE NOT ready ORDER BY updated_at,project_id COLLATE "C" LIMIT 1`)
+		e := q.tx.QueryRow(q.ctx(), `SELECT project_id,generation::text FROM resource_build WHERE NOT ready AND next_attempt_at<=clock_timestamp()
+ AND project_id<>ALL($1::text[]) ORDER BY updated_at,project_id COLLATE "C" LIMIT 1`, resourceHeld.ids("build:", true)).Scan(&build, &generation)
+		if errors.Is(e, pgx.ErrNoRows) {
+			e = nil
+		}
 		if e != nil {
 			return e
 		}
-		projects, e = pgx.CollectRows(rs, pgx.RowTo[string])
-		if e != nil {
-			return e
-		}
-		rs, e = q.tx.Query(q.ctx(), `SELECT repair_id::text FROM resource_metadata_repair r WHERE next_attempt_at<=clock_timestamp()
+		rs, e := q.tx.Query(q.ctx(), `SELECT repair_id::text FROM resource_metadata_repair r WHERE next_attempt_at<=clock_timestamp() AND repair_id<>ALL($1::uuid[])
  AND (NOT done OR NOT EXISTS(SELECT 1 FROM resource_work w WHERE w.repair_id=r.repair_id))
- ORDER BY next_attempt_at,created_at LIMIT 1`)
+ ORDER BY next_attempt_at,created_at LIMIT 1`, resourceHeld.ids("repair:", true))
 		if e != nil {
 			return e
 		}
@@ -1428,13 +1686,28 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		if e != nil {
 			return e
 		}
-		rs, e = q.tx.Query(q.ctx(), resourceCandidatesSQL)
+		rs, e = q.tx.Query(q.ctx(), resourceCandidatesSQL, append(resourceHeld.ids("execution:", true), resourceHeld.ids("scope:", true)...))
 		if e != nil {
 			return e
 		}
 		ids, e = pgx.CollectRows(rs, pgx.RowTo[string])
 		if e != nil {
 			return e
+		}
+		// An ended hold whose item is gone (an execution with no work left, a build that is ready or removed, a finished
+		// repair) is let go; nothing else would select it again.
+		heldExecutions, heldScopes := resourceHeld.ids("execution:", false), resourceHeld.ids("scope:", false)
+		heldBuilds, heldRepairs := resourceHeld.ids("build:", false), resourceHeld.ids("repair:", false)
+		if len(heldExecutions)+len(heldScopes)+len(heldBuilds)+len(heldRepairs) > 0 {
+			if rs, e = q.tx.Query(q.ctx(), `SELECT 'execution:'||e FROM unnest($1::text[]) e WHERE NOT EXISTS(SELECT 1 FROM resource_work w WHERE w.execution_id=e)
+ UNION ALL SELECT 'scope:'||e FROM unnest($2::text[]) e WHERE NOT EXISTS(SELECT 1 FROM resource_work w WHERE w.execution_id=e)
+ UNION ALL SELECT 'build:'||p FROM unnest($3::text[]) p WHERE NOT EXISTS(SELECT 1 FROM resource_build b WHERE b.project_id=p AND NOT b.ready)
+ UNION ALL SELECT 'repair:'||r::text FROM unnest($4::uuid[]) r WHERE NOT EXISTS(SELECT 1 FROM resource_metadata_repair m WHERE m.repair_id=r)`, heldExecutions, heldScopes, heldBuilds, heldRepairs); e != nil {
+				return e
+			}
+			if workless, e = pgx.CollectRows(rs, pgx.RowTo[string]); e != nil {
+				return e
+			}
 		}
 		var oldest *time.Time
 		if e = q.tx.QueryRow(q.ctx(), `SELECT min(first_pending_at) FROM resource_work`).Scan(&oldest); e != nil {
@@ -1446,30 +1719,63 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		return nil
 	})
 	if err != nil {
-		finalErr = err
-		return err
+		finalErr = errors.Join(finalErr, fmt.Errorf("%w: %w", errResourceStall, err))
+		return finalErr
 	}
-	for _, p := range projects {
-		if e := resourceBuildPage(ctx, a, p); e != nil {
-			finalErr = e
-			_ = runTxLocks(ctx, a, nil, true, []string{"project:" + p}, func(q *Request) error {
-				return exec(q, `UPDATE resource_build SET last_error='build_failed',updated_at=clock_timestamp() WHERE project_id=$1`, p)
-			})
+	// A failed build page or metadata page pauses only that build or repair (resourcePause). Only the row lock, like an
+	// execution's pause: the project lock may be what failed. The generation read before the page keeps an older
+	// failure off a concurrent resourceRebuild's reset.
+	if p := build; p != "" {
+		if e := resourceBuildPage(ctx, a, p); e == nil {
+			resourceHeld.forget("build:" + p)
+		} else if ctx.Err() == nil {
+			finalErr = errors.Join(finalErr, e)
+			finalErr = errors.Join(finalErr, resourcePause(ctx, a, nil, "build:"+p, `SELECT attempts FROM resource_build WHERE project_id=$1 FOR UPDATE`,
+				`UPDATE resource_build SET last_error='build_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',updated_at=clock_timestamp() WHERE project_id=$1 AND generation=$4::uuid`, p, generation))
 		}
 	}
 	for _, r := range repairs {
-		if e := resourceMetadataPage(ctx, a, r); e != nil {
-			finalErr = e
-			_ = runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
-				return exec(q, `UPDATE resource_metadata_repair SET last_error='metadata_failed',next_attempt_at=clock_timestamp()+interval '100 milliseconds' WHERE repair_id=$1::uuid`, r)
-			})
+		if e := resourceMetadataPage(ctx, a, r); e == nil {
+			resourceHeld.forget("repair:" + r)
+		} else if ctx.Err() == nil {
+			finalErr = errors.Join(finalErr, e)
+			finalErr = errors.Join(finalErr, resourcePause(ctx, a, nil, "repair:"+r, `SELECT attempts FROM resource_metadata_repair WHERE repair_id=$1::uuid FOR UPDATE`,
+				`UPDATE resource_metadata_repair SET last_error='metadata_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond' WHERE repair_id=$1::uuid`, r))
 		}
 	}
+	for _, k := range workless {
+		resourceHeld.forget(k)
+	}
 	if e := resourceReplaceCandidates(ctx, a, ids); e != nil {
-		finalErr = e
+		finalErr = errors.Join(finalErr, e)
 	}
 	span.Set("fleet.resource.candidates", strconv.Itoa(len(ids)))
 	return finalErr
+}
+
+// resourceCreateBuilds creates the missing build and summary rows in one statement without a project lock (ON CONFLICT
+// keeps it safe beside resourceEnsureProject). The caller leaves held projects out. If the statement fails, each project
+// is tried alone, and one that keeps failing is held (resourceHeld) so it neither spins nor holds the others back.
+func resourceCreateBuilds(ctx context.Context, a *App, projects []string) error {
+	create := func(ps []string) error {
+		return runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+			return exec(q, `WITH builds AS (INSERT INTO resource_build(project_id) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING RETURNING project_id,generation)
+ INSERT INTO resource_project_summary(project_id,build_generation) SELECT project_id,generation FROM builds ON CONFLICT DO NOTHING`, ps)
+		})
+	}
+	if len(projects) == 0 || create(projects) == nil || ctx.Err() != nil {
+		return nil
+	}
+	var errs error
+	for _, p := range projects {
+		if err := create([]string{p}); err != nil {
+			resourceHeld.fail("project:"+p, 0)
+			errs = errors.Join(errs, err)
+		} else {
+			resourceHeld.forget("project:" + p)
+		}
+	}
+	return errs
 }
 
 // resourcePreparedState is an INTERNAL read seam. The caller must authorize a non-null project
