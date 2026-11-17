@@ -530,8 +530,9 @@ func (e *executor) reconcileProcesses() error {
 		return err
 	}
 	specs, _ := filepath.Glob(filepath.Join(e.root, "runs", "*.code.json"))
-	for _, f := range append(files, specs...) {
-		if !unresolved[strings.TrimSuffix(strings.TrimSuffix(filepath.Base(f), ".env"), ".code.json")] {
+	contexts, _ := filepath.Glob(filepath.Join(e.root, "runs", "*.fleet.json"))
+	for _, f := range append(append(files, specs...), contexts...) {
+		if !unresolved[strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(filepath.Base(f), ".env"), ".code.json"), ".fleet.json")] {
 			if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -1044,7 +1045,10 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if fleetTools {
 		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
 		journal := filepath.Join(e.root, "journal.sqlite")
-		server, err := delegationServer(context, journal, filepath.Join(dir, execution+".fleet-context.json"))
+		if err := os.MkdirAll(filepath.Join(e.root, "runs"), 0o700); err != nil {
+			return err
+		}
+		server, err := delegationServer(context, journal, fleetContextFile(e.root, execution))
 		if err != nil {
 			return fail(1, "fleet MCP context: "+err.Error())
 		}
@@ -1063,7 +1067,8 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			os.Remove(runFile) // K2-6: a launch that failed never needs its run token
 		}
 		if !launched {
-			os.Remove(codeSpecFile(e.root, execution)) // nor its code server spec
+			os.Remove(codeSpecFile(e.root, execution))     // nor its code server spec
+			os.Remove(fleetContextFile(e.root, execution)) // nor its Fleet server context
 		}
 	}()
 	granted := jArr(p, "connections")

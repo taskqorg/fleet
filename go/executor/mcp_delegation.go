@@ -498,7 +498,9 @@ func mcpRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		if path, ok := strings.CutPrefix(s, "@"); ok { // the context file delegationServer wrote
+		// The context file delegationServer writes; inline JSON stays for a harness an earlier executor started, which
+		// restarts this server from the updated binary with its original argv.
+		if path, ok := strings.CutPrefix(s, "@"); ok {
 			b, err := os.ReadFile(path)
 			if err != nil {
 				return err

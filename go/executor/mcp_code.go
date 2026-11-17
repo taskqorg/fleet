@@ -810,6 +810,17 @@ func probeCodeHost() (node, sandbox string, err error) {
 func removeRunFiles(root, execution string) {
 	os.Remove(filepath.Join(root, "runs", execution+".env"))
 	os.Remove(codeSpecFile(root, execution))
+	os.Remove(fleetContextFile(root, execution))
+}
+
+// fleetContextFile is the Fleet MCP server's context for one execution: private to the executor (runs/ is 0700, outside
+// every agent's working directory), removed with the run file.
+func fleetContextFile(root, execution string) string {
+	p, err := filepath.Abs(filepath.Join(root, "runs", execution+".fleet.json"))
+	if err != nil {
+		return filepath.Join(root, "runs", execution+".fleet.json")
+	}
+	return p
 }
 
 // codeSpecFile is the code server's spec for one execution, beside its run file and removed with it.

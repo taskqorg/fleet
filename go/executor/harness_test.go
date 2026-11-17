@@ -448,16 +448,18 @@ func TestFleetMCPContextStaysOutOfArgv(t *testing.T) {
 	ops := []any{}
 	for n, o := range contract.Operations {
 		var s any
-		json.Unmarshal(o.InputSchema, &s)
+		if err := json.Unmarshal(o.InputSchema, &s); err != nil {
+			t.Fatal(n, err)
+		}
 		ops = append(ops, M{"name": n, "inputSchema": s, "description": strings.Repeat("Describes the operation. ", 40)})
 	}
 	dir := t.TempDir()
 	ctx := M{"hostId": "h", "commandId": "c", "executionId": "e", "projectId": "p", "workdir": dir, "operations": ops}
-	fleet, err := delegationServer(ctx, filepath.Join(dir, "journal.sqlite"), filepath.Join(dir, "e.fleet-context.json"))
+	fleet, err := delegationServer(ctx, filepath.Join(dir, "journal.sqlite"), filepath.Join(dir, "e.fleet.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b, err := os.ReadFile(filepath.Join(dir, "e.fleet-context.json")); err != nil || len(b) < 100000 {
+	if b, err := os.ReadFile(filepath.Join(dir, "e.fleet.json")); err != nil || len(b) < 100000 {
 		t.Fatalf("the context file holds the operations: %d bytes, %v", len(b), err)
 	}
 	servers, err := wrapMCPServers(M{"fleet": fleet}, filepath.Join(dir, "s.sock"), dir, filepath.Join(dir, "r"))
