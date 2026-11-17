@@ -75,12 +75,13 @@ func bugsinkIngest(d sentryDSN) string {
 	return d.scheme + "://" + d.host
 }
 
-// bugsinkURL: Bugsink's public address, for issue links: FLEET_BUGSINK_URL, else the provider catalogue's.
+// bugsinkURL: Bugsink's public address, for issue links people open: FLEET_BUGSINK_URL, else https://bugsink.ufobe.com.
+// The gateway reads the API on PDS18's loopback (providers.go): the public API is behind Cloudflare Access.
 func bugsinkURL() string {
 	if v := strings.TrimRight(os.Getenv("FLEET_BUGSINK_URL"), "/"); v != "" {
 		return v
 	}
-	return astr(mapOf(providers[bugsinkConn])["baseUrl"])
+	return "https://bugsink.ufobe.com"
 }
 
 // bugsinkTunnel: Sentry's tunnel (docs.sentry.io, "Dealing with Ad-Blockers"): the browser SDK posts its envelope to
