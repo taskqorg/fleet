@@ -148,7 +148,8 @@ export function Delivery({ id }: { id?: string }) {
     view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: { stage: ['installed'] },
     // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
     // most installed) or a filter to installed rows is its own context, where it starts open.
-    groupsContext: v => paceOf(v).picked || doneOnly(v) ? 'merged' : undefined,
+    // The day in the URL, not the bucket found in the history: the context does not change when the history arrives.
+    groupsContext: v => deliveryExtra(v.extra).at || doneOnly(v) ? 'merged' : undefined,
     defaultGroup: DEFAULT_DELIVERY_GROUP, defaultSort: DEFAULT_DELIVERY_SORT, system: SYSTEM_VIEWS, groupLabel: (_g, l) => l ?? '',
   });
   const { view, set } = page;

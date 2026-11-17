@@ -160,8 +160,8 @@ function App() {
     left.current = current;
   }, [loc, query, access.value.state, prefsRead.value]);
   useEffect(() => {
-    // Unsent list group toggles go with them (a list sends its own when it closes), in one keepalive request: a hidden tab may
-    // be closed without pagehide (prefs.ts saveOnLeave).
+    // Unsent list group toggles go with them, in one keepalive request: a hidden tab may be closed without pagehide
+    // (prefs.ts saveOnLeave; a section leave sends the same request without keepalive above).
     const flush = () => { if (document.visibilityState === 'hidden') saveOnLeave(left.current); };
     const leave = () => saveOnLeave(left.current);
     document.addEventListener('visibilitychange', flush); addEventListener('pagehide', leave);
