@@ -53,7 +53,11 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   // Without ?in= the page starts on the first focused or recent project, once the projects are known.
   const [touched, setTouched] = useState(initialProject !== null);
   // Files added meanwhile belong to the shown project: then the page stays on it.
-  useEffect(() => { if (!touched && !files.items.length && projects.data && recent.data && ordered.length && (focus.length || seen.length)) { setProject(ordered[0].id); setTouched(true); } }, [touched, projects.data, recent.data]);
+  useEffect(() => {
+    if (touched || !projects.data || !recent.data) return;
+    if (files.items.length) { setTouched(true); return; } // the shown project is the person's from now on
+    if (ordered.length && (focus.length || seen.length)) { setProject(ordered[0].id); setTouched(true); }
+  }, [touched, projects.data, recent.data, files.items.length]);
   const list: Preset[] = presets.data?.presets ?? [];
   // The picked preset while it can start; else the first one for the asked role (?role=pm), else the first that can start.
   const chosen = list.find(p => p.id === picked[key] && !p.unavailable) ?? list.find(p => !p.unavailable && !!initialRole && p.role === initialRole) ?? list.find(p => !p.unavailable);
@@ -79,13 +83,13 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   const live = useRef(now); live.current = now;
   const settings = () => JSON.stringify(live.current);
   const send = async (text: string) => {
-    const scope = authorizedDraftScope(target), shown = settings(), wanted = files.items.length;
+    const scope = authorizedDraftScope(target), shown = settings();
     // Files still uploading finish first; a failed one fails the start and stays on its chip.
     let attachments: string[];
     try { attachments = await files.ready(); } catch (e: any) { setError(`Attachment not uploaded: ${e?.message ?? e}`); throw e; }
-    // The start uses what the page shows: settings changed (or files dropped by a project change) while the files uploaded
-    // are not started with the old ones.
-    if (settings() !== shown || attachments.length < wanted) {
+    // The start uses what the page shows: settings changed while the files uploaded (a project change also drops its files)
+    // are not started with the old ones. A file removed meanwhile just drops out, as in a conversation.
+    if (settings() !== shown) {
       const e = Error('The settings or files changed while the files uploaded; check them and send again.'); setError(e.message); throw e;
     }
     const body = { ...(project ? { projectId: project, branch } : {}), preset: chosen!.id, access, text, ...(attachments.length ? { attachments } : {}) };

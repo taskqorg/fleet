@@ -504,7 +504,9 @@ button.start-fact:hover{background:var(--hover);color:var(--fg)}
 .composer:focus-within{border-color:var(--accent)}
 .composer.off{background:var(--surface-sunken)}
 .composer textarea{min-width:0;min-height:var(--size-control);max-height:calc(var(--size-control) * 6);padding:var(--space-1) var(--space-2);border:0;outline:0;background:none;color:var(--fg);font:inherit;resize:none;field-sizing:content}
-.composer-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);min-width:0}
+.composer-row{display:flex;align-items:center;gap:var(--space-2);min-width:0}
+/* The new page's start facts are read before a start: they wrap instead of shrinking to ellipses */
+.new-conversation .composer-row{flex-wrap:wrap}
 .composer-chips{display:contents}
 /* A page wrapped in a drop zone keeps the detail's spacing and scrolls as before */
 .detail>.drop-zone{flex:none;min-height:auto;gap:var(--space-3)}
