@@ -713,7 +713,7 @@ func resourceHintFailure(ctx context.Context, a *App, err error) error {
 // statement snapshot. Later work is neither observed as claimed nor deleted.
 func resourceClaimSnapshotSQL() string {
 	return `WITH claimed AS MATERIALIZED (
- SELECT work_id FROM resource_work WHERE execution_id=$1 AND next_attempt_at<=clock_timestamp()
+ SELECT work_id FROM resource_work WHERE execution_id=$1 AND next_attempt_at<=statement_timestamp()
  ORDER BY work_id FOR UPDATE SKIP LOCKED)
  SELECT (SELECT coalesce(array_agg(work_id::text ORDER BY work_id),'{}'::text[]) FROM claimed),
  CASE WHEN EXISTS(SELECT 1 FROM claimed) THEN (` + resourceSourceSQL + `) ELSE NULL END`
@@ -1674,10 +1674,11 @@ func resourceMetadataPage(ctx context.Context, a *App, repair string) error {
 
 // A paused execution (a failed row still waiting) is no candidate, even through a new due row: the execution is one item,
 // and when it is picked every failed row is due, so a success consumes them all.
+// The statement clock bounds the due index scan while the rest of the queue waits out its pause.
 // $1: the executions held in memory (resourceHeld), left out inside the page limit so they cannot take every slot.
 const resourceCandidatesSQL = `SELECT execution_id FROM (SELECT execution_id,next_attempt_at,first_pending_at FROM resource_work candidate
- WHERE next_attempt_at<=clock_timestamp() AND execution_id<>ALL($1::text[])
- AND NOT EXISTS(SELECT 1 FROM resource_work paused WHERE paused.execution_id=candidate.execution_id AND paused.attempts>0 AND paused.next_attempt_at>clock_timestamp())
+ WHERE next_attempt_at<=statement_timestamp() AND execution_id<>ALL($1::text[])
+ AND NOT EXISTS(SELECT 1 FROM resource_work paused WHERE paused.execution_id=candidate.execution_id AND paused.attempts>0 AND paused.next_attempt_at>statement_timestamp())
  AND (NOT EXISTS(SELECT 1 FROM resource_build WHERE phase='clearing') OR NOT EXISTS(
   SELECT 1 FROM resource_work blocked JOIN resource_work_scope scope USING(work_id)
   JOIN resource_build build ON build.project_id=scope.project_id
@@ -1726,7 +1727,7 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		return finalErr
 	}
 	err = runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error {
-		e := q.tx.QueryRow(q.ctx(), `SELECT project_id,generation::text FROM resource_build WHERE NOT ready AND next_attempt_at<=clock_timestamp()
+		e := q.tx.QueryRow(q.ctx(), `SELECT project_id,generation::text FROM resource_build WHERE NOT ready AND next_attempt_at<=statement_timestamp()
  AND project_id<>ALL($1::text[]) ORDER BY updated_at,project_id COLLATE "C" LIMIT 1`, resourceHeld.ids("build:", true)).Scan(&build, &generation)
 		if errors.Is(e, pgx.ErrNoRows) {
 			e = nil
@@ -1734,7 +1735,7 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		if e != nil {
 			return e
 		}
-		rs, e := q.tx.Query(q.ctx(), `SELECT repair_id::text FROM resource_metadata_repair r WHERE next_attempt_at<=clock_timestamp() AND repair_id<>ALL($1::uuid[])
+		rs, e := q.tx.Query(q.ctx(), `SELECT repair_id::text FROM resource_metadata_repair r WHERE next_attempt_at<=statement_timestamp() AND repair_id<>ALL($1::uuid[])
  AND (NOT done OR NOT EXISTS(SELECT 1 FROM resource_work w WHERE w.repair_id=r.repair_id))
  ORDER BY next_attempt_at,created_at LIMIT 1`, resourceHeld.ids("repair:", true))
 		if e != nil {
