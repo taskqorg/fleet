@@ -51,11 +51,12 @@ export async function checkSpotlight(browser: Browser, origin: string) {
     await dialog.getByRole('option', {name: /Spotlight bulk 9/}).waitFor();
     await dialog.getByRole('option', {name: /All \d+ in Tasks/}).waitFor();
     await input.press('ArrowDown'); await input.press('ArrowDown');
-    const rows = await dialog.getByRole('option').allTextContents(), cur = await dialog.locator('[role=option][aria-selected=true]').textContent();
+    // Rows by title and code, without the age, which counts on in seconds between the two reads.
+    const titles = () => dialog.locator('[role=option]').evaluateAll(os => os.map(o => [o.querySelector('.title')?.textContent, o.querySelector('.id')?.textContent, o.getAttribute('aria-selected')].join('|')));
+    const rows = await titles();
     await input.press('Escape'); assert.equal(await dialog.count(), 0);
     await p.keyboard.press('ControlOrMeta+k'); await dialog.waitFor();
-    assert.deepEqual(await dialog.getByRole('option').allTextContents(), rows, 'the results show again at once');
-    assert.equal(await dialog.locator('[role=option][aria-selected=true]').textContent(), cur, 'the same row is highlighted');
+    assert.deepEqual(await titles(), rows, 'the results show again at once, with the same row highlighted');
     assert.deepEqual(await input.evaluate((e: HTMLInputElement) => [e.value, e.selectionStart, e.selectionEnd, document.activeElement === e]), ['spotlight', 0, 9, true],
       'the kept query is focused and selected');
     // A conversation is found by its first message and opens in the work area.
