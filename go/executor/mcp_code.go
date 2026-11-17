@@ -62,12 +62,13 @@ type codeServer struct {
 }
 
 type codeRuntime struct {
-	gone bool    // its stdout ended (under codeServer.mu)
-	tail tailBuf // the end of its stderr, for the runtime-exited reason
-	cmd  *exec.Cmd
-	mu   sync.Mutex // serializes writes to stdin
-	in   io.WriteCloser
-	dead chan struct{}
+	awaiting map[string]*codeJob // replies sent, not yet settled by the runtime (under codeServer.mu)
+	gone     bool                // its stdout ended (under codeServer.mu)
+	tail     tailBuf             // the end of its stderr, for the runtime-exited reason
+	cmd      *exec.Cmd
+	mu       sync.Mutex // serializes writes to stdin
+	in       io.WriteCloser
+	dead     chan struct{}
 }
 
 func codeMCP(spec any, in io.Reader, w io.Writer) error {
@@ -366,7 +367,7 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "NODE_NO_WARNINGS=1"}
 	// The protocol has its own pipe (fd 3): a raw write to fd 1 (fs.writeSync(1, ...)) cannot corrupt a protocol line; it
 	// goes to this server's stderr log.
-	rt := &codeRuntime{dead: make(chan struct{})}
+	rt := &codeRuntime{dead: make(chan struct{}), awaiting: map[string]*codeJob{}}
 	cmd.Stdout, cmd.Stderr = os.Stderr, io.MultiWriter(os.Stderr, &rt.tail)
 	in, err := cmd.StdinPipe()
 	if err != nil {
@@ -374,6 +375,7 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	}
 	stdout, proto, err := os.Pipe()
 	if err != nil {
+		in.Close()
 		return nil, false, err
 	}
 	cmd.ExtraFiles = []*os.File{proto}
@@ -381,6 +383,7 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	proto.Close()
 	if err != nil {
 		stdout.Close()
+		in.Close()
 		return nil, false, err
 	}
 	rt.cmd, rt.in = cmd, in
@@ -392,7 +395,14 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	for n, spec := range s.conns {
 		names[n] = mcpToolNames(spec)
 	}
-	rt.send(M{"type": "tools", "fleet": anyStrings(sortedKeysOf(s.fleet)), "conns": names}) // before any run line
+	// The tools line goes first: rt.mu is taken here and released after the write, so every later send (run lines,
+	// replies) waits for it, and s.mu is not held while a slow runtime starts reading.
+	tools := enc(M{"type": "tools", "fleet": anyStrings(sortedKeysOf(s.fleet)), "conns": names}) + "\n"
+	rt.mu.Lock()
+	go func() {
+		defer rt.mu.Unlock()
+		io.WriteString(rt.in, tools)
+	}()
 	return rt, true, nil
 }
 
@@ -466,7 +476,8 @@ func (s *codeServer) stop() {
 
 // read handles the runtime's lines until its stdout ends or fails; then it stops the process, and every unfinished job of
 // this runtime ends with runtime-exited. Lines have no size cap: the runtime never cuts output.
-func (s *codeServer) read(rt *codeRuntime, stdout io.Reader) {
+func (s *codeServer) read(rt *codeRuntime, stdout io.ReadCloser) {
+	defer stdout.Close()
 	r := bufio.NewReader(stdout)
 	for {
 		line, err := r.ReadBytes('\n')
@@ -502,9 +513,18 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.Reader) {
 		}
 		open = append(open, j)
 	}
+	// Replies the dead runtime will never settle.
+	var unsettled []*codeJob
+	for k, j := range rt.awaiting {
+		unsettled = append(unsettled, j)
+		delete(rt.awaiting, k)
+	}
 	s.mu.Unlock()
 	for _, j := range open {
 		s.finish(j, false, nil, exited)
+	}
+	for _, j := range unsettled {
+		s.settle(j)
 	}
 	close(rt.dead)
 }
@@ -538,6 +558,15 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 	j := s.jobs[jStr(m, "job")]
 	s.mu.Unlock()
 	switch jStr(m, "type") {
+	case "settled":
+		key := enc(jAt(m, "id"))
+		s.mu.Lock()
+		sj, ok := rt.awaiting[key]
+		delete(rt.awaiting, key)
+		s.mu.Unlock()
+		if ok {
+			s.settle(sj)
+		}
 	case "done":
 		if j != nil {
 			// A call started before the return (unawaited) is still part of the job: the final reply waits for it, so
@@ -555,7 +584,9 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		}
 	case "call":
 		s.mu.Lock()
-		ended := j == nil || jobStatus(j) != "running" || j.ended != nil // the code returned: a timer's call is late
+		// After the code returned, a call is still part of the job while another of its calls is in flight (a chain such as
+		// fleet.a().then(fleet.b)); once none is, a call (a timer) is late.
+		ended := j == nil || jobStatus(j) != "running" || j.ended != nil && j.busy == 0
 		if !ended {
 			j.busy++
 		}
@@ -586,9 +617,27 @@ func (s *codeServer) call(rt *codeRuntime, j *codeJob, m any) {
 		fail["tool"] = label
 		reply["error"] = fail
 	}
-	rt.send(reply)
+	// The call counts as busy until the runtime settles it: its `settled` line comes after the reply's promise callbacks
+	// ran, so a call chained off this reply (fleet.a().then(fleet.b)) arrives while this one still counts.
+	key := enc(jAt(m, "id"))
 	s.mu.Lock()
-	j.calls = append(j.calls, M{"tool": label, "ms": time.Since(start).Milliseconds(), "outcome": outcome})
+	j.calls = append(j.calls, M{"tool": label, "ms": time.Since(start).Milliseconds(), "outcome": outcome}) // done at the provider: listed now
+	gone := rt.gone
+	if !gone {
+		rt.awaiting[key] = j
+	}
+	s.mu.Unlock()
+	if gone || rt.send(reply) != nil {
+		s.mu.Lock()
+		delete(rt.awaiting, key)
+		s.mu.Unlock()
+		s.settle(j)
+	}
+}
+
+// settle ends one bridged call of j; the job's final reply waits until none is left.
+func (s *codeServer) settle(j *codeJob) {
+	s.mu.Lock()
 	j.busy--
 	end := j.ended
 	last := j.busy == 0 && end != nil
@@ -699,26 +748,24 @@ var codeHost = func() func() (string, string, error) {
 	var node, sandbox string
 	var err error
 	var at time.Time
-	var probing bool
-	probe := func() {
-		n, sb, e := probeCodeHost()
-		mu.Lock()
-		node, sandbox, err, at, probing = n, sb, e, time.Now(), false
-		mu.Unlock()
-	}
+	var background bool
 	return func() (string, string, error) {
 		mu.Lock()
-		switch {
-		case !probing && (at.IsZero() || err == nil && !(isFile(node) && isFile(sandbox))):
-			probing = true
-			mu.Unlock()
-			probe()
-			mu.Lock()
-		case err != nil && time.Since(at) >= time.Minute && !probing:
-			probing = true
-			go probe()
-		}
 		defer mu.Unlock()
+		switch {
+		case at.IsZero() || err == nil && !(isFile(node) && isFile(sandbox)):
+			// No result yet, or a ready one whose files are gone: probe now. Concurrent callers wait for this result.
+			node, sandbox, err = probeCodeHost()
+			at = time.Now()
+		case err != nil && time.Since(at) >= time.Minute && !background:
+			background = true
+			go func() {
+				n, sb, e := probeCodeHost()
+				mu.Lock()
+				node, sandbox, err, at, background = n, sb, e, time.Now(), false
+				mu.Unlock()
+			}()
+		}
 		return node, sandbox, err
 	}
 }()
@@ -759,6 +806,12 @@ func probeCodeHost() (node, sandbox string, err error) {
 	return node, sandbox, nil
 }
 
+// removeRunFiles removes an execution's private files under runs/: its run token file and its code server spec.
+func removeRunFiles(root, execution string) {
+	os.Remove(filepath.Join(root, "runs", execution+".env"))
+	os.Remove(codeSpecFile(root, execution))
+}
+
 // codeSpecFile is the code server's spec for one execution, beside its run file and removed with it.
 func codeSpecFile(root, execution string) string {
 	return filepath.Join(root, "runs", execution+".code.json")
@@ -770,11 +823,20 @@ type codeFleet struct {
 	context any
 }
 
+// codeReadRoots are the roots the runtime may read: none for a Claude profile without Read, Grep, Glob or Bash.
+func codeReadRoots(harness string, profile any, roots ...string) []string {
+	native, _ := claudeNativeTools(profile)
+	if harness == "claude" && !slices.ContainsFunc(native, func(t string) bool { return t == "Read" || t == "Grep" || t == "Glob" || t == "Bash" }) {
+		return nil
+	}
+	return slices.DeleteFunc(roots, func(r string) bool { return r == "" })
+}
+
 // addCodeServer adds the `code` server to a launch's servers; mode `only` removes the fleet and connection servers it
-// bridges. A Claude profile without Read, Grep, Glob or Bash gets no file reads in the runtime.
+// bridges.
 // The spec goes to specFile (0600), not argv: fleet operations and connection schemas can exceed one argv string.
 // conns are the launch's connection servers' specs, with the tools those servers expose.
-func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFleet, conns []any, runFile, specFile string, read []string) error {
+func addCodeServer(servers M, mode string, fleet *codeFleet, conns []any, runFile, specFile, dir string, read []string) error {
 	if conns == nil {
 		conns = []any{}
 	}
@@ -788,7 +850,7 @@ func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFlee
 	if err != nil {
 		return err
 	}
-	spec := M{"dir": read[0], "read": []any{}, "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox, "instructions": []any{}}
+	spec := M{"dir": dir, "read": anyStrings(read), "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox, "instructions": []any{}}
 	if mode == "only" {
 		instr := []any{}
 		for _, c := range conns {
@@ -798,14 +860,6 @@ func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFlee
 	}
 	if fleet != nil {
 		spec["journal"], spec["context"] = fleet.journal, fleet.context
-	}
-	native, _ := claudeNativeTools(profile)
-	if harness != "claude" || slices.ContainsFunc(native, func(t string) bool { return t == "Read" || t == "Grep" || t == "Glob" || t == "Bash" }) {
-		for _, r := range read {
-			if r != "" {
-				spec["read"] = append(spec["read"].([]any), r)
-			}
-		}
 	}
 	if mode == "only" {
 		delete(servers, "fleet")

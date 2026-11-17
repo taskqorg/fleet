@@ -398,8 +398,7 @@ func (e *executor) releaseLaunchWindow(execution, session string) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		os.Remove(filepath.Join(e.root, "runs", execution+".env")) // the run token goes with the launch
-		os.Remove(codeSpecFile(e.root, execution))
+		removeRunFiles(e.root, execution) // the run token goes with the launch
 	}
 	return nil
 }
@@ -1112,12 +1111,12 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
 	if codeMode != "" {
-		mode := codeMode
-		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), []string{work, inputDir}); err != nil {
+		read := codeReadRoots(name, jAt(p, "agentConfig"), work, inputDir)
+		if err := addCodeServer(servers, codeMode, codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), work, read); err != nil {
 			return fail(1, err.Error())
 		}
-		observed["codeMode"], observed["codeTools"] = mode, jAt(servers, "code", "tools")
-		if mode == "only" {
+		observed["codeMode"], observed["codeTools"] = codeMode, jAt(servers, "code", "tools")
+		if codeMode == "only" {
 			connectionTools, fleetMCP = nil, []any{} // the fleet server is gone; its tools are reached through code
 		}
 	}
@@ -1791,8 +1790,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		}
 		l.wire.mu.Unlock()
 	}
-	os.Remove(filepath.Join(e.root, "runs", execution+".env")) // the run token is not needed after the run
-	os.Remove(codeSpecFile(e.root, execution))
+	removeRunFiles(e.root, execution) // the run token is not needed after the run
 	var code *int64
 	if l.state != nil && l.state.Exited() {
 		c := int64(l.state.ExitCode())

@@ -94,6 +94,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     const p = pending.get(m.id);
     pending.delete(m.id);
     if (p) m.ok ? p.resolve(m.value) : p.reject(new FleetCallError({ ...m.error, job: p.owner }));
+    // After the promise callbacks (microtasks) ran: a call they chained is already sent when the server sees this.
+    setImmediate(() => out(JSON.stringify({ type: 'settled', id: m.id }) + '\n'));
     return;
   }
   if (m.type !== 'run') return;

@@ -174,6 +174,10 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	if r, _ := c.code(`conn.web.broken({}); await new Promise(r => setTimeout(r, 100)); return 1`); !strings.Contains(jStr(r, "output"), "Unhandled rejection") {
 		t.Fatalf("unhandled rejection not in the job's output: %v", r)
 	}
+	// A call chained off an unawaited one is part of the job too, while the first is in flight.
+	if r, _ := c.code(`conn.web.search({}).then(() => conn.web.search({})); return 1`); len(jArr(r, "calls")) != 2 {
+		t.Fatalf("chained call: %v", r)
+	}
 	// A call started just before the return is part of the job: the final reply carries its outcome.
 	if r, _ := c.code(`conn.web.search({}); return 1`); len(jArr(r, "calls")) != 1 {
 		t.Fatalf("unawaited call before return: %v", r)
@@ -389,7 +393,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 			fleet = &codeFleet{journal, M{"commandId": "c"}}
 		}
 		file := filepath.Join(t.TempDir(), "runs", "x.code.json")
-		err := addCodeServer(servers, mode, harness, profile, fleet, granted, "/run.env", file, []string{"/work", "/input"})
+		err := addCodeServer(servers, mode, fleet, granted, "/run.env", file, "/work", codeReadRoots(harness, profile, "/work", "/input"))
 		if err != nil {
 			return servers, nil, err
 		}
