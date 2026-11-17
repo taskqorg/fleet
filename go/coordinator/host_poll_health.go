@@ -21,6 +21,10 @@ import (
 const (
 	hostPollProblemAfterMs = 2 * 60 * 1000
 	hostPollMessageRunes   = 300
+	// The record's at (last failure) is rewritten at most this often while nothing else changes, and a gap longer than
+	// hostPollRunGapMs between failures starts a new run (a host that stopped polling while it failed).
+	hostPollAtEveryMs = 60 * 1000
+	hostPollRunGapMs  = 5 * 60 * 1000
 )
 
 var pollReasonCode = regexp.MustCompile(`^[a-z0-9_.-]{1,64}$`)
@@ -106,15 +110,17 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 			o = doc{"id": host, "holder": holder}
 		}
 		prev := mapOf(o["pollError"])
+		// A run of failures continues while they keep coming; a record left by a host that stopped polling while it
+		// failed (no success cleared it) starts a new run.
 		since = float64(now)
-		if s := num(prev["since"]); s > 0 {
+		if s, at := num(prev["since"]), num(prev["at"]); s > 0 && float64(now)-at < hostPollRunGapMs {
 			since = s
 		}
-		changed = prev == nil || num(prev["status"]) != float64(f.status) || prev["reason"] != f.reason
-		if !changed && prev["message"] == f.message {
-			return nil // unchanged: no write, no change row
+		changed = prev == nil || since != num(prev["since"]) || num(prev["status"]) != float64(f.status) || prev["reason"] != f.reason
+		if !changed && prev["message"] == f.message && float64(now)-num(prev["at"]) < hostPollAtEveryMs {
+			return nil // unchanged and recent: no write, no change row
 		}
-		o["pollError"] = doc{"status": f.status, "reason": f.reason, "message": f.message, "since": since}
+		o["pollError"] = doc{"status": f.status, "reason": f.reason, "message": f.message, "since": since, "at": float64(now)}
 		return put(wq, "host-observation", o)
 	})
 	if werr != nil {
@@ -124,37 +130,39 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	if internalPollError(f) && changed {
 		errtrack.Capture(err, map[string]string{"route": "POST /api/hosts/poll", "host": host, "status": fmt.Sprint(f.status), "reason": f.reason})
 	}
-	if werr != nil {
-		return
-	}
-	if float64(now)-since < hostPollProblemAfterMs {
+	if werr != nil || float64(now)-since < hostPollProblemAfterMs {
 		return
 	}
 	a.pollMu.Lock()
-	hb = a.heartbeatOf(host)
-	opened := hb.pollProblem
-	hb.pollProblem = true
+	opened := a.heartbeatOf(host).pollProblem
 	a.pollMu.Unlock()
 	if opened {
 		return
 	}
 	text := fmt.Sprintf("Host %s: its polls fail with %s, so it gets no commands and no update target.", host, f.reason)
 	// Under GLOBAL and the host's lock: a success clears under the host's lock, so the problem opens only while the
-	// record it describes is still there, and a success after it closes it.
+	// record it describes is still there, and a success after it closes it. The flag is set only for a problem held.
+	held := false
 	if err := runTxLocks(ctx, a, nil, true, []string{GLOBAL, "host:" + host}, func(q *Request) error {
+		held = false
 		o, err := maybe(q, host, "host-observation")
 		if err != nil || o == nil || o["pollError"] == nil {
 			return err
 		}
 		if h, err := problemHeld(q, hostPollCause(host)); err != nil || h != nil {
+			held = h != nil
 			return err
 		}
+		held = true
 		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: doc{"hostId": host, "reason": f.reason}})
 	}); err != nil {
-		a.pollMu.Lock()
-		a.heartbeatOf(host).pollProblem = false
-		a.pollMu.Unlock()
 		log.Printf("host %s poll problem: %v", host, err)
+		return
+	}
+	if held {
+		a.pollMu.Lock()
+		a.heartbeatOf(host).pollProblem = true
+		a.pollMu.Unlock()
 	}
 }
 

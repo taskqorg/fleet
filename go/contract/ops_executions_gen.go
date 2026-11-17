@@ -991,10 +991,11 @@ func (v *GatewayVersion) Validate() error {
 
 // HostPollError: The last failed poll of a host as the coordinator answered it (go/coordinator/host_poll_health.go); cleared by the next successful poll.
 type HostPollError struct {
-	Message string  `json:"message"`
-	Reason  string  `json:"reason"`
-	Since   float64 `json:"since"`
-	Status  int64   `json:"status"`
+	At      *float64 `json:"at,omitempty"`
+	Message string   `json:"message"`
+	Reason  string   `json:"reason"`
+	Since   float64  `json:"since"`
+	Status  int64    `json:"status"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

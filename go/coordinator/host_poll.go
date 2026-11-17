@@ -317,12 +317,24 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 				if outcome == pollFails {
 					return err // a deadlock, a lost connection, the request leaving: the whole poll fails and is retried
 				}
+				// Its writes roll back; its onEnd hooks (a publish, a pipeline write guard) stay, and are idempotent.
 				if err := exec(wq, "ROLLBACK TO SAVEPOINT poll_command"); err != nil {
+					return err
+				}
+				if err := exec(wq, "RELEASE SAVEPOINT poll_command"); err != nil {
 					return err
 				}
 				if outcome == pollRetriesCommand {
 					log.Printf("host %s command %s waits: %v", host, astr(c["id"]), err)
-					continue // transient for this command only: it stays pending for the next poll
+					// It stays pending for the next poll. A failure that keeps coming is a bug: one Bugsink event per
+					// command and error (its issue reaches Needs you), not one per poll.
+					if _, seen := pollCommandErrors.LoadOrStore(astr(c["id"])+"\x00"+err.Error(), true); !seen {
+						cerr, kind := err, astr(c["kind"])
+						onEnd(wq.tx, func(bool) {
+							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
+						})
+					}
+					continue
 				}
 				if err := a.refusePollCommand(wq, c, reason); err != nil {
 					return err
@@ -380,9 +392,9 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
 }
 
 // pollCommandRefusal: what a command's failed preparation does. The command's own lasting failure (an authorization
-// refusal, a missing or malformed stored row, a data or statement error) stops it with the reason; anything else (a
-// conflict, a race, a busy dependency, an error without a status) leaves it pending for the next poll; a serialization
-// failure, a deadlock, a lost connection or the request leaving fail the poll as before (and are retried).
+// refusal, a missing or malformed stored row) stops it with the reason; anything else (a conflict, a race, a busy
+// dependency, a database or other error) leaves it pending for the next poll; a serialization failure, a deadlock, a
+// lost connection or the request leaving fail the poll as before (and are retried).
 func pollCommandRefusal(err error) (string, pollCommandOutcome) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "", pollFails
@@ -405,12 +417,14 @@ func pollCommandRefusal(err error) (string, pollCommandOutcome) {
 	// poll for its retry; a lost connection without a code fails the savepoint rollback, and with it the poll.
 	case strings.HasPrefix(code, "40") || strings.HasPrefix(code, "08") || strings.HasPrefix(code, "57"):
 		return "", pollFails
-	// Data exceptions, constraint violations (but a unique-key race) and statement errors are the stored row's own.
-	case strings.HasPrefix(code, "22") || strings.HasPrefix(code, "42") || strings.HasPrefix(code, "23") && code != "23505":
-		return "handoff failed: database error " + code, pollStopsCommand
 	}
+	// Any other database error may be the coordinator's (a statement or schema bug after a deploy): the command waits,
+	// never destroyed for it.
 	return "", pollRetriesCommand
 }
+
+// pollCommandErrors: the (command, error) pairs already sent to Bugsink by this process.
+var pollCommandErrors sync.Map
 
 type pollCommandOutcome int
 
@@ -420,9 +434,11 @@ const (
 	pollStopsCommand
 )
 
-// refusePollCommand settles a command that will never be handed off: it is stopped with its reason, and a start or a
-// script also ends its execution that has not started (cancelled with the reason, as a refused start of the dispatch
-// pass), so no execution waits on a command that cannot come; a pipeline step sees its native execution end.
+// refusePollCommand settles a command that will never be handed off: it is stopped with its reason. A pipeline's start
+// or script whose plan entry is still prepared (the handoff gate is the only way to a host, so no host has seen it)
+// also ends its execution, cancelled with the reason, so the step does not wait on a command that cannot come. A
+// command that may have reached a host already (a redelivery, any other kind) leaves its execution to its receipts and
+// the lost-host sweep.
 func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	if err := stopPipelineCommand(wq, c, reason); err != nil {
 		return err
@@ -431,8 +447,22 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 		return nil
 	}
 	e, err := maybe(wq, c["executionId"], "execution")
-	if err != nil || e == nil || terminal(e) || e["state"] == "running" {
+	if err != nil || e == nil || e["pipelineRunId"] == nil || terminal(e) || e["state"] == "running" {
 		return err
+	}
+	run, err := getRun(wq, astr(e["pipelineRunId"]))
+	if pipelineFormatUnsupported(err) || err == nil && run == nil {
+		return nil // no run to read: nothing proves the command never went out
+	}
+	if err != nil {
+		return err
+	}
+	index := pipelineStepIndex(run, astr(e["pipelineStepId"]))
+	if index < 0 {
+		return nil
+	}
+	if d := mapOf(pipelinePlanEntry(run, index)["dispatch"]); d["phase"] != "prepared" || d["commandId"] != c["id"] {
+		return nil
 	}
 	e["state"], e["stopDetail"] = "cancelled", reason
 	delete(e, "waitReason")

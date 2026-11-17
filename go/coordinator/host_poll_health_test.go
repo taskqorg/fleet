@@ -121,12 +121,13 @@ func TestPollCommandRefusal(t *testing.T) {
 		{fail(503, "store unreachable"), "", pollRetriesCommand},
 		{fail(429, "busy"), "", pollRetriesCommand},
 		{fmt.Errorf("read: connection reset"), "", pollRetriesCommand},
-		{&pgconn.PgError{Code: "23503"}, "handoff failed: database error 23503", pollStopsCommand},
+		{&pgconn.PgError{Code: "23503"}, "", pollRetriesCommand},
+		{&pgconn.PgError{Code: "42703"}, "", pollRetriesCommand},
 		{&pgconn.PgError{Code: "23505"}, "", pollRetriesCommand},
 		{&pgconn.PgError{Code: "40001"}, "", pollFails},
 		{&pgconn.PgError{Code: "40P01"}, "", pollFails},
 		{&pgconn.PgError{Code: "55P03"}, "", pollRetriesCommand},
-		{&pgconn.PgError{Code: "22P02"}, "handoff failed: database error 22P02", pollStopsCommand},
+		{&pgconn.PgError{Code: "22P02"}, "", pollRetriesCommand},
 		{&pgconn.PgError{Code: "42501"}, "refused: not in scope", pollStopsCommand},
 		{fmt.Errorf("wrapped: %w", context.Canceled), "", pollFails},
 	} {
@@ -256,5 +257,23 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	}
 	if q := question(); q == nil || q["state"] != "withdrawn" {
 		t.Fatalf("problem after recovery %v", q)
+	}
+
+	// A record left by a host that stopped polling while it failed (no success cleared it) does not carry its old
+	// first-failure time into a new run of failures, so no problem opens at once.
+	failure := &HTTPError{Code: 409, Msg: "x", Extra: doc{"reason": "pipeline_format_unsupported"}}
+	env.app.notePollFailure(env.ctx, "sick-host", testOwnerEmail, failure)
+	old := float64(nowMs() - 60*60*1000)
+	if err := runTx(env.ctx, env.app, nil, true, "host:sick-host", func(q *Request) error {
+		return exec(q, "UPDATE document SET data=jsonb_set(jsonb_set(data,'{pollError,since}',to_jsonb($2::float8)),'{pollError,at}',to_jsonb($2::float8)) WHERE kind='host-observation' AND id=$1", "sick-host", old)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	env.app.notePollFailure(env.ctx, "sick-host", testOwnerEmail, failure)
+	if pe := pollError("hosts_list"); pe == nil || num(pe["since"]) <= old {
+		t.Fatalf("an old run's first failure was kept: %v", pe)
+	}
+	if q := question(); q == nil || q["state"] != "withdrawn" {
+		t.Fatalf("a problem opened at once for a new run: %v", q)
 	}
 }
