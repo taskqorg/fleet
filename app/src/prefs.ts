@@ -53,9 +53,8 @@ export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Pat
   prefs.value = { ...before, ...change(before) };
   pending++;
   const send = () => e !== epoch ? null : op('person_settings_set', patch, { keepalive });
-  const handled = (p: Promise<Settings | null>) => p
+  chain = chain.then(send)
     .then(s => { if (e !== epoch) return; pending--; if (s && seq === n) prefs.value = s; refreshAfterWrites(); }, () => { if (e !== epoch) return; pending--; if (seq === n) { prefs.value = before; loadPrefs(); } refreshAfterWrites(); });
-  chain = handled(chain.then(send));
 }
 
 export function usePins(list: string) {
@@ -137,7 +136,7 @@ export function setListGroups(list: string, flipped: string[]) {
   groupsHere.value = { ...groupsHere.value, [list]: flipped.slice(-MAX_FLIPS) };
   clearTimeout(groupsTimer); groupsTimer = setTimeout(saveListGroups, 500);
 }
-/** Send this tab's unsent toggles (debounce end, a list closing). */
+/** Send this tab's unsent toggles when the debounce ends (a section leave and the tab hiding send them with saveOnLeave). */
 export function saveListGroups() {
   const p = groupsPatch();
   if (p) savePrefs(p.change, p.patch);

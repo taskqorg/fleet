@@ -13,7 +13,7 @@ import { useList, useDoc, type Kind } from './store.ts';
 import { chunks, compareKeys, closedGroups, flipGroup } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
-import { usePins, useViews, listGroups, setListGroups, saveListGroups, type SavedView } from './prefs.ts';
+import { usePins, useViews, listGroups, setListGroups, type SavedView } from './prefs.ts';
 import type { Change } from './feed.ts';
 
 /** A server list row: its id, code and the server sort key whose first part is the group key. */
@@ -71,8 +71,6 @@ export type ListPageOptions = {
 
 export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const { view, set, href } = useUrlView(o.view);
-  // Unsent group toggles leave with the section (the tab hiding sends them too: main.tsx).
-  useEffect(() => saveListGroups, []);
   // A new query ends the preset that was active when the person typed it. A preset picked while the debounced query waits
   // stays: the commit reads the URL as it is then (url.ts) and leaves a different preset alone.
   const typedPreset = useRef<string | undefined>(undefined);
