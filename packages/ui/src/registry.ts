@@ -102,6 +102,12 @@ export const states = {
     all: { label: 'Open', tone: 'success', icon: 'circle-check' },
     paused: { label: 'Paused', tone: 'attention', icon: 'circle-pause' },
   },
+  /** A question to a person (Spotlight results): open needs an answer; answered and withdrawn are done. */
+  question: {
+    open: { label: 'Needs you', tone: 'attention', icon: 'message-circle-question' },
+    answered: { label: 'Answered', tone: 'success', icon: 'circle-check' },
+    withdrawn: { label: 'Withdrawn', tone: 'neutral', icon: 'circle-slash' },
+  },
   /** A stored result or other artifact (Results page, OR-22). */
   artifact: {
     stored: { label: 'Stored', tone: 'success', icon: 'save' },

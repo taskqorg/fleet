@@ -5,11 +5,11 @@ import { Projects } from './views/projects.tsx';
 import { render, Component, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
-import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, type NavItem, type AppScreen, type SpotlightProvider, type IconName } from '../../packages/ui/src/index.ts';
+import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
-import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
+import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view-url/view-url.ts';
 import { preferencesTouched } from './invalidation.ts';
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, knownProjects, outsideFocus } from './prefs.ts';
 import { useDoc } from './store.ts';
@@ -60,31 +60,55 @@ const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) =>
 };
 const BUILT = workspaces.filter(w => w.app).map(w => ({ ...w, ...SCREENS[w.id as AppScreen] }));
 const NAV: NavItem[] = BUILT;
-// Each kind the server finds: its group label, icon and where a hit opens (a question opens its task).
+// Each kind the server finds: its group label, icon, the registry state family of its hits, where a hit opens (a question
+// opens its task) and the list section that takes the same query (the "All N" row).
 type Hit = Ops['search']['reply']['hits'][number];
 const ws = (id: string) => workspaces.find(x => x.id === id)!;
-const KINDS: Record<Hit['kind'], { label: string; icon: IconName; path: (h: Hit) => string }> = {
-  task: { label: ws('tasks').label, icon: ws('tasks').icon, path: h => '/tasks/' + encodeURIComponent(h.id) },
-  question: { label: 'Questions', icon: 'circle-question-mark', path: h => h.taskId ? '/tasks/' + encodeURIComponent(h.taskId) : h.sessionId ? '/conversations/' + encodeURIComponent(h.sessionId) : '/overview' },
-  conversation: { label: ws('conversations').label, icon: ws('conversations').icon, path: h => '/conversations/' + encodeURIComponent(h.id) },
-  project: { label: ws('projects').label, icon: ws('projects').icon, path: h => '/projects/' + encodeURIComponent(h.id) },
-  host: { label: ws('hosts').label, icon: ws('hosts').icon, path: h => '/hosts/' + encodeURIComponent(h.id) },
+const itemPath = (id: string, x: string) => `/${id}/` + encodeURIComponent(x);
+const KINDS: Record<Hit['kind'], { label: string; icon: IconName; family?: Family; list?: ViewName; path: (h: Hit) => string }> = {
+  task: { label: ws('tasks').label, icon: ws('tasks').icon, family: 'task', list: 'tasks', path: h => itemPath('tasks', h.id) },
+  question: { label: 'Questions', icon: 'circle-question-mark', family: 'question', path: h => h.taskId ? itemPath('tasks', h.taskId) : h.sessionId ? itemPath('conversations', h.sessionId) : '/overview' },
+  conversation: { label: ws('conversations').label, icon: ws('conversations').icon, family: 'session', list: 'conversations', path: h => itemPath('conversations', h.id) },
+  result: { label: ws('results').label, icon: ws('results').icon, family: 'artifact', list: 'results', path: h => itemPath('results', h.id) },
+  project: { label: ws('projects').label, icon: ws('projects').icon, path: h => itemPath('projects', h.id) },
+  host: { label: ws('hosts').label, icon: ws('hosts').icon, path: h => itemPath('hosts', h.id) },
+  agent: { label: ws('agents').label, icon: ws('agents').icon, path: h => itemPath('agents', h.id) },
+  pipeline: { label: ws('pipelines').label, icon: ws('pipelines').icon, path: h => itemPath('pipelines', h.id) },
 };
 
+// The project focus (OR-34): '-' is work outside projects; an empty focus holds everything. The server marks hits outside it.
+const toggleFocus = (id: string) => { const f = prefs.value.focus; setFocus(f.includes(id) ? f.filter(x => x !== id) : [...f, id]); };
+
 // Spotlight (OR-32): one provider per kind the server's `search` operation finds (agents call the same tool). The kinds of
-// one query share one request, sent 150 ms after the last key and reused while pending (up to 10 s) and for 2 s after; a failed one is not reused.
-let last: { query: string; at: number; hits: Promise<Ops['search']['reply']['hits']> } | null = null;
+// one query and focus share one request, sent 150 ms after the last key and reused while pending (up to 10 s) and for 2 s
+// after; a failed one is not reused. The server puts each kind's hits in the focus first and counts what its list shows.
+type Reply = Ops['search']['reply'];
+let last: { key: string; at: number; reply: Promise<Reply> } | null = null;
 const found = (kind: Hit['kind'], go: (to: string) => void): SpotlightProvider => {
   const w = KINDS[kind];
-  const fresh = (query: string) => last?.query === query && Date.now() - last.at < 2000;
   return { id: kind, label: w.label, find: async (query, signal) => {
-    if (!fresh(query)) {
+    // The focus without ignored projects, as lists apply it; the server leaves ignored projects out itself.
+    const { ignored } = prefs.value, focus = prefs.value.focus.filter(p => !ignored.includes(p)), key = JSON.stringify([query, focus, ignored]);
+    const fresh = () => last?.key === key && Date.now() - last.at < 2000;
+    if (!fresh()) {
       await new Promise(r => setTimeout(r, 150));
       if (signal.aborted) return [];
-      if (!fresh(query)) { const hits = op('search', { query }).then(r => r.hits); const l = last = { query, at: Date.now() + 8000, hits }; hits.then(() => { l.at = Date.now(); }, () => { if (last === l) last = null; }); }
+      if (!fresh()) { const reply = op('search', { query, ...(focus.length ? { projectIds: focus } : {}) }); const l = last = { key, at: Date.now() + 8000, reply }; reply.then(() => { l.at = Date.now(); }, () => { if (last === l) last = null; }); }
     }
-    return (await last!.hits).filter(h => h.kind === kind).map(h => ({ key: kind + ':' + h.id, icon: w.icon, label: h.title,
-      code: h.code ?? undefined, sub: h.projectId ?? undefined, run: () => go(w.path(h)) }));
+    const r = await last!.reply, hits = r.hits.filter(h => h.kind === kind);
+    const items: SpotlightItem[] = hits.map(h => {
+      const pinned = kind === 'project' && focus.includes(h.id), outside = !!h.outside, at = h.at ? Date.parse(h.at) : NaN;
+      // The project is not repeated on every row when a one-project focus already names it (OR-17).
+      return { key: kind + ':' + h.id, icon: w.icon, label: h.title, code: h.code ?? undefined, sub: kind === 'project' || focus.length === 1 && focus[0] === (h.projectId ?? '-') ? undefined : h.projectId ?? undefined,
+        state: w.family && h.state ? { family: w.family, state: h.state } : undefined, at: Number.isFinite(at) ? at : undefined, outside,
+        // An ignored project (found by naming it) cannot join the focus until it is restored, so it offers no focus action.
+        action: kind === 'project' && !ignored.includes(h.id) ? { label: pinned ? 'Remove from focus' : 'Add to focus', icon: 'focus' as const, pressed: pinned, run: () => toggleFocus(h.id) } : undefined,
+        run: () => go(w.path(h)) };
+    });
+    // "All N in <Section>": the list holds more than the focused rows shown; it opens with the same query (OR-36).
+    const total = r.counts[kind] ?? 0, shown = items.filter(i => !i.outside).length;
+    if (w.list && total > shown) items.push({ key: 'all:' + kind, icon: w.icon, label: `All ${total.toLocaleString('en')} in ${w.label}`, more: true, run: () => go(formatView({ view: w.list!, q: query })) });
+    return items;
   } };
 };
 
@@ -92,7 +116,7 @@ function App() {
   const [loc, go] = useLocation();
   const query = useSearch();
   const current = loc.split('/')[1] || 'overview';
-  const search = useRef((['task', 'question', 'conversation', 'project', 'host'] as const).map(k => found(k, go))).current;
+  const search = useRef((Object.keys(KINDS) as Hit['kind'][]).map(k => found(k, go))).current;
   // Pinned sections and the other preferences are person settings (prefs.ts), so they follow the person to every device.
   // Preferences load only after authorized baseline activation.
   // Focus and online check the person quietly (below); preferences changed elsewhere arrive as setting-change events.
@@ -169,7 +193,10 @@ function App() {
     return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
   }, []);
   // The project focus and ignored projects (OR-34) are person settings; lists apply them where their view names no projects.
+  // The empty palette offers the same presets as the focus chip, without ignored projects.
+  const { focus, focusPresets, ignored } = prefs.value;
   return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={NAV} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
+    searchIdle={<FocusPresets icon value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} onChange={setFocus} />}
     focus={access.value.state === 'open' ? <Focus go={go} /> : undefined}
     widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
