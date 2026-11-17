@@ -14,6 +14,7 @@ const cases = { // case: [expected rule, breach]
   absOverlay: ['OR-27', () => { const d = document.querySelector('[data-ui=detail]'); d.style.cssText += ';position:absolute;inset:0;z-index:9'; }],
   toggleInRail: ['OR-42', () => document.querySelector('[data-ui=nav-rail]').prepend(document.querySelector('.nav-toggle'))],
   railJump: ['OR-42', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.rail.mini .rail-h{display:none}' }))],
+  iconJump: ['OR-42', () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.rail.mini .nav-i a{padding:0 var(--space-2)}' }))],
   toggleLast: ['OR-42', () => document.querySelector('[data-ui=shell-header]').append(document.querySelector('.nav-toggle'))],
   noHeader: ['OR-43', () => document.querySelector('[data-ui=shell-header]').remove()],
   noTitle: ['OR-43', () => { document.querySelector('[data-ui=shell-header] h1').textContent = ''; }],
