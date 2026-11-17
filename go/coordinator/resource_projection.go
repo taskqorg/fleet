@@ -38,9 +38,6 @@ var errResourceClearing = errors.New("resource build clearing")
 // errResourceStall: the pass could not select its work; the processor loop pauses.
 var errResourceStall = errors.New("resource processor stalled")
 
-// errResourceHint: an execution's scope hint could not be read (the shared read pool).
-var errResourceHint = errors.New("resource scope hint unreadable")
-
 func init() { onStart(startResourceProcessor) }
 
 func startResourceProcessor(ctx context.Context, a *App) {
@@ -111,7 +108,7 @@ func resourceStallProblem(ctx context.Context, a *App, open bool) bool {
 		if !open {
 			return problemClose(q, "problem:resource:stalled")
 		}
-		return problemOpen(q, "problem:resource:stalled", nil, fmt.Sprintf("The resource processor keeps failing to select its work; it retries every %s.", resourceRetryEvery()))
+		return problemOpen(q, "problem:resource:stalled", nil, fmt.Sprintf("The resource processor keeps failing to select its work. Retry pauses are up to %s.", resourceRetryEvery()))
 	})
 	if err != nil && ctx.Err() == nil {
 		log.Printf("resource processor stall problem: %v", err)
@@ -683,6 +680,18 @@ func resourceScopeHint(ctx context.Context, a *App, id string) ([]string, error)
 	return pgx.CollectRows(rs, pgx.RowTo[string])
 }
 
+// Probe the same query with no matching execution. A candidate or cohort can time out on its own data
+// even while the read pool and scope tables are healthy.
+func resourceHintFailure(ctx context.Context, a *App, err error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	if _, probeErr := resourceScopeHint(ctx, a, ""); probeErr != nil {
+		return fmt.Errorf("%w: %w", errResourceStall, errors.Join(err, probeErr))
+	}
+	return err
+}
+
 // Materialization claims only work rows before evaluating the source in this same
 // statement snapshot. Later work is neither observed as claimed nor deleted.
 func resourceClaimSnapshotSQL() string {
@@ -867,10 +876,6 @@ func resourceFlushDeltas(q *Request, projects []string, deltas map[string]*resou
 // resourceReplace consumes only the UUIDs claimed by this attempt. The callback is replayable:
 // every retry resets its local claims, snapshot and candidate. Scope expansion restarts the whole Tx.
 func resourceReplace(ctx context.Context, a *App, id string) error {
-	return resourceReplaceAttempt(ctx, a, id, true)
-}
-
-func resourceReplaceAttempt(ctx context.Context, a *App, id string, holdHint bool) error {
 	ctx, span := obs.Start(obs.WithRun(ctx, obs.Run{ExecutionID: id}), "resource.replace", "internal")
 	var finalErr error
 	defer func() { span.End(finalErr) }()
@@ -881,10 +886,8 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, holdHint boo
 		scopeStart := time.Now()
 		ps, err := resourceScopeHint(ctx, a, id)
 		if err != nil {
-			// An isolated hint error pauses only this execution. A batch hint failure followed by this
-			// error pauses the whole processor; leaving this execution eligible lets the next pass probe recovery.
-			finalErr = err
-			if holdHint && ctx.Err() == nil {
+			finalErr = resourceHintFailure(ctx, a, err)
+			if !errors.Is(finalErr, errResourceStall) && ctx.Err() == nil {
 				var durable int
 				readErr := runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error {
 					return q.tx.QueryRow(q.ctx(), resourceWorkAttemptsSQL, id).Scan(&durable)
@@ -894,7 +897,7 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, holdHint boo
 				}
 				finalErr = errors.Join(finalErr, readErr)
 			}
-			return fmt.Errorf("%w: %w", errResourceHint, finalErr)
+			return finalErr
 		}
 		// A scope expansion that teaches no new scope set would repeat at once: it fails like any other error.
 		key := strings.Join(ps, "\x00")
@@ -1051,12 +1054,7 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 	}
 	hints, err := resourceBatchHints(ctx, a, ids)
 	if err != nil {
-		// A failed cohort query may be specific to its size. Probe one scope before classifying it as
-		// a shared-pool stall. A healthy individual read lets the caller split the cohort.
-		if _, probeErr := resourceScopeHint(ctx, a, ids[0]); probeErr != nil {
-			return fmt.Errorf("%w: %w", errResourceStall, errors.Join(err, probeErr))
-		}
-		return err
+		return resourceHintFailure(ctx, a, err)
 	}
 	project := hints[ids[0]]
 	if project == "" {
@@ -1191,16 +1189,15 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 	hints, err := resourceBatchHints(ctx, a, ids)
 	var finalErr error
 	if err != nil {
-		// Every candidate goes alone. If its own scope read fails too, the shared read pool is failing: the pass
-		// stalls there. An isolated hint failure after a successful batch read holds only that candidate.
+		// Every candidate goes alone. A failure on that path is classified by the empty-key probe.
 		hints, finalErr = nil, err
 	}
 	for _, cohort := range resourceCandidateCohorts(ids, hints) {
 		if len(cohort) == 1 {
-			if e := resourceReplaceAttempt(ctx, a, cohort[0], err == nil); e != nil {
+			if e := resourceReplace(ctx, a, cohort[0]); e != nil {
 				finalErr = errors.Join(finalErr, e)
-				if err != nil && errors.Is(e, errResourceHint) {
-					return fmt.Errorf("%w: %w", errResourceStall, finalErr)
+				if errors.Is(e, errResourceStall) {
+					return finalErr
 				}
 			}
 		} else if e := resourceBisectCohort(cohort,
@@ -1261,7 +1258,7 @@ func repairTotalsOwnership(ctx context.Context, a *App, id string) error {
 		if err := runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error { var e error; projects, e = resourceScopes(q, id); return e }); err != nil {
 			return err
 		}
-		// Like resourceReplaceAttempt: a scope set already tried would repeat at once, so it is an error.
+		// Like resourceReplace: a scope set already tried would repeat at once, so it is an error.
 		key := strings.Join(projects, "\x00")
 		if seen[key] {
 			return errResourceScope

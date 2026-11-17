@@ -311,7 +311,7 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 			if len(items) == 1 {
 				noun = "item"
 			}
-			text(&f, fmt.Sprintf("Resource processing keeps failing for %d %s (%s); retry pauses up to %s.", len(items), noun, strings.Join(items, ", "), resourceRetryEvery()))
+			text(&f, fmt.Sprintf("Resource processing keeps failing for %d %s (%s). Retry pauses are up to %s.", len(items), noun, strings.Join(items, ", "), resourceRetryEvery()))
 			out = append(out, f)
 		}
 		// Hosts the span rules may name: not removed, intake not paused.

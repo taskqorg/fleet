@@ -298,6 +298,17 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		t.Fatal("stall question stays", stalled())
 	}
 
+	// A broken scope table stalls all reads. A scope error with a successful empty-key probe is local to its data.
+	hintErr := errors.New("candidate scope read failed")
+	if got := resourceHintFailure(ctx, a, hintErr); got != hintErr {
+		t.Fatal("an isolated scope failure stalled the processor", got)
+	}
+	owner(`ALTER TABLE resource_work_scope RENAME TO resource_work_scope_away`)
+	if got := resourceHintFailure(ctx, a, hintErr); !errors.Is(got, errResourceStall) || !errors.Is(got, hintErr) {
+		t.Fatal("a broken scope read did not stall the processor", got)
+	}
+	owner(`ALTER TABLE resource_work_scope_away RENAME TO resource_work_scope`)
+
 	// A pass that cannot select its work is a processor-wide failure: the loop pauses, not the items.
 	owner(`ALTER TABLE resource_metadata_repair RENAME TO resource_metadata_repair_away`)
 	if err := pass(); !errors.Is(err, errResourceStall) {
