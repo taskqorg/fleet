@@ -1,6 +1,6 @@
 // Overview (docs/design-system/pages/overview.md): what needs the operator, operational counts, workers per host, projects.
 import { useLocation, useSearch } from 'wouter-preact';
-import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, Button, keyConnection, actor } from '../../../packages/ui/src/index.ts';
+import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, Button, keyConnection, actor, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { focusIds, scopeReady, prefs } from '../prefs.ts';
@@ -33,7 +33,8 @@ export function Overview() {
         { label: 'queued', icon: 'list-ordered', value: { value: data.counts.queued ?? 0, basis: 'measured' }, href: '/tasks?state=queued' },
   ] as const).filter(x => x.value.value > 0);
   return <>
-    <header class="page-h">{all && <><span class="muted">Every project, focus not applied</span><Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} /></>}<span class="grow" /><OfflineMarker state={state} now={now} /></header>
+    <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
+    {all && <header class="page-h"><span class="muted">Every project, focus not applied</span><Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} /></header>}
     <OpsSummary>
       {ops.length > 0 && <StatStrip label="Operations" stats={ops} />}
       <div class="cols">

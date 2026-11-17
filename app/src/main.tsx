@@ -197,8 +197,9 @@ function Focus({ go }: { go: (to: string) => void }) {
   const ids = list.map(p => p.id).join('\n');
   useEffect(() => { knownProjects.value = projects.data ? ids ? ids.split('\n') : [] : projects.error ? 'failed' : null; }, [ids, !!projects.data, !!projects.error]);
   const { focus, focusPresets, ignored } = prefs.value;
-  const outside = useOutside();
-  return <FocusControl projects={list} value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} outside={{ n: outside, onOpen: () => go('/overview?all') }}
+  // Not shown where it leads: the Overview with every project.
+  const [loc] = useLocation(), here = loc === '/overview' && new URLSearchParams(useSearch()).has('all'), outside = useOutside();
+  return <FocusControl projects={list} value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} outside={{ n: here ? 0 : outside, onOpen: () => go('/overview?all') }}
     onChange={setFocus} onSavePreset={n => saveFocusPreset(n)} onRemovePreset={removeFocusPreset} onIgnore={setIgnored} />;
 }
 

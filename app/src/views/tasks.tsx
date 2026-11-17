@@ -6,8 +6,7 @@ import {
   ListDetail, RowFacts, Fact, ProblemRow, StateBadge, HarnessMark, AgeChip, Button,
   SplitButton, Totals, Icon, DetailSection, Markdown, actions, OutcomeBlock, DecisionBlock, ExecTree, Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses,
   type TreeNode, type Harness, type StateOf, states as states_,
-  keyConnection, EntityCode, actor, fileLabel, viewOf,
-} from '../../../packages/ui/src/index.ts';
+  keyConnection, EntityCode, actor, fileLabel, viewOf, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
@@ -45,7 +44,7 @@ export function Tasks({ id }: { id?: string }) {
   // The empty text names the focus only when a focus is set: ignored projects alone are not a focus "Show all projects" could clear.
   const { filtered } = page, focused = !view.project?.length && prefs.value.focus.length > 0;
   const listPane = <>
-    <header class="page-h"><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
+    <ShellStatus><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></ShellStatus>
     <ListPagePanel page={page} noun="Tasks" placeholder="Search tasks, agent:claude host:mac" family="task" groups={GROUPS} sorts={SORTS} focused={id}
       actions={() => [
         { label: 'Pause', icon: 'pause', onClick: () => bulk('pause', chosen.filter(canPause)), disabledReason: off ?? (chosen.some(canPause) ? undefined : 'None can pause') },

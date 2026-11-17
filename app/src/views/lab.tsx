@@ -4,7 +4,7 @@
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField, StepList, msMeasured, type StepItem } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { LabCreate } from './lab-create.tsx';
@@ -28,7 +28,8 @@ export function Lab({ id }: { id?: string }) {
   const approvals = data.ratings.filter((r: any) => r.exampleArtifactId), open = data.ratings.filter((r: any) => r.experimentId);
   // Control column: what waits for the owner, then the experiments catalogue (its one scroller, OR-25).
   const list = <>
-    <header class="page-h"><span class="grow" /><Button label="New experiment" icon="plus" iconOnly onClick={() => go('/lab/new')} /><OfflineMarker state={state} now={now} /></header>
+    <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
+    <header class="page-h"><span class="grow" /><Button label="New experiment" icon="plus" iconOnly onClick={() => go('/lab/new')} /></header>
     {(approvals.length > 0 || open.length > 0) && <section class="panel"><header class="panel-h"><Icon name="bell" /><h2>Waiting for you</h2></header>
       {open.length > 0 && <div class="vl-row static"><span>{open.length} open ratings</span></div>}
       {approvals.map((r: any) => <Rating key={r.id} r={r} now={now} />)}

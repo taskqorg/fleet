@@ -4,7 +4,7 @@
 // Staleness is decided on the client from lastSeenAt (no write happens when a host stops polling), re-evaluated every 5 s.
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { EntityCode, ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow, useTick } from '../../../packages/ui/src/index.ts';
+import { EntityCode, ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow, useTick, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { Limits } from './limits.tsx';
@@ -28,7 +28,8 @@ export function Hosts({ id }: { id?: string }) {
   const reading = (hid: string) => (tele.data?.hosts ?? []).find((r: any) => r.hostId === hid);
   const sel = data.hosts.find((h: any) => h.id === id);
   const list = <>
-    <header class="page-h"><span class="grow" /><OfflineMarker state={state} now={now} />
+    <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
+    <header class="page-h"><span class="grow" />
       <a class="btn quiet" href="/hosts/limits" onClick={e => { e.preventDefault(); go('/hosts/limits'); }}><Icon name="gauge" />Limits</a></header>
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>

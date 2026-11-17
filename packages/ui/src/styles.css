@@ -286,6 +286,8 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .shell-h{flex:none;display:flex;align-items:center;gap:var(--space-2);min-width:0;height:calc(var(--size-control) + 2 * var(--space-2));padding:0 var(--space-3) 0 var(--space-2);border-bottom:1px solid var(--line);background:var(--bg)}
 .shell-title{flex:0 1 auto;min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-size-lg);font-weight:var(--font-weight-bold);letter-spacing:-.01em}
 .shell-h>.grow{flex:1 0 0}
+.shell-status{display:flex;align-items:center;gap:var(--space-2);min-width:0;overflow:hidden;white-space:nowrap}
+.shell-status:empty{display:none}
 .nav-toggle,.shell-search{flex:none}
 .nav-toggle .btn{border-color:transparent;background:none}
 .shell-search:hover{background:var(--hover);color:var(--fg)}
@@ -733,6 +735,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .focus-list li>.nm{flex:1;padding:0 var(--space-2)}
 .focus-act{flex:none;display:inline-grid;place-items:center;width:var(--size-control);height:var(--size-control);border:0;border-radius:var(--radius-md);background:none;color:var(--fg-muted);cursor:pointer}
 .focus-act:hover,.focus-act:focus-visible{background:var(--hover);color:var(--fg)}
+.focus-act[aria-disabled=true]{opacity:.4;cursor:default}
 .focus-ignored{padding-top:var(--space-2);border-top:1px solid var(--line)}
 .focus-ignored>.group-h{height:var(--size-control);padding:0 var(--space-2);color:var(--fg-muted)}
 /* Phone: icons only (the chip's names, the outside words); the panel spans the window under the header. */

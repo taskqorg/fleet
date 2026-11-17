@@ -926,7 +926,7 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id]);
   const save = () => { if (naming?.trim()) onSavePreset(naming.trim()); setNaming(null); };
   return <div class={`focus-ctl${open ? ' open' : ''}${value.length ? ' set' : ''}`} data-ui="focus-control" ref={ref}>
-    {outside && outside.n > 0 && <button type="button" class="focus-outside t-attention" aria-label={`${outside.n} need you outside focus: show every project`} data-tip="Show every project" onClick={outside.onOpen}>
+    {outside && outside.n > 0 && <button type="button" class="focus-outside t-attention" aria-label={`${outside.n} need you outside focus: show every project`} data-tip="Show every project" onClick={() => { setOpen(false); outside.onOpen(); }}>
       <Icon name="bell" /><span class="num">{outside.n}</span><span class="nm">need you outside focus</span></button>}
     <button type="button" class="focus-btn" aria-expanded={open} aria-label={`Focus: ${summary}`} onClick={() => setOpen(!open)}>
       <span class="focus-ic" data-tip={`Focus: ${summary}`} data-tip-narrow><Icon name="focus" /></span>
@@ -948,7 +948,8 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
       {offered.length > 8 && <SearchBox label="Find project" value={q} onInput={setQ} always />}
       <ul class="focus-list" aria-label="Projects">{shown.map(p => <li key={p.id}><label><input type="checkbox" class="row-check" checked={value.includes(p.id)} onChange={() => toggle(p.id)} />
         <span class="nm">{p.name}</span></label>
-        {onIgnore && p.id !== '-' && <button type="button" class="focus-act" aria-label={`Ignore ${p.name}`} data-tip="Ignore: hide everywhere" onClick={() => onIgnore(p.id, true)}><Icon name="circle-slash" /></button>}</li>)}</ul>
+        {onIgnore && p.id !== '-' && (only => <button type="button" class="focus-act" aria-label={`Ignore ${p.name}`} aria-disabled={only || undefined}
+          data-tip={only ? 'The only focused project: focus another first' : 'Ignore: hide everywhere'} onClick={() => { if (!only) onIgnore(p.id, true); }}><Icon name="circle-slash" /></button>)(value.length === 1 && value[0] === p.id)}</li>)}</ul>
       {hidden.length > 0 && <div class="focus-ignored">
         <button type="button" class="group-h" aria-expanded={showIgnored} onClick={() => setShowIgnored(!showIgnored)}>
           <span class={showIgnored ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span><Icon name="circle-slash" /><b>Ignored</b><span class="num">{hidden.length}</span></button>

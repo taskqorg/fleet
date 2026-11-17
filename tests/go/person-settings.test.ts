@@ -119,7 +119,7 @@ test('P6 ignored projects are a person setting: ignored and restored one at a ti
   assert.deepEqual(s.ignored, ['ign-b']); assert.deepEqual(s.focus, ['ign-a'], 'a focus never holds an ignored project');
   const fields = (await op('setting_changes', {target: 'person:' + s.email})).changes.map((c: any) => c.field);
   assert.ok(fields.includes('ignored'), 'an ignore is audited');
-  for (const bad of [{ignore: {project: 'no-such-project', ignored: true}}, {ignored: ['no-such-project']}, {ignore: {project: '', ignored: true}}]) {
+  for (const bad of [{ignore: {project: 'no-such-project', ignored: true}}, {ignored: ['no-such-project']}, {ignore: {project: '', ignored: true}}, {ignore: {project: 'ign-a'}}]) {
     const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify(bad)});
     assert.equal(b.status, 400, JSON.stringify(bad));
   }
