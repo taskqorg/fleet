@@ -197,11 +197,17 @@ export function Delivery({ id }: { id?: string }) {
 /** Seconds in a stage after which its time is red: the stage's P90 over the last 14 days; none for stages without a norm. */
 const alertOf = (n: Norms, it: Item) => { const x = n.stage(it.stage, it.repo); return x ? x[1] / 1000 : undefined; };
 
+/** Released before install times were recorded: its install is unknown, never measured. */
+const unrecorded = (x: HistoryPr, installsFrom: number | null) => !!installsFrom && !!x.released && ms(x.released) < installsFrom;
+/** Due a measure: it has one, or it reached the hosts (installed), or recording had not begun. One not installed yet is
+ *  on its way (or stuck before the hosts), not unmeasured; the rule reads the data only, never the clock. */
+const due = (x: HistoryPr, installsFrom: number | null) => typeof x.durations.total === 'number' || !!x.installed?.coordinator || unrecorded(x, installsFrom);
+
 /** A recorded (merged) pull request as a list row: its stage from how far it got. */
 function fromHistory(x: HistoryPr, installsFrom?: string): Item {
   // Released before installs were recorded: its install is unknown, so it is done (merged), not installing for weeks.
-  const unrecorded = !!x.released && !!installsFrom && x.released < installsFrom;
-  const installed = !!x.installed?.coordinator, stage: Stage = installed ? 'installed' : unrecorded ? 'merged' : x.released ? 'installing' : 'releasing';
+  const unrec = unrecorded(x, installsFrom ? ms(installsFrom) : null);
+  const installed = !!x.installed?.coordinator, stage: Stage = installed ? 'installed' : unrec ? 'merged' : x.released ? 'installing' : 'releasing';
   return { projectId: 'fleet', repo: FLEET, number: x.number, title: x.title, url: x.url, stage, since: (installed ? x.installed.coordinator : x.released ?? x.merged) as string, opened: x.opened, merged: x.merged, release: x.release };
 }
 
@@ -242,7 +248,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
     {fleetShown && <Pace hist={hist?.h ?? null} error={histError} now={now} norms={norms} range={range} buckets={buckets} picked={picked} onRange={onRange} onPick={onPick} />}
   </div>;
 }
-const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available' };
+const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available', run: 'Queue run' };
 const keyLabel = (k: string) => KEYS[k] ?? k;
 
 // Where the time goes: a pull request's stage durations folded into four parts, in pipeline order.
@@ -254,13 +260,21 @@ const partOf = (x: HistoryPr, keys: string[]) => keys.reduce((s, k) => s + (x.du
 // Measured through install: every part has its own duration (enqueue and merge may be absent when there was no wait).
 const complete = (x: HistoryPr) => ['pr_ci', 'queue', 'release', 'install'].every(k => typeof x.durations[k] === 'number');
 
-/** Open to installed in a bucket: P50 and P90 of its pull requests measured through install; none measured is "not measured", never 0. */
+/**
+ * Open to installed in a bucket: P50 and P90 of its pull requests measured through install; none measured is "not
+ * measured", never 0. Only pull requests due a measure (`due`) count against "partly measured"; one not installed yet
+ * is on its way.
+ */
 export function totalMark(prs: HistoryPr[], b: Bucket, installsFrom: number | null): DayMark {
   const xs = prs.map(x => x.durations.total).filter((v): v is number => typeof v === 'number');
   if (!prs.length) return { v: null, missing: 'nothing merged' };
-  if (!xs.length) return { v: null, missing: installsFrom && b.end <= installsFrom ? `install times recorded from ${day(installsFrom)}` : 'not installed yet' };
-  const part = [xs.length < prs.length ? `${xs.length} of ${prs.length} measured` : '', b.today ? 'so far' : ''].filter(Boolean).join(', ');
-  return { v: q(xs, 0.5), hi: q(xs, 0.9), partial: part || undefined };
+  // Why none is measured, the most specific first: installed but its install time not matched, recording not begun, on its way.
+  // An installed one without a measure: its hosts took a later release, or its install was not matched to this one.
+  if (!xs.length) return { v: null, missing: prs.some(x => !!x.installed?.coordinator) ? 'installed with a later release, or not matched to its own'
+    : installsFrom && (b.end <= installsFrom || prs.some(x => unrecorded(x, installsFrom))) ? `install times recorded from ${day(installsFrom)} ${hourLabel(installsFrom)}`
+    : 'not installed yet' };
+  const n = prs.filter(x => due(x, installsFrom)).length;
+  return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < n ? `${xs.length} of ${n} measured` : undefined, partial: b.today ? 'so far' : undefined };
 }
 
 function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick }: {
@@ -277,7 +291,8 @@ function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick
   const merged: DayMark[] = buckets.map(b => ({ v: inB(b).length, partial: b.today ? 'so far' : undefined }));
   const totals = prs.map(x => x.durations.total).filter((v): v is number => typeof v === 'number');
   const removals = prs.reduce((n, x) => n + x.queueRemovals, 0), flakes = prs.reduce((n, x) => n + x.flakes, 0);
-  const scope = picked ? inB(picked) : prs, done = scope.filter(complete);
+  // Pull requests still on their way are not counted as unmeasured, as on the chart.
+  const scope = (picked ? inB(picked) : prs).filter(x => due(x, installsFrom)), done = scope.filter(complete);
   const mean = (keys: string[]) => done.reduce((s, x) => s + partOf(x, keys), 0) / (done.length || 1);
   const share: SharePart[] = PARTS.map(p => ({ label: p.label, v: mean(p.keys), tone: p.tone, tip: `${p.label}: mean ${fmt(mean(p.keys))}, P50 ${fmt(q(done.map(x => partOf(x, p.keys)), 0.5) ?? 0)}` }));
   const days = Math.max(1, (now - from) / DAY), base = norms.total;
@@ -296,7 +311,7 @@ function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick
     <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={buckets} marks={merged} value={v => String(Math.round(v))}
       cap={capOf(merged.map(m => m.v), { floor: 4, fence: Infinity })} tone="d2" axis selected={picked?.key ?? null} onSelect={pick} />
     <ShareBar title="Where the time goes" label="Where the time goes" parts={share} value={fmt}
-      note={`mean per pull request, ${done.length} of ${scope.length} measured${picked ? ` · ${picked.tip ?? picked.label}` : ''}`} />
+      note={`mean per pull request, ${done.length} of ${scope.length} with every stage measured${picked ? ` · ${picked.tip ?? picked.label}` : ''}`} />
   </div></DetailSection>;
 }
 
