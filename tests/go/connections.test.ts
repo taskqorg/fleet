@@ -982,9 +982,13 @@ test('C11 minted spec carries file and idempotent (requirement: docs/designs/fle
   const existingTools = ['issue_get', 'issue_comments'];
   ok(await op('connections_set_tools', {connection: c, tools: existingTools}));
   await until(() => issuePath().includes('attachments(name,url,size)') || undefined, 'legacy reads before granting download');
+  const old = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
   ok(await op('connections_set_tools', {connection: c, tools: [...existingTools, 'attachment_add', 'attachment_get']}));
   await until(() => issuePath().includes('attachments(id,name,size,mimeType,comment(id))') || undefined, 'attachment IDs after granting download');
   const m = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  const token = (value: string) => snapshot().tokens.find((entry: any) => entry.sha256 === sha(value));
+  await until(() => token(m.token)?.fileDownloads?.includes(c) || undefined, 'new token can use attachment IDs');
+  assert.equal(token(old.token).fileDownloads, undefined);
   const tools = Object.fromEntries(m.connections[0].tools.map((x: any) => [x.name, x]));
   assert.deepEqual([tools.attachment_add.file, tools.attachment_add.idempotent], ['upload', false]);
   assert.deepEqual([tools.attachment_get.file, tools.attachment_get.idempotent], ['download', true]);

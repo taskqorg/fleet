@@ -136,8 +136,8 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 				gc.Limits = &limits
 			}
 		}
-		if gc.Provider == "youtrack" && !slices.Contains(gc.Tools, "attachment_get") {
-			// Keep the existing issue_get URLs until the owner grants the replacement download tool.
+		if gc.Provider == "youtrack" {
+			// Keep issue_get URLs for connections and existing tokens without the replacement download tool.
 			const legacyProvider = "youtrack-legacy-attachments"
 			if _, ok := snap.Providers[legacyProvider]; !ok {
 				p := snap.Providers[gc.Provider]
@@ -148,7 +148,9 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 				snap.Providers = maps.Clone(snap.Providers)
 				snap.Providers[legacyProvider] = p
 			}
-			gc.Provider = legacyProvider
+			if !slices.Contains(gc.Tools, "attachment_get") {
+				gc.Provider = legacyProvider
+			}
 		}
 		snap.Connections[name] = gc
 	}
@@ -161,7 +163,7 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 			continue
 		}
 		snap.Tokens = append(snap.Tokens, contract.GatewayRunToken{Sha256: astr(t["sha256"]), ExecutionId: astr(t["executionId"]), DirectedBy: astr(t["directedBy"]),
-			ProjectId: astr(t["projectId"]), ExperimentId: astr(t["experimentId"]), Connections: strs(t["connections"])})
+			ProjectId: astr(t["projectId"]), ExperimentId: astr(t["experimentId"]), Connections: strs(t["connections"]), FileDownloads: strs(t["fileDownloads"])})
 	}
 	return snap, nil
 }
@@ -969,6 +971,7 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 	token := randomToken()
 	sha := sha256hex([]byte(token))
 	names, specs, refused := []any{}, []any{}, []string{}
+	var fileDownloads []string
 	for _, c := range granted {
 		names = append(names, c["name"])
 		p := mapOf(providers[astr(c["provider"])])
@@ -980,6 +983,9 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 				entry := doc{"name": t, "description": spec["description"], "inputSchema": spec["inputSchema"], "idempotent": spec["idempotent"] == true}
 				if spec["file"] != nil {
 					entry["file"] = spec["file"]
+				}
+				if spec["file"] == "download" && !slices.Contains(fileDownloads, astr(c["name"])) {
+					fileDownloads = append(fileDownloads, astr(c["name"]))
 				}
 				tools = append(tools, entry)
 			}
@@ -1008,6 +1014,9 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 	}
 	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": run["executionId"], "directedBy": run["directedBy"], "projectId": projectOrNil(run["projectId"]),
 		"experimentId": run["experimentId"], "pipelineRunId": run["pipelineRunId"], "connections": names, "createdAt": nowMs()}
+	if len(fileDownloads) > 0 {
+		row["fileDownloads"] = fileDownloads
+	}
 	if run["step"] == true {
 		row["step"] = true
 	}

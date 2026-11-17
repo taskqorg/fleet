@@ -1176,6 +1176,23 @@ func TestUploadProviderCutIsUnknown(t *testing.T) {
 	expect(t, len(uploads), 1, "provider requests")
 }
 
+// Requirement: a provider 5xx after a file POST leaves the outcome unknown.
+// Risk: a retry creates a duplicate attachment.
+func TestUploadProvider5xxIsUnknown(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	p.onUpload = func(w http.ResponseWriter, read func()) {
+		read()
+		http.Error(w, "failed after receiving upload", 500)
+	}
+	data := []byte("invented")
+	status, _ := gw.uploadBytes(data, map[string]any{"issue": "TGT-12", "name": "a.txt"})
+	expect(t, status, 500, "provider status")
+	line := lastLine(t, gw)
+	expect(t, []any{line["outcome"], field(line, "transfer", "sha256")}, []any{"unknown", shaHex(data)}, "upload outcome")
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 1, "provider requests")
+}
+
 // Requirement: §9 download: the lookup carries the key; the file fetch from the signed URL carries none.
 // Risk: the key leaves the gateway on a request it does not need, to a URL the provider's reply chose.
 func TestDownloadFetchCarriesNoKey(t *testing.T) {

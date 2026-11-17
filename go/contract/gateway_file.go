@@ -264,7 +264,23 @@ func openDownloadRoot(path string) (*os.Root, error) {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return nil, err
 	}
-	return os.OpenRoot(path)
+	expected, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !expected.IsDir() {
+		return nil, fs.ErrPermission
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	actual, err := root.Stat(".")
+	if err != nil || !os.SameFile(expected, actual) {
+		root.Close()
+		return nil, fs.ErrPermission
+	}
+	return root, nil
 }
 
 // openFolder opens components relative to their parents and verifies each opened directory's identity.

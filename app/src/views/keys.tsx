@@ -14,6 +14,9 @@ const fileLimits = (l: { fileBytes?: number; replyBytes?: number; stallMs?: numb
   `stall ${duration((l?.stallMs ?? 60_000) / 1000).text}`, `answer ${duration((l?.answerMs ?? 120_000) / 1000).text}`,
 ].join(' · ');
 
+const fileTimeouts = (l?: { stallMs?: number; answerMs?: number }) =>
+  `Stall ${l?.stallMs ?? 60_000} ms · Answer ${l?.answerMs ?? 120_000} ms`;
+
 export function Keys({ id }: { id?: string }) {
   const [, go] = useLocation();
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +67,9 @@ export function Keys({ id }: { id?: string }) {
         onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, experiments: ids(v) } })} />
       <KvRow icon="activity" label="Intake" value={<Button label={sel.intake === 'all' ? 'Pause' : 'Resume'} icon={sel.intake === 'all' ? 'pause' : 'play'} onClick={() => run('connections_set_intake', { connection: sel.name, intake: sel.intake === 'all' ? 'paused' : 'all' })} />} />
       {/* File limits (fleet-connections.md §9) are set by the connections_set_limits operation; the screen shows them. */}
-      <KvRow icon="gauge" label="Limits" value={fileLimits(sel.limits)} />
+      <KvRow icon="gauge" label="Limits" value={<span data-tip={fileTimeouts(sel.limits)} aria-description={fileTimeouts(sel.limits)}>
+        {fileLimits(sel.limits)}
+      </span>} />
     </DetailSection>
   </article>;
   return <ListDetail list={list} detail={detail || undefined} detailKey={id} />;

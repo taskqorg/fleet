@@ -194,8 +194,12 @@ func TestGuardRefuses(t *testing.T) {
 type fileGateway struct {
 	*httptest.Server
 	requests atomic.Int64
-	args     map[string]any
-	sha      string
+	upload   atomic.Pointer[observedUpload]
+}
+
+type observedUpload struct {
+	args map[string]any
+	sha  string
 }
 
 func newFileGateway(t *testing.T, body []byte) *fileGateway {
@@ -208,9 +212,10 @@ func newFileGateway(t *testing.T, body []byte) *fileGateway {
 			b, _ := io.ReadAll(r.Body)
 			sum := sha256.Sum256(b)
 			raw, _ := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Fleet-Args"))
-			json.Unmarshal(raw, &g.args)
-			g.sha = hex.EncodeToString(sum[:])
-			if r.Header.Get("Content-Type") != "application/octet-stream" || r.Header.Get("X-Fleet-Sha256") != g.sha || r.ContentLength != int64(len(b)) {
+			observation := &observedUpload{sha: hex.EncodeToString(sum[:])}
+			json.Unmarshal(raw, &observation.args)
+			g.upload.Store(observation)
+			if r.Header.Get("Content-Type") != "application/octet-stream" || r.Header.Get("X-Fleet-Sha256") != observation.sha || r.ContentLength != int64(len(b)) {
 				w.WriteHeader(400)
 				return
 			}
@@ -280,9 +285,13 @@ func TestConnectionFileTools(t *testing.T) {
 		}
 	}
 	up := decM(resultText(r[2]))
-	if jAt(r[2], "result", "isError") != false || gw.args["issue"] != "TGT-1" || gw.args["name"] != "shot.png" || gw.args["mediaType"] != "image/png" || len(gw.args) != 3 ||
-		jStr(up, "sha256") != gw.sha || jStr(up, "callId") != "c1" || jAt(up, "reply") == nil {
-		t.Fatalf("upload: %s, args %v", resultText(r[2]), gw.args)
+	observed := gw.upload.Load()
+	if observed == nil {
+		t.Fatal("upload did not reach the gateway")
+	}
+	if jAt(r[2], "result", "isError") != false || observed.args["issue"] != "TGT-1" || observed.args["name"] != "shot.png" || observed.args["mediaType"] != "image/png" || len(observed.args) != 3 ||
+		jStr(up, "sha256") != observed.sha || jStr(up, "callId") != "c1" || jAt(up, "reply") == nil {
+		t.Fatalf("upload: %s, args %v", resultText(r[2]), observed.args)
 	}
 	down := decM(resultText(r[3]))
 	want := filepath.Join(input, "attachments", "TGT-1", "85-7-screen.png")
@@ -359,7 +368,8 @@ func TestConnectionCLI(t *testing.T) {
 	out.Reset()
 	ok, err = connectionCommand([]string{"call", "youtrack", "attachment_add", spec}, strings.NewReader(`{"issue":"TGT-1","path":"shot.png"}`), &out)
 	json.Unmarshal(out.Bytes(), &line)
-	if err != nil || !ok || line.Transfer == nil || line.Transfer.Direction != contract.CallTransferDirectionUpload || gw.args["name"] != "shot.png" {
+	observed := gw.upload.Load()
+	if err != nil || !ok || line.Transfer == nil || line.Transfer.Direction != contract.CallTransferDirectionUpload || observed == nil || observed.args["name"] != "shot.png" {
 		t.Fatalf("upload: %v %s", err, out.String())
 	}
 	if _, err := connectionCommand([]string{"call", "youtrack", "nope", spec}, strings.NewReader(`{}`), &out); err == nil {

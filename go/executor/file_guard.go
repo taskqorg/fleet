@@ -173,7 +173,7 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 		if !filepath.IsAbs(base) {
 			return nil, nil, guardError{"the upload base is unavailable"}
 		}
-		path = filepath.Join(base, path)
+		path = base + "/" + path // resolve symlinks before interpreting ..
 	}
 	deny := deniedIdents()
 	resolved, err := resolveUploadPath(path, deny)

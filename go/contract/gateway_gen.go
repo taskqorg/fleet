@@ -283,12 +283,13 @@ func (v *GatewayProvider) Validate() error {
 }
 
 type GatewayRunToken struct {
-	Connections  []string `json:"connections"`
-	DirectedBy   string   `json:"directedBy"`
-	ExecutionId  string   `json:"executionId"`
-	ExperimentId string   `json:"experimentId"`
-	ProjectId    string   `json:"projectId"`
-	Sha256       string   `json:"sha256"`
+	Connections   []string `json:"connections"`
+	DirectedBy    string   `json:"directedBy"`
+	ExecutionId   string   `json:"executionId"`
+	ExperimentId  string   `json:"experimentId"`
+	FileDownloads []string `json:"fileDownloads,omitempty"`
+	ProjectId     string   `json:"projectId"`
+	Sha256        string   `json:"sha256"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

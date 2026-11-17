@@ -774,6 +774,9 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		if status < 200 || status > 299 {
 			a.outcome, a.err = "error", fmt.Sprintf("provider-%d", status)
 		}
+		if status >= 500 && b.open != nil {
+			a.outcome = "unknown" // a failing upload reply does not establish whether the provider saved the file
+		}
 		if c.Provider == "anthropic" && t.Path == "/v1/messages" {
 			a.usage = nil
 			if status >= 200 && status <= 299 {
@@ -927,11 +930,16 @@ func (g *gateway) resolve(q *request) {
 	s := g.snapshot.Load()
 	c, known := s.Connections[q.connection]
 	q.c, q.p = c, s.Providers[c.Provider]
-	q.t, q.offered = q.p.Tools[q.tool]
-	q.offered = q.offered && known && contains(c.Tools, q.tool)
 	if q.run != nil {
 		q.run = s.tokens[q.run.Sha256] // nil once revoked
 	}
+	if q.tool == "issue_get" && c.Provider == "youtrack" && q.run != nil && !contains(q.run.FileDownloads, q.connection) {
+		if legacy, ok := s.Providers["youtrack-legacy-attachments"]; ok {
+			q.p = legacy
+		}
+	}
+	q.t, q.offered = q.p.Tools[q.tool]
+	q.offered = q.offered && known && contains(c.Tools, q.tool)
 }
 
 // admit refuses a call its token, grant, tool, intake or budget does not allow; nil admits it.

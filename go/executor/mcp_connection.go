@@ -142,7 +142,15 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 			return refusedLine(connection, tool, "secret-in-file", "the upload name holds this client's Fleet token or Access secret; nothing was sent")
 		}
 	}
-	sum, found, err := scanFile(io.NewSectionReader(f, 0, info.Size()), patterns)
+	staged, err := os.CreateTemp("", "fleet-upload-*")
+	if err != nil {
+		return refusedLine(connection, tool, "staging-failed", "cannot create a private upload copy")
+	}
+	defer staged.Close()
+	if err := os.Remove(staged.Name()); err != nil {
+		return refusedLine(connection, tool, "staging-failed", "cannot keep the upload copy private")
+	}
+	sum, found, err := scanFile(io.TeeReader(io.NewSectionReader(f, 0, info.Size()), staged), patterns)
 	if err != nil {
 		return refusedLine(connection, tool, "path-refused", "the file cannot be read")
 	}
@@ -150,8 +158,12 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 		return refusedLine(connection, tool, "secret-in-file", "the file holds this client's Fleet token or Access secret; nothing was sent")
 	}
 	head := make([]byte, 512)
-	n, _ := f.ReadAt(head, 0)
-	return contract.GatewayUpload(context.Background(), t, connection, tool, args, contract.Upload{File: f, Size: info.Size(),
+	size, err := staged.Seek(0, io.SeekCurrent)
+	if err != nil || size != info.Size() {
+		return refusedLine(connection, tool, "staging-failed", "the file size changed while preparing the upload")
+	}
+	n, _ := staged.ReadAt(head, 0)
+	return contract.GatewayUpload(context.Background(), t, connection, tool, args, contract.Upload{File: staged, Size: size,
 		Name: fileName, MediaType: mediaTypeOf(fileName, head[:n]), Sha256: sum})
 }
 
