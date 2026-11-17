@@ -39,13 +39,14 @@ type Scope struct{ ProjectIDs, Person string }
 // fleet.actor from it, which fleet_change() records as change.actor (docs/designs/fleet-pm-agent.md §1).
 type actorKey struct{}
 
-// showDeletedKey: the context value of a host's own call (true); its transactions set fleet.deleted=on, so the stop,
-// teardown and receipts of deleted work still land (migration 67). An agent acting for its director clears it.
+// showDeletedKey: the context value of an executor-internal host call (true); its transactions set fleet.deleted=on
+// (migration 67), so the stop and teardown of deleted work are still delivered and their results land.
 type showDeletedKey struct{}
 
-// agentHostRoutes: host routes that carry an agent's own request (its tools, project operations, child runs); they
-// read as the agent does, without deleted rows.
-var agentHostRoutes = map[string]bool{"/api/hosts/agent-tools": true, "/api/hosts/project-operations": true, "/api/hosts/delegations": true}
+// deletedHostRoutes: the host routes that see deleted rows. Every other host route (agent tools, project operations,
+// child runs, artifact reads and transfers) reads as everyone does: a late upload of deleted work gets 404 and the
+// executor sets it aside.
+var deletedHostRoutes = map[string]bool{"/api/hosts/poll": true, "/api/hosts/receipts": true, "/api/hosts/events": true, "/api/hosts/spans": true}
 
 // Canonical advisory-lock hierarchy. Within any transaction, requested locks are sorted and deduplicated by (rank, key),
 // and dynamic lock acquisition rejects any lock ordered before or equal to a lock already held in the transaction:

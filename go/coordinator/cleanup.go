@@ -400,7 +400,8 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 	}
 	// Pipeline runs are cancelled first, each in its own transaction under its run lock (pipelineCancel), as a Lab
 	// cell cancel does; the step a host holds is stopped like any execution. The experiments stop first, so Lab
-	// launches no new trial meanwhile; the checks run in that same transaction, so a refused delete stops nothing.
+	// launches no new trial meanwhile; the checks run in that same transaction, so a delete refused there stops nothing
+	// (one refused by the last transaction, after a new citing score, leaves the experiment stopped; delete it again).
 	// ponytail: a pipeline run a task starts between these transactions is tombstoned uncancelled; receipts of its
 	// steps (host calls see deleted rows) could still advance it. Cancel it in the last transaction if that is seen.
 	runs := []string{}
@@ -647,6 +648,14 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 		if blocked, err = c.blockedBy(q); err != nil || blocked != "" {
 			return err
 		}
+		// A stop or teardown a host has not fetched yet keeps the object: purging it would leave the agent running and
+		// the worktree in place. hosts_remove settles the commands of a removed host.
+		if ok, err := has(q, "SELECT 1 FROM document WHERE kind='command' AND data->>'status'='pending' AND data->>'executionId'=ANY($1)", c.sets["execution"]); err != nil || ok {
+			if ok {
+				blocked = "pending command"
+			}
+			return err
+		}
 		if rows, bytes, err = c.counts(q); err != nil || preview {
 			return err
 		}
@@ -663,6 +672,20 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	kinds := contract.PurgeKindValues
 	if len(b.Kinds) > 0 {
 		kinds = b.Kinds
+	}
+	// Hosts first, as the preview sees them: tombstoned rows count as references, so a host a purged project named goes
+	// at the next purge.
+	if slices.Contains(kinds, contract.PurgeKindHost) {
+		if err := runTx(q.ctx(), q.app, q, !b.Preview, "", func(q *Request) error {
+			if err := showDeleted(q); err != nil {
+				return err
+			}
+			removed, kept, err := purgeHosts(q, b.Preview)
+			out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, kept)
+			return err
+		}); err != nil {
+			return out, err
+		}
 	}
 	rows := map[contract.ObjectKind]*contract.KindCount{}
 	for _, kind := range []contract.PurgeKind{contract.PurgeKindExperiment, contract.PurgeKindProject} {
@@ -682,7 +705,23 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		}
 		removed, kept := contract.PurgeCount{Kind: kind, Ids: []string{}}, contract.PurgeCount{Kind: kind, Ids: []string{}}
 		var bytes int64
-		// One pass, as the preview: a root kept only by another tombstoned root goes at the next purge.
+		// The roots unblocked before any goes, as the preview sees them: a root kept only by another tombstoned root
+		// goes at the next purge.
+		if !b.Preview {
+			free := []string{}
+			for _, id := range roots {
+				_, _, blocked, err := purgeRootTx(q, kind, id, true)
+				if err != nil {
+					return out, err
+				}
+				if blocked == "" {
+					free = append(free, id)
+				} else {
+					kept.Ids = append(kept.Ids, id)
+				}
+			}
+			roots = free
+		}
 		{
 			left := []string{}
 			for _, id := range roots {
@@ -712,22 +751,9 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 			roots = left
 		}
 		removed.Count, removed.Bytes = int64(len(removed.Ids)), &bytes
-		kept.Ids, kept.Count = append(kept.Ids, roots...), int64(len(roots))
+		kept.Ids = append(kept.Ids, roots...)
+		kept.Count = int64(len(kept.Ids))
 		out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, kept)
-	}
-	// Hosts last (a purged project may have been the last history naming one), listed first. Tombstoned rows count as
-	// references: a host stays while any row names it.
-	if slices.Contains(kinds, contract.PurgeKindHost) {
-		if err := runTx(q.ctx(), q.app, q, !b.Preview, "", func(q *Request) error {
-			if err := showDeleted(q); err != nil {
-				return err
-			}
-			removed, kept, err := purgeHosts(q, b.Preview)
-			out.Removed, out.Kept = append([]contract.PurgeCount{removed}, out.Removed...), append([]contract.PurgeCount{kept}, out.Kept...)
-			return err
-		}); err != nil {
-			return out, err
-		}
 	}
 	for _, k := range contract.ObjectKindValues {
 		if rows[k] != nil {

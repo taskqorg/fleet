@@ -199,6 +199,11 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 	if c, _ := call("object_delete", doc{"kind": "project", "id": "acc", "preview": true}, owner); c != 409 {
 		t.Fatalf("a second delete: %d", c)
 	}
+	// A host route an agent's tools reach (artifact read) does not see a deleted artifact; poll above did see the
+	// deleted execution's commands.
+	if c, body := e.callJSON(t, "POST", "/api/hosts/artifacts/get", doc{"hostId": "h-del", "artifactId": "a1"}, map[string]string{"Authorization": "Bearer " + secret}); c != 404 {
+		t.Fatalf("a host reads a deleted artifact: %d %v", c, body)
+	}
 
 	// Another experiment's score cites a trial of x1: the delete is refused while it does (design: delete checks scores).
 	if c, body := call("object_delete", doc{"kind": "experiment", "id": "x1", "preview": true}, owner); c != 409 || !strings.Contains(astr(body["message"]), "score.trial_ids") {
@@ -219,13 +224,19 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 		t.Fatalf("a second experiment delete: %d", c)
 	}
 	// A host reports for the deleted trial after the delete: the row is born tombstoned.
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `INSERT INTO document(kind,id,data,project_id) VALUES ('event','event:r1:late','{"id":"event:r1:late","executionId":"r1","seq":1,"type":"x"}','keep')`)
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `SET fleet.deleted = 'on'; INSERT INTO document(kind,id,data,project_id) VALUES ('event','event:r1:late','{"id":"event:r1:late","executionId":"r1","seq":1,"type":"x"}','keep')`)
 	if n := appCount(t, e, false, "SELECT count(*) FROM document WHERE id='event:r1:late'"); n != 0 {
 		t.Fatalf("a late row of a deleted trial is read")
 	}
 	// A row written later that names a tombstoned trial keeps it at purge (design test 4).
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", "INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value) VALUES ('sc3','x2','keep','{r1}','j','1','typed','{}')")
 
+	// The stop and teardown the host fetched but has not finished keep the project: purging them would leave the agent
+	// running. The host's receipts settle them.
+	if c, p := call("system_purge", doc{"preview": true, "kinds": []string{"project"}}, owner); c != 200 || !slices.Equal(strs(mapOf(anys(p["kept"])[0])["ids"]), []string{"acc"}) {
+		t.Fatalf("a project with pending commands is purgeable: %d %v", c, p)
+	}
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET data=data||'{"status":"completed"}' WHERE kind='command' AND data->>'executionId'='e2'`)
 	c, p := call("system_purge", doc{"preview": true}, owner)
 	removed, kept := map[string][]string{}, map[string][]string{}
 	for _, x := range anys(p["removed"]) {

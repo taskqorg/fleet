@@ -2380,10 +2380,10 @@ DO $$ DECLARE t text; BEGIN
    ' OR project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))', t);
  END LOOP;
 END $$;
--- A row a host writes later for a tombstoned execution (an event, an artifact, a question, a child run) is born
--- tombstoned: host calls see deleted rows, and a stop lands only after the delete.
+-- A row written later for a tombstoned execution by a writer that sees deleted rows (a host's event or receipt, a stop
+-- landing after the delete) is born tombstoned.
 CREATE FUNCTION fleet_inherit_tombstone() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE e text; BEGIN
- IF NEW.tombstoned_at IS NOT NULL THEN RETURN NEW; END IF;
+ IF NEW.tombstoned_at IS NOT NULL OR NOT fleet_show_deleted() THEN RETURN NEW; END IF; -- elsewhere a tombstone is invisible
  IF TG_TABLE_NAME = 'document' THEN e := NEW.data->>'executionId'; ELSE e := to_jsonb(NEW)->>TG_ARGV[0]; END IF;
  IF e IS NOT NULL AND EXISTS (SELECT 1 FROM execution WHERE id = e AND tombstoned_at IS NOT NULL) THEN NEW.tombstoned_at := now(); END IF;
  RETURN NEW;

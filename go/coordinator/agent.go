@@ -1652,7 +1652,7 @@ func init() {
 		name := rpc.Params.Name
 		// The director's rights, the execution as actor (docs/designs/fleet-pm-agent.md §1).
 		q.agent = "execution:" + executionID
-		q.r = q.r.WithContext(context.WithValue(context.WithValue(q.ctx(), actorKey{}, q.agent), showDeletedKey{}, false))
+		q.r = q.r.WithContext(context.WithValue(q.ctx(), actorKey{}, q.agent))
 		var focus []string                   // nil: no focus or "*"
 		sessionProject, focused := "", false // the calling session's own project; whether it has any focus
 		prove := func() error {
