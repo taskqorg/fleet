@@ -8,7 +8,8 @@ import (
 	"os"
 	"strings"
 	"syscall"
-	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // processIdentity is /proc/<pid>/stat field 22 (start time in clock ticks).
@@ -45,11 +46,11 @@ func signalOwned(pid int, expected string, sig syscall.Signal) error {
 // waitExited blocks until pid exits without reaping it (waitid with WNOWAIT): its PID stays taken until the caller
 // reaps it. It reports false when waitid fails: the process may still run.
 func waitExited(pid int) bool {
-	var info [128]byte // siginfo_t
+	var info unix.Siginfo
 	for {
-		_, _, e := syscall.Syscall6(syscall.SYS_WAITID, 1 /* P_PID */, uintptr(pid), uintptr(unsafe.Pointer(&info[0])), 4|0x01000000 /* WEXITED|WNOWAIT */, 0, 0)
-		if e != syscall.EINTR {
-			return e == 0
+		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if err != unix.EINTR {
+			return err == nil
 		}
 	}
 }

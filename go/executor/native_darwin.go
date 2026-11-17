@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/ebitengine/purego"
 )
@@ -109,7 +110,13 @@ func waitExited(pid int) bool {
 	var info [104]byte // siginfo_t
 	for {
 		if waitid(1 /* P_PID */, int32(pid), &info[0], 0x4|0x20 /* WEXITED|WNOWAIT */) == 0 {
-			return true
+			// macOS also reports a stopped child here (golang/go#19314): only an exit (si_code at offset 8: CLD_EXITED 1,
+			// CLD_KILLED 2, CLD_DUMPED 3) counts; otherwise wait again.
+			if code := binary.LittleEndian.Uint32(info[8:]); code >= 1 && code <= 3 {
+				return true
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 		if *errnoPtr() != int32(syscall.EINTR) {
 			return false

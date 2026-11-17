@@ -552,10 +552,12 @@ func TestCodeModeReplyAndLastExpression(t *testing.T) {
 		"const o = {\n  k: 1,\n}\no.k":                       "1",
 		"const f = (x) =>\n  x + 1\nf(1)":                    "2",
 		"const r = await Promise.all([\n  Promise.resolve(1),\n  Promise.resolve(2),\n])\nr": "[1,2]",
-		"const ok = false\n!ok":   "true",
-		"1 + 1\n// todo; cleanup": "2",
-		"const q = 2\nq // a;b":   "2",
-		"const a = 1\na\n!== 2":   "true",
+		"const ok = false\n!ok": "true",
+		"const r = helper(2)\nasync function helper(x) { return x * 2 }\nr": "4",
+		"print(1)\nfunction f() {}":                                         "null",
+		"1 + 1\n// todo; cleanup":                                           "2",
+		"const q = 2\nq // a;b":                                             "2",
+		"const a = 1\na\n!== 2":                                             "true",
 	} {
 		if r, bad := c.code(src); bad || enc(r["value"]) != want {
 			t.Errorf("%q: %v %v, want %s", src, bad, r, want)
@@ -610,6 +612,23 @@ func TestCodeModeFiles(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "a", "n.txt")); string(b) != "n" {
 		t.Fatalf("upward symlink: %q", b)
+	}
+	// A hard link into .git keeps its contents (the write replaces the name), a nested .git is refused, the mode stays,
+	// and a slash-less grep glob matches at any depth.
+	os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("[core]\n"), 0o644)
+	os.Link(filepath.Join(dir, ".git", "config"), filepath.Join(dir, "hard"))
+	os.WriteFile(filepath.Join(dir, "run.sh"), []byte("x"), 0o755)
+	r, bad = c.code(`const fail = async (f) => { try { await f(); return "allowed" } catch (e) { return e.code } }
+		;[await fail(() => write("hard", "evil")), await fail(() => write("sub/.git/hooks/x", "")), await fail(() => edit("run.sh", "x", "y")),
+			(await grep("n", {glob: "*.txt"})).map(h => h.file).sort()]`)
+	if bad || enc(r["value"]) != `["allowed","outside-worktree","allowed",["a/n.txt"]]` {
+		t.Fatalf("hard link, nested .git, grep glob: %v %v", bad, r)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, ".git", "config")); string(b) != "[core]\n" {
+		t.Fatalf("written through a hard link into .git: %q", b)
+	}
+	if st, _ := os.Stat(filepath.Join(dir, "run.sh")); st.Mode().Perm() != 0o755 {
+		t.Fatalf("mode: %v", st.Mode())
 	}
 	if runtime.GOOS == "darwin" { // a case-insensitive file system: .GIT through a symlink is the same directory
 		os.Symlink(filepath.Join(dir, ".GIT"), filepath.Join(dir, "g2"))

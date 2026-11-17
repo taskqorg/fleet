@@ -79,14 +79,20 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	// Until cmd.Wait reaps it, the exited leader stays a zombie, so its PID and process group id cannot be reused: what
 	// the command left running in its group is killed before then, never another command's group. Without waitid the
 	// group is not killed: a kill after the reap could hit another group.
-	exited := waitExited(cmd.Process.Pid)
-	p.mu.Lock()
-	p.exited = true // a timeout from here on comes too late: the command had ended
-	p.mu.Unlock()
-	if exited {
+	if waitExited(cmd.Process.Pid) {
+		p.mu.Lock()
+		p.exited = true // a timeout from here on comes too late: the command had ended
+		p.mu.Unlock()
 		p.kill()
+		p.reap()
+	} else {
+		// No waitid: Wait blocks while the command runs, so a timeout, reset or shutdown can still kill it; its group is
+		// not killed after the reap.
+		p.cmd.Wait()
+		p.mu.Lock()
+		p.exited, p.reaped = true, true
+		p.mu.Unlock()
 	}
-	p.reap()
 	s.mu.Lock()
 	delete(s.procs, p)
 	s.mu.Unlock()
@@ -432,25 +438,35 @@ func codeFile(dir, tool string, args any) (any, M) {
 			}
 		}
 	}
-	flags := os.O_RDWR | syscall.O_NOFOLLOW
-	if tool == "write" {
-		flags |= os.O_CREATE
-	}
-	f, err := cur.OpenFile(filepath.Base(rel), flags, 0o644)
-	if err != nil {
+	// The new contents go to a temporary file renamed over the name: readers never see a half-written file, a failed
+	// write keeps the old contents, and a hard link (to a file in .git, say) keeps its contents.
+	name := filepath.Base(rel)
+	mode := os.FileMode(0o644)
+	var b []byte
+	if f, err := cur.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0); err == nil {
+		st, err := f.Stat()
+		if err == nil && isGit(st) {
+			err = errors.New(rel + " is .git")
+		}
+		if err == nil && !st.Mode().IsRegular() {
+			err = errors.New(rel + " is not a regular file")
+		}
+		if err == nil {
+			mode = st.Mode().Perm()
+			if tool == "edit" {
+				b, err = io.ReadAll(f)
+			}
+		}
+		f.Close()
+		if err != nil {
+			return fail(err)
+		}
+	} else if tool == "edit" || !errors.Is(err, os.ErrNotExist) {
 		return fail(err)
-	}
-	defer f.Close()
-	if st, err := f.Stat(); err != nil || isGit(st) {
-		return nil, callError("error", "outside-worktree", rel+" is .git")
 	}
 	data := []byte(jStr(args, "text"))
 	replaced := 0
 	if tool == "edit" {
-		b, err := io.ReadAll(f)
-		if err != nil {
-			return fail(err)
-		}
 		replaced = strings.Count(string(b), old)
 		switch {
 		case replaced == 0:
@@ -460,10 +476,23 @@ func codeFile(dir, tool string, args any) (any, M) {
 		}
 		data = []byte(strings.ReplaceAll(string(b), old, jStr(args, "new")))
 	}
-	if err := f.Truncate(0); err != nil {
+	tmp := fmt.Sprintf(".%s.fleet-%d.tmp", name, time.Now().UnixNano())
+	f, err := cur.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, mode)
+	if err != nil {
 		return fail(err)
 	}
-	if _, err := f.WriteAt(data, 0); err != nil {
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(mode) // the umask narrowed the create
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = cur.Rename(tmp, name)
+	}
+	if err != nil {
+		cur.Remove(tmp)
 		return fail(err)
 	}
 	if tool == "edit" {
@@ -487,7 +516,8 @@ func worktreePath(dir, p string) (string, error) {
 	}
 	for _, b := range bases {
 		if rel, err := filepath.Rel(b, p); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, "../") {
-			if strings.EqualFold(strings.Split(rel, "/")[0], ".git") { // any case: macOS file systems ignore it
+			// Any .git, a nested repository's (submodule) too, in any case: macOS file systems ignore it.
+			if slices.ContainsFunc(strings.Split(rel, "/"), func(c string) bool { return strings.EqualFold(c, ".git") }) {
 				return "", errors.New(rel + " is under .git")
 			}
 			return rel, nil

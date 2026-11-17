@@ -98,7 +98,9 @@ const host = {
     const re = new RegExp(pattern instanceof RegExp ? pattern.source : String(pattern), flags);
     const hits = [];
     // 32 files at a time, in walk order; a file that cannot be read as text (too large for a string) is skipped.
-    const list = await files(opts, opts?.glob);
+    // A glob without a slash matches file names at any depth, as ripgrep's.
+    const g = opts?.glob;
+    const list = await files(opts, g != null && !String(g).includes('/') ? '**/' + g : g);
     for (let i = 0; i < list.length; i += 32) {
       const texts = await Promise.all(list.slice(i, i + 32).map((f) => textOf(f).catch(() => null)));
       texts.forEach((t, k) => t?.split('\n').forEach((text, n) => { if (re.test(text)) hits.push({ file: shown(list[i + k]), line: n + 1, text }); }));
@@ -166,12 +168,14 @@ const compiles = (body) => { try { new AsyncFunction(body); return true; } catch
 // result, unlike plain JavaScript, so a last line `({a, b})` returns the object instead of calling the line before.
 // `!` alone starts a new statement (a semicolon is inserted before it); `!=` continues.
 const continues = /^\s*([-+*/%<>=&|^?:,.)\]}]|!=)/;
+const declaration = /^\s*((async\s+)?function\b|class\b)/;
 function body(source) {
   if (!compiles(source)) return source; // its own syntax error, unchanged
   for (let i = source.length; i >= 0; i--) {
     if (i > 0 && source[i - 1] !== '\n' && source[i - 1] !== ';') continue;
     const tail = source.slice(i).replace(/[\s;]+$/, '');
     if (tail.trim() === '' || i > 0 && source[i - 1] === '\n' && continues.test(tail)) continue;
+    if (declaration.test(tail)) continue; // `return (function f() {})` would no longer hoist f
     // The tail alone first: most tails fail at their first tokens, so a script without a last expression costs about
     // one parse, not one per line.
     if (!compiles('return (' + tail + '\n)')) continue;
