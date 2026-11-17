@@ -372,8 +372,11 @@ var hostHarnessTargets = sync.OnceValue(func() map[string]map[string]harnessrele
 
 func hostHarnessVersions(o doc, live bool) any {
 	assets := hostHarnessTargets()[astr(o["platform"])]
-	if len(assets) == 0 {
+	if len(assets) == 0 && live {
 		return o["harnessVersions"]
+	}
+	if len(assets) == 0 {
+		return nil
 	}
 	observed := map[string]any{}
 	if rows, ok := o["harnessVersions"].([]any); live && ok {
@@ -495,7 +498,7 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 			polling := seen > 0 && float64(now)-seen < hostStaleMs
 			// The last failed poll, until a successful one (host_poll_health.go); like problems, only while the host
 			// polls: a host that stopped is offline, and an old failure would hide that.
-			if versions := hostHarnessVersions(o, polling); versions != nil {
+			if versions := hostHarnessVersions(o, polling && o["pollError"] == nil); versions != nil {
 				h["harnessVersions"] = versions
 			}
 			if polling && o["pollError"] != nil {

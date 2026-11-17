@@ -8,7 +8,7 @@
 
 - `fleet-update executor` updates one executor host.
 - `fleet-update pds18` updates the coordinator side, PDS18 executor, and UI independently.
-- `fleet-update prepare-harnesses <release> <releases>` provisions the candidate managed CLI cache for the manual installer.
+- `fleet-update install-local <verified-stage> <releases>` prepares the managed CLI cache and switches the local release under the same lock as auto-update.
 - `fleet-update selftest` verifies the compiled-in Ed25519 release-key setup.
 - Linux and macOS trigger helpers write a path watcher for the executor's `update.json` target signal when the matching existing service definition is present.
 

@@ -11,14 +11,14 @@ set -eu
 . "$(dirname "$0")/status.sh"
 releases=${FLEET_RELEASES:-$HOME/releases}
 mkdir -p "$releases"
+activated=no
 if [ "${1:-}" = --rollback ]; then
   target=$(readlink "$releases/previous") || { echo "no previous release" >&2; exit 1; }
 else
   [ $# -eq 1 ] || { echo 'usage: deploy/install-release.sh <tarball> | --rollback' >&2; exit 2; }
   status working 10 "verifying $(basename "$1")"
   (cd "$(dirname "$1")" && grep " $(basename "$1")\$" SHA256SUMS | { shasum -a 256 -c 2>/dev/null || sha256sum -c; }) >/dev/null
-  partial=$releases/install.tmp-$$
-  rm -rf "$partial" && mkdir "$partial"
+  partial=$(mktemp -d "$releases/install.XXXXXX")
   tar -xzf "$1" -C "$partial" --no-same-owner  # root keeps its releases root-owned
   version=$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$partial/release.json")
   [ -n "$version" ] || { echo "no version in release.json" >&2; exit 1; }
@@ -28,14 +28,19 @@ else
     if [ -x "$partial/$bin" ]; then "$partial/$bin" selftest >/dev/null; fi
   done
   if [ -f "$partial/config/harness-pins.json" ]; then
-    "$partial/fleet-update" prepare-harnesses "$partial" "$releases"
+    "$partial/fleet-update" install-local "$partial" "$releases"
+    activated=yes
+    rm -rf "$partial"
+  else
+    find "$partial" -type f -exec chmod a-w {} +   # directories stay 0755, so rm -rf still works
+    rm -rf "$target" && mv "$partial" "$target"
   fi
-  find "$partial" -type f -exec chmod a-w {} +   # directories stay 0755, so rm -rf still works
-  rm -rf "$target" && mv "$partial" "$target"
 fi
-old=$(readlink "$releases/current" || true)
-[ -n "$old" ] && [ "$(basename "$old")" != "$(basename "$target")" ] && ln -sfn "$(basename "$old")" "$releases/previous"
-ln -sfn "$(basename "$target")" "$releases/current"  # relative links: fleet-update works through os.Root
+if [ "$activated" = no ]; then
+  old=$(readlink "$releases/current" || true)
+  [ -n "$old" ] && [ "$(basename "$old")" != "$(basename "$target")" ] && ln -sfn "$(basename "$old")" "$releases/previous"
+  ln -sfn "$(basename "$target")" "$releases/current"  # relative links: fleet-update works through os.Root
+fi
 status working 60 "switched to $(basename "$target")"
 if [ "$(uname)" = Darwin ]; then
   agent=gui/$(id -u)/com.ufobe.fleet-executor

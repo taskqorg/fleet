@@ -38,8 +38,8 @@ func main() {
 }
 
 func run(args []string) error {
-	const usage = "usage: fleet-update pds18 | executor | selftest | prepare-harnesses <release> <releases>"
-	if len(args) != 1 && (len(args) != 3 || args[0] != "prepare-harnesses") {
+	const usage = "usage: fleet-update pds18 | executor | selftest | install-local <verified-stage> <releases>"
+	if len(args) != 1 && (len(args) != 3 || args[0] != "install-local") {
 		return errors.New(usage)
 	}
 	key, err := publicKey()
@@ -48,7 +48,7 @@ func run(args []string) error {
 	}
 	u := newUpdater(key)
 	switch args[0] {
-	case "prepare-harnesses":
+	case "install-local":
 		if len(args) != 3 {
 			return errors.New(usage)
 		}
@@ -57,7 +57,23 @@ func run(args []string) error {
 			return err
 		}
 		defer root.Close()
-		return u.prepareHarnesses(&part{r: root, stage: args[2]}, args[1])
+		unlock, ok, err := lock(filepath.Join(args[2], "install.lock"))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("another Fleet installer is active")
+		}
+		defer unlock()
+		ver := releaseVersion(args[1])
+		if !verRe.MatchString(ver) {
+			return errors.New("invalid staged release version")
+		}
+		p := &part{r: root, root: args[2], stage: args[2]}
+		if err := u.prepareHarnesses(p, args[1]); err != nil {
+			return err
+		}
+		return u.install(p, ver, args[1])
 	case "selftest":
 		fmt.Printf("fleet-update %s: selftest ok\n", version)
 		return nil
@@ -117,7 +133,6 @@ func (u *updater) runExecutor() error {
 	defer r.Close()
 	p := &part{r: r, name: "executor", root: root, stage: root, bins: []string{"fleet-executor", "fleet-update"},
 		activity: u.executorActivity(signal), restart: command(restart...), health: u.executorHealth(signal), st: st}
-	pruneReleases(r)
 	var in signalFile
 	if !readJSON(signal, &in) {
 		log.Print("no update.json yet: the executor has not polled")
@@ -166,8 +181,6 @@ func (u *updater) runPDS18() error {
 		return err
 	}
 	defer execR.Close()
-	pruneReleases(coordR)
-	pruneReleases(execR)
 	pruneDumps("/backup/fleet/pre-deploy", coordR, st.Coordinator)
 	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true, app: "dist/app",
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},

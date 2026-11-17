@@ -22,11 +22,12 @@ import (
 
 // registryEntry is one named host account of FLEET_NATIVE_ACCOUNTS.
 type registryEntry struct {
-	Harness    string `json:"harness"`
-	Home       string `json:"home"`
-	NativeHome string `json:"nativeHome"`
-	Executable string `json:"executable"`
-	Readiness  string `json:"readiness"`
+	ReleaseManaged bool   `json:"-"`
+	Harness        string `json:"harness"`
+	Home           string `json:"home"`
+	NativeHome     string `json:"nativeHome"`
+	Executable     string `json:"executable"`
+	Readiness      string `json:"readiness"`
 	// CredentialAuthority native-current: the login lives in CredentialHome (HOME for Claude), as the start path uses it.
 	CredentialAuthority string `json:"credentialAuthority"`
 	CredentialHome      string `json:"credentialHome"`
@@ -207,8 +208,13 @@ func (e *executor) readLimits(c M, p contract.AccountInspectPayload, reg map[str
 	if err := runnable(x); err != nil {
 		return fail(err.Error())
 	}
+	executable, managed, err := managedExecutable(x.Harness, x.Executable, "")
+	if err != nil {
+		return fail(err.Error())
+	}
+	x.Executable = executable
+	x.ReleaseManaged = managed
 	var reading M
-	var err error
 	switch p.Harness {
 	case "codex":
 		reading, err = codexReadLimits(x)
@@ -279,6 +285,9 @@ func decAny(s string) any { v, _ := dec(s); return v }
 
 func probeCmd(x registryEntry, args ...string) *exec.Cmd {
 	c := newCmd(x.Executable, x.Home)
+	if x.ReleaseManaged && x.Harness == "claude" {
+		setEnv(c, "DISABLE_AUTOUPDATER", "1")
+	}
 	passEnv(c, "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
 	setEnv(c, "HOME", x.Home)
 	env := nativeEnv(x)

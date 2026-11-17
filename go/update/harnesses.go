@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/sha512"
 	"errors"
 	"fleet/harnessrelease"
 	"fmt"
 	"hash"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -37,8 +39,29 @@ func (u *updater) prepareHarnesses(p *part, release string) error {
 }
 
 func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) error {
-	if st, err := p.r.Stat(a.Executable(name)); err == nil && executable(st) {
-		return nil
+	dir := a.Dir(name)
+	if _, err := p.r.Stat(dir); err == nil {
+		cached, err := p.r.ReadFile(filepath.Join(dir, ".fleet-checksums"))
+		if err == nil {
+			actual, err := harnessChecksums(p.r.FS(), dir)
+			if err == nil && bytes.Equal(actual, cached) {
+				if st, err := p.r.Stat(a.Executable(name)); err == nil && executable(st) {
+					return nil
+				}
+			}
+		}
+		kept, err := u.retainedHarnesses(p)
+		if err != nil {
+			return err
+		}
+		if kept[dir] {
+			return fmt.Errorf("%w: cached payload %s is damaged and belongs to the current or rollback release", refusal("harness-cache"), dir)
+		}
+		if err := p.r.RemoveAll(dir); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	// Use a private trusted staging directory. Publish only the complete, verified payload.
 	stage, err := os.MkdirTemp(p.stage, "cli-")
@@ -82,7 +105,6 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 		return fmt.Errorf("%w: executable %s is missing", refusal("harness-archive"), entry)
 	}
 
-	dir := a.Dir(name)
 	tmp := dir + ".tmp"
 	if err := p.r.RemoveAll(tmp); err != nil {
 		return err
@@ -103,7 +125,11 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 	}); err != nil {
 		return err
 	}
-	if err := p.r.RemoveAll(dir); err != nil {
+	checksums, err := harnessChecksums(p.r.FS(), tmp)
+	if err != nil {
+		return err
+	}
+	if err := p.r.WriteFile(filepath.Join(tmp, ".fleet-checksums"), checksums, 0o444); err != nil {
 		return err
 	}
 	return p.r.Rename(tmp, dir)
@@ -113,16 +139,25 @@ func executable(st fs.FileInfo) bool {
 	return st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0
 }
 
-func (u *updater) pruneHarnesses(p *part) {
+func (u *updater) retainedHarnesses(p *part) (map[string]bool, error) {
 	keep := map[string]bool{}
 	for _, link := range []string{"current", "previous"} {
 		assets, err := harnessrelease.Read(filepath.Join(p.root, link), u.target)
 		if err != nil {
-			return // Preserve rollback payloads when the manifest cannot be read.
+			return nil, err
 		}
 		for name, asset := range assets {
 			keep[asset.Dir(name)] = true
 		}
+	}
+	return keep, nil
+}
+
+func (u *updater) pruneHarnesses(p *part) {
+	keep, err := u.retainedHarnesses(p)
+	if err != nil {
+		log.Print("prune managed CLIs: ", err)
+		return
 	}
 	for _, name := range []string{"codex", "claude", "antigravity"} {
 		parent := filepath.Join("harnesses", name)
@@ -136,4 +171,36 @@ func (u *updater) pruneHarnesses(p *part) {
 			}
 		}
 	}
+}
+
+func harnessChecksums(tree fs.FS, dir string) ([]byte, error) {
+	var out bytes.Buffer
+	err := fs.WalkDir(tree, dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		rel := strings.TrimPrefix(path, dir+"/")
+		if rel == ".fleet-checksums" {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", path)
+		}
+		f, err := tree.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			return err
+		}
+		fmt.Fprintf(&out, "%x %o %q\n", h.Sum(nil), info.Mode().Perm(), rel)
+		return nil
+	})
+	return out.Bytes(), err
 }

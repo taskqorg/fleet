@@ -41,5 +41,6 @@ jobs:
           gh pr create --head "$branch" --base main --title 'Update managed agent CLI pins' --body-file - <<'BODY'
           Update pinned native executables from vendor release metadata. Fleet verifies the pinned payloads before switching releases.
 
+          Let GitHub run CI. Approve the workflow run from the Checks tab if GitHub requests approval for this bot PR.
           Review the vendor release changes and qualify the configured models before enqueueing.
           BODY
