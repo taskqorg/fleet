@@ -125,7 +125,7 @@ export function Delivery({ id }: { id?: string }) {
     const source = !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(x => fromHistory(x, hist.h.installsFrom)) : [];
     const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
     const rowsOf = source.map(row);
-    const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo}`, { state: r.it.stage, project: r.it.projectId }));
+    const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo} ${r.it.release ?? ''}`, { state: r.it.stage, project: r.it.projectId }));
     const counts: Record<string, number> = Object.fromEntries(ORDER.map(s => [s, 0]));
     for (const r of searched) counts[r.it.stage]++;
     const st = v.state ?? [], group = v.group ?? DEFAULT_DELIVERY_GROUP, sort = v.sort ?? DEFAULT_DELIVERY_SORT;
@@ -345,7 +345,7 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
       {url && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(url, '_blank', 'noopener')} />}</header>
     <h2 class="detail-title">{title}</h2>
     <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} now={now} />}
-      {rel && <EntityCode code={releaseLabel(rel)} id={rel} kind="release" />}</div>
+      {rel && <EntityCode code={rel} id={rel} kind="release" />}</div>
     <div class="stack-pad">
       {h.error && !h.data && <ErrorBanner text={`History did not load: ${h.error}`} />}
       {x ? <>

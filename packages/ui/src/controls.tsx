@@ -527,7 +527,9 @@ export function EntityCode({ code, id, kind, cls }: { code?: string | null; id?:
   const el = useRef<HTMLButtonElement>(null);
   const cur = useShownCard(el);
   // A code that leaves the page (its row recycled by a virtual list, the view changed) takes its card with it.
-  useEffect(() => { const b = el.current; return () => { if (b && shown?.anchor === b) showCard(null); }; }, []);
+  const last = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => { last.current = el.current; });
+  useEffect(() => () => { if (last.current && shown?.anchor === last.current) showCard(null); }, []);
   const k = kind ?? (code ? codeKind[code[0]] : undefined);
   if (!k || !id && !code) return null;
   const open = !!cur && !!el.current && cur.anchor === el.current;

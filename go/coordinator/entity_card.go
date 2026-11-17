@@ -83,6 +83,14 @@ func facts(fs ...contract.EntityFact) []contract.EntityFact {
 	return fs[:min(4, len(fs))]
 }
 
+// sizeOf: a byte size, "" (no fact) when none is recorded.
+func sizeOf(v any) string {
+	if v == nil || v == "" {
+		return ""
+	}
+	return count(v)
+}
+
 // count: an integer fact value (a float64 count would print 1e+06).
 func count(v any) string { return strconv.FormatInt(int64(num(v)), 10) }
 
@@ -134,8 +142,8 @@ func cardQuestion(q *Request, id string) (*contract.EntityCardReply, error) {
 func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) {
 	r, err := first(q, `SELECT d.id,d.code,d.project_id,d.data->'agentConfig'->>'id' AS profile,t.code AS task_code,
 	 coalesce(last.state,'idle') AS state,coalesce(last.harness,d.data->'agentConfig'->>'harness') AS harness,
-	 (SELECT m.data->>'text' FROM document m WHERE m.kind='message' AND m.data->>'sessionId'=d.id ORDER BY m.seq LIMIT 1) AS first_message,
-	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM document a WHERE a.kind IN ('message','event') AND a.data->>'sessionId'=d.id),ex.last_at) AS activity_at,
+	 (SELECT m.data->>'text' FROM document m WHERE m.session_ref=d.id AND m.kind='message' ORDER BY m.seq LIMIT 1) AS first_message,
+	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM document a WHERE a.session_ref=d.id AND a.kind IN ('message','event')),ex.last_at) AS activity_at,
 	 ex.n AS runs,(SELECT count(*) FROM question x WHERE x.session_id=d.id AND x.state='open') AS open_questions
 	 FROM document d LEFT JOIN task t ON t.id=d.data->>'taskId'
 	 LEFT JOIN LATERAL (SELECT e.state::text AS state,e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) last ON true
@@ -201,7 +209,7 @@ func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Hash: optStr(astr(r["content_hash"])), Title: firstString(astr(r["name"]), "Result"), State: optStr(astr(r["state"])),
 		ProjectId: optStr(astr(r["project_id"])), At: optStr(astr(r["created_at"])), AtLabel: ptr("stored"), Path: itemPath("results", id),
 		Facts: facts(fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])), fact("Type", contract.EntityFactTypeCode, astr(r["media_type"])),
-			fact("Size", contract.EntityFactTypeBytes, count(r["size"])))}, nil
+			fact("Size", contract.EntityFactTypeBytes, sizeOf(r["size"])))}, nil
 }
 
 // architect: definitions and Lab are the architect's to read (people.go architectOps); an agent without a person passes.
@@ -353,9 +361,24 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 	if err := json.Unmarshal(jsonBytes(d["data"]), &x); err != nil {
 		return nil, err
 	}
-	n, stage, at := strconv.FormatInt(number, 10), "merged", x.Merged
-	if x.Release != nil && x.Installed["coordinator"] != "" {
-		stage, at = "installed", x.Installed["coordinator"]
+	// The stage as Delivery's fromHistory puts it: delivered (on the coordinator, or the UI on site for a UI-only release),
+	// else merged when it was released before installs were recorded, else installing once released, else releasing.
+	st, err := dhStateOf(q)
+	if err != nil {
+		return nil, err
+	}
+	n, done := strconv.FormatInt(number, 10), x.Installed["coordinator"]
+	if uiOnlyRelease(deref(x.Release)) {
+		done = deref(x.UiOnSite)
+	}
+	stage, at := "releasing", x.Merged
+	switch {
+	case done != "":
+		stage, at = "installed", done
+	case x.Released != nil && st.InstallsFrom != "" && *x.Released < st.InstallsFrom:
+		stage = "merged"
+	case x.Released != nil:
+		stage, at = "installing", *x.Released
 	}
 	return &contract.EntityCardReply{Id: ciOwner + "/" + ciRepo + "#" + n, Code: ptr("#" + n), Title: x.Title, State: ptr(stage), ProjectId: ptr(ciProject),
 		At: optStr(at), AtLabel: ptr("since"), Url: optStr(x.Url), Path: itemPath("delivery", ciOwner+"~"+ciRepo+"~"+n),
@@ -396,6 +419,22 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 		}
 		return c, nil
 	}
+	c.Title = "Release " + version
+	if !fullAccess(q.person) {
+		// A person sees only the hosts they hold: the state is the one the delivery pass gave this release's pull requests.
+		if !known {
+			return nil, nil
+		}
+		installing := false
+		for _, it := range deliveryVisible(q).Items {
+			installing = installing || deref(it.Release) == tag && it.Stage != contract.DeliveryStageInstalled
+		}
+		if prs > 0 && !installing {
+			c.State = ptr("installed")
+		}
+		c.Facts = facts(fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
+		return c, nil
+	}
 	obs, err := all(q, "host-observation", nil)
 	if err != nil {
 		return nil, err
@@ -415,7 +454,7 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 			on++
 		}
 	}
-	c.Title, c.Facts = "Release "+version, facts(fact("Hosts", contract.EntityFactTypeText, fmt.Sprintf("%d of %d", on, len(versions))), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
+	c.Facts = facts(fact("Hosts", contract.EntityFactTypeText, fmt.Sprintf("%d of %d", on, len(versions))), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
 	if installed(version, versions) {
 		c.State = ptr("installed")
 	}
