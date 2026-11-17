@@ -10,18 +10,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"time"
 )
 
 // sh runs one command for the code: bash -c in the worktree or cwd, under the execution's shell policy, with the code
 // server's environment without FLEET_* (no run token, gateway URL or Access file). It returns the whole stdout and
-// stderr; a non-zero exit is a result, not a failure.
-func (s *codeServer) sh(args any) (any, M) {
+// stderr; a non-zero exit is a result, not a failure. rt is the runtime that sent the call: once a reset stopped it, no
+// new command starts for it.
+func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	command := jStr(args, "command")
 	if strings.TrimSpace(command) == "" {
 		return nil, callError("error", "bad-arguments", "command required")
@@ -33,7 +35,17 @@ func (s *codeServer) sh(args any) (any, M) {
 	} else if !filepath.IsAbs(cwd) {
 		cwd = filepath.Join(dir, cwd)
 	}
-	argv, err := shellArgv(jAt(s.spec, "shell"), jStr(s.spec, "sandbox"), cwd, command)
+	s.mu.Lock()
+	if s.closed || rt != nil && rt.stopped {
+		s.mu.Unlock()
+		return nil, callError("error", "job-ended", "the runtime was reset or the code server is stopping")
+	}
+	tmp, err := s.shellTmp()
+	s.mu.Unlock()
+	if err != nil {
+		return nil, callError("error", "sandbox", err.Error())
+	}
+	argv, err := shellArgv(jAt(s.spec, "shell"), jStr(s.spec, "sandbox"), cwd, tmp, command)
 	if err != nil {
 		return nil, callError("error", "sandbox", err.Error())
 	}
@@ -46,50 +58,129 @@ func (s *codeServer) sh(args any) (any, M) {
 	// ponytail: 1 s for a background child that keeps the output open after the command exits; then its group is killed.
 	cmd.WaitDelay = time.Second
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || rt != nil && rt.stopped { // a reset between the check above and here
 		s.mu.Unlock()
-		return nil, callError("error", "job-ended", "the code server is stopping")
+		return nil, callError("error", "job-ended", "the runtime was reset or the code server is stopping")
 	}
 	if err := cmd.Start(); err != nil {
 		s.mu.Unlock()
 		return nil, callError("error", "sh-start", err.Error())
 	}
-	s.procs[cmd] = true
+	p := &shProc{cmd: cmd}
+	s.procs[p] = true
 	s.mu.Unlock()
-	var timedOut atomic.Bool
+	timedOut := false
 	if ms, ok := num(jAt(args, "timeoutMs")); ok && ms > 0 {
-		t := time.AfterFunc(time.Duration(ms*float64(time.Millisecond)), func() { timedOut.Store(true); killGroup(cmd) })
+		t := time.AfterFunc(time.Duration(ms*float64(time.Millisecond)), func() {
+			if p.kill() {
+				s.mu.Lock()
+				timedOut = true
+				s.mu.Unlock()
+			}
+		})
 		defer t.Stop()
 	}
-	cmd.Wait()
+	// Until cmd.Wait reaps it, the exited leader stays a zombie, so its PID and process group id cannot be reused: what
+	// the command left running in its group is killed before then, never another command's group.
+	waitExited(cmd.Process.Pid)
+	p.kill()
+	p.reap()
 	s.mu.Lock()
-	delete(s.procs, cmd)
-	killGroup(cmd) // what the command left running in its process group
-	s.mu.Unlock()
+	delete(s.procs, p)
 	r := M{"code": nil, "stdout": stdout.String(), "stderr": stderr.String()}
+	if timedOut {
+		r["timedOut"] = true
+	}
+	s.mu.Unlock()
 	if st, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && st.Signaled() {
 		r["signal"] = st.Signal().String()
 	} else {
 		r["code"] = cmd.ProcessState.ExitCode()
 	}
-	if timedOut.Load() {
-		r["timedOut"] = true
-	}
 	return r, nil
 }
 
-// killGroup kills a started command's process group.
-func killGroup(c *exec.Cmd) {
-	if c.Process != nil {
-		syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+// shProc is one running sh command. Its group is killed only while the leader is unreaped.
+type shProc struct {
+	cmd    *exec.Cmd
+	mu     sync.Mutex
+	reaped bool
+}
+
+// kill kills the command's process group unless the leader was already reaped; it reports whether it did.
+func (p *shProc) kill() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.reaped {
+		return false
 	}
+	syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+	return true
+}
+
+func (p *shProc) reap() {
+	p.mu.Lock()
+	p.reaped = true // set before the reap: a kill after this could hit a reused process group id
+	p.mu.Unlock()
+	p.cmd.Wait()
+}
+
+// shellTmp is the code server's private /tmp for Linux sh commands, made on first use and kept for the execution, so
+// one command's /tmp files reach the next; nil elsewhere. The caller holds s.mu.
+func (s *codeServer) shellTmp() (string, error) {
+	if runtime.GOOS != "linux" || jAt(s.spec, "shell", "sandbox") != true || jAt(s.spec, "shell", "readOnly") == true {
+		return "", nil
+	}
+	if s.tmp == "" {
+		d, err := os.MkdirTemp("", "fleet-code-tmp-")
+		if err != nil {
+			return "", err
+		}
+		s.tmp = d
+	}
+	return s.tmp, nil
+}
+
+// darwinShellProfile is the macOS sandbox for sh, deny-default as Codex's seatbelt policy: processes, reads, writes
+// only under the write roots, the system services ordinary commands need (user lookup, notifications, logging), no
+// other Mach service (so no launchd job or app runs outside the sandbox for it), signals only inside the sandbox, and
+// network (IP and the DNS socket, no other Unix socket) only when the policy has it.
+func darwinShellProfile(roots, protected []string, network bool) string {
+	q := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace
+	var b strings.Builder
+	b.WriteString("(version 1)(deny default)(allow process-exec)(allow process-fork)(allow signal (target same-sandbox))" +
+		"(allow process-info* (target same-sandbox))(allow file-read*)(allow sysctl-read)(allow user-preference-read)" +
+		"(allow ipc-posix-sem)(allow ipc-posix-shm-read-data ipc-posix-shm-read-metadata)(allow pseudo-tty)" +
+		`(allow iokit-open (iokit-registry-entry-class "RootDomainUserClient"))` +
+		`(allow file-write-data file-ioctl (literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") (regex #"^/dev/tty") (regex #"^/dev/fd/"))` +
+		`(allow file-read* file-write* file-ioctl (literal "/dev/ptmx") (regex #"^/dev/ttys[0-9]+"))` +
+		`(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.opendirectoryd.membership")` +
+		` (global-name "com.apple.system.notification_center") (global-name "com.apple.logd") (global-name "com.apple.system.logger")` +
+		` (global-name "com.apple.sysmond") (global-name "com.apple.bsd.dirhelper") (global-name "com.apple.securityd.xpc"))`)
+	if len(roots) > 0 {
+		b.WriteString("(allow file-write*")
+		for _, r := range roots {
+			b.WriteString(` (subpath "` + q(r) + `")`)
+		}
+		b.WriteString(")")
+	}
+	for _, g := range protected { // in any case: macOS file systems ignore it, so .GIT is the same directory
+		b.WriteString(`(deny file-write* (subpath "` + q(g) + `") (regex #"^` + strings.ReplaceAll(regexp.QuoteMeta(filepath.Dir(g)), `"`, `.`) + `/\.[Gg][Ii][Tt](/|$)"))`)
+	}
+	if network {
+		b.WriteString(`(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))(allow network-inbound (local ip))(allow system-socket)` +
+			`(allow mach-lookup (global-name "com.apple.dnssd.service") (global-name "com.apple.SystemConfiguration.configd")` +
+			` (global-name "com.apple.SystemConfiguration.DNSConfiguration") (global-name "com.apple.networkd") (global-name "com.apple.trustd")` +
+			` (global-name "com.apple.trustd.agent") (global-name "com.apple.SecurityServer") (global-name "com.apple.ocspd"))`)
+	}
+	return b.String()
 }
 
 // shellArgv is the sh command: bash -c, unsandboxed for a harness whose own shell has no sandbox (Claude), else in an OS
-// sandbox that reads everything, writes only the policy's write roots and the temporary directories, signals only inside
-// itself, and has network only when the policy says so. A write root's .git stays read-only unless another write root
-// lies inside it, as in Codex.
-func shellArgv(policy any, sandbox, cwd, command string) ([]string, error) {
+// sandbox that reads files, writes only the policy's write roots and the temporary directories (nothing for a read-only
+// start), signals only inside itself, reaches no host Unix socket, and has network only when the policy says so. A write
+// root's .git stays read-only unless another write root lies inside it, as in Codex. tmp is the private /tmp on Linux.
+func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) {
 	bash := "/bin/bash"
 	if !isFile(bash) {
 		bash = "/bin/sh"
@@ -98,16 +189,21 @@ func shellArgv(policy any, sandbox, cwd, command string) ([]string, error) {
 	if jAt(policy, "sandbox") != true {
 		return run, nil
 	}
-	network := jAt(policy, "network") == true
-	var roots []string // none for a read-only start, not even the temporary directories
-	if jAt(policy, "readOnly") != true {
-		for _, r := range append(jArr(policy, "write"), os.Getenv("TMPDIR")) {
+	network, readOnly := jAt(policy, "network") == true, jAt(policy, "readOnly") == true
+	paths := func(list []any) []string {
+		var out []string
+		for _, r := range list {
 			if p, ok := str(r); ok && p != "" {
-				if c, err := canon(p); err == nil && !slices.Contains(roots, c) {
-					roots = append(roots, c)
+				if c, err := canon(p); err == nil && !slices.Contains(out, c) {
+					out = append(out, c)
 				}
 			}
 		}
+		return out
+	}
+	var roots []string // none for a read-only start, not even the temporary directories
+	if !readOnly {
+		roots = paths(append(jArr(policy, "write"), os.Getenv("TMPDIR")))
 		if runtime.GOOS == "darwin" {
 			roots = append(roots, "/private/tmp")
 		}
@@ -121,34 +217,50 @@ func shellArgv(policy any, sandbox, cwd, command string) ([]string, error) {
 	}
 	switch runtime.GOOS {
 	case "darwin":
-		q := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace
-		p := "(version 1)(allow default)"
-		if !network {
-			p += "(deny network*)"
-		}
-		p += `(deny file-write*)(allow file-write* (literal "/dev/null") (literal "/dev/zero") (regex #"^/dev/tty") (regex #"^/dev/fd/")`
-		for _, r := range roots {
-			p += ` (subpath "` + q(r) + `")`
-		}
-		p += ")"
-		for _, g := range protected {
-			p += `(deny file-write* (subpath "` + q(g) + `"))`
-		}
-		p += "(deny signal)(allow signal (target same-sandbox))"
-		return append([]string{sandbox, "-p", p}, run...), nil
+		return append([]string{sandbox, "-p", darwinShellProfile(roots, protected, network)}, run...), nil
 	case "linux":
-		argv := []string{sandbox, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--unshare-ipc", "--unshare-pid", "--die-with-parent", "--new-session"}
-		if jAt(policy, "readOnly") != true {
-			argv = append(argv, "--tmpfs", "/tmp") // its own writable /tmp, before the binds: one may be under /tmp
+		argv := []string{sandbox, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"}
+		// Host Unix sockets live under /run (/var/run, XDG_RUNTIME_DIR, docker.sock, D-Bus), /tmp and the executor's data
+		// directory (its MCP sockets): each gets an empty tmpfs; abstract sockets stay in the host network namespace,
+		// which --unshare-net leaves.
+		hidden := []string{"/run"}
+		if st, err := os.Lstat("/var/run"); err == nil && st.Mode()&os.ModeSymlink == 0 {
+			hidden = append(hidden, "/var/run")
 		}
-		if !network {
-			argv = append(argv, "--unshare-net")
+		if x := os.Getenv("XDG_RUNTIME_DIR"); x != "" && !under(x, "/run") {
+			if st, err := os.Stat(x); err == nil && st.IsDir() {
+				hidden = append(hidden, x)
+			}
+		}
+		hidden = append(hidden, paths(jArr(policy, "hide"))...)
+		for _, h := range hidden {
+			argv = append(argv, "--tmpfs", h)
+		}
+		if tmp != "" {
+			argv = append(argv, "--bind", tmp, "/tmp")
+		} else {
+			argv = append(argv, "--tmpfs", "/tmp")
+		}
+		if network { // the resolver file may live under /run (systemd-resolved)
+			if r, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && under(r, "/run") {
+				argv = append(argv, "--ro-bind", r, r)
+			}
+		}
+		for _, r := range paths(jArr(policy, "read")) { // read roots under a hidden directory stay readable
+			argv = append(argv, "--ro-bind", r, r)
 		}
 		for _, r := range roots {
 			argv = append(argv, "--bind", r, r)
 		}
 		for _, g := range protected {
 			argv = append(argv, "--ro-bind", g, g)
+		}
+		if readOnly {
+			argv = append(argv, "--remount-ro", "/tmp")
+		}
+		argv = append(argv, "--unshare-ipc", "--unshare-pid", "--die-with-parent", "--new-session")
+		if !network {
+			argv = append(argv, "--unshare-net")
 		}
 		return append(append(argv, "--chdir", cwd), run...), nil
 	}
@@ -228,7 +340,7 @@ func worktreePath(dir, p string) (string, error) {
 	}
 	for _, b := range bases {
 		if rel, err := filepath.Rel(b, p); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, "../") {
-			if strings.Split(rel, "/")[0] == ".git" {
+			if strings.EqualFold(strings.Split(rel, "/")[0], ".git") { // any case: macOS file systems ignore it
 				return "", errors.New(rel + " is under .git")
 			}
 			return rel, nil
@@ -243,13 +355,22 @@ func underGitDir(dir, rel string) error {
 	if err != nil {
 		return err
 	}
+	git, err := os.Stat(filepath.Join(real, ".git"))
+	if err != nil {
+		return nil // no .git in the worktree
+	}
 	p := filepath.Join(real, rel)
 	for {
 		if r, err := filepath.EvalSymlinks(p); err == nil {
-			if under(r, filepath.Join(real, ".git")) {
-				return errors.New(rel + " resolves under .git")
+			// By file identity, not by name: another spelling (macOS ignores case) resolves to the same directory.
+			for a := r; ; a = filepath.Dir(a) {
+				if st, err := os.Stat(a); err == nil && os.SameFile(st, git) {
+					return errors.New(rel + " resolves under .git")
+				}
+				if a == filepath.Dir(a) {
+					return nil
+				}
 			}
-			return nil
 		}
 		if p == real {
 			return nil

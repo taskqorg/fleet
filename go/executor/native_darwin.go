@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"syscall"
 
 	"github.com/ebitengine/purego"
@@ -18,6 +19,8 @@ var (
 	procPidinfo func(pid, flavor int32, arg uint64, buf *byte, size int32) int32
 	procPidpath func(pid int32, buffer *byte, size uint32) int32
 	procSignal  func(token *[8]uint32, sig int32) int32
+	waitid      func(idtype, id int32, info *byte, options int32) int32
+	errnoPtr    func() *int32
 )
 
 func init() {
@@ -30,6 +33,12 @@ func init() {
 	}
 	if sym, err := purego.Dlsym(lib, "proc_pidinfo"); err == nil {
 		purego.RegisterFunc(&procPidinfo, sym)
+	}
+	if sym, err := purego.Dlsym(lib, "waitid"); err == nil {
+		purego.RegisterFunc(&waitid, sym)
+	}
+	if sym, err := purego.Dlsym(lib, "__error"); err == nil {
+		purego.RegisterFunc(&errnoPtr, sym)
 	}
 	if sym, err := purego.Dlsym(lib, "proc_signal_with_audittoken"); err == nil {
 		purego.RegisterFunc(&procSignal, sym)
@@ -87,4 +96,17 @@ func processExecutable(pid int) (string, error) {
 		return "", errors.New("process executable unavailable")
 	}
 	return filepath.EvalSymlinks(string(bytes.TrimRight(b[:n], "\x00")))
+}
+
+// waitExited blocks until pid exits without reaping it (waitid with WNOWAIT): its PID stays taken until the caller
+// reaps it. Without waitid it returns at once.
+func waitExited(pid int) {
+	if waitid == nil || errnoPtr == nil {
+		return
+	}
+	runtime.LockOSThread() // errno is per thread
+	defer runtime.UnlockOSThread()
+	var info [104]byte // siginfo_t
+	for waitid(1 /* P_PID */, int32(pid), &info[0], 0x4|0x20 /* WEXITED|WNOWAIT */) != 0 && *errnoPtr() == int32(syscall.EINTR) {
+	}
 }

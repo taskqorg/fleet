@@ -53,7 +53,7 @@ With `add`, every native tool stays.
 Input: `{source: string, detachAfterSeconds?: number}`.
 
 - `source` is the body of an async function. It may use `await`, `return` and `Promise.all`.
-- Without an explicit `return`, the last expression statement is the result. The runtime returns the shortest tail of the source, after a newline or `;`, that compiles as one expression after a prefix that compiles on its own. A line that starts with an operator or a dot continues the line before it, so it is never split off. A last line that starts with `(`, `[` or a template is the result, unlike plain JavaScript, which would call or index the line before it: `({a, b})` on the last line returns the object.
+- Without an explicit `return`, the last expression statement is the result. The runtime returns the shortest tail of the source, after a newline or `;`, that compiles as one expression after a prefix that compiles on its own. A line that starts with a binary operator or a dot continues the line before it, so it is never split off; `!` alone starts a new one. A `;` inside a trailing line comment is no split point. A last line that starts with `(`, `[` or a template is the result, unlike plain JavaScript, which would call or index the line before it: `({a, b})` on the last line returns the object.
 - The runtime keeps one global object for the whole execution. `state` is a persistent object for values that later calls read, for example `state.issues = await ...`. Variables declared with `let`, `const` or `var` live only inside one call.
 - `print(...values)` and `console.log` append a line to the call's output; `process.stdout.write` appends its text as is.
 - The runtime does not cut the output or the value. The agent controls their size in its code.
@@ -106,11 +106,11 @@ The runtime offers the agent's own file and shell tools as functions, with exact
 | `edit(path, old, new, {all})` | `{path, replaced}`. `old` must occur once, or `all: true` replaces every occurrence. | The code server, inside the worktree. |
 | `` sh`cmd ${x}` `` or `sh(cmd, {cwd, timeoutMs})` | `{code, stdout, stderr}`, with `.text()`, `.json()` and `.lines()` over `stdout`. `signal` is set when a signal ended the command, `timedOut: true` when `timeoutMs` passed. | The code server, in the shell sandbox. |
 
-- `glob` and `grep` walk the tree without following symlinks and skip `.git` and `node_modules`. `grep` skips files with a NUL byte in their first 8 KiB. Returned paths are relative to the worktree when they are inside it.
+- `glob` and `grep` walk the tree asynchronously without following symlinks and skip `.git` and `node_modules`; they do not read `.gitignore`. `grep` reads no further in a file with a NUL byte in its first 8 KiB. Returned paths are relative to the worktree when they are inside it.
 - `` sh`...` `` quotes each interpolated value as one shell word; an array becomes several words. A string command runs as written. A non-zero exit does not throw: the script reads `code`.
-- `sh` runs `bash -c` (`/bin/sh` without bash) in the worktree, or in `cwd`, with stdin from `/dev/null` and the code server's environment without its `FLEET_*` variables. It has no default timeout. `poll {reset: true}` and the end of the code server kill running commands. When the command exits, the rest of its process group is killed.
+- `sh` runs `bash -c` (`/bin/sh` without bash) in the worktree, or in `cwd`, with stdin from `/dev/null` and the code server's environment without its `FLEET_*` variables. It has no default timeout. `poll {reset: true}` and the end of the code server kill running commands, and a reset runtime starts no new one. When the command exits, the rest of its process group is killed while the exited leader is not yet reaped, so the group id cannot belong to another process.
 - `sh` returns the whole stdout and stderr to the script. Nothing reaches the reply unless the script returns or prints it.
-- `write` and `edit` open the path inside the worktree with Go's `os.Root`. A path outside it, through a symlink out of it, or under `.git` fails with `FleetCallError` `code: "outside-worktree"`. `edit` fails with `not-found` when `old` does not occur and with `not-unique` when it occurs more than once without `all`.
+- `write` and `edit` open the path inside the worktree with Go's `os.Root`. A path outside it, through a symlink out of it, or under `.git` (in any case, or through a symlink, compared by file identity) fails with `FleetCallError` `code: "outside-worktree"`. `edit` fails with `not-found` when `old` does not occur and with `not-unique` when it occurs more than once without `all`.
 - `sh`, `write` and `edit` are bridged calls: they belong to their job like any other call, and `calls` names them `sh`, `write` and `edit`. `read`, `glob` and `grep` send no call.
 
 ### Authority per harness
@@ -128,12 +128,12 @@ A read-only start (`readOnly`, [conversations](fleet-conversations.md)) narrows 
 
 Fleet does not know the exact rules of Antigravity's or another ACP agent's own sandbox. A sandboxed `sh` there gets only the worktree and no network: less authority, never more.
 
-The shell sandbox reads every file the OS user can read, as Codex's sandbox does:
+The shell sandbox reads files as Codex's sandbox does and reaches no host Unix socket:
 
-- macOS: `sandbox-exec` with `(deny file-write*)` except under the write roots, `/dev/null`, `/dev/zero`, `/dev/tty*` and `/dev/fd/*`; `(deny network*)` without network; `(deny signal)` except inside the same sandbox.
-- Linux: `bwrap --ro-bind / /` with the write roots bound read-write, its own `/dev`, `/proc` and `/tmp` (see below), `--unshare-pid --unshare-ipc --die-with-parent --new-session`, and `--unshare-net` without network.
-- A write root's `.git` stays read-only unless another write root lies inside it, as in Codex.
-- The temporary directories are `TMPDIR` and, on macOS, `/private/tmp`. On Linux `/tmp` is the sandbox's own, except for a read-only start, which sees the host's `/tmp` read-only.
+- macOS: `sandbox-exec` with a deny-default profile, as Codex's seatbelt policy. It allows processes, file reads, writes under the write roots and to `/dev/null`, `/dev/zero`, `/dev/tty*` and `/dev/fd/*`, signals inside the same sandbox, and only the Mach services ordinary commands need: user and group lookup, notifications, logging, `sysmond`, `dirhelper` and `securityd`. No other service is reachable, so no launchd job (`launchctl submit`) or app runs outside the sandbox for a command. With network it adds IP traffic, the DNS socket (`/private/var/run/mDNSResponder`) and the DNS, network configuration and certificate services; no other Unix socket.
+- Linux: `bwrap --ro-bind / /` with its own `/dev` and `/proc`; empty tmpfs over `/run`, `/var/run`, `XDG_RUNTIME_DIR` and the executor's data directory (its MCP sockets), so no host Unix socket there is reachable; the read roots and write roots bound back; `--unshare-pid --unshare-ipc --die-with-parent --new-session`; and `--unshare-net` without network, which also leaves the host's abstract sockets. With network, a resolver file under `/run` is bound back read-only.
+- A write root's `.git` stays read-only unless another write root lies inside it, as in Codex. On macOS the rule matches `.git` in any case, since the file system ignores case.
+- The temporary directories are `TMPDIR` and, on macOS, `/private/tmp`. On Linux `/tmp` is a private directory of the code server, the same for every command of the execution and removed with the code server; a read-only start gets an empty read-only `/tmp`.
 
 ## Authority
 

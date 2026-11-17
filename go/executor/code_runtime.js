@@ -57,31 +57,43 @@ const path = require('node:path');
 let root = process.cwd(); // the worktree, as the code server names it (the tools line): the read roots use that spelling
 const resolve = (p) => path.resolve(root, String(p));
 const shown = (abs) => { const r = path.relative(root, abs); return r.startsWith('..') || path.isAbsolute(r) ? abs : r; };
-function walk(dir, out) {
-  for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+// Asynchronous, so a walk or grep inside Promise.all lets other calls and jobs run between its reads.
+async function walk(dir, out) {
+  for (const d of await fs.promises.readdir(dir, { withFileTypes: true })) {
     const p = path.join(dir, d.name);
     if (d.isDirectory()) {
-      if (d.name !== '.git' && d.name !== 'node_modules') walk(p, out);
+      if (d.name !== '.git' && d.name !== 'node_modules') await walk(p, out);
     } else if (d.isFile()) out.push(p); // symlinks are not followed
   }
   return out;
 }
 // Each entry relative to the walk's start, as a glob pattern sees it; returned relative to the worktree.
-function files(opts, pattern) {
+async function files(opts, pattern) {
   const start = resolve(opts?.path ?? '.');
-  const all = fs.statSync(start).isDirectory() ? walk(start, []) : [start];
+  const all = (await fs.promises.stat(start)).isDirectory() ? await walk(start, []) : [start];
   return all.filter((f) => pattern == null || path.matchesGlob(path.relative(start, f), pattern));
 }
+// A file's text, or null when its first 8 KiB hold a NUL byte (binary): then the rest is not read.
+async function textOf(f) {
+  const h = await fs.promises.open(f);
+  try {
+    const head = Buffer.alloc(8192);
+    const { bytesRead } = await h.read(head, 0, head.length, 0);
+    if (head.subarray(0, bytesRead).includes(0)) return null;
+    return (await h.readFile()).toString('utf8'); // a positional read leaves the position at 0
+  } finally {
+    await h.close();
+  }
+}
 const host = {
-  read: async (p) => fs.readFileSync(resolve(p), 'utf8'),
-  glob: async (pattern, opts) => files(opts, pattern).map(shown),
+  read: (p) => fs.promises.readFile(resolve(p), 'utf8'),
+  glob: async (pattern, opts) => (await files(opts, pattern)).map(shown),
   grep: async (pattern, opts) => {
-    const re = pattern instanceof RegExp ? new RegExp(pattern.source, pattern.flags.replace('g', '')) : new RegExp(String(pattern), opts?.ignoreCase ? 'i' : '');
+    const re = pattern instanceof RegExp ? new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, '')) : new RegExp(String(pattern), opts?.ignoreCase ? 'i' : '');
     const hits = [];
-    for (const f of files(opts, opts?.glob)) {
-      const b = fs.readFileSync(f);
-      if (b.subarray(0, 8192).includes(0)) continue; // binary
-      b.toString('utf8').split('\n').forEach((text, i) => { if (re.test(text)) hits.push({ file: shown(f), line: i + 1, text }); });
+    for (const f of await files(opts, opts?.glob)) {
+      const t = await textOf(f);
+      t?.split('\n').forEach((text, i) => { if (re.test(text)) hits.push({ file: shown(f), line: i + 1, text }); });
     }
     return hits;
   },
@@ -143,14 +155,20 @@ const compiles = (body) => { try { new AsyncFunction(body); return true; } catch
 // compiles as one expression after a prefix that compiles on its own. A line that starts with an operator or a dot
 // continues the line before it, so it is never split off. A line that starts with `(`, `[` or a template starts the
 // result, unlike plain JavaScript, so a last line `({a, b})` returns the object instead of calling the line before.
-const continues = /^\s*[-+*/%<>=!&|^?:,.)\]}]/;
+// `!` alone starts a new statement (a semicolon is inserted before it); `!=` continues.
+const continues = /^\s*([-+*/%<>=&|^?:,.)\]}]|!=)/;
 function body(source) {
   if (!compiles(source)) return source; // its own syntax error, unchanged
   for (let i = source.length; i >= 0; i--) {
     if (i > 0 && source[i - 1] !== '\n' && source[i - 1] !== ';') continue;
     const tail = source.slice(i).replace(/[\s;]+$/, '');
     if (tail.trim() === '' || i > 0 && source[i - 1] === '\n' && continues.test(tail)) continue;
+    // The tail alone first: most tails fail at their first tokens, so a script without a last expression costs about
+    // one parse, not one per line.
+    if (!compiles('return (' + tail + '\n)')) continue;
     const prefix = source.slice(0, i);
+    // A `;` inside a trailing line comment is no statement end: there `prefix (` still compiles, the `(` commented out.
+    if (source[i - 1] === ';' && compiles(prefix + ' (')) continue;
     const wrapped = prefix + '\nreturn (' + tail + '\n)';
     if (compiles(wrapped) && compiles(prefix)) return wrapped;
   }

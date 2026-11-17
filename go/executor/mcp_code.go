@@ -72,7 +72,11 @@ func codeDescription(spec any) string {
 	if can("sh") {
 		b.WriteString("- sh`cmd ${arg}` (each ${} is quoted as one word) or sh(cmd, {cwd, timeoutMs}) -> {code, stdout, stderr} with .text(), .json(), .lines(); a non-zero code does not throw.")
 		if shell := jAt(spec, "shell"); jAt(shell, "sandbox") == true {
-			b.WriteString(" Commands write only under the working directory and temporary directories")
+			if jAt(shell, "readOnly") == true {
+				b.WriteString(" Commands write nothing")
+			} else {
+				b.WriteString(" Commands write only under the working directory and temporary directories")
+			}
 			if jAt(shell, "network") != true {
 				b.WriteString(" and have no network")
 			}
@@ -174,13 +178,15 @@ type codeServer struct {
 	order  []string
 	rt     *codeRuntime
 	seq    int
-	closed bool               // the server is shutting down: no new runtime
-	procs  map[*exec.Cmd]bool // running sh commands, killed by reset and shutdown
+	closed bool             // the server is shutting down: no new runtime
+	procs  map[*shProc]bool // running sh commands, killed by reset and shutdown
+	tmp    string           // the private /tmp of Linux sh commands, removed at shutdown
 }
 
 type codeRuntime struct {
 	awaiting map[string]*codeJob // replies sent, not yet settled by the runtime (under codeServer.mu)
 	gone     bool                // its stdout ended (under codeServer.mu)
+	stopped  bool                // a reset or shutdown stopped it: no new sh for its jobs (under codeServer.mu)
 	tail     tailBuf             // the end of its stderr, for the runtime-exited reason
 	cmd      *exec.Cmd
 	mu       sync.Mutex // serializes writes to stdin
@@ -189,7 +195,7 @@ type codeRuntime struct {
 }
 
 func codeMCP(spec any, in io.Reader, w io.Writer) error {
-	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}, procs: map[*exec.Cmd]bool{}}
+	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}, procs: map[*shProc]bool{}}
 	if journal := jStr(spec, "journal"); journal != "" {
 		db, err := openJournal(journal)
 		if err != nil {
@@ -216,6 +222,13 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 	// writes are serialized.
 	var wmu sync.Mutex
 	var wg sync.WaitGroup
+	defer func() { // last: the commands are killed by then
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.tmp != "" {
+			os.RemoveAll(s.tmp)
+		}
+	}()
 	// On stdin end the runtime stops first, so waiting requests return with runtime-exited instead of their full wait.
 	defer wg.Wait()
 	defer func() {
@@ -577,8 +590,11 @@ func (rt *codeRuntime) send(m M) error {
 func (s *codeServer) stop() {
 	s.mu.Lock()
 	rt := s.rt
-	for c := range s.procs {
-		killGroup(c)
+	if rt != nil {
+		rt.stopped = true
+	}
+	for p := range s.procs {
+		p.kill()
 	}
 	s.mu.Unlock()
 	if rt != nil {
@@ -720,7 +736,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 func (s *codeServer) call(rt *codeRuntime, j *codeJob, m any) {
 	start := time.Now()
 	server, tool, args := jStr(m, "server"), jStr(m, "tool"), jAt(m, "args")
-	value, fail := s.bridge(server, tool, args)
+	value, fail := s.bridge(rt, server, tool, args)
 	label := callLabel(server, tool)
 	outcome := "ok"
 	if fail != nil {
@@ -765,7 +781,7 @@ func callError(outcome, code string, output any) M {
 	return M{"outcome": outcome, "code": code, "output": output}
 }
 
-func (s *codeServer) bridge(server, tool string, args any) (any, M) {
+func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any, M) {
 	if !truth(args) {
 		args = M{}
 	}
@@ -775,7 +791,7 @@ func (s *codeServer) bridge(server, tool string, args any) (any, M) {
 		}
 		switch tool {
 		case "sh":
-			return s.sh(args)
+			return s.sh(rt, args)
 		case "write", "edit":
 			return codeFile(jStr(s.spec, "dir"), tool, args)
 		}
@@ -970,11 +986,16 @@ type codeAuthority struct {
 
 // codeAuthorityFor mirrors the harness's own tools for this execution, never more. work is the worktree; writable are
 // Codex's extra writable roots and network its sandbox network (gitNetwork); readOnly is a read-only start
-// (StartPayload.readOnly): Codex's read-only sandbox, Claude's Read, Glob and Grep, plan mode for ACP agents.
-func codeAuthorityFor(harness string, profile any, work string, read []string, writable []any, network, readOnly bool) codeAuthority {
+// (StartPayload.readOnly): Codex's read-only sandbox, Claude's Read, Glob and Grep, plan mode for ACP agents. A
+// sandboxed sh on Linux sees an empty executor data directory (root: its MCP sockets) except the read roots.
+func codeAuthorityFor(harness string, profile any, work string, read []string, writable []any, network, readOnly bool, root string) codeAuthority {
 	a := codeAuthority{read: slices.DeleteFunc(slices.Clone(read), func(r string) bool { return r == "" })}
 	sandboxed := func(extra []any, net bool) M {
-		return M{"sandbox": true, "write": append([]any{work}, extra...), "network": net}
+		m := M{"sandbox": true, "write": append([]any{work}, extra...), "network": net, "read": anyStrings(a.read)}
+		if root != "" {
+			m["hide"] = []any{root}
+		}
+		return m
 	}
 	switch harness {
 	case "claude":
@@ -992,7 +1013,8 @@ func codeAuthorityFor(harness string, profile any, work string, read []string, w
 		}
 	case "codex":
 		if readOnly { // Codex's read-only sandbox: commands run, nothing is written, no network
-			a.shell = M{"sandbox": true, "readOnly": true, "network": false}
+			a.shell = sandboxed(nil, false)
+			a.shell["readOnly"] = true
 			return a
 		}
 		a.write, a.edit, a.shell = true, true, sandboxed(writable, network)

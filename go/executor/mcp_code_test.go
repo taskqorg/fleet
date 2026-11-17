@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -202,7 +204,7 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	}
 	srv := &codeServer{conns: map[string]any{"web": web}, fleet: map[string]bool{}}
 	for _, x := range [][3]string{{"conn:web", "delete", "tool-not-granted"}, {"conn:other", "search", "connection-not-granted"}, {"fleet", "ask", "no-fleet-tools"}} {
-		if _, fail := srv.bridge(x[0], x[1], M{}); jStr(fail, "code") != x[2] {
+		if _, fail := srv.bridge(nil, x[0], x[1], M{}); jStr(fail, "code") != x[2] {
 			t.Errorf("bridge %s.%s: %v", x[0], x[1], fail)
 		}
 	}
@@ -434,7 +436,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 			fleet = &codeFleet{journal, M{"commandId": "c"}}
 		}
 		file := filepath.Join(t.TempDir(), "runs", "x.code.json")
-		err := addCodeServer(servers, mode, fleet, granted, "/run.env", file, "/work", codeAuthorityFor(harness, profile, "/work", []string{"/work", "/input"}, []any{"/git"}, true, profile["readOnly"] == true))
+		err := addCodeServer(servers, mode, fleet, granted, "/run.env", file, "/work", codeAuthorityFor(harness, profile, "/work", []string{"/work", "/input"}, []any{"/git"}, true, profile["readOnly"] == true, "/exec"))
 		if err != nil {
 			return servers, nil, err
 		}
@@ -454,7 +456,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 		t.Fatalf("only: %v", sortedKeys(servers))
 	}
 	// Codex: sh sandboxed with its writable roots and gitNetwork's network; write and edit.
-	if _, spec, _ := launch("only", "codex", M{}, "/journal"); enc(spec["shell"]) != `{"network":true,"sandbox":true,"write":["/work","/git"]}` || spec["write"] != true || spec["edit"] != true {
+	if _, spec, _ := launch("only", "codex", M{}, "/journal"); enc(spec["shell"]) != `{"hide":["/exec"],"network":true,"read":["/work","/input"],"sandbox":true,"write":["/work","/git"]}` || spec["write"] != true || spec["edit"] != true {
 		t.Fatalf("codex authority: %v", spec)
 	}
 	// Claude: each host function only with its native tool; no Bash, no sh.
@@ -465,7 +467,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 		t.Fatalf("default claude: %v", spec)
 	}
 	// Antigravity and acp: a sandboxed sh with the worktree only and no network; nothing writes in plan mode.
-	if _, spec, _ := launch("add", "acp", M{}, "/journal"); enc(spec["shell"]) != `{"network":false,"sandbox":true,"write":["/work"]}` {
+	if _, spec, _ := launch("add", "acp", M{}, "/journal"); enc(spec["shell"]) != `{"hide":["/exec"],"network":false,"read":["/work","/input"],"sandbox":true,"write":["/work"]}` {
 		t.Fatalf("acp: %v", spec)
 	}
 	if _, spec, _ := launch("add", "antigravity", M{"settings": M{"sandbox": false}}, "/journal"); enc(spec["shell"]) != `{"sandbox":false}` {
@@ -475,7 +477,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 		t.Fatalf("antigravity plan: %v", spec)
 	}
 	// A read-only start: Codex's sh runs read-only, Claude keeps reads only, ACP agents get nothing that writes.
-	if _, spec, _ := launch("add", "codex", M{"readOnly": true}, "/journal"); enc(spec["shell"]) != `{"network":false,"readOnly":true,"sandbox":true}` || spec["write"] != false || spec["edit"] != false {
+	if _, spec, _ := launch("add", "codex", M{"readOnly": true}, "/journal"); enc(spec["shell"]) != `{"hide":["/exec"],"network":false,"read":["/work","/input"],"readOnly":true,"sandbox":true,"write":["/work"]}` || spec["write"] != false || spec["edit"] != false {
 		t.Fatalf("codex read-only: %v", spec)
 	}
 	if _, spec, _ := launch("add", "claude", M{"readOnly": true}, "/journal"); has(spec, "shell") || spec["write"] != false || spec["edit"] != false || len(jArr(spec, "read")) != 2 {
@@ -483,6 +485,9 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	}
 	if _, spec, _ := launch("add", "acp", M{"readOnly": true}, "/journal"); has(spec, "shell") || spec["write"] != false {
 		t.Fatalf("acp read-only: %v", spec)
+	}
+	if d := codeDescription(M{"shell": M{"sandbox": true, "readOnly": true}}); !strings.Contains(d, "Commands write nothing and have no network.") {
+		t.Fatalf("read-only description: %s", d)
 	}
 	// only hides the Claude tools that host functions cover; add keeps them.
 	for mode, want := range map[string]string{"only": "Task,TaskStop", "add": "Read,Edit,Write,Bash,Glob,Grep,Task,TaskStop"} {
@@ -512,7 +517,7 @@ func TestCodeModeJournalErrorIsUnknown(t *testing.T) {
 	ctx := M{"commandId": "cmd", "executionId": "ex", "hostId": "h"}
 	s := &codeServer{db: db, ctx: ctx, fleet: map[string]bool{"message_send": true}}
 	db.Close()
-	if _, fail := s.bridge("fleet", "message_send", M{"text": "hi"}); jStr(fail, "outcome") != "unknown" || jStr(fail, "code") != "journal-error" {
+	if _, fail := s.bridge(nil, "fleet", "message_send", M{"text": "hi"}); jStr(fail, "outcome") != "unknown" || jStr(fail, "code") != "journal-error" {
 		t.Fatalf("closed journal: %v", fail)
 	}
 }
@@ -547,6 +552,10 @@ func TestCodeModeReplyAndLastExpression(t *testing.T) {
 		"const o = {\n  k: 1,\n}\no.k":                       "1",
 		"const f = (x) =>\n  x + 1\nf(1)":                    "2",
 		"const r = await Promise.all([\n  Promise.resolve(1),\n  Promise.resolve(2),\n])\nr": "[1,2]",
+		"const ok = false\n!ok":   "true",
+		"1 + 1\n// todo; cleanup": "2",
+		"const q = 2\nq // a;b":   "2",
+		"const a = 1\na\n!== 2":   "true",
 	} {
 		if r, bad := c.code(src); bad || enc(r["value"]) != want {
 			t.Errorf("%q: %v %v, want %s", src, bad, r, want)
@@ -569,10 +578,11 @@ func TestCodeModeFiles(t *testing.T) {
 			missing: await fail(() => edit("a/b.txt", "zzz", "")), read: await read("a/b.txt"), glob: await glob("**/*.txt"),
 			grep: await grep("2", {glob: "**/*.txt"}), types: [typeof sh, typeof write],
 			up: await fail(() => write("../x.txt", "")), abs: await fail(() => write(` + enc(filepath.Join(outside, "y.txt")) + `, "")),
-			link: await fail(() => write("out/z.txt", "")), git: await fail(() => write(".git/config", "")), viaLink: await fail(() => write("g/config", ""))}`)
+			link: await fail(() => write("out/z.txt", "")), git: await fail(() => write(".git/config", "")), viaLink: await fail(() => write("g/config", "")),
+			upper: await fail(() => write(".GIT/config", ""))}`)
 	want := `{"abs":"outside-worktree","all":{"path":"a/b.txt","replaced":2},"git":"outside-worktree","glob":["a/b.txt"],"grep":[{"file":"a/b.txt","line":1,"text":"1 2 2"}],` +
 		`"link":"outside-worktree","many":"not-unique","missing":"not-found","once":{"path":"a/b.txt","replaced":1},"read":"1 2 2","types":["undefined","function"],` +
-		`"up":"outside-worktree","viaLink":"outside-worktree","w":{"bytes":11,"path":"a/b.txt"}}`
+		`"up":"outside-worktree","upper":"outside-worktree","viaLink":"outside-worktree","w":{"bytes":11,"path":"a/b.txt"}}`
 	if bad || enc(r["value"]) != want {
 		t.Fatalf("files: %v %v\n got %s\nwant %s", bad, r, enc(r["value"]), want)
 	}
@@ -585,6 +595,12 @@ func TestCodeModeFiles(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Join(dir, ".git")); len(entries) != 0 {
 		t.Fatalf("written under .git: %v", entries)
 	}
+	if runtime.GOOS == "darwin" { // a case-insensitive file system: .GIT through a symlink is the same directory
+		os.Symlink(filepath.Join(dir, ".GIT"), filepath.Join(dir, "g2"))
+		if _, fail := codeFile(dir, "write", M{"path": "g2/config", "text": ""}); jStr(fail, "code") != "outside-worktree" {
+			t.Fatalf(".GIT through a symlink: %v", fail)
+		}
+	}
 	// Without the grant the functions do not exist, and the server refuses the call too.
 	c = newCodeClient(t, M{"dir": dir})
 	if r, _ := c.code(`[typeof read, typeof write, typeof edit, typeof sh]`); enc(r["value"]) != `["undefined","undefined","undefined","undefined"]` {
@@ -592,7 +608,7 @@ func TestCodeModeFiles(t *testing.T) {
 	}
 	srv := &codeServer{spec: M{"dir": dir}}
 	for _, tool := range []string{"write", "edit", "sh"} {
-		if _, fail := srv.bridge("host", tool, M{"path": "x", "command": "true"}); jStr(fail, "code") != "tool-not-granted" {
+		if _, fail := srv.bridge(nil, "host", tool, M{"path": "x", "command": "true"}); jStr(fail, "code") != "tool-not-granted" {
 			t.Errorf("%s: %v", tool, fail)
 		}
 	}
@@ -668,12 +684,74 @@ func TestCodeModeShell(t *testing.T) {
 		t.Fatalf("network with gitNetwork: %v, hits %d", r, hits.Load())
 	}
 	// A read-only start: commands run, nothing is written, not even the temporary directory.
-	c = newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": true, "readOnly": true, "network": false}})
+	c = newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": true, "readOnly": true, "network": false, "read": []any{dir}}})
 	if r, _ := c.code(`[(await sh("cat .git")).code, (await sh("echo x > ro.txt")).code, (await sh("echo x > \"$TMPDIR/ro.txt\"")).code]`); jStr(r, "value") != "" || enc(jArr(r, "value")[0]) != "0" || enc(jArr(r, "value")[1]) == "0" || enc(jArr(r, "value")[2]) == "0" {
 		t.Fatalf("read-only sh: %v", r)
 	}
 	c = newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": false}})
 	if r, _ := c.code(`(await sh("echo x > ` + filepath.Join(outside, "free.txt") + `")).code`); enc(r["value"]) != "0" {
 		t.Fatalf("unsandboxed: %v", r)
+	}
+}
+
+// Risk: a sandboxed sh reaches the host through a Unix socket (the executor's MCP sockets, docker.sock, D-Bus) or a
+// launchd job outside the sandbox, loses /tmp between calls, or writes .git under another case (fleet-code-mode.md,
+// authority per harness).
+func TestCodeModeShellHost(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: elsewhere\n"), 0o644)
+	sockDir, err := os.MkdirTemp("/var/tmp", "fcs") // short: a Unix socket path has about 100 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	sock := filepath.Join(sockDir, "s")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	var accepted atomic.Int32
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			conn.Close()
+		}
+	}()
+	connect := `node -e 'require("net").connect(` + enc(sock) + `).on("connect", () => process.exit(0)).on("error", () => process.exit(1))'`
+	name := fmt.Sprintf("fleet-code-%d", time.Now().UnixNano())
+	t.Cleanup(func() { os.Remove(filepath.Join("/private/tmp", name)) })
+	probe := `const run = async (cmd) => (await sh(cmd)).code
+		await sh("echo kept > /tmp/` + name + `")
+		return {socket: await run(` + enc(connect) + `), tmp: (await sh("cat /tmp/` + name + `")).text(), upper: await run("echo x >> .GIT"),
+			launchd: await run("launchctl submit -l ` + name + ` -- /usr/bin/true"), run: (await sh("ls -A /run | wc -l")).text().trim()}`
+	// With network, as with gitNetwork: IP yes, host Unix sockets no.
+	c := newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": true, "write": []any{dir}, "network": true, "hide": []any{sockDir}}})
+	r, bad := c.code(probe)
+	if bad || enc(jAt(r, "value", "socket")) == "0" || accepted.Load() != 0 || jStr(r, "value", "tmp") != "kept" {
+		t.Fatalf("socket or /tmp: %v %v, accepted %d", bad, r, accepted.Load())
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		exec.Command("launchctl", "remove", name).Run()
+		if enc(jAt(r, "value", "upper")) == "0" || enc(jAt(r, "value", "launchd")) == "0" {
+			t.Fatalf(".GIT or a launchd job: %v", r["value"])
+		}
+		if b, _ := os.ReadFile(filepath.Join(dir, ".git")); string(b) != "gitdir: elsewhere\n" {
+			t.Fatalf(".git changed through .GIT: %q", b)
+		}
+	case "linux":
+		if jStr(r, "value", "run") != "0" {
+			t.Fatalf("/run is visible: %v", r["value"])
+		}
+	}
+	// The listener works: an unsandboxed command reaches it.
+	c = newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": false}})
+	if r, _ := c.code(`(await sh(` + enc(connect) + `)).code`); enc(r["value"]) != "0" || accepted.Load() != 1 {
+		t.Fatalf("control: %v, accepted %d", r, accepted.Load())
 	}
 }
