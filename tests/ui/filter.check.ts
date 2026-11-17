@@ -203,6 +203,13 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.waitForFunction(b => new URLSearchParams(location.search).get('sel') === b, badId, { timeout: 5000 }).catch(() => {});
     { const sel = new URL(origin + await url()).searchParams.get('sel'); rule(N, sel === badId, `after a partial bulk failure sel should be only the failed row ${badId}, got ${sel}`); }
     await page.unroute('**/api/ops/task_update');
+    // Restore the bulk fixture before testing group preferences. Leaving a Paused group open would make the
+    // browser page through the collapsed Queued group before reaching Completed on the large fixture.
+    const resumed = await fetch(origin + '/api/ops/task_update', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin },
+      body: JSON.stringify({ taskId: okId, action: 'resume' }),
+    });
+    if (!resumed.ok || (await resumed.json()).state !== 'queued') throw new Error('The bulk fixture did not resume to queued');
     // Collapsed groups are remembered per person (list-view.md, prefs listGroups), both ways: under state grouping In
     // progress (3) and Queued (4) are collapsed by the person, Completed (7, collapsed by default) is opened. Leaving the
     // section and coming back, and a reload, show them so from the first frame the headers are on screen.
