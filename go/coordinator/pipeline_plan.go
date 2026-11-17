@@ -233,6 +233,9 @@ func pipelineStepIndex(run doc, executionID string) int {
 
 // claimPipelineAPI mints once in the transaction that wins the persisted claim.
 // Status/recent-task reads observe the existing job and never create a new effect.
+// errFileTool: a pipeline api step names a file tool (file: upload|download), which only a host client can call.
+var errFileTool = errors.New("file tool")
+
 // claimPipelineAPI also answers the tool's idempotent flag from the minted spec (how an edge error reads).
 func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (doc, string, bool, bool, error) {
 	if _, err := first(q, "SELECT id FROM execution WHERE id=$1 FOR UPDATE", runID); err != nil {
@@ -279,6 +282,9 @@ func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (
 		for _, t := range anys(mapOf(c)["tools"]) {
 			if mapOf(t)["name"] == tool {
 				idempotent = mapOf(t)["idempotent"] == true
+				if mapOf(t)["file"] != nil {
+					return run, "", false, false, errFileTool // the coordinator calls JSON tools only
+				}
 			}
 		}
 	}

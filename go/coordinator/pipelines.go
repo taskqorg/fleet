@@ -1062,6 +1062,10 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 		claimed, token, won, idempotent, err = claimPipelineAPI(q, astr(run["id"]), executionID, connection, tool)
 		return err
 	})
+	if errors.Is(err, errFileTool) {
+		unavailable.ErrorCode = ptr("file-tool-unsupported")
+		return unavailable
+	}
 	if err != nil {
 		unavailable.ErrorCode = ptr("pipeline-authority-denied")
 		return unavailable

@@ -49,10 +49,14 @@ func GatewayUpload(ctx context.Context, t GatewayTarget, connection, tool string
 	}, answer)
 	defer x.close()
 	sum := u.Sha256
-	x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionUpload, Bytes: u.Size, MediaType: u.MediaType, Name: u.Name, Sha256: &sum}
 	if x.failed {
+		if x.line.Outcome == CallOutcomeUnknown {
+			// What may have been stored: the agent compares it with the issue's attachments.
+			x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionUpload, Bytes: u.Size, MediaType: u.MediaType, Name: u.Name, Sha256: &sum}
+		}
 		return x.line
 	}
+	x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionUpload, Bytes: u.Size, MediaType: u.MediaType, Name: u.Name, Sha256: &sum}
 	line := x.answerJSON()
 	if line.Outcome == CallOutcomeOk {
 		line.Output, _ = json.Marshal(map[string]any{"reply": line.Output, "name": u.Name, "mediaType": u.MediaType, "bytes": u.Size, "sha256": u.Sha256, "callId": line.CallId})
@@ -82,10 +86,20 @@ func SafeName(name string) string { return cutName(safeChars(name), 200) }
 
 // cutName cuts name to at most n bytes on a rune boundary; an empty name is "file".
 func cutName(name string, n int) string {
-	for len(name) > n {
-		_, size := utf8.DecodeLastRuneInString(name)
-		name = name[:len(name)-size]
+	// The stem is cut, not a short extension: the agent's file tools go by it.
+	ext := filepath.Ext(name)
+	if len(name) <= n || len(ext) > 20 || len(ext) >= n || ext == name {
+		ext = ""
 	}
+	stem := strings.TrimSuffix(name, ext)
+	for len(stem)+len(ext) > n {
+		_, size := utf8.DecodeLastRuneInString(stem)
+		stem = stem[:len(stem)-size]
+	}
+	if stem == "" && ext != "" {
+		stem = "file"[:min(4, n-len(ext))]
+	}
+	name = stem + ext
 	if name == "" {
 		return "file"
 	}
@@ -112,7 +126,7 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 	for i, s := range append([]string{d.Prefix}, d.Folder...) {
 		if (i > 0 || s != "") && !segment(s) {
 			code := "bad-request"
-			refused.ErrorCode = &code
+			refused.ErrorCode, refused.Output = &code, textOf([]byte("an argument naming the download folder or file is not one path element: "+s))
 			return refused
 		}
 	}

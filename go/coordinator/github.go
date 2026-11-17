@@ -298,7 +298,7 @@ func githubGateway(ctx context.Context, a *App, connection, project, tool string
 	if err != nil {
 		return nil, err
 	}
-	line := gatewayCall(ctx, token, connection, tool, args, true) // reads only
+	line := gatewayCall(ctx, token, connection, tool, args, mapOf(providerTools("github")[tool])["idempotent"] == true)
 	if line.Outcome != contract.CallOutcomeOk {
 		return nil, fmt.Errorf("github %s: %s %d", tool, deref(line.ErrorCode), line.Status)
 	}

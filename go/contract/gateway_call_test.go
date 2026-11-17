@@ -312,7 +312,7 @@ func TestDownloadCutLeavesNoFile(t *testing.T) {
 // Requirement: §9 download names: Cyrillic names with spaces stay readable, a leading dot and separators become '_',
 // the name is cut to 200 bytes on a rune boundary. Risk: a hidden file, a path, or a broken UTF-8 name on disk.
 func TestSafeName(t *testing.T) {
-	for in, want := range map[string]string{"запись экрана.mov": "запись экрана.mov", ".env": "_env", "a/b\\c": "a_b_c", "": "file", strings.Repeat("я", 150): strings.Repeat("я", 100)} {
+	for in, want := range map[string]string{"запись экрана.mov": "запись экрана.mov", ".env": "_env", "a/b\\c": "a_b_c", "": "file", strings.Repeat("я", 150): strings.Repeat("я", 100), strings.Repeat("я", 150) + ".png": strings.Repeat("я", 98) + ".png"} {
 		if got := SafeName(in); got != want {
 			t.Fatalf("%q: %q", in, got)
 		}

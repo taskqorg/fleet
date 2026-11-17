@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -46,10 +47,13 @@ func clientWaits() (stall, answer time.Duration) {
 // upload's body) without following redirects: an Access login redirect is an answer, not a place to send the call.
 var gatewayClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
-// watchdog cancels a call when no progress happened within the armed wait. Each progress re-arms it.
+// watchdog cancels a call when no progress happened within the armed wait. Each progress re-arms it. Once the answer
+// arrived the request body no longer arms it (the transport may still read it), and once stopped nothing does.
 type watchdog struct {
-	timer *time.Timer
-	fired atomic.Bool
+	mu                sync.Mutex
+	timer             *time.Timer
+	fired             atomic.Bool
+	answered, stopped bool
 }
 
 func newWatchdog(cancel context.CancelFunc, wait time.Duration) *watchdog {
@@ -58,33 +62,78 @@ func newWatchdog(cancel context.CancelFunc, wait time.Duration) *watchdog {
 	return w
 }
 
-func (w *watchdog) arm(wait time.Duration) { w.timer.Reset(wait) }
+// arm re-arms the wait; request marks progress of the request body.
+func (w *watchdog) arm(wait time.Duration, request bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.stopped && !(request && w.answered) {
+		w.timer.Reset(wait)
+	}
+}
 
-// progressReader re-arms the watchdog with each read. For a request body of want bytes it is done, and arms the answer
-// wait, only once all want bytes were read: a file that shrank since its first pass never left whole.
-type progressReader struct {
+// answer switches to the answer's stall wait.
+func (w *watchdog) answer(stall time.Duration) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.answered = true
+	if !w.stopped {
+		w.timer.Reset(stall)
+	}
+}
+
+func (w *watchdog) stop() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stopped = true
+	w.timer.Stop()
+}
+
+// bodyReader is a request body of want bytes. Each read re-arms the stall wait; it is done, and arms the answer wait,
+// only once all want bytes were read (a file that shrank since its first pass never left whole). The answer wait
+// counts from the last byte and, for a file, adds the time the body took: the gateway posts the staged file on before
+// its own answer wait starts, and over loopback that takes no longer than the client's send did.
+type bodyReader struct {
 	r            io.Reader
 	dog          *watchdog
 	stall, after time.Duration
+	file         bool
+	begun        time.Time
 	want, n      int64
 	done         atomic.Bool
 }
 
-func (p *progressReader) Read(b []byte) (int, error) {
+func (p *bodyReader) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
 	p.n += int64(n)
 	if err == io.EOF && p.n == p.want {
 		p.done.Store(true)
-		p.dog.arm(p.after)
+		wait := p.after
+		if p.file {
+			wait += time.Since(p.begun)
+		}
+		p.dog.arm(wait, true)
 	} else {
-		p.dog.arm(p.stall)
+		p.dog.arm(p.stall, true)
 	}
+	return n, err
+}
+
+// answerReader re-arms the stall wait with each read of the answer body.
+type answerReader struct {
+	r     io.Reader
+	dog   *watchdog
+	stall time.Duration
+}
+
+func (p *answerReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.dog.arm(p.stall, false)
 	return n, err
 }
 
 // reader is the answer body with the stall wait re-armed on each read.
 func (x *exchange) reader() io.Reader {
-	return &progressReader{r: x.res.Body, dog: x.dog, stall: x.stall, after: x.stall}
+	return &answerReader{r: x.res.Body, dog: x.dog, stall: x.stall}
 }
 
 // exchange is one request to the gateway with its answer still open; line holds the outcome when the request failed.
@@ -105,7 +154,7 @@ func (x *exchange) close() {
 	if x.res != nil {
 		x.res.Body.Close()
 	}
-	x.dog.timer.Stop()
+	x.dog.stop()
 	x.cancel()
 }
 
@@ -122,9 +171,9 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, open fu
 		x.fail(CallOutcomeError, "connection-unavailable")
 		return x
 	}
-	var current atomic.Pointer[progressReader] // the body last handed to the transport
-	fresh := func() *progressReader {
-		p := &progressReader{r: open(), dog: x.dog, stall: stall, after: wait, want: length}
+	var current atomic.Pointer[bodyReader] // the body last handed to the transport
+	fresh := func() *bodyReader {
+		p := &bodyReader{r: open(), dog: x.dog, stall: stall, after: wait, file: file, begun: time.Now(), want: length}
 		current.Store(p)
 		return p
 	}
@@ -132,7 +181,7 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, open fu
 	if length > 0 {
 		reader = fresh()
 	} else {
-		x.dog.arm(wait)
+		x.dog.arm(wait, true)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(t.URL, "/")+"/v1/call/"+connection+"/"+tool, reader)
 	if err != nil {
@@ -177,7 +226,7 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, open fu
 		return x
 	}
 	x.res = res
-	x.dog.arm(stall)
+	x.dog.answer(stall)
 	x.line.CallId, x.line.Status = res.Header.Get("x-fleet-call-id"), int64(res.StatusCode)
 	// A 5xx without the gateway's call id came from the edge (Cloudflare, Caddy): whether the gateway got and sent the
 	// call is open, unless the tool may be repeated or the request never left whole.
@@ -196,7 +245,12 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, open fu
 // readSome is the first 2000 bytes of an answer as {"text": ...}.
 func readSome(x *exchange) json.RawMessage {
 	b, _ := io.ReadAll(io.LimitReader(x.reader(), 2000))
-	text, _ := json.Marshal(map[string]string{"text": strings.ToValidUTF8(string(b), "�")})
+	return textOf(b)
+}
+
+// textOf is a non-JSON answer's first 2000 bytes as {"text": ...}.
+func textOf(b []byte) json.RawMessage {
+	text, _ := json.Marshal(map[string]string{"text": strings.ToValidUTF8(string(b[:min(len(b), 2000)]), "�")})
 	return text
 }
 
@@ -216,8 +270,7 @@ func (x *exchange) answerJSON() CallLine {
 	if json.Valid(body) {
 		x.line.Output = body
 	} else {
-		text, _ := json.Marshal(map[string]string{"text": strings.ToValidUTF8(string(body[:min(len(body), 2000)]), "�")})
-		x.line.Output = text
+		x.line.Output = textOf(body)
 		if ok {
 			x.fail(CallOutcomeUnknown, "invalid-response")
 			return x.line
