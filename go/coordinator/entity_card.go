@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -168,7 +167,7 @@ func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
 	r, err := first(q, `SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.project_id,e.task_id,e.session_id,e.experiment_id,e.host_id,e.harness,e.model,e.problem,
 	 e.started_at,e.ended_at,e.updated_at,extract(epoch FROM e.ended_at-e.started_at) AS secs,t.code AS task_code,t.title AS task_title,s.code AS session_code
 	 FROM execution e LEFT JOIN task t ON t.id=e.task_id LEFT JOIN document s ON s.kind='session' AND s.id=e.session_id WHERE e.id=$1`, id)
-	if r == nil || err != nil {
+	if r == nil || err != nil || astr(r["experiment_id"]) != "" && !architect(q) { // a Lab trial is the architect's, as its experiment
 		return nil, err
 	}
 	path := ptr("/runners")
@@ -193,8 +192,8 @@ func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Title: firstString(astr(r["task_title"]), executionKindLabel[astr(r["kind"])], "Run"), State: optStr(astr(r["state"])),
 		ProjectId: optStr(astr(r["project_id"])), Harness: optStr(astr(r["harness"])), At: optStr(at), AtLabel: ptr(label), Path: path,
 		Facts: facts(fact("Problem", contract.EntityFactTypeText, astr(r["problem"])), fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])),
-			fact("Conversation", contract.EntityFactTypeCode, astr(r["session_code"])), fact("Host", contract.EntityFactTypeCode, astr(r["host_id"])),
-			fact("Model", contract.EntityFactTypeCode, astr(r["model"])), fact("Duration", contract.EntityFactTypeDuration, secs))}, nil
+			fact("Duration", contract.EntityFactTypeDuration, secs), fact("Host", contract.EntityFactTypeCode, astr(r["host_id"])),
+			fact("Model", contract.EntityFactTypeCode, astr(r["model"])), fact("Conversation", contract.EntityFactTypeCode, astr(r["session_code"])))}, nil
 }
 
 func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
@@ -396,14 +395,12 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 			fact("Opened", contract.EntityFactTypeTime, x.Opened), fact("Merged", contract.EntityFactTypeTime, x.Merged))}, nil
 }
 
-var nativeReleaseTag = regexp.MustCompile(`^v\d+(\.\d+)*$`)
-
 // cardRelease: a release tag the delivery pass or history knows, or that a host or the site runs; installed as the
 // delivery pass decides it (delivery.go): every host seen within the hour that reports a version runs it or newer; a
 // UI-only release (ui-<backend>-v<UI>) installs on no host and is installed once the site serves that UI or newer.
 func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 	tag := strings.TrimSpace(id)
-	if !nativeReleaseTag.MatchString(tag) && !uiOnlyRelease(tag) {
+	if !deliveryReleaseTag(tag) || tag == "v" {
 		return nil, fail(400, "Expected a release tag such as v1.2.3")
 	}
 	prs, installing := 0, false
@@ -425,7 +422,7 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 	// Open lists its pull requests while the pass holds them; an older release opens Delivery, whose history has it.
 	path := "/delivery"
 	if prs > 0 {
-		path += "?q=" + url.QueryEscape(tag)
+		path += "?q=" + url.QueryEscape("release="+tag+".") // Delivery's search text ends each release with a dot, so v1.2.3 is not v1.2.31
 	}
 	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), State: ptr("installing"), Path: ptr(path)}
 	if uiOnlyRelease(tag) {
@@ -433,7 +430,8 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 		if !known && (on != version || !fullAccess(q.person)) {
 			return nil, nil
 		}
-		c.Title, c.Facts = "UI release "+version, facts(fact("Site serves", contract.EntityFactTypeCode, on), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
+		c.Title, c.Facts = "UI release "+version, facts(fact("Hosts", contract.EntityFactTypeText, "install nothing: the web app only"), fact("Site serves", contract.EntityFactTypeCode, on),
+			fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
 		if on != "" && !versionLess(on, version) {
 			c.State = ptr("installed")
 		}

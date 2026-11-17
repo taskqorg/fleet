@@ -125,7 +125,7 @@ export function Delivery({ id }: { id?: string }) {
     const source = !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(x => fromHistory(x, hist.h.installsFrom)) : [];
     const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
     const rowsOf = source.map(row);
-    const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo} ${r.it.release ?? ''}`, { state: r.it.stage, project: r.it.projectId }));
+    const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo} ${r.it.release ?? ''} release=${r.it.release ?? ''}.`, { state: r.it.stage, project: r.it.projectId }));
     const counts: Record<string, number> = Object.fromEntries(ORDER.map(s => [s, 0]));
     for (const r of searched) counts[r.it.stage]++;
     const st = v.state ?? [], group = v.group ?? DEFAULT_DELIVERY_GROUP, sort = v.sort ?? DEFAULT_DELIVERY_SORT;

@@ -15,13 +15,14 @@ export function cardTouched(kind: EntityRef['kind'], id: string | undefined, c: 
     // task_derived changes (kind task).
     case 'task': return (c.id === id || c.taskId === id) && c.kind !== 'event' && c.kind !== 'execution';
     case 'question': return c.kind === 'question' && c.id === id;
-    // Not every streamed event or totals flush: the session and question changes; runs show when it opens again.
+    // Not every streamed event or totals flush: the session and question changes, and its runs on the 5 s timer.
     case 'conversation': return c.sessionId === id && c.kind !== 'event' && c.kind !== 'execution';
-    case 'execution': return c.kind === 'execution' && c.id === id;
+    // Its changes are mostly totals flushes; the run's state is read on a timer instead (useCard).
+    case 'execution': return false;
     case 'result': return c.kind === 'artifact' && c.id === id;
     // Its trials are executions, whose changes name no experiment: Trials is read again when the card opens (holdDoc).
     case 'experiment': return c.kind === 'experiment' && c.id === id;
-    // Its observation and the commands for it (a run started or ended there shows when the card opens again).
+    // Its observation and the commands for it; its runs on the 5 s timer.
     case 'host': return c.hostId === id && c.kind !== 'execution' || c.kind === 'host' && c.id === id;
     // A change names no project, so counts are read again when the card opens (holdDoc), not on every task change.
     case 'project': return c.kind === 'definition' && c.id === 'project/' + id;
@@ -32,6 +33,8 @@ export function cardTouched(kind: EntityRef['kind'], id: string | undefined, c: 
 }
 
 const NOT_FOUND = 'Not found, or not visible to you';
+// Kinds whose state comes from runs, whose changes (totals) arrive many times a second: read every 5 s while open.
+const TIMED = new Set<EntityRef['kind']>(['execution', 'conversation', 'host']);
 
 function useCard(ref: EntityRef): EntityCardRead {
   const name = `entity-card:${ref.kind}:${ref.id ?? ref.code}`;
@@ -39,7 +42,7 @@ function useCard(ref: EntityRef): EntityCardRead {
   const doc = useDoc<EntityCardReply>(name, async () => {
     try { return await op('entity_card', ref.id ? { kind: ref.kind, id: ref.id } : { code: ref.code! }); }
     catch (e) { throw e instanceof OpError && e.status === 404 ? Error(NOT_FOUND) : e; }
-  }, c => cardTouched(ref.kind, known.current, c));
+  }, c => cardTouched(ref.kind, known.current, c), TIMED.has(ref.kind) ? 5000 : undefined);
   known.current = doc.data?.id ?? ref.id; // the reply's id: a legacy or alias id resolves to the one changes carry
   // An entity now gone or hidden shows as such, never as its stored card.
   const gone = doc.error === NOT_FOUND;
