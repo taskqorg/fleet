@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strings"
@@ -246,9 +247,11 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 
 	// A pause that cannot be written holds the execution in memory: it neither spins nor stalls the others.
 	owner(`SELECT set_config('fleet.project_ids','*',false); INSERT INTO execution(id,kind,state,project_id) VALUES('pause-stall','tool_run','succeeded','');
-	 CREATE FUNCTION pause_work_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'pause fault'; END $$;
+	 CREATE FUNCTION pause_work_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'pause fault' USING ERRCODE = '40001'; END $$;
 	 CREATE TRIGGER pause_work_fault BEFORE UPDATE ON resource_work FOR EACH ROW WHEN (NEW.execution_id='pause-stall') EXECUTE FUNCTION pause_work_fault()`)
-	if err := pass(); errors.Is(err, errResourceStall) || err == nil || !strings.Contains(err.Error(), "pause fault") || !slices.Contains(resourceHeld.ids("execution:", true), "pause-stall") {
+	pauseCtx, cancelPause := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelPause()
+	if err := resourceProcessorPass(pauseCtx, a); errors.Is(err, errResourceStall) || err == nil || !strings.Contains(err.Error(), "pause fault") || !slices.Contains(resourceHeld.ids("execution:", true), "pause-stall") {
 		t.Fatal("unwritable pause", err)
 	}
 	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('pause-healthy-4','tool_run','succeeded','PAUSE')`)
