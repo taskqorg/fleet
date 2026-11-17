@@ -351,3 +351,18 @@ func TestIssueClosed(t *testing.T) {
 		}
 	}
 }
+
+// Requirement: fleet-error-tracking.md, agent read access: the gateway reads Bugsink at FLEET_BUGSINK_INGEST, the one
+// loopback setting the tunnel uses too, and other providers keep their catalogue address. Risk: moving Bugsink's port
+// breaks agent reads and the resolution pass until a code release.
+func TestSnapshotProviders(t *testing.T) {
+	t.Setenv("FLEET_BUGSINK_INGEST", "")
+	if got := snapshotProviders()[bugsinkConn].BaseUrl; got != "http://127.0.0.1:9510" {
+		t.Fatalf("default %s", got)
+	}
+	t.Setenv("FLEET_BUGSINK_INGEST", "http://127.0.0.1:9999/")
+	p := snapshotProviders()
+	if p[bugsinkConn].BaseUrl != "http://127.0.0.1:9999" || p["github"].BaseUrl != "https://api.github.com" || gatewayProviders[bugsinkConn].BaseUrl != "http://127.0.0.1:9510" {
+		t.Fatalf("override: %s %s %s", p[bugsinkConn].BaseUrl, p["github"].BaseUrl, gatewayProviders[bugsinkConn].BaseUrl)
+	}
+}

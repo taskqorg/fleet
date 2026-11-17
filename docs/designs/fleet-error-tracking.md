@@ -40,7 +40,7 @@ Each capture runs on a clone of the process hub, so concurrent events keep their
 
 ### 4. Agent read access
 
-Connection provider `bugsink` ([`providers.go`](../../go/coordinator/providers.go)) reads `/api/canonical/0/` on Bugsink's loopback address `http://127.0.0.1:9510` (the gateway runs on PDS18, and the public API is behind Cloudflare Access; only ingest is public) with a read-only Bugsink token (`projects:read`, `issues:read`, `events:read`). All tools are GET and idempotent:
+Connection provider `bugsink` ([`providers.go`](../../go/coordinator/providers.go)) reads `/api/canonical/0/` on Bugsink's loopback address, `FLEET_BUGSINK_INGEST` in the gateway snapshot, else the catalogue's `http://127.0.0.1:9510` (the gateway runs on PDS18, and the public API is behind Cloudflare Access; only ingest is public) with a read-only Bugsink token (`projects:read`, `issues:read`, `events:read`). All tools are GET and idempotent:
 
 | Tool | Path |
 |---|---|
@@ -79,7 +79,8 @@ Bugsink alerts (new issue, regression, unmute; [alerts](https://www.bugsink.com/
 | Value | Where | Secret |
 |---|---|---|
 | `FLEET_BUGSINK_WEB_DSN`, `FLEET_BUGSINK_DSN` (coordinator), `FLEET_BUGSINK_INGEST`, `FLEET_BUGSINK_ALERT_SECRET_FILE` | PDS18 `coordinator.env` | no; the alert secret is a file named here |
-| `FLEET_BUGSINK_URL` | optional, issue links; default `https://bugsink.ufobe.com` | no |
+| `FLEET_BUGSINK_URL` | optional, issue links; default the web DSN's host, else `https://bugsink.ufobe.com` | no |
+| Bugsink API address | `FLEET_BUGSINK_INGEST` (coordinator.env), the same loopback address as ingest; without it the catalogue's `http://127.0.0.1:9510` | no |
 | `bugsinkDsn` | `config/executor-defaults.json`, overridden by the executor's `FLEET_BUGSINK_DSN` | no |
 | `web` | `config/bugsink.json`, built into the app | no |
 | read token | the `bugsink` connection's key file (`FLEET_SECRET_DIR/connections/bugsink/`) | yes |

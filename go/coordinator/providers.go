@@ -4,6 +4,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 
 	"fleet/contract"
 )
@@ -24,6 +26,23 @@ var gatewayProviders = func() map[string]contract.GatewayProvider {
 	}
 	return p
 }()
+
+// snapshotProviders: the catalogue as the gateway gets it; FLEET_BUGSINK_INGEST, the address the tunnel forwards to,
+// is the bugsink API's address too, so one setting moves both (docs/designs/fleet-error-tracking.md).
+func snapshotProviders() map[string]contract.GatewayProvider {
+	v := strings.TrimRight(os.Getenv("FLEET_BUGSINK_INGEST"), "/")
+	if v == "" {
+		return gatewayProviders
+	}
+	out := make(map[string]contract.GatewayProvider, len(gatewayProviders))
+	for k, p := range gatewayProviders {
+		if k == bugsinkConn {
+			p.BaseUrl = v
+		}
+		out[k] = p
+	}
+	return out
+}
 
 func providerTools(name string) doc { return mapOf(mapOf(providers[name])["tools"]) }
 
