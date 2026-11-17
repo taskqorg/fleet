@@ -1130,7 +1130,7 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 		}
 	}
 	inserted, err := insertExecution(q, doc{
-		"id": id, "kind": "tool_run", "state": state, "projectId": t["projectId"], "parentExecutionId": parent,
+		"id": id, "kind": "tool_run", "state": state, "projectId": nilIf(astr(t["projectId"])), "parentExecutionId": parent,
 		"experimentId": t["experimentId"], "taskId": pTask, "sessionId": pSession,
 		"directedBy": nilIf(firstString(t["directedBy"], deref(pDir))), "startedAt": startedAt, "endedAt": endedAt,
 		"pipelineId": pPipe, "pipelineRevision": pPipeRev, "stepId": pStep, "profileId": pProf, "profileRevision": pProfRev,

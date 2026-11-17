@@ -2407,3 +2407,12 @@ CREATE OR REPLACE FUNCTION fleet_note_append_only() RETURNS trigger LANGUAGE plp
  IF TG_OP = 'UPDATE' AND to_jsonb(NEW) - 'tombstoned_at' = to_jsonb(OLD) - 'tombstoned_at' THEN RETURN NEW; END IF;
  RAISE EXCEPTION 'experiment notes are append-only';
 END $$;
+
+-- migration 68: "no project" is NULL. A read token minted for a projectless pass (bugsink-resolved) carried project ''
+-- into its tool_run executions, so every resource scope query returned '': the replacement's lock "project:" is not a
+-- lock scope, and the processor retried that work every pass and failed every call. The rows get NULL (their totals
+-- follow through resource_align_totals_owner), the '' scopes those updates enqueue go, and the check keeps '' out.
+SELECT set_config('fleet.project_ids','*',true), set_config('fleet.deleted','on',true);
+UPDATE execution SET project_id=NULL WHERE project_id='';
+DELETE FROM resource_work_scope WHERE project_id='';
+ALTER TABLE execution ADD CONSTRAINT execution_project_id_not_empty CHECK (project_id<>'');
