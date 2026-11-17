@@ -125,9 +125,10 @@ test('A5b a stop racing the dispatch claim is never overwritten: a stop that set
         assert.deepEqual([e.state, e.hostId ?? null], ['cancelled', null], 'a settled stop stays settled');
       } else {
         handed++;
-        assert.deepEqual([stop.status, e.hostId], ['pending', 'trial-host'], 'an unsettled stop waits for the host that has the work');
-        // The host confirms it: no stray claimed work for the later tests.
-        ok(await h('/api/hosts/receipts', {commandId: stop.id, executionId, status: 'stopped'}));
+        assert.equal(stop.status, 'pending', 'an unsettled stop waits for the host that has the work');
+        assert.equal(stop.hostId, e.hostId); assert.ok(secrets.has(e.hostId), 'a host of this file has it');
+        // That host confirms it: no stray claimed work for the later tests.
+        ok(await (await host(e.hostId))('/api/hosts/receipts', {commandId: stop.id, executionId, status: 'stopped'}));
         assert.equal((await execution(sessionId, executionId)).state, 'cancelled');
       }
     }
