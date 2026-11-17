@@ -181,6 +181,7 @@ func (u *updater) runPDS18() error {
 		return err
 	}
 	defer execR.Close()
+	pruneReleases(coordR)
 	pruneDumps("/backup/fleet/pre-deploy", coordR, st.Coordinator)
 	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true, app: "dist/app",
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},

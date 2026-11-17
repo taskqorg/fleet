@@ -19,6 +19,7 @@ else
   status working 10 "verifying $(basename "$1")"
   (cd "$(dirname "$1")" && grep " $(basename "$1")\$" SHA256SUMS | { shasum -a 256 -c 2>/dev/null || sha256sum -c; }) >/dev/null
   partial=$(mktemp -d "$releases/install.XXXXXX")
+  trap 'rm -rf "$partial"' EXIT
   tar -xzf "$1" -C "$partial" --no-same-owner  # root keeps its releases root-owned
   version=$(sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$partial/release.json")
   [ -n "$version" ] || { echo "no version in release.json" >&2; exit 1; }
@@ -27,7 +28,8 @@ else
   for bin in fleet-coordinator fleet-gateway fleet-executor fleet-update; do
     if [ -x "$partial/$bin" ]; then "$partial/$bin" selftest >/dev/null; fi
   done
-  if [ -f "$partial/config/harness-pins.json" ]; then
+  # PDS18 coordinator and gateway use a separate release root from the executor.
+  if [ "$releases" != /home/fleet/releases ] && [ -f "$partial/config/harness-pins.json" ]; then
     "$partial/fleet-update" install-local "$partial" "$releases"
     activated=yes
     rm -rf "$partial"

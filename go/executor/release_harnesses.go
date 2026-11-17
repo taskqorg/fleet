@@ -55,27 +55,56 @@ func managedExecutable(name, fallback, model string) (path string, managed bool,
 
 var cliSemver = regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?\b`)
 
-// Probe the release's immutable paths as the executor user. These are observations, independent of account readiness.
-var managedVersions = sync.OnceValue(func() []contract.HarnessVersion {
+type cliObservation struct {
+	info    os.FileInfo
+	version *string
+	at      time.Time
+}
+
+var (
+	cliObservationsMu sync.Mutex
+	cliObservations   = map[string]cliObservation{}
+)
+
+// Probe the release paths as the executor user when a file changes. A failed probe is retried on later polls.
+func managedVersions() []contract.HarnessVersion {
 	release := releaseHarnesses()
+	if len(release.assets) == 0 {
+		return nil
+	}
+	cliObservationsMu.Lock()
+	defer cliObservationsMu.Unlock()
 	var versions []contract.HarnessVersion
 	for _, name := range []string{"codex", "claude", "antigravity"} {
-		a, ok := release.assets[name]
-		if !ok {
-			continue
-		}
-		version := contract.HarnessVersion{Harness: name, Expected: a.Version}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		cmd := exec.CommandContext(ctx, filepath.Join(release.root, a.Executable(name)), "--version")
-		cmd.Env = []string{}
-		o, err := cmd.Output()
-		cancel()
-		if err == nil {
-			if observed := cliSemver.FindString(string(o)); observed != "" {
-				version.Observed = &observed
-			}
-		}
-		versions = append(versions, version)
+		a := release.assets[name]
+		path := filepath.Join(release.root, a.Executable(name))
+		versions = append(versions, contract.HarnessVersion{Harness: name, Expected: a.Version, Observed: observeCLIVersion(path)})
 	}
 	return versions
-})
+}
+
+func observeCLIVersion(path string) *string {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		delete(cliObservations, path)
+		return nil
+	}
+	old, ok := cliObservations[path]
+	if ok && os.SameFile(info, old.info) && info.Size() == old.info.Size() && info.ModTime().Equal(old.info.ModTime()) &&
+		(old.version != nil || time.Since(old.at) < 30*time.Second) {
+		return old.version
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	cmd.Env = []string{}
+	o, err := cmd.Output()
+	sample := cliObservation{info: info, at: time.Now()}
+	if err == nil {
+		if observed := cliSemver.FindString(string(o)); observed != "" {
+			sample.version = &observed
+		}
+	}
+	cliObservations[path] = sample
+	return sample.version
+}

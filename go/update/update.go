@@ -139,7 +139,7 @@ func (u *updater) held(autoUpdate string) bool {
 
 // cycle is one run of one part (section 3.2). It returns the result to record, or nil when nothing changed.
 func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Result {
-	if p.name != "ui" {
+	if p.name == "executor" {
 		unlock, ok, err := lock(filepath.Join(p.root, "install.lock"))
 		if err != nil {
 			return u.result("", "error", err.Error())

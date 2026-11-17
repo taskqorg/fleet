@@ -532,4 +532,19 @@ func TestManagedCLIRelease(t *testing.T) {
 	if r := f.run(refused); r.State != "refused" || !strings.Contains(r.Error, "harness-checksum: codex") || f.current() != first {
 		t.Fatalf("corrupt CLI update: %+v, current %s", r, f.current())
 	}
+	if requests != 5 {
+		t.Fatalf("a checksum mismatch must get one fresh download, requests %d", requests)
+	}
+	exe := filepath.Join(f.root, a.Executable("codex"))
+	if err := os.Chmod(exe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("damaged"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const damaged = "1.261111.4"
+	f.release(damaged, 0, lock(sha))
+	if r := f.run(damaged); r.State != "refused" || !strings.Contains(r.Error, "harness-cache: codex") || f.current() != first {
+		t.Fatalf("damaged retained cache: %+v, current %s", r, f.current())
+	}
 }

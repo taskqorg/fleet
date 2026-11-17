@@ -81,7 +81,7 @@ func (a Asset) validate() error {
 	if err != nil || (a.SHA256 != "" && (len(digest) != 32 || a.SHA512 != "")) || (a.SHA256 == "" && len(digest) != 64) {
 		return errors.New("invalid payload digest")
 	}
-	if a.Version == "" || (a.Entry != "" && (!filepath.IsLocal(a.Entry) || filepath.Clean(a.Entry) != a.Entry || a.Entry == ".")) {
+	if _, stable := versionParts(a.Version); !stable || (a.Entry != "" && (!filepath.IsLocal(a.Entry) || filepath.Clean(a.Entry) != a.Entry || a.Entry == ".")) {
 		return errors.New("invalid version or executable path")
 	}
 	return nil

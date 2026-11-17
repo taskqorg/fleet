@@ -70,16 +70,12 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 	}
 	defer os.RemoveAll(stage)
 	payload := filepath.Join(stage, "download")
-	var digest hash.Hash = sha256.New()
+	newHash := sha256.New
 	if a.SHA512 != "" {
-		digest = sha512.New()
+		newHash = sha512.New
 	}
-	got, err := u.downloadDigest(a.URL, payload, digest)
-	if err != nil {
+	if err := u.downloadHarness(a, payload, newHash); err != nil {
 		return err
-	}
-	if !strings.EqualFold(got, a.Digest()) {
-		return fmt.Errorf("%w: got %s, expected %s", refusal("harness-checksum"), got, a.Digest())
 	}
 	files := filepath.Join(stage, "files")
 	if a.Entry != "" {
@@ -133,6 +129,21 @@ func (u *updater) prepareHarness(p *part, name string, a harnessrelease.Asset) e
 		return err
 	}
 	return p.r.Rename(tmp, dir)
+}
+
+func (u *updater) downloadHarness(a harnessrelease.Asset, path string, newHash func() hash.Hash) error {
+	for attempt := 0; ; attempt++ {
+		got, err := u.downloadDigest(a.URL, path, newHash())
+		if err != nil {
+			return err
+		}
+		if strings.EqualFold(got, a.Digest()) {
+			return nil
+		}
+		if attempt == 1 {
+			return fmt.Errorf("%w: got %s, expected %s", refusal("harness-checksum"), got, a.Digest())
+		}
+	}
 }
 
 func executable(st fs.FileInfo) bool {
