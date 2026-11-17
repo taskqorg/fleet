@@ -139,6 +139,8 @@ func acquireTxLocks(ctx context.Context, tx pgx.Tx, keys ...string) error {
 	return acquireTxLocksMode(ctx, tx, false, keys...)
 }
 
+var errAdvisoryBusy = errors.New("advisory lock busy")
+
 func tryAdvisoryLock(ctx context.Context, tx pgx.Tx, key string) (bool, error) {
 	var held bool
 	err := tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))", key).Scan(&held)
@@ -183,7 +185,7 @@ func acquireTxLocksMode(ctx context.Context, tx pgx.Tx, noWait bool, keys ...str
 				return err
 			}
 			if !held {
-				return fmt.Errorf("advisory lock scope %q is busy", k)
+				return fmt.Errorf("%w: %q", errAdvisoryBusy, k)
 			}
 		} else if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", k); err != nil {
 			return err

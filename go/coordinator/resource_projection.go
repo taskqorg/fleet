@@ -232,6 +232,18 @@ func (h *resourceHolds) fail(key string, durable int) {
 	h.items[key] = it
 }
 
+// Brief contention defers selection without counting as a failed projection.
+func (h *resourceHolds) deferBusy(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	it := h.items[key]
+	until := time.Now().Add(resourceRetryBase)
+	if it.until.Before(until) {
+		it.until = until
+	}
+	h.items[key] = it
+}
+
 func (h *resourceHolds) forget(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -986,6 +998,10 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 		if errors.Is(err, errResourceClearing) {
 			return nil
 		} // Clearing preserves every claimed UUID.
+		if errors.Is(err, errAdvisoryBusy) {
+			resourceHeld.deferBusy("execution:" + id)
+			return nil
+		}
 		if err != nil {
 			finalErr = err
 			pauseErr := resourceReplaceFailed(ctx, a, id, claimed, err)
@@ -1116,7 +1132,13 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 	}
 	ctx, batchSpan := obs.Start(ctx, "resource.batch", "internal")
 	batchSpan.Set("fleet.resource.batch_size", strconv.Itoa(len(ids)))
-	defer func() { batchSpan.End(resultErr) }()
+	defer func() {
+		if errors.Is(resultErr, errAdvisoryBusy) {
+			batchSpan.End(nil)
+			return
+		}
+		batchSpan.End(resultErr)
+	}()
 	type member struct {
 		ctx  context.Context
 		span *obs.Span
@@ -1810,6 +1832,8 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 	if p := build; p != "" {
 		if e := resourceBuildPage(ctx, a, p); e == nil {
 			resourceHeld.forget("build:" + p)
+		} else if errors.Is(e, errAdvisoryBusy) {
+			resourceHeld.deferBusy("build:" + p)
 		} else if ctx.Err() == nil {
 			finalErr = errors.Join(finalErr, e)
 			finalErr = errors.Join(finalErr, resourcePause(ctx, a, "", "build:"+p, resourceBuildPauseSelect+" FOR UPDATE NOWAIT", resourceBuildPauseSelect,

@@ -174,9 +174,13 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	}
 	resourceHeld.forgetExecution("pause-later")
 	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('lock-healthy','tool_run','succeeded','PAUSE')`)
-	if err := resourceProcessorPass(busyCtx, a); err == nil || busyCtx.Err() != nil || !strings.Contains(err.Error(), `advisory lock scope "execution:pause-later" is busy`) {
-		t.Fatal("busy scope waited or hid the failure", err)
+	if err := resourceProcessorPass(busyCtx, a); err != nil || busyCtx.Err() != nil {
+		t.Fatal("busy scope waited or was treated as a failure", err)
 	}
+	if !slices.Contains(resourceHeld.ids("execution:", true), "pause-later") || resourceHeld.count("execution:pause-later") != 0 {
+		t.Fatal("busy work was not deferred without counting a failure")
+	}
+	equal(`SELECT attempts::text FROM resource_work WHERE execution_id='pause-later'`, "2")
 	equal(`SELECT count(*)::text FROM resource_contribution WHERE execution_id='lock-healthy'`, "1")
 	if err := busy.Rollback(ctx); err != nil {
 		t.Fatal(err)
