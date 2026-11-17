@@ -28,8 +28,7 @@ else
   for bin in fleet-coordinator fleet-gateway fleet-executor fleet-update; do
     if [ -x "$partial/$bin" ]; then "$partial/$bin" selftest >/dev/null; fi
   done
-  # PDS18 coordinator and gateway use a separate release root from the executor.
-  if [ "$releases" != /home/fleet/releases ] && [ -f "$partial/config/harness-pins.json" ]; then
+  if [ -f "$partial/config/harness-pins.json" ]; then
     "$partial/fleet-update" install-local "$partial" "$releases"
     activated=yes
     rm -rf "$partial"

@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type harnessRelease struct {
@@ -63,7 +65,7 @@ type cliObservation struct {
 
 var (
 	cliObservationsMu sync.Mutex
-	cliObservations   = map[string]cliObservation{}
+	cliObservations   = map[string]*cliObservation{}
 )
 
 // Probe the release paths as the executor user when a file changes. A failed probe is retried on later polls.
@@ -85,26 +87,37 @@ func managedVersions() []contract.HarnessVersion {
 
 func observeCLIVersion(path string) *string {
 	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+	if err != nil || !info.Mode().IsRegular() || unix.Access(path, unix.X_OK) != nil {
 		delete(cliObservations, path)
 		return nil
 	}
 	old, ok := cliObservations[path]
-	if ok && os.SameFile(info, old.info) && info.Size() == old.info.Size() && info.ModTime().Equal(old.info.ModTime()) &&
-		(old.version != nil || time.Since(old.at) < 30*time.Second) {
+	if ok && os.SameFile(info, old.info) && info.Size() == old.info.Size() && info.Mode() == old.info.Mode() &&
+		info.ModTime().Equal(old.info.ModTime()) && (old.version != nil || time.Since(old.at) < 30*time.Second) {
 		return old.version
 	}
+	sample := &cliObservation{info: info, at: time.Now()}
+	cliObservations[path] = sample
+	go probeCLIVersion(path, sample)
+	return nil
+}
+
+func probeCLIVersion(path string, sample *cliObservation) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
 	cmd.Env = []string{}
+	cmd.WaitDelay = time.Second
 	o, err := cmd.Output()
-	sample := cliObservation{info: info, at: time.Now()}
+	cliObservationsMu.Lock()
+	defer cliObservationsMu.Unlock()
+	if cliObservations[path] != sample {
+		return
+	}
+	sample.at = time.Now()
 	if err == nil {
 		if observed := cliSemver.FindString(string(o)); observed != "" {
 			sample.version = &observed
 		}
 	}
-	cliObservations[path] = sample
-	return sample.version
 }

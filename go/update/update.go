@@ -139,8 +139,8 @@ func (u *updater) held(autoUpdate string) bool {
 
 // cycle is one run of one part (section 3.2). It returns the result to record, or nil when nothing changed.
 func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Result {
-	if p.name == "executor" {
-		unlock, ok, err := lock(filepath.Join(p.root, "install.lock"))
+	if p.name != "ui" {
+		unlock, ok, err := lockReleases(p.r)
 		if err != nil {
 			return u.result("", "error", err.Error())
 		}
@@ -807,11 +807,24 @@ func writeJSON(path string, v any, mode fs.FileMode) error {
 	return nil
 }
 
+// Lock the releases directory itself so the PDS18 service user and the root updater share a lock without sharing a writable file.
+func lockReleases(root *os.Root) (unlock func(), ok bool, err error) {
+	f, err := root.Open(".")
+	if err != nil {
+		return nil, false, err
+	}
+	return flock(f)
+}
+
 func lock(path string) (unlock func(), ok bool, err error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, false, err
 	}
+	return flock(f)
+}
+
+func flock(f *os.File) (unlock func(), ok bool, err error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		log.Print("another fleet-update run holds the lock")

@@ -27,6 +27,8 @@ const releaseKey = "eT+0MVUmjUvvItJGhR3rUqW5PBzvE8QbD9Uq/wjAHlQ="
 
 const releasesURL = "https://github.com/taskqorg/fleet/releases"
 
+const pdsCoordinatorReleases = "/home/fleet/releases"
+
 const repoURL = "https://github.com/taskqorg/fleet.git"
 
 func main() {
@@ -57,7 +59,7 @@ func run(args []string) error {
 			return err
 		}
 		defer root.Close()
-		unlock, ok, err := lock(filepath.Join(args[2], "install.lock"))
+		unlock, ok, err := lockReleases(root)
 		if err != nil {
 			return err
 		}
@@ -70,8 +72,10 @@ func run(args []string) error {
 			return errors.New("invalid staged release version")
 		}
 		p := &part{r: root, root: args[2], stage: args[2]}
-		if err := u.prepareHarnesses(p, args[1]); err != nil {
-			return err
+		if filepath.Clean(args[2]) != pdsCoordinatorReleases {
+			if err := u.prepareHarnesses(p, args[1]); err != nil {
+				return err
+			}
 		}
 		return u.install(p, ver, args[1])
 	case "selftest":
@@ -146,7 +150,7 @@ func (u *updater) runExecutor() error {
 }
 
 func (u *updater) runPDS18() error {
-	const s, coordRoot, execRoot = "/var/lib/fleet-update", "/home/fleet/releases", "/opt/fleet-agent/releases"
+	const s, coordRoot, execRoot = "/var/lib/fleet-update", pdsCoordinatorReleases, "/opt/fleet-agent/releases"
 	if err := os.MkdirAll(s, 0o755); err != nil {
 		return err
 	}
@@ -181,7 +185,6 @@ func (u *updater) runPDS18() error {
 		return err
 	}
 	defer execR.Close()
-	pruneReleases(coordR)
 	pruneDumps("/backup/fleet/pre-deploy", coordR, st.Coordinator)
 	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true, app: "dist/app",
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},
