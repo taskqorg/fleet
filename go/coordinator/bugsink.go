@@ -368,7 +368,8 @@ func bugsinkText(issue, project, reason string) string {
 	return what + where + ": " + bugsinkURL() + "/issues/issue/" + issue + "/ (bugsink issue_get {\"issue\": \"" + issue + "\"})."
 }
 
-// bugsinkFleetProject: the live Fleet project whose settings errors.bugsink list the Bugsink project; "" for none.
+// bugsinkFleetProject: the live Fleet project whose settings errors.bugsink list the Bugsink project; "" for none. A
+// project revision is the bundle {settings, contextFiles} (project_update, shippedDefinitions).
 func bugsinkFleetProject(q *Request, name string) (string, error) {
 	if name == "" {
 		return "", nil
@@ -376,12 +377,14 @@ func bugsinkFleetProject(q *Request, name string) (string, error) {
 	heads, err := headTexts(q, "project")
 	for _, h := range heads {
 		var p struct {
-			Errors struct {
-				Bugsink []string `json:"bugsink"`
-			} `json:"errors"`
+			Settings struct {
+				Errors struct {
+					Bugsink []string `json:"bugsink"`
+				} `json:"errors"`
+			} `json:"settings"`
 		}
 		if json.Unmarshal(h.text, &p) == nil {
-			for _, n := range p.Errors.Bugsink {
+			for _, n := range p.Settings.Errors.Bugsink {
 				if n == name {
 					return h.id, err
 				}
