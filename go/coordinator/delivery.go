@@ -3,7 +3,8 @@
 // scripts/delivery-latency.sh and scripts/watch-landings.sh: PR CI (pull_request runs), merge queue (merge_group runs on
 // gh-readonly-queue/<base>/pr-<n>-<sha>), merged, release (the first v* release whose target commit contains the merge;
 // main is linear behind the merge queue, so "contains" is "merged no later than the release's target"), installed on
-// hosts (every host seen in the last hour runs that version or newer).
+// hosts (every host seen in the last hour runs that version or newer). A UI-only release (ui-<backend>-v<UI version>,
+// release.yml) ships the web app alone: hosts install nothing, so it is installed when the site serves that UI or newer.
 // Reads go through the gateway's github connection when it exists (the owner adds a read-only key: scripts/key-add.sh github); without it
 // the coordinator reads the fleet repository unauthenticated (60 requests an hour per address), which the reply says.
 // Each read also stores the per-stage counts, so the chart is the recorded history of the last 24 hours.
@@ -288,7 +289,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			}
 		}
 		g.runs, g.finished, g.queueDone = append(active.Runs, queued.Runs...), finished.Runs, queueDone.Runs
-		its, l := deliveryStages(t.projects[0], name, g, versions, now)
+		its, l := deliveryStages(t.projects[0], name, g, versions, uiServed(), now)
 		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l}
 		c := map[string]int64{}
 		for _, s := range contract.DeliveryStageValues {
@@ -350,8 +351,8 @@ func deliveryPass(ctx context.Context, a *App) error {
 }
 
 // deliveryStages: each pull request's current stage. landing counts the pull requests a worker waits on (auto-merge on
-// or in the merge queue).
-func deliveryStages(project, repo string, g ghRepo, versions []string, now time.Time) ([]contract.DeliveryItem, int64) {
+// or in the merge queue). versions: the hosts' executor versions; ui: the UI version the site serves (uiServed).
+func deliveryStages(project, repo string, g ghRepo, versions []string, ui string, now time.Time) ([]contract.DeliveryItem, int64) {
 	item := func(p ghPull, s contract.DeliveryStage, since string) contract.DeliveryItem {
 		it := contract.DeliveryItem{ProjectId: project, Repo: repo, Number: p.Number, Title: p.Title, Url: p.URL, Stage: s, Since: since}
 		if p.CreatedAt != "" {
@@ -461,7 +462,8 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			out = append(out, item(p, contract.DeliveryStagePrOpen, p.CreatedAt))
 		}
 	}
-	// Releases: v<version> tags only (ui-* releases ship the web app on their own), oldest first, each with the merge
+	// Releases: v<version> and ui-<backend>-v<UI version> tags (release.yml cuts a UI-only release instead of a v* one when
+	// only the web app changed since the last release; both share one version sequence), oldest first, each with the merge
 	// time of its target commit; a release whose target is not among the merged pull requests read is left out.
 	mergedAt := map[string]string{}
 	for _, p := range g.closed {
@@ -469,17 +471,20 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			mergedAt[p.MergeSHA] = *p.MergedAt
 		}
 	}
-	type rel struct{ tag, version, covers, published string }
+	type rel struct {
+		tag, version, covers, published string
+		uiOnly                          bool
+	}
 	var rels []rel
 	for _, r := range g.releases {
-		if r.Draft || !strings.HasPrefix(r.Tag, "v") || r.Published == "" {
+		if r.Draft || !strings.HasPrefix(r.Tag, "v") && !uiOnlyRelease(r.Tag) || r.Published == "" {
 			continue
 		}
 		c := mergedAt[r.Target]
 		if c == "" {
 			continue // the target's merge time is unknown: guessing it could claim merges the release lacks
 		}
-		rels = append(rels, rel{r.Tag, strings.TrimPrefix(r.Tag, "v"), c, r.Published})
+		rels = append(rels, rel{r.Tag, releaseVersionOf(r.Tag), c, r.Published, uiOnlyRelease(r.Tag)})
 	}
 	sort.Slice(rels, func(i, j int) bool { return rels[i].published < rels[j].published })
 	day := now.Add(-24 * time.Hour).Format(time.RFC3339)
@@ -504,7 +509,7 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 		switch {
 		case r == nil:
 			out = append(out, item(p, contract.DeliveryStageReleasing, m))
-		case !installed(r.version, versions):
+		case r.uiOnly && (ui == "" || versionLess(ui, r.version)), !r.uiOnly && !installed(r.version, versions):
 			it := item(p, contract.DeliveryStageInstalling, r.published)
 			it.Release = &r.tag
 			out = append(out, it)

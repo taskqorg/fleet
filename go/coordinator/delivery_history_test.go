@@ -172,3 +172,45 @@ func TestDeliveryPendingAvailabilityAlerts(t *testing.T) {
 		t.Fatalf("%+v %+v", regs, cur)
 	}
 }
+
+// Requirement: a pull request a UI-only release (ui-<backend>-v<UI version>) delivered is matched to it and done when the
+// site serves its UI: no install stage, total from opened to UI on site; while the UI is not on the site the wait counts
+// against the ui stage. Re-deriving stored records (as every pass does) gives records stored before this rule the same.
+// Risk: a UI-only pull request stays "releasing" or "installing" forever, never measured, or red past an install norm.
+func TestDeliveryUIOnlyRelease(t *testing.T) {
+	prs := []contract.DeliveryPr{
+		// As stored before UI-only releases counted: release and UI on site known, no total.
+		{Number: 626, MergeSha: "m626", Opened: "2026-11-17T16:01:47Z", Merged: "2026-11-17T16:08:57Z", Durations: map[string]int64{"ui": 153000}},
+		{Number: 627, MergeSha: "m627", Opened: "2026-11-17T16:20:00Z", Merged: "2026-11-17T16:30:00Z"},
+	}
+	rels := []contract.DeliveryRelease{
+		{Tag: "ui-1.261117.26-v1.261117.27", Target: "m626", Published: "2026-11-17T16:09:46Z", UiOnSite: ptr("2026-11-17T16:12:19Z"), Installed: map[string]string{}},
+		{Tag: "ui-1.261117.26-v1.261117.28", Target: "m627", Published: "2026-11-17T16:31:00Z", Installed: map[string]string{}},
+	}
+	deliveryDerive(prs, nil, rels)
+	p := prs[0]
+	if deref(p.Release) != "ui-1.261117.26-v1.261117.27" || releaseVersionOf(deref(p.Release)) != "1.261117.27" || p.Durations["release"] != 49000 || p.Durations["ui"] != 153000 {
+		t.Fatalf("matched release: %+v", p)
+	}
+	if p.Durations["total"] != 632000 { // 16:01:47 to 16:12:19
+		t.Fatalf("total is opened to UI on site: %+v", p.Durations)
+	}
+	for _, k := range []string{"install", "availability", "time_to_available"} {
+		if _, ok := p.Durations[k]; ok {
+			t.Fatalf("a UI-only release has no %s: %+v", k, p.Durations)
+		}
+	}
+	if _, ok := prs[1].Durations["total"]; ok {
+		t.Fatalf("not on the site yet: %+v", prs[1].Durations)
+	}
+	cur := deliverySeries{}
+	deliveryPending(cur, prs, "2026-11-17T00:00:00Z", "2026-11-17T17:31:00Z", "2026-11-12T00:00:00Z")
+	if len(cur["ui_wait"]) != 1 || cur["ui_wait"][0].pr != 627 || cur["ui_wait"][0].ms != 3600e3 || len(cur["availability_wait"]) != 0 {
+		t.Fatalf("pending: %+v", cur)
+	}
+	base := contract.DeliveryBaseline{MetricBasis: ptr("exact-install-v1"), Stats: []contract.DeliveryStat{{Key: "ui", N: 5, P50Ms: 150000, P90Ms: 200000}}}
+	regs := deliveryCompare(prs, cur, base, contract.DeliverySettings{Ratio: 1.5, MinSamples: 1, MinDeltaMs: 60000})
+	if len(regs) != 2 || regs[0].Key != "ui_wait" {
+		t.Fatalf("a stalled UI release regresses against the ui stage: %+v", regs)
+	}
+}

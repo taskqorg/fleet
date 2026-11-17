@@ -84,6 +84,8 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     it(701, 'Checks failed here', 'pr_failed', now - 20 * min), it(702, 'Left the merge queue', 'mq_failed', now - 15 * min),
     it(703, 'Checks running long', 'pr_ci', now - 50 * min), it(704, 'Waiting for review', 'pr_open', now - 3 * 3600e3),
     it(690, 'Installed one', 'installed', now - 4 * 3600e3, {release: 'v1.1.1'}), it(691, 'Installed two', 'installed', now - 5 * 3600e3, {release: 'v1.1.1'}),
+    // UI-only releases (ui-<backend>-v<UI version>): named by their UI version; on its way, its norm is the UI on site.
+    it(692, 'UI release on site', 'installed', now - 6 * 3600e3, {release: 'ui-1.1.1-v1.1.2'}), it(705, 'UI release on its way', 'installing', now - 10 * min, {release: 'ui-1.1.1-v1.1.3'}),
   ];
   // History: three days ago merged before install times were recorded (not measured); yesterday measured.
   const pr = (number: number, title: string, merged: number, durations: Record<string, number>) =>
@@ -98,12 +100,15 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     pr(661, 'Merged yesterday B', dayStart(1) + 13 * 3600e3, {pr_ci: 10 * min, queue: 7 * min, release: 2 * min, install: min, total: 95 * min}),
     // Installed, but its install time was not matched to its release: unmeasured, so yesterday is partly measured.
     {...pr(662, 'Merged yesterday, no install time', dayStart(1) + 15 * 3600e3, {pr_ci: 9 * min, queue: 6 * min, release: 2 * min}), installed: {coordinator: iso(dayStart(1) + 16 * 3600e3)}},
+    // Two days ago: UI-only, no host install; delivered (and measured) when the site served its UI.
+    {...pr(670, 'UI-only, on site', dayStart(2) + 12 * 3600e3, {pr_ci: 5 * min, queue: 4 * min, release: min, ui: 2 * min, total: 12 * min}), installed: {},
+      release: 'ui-1.1.1-v1.1.2', uiOnSite: iso(dayStart(2) + 12 * 3600e3 + 3 * min)},
     // Merged minutes ago and still on its way: pending, never "unmeasured".
     {...pr(663, 'Merged just now', Math.max(now - 10 * min, dayStart(0)), {pr_ci: 9 * min, queue: 6 * min}), released: iso(now)},
   ];
   const stat = (key: string, p50: number, p90: number) => ({key, n: 20, p50Ms: p50 * min, p90Ms: p90 * min});
   const base = {from: iso(dayStart(14)), until: iso(now), counts: {prs: 20, runs: 20, removals: 0, flakes: 0},
-    stats: [stat('pr_ci', 7, 40), stat('enqueue', 1, 8), stat('queue', 6, 16), stat('release', 1, 4), stat('install', 1, 2), stat('total', 21, 74)]};
+    stats: [stat('pr_ci', 7, 40), stat('enqueue', 1, 8), stat('queue', 6, 16), stat('release', 1, 4), stat('install', 1, 2), stat('ui', 2, 3), stat('total', 21, 74)]};
   const settings = {ratio: 1.5, minSamples: 5, minDeltaMs: 60000, baseline: 'rolling'};
   await page.route('**/api/ops/delivery_status', r => r.fulfill({json: {source: 'key', refreshedAt: iso(now), items, samples: [], landing: 0}}));
   await page.route('**/api/ops/delivery_baseline', r => r.fulfill({json: {rolling: base, snapshots: [], trend: [], settings}}));
@@ -120,6 +125,8 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     // The person opens Installed: it is remembered (prefs listGroups, delivery:stage), so leaving the section and coming
     // back, and a reload, show it open from the first frame its header is on screen.
     await installed.click(); await list.getByRole('link', {name: 'Installed one'}).waitFor();
+    assert.equal(await list.locator('.vl-row', {hasText: 'UI release on site'}).getByText('UI 1.1.2', {exact: true}).count(), 1, 'a UI-only release shows its UI version');
+    assert.equal(await list.locator('.vl-row', {hasText: 'Installed one'}).getByText('1.1.1', {exact: true}).count(), 1, 'a native release shows its version');
     const RECORD = `window.__inst = []; const tick = () => { const s = [...document.querySelectorAll('.group-h')].find(b => b.textContent.includes('Installed'))?.getAttribute('aria-expanded') ?? '-'; if (window.__inst.at(-1) !== s) window.__inst.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
     await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
     const stored = () => page.evaluate(() => fetch('/api/ops/person_settings_get', {method: 'POST', headers: {'content-type': 'application/json'}, body: '{}'}).then(r => r.json()).then(s => s.listGroups?.['delivery:stage'] ?? []));
@@ -155,6 +162,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     // Moving now: a norm bar per pull request in flight, past the norm for the long PR checks.
     const moving = page.getByRole('grid', {name: 'Pull requests in flight'});
     await moving.getByRole('img', {name: /PR checks #703: 50m; norm P50 7m, P90 40m, past the norm/}).waitFor();
+    await moving.getByRole('img', {name: /Installing #705: 10m; norm P50 2m, P90 3m, past the norm/}).waitFor();
     // Pace: a day with merges but no install times is not measured, never zero.
     const chart = page.getByRole('group', {name: 'Open to installed per day, P50 and P90'});
     await chart.waitFor();
@@ -162,6 +170,8 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     assert.equal(await cols.count(), 7, 'seven calendar days');
     assert.match((await cols.nth(3).getAttribute('aria-label'))!, /: not measured \(install times recorded from /, 'three days ago is not measured');
     assert.match((await cols.nth(2).getAttribute('aria-label'))!, /· 1 of 2 measured/, 'a release before recording counts against its day');
+    const ui = (await cols.nth(4).getAttribute('aria-label'))!;
+    assert.ok(/P50 12m, P90 12m/.test(ui) && !/measured/.test(ui), 'a UI-only release is measured to the UI on site: ' + ui);
     assert.match((await cols.nth(5).getAttribute('aria-label'))!, /P50 \d+m, P90 1h 35m · 2 of 3 measured · above the 14-day P90 1h 14m/, 'yesterday is measured in part, its P90 red');
     // A past day measured in part is "partly measured", never "part of the day" (that is today only).
     assert.equal(await cols.nth(5).evaluate(e => e.classList.contains('some') && !e.classList.contains('part')), true, 'yesterday is partly measured');
