@@ -34,7 +34,7 @@ type Broadcast struct {
 	rlsQueries          atomic.Int64
 }
 
-// heldWait: the next look when committed changes wait behind an older running transaction anywhere on the server.
+// heldWait: the next look when committed changes wait behind an older running transaction of this database (visible).
 const heldWait = 250 * time.Millisecond
 
 func listen(parent context.Context, url string, store *Store) *Broadcast {
@@ -104,10 +104,22 @@ type change struct {
 	Actor     *string `json:"-"`
 }
 
-const visible = "xid < pg_snapshot_xmin(pg_current_snapshot())"
+// horizon: the lowest xid of the statement's snapshot that may still commit change rows (docs/designs/fleet-operator-app.md
+// §4). A running transaction of this database may still commit rows under its lower xid, so the cursor must not pass it.
+// pg_snapshot_xmin alone spans the whole server: a transaction in another database (pg_dump, another service's session,
+// another test file's database) would hold the stream back. So a running xid is left out when pg_stat_activity shows its
+// backend in another database; a backend never changes database, so that xid can never write here. An xid that has ended
+// since the snapshot, a prepared transaction or an unlisted backend still counts (the next look passes it). Uncorrelated,
+// so one InitPlan per statement, an index bound on change_order; pg_stat_activity is read only while xids run (about
+// 0.1 ms, a copy of the backend table once per transaction).
+const horizon = `(SELECT coalesce(min(x), pg_snapshot_xmax(pg_current_snapshot())) FROM pg_snapshot_xip(pg_current_snapshot()) x
+ WHERE NOT EXISTS (SELECT FROM pg_stat_activity a WHERE a.backend_xid = xid(x) AND a.datid IS DISTINCT FROM (SELECT oid FROM pg_database WHERE datname = current_database())))`
 
-// since: changes after cursor in (xid, seq) order, only from transactions older than every one still running. held: some
-// committed rows still wait behind such a transaction, which sends no second NOTIFY when it ends.
+// visible: rows of transactions older than the horizon; no later commit can sort before them.
+const visible = "xid < " + horizon
+
+// since: changes after cursor in (xid, seq) order, only from transactions older than every one of this database still
+// running. held: some committed rows still wait behind such a transaction, which sends no second NOTIFY when it ends.
 func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []change, next int64, resync, held bool, err error) {
 	next = cursor
 	var xid string
@@ -140,7 +152,7 @@ func since(ctx context.Context, tx pgx.Tx, cursor int64, limit int) (out []chang
 		next = out[len(out)-1].Seq
 	}
 	if len(out) < limit {
-		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM change WHERE NOT ("+visible+"))").Scan(&held)
+		err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM change WHERE xid >= "+horizon+")").Scan(&held)
 	}
 	return
 }

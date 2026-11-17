@@ -1,11 +1,10 @@
 // The file runner of tests/go/run.sh: each outside test file through tests/trial/run.ts, `jobs` files at once.
 //   node tests/go/run-files.ts <jobs> <file>...
 // Each file gets its own database (FLEET_TRIAL_NAME), secret and store directories and fake-gateway port. With jobs > 1
-// each of the jobs slots also has its own PostgreSQL server (FLEET_TRIAL_PGDATA-<slot>, port FLEET_TRIAL_PGPORT+1+slot):
-// the change stream shows a commit only once it is older than every transaction running on the server, in any database
-// (go/coordinator/stream.go `visible`), so one file's long transaction would hold back another file's stream. A file's
-// output is printed whole when it ends, with its duration; after a failed file no new file starts, and the run exits 1
-// once the running files end, naming the failed ones.
+// each of the jobs slots also has its own PostgreSQL server (FLEET_TRIAL_PGDATA-<slot>, port FLEET_TRIAL_PGPORT+1+slot),
+// so slots share no connection limit and never race to create the roles of one fresh server. A file's output is printed
+// whole when it ends, with its duration; after a failed file no new file starts, and the run exits 1 once the running
+// files end, naming the failed ones.
 import {spawn} from 'node:child_process';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';

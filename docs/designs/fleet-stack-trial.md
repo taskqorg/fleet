@@ -46,7 +46,7 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 
 **Runner.** `node tests/trial/run.ts` is the one command. It starts, once per machine, a local PostgreSQL in `~/.cache/fleet-trial/pg` (trust authentication, Unix socket only, port 54329, left running for other worktrees), creates a fresh database for this worktree with `deploy/infrastructure/fleet-postgres.sql`, starts the coordinator under test on a free port (`tests/harness.ts`; `FLEET_TRIAL_SERVER`, default `go/bin/fleet-coordinator`), runs the tests with the base URL and secret in the environment, stops the server and drops the database. Tests are TypeScript on Node's test runner, standard library only, and reach the server only over HTTP and SSE.
 
-**Shared-server rule.** Change visibility uses `pg_snapshot_xmin(pg_current_snapshot())`, which spans every database on the server, so a transaction open in another database holds committed changes back and no second `NOTIFY` arrives when it ends. `changes.since` reports `held`, and the stream looks again after 250 ms (`heldWait` in `go/coordinator/stream.go`). The same stall applies in production behind any long transaction that writes no change row.
+**Shared-server rule.** Change visibility counts only transactions of the coordinator's own database (`horizon` in `go/coordinator/stream.go`, [operator app §4](fleet-operator-app.md#4-live-updates-d1-d5)), so test files may share one server, each in its own database. A transaction open in the same database holds committed changes back, and no second `NOTIFY` arrives when it ends: `changes.since` reports `held`, and the stream looks again after 250 ms (`heldWait`). The same applies in production behind any long transaction in Fleet's database, even one that writes no change row.
 
 **Planted defects.** The trial planted these defects in the TypeScript coordinator, since deleted; each turned its test red.
 
@@ -70,7 +70,7 @@ Requirements SL1-SL11 are the slice's own. Each has one outside test in `tests/t
 | P16 | SSE served as `text/plain` | SL8 |
 | P17 | LISTEN on the wrong channel | SL8 |
 
-Not covered by an outside test: the advisory lock alone (it matters only for a second process; the slice runs one), the `held` re-read (it needs a transaction open in another database), and removing only the message route's own `store.tx` (the per-route transaction already covers it).
+Not covered by an outside test: the advisory lock alone (it matters only for a second process; the slice runs one), the `held` re-read (a Go test covers it: `TestSharedFeedHeldWaitAndPruning`, and `TestStreamHorizonIgnoresOtherDatabases` for a transaction in another database), and removing only the message route's own `store.tx` (the per-route transaction already covers it).
 
 Covered only by old tests: everything out of the slice above; PGlite as a store; nested transactions and savepoints; serialization and deadlock retry with backoff; data moves of migrations 1-17; change-log pruning; profiles, accounts, projects, tasks, delegation, pipelines, artifacts, lab, threads and the agent tools.
 
