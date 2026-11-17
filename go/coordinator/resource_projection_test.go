@@ -315,10 +315,11 @@ func TestResourcePostgres(t *testing.T) {
 		t.Fatalf("pending read %+v", v)
 	}
 	// Requirement: coordinator statements never pay JIT compilation; risk: a 1 ms lookup compiles for 100+ ms per call.
-	var jit string
-	tx(func(q *Request) error { return q.tx.QueryRow(q.ctx(), `SHOW jit`).Scan(&jit) })
-	if jit != "off" {
-		t.Fatalf("coordinator connection jit=%s", jit)
+	for _, write := range []bool{true, false} {
+		var jit string
+		if e := st.Tx(ctx, nil, write, NOLOCK, func(tx pgx.Tx) error { return tx.QueryRow(ctx, `SHOW jit`).Scan(&jit) }); e != nil || jit != "off" {
+			t.Fatalf("coordinator connection (write=%v) jit=%s %v", write, jit, e)
+		}
 	}
 	// Requirement: a prepared read's oldest-pending age costs the same with a large backlog; risk: the per-read
 	// join over every pending scope grows with the backlog and starves the processor that drains it.
