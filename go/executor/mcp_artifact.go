@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -96,9 +97,19 @@ func pathParts(path string) []string {
 
 // insideParts: an absolute path's components below the working area; nil when no leading part of it is the working
 // area's directory. The leading part may spell the area any way that reaches the same directory (a root through a link,
-// such as /var and /private/var on macOS, either way round); the components below it are still opened one by one
+// such as /var and /private/var on macOS, either way round; the configured and resolved spellings are compared first,
+// other prefixes are compared by directory identity); the components below it are still opened one by one
 // without following a link.
 func insideParts(workdir string, parts []string) []string {
+	spellings := []string{filepath.Clean(workdir)} // the usual spellings first, without touching the filesystem
+	if r, err := filepath.EvalSymlinks(workdir); err == nil {
+		spellings = append(spellings, r)
+	}
+	for _, w := range spellings {
+		if wp := pathParts(w); len(wp) > 0 && len(parts) > len(wp) && slices.Equal(parts[:len(wp)], wp) {
+			return parts[len(wp):]
+		}
+	}
 	root, err := os.Stat(workdir)
 	if err != nil {
 		return nil
@@ -235,7 +246,7 @@ func artifactCall(ctx any, name string, q any, db dbExec) (any, error) {
 			if scope != nil && scope != "execution" && scope != "project" {
 				return mcpText(M{"error": `artifact tool refused: scope must be "execution" or "project"`}, &yes), nil
 			}
-			if scope != nil && (jAt(q, "execution_id") != nil || jAt(q, "task_id") != nil) {
+			if scope != nil && (jStr(q, "execution_id") != "" || jStr(q, "task_id") != "") {
 				return mcpText(M{"error": "artifact tool refused: scope goes without execution_id and task_id"}, &yes), nil
 			}
 			// Without a filter an agent lists its own execution's artifacts; the whole project only on request.

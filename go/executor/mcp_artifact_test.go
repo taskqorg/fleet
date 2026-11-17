@@ -101,6 +101,7 @@ func TestArtifactListDefaultsToOwnExecution(t *testing.T) {
 		{M{}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":null}`},
 		{M{"scope": "execution"}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":null}`},
 		{M{"execution_id": ""}, `{"cursor":null,"executionId":"own","mediaType":null,"taskId":null}`}, // empty is no filter
+		{M{"scope": "project", "task_id": ""}, `{"cursor":null,"executionId":null,"mediaType":null,"taskId":""}`},
 		{M{"scope": "project", "cursor": "17"}, `{"cursor":"17","executionId":null,"mediaType":null,"taskId":null}`},
 		{M{"task_id": "t"}, `{"cursor":null,"executionId":null,"mediaType":null,"taskId":"t"}`},
 		{M{"execution_id": "other", "media_type": "text/plain"}, `{"cursor":null,"executionId":"other","mediaType":"text/plain","taskId":null}`},
