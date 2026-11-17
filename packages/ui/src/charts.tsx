@@ -28,6 +28,13 @@ export function capOf(values: (number | null | undefined)[], { q = 0.95, floor =
   return Math.max(floor, nice * unit);
 }
 
+/** The `f` quantile of xs (nearest rank: P50 of 4 values is the second); null for none. */
+export function quantile(xs: number[], f: number): number | null {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.max(0, Math.ceil(f * s.length) - 1))];
+}
+
 const pct = (v: number, cap: number) => Math.max(0, Math.min(100, v / (cap || 1) * 100));
 
 type DayChartProps = {

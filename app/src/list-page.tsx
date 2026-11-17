@@ -22,7 +22,7 @@ export type ListRow = { id: string; code?: string | null; sortKey: (string | num
  * A list the page reads whole and filters, groups and sorts itself (Delivery: delivery_status holds every pull request), in
  * place of a server list kind. `rows` are in group order, each row's sortKey[0] its group key; `all` is unfiltered (pins).
  */
-export type LocalList<R> = { rows: R[]; all: R[]; counts: Record<string, number | null>; groups: { key: string; label: string; count: number }[];
+export type LocalList<R> = { rows: R[]; all: R[]; counts: Record<string, number>; groups: { key: string; label: string; count: number }[];
   pending: boolean; error: string | null; reload: () => void };
 export type ListItem<R> = { kind: 'group'; key: string; label: string; count: number; icon?: 'pin' } | { kind: 'row'; r: R; pinned?: boolean };
 type MenuItems = Parameters<typeof ContextMenu>[0]['items'];
@@ -168,16 +168,15 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   return {
     view, set, href, query, setQuery, pins, views, list, group, sort, states, rowsGroup, rows, items, displayed, chosen, closed, toggleGroup,
     sel, selecting, setSelectOn, select, leave, confirm, setConfirm, bulkError, busy, bulk, off, pinAll, menu, setMenu, closeMenu,
-    pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown,
+    pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown, isLocal: !!local,
   };
 }
 export type ListPage<R extends ListRow> = ReturnType<typeof useListPage<R>>;
 
 /** A page-built list in the shape useList returns: always loaded, one page, counts from the page. */
 function localList(l: LocalList<ListRow>, view: View) {
-  const counts = Object.fromEntries(Object.entries(l.counts).map(([k, n]) => [k, n ?? 0]));
   return {
-    rows: l.rows as unknown as ReturnType<typeof useList>['rows'], counts, total: Object.values(counts).reduce((a, b) => a + b, 0), groups: l.groups, at: 0, error: l.error,
+    rows: l.rows as unknown as ReturnType<typeof useList>['rows'], counts: l.counts, total: Object.values(l.counts).reduce((a, b) => a + b, 0), groups: l.groups, at: 0, error: l.error,
     pending: l.pending, shownKey: l.pending && !l.rows.length ? null : listKey(view), shownView: view, more: () => Promise.resolve(), reload: () => { l.reload(); return Promise.resolve(); },
     state: 'current' as const,
   };
@@ -252,7 +251,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
       {g.bulkError && <ErrorBanner text={g.bulkError} />}
       {list.error && <ErrorBanner text={`${p.noun} did not load: ${list.error}`} onRetry={list.reload} />}
       {pinnedDoc.error && <ErrorBanner text={`Pinned ${p.noun.toLowerCase()} did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
-      {!displayed.length && (list.shownKey === null || list.pending || (pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
+      {!displayed.length && (list.shownKey === null || list.pending || (!g.isLocal && pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
         : !displayed.length ? (list.error || pinnedDoc.error ? null : p.empty)
         : <VirtualList items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={ROW} follow="top" label={p.listLabel} onEnd={list.more}
           columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.r.id === p.focused ? 'sel' : ''}${sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}

@@ -477,7 +477,7 @@ func (v DeliverySource) Valid() bool {
 	return false
 }
 
-// DeliveryStage: pr_failed: open, no run active, and the last finished pull_request run on its head failed; mq_failed: open, not in the merge queue and not set to enter it, and its last finished merge_group run failed after the last finished check of its head (it was removed from the queue); both read only with a GitHub key
+// DeliveryStage: pr_failed: open, no run active, and the last finished pull_request run on its head failed; mq_failed: open, not in the merge queue and not set to enter it, and the latest finished merge_group run of some workflow failed after its head was first checked (it was removed from the queue and no new commit followed); both read only with a GitHub key
 type DeliveryStage string
 
 const (

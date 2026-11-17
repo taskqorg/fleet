@@ -7,7 +7,7 @@
 import { useCallback, useEffect } from 'preact/hooks';
 import {
   ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
-  Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, day, dayStart, hourLabel, duration, actions,
+  Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, duration, actions, DELIVERY_ORDER,
   type StateOf, type DayCol, type DayMark, type SharePart,
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
@@ -28,10 +28,9 @@ type Regressions = Ops['delivery_regressions']['reply'];
 /** A list row: the pull request, its focus id, its code (#number) and its group and order keys. */
 type Row = { id: string; code: string; sortKey: (string | number)[]; it: Item };
 
-const MIN = 6e4, HOUR = 36e5, DAY = 864e5;
+const MIN = 6e4, DAY = 864e5;
 const FLEET = 'taskqorg/fleet';
-// Attention order: failed checks first, then the merge queue and checks, then the release tail.
-const ORDER: Stage[] = ['pr_failed', 'mq_failed', 'mq_ci', 'mq_wait', 'pr_ci', 'pr_open', 'releasing', 'installing', 'installed', 'merged'];
+const ORDER = DELIVERY_ORDER;
 const DONE: Stage[] = ['installed', 'merged'];
 const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
 // Each stage's norm is its P50 and P90 in delivery_baseline (the last 14 days): the key of the history duration it is.
@@ -56,7 +55,7 @@ const touchesStatus = (c: Change) => c.kind === 'delivery' && c.id.startsWith('d
 const touchesHistory = (c: Change) => c.kind === 'delivery' && !c.id.startsWith('delivery-state:');
 const NONE = 'none' as const; // no history kept (404): known, unlike still loading
 const no404 = <T,>(p: Promise<T>) => p.catch(e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; });
-const q = (xs: number[], f: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(f * s.length) - 1)]; };
+const q = quantile;
 const sec = (v: number | null | undefined) => ({ value: v == null ? null : v / 1000, basis: v == null ? 'unavailable' as const : 'measured' as const, reason: v == null ? 'no pull requests' : undefined });
 
 type DeliveryExtra = { range?: string; at?: string };
@@ -74,8 +73,7 @@ type Bucket = DayCol & { start: number; end: number; today: boolean };
 /** 24 h: twelve two-hour slots of local time ending with the current one; 7 and 30 days: calendar days to today, from the first recorded day. */
 export function bucketsOf(range: string, now: number, first?: number): Bucket[] {
   if (range === '24h') {
-    const d0 = dayStart(now), end = d0 + Math.ceil((now - d0 + 1) / (2 * HOUR)) * 2 * HOUR;
-    return Array.from({ length: 12 }, (_, i) => { const s = end - (12 - i) * 2 * HOUR, e = s + 2 * HOUR;
+    return Array.from({ length: 12 }, (_, i) => { const s = slotStart(now, 2, i - 11), e = slotStart(now, 2, i - 10);
       return { key: String(s), start: s, end: e, label: hourLabel(s), tip: `${day(s, now)} ${hourLabel(s)}–${hourLabel(e)}${e > now ? ', so far' : ''}`, today: e > now }; });
   }
   const out: Bucket[] = [];
@@ -113,9 +111,10 @@ export function Delivery({ id }: { id?: string }) {
     const { picked } = paceOf(v);
     // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows.
     const source = picked && hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(fromHistory) : items;
-    const all = source.map(it => ({ id: idOf(it), code: '#' + it.number, sortKey: [] as (string | number)[], it }));
-    const searched = all.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo}`, { state: r.it.stage, project: r.it.projectId }));
-    const counts: Record<string, number | null> = {};
+    const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
+    const rowsOf = source.map(row);
+    const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo}`, { state: r.it.stage, project: r.it.projectId }));
+    const counts: Record<string, number> = {};
     for (const s of ORDER) counts[s] = searched.filter(r => r.it.stage === s).length;
     const st = v.state ?? [], group = v.group ?? DEFAULT_DELIVERY_GROUP, sort = v.sort ?? DEFAULT_DELIVERY_SORT;
     const desc = sort.startsWith('-'), field = desc ? sort.slice(1) : sort;
@@ -125,7 +124,10 @@ export function Delivery({ id }: { id?: string }) {
     const rows = searched.filter(r => !st.length || st.includes(r.it.stage)).map(r => ({ ...r, sortKey: [gkey(r), key(r)] }))
       .sort((a, b) => order.indexOf(String(a.sortKey[0])) - order.indexOf(String(b.sortKey[0])) || (desc ? key(b) - key(a) : key(a) - key(b)));
     const groups = order.map(k => ({ key: k, label: group === 'stage' ? states.delivery[k as Stage].label : k || 'No project', count: rows.filter(r => r.sortKey[0] === k).length })).filter(g => g.count);
-    return { rows, all, counts: incomplete && !picked ? Object.fromEntries(ORDER.map(s => [s, null])) : counts, groups, pending: !data && !status.error, error: status.error && !data ? status.error : null, reload: status.reload };
+    // Pinned rows stay whatever the filter or the picked day (OR-12): the current rows and the day's, in the page's order.
+    const keyed = (r: Row) => ({ ...r, sortKey: [gkey(r), key(r)] });
+    const all = [...items.map(row), ...rowsOf.filter(r => !items.some(it => idOf(it) === r.id))].map(keyed);
+    return { rows, all, counts, groups, pending: !data && !status.error, error: status.error && !data ? status.error : null, reload: status.reload };
   };
   const page = useListPage<Row>({
     view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: ['installed'],
@@ -136,8 +138,10 @@ export function Delivery({ id }: { id?: string }) {
   const { ex, range, buckets, picked } = paceOf(view);
   // A link saved while the "undefined" bug was live, or one with an old range, carries keys the page ignores: drop them.
   useEffect(() => { const x = view.extra ?? {}; if (Object.keys(x).some(k => (x as Record<string, string | undefined>)[k] !== (ex as Record<string, string | undefined>)[k])) set({ extra: ex }, 'type'); }, [JSON.stringify(view.extra)]);
-  // A picked day lists merged pull requests, most of them installed: their group opens.
-  useEffect(() => { if (ex.at && page.closed.includes('installed')) page.toggleGroup('installed'); }, [ex.at]);
+  // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
+  // most installed) or a filter to installed rows opens it.
+  const doneOnly = !!view.state?.length && view.state.every(s => DONE.includes(s as Stage));
+  useEffect(() => { if ((ex.at || doneOnly) && page.closed.includes('installed')) page.toggleGroup('installed'); }, [ex.at, doneOnly]);
   const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
   const open = items.find(it => idOf(it) === id) ?? hist?.h.prs.map(fromHistory).find(it => idOf(it) === id);

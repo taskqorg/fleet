@@ -36,6 +36,13 @@ export function dayStart(t: number, n = 0): number {
   return d.getTime();
 }
 
+/** Start of the local slot of `hours` (a divisor of 24) that holds `t`, `n` slots later; local clock hours, so a daylight-saving change keeps the labels. */
+export function slotStart(t: number, hours: number, n = 0): number {
+  const d = new Date(t);
+  d.setHours(d.getHours() - d.getHours() % hours + n * hours, 0, 0, 0);
+  return d.getTime();
+}
+
 /** Hour of the day in the viewer's zone, for buckets shorter than a day: "14:00". */
 export function hourLabel(t: number): string {
   const d = new Date(t);

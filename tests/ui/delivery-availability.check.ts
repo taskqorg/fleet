@@ -120,6 +120,9 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     await page.getByRole('button', {name: 'In flight', exact: true}).click();
     await page.waitForURL(u => (u.searchParams.get('state') ?? '').split(',').length === 8);
     assert.equal(await list.getByRole('link', {name: 'Waiting for review'}).count(), 1);
+    // The Installed preset shows its rows: the group collapsed by default opens for a filter to installed rows.
+    await page.getByRole('button', {name: 'Installed', exact: true}).click();
+    await list.getByRole('link', {name: 'Installed one'}).waitFor();
     await page.goto(origin + '/delivery');
     // Moving now: a norm bar per pull request in flight, past the norm for the long PR checks.
     const moving = page.getByRole('grid', {name: 'Pull requests in flight'});

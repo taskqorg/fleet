@@ -162,6 +162,10 @@ export const stepKinds = {
 export type StepKind = keyof typeof stepKinds;
 
 /** Action icons used by controls. One meaning per icon. */
+/** Delivery stages in attention order (the list's stage groups, Moving now): failed first, then the merge queue and
+ *  checks, then the release tail. */
+export const DELIVERY_ORDER: StateOf<'delivery'>[] = ['pr_failed', 'mq_failed', 'mq_ci', 'mq_wait', 'pr_ci', 'pr_open', 'releasing', 'installing', 'installed', 'merged'];
+
 export const actions = {
   pin: 'pin', unpin: 'pin-off', filter: 'list-filter', search: 'search', clear: 'x', retry: 'rotate-ccw',
   open: 'external-link', copy: 'copy', download: 'download', settings: 'settings', more: 'ellipsis',

@@ -6,14 +6,14 @@ import { useState } from 'preact/hooks';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, GroupHeader, GroupControl, SortControl, SelectToggle, StateBadge, AgeChip, Num, Totals,
   TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Stale, Fact, RowFacts, Presets, Latest, DayChart, ShareBar, NormBar,
-  capOf, day, dayStart, hourLabel, duration, states, type StateOf, type DayCol, type DayMark, type SharePart,
+  capOf, quantile, day, dayStart, slotStart, hourLabel, duration, DELIVERY_ORDER, states, type StateOf, type DayCol, type DayMark, type SharePart,
 } from '../src/index.ts';
 import { NOW, min, hr } from './fixtures.ts';
 
 type Stage = StateOf<'delivery'>;
 const DAY = 24 * hr;
 // Attention order of the stage groups.
-const ORDER: Stage[] = ['pr_failed', 'mq_failed', 'mq_ci', 'mq_wait', 'pr_ci', 'pr_open', 'releasing', 'installing', 'installed', 'merged'];
+const ORDER = DELIVERY_ORDER;
 /** Each stage's norm: its P50 and P90 over the last 14 days (delivery_baseline rolling, read 17 Nov 2026), in ms. Open has none: people work there. */
 const NORM: Partial<Record<Stage, [number, number]>> = {
   pr_ci: [6.5 * min, 42 * min], mq_wait: [0.8 * min, 8 * min], mq_ci: [5.8 * min, 15.6 * min], releasing: [1.2 * min, 4.4 * min], installing: [1.1 * min, 2.1 * min],
@@ -126,8 +126,7 @@ type Range = '24h' | '7d' | '30d';
 type Bucket = DayCol & { start: number; end: number; today: boolean };
 function bucketsOf(range: Range): Bucket[] {
   if (range === '24h') {
-    const end = dayStart(NOW) + Math.ceil((NOW - dayStart(NOW)) / (2 * hr)) * 2 * hr;
-    return Array.from({ length: 12 }, (_, i) => { const s = end - (12 - i) * 2 * hr; return { key: String(s), start: s, end: s + 2 * hr, label: hourLabel(s), tip: `${day(s)} ${hourLabel(s)}–${hourLabel(s + 2 * hr)}`, today: s + 2 * hr > NOW }; });
+    return Array.from({ length: 12 }, (_, i) => { const s = slotStart(NOW, 2, i - 11), e = slotStart(NOW, 2, i - 10); return { key: String(s), start: s, end: e, label: hourLabel(s), tip: `${day(s)} ${hourLabel(s)}–${hourLabel(e)}`, today: e > NOW }; });
   }
   // Calendar days in the viewer's zone, from the first recorded day when the range reaches past it.
   const n = range === '7d' ? 7 : 30, first = Math.max(dayStart(NOW, -(n - 1)), D0);
@@ -135,7 +134,7 @@ function bucketsOf(range: Range): Bucket[] {
   for (let s = first; s <= NOW; s = dayStart(s, 1)) out.push({ key: String(s), start: s, end: dayStart(s, 1), label: day(s), tip: dayStart(NOW) === s ? `${day(s)}, today so far` : day(s), today: dayStart(NOW) === s });
   return out;
 }
-const q = (xs: number[], f: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(f * s.length) - 1)]; };
+const q = quantile;
 const inB = (b: { start: number; end: number }) => HIST.filter(h => h.merged >= b.start && h.merged < b.end);
 /** Open to installed per bucket: P50 and P90 of the pull requests with every stage measured; none measured is "not measured", never 0. */
 function totalMark(b: Bucket): DayMark {
