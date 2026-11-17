@@ -1034,6 +1034,9 @@ func TestUploadKeySplitAcrossReadsRefused(t *testing.T) {
 			t.Fatal("the refusal names the value")
 		}
 	}
+	// The name goes to the provider too.
+	status, v := gw.uploadBytes([]byte("clean"), map[string]any{"issue": "TGT-12", "name": testToken + ".txt"})
+	expect(t, []any{status, v["error"]}, []any{422, "secret-found"}, "a token in the name")
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 0, "provider requests")
 	expect(t, len(gw.parts()), 0, "staged files")
@@ -1077,7 +1080,7 @@ func TestJSONToFileToolRefused(t *testing.T) {
 // names over 255 bytes are refused. Risk: a crafted name adds a header or a part, or names a path.
 func TestUploadBadFileNameRefused(t *testing.T) {
 	gw, p := newFileFixture(t, nil)
-	for _, name := range []string{"", "a\rb", "a\nb", "a\x01b", `a"b`, `notes\`, "invoice\u202efdp.exe", "a\u0085b", "a/b", strings.Repeat("я", 128)} {
+	for _, name := range []string{"", "a\rb", "a\nb", "a\x01b", `a"b`, `notes\`, "invoice\u202efdp.exe", "a\u0085b", "..", "  ", "a/b", strings.Repeat("я", 128)} {
 		status, v := gw.uploadBytes([]byte("x"), map[string]any{"issue": "TGT-12", "name": name})
 		expect(t, []any{status, v["error"]}, []any{400, "bad-file-name"}, fmt.Sprintf("%q", name))
 	}

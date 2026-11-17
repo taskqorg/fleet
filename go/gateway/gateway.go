@@ -370,6 +370,7 @@ type gateway struct {
 	// File calls in flight (/healthz transfers), and the cancel of each upload still staging, by call id: a stop
 	// refuses those with draining, since nothing reached the provider yet.
 	transfers   atomic.Int64
+	handling    atomic.Int64 // /v1/call requests in their handler
 	stagingLock sync.Mutex
 	staging     map[string]func()
 }
@@ -921,6 +922,8 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]string{"error": "not-found", "reason": "unknown route"})
 		return
 	}
+	g.handling.Add(1)
+	defer g.handling.Add(-1)
 	startedMs := nowMs()
 	q := &request{id: fmt.Sprintf("%x-%x-%x", startedMs, os.Getpid(), g.calls.Add(1)-1), connection: connectionName, tool: toolName,
 		startedMs: startedMs, begun: time.Now()}
@@ -1110,7 +1113,7 @@ func bidiControl(r rune) bool {
 
 // fileName: a name that stays inside the multipart header's quotes (no ", no \ escape) and names no path.
 func fileName(name string) bool {
-	if name == "" || len(name) > 255 || !utf8.ValidString(name) {
+	if name == "" || name == "." || name == ".." || strings.TrimSpace(name) == "" || len(name) > 255 || !utf8.ValidString(name) {
 		return false
 	}
 	for _, r := range name {
@@ -1258,8 +1261,8 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	case sum != want:
 		refuse(refusal(400, "error", "sha-mismatch", "the received bytes do not match X-Fleet-Sha256; nothing was sent"), transfer)
 		return
-	case scan.found:
-		refuse(refusal(422, "error", "secret-found", "the file contains a key value or the caller's token; nothing was sent"), transfer)
+	case scan.found || newScanner(patterns).write([]byte(name)):
+		refuse(refusal(422, "error", "secret-found", "the file or its name contains a key value or the caller's token; nothing was sent"), transfer)
 		return
 	}
 	// One file part with the caller's name; the name rules keep it inside the quotes (RFC 7578 allows UTF-8).
@@ -1414,10 +1417,9 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 		}
 	}
 	// No usage, disabled key or key problem: those rode on the started line and must not count twice.
-	done := contract.CallLine{CallId: q.id, Connection: q.connection, Tool: q.tool, Status: 200, Outcome: contract.CallOutcomeOk,
-		StartedAt: q.startedMs, Ms: time.Since(q.begun).Milliseconds(), ExecutionId: started.ExecutionId, TokenSha256: started.TokenSha256,
-		KeyFingerprint: started.KeyFingerprint, Phase: ptr(contract.CallPhaseCompleted),
-		Transfer: &contract.CallTransfer{Direction: contract.CallTransferDirectionDownload, Bytes: delivered, MediaType: mediaType, Name: name}}
+	done := g.line(q, &answer{status: 200, outcome: "ok", key: lookup.key})
+	done.Phase = ptr(contract.CallPhaseCompleted)
+	done.Transfer = &contract.CallTransfer{Direction: contract.CallTransferDirectionDownload, Bytes: delivered, MediaType: mediaType, Name: name}
 	if code == "" {
 		sum := hex.EncodeToString(hash.Sum(nil))
 		done.Transfer.Sha256 = &sum
@@ -1678,8 +1680,8 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 	if server.Shutdown(ctx) != nil {
 		logf("drain timed out; remaining calls are cut")
 		server.Close()
-		// A cut file call still writes its spool line (a post cut at the drain end may have been stored).
-		for end := time.Now().Add(5 * time.Second); g.transfers.Load() > 0 && time.Now().Before(end); {
+		// A cut call still writes its spool line (a post cut at the drain end may have been stored).
+		for end := time.Now().Add(5 * time.Second); g.handling.Load() > 0 && time.Now().Before(end); {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
