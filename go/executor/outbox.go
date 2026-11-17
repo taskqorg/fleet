@@ -182,11 +182,6 @@ func edgeRedirect(route string, status int, detail string) {
 	defer edgeMu.Unlock()
 	attempts := 0
 	if e, ok := edges[route]; ok {
-		// Lanes asked the route together before its edge answer was known: their answers are one attempt.
-		if route != pollRoute && nowMs() < e.nextAt {
-			e.status, e.detail = status, detail
-			return
-		}
 		attempts = e.attempts + 1
 	}
 	if attempts == 0 {
@@ -212,7 +207,27 @@ func edgeOK(route string) {
 	}
 }
 
-func observe(route string, a answer) {
+// edgeChanged: when each route's edge state last changed, in Unix nanoseconds.
+var edgeChanged = map[string]int64{}
+
+func observe(route string, a answer) { observeSent(route, a, time.Now().UnixNano()) }
+
+// observeSent: an answer to a request sent before the route's edge state last changed is stale: lanes that asked the
+// route together count as one attempt, and a late redirect does not undo a newer success (nor a late success a newer
+// redirect).
+func observeSent(route string, a answer, sentAt int64) {
+	if a.kind == answerRetry {
+		return
+	}
+	edgeMu.Lock()
+	stale := sentAt < edgeChanged[route]
+	if !stale {
+		edgeChanged[route] = time.Now().UnixNano()
+	}
+	edgeMu.Unlock()
+	if stale {
+		return
+	}
 	switch a.kind {
 	case answerEdge:
 		edgeRedirect(route, a.status, a.text)
@@ -287,7 +302,15 @@ var pollClient = &http.Client{Timeout: 35 * time.Second, CheckRedirect: noRedire
 // deliveryClient delivers journaled outbox rows with the held-poll deadline. A cancelled row is rolled back by the
 // coordinator and resent whole, so a deadline shorter than its ingest never lets it through and holds every row
 // behind it, the terminal receipt included.
-var deliveryClient = pollClient
+// Its own transport keeps an idle connection per concurrent lane (the default keeps 2 per host), so lanes over
+// HTTP/1.1 do not dial and handshake again on every pass.
+var deliveryClient = &http.Client{Timeout: pollClient.Timeout, CheckRedirect: noRedirect, Transport: deliveryTransport()}
+
+func deliveryTransport() http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConnsPerHost = 100
+	return t
+}
 
 func postJSON(c *http.Client, url, token string, v any) (*http.Response, error) {
 	return postJSONCtx(context.Background(), c, url, token, v)
@@ -307,8 +330,9 @@ func postJSONCtx(ctx context.Context, c *http.Client, url, token string, v any) 
 }
 
 func sendWithClient(ctx context.Context, c *http.Client, url, token, reqRoute, metricRoute string, v any) answer {
+	sentAt := time.Now().UnixNano()
 	a := classify(postJSONCtx(ctx, c, url+reqRoute, token, v))
-	observe(metricRoute, a)
+	observeSent(metricRoute, a, sentAt)
 	return a
 }
 
@@ -380,6 +404,7 @@ func retryDone(n int64) {
 type outboxRow struct {
 	n                          int64
 	route, body, execution, ln string
+	loaded                     bool // its body was read: still queued
 }
 
 // laneBusy: lanes with a delivery in flight, by journal. A scan skips them; their newer rows go with their next run, in
@@ -506,7 +531,11 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 		case p.failErr != nil:
 			return p.failErr
 		case p.stopErr != nil:
-			heldOnly.Store(true) // the coordinator as a whole is unreachable or asks to slow down: the longer interval
+			// The coordinator as a whole is unreachable or asks to slow down: the longer interval, unless the stop
+			// ended while a slow lane of this pass was still delivering.
+			laneMu.Lock()
+			heldOnly.Store(nowMs() < stopUntil[db])
+			laneMu.Unlock()
 			return p.stopErr
 		}
 		// The longer interval only when nothing moved and no other lane of the journal is still delivering; a scan that
@@ -542,7 +571,7 @@ func bodies(db *sql.DB, rows []outboxRow) error {
 		if err := rs.Scan(&n, &body); err != nil {
 			return err
 		}
-		rows[at[n]].body = body
+		rows[at[n]].body, rows[at[n]].loaded = body, true
 	}
 	return rs.Err()
 }
@@ -584,6 +613,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			p.held = true
 			p.mu.Unlock()
 		}
+		checked := time.Now().UnixNano() // the edge state this send is based on
 		if p.routeHeld(r.route) || edgeWait(r.route) {
 			hold()
 			return nil
@@ -598,6 +628,10 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			}
 			read, r = true, rows[i]
 		}
+		if !r.loaded { // left the queue since the scan: nothing to send
+			i++
+			continue
+		}
 		value := decM(r.body)
 		// Consecutive event rows of the lane go in one request.
 		batch := []outboxRow{r}
@@ -605,14 +639,15 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			for i+len(batch) < len(rows) {
 				nx := rows[i+len(batch)]
 				events, _ := value["events"].([]any)
-				if nx.route != r.route || nx.execution != r.execution || len(events) >= 500 {
+				if !nx.loaded || nx.route != r.route || nx.execution != r.execution || len(events) >= 500 {
 					break
 				}
 				value["events"] = append(events, jArr(decM(nx.body), "events")...)
 				batch = append(batch, nx)
 			}
 		}
-		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
+		a := classify(postJSONCtx(context.Background(), deliveryClient, p.url+r.route, p.token, value))
+		observeSent(r.route, a, checked)
 		var response any
 		switch a.kind {
 		case answerOK:
