@@ -108,9 +108,10 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 		}
 		return
 	}
-	var since float64
-	var changed bool
+	var since, at float64
+	var changed, observed bool
 	werr := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
+		observed, changed = false, false
 		o, err := maybe(wq, host, "host-observation")
 		if err != nil {
 			return err
@@ -118,6 +119,7 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 		if o == nil {
 			return nil // never observed: no observation is made up for it (its existence means an observed host)
 		}
+		observed = true
 		prev := mapOf(o["pollError"])
 		// A run of failures continues while they keep coming; a record left by a host that stopped polling while it
 		// failed (no success cleared it) starts a new run.
@@ -126,15 +128,17 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 			since = s
 		}
 		changed = prev == nil || since != num(prev["since"]) || num(prev["status"]) != float64(f.status) || prev["reason"] != f.reason
+		at = float64(now)
 		if !changed && prev["message"] == f.message && float64(now)-num(prev["at"]) < hostPollAtEveryMs {
-			return nil // unchanged and recent: no write, no change row
+			at = num(prev["at"]) // the stored one: the cache never runs ahead of the record
+			return nil           // unchanged and recent: no write, no change row
 		}
 		o["pollError"] = doc{"status": f.status, "reason": f.reason, "message": f.message, "since": since, "at": float64(now)}
 		return put(wq, "host-observation", o)
 	})
-	if werr == nil {
+	if werr == nil && observed {
 		a.pollMu.Lock()
-		a.heartbeatOf(host).pollRecorded = &pollRecord{f, since, float64(now)}
+		a.heartbeatOf(host).pollRecorded = &pollRecord{f, since, at}
 		a.pollMu.Unlock()
 	}
 	if werr != nil {
@@ -144,7 +148,7 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	if internalPollError(f) && changed {
 		errtrack.Capture(err, map[string]string{"route": "POST /api/hosts/poll", "host": host, "status": fmt.Sprint(f.status), "reason": f.reason})
 	}
-	if werr != nil || float64(now)-since < hostPollProblemAfterMs {
+	if werr != nil || !observed || float64(now)-since < hostPollProblemAfterMs {
 		return
 	}
 	a.openPollProblem(ctx, host, f.reason)

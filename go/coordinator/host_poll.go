@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -396,7 +397,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
 }
 
 // pollCommandRefusal: what a command's failed preparation does. The command's own lasting failure (an authorization
-// refusal, a missing or malformed stored row) stops it with the reason; anything else (a conflict, a race, a busy
+// refusal, a stored row that is gone) stops it with the reason; anything else (a conflict, a race, a busy
 // dependency, a database or other error) leaves it pending for the next poll; a serialization failure, a deadlock, a
 // lost connection or the request leaving fail the poll as before (and are retried).
 func pollCommandRefusal(err error) (string, pollCommandOutcome) {
@@ -408,15 +409,13 @@ func pollCommandRefusal(err error) (string, pollCommandOutcome) {
 		switch he.Code {
 		case 403:
 			return "refused: " + he.Msg, pollStopsCommand // an authorization refusal: never handed over, never widened
-		case 400, 404, 410, 422:
-			return "handoff failed: " + he.Msg, pollStopsCommand // a missing or malformed stored row
+		case 404, 410:
+			return "handoff failed: " + he.Msg, pollStopsCommand // a stored row that is gone
 		}
 		return "", pollRetriesCommand // a conflict, a race or a busy dependency: the next poll tries again
 	}
 	code := pgCode(err)
 	switch {
-	case code == "42501":
-		return "refused: not in scope", pollStopsCommand
 	// Class 40 (serialization, deadlock), 08 (connection) and 57 (operator intervention, statement timeout) fail the
 	// poll for its retry; a lost connection without a code fails the savepoint rollback, and with it the poll.
 	case strings.HasPrefix(code, "40") || strings.HasPrefix(code, "08") || strings.HasPrefix(code, "57"):
@@ -475,8 +474,15 @@ func errorClass(err error) string {
 	if code := pgCode(err); code != "" {
 		return "sqlstate_" + code
 	}
-	return fmt.Sprintf("go_%T", errors.Unwrap(err))
+	// Digits (ids, times, revisions) do not make a new class; the cap bounds the rest.
+	m := []rune(errorDigits.ReplaceAllString(err.Error(), "#"))
+	if len(m) > 120 {
+		m = m[:120]
+	}
+	return "go:" + string(m)
 }
+
+var errorDigits = regexp.MustCompile(`[0-9]+`)
 
 type pollCommandOutcome int
 
@@ -523,6 +529,12 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	if err := put(wq, "execution", e); err != nil {
 		return err
 	}
+	// The dispatch pass runs the pipeline engine's sweeps: the step sees its native execution end.
+	onEnd(wq.tx, func(committed bool) {
+		if committed {
+			a.wakeDispatch()
+		}
+	})
 	return exec(wq, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"])
 }
 

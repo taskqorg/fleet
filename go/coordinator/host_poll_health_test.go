@@ -128,7 +128,8 @@ func TestPollCommandRefusal(t *testing.T) {
 		{&pgconn.PgError{Code: "40P01"}, "", pollFails},
 		{&pgconn.PgError{Code: "55P03"}, "", pollRetriesCommand},
 		{&pgconn.PgError{Code: "22P02"}, "", pollRetriesCommand},
-		{&pgconn.PgError{Code: "42501"}, "refused: not in scope", pollStopsCommand},
+		{&pgconn.PgError{Code: "42501"}, "", pollRetriesCommand}, // in the unscoped poll, a missing grant is the coordinator's bug
+		{fail(422, "Invalid stored input"), "", pollRetriesCommand},
 		{fmt.Errorf("wrapped: %w", context.Canceled), "", pollFails},
 	} {
 		if reason, outcome := pollCommandRefusal(c.err); reason != c.reason || outcome != c.outcome {
