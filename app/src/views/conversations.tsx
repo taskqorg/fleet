@@ -237,12 +237,15 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
  *  never replaces it. */
 function RenamePanel({ sessionId, current, onDone, onSaved, run, unknown, signal }: { sessionId: string; current: string; onDone: () => void; onSaved: () => void; run: (fn: () => Promise<unknown>) => Promise<void>; unknown: () => void; signal: AbortSignal }) {
   const [v, setV] = useState(current), [busy, setBusy] = useState(false), off = !online.value, clean = v.trim().replace(/\s+/g, ' '), chars = [...clean].length;
+  // The server's checks (session_titles.go sessionRename), said before sending.
+  const reason = off ? 'offline' : !clean ? 'type a title' : chars > 200 ? 'at most 200 characters' : !/[\p{L}\p{N}]/u.test(clean) ? 'a title holds a word'
+    : /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(clean) ? 'no UUID in a title' : undefined;
   // A rename is idempotent: the same title again changes nothing, so an unknown outcome is simply retried. One at a time.
   const save = () => { if (busy) return; setBusy(true); run(async () => { try { await writeOnce('session_rename', { sessionId, title: clean }, unknown, { signal }); onDone(); onSaved(); /* not only the change feed: it may not be connected yet */ } finally { setBusy(false); } }); };
   return <DetailSection title="Rename">
-    <form class="answers" onSubmit={e => { e.preventDefault(); if (clean && chars <= 200 && /[\p{L}\p{N}]/u.test(clean) && !/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(clean) && !off) save(); }} onKeyDown={e => { if (e.key === 'Escape') onDone(); }}>
+    <form class="answers" onSubmit={e => { e.preventDefault(); if (!reason) save(); }} onKeyDown={e => { if (e.key === 'Escape') onDone(); }}>
       <TextField label="Title" value={v} onChange={setV} />
-      <Button label="Save" kind="primary" busy={busy} disabledReason={off ? 'offline' : !clean ? 'type a title' : chars > 200 ? 'at most 200 characters' : !/[\p{L}\p{N}]/u.test(clean) ? 'a title holds a word' : /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(clean) ? 'no UUID in a title' : undefined} onClick={save} />
+      <Button label="Save" kind="primary" busy={busy} disabledReason={reason} onClick={save} />
       <Button label="Cancel" kind="quiet" onClick={onDone} /></form>
   </DetailSection>;
 }
