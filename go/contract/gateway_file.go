@@ -49,14 +49,14 @@ func GatewayUpload(ctx context.Context, t GatewayTarget, connection, tool string
 	}, answer)
 	defer x.close()
 	sum := u.Sha256
+	transfer := &CallTransfer{Direction: CallTransferDirectionUpload, Bytes: u.Size, MediaType: u.MediaType, Name: u.Name, Sha256: &sum}
 	if x.failed {
 		if x.line.Outcome == CallOutcomeUnknown {
-			// What may have been stored: the agent compares it with the issue's attachments.
-			x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionUpload, Bytes: u.Size, MediaType: u.MediaType, Name: u.Name, Sha256: &sum}
+			x.line.Transfer = transfer // what may have been stored: the agent compares it with the issue's attachments
 		}
 		return x.line
 	}
-	x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionUpload, Bytes: u.Size, MediaType: u.MediaType, Name: u.Name, Sha256: &sum}
+	x.line.Transfer = transfer
 	line := x.answerJSON()
 	if line.Outcome == CallOutcomeOk {
 		line.Output, _ = json.Marshal(map[string]any{"reply": line.Output, "name": u.Name, "mediaType": u.MediaType, "bytes": u.Size, "sha256": u.Sha256, "callId": line.CallId})
@@ -257,8 +257,12 @@ func openFolder(d Download) (*os.Root, string, error) {
 		fi, err := root.Lstat(rel)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			if err := root.Mkdir(rel, 0o700); err != nil {
+			// A concurrent download may create it first; then it is checked like any existing folder.
+			if err := root.Mkdir(rel, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 				return nil, "", err
+			}
+			if fi, err := root.Lstat(rel); err != nil || !fi.IsDir() {
+				return nil, "", fs.ErrPermission
 			}
 		case err != nil:
 			return nil, "", err

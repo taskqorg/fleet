@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"fleet/contract"
 )
@@ -190,6 +191,17 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 		listed = append(listed, modelTool(t))
 	}
 	out := bufio.NewWriter(w)
+	var wmu sync.Mutex
+	write := func(reply M) {
+		wmu.Lock()
+		defer wmu.Unlock()
+		fmt.Fprintln(out, enc(reply))
+		out.Flush()
+	}
+	// Calls run concurrently: a long file transfer never holds a ping or another call. At end of input the server
+	// waits for the calls in flight.
+	var calls sync.WaitGroup
+	defer calls.Wait()
 	sc := bufio.NewScanner(in)
 	sc.Buffer(nil, 64<<20)
 	for sc.Scan() {
@@ -215,23 +227,28 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 		case "tools/list":
 			reply["result"] = M{"tools": listed}
 		case "tools/call":
-			name, _ := str(params["name"])
-			code := "tool-not-granted"
-			line := contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: &code}
-			if tool, ok := byName[name]; ok && name != "" {
-				args := params["arguments"]
-				if !truth(args) {
-					args = M{}
+			calls.Add(1)
+			go func() {
+				defer calls.Done()
+				name, _ := str(params["name"])
+				code := "tool-not-granted"
+				line := contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: &code}
+				if tool, ok := byName[name]; ok && name != "" {
+					args := params["arguments"]
+					if !truth(args) {
+						args = M{}
+					}
+					line = connectionCall(connection, tool, args)
 				}
-				line = connectionCall(connection, tool, args)
-			}
-			text, ok := callText(line)
-			reply["result"] = M{"content": []any{M{"type": "text", "text": text}}, "isError": !ok}
+				text, ok := callText(line)
+				reply["result"] = M{"content": []any{M{"type": "text", "text": text}}, "isError": !ok}
+				write(reply)
+			}()
+			continue
 		default:
 			reply["error"] = M{"code": -32601, "message": "method not found"}
 		}
-		fmt.Fprintln(out, enc(reply))
-		out.Flush()
+		write(reply)
 	}
 	return sc.Err()
 }

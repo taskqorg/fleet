@@ -51,7 +51,9 @@ func homeEntries(home string) []string {
 	}
 	list := dataStores(filepath.Join(home, data))
 	for _, rel := range []string{".config/fleet", ".local/share/fleet/gateway", ".ssh", ".aws", ".gnupg", ".netrc",
-		".config/gh", ".hermes/.env", "Library/Keychains", ".claude/.credentials.json", ".codex/auth.json"} {
+		".config/gh", ".hermes/.env", "Library/Keychains", ".claude/.credentials.json", ".codex/auth.json",
+		".git-credentials", ".config/git/credentials", ".docker/config.json", ".kube/config", ".npmrc", ".pypirc",
+		".config/gcloud", ".gemini/oauth_creds.json", ".azure"} {
 		list = append(list, filepath.Join(home, rel))
 	}
 	return list
