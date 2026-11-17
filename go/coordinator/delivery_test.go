@@ -149,12 +149,13 @@ func TestDeliveryStages(t *testing.T) {
 func TestDeliveryRecordedUIRelease(t *testing.T) {
 	s := func(v string) *string { return &v }
 	now, _ := time.Parse(time.RFC3339, "2026-11-17T18:20:00Z")
-	read := []ghRelease{{Tag: "v1.261117.28", Target: "m627", Published: "2026-11-17T16:33:37Z"}}
+	read := []ghRelease{{Tag: "v1.261117.28", Target: "m627", Published: "2026-11-17T16:33:37Z"}, {Tag: "v1.261117.0", Target: "m600", Published: "2026-11-17T00:50:00Z"}}
 	ui := ghRelease{Tag: "ui-1.261117.26-v1.261117.27", Target: "m626", Published: "2026-11-17T16:09:46Z"}
+	older := ghRelease{Tag: "ui-1.261116.1-v1.261116.2", Target: "m500", Published: "2026-11-16T10:00:00Z"}
 	g := ghRepo{closed: []ghPull{{Number: 626, MergedAt: s("2026-11-17T16:08:57Z"), MergeSHA: "m626"}, {Number: 627, MergedAt: s("2026-11-17T16:30:00Z"), MergeSHA: "m627"}},
-		releases: withReleases(read, []ghRelease{ui, read[0]})}
-	if len(g.releases) != 2 {
-		t.Fatalf("a recorded release the read has is not added twice: %+v", g.releases)
+		releases: withReleases(read, []ghRelease{ui, read[0], older})}
+	if len(g.releases) != 3 || slices.ContainsFunc(g.releases, func(r ghRelease) bool { return r.Tag == older.Tag }) {
+		t.Fatalf("a recorded release the read has is not added twice, one older than every one read not at all: %+v", g.releases)
 	}
 	items, _ := deliveryStages("fleet", githubPublicRepo, g, []string{"1.261117.28"}, "1.261117.28", now)
 	i := slices.IndexFunc(items, func(it contract.DeliveryItem) bool { return it.Number == 626 })

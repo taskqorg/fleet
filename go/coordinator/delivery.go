@@ -235,6 +235,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	// only, in its own transaction: a failed read leaves the pass as it was.
 	if byKey[strings.ToLower(githubPublicRepo)] != nil {
 		if rerr := runTx(ctx, a, nil, false, "", func(q *Request) error {
+			recordedUI = nil // a retried transaction starts over
 			rs, err := rows(q, "SELECT data FROM document WHERE kind='delivery-release' AND id LIKE 'delivery-release:ui-%'")
 			for _, r := range rs {
 				var x contract.DeliveryRelease
@@ -555,11 +556,18 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 	return out, landing
 }
 
-// withReleases: read plus the recorded releases it lacks (by tag).
+// withReleases: read plus the recorded releases it lacks (by tag), only those published since the oldest one read: an
+// older one would reach back past the native releases read and claim merges a release not read delivered.
 func withReleases(read, recorded []ghRelease) []ghRelease {
 	out := slices.Clone(read)
+	oldest := ""
+	for _, r := range read {
+		if r.Published != "" && (oldest == "" || r.Published < oldest) {
+			oldest = r.Published
+		}
+	}
 	for _, r := range recorded {
-		if !slices.ContainsFunc(read, func(x ghRelease) bool { return x.Tag == r.Tag }) {
+		if oldest != "" && r.Published >= oldest && !slices.ContainsFunc(out, func(x ghRelease) bool { return x.Tag == r.Tag }) {
 			out = append(out, r)
 		}
 	}
