@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func TestDeliveryEvidenceIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
-	deliveryInstalls(&r, dhState{}, map[string]hostVersion{"coordinator": {"1.2.4", "2026-11-14T11:30:00Z"}}, now)
+	deliveryInstalls(&r, dhState{}, map[string]hostVersion{"coordinator": {"1.2.4", "2026-11-14T11:30:00Z"}}, hostVersion{}, now)
 	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +121,7 @@ func TestDeliveryEvidenceIntegration(t *testing.T) {
 		t.Fatal(series)
 	}
 	exact := contract.DeliveryRelease{Tag: "v1.2.3", Published: loaded.Published}
-	deliveryInstalls(&exact, dhState{}, map[string]hostVersion{"coordinator": {"1.2.3", "2026-11-14T11:30:00Z"}}, now)
+	deliveryInstalls(&exact, dhState{}, map[string]hostVersion{"coordinator": {"1.2.3", "2026-11-14T11:30:00Z"}}, hostVersion{}, now)
 	if exact.InstalledVersions["coordinator"] != "1.2.3" {
 		t.Fatal(exact)
 	}
@@ -140,7 +141,7 @@ func TestDeliveryCompatibilityAndRefusal(t *testing.T) {
 	}
 	ui := contract.DeliveryRelease{Tag: "ui-1.2.2-v1.2.3", Published: "2026-11-14T10:00:00Z"}
 	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
-	deliveryInstalls(&ui, dhState{UISeen: map[string]string{"1.2.3": "2026-11-14T11:00:00Z"}}, map[string]hostVersion{"h": {"1.2.3", "2026-11-14T11:00:00Z"}}, now)
+	deliveryInstalls(&ui, dhState{UISeen: map[string]string{"1.2.3": "2026-11-14T11:00:00Z"}}, map[string]hostVersion{"h": {"1.2.3", "2026-11-14T11:00:00Z"}}, hostVersion{}, now)
 	if len(ui.Installed) != 0 || len(ui.Available) != 0 || ui.UiOnSite == nil {
 		t.Fatal(ui)
 	}
@@ -151,7 +152,12 @@ func TestDeliveryCompatibilityAndRefusal(t *testing.T) {
 	if len(regs) != 2 || regs[0].Key != "queue" {
 		t.Fatal(regs)
 	}
+	// exact-install-v1 measured install as now, but its total left UI-only releases out: total compares from delivered-v2 on.
 	base.MetricBasis = ptr("exact-install-v1")
+	if got := deliveryCompare(nil, cur, base, settings); len(got) != 4 || slices.ContainsFunc(got, func(r contract.DeliveryRegression) bool { return r.Key == "total" }) {
+		t.Fatal(got)
+	}
+	base.MetricBasis = ptr(deliveryBasis)
 	if got := deliveryCompare(nil, cur, base, settings); len(got) != 6 {
 		t.Fatal(got)
 	}
@@ -170,5 +176,91 @@ func TestDeliveryPendingAvailabilityAlerts(t *testing.T) {
 	regs := deliveryCompare(prs, cur, base, contract.DeliverySettings{Ratio: 1.5, MinSamples: 1, MinDeltaMs: 60000})
 	if len(regs) != 2 || regs[0].Key != "availability_wait" || len(cur["install"]) != 0 {
 		t.Fatalf("%+v %+v", regs, cur)
+	}
+}
+
+// Requirement: a pull request a UI-only release (ui-<backend>-v<UI version>) delivered is matched to it and done when the
+// site serves its UI: no install stage, total from opened to UI on site; while the UI is not on the site the wait counts
+// against the ui stage. Re-deriving stored records (as every pass does) gives records stored before this rule the same.
+// Risk: a UI-only pull request stays "releasing" or "installing" forever, never measured, or red past an install norm.
+func TestDeliveryUIOnlyRelease(t *testing.T) {
+	prs := []contract.DeliveryPr{
+		// As stored before UI-only releases counted: release and UI on site known, no total.
+		{Number: 626, MergeSha: "m626", Opened: "2026-11-17T16:01:47Z", Merged: "2026-11-17T16:08:57Z", Durations: map[string]int64{"ui": 153000}},
+		{Number: 627, MergeSha: "m627", Opened: "2026-11-17T16:20:00Z", Merged: "2026-11-17T16:30:00Z"},
+	}
+	rels := []contract.DeliveryRelease{
+		{Tag: "ui-1.261117.26-v1.261117.27", Target: "m626", Published: "2026-11-17T16:09:46Z", UiOnSite: ptr("2026-11-17T16:12:19Z"), Installed: map[string]string{}},
+		{Tag: "ui-1.261117.26-v1.261117.28", Target: "m627", Published: "2026-11-17T16:31:00Z", Installed: map[string]string{}},
+	}
+	deliveryDerive(prs, nil, rels)
+	p := prs[0]
+	if deref(p.Release) != "ui-1.261117.26-v1.261117.27" || releaseVersionOf(deref(p.Release)) != "1.261117.27" || p.Durations["release"] != 49000 {
+		t.Fatalf("matched release: %+v", p)
+	}
+	if p.Durations["total"] != 632000 || p.Durations["ui_install"] != 153000 { // 16:01:47 to 16:12:19
+		t.Fatalf("total is opened to UI on site: %+v", p.Durations)
+	}
+	// ui is native releases' UI on site only; a UI-only one's is ui_install.
+	for _, k := range []string{"install", "availability", "time_to_available", "ui"} {
+		if _, ok := p.Durations[k]; ok {
+			t.Fatalf("a UI-only release has no %s: %+v", k, p.Durations)
+		}
+	}
+	if _, ok := prs[1].Durations["total"]; ok {
+		t.Fatalf("not on the site yet: %+v", prs[1].Durations)
+	}
+	cur := deliverySeries{}
+	deliveryPending(cur, prs, "2026-11-17T00:00:00Z", "2026-11-17T17:31:00Z", "2026-11-12T00:00:00Z")
+	if len(cur["ui_wait"]) != 1 || cur["ui_wait"][0].pr != 627 || cur["ui_wait"][0].ms != 3600e3 || len(cur["availability_wait"]) != 0 {
+		t.Fatalf("pending: %+v", cur)
+	}
+	// Against UI-only installs (ui_install), not ui, which native releases' coordinator restarts dominate.
+	base := contract.DeliveryBaseline{MetricBasis: ptr(deliveryBasis), Stats: []contract.DeliveryStat{{Key: "ui", N: 5, P50Ms: 3600e3, P90Ms: 7200e3}, {Key: "ui_install", N: 5, P50Ms: 150000, P90Ms: 200000}}}
+	regs := deliveryCompare(prs, cur, base, contract.DeliverySettings{Ratio: 1.5, MinSamples: 1, MinDeltaMs: 60000})
+	if len(regs) != 2 || regs[0].Key != "ui_wait" || regs[0].BaselineMs != 150000 {
+		t.Fatalf("a stalled UI release regresses against UI-only installs: %+v", regs)
+	}
+	// The minute pass's sighting beats the 10-minute history pass's.
+	saved := uiSeenSnapshot()
+	t.Cleanup(func() { uiSeenAt.Lock(); uiSeenAt.m = saved; uiSeenAt.Unlock() })
+	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 12, 0, 0, time.UTC))
+	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 20, 0, 0, time.UTC))
+	if uiSeenSnapshot()["9.9.9"] != "2026-11-17T16:12:00Z" {
+		t.Fatal(uiSeenSnapshot())
+	}
+	// Its own UI seen a second before GitHub's publication time (clock skew) is on the site at publication, not never.
+	r := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
+	deliveryInstalls(&r, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T17:00:00Z", "1.261117.28": "2026-11-17T16:59:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	if deref(r.UiOnSite) != "2026-11-17T17:00:01Z" {
+		t.Fatal(r)
+	}
+	// Its own version cannot be served before publication, however far the clock is off; a newer one only within a minute.
+	early := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
+	deliveryInstalls(&early, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T16:50:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	newer := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
+	deliveryInstalls(&newer, dhState{UISeen: map[string]string{"1.261117.30": "2026-11-17T16:50:00Z", "1.261117.31": "2026-11-17T17:00:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	if deref(early.UiOnSite) != "2026-11-17T17:00:01Z" || deref(newer.UiOnSite) != "2026-11-17T17:00:01Z" {
+		t.Fatal(early, newer)
+	}
+	stale := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
+	deliveryInstalls(&stale, dhState{UISeen: map[string]string{"1.261117.30": "2026-11-17T16:50:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	if stale.UiOnSite != nil {
+		t.Fatal("a newer UI seen well before publication says nothing of this one", stale)
+	}
+	// ... but while the site still serves it, the release has been on the site since its publication, as delivery_status says.
+	deliveryInstalls(&stale, dhState{UISeen: map[string]string{"1.261117.30": "2026-11-17T16:50:00Z"}}, nil, hostVersion{"1.261117.30", "2026-11-17T17:04:00Z"}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	if deref(stale.UiOnSite) != "2026-11-17T17:00:01Z" {
+		t.Fatal(stale)
+	}
+	odd := contract.DeliveryRelease{Tag: "ui-kit-v1.2", Published: "2026-11-17T17:00:01Z"}
+	deliveryInstalls(&odd, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T17:01:00Z"}}, nil, hostVersion{}, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	if odd.UiOnSite != nil {
+		t.Fatal("a tag that is no Fleet release records nothing", odd)
+	}
+	for tag, want := range map[string]bool{"ui-1.261117.26-v1.261117.27": true, "ui-kit-1.0": false, "ui-v2.0.0": false, "v1.2.3": false} {
+		if uiOnlyRelease(tag) != want || deliveryReleaseTag(tag) != (want || tag[0] == 'v') {
+			t.Errorf("%s: uiOnly %v", tag, uiOnlyRelease(tag))
+		}
 	}
 }

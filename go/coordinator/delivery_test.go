@@ -91,22 +91,42 @@ func TestDeliveryStages(t *testing.T) {
 			{Number: 11, MergedAt: s("2026-11-12T10:00:00Z"), MergeSHA: "m11"},
 			{Number: 12, MergedAt: s("2026-11-12T11:00:00Z"), MergeSHA: "m12"},
 			{Number: 13},
+			// #20 and #21: UI-only, released as ui-<backend>-v<UI version>; the site serves UI 1.2.12, so #20's release is on
+			// it and #21's newer one is not yet; #22 waits for a release.
+			{Number: 20, MergedAt: s("2026-11-12T11:20:00Z"), MergeSHA: "m20"},
+			{Number: 21, MergedAt: s("2026-11-12T11:30:00Z"), MergeSHA: "m21"},
+			{Number: 22, MergedAt: s("2026-11-12T11:40:00Z"), MergeSHA: "m22"},
 		},
 		releases: []ghRelease{
 			{Tag: "v1.2.10", Target: "m11", Published: "2026-11-12T10:10:00Z"},
 			{Tag: "v1.2.9", Target: "m10", Published: "2026-11-12T09:10:00Z"},
-			{Tag: "ui-ts-v1.2.11", Target: "m12", Published: "2026-11-12T11:10:00Z"},
+			{Tag: "v1.2.11", Target: "m12", Published: "2026-11-12T11:10:00Z"},
+			{Tag: "ui-1.2.11-v1.2.12", Target: "m20", Published: "2026-11-12T11:25:00Z"},
+			{Tag: "ui-1.2.11-v1.2.13", Target: "m21", Published: "2026-11-12T11:35:00Z"},
+			{Tag: "ui-ts-v1.2.14", Target: "m22", Published: "2026-11-12T11:45:00Z"}, // not ui-<backend>-v<UI version>: no release
 		},
 	}
-	items, landing := deliveryStages("fleet", "o/r", g, []string{"1.2.9", "1.2.10"}, now)
+	// Another repository's ui-* tags are no Fleet UI releases: its merges wait for a v* release.
+	other, _ := deliveryStages("p", "o/r", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
+	for _, it := range other {
+		if it.Number >= 20 && (it.Stage != "releasing" || it.Release != nil) {
+			t.Errorf("o/r #%d: %s %v", it.Number, it.Stage, deref(it.Release))
+		}
+	}
+	items, landing := deliveryStages("fleet", "taskqorg/fleet", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
 	want := map[int64]contract.DeliveryStage{1: "pr_open", 2: "pr_ci", 3: "mq_wait", 4: "mq_ci", 5: "mq_wait", 6: "pr_failed", 7: "pr_open", 8: "mq_failed", 9: "pr_open",
-		14: "mq_wait", 15: "pr_open", 16: "pr_open", 17: "mq_failed", 18: "mq_failed", 19: "pr_open", 10: "installed", 11: "installing", 12: "releasing"}
+		14: "mq_wait", 15: "pr_open", 16: "pr_open", 17: "mq_failed", 18: "mq_failed", 19: "pr_open", 10: "installed", 11: "installing", 12: "installing",
+		20: "installed", 21: "installing", 22: "releasing"}
+	rel := map[int64]string{10: "v1.2.9", 11: "v1.2.10", 12: "v1.2.11", 20: "ui-1.2.11-v1.2.12", 21: "ui-1.2.11-v1.2.13"}
 	if len(items) != len(want) {
 		t.Fatalf("items = %+v", items)
 	}
 	for _, it := range items {
 		if want[it.Number] != it.Stage {
 			t.Errorf("#%d stage %s, want %s", it.Number, it.Stage, want[it.Number])
+		}
+		if deref(it.Release) != rel[it.Number] {
+			t.Errorf("#%d release %q, want %q", it.Number, deref(it.Release), rel[it.Number])
 		}
 		if it.Number == 6 && it.Since != "2026-11-12T11:30:00Z" || it.Number == 8 && it.Since != "2026-11-12T11:15:00Z" || it.Number == 14 && it.Since != "2026-11-12T10:50:00Z" || it.Number == 5 && it.Since != "2026-11-12T10:00:00Z" {
 			t.Errorf("#%d failed since %s", it.Number, it.Since)

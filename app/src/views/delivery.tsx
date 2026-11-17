@@ -36,9 +36,17 @@ const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
 // Each stage's norm is its P50 and P90 in delivery_baseline (the last 14 days): the key of the history duration it is.
 // Open, Checks failed and Queue failed have none: people work there, and a failure needs a look at once.
 // Waiting in queue is both "set to enter" and "in the queue, waiting for a runner": the queue's norm covers both.
+// A UI-only release installs on no host: its Installing is the time until the site serves its UI (`ui_install`).
 const NORM_KEY: Partial<Record<Stage, string>> = { pr_ci: 'pr_ci', mq_wait: 'queue', mq_ci: 'queue', releasing: 'release', installing: 'install' };
+const normKey = (it: Pick<Item, 'stage' | 'release'>) => it.stage === 'installing' && uiOnly(it.release) ? 'ui_install' : NORM_KEY[it.stage];
 /** The norms are the fleet repository's history: other repositories' pull requests have none. */
-type Norms = { stage: (s: Stage, repo?: string) => [number, number] | null; total: [number, number] | null };
+type Norms = { stage: (it: Pick<Item, 'stage' | 'repo' | 'release'>) => [number, number] | null; total: [number, number] | null };
+/** A UI-only release, ui-<backend>-v<UI version> (release.yml): the web app alone, delivered when the site serves it. */
+// The shape go/coordinator/delivery_history.go uiReleaseTag matches; the server sends the tag only.
+const UI_TAG = /^ui-\d+(?:\.\d+)*-v(\d+(?:\.\d+)*)$/;
+export const uiOnly = (tag?: string | null) => !!tag && UI_TAG.test(tag);
+/** A release as people name it: v1.2.3 is 1.2.3; ui-1.2.2-v1.2.3 is "UI 1.2.3" (its UI version; the backend stays 1.2.2). */
+export const releaseLabel = (tag: string) => { const m = UI_TAG.exec(tag); return m ? `UI ${m[1]}` : tag.replace(/^v/, ''); };
 const GROUPS = [['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const;
 const SORTS = [['since', 'In stage since'], ['opened', 'Opened']] as const;
 // System presets (OR-33) set the stage filter only; grouping, sort and search stay.
@@ -94,7 +102,7 @@ export function Delivery({ id }: { id?: string }) {
   const base = baseDoc.data === NONE ? null : baseDoc.data;
   const stat = (k: string) => base?.rolling.stats.find(s => s.key === k);
   const norms: Norms = {
-    stage: (s, repo = FLEET) => { const x = repo === FLEET && NORM_KEY[s] && stat(NORM_KEY[s]!); return x ? [x.p50Ms, x.p90Ms] : null; },
+    stage: it => { const k = normKey(it), x = it.repo === FLEET && k && stat(k); return x ? [x.p50Ms, x.p90Ms] : null; },
     total: stat('total') ? [stat('total')!.p50Ms, stat('total')!.p90Ms] : null,
   };
   // The recorded history covers the fleet repository only; a 404 (no history kept), a focus away from fleet or an ignored fleet hides Pace.
@@ -177,7 +185,7 @@ export function Delivery({ id }: { id?: string }) {
       empty={<Empty text={p ? 'No pull requests merged then.' : page.filtered ? 'No pull requests match.' : incomplete ? 'Unavailable. GitHub data is incomplete.' : 'No pull requests in flight.'} />}
       facts={r => <RowFacts>
         {r.it.repo !== FLEET && <Fact text={r.it.repo} tip="Repository" />}
-        {r.it.release && <Fact text={r.it.release.replace(/^v/, '')} tip="Release" />}
+        {r.it.release && <Fact text={releaseLabel(r.it.release)} tip={uiOnly(r.it.release) ? `UI-only release ${r.it.release}: hosts install nothing` : 'Release'} />}
         <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} now={now} alertAfter={alertOf(norms, r.it)} alertLabel="past the stage's P90" /></Fact>
       </RowFacts>} />
   </>;
@@ -189,20 +197,24 @@ export function Delivery({ id }: { id?: string }) {
 }
 
 /** Seconds in a stage after which its time is red: the stage's P90 over the last 14 days; none for stages without a norm. */
-const alertOf = (n: Norms, it: Item) => { const x = n.stage(it.stage, it.repo); return x ? x[1] / 1000 : undefined; };
+const alertOf = (n: Norms, it: Item) => { const x = n.stage(it); return x ? x[1] / 1000 : undefined; };
 
 /** Released before install times were recorded: its install is unknown, never measured. */
 const unrecorded = (x: HistoryPr, installsFrom: number | null) => !!installsFrom && !!x.released && ms(x.released) < installsFrom;
 /** Due a measure: it has one, or it reached the hosts (installed), or recording had not begun. One not installed yet is
  *  on its way (or stuck before the hosts), not unmeasured; the rule reads the data only, never the clock. */
-const due = (x: HistoryPr, installsFrom: number | null) => typeof x.durations.total === 'number' || !!x.installed?.coordinator || unrecorded(x, installsFrom);
+const due = (x: HistoryPr, installsFrom: number | null) => typeof x.durations.total === 'number' || !!doneAt(x) || unrecorded(x, installsFrom);
+/** When it was delivered: on the PDS18 coordinator, or for a UI-only release when the site served its UI. */
+const doneAt = (x: HistoryPr) => uiOnly(x.release) ? x.uiOnSite : x.installed?.coordinator;
+/** A stage duration, a UI-only release's UI on site standing for the install it does not have. */
+const stageMs = (x: HistoryPr, k: string) => k === 'install' && uiOnly(x.release) ? x.durations.ui_install : x.durations[k];
 
 /** A recorded (merged) pull request as a list row: its stage from how far it got. */
 function fromHistory(x: HistoryPr, installsFrom?: string): Item {
   // Released before installs were recorded: its install is unknown, so it is done (merged), not installing for weeks.
   const unrec = unrecorded(x, installsFrom ? ms(installsFrom) : null);
-  const installed = !!x.installed?.coordinator, stage: Stage = installed ? 'installed' : unrec ? 'merged' : x.released ? 'installing' : 'releasing';
-  return { projectId: 'fleet', repo: FLEET, number: x.number, title: x.title, url: x.url, stage, since: (installed ? x.installed.coordinator : x.released ?? x.merged) as string, opened: x.opened, merged: x.merged, release: x.release };
+  const done = doneAt(x), stage: Stage = done ? 'installed' : unrec ? 'merged' : x.released ? 'installing' : 'releasing';
+  return { projectId: 'fleet', repo: FLEET, number: x.number, title: x.title, url: x.url, stage, since: (done ?? x.released ?? x.merged) as string, opened: x.opened, merged: x.merged, release: x.release };
 }
 
 /** The work area while no pull request is open: what needs a look, what moves now, the pace. */
@@ -211,14 +223,14 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
   range: string; buckets: Bucket[]; picked: Bucket | null; onRange: (r: string) => void; onPick: (k: string) => void; onOpen: (it: Item) => void; href: (it: Item) => string;
 }) {
   const moving = ORDER.filter(s => !DONE.includes(s)).flatMap(s => items.filter(it => it.stage === s));
-  const over = (it: Item) => { const n = norms.stage(it.stage, it.repo); return !!n && now - ms(it.since) > n[1]; };
+  const over = (it: Item) => { const n = norms.stage(it); return !!n && now - ms(it.since) > n[1]; };
   const failed = items.filter(it => FAILED.includes(it.stage)), stuck = moving.filter(over);
   const look = [
     ...regressions.map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
       facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />),
     ...failed.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={`${it.title} · ${fmt(Math.max(0, now - ms(it.since)))} ago`}
       actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
-    ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it.stage, it.repo)![1])}`}
+    ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${it.stage === 'installing' && uiOnly(it.release) ? 'waiting for the UI on site' : states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it)![1])}`}
       facts={it.title} actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
   ];
   return <div class="stack-pad" data-ui="delivery-overview">
@@ -226,7 +238,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
     <DetailSection title="Moving now">
       {!moving.length ? <Empty text={incomplete ? 'Unavailable. GitHub data is incomplete.' : 'Nothing in flight.'} />
         : <div class="vl-wrap" role="grid" aria-label="Pull requests in flight" style={{ '--cols': '1.25rem 3.5rem minmax(0,1fr) minmax(0,1.3fr) 2.75rem 4.5rem' }}>{moving.map(it => {
-          const n = norms.stage(it.stage, it.repo), el = Math.max(0, now - ms(it.since)), red = over(it);
+          const n = norms.stage(it), el = Math.max(0, now - ms(it.since)), red = over(it);
           return <div key={idOf(it)} class="vl-row static" role="row">
             <span class="lead"><StateBadge family="delivery" state={it.stage} compact /></span>
             <a class="mono row-link" href={href(it)} onClick={e => { e.preventDefault(); onOpen(it); }}>#{it.number}</a>
@@ -242,17 +254,19 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
     {fleetShown && <Pace hist={hist?.h ?? null} error={histError} now={now} norms={norms} range={range} buckets={buckets} picked={picked} onRange={onRange} onPick={onPick} />}
   </div>;
 }
-const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available', run: 'Queue run' };
+const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available', run: 'Queue run',
+  availability_wait: 'Waiting for availability', ui_wait: 'Waiting for the UI on site', ui_install: 'UI on site (UI-only release)' };
 const keyLabel = (k: string) => KEYS[k] ?? k;
 
-// Where the time goes: a pull request's stage durations folded into four parts, in pipeline order.
+// Where the time goes: a pull request's stage durations folded into four parts, in pipeline order; a UI-only release's
+// Install is its UI on site (stageMs).
 const PARTS: { label: string; tone: SharePart['tone']; keys: string[] }[] = [
   { label: 'PR checks', tone: 'd1', keys: ['pr_ci'] }, { label: 'Queue', tone: 'd2', keys: ['enqueue', 'queue', 'merge'] },
   { label: 'Release', tone: 'd3', keys: ['release'] }, { label: 'Install', tone: 'd4', keys: ['install'] },
 ];
-const partOf = (x: HistoryPr, keys: string[]) => keys.reduce((s, k) => s + (x.durations[k] ?? 0), 0);
+const partOf = (x: HistoryPr, keys: string[]) => keys.reduce((s, k) => s + (stageMs(x, k) ?? 0), 0);
 // Measured through install: every part has its own duration (enqueue and merge may be absent when there was no wait).
-const complete = (x: HistoryPr) => ['pr_ci', 'queue', 'release', 'install'].every(k => typeof x.durations[k] === 'number');
+const complete = (x: HistoryPr) => ['pr_ci', 'queue', 'release', 'install'].every(k => typeof stageMs(x, k) === 'number');
 
 /**
  * Open to installed in a bucket: P50 and P90 of its pull requests measured through install; none measured is "not
@@ -264,7 +278,7 @@ export function totalMark(prs: HistoryPr[], b: Bucket, installsFrom: number | nu
   if (!prs.length) return { v: null, missing: 'nothing merged' };
   // Why none is measured, the most specific first: installed but its install time not matched, recording not begun, on its way.
   // An installed one without a measure: its hosts took a later release, or its install was not matched to this one.
-  if (!xs.length) return { v: null, missing: prs.some(x => !!x.installed?.coordinator) ? 'installed with a later release, or not matched to its own'
+  if (!xs.length) return { v: null, missing: prs.some(x => !!doneAt(x)) ? 'installed with a later release, or not matched to its own'
     : installsFrom && (b.end <= installsFrom || prs.some(x => unrecorded(x, installsFrom))) ? `install times recorded from ${day(installsFrom)} ${hourLabel(installsFrom)}`
     : 'not installed yet' };
   const n = prs.filter(x => due(x, installsFrom)).length;
@@ -322,8 +336,9 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
   const steps: (readonly [string, Stage, string | undefined, string | undefined])[] = x ? [
     ['PR checks', 'pr_ci', x.opened, x.prCiDone],
     ...(qStart && x.enqueued ? [['Waiting in queue', 'mq_wait', x.enqueued, qStart], ['Queue checks', 'mq_ci', qStart, x.mqCiDone ?? x.merged]] as const : [['Merge queue', 'mq_ci', x.enqueued, x.mqCiDone ?? x.merged]] as const),
-    ['Releasing', 'releasing', x.merged, x.released], ['Installing', 'installing', x.released, x.installed?.coordinator],
+    ['Releasing', 'releasing', x.merged, x.released], [uiOnly(x.release) ? 'UI on site' : 'Installing', 'installing', x.released, doneAt(x)],
   ] : [];
+  const done = x && doneAt(x), rel = item?.release || x?.release;
   // A stage without its own end ends where a later one starts; only the last stage reached runs to now.
   const known = steps.filter(([, , a]) => a);
   const ended = known.map(([l, s, a, b], i) => [l, s, a, b ?? known.slice(i + 1).map(k => k[2]).find(Boolean)] as const);
@@ -334,12 +349,12 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
       {url && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(url, '_blank', 'noopener')} />}</header>
     <h2 class="detail-title">{title}</h2>
     <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} now={now} />}
-      {(item?.release || x?.release) && <span class="id">{(item?.release || x?.release)!.replace(/^v/, '')}</span>}</div>
+      {rel && <span class="id" data-tip={uiOnly(rel) ? `UI-only release ${rel}: hosts install nothing` : undefined}>{releaseLabel(rel)}</span>}</div>
     <div class="stack-pad">
       {h.error && !h.data && <ErrorBanner text={`History did not load: ${h.error}`} />}
       {x ? <>
         <Totals items={[
-          { label: x.installed?.coordinator ? 'Open to installed' : 'Lead so far', m: sec((ms(x.installed?.coordinator) || now) - ms(x.opened)), kind: 'duration' },
+          { label: done ? 'Open to installed' : 'Lead so far', m: sec((ms(done) || now) - ms(x.opened)), kind: 'duration' },
           { label: 'Queue runs', m: { value: x.queueRuns, basis: 'measured' }, kind: 'count' },
           { label: 'Removed', m: { value: x.queueRemovals, basis: 'measured' }, kind: 'count', note: x.flakes ? `${x.flakes} flaky` : undefined },
         ]} />
@@ -350,7 +365,9 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
           icon={r.conclusion === 'success' ? 'circle-check' : r.conclusion === 'cancelled' ? 'circle-slash' : 'octagon-x'} label={`Run ${r.attempt > 1 ? `${r.id} · attempt ${r.attempt}` : r.id}`}
           meta={r.conclusion === 'success' ? 'all checks passed' : `${r.conclusion}: ${r.jobs.filter(j => j.conclusion !== 'success').map(j => j.name).join(', ') || 'no failed job recorded'}`}
           value={<Num m={sec(r.wallMs ?? null)} kind="duration" />} />)}</DetailSection>
-        <DetailSection title="Installed">{Object.keys(x.installed ?? {}).length === 0 ? <Empty text={x.released ? 'Not installed on any host yet.' : 'Not released yet.'} />
+        <DetailSection title="Installed">{uiOnly(x.release) ? x.uiOnSite ? <KvRow icon="panels-top-left" label="Site" meta="serves this UI or a newer one" value={<AgeChip t={ms(x.uiOnSite)} now={now} />} />
+            : <Empty text={`UI-only release: hosts install nothing; ${unrecorded(x, h.data?.installsFrom ? ms(h.data.installsFrom) : null) ? `its UI on site was not recorded (recorded from ${day(ms(h.data!.installsFrom!), now)})` : 'the site does not serve it yet'}.`} />
+          : Object.keys(x.installed ?? {}).length === 0 ? <Empty text={x.released ? 'Not installed on any host yet.' : 'Not released yet.'} />
           : Object.entries(x.installed).map(([host, t]) => <KvRow key={host} icon="terminal" label={host} meta={x.installedVersions?.[host]} value={<AgeChip t={ms(t)} now={now} />} />)}</DetailSection>
       </> : item ? <>
         <DetailSection title="Now">
