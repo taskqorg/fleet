@@ -42,6 +42,9 @@ var deliveryStageKeys = []string{"pr_ci", "enqueue", "queue", "merge", "release"
 // longer ui. A v1 baseline still compares install, not total or ui.
 const deliveryBasis = "delivered-v2"
 
+// deliveryBasisOf: the bases under which a baseline's stat compares with today's; a stat not listed compares under any.
+var deliveryBasisOf = map[string][]string{"install": {"exact-install-v1", deliveryBasis}, "total": {deliveryBasis}, "ui": {deliveryBasis}}
+
 var deliveryDefaults = contract.DeliverySettings{Ratio: 1.5, MinSamples: 5, MinDeltaMs: 60_000}
 
 // dhState: the pass's own record (document delivery-history).
@@ -723,7 +726,8 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 			}
 		}
 		// The UI served now has been served since its first sighting, and this release was on the site from then or from its
-		// publication, whichever is later.
+		// publication, whichever is later. A sighting after publication was taken above, so with the pass's sightings merged
+		// this is a clock more than a minute behind GitHub's: on the site at publication, as delivery_status says.
 		if r.UiOnSite == nil && served.version != "" && !versionLess(served.version, v) && served.at >= r.Published {
 			at := served.at
 			if s := st.UISeen[served.version]; s != "" && s < at {
@@ -1019,11 +1023,9 @@ func deliveryWindow(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from
 // deliveryCompare: the regressions of current against base (a stat with enough values in both whose P50 or P90 grew
 // past ratio and by at least minDelta), each with the first value over the baseline's in the window and the range.
 func deliveryCompare(prs []contract.DeliveryPr, cur deliverySeries, base contract.DeliveryBaseline, s contract.DeliverySettings) []contract.DeliveryRegression {
-	// The bases a stat of the baseline compares under (deliveryBasis); a stat not listed compares under any.
-	compatible := map[string][]string{"install": {"exact-install-v1", deliveryBasis}, "total": {deliveryBasis}, "ui": {deliveryBasis}}
 	bs := map[string]contract.DeliveryStat{}
 	for _, b := range base.Stats {
-		if ok, listed := compatible[b.Key]; listed && !slices.Contains(ok, deref(base.MetricBasis)) {
+		if ok, listed := deliveryBasisOf[b.Key]; listed && !slices.Contains(ok, deref(base.MetricBasis)) {
 			continue
 		}
 		bs[b.Key] = b
