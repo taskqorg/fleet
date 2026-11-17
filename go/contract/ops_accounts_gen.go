@@ -326,6 +326,7 @@ type ConnectionView struct {
 	Id        string                       `json:"id"`
 	Intake    string                       `json:"intake"`
 	Keys      []map[string]json.RawMessage `json:"keys,omitempty"`
+	Limits    *GatewayLimits               `json:"limits,omitempty"`
 	Name      string                       `json:"name"`
 	Provider  string                       `json:"provider"`
 	Spend     map[string]json.RawMessage   `json:"spend,omitempty"`
@@ -337,6 +338,11 @@ type ConnectionView struct {
 func (v *ConnectionView) Validate() error {
 	if err := Check(&v.Access, "access"); err != nil {
 		return err
+	}
+	if v.Limits != nil {
+		if err := Check(v.Limits, "limits"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -470,6 +476,22 @@ type ConnectionsSetIntakeRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *ConnectionsSetIntakeRequest) Validate() error {
+	return nil
+}
+
+type ConnectionsSetLimitsReply = ConnectionView
+
+// ConnectionsSetLimitsRequest: Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.
+type ConnectionsSetLimitsRequest struct {
+	Connection string        `json:"connection"`
+	Limits     GatewayLimits `json:"limits"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionsSetLimitsRequest) Validate() error {
+	if err := Check(&v.Limits, "limits"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1052,6 +1074,7 @@ func init() {
 		"connections_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_set_access":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"access: {people, projects, experiments}, each a list of ids.\",\"additionalProperties\":true,\"properties\":{\"access\":{},\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\",\"access\"],\"type\":\"object\"}")},
 		"connections_set_intake":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"intake all or paused.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"}},\"required\":[\"connection\",\"intake\"],\"type\":\"object\"}")},
+		"connections_set_limits":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"limits\":{\"$comment\":\"File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.\",\"properties\":{\"answerMs\":{\"$comment\":\"Wait from the last byte sent to the provider's response headers (file tools).\",\"minimum\":1,\"type\":\"integer\"},\"fileBytes\":{\"$comment\":\"Largest upload in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"replyBytes\":{\"$comment\":\"Largest download in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"stallMs\":{\"$comment\":\"Longest time without progress in either direction.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}},\"required\":[\"connection\",\"limits\"],\"type\":\"object\"}")},
 		"connections_set_tools":       {Read: false, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Owner-only explicit recognized provider tool grant; does not change people/project/experiment access.\",\"properties\":{\"connection\":{\"type\":\"string\"},\"tools\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"connection\",\"tools\"],\"type\":\"object\"}")},
 		"connections_token_create":    {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"The owner only (not an agent). The token value is answered once.\",\"additionalProperties\":true,\"properties\":{\"connections\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
 		"connections_token_list":      {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},

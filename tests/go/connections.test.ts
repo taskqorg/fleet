@@ -947,6 +947,28 @@ test('C8 connections_delete: owner only, refused while a key is in use, then the
   ok(await op('connections_create', {name: c, provider: 'tavily'}));
 });
 
+test('C9 connections_set_limits: holder (an architect) or owner only, one history row per change, republished to the gateway, an omitted field clears and a non-positive value is refused (requirement: docs/designs/fleet-connections.md §9 limits as settings; risk: anyone changes a connection\'s file limits, a change leaves no audit row, or the gateway keeps old limits)', async () => {
+  const MEMBER = 'member@trial.test', c = name('tavily');
+  ok(await op('connections_create', {name: c, provider: 'tavily', holder: OUTSIDER}));
+  assert.equal((await op('connections_set_limits', {connection: c, limits: {fileBytes: 1000}}, MEMBER)).status, 403);
+  const set = ok(await op('connections_set_limits', {connection: c, limits: {fileBytes: 1000, stallMs: 5000}}));
+  assert.deepEqual(set.limits, {fileBytes: 1000, stallMs: 5000});
+  await until(() => snapshot().connections[c]?.limits?.fileBytes === 1000 || undefined, 'limits in the snapshot');
+  assert.deepEqual(snapshot().connections[c].limits, {fileBytes: 1000, stallMs: 5000});
+  ok(await op('connections_set_limits', {connection: c, limits: {fileBytes: 1000, stallMs: 5000}}));
+  assert.equal(ok(await op('setting_changes', {target: 'connection:' + c})).changes.length, 1, 'an unchanged value writes no history row');
+  ok(await op('connections_set_limits', {connection: c, limits: {stallMs: 5000}}));
+  await until(() => snapshot().connections[c].limits?.fileBytes === undefined || undefined, 'an omitted field returns to its default');
+  assert.deepEqual(snapshot().connections[c].limits, {stallMs: 5000});
+  const history = ok(await op('setting_changes', {target: 'connection:' + c})).changes;
+  assert.deepEqual(history.map((x: any) => [x.field, x.value]), [['limits', {stallMs: 5000}], ['limits', {fileBytes: 1000, stallMs: 5000}]]);
+  for (const limits of [{stallMs: 0}, {answerMs: -1}, {replyBytes: 1.5}, {other: 1}])
+    assert.equal((await op('connections_set_limits', {connection: c, limits})).status, 400, JSON.stringify(limits));
+  ok(await op('connections_set_limits', {connection: c, limits: {}}));
+  await until(() => snapshot().connections[c].limits === undefined || undefined, 'no limits: no caps and default timeouts');
+  assert.equal(ok(await op('connections_list')).connections.find((x: any) => x.name === c).limits, undefined);
+});
+
 // Coordinator phases and real local shell/HTTP receipts; the gateway/S3 are synthetic, no provider call.
 test('Pipeline step terminal ends agree across sequential API/script success, failure, cancellation and retry (requirement: observed pipeline-step timing; risk: finished steps read unfinished, retry rewrites history or containers count as work)', async () => {
   const read = async (id: string) => ok(await op('pipeline_get', {runId: id}));

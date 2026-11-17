@@ -27,7 +27,7 @@ func (v *CallKeyProblem) Validate() error {
 	return nil
 }
 
-// CallLine: One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output.
+// CallLine: One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output. A file tool's line carries transfer. A download writes two lines with one callId: phase started (outcome unknown, download-unfinished) before the bytes stream and phase completed after it; ingest updates the started row from the completed line. A line without phase is a one-line call.
 type CallLine struct {
 	CallId         string           `json:"callId"`
 	Connection     string           `json:"connection"`
@@ -39,10 +39,12 @@ type CallLine struct {
 	Ms             int64            `json:"ms"`
 	Outcome        CallOutcome      `json:"outcome"`
 	Output         json.RawMessage  `json:"output,omitempty"`
+	Phase          *CallPhase       `json:"phase,omitempty"`
 	StartedAt      int64            `json:"startedAt"`
 	Status         int64            `json:"status"`
 	TokenSha256    *string          `json:"tokenSha256,omitempty"`
 	Tool           string           `json:"tool"`
+	Transfer       *CallTransfer    `json:"transfer,omitempty"`
 	Usage          *CallUsage       `json:"usage,omitempty"`
 	UsageKey       *string          `json:"usageKey,omitempty"`
 }
@@ -61,6 +63,16 @@ func (v *CallLine) Validate() error {
 	}
 	if err := Check(&v.Outcome, "outcome"); err != nil {
 		return err
+	}
+	if v.Phase != nil {
+		if err := Check(v.Phase, "phase"); err != nil {
+			return err
+		}
+	}
+	if v.Transfer != nil {
+		if err := Check(v.Transfer, "transfer"); err != nil {
+			return err
+		}
 	}
 	if v.Usage != nil {
 		if err := Check(v.Usage, "usage"); err != nil {
@@ -91,6 +103,63 @@ func (v CallOutcome) Valid() bool {
 	return false
 }
 
+type CallPhase string
+
+const (
+	CallPhaseStarted   CallPhase = "started"
+	CallPhaseCompleted CallPhase = "completed"
+)
+
+// CallPhaseValues lists every CallPhase in schema order.
+var CallPhaseValues = []CallPhase{CallPhaseStarted, CallPhaseCompleted}
+
+// Valid: v is one of the schema's values.
+func (v CallPhase) Valid() bool {
+	for _, x := range CallPhaseValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// CallTransfer: The file of a file tool call: bytes moved, and their sha256 (absent on a download's started line).
+type CallTransfer struct {
+	Bytes     int64                 `json:"bytes"`
+	Direction CallTransferDirection `json:"direction"`
+	MediaType string                `json:"mediaType"`
+	Name      string                `json:"name"`
+	Sha256    *string               `json:"sha256,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *CallTransfer) Validate() error {
+	if err := Check(&v.Direction, "direction"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type CallTransferDirection string
+
+const (
+	CallTransferDirectionUpload   CallTransferDirection = "upload"
+	CallTransferDirectionDownload CallTransferDirection = "download"
+)
+
+// CallTransferDirectionValues lists every CallTransferDirection in schema order.
+var CallTransferDirectionValues = []CallTransferDirection{CallTransferDirectionUpload, CallTransferDirectionDownload}
+
+// Valid: v is one of the schema's values.
+func (v CallTransferDirection) Valid() bool {
+	for _, x := range CallTransferDirectionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type CallUsage struct {
 	Amount int64  `json:"amount"`
 	Unit   string `json:"unit"`
@@ -102,11 +171,12 @@ func (v *CallUsage) Validate() error {
 }
 
 type GatewayConnection struct {
-	Blocked  []string     `json:"blocked"`
-	Intake   string       `json:"intake"`
-	Keys     []GatewayKey `json:"keys"`
-	Provider string       `json:"provider"`
-	Tools    []string     `json:"tools"`
+	Blocked  []string       `json:"blocked"`
+	Intake   string         `json:"intake"`
+	Keys     []GatewayKey   `json:"keys"`
+	Limits   *GatewayLimits `json:"limits,omitempty"`
+	Provider string         `json:"provider"`
+	Tools    []string       `json:"tools"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -122,10 +192,49 @@ func (v *GatewayConnection) Validate() error {
 			return err
 		}
 	}
+	if v.Limits != nil {
+		if err := Check(v.Limits, "limits"); err != nil {
+			return err
+		}
+	}
 	if v.Tools == nil {
 		return Missing("tools")
 	}
 	return nil
+}
+
+// GatewayFileFrom: A download tool's dotted fields of the lookup reply: the relative URL of the file, its size in bytes, its name and its media type.
+type GatewayFileFrom struct {
+	Bytes     string `json:"bytes"`
+	MediaType string `json:"mediaType"`
+	Name      string `json:"name"`
+	Url       string `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayFileFrom) Validate() error {
+	return nil
+}
+
+// GatewayFileMode: A file tool (fleet-connections.md section 9): upload takes the raw file bytes and sends them to the provider as one multipart part; download looks the file up as a JSON call, then streams it from the provider without the key. Absent: a JSON tool.
+type GatewayFileMode string
+
+const (
+	GatewayFileModeUpload   GatewayFileMode = "upload"
+	GatewayFileModeDownload GatewayFileMode = "download"
+)
+
+// GatewayFileModeValues lists every GatewayFileMode in schema order.
+var GatewayFileModeValues = []GatewayFileMode{GatewayFileModeUpload, GatewayFileModeDownload}
+
+// Valid: v is one of the schema's values.
+func (v GatewayFileMode) Valid() bool {
+	for _, x := range GatewayFileModeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 type GatewayKey struct {
@@ -136,6 +245,19 @@ type GatewayKey struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayKey) Validate() error {
+	return nil
+}
+
+// GatewayLimits: File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.
+type GatewayLimits struct {
+	AnswerMs   *int64 `json:"answerMs,omitempty"`
+	FileBytes  *int64 `json:"fileBytes,omitempty"`
+	ReplyBytes *int64 `json:"replyBytes,omitempty"`
+	StallMs    *int64 `json:"stallMs,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *GatewayLimits) Validate() error {
 	return nil
 }
 
@@ -208,6 +330,8 @@ func (v *GatewaySnapshot) Validate() error {
 type GatewayTool struct {
 	AdoptFields     []string                   `json:"adoptFields,omitempty"`
 	AdoptMatch      *string                    `json:"adoptMatch,omitempty"`
+	File            *GatewayFileMode           `json:"file,omitempty"`
+	FileFrom        *GatewayFileFrom           `json:"fileFrom,omitempty"`
 	ForbiddenIsCall *bool                      `json:"forbiddenIsCall,omitempty"`
 	Headers         map[string]string          `json:"headers,omitempty"`
 	Idempotent      bool                       `json:"idempotent"`
@@ -224,6 +348,16 @@ type GatewayTool struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *GatewayTool) Validate() error {
+	if v.File != nil {
+		if err := Check(v.File, "file"); err != nil {
+			return err
+		}
+	}
+	if v.FileFrom != nil {
+		if err := Check(v.FileFrom, "fileFrom"); err != nil {
+			return err
+		}
+	}
 	if v.UsageWhen != nil {
 		if err := Check(v.UsageWhen, "usageWhen"); err != nil {
 			return err

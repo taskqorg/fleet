@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"fleet/contract"
 )
@@ -29,6 +32,10 @@ const (
 	refusedBytes    = 64 << 10
 	refusedPatience = 2 * time.Second
 	providerBytes   = 16 << 20
+	// File tools (fleet-connections.md §9): defaults for a connection's limits that leave stallMs or answerMs out.
+	defaultStall  = 60 * time.Second
+	defaultAnswer = 120 * time.Second
+	copyBytes     = 32 << 10
 )
 
 func nowMs() int64 { return time.Now().UnixMilli() }
@@ -160,6 +167,16 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 			for field, pattern := range t.PathPatterns {
 				if _, err := regexp.Compile(pattern); err != nil {
 					return nil, fmt.Errorf("tool %s path pattern %s: %w", toolName, field, err)
+				}
+			}
+			if t.File != nil {
+				switch {
+				case !t.File.Valid():
+					return nil, fmt.Errorf("tool %s file mode is unknown", toolName)
+				case *t.File == contract.GatewayFileModeUpload && t.Method != "POST":
+					return nil, fmt.Errorf("upload tool %s must POST", toolName)
+				case *t.File == contract.GatewayFileModeDownload && t.FileFrom == nil:
+					return nil, fmt.Errorf("download tool %s needs fileFrom", toolName)
 				}
 			}
 			if t.Unit == "" {
@@ -334,13 +351,29 @@ type gateway struct {
 	draining     atomic.Bool
 	started      time.Time
 	calls        atomic.Uint64
+	// File calls in flight (/healthz transfers), and the cancel of each upload still staging, by call id: a stop
+	// refuses those with draining, since nothing reached the provider yet.
+	transfers   atomic.Int64
+	stagingLock sync.Mutex
+	staging     map[string]func()
 }
 
 func newGateway(c *config) (*gateway, error) {
 	if err := os.MkdirAll(c.StateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("state directory: %w", err)
 	}
-	g := &gateway{config: c, disabled: map[string]disabledKey{}, current: map[string]int{}, started: time.Now(),
+	// Staged uploads live under <state>/files; a crash leaves *.part files, removed here.
+	files := filepath.Join(c.StateDir, "files")
+	if err := os.MkdirAll(files, 0o700); err != nil {
+		return nil, fmt.Errorf("files directory: %w", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(files, "*.part")); len(left) > 0 {
+		for _, part := range left {
+			os.Remove(part)
+		}
+		logf("removed %d staged upload(s) left by an earlier process", len(left))
+	}
+	g := &gateway{config: c, disabled: map[string]disabledKey{}, current: map[string]int{}, started: time.Now(), staging: map[string]func(){},
 		// Redirects are never followed: a 307/308 resends the method and body, which could charge a call twice.
 		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 64}}}
 	if text, err := os.ReadFile(filepath.Join(c.StateDir, "disabled-keys")); err == nil {
@@ -461,17 +494,55 @@ func (g *gateway) usable(c connection) []string {
 	return ids
 }
 
+// body is a provider request body: JSON bytes, or a file body (an upload's multipart) opened afresh for each send.
+type body struct {
+	data []byte
+	// A file body: its reader, length and content type. stall bounds each read of it, answer the wait for the response
+	// headers after its last byte.
+	open          func() io.Reader
+	length        int64
+	contentType   string
+	stall, answer time.Duration
+}
+
+// errStalled: a file body's provider stopped reading it, or did not answer within answerMs of its last byte.
+var errStalled = errors.New("provider stalled")
+
+// progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end.
+type progress struct {
+	io.Reader
+	timer         *time.Timer
+	stall, answer time.Duration
+}
+
+func (p *progress) Read(b []byte) (int, error) {
+	n, err := p.Reader.Read(b)
+	if err == io.EOF {
+		p.timer.Reset(p.answer)
+	} else {
+		p.timer.Reset(p.stall)
+	}
+	return n, err
+}
+
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
 // Cancelling caller ends the request too; it does not undo what the provider already did.
-func (g *gateway) send(caller context.Context, method, url, keyHeader, value string, body []byte, headers map[string]string) (*http.Response, []byte, error) {
+func (g *gateway) send(caller context.Context, method, url, keyHeader, value string, b body, headers map[string]string) (*http.Response, []byte, error) {
 	ctx, cancel := context.WithCancel(caller)
 	defer cancel()
 	var timedOut atomic.Bool
-	timer := time.AfterFunc(g.config.requestTimeout, func() { timedOut.Store(true); cancel() })
+	wait := g.config.requestTimeout
+	if b.open != nil {
+		wait = b.stall
+	}
+	timer := time.AfterFunc(wait, func() { timedOut.Store(true); cancel() })
 	defer timer.Stop()
 	var reader io.Reader
-	if body != nil {
-		reader = bytes.NewReader(body)
+	switch {
+	case b.open != nil:
+		reader = &progress{Reader: b.open(), timer: timer, stall: b.stall, answer: b.answer}
+	case b.data != nil:
+		reader = bytes.NewReader(b.data)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
@@ -483,11 +554,18 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 		request.Header.Set("Authorization", "Bearer "+value)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	if b.open != nil {
+		request.ContentLength = b.length
+		request.Header.Set("Content-Type", b.contentType)
+	}
 	for k, v := range headers {
 		request.Header.Set(k, v)
 	}
 	response, err := g.client.Do(request)
 	if err != nil {
+		if timedOut.Load() && b.open != nil {
+			return nil, nil, errStalled
+		}
 		if timedOut.Load() {
 			return nil, nil, context.DeadlineExceeded
 		}
@@ -512,7 +590,7 @@ func (e errBody) orNil() error {
 	return e
 }
 
-func (g *gateway) call(ctx context.Context, name string, c connection, p provider, t tool, path string, body []byte) *answer {
+func (g *gateway) call(ctx context.Context, name string, c connection, p provider, t tool, path string, b body) *answer {
 	keys := g.usable(c)
 	if len(keys) == 0 {
 		return refusal(503, "error", "no-usable-key", "no active key; the holder or the owner must act")
@@ -529,12 +607,17 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			lastFailure = "key " + id + " has no value file"
 			continue
 		}
-		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, deref(p.KeyHeader), value, body, t.Headers)
+		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, deref(p.KeyHeader), value, b, t.Headers)
 		var cut errBody
 		switch {
 		case err != nil && ctx.Err() != nil:
 			// The caller left: no failover, and a request already sent may still have been charged.
 			a := refusal(499, "unknown", "caller-cancelled", "the caller cancelled the call")
+			a.key = id
+			return a
+		case errors.Is(err, errStalled):
+			// Part of the file, or all of it, reached the provider: a write may have happened.
+			a := refusal(504, "unknown", "provider-stalled", "the provider stopped reading the file or did not answer in time")
 			a.key = id
 			return a
 		case errors.Is(err, context.DeadlineExceeded) && response == nil:
@@ -628,7 +711,7 @@ func (g *gateway) usageReport(ctx context.Context) map[string]any {
 				continue
 			}
 			row := map[string]any{"connection": name, "key": k.Id, "usage": nil}
-			response, data, err := g.send(ctx, "GET", p.BaseUrl+p.Usage.Path, deref(p.KeyHeader), value, nil, nil)
+			response, data, err := g.send(ctx, "GET", p.BaseUrl+p.Usage.Path, deref(p.KeyHeader), value, body{}, nil)
 			switch {
 			case errors.Is(err, context.DeadlineExceeded) && response == nil:
 				row["unknown"] = "usage request timed out"
@@ -674,9 +757,13 @@ func (g *gateway) onDisabled(id string, status int) {
 func (g *gateway) health() map[string]any {
 	s := g.snapshot.Load()
 	keys, usable := 0, 0
-	for _, c := range s.Connections {
+	limits := map[string]*contract.GatewayLimits{}
+	for name, c := range s.Connections {
 		keys += len(c.Keys)
 		usable += len(g.usable(c))
+		if l := c.Limits; l != nil && (l.FileBytes != nil || l.ReplyBytes != nil || l.StallMs != nil || l.AnswerMs != nil) {
+			limits[name] = l
+		}
 	}
 	status := "ok"
 	if g.draining.Load() {
@@ -689,8 +776,10 @@ func (g *gateway) health() map[string]any {
 		"status": status, "version": version, "uptime_s": int(time.Since(g.started).Seconds()),
 		"snapshot": map[string]any{"revision": s.revision, "age_s": max(nowMs()-s.GeneratedMs, 0) / 1000,
 			"tokens": len(s.tokens), "rejected": g.rejected.Load()},
-		"keys":  map[string]any{"total": keys, "usable": usable, "disabled": disabled},
-		"spool": map[string]any{"lost": g.spool.lost.Load(), "lostRecorded": g.spool.lostRecorded.Load()},
+		"keys":      map[string]any{"total": keys, "usable": usable, "disabled": disabled},
+		"spool":     map[string]any{"lost": g.spool.lost.Load(), "lostRecorded": g.spool.lostRecorded.Load()},
+		"limits":    limits,
+		"transfers": g.transfers.Load(),
 	}
 }
 
@@ -704,9 +793,52 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Write(data)
 }
 
+// writeRaw answers file bytes as they are: no redaction, no textReply (a download's stream).
+func writeRaw(w http.ResponseWriter, length int64, headers map[string]string) {
+	for k, v := range headers {
+		w.Header().Set(k, v)
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+	w.WriteHeader(200)
+	http.NewResponseController(w).Flush() // the headers leave now, not with the first file bytes
+}
+
 func bearer(r *http.Request) (string, bool) {
 	value, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	return strings.TrimSpace(value), ok
+}
+
+// request is one /v1/call request after its route, token and tool were resolved.
+type request struct {
+	id, connection, tool string
+	run                  *token
+	bearer               string
+	c                    connection
+	p                    provider
+	t                    tool
+	offered              bool
+	usageKey             string
+	startedMs            int64
+	begun                time.Time
+}
+
+// admit refuses a call its token, grant, tool, intake or budget does not allow; nil admits it.
+func admit(q *request) *answer {
+	switch {
+	case q.run == nil:
+		return refusal(401, "error", "unauthenticated", "a valid run token is required")
+	case !contains(q.run.Connections, q.connection):
+		return refusal(403, "error", "not-granted", "this run is not granted the connection")
+	case !q.offered:
+		return refusal(404, "error", "unknown-tool", "the connection has no such tool")
+	case q.c.Intake != "all":
+		return refusal(403, "error", "intake-paused", "the connection's intake is paused")
+	}
+	if scope := blockedScope(q.c, q.run); scope != "" {
+		return refusal(403, "error", "budget-reached", "a budget on "+scope+" is reached; ask the owner to raise it")
+	}
+	return nil
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -731,58 +863,51 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]string{"error": "not-found", "reason": "unknown route"})
 		return
 	}
-	startedMs, begun := nowMs(), time.Now()
-	var run *token
+	startedMs := nowMs()
+	q := &request{id: fmt.Sprintf("%x-%x-%x", startedMs, os.Getpid(), g.calls.Add(1)-1), connection: connectionName, tool: toolName,
+		startedMs: startedMs, begun: time.Now()}
 	if t, ok := bearer(r); ok {
-		run = g.authenticate(t)
+		q.run, q.bearer = g.authenticate(t), t
+	}
+	// The tool is resolved before the body is read: an upload's body is the file, read only once the call is admitted.
+	s := g.snapshot.Load()
+	c, known := s.Connections[connectionName]
+	q.c, q.p = c, s.Providers[c.Provider]
+	q.t, q.offered = q.p.Tools[toolName]
+	q.offered = q.offered && known && contains(c.Tools, toolName)
+	if q.offered && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload {
+		g.serveUpload(w, r, q)
+		return
 	}
 	// Read the body before any refusal: closing on unread bytes resets the connection and loses the caller's reason.
 	// Unauthenticated callers get a small, short read, so a slow or large body cannot hold the gateway.
 	limit, patience := int64(refusedBytes), refusedPatience
-	if run != nil {
+	if q.run != nil {
 		limit, patience = requestBytes, g.config.requestTimeout
 	}
 	http.NewResponseController(w).SetReadDeadline(time.Now().Add(patience))
 	raw, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	http.NewResponseController(w).SetReadDeadline(time.Time{})
-	s := g.snapshot.Load()
-	c, known := s.Connections[connectionName]
-	p := s.Providers[c.Provider]
-	t, offered := p.Tools[toolName]
-	offered = offered && known && contains(c.Tools, toolName)
-	var a *answer
-	usageKey := ""
-	switch {
-	case run == nil:
-		a = refusal(401, "error", "unauthenticated", "a valid run token is required")
-	case !contains(run.Connections, connectionName):
-		a = refusal(403, "error", "not-granted", "this run is not granted the connection")
-	case !offered:
-		a = refusal(404, "error", "unknown-tool", "the connection has no such tool")
-	case c.Intake != "all":
-		a = refusal(403, "error", "intake-paused", "the connection's intake is paused")
-	default:
-		if scope := blockedScope(c, run); scope != "" {
-			a = refusal(403, "error", "budget-reached", "a budget on "+scope+" is reached; ask the owner to raise it")
-			break
-		}
-		var body map[string]json.RawMessage
-		if readErr != nil || json.Unmarshal(raw, &body) != nil || body == nil {
+	t := q.t
+	a := admit(q)
+	for a == nil {
+		var args map[string]json.RawMessage
+		if readErr != nil || json.Unmarshal(raw, &args) != nil || args == nil {
 			a = refusal(400, "error", "bad-request", "the body must be a JSON object of at most 1 MiB")
 			break
 		}
 		if t.UsageOnce != nil {
 			var v string
-			json.Unmarshal(body[*t.UsageOnce], &v)
-			usageKey = connectionName + ":" + v
+			json.Unmarshal(args[*t.UsageOnce], &v)
+			q.usageKey = connectionName + ":" + v
 		}
-		path, ok := fillPath(t, body)
+		path, ok := fillPath(t, args)
 		if !ok {
 			a = refusal(400, "error", "bad-request", "a path field is missing or not an id")
 			break
 		}
 		if c.Provider == "anthropic" {
-			path, ok = anthropicPath(t.Path, body)
+			path, ok = anthropicPath(t.Path, args)
 			if !ok {
 				a = refusal(400, "error", "bad-request", "Anthropic input is invalid or unsupported; only nonstreaming Messages and model pages are supported")
 				break
@@ -790,18 +915,30 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		var sent []byte
 		if t.Method != "GET" {
-			sent, _ = json.Marshal(body)
+			sent, _ = json.Marshal(args)
 		}
-		a = g.call(r.Context(), connectionName, c, p, t, path, sent)
+		if t.File != nil && *t.File == contract.GatewayFileModeDownload {
+			// An old client would read the file bytes as an invalid JSON reply.
+			if !strings.Contains(r.Header.Get("Accept"), "application/octet-stream") {
+				a = refusal(400, "error", "file-expected", "a download tool answers file bytes; send Accept: application/octet-stream")
+				break
+			}
+			if a = g.serveDownload(w, r, q, path, sent); a == nil {
+				return // streamed, with its started and completed spool lines
+			}
+			break
+		}
+		a = g.call(r.Context(), connectionName, c, q.p, t, path, body{data: sent})
 	}
-	if a.disabled != 0 {
-		g.onDisabled(a.key, a.disabled)
-	}
-	callID := fmt.Sprintf("%x-%x-%x", startedMs, os.Getpid(), g.calls.Add(1)-1)
-	line := contract.CallLine{CallId: callID, Connection: connectionName, Tool: toolName, Status: int64(a.status),
-		Outcome: contract.CallOutcome(a.outcome), StartedAt: startedMs, Ms: time.Since(begun).Milliseconds()}
-	if run != nil {
-		line.ExecutionId, line.TokenSha256 = &run.ExecutionId, &run.Sha256
+	g.finish(w, q, a, nil)
+}
+
+// line is the spool record of an answered call.
+func (g *gateway) line(q *request, a *answer) contract.CallLine {
+	line := contract.CallLine{CallId: q.id, Connection: q.connection, Tool: q.tool, Status: int64(a.status),
+		Outcome: contract.CallOutcome(a.outcome), StartedAt: q.startedMs, Ms: time.Since(q.begun).Milliseconds()}
+	if q.run != nil {
+		line.ExecutionId, line.TokenSha256 = &q.run.ExecutionId, &q.run.Sha256
 	}
 	if a.key != "" {
 		line.KeyFingerprint = &a.key
@@ -810,9 +947,9 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		line.ErrorCode = &a.err
 	}
 	if a.usage != nil {
-		line.Usage = &contract.CallUsage{Unit: t.Unit, Amount: *a.usage}
-		if usageKey != "" {
-			line.UsageKey = &usageKey
+		line.Usage = &contract.CallUsage{Unit: q.t.Unit, Amount: *a.usage}
+		if q.usageKey != "" {
+			line.UsageKey = &q.usageKey
 		}
 	}
 	if a.disabled != 0 {
@@ -821,8 +958,18 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.problem != nil {
 		line.KeyProblem = &contract.CallKeyProblem{Key: a.key, Status: 403, Message: *a.problem}
 	}
+	return line
+}
+
+// finish spools the call's line, then answers it: a call answered to its caller is already durable.
+func (g *gateway) finish(w http.ResponseWriter, q *request, a *answer, transfer *contract.CallTransfer) {
+	if a.disabled != 0 {
+		g.onDisabled(a.key, a.disabled)
+	}
+	line := g.line(q, a)
+	line.Transfer = transfer
 	g.spool.append(line)
-	w.Header().Set("X-Fleet-Call-Id", callID)
+	w.Header().Set("X-Fleet-Call-Id", q.id)
 	w.Header().Set("X-Fleet-Outcome", a.outcome)
 	if a.err != "" {
 		w.Header().Set("X-Fleet-Error", a.err)
@@ -832,6 +979,362 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, a.status, a.body)
 }
+
+// limits are a connection's file limits with their defaults; a byte limit of 0 is no cap.
+func limits(c connection) (fileBytes, replyBytes int64, stall, answer time.Duration) {
+	stall, answer = defaultStall, defaultAnswer
+	if l := c.Limits; l != nil {
+		if l.FileBytes != nil {
+			fileBytes = *l.FileBytes
+		}
+		if l.ReplyBytes != nil {
+			replyBytes = *l.ReplyBytes
+		}
+		if l.StallMs != nil {
+			stall = time.Duration(*l.StallMs) * time.Millisecond
+		}
+		if l.AnswerMs != nil {
+			answer = time.Duration(*l.AnswerMs) * time.Millisecond
+		}
+	}
+	return
+}
+
+// scanner finds any of its patterns in a stream, also one split across two writes: each write is searched together
+// with the last len(longest)-1 bytes before it.
+type scanner struct {
+	patterns  [][]byte
+	keep      int
+	tail, buf []byte
+	found     bool
+}
+
+func newScanner(patterns [][]byte) *scanner {
+	s := &scanner{}
+	for _, p := range patterns {
+		if len(p) > 0 {
+			s.patterns = append(s.patterns, p)
+			s.keep = max(s.keep, len(p)-1)
+		}
+	}
+	return s
+}
+
+func (s *scanner) write(chunk []byte) bool {
+	if s.found || len(s.patterns) == 0 {
+		return s.found
+	}
+	s.buf = append(append(s.buf[:0], s.tail...), chunk...)
+	for _, p := range s.patterns {
+		if bytes.Contains(s.buf, p) {
+			s.found = true
+			return true
+		}
+	}
+	s.tail = append(s.tail[:0], s.buf[max(len(s.buf)-s.keep, 0):]...)
+	return false
+}
+
+var mediaTypeText = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`)
+
+// fileName: a name that stays inside the multipart header's quotes and names no path.
+func fileName(name string) bool {
+	if name == "" || len(name) > 255 || !utf8.ValidString(name) {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '/' {
+			return false
+		}
+	}
+	return true
+}
+
+// serveUpload: the request body is the file. It is staged under <state>/files while it is counted, hashed and scanned
+// for every key value the gateway holds and the caller's token; only a whole, matching, clean file is sent, as one
+// multipart part. Every refusal closes the connection, so an unread body is never taken as the next request.
+func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request) {
+	g.transfers.Add(1)
+	defer g.transfers.Add(-1)
+	refuse := func(a *answer, transfer *contract.CallTransfer) {
+		w.Header().Set("Connection", "close")
+		g.finish(w, q, a, transfer)
+	}
+	if a := admit(q); a != nil {
+		refuse(a, nil)
+		return
+	}
+	fileBytes, _, stall, answerWait := limits(q.c)
+	contentType, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
+	if strings.TrimSpace(strings.ToLower(contentType)) != "application/octet-stream" {
+		refuse(refusal(400, "error", "file-expected", "an upload tool takes the file bytes as application/octet-stream with X-Fleet-Args"), nil)
+		return
+	}
+	if r.ContentLength < 0 {
+		refuse(refusal(411, "error", "length-required", "an upload needs Content-Length"), nil)
+		return
+	}
+	if fileBytes > 0 && r.ContentLength > fileBytes {
+		refuse(refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), nil)
+		return
+	}
+	var args map[string]json.RawMessage
+	encoded, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Fleet-Args"))
+	if err != nil || json.Unmarshal(encoded, &args) != nil || args == nil {
+		refuse(refusal(400, "error", "bad-request", "X-Fleet-Args must be base64url JSON"), nil)
+		return
+	}
+	var name, mediaType string
+	nameErr := json.Unmarshal(args["name"], &name)
+	if len(args["mediaType"]) > 0 && json.Unmarshal(args["mediaType"], &mediaType) != nil {
+		mediaType = "\n" // not a string: refused below
+	}
+	delete(args, "name")
+	delete(args, "mediaType")
+	path, ok := fillPath(q.t, args)
+	for k := range args {
+		// fillPath used the path fields; inject fields are the catalogue's. Any other argument has no place in a file call.
+		if _, injected := q.t.Inject[k]; !injected {
+			ok = false
+		}
+	}
+	mediaType = strings.ToLower(mediaType)
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	want := r.Header.Get("X-Fleet-Sha256")
+	switch {
+	case !ok || !mediaTypeText.MatchString(mediaType) || !isHex(want, 64) || want != strings.ToLower(want):
+		refuse(refusal(400, "error", "bad-request", "X-Fleet-Args takes the path fields, name and mediaType; X-Fleet-Sha256 is the file's lowercase hex SHA-256"), nil)
+		return
+	case nameErr != nil || !fileName(name):
+		refuse(refusal(400, "error", "bad-file-name", "the file name must be 1 to 255 bytes of UTF-8 without control characters, \" or /"), nil)
+		return
+	}
+
+	part := filepath.Join(g.config.StateDir, "files", q.id+".part")
+	file, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		refuse(refusal(507, "error", "staging-failed", "the file could not be staged"), nil)
+		return
+	}
+	defer os.Remove(part)
+	defer file.Close()
+	// A stop cancels the staging read at once: nothing reached the provider, so the caller may simply retry.
+	control := http.NewResponseController(w)
+	var drained atomic.Bool
+	g.stagingLock.Lock()
+	g.staging[q.id] = func() { drained.Store(true); control.SetReadDeadline(time.Now()) }
+	if g.draining.Load() {
+		drained.Store(true)
+	}
+	g.stagingLock.Unlock()
+	unstage := func() bool {
+		g.stagingLock.Lock()
+		defer g.stagingLock.Unlock()
+		delete(g.staging, q.id)
+		return drained.Load() || g.draining.Load()
+	}
+	draining := refusal(503, "error", "draining", "the gateway is stopping; the file was not sent, try again")
+	patterns := [][]byte{[]byte(q.bearer)}
+	g.values.Range(func(_, v any) bool { patterns = append(patterns, []byte(v.(string))); return true })
+	scan, hash := newScanner(patterns), sha256.New()
+	buf := make([]byte, copyBytes)
+	var staged int64
+	var readErr, writeErr error
+	for !drained.Load() {
+		control.SetReadDeadline(time.Now().Add(stall))
+		if drained.Load() {
+			break // a cancel between the check and the deadline: its deadline was overwritten
+		}
+		n, err := r.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr = file.Write(buf[:n]); writeErr != nil {
+				break
+			}
+			hash.Write(buf[:n])
+			scan.write(buf[:n])
+			staged += int64(n)
+		}
+		if err != nil {
+			if err != io.EOF {
+				readErr = err
+			}
+			break
+		}
+	}
+	control.SetReadDeadline(time.Time{})
+	if unstage() {
+		refuse(draining, nil)
+		return
+	}
+	sum := hex.EncodeToString(hash.Sum(nil))
+	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: staged, MediaType: mediaType, Name: name, Sha256: &sum}
+	switch {
+	case writeErr != nil:
+		logf("staging %s: %v", q.id, writeErr)
+		refuse(refusal(507, "error", "staging-failed", "the file could not be staged"), nil)
+		return
+	case errors.Is(readErr, os.ErrDeadlineExceeded):
+		refuse(refusal(408, "error", "stalled", fmt.Sprintf("no file bytes arrived for %s; nothing was sent", stall)), nil)
+		return
+	case readErr != nil || staged != r.ContentLength:
+		refuse(refusal(400, "error", "bad-request", "the file ended before Content-Length; nothing was sent"), nil)
+		return
+	case sum != want:
+		refuse(refusal(400, "error", "sha-mismatch", "the received bytes do not match X-Fleet-Sha256; nothing was sent"), transfer)
+		return
+	case scan.found:
+		refuse(refusal(422, "error", "secret-found", "the file contains a key value or the caller's token; nothing was sent"), transfer)
+		return
+	}
+	// One file part with the caller's name; the name rules keep it inside the quotes (RFC 7578 allows UTF-8).
+	boundary := randomHex(16)
+	head := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + name + "\"\r\nContent-Type: " + mediaType + "\r\n\r\n"
+	tail := "\r\n--" + boundary + "--\r\n"
+	a := g.call(r.Context(), q.connection, q.c, q.p, q.t, path, body{
+		open: func() io.Reader {
+			return io.MultiReader(strings.NewReader(head), io.NewSectionReader(file, 0, staged), strings.NewReader(tail))
+		},
+		length: int64(len(head)) + staged + int64(len(tail)), contentType: "multipart/form-data; boundary=" + boundary,
+		stall: stall, answer: answerWait})
+	g.finish(w, q, a, transfer)
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// serveDownload: a JSON lookup with the key names the file (fileFrom fields); the file itself is fetched from the
+// provider's relative URL without the key and streamed to the caller unchanged. A started spool line is durable before
+// the response headers leave, a completed line follows the stream. nil: the call was answered here; else the answer
+// of a call refused or failed before any byte was sent.
+func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *request, path string, sent []byte) *answer {
+	g.transfers.Add(1)
+	defer g.transfers.Add(-1)
+	_, replyBytes, stall, answerWait := limits(q.c)
+	lookup := g.call(r.Context(), q.connection, q.c, q.p, q.t, path, body{data: sent})
+	if lookup.outcome != "ok" || lookup.status < 200 || lookup.status > 299 {
+		return lookup
+	}
+	fail := func(status int, outcome, code, reason string) *answer {
+		a := refusal(status, outcome, code, reason)
+		a.key, a.usage = lookup.key, lookup.usage
+		return a
+	}
+	from := q.t.FileFrom
+	rel, name, mediaType := stringAt(lookup.body, from.Url), stringAt(lookup.body, from.Name), stringAt(lookup.body, from.MediaType)
+	size, sized := usageAt(lookup.body, from.Bytes)
+	base, err := url.Parse(q.p.BaseUrl)
+	if err != nil {
+		return fail(502, "error", "provider-body", "the provider base URL is invalid")
+	}
+	origin := base.Scheme + "://" + base.Host
+	target, err := url.Parse(origin + rel)
+	// Only a path on the provider's own host: an absolute or protocol-relative URL would send the caller elsewhere.
+	if !sized || !strings.HasPrefix(rel, "/") || strings.HasPrefix(rel, "//") || strings.Contains(rel, "\\") || err != nil || target.Host != base.Host {
+		return fail(502, "error", "provider-body", "the lookup reply has no relative file URL and size")
+	}
+	if replyBytes > 0 && size > replyBytes {
+		return fail(413, "error", "reply-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", replyBytes))
+	}
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	var stalled atomic.Bool
+	timer := time.AfterFunc(answerWait, func() { stalled.Store(true); cancel() })
+	defer timer.Stop()
+	fetch, err := http.NewRequestWithContext(ctx, "GET", target.String(), nil)
+	if err != nil {
+		return fail(502, "error", "provider-body", "the file URL is invalid")
+	}
+	// Without the key: a signed URL needs none, and identity keeps the bytes and their length as the provider stores them.
+	fetch.Header.Set("Accept-Encoding", "identity")
+	response, err := g.client.Do(fetch)
+	switch {
+	case err != nil && stalled.Load():
+		return fail(504, "error", "provider-stalled", "the provider did not answer the file request in time")
+	case err != nil && r.Context().Err() != nil:
+		return fail(499, "error", "caller-cancelled", "the caller cancelled the call")
+	case err != nil:
+		return fail(502, "error", "provider-unreachable", "the file request got no answer")
+	}
+	defer response.Body.Close()
+	switch status := response.StatusCode; {
+	case status >= 300 && status <= 399:
+		return fail(502, "error", "provider-redirect", fmt.Sprintf("the file request answered HTTP %d; the redirect is not followed", status))
+	case status < 200 || status > 299:
+		return fail(502, "error", fmt.Sprintf("provider-%d", status), fmt.Sprintf("the file request answered HTTP %d", status))
+	case response.ContentLength >= 0 && response.ContentLength != size:
+		return fail(502, "error", "provider-body", "the file's length differs from the lookup size")
+	}
+	started := g.line(q, &answer{status: 200, outcome: "unknown", err: "download-unfinished", key: lookup.key, usage: lookup.usage})
+	started.Phase = ptr(contract.CallPhaseStarted)
+	started.Transfer = &contract.CallTransfer{Direction: contract.CallTransferDirectionDownload, Bytes: size, MediaType: mediaType, Name: name}
+	g.spool.append(started)
+	meta, _ := json.Marshal(map[string]any{"name": name, "mediaType": mediaType, "bytes": size})
+	writeRaw(w, size, map[string]string{"X-Fleet-Call-Id": q.id, "X-Fleet-Outcome": "ok", "X-Fleet-File": base64.RawURLEncoding.EncodeToString(meta)})
+	control := http.NewResponseController(w)
+	hash, buf := sha256.New(), make([]byte, copyBytes)
+	var delivered int64
+	code := ""
+	for code == "" && delivered < size {
+		timer.Reset(stall)
+		n, err := response.Body.Read(buf[:min(int64(len(buf)), size-delivered)])
+		timer.Stop() // a slow caller is not a stalled provider
+		if n > 0 {
+			control.SetWriteDeadline(time.Now().Add(stall))
+			written, werr := w.Write(buf[:n])
+			hash.Write(buf[:written])
+			delivered += int64(written)
+			if werr != nil {
+				code = "download-cut"
+				if errors.Is(werr, os.ErrDeadlineExceeded) {
+					code = "client-stalled"
+				}
+			}
+		}
+		switch {
+		case code != "" || err == nil:
+		case stalled.Load():
+			code = "provider-stalled"
+		case err == io.EOF && delivered == size:
+		default:
+			code = "download-cut" // a short provider body, or the caller left
+		}
+	}
+	timer.Stop()
+	if code == "" {
+		control.SetWriteDeadline(time.Now().Add(stall))
+		if err := control.Flush(); err != nil {
+			code = "download-cut"
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				code = "client-stalled"
+			}
+		}
+	}
+	done := contract.CallLine{CallId: q.id, Connection: q.connection, Tool: q.tool, Status: 200, Outcome: contract.CallOutcomeOk,
+		StartedAt: q.startedMs, Ms: time.Since(q.begun).Milliseconds(), ExecutionId: started.ExecutionId, TokenSha256: started.TokenSha256,
+		Phase: ptr(contract.CallPhaseCompleted), Transfer: &contract.CallTransfer{Direction: contract.CallTransferDirectionDownload, Bytes: delivered, MediaType: mediaType, Name: name}}
+	if code == "" {
+		sum := hex.EncodeToString(hash.Sum(nil))
+		done.Transfer.Sha256 = &sum
+	} else {
+		done.Outcome, done.ErrorCode = contract.CallOutcomeError, &code
+	}
+	g.spool.append(done)
+	if code != "" {
+		// The caller sees a cut connection, never a short file that ends cleanly.
+		panic(http.ErrAbortHandler)
+	}
+	return nil
+}
+
+func ptr[T any](v T) *T { return &v }
 
 func contains(list []string, item string) bool {
 	for _, x := range list {
@@ -1065,7 +1568,13 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 		return err
 	case <-stop:
 	}
+	// Uploads still staging answer draining at once (nothing reached the provider); posts in flight finish within the drain.
+	g.stagingLock.Lock()
 	g.draining.Store(true)
+	for _, cancel := range g.staging {
+		cancel()
+	}
+	g.stagingLock.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), c.drainTimeout)
 	defer cancel()
 	if server.Shutdown(ctx) != nil {
