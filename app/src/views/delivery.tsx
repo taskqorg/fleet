@@ -109,10 +109,10 @@ export function Delivery({ id }: { id?: string }) {
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
   const url = deliveryExtra(useUrlView('delivery').view.extra);
   const urlRange = url.range ?? '7d';
-  const releaseDoc = useDoc<History | typeof NONE>(url.release ? 'delivery-release:' + url.release : null,
+  const releaseDoc = useDoc<History | typeof NONE>(prefsRead.value && fleetShown && url.release ? 'delivery-release:' + url.release : null,
     () => no404(op('delivery_history', { release: url.release! })), touchesHistory, 600000);
   const releaseHistory = releaseDoc.data === NONE ? null : releaseDoc.data;
-  const releaseRows = releaseHistory?.prs.map(pr => fromHistory(pr, releaseHistory.installsFrom)) ?? [];
+  const releaseRows = fleetShown && releaseHistory ? releaseHistory.prs.map(pr => fromHistory(pr, releaseHistory.installsFrom)) : [];
   const releaseItems = url.release ? items.filter(it => it.release === url.release) : [];
   const releaseRowIds = new Set(releaseItems.map(idOf));
   // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
@@ -152,8 +152,8 @@ export function Delivery({ id }: { id?: string }) {
     const current = items.map(row), ids = new Set(current.map(r => r.id));
     const all = [...current, ...rowsOf.filter(r => !ids.has(r.id))].map(keyed);
     // The rows come from the history while a day is picked: its failure is the list's, never "none merged then".
-    const error = url.release ? releaseDoc.error : picked ? (hist ? null : histDoc.error && `history: ${histDoc.error}`) : status.error && !data ? status.error : null;
-    return { rows, all, counts, groups, total: rowsOf.length, pending: url.release ? releaseDoc.data === null && !releaseDoc.error : !picked && !data && !status.error || !!picked && histLoading, error, reload: url.release ? releaseDoc.reload : picked ? histDoc.reload : status.reload };
+    const error = url.release ? releaseDoc.error ?? (!data ? status.error : null) : picked ? (hist ? null : histDoc.error && `history: ${histDoc.error}`) : status.error && !data ? status.error : null;
+    return { rows, all, counts, groups, total: rowsOf.length, pending: url.release ? !prefsRead.value || (fleetShown && releaseDoc.data === null && !releaseDoc.error) || (!data && !status.error) : !picked && !data && !status.error || !!picked && histLoading, error, reload: url.release ? () => { if (fleetShown) releaseDoc.reload(); status.reload(); } : picked ? histDoc.reload : status.reload };
   };
   const page = useListPage<Row>({
     view: 'delivery', entity: 'pull_request', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: { stage: ['installed'] },

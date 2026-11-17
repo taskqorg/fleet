@@ -599,7 +599,21 @@ export function EntityCardLayer() {
       document.removeEventListener('focusout', out, true); removeEventListener('resize', place); sized.disconnect(); seen.disconnect(); };
   }, [cur]);
   // Opened by a key: focus goes to Open, which stays the same element while the card loads.
-  useEffect(() => { if (cur?.keyboard) box.current?.querySelector<HTMLElement>('.ec-open')?.focus({ preventScroll: true }); }, [cur]);
+  useEffect(() => {
+    const el = box.current, open = el?.querySelector<HTMLElement>('.ec-open');
+    if (!cur?.keyboard || !el || !open) return;
+    open.focus({ preventScroll: true });
+    const reveal = () => {
+      if (document.activeElement !== open) return;
+      const b = open.getBoundingClientRect(), r = el.getBoundingClientRect();
+      if (b.bottom > r.bottom) el.scrollTop += b.bottom - r.bottom;
+    };
+    reveal();
+    const layout = new ResizeObserver(reveal);
+    layout.observe(el);
+    if (open.parentElement) layout.observe(open.parentElement);
+    return () => layout.disconnect();
+  }, [cur]);
   if (!cur) return null;
   const k = entityKinds[cur.ref.kind];
   // The card takes its code's theme where a region sets one (the book's light and dark frames).
