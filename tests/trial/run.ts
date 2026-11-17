@@ -10,6 +10,7 @@
 //                        (trust authentication, Unix socket only) and started on first use; left running for other worktrees.
 //   FLEET_TRIAL_PGPORT   its port number on the socket; default 54329.
 //   FLEET_TRIAL_TESTS    test files; default tests/trial/*.test.ts.
+//   FLEET_TRIAL_NAME     database name suffix (startCoordinator name); default none, one database per checkout.
 // Prints one line `trial-run setup_ms=… tests_ms=… teardown_ms=… total_ms=… server_peak_rss_kb=… result=pass|fail`;
 // server_peak_rss_kb is the largest summed resident size of the server's process group, sampled every 100 ms.
 import {execFileSync, spawn} from 'node:child_process';
@@ -19,7 +20,8 @@ import {root, startCoordinator} from '../harness.ts';
 
 const t0 = performance.now();
 const sh = (cmd: string, args: string[]) => execFileSync(cmd, args, {encoding: 'utf8'});
-const c = await startCoordinator();
+// FLEET_TRIAL_NAME: a database of its own when several runs share one checkout (tests/go/run-files.ts).
+const c = await startCoordinator({name: process.env.FLEET_TRIAL_NAME || undefined});
 const {base, secret} = c, server = {pid: c.pid};
 
 const t1 = performance.now();

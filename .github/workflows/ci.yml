@@ -224,7 +224,8 @@ jobs:
   # Go (docs/designs/fleet-go-code.md), split into parallel parts so the family is never the critical path:
   # vet: generated-code drift, vet, a Windows compile of the coordinator; unit: the unit tests with -race;
   # vet also runs the executor's MCP adapter tests; outside-N: the outside tests against a -race coordinator on the runner's
-  # PostgreSQL, sharded by file (tests/go/run.sh). The go wrapper sees the matrix as one result.
+  # PostgreSQL, sharded by file, the shard's files nproc at once, each slot on its own server (tests/go/run.sh). The go
+  # wrapper sees the matrix as one result.
   # Node only as the test runner: the outside tests import node: builtins, so no pnpm install here.
   go-tests:
     needs: selection
@@ -242,8 +243,9 @@ jobs:
     env:
       GOFLAGS: -mod=readonly
       # Matrix entries outside-0..N-1 are the shards; run.sh fails on an index outside the total or an empty shard.
-      # One shard: each shard pays ~80 s of containers, toolchain and -race build for ~15 s of tests, and the hosted
-      # runner pool (20 concurrent jobs per org) is the merge queue's bottleneck, not one run's wall time.
+      # One shard: each shard pays ~50 s of setup and -race build, and the hosted runner pool (20 concurrent jobs per org) is
+      # shared by every run. Inside it the files run nproc at once (scripts/ci-part.sh OUTSIDE_JOBS): on the 4-vCPU runner
+      # 52 files took 170-211 s against 421 s one at a time (PR #639 measurement runs).
       OUTSIDE_SHARDS: 1
       # The span store for go/obs and tests/go/telemetry.test.ts live tests (docs/designs/fleet-telemetry.md); same LTS as deploy/infrastructure/fleet-clickhouse.container.
       FLEET_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
@@ -300,7 +302,10 @@ jobs:
       go: true
       clickhouse: ${{ matrix.clickhouse }}
       # The service's per-job port is in FLEET_TEST_CLICKHOUSE_URL (ci-part.sh clickhouse uses a fixed port and name).
-      env: GOFLAGS=-mod=readonly
+      # OUTSIDE_JOBS: the hosted runner's measured 4, not the guest's nproc, which its other pool runners share.
+      env: |
+        GOFLAGS=-mod=readonly
+        OUTSIDE_JOBS=4
       script: scripts/ci-part.sh ${{ matrix.part }} test
   # App: bundle and UI unit tests. The release tarballs are release-build's.
   app-tests:

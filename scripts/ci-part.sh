@@ -4,7 +4,7 @@
 #   scripts/ci-part.sh <vet|unit|outside-N|browser|release> <build|test>
 #   scripts/ci-part.sh clickhouse <start|wait>   ClickHouse for go/obs and telemetry tests, started in the background
 # BIN: where binaries go (default go/bin; cache-warm puts them outside go/, whose hash keys the caches).
-# OUTSIDE_SHARDS: total outside shards (default 1). VERSION: release version (default 0.0.0).
+# OUTSIDE_SHARDS: total outside shards (default 1). OUTSIDE_JOBS: outside files at once (default nproc). VERSION: release version (default 0.0.0).
 set -euo pipefail
 part=${1:?part} mode=${2:?mode}
 root=$(cd "$(dirname "$0")/.." && pwd) self=$root/scripts/ci-part.sh
@@ -42,7 +42,7 @@ case "$part:$mode" in
     # /api/health reports vcs.modified as dirty; a build from the CI checkout must be clean (untracked files count).
     go version -m "$bin/fleet-coordinator" | grep -q 'vcs.modified=false' || { git status --porcelain; exit 1; }
     # The outside tests run a -race coordinator; GORACE halts it at the first race, so the test of that moment fails.
-    PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 tests/go/run.sh "${part#outside-}" "${OUTSIDE_SHARDS:-1}" ;;
+    PATH="$(ls -d /usr/lib/postgresql/*/bin | tail -1):$PATH" GORACE=halt_on_error=1 OUTSIDE_JOBS="${OUTSIDE_JOBS:-$(nproc)}" tests/go/run.sh "${part#outside-}" "${OUTSIDE_SHARDS:-1}" ;;
   browser:build) pnpm run app:bundle && (cd go && CGO_ENABLED=0 go build -trimpath -o "$bin/fleet-coordinator" ./coordinator) ;;
   release:build)
     rm -rf "$bin/release" && mkdir -p "$bin/release"

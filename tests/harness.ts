@@ -1,6 +1,6 @@
 // The Go coordinator under test (go/bin/fleet-coordinator, or FLEET_TRIAL_SERVER): a fresh Postgres database with the PDS18
-// roles on one shared local server, the binary started against it on a free port. Used by tests/trial/run.ts and the app
-// checks in tests/ui. Node standard library and the PostgreSQL client programs only; seed data goes in through sql().
+// roles on one shared local server (tests/go/run-files.ts gives each of its parallel slots a server of its own), the
+// binary started against it on a free port. Used by tests/trial/run.ts and the app checks in tests/ui. Node standard library and the PostgreSQL client programs only; seed data goes in through sql().
 //
 // Environment (all optional): FLEET_TRIAL_SERVER (shell command, default go/bin/fleet-coordinator), FLEET_TRIAL_PGDATA
 // (default ~/.cache/fleet-trial/pg; created with initdb and started on first use), FLEET_TRIAL_PGPORT (default 54329).
@@ -12,8 +12,8 @@ import {homedir, tmpdir} from 'node:os';
 import {basename, join} from 'node:path';
 
 export const root = new URL('../', import.meta.url).pathname;
-const pgdata = process.env.FLEET_TRIAL_PGDATA || join(homedir(), '.cache/fleet-trial/pg');
-const pgport = process.env.FLEET_TRIAL_PGPORT || '54329';
+export const pgdata = process.env.FLEET_TRIAL_PGDATA || join(homedir(), '.cache/fleet-trial/pg');
+export const pgport = process.env.FLEET_TRIAL_PGPORT || '54329';
 const pgArgs = ['-h', pgdata, '-p', pgport, '-U', 'postgres'];
 const sh = (cmd: string, args: string[], input?: string) => execFileSync(cmd, args, {input, encoding: 'utf8', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']});
 const ready = () => { try { sh('pg_isready', pgArgs); return true; } catch { return false; } };

@@ -120,8 +120,11 @@ jobs:
           retention-days: ${{ inputs.artifact-retention }}
           overwrite: true
           if-no-files-found: error
-      # The runner kills the job's leftover processes; stopping PostgreSQL first frees its shared memory cleanly.
+      # The runner kills the job's leftover processes; stopping PostgreSQL first frees its shared memory cleanly. The
+      # -<slot> servers are tests/go/run-files.ts's, one per file run at once.
       - name: Stop job-local PostgreSQL
         if: always()
         run: |
-          [ ! -f "$FLEET_TRIAL_PGDATA/postmaster.pid" ] || "$(ls -d /usr/lib/postgresql/*/bin | tail -1)/pg_ctl" -D "$FLEET_TRIAL_PGDATA" -m immediate -w stop || true
+          for d in "$FLEET_TRIAL_PGDATA" "$FLEET_TRIAL_PGDATA"-*; do
+            [ ! -f "$d/postmaster.pid" ] || "$(ls -d /usr/lib/postgresql/*/bin | tail -1)/pg_ctl" -D "$d" -m immediate -w stop || true
+          done
