@@ -579,9 +579,10 @@ func TestBugsinkCatalogue(t *testing.T) {
 	}
 }
 
-// Requirement: fleet-connections.md §1, YouTrack: each youtrack catalogue tool (coordinator providers.go) reaches the
+// Requirement: fleet-connections.md §5 path fields and §8 YouTrack: each youtrack catalogue tool (coordinator providers.go) reaches the
 // YouTrack REST path it names with the key as bearer; a search query is query-escaped, and an issue id that is not an id
-// is refused. Risk: a query adds or ends a parameter, or a crafted id walks to another API path with the agents' token.
+// is refused; a 403 is not recorded on the key. Risk: a query adds or ends a parameter, a crafted id walks to another
+// API path with the agents' token, or every refused action marks the only key as broken.
 func TestYouTrackCatalogue(t *testing.T) {
 	src, err := os.ReadFile("../coordinator/providers.go")
 	if err != nil {
@@ -593,11 +594,16 @@ func TestYouTrackCatalogue(t *testing.T) {
 	if err := json.Unmarshal([]byte(text[:strings.Index(text, "`")]), &catalogue); err != nil {
 		t.Fatal(err)
 	}
-	type seen struct{ method, path, query, auth, body string }
+	type seen struct{ method, path, query, skip, auth, body string }
 	got := make(chan seen, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		got <- seen{r.Method, r.URL.Path, r.URL.Query().Get("query"), r.Header.Get("Authorization"), string(b)}
+		got <- seen{r.Method, r.URL.Path, r.URL.Query().Get("query"), r.URL.Query().Get("$skip"), r.Header.Get("Authorization"), string(b)}
+		if strings.Contains(string(b), "State Done") {
+			w.WriteHeader(403)
+			io.WriteString(w, `{"error":"forbidden"}`)
+			return
+		}
 		io.WriteString(w, `[]`)
 	}))
 	t.Cleanup(server.Close)
@@ -618,19 +624,19 @@ func TestYouTrackCatalogue(t *testing.T) {
 	gw.write(snap)
 	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
 
-	query := "project: TGT #Unresolved & fields=x?y"
+	query := "project: TGT #Unresolved & fields=x?y {skip} ../a sort by: created asc"
 	for tool, c := range map[string]struct {
 		body string
 		want seen
 	}{
-		"projects":       {`{}`, seen{"GET", "/api/admin/projects", "", "", ""}},
-		"issues_search":  {`{"query":"` + query + `","skip":"50"}`, seen{"GET", "/api/issues", query, "", ""}},
-		"issue_get":      {`{"issue":"TGT-12"}`, seen{"GET", "/api/issues/TGT-12", "", "", ""}},
-		"issue_comments": {`{"issue":"TGT-12"}`, seen{"GET", "/api/issues/TGT-12/comments", "", "", ""}},
-		"issue_create":   {`{"project":{"id":"0-1"},"summary":"s"}`, seen{"POST", "/api/issues", "", "", `{"project":{"id":"0-1"},"summary":"s"}`}},
-		"issue_update":   {`{"issue":"TGT-12","summary":"s"}`, seen{"POST", "/api/issues/TGT-12", "", "", `{"summary":"s"}`}},
-		"comment_add":    {`{"issue":"TGT-12","text":"t"}`, seen{"POST", "/api/issues/TGT-12/comments", "", "", `{"text":"t"}`}},
-		"command":        {`{"query":"State Open","issues":[{"idReadable":"TGT-12"}]}`, seen{"POST", "/api/commands", "", "", `{"issues":[{"idReadable":"TGT-12"}],"query":"State Open"}`}},
+		"projects":       {`{}`, seen{"GET", "/api/admin/projects", "", "", "", ""}},
+		"issues_search":  {`{"query":"` + query + `","skip":"50"}`, seen{"GET", "/api/issues", query, "50", "", ""}},
+		"issue_get":      {`{"issue":"TGT-12"}`, seen{"GET", "/api/issues/TGT-12", "", "", "", ""}},
+		"issue_comments": {`{"issue":"TGT-12"}`, seen{"GET", "/api/issues/TGT-12/comments", "", "", "", ""}},
+		"issue_create":   {`{"project":{"id":"0-1"},"summary":"s"}`, seen{"POST", "/api/issues", "", "", "", `{"project":{"id":"0-1"},"summary":"s"}`}},
+		"issue_update":   {`{"issue":"TGT-12","summary":"s"}`, seen{"POST", "/api/issues/TGT-12", "", "", "", `{"summary":"s"}`}},
+		"comment_add":    {`{"issue":"TGT-12","text":"t"}`, seen{"POST", "/api/issues/TGT-12/comments", "", "", "", `{"text":"t"}`}},
+		"command":        {`{"query":"State Open","issues":[{"idReadable":"TGT-12"}]}`, seen{"POST", "/api/commands", "", "", "", `{"issues":[{"idReadable":"TGT-12"}],"query":"State Open"}`}},
 	} {
 		status, _, _ := gw.raw("POST", "/v1/call/youtrack/"+tool, "Bearer "+testToken, c.body)
 		if status != 200 {
@@ -644,6 +650,13 @@ func TestYouTrackCatalogue(t *testing.T) {
 			t.Fatalf("%s %s: %d", tool, body, status)
 		}
 	}
+	// An action the account may not do (Agents cannot set Done) answers 403; that refuses the call, not the shared key.
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/command", "Bearer "+testToken, `{"query":"State Done","issues":[{"idReadable":"TGT-12"}]}`); status != 403 {
+		t.Fatalf("forbidden command: %d", status)
+	}
+	<-got
+	lines, _ := gw.spool()
+	expect(t, lines[len(lines)-1]["keyProblem"], nil, "a 403 is not a key problem")
 	if len(tools) != 8 {
 		t.Fatalf("youtrack tools: %v", tools)
 	}

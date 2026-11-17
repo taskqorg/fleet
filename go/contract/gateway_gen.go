@@ -141,10 +141,11 @@ func (v *GatewayKey) Validate() error {
 
 // GatewayProvider: A provider catalogue entry (go/coordinator/providers.go); the gateway reads only these fields.
 type GatewayProvider struct {
-	BaseUrl   string                 `json:"baseUrl"`
-	KeyHeader *string                `json:"keyHeader,omitempty"`
-	Tools     map[string]GatewayTool `json:"tools"`
-	Usage     *GatewayUsageSource    `json:"usage,omitempty"`
+	BaseUrl         string                 `json:"baseUrl"`
+	ForbiddenIsCall *bool                  `json:"forbiddenIsCall,omitempty"`
+	KeyHeader       *string                `json:"keyHeader,omitempty"`
+	Tools           map[string]GatewayTool `json:"tools"`
+	Usage           *GatewayUsageSource    `json:"usage,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

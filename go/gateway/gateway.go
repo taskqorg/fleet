@@ -602,7 +602,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 				a.outcome = "unknown"
 			}
 		}
-		if status == 403 {
+		if status == 403 && (p.ForbiddenIsCall == nil || !*p.ForbiddenIsCall) {
 			// Redact over the whole body first, so a key cut at the 500-character mark cannot leave a prefix behind.
 			message := []rune(strings.ReplaceAll(strings.ToValidUTF8(string(data), "�"), value, "[key]"))
 			text := string(message[:min(len(message), 500)])
@@ -859,24 +859,29 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 	for k, v := range t.Inject {
 		body[k] = v
 	}
-	path := t.Path
+	// The template is read once from the left, so an inserted value is never read as a field, and whether a field is in
+	// the query depends on the template's own "?", not on what earlier values contain.
+	var out strings.Builder
+	rest, query := t.Path, false
 	for {
-		start := strings.IndexByte(path, '{')
+		start := strings.IndexByte(rest, '{')
 		if start < 0 {
-			return path, true
+			out.WriteString(rest)
+			return out.String(), true
 		}
-		length := strings.IndexByte(path[start:], '}')
+		query = query || strings.IndexByte(rest[:start], '?') >= 0
+		length := strings.IndexByte(rest[start:], '}')
 		if length < 0 {
 			return "", false
 		}
-		field := path[start+1 : start+length]
+		field := rest[start+1 : start+length]
 		var value string
 		if json.Unmarshal(body[field], &value) != nil || value == "" {
 			return "", false
 		}
 		if pattern, ok := t.PathPatterns[field]; ok {
-			// Patterns compiled when the snapshot loaded; a "." or ".." segment never reaches the provider.
-			if !regexp.MustCompile(pattern).MatchString(value) || dotSegment(value) {
+			// Patterns compiled when the snapshot loaded; a "." or ".." path segment never reaches the provider.
+			if !regexp.MustCompile(pattern).MatchString(value) || !query && dotSegment(value) {
 				return "", false
 			}
 		} else if strings.IndexFunc(value, func(r rune) bool {
@@ -885,11 +890,13 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 			return "", false
 		}
 		delete(body, field)
-		if strings.IndexByte(path[:start], '?') >= 0 {
+		if query {
 			// A query value (a YouTrack search) is escaped, so it cannot add or end a parameter.
 			value = url.QueryEscape(value)
 		}
-		path = path[:start] + value + path[start+length+1:]
+		out.WriteString(rest[:start])
+		out.WriteString(value)
+		rest = rest[start+length+1:]
 	}
 }
 

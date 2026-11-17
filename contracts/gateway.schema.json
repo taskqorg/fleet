@@ -13,7 +13,8 @@
       "baseUrl": {"type": "string"},
       "keyHeader": {"$comment": "Header that carries the key value as is (Google AI x-goog-api-key); absent: Authorization: Bearer <key>.", "type": "string"},
       "tools": {"type": "object", "additionalProperties": {"$ref": "#/$defs/GatewayTool"}},
-      "usage": {"$ref": "#/$defs/GatewayUsageSource"}}},
+      "usage": {"$ref": "#/$defs/GatewayUsageSource"},
+      "forbiddenIsCall": {"$comment": "A 403 refuses the call, not the key (YouTrack: an action the account may not do); it is not recorded as a key problem.", "type": "boolean"}}},
     "GatewayUsageSource": {"$comment": "Per-key usage report (reconcile): GET path, and the dotted field holding the number.", "type": "object", "required": ["path", "field"], "properties": {"path": {"type": "string"}, "field": {"type": "string"}}},
     "GatewayTool": {"type": "object", "additionalProperties": true, "required": ["method", "path", "idempotent", "unit"], "properties": {
       "method": {"type": "string"},
