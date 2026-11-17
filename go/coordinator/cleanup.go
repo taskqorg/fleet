@@ -415,6 +415,7 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 			return err
 		}
 		rs, err := queryRows(q, "SELECT id FROM execution WHERE id=ANY($1) AND kind='pipeline_run' AND state='running' ORDER BY seq", c.sets["execution"])
+		runs = runs[:0]
 		for _, r := range rs {
 			runs = append(runs, astr(r["id"]))
 		}
@@ -433,7 +434,8 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 			}
 		}
 	}
-	err := runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
+	// DISPATCH too: a dispatch pass or a promotion cannot add an execution to the cascade while it is read and marked.
+	err := runTxLocks(q.ctx(), q.app, q, true, []string{GLOBAL, DISPATCH}, func(q *Request) error {
 		var err error
 		if c, out, err = deletePreview(q, b); err != nil {
 			return err
@@ -471,6 +473,10 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		return err
 	}
 	if err := exec(q, "UPDATE question SET state='withdrawn' WHERE id=ANY($1) AND state='open'", c.sets["question"]); err != nil {
+		return err
+	}
+	// Messages still waiting for a turn never start one (host receipts see deleted rows and promote queued messages).
+	if err := exec(q, `UPDATE document SET data=data||'{"state":"deleted"}', updated_at=now() WHERE kind='queued-message' AND data->>'sessionId'=ANY($1) AND data->>'state' IN ('queued','steering')`, c.sets["session"]); err != nil {
 		return err
 	}
 	teardowns := int64(0)
@@ -680,16 +686,18 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	// Hosts first, as the preview sees them: tombstoned rows count as references, so a host a purged project named goes
 	// at the next purge.
 	if slices.Contains(kinds, contract.PurgeKindHost) {
+		var removed, kept contract.PurgeCount
 		if err := runTx(q.ctx(), q.app, q, !b.Preview, "", func(q *Request) error {
 			if err := showDeleted(q); err != nil {
 				return err
 			}
-			removed, kept, err := purgeHosts(q, b.Preview)
-			out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, kept)
+			var err error
+			removed, kept, err = purgeHosts(q, b.Preview)
 			return err
 		}); err != nil {
 			return out, err
 		}
+		out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, kept)
 	}
 	rows := map[contract.ObjectKind]*contract.KindCount{}
 	// Every root of every kind is checked before any goes, as the preview sees them: a root kept only by another

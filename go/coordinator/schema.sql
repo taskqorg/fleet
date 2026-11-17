@@ -2372,7 +2372,8 @@ CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql STABLE AS
 DO $$ DECLARE t text; BEGIN
  FOREACH t IN ARRAY ARRAY['execution','task','experiment','question','artifact','document','score','experiment_note'] LOOP
   EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted() OR (tombstoned_at IS NULL'
-   ' AND (project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))))', t);
+   ' AND (project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[])%s)))', t,
+   CASE WHEN t = 'document' THEN ' OR kind IN (''setting-change'', ''transport-audit'')' ELSE '' END); -- audit outlives the project
  END LOOP;
  FOREACH t IN ARRAY ARRAY['artifact_copy','artifact_rule_confirmation','entity_code','execution_totals','purged_hash',
   'route_decision','task_dependency','task_derived'] LOOP
@@ -2388,6 +2389,9 @@ CREATE FUNCTION fleet_inherit_tombstone() RETURNS trigger LANGUAGE plpgsql AS $$
  IF TG_TABLE_NAME = 'document' THEN
   IF NEW.kind IN ('setting-change', 'transport-audit', 'purge-task') THEN RETURN NEW; END IF; -- audit outlives the object
   e := NEW.data->>'executionId';
+  IF e IS NULL AND NEW.data->>'sessionId' IS NOT NULL AND EXISTS (SELECT 1 FROM document WHERE kind = 'session' AND id = NEW.data->>'sessionId' AND tombstoned_at IS NOT NULL) THEN
+   NEW.tombstoned_at := now(); RETURN NEW;
+  END IF;
  ELSE e := to_jsonb(NEW)->>TG_ARGV[0]; END IF;
  IF e IS NOT NULL AND EXISTS (SELECT 1 FROM execution WHERE id = e AND tombstoned_at IS NOT NULL) THEN NEW.tombstoned_at := now(); END IF;
  RETURN NEW;
