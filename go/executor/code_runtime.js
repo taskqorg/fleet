@@ -51,6 +51,61 @@ const tools = (server, names) => {
 const emit = (text) => send({ type: 'print', job: job.getStore() ?? null, text });
 const print = (...xs) => emit(util.format(...xs) + '\n');
 
+// Host functions (fleet-code-mode.md, host functions). read, glob and grep run here, within the read roots; write, edit
+// and sh are bridged: the code server checks them against the execution's grant.
+const path = require('node:path');
+let root = process.cwd(); // the worktree, as the code server names it (the tools line): the read roots use that spelling
+const resolve = (p) => path.resolve(root, String(p));
+const shown = (abs) => { const r = path.relative(root, abs); return r.startsWith('..') || path.isAbsolute(r) ? abs : r; };
+function walk(dir, out) {
+  for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      if (d.name !== '.git' && d.name !== 'node_modules') walk(p, out);
+    } else if (d.isFile()) out.push(p); // symlinks are not followed
+  }
+  return out;
+}
+// Each entry relative to the walk's start, as a glob pattern sees it; returned relative to the worktree.
+function files(opts, pattern) {
+  const start = resolve(opts?.path ?? '.');
+  const all = fs.statSync(start).isDirectory() ? walk(start, []) : [start];
+  return all.filter((f) => pattern == null || path.matchesGlob(path.relative(start, f), pattern));
+}
+const host = {
+  read: async (p) => fs.readFileSync(resolve(p), 'utf8'),
+  glob: async (pattern, opts) => files(opts, pattern).map(shown),
+  grep: async (pattern, opts) => {
+    const re = pattern instanceof RegExp ? new RegExp(pattern.source, pattern.flags.replace('g', '')) : new RegExp(String(pattern), opts?.ignoreCase ? 'i' : '');
+    const hits = [];
+    for (const f of files(opts, opts?.glob)) {
+      const b = fs.readFileSync(f);
+      if (b.subarray(0, 8192).includes(0)) continue; // binary
+      b.toString('utf8').split('\n').forEach((text, i) => { if (re.test(text)) hits.push({ file: shown(f), line: i + 1, text }); });
+    }
+    return hits;
+  },
+  write: (p, text) => call('host', 'write', { path: String(p), text: String(text) }),
+  edit: (p, old, text, opts) => call('host', 'edit', { path: String(p), old: String(old), new: String(text), all: opts?.all === true }),
+  sh: (cmd, ...rest) => {
+    let opts = {};
+    if (Array.isArray(cmd) && Array.isArray(cmd.raw)) {
+      // A tagged template: each interpolated value is one shell word, an array several.
+      const word = (v) => Array.isArray(v) ? v.map(word).join(' ') : "'" + String(v).replaceAll("'", "'\\''") + "'";
+      cmd = cmd.raw.reduce((a, s, i) => a + word(rest[i - 1]) + s);
+    } else {
+      opts = rest[0] ?? {};
+    }
+    return call('host', 'sh', { command: String(cmd), cwd: opts.cwd, timeoutMs: opts.timeoutMs }).then((r) => new ShResult(r));
+  },
+};
+class ShResult {
+  constructor(r) { Object.assign(this, r); }
+  text() { return this.stdout.trimEnd(); }
+  json() { return JSON.parse(this.stdout); }
+  lines() { return this.stdout.split('\n').filter((l) => l !== ''); }
+}
+
 globalThis.fleet = tools('fleet', []);
 globalThis.conn = {};
 globalThis.state = {};
@@ -83,11 +138,32 @@ function valueJSON(v) {
 }
 
 const AsyncFunction = (async () => {}).constructor;
+const compiles = (body) => { try { new AsyncFunction(body); return true; } catch { return false; } };
+// Without an explicit return, the last expression statement is the result: the shortest tail after a newline or `;` that
+// compiles as one expression after a prefix that compiles on its own. A line that starts with an operator or a dot
+// continues the line before it, so it is never split off. A line that starts with `(`, `[` or a template starts the
+// result, unlike plain JavaScript, so a last line `({a, b})` returns the object instead of calling the line before.
+const continues = /^\s*[-+*/%<>=!&|^?:,.)\]}]/;
+function body(source) {
+  if (!compiles(source)) return source; // its own syntax error, unchanged
+  for (let i = source.length; i >= 0; i--) {
+    if (i > 0 && source[i - 1] !== '\n' && source[i - 1] !== ';') continue;
+    const tail = source.slice(i).replace(/[\s;]+$/, '');
+    if (tail.trim() === '' || i > 0 && source[i - 1] === '\n' && continues.test(tail)) continue;
+    const prefix = source.slice(0, i);
+    const wrapped = prefix + '\nreturn (' + tail + '\n)';
+    if (compiles(wrapped) && compiles(prefix)) return wrapped;
+  }
+  return source;
+}
+
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
   if (m.type === 'tools') {
     globalThis.fleet = tools('fleet', m.fleet);
     globalThis.conn = Object.fromEntries(Object.entries(m.conns).map(([name, names]) => [name, tools('conn:' + name, names)]));
+    root = m.dir ?? root;
+    for (const n of m.host ?? []) globalThis[n] = host[n];
     return;
   }
   if (m.type === 'reply') {
@@ -101,7 +177,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (m.type !== 'run') return;
   job.run(m.job, async () => {
     try {
-      const value = await new AsyncFunction(m.source)();
+      const value = await new AsyncFunction(body(m.source))();
       out(`{"type":"done","job":${JSON.stringify(m.job)},"ok":true,"value":${valueJSON(value)}}\n`);
     } catch (e) {
       // Any thrown value ends the job, even one that cannot be turned into a string.

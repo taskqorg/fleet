@@ -52,8 +52,8 @@ func newCodeClient(t *testing.T, spec M) *codeClient {
 	return &codeClient{t: t, in: inW, out: sc}
 }
 
-// call sends one tools/call and returns the decoded text result and isError.
-func (c *codeClient) call(tool string, args M) (M, bool) {
+// parts sends one tools/call and returns its text parts and isError.
+func (c *codeClient) parts(tool string, args M) ([]string, bool) {
 	c.t.Helper()
 	c.id++
 	io.WriteString(c.in, enc(M{"jsonrpc": "2.0", "id": c.id, "method": "tools/call", "params": M{"name": tool, "arguments": args}})+"\n")
@@ -65,11 +65,51 @@ func (c *codeClient) call(tool string, args M) (M, bool) {
 		c.t.Fatal(err)
 	}
 	r := jAt(reply, "result")
-	v, err := dec(jStr(jArr(r, "content")[0], "text"))
-	if err != nil {
-		c.t.Fatal(err)
+	var texts []string
+	for _, p := range jArr(r, "content") {
+		texts = append(texts, jStr(p, "text"))
 	}
-	return v.(M), jAt(r, "isError") == true
+	return texts, jAt(r, "isError") == true
+}
+
+// call returns the reply as one object (fleet-code-mode.md, reply): the `[code] ` part's fields, `output` from the
+// printed part and, for a finished job, `value` from the value part (JSON when it decodes, else the text itself).
+func (c *codeClient) call(tool string, args M) (M, bool) {
+	c.t.Helper()
+	texts, bad := c.parts(tool, args)
+	v := M{}
+	var plain []string
+	for _, t := range texts {
+		if meta, ok := strings.CutPrefix(t, "[code] "); ok {
+			m, err := dec(meta)
+			if err != nil {
+				c.t.Fatal(err)
+			}
+			for k, x := range m.(M) {
+				v[k] = x
+			}
+			continue
+		}
+		plain = append(plain, t)
+	}
+	if !has(v, "status") && !has(v, "error") && !has(v, "jobs") && !has(v, "reset") {
+		v["status"] = "done"
+		if len(plain) == 0 {
+			c.t.Fatalf("finished job without a value part: %q", texts)
+		}
+		last := plain[len(plain)-1]
+		if x, err := dec(last); err == nil {
+			v["value"] = x
+		} else {
+			v["value"] = last
+		}
+		plain = plain[:len(plain)-1]
+	}
+	if len(plain) > 1 {
+		c.t.Fatalf("more than one output part: %q", texts)
+	}
+	v["output"] = strings.Join(plain, "")
+	return v, bad
 }
 
 func (c *codeClient) code(source string) (M, bool) { return c.call("code", M{"source": source}) }
@@ -144,8 +184,8 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	if d := time.Since(start); d > 1500*time.Millisecond {
 		t.Fatalf("4 calls of 500 ms took %v: not parallel (in a row: 2 s)", d)
 	}
-	if n := len(jArr(r, "calls")); n != 4 || jStr(jArr(r, "calls")[0], "tool") != "web.search" {
-		t.Fatalf("calls summary: %v", r["calls"])
+	if has(r, "calls") || calls.Load() != 4 { // every call succeeded: no calls list in the reply
+		t.Fatalf("calls summary: %v, gateway calls %d", r["calls"], calls.Load())
 	}
 
 	r, bad = c.code(`try { await conn.web.broken({}) } catch (e) { return [e.name, e.tool, e.outcome, e.code, e.output] }`)
@@ -175,11 +215,12 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 		t.Fatalf("unhandled rejection not in the job's output: %v", r)
 	}
 	// A call chained off an unawaited one is part of the job too, while the first is in flight.
-	if r, _ := c.code(`conn.web.search({}).then(() => conn.web.search({})); return 1`); len(jArr(r, "calls")) != 2 {
+	// A failed call keeps the calls list, so the chain's second call shows.
+	if r, _ := c.code(`conn.web.search({}).then(() => conn.web.broken({}).catch(() => 0)); return 1`); len(jArr(r, "calls")) != 2 || jStr(jArr(r, "calls")[1], "tool") != "web.broken" {
 		t.Fatalf("chained call: %v", r)
 	}
 	// A call started just before the return is part of the job: the final reply carries its outcome.
-	if r, _ := c.code(`conn.web.search({}); return 1`); len(jArr(r, "calls")) != 1 {
+	if r, _ := c.code(`conn.web.broken({}).catch(() => 0); return 1`); len(jArr(r, "calls")) != 1 || jStr(jArr(r, "calls")[0], "outcome") != "error" {
 		t.Fatalf("unawaited call before return: %v", r)
 	}
 	// Arguments that do not serialize reject as FleetCallError, not a raw TypeError.
@@ -393,7 +434,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 			fleet = &codeFleet{journal, M{"commandId": "c"}}
 		}
 		file := filepath.Join(t.TempDir(), "runs", "x.code.json")
-		err := addCodeServer(servers, mode, fleet, granted, "/run.env", file, "/work", codeReadRoots(harness, profile, "/work", "/input"))
+		err := addCodeServer(servers, mode, fleet, granted, "/run.env", file, "/work", codeAuthorityFor(harness, profile, "/work", []string{"/work", "/input"}, []any{"/git"}, true, profile["readOnly"] == true))
 		if err != nil {
 			return servers, nil, err
 		}
@@ -412,11 +453,44 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	if has(servers, "fleet") || has(servers, "web") || !has(servers, "serena") || !has(servers, "code") {
 		t.Fatalf("only: %v", sortedKeys(servers))
 	}
-	if _, spec, _ := launch("add", "claude", M{"tools": []any{"Edit"}}, "/journal"); enc(spec["read"]) != `[]` {
-		t.Fatalf("restricted claude reads: %v", spec["read"])
+	// Codex: sh sandboxed with its writable roots and gitNetwork's network; write and edit.
+	if _, spec, _ := launch("only", "codex", M{}, "/journal"); enc(spec["shell"]) != `{"network":true,"sandbox":true,"write":["/work","/git"]}` || spec["write"] != true || spec["edit"] != true {
+		t.Fatalf("codex authority: %v", spec)
 	}
-	if _, spec, _ := launch("add", "claude", M{}, "/journal"); enc(spec["read"]) != `["/work","/input"]` {
-		t.Fatalf("default claude: %v", spec["read"])
+	// Claude: each host function only with its native tool; no Bash, no sh.
+	if _, spec, _ := launch("add", "claude", M{"tools": []any{"Edit"}}, "/journal"); enc(spec["read"]) != `[]` || has(spec, "shell") || spec["write"] != false || spec["edit"] != true {
+		t.Fatalf("restricted claude: %v", spec)
+	}
+	if _, spec, _ := launch("add", "claude", M{}, "/journal"); enc(spec["read"]) != `["/work","/input"]` || enc(spec["shell"]) != `{"sandbox":false}` || spec["write"] != true {
+		t.Fatalf("default claude: %v", spec)
+	}
+	// Antigravity and acp: a sandboxed sh with the worktree only and no network; nothing writes in plan mode.
+	if _, spec, _ := launch("add", "acp", M{}, "/journal"); enc(spec["shell"]) != `{"network":false,"sandbox":true,"write":["/work"]}` {
+		t.Fatalf("acp: %v", spec)
+	}
+	if _, spec, _ := launch("add", "antigravity", M{"settings": M{"sandbox": false}}, "/journal"); enc(spec["shell"]) != `{"sandbox":false}` {
+		t.Fatalf("antigravity without sandbox: %v", spec)
+	}
+	if _, spec, _ := launch("add", "antigravity", M{"settings": M{"mode": "plan"}}, "/journal"); has(spec, "shell") || spec["write"] != false || spec["edit"] != false {
+		t.Fatalf("antigravity plan: %v", spec)
+	}
+	// A read-only start: Codex's sh runs read-only, Claude keeps reads only, ACP agents get nothing that writes.
+	if _, spec, _ := launch("add", "codex", M{"readOnly": true}, "/journal"); enc(spec["shell"]) != `{"network":false,"readOnly":true,"sandbox":true}` || spec["write"] != false || spec["edit"] != false {
+		t.Fatalf("codex read-only: %v", spec)
+	}
+	if _, spec, _ := launch("add", "claude", M{"readOnly": true}, "/journal"); has(spec, "shell") || spec["write"] != false || spec["edit"] != false || len(jArr(spec, "read")) != 2 {
+		t.Fatalf("claude read-only: %v", spec)
+	}
+	if _, spec, _ := launch("add", "acp", M{"readOnly": true}, "/journal"); has(spec, "shell") || spec["write"] != false {
+		t.Fatalf("acp read-only: %v", spec)
+	}
+	// only hides the Claude tools that host functions cover; add keeps them.
+	for mode, want := range map[string]string{"only": "Task,TaskStop", "add": "Read,Edit,Write,Bash,Glob,Grep,Task,TaskStop"} {
+		c := exec.Command("not-executed")
+		claudeMCP(c, M{"codeMode": mode}, M{}, nil)
+		if got := c.Args[len(c.Args)-1]; got != want {
+			t.Fatalf("%s: allowed tools %s", mode, got)
+		}
 	}
 	granted = nil
 	if _, _, err := launch("add", "codex", M{}, ""); err == nil || err.Error() != "codeMode needs Fleet tools or a connection" {
@@ -440,5 +514,166 @@ func TestCodeModeJournalErrorIsUnknown(t *testing.T) {
 	db.Close()
 	if _, fail := s.bridge("fleet", "message_send", M{"text": "hi"}); jStr(fail, "outcome") != "unknown" || jStr(fail, "code") != "journal-error" {
 		t.Fatalf("closed journal: %v", fail)
+	}
+}
+
+// Risk: the agent reads its result as an escaped JSON string inside metadata, or must write `return` for every value,
+// so code mode costs more context than direct tools (fleet-code-mode.md, reply).
+func TestCodeModeReplyAndLastExpression(t *testing.T) {
+	c := newCodeClient(t, M{"dir": t.TempDir()})
+	if p, bad := c.parts("code", M{"source": `"plain " + "text"`}); bad || enc(p) != `["plain text","[code] {\"newRuntime\":true}"]` {
+		t.Fatalf("first call: %q", p)
+	}
+	// A finished job: the printed output and the value as real JSON, nothing else.
+	if p, bad := c.parts("code", M{"source": `print("hi"); return {a: [1, "x"]}`}); bad || enc(p) != `["hi\n","{\"a\":[1,\"x\"]}"]` {
+		t.Fatalf("done: %q", p)
+	}
+	if p, _ := c.parts("code", M{"source": `if (state) {}`}); enc(p) != `["null"]` {
+		t.Fatalf("no value: %q", p)
+	}
+	if p, bad := c.parts("code", M{"source": `throw new Error("boom")`}); !bad || len(p) != 1 || !strings.HasPrefix(p[0], `[code] {"error":{"message":"boom"`) || !strings.HasSuffix(p[0], `"status":"failed"}`) {
+		t.Fatalf("failed: %q", p)
+	}
+	for src, want := range map[string]string{
+		"1 + 1": "2",
+		"const a = 1\nconst b = await Promise.resolve(2)\n({a, b})":            `{"a":1,"b":2}`,
+		"const xs = [1, 2, 3]\nxs\n  .filter(x => x > 1)\n  .map(x => x * 10)": "[20,30]",
+		"const n = 4; n * 2;":                                "8",
+		"let s = 0\nfor (const x of [1, 2, 3])\n  s += x\ns": "6",
+		"const local = 1":                                    "null",
+		"if (true) return 'early'\n'late'":                   `"early"`,
+		"const t = `a\nb`\nt.length":                         "3",
+		"[1, 2].map(x => x + 1) // comment":                  "[2,3]",
+		"const o = {\n  k: 1,\n}\no.k":                       "1",
+		"const f = (x) =>\n  x + 1\nf(1)":                    "2",
+		"const r = await Promise.all([\n  Promise.resolve(1),\n  Promise.resolve(2),\n])\nr": "[1,2]",
+	} {
+		if r, bad := c.code(src); bad || enc(r["value"]) != want {
+			t.Errorf("%q: %v %v, want %s", src, bad, r, want)
+		}
+	}
+}
+
+// Risk: write or edit reaches outside the worktree (a path, a symlink, .git), or a profile without the native tool gets
+// it in code (fleet-code-mode.md, host functions).
+func TestCodeModeFiles(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	os.Symlink(outside, filepath.Join(dir, "out"))
+	os.Symlink(filepath.Join(dir, ".git"), filepath.Join(dir, "g"))
+	c := newCodeClient(t, M{"dir": dir, "read": []any{dir}, "write": true, "edit": true})
+	r, bad := c.code(`const w = await write("a/b.txt", "one two two")
+		const once = await edit("a/b.txt", "one", "1")
+		const fail = async (f) => { try { await f(); return "allowed" } catch (e) { return e.code } }
+		return {w, once, many: await fail(() => edit("a/b.txt", "two", "2")), all: await edit("a/b.txt", "two", "2", {all: true}),
+			missing: await fail(() => edit("a/b.txt", "zzz", "")), read: await read("a/b.txt"), glob: await glob("**/*.txt"),
+			grep: await grep("2", {glob: "**/*.txt"}), types: [typeof sh, typeof write],
+			up: await fail(() => write("../x.txt", "")), abs: await fail(() => write(` + enc(filepath.Join(outside, "y.txt")) + `, "")),
+			link: await fail(() => write("out/z.txt", "")), git: await fail(() => write(".git/config", "")), viaLink: await fail(() => write("g/config", ""))}`)
+	want := `{"abs":"outside-worktree","all":{"path":"a/b.txt","replaced":2},"git":"outside-worktree","glob":["a/b.txt"],"grep":[{"file":"a/b.txt","line":1,"text":"1 2 2"}],` +
+		`"link":"outside-worktree","many":"not-unique","missing":"not-found","once":{"path":"a/b.txt","replaced":1},"read":"1 2 2","types":["undefined","function"],` +
+		`"up":"outside-worktree","viaLink":"outside-worktree","w":{"bytes":11,"path":"a/b.txt"}}`
+	if bad || enc(r["value"]) != want {
+		t.Fatalf("files: %v %v\n got %s\nwant %s", bad, r, enc(r["value"]), want)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "a", "b.txt")); string(b) != "1 2 2" {
+		t.Fatalf("file: %q", b)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("written outside: %v", entries)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, ".git")); len(entries) != 0 {
+		t.Fatalf("written under .git: %v", entries)
+	}
+	// Without the grant the functions do not exist, and the server refuses the call too.
+	c = newCodeClient(t, M{"dir": dir})
+	if r, _ := c.code(`[typeof read, typeof write, typeof edit, typeof sh]`); enc(r["value"]) != `["undefined","undefined","undefined","undefined"]` {
+		t.Fatalf("ungranted: %v", r["value"])
+	}
+	srv := &codeServer{spec: M{"dir": dir}}
+	for _, tool := range []string{"write", "edit", "sh"} {
+		if _, fail := srv.bridge("host", tool, M{"path": "x", "command": "true"}); jStr(fail, "code") != "tool-not-granted" {
+			t.Errorf("%s: %v", tool, fail)
+		}
+	}
+}
+
+// Risk: sh writes outside the harness's write roots, reaches the network without gitNetwork, signals other processes,
+// sees the run token, or hangs the runtime past reset (fleet-code-mode.md, authority per harness).
+func TestCodeModeShell(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	sleeper := exec.Command("sleep", "30")
+	if err := sleeper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sleeper.Process.Kill()
+	dir := t.TempDir()
+	// Outside every write root and outside /tmp, which is the sandbox's own on Linux: a refused write there is the
+	// sandbox's refusal, not a missing directory.
+	outside, err := os.MkdirTemp("/var/tmp", "fleet-code-outside-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(outside) })
+	os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: elsewhere\n"), 0o644)
+	t.Setenv("TMPDIR", t.TempDir()) // the temporary directory the sandbox may write; `outside` is not under it
+	t.Setenv("FLEET_RUN_TOKEN", "invented")
+	port := strings.TrimPrefix(srv.URL, "http://127.0.0.1:")
+	httpGet := `exec 3<>/dev/tcp/127.0.0.1/` + port + ` && printf 'GET / HTTP/1.0\r\n\r\n' >&3 && cat <&3 >/dev/null`
+	probe := `const run = async (cmd) => (await sh(cmd)).code
+		return {pwd: (await sh("pwd -P")).text(), word: (await sh` + "`printf %s ${\"a b\"}`" + `).stdout, json: (await sh("echo '{\"k\":1}'")).json(),
+			exit: await run("exit 3"), inside: await run("echo x > made.txt"), outside: await run("echo x > ` + filepath.Join(outside, "o.txt") + `"),
+			tmp: await run("echo x > \"$TMPDIR/t.txt\""), git: await run("echo x >> .git"), net: await run(` + enc(httpGet) + `),
+			signal: await run("kill ` + fmt.Sprint(sleeper.Process.Pid) + `"), token: (await sh("echo ${FLEET_RUN_TOKEN:-none}")).text()}`
+	sandboxed := M{"sandbox": true, "write": []any{dir}, "network": false}
+	c := newCodeClient(t, M{"dir": dir, "shell": sandboxed})
+	r, bad := c.code(probe)
+	real, _ := canon(dir)
+	if bad || jStr(r, "value", "pwd") != real || jStr(r, "value", "word") != "a b" || enc(jAt(r, "value", "json")) != `{"k":1}` || jStr(r, "value", "token") != "none" {
+		t.Fatalf("sh: %v %v", bad, r)
+	}
+	for k, want := range map[string]bool{"exit": false, "inside": true, "outside": false, "tmp": true, "git": false, "net": false, "signal": false} {
+		if got := enc(jAt(r, "value", k)) == "0"; got != want {
+			t.Errorf("%s: exit code %v", k, jAt(r, "value", k))
+		}
+	}
+	if enc(jAt(r, "value", "exit")) != "3" {
+		t.Errorf("exit: %v", jAt(r, "value", "exit"))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "made.txt")); err != nil {
+		t.Error("the write inside the worktree is missing")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "o.txt")); err == nil || hits.Load() != 0 {
+		t.Errorf("wrote outside or reached the network: %v, server hits %d", err, hits.Load())
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, ".git")); string(b) != "gitdir: elsewhere\n" || sleeper.Process.Signal(syscall.Signal(0)) != nil {
+		t.Fatalf(".git changed or the other process was signalled: %q", b)
+	}
+	// A timeout kills the command; reset kills a running one, so its job ends.
+	start := time.Now()
+	if r, _ := c.code(`await sh("sleep 20", {timeoutMs: 200})`); jAt(r, "value", "timedOut") != true || time.Since(start) > 5*time.Second {
+		t.Fatalf("timeout: %v after %v", r, time.Since(start))
+	}
+	r, _ = c.call("code", M{"source": `await sh("sleep 20")`, "detachAfterSeconds": 0.3})
+	c.call("poll", M{"reset": true})
+	if r, _ := c.call("poll", M{"jobId": jStr(r, "jobId"), "waitSeconds": 10}); r["status"] != "failed" || time.Since(start) > 8*time.Second {
+		t.Fatalf("reset with sh running: %v after %v", r, time.Since(start))
+	}
+
+	// With gitNetwork the sandbox has network; the harness's unsandboxed shell (Claude's Bash) writes anywhere.
+	c = newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": true, "write": []any{dir}, "network": true}})
+	if r, _ := c.code(`(await sh(` + enc(httpGet) + `)).code`); enc(r["value"]) != "0" || hits.Load() != 1 {
+		t.Fatalf("network with gitNetwork: %v, hits %d", r, hits.Load())
+	}
+	// A read-only start: commands run, nothing is written, not even the temporary directory.
+	c = newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": true, "readOnly": true, "network": false}})
+	if r, _ := c.code(`[(await sh("cat .git")).code, (await sh("echo x > ro.txt")).code, (await sh("echo x > \"$TMPDIR/ro.txt\"")).code]`); jStr(r, "value") != "" || enc(jArr(r, "value")[0]) != "0" || enc(jArr(r, "value")[1]) == "0" || enc(jArr(r, "value")[2]) == "0" {
+		t.Fatalf("read-only sh: %v", r)
+	}
+	c = newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": false}})
+	if r, _ := c.code(`(await sh("echo x > ` + filepath.Join(outside, "free.txt") + `")).code`); enc(r["value"]) != "0" {
+		t.Fatalf("unsandboxed: %v", r)
 	}
 }
