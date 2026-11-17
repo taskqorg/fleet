@@ -5,7 +5,8 @@
 # OUTSIDE_JOBS: files run at once (default 1). Each file gets its own database, secret directories and gateway port; its
 # output is printed whole when it ends, with its duration. A failed file starts no new ones; the run fails after the
 # running files end, naming the failed files. With OUTSIDE_JOBS > 1 each slot has its own PostgreSQL server
-# (FLEET_TRIAL_PGDATA-<slot>), left running like the shared one: pg_ctl -D <dir> stop.
+# (FLEET_TRIAL_PGDATA-<slot>, port FLEET_TRIAL_PGPORT+1+slot), left running like the shared one (pg_ctl -D <dir> stop);
+# slots are per machine, so run OUTSIDE_JOBS > 1 from one checkout at a time (CI has one).
 set -e
 cd "$(dirname "$0")/../.."
 index=${1:-0} total=${2:-1}
