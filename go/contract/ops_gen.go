@@ -276,6 +276,7 @@ type ExecutionRow struct {
 	SessionId         *string         `json:"sessionId"`
 	StartedAt         *string         `json:"startedAt"`
 	State             ExecutionState  `json:"state"`
+	SystemActor       *string         `json:"systemActor,omitempty"`
 	TaskId            *string         `json:"taskId"`
 	Variant           *string         `json:"variant"`
 }
@@ -587,6 +588,28 @@ type StreamCursor struct {
 // Validate: the schema's required fields and enums (see Check).
 func (v *StreamCursor) Validate() error {
 	return nil
+}
+
+// SystemActivity: Fleet's own background calls (execution systemActor set, such as the coordinator's GitHub and Bugsink reads): exclude leaves them out, include adds them, only keeps them alone. Unset is exclude, or include when the request names a parent (executions_list parentExecutionId, analytics_query filters.parent); a connection's full usage is system include (docs/designs/fleet-analytics.md, System activity).
+type SystemActivity string
+
+const (
+	SystemActivityExclude SystemActivity = "exclude"
+	SystemActivityInclude SystemActivity = "include"
+	SystemActivityOnly    SystemActivity = "only"
+)
+
+// SystemActivityValues lists every SystemActivity in schema order.
+var SystemActivityValues = []SystemActivity{SystemActivityExclude, SystemActivityInclude, SystemActivityOnly}
+
+// Valid: v is one of the schema's values.
+func (v SystemActivity) Valid() bool {
+	for _, x := range SystemActivityValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 type TokenBreakdown struct {

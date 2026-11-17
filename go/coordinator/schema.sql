@@ -2419,3 +2419,26 @@ UPDATE execution_totals t SET project_id=e.project_id FROM execution e WHERE e.i
 DELETE FROM resource_work_scope WHERE project_id='';
 DELETE FROM resource_repair_scope WHERE project_id='';
 ALTER TABLE execution ADD CONSTRAINT execution_project_id_not_empty CHECK (project_id<>'');
+-- migration 69: Fleet's own background calls (docs/designs/fleet-analytics.md, System activity). The coordinator's
+-- GitHub and Bugsink reads (a run token "<connection>-read:<uuid>" minted for the project whose grant allows the read)
+-- became tool_runs of that project and filled its analytics and execution lists. system_actor names the Fleet component
+-- that made a call on its own ('coordinator'), written at insert; analytics_query, executions_list, project resources
+-- and person/project budgets leave those rows out unless asked for; connection budgets and Runners keep them. Every
+-- read token gets the mark (the first ones, 2026-11-12, a personal token named github-read, too), so calls ingested
+-- after this migration carry it. The earlier rows of these reads get the mark and legacySystemRead in data;
+-- systemReadsCleanup (system_activity.go) deletes them once no spool line names them. The mark is no resource fact
+-- (resource_execution_facts), so the marked rows are queued for resource replacement here. No span names these calls
+-- (a gateway call runs under no run context).
+ALTER TABLE execution ADD COLUMN IF NOT EXISTS system_actor text NULL;
+CREATE INDEX IF NOT EXISTS execution_system ON execution(seq) WHERE system_actor IS NOT NULL;
+SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+UPDATE document SET data = data || '{"systemActor": "coordinator"}'
+ WHERE kind = 'run-token' AND data->>'executionId' ~ '^[a-z0-9-]+-read:[0-9a-f-]{36}$';
+-- The 2026-11-12 calls (personal token github-read) have no parent and tokenName in data, minted for a project and no
+-- person; a person's own token of that name has a director and no project, and keeps its calls.
+CREATE TEMP TABLE system_read ON COMMIT DROP AS
+ SELECT id, project_id FROM execution WHERE kind = 'tool_run' AND system_actor IS NULL
+  AND (parent_execution_id ~ '^[a-z0-9-]+-read:[0-9a-f-]{36}$'
+   OR (parent_execution_id IS NULL AND data->>'tokenName' = 'github-read' AND project_id IS NOT NULL AND directed_by IS NULL));
+UPDATE execution SET system_actor = 'coordinator', data = data || '{"legacySystemRead": true}' WHERE id IN (SELECT id FROM system_read);
+SELECT resource_enqueue_source(id, project_id, project_id) FROM system_read;

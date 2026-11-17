@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,6 +62,32 @@ var defaultAnalyticsMeasures = []contract.AnalyticsMeasure{
 
 func init() {
 	gatedObjOp("analytics_query", true, typedOp(analyticsQuery))
+}
+
+// systemFilter: the condition that keeps project work (exclude, the default), adds Fleet's own background calls
+// (include) or keeps them alone (only) (docs/designs/fleet-analytics.md, System activity). col is the system_actor column.
+func systemFilter(s *contract.SystemActivity, col string) string {
+	var v contract.SystemActivity
+	if s != nil {
+		v = *s
+	}
+	switch v {
+	case contract.SystemActivityInclude:
+		return "true"
+	case contract.SystemActivityOnly:
+		return col + " IS NOT NULL"
+	}
+	return col + " IS NULL"
+}
+
+// systemOf: the system activity of a request; unset with a named parent, that parent's children, system ones included
+// (a read token's calls are listed under its id).
+func systemOf(s *contract.SystemActivity, parentNamed bool) *contract.SystemActivity {
+	if s == nil && parentNamed {
+		include := contract.SystemActivityInclude
+		return &include
+	}
+	return s
 }
 
 func basisOrder(b contract.ResourceBasis) int {
@@ -140,6 +167,7 @@ const analyticsBaseLeavesSelect = `
   nullif(e.data->>'tool', '') AS tool_name,
   e.experiment_id,
   e.variant,
+  e.system_actor,
   coalesce(nullif(e.data->>'outcome', ''), CASE WHEN e.state IN ('succeeded', 'failed', 'cancelled') THEN e.state::text END) AS outcome,
   coalesce(e.directed_by, t.directed_by) AS person,
   e.started_at,
@@ -696,6 +724,11 @@ func analyticsQuery(q *Request, r *contract.AnalyticsQueryRequest) (contract.Ana
 
 	params := []any{from, to}
 	var conds []string
+	// Fleet's own background calls stay out of the counts unless asked for; hidden still compares unfiltered windows.
+	// Only when every value names a parent: "unknown" (and "", read as it) is no parent.
+	parentNamed := r.Filters != nil && len(r.Filters.Parent) > 0 &&
+		!slices.ContainsFunc(r.Filters.Parent, func(p string) bool { return p == "" || p == "unknown" })
+	conds = append(conds, systemFilter(systemOf(r.System, parentNamed), "l.system_actor"))
 	if r.ProjectId != nil {
 		if *r.ProjectId == "" {
 			return rep, fail(400, "Invalid projectId")
@@ -1883,7 +1916,8 @@ func definitionUsageResources(q *Request, kind, id string, days int64) (map[stri
 	return tot, byRev, nil
 }
 
-// projectResources summarizes all visible leaf executions belonging to projectID.
+// projectResources summarizes all visible leaf executions belonging to projectID: its work, without Fleet's own
+// background calls (system_actor).
 func projectResources(q *Request, projectID string) (contract.ResourceSummary, error) {
 	if projectID == "" {
 		return emptyResourceSummary(), nil
@@ -1891,7 +1925,7 @@ func projectResources(q *Request, projectID string) (contract.ResourceSummary, e
 	ctes := `WITH scoped_leaves AS (
   SELECT 'project'::text AS scope, ''::text AS scope_key, e.id AS leaf_id
   FROM execution e
-  WHERE e.project_id = $1
+  WHERE e.project_id = $1 AND ` + systemFilter(nil, "e.system_actor") + `
  )`
 	raw, err := summarizeResourceQuery(q, ctes, projectID)
 	if err != nil {

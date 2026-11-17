@@ -661,10 +661,10 @@ func insertExecution(q *Request, v doc) (bool, error) {
 		return false, traceErr
 	}
 	var id string
-	err := q.tx.QueryRow(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,parent_execution_id,config_ref,data,experiment_id,variant,request_id,task_id,session_id,directed_by,started_at,ended_at,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) ON CONFLICT DO NOTHING RETURNING id`,
+	err := q.tx.QueryRow(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,parent_execution_id,config_ref,data,experiment_id,variant,request_id,task_id,session_id,directed_by,started_at,ended_at,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision,system_actor)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) ON CONFLICT DO NOTHING RETURNING id`,
 		v["id"], v["kind"], state, projectOrNil(v["projectId"]), v["parentExecutionId"], cfg, jsonBytes(data), v["experimentId"], v["variant"], v["requestId"],
-		v["taskId"], v["sessionId"], v["directedBy"], executionTime(v["startedAt"]), executionTime(v["endedAt"]), v["pipelineId"], v["pipelineRevision"], v["stepId"], v["profileId"], v["profileRevision"]).Scan(&id)
+		v["taskId"], v["sessionId"], v["directedBy"], executionTime(v["startedAt"]), executionTime(v["endedAt"]), v["pipelineId"], v["pipelineRevision"], v["stepId"], v["profileId"], v["profileRevision"], v["systemActor"]).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

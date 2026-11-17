@@ -10,7 +10,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -216,7 +215,9 @@ func githubPublic(ctx context.Context, path string) ([]byte, error) {
 // readToks: one minted token per connection and project for the coordinator's own reads (GitHub screens, the Bugsink
 // resolution pass), reused for readTokenTTL and then revoked. Minting
 // and revoking per call (connCallFor) took about 12 s a read on PDS18 (two write transactions, a snapshot rewrite and a
-// spool ingest); the delivery history makes hundreds. The calls become tool_runs when the token is revoked.
+// spool ingest); the delivery history makes hundreds. The calls become tool_runs when the token is revoked, marked
+// systemActor coordinator: Fleet's own activity, kept under the project whose grant allowed the read but left out of
+// its analytics and execution lists by default (docs/designs/fleet-analytics.md, System activity).
 type readToken struct {
 	token string
 	until time.Time
@@ -231,7 +232,7 @@ var (
 )
 
 func readTokenFor(ctx context.Context, a *App, connection, project string) (string, error) {
-	if !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(connection) {
+	if !connName.MatchString(connection) {
 		return "", fmt.Errorf("%s: connection-unavailable", connection)
 	}
 	key := connection + " " + project
@@ -253,7 +254,7 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	exec := connection + "-read:" + newID()
 	var token string
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		m, err := mint(q, doc{"executionId": exec, "projectId": project, "step": true}, []string{connection})
+		m, err := mint(q, doc{"executionId": exec, "projectId": project, "step": true, "systemActor": "coordinator"}, []string{connection})
 		if err == nil {
 			token, _ = m["token"].(string)
 		}
