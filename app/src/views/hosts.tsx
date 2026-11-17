@@ -83,6 +83,9 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, now, onGone,
         value={<><EntityCode id={run.executionId} what="Execution" />{run.durationMs != null && <Num m={m(run.durationMs / 1000)} kind="duration" />} <Num m={m(run.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(run.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{run.orphans > 0 && <span class="chip t-danger">{run.orphans} orphan</span>} <AgeChip t={ms(run.at)} now={now} /></>} />)}
     </DetailSection>
     {live && sel.problems?.length > 0 && <DetailSection title="Problems">{sel.problems.map((p: any) => <KvRow key={p.route} icon="activity" label={`Edge answers ${p.route} with ${p.status}`} meta={p.detail || p.location || undefined} />)}</DetailSection>}
+    {sel.harnessVersions?.length > 0 && <DetailSection title="Agent CLIs">{sel.harnessVersions.map((cli: { harness: string; expected: string; observed: string | null }) =>
+      <KvRow key={cli.harness} icon="info" label={cli.harness} value={<span class="mono">{live && cli.observed || 'unknown'}</span>}
+        meta={(!live || cli.observed !== cli.expected) ? `Expected ${cli.expected}` : undefined} />)}</DetailSection>}
     <DetailSection title="Capabilities">{sel.capabilities.length ? sel.capabilities.map((c: string) => <KvRow key={c} icon="check" label={c} />) : <span class="muted">none reported</span>}</DetailSection>
     <DetailSection title="Store"><KvRow icon="save" label="Store checks" value={live ? sel.stores : 'unknown'} meta={live ? sel.storesReason : 'Host observation stale'} /></DetailSection>
     <DetailSection title="Remove">

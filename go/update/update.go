@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"log"
@@ -173,6 +174,9 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	}
 	log.Printf("%s: %s -> %s", p.name, running, cand)
 	dir, err := u.fetch(p, cand)
+	if err == nil && p.name == "executor" {
+		err = u.prepareHarnesses(p, dir)
+	}
 	var ref refusal
 	if errors.As(err, &ref) {
 		return u.refuse(p, cand, string(ref), err.Error())
@@ -196,7 +200,11 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	if p.app != "" {
 		u.uploadSourcemaps(filepath.Join(p.root, cand, p.app), cand)
 	}
-	return u.settle(p, cand, true)
+	result := u.settle(p, cand, true)
+	if p.name == "executor" && result.State == "ok" {
+		u.pruneHarnesses(p)
+	}
+	return result
 }
 
 func (u *updater) refuse(p *part, ver, reason, msg string) *Result {
@@ -315,6 +323,10 @@ func okStatus(method, url string, resp *http.Response) error {
 
 // download streams url to file and returns its hex SHA-256.
 func (u *updater) download(url, file string) (string, error) {
+	return u.downloadDigest(url, file, sha256.New())
+}
+
+func (u *updater) downloadDigest(url, file string, h hash.Hash) (string, error) {
 	resp, err := u.client.Get(url)
 	if err != nil {
 		return "", err
@@ -328,7 +340,6 @@ func (u *updater) download(url, file string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(f, h), resp.Body); err != nil {
 		return "", err
 	}

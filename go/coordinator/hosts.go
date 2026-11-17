@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"fleet/contract"
+	"fleet/harnessrelease"
 )
 
 const hostStaleMs = 30000
@@ -358,6 +360,35 @@ func hostsRotateSecret(q *Request, b doc) (any, error) {
 	return out, nil
 }
 
+// The coordinator's pins are the target. A host on an older release may still report older observed versions.
+var hostHarnessTargets = sync.OnceValue(func() map[string]map[string]harnessrelease.Asset {
+	dir := releaseDir()
+	out := map[string]map[string]harnessrelease.Asset{}
+	out["linux"], _ = harnessrelease.Read(dir, "linux-amd64")
+	out["win32"] = out["linux"]
+	out["darwin"], _ = harnessrelease.Read(dir, "darwin-arm64")
+	return out
+})
+
+func hostHarnessVersions(o doc, live bool) any {
+	assets := hostHarnessTargets()[astr(o["platform"])]
+	if len(assets) == 0 {
+		return o["harnessVersions"]
+	}
+	observed := map[string]any{}
+	if rows, ok := o["harnessVersions"].([]any); live && ok {
+		for _, row := range rows {
+			v := mapOf(row)
+			observed[astr(v["harness"])] = v["observed"]
+		}
+	}
+	rows := make([]doc, 0, len(assets))
+	for _, name := range []string{"codex", "claude", "antigravity"} {
+		rows = append(rows, doc{"harness": name, "expected": assets[name].Version, "observed": observed[name]})
+	}
+	return rows
+}
+
 func hostsList(q *Request, includeRemoved bool) (any, error) {
 	configured, err := hostIDs(q)
 	if err != nil {
@@ -464,6 +495,9 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 			polling := seen > 0 && float64(now)-seen < hostStaleMs
 			// The last failed poll, until a successful one (host_poll_health.go); like problems, only while the host
 			// polls: a host that stopped is offline, and an old failure would hide that.
+			if versions := hostHarnessVersions(o, polling); versions != nil {
+				h["harnessVersions"] = versions
+			}
 			if polling && o["pollError"] != nil {
 				h["pollError"] = o["pollError"]
 			}

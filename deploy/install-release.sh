@@ -27,6 +27,9 @@ else
   for bin in fleet-coordinator fleet-gateway fleet-executor fleet-update; do
     if [ -x "$partial/$bin" ]; then "$partial/$bin" selftest >/dev/null; fi
   done
+  if [ -f "$partial/config/harness-pins.json" ]; then
+    "$partial/fleet-update" prepare-harnesses "$partial" "$releases"
+  fi
   find "$partial" -type f -exec chmod a-w {} +   # directories stay 0755, so rm -rf still works
   rm -rf "$target" && mv "$partial" "$target"
 fi

@@ -57,10 +57,14 @@ func readRegistry() (map[string]registryEntry, error) {
 // runnable: the same gate as the start path (commandRegistry) before anything is launched under an entry: reviewed
 // ready, absolute executable, private home directories, no shared native-current login, Claude placement.
 func runnable(x registryEntry) error {
+	executable, managed, err := managedExecutable(x.Harness, x.Executable, "")
+	if err != nil {
+		return err
+	}
 	switch {
 	case x.Readiness != "ready":
 		return errors.New("named host account is unprovisioned; operator login and readiness review required")
-	case !filepath.IsAbs(x.Executable):
+	case !filepath.IsAbs(executable):
 		return errors.New("host executable must be absolute")
 	case x.CredentialAuthority != "" && x.CredentialAuthority != "native-current":
 		return errors.New("unsupported credential authority")
@@ -70,6 +74,9 @@ func runnable(x registryEntry) error {
 		if err != nil || !filepath.IsAbs(x.CredentialHome) || !st.IsDir() || owner(st) != os.Geteuid() || st.Mode().Perm()&0o022 != 0 {
 			return errors.New("native-current credential home must be owner-controlled")
 		}
+	}
+	if managed && !isFile(executable) {
+		return errors.New("release-managed executable missing")
 	}
 	for _, d := range []string{x.Home, x.NativeHome} {
 		if err := private(d); err != nil {

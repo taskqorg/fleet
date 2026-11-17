@@ -1,0 +1,43 @@
+{
+  "enabled": false,
+  "targets": {
+    "linux-amd64": {
+      "codex": {
+        "version": "0.169.0",
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.169.0/codex-package-x86_64-unknown-linux-musl.tar.gz",
+        "sha256": "3b8ed091149cc63a59046b9f094bcfa21cdb4dda15ede441ce369bcee4a71ba0",
+        "entry": "bin/codex"
+      },
+      "claude": {
+        "version": "2.1.326",
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.326/linux-x64/claude",
+        "sha256": "b6b3647d981130dc44fc670846ae97b6cde531ffb667cf9c4d17cfcafb38cb37"
+      },
+      "antigravity": {
+        "version": "1.5.10",
+        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.10-5253791805734912/linux-x64/cli_linux_x64.tar.gz",
+        "sha512": "713ae840845d74736e2d4a96f5d84e3353d614e73a875793ddf500997ccee09595448cebfd8e94fdd90ce2a0fa97707bd1cc29763dcfe01c945d80c92234378f",
+        "entry": "antigravity"
+      }
+    },
+    "darwin-arm64": {
+      "codex": {
+        "version": "0.169.0",
+        "url": "https://github.com/openai/codex/releases/download/rust-v0.169.0/codex-package-aarch64-apple-darwin.tar.gz",
+        "sha256": "8a232260df7a12c5e83e0b4b7659e1c8d9259b41942517bc0068d8ab55c36461",
+        "entry": "bin/codex"
+      },
+      "claude": {
+        "version": "2.1.326",
+        "url": "https://downloads.claude.ai/claude-code-releases/2.1.326/darwin-arm64/claude",
+        "sha256": "e214ad76dcc0e846b03be28ed1c2734aacd4e27acb527cb7f8a9e2bed644e837"
+      },
+      "antigravity": {
+        "version": "1.5.10",
+        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.10-5253791805734912/darwin-arm/cli_mac_arm64.tar.gz",
+        "sha512": "f192adfc6ca61bc8f0be93b8503c1a0a4e0314f127c9a13fb7e25228343dfbba09ae1a1be083851d9e79a703e535cc19242db44675e40cf7f9a4eaa8cb9b272f",
+        "entry": "antigravity"
+      }
+    }
+  }
+}

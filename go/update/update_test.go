@@ -7,6 +7,8 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fleet/harnessrelease"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -86,7 +88,7 @@ func newFixture(t *testing.T) *fixture {
 }
 
 // release publishes ver; selftest is the exit code of its fleet-executor selftest.
-func (f *fixture) release(ver string, selftest int) {
+func (f *fixture) release(ver string, selftest int, pins ...[]byte) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
@@ -97,6 +99,9 @@ func (f *fixture) release(ver string, selftest int) {
 	tw.WriteHeader(&tar.Header{Name: "./config/", Mode: 0o755, Typeflag: tar.TypeDir})
 	add("./release.json", `{"version":"`+ver+`"}`, 0o644)
 	add("./fleet-executor", "#!/bin/sh\nexit "+string(rune('0'+selftest))+"\n", 0o755)
+	if len(pins) > 0 {
+		add("./config/harness-pins.json", string(pins[0]), 0o644)
+	}
 	tw.Close()
 	gz.Close()
 	file := "fleet-" + ver + "-linux-amd64.tgz"
@@ -479,5 +484,52 @@ func TestInstallLogLine(t *testing.T) {
 	}
 	if strings.Count(logs.String(), "installed") != 2 {
 		t.Fatalf("install lines:\n%s", logs.String())
+	}
+}
+
+func TestManagedCLIRelease(t *testing.T) {
+	// A signed release activates only after the payloads verify. Its predecessor remains usable on rollback.
+	f := newFixture(t)
+	payload := []byte("#!/bin/sh\necho 1.2.3\n")
+	sum := sha256.Sum256(payload)
+	sha := hex.EncodeToString(sum[:])
+	requests := 0
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Write(payload)
+	}))
+	defer provider.Close()
+	f.u.client.Transport = provider.Client().Transport
+	lock := func(digest string) []byte {
+		assets := map[string]harnessrelease.Asset{}
+		for _, name := range []string{"codex", "claude", "antigravity"} {
+			assets[name] = harnessrelease.Asset{Version: "1.2.3", URL: provider.URL, SHA256: digest}
+		}
+		data, err := json.Marshal(map[string]any{"enabled": true, "targets": map[string]any{"linux-amd64": assets}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	const first, rollback, refused = "1.261111.1", "1.261111.2", "1.261111.3"
+	f.release(first, 0, lock(sha))
+	if r := f.run(first); r.State != "ok" || requests != 3 {
+		t.Fatalf("first update: %+v, downloads %d", r, requests)
+	}
+	a := harnessrelease.Asset{SHA256: sha}
+	if st, err := os.Stat(filepath.Join(f.root, a.Executable("codex"))); err != nil || st.Mode().Perm() != 0o555 {
+		t.Fatalf("verified cache executable: %v %v", st, err)
+	}
+	f.release(rollback, 0, lock(sha))
+	f.health[rollback] = down
+	for i := 0; i < 3; i++ {
+		f.run(rollback)
+	}
+	if f.current() != first || requests != 3 {
+		t.Fatalf("rollback to %s, downloads %d", f.current(), requests)
+	}
+	f.release(refused, 0, lock(strings.Repeat("0", 64)))
+	if r := f.run(refused); r.State != "refused" || !strings.Contains(r.Error, "harness-checksum: codex") || f.current() != first {
+		t.Fatalf("corrupt CLI update: %+v, current %s", r, f.current())
 	}
 }

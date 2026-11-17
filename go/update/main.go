@@ -38,8 +38,9 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: fleet-update pds18 | executor | selftest")
+	const usage = "usage: fleet-update pds18 | executor | selftest | prepare-harnesses <release> <releases>"
+	if len(args) != 1 && (len(args) != 3 || args[0] != "prepare-harnesses") {
+		return errors.New(usage)
 	}
 	key, err := publicKey()
 	if err != nil {
@@ -47,6 +48,16 @@ func run(args []string) error {
 	}
 	u := newUpdater(key)
 	switch args[0] {
+	case "prepare-harnesses":
+		if len(args) != 3 {
+			return errors.New(usage)
+		}
+		root, err := openReleases(args[2])
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		return u.prepareHarnesses(&part{r: root, stage: args[2]}, args[1])
 	case "selftest":
 		fmt.Printf("fleet-update %s: selftest ok\n", version)
 		return nil
@@ -55,7 +66,7 @@ func run(args []string) error {
 	case "executor":
 		return u.runExecutor()
 	}
-	return errors.New("usage: fleet-update pds18 | executor | selftest")
+	return errors.New(usage)
 }
 
 func publicKey() (ed25519.PublicKey, error) {

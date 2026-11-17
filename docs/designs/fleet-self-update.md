@@ -399,3 +399,15 @@ Six phases, one pull request each; every phase builds and passes `go test ./...`
 --------------------------------------------------------------------------------
 
 *Drafted with EGM*
+
+## Managed agent CLIs
+
+`config/harness-pins.json` names the Codex, Claude Code and Antigravity versions shipped with a Fleet release. It pins each supported target's official download URL and digest. Linux/amd64 serves native Linux and WSL, and Darwin/arm64 serves the Mac. Platform and account placement still apply. Custom ACP agents use their host account's executable.
+
+Before draining or switching an executor, `fleet-update` verifies and installs the pinned payloads into a cache under its releases root. The running executor resolves managed binaries from its own release manifest and the verified payload's digest. Changing `current` therefore switches Fleet and the CLI versions together, including on rollback. A payload that fails integrity verification follows the existing update refusal and Needs you path. Host env files and account registries are unchanged.
+
+Hosts report the expected and observed versions of the managed binaries. A missing or unreadable executable is shown as unknown. The version reported by a host is not evidence of account or model compatibility.
+
+Roll out the updater support to every host before enabling the manifest. The executor continues to use the host's existing paths while `enabled` is false. Once enabled, it requires the pinned binaries for managed harnesses.
+
+The daily Managed agent CLI releases workflow reads the official Codex, Claude Code and Antigravity release metadata and opens a pull request when both platform targets can advance. The pull request uses the normal review and release path. An older bundled catalogue can omit a server-advertised model, so catalogue absence does not establish incompatibility.

@@ -116,6 +116,10 @@ func (h harness) Command(dir, native string, p map[string]any) (*exec.Cmd, []byt
 		if exe == "" {
 			exe = "codex"
 		}
+		exe, _, err := managedExecutable(n, exe, jStr(p["model"]))
+		if err != nil {
+			return nil, nil, err
+		}
 		c, err := codexExec(dir, native, text, home, account, exe)
 		return c, nil, err
 	}
@@ -258,8 +262,12 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 	} else if has(a, "credentialAuthority") {
 		return fail("unsupported credential authority")
 	}
-	exe, ok := str(jAt(a, "executable"))
-	if !ok {
+	legacy, _ := str(jAt(a, "executable"))
+	exe, managed, err := managedExecutable(h, legacy, jStr(p["model"]))
+	if err != nil {
+		return nil, nil, err
+	}
+	if exe == "" {
 		return fail("host executable missing")
 	}
 	if !filepath.IsAbs(exe) {
@@ -328,6 +336,9 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 		return fail("explicit native model required")
 	}
 	c := newCmd(exe, dir)
+	if managed && h == "claude" {
+		setEnv(c, "DISABLE_AUTOUPDATER", "1")
+	}
 	setEnv(c, "HOME", home)
 	passEnv(c, "PATH", "TMPDIR", "LANG", "SSL_CERT_FILE", "SSL_CERT_DIR")
 	if !hasText {

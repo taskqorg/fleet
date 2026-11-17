@@ -191,6 +191,10 @@ func updateQuestion(q *Request, host string, holder any, r contract.UpdateResult
 	case contract.UpdateStateOk:
 		return exec(q, "UPDATE question SET state='withdrawn',cause=NULL WHERE state='open' AND cause LIKE $1", "update:"+host+":%")
 	case contract.UpdateStateRefused, contract.UpdateStateFailed:
+	case contract.UpdateStateError:
+		if r.Error == nil || !strings.HasPrefix(*r.Error, "managed CLI ") {
+			return nil
+		}
 	default:
 		return nil
 	}
@@ -207,7 +211,7 @@ func updateQuestion(q *Request, host string, holder any, r contract.UpdateResult
 		reason = *r.Error
 	}
 	what := "refused"
-	if r.State == contract.UpdateStateFailed {
+	if r.State == contract.UpdateStateFailed || r.State == contract.UpdateStateError {
 		what = "failed"
 	} else if reason == "unhealthy" {
 		what = "rolled back"

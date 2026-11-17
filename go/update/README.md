@@ -8,6 +8,7 @@
 
 - `fleet-update executor` updates one executor host.
 - `fleet-update pds18` updates the coordinator side, PDS18 executor, and UI independently.
+- `fleet-update prepare-harnesses <release> <releases>` provisions the candidate managed CLI cache for the manual installer.
 - `fleet-update selftest` verifies the compiled-in Ed25519 release-key setup.
 - Linux and macOS trigger helpers write a path watcher for the executor's `update.json` target signal when the matching existing service definition is present.
 
@@ -15,6 +16,7 @@
 
 - Exactly one updater run holds the local lock ([update.go: `lock`](update.go)).
 - A release requires a signed `SHA256SUMS`, a matching artifact digest, the requested version in `release.json`, and successful binary selftests before installation ([update.go: `fetch`](update.go)).
+- Before switching executors, [`harnesses.go`](harnesses.go) installs pinned CLI payloads after digest verification and keeps the current and previous releases' payloads for rollback.
 - Archive extraction permits only local regular-file and directory entries. Installed files become read-only, and release links are changed through temporary symlinks ([update.go: `unpack`, `install`, `relink`](update.go)).
 - A release must become healthy after restart; after three unhealthy starts the updater restores `previous`, records the refusal, and retains the pre-deploy database dump where applicable ([update.go: `settle`, `pruneDumps`](update.go)).
 - After installing a coordinator or UI release and before its restart, the app's source maps go to Bugsink when `/etc/fleet/bugsink/` holds `ci-token` and `ingest-url` (PDS18); a failed upload is only a warning ([sourcemaps.go: `uploadSourcemaps`](sourcemaps.go), [error tracking](../../docs/designs/fleet-error-tracking.md#6-source-maps)).
