@@ -390,18 +390,11 @@
           "result": {
             "tools": [
               {
-                "description": "Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.",
+                "name": "session_start",
+                "description": "Start a new Fleet session in your project: requestId, preset (an id from session_presets) or role (pm|worker|reviewer from the project roles) or profileId, optional access read|write and branch true|false (override the preset; write needs a branch), text (first turn), setup run|skip. You are woken with a message when it finishes.",
                 "inputSchema": {
+                  "type": "object",
                   "properties": {
-                    "account": {
-                      "type": "string"
-                    },
-                    "hostId": {
-                      "type": "string"
-                    },
-                    "profileId": {
-                      "type": "string"
-                    },
                     "projectId": {
                       "type": "string"
                     },
@@ -411,19 +404,54 @@
                     "role": {
                       "type": "string"
                     },
-                    "setup": {
+                    "profileId": {
+                      "type": "string"
+                    },
+                    "account": {
+                      "type": "string"
+                    },
+                    "hostId": {
                       "type": "string"
                     },
                     "text": {
                       "type": "string"
+                    },
+                    "setup": {
+                      "type": "string"
+                    },
+                    "preset": {
+                      "type": "string"
+                    },
+                    "access": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    },
+                    "branch": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
                     "requestId"
-                  ],
-                  "type": "object"
+                  ]
+                }
+              },
+              {
+                "name": "session_presets",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
                 },
-                "name": "session_start"
+                "description": "List your own project's presets for session_start: id, name, what it does, the profile it starts (only profiles your project maps to roles can start), access read|write, branch, starter instruction; unavailable says why one cannot start.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {}
+                }
               },
               {
                 "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
@@ -1814,18 +1842,11 @@
                 "name": "artifact_get"
               },
               {
-                "description": "Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.",
+                "name": "session_start",
+                "description": "Start a new Fleet session in your project: requestId, preset (an id from session_presets) or role (pm|worker|reviewer from the project roles) or profileId, optional access read|write and branch true|false (override the preset; write needs a branch), text (first turn), setup run|skip. You are woken with a message when it finishes.",
                 "inputSchema": {
+                  "type": "object",
                   "properties": {
-                    "account": {
-                      "type": "string"
-                    },
-                    "hostId": {
-                      "type": "string"
-                    },
-                    "profileId": {
-                      "type": "string"
-                    },
                     "projectId": {
                       "type": "string"
                     },
@@ -1835,19 +1856,54 @@
                     "role": {
                       "type": "string"
                     },
-                    "setup": {
+                    "profileId": {
+                      "type": "string"
+                    },
+                    "account": {
+                      "type": "string"
+                    },
+                    "hostId": {
                       "type": "string"
                     },
                     "text": {
                       "type": "string"
+                    },
+                    "setup": {
+                      "type": "string"
+                    },
+                    "preset": {
+                      "type": "string"
+                    },
+                    "access": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    },
+                    "branch": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
                     "requestId"
-                  ],
-                  "type": "object"
+                  ]
+                }
+              },
+              {
+                "name": "session_presets",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
                 },
-                "name": "session_start"
+                "description": "List your own project's presets for session_start: id, name, what it does, the profile it starts (only profiles your project maps to roles can start), access read|write, branch, starter instruction; unavailable says why one cannot start.",
+                "inputSchema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {}
+                }
               },
               {
                 "description": "Ask Fleet to open a PR from a project session branch (fleet/<sessionId>, already pushed) and merge it after checks. Call again with the same sessionId to read the state.",
