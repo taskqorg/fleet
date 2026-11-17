@@ -36,7 +36,8 @@ const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
 // Each stage's norm is its P50 and P90 in delivery_baseline (the last 14 days): the key of the history duration it is.
 // Open, Checks failed and Queue failed have none: people work there, and a failure needs a look at once.
 const NORM_KEY: Partial<Record<Stage, string>> = { pr_ci: 'pr_ci', mq_wait: 'enqueue', mq_ci: 'queue', releasing: 'release', installing: 'install' };
-type Norms = { stage: (s: Stage) => [number, number] | null; total: [number, number] | null };
+/** The norms are the fleet repository's history: other repositories' pull requests have none. */
+type Norms = { stage: (s: Stage, repo?: string) => [number, number] | null; total: [number, number] | null };
 const GROUPS = [['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const;
 const SORTS = [['since', 'In stage since'], ['opened', 'Opened']] as const;
 // System presets (OR-33) set the stage filter only; grouping, sort and search stay.
@@ -92,7 +93,7 @@ export function Delivery({ id }: { id?: string }) {
   const base = baseDoc.data === NONE ? null : baseDoc.data;
   const stat = (k: string) => base?.rolling.stats.find(s => s.key === k);
   const norms: Norms = {
-    stage: s => { const x = NORM_KEY[s] && stat(NORM_KEY[s]!); return x ? [x.p50Ms, x.p90Ms] : null; },
+    stage: (s, repo = FLEET) => { const x = repo === FLEET && NORM_KEY[s] && stat(NORM_KEY[s]!); return x ? [x.p50Ms, x.p90Ms] : null; },
     total: stat('total') ? [stat('total')!.p50Ms, stat('total')!.p90Ms] : null,
   };
   // The recorded history covers the fleet repository only; a 404 (no history kept) or a focus away from fleet hides Pace.
@@ -100,9 +101,11 @@ export function Delivery({ id }: { id?: string }) {
   const data = status.data, items = data?.items ?? [], incomplete = !!data?.error;
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
   const urlRange = deliveryExtra(useUrlView('delivery').view.extra).range ?? '7d';
-  const histDoc = useDoc<{ h: History; r: Regressions } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange : null,
-    () => no404(Promise.all([op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }), op('delivery_regressions', {})]).then(([h, r]) => ({ h, r }))), touchesHistory, 600000);
+  const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange : null,
+    () => no404(op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }).then(h => ({ h }))), touchesHistory, 600000);
   const hist = histDoc.data === NONE ? null : histDoc.data;
+  const regDoc = useDoc<Regressions | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
+  const regressions = regDoc.data === NONE ? [] : regDoc.data?.regressions ?? [];
   const histLoading = !prefsRead.value || fleetShown && histDoc.data === null && !histDoc.error;
   const paceOf = (v: View) => {
     const ex = deliveryExtra(v.extra), range = ex.range ?? '7d', buckets = bucketsOf(range, now, hist?.h.backfilledFrom ? ms(hist.h.backfilledFrom) : undefined);
@@ -116,27 +119,28 @@ export function Delivery({ id }: { id?: string }) {
     const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
     const rowsOf = source.map(row);
     const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo}`, { state: r.it.stage, project: r.it.projectId }));
-    const counts: Record<string, number> = {};
-    for (const s of ORDER) counts[s] = searched.filter(r => r.it.stage === s).length;
+    const counts: Record<string, number> = Object.fromEntries(ORDER.map(s => [s, 0]));
+    for (const r of searched) counts[r.it.stage]++;
     const st = v.state ?? [], group = v.group ?? DEFAULT_DELIVERY_GROUP, sort = v.sort ?? DEFAULT_DELIVERY_SORT;
     const desc = sort.startsWith('-'), field = desc ? sort.slice(1) : sort;
     const key = (r: Row) => ms(field === 'opened' ? r.it.opened : r.it.since) || 0;
     const gkey = (r: Row) => group === 'stage' ? r.it.stage : group === 'project' ? r.it.projectId || '' : '';
-    const order = group === 'stage' ? ORDER as string[] : [...new Set(searched.map(gkey))].sort();
+    const order = group === 'stage' ? ORDER as string[] : [...new Set(searched.map(gkey))].sort(), at = new Map(order.map((k, i) => [k, i]));
     // The order key carries the direction, as a server list's does, so pinned rows (compareKeys) follow it too.
     const keyed = (r: Row): Row => ({ ...r, sortKey: [gkey(r), desc ? -key(r) : key(r)] });
     const rows = searched.filter(r => !st.length || st.includes(r.it.stage)).map(keyed)
-      .sort((a, b) => order.indexOf(String(a.sortKey[0])) - order.indexOf(String(b.sortKey[0])) || (a.sortKey[1] as number) - (b.sortKey[1] as number));
-    const groups = order.map(k => ({ key: k, label: group === 'stage' ? states.delivery[k as Stage].label : k || 'No project', count: rows.filter(r => r.sortKey[0] === k).length })).filter(g => g.count);
+      .sort((a, b) => at.get(String(a.sortKey[0]))! - at.get(String(b.sortKey[0]))! || (a.sortKey[1] as number) - (b.sortKey[1] as number));
+    const per = new Map<string, number>();
+    for (const r of rows) per.set(String(r.sortKey[0]), (per.get(String(r.sortKey[0])) ?? 0) + 1);
+    const groups = order.filter(k => per.has(k)).map(k => ({ key: k, label: group === 'stage' ? states.delivery[k as Stage].label : k || 'No project', count: per.get(k)! }));
     // Pinned rows stay whatever the filter or the picked day (OR-12): the current rows and the day's, in the page's order.
     const current = items.map(row), ids = new Set(current.map(r => r.id));
     const all = [...current, ...rowsOf.filter(r => !ids.has(r.id))].map(keyed);
-    return { rows, all, counts, groups, pending: !data && !status.error || !!picked && histLoading, error: status.error && !data ? status.error : null, reload: status.reload };
+    return { rows, all, counts, groups, total: rowsOf.length, pending: !data && !status.error || !!picked && histLoading, error: status.error && !data ? status.error : null, reload: status.reload };
   };
   const page = useListPage<Row>({
     view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: ['installed'],
-    defaultGroup: DEFAULT_DELIVERY_GROUP, defaultSort: DEFAULT_DELIVERY_SORT, system: SYSTEM_VIEWS,
-    pinDoc: 'delivery-pins', pinRead: () => ({ key: [], filter: {} }), pinTouches: () => false, groupLabel: (_g, l) => l ?? '',
+    defaultGroup: DEFAULT_DELIVERY_GROUP, defaultSort: DEFAULT_DELIVERY_SORT, system: SYSTEM_VIEWS, groupLabel: (_g, l) => l ?? '',
   });
   const { view, set } = page;
   const { ex, range, buckets, picked } = paceOf(view);
@@ -169,18 +173,18 @@ export function Delivery({ id }: { id?: string }) {
       facts={r => <RowFacts>
         {r.it.repo !== FLEET && <Fact text={r.it.repo} tip="Repository" />}
         {r.it.release && <Fact text={r.it.release.replace(/^v/, '')} tip="Release" />}
-        <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} now={now} alertAfter={alertOf(norms, r.it.stage)} alertLabel="past the stage's P90" /></Fact>
+        <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} now={now} alertAfter={alertOf(norms, r.it)} alertLabel="past the stage's P90" /></Fact>
       </RowFacts>} />
   </>;
   return <ListDetail list={list} detailKey={id}
-    idle={<Overview now={now} items={items} incomplete={incomplete} norms={norms} hist={hist} histError={histDoc.error} fleetShown={fleetShown && histDoc.data !== NONE}
+    idle={<Overview now={now} items={items} incomplete={incomplete} norms={norms} hist={hist} regressions={regressions} histError={histDoc.error} fleetShown={fleetShown && histDoc.data !== NONE}
       range={range} buckets={buckets} picked={p} href={it => page.href({ focus: idOf(it) })} onOpen={go}
       onRange={r => setPace({ range: r, at: undefined })} onPick={k => setPace({ at: ex.at === k ? undefined : k })} />}
     detail={id ? <PrDetail key={id} id={id} item={open} now={now} norms={norms} onClose={() => go()} /> : undefined} />;
 }
 
 /** Seconds in a stage after which its time is red: the stage's P90 over the last 14 days; none for stages without a norm. */
-const alertOf = (n: Norms, s: Stage) => { const x = n.stage(s); return x ? x[1] / 1000 : undefined; };
+const alertOf = (n: Norms, it: Item) => { const x = n.stage(it.stage, it.repo); return x ? x[1] / 1000 : undefined; };
 
 /** A recorded (merged) pull request as a list row: its stage from how far it got. */
 function fromHistory(x: HistoryPr): Item {
@@ -189,19 +193,19 @@ function fromHistory(x: HistoryPr): Item {
 }
 
 /** The work area while no pull request is open: what needs a look, what moves now, the pace. */
-function Overview({ now, items, incomplete, norms, hist, histError, fleetShown, range, buckets, picked, onRange, onPick, onOpen, href }: {
-  now: number; items: Item[]; incomplete: boolean; norms: Norms; hist: { h: History; r: Regressions } | null; histError: string | null; fleetShown: boolean;
+function Overview({ now, items, incomplete, norms, hist, regressions, histError, fleetShown, range, buckets, picked, onRange, onPick, onOpen, href }: {
+  now: number; items: Item[]; incomplete: boolean; norms: Norms; hist: { h: History } | null; regressions: Regressions['regressions']; histError: string | null; fleetShown: boolean;
   range: string; buckets: Bucket[]; picked: Bucket | null; onRange: (r: string) => void; onPick: (k: string) => void; onOpen: (it: Item) => void; href: (it: Item) => string;
 }) {
   const moving = ORDER.filter(s => !DONE.includes(s)).flatMap(s => items.filter(it => it.stage === s));
-  const over = (it: Item) => { const n = norms.stage(it.stage); return !!n && now - ms(it.since) > n[1]; };
+  const over = (it: Item) => { const n = norms.stage(it.stage, it.repo); return !!n && now - ms(it.since) > n[1]; };
   const failed = items.filter(it => FAILED.includes(it.stage)), stuck = moving.filter(over);
   const look = [
-    ...(hist?.r.regressions ?? []).map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
+    ...regressions.map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
       facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />),
     ...failed.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={`${it.title} · ${fmt(Math.max(0, now - ms(it.since)))} ago`}
       actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
-    ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it.stage)![1])}`}
+    ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it.stage, it.repo)![1])}`}
       facts={it.title} actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
   ];
   return <div class="stack-pad" data-ui="delivery-overview">
@@ -209,13 +213,13 @@ function Overview({ now, items, incomplete, norms, hist, histError, fleetShown, 
     <DetailSection title="Moving now">
       {!moving.length ? <Empty text={incomplete ? 'Unavailable. GitHub data is incomplete.' : 'Nothing in flight.'} />
         : <div class="vl-wrap" role="grid" aria-label="Pull requests in flight" style={{ '--cols': '1.25rem 3.5rem minmax(0,1fr) minmax(0,1.3fr) 2.75rem 4.5rem' }}>{moving.map(it => {
-          const n = norms.stage(it.stage), el = Math.max(0, now - ms(it.since)), red = over(it);
+          const n = norms.stage(it.stage, it.repo), el = Math.max(0, now - ms(it.since)), red = over(it);
           return <div key={idOf(it)} class="vl-row static" role="row">
             <span class="lead"><StateBadge family="delivery" state={it.stage} compact /></span>
             <a class="mono row-link" href={href(it)} onClick={e => { e.preventDefault(); onOpen(it); }}>#{it.number}</a>
             <span class="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</span>
             <NormBar elapsed={el} p50={n?.[0]} p90={n?.[1]} label={`${states.delivery[it.stage].label} #${it.number}`} value={fmt} />
-            <span class="r"><AgeChip t={ms(it.since)} now={now} alertAfter={alertOf(norms, it.stage)} alertLabel="past the stage's P90" /></span>
+            <span class="r"><AgeChip t={ms(it.since)} now={now} alertAfter={alertOf(norms, it)} alertLabel="past the stage's P90" /></span>
             <span class={`r mono type-sm${red ? ' t-danger' : ' muted'}`} style={red ? { color: 'var(--tone-fg)' } : undefined}
               data-tip={n ? `${states.delivery[it.stage].label}: P50 ${fmt(n[0])}, P90 ${fmt(n[1])} over 14 days` : undefined}>{n ? `P90 ${fmt(n[1])}` : 'no norm'}</span>
           </div>;
@@ -330,7 +334,7 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
         <DetailSection title="Now">
           <KvRow icon={states.delivery[item.stage].icon} label={states.delivery[item.stage].label}
             meta={item.stage === 'pr_failed' ? 'the last checks on its head failed' : item.stage === 'mq_failed' ? 'its last merge-queue run failed; it left the queue' : undefined}
-            value={<AgeChip t={ms(item.since)} now={now} alertAfter={alertOf(norms, item.stage)} alertLabel="past the stage's P90" />} />
+            value={<AgeChip t={ms(item.since)} now={now} alertAfter={alertOf(norms, item)} alertLabel="past the stage's P90" />} />
           {item.opened && <KvRow icon="git-pull-request" label="Opened" value={<AgeChip t={ms(item.opened)} now={now} />} />}
         </DetailSection>
         <p class="muted type-sm">{fleet ? 'The stage history is recorded once the pull request merges.' : 'Stage history is recorded for the fleet repository only.'}</p>

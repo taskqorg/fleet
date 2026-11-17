@@ -354,11 +354,12 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			latest[k] = r
 		}
 	}
-	failedAt, headFrom := map[string]string{}, map[string]string{}
+	failedAt, headFrom, checkedAt := map[string]string{}, map[string]string{}, map[string]string{}
 	for k, r := range latest {
 		if (r.Conclusion == "failure" || r.Conclusion == "timed_out") && r.UpdatedAt > failedAt[k.sha] {
 			failedAt[k.sha] = r.UpdatedAt
 		}
+		checkedAt[k.sha] = max(checkedAt[k.sha], r.UpdatedAt)
 	}
 	// When a head was first checked: a head first checked after a queue failure is a new commit, the fix.
 	for _, r := range g.finished {
@@ -432,7 +433,8 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			// Removed from the queue and not set to enter it again, and its head is no newer: it waits on a person.
 			out = append(out, item(p, contract.DeliveryStageMqFailed, at))
 		} else if p.AutoMerge != nil {
-			out = append(out, item(p, contract.DeliveryStageMqWait, p.CreatedAt))
+			// Waiting to enter the queue since its head's checks finished (the enqueue norm's start), else since it opened.
+			out = append(out, item(p, contract.DeliveryStageMqWait, max(p.CreatedAt, checkedAt[p.Head.SHA])))
 		} else {
 			out = append(out, item(p, contract.DeliveryStagePrOpen, p.CreatedAt))
 		}

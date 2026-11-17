@@ -23,6 +23,7 @@ export type ListRow = { id: string; code?: string | null; sortKey: (string | num
  * place of a server list kind. `rows` are in group order, each row's sortKey[0] its group key; `all` is unfiltered (pins).
  */
 export type LocalList<R> = { rows: R[]; all: R[]; counts: Record<string, number>; groups: { key: string; label: string; count: number }[];
+  /** Rows before the search and the state filter: the "of M" of the count. */ total: number;
   pending: boolean; error: string | null; reload: () => void };
 export type ListItem<R> = { kind: 'group'; key: string; label: string; count: number; icon?: 'pin' } | { kind: 'row'; r: R; pinned?: boolean };
 type MenuItems = Parameters<typeof ContextMenu>[0]['items'];
@@ -43,12 +44,12 @@ export type ListPageOptions = {
   defaultSort: string;
   /** System presets (OR-33): fixed, shown before the person's views; each sets the state filter only. */
   system: SavedView[];
-  /** Doc name prefix of the pin read. */
-  pinDoc: string;
+  /** Doc name prefix of the pin read (server lists; a local list finds pinned rows in its own rows). */
+  pinDoc?: string;
   /** The pin read's filter, and the parts of the view it depends on (added to the doc name). */
-  pinRead: (v: View) => { key: unknown[]; filter: Record<string, unknown> };
+  pinRead?: (v: View) => { key: unknown[]; filter: Record<string, unknown> };
   /** Whether a change touches a pinned row. */
-  pinTouches: (c: Change, pinned: (id: string) => boolean) => boolean;
+  pinTouches?: (c: Change, pinned: (id: string) => boolean) => boolean;
   groupLabel: (group: string, label: string | null) => string;
   /** A saved personal view as it is matched and restored (e.g. a default for a key older views lack). */
   savedView?: (v: View) => View;
@@ -99,7 +100,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   useEffect(() => { if (firstList.current) { firstList.current = false; return; } setSelectOn(false); setConfirm(null); setBulkError(null); }, [o.listId?.(view)]);
   // Pinned rows stay in the list whatever the filter, search or grouping (OR-12): they are read by id with the page's pin
   // filter and live through row changes; the filtered page supplies the rest.
-  const pinRead = o.pinRead(view);
+  const pinRead = o.pinRead?.(view) ?? { key: [], filter: {} };
   const pinnedDoc = useDoc<R[]>(pins.ids.length && !local ? JSON.stringify([o.pinDoc, pins.ids, sort, ...pinRead.key]) : null,
     async () => {
       const found: R[] = [];
@@ -109,7 +110,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
         found.push(...reply.lists[0].rows as unknown as R[]);
       }
       return found;
-    }, c => o.pinTouches(c, pins.has));
+    }, c => !!o.pinTouches?.(c, pins.has));
   const byId = new Map(((local?.all as R[] | undefined) ?? pinnedDoc.data ?? []).map(r => [r.id, r]));
   // The page supplies a just-pinned row while its independent read is pending. Its grouping key is irrelevant here.
   const pinned = pins.ids.map(x => byId.get(x) ?? rows.find(r => r.id === x))
@@ -176,7 +177,7 @@ export type ListPage<R extends ListRow> = ReturnType<typeof useListPage<R>>;
 /** A page-built list in the shape useList returns: always loaded, one page, counts from the page. */
 function localList(l: LocalList<ListRow>, view: View) {
   return {
-    rows: l.rows as unknown as ReturnType<typeof useList>['rows'], counts: l.counts, total: Object.values(l.counts).reduce((a, b) => a + b, 0), groups: l.groups, at: 0, error: l.error,
+    rows: l.rows as unknown as ReturnType<typeof useList>['rows'], counts: l.counts, total: l.total, groups: l.groups, at: 0, error: l.error,
     pending: l.pending, shownKey: l.pending && !l.rows.length ? null : listKey(view), shownView: view, more: () => Promise.resolve(), reload: () => { l.reload(); return Promise.resolve(); },
     state: 'current' as const,
   };

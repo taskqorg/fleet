@@ -36,7 +36,9 @@ func TestDeliveryStages(t *testing.T) {
 			{Number: 9, CreatedAt: "2026-11-12T10:00:00Z", Head: struct {
 				SHA string `json:"sha"`
 			}{"h9"}},
-			{Number: 14, CreatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}},
+			{Number: 14, CreatedAt: "2026-11-12T10:00:00Z", AutoMerge: map[string]any{}, Head: struct {
+				SHA string `json:"sha"`
+			}{"h14"}},
 			{Number: 15, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 16, CreatedAt: "2026-11-12T10:00:00Z"},
 			{Number: 17, CreatedAt: "2026-11-12T10:00:00Z"},
@@ -69,6 +71,7 @@ func TestDeliveryStages(t *testing.T) {
 			{Event: "pull_request", Conclusion: "success", HeadSHA: "h8", CreatedAt: "2026-11-12T10:20:00Z", UpdatedAt: "2026-11-12T10:30:00Z"},
 			{Event: "pull_request", Conclusion: "success", HeadSHA: "h9", CreatedAt: "2026-11-12T11:00:00Z", UpdatedAt: "2026-11-12T11:05:00Z"},
 			{Event: "pull_request", Conclusion: "success", HeadSHA: "h18", CreatedAt: "2026-11-12T10:05:00Z", UpdatedAt: "2026-11-12T11:30:00Z"},
+			{Event: "pull_request", Conclusion: "success", HeadSHA: "h14", CreatedAt: "2026-11-12T10:05:00Z", UpdatedAt: "2026-11-12T10:20:00Z"},
 		},
 		runs: []ghRun{
 			{Event: "pull_request", Status: "in_progress", HeadSHA: "h2", CreatedAt: "2026-11-12T11:00:00Z"},
@@ -98,7 +101,7 @@ func TestDeliveryStages(t *testing.T) {
 		if want[it.Number] != it.Stage {
 			t.Errorf("#%d stage %s, want %s", it.Number, it.Stage, want[it.Number])
 		}
-		if it.Number == 6 && it.Since != "2026-11-12T11:30:00Z" || it.Number == 8 && it.Since != "2026-11-12T11:15:00Z" {
+		if it.Number == 6 && it.Since != "2026-11-12T11:30:00Z" || it.Number == 8 && it.Since != "2026-11-12T11:15:00Z" || it.Number == 14 && it.Since != "2026-11-12T10:20:00Z" || it.Number == 5 && it.Since != "2026-11-12T10:00:00Z" {
 			t.Errorf("#%d failed since %s", it.Number, it.Since)
 		}
 		if it.Number < 10 && deref(it.Opened) != "2026-11-12T10:00:00Z" || it.Number == 12 && deref(it.Merged) != "2026-11-12T11:00:00Z" {
