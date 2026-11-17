@@ -29,6 +29,9 @@ func watchSet(q *Request, b doc) (doc, error) {
 	} else if err := directs(q, s); err != nil {
 		return nil, err
 	}
+	if err := taskAllowsWork(q, firstString(s["deliveryId"], s["taskId"])); err != nil {
+		return nil, err
+	}
 	kinds := strList(b["kinds"])
 	if xs, _ := b["kinds"].([]any); len(kinds) == 0 || len(kinds) != len(xs) {
 		return nil, fail(400, "Expected kinds: task, question, execution, host, limits")
@@ -137,7 +140,14 @@ func watchOne(q *Request, wid string) error {
 	if err != nil {
 		return err
 	}
-	if s == nil {
+	cancelled := false
+	if task := firstString(s["deliveryId"], s["taskId"]); task != "" {
+		cancelled, err = has(q, "SELECT 1 FROM task WHERE id=$1 AND state='cancelled'", task)
+		if err != nil {
+			return err
+		}
+	}
+	if s == nil || cancelled {
 		return exec(q, "DELETE FROM document WHERE kind='watch' AND id=$1", wid)
 	}
 	// PM busy: a wake still queued covers everything; keep the cursor (step 6).

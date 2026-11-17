@@ -371,6 +371,8 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 	return out, err
 }
 
+var stopWithheldKinds = []string{"start", "input", "script", "steer", "delivery-step"}
+
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
 func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
@@ -378,9 +380,32 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
 	if err != nil || !ok {
 		return nil, err
 	}
+	if inList(stopWithheldKinds, astr(c["kind"])) {
+		// This row lock is shared with stop. A committed poll may have
+		// reached the executor even when its HTTP response is lost.
+		locked, err := has(wq, "SELECT 1 FROM execution WHERE id=$1 FOR UPDATE SKIP LOCKED", c["executionId"])
+		if err != nil {
+			return nil, err
+		}
+		if !locked {
+			// A busy row is retried. A missing row still goes through
+			// the poll's permanent 404 refusal and retires its command.
+			_, err := get(wq, c["executionId"], "execution")
+			return nil, err
+		}
+		c, err = get(wq, c["id"], "command")
+		if err != nil || c["status"] != "pending" {
+			return nil, err
+		}
+	}
 	e, err := get(wq, c["executionId"], "execution")
 	if err != nil {
 		return nil, err
+	}
+	// A previously handed-out start may already be in flight. Stop it on its
+	// owning host, while withholding further delivery of work after the stop.
+	if e["taskStopRequested"] == true && inList(stopWithheldKinds, astr(c["kind"])) {
+		return nil, nil
 	}
 	// Held-host trust: work that carries project content goes only to a host whose holder may see the project.
 	if k := astr(c["kind"]); k == "start" || k == "script" || k == "delivery-step" {
@@ -397,7 +422,15 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
 	if ok, err := handoffPipelineCommand(wq, e, c); err != nil || !ok {
 		return nil, err
 	}
-	return get(wq, c["id"], "command")
+	if c["handedOut"] == false {
+		if err := exec(wq, `UPDATE document SET data=data||'{"handedOut":true}'::jsonb,updated_at=now()
+			WHERE kind='command' AND id=$1`, c["id"]); err != nil {
+			return nil, err
+		}
+	}
+	out, err := get(wq, c["id"], "command")
+	delete(out, "handedOut") // coordinator-only delivery fence, keep executor replays byte-identical
+	return out, err
 }
 
 // pollCommandRefusal: what a command's failed preparation does. The command's own lasting failure (an authorization

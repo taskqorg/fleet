@@ -96,6 +96,8 @@ After execution failure, retain the error and follow project rules: continue aut
 
 Pause and cancellation prevent new steps. Show running operations and whether they can be stopped; cancellation requests their stop. Neither action proves immediate execution termination.
 
+A host command issued before cancellation may already be in flight. Withhold further delivery of work for that execution, request stop on its owning host, and keep its last known state until execution evidence arrives.
+
 Neither pause nor cancellation rolls back completed external effects. Rollback requires a separate decision.
 
 ### Agent execution

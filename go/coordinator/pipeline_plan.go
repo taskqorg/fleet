@@ -978,6 +978,13 @@ func restorePipelineValue(current, snapshot any) any {
 func runPipelineTransition(ctx context.Context, a *App, run doc, fn func(*Request) error) error {
 	snapshot := restorePipelineValue(nil, run)
 	return runTx(ctx, a, nil, true, "", func(q *Request) error {
+		cancelled, err := has(q, "SELECT 1 FROM execution WHERE id=$1 AND state='cancelled'", run["id"])
+		if err != nil {
+			return err
+		}
+		if cancelled {
+			return fail(409, "Pipeline is cancelled")
+		}
 		onEnd(q.tx, func(committed bool) {
 			if !committed {
 				restorePipelineValue(run, snapshot)

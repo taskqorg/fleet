@@ -496,7 +496,8 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	// Caller lineage is server-derived, never a pipeline parameter.
 	if strings.HasPrefix(q.agent, "execution:") {
 		source := strings.TrimPrefix(q.agent, "execution:")
-		parent, e := first(q, "SELECT project_id,task_id,session_id,directed_by FROM execution WHERE id=$1", source)
+		parent, e := first(q, `SELECT e.project_id,coalesce(e.task_id,s.data->>'taskId') AS task_id,e.session_id,e.directed_by
+			FROM execution e LEFT JOIN document s ON s.kind='session' AND s.id=e.session_id WHERE e.id=$1`, source)
 		if e != nil {
 			return nil, e
 		}
@@ -534,6 +535,9 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	}
 	for k, v := range mapOf(o["extra"]) {
 		run[k] = v
+	}
+	if err := taskAllowsWork(q, firstString(run["deliveryId"], run["taskId"])); err != nil {
+		return nil, err
 	}
 	if o["rerunOf"] != nil {
 		run["rerunOf"], run["reused"] = o["rerunOf"], reused
@@ -710,7 +714,9 @@ func pipelineCancel(ctx context.Context, a *App, runID string) (string, error) {
 	return own, err
 }
 
-// pipelineCancelIn is called under runLock and a write transaction. Caller handles post-commit notification/stop.
+// pipelineCancelIn uses GLOBAL to fence durable transitions. A driver that
+// already holds a snapshot rechecks the stored run before writing it back.
+// The caller handles post-commit notification and a handed-off native stop.
 func pipelineCancelIn(q *Request, runID string) (string, doc, error) {
 	run, err := getRun(q, runID)
 	if err != nil || run == nil || run["state"] != "running" {
@@ -1037,7 +1043,7 @@ func startScript(q *Request, run doc, stepExecutionID, command string, timeout a
 	if timeout != nil {
 		payload["timeout_ms"] = timeout
 	}
-	return id, put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": hostID, "kind": "script", "payload": payload, "status": "pending"})
+	return id, put(q, "command", doc{"id": newID(), "executionId": id, "sessionId": sid, "hostId": hostID, "kind": "script", "payload": payload, "status": "pending", "handedOut": false})
 }
 
 // connCallFor: one provider call with a token minted for the step row, revoked after the call; the gateway's spool line
