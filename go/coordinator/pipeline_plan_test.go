@@ -343,7 +343,7 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 	env.registerHost(t, "plan-host")
 	ids := map[string]string{}
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		for _, id := range []string{"legacy", "removed", "current"} {
+		for _, id := range []string{"legacy", "removed", "ended", "current"} {
 			run := planFixture(t, id)
 			if err := putRun(q, run); err != nil {
 				return err
@@ -379,6 +379,9 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 				ids[id+":"+kind] = astr(c["id"])
 			}
 		}
+		if err := exec(q, "UPDATE execution SET state='succeeded',ended_at=now() WHERE id='ended'"); err != nil {
+			return err
+		}
 		if err := exec(q, "DELETE FROM execution WHERE id='removed'"); err != nil {
 			return err
 		}
@@ -398,36 +401,27 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 	for _, c := range out {
 		got[astr(c["id"])] = true
 	}
-	for _, want := range []string{"legacy:teardown", "current:teardown", "current:script", "current:steer", "current:input"} {
-		if !got[ids[want]] {
-			t.Fatal("not delivered:", want, out)
+	for _, id := range []string{"legacy", "removed", "ended", "current"} {
+		for _, kind := range []string{"teardown", "input"} {
+			if !got[ids[id+":"+kind]] {
+				t.Fatal("not delivered:", id, kind, out)
+			}
 		}
 	}
-	for _, kind := range []string{"teardown", "steer", "input"} {
-		if got[ids["removed:"+kind]] {
-			t.Fatal("abandoned execution's", kind, "was delivered")
-		}
-	}
-	for _, id := range []string{"legacy", "removed"} {
-		if got[ids[id+":script"]] {
-			t.Fatal(id, "run's script was delivered")
-		}
+	if !got[ids["current:script"]] || !got[ids["current:steer"]] {
+		t.Fatal("current run's script or steer was not delivered", out)
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
-		for _, id := range []string{"legacy", "removed"} {
+		for _, id := range []string{"legacy", "removed", "ended"} {
+			if got[ids[id+":script"]] {
+				return fmt.Errorf("%s run's script was delivered", id)
+			}
 			c, err := get(q, ids[id+":script"], "command")
 			if err != nil {
 				return err
 			}
 			if c["status"] != "stopped" || c["stopDetail"] == nil {
 				return fmt.Errorf("%s script command is %v (%v), want stopped with a reason", id, c["status"], c["stopDetail"])
-			}
-			e, err := get(q, ids[id+":native"], "execution")
-			if err != nil {
-				return err
-			}
-			if !terminal(e) {
-				return fmt.Errorf("%s native execution stays %v", id, e["state"])
 			}
 		}
 		return nil

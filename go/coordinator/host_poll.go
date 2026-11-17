@@ -343,9 +343,6 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			if err != nil {
 				return err
 			}
-			if fresh["status"] != "pending" {
-				continue // settled by an earlier command of this poll (an abandoned execution stops its commands)
-			}
 			out = append(out, fresh)
 		}
 		return nil

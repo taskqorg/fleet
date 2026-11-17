@@ -328,22 +328,21 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 	if !txHasLock(q.tx, GLOBAL) {
 		return false, nil // a stale poll preflight waits for the next correctly fenced poll
 	}
-	// A command that can never be handed off is settled here, never answered as an error: an error fails the
-	// whole poll, so the host would get no other command and no update target.
+	// A command that can never be handed off is stopped with its reason, never answered as an error: an error
+	// fails the whole poll, so the host would get no other command and no update target. Its execution is left
+	// to its engine and the lost-host sweep, as before.
 	run, err := getRun(q, astr(execution["pipelineRunId"]))
-	if pipelineFormatUnsupported(err) || err == nil && run == nil {
-		// No engine will advance a run from before plans or a removed run: its execution is abandoned too.
-		reason := "pipeline run format unsupported"
-		if err == nil {
-			reason = "pipeline run removed"
-		}
-		if _, err := executionAbandon(q, astr(execution["id"]), reason, "fleet"); err != nil {
-			return false, err
-		}
-		return false, stopPipelineCommand(q, command, reason)
+	if pipelineFormatUnsupported(err) {
+		return false, stopPipelineCommand(q, command, "pipeline run format unsupported")
 	}
 	if err != nil {
 		return false, err
+	}
+	if run == nil {
+		return false, stopPipelineCommand(q, command, "pipeline run removed")
+	}
+	if terminalTyped[astr(run["state"])] {
+		return false, stopPipelineCommand(q, command, "pipeline run ended")
 	}
 	index := pipelineStepIndex(run, astr(execution["pipelineStepId"]))
 	if run["state"] != "running" || index < 0 {
