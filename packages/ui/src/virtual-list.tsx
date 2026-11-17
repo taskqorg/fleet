@@ -54,6 +54,23 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   const requested = useRef<{ key: string; offsetPx?: number; align?: 'start' | 'center' | 'end' } | null>(null);
   const prev = useRef<{ keys: Set<string>; atEdge: boolean; top: number }>({ keys: new Set(p.items.map(p.getKey)), atEdge: true, top: 0 });
 
+  const atEdge = () => {
+    const el = scroller.current;
+    if (!el) return true;
+    return p.follow === 'top' ? el.scrollTop < 2 : el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+  };
+  // Read the old DOM before rendering the new window. A scroll event may still be pending, and shrinking the
+  // window can clamp scrollTop during the DOM update. Clamping must not be counted as a second scroll.
+  const elBeforeRender = scroller.current;
+  if (elBeforeRender) {
+    const top = elBeforeRender.scrollTop;
+    if (Math.abs(top - prev.current.top) > 1) {
+      if (anchor.current) anchor.current.delta -= top - prev.current.top;
+      prev.current.atEdge = atEdge();
+      prev.current.top = top;
+    }
+  }
+
   const opts = {
     count: p.items.length,
     getScrollElement: () => scroller.current,
@@ -70,11 +87,6 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   useLayoutEffect(() => v._didMount(), []);
   useLayoutEffect(() => { v._willUpdate(); });
 
-  const atEdge = () => {
-    const el = scroller.current;
-    if (!el) return true;
-    return p.follow === 'top' ? el.scrollTop < 2 : el.scrollHeight - el.scrollTop - el.clientHeight < 2;
-  };
   const capture = () => {
     const el = scroller.current;
     const first = el ? v.getVirtualItemForOffset(el.scrollTop) : undefined;
@@ -83,26 +95,14 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (el) prev.current.top = el.scrollTop;
     if (prev.current.atEdge && unseen) setUnseen(0);
   };
-  // A scroll whose event has not run yet (it fires on the next frame): a render in between must not use the captured
-  // anchor and edge as they were before it, or it undoes the scroll (the view pulled back to the end, the next row
-  // followed instead of counted). The anchor row moved by the same distance; the edge is read again, except for a
-  // bottom list whose position moved down, where only its own scroll event can tell rows appended below from a scroll.
-  const sync = () => {
-    const el = scroller.current; if (!el) return;
-    const d = el.scrollTop - prev.current.top; if (Math.abs(d) <= 1) return;
-    if (anchor.current) anchor.current.delta -= d;
-    prev.current.top = el.scrollTop;
-    if (p.follow === 'top' || d < 0) prev.current.atEdge = atEdge();
-  };
   // This control's own scroll writes (to the end, an anchor kept, a restore) move the position before their scroll
-  // event too: record it, so sync() counts only a move nobody here made.
+  // event too. Record them so the next render does not count them twice.
   const wrote = () => { const el = scroller.current; if (el) prev.current.top = el.scrollTop; };
 
   // Runs before paint whenever items change: keep the anchor row where it was, or follow the edge.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    sync();
     // ponytail: O(n) key diff per update; switch to a server-provided "new since" count if lists reach millions client-side.
     // New rows counted for the pill: for 'bottom' (threads) the rows after the last row already shown; for 'top' (newest-first
     // lists, possibly grouped) the rows placed before the last old row. Rows paged in on the far side (older history) are not new.
@@ -130,7 +130,6 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
 
   // Viewport and measured heights can change without a new items array.
   useLayoutEffect(() => {
-    sync();
     if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) { v.scrollToEnd(); wrote(); }
   });
 
@@ -138,6 +137,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     setUnseen(0);
     if (p.follow === 'top') scroller.current?.scrollTo({ top: 0 });
     else if (p.items.length) v.scrollToIndex(p.items.length - 1, { align: 'end' });
+    capture();
   };
 
   // Apply imperative restoration after this control's own anchor/layout work, before edge loading.

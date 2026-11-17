@@ -79,5 +79,16 @@ test('mounted top VirtualList keeps the row being read when an insert overtakes 
     await page.waitForTimeout(100);
     assert.equal(await rowTop('row-20'), 0, 'the row being read stays where the scroll put it');
     assert.equal(await page.locator('.pill').textContent(), '1 new');
+    // A smaller window clamps scrollTop before layout effects, even though this reader did not move.
+    await grid.evaluate(el => { el.scrollTop = 5760; });
+    await grid.locator('[data-key="row-179"]').waitFor();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await rowTop('row-179'), 0, 'the reader is at row 179 before the window shrinks');
+    await page.evaluate(() => { const w = window as any; w.items = ['new', ...w.items.slice(61)]; w.draw(); });
+    await page.waitForFunction(() => {
+      const grid = document.querySelector('.vl')!;
+      const row = grid.querySelector('[data-key="row-179"]');
+      return row && Math.abs(row.getBoundingClientRect().top - grid.getBoundingClientRect().top) <= 1;
+    }, null, {timeout: 1500});
   } finally { await browser.close(); }
 });
