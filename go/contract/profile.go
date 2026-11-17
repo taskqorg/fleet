@@ -11,6 +11,9 @@ import (
 	"strings"
 )
 
+// ExecutorMCPServers are the MCP server names the executor gives a launch itself; a granted connection may not take one.
+var ExecutorMCPServers = []string{"fleet", "code", "design-rules", "project-browser", "project-forge"}
+
 // ParseProfile decodes an agent profile (contracts/profile.schema.json) and checks the rules the schema subset cannot
 // say. It is the one validator: the coordinator runs it on config/agents/*.json, the executor before any spawn, so a
 // profile the coordinator dispatches is never refused on the host.
@@ -115,6 +118,14 @@ func (p Profile) check() error {
 	if badArg(p.Id) || len(p.Id) > 80 || badArg(p.Model) || len(p.Instructions) > 16384 {
 		return errors.New("unsupported agent profile: id, model or instructions")
 	}
+	if p.CodeMode != nil && !p.CodeMode.Valid() {
+		return errors.New("codeMode must be add or only")
+	}
+	// fleetTools defaults to true in the executor; without it (the fleet server) and without a connection, code mode
+	// has nothing to bridge.
+	if p.CodeMode != nil && p.FleetTools != nil && !*p.FleetTools && len(p.Connections) == 0 {
+		return errors.New("codeMode needs Fleet tools or a connection")
+	}
 	seenServers := map[string]bool{}
 	for _, server := range p.McpServers {
 		if seenServers[server.Id] {
@@ -122,7 +133,7 @@ func (p Profile) check() error {
 		}
 		seenServers[server.Id] = true
 		if server.Id != "design-rules" {
-			if !grantID.MatchString(server.Id) || server.Id == "fleet" || server.Id == "connection" || len(server.Data) != 1 {
+			if !grantID.MatchString(server.Id) || slices.Contains(ExecutorMCPServers, server.Id) || server.Id == "connection" || len(server.Data) != 1 {
 				return errors.New("MCP grant needs a unique named connection and explicit tools only")
 			}
 			var tools []string

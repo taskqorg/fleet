@@ -353,6 +353,9 @@ func init() {
 		if !connName.MatchString(name) || providers[provider] == nil || !keysOnly(b, "name", "provider", "holder", "comment") {
 			return nil, fail(400, "Expected name and a known provider")
 		}
+		if slices.Contains(contract.ExecutorMCPServers, name) {
+			return nil, fail(400, "Connection name "+name+" is an executor MCP server name")
+		}
 		if old, err := maybe(q, "connection:"+name, "api-connection"); err != nil {
 			return nil, err
 		} else if old != nil {

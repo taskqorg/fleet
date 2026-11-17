@@ -266,6 +266,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The code mode runtime tests need bwrap with user namespaces, which 24.04 restricts (docs/designs/fleet-code-mode.md);
+      # without them the tests skip.
+      - if: matrix.part == 'unit'
+        run: |
+          command -v bwrap || { sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap; }
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # Commands per part: scripts/ci-part.sh, shared with cache-warm. The outside parts build their coordinator while
       # ClickHouse comes up (test then finds it built).
       - if: startsWith(matrix.part, 'outside-')
@@ -277,6 +283,8 @@ jobs:
       - run: scripts/ci-part.sh "$PART" test
         env:
           PART: ${{ matrix.part }}
+          # The code mode runtime tests fail instead of skipping where the step above set up bwrap.
+          FLEET_REQUIRE_CODE_MODE: ${{ matrix.part == 'unit' && '1' || '' }}
   # The same parts on the warm PDS18 pool (.github/workflows/pds18.yml at main: the pool admits only main's workflows).
   go-tests-pds18:
     needs: selection

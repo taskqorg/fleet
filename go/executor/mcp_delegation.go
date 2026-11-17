@@ -138,6 +138,9 @@ func delegationServer(ctx any, journal string) M {
 	return M{"command": exe(), "args": []any{"mcp", "delegation", journal, enc(ctx)}, "tools": mcpToolNames(mcpTools(ctx))}
 }
 
+// unreadReply marks a stored host reply that does not decode: the request was journaled, so its outcome is unknown.
+type unreadReply struct{ error }
+
 // dbError marks journal failures: they end the call with a JSON-RPC error, never a tool result.
 type dbError struct{ error }
 
@@ -166,7 +169,7 @@ func wait(db *sql.DB, table, key string, seconds int, artifact bool) (any, error
 		if err == nil && raw.String != "" {
 			v, err := dec(raw.String)
 			if err != nil {
-				return nil, err
+				return nil, unreadReply{err} // the stored reply does not decode: the request was made, its outcome unknown
 			}
 			if table != "transfers" || state == "failed" || (artifact && has(v, "artifactId")) || (!artifact && state == "done") {
 				return v, nil
@@ -492,6 +495,20 @@ func mcpRun(args []string) error {
 		if ctx, err = dec(s); err != nil {
 			return err
 		}
+	case "code":
+		path, err := arg(1, "spec file")
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		spec, err := dec(string(b))
+		if err != nil {
+			return err
+		}
+		return codeMCP(spec, os.Stdin, os.Stdout)
 	case "connection":
 		conn, err := arg(1, "connection")
 		if err != nil {

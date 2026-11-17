@@ -398,7 +398,7 @@ func (e *executor) releaseLaunchWindow(execution, session string) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		os.Remove(filepath.Join(e.root, "runs", execution+".env")) // the run token goes with the launch
+		removeRunFiles(e.root, execution) // the run token goes with the launch
 	}
 	return nil
 }
@@ -524,13 +524,14 @@ func (e *executor) reconcileProcesses() error {
 			return err
 		}
 	}
-	// Run files of every execution without an unresolved launch: no process of this executor can need them.
+	// Run files and code server specs of every execution without an unresolved launch: no process of this executor can need them.
 	files, err := filepath.Glob(filepath.Join(e.root, "runs", "*.env"))
 	if err != nil {
 		return err
 	}
-	for _, f := range files {
-		if !unresolved[strings.TrimSuffix(filepath.Base(f), ".env")] {
+	specs, _ := filepath.Glob(filepath.Join(e.root, "runs", "*.code.json"))
+	for _, f := range append(files, specs...) {
+		if !unresolved[strings.TrimSuffix(strings.TrimSuffix(filepath.Base(f), ".env"), ".code.json")] {
 			if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -1038,18 +1039,16 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		profiles = []any{}
 	}
 	fleetMCP := []any{}
+	var codeFleetTools *codeFleet
 	if fleetTools {
 		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
-		server := delegationServer(context, filepath.Join(e.root, "journal.sqlite"))
+		journal := filepath.Join(e.root, "journal.sqlite")
+		server := delegationServer(context, journal)
+		codeFleetTools = &codeFleet{journal, context}
 		fleetMCP = jArr(server, "tools")
 		servers["fleet"] = server
 	}
 	observed["fleetTools"], observed["collaborationTools"] = fleetTools, collaboration
-	if name == "codex" {
-		observed["fleetMcpTools"] = fleetMCP
-	} else {
-		observed["fleetMcpTools"] = anyStrings(sortedKeys(servers))
-	}
 	observed["cwd"], observed["worktree"], observed["platform"] = work, hasW, platform()
 	// Granted connections: one `<executor> mcp connection` server each, calling fleet-gateway with this run's token. The
 	// token and gateway URL reach the servers through the harness environment, never a file or argv.
@@ -1058,6 +1057,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	defer func() {
 		if runFile != "" && !launched {
 			os.Remove(runFile) // K2-6: a launch that failed never needs its run token
+		}
+		if !launched {
+			os.Remove(codeSpecFile(e.root, execution)) // nor its code server spec
 		}
 	}()
 	granted := jArr(p, "connections")
@@ -1082,23 +1084,53 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 	}
 	gatewayConns := map[string]bool{}
+	codeMode := jStr(p, "agentConfig", "codeMode")
+	var bridged []any // the granted connections with the tools their direct servers expose, for code mode
 	for _, spec := range granted {
 		conn := jStr(spec, "name")
 		if conn == "" || !onlyBytes(conn, func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' }) {
 			continue
 		}
-		tools := []any{}
+		tools, specs := []any{}, []any{}
 		for _, t := range jArr(spec, "tools") {
 			if n := jStr(t, "name"); n != "" && onlyBytes(n, func(b byte) bool { return alnum(b) || b == '_' }) {
-				tools = append(tools, n)
+				tools, specs = append(tools, n), append(specs, t)
 				connectionTools = append(connectionTools, "mcp__"+conn+"__"+n)
 			}
+		}
+		if codeMode != "" {
+			b := jObj(jClone(spec))
+			b["tools"] = specs
+			bridged = append(bridged, b)
 		}
 		if has(servers, conn) {
 			return fail(1, "MCP server name collides with a granted connection")
 		}
 		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec), runFile}, "tools": tools, "env": []any{"HOME"}}
 		gatewayConns[conn] = true
+	}
+	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
+	if codeMode != "" {
+		read := codeReadRoots(name, jAt(p, "agentConfig"), work, inputDir)
+		if err := addCodeServer(servers, codeMode, codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), work, read); err != nil {
+			return fail(1, err.Error())
+		}
+		observed["codeMode"], observed["codeTools"] = codeMode, jAt(servers, "code", "tools")
+		if codeMode == "only" {
+			connectionTools, fleetMCP = nil, []any{} // the fleet server is gone; its tools are reached through code
+		}
+	}
+	// Codex: the fleet server's tools; other harnesses: the launch's servers without the connection servers.
+	if name == "codex" {
+		observed["fleetMcpTools"] = fleetMCP
+	} else {
+		var direct []string
+		for _, k := range sortedKeys(servers) {
+			if !gatewayConns[k] {
+				direct = append(direct, k)
+			}
+		}
+		observed["fleetMcpTools"] = anyStrings(direct)
 	}
 	// Built-in web for pipeline agent steps: off unless the step's run sets webRoute builtin.
 	if name == "codex" && sp.WebRoute != nil {
@@ -1758,7 +1790,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		}
 		l.wire.mu.Unlock()
 	}
-	os.Remove(filepath.Join(e.root, "runs", execution+".env")) // the run token is not needed after the run
+	removeRunFiles(e.root, execution) // the run token is not needed after the run
 	var code *int64
 	if l.state != nil && l.state.Exited() {
 		c := int64(l.state.ExitCode())
