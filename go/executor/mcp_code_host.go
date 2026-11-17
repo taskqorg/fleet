@@ -47,11 +47,23 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	if err != nil {
 		return nil, callError("error", "sandbox", err.Error())
 	}
-	argv, err := shellArgv(jAt(s.spec, "shell"), jStr(s.spec, "sandbox"), cwd, tmp, command)
+	policy := jAt(s.spec, "shell")
+	argv, err := shellArgv(policy, jStr(s.spec, "sandbox"), cwd, tmp, command)
 	if err != nil {
 		return nil, callError("error", "sandbox", err.Error())
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	if jAt(policy, "sandbox") == true {
+		filter, err := shellSocketFilter()
+		if err != nil {
+			return nil, callError("error", "sandbox", err.Error())
+		}
+		if filter != nil {
+			defer filter.Close()
+			cmd.ExtraFiles = []*os.File{filter}
+			cmd.Args = slices.Insert(cmd.Args, 1, "--seccomp", "3")
+		}
+	}
 	cmd.Dir = cwd
 	cmd.Env = shellEnv(jAt(s.spec, "env"), jAt(s.spec, "shell"))
 	var stdout, stderr bytes.Buffer
@@ -302,9 +314,8 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) 
 		return append([]string{sandbox, "-p", darwinShellProfile(roots, protected, hide, append(read, roots...), network)}, run...), nil
 	case "linux":
 		argv := []string{sandbox, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc"}
-		// Host Unix sockets live under /run (/var/run, XDG_RUNTIME_DIR, docker.sock, D-Bus), /tmp and the executor's data
-		// directory (its MCP sockets): each gets an empty tmpfs; abstract sockets stay in the host network namespace,
-		// which --unshare-net leaves.
+		// Hide host runtime files and executor secrets. shellSocketFilter blocks Unix sockets independently of their
+		// filesystem location or the network namespace.
 		hidden := []string{"/run"}
 		if st, err := os.Lstat("/var/run"); err == nil && st.Mode()&os.ModeSymlink == 0 {
 			hidden = append(hidden, "/var/run")

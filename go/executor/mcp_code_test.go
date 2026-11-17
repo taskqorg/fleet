@@ -761,7 +761,13 @@ func TestCodeModeShellHost(t *testing.T) {
 	planted := "gitdir: " + sockDir + "\n"
 	os.WriteFile(filepath.Join(dir, ".git"), []byte(planted), 0o644)
 	os.WriteFile(filepath.Join(sockDir, "commondir"), []byte(".\n"), 0o644)
-	sock := filepath.Join(sockDir, "s")
+	// Keep the listener outside the hidden data directory so this test checks the socket policy itself.
+	socketRoot, err := os.MkdirTemp("/var/tmp", "fcs-socket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(socketRoot) })
+	sock := filepath.Join(socketRoot, "s")
 	os.WriteFile(filepath.Join(sockDir, "run.env"), []byte("FLEET_RUN_TOKEN=invented\n"), 0o600) // like the executor data directory
 	l, err := net.Listen("unix", sock)
 	if err != nil {

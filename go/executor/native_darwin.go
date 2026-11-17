@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/ebitengine/purego"
 )
+
+// Seatbelt already enforces the socket policy on macOS.
+func shellSocketFilter() (*os.File, error) { return nil, nil }
 
 // libproc through purego (no cgo): proc_pidinfo, and the private proc_signal_with_audittoken looked up at run time.
 var (
