@@ -140,11 +140,6 @@ export function setNavCounter(section: string, name: string | null) {
   const v = name === null ? '-' : name === NAV_COUNTER_DEFAULTS[section] ? '' : name;
   savePrefs(s => { const c = { ...s.navCounters }; if (v) c[section] = v; else delete c[section]; return { navCounters: c }; }, { navCounters: { [section]: v } });
 }
-/** The view a section's counter counts now: the person's choice while that view exists, else the default; null when off. */
-export function navCounted(section: string, names: string[]): string | null {
-  const v = prefs.value.navCounters?.[section];
-  return v === '-' ? null : v && names.includes(v) ? v : NAV_COUNTER_DEFAULTS[section] ?? null;
-}
 
 /** A column width in px by key (nav, control); 0 resets to the default. */
 export const setWidth = (key: string, px: number) =>

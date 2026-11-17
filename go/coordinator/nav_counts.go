@@ -58,15 +58,23 @@ var navDefaults = map[string]string{"tasks": "Running", "conversations": "Runnin
 // navCounterOff: the navCounters value that turns a section's counter off; a saved view named "-" cannot be counted.
 const navCounterOff = "-"
 
+// navSystemView: a section's system view by name.
+func navSystemView(section, name string) (navView, bool) {
+	i := slices.IndexFunc(navSystemViews[section], func(v navView) bool { return v.name == name })
+	if i < 0 {
+		return navView{}, false
+	}
+	return navSystemViews[section][i], true
+}
+
 // checkNavCounters: each key is a counted section; each value is empty (the default), off, a system view of that
 // section, or a saved view of that list in the person's views after this change (views reads them).
 func checkNavCounters(set map[string]string, views []contract.SavedView) error {
 	for k, v := range set {
-		sys, ok := navSystemViews[k]
-		if !ok {
+		if _, ok := navSystemViews[k]; !ok {
 			return fail(400, "navCounters: "+k+" has no counter (tasks, conversations, delivery, results, hosts)")
 		}
-		if v == "" || v == navCounterOff || slices.ContainsFunc(sys, func(x navView) bool { return x.name == v }) {
+		if _, isSystem := navSystemView(k, v); v == "" || v == navCounterOff || isSystem {
 			continue
 		}
 		if k == "results" || k == "hosts" || !slices.ContainsFunc(views, func(x contract.SavedView) bool { return x.List == k && x.Name == v }) {
@@ -162,28 +170,19 @@ func navCounts(q *Request, _ *contract.NavCountsRequest) (contract.NavCountsRepl
 		if name == navCounterOff {
 			continue
 		}
-		// The counted view: the named system preset or saved view, else the default (a saved view since removed counts it too).
-		view, saved := navView{}, map[string]any{}
-		for _, v := range navSystemViews[section] {
-			if v.name == name {
-				view = v
-			}
-		}
+		// The counted view: the named system preset or saved view, else the default (a saved view since removed, or one that
+		// no longer reads, counts it too).
+		def, _ := navSystemView(section, navDefaults[section])
+		view, _ := navSystemView(section, name)
+		var saved map[string]any
 		if view.name == "" && name != "" {
-			if i := slices.IndexFunc(ps.Views, func(x contract.SavedView) bool { return x.List == section && x.Name == name }); i >= 0 {
-				saved = map[string]any{}
-				_ = json.Unmarshal(jsonBytes(ps.Views[i].View), &saved) // checked by checkView when it was saved
+			if i := slices.IndexFunc(ps.Views, func(x contract.SavedView) bool { return x.List == section && x.Name == name }); i >= 0 &&
+				json.Unmarshal(jsonBytes(ps.Views[i].View), &saved) == nil {
 				view = navView{name: name, label: name, states: strs(saved["state"])}
 			}
 		}
-		def := navView{}
-		for _, v := range navSystemViews[section] {
-			if v.name == navDefaults[section] {
-				def = v
-			}
-		}
 		if view.name == "" {
-			view = def
+			view, saved = def, nil
 		}
 		// A saved view that names its projects is that list whatever the focus (withFocus in the app): one number, no split.
 		sc := s
@@ -255,7 +254,8 @@ func navCount(q *Request, section string, v navView, saved map[string]any, s nav
 }
 
 // navDelivery: the pull requests of delivery_status in the view's stages and search, as the Delivery list shows them for
-// the person's scope: in the focus is what the list shows with the focus, outside what only every project adds.
+// the person's scope: in the focus is what the list shows with the focus, outside what only every project adds. A view's
+// picked pace day (extra at) is not counted: the counter is the pull requests now.
 func navDelivery(q *Request, v navView, saved map[string]any, s navScope) (int64, int64, error) {
 	deliveryMu.Lock()
 	last := deliveryLast

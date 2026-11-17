@@ -4,17 +4,24 @@
 // settings change (focus, ignored projects, the counter views), and every REFRESH ms for hosts, whose liveness moves
 // without a change row.
 import { useEffect, useRef } from 'preact/hooks';
+import { signal } from '@preact/signals';
 import { op, type Ops } from './api.ts';
 import { useDoc } from './store.ts';
 import { subscribe, type Change } from './feed.ts';
 import { access } from './access.ts';
 import { preferencesTouched } from './invalidation.ts';
 import { prefs, prefsRead, prefsSaved } from './prefs.ts';
+import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 import type { NavCount, Tone } from '../../packages/ui/src/index.ts';
 
 type Reply = Ops['nav_counts']['reply'];
 const QUIET = 5000, REFRESH = 30_000;
-const COUNTED: Change['kind'][] = ['task', 'session', 'execution', 'artifact', 'delivery', 'host'];
+// Execution changes come also with every token and cost total; a session's state moves with them, so they count, but
+// a batch of only those waits longer.
+const QUIET_EXECUTIONS = 15_000;
+const COUNTED: Change['kind'][] = ['task', 'session', 'artifact', 'delivery', 'host'];
+/** The view each section's counter counts now, as the server resolved it (a removed or refused saved view counts the default). */
+const countedViews = signal<Record<string, string>>({});
 // Hosts offline needs a look (OR-18); the other counters are plain amounts of work.
 const TONES: Record<string, Tone> = { hosts: 'attention' };
 
@@ -22,17 +29,23 @@ const TONES: Record<string, Tone> = { hosts: 'attention' };
 export function useNavCounts(ready: boolean): Record<string, NavCount> {
   const { focus, ignored, navCounters } = prefs.value;
   // Sorted, so the server's copy of the same settings (its own key order) names the same read.
-  const key = ready && prefsRead.value ? 'nav-counts:' + JSON.stringify([focus, ignored, Object.entries(navCounters ?? {}).sort()]) : null;
+  // The counted saved views' definitions too: editing one reads at once.
+  const saved = Object.entries(navCounters ?? {}).sort().map(([list, name]) => [list, name, prefs.value.views.find(v => v.list === list && v.name === name)?.view ?? null]);
+  const key = ready && prefsRead.value ? 'nav-counts:' + JSON.stringify([focus, ignored, saved]) : null;
   // A changed focus or counter view shows at once in prefs; the read waits for its save, so it counts the new settings.
   const doc = useDoc<Reply>(key, () => prefsSaved().then(() => op('nav_counts', {})), () => false, REFRESH);
   const reload = useRef(doc.reload); reload.current = doc.reload;
   useEffect(() => {
     if (!key) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    // One pending read; a counted change brings a later one forward. This person's settings only: other people's setting
+    // changes reach the feed too.
+    let timer: ReturnType<typeof setTimeout> | undefined, due = Infinity;
     const off = subscribe({ resync: () => {}, changes: cs => {
-      // This person's settings only: other people's setting changes reach the feed too.
-      if (timer || !(cs.some(c => COUNTED.includes(c.kind)) || preferencesTouched(cs, access.value.identity?.identityKey))) return;
-      timer = setTimeout(() => { timer = undefined; reload.current(); }, QUIET);
+      const wait = cs.some(c => COUNTED.includes(c.kind)) || preferencesTouched(cs, access.value.identity?.identityKey) ? QUIET
+        : cs.some(c => c.kind === 'execution') ? QUIET_EXECUTIONS : 0;
+      if (!wait || Date.now() + wait >= due) return;
+      clearTimeout(timer); due = Date.now() + wait;
+      timer = setTimeout(() => { timer = undefined; due = Infinity; reload.current(); }, wait);
     } });
     return () => { off(); clearTimeout(timer); };
   }, [key]);
@@ -41,8 +54,19 @@ export function useNavCounts(ready: boolean): Record<string, NavCount> {
   const last = useRef<Reply | null>(null);
   if (!key) last.current = null; else if (doc.data) last.current = doc.data;
   const r = last.current;
+  useEffect(() => { countedViews.value = r ? Object.fromEntries(Object.entries(r.sections).map(([id, c]) => [id, c.view])) : {}; }, [r]);
   if (!r) return {};
   return Object.fromEntries(Object.entries(r.sections).map(([id, c]) => [id, {
     n: c.inFocus, outside: c.split ? c.outside : undefined, tone: TONES[id] ?? 'neutral', label: c.label,
   }]));
+}
+
+/**
+ * The view a section's counter counts, for the saved-views menu: the server's answer once read, else the person's choice
+ * while that view exists, else the default; null when the counter is off.
+ */
+export function navCounted(section: string, names: string[]): string | null {
+  const v = prefs.value.navCounters?.[section];
+  if (v === '-') return null;
+  return countedViews.value[section] ?? (v && names.includes(v) ? v : NAV_COUNTER_DEFAULTS[section] ?? null);
 }

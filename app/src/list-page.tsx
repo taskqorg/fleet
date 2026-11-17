@@ -13,7 +13,8 @@ import { useList, useDoc, type Kind } from './store.ts';
 import { chunks, compareKeys, closedGroups, flipGroup } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
-import { usePins, useViews, listGroups, setListGroups, setNavCounter, navCounted, type SavedView } from './prefs.ts';
+import { usePins, useViews, listGroups, setListGroups, setNavCounter, type SavedView } from './prefs.ts';
+import { navCounted } from './nav-counts.ts';
 import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 import type { Change } from './feed.ts';
 

@@ -285,7 +285,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.NavCounters != nil || r.Views != nil || r.ViewDelete != nil {
 		next.NavCounters = maps.Clone(prev.NavCounters)
 		for k, v := range next.NavCounters {
-			if v != navCounterOff && !slices.ContainsFunc(navSystemViews[k], func(x navView) bool { return x.name == v }) &&
+			if _, isSystem := navSystemView(k, v); v != navCounterOff && !isSystem &&
 				!slices.ContainsFunc(next.Views, func(x contract.SavedView) bool { return x.List == k && x.Name == v }) {
 				delete(next.NavCounters, k)
 			}
