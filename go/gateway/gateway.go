@@ -572,6 +572,7 @@ func (p *progress) reopen(r io.Reader) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	p.Reader = r
+	p.read = false // the transport retries only a body it wrote nothing of
 }
 
 // answered: the provider sent response bytes; the rest of its headers must follow within the stall limit.
