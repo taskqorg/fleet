@@ -1,8 +1,5 @@
 {
   "collaborationTools": false,
-  "connections": [
-    "youtrack"
-  ],
   "effort": "low",
   "fleetTools": false,
   "id": "harness-capability-candidate",
