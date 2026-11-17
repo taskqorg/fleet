@@ -12,9 +12,10 @@ import {
 import { op, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { useListPage, ListPagePanel, type LocalList } from '../list-page.tsx';
+import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useUrlView } from '../url.ts';
-import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, DELIVERY_STAGES, type View } from '../../../packages/view-url/view-url.ts';
-import { scopeIds, prefs, prefsRead, type SavedView } from '../prefs.ts';
+import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, type View } from '../../../packages/view-url/view-url.ts';
+import { scopeIds, prefs, prefsRead } from '../prefs.ts';
 import type { Change } from '../../../contracts/generated/ops.ts';
 
 type Stage = StateOf<'delivery'>;
@@ -49,12 +50,6 @@ export const uiOnly = (tag?: string | null) => !!tag && UI_TAG.test(tag);
 export const releaseLabel = (tag: string) => { const m = UI_TAG.exec(tag); return m ? `UI ${m[1]}` : tag.replace(/^v/, ''); };
 const GROUPS = [['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const;
 const SORTS = [['since', 'In stage since'], ['opened', 'Opened']] as const;
-// System presets (OR-33) set the stage filter only; grouping, sort and search stay.
-const SYSTEM_VIEWS: SavedView[] = [
-  { name: 'Needs me', view: { view: 'delivery', state: [...FAILED] } },
-  { name: 'In flight', view: { view: 'delivery', state: DELIVERY_STAGES.filter(s => !DONE.includes(s)) } },
-  { name: 'Installed', view: { view: 'delivery', state: [...DONE] } },
-];
 const RANGES = [{ id: '24h', label: '24 h' }, { id: '7d', label: '7 days' }, { id: '30d', label: '30 days' }];
 const ms = (s?: string | null) => s ? Date.parse(s) : NaN;
 const fmt = (v: number) => duration(v / 1000).text;
@@ -157,7 +152,7 @@ export function Delivery({ id }: { id?: string }) {
     // most installed) or a filter to installed rows is its own context, where it starts open.
     // The day in the URL, not the bucket found in the history: the context does not change when the history arrives.
     groupsContext: v => deliveryExtra(v.extra).at || doneOnly(v) ? 'merged' : undefined,
-    defaultGroup: DEFAULT_DELIVERY_GROUP, defaultSort: DEFAULT_DELIVERY_SORT, system: SYSTEM_VIEWS, groupLabel: (_g, l) => l ?? '',
+    defaultGroup: DEFAULT_DELIVERY_GROUP, defaultSort: DEFAULT_DELIVERY_SORT, system: SYSTEM_VIEWS.delivery, groupLabel: (_g, l) => l ?? '',
   });
   const { view, set } = page;
   const { ex, range, buckets, picked } = paceOf(view);

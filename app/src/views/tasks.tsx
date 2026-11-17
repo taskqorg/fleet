@@ -12,6 +12,7 @@ import { useDoc } from '../store.ts';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
 import { usePins, prefs, setFocus } from '../prefs.ts';
 import { useListPage, ListPagePanel } from '../list-page.tsx';
+import { SYSTEM_VIEWS } from '../system-views.ts';
 import { ScopedRollupDetails, buildExecTree, resourceTotals } from './resources.tsx';
 
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
@@ -21,16 +22,14 @@ type TaskRow = { id: string; code?: string | null; title: string; state: StateOf
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 
-// System presets (P5): fixed, shown before the person's saved views. Running: every non-terminal state.
-// A system preset sets the state filter only; grouping, sort, projects and search stay as the person set them.
-const SYSTEM_VIEWS = [{ name: 'Needs me', view: { view: 'tasks' as const, state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'tasks' as const, state: ['queued', 'in_progress', 'waiting', 'held', 'paused'] } }];
+// System presets (P5): system-views.ts. Running: every non-terminal state.
 // Saved views from before the project default kept no group: they were grouped by priority.
 const savedView = (v: View): View => v.group ? v : { ...v, group: 'priority' };
 
 export function Tasks({ id }: { id?: string }) {
   // Pinned tasks are read by id with an empty filter and live through task changes.
   const page = useListPage<TaskRow>({
-    view: 'tasks', kind: 'tasks', defaultGroup: DEFAULT_TASK_GROUP, defaultSort: DEFAULT_TASK_SORT, system: SYSTEM_VIEWS, groupLabel,
+    view: 'tasks', kind: 'tasks', defaultGroup: DEFAULT_TASK_GROUP, defaultSort: DEFAULT_TASK_SORT, system: SYSTEM_VIEWS.tasks, groupLabel,
     pinDoc: 'task-pins', pinRead: () => ({ key: [], filter: {} }), pinTouches: (c, has) => c.kind === 'task' && has(c.id) || !!c.taskId && has(c.taskId),
     savedView, saveGroup: DEFAULT_TASK_GROUP,
     // Completed (7) and cancelled (8) start collapsed under state grouping (the state group keys of task_page, attention

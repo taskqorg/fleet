@@ -1,14 +1,15 @@
 // Per-person preferences, stored server-side in the person's settings (person_settings_get / person_settings_set,
 // docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus, focus
-// presets and ignored projects, column widths, the collapsed navigation, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
+// presets and ignored projects, column widths, the collapsed navigation, the navigation counter views, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
 import { signal } from '@preact/signals';
 import { op, type Ops } from './api.ts';
 import { onClear } from './offline.ts';
 import type { View } from '../../packages/view-url/view-url.ts';
+import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
-const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], ignored: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {}, listGroups: {} };
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], ignored: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {}, listGroups: {}, navCounters: {} };
 export const prefs = signal<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
@@ -56,6 +57,9 @@ export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Pat
   chain = chain.then(send)
     .then(s => { if (e !== epoch) return; pending--; if (s && seq === n) prefs.value = s; refreshAfterWrites(); }, () => { if (e !== epoch) return; pending--; if (seq === n) { prefs.value = before; loadPrefs(); } refreshAfterWrites(); });
 }
+
+/** Settles when this tab's queued preference saves have reached the server (a read after it sees them). */
+export const prefsSaved = () => chain.then(() => {}, () => {});
 
 export function usePins(list: string) {
   const ids = prefs.value.rowPins[list] ?? [], set = new Set(ids);
@@ -127,6 +131,20 @@ export function saveFocusPreset(name: string, projects = prefs.value.focus) {
   savePrefs(s => { const i = s.focusPresets.findIndex(p => p.name === name); const ps = [...s.focusPresets]; if (i < 0) ps.push(item); else ps[i] = item; return { focusPresets: ps }; }, { focusPresetPut: item });
 }
 export const removeFocusPreset = (name: string) => savePrefs(s => ({ focusPresets: s.focusPresets.filter(p => p.name !== name) }), { focusPresetDelete: name });
+
+/**
+ * The view a section's navigation counter counts (nav-rail.md, Counters): a view name of that list, null to turn the
+ * counter off, or the section's default, which is stored as no choice so a later default change reaches the person.
+ */
+export function setNavCounter(section: string, name: string | null) {
+  const v = name === null ? '-' : name === NAV_COUNTER_DEFAULTS[section] ? '' : name;
+  savePrefs(s => { const c = { ...s.navCounters }; if (v) c[section] = v; else delete c[section]; return { navCounters: c }; }, { navCounters: { [section]: v } });
+}
+/** The view a section's counter counts now: the person's choice while that view exists, else the default; null when off. */
+export function navCounted(section: string, names: string[]): string | null {
+  const v = prefs.value.navCounters?.[section];
+  return v === '-' ? null : v && names.includes(v) ? v : NAV_COUNTER_DEFAULTS[section] ?? null;
+}
 
 /** A column width in px by key (nav, control); 0 resets to the default. */
 export const setWidth = (key: string, px: number) =>

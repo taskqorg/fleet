@@ -10,7 +10,7 @@
 2. All other sections, grouped (Operator, Architect) under small group headings.
 3. At the bottom, the current user block: avatar and name. A click (or right-click) opens a short menu with Logout, the Cloudflare Access logout (OR-42). After the name, the version (**Version** below).
 
-Each item has a registry icon (OR-3), a name, an optional counter chip in a tone (for example `3` in attention for "need you"), and a pin button.
+Each item has a registry icon (OR-3), a name, an optional counter (**Counters** below) and a pin button.
 
 **Behaviour.**
 * The pin button appears on hover and focus, and is always visible on touch. Pinning adds the item to the pinned group and keeps it in its own group, where its pin stays shown as pressed. Unpin from either place.
@@ -18,11 +18,29 @@ Each item has a registry icon (OR-3), a name, an optional counter chip in a tone
 * Drag a pinned item to reorder the pinned group.
 * Pins and their order are a person setting (`pins` in `person_settings_get`/`person_settings_set`) and are restored on every device.
 * A section opens with its list as the person left it: sort, grouping, filters and search (`lastViews`, a person setting kept per section as its list path; the open item and checked rows are not kept, so a deleted item never traps the section). It is saved when the person leaves the section or the tab hides. Clicking the current section from an open item returns to that list. Spotlight's section jumps do the same.
-* Counters show only when they are not zero and link to the filtered list. A counter's tone follows the [state badge](state-badge.md) mapping.
 * The current section has the `selected` background.
 * Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Every icon (the mark, section icons, the avatar) keeps its exact position: the paddings do not change and the collapsed rail is just its icon column wide. Group headings keep their height, the user block keeps its avatar. The toggle shows `panel-left-close` expanded and `panel-left-open` collapsed.
 * The divider on the rail's right edge resizes it (OR-41): drag, or focus it and press Left and Right; a double-click resets the width. Collapsed, the rail has no divider.
-* The collapse button shrinks the rail to icons, and below 760 px it is always collapsed: pins first and counters on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears.
+* The collapse button shrinks the rail to icons, and below 760 px it is always collapsed: pins first and counters as badges on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears.
+
+**Counters.** A section's counter counts its *counter view*, a person setting (`navCounters` in `person_settings_get`/`person_settings_set`; agents write it too):
+
+| Section | Default | Choice |
+|---|---|---|
+| Tasks | Running | any system preset or saved view of the list |
+| Conversations | Running | any system preset or saved view of the list |
+| Delivery | In flight | any system preset or saved view of the list |
+| Results | Last 24 h (the list with `since:1d`) | on or off |
+| Hosts | Offline (not seen within the Hosts list's stale limit), attention tone | on or off |
+
+* Other sections have no counter: Overview is answered by the "N need you" chip in the head, which is not a counter; Projects, Runners, Lab, API keys and the architect sections have no amount that changes often enough to watch.
+* One read gives every counter: `nav_counts` (agents call the same tool). Each section counts with its list's own filters (the view's states, search and the projects it names), so a counter equals the list it stands for; ignored projects are never counted, also when a saved view names one (OR-34). A saved view since removed counts the section's default again.
+* Without a focus a counter is one number: `12`. With a focus it splits: the count in the focus in the foreground colour, then `·` and the rest outside the focus (not ignored) in muted colour, `12·30`. With nothing in the focus but some outside it shows `·30` on no fill, so a bare number always means "in focus". Zero in and out shows nothing (OR-29). Hosts have no project and stay one number.
+* Collapsed (and below 760 px) only the in-focus number stays, as a badge on the icon's top right; `·30` alone shows no badge. The badge is positioned over the icon, so no icon moves (OR-42, OR-23).
+* The accessible name says it in words: "12 running", "12 running in focus, 30 outside", "none running in focus, 30 outside".
+* The counter view is chosen in the section's saved views (OR-33): the menu of a view chip (right click, Menu key or Shift+F10) offers **Count in navigation**, and on the counted view **Stop counting in navigation**. Choosing the default stores no choice.
+* Live: the app reads `nav_counts` again after a change of a counted kind (tasks, sessions, executions, results, delivery, hosts, settings) at most once per 3 s, the last change included, and every 30 s for host liveness, which moves without a change row. A changed focus or counter view reads at once, after its save.
+* Clicking the item opens the section as the person left it, as without a counter; the counter is not a link of its own.
 
 **Version.** The installed Fleet release (the coordinator's version, `1.261115.6`) in mono after the person's name. It is toned when a part needs a look (OR-18): attention for a host behind or an update held, danger for a failed update, a host whose polls fail, or an unreachable gateway. A click shows the overview (an informational layer, OR-14): one row per part with its version, state and a short note. Moments in a row (started, checked, last seen, failing since, observed) are compact ages with the exact time on hover (OR-2, `Ago`), never raw timestamps; while the overview is open, the mark, its states and its ages are recounted from one present every 15 seconds. The rows are this tab, the app the site serves (bundled or a separate UI release), the coordinator (since when, and the release it offers hosts when that differs), the gateway when configured, and each host (polls failing with the reason code and status, current, behind, updating, update failed, offline; auto-update off or held). Polls failing comes first: such a host still looks seen, but it gets no commands and no update target. The data is `system_versions`, the same read agents use.
 
@@ -30,6 +48,6 @@ When the site serves a newer app than the tab runs, an Update button (icon) show
 
 **Keyboard.** `g` then a letter goes to a section ([principles §5](../principles.md#5-keyboard)). Up and down arrows move through items, `p` pins or unpins the focused item, and Alt+Up and Alt+Down move a focused pinned item.
 
-**Accessibility.** `nav` named "Sections". Each pinned and group list is named. Pin buttons are named "Pin Tasks" or "Unpin Tasks" and expose `aria-pressed`. Counters have accessible names such as "2 failed".
+**Accessibility.** `nav` named "Sections". Each pinned and group list is named. Pin buttons are named "Pin Tasks" or "Unpin Tasks" and expose `aria-pressed`. Counters have accessible names such as "12 running in focus, 30 outside" (**Counters**).
 
 **Do.** Keep the order the person chose. **Don't.** Reorder sections automatically by frequency (specq "stable adaptation"). Don't add a separate Favourites page (OR-12).
