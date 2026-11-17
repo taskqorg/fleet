@@ -988,8 +988,12 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 				case len(rest) == 0:
 					err = exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
 				case len(rest) < len(strs(t["executionIds"])):
-					t["executionIds"] = rest
-					err = exec(q, "UPDATE document SET data=$2, updated_at=now() WHERE kind='purge-task' AND id=$1", t["id"], jsonBytes(t))
+					next := doc{} // a copy: a retried transaction reads the task as stored
+					for k, v := range t {
+						next[k] = v
+					}
+					next["executionIds"] = rest
+					err = exec(q, "UPDATE document SET data=$2, updated_at=now() WHERE kind='purge-task' AND id=$1", t["id"], jsonBytes(next))
 				}
 				if err != nil {
 					return err
