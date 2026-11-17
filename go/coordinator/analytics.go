@@ -1548,23 +1548,34 @@ const taskLineageCTEs = `WITH RECURSIVE
        UNION SELECT session_id FROM del_tree WHERE session_id IS NOT NULL
       )
     )
+ )` + spawnedExecsCTEs
+
+// spawnedExecsCTEs: the executions of the spawned tasks (usually none), joined from those tasks through indexed
+// equalities. One join of every execution with every task under an OR condition was planned as a nested loop over
+// both tables once statistics were current: 40 s for one task of a 20000-task store, under the global write lock
+// when task_update returns the task.
+const spawnedExecsCTEs = `,
+ spawned_task_ids AS MATERIALIZED (SELECT id FROM spawned_tasks),
+ spawned_sessions AS MATERIALIZED (
+  SELECT st.id AS task_id, d.id AS session_id
+  FROM spawned_task_ids st
+  JOIN document d ON d.kind = 'session' AND d.data->>'taskId' = st.id
+ ),
+ spawned_runs AS MATERIALIZED (
+  SELECT st.id AS task_id, e.id
+  FROM spawned_task_ids st
+  JOIN execution e ON e.task_id = st.id
+  UNION
+  SELECT ss.task_id, e.id
+  FROM spawned_sessions ss
+  JOIN execution e ON e.task_id IS NULL AND e.session_id = ss.session_id
  ),
  spawned_execs AS (
-  SELECT st.id AS task_id, e.id AS exec_id
-  FROM spawned_tasks st
-  JOIN execution e ON (
-   e.task_id = st.id
-   OR (e.task_id IS NULL AND e.session_id IN (
-     SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
-   ))
-   OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
-     SELECT p.id FROM execution p
-     WHERE p.task_id = st.id
-        OR (p.task_id IS NULL AND p.session_id IN (
-          SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
-        ))
-   ))
-  )
+  SELECT task_id, id AS exec_id FROM spawned_runs
+  UNION
+  SELECT sr.task_id, e.id AS exec_id
+  FROM spawned_runs sr
+  JOIN execution e ON e.kind = 'tool_run' AND e.parent_execution_id = sr.id
  )`
 
 // resourceLineageQuery suppresses JIT only while computing a resource lineage.
@@ -1710,24 +1721,8 @@ const sessionLineageCTEs = `WITH RECURSIVE
       OR t.created_by_execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
       OR t.created_by_session_id IN (SELECT session_id FROM del_tree WHERE session_id IS NOT NULL)
     )
- ),
- spawned_execs AS (
-  SELECT st.id AS task_id, e.id AS exec_id
-  FROM spawned_tasks st
-  JOIN execution e ON (
-   e.task_id = st.id
-   OR (e.task_id IS NULL AND e.session_id IN (
-     SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
-   ))
-   OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
-     SELECT p.id FROM execution p
-     WHERE p.task_id = st.id
-        OR (p.task_id IS NULL AND p.session_id IN (
-          SELECT d.id FROM document d WHERE d.kind = 'session' AND d.data->>'taskId' = st.id
-        ))
-   ))
-  )
- )`
+ )` + spawnedExecsCTEs
+
 
 func sessionResourceRollup(q *Request, sessionID string) (contract.ScopedResourceRollup, error) {
 	return resourceLineageQuery(q, func() (contract.ScopedResourceRollup, error) { return sessionResourceRollupQuery(q, sessionID) })

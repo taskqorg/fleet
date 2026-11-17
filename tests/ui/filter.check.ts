@@ -41,6 +41,9 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     // Two completed tasks: the Completed group of state grouping (collapsed by default) for the remembered-groups check.
     for (let i = 0; i < 2; i++) seed.task({ title: 'Shipped notes ' + i, projectId: 'fleet', priority: 'normal', state: 'completed' });
   });
+  // Statistics as a store of this size has them: without this, autoanalyze landing mid-check switched the plans the
+  // checks below ran with (a task_update of 40 s, flaky bulk-pause and remembered-groups rules in CI).
+  seed.sql('ANALYZE');
   console.log(`fixture load: ${((performance.now() - t) / 1000).toFixed(1)} s`);
   httpMedians[N] = {};
   for (const [name, b] of CASES) {
