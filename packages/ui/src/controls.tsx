@@ -571,7 +571,7 @@ export function EntityCardLayer() {
     const place = () => {
       const a = cur.anchor.getBoundingClientRect(), r = el.getBoundingClientRect(), gap = 4, edge = 8;
       const below = a.bottom + gap + r.height <= innerHeight - edge || a.top - gap - r.height < edge && innerHeight - a.bottom > a.top;
-      el.style.top = `${Math.max(edge, below ? a.bottom + gap : a.top - gap - r.height)}px`;
+      el.style.top = `${Math.max(edge, Math.min(innerHeight - edge - r.height, below ? a.bottom + gap : a.top - gap - r.height))}px`;
       el.style.left = `${Math.max(edge, Math.min(a.left, innerWidth - edge - r.width))}px`;
       el.dataset.side = below ? 'below' : 'above';
     };
@@ -611,7 +611,7 @@ export function EntityCardLayer() {
 function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
   const source = useContext(EntityCards);
   const read: EntityCardRead = source ? source.useCard(r) : { data: null, error: 'Details are not available here' };
-  const k = entityKinds[r.kind], c = read.data, now = Date.now();
+  const k = entityKinds[r.kind], c = read.error ? null : read.data, now = Date.now();
   // Before it loads, a release names itself by its tag (the reference may show a label such as UI 1.2.5).
   const code = c ? c.code : r.kind === 'release' ? r.id : r.code;
   // Copy actions: the code (a pull request: owner/repo#n), the UUID, the id of a kind with neither, a result's hash.
@@ -619,7 +619,7 @@ function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
     ...(c.code ? [[c.kind === 'pull_request' ? 'Copy reference' : 'Copy code', c.kind === 'pull_request' ? c.id : c.code] as [string, string]] : []),
     ...(c.uuid ? [['Copy UUID', c.uuid] as [string, string]] : []),
     ...(!c.code && !c.uuid ? [['Copy id', c.id] as [string, string]] : []),
-    ...(c.hash ? [['Copy SHA-256', c.hash] as [string, string]] : [])] : code && /^[TQC]-/.test(code) ? [['Copy code', code]] : [];
+    ...(c.hash ? [['Copy SHA-256', c.hash] as [string, string]] : [])] : r.kind === 'pull_request' && r.id ? [['Copy reference', r.id.replace(/^([^~]+)~([^~]+)~(\d+)$/, '$1/$2#$3')]] : code ? [['Copy code', code]] : [];
   const at = c?.at ? Date.parse(c.at) : NaN;
   const go = (e: MouseEvent) => {
     if (!c?.path) { e.preventDefault(); return; }

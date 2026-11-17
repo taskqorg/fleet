@@ -419,11 +419,7 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 		_ = json.Unmarshal(jsonBytes(rec["data"]), &history)
 	}
 	version, known := releaseVersionOf(tag), prs > 0 || rec != nil
-	// Open lists its pull requests while the pass holds them; an older release opens Delivery, whose history has it.
-	path := "/delivery"
-	if prs > 0 {
-		path += "?q=" + url.QueryEscape("release="+tag+".") // Delivery's search text ends each release with a dot, so v1.2.3 is not v1.2.31
-	}
+	path := "/delivery?release=" + url.QueryEscape(tag)
 	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), State: ptr("installing"), Path: ptr(path)}
 	if uiOnlyRelease(tag) {
 		on := uiServed()

@@ -232,9 +232,10 @@ func (v *DeliveryHistoryReply) Validate() error {
 }
 
 type DeliveryHistoryRequest struct {
-	Number *int64  `json:"number,omitempty"`
-	Since  *string `json:"since,omitempty"`
-	Until  *string `json:"until,omitempty"`
+	Number  *int64  `json:"number,omitempty"`
+	Release *string `json:"release,omitempty"`
+	Since   *string `json:"since,omitempty"`
+	Until   *string `json:"until,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2469,7 +2470,7 @@ func init() {
 	for n, o := range map[string]Operation{
 		"delivery_baseline":     {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"days\":{\"$comment\":\"trend length in days, default 7, at most 60; the rolling baseline is always 7 days\",\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"delivery_baseline_set": {Read: false, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full access.\",\"additionalProperties\":true,\"properties\":{\"remove\":{\"$comment\":\"delete the snapshot of this name\",\"type\":\"string\"},\"settings\":{\"properties\":{\"baseline\":{\"$comment\":\"the snapshot name compared with; empty: the 7 days before the last 24 h\",\"type\":\"string\"},\"minDeltaMs\":{\"$comment\":\"and the difference at least this (default 60000)\",\"type\":\"integer\"},\"minSamples\":{\"$comment\":\"both windows need this many values (default 5)\",\"type\":\"integer\"},\"ratio\":{\"$comment\":\"a P50 or P90 of the last 24 h this many times the baseline's is a regression (default 1.5)\",\"type\":\"number\"}},\"required\":[\"ratio\",\"minSamples\",\"minDeltaMs\",\"baseline\"],\"type\":\"object\"},\"snapshot\":{\"$comment\":\"store the rolling 7-day baseline now under this name (replaces one of the same name)\",\"type\":\"string\"}},\"type\":\"object\"}")},
-		"delivery_history":      {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"number\":{\"$comment\":\"one pull request and its merge-queue runs\",\"type\":\"integer\"},\"since\":{\"$comment\":\"RFC 3339 time or YYYY-MM-DD; default 7 days ago. Pull requests by merge time, runs by creation, releases by publication\",\"type\":\"string\"},\"until\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"delivery_history":      {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"number\":{\"$comment\":\"one pull request and its merge-queue runs\",\"type\":\"integer\"},\"release\":{\"$comment\":\"exact release tag; selects its pull requests regardless of the date window\",\"type\":\"string\"},\"since\":{\"$comment\":\"RFC 3339 time or YYYY-MM-DD; default 7 days ago. Pull requests by merge time, runs by creation, releases by publication\",\"type\":\"string\"},\"until\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"delivery_regressions":  {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"check\":{\"$comment\":\"run the check now (full access) instead of returning the last one\",\"type\":\"boolean\"}},\"type\":\"object\"}")},
 		"delivery_status":       {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"All projects the caller may see, narrowed to projectIds when given; a repository shows when a project the caller sees, in projectIds and not in excludeProjectIds, lists it.\",\"additionalProperties\":true,\"properties\":{\"excludeProjectIds\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); '-' is no project (an empty id or null is a 400); applied after projectIds, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectIds\":{\"$comment\":\"keep rows of these projects only (the app passes the person's focus, OR-34); '-' is no project\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"}")},
 		"execution_differences": {Read: true, Long: false, Errors: []int{403, 409, 503}, InputSchema: json.RawMessage("{\"$comment\":\"previous: the earlier execution of the same session.\",\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"previous\":{\"type\":\"string\"}},\"required\":[\"executionId\",\"previous\"],\"type\":\"object\"}")},
