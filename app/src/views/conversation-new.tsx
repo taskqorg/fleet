@@ -43,7 +43,8 @@ export function NewConversation({ initialProject, onStarted }: { initialProject:
 
   const list: Preset[] = presets.data?.presets ?? [];
   const chosen = list.find(p => p.id === picked[key]) ?? list.find(p => !p.unavailable);
-  const access = override.access ?? chosen?.access ?? 'write', branch = project ? override.branch ?? chosen?.branch ?? true : false;
+  // Write work always has its own branch (session_start refuses write without one); read may go without.
+  const access = override.access ?? chosen?.access ?? 'write', branch = access === 'write' || (override.branch ?? chosen?.branch ?? true);
   const options: PresetOption[] = list.map(p => ({ id: p.id, name: p.name, description: p.description, icon: p.source === 'system' ? ICONS[p.id] : undefined, facts: factsOf(p, !!project), unavailable: p.unavailable ?? undefined }));
   const name = project ? all.find(p => p.id === project)?.name ?? project : 'No project';
   const facts: StartFact[] = chosen ? [
@@ -51,17 +52,18 @@ export function NewConversation({ initialProject, onStarted }: { initialProject:
     { key: 'agent', harness: isHarness(chosen.harness) ? chosen.harness : undefined, icon: 'bot', text: agentLabel(chosen.model, chosen.effort) || chosen.profileId || '', tip: `Profile ${chosen.profileId}${chosen.role ? `, the project's ${chosen.role} role` : ', a system profile'}` },
     { key: 'access', icon: 'shield', text: access === 'read' ? 'Read only' : 'Can edit', tip: access === 'read' ? 'The agent reads and runs read-only tools; click to let it edit' : 'The agent may edit files; click for read only', onClick: () => setOverride(o => ({ ...o, access: access === 'read' ? 'write' : 'read' })) },
     ...(project ? [{ key: 'branch', icon: 'git-pull-request' as IconName, text: branch ? `${presets.data?.branchPrefix ?? 'fleet'}/new` : 'No branch',
-      tip: branch ? `A new branch from ${presets.data?.base ?? 'the default branch'}; click for no branch` : `A detached copy of ${presets.data?.base ?? 'the default branch'}, no branch; click for a new branch`,
-      onClick: () => setOverride(o => ({ ...o, branch: !branch })) }] : []),
+      tip: access === 'write' ? `A new branch from ${presets.data?.base ?? 'the default branch'}; edits always get their own branch` : branch ? `A new branch from ${presets.data?.base ?? 'the default branch'}; click for no branch` : `A detached copy of ${presets.data?.base ?? 'the default branch'}, no branch; click for a new branch`,
+      onClick: access === 'write' ? undefined : () => setOverride(o => ({ ...o, branch: !branch })) }] : []),
   ] : [];
 
-  const target = { kind: 'project' as const, id: key, roleId: chosen?.id ?? '' };
-  const reason = !online.value ? 'offline' : !chosen ? (presets.error ? 'Presets did not load' : 'Loading presets') : undefined;
+  // One draft for the page: switching project or preset keeps the text (api.ts takes 'new' as any start from here).
+  const target = { kind: 'project' as const, id: 'new', roleId: 'new' };
+  const reason = !online.value ? 'offline' : !chosen ? (presets.error ? 'Presets did not load' : presets.data ? 'No preset can start here' : 'Loading presets') : undefined;
   const send = async (text: string) => {
     const scope = authorizedDraftScope(target);
     try {
       setError('');
-      const request = await prepareSending(scope, 'session_start', { ...(project ? { projectId: project } : {}), preset: chosen!.id, access, ...(project ? { branch } : {}), text });
+      const request = await prepareSending(scope, 'session_start', { ...(project ? { projectId: project, branch } : {}), preset: chosen!.id, access, text });
       const r = await writeOnce('session_start', request, () => setError('unknown, retrying'), { signal: alive });
       sendingId(scope, null, text);
       onStarted(r.sessionId);

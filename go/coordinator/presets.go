@@ -67,8 +67,8 @@ func parsePresets(v any) ([]preset, error) {
 		}
 		p.Branch = p.Access == "write"
 		if b, given := o["branch"]; given {
-			if p.Branch, ok = b.(bool); !ok {
-				return nil, bad(".branch")
+			if p.Branch, ok = b.(bool); !ok || p.Access == "write" && !p.Branch {
+				return nil, bad(".branch: write access needs a branch")
 			}
 		}
 		out = append(out, p)
@@ -124,21 +124,14 @@ func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.Ses
 	}
 	for _, p := range ps {
 		role, profileID, profile, unavailable := resolvePreset(q, p, settings)
-		x := contract.SessionPreset{Id: p.ID, Name: p.Name, Description: p.Description, Access: contract.SessionAccess(p.Access), Branch: p.Branch && settings != nil, Source: source,
-			Role: strOrNil(role), ProfileId: strOrNil(profileID), Starter: strOrNil(p.Starter), Unavailable: strOrNil(unavailable)}
+		x := contract.SessionPreset{Id: p.ID, Name: p.Name, Description: p.Description, Access: contract.SessionAccess(p.Access), Branch: p.Branch, Source: source,
+			Role: optStr(role), ProfileId: optStr(profileID), Starter: optStr(p.Starter), Unavailable: optStr(unavailable)}
 		if profile != nil {
-			x.Harness, x.Model, x.Effort = ptr(firstString(profile["harness"], "codex")), strOrNil(astr(profile["model"])), strOrNil(astr(profile["effort"]))
+			x.Harness, x.Model, x.Effort = ptr(firstString(profile["harness"], "codex")), optStr(astr(profile["model"])), optStr(astr(profile["effort"]))
 		}
 		out.Presets = append(out.Presets, x)
 	}
 	return out, nil
-}
-
-func strOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 func firstOf(xs []any) any {

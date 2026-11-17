@@ -522,6 +522,11 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip("coding tool unavailable: "+missingTool+" on "+id, "host:"+id+":tool:"+missingTool)
 				continue
 			}
+			// A read-only or branchless start (a preset) runs only where the executor honours it (start-access-v1).
+			if (x["access"] == "read" || x["branch"] == false) && !inList(k.caps[id], "start-access-v1") {
+				skip(id+" executor lacks start-access-v1 for a read-only or branchless start; update required", "host:"+id+":start-access")
+				continue
+			}
 			if astr(x["workspaceKey"]) != "" && !inList(k.caps[id], "workspace-key-v1") {
 				skip(id+" executor lacks workspace-key-v1; update required", "host:"+id+":workspace-version")
 				continue

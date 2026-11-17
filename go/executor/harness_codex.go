@@ -172,7 +172,7 @@ func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 		config[name] = M{"command": jAt(s, "command"), "args": jAt(s, "args")}
 	}
 	if has(servers, "fleet") {
-		for _, t := range []string{"session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status", "artifact_save", "artifact_list", "artifact_get"} {
+		for _, t := range []string{"session_presets", "session_transition", "session_fork", "session_resume", "session_handoffs", "message_send", "queue_list", "ask", "reply", "questions", "worker_done", "execution_status", "artifact_save", "artifact_list", "artifact_get"} {
 			allowed = append(allowed, "mcp__fleet__"+t)
 		}
 		if d, _ := jAt(profile, "delegationProfiles").([]any); len(d) > 0 {

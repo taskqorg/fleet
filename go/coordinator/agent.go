@@ -130,7 +130,7 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 	}
 	id := newID()
 	e := doc{"id": id, "executionId": id, "sessionId": s["id"], "hostId": nil, "state": "preparing", "createdAt": nowMs(), "directedBy": s["directedBy"], "model": "gpt-6.1-sol", "effort": "low",
-		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "workspaceKey": s["workspaceKey"], "account": s["account"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
+		"dispatch": doc{"harness": harnessOf(s), "projectId": s["projectId"], "workingDirectory": s["workingDirectory"], "workspaceKey": s["workspaceKey"], "account": s["account"], "access": s["access"], "branch": s["branch"], "host": nilIf(host), "last": nilIf(last), "input": input, "payload": payload}}
 	if ac != nil {
 		e["agentConfig"], e["profileSha256"], e["model"], e["effort"] = ac, frameHash(ac), firstString(ac["model"], "gpt-6.1-sol"), ac["effort"]
 		ref, err := definitionRef(q, "agent", astr(ac["id"]), ac)
@@ -1461,10 +1461,10 @@ func sessionAttach(q *Request, b doc) (doc, error) {
 }
 
 func sessionStart(q *Request, b doc) (doc, error) {
-	// A person may start outside projects (no projectId); an agent's call always names its project (agentArgs).
+	// A person with full access may start outside projects (no projectId); an agent's call always names its project (agentArgs).
 	pid := ""
 	var err error
-	if _, given := b["projectId"]; given || q.person == nil {
+	if _, given := b["projectId"]; given || q.person == nil || q.agent != "" {
 		if pid, err = strArg(b, "projectId", "projectId", 0); err != nil {
 			return nil, err
 		}
@@ -1474,12 +1474,19 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		return nil, err
 	}
 	var project doc
+	key := pid + ":" + rid
 	if pid != "" {
 		if project = projectSettingsOf(q, pid); project == nil {
 			return nil, fail(404, "Unknown project")
 		}
+	} else {
+		// Outside projects: the same rule as other projectless work (full access), and the request identity is the
+		// caller's own, so two people never collide on or replay each other's start.
+		if !mayAccessProjectID(q.person, "") {
+			return nil, fail(403, "Starting outside projects needs full access")
+		}
+		key = "-:" + q.person.Email + ":" + rid
 	}
-	key := firstString(pid, "-") + ":" + rid
 	if old, err := all(q, "session", doc{"startRequest": key}); err != nil {
 		return nil, err
 	} else if len(old) > 0 {
@@ -1512,14 +1519,25 @@ func sessionStart(q *Request, b doc) (doc, error) {
 			return nil, fail(400, unavailable)
 		}
 		role, profileID = r, id
+		// An agent starts only the profiles its project maps to roles (agentArgs checks an explicit profileId the same
+		// way): a preset never gives it a system profile it could not request directly.
+		if q.agent != "" {
+			mapped := false
+			for _, v := range mapOf(project["roles"]) {
+				mapped = mapped || v == profileID
+			}
+			if !mapped {
+				return nil, fail(403, "Profile not in project roles")
+			}
+		}
 	}
 	profile := roleProfile(q, profileID)
 	if profileID == "" || profile == nil {
 		return nil, fail(400, "Expected profileId, a role mapped to a profile, or a preset")
 	}
-	access, branch := "write", pid != ""
+	access, branch := "write", true
 	if pre != nil {
-		access, branch = pre.Access, pre.Branch && pid != ""
+		access, branch = pre.Access, pre.Branch
 	}
 	if v, given := b["access"]; given {
 		if access = astr(v); access != "read" && access != "write" {
@@ -1530,6 +1548,16 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		var ok bool
 		if branch, ok = v.(bool); !ok {
 			return nil, fail(400, "Expected branch true|false")
+		}
+	}
+	// Write work needs its own branch: commits on a detached worktree could never be delivered.
+	if access == "write" && !branch {
+		return nil, fail(400, "Write access needs a branch")
+	}
+	// A read-only conversation stays read-only one hop later: the sessions its agent starts are read-only too.
+	if c := astr(b["callerSessionId"]); c != "" && access == "write" {
+		if caller, _ := maybe(q, c, "session"); caller != nil && caller["access"] == "read" {
+			return nil, fail(403, "A read-only conversation starts read-only sessions only")
 		}
 	}
 	if st, ok := b["setup"]; ok && st != "run" && st != "skip" {

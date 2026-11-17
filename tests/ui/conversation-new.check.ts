@@ -57,9 +57,13 @@ export async function checkNewConversation(browser: Browser, origin: string) {
       assert.ok(await until(async () => (await fact('agent').getAttribute('data-tip')) === 'Profile coding-worker, a system profile'), 'Fix / build picks the coding worker');
       assert.equal(await said('access'), 'Can edit');
       assert.equal(await said('branch'), 'fleet-test/new');
+      assert.equal(await fact('branch').evaluate(e => e.tagName), 'SPAN', 'edits always get a branch: the chip does not flip');
+      await fact('access').click();
+      assert.equal(await said('access'), 'Read only', 'the access chip flips');
       await fact('branch').click();
-      assert.equal(await said('branch'), 'No branch', 'the branch chip flips');
-      await fact('branch').click();
+      assert.equal(await said('branch'), 'No branch', 'read only may go without a branch');
+      await fact('access').click();
+      assert.deepEqual([await said('access'), await said('branch')], ['Can edit', 'fleet-test/new'], 'back to edits brings the branch back');
       // Start: session_start in cs, then the conversation opens; Back returns to the new page.
       const text = `Fix the hero on ${width}`;
       await form.locator('[data-ui=composer] textarea').fill(text);

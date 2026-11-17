@@ -89,7 +89,7 @@ func platform() string {
 }
 
 func capabilities() []string {
-	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1"}
+	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1"}
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}

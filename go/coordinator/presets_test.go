@@ -22,11 +22,11 @@ func TestPresets(t *testing.T) {
 			t.Errorf("system preset %s: branch %v with access %s", p.ID, p.Branch, p.Access)
 		}
 	}
-	got, source, err := presetsOf(doc{"presets": []any{map[string]any{"id": "triage", "name": "Triage", "role": "pm", "access": "read"}, map[string]any{"id": "ship", "name": "Ship", "profile": "coding-worker", "branch": false}}})
+	got, source, err := presetsOf(doc{"presets": []any{map[string]any{"id": "triage", "name": "Triage", "role": "pm", "access": "read"}, map[string]any{"id": "ship", "name": "Ship", "profile": "coding-worker"}}})
 	if err != nil || source != "project" || len(got) != 2 {
 		t.Fatal(got, source, err)
 	}
-	if got[0].Branch || got[0].Access != "read" || got[1].Access != "write" || got[1].Branch {
+	if got[0].Branch || got[0].Access != "read" || got[1].Access != "write" || !got[1].Branch {
 		t.Fatalf("defaults: %+v", got)
 	}
 	if _, _, err := presetsOf(doc{"presets": []any{}}); err != nil {
@@ -39,6 +39,7 @@ func TestPresets(t *testing.T) {
 		[]any{map[string]any{"id": "x", "name": " ", "role": "pm"}},                                                       // name
 		[]any{map[string]any{"id": "x", "name": "X", "role": "pm", "access": "admin"}},                                    // access
 		[]any{map[string]any{"id": "x", "name": "X", "role": "pm", "branch": "yes"}},                                      // branch
+		[]any{map[string]any{"id": "x", "name": "X", "role": "pm", "branch": false}},                                      // write without a branch
 		[]any{map[string]any{"id": "x", "name": "X", "role": "pm", "model": "opus"}},                                      // unknown key
 		[]any{map[string]any{"id": "x", "name": "X", "role": "pm"}, map[string]any{"id": "x", "name": "Y", "role": "pm"}}, // duplicate
 	} {
