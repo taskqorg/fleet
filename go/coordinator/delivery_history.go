@@ -490,7 +490,9 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	// The earliest this process saw each UI served: delivery_status's pass notes it every minute, so a UI-only release's
 	// UI on site (its total's end) is not up to this pass's 10 minutes late. Noted here too for a coordinator whose
 	// delivery_status pass is off (FLEET_DELIVERY_TICK_MS=0).
-	noteUISeen(uiServed(), now)
+	// The time of the read, not the pass's start: the reads above take minutes in a backfill.
+	ui, uiAt := uiServed(), time.Now().UTC()
+	noteUISeen(ui, uiAt)
 	for v, at := range uiSeenSnapshot() {
 		if st.UISeen[v] == "" || at < st.UISeen[v] {
 			st.UISeen[v] = at
@@ -498,7 +500,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	}
 	hosts := deliveryHostVersions(obs, now)
 	for i := range releases {
-		deliveryInstalls(&releases[i], st, hosts, now)
+		deliveryInstalls(&releases[i], st, hosts, hostVersion{ui, uiAt.Format(time.RFC3339)}, now)
 		deliveryUpdateObservations(&releases[i], obs)
 	}
 	runList := make([]contract.DeliveryRun, 0, len(have))
@@ -669,8 +671,10 @@ func deliveryObservation(tag, published string, hv hostVersion, now time.Time) (
 }
 
 // deliveryInstalls: a release published since installsFrom is installed on a host when the host runs it or newer
-// (the first time seen); its UI is on the site when the site first served a UI of its version or newer.
-func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]hostVersion, now time.Time) {
+// (the first time seen); its UI is on the site when the site first served a UI of its version or newer. served: the UI
+// the site serves now and when that was read; a release no sighting qualifies for is on the site then, as delivery_status
+// says, so the two never disagree for long.
+func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]hostVersion, served hostVersion, now time.Time) {
 	if r.Published < st.InstallsFrom || !deliveryReleaseTag(r.Tag) {
 		return
 	}
@@ -703,19 +707,23 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 		}
 	}
 	if r.UiOnSite == nil {
-		// A sighting before GitHub's publication time is the coordinator's clock behind GitHub's: its own version exists only
-		// once release.yml publishes it (versions are never reused), and a newer one seen within a minute is the same skew.
+		// A sighting before GitHub's publication time is the coordinator's clock behind GitHub's: a UI-only release's own
+		// version exists only once release.yml publishes it (versions are never reused), and any other seen within a
+		// minute is the same skew.
 		skew := r.Published
 		if p, err := time.Parse(time.RFC3339, r.Published); err == nil {
 			skew = p.Add(-time.Minute).Format(time.RFC3339)
 		}
 		for uv, at := range st.UISeen {
-			if at < r.Published && (uv == v || at >= skew) {
+			if at < r.Published && (uv == v && uiOnlyRelease(r.Tag) || at >= skew) {
 				at = r.Published
 			}
 			if !versionLess(uv, v) && at >= r.Published && (r.UiOnSite == nil || at < *r.UiOnSite) {
 				r.UiOnSite = ptr(at)
 			}
+		}
+		if r.UiOnSite == nil && served.version != "" && !versionLess(served.version, v) && served.at >= r.Published {
+			r.UiOnSite = ptr(served.at)
 		}
 	}
 }
