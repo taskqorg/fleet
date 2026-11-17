@@ -134,8 +134,14 @@ func mcpToolNames(discovery any) []any {
 	}
 	return out
 }
-func delegationServer(ctx any, journal string) M {
-	return M{"command": exe(), "args": []any{"mcp", "delegation", journal, enc(ctx)}, "tools": mcpToolNames(mcpTools(ctx))}
+
+// The context goes in a file (@path), never in argv: a director's operation list with schemas outgrows Linux's
+// 128 KiB limit for one argument (MAX_ARG_STRLEN) once the MCP wrappers escape it, and the harness then cannot start.
+func delegationServer(ctx any, journal, contextFile string) (M, error) {
+	if err := os.WriteFile(contextFile, []byte(enc(ctx)), 0o600); err != nil {
+		return nil, err
+	}
+	return M{"command": exe(), "args": []any{"mcp", "delegation", journal, "@" + contextFile}, "tools": mcpToolNames(mcpTools(ctx))}, nil
 }
 
 // unreadReply marks a stored host reply that does not decode: the request was journaled, so its outcome is unknown.
@@ -491,6 +497,15 @@ func mcpRun(args []string) error {
 		s, err := arg(2, "context")
 		if err != nil {
 			return err
+		}
+		// The context file delegationServer writes; inline JSON stays for a harness an earlier executor started, which
+		// restarts this server from the updated binary with its original argv.
+		if path, ok := strings.CutPrefix(s, "@"); ok {
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			s = string(b)
 		}
 		if ctx, err = dec(s); err != nil {
 			return err
