@@ -34,7 +34,7 @@ function useCard(ref: EntityRef): EntityCardRead {
     try { return await op('entity_card', ref.id ? { kind: ref.kind, id: ref.id } : { code: ref.code! }); }
     catch (e) { throw e instanceof OpError && e.status === 404 ? Error('Not found, or not visible to you') : e; }
   }, c => cardTouched(ref.kind, known.current, c));
-  known.current = ref.id ?? doc.data?.id;
+  known.current = doc.data?.id ?? ref.id; // the reply's id: a legacy or alias id resolves to the one changes carry
   return { data: doc.data, error: doc.error, retry: doc.reload };
 }
 

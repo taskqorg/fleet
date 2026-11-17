@@ -8,14 +8,14 @@
 
 * The reference: the human code in mono (`T-FLT-42`, a pull request's `#643`, a release tag, a profile id) right after the name (OR-22), or, for a kind without a code (run, result, experiment), its kind icon. It is a button with the tooltip "Show details".
 * The card: kind icon and code, the state badge on the right (registry family of the kind); the title in bold, up to three lines; one muted line with the project, the harness mark and the compact time with what it is (`changed 4m`, OR-2); one to four facts as label and value; the actions.
-* Actions, left to right: **Open** (primary, first), then Copy code (a pull request: Copy reference, `owner/repo#n`), Copy UUID (only kinds that have one), Copy id (a kind with neither, a host), Copy SHA-256 (a result), and Open on GitHub (a pull request). Copy feedback swaps the button's icon (check, or a cross on failure) and is announced; the row keeps its width (OR-23).
+* Actions, left to right: **Open** (primary, first), then Copy code (a pull request: Copy reference, `owner/repo#n`), Copy UUID (only kinds that have one), Copy id (a kind with neither, a host), Copy SHA-256 (a result), and Open on GitHub (a pull request). Each copy is a `CopyButton`: its icon turns into a check (a cross on failure) and the result is announced; the row keeps its width (OR-23).
 
 **Behaviour.**
 
 * A click, a tap, Enter or Space on the reference opens its card; the same again closes it. Hover only shows the pointer and the short tooltip. The click never opens the row the reference sits in (OR-26).
 * One card at a time: opening another closes the first.
-* It closes on Escape, a click outside, a scroll outside it, the window resizing, focus moving out of it and the reference, or the reference leaving the page (its row scrolled out of a virtual list).
-* Placement: under the reference, left-aligned with it; above it when there is no room below; always inside the window with an 8 px edge. It floats over the page and moves nothing (OR-23).
+* It closes on Escape, a click outside, focus moving out of it and the reference, or the reference going out of sight (clipped by its column, scrolled out of a virtual list, gone with the view).
+* Placement: under the reference, left-aligned with it; above it when there is no room below; always inside the window with an 8 px edge. It follows its reference when a column scrolls (also a live list keeping its anchor) and is placed again when it grows from the skeleton to the loaded card or the window resizes. It floats over the page and moves nothing (OR-23).
 * Loading shows a skeleton of three lines in the body's place; a failed read shows the reason ("Not found, or not visible to you" for an unknown or forbidden entity) with Retry. Open is disabled until the card has a path; the copy of the code works at once.
 * Open goes to the entity in the work area (OR-27); a modified click (new tab) follows the link.
 * D17 codes of tasks, questions and conversations in an agent message (`Markdown`) are references too; codes inside inline code, fenced code and link text stay text. Spec rule codes (`S-…`) are not entities.
@@ -34,8 +34,8 @@
 | Host | host id | host (online, offline, polls failing) | id | seen | Version, Running, Queued, Platform | Open, id |
 | Agent (profile) | profile id | none | name | harness, changed | Model, Effort, Revision | Open, code |
 | Pipeline | pipeline id | none | name | changed | Steps, Revision | Open, id or code |
-| Pull request | `#643` | delivery stage | title | project, since | Repository, Release, Opened, Merged | Open (Delivery), reference, GitHub |
-| Release | tag | delivery (installing, installed) | Release 1.2.3, UI release 1.2.3 | none | Hosts (`2 of 3` seen in the hour), Site serves (UI-only), Pull requests | Open (Delivery filtered by the tag), code |
+| Pull request | `#643` | delivery stage (from history: merged or installed) | title | project, since | Repository or Author (history), Release, Opened, Merged | Open (Delivery), reference, GitHub |
+| Release | tag, known to the delivery pass or history or run by a host or the site (else 404) | delivery (installing, installed, as the delivery pass decides) | Release 1.2.3, UI release 1.2.3 | none | Hosts (`2 of 3` seen in the hour with a version), Site serves (UI-only), Pull requests | Open (Delivery filtered by the tag), code |
 
 Not covered, by decision:
 
@@ -44,7 +44,7 @@ Not covered, by decision:
 * The author avatar of the GitHub card: Fleet does not keep pull request authors in the delivery pass; the Delivery detail shows the author from history.
 * Pull request checks beyond the stage: the stage already says PR checks, Checks failed, Queue checks or Queue failed; a check list would need a GitHub read per card.
 * Needs-you and problem rows: their text names hosts and harnesses as words, not codes; they open their item already.
-* Price ids (Resources) and other ids that name no entity: a plain copy button.
+* Price ids (Resources) and other ids that name no entity: a `CopyButton`.
 
 **Keyboard.** Tab reaches the reference; Enter or Space opens the card and moves focus to Open; Tab moves through the actions; Escape closes it and returns focus to the reference. A pointer open leaves focus where it was.
 

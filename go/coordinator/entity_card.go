@@ -93,7 +93,7 @@ func cardRow(q *Request, sql string, args ...any) (doc, error) { return first(q,
 
 func cardTask(q *Request, id string) (*contract.EntityCardReply, error) {
 	r, err := cardRow(q, `SELECT t.id,t.code,t.title,`+stateSQL+` AS state,t.project_id,t.updated_at,t.wait_reason,t.priority,
-	 coalesce(d.agent,d.last_agent) AS agent,d.host,d.open_questions,(SELECT count(*) FROM execution e WHERE e.task_id=t.id AND e.kind<>'tool_run') AS runs
+	 coalesce(d.agent,d.last_agent) AS agent,d.host,d.open_questions,d.executions AS runs
 	 FROM task t LEFT JOIN task_derived d ON d.task_id=t.id WHERE t.id=$1`, id)
 	if r == nil || err != nil {
 		return nil, err
@@ -139,7 +139,8 @@ func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) 
 	 coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
 	 coalesce((SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),d.data->'agentConfig'->>'harness') AS harness,
 	 (SELECT m.data->>'text' FROM document m WHERE m.kind='message' AND m.data->>'sessionId'=d.id ORDER BY m.seq LIMIT 1) AS first_message,
-	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM document a WHERE a.kind IN ('message','event') AND a.data->>'sessionId'=d.id)) AS activity_at,
+	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM document a WHERE a.kind IN ('message','event') AND a.data->>'sessionId'=d.id),
+	  (SELECT max(greatest(e.started_at,e.ended_at)) FROM execution e WHERE e.session_id=d.id)) AS activity_at,
 	 (SELECT count(*) FROM execution e WHERE e.session_id=d.id) AS runs,
 	 (SELECT count(*) FROM question x WHERE x.session_id=d.id AND x.state='open') AS open_questions
 	 FROM document d LEFT JOIN task t ON t.id=d.data->>'taskId' WHERE d.kind='session' AND d.id=$1`, id)
@@ -153,7 +154,7 @@ func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) 
 			fact("Runs", contract.EntityFactTypeCount, count(r["runs"])), fact("Open questions", contract.EntityFactTypeCount, count(r["open_questions"])))}, nil
 }
 
-var executionKindLabel = map[string]string{"agent_run": "Agent run", "pipeline_run": "Pipeline run", "pipeline_step": "Pipeline step", "child_agent": "Child agent", "tool_run": "Tool run"}
+var executionKindLabel = map[string]string{"agent_run": "Agent run", "pipeline_run": "Pipeline run", "pipeline_step": "Pipeline step", "child_agent": "Child agent", "tool_run": "Tool run", "host_job": "Host job"}
 
 func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
 	r, err := cardRow(q, `SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.project_id,e.task_id,e.session_id,e.experiment_id,e.host_id,e.harness,e.model,e.problem,
@@ -181,7 +182,7 @@ func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
 	} else if astr(r["started_at"]) != "" {
 		label = "started"
 	}
-	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Title: firstString(astr(r["task_title"]), executionKindLabel[astr(r["kind"])]), State: optStr(astr(r["state"])),
+	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Title: firstString(astr(r["task_title"]), executionKindLabel[astr(r["kind"])], "Run"), State: optStr(astr(r["state"])),
 		ProjectId: optStr(astr(r["project_id"])), Harness: optStr(astr(r["harness"])), At: optStr(at), AtLabel: ptr(label), Path: path,
 		Facts: facts(fact("Problem", contract.EntityFactTypeText, astr(r["problem"])), fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])),
 			fact("Conversation", contract.EntityFactTypeCode, astr(r["session_code"])), fact("Host", contract.EntityFactTypeCode, astr(r["host_id"])),
@@ -367,13 +368,14 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 			fact("Opened", contract.EntityFactTypeTime, x.Opened), fact("Merged", contract.EntityFactTypeTime, x.Merged))}, nil
 }
 
-var releaseTag = regexp.MustCompile(`^(v\d+(\.\d+)*|ui-\d+(\.\d+)*-v\d+(\.\d+)*)$`)
+var nativeReleaseTag = regexp.MustCompile(`^v\d+(\.\d+)*$`)
 
-// cardRelease: a release tag: installed when every host seen within the hour runs it or newer (delivery.go installed);
-// a UI-only release (ui-<backend>-v<UI>) installs on no host and is installed once the site serves that UI or newer.
+// cardRelease: a release tag the delivery pass or history knows, or that a host or the site runs; installed as the
+// delivery pass decides it (delivery.go): every host seen within the hour that reports a version runs it or newer; a
+// UI-only release (ui-<backend>-v<UI>) installs on no host and is installed once the site serves that UI or newer.
 func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 	tag := strings.TrimSpace(id)
-	if !releaseTag.MatchString(tag) {
+	if !nativeReleaseTag.MatchString(tag) && !uiOnlyRelease(tag) {
 		return nil, fail(400, "Expected a release tag such as v1.2.3")
 	}
 	prs := 0
@@ -382,34 +384,44 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 			prs++
 		}
 	}
-	if i := strings.LastIndex(tag, "-v"); strings.HasPrefix(tag, "ui-") && i > 0 {
-		ui, on := tag[i+2:], astr(uiRelease()["version"])
-		c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), Title: "UI release " + ui, State: ptr("installing"), Path: ptr("/delivery?q=" + url.QueryEscape(tag)),
-			Facts: facts(fact("Site serves", contract.EntityFactTypeCode, on), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))}
-		if on != "" && !versionLess(on, ui) {
+	recorded, err := has(q, "SELECT 1 FROM document WHERE kind='delivery-release' AND data->>'tag'=$1", tag)
+	if err != nil {
+		return nil, err
+	}
+	version, known := releaseVersionOf(tag), prs > 0 || recorded
+	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), State: ptr("installing"), Path: ptr("/delivery?q=" + url.QueryEscape(tag))}
+	if uiOnlyRelease(tag) {
+		on := uiServed()
+		if !known && on != version {
+			return nil, nil
+		}
+		c.Title, c.Facts = "UI release "+version, facts(fact("Site serves", contract.EntityFactTypeCode, on), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
+		if on != "" && !versionLess(on, version) {
 			c.State = ptr("installed")
 		}
 		return c, nil
 	}
-	version := strings.TrimPrefix(tag, "v")
-	list, err := hostsList(q, false)
+	obs, err := all(q, "host-observation", nil)
 	if err != nil {
 		return nil, err
 	}
-	hosts, _ := list.(doc)["hosts"].([]doc)
-	seen, on := 0, 0
-	for _, h := range hosts {
-		if h["lastSeenAt"] == nil || nowMs()-int64(num(h["lastSeenAt"])) > time.Hour.Milliseconds() {
-			continue
+	versions := []string{}
+	for _, o := range obs { // as deliveryPass reads them
+		if seen := q.app.effectiveHostSeen(astr(o["id"]), num(o["lastSeenAt"])); nowMs()-int64(seen) < 3600_000 && astr(o["version"]) != "" {
+			versions = append(versions, astr(o["version"]))
 		}
-		seen++
-		if v := astr(h["version"]); v != "" && !versionLess(v, version) {
+	}
+	if !known && !slices.Contains(versions, version) {
+		return nil, nil
+	}
+	on := 0
+	for _, v := range versions {
+		if !versionLess(v, version) {
 			on++
 		}
 	}
-	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), Title: "Release " + version, State: ptr("installing"), Path: ptr("/delivery?q=" + url.QueryEscape(tag)),
-		Facts: facts(fact("Hosts", contract.EntityFactTypeText, fmt.Sprintf("%d of %d", on, seen)), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))}
-	if seen > 0 && on == seen {
+	c.Title, c.Facts = "Release "+version, facts(fact("Hosts", contract.EntityFactTypeText, fmt.Sprintf("%d of %d", on, len(versions))), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
+	if installed(version, versions) {
 		c.State = ptr("installed")
 	}
 	return c, nil

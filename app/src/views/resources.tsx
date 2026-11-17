@@ -2,7 +2,7 @@
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  StatusLine, AgeChip, Button, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, copyText,
+  StatusLine, AgeChip, Button, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
   msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
 } from '../../../packages/ui/src/index.ts';
@@ -495,7 +495,7 @@ function PreparedResourceWindow({ projectId, category, group, onClose }: { proje
     <VirtualList fill handle={handle} items={rows} getKey={resourceItemKey} label={`Project ${category}`} rowHeight={ROW2} follow="top" columns="1.25rem minmax(0,1fr) auto"
       onEnd={!loadingWindow && page?.nextCursor ? () => move({ cursor: page.nextCursor! }, 'append') : undefined}
       onStart={!loadingWindow && page?.previousCursor ? () => move({ cursor: page.previousCursor! }, 'prepend') : undefined}
-      render={item => <><StateBadge family="source" state="current" compact />{item.kind === 'tool' ? <><span>{item.name}</span><span class="num">{item.calls} · {item.errors} failed</span></> : item.kind === 'cost' ? <><CostFigures cost={[{ ...item, reason: item.reason ?? undefined, note: item.note ?? undefined, usages: item.usages ?? undefined }]} showUnavailable /><Button label={`Price basis · ${item.priceCount}`} onClick={() => setPrices({ currency: item.currency, basis: item.basis })} /></> : <><span><Button label="Copy price id" icon="copy" iconOnly kind="quiet" onClick={() => void copyText(item.priceId)} /> Recorded rate</span><AgeChip t={item.observedAt} now={Date.now()} /></>}</>} />
+      render={item => <><StateBadge family="source" state="current" compact />{item.kind === 'tool' ? <><span>{item.name}</span><span class="num">{item.calls} · {item.errors} failed</span></> : item.kind === 'cost' ? <><CostFigures cost={[{ ...item, reason: item.reason ?? undefined, note: item.note ?? undefined, usages: item.usages ?? undefined }]} showUnavailable /><Button label={`Price basis · ${item.priceCount}`} onClick={() => setPrices({ currency: item.currency, basis: item.basis })} /></> : <><span><CopyButton label="Copy price id" value={item.priceId} iconOnly /> Recorded rate</span><AgeChip t={item.observedAt} now={Date.now()} /></>}</>} />
     {!rows.length && page && <Empty text="No matching confirmed items." />}
   </article>;
 }

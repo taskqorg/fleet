@@ -65,7 +65,10 @@ test('entity_card: every kind by code or kind and id, within the caller\'s grant
   assert.ok(pl.facts.some((f: any) => f.label === 'Steps' && f.value === '1')); assert.equal(pl.path, '/pipelines/search-basic');
   const rel = await card({kind: 'release', id: 'v1.2.3'});
   assert.equal(rel.state, 'installed'); assert.ok(rel.facts.some((f: any) => f.label === 'Hosts' && f.value === '1 of 1'), JSON.stringify(rel.facts));
-  assert.equal((await card({kind: 'release', id: 'v9.0.0'})).state, 'installing');
+  assert.equal(await status({kind: 'release', id: 'v9.0.0'}), 404, 'a tag nothing knows is no release');
+  c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES('delivery-release','delivery-release:v9.0.0','fleet','{"tag":"v9.0.0"}')`);
+  const next = await card({kind: 'release', id: 'v9.0.0'});
+  assert.equal(next.state, 'installing'); assert.ok(next.facts.some((f: any) => f.label === 'Hosts' && f.value === '0 of 1'));
   // An old code after a project rename still resolves, to the current code.
   await op('project_code_set', {projectId: 'hello-world', code: 'HWC'});
   const moved = await card({code: task.code});

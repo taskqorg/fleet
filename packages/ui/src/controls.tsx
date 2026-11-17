@@ -560,26 +560,10 @@ export function linkCodes(text: string, key: number): ComponentChildren {
 export function EntityCardLayer() {
   const cur = useShownCard();
   const box = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => { // layout, not a later effect: a click right after opening already closes it
-    if (!cur) return;
-    const close = (refocus: boolean) => { showCard(null); if (refocus) cur.anchor.focus({ preventScroll: true }); };
-    const inside = (n: EventTarget | null) => n instanceof Node && (!!box.current?.contains(n) || cur.anchor.contains(n));
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(true); } };
-    const down = (e: PointerEvent) => { if (!inside(e.target)) close(false); };
-    const scroll = (e: Event) => { if (!inside(e.target)) close(false); };
-    const out = (e: FocusEvent) => { if (e.relatedTarget && !inside(e.relatedTarget)) close(false); };
-    const gone = () => close(false);
-    document.addEventListener('keydown', key, true); document.addEventListener('pointerdown', down, true); document.addEventListener('scroll', scroll, true);
-    document.addEventListener('focusout', out, true); addEventListener('resize', gone);
-    // The code left the page (its row scrolled out of a virtual list, the view changed): the card goes with it.
-    const watch = setInterval(() => { if (!cur.anchor.isConnected) close(false); }, 250);
-    return () => { document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', down, true); document.removeEventListener('scroll', scroll, true);
-      document.removeEventListener('focusout', out, true); removeEventListener('resize', gone); clearInterval(watch); };
-  }, [cur]);
-  // Placed when it opens and whenever its size changes (the loaded card is taller than the skeleton): below, else above,
-  // else the roomier side; inside the window.
+  // A layout effect, not a later one: a click right after opening already closes it.
   useLayoutEffect(() => {
     const el = box.current; if (!cur || !el) return;
+    // Below the code, else above it, else on the roomier side; inside the window.
     const place = () => {
       const a = cur.anchor.getBoundingClientRect(), r = el.getBoundingClientRect(), gap = 4, edge = 8;
       const below = a.bottom + gap + r.height <= innerHeight - edge || a.top - gap - r.height < edge && innerHeight - a.bottom > a.top;
@@ -588,8 +572,21 @@ export function EntityCardLayer() {
       el.dataset.side = below ? 'below' : 'above';
     };
     place();
-    const watch = new ResizeObserver(place); watch.observe(el);
-    return () => watch.disconnect();
+    const close = (refocus: boolean) => { showCard(null); if (refocus) cur.anchor.focus({ preventScroll: true }); };
+    const inside = (n: EventTarget | null) => n instanceof Node && (el.contains(n) || cur.anchor.contains(n));
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(true); } };
+    const down = (e: PointerEvent) => { if (!inside(e.target)) close(false); };
+    const out = (e: FocusEvent) => { if (e.relatedTarget && !inside(e.relatedTarget)) close(false); };
+    // A scroll (the person's, or a live list keeping its anchor) moves the card with its code; the size changes too (the
+    // loaded card is taller than the skeleton). The card closes once its code is out of sight (clipped by its column,
+    // scrolled out of a virtual list, or gone with the view).
+    const sized = new ResizeObserver(place); sized.observe(el);
+    const seen = new IntersectionObserver(es => { if (es.some(x => !x.isIntersecting)) close(false); }); seen.observe(cur.anchor);
+    const watch = setInterval(() => { if (!cur.anchor.isConnected) close(false); }, 250);
+    document.addEventListener('keydown', key, true); document.addEventListener('pointerdown', down, true); document.addEventListener('scroll', place, true);
+    document.addEventListener('focusout', out, true); addEventListener('resize', place);
+    return () => { document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', down, true); document.removeEventListener('scroll', place, true);
+      document.removeEventListener('focusout', out, true); removeEventListener('resize', place); sized.disconnect(); seen.disconnect(); clearInterval(watch); };
   }, [cur]);
   // Opened by a key: focus goes to Open, which stays the same element while the card loads.
   useEffect(() => { if (cur?.keyboard) box.current?.querySelector<HTMLElement>('.ec-open')?.focus({ preventScroll: true }); }, [cur]);
@@ -604,14 +601,7 @@ export function EntityCardLayer() {
 function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
   const source = useContext(EntityCards);
   const read: EntityCardRead = source ? source.useCard(r) : { data: null, error: 'Details are not available here' };
-  const [copied, setCopied] = useState<{ label: string; ok: boolean } | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
   const k = entityKinds[r.kind], c = read.data, now = Date.now();
-  const copy = (label: string, value: string) => {
-    const done = (ok: boolean) => { setCopied({ label, ok }); clearTimeout(timer.current); timer.current = setTimeout(() => setCopied(null), 1500); };
-    copyText(value).then(() => done(true), () => done(false));
-  };
   const code = c ? c.code : r.code;
   // Copy actions: the code (a pull request: owner/repo#n), the UUID, the id of a kind with neither, a result's hash.
   const copies: [string, string][] = c ? [
@@ -642,12 +632,21 @@ function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
       {/* One element whether or not the path is known yet, so focus on it survives the load. */}
       <a class="btn primary ec-open" data-ui="button" href={c?.path ?? undefined} tabIndex={0} role={c?.path ? undefined : 'link'} aria-disabled={c?.path ? undefined : true}
         data-tip={c?.path ? undefined : read.error ? 'Not available' : 'Loading'} onClick={go}><Icon name="arrow-right" /><span>Open</span></a>
-      {/* Feedback swaps the icon only (OR-23: the row keeps its width) and is announced in the status below. */}
-      {copies.map(([label, value]) => <Button key={label} label={label} icon={copied?.label !== label ? actions.copy : copied.ok ? 'check' : 'circle-x'} kind="quiet" onClick={() => copy(label, value)} />)}
+      {copies.map(([label, value]) => <CopyButton key={label} label={label} value={value} />)}
       {c?.url && <a class="btn quiet icon-only" data-ui="button" href={c.url} target="_blank" rel="noopener noreferrer" aria-label="Open on GitHub" data-tip="Open on GitHub"><Icon name="github" /></a>}
     </div>
-    <span class="sr-only" role="status">{copied ? (copied.ok ? copied.label.replace('Copy ', '') + ' copied' : 'Copy failed') : ''}</span>
   </>;
+}
+
+/** A copy action: its icon turns into a check (a cross when the copy failed) for a moment and the result is announced;
+ *  the button keeps its width (OR-23). */
+export function CopyButton({ label, value, iconOnly }: { label: string; value: string; iconOnly?: boolean }) {
+  const [done, setDone] = useState<boolean | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const show = (ok: boolean) => { setDone(ok); clearTimeout(timer.current); timer.current = setTimeout(() => setDone(null), 1500); };
+  return <><Button label={label} icon={done === null ? actions.copy : done ? 'check' : 'circle-x'} kind="quiet" iconOnly={iconOnly} onClick={() => copyText(value).then(() => show(true), () => show(false))} />
+    <span class="sr-only" role="status">{done === null ? '' : done ? `${label.replace(/^Copy /, '')} copied` : 'Copy failed'}</span></>;
 }
 
 function factText(f: EntityCardData['facts'][number], now: number): ComponentChildren {
