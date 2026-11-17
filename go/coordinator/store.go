@@ -231,7 +231,12 @@ func openStore(ctx context.Context, url string) (*Store, error) {
 		return nil, err
 	}
 	cfg.MaxConns = 16
-	cfg.ConnConfig.RuntimeParams["options"] = "-c fleet.project_ids=*"
+	// JIT compiles a plan to machine code when its estimated cost is high. Coordinator statements are short indexed
+	// lookups whose estimates can still be large (FORCE RLS filters, LIMIT over big tables): measured on 1m-history data,
+	// the processor's candidate selection ran in 1.2 ms and then spent 124 ms compiling, on every call. Off for every
+	// connection of both Store pools; heavy analytics belong to ClickHouse.
+	// Appended, so options given in the connection URL still apply.
+	cfg.ConnConfig.RuntimeParams["options"] = strings.TrimSpace(cfg.ConnConfig.RuntimeParams["options"] + " -c fleet.project_ids=* -c jit=off")
 	p, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
