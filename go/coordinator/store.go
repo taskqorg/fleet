@@ -136,6 +136,16 @@ var txLockStates sync.Map // pgx.Tx -> *txLockState
 // acquireTxLocks acquires keys in canonical sorted order within tx using 64-bit hashtextextended($1, 0),
 // skipping already-held keys and failing explicitly on any out-of-order re-locking attempt.
 func acquireTxLocks(ctx context.Context, tx pgx.Tx, keys ...string) error {
+	return acquireTxLocksMode(ctx, tx, false, keys...)
+}
+
+func tryAdvisoryLock(ctx context.Context, tx pgx.Tx, key string) (bool, error) {
+	var held bool
+	err := tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))", key).Scan(&held)
+	return held, err
+}
+
+func acquireTxLocksMode(ctx context.Context, tx pgx.Tx, noWait bool, keys ...string) error {
 	sorted, err := sortLocks(keys)
 	if err != nil {
 		return err
@@ -167,7 +177,15 @@ func acquireTxLocks(ctx context.Context, tx pgx.Tx, keys ...string) error {
 		return fmt.Errorf("advisory lock order violation: cannot acquire %q after %q", pending[0], st.maxKey)
 	}
 	for _, k := range pending {
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", k); err != nil {
+		if noWait {
+			held, err := tryAdvisoryLock(ctx, tx, k)
+			if err != nil {
+				return err
+			}
+			if !held {
+				return fmt.Errorf("advisory lock scope %q is busy", k)
+			}
+		} else if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", k); err != nil {
 			return err
 		}
 		r, _ := lockRank(k)

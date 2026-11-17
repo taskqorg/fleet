@@ -104,7 +104,7 @@ func resourceStallProblem(ctx context.Context, a *App, open bool) bool {
 	err := runTxLocksOnce(ctx, a, nil, true, nil, func(q *Request) error {
 		// A busy Fleet write must not stop resource publication just to update its owner notification.
 		var err error
-		if held, err = resourceTryLock(q, GLOBAL); err != nil || !held {
+		if held, err = tryAdvisoryLock(q.ctx(), q.tx, GLOBAL); err != nil || !held {
 			return err
 		}
 		if !open {
@@ -150,13 +150,6 @@ func resourceRetryDelay(failures int) time.Duration {
 	return time.Duration(cap * (1 - rand.Float64()/4))
 }
 
-// These maintenance writes have at most one advisory lock. Busy items retry from the worker's backoff.
-func resourceTryLock(q *Request, lock string) (bool, error) {
-	var held bool
-	err := q.tx.QueryRow(q.ctx(), "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))", lock).Scan(&held)
-	return held, err
-}
-
 // resourcePause records one more failure of the item key names, in its own transaction under locks. selectSQL reads
 // the item's attempts ($1 item, then selectArgs), locking its row when needed. readSQL reads them without locks on failure. updateSQL gets $1 the item, $2 the new attempts and $3 the pause in
 // microseconds (resourceRetryDelay of the earlier attempts), plus extra. A hold's count carries over into the row. A
@@ -170,7 +163,7 @@ func resourcePause(ctx context.Context, a *App, lock, key, lockedSQL, readSQL, u
 	args := append([]any{item}, selectArgs...)
 	err := runTxLocksOnce(ctx, a, nil, true, nil, func(q *Request) error {
 		if lock != "" {
-			held, err := resourceTryLock(q, lock)
+			held, err := tryAdvisoryLock(q.ctx(), q.tx, lock)
 			if err != nil {
 				return err
 			}
@@ -903,6 +896,21 @@ func resourceFlushDeltas(q *Request, projects []string, deltas map[string]*resou
 	return nil
 }
 
+type resourcePassLocksKey struct{}
+
+// The background worker must reach per-item backoff when a competing transaction holds a scope.
+func runResourceWorkTx(ctx context.Context, a *App, locks []string, fn func(*Request) error) error {
+	if ctx.Value(resourcePassLocksKey{}) == nil {
+		return runTxLocksOnce(ctx, a, nil, true, locks, fn)
+	}
+	return runTxLocksOnce(ctx, a, nil, true, nil, func(q *Request) error {
+		if err := acquireTxLocksMode(q.ctx(), q.tx, true, locks...); err != nil {
+			return err
+		}
+		return fn(q)
+	})
+}
+
 // resourceReplace consumes only the UUIDs claimed by this attempt. The callback is replayable:
 // every retry resets its local claims, snapshot and candidate. Scope expansion restarts the whole Tx.
 func resourceReplace(ctx context.Context, a *App, id string) error {
@@ -940,7 +948,7 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 		var bodyFinished time.Time
 		var claimed []string
 		lockStart := time.Now()
-		err = runTxLocksOnce(ctx, a, nil, true, locks, func(q *Request) error {
+		err = runResourceWorkTx(ctx, a, locks, func(q *Request) error {
 			span.Set("fleet.resource.lock_ms", strconv.FormatInt(time.Since(lockStart).Milliseconds(), 10))
 			defer func() { bodyFinished = time.Now() }()
 			w, e := resourcePrepareReplacement(q, id, projects, span)
@@ -1122,7 +1130,7 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 	}
 	var bodyFinished time.Time
 	lockStart := time.Now()
-	resultErr = runTxLocksOnce(ctx, a, nil, true, locks, func(q *Request) error {
+	resultErr = runResourceWorkTx(ctx, a, locks, func(q *Request) error {
 		defer func() { bodyFinished = time.Now() }()
 		batchSpan.Set("fleet.resource.lock_ms", strconv.FormatInt(time.Since(lockStart).Milliseconds(), 10))
 		// Claim/evaluate every member before the first support mutation.
@@ -1309,7 +1317,7 @@ func repairTotalsOwnership(ctx context.Context, a *App, id string) error {
 		for _, p := range projects {
 			locks = append(locks, "project:"+p)
 		}
-		err := runTxLocksOnce(ctx, a, nil, true, locks, func(q *Request) error {
+		err := runResourceWorkTx(ctx, a, locks, func(q *Request) error {
 			var parent *string
 			e := q.tx.QueryRow(q.ctx(), `SELECT project_id FROM execution WHERE id=$1 FOR UPDATE`, id).Scan(&parent)
 			if errors.Is(e, pgx.ErrNoRows) {
@@ -1519,7 +1527,7 @@ const resourceProgressSQL = `SELECT EXISTS(SELECT 1 FROM resource_work_scope WHE
  OR EXISTS(SELECT 1 FROM resource_metadata_repair WHERE NOT done)`
 
 func resourceBuildPage(ctx context.Context, a *App, p string) error {
-	return runTxLocksOnce(ctx, a, nil, true, []string{"project:" + p}, func(q *Request) error {
+	return runResourceWorkTx(ctx, a, []string{"project:" + p}, func(q *Request) error {
 		if err := resourceEnsureProject(q, p); err != nil {
 			return err
 		}
@@ -1702,6 +1710,7 @@ const resourceCandidatesSQL = `SELECT execution_id FROM (SELECT execution_id,nex
  GROUP BY execution_id ORDER BY min(next_attempt_at),min(first_pending_at),execution_id`
 
 func resourceProcessorPass(ctx context.Context, a *App) error {
+	ctx = context.WithValue(ctx, resourcePassLocksKey{}, true)
 	ctx, span := obs.Start(ctx, "resource.process", "internal")
 	var finalErr error
 	defer func() { span.End(finalErr) }()
