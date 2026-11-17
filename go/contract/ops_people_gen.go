@@ -240,6 +240,7 @@ type NavCount struct {
 	InFocus int64  `json:"inFocus"`
 	Label   string `json:"label"`
 	Outside int64  `json:"outside"`
+	Split   bool   `json:"split"`
 	View    string `json:"view"`
 }
 

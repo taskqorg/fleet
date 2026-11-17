@@ -9,6 +9,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -33,11 +34,23 @@ type navView struct {
 var navSystemViews = map[string][]navView{
 	"tasks":         {{"Needs me", "need me", []string{"failed", "waiting"}}, {"Running", "running", []string{"queued", "in_progress", "waiting", "held", "paused"}}},
 	"conversations": {{"Needs me", "need me", []string{"failed", "waiting"}}, {"Running", "running", []string{"preparing", "running", "waiting"}}},
-	"delivery": {{"Needs me", "need me", []string{"pr_failed", "mq_failed"}},
-		{"In flight", "in flight", []string{"pr_open", "pr_ci", "pr_failed", "mq_wait", "mq_ci", "mq_failed", "releasing", "installing"}},
-		{"Installed", "installed", []string{"installed", "merged"}}},
-	"results": {{"Last 24 h", "new in 24 h", nil}},
-	"hosts":   {{"Offline", "offline", nil}},
+	"delivery":      {{"Needs me", "need me", deliveryFailed}, {"In flight", "in flight", deliveryInFlight()}, {"Installed", "installed", deliveryDone}},
+	"results":       {{"Last 24 h", "new in 24 h", nil}},
+	"hosts":         {{"Offline", "offline", nil}},
+}
+
+// Delivery stages that are done and failed; every other stage is in flight, so a new stage counts as in flight (as
+// app/src/system-views.ts derives it from DELIVERY_STAGES).
+var deliveryDone, deliveryFailed = []string{"installed", "merged"}, []string{"pr_failed", "mq_failed"}
+
+func deliveryInFlight() []string {
+	out := []string{}
+	for _, s := range contract.DeliveryStageValues {
+		if !slices.Contains(deliveryDone, string(s)) {
+			out = append(out, string(s))
+		}
+	}
+	return out
 }
 
 var navDefaults = map[string]string{"tasks": "Running", "conversations": "Running", "delivery": "In flight", "results": "Last 24 h", "hosts": "Offline"}
@@ -172,23 +185,23 @@ func navCounts(q *Request, _ *contract.NavCountsRequest) (contract.NavCountsRepl
 		if view.name == "" {
 			view = def
 		}
-		// A saved view that names its projects is that list whatever the focus (withFocus in the app): all of it counts as
-		// in focus.
+		// A saved view that names its projects is that list whatever the focus (withFocus in the app): one number, no split.
 		sc := s
-		if ps, _ := saved["project"].([]any); len(ps) > 0 && section != "delivery" {
+		if named, _ := saved["project"].([]any); len(named) > 0 && section != "delivery" {
 			sc = navScope{ignored: s.ignored}
 		}
 		in, outside, err := navCount(q, section, view, saved, sc)
-		if err != nil && len(saved) > 0 {
-			// A saved view the list filters no longer take (a state since renamed) is refused before any statement runs:
-			// the section counts its default rather than failing every counter.
-			view = def
-			in, outside, err = navCount(q, section, view, nil, s)
+		// A saved view the list filters no longer take (a state since renamed) is refused (400) before any statement runs:
+		// the section counts its default rather than failing every counter. Any other failure fails the read.
+		var refused *HTTPError
+		if err != nil && len(saved) > 0 && errors.As(err, &refused) && refused.Code == 400 {
+			view, sc = def, s
+			in, outside, err = navCount(q, section, view, nil, sc)
 		}
 		if err != nil {
 			return out, err
 		}
-		out.Sections[section] = contract.NavCount{View: view.name, Label: view.label, InFocus: in, Outside: outside}
+		out.Sections[section] = contract.NavCount{View: view.name, Label: view.label, InFocus: in, Outside: outside, Split: len(sc.focus) > 0 && section != "hosts"}
 	}
 	return out, nil
 }
@@ -204,22 +217,22 @@ func navCount(q *Request, section string, v navView, saved map[string]any, s nav
 		}
 		return splitCount(q, "SELECT count(*) FILTER (WHERE "+s.split(&p, "t.project_id")+"),count(*) FROM task t"+where(c), p)
 	case "conversations":
-		p := []any{}
-		c, err := sessionWhere(navList(saved, v.states, s), &p, true)
+		p, f := []any{}, navList(saved, v.states, s)
+		c, err := sessionWhere(f, &p, true)
 		if err != nil {
 			return 0, 0, err
 		}
 		// Without a search the count needs only each session's state: not sessionBase's message and activity scans,
 		// which this read, repeated on execution changes, would run every few seconds.
 		base := sessionBase
-		if f := navList(saved, v.states, s); f["search"] == nil {
+		if f["search"] == nil {
 			base = navSessionBase
 		}
 		return splitCount(q, base+" SELECT count(*) FILTER (WHERE "+s.split(&p, "x.project_id")+"),count(*) FROM x"+where(c), p)
 	case "delivery":
 		return navDelivery(q, v, saved, s)
 	case "results":
-		// The Results list with since:1d: stored, pending and failed results of the last 24 hours (artifact_list).
+		// The Results list with since:1d: every result of the last 24 hours it shows, in any state (artifact_list).
 		p := []any{time.Now().Add(-24 * time.Hour)}
 		c := projectNotIn([]string{"tombstoned_at IS NULL", "created_at>=$1"}, &p, "project_id", s.ignored)
 		return splitCount(q, "SELECT count(*) FILTER (WHERE "+s.split(&p, "project_id")+"),count(*) FROM artifact"+where(c), p)

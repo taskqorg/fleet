@@ -48,7 +48,7 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   assert.equal(s.delivery.inFocus, (await op('delivery_status', {})).items.filter((i: any) => states('delivery', 'In flight').includes(i.stage)).length);
   const hosts = await op('hosts_list', {});
   assert.equal(s.hosts.inFocus, hosts.hosts.filter((h: any) => !h.lastSeenAt || hosts.serverNow - h.lastSeenAt >= hosts.staleAfterMs).length, 'offline as the Hosts list judges it');
-  for (const x of Object.values(s) as any[]) assert.equal(x.outside, 0, 'no focus: nothing outside');
+  for (const x of Object.values(s) as any[]) assert.deepEqual([x.outside, x.split], [0, false], 'no focus: nothing outside, no split');
 
   // Ignored: never counted, also without a focus; work outside projects and an undefined project stay.
   await op('person_settings_set', {ignore: {project: 'muted', ignored: true}});
@@ -64,7 +64,7 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   assert.equal(s.tasks.outside, 2, 'beta and stray; muted is ignored');
   assert.deepEqual([s.conversations.inFocus, s.conversations.outside], [2, 0]);
   assert.deepEqual([s.results.inFocus, s.results.outside], [1, 1]);
-  assert.equal(s.hosts.outside, 0, 'hosts have no project');
+  assert.deepEqual([s.hosts.outside, s.hosts.split, s.tasks.split], [0, false, true], 'hosts have no project: no split');
 
   // The counter view is a person setting: another system preset, a saved view, off, and back to the default.
   await op('person_settings_set', {navCounters: {tasks: 'Needs me'}});
@@ -76,7 +76,7 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   // A saved view that names its projects is that list whatever the focus: all of it in focus, as the list shows it.
   await op('person_settings_set', {viewPut: {list: 'tasks', name: 'Beta', view: {view: 'tasks', state: ['queued', 'failed'], project: ['beta']}}, navCounters: {tasks: 'Beta'}});
   s = await counts();
-  assert.deepEqual([s.tasks.inFocus, s.tasks.outside], [await total('task_page', {state: ['queued', 'failed'], projectId: ['beta']}), 0]); assert.equal(s.tasks.inFocus, 2);
+  assert.deepEqual([s.tasks.inFocus, s.tasks.outside, s.tasks.split], [await total('task_page', {state: ['queued', 'failed'], projectId: ['beta']}), 0, false]); assert.equal(s.tasks.inFocus, 2);
   // A saved view the list filters no longer take counts the default instead of failing every counter.
   c.sql(`UPDATE document SET data=jsonb_set(data,'{views}',(SELECT jsonb_agg(CASE WHEN v->>'name'='Beta' THEN jsonb_set(v,'{view,state}','["no_such_state"]') ELSE v END) FROM jsonb_array_elements(data->'views') v)) WHERE kind='person-setting'`);
   s = await counts();

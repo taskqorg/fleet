@@ -13,7 +13,7 @@ import { prefs, prefsRead, prefsSaved } from './prefs.ts';
 import type { NavCount, Tone } from '../../packages/ui/src/index.ts';
 
 type Reply = Ops['nav_counts']['reply'];
-const QUIET = 3000, REFRESH = 30_000;
+const QUIET = 5000, REFRESH = 30_000;
 const COUNTED: Change['kind'][] = ['task', 'session', 'execution', 'artifact', 'delivery', 'host'];
 // Hosts offline needs a look (OR-18); the other counters are plain amounts of work.
 const TONES: Record<string, Tone> = { hosts: 'attention' };
@@ -43,6 +43,6 @@ export function useNavCounts(ready: boolean): Record<string, NavCount> {
   const r = last.current;
   if (!r) return {};
   return Object.fromEntries(Object.entries(r.sections).map(([id, c]) => [id, {
-    n: c.inFocus, outside: r.focused && id !== 'hosts' ? c.outside : undefined, tone: TONES[id] ?? 'neutral', label: c.label,
+    n: c.inFocus, outside: c.split ? c.outside : undefined, tone: TONES[id] ?? 'neutral', label: c.label,
   }]));
 }
