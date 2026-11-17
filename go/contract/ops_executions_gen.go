@@ -989,6 +989,20 @@ func (v *GatewayVersion) Validate() error {
 	return nil
 }
 
+// HostPollError: The last failed poll of a host as the coordinator answered it (go/coordinator/host_poll_health.go); cleared by the next successful poll.
+type HostPollError struct {
+	At      *float64 `json:"at,omitempty"`
+	Message string   `json:"message"`
+	Reason  string   `json:"reason"`
+	Since   float64  `json:"since"`
+	Status  int64    `json:"status"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostPollError) Validate() error {
+	return nil
+}
+
 // HostRecord: A registered host (without its secret hash). harnesses: per harness name whether it is allowed; autoUpdate on, off or an RFC 3339 time.
 type HostRecord struct {
 	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
@@ -1011,7 +1025,7 @@ func (v *HostRecord) Validate() error {
 	return nil
 }
 
-// HostRow: One host as the Hosts screen shows it: configured, observed, or both; problems only while it polls.
+// HostRow: One host as the Hosts screen shows it: configured, observed, or both; problems only while it polls; pollError only while its polls fail.
 type HostRow struct {
 	AutoUpdate       json.RawMessage  `json:"autoUpdate"`
 	Capabilities     json.RawMessage  `json:"capabilities"`
@@ -1019,6 +1033,7 @@ type HostRow struct {
 	Id               string           `json:"id"`
 	LastSeenAt       *float64         `json:"lastSeenAt"`
 	Platform         *string          `json:"platform"`
+	PollError        *HostPollError   `json:"pollError,omitempty"`
 	Problems         json.RawMessage  `json:"problems"`
 	Queued           int64            `json:"queued"`
 	RemovedAt        *float64         `json:"removedAt,omitempty"`
@@ -1038,6 +1053,11 @@ func (v *HostRow) Validate() error {
 	}
 	if v.Capabilities == nil {
 		return Missing("capabilities")
+	}
+	if v.PollError != nil {
+		if err := Check(v.PollError, "pollError"); err != nil {
+			return err
+		}
 	}
 	if v.Problems == nil {
 		return Missing("problems")
@@ -1059,6 +1079,7 @@ type HostVersion struct {
 	Behind     *bool           `json:"behind"`
 	Id         string          `json:"id"`
 	LastSeenAt *float64        `json:"lastSeenAt"`
+	PollError  *HostPollError  `json:"pollError,omitempty"`
 	Update     json.RawMessage `json:"update"`
 	Version    *string         `json:"version"`
 }
@@ -1067,6 +1088,11 @@ type HostVersion struct {
 func (v *HostVersion) Validate() error {
 	if v.AutoUpdate == nil {
 		return Missing("autoUpdate")
+	}
+	if v.PollError != nil {
+		if err := Check(v.PollError, "pollError"); err != nil {
+			return err
+		}
 	}
 	if v.Update == nil {
 		return Missing("update")

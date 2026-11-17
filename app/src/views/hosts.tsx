@@ -4,7 +4,7 @@
 // Staleness is decided on the client from lastSeenAt (no write happens when a host stops polling), re-evaluated every 5 s.
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { EntityCode, ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, FillBar, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow, useTick } from '../../../packages/ui/src/index.ts';
+import { EntityCode, ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow, useTick } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { Limits } from './limits.tsx';
@@ -33,7 +33,7 @@ export function Hosts({ id }: { id?: string }) {
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
         {data.hosts.map((h: any) => { const r = reading(h.id); return <div key={h.id} role="row" class={`vl-row static${h.id === id ? ' sel' : ''}`}>
-          <span class="lead"><StateBadge family="host" state={fresh(h) ? 'online' : 'offline'} compact lastSeen={fresh(h) ? undefined : h.lastSeenAt ?? undefined} now={now} /></span>
+          <span class="lead"><StateBadge family="host" state={!fresh(h) ? 'offline' : h.pollError ? 'failing' : 'online'} compact lastSeen={fresh(h) ? undefined : h.lastSeenAt ?? undefined} now={now} /></span>
           <span class="tt"><a class="title row-link" href={`/hosts/${h.id}`} onClick={e => { e.preventDefault(); go(`/hosts/${h.id}`); }}>{h.id}</a>
             {h.platform && !h.id.includes(h.platform.slice(0, 3)) && <span class="id">{h.platform}</span>}
             <HarnessCounts counts={h.runningByHarness} label={`${h.id} workers by harness`} />
@@ -59,7 +59,11 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, now, onGone,
   const remove = (confirm: boolean) => (setErr(''), op('hosts_remove', { id: sel.id, preview: !confirm }).then(x => { if (confirm) onGone(); else setPreview(x); }, e => setErr(String(e.message ?? e))));
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.id}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onGone} /><h2 class="detail-title">{sel.id}</h2></header>
-    <DetailSection title="State"><KvRow icon="activity" label="Last seen" meta={sel.lastSeenAt ? undefined : 'never'} value={sel.lastSeenAt ? <AgeChip t={sel.lastSeenAt} now={now} /> : undefined} />
+    <DetailSection title="State">
+      {/* The coordinator answers this host's polls with an error: no commands, no update target (host_poll_health.go). */}
+      {live && sel.pollError && <ProblemRow title="Polls failing" severity="failure" actions={[]}
+        facts={<><span class="mono">{sel.pollError.reason}</span> <span class="muted">{sel.pollError.status} since</span> <AgeChip t={sel.pollError.since} now={now} /> <span class="muted">{sel.pollError.message}</span></>} />}
+      <KvRow icon="activity" label="Last seen" meta={sel.lastSeenAt ? undefined : 'never'} value={sel.lastSeenAt ? <AgeChip t={sel.lastSeenAt} now={now} /> : undefined} />
       <KvRow icon="panels-top-left" label="Platform" meta={sel.platform ?? 'unknown'} />
       {(r?.version ?? sel.version) && <KvRow icon="info" label="Daemon version" meta={<span class="mono">{r?.version ?? sel.version}</span>} />}</DetailSection>
     <DetailSection title="Host daemon health">{r ? <>

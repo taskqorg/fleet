@@ -112,6 +112,8 @@ export const states = {
   host: {
     online: { label: 'Online', tone: 'success', icon: 'circle-check' },
     offline: { label: 'Offline', tone: 'danger', icon: 'circle-slash' },
+    /** It polls, but the coordinator answers its polls with an error: no commands, no update target. */
+    failing: { label: 'Polls failing', tone: 'danger', icon: 'octagon-x' },
   },
   // A subscription's intake (people-access §7): it accepts new work, or its holder paused it.
   subscription: {

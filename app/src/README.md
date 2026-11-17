@@ -7,7 +7,7 @@
 ## Interface
 
 - [`errors.ts`](errors.ts) starts the Sentry browser SDK for Bugsink before any other module (DSN from `config/bugsink.json`, none: off): errors only, no personal data, imports no app module; `main.tsx` passes `configureErrors` the ignored errors (`OpError`, `AccessChanged`) and the release (the version this tab runs); `captureRender` reports a render crash. `main.tsx:RenderBoundary` shows a crashed page as an error with Reload ([error tracking](../../docs/designs/fleet-error-tracking.md#2-browser-tunnel)).
-- [`version.ts`](version.ts) reads `system_versions`, clears private version snapshots on access invalidation, keeps unknown/stale observations explicit, and detects and activates app updates.
+- [`version.ts`](version.ts) reads `system_versions`, clears private version snapshots on access invalidation, keeps unknown/stale observations explicit, and detects and activates app updates. `hostState` puts a host with `pollError` first: danger, "polls failing", the reason code and status as its note and the first failure as a "failing since" age.
 - [`main.tsx`](main.tsx) defines `SCREENS` and `App`, connects `AppShell`, identity/grant checks, preferences, feed/store startup, service worker registration, and routes.
 - [`api.ts`](api.ts) exports typed `op`, `writeOnce`, `addRequestedKey`, `sendingId`, `useAlive`, `online`, and `signedOut`.
 - [`feed.ts`](feed.ts) exports `startFeed`, `subscribe`, `currentCursor`, and `feedState`; [`store.ts`](store.ts) exports `useList`, `useDoc`, list loading, and live-change application.

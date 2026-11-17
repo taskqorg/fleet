@@ -3,12 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"fleet/contract"
+	"fleet/errtrack"
 )
 
 // POST /api/hosts/poll (SL5). Decoupled from GLOBAL: heartbeat writes and readiness checks run under "host:"+hostID
@@ -27,6 +32,13 @@ type hostHeartbeat struct {
 	lastPersistedAt int64
 	stateSig        string
 	storesSig       string
+	// Poll health (host_poll_health.go): pollClean, no failure is recorded in the database; pollProblem, its
+	// needs-you problem is open; pollFailures is the sequence number of its last failed poll (pollFailureSeq, never
+	// reused after a cache clear), so a success does not mark clean over a later failure.
+	pollClean    bool
+	pollProblem  bool
+	pollFailures uint64
+	pollRecorded *pollRecord // the failure last written, so a repeat within a minute needs no transaction
 }
 
 type hostWakeEntry struct {
@@ -96,11 +108,7 @@ func (a *App) enterHostPoll(hostID string) {
 	a.ensureRuntime()
 	now := nowMs()
 	a.pollMu.Lock()
-	hb := a.heartbeats[hostID]
-	if hb == nil {
-		hb = &hostHeartbeat{}
-		a.heartbeats[hostID] = hb
-	}
+	hb := a.heartbeatOf(hostID)
 	hb.activePolls++
 	if now > hb.lastSeenAt {
 		hb.lastSeenAt = now
@@ -151,11 +159,7 @@ func (a *App) heartbeatNeedsFlush(hostID, stateSig, storesSig string, now int64)
 func (a *App) commitHostHeartbeat(hostID, stateSig, storesSig string, persistedAt int64) {
 	a.ensureRuntime()
 	a.pollMu.Lock()
-	hb := a.heartbeats[hostID]
-	if hb == nil {
-		hb = &hostHeartbeat{}
-		a.heartbeats[hostID] = hb
-	}
+	hb := a.heartbeatOf(hostID)
 	hb.lastPersistedAt = persistedAt
 	hb.stateSig = stateSig
 	hb.storesSig = storesSig
@@ -305,59 +309,258 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			if astr(mapOf(c["payload"])["workspaceKey"]) != "" && !inList(caps, "workspace-key-v1") {
 				continue
 			}
-			ok, err := agentReady(wq, c)
-			if err != nil {
+			// Each command is prepared under its own savepoint: one command that cannot be handed off is stopped with
+			// its reason, and the rest of the poll goes on (2026-11-17: one stored run failed every poll for 2.5 h).
+			if err := exec(wq, "SAVEPOINT poll_command"); err != nil {
 				return err
 			}
-			if !ok {
-				continue
-			}
-			e, err := get(wq, c["executionId"], "execution")
+			fresh, err := a.pollReadyCommand(wq, hostDoc, c)
 			if err != nil {
-				return err
-			}
-			// Held-host trust: work that carries project content goes only to a host whose holder may see the project.
-			if k := astr(c["kind"]); k == "start" || k == "script" || k == "delivery-step" {
-				if !a.hostMayRun(hostDoc, nonNil(e["projectId"], mapOf(c["payload"])["projectId"]), e["directedBy"]) {
-					continue
+				reason, outcome := pollCommandRefusal(err)
+				if outcome == pollFails {
+					return err // a deadlock, a lost connection, the request leaving: the whole poll fails and is retried
 				}
-			}
-			if c["kind"] != "stop" {
-				ok, err := a.delegationReady(wq, e)
-				if err != nil {
+				// Its writes roll back; its onEnd hooks (a publish, a pipeline write guard) stay, and are idempotent.
+				if err := exec(wq, "ROLLBACK TO SAVEPOINT poll_command"); err != nil {
 					return err
 				}
-				if !ok {
+				if err := exec(wq, "RELEASE SAVEPOINT poll_command"); err != nil {
+					return err
+				}
+				if outcome == pollRetriesCommand {
+					// It stays pending for the next poll. A failure that keeps coming is a bug: one log line and one
+					// Bugsink event (its issue reaches Needs you) per command and error class, not one per poll.
+					if pollCommandWaits.note(astr(c["id"]), errorClass(err)) {
+						log.Printf("host %s command %s waits: %v", host, astr(c["id"]), err)
+						cerr, kind := err, astr(c["kind"])
+						onEnd(wq.tx, func(bool) {
+							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
+						})
+					}
 					continue
 				}
-			}
-			ok, err = handoffPipelineCommand(wq, e, c)
-			if err != nil {
-				return err
-			}
-			if !ok {
+				pollCommandWaits.forget(astr(c["id"]))
+				if err := a.refusePollCommand(wq, c, reason); err != nil {
+					return err
+				}
+				log.Printf("host %s command %s stopped: %s", host, astr(c["id"]), reason)
+				if !strings.HasPrefix(reason, "refused:") {
+					cerr, kind := err, astr(c["kind"])
+					onEnd(wq.tx, func(committed bool) { // once, for the attempt that committed the stop
+						if committed {
+							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
+						}
+					})
+				}
 				continue
 			}
-			// The ready filter may rewrite the command (delegation inputs): reply with it as stored now.
-			fresh, err := get(wq, c["id"], "command")
-			if err != nil {
+			if err := exec(wq, "RELEASE SAVEPOINT poll_command"); err != nil {
 				return err
 			}
-			out = append(out, fresh)
+			pollCommandWaits.forget(astr(c["id"])) // prepared: no longer waiting on an error
+			if fresh != nil {
+				out = append(out, fresh)
+			}
 		}
 		return nil
 	})
 	return out, err
 }
 
+// pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
+// command (delegation inputs), so the reply is the command as stored after it.
+func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
+	ok, err := agentReady(wq, c)
+	if err != nil || !ok {
+		return nil, err
+	}
+	e, err := get(wq, c["executionId"], "execution")
+	if err != nil {
+		return nil, err
+	}
+	// Held-host trust: work that carries project content goes only to a host whose holder may see the project.
+	if k := astr(c["kind"]); k == "start" || k == "script" || k == "delivery-step" {
+		if !a.hostMayRun(hostDoc, nonNil(e["projectId"], mapOf(c["payload"])["projectId"]), e["directedBy"]) {
+			return nil, nil
+		}
+	}
+	if c["kind"] != "stop" {
+		ok, err := a.delegationReady(wq, e)
+		if err != nil || !ok {
+			return nil, err
+		}
+	}
+	if ok, err := handoffPipelineCommand(wq, e, c); err != nil || !ok {
+		return nil, err
+	}
+	return get(wq, c["id"], "command")
+}
+
+// pollCommandRefusal: what a command's failed preparation does. The command's own lasting failure (an authorization
+// refusal, a stored row that is gone) stops it with the reason; anything else (a conflict, a race, a busy
+// dependency, a database or other error) leaves it pending for the next poll; a serialization failure, a deadlock, a
+// lost connection or the request leaving fail the poll as before (and are retried).
+func pollCommandRefusal(err error) (string, pollCommandOutcome) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "", pollFails
+	}
+	var he *HTTPError
+	if errors.As(err, &he) {
+		switch he.Code {
+		case 403:
+			return "refused: " + he.Msg, pollStopsCommand // an authorization refusal: never handed over, never widened
+		case 404, 410:
+			return "handoff failed: " + he.Msg, pollStopsCommand // a stored row that is gone
+		}
+		return "", pollRetriesCommand // a conflict, a race or a busy dependency: the next poll tries again
+	}
+	code := pgCode(err)
+	switch {
+	// Class 40 (serialization, deadlock), 08 (connection) and 57 (operator intervention, statement timeout) fail the
+	// poll for its retry; a lost connection without a code fails the savepoint rollback, and with it the poll.
+	case strings.HasPrefix(code, "40") || strings.HasPrefix(code, "08") || strings.HasPrefix(code, "57"):
+		return "", pollFails
+	}
+	// Any other database error may be the coordinator's (a statement or schema bug after a deploy): the command waits,
+	// never destroyed for it.
+	return "", pollRetriesCommand
+}
+
+// commandWaits: the error class each waiting command was last reported with (pollCommandWaits), so a command that keeps
+// failing is logged and sent to Bugsink once per class, not once per poll. An entry goes when its command prepares or
+// is stopped; the map holds at most commandWaitsCap entries (when full it starts over, which only repeats reports).
+type commandWaits struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+const commandWaitsCap = 4096
+
+var pollCommandWaits = &commandWaits{m: map[string]string{}}
+
+// note records that command id waits on class; true when that is new (report it).
+func (w *commandWaits) note(id, class string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.m[id] == class {
+		return false
+	}
+	if _, ok := w.m[id]; !ok && len(w.m) >= commandWaitsCap {
+		w.m = map[string]string{}
+	}
+	w.m[id] = class
+	return true
+}
+
+func (w *commandWaits) forget(id string) {
+	w.mu.Lock()
+	delete(w.m, id)
+	w.mu.Unlock()
+}
+
+func (w *commandWaits) size() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.m)
+}
+
+// errorClass: a stable class of err (its HTTP status and reason code, or its SQLSTATE), never its text.
+func errorClass(err error) string {
+	var he *HTTPError
+	if errors.As(err, &he) {
+		r, _ := he.extraReason()
+		return fmt.Sprintf("http_%d:%s", he.Code, r)
+	}
+	if code := pgCode(err); code != "" {
+		return "sqlstate_" + code
+	}
+	// Digits (ids, times, revisions) do not make a new class; the cap bounds the rest.
+	m := []rune(errorDigits.ReplaceAllString(err.Error(), "#"))
+	if len(m) > 120 {
+		m = m[:120]
+	}
+	return "go:" + string(m)
+}
+
+var errorDigits = regexp.MustCompile(`[0-9]+`)
+
+type pollCommandOutcome int
+
+const (
+	pollFails pollCommandOutcome = iota
+	pollRetriesCommand
+	pollStopsCommand
+)
+
+// refusePollCommand settles a command that will never be handed off: it is stopped with its reason. A pipeline's start
+// or script whose plan entry is still prepared (the handoff gate is the only way to a host, so no host has seen it)
+// also ends its execution, cancelled with the reason, so the step does not wait on a command that cannot come. A
+// command that may have reached a host already (a redelivery, any other kind) leaves its execution to its receipts and
+// the lost-host sweep.
+func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
+	if err := stopPipelineCommand(wq, c, reason); err != nil {
+		return err
+	}
+	if !pipelineDispatchKind(c["kind"]) {
+		return nil
+	}
+	e, err := maybe(wq, c["executionId"], "execution")
+	if err != nil || e == nil || e["pipelineRunId"] == nil || terminal(e) || e["state"] == "running" {
+		return err
+	}
+	run, err := getRun(wq, astr(e["pipelineRunId"]))
+	if pipelineFormatUnsupported(err) || err == nil && run == nil {
+		return nil // no run to read: nothing proves the command never went out
+	}
+	if err != nil {
+		return err
+	}
+	index := pipelineStepIndex(run, astr(e["pipelineStepId"]))
+	if index < 0 {
+		return nil
+	}
+	if d := mapOf(pipelinePlanEntry(run, index)["dispatch"]); d["phase"] != "prepared" || d["commandId"] != c["id"] {
+		return nil
+	}
+	now := nowMs()
+	e["state"], e["stopDetail"], e["finishedAt"], e["updatedAt"] = "cancelled", reason, now, now
+	delete(e, "waitReason")
+	delete(e, "waitDetail")
+	if err := put(wq, "execution", e); err != nil {
+		return err
+	}
+	// The dispatch pass runs the pipeline engine's sweeps: the step sees its native execution end.
+	onEnd(wq.tx, func(committed bool) {
+		if committed {
+			a.wakeDispatch()
+		}
+	})
+	return exec(wq, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"])
+}
+
+// poll answers one host poll and records its health: a failure the host cannot report (it gets no reply to report
+// with) is recorded here, and the next success clears it (host_poll_health.go).
 func (a *App) poll(q *Request) (any, error) {
+	out, err := a.pollOnce(q)
+	if host := hostOf(q); err != nil && q.ctx().Err() != nil {
+		// The host left (a restart mid long-poll): whatever error that surfaced as, it is not a failure to record.
+	} else if err != nil {
+		a.notePollFailure(q.ctx(), host, q.host["holder"], err)
+	} else {
+		a.notePollSuccess(q.ctx(), host)
+	}
+	return out, err
+}
+
+func (a *App) pollOnce(q *Request) (any, error) {
+	// The host is seen before its body is read: a host whose every poll fails still shows as polling (with pollError).
+	host := hostOf(q)
+	a.enterHostPoll(host)
+	defer a.exitHostPoll(host)
 	var b contract.PollRequest
 	if err := decode(q.body, &b); err != nil {
 		return nil, err
 	}
-	host := hostOf(q)
-	a.enterHostPoll(host)
-	defer a.exitHostPoll(host)
 
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
 	now := nowMs()
@@ -414,17 +617,25 @@ func (a *App) poll(q *Request) (any, error) {
 				}
 			}
 			if flushObs {
-				if hasUpd {
-					// Look at update question only when the update result changes.
-					if prev, err := get(wq, host, "host-observation"); err != nil && !errors.Is(err, errNotFound) {
+				prev, err := maybe(wq, host, "host-observation")
+				if err != nil {
+					return err
+				}
+				// Look at update question only when the update result changes.
+				if hasUpd && js(mapOf(prev)["update"]) != js(upd) {
+					if err := updateQuestion(wq, host, q.host["holder"], updResult); err != nil {
 						return err
-					} else if js(mapOf(prev)["update"]) != js(upd) {
-						if err := updateQuestion(wq, host, q.host["holder"], updResult); err != nil {
-							return err
-						}
 					}
 				}
-				if err := put(wq, "host-observation", obs); err != nil {
+				// A recorded poll failure stays until a successful poll clears it (host_poll_health.go).
+				row := obs
+				if pe := mapOf(prev)["pollError"]; pe != nil {
+					row = doc{"pollError": pe}
+					for k, v := range obs {
+						row[k] = v
+					}
+				}
+				if err := put(wq, "host-observation", row); err != nil {
 					return err
 				}
 			}

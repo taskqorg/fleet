@@ -461,8 +461,14 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 			if o["capabilities"] != nil {
 				h["capabilities"] = o["capabilities"]
 			}
+			polling := seen > 0 && float64(now)-seen < hostStaleMs
+			// The last failed poll, until a successful one (host_poll_health.go); like problems, only while the host
+			// polls: a host that stopped is offline, and an old failure would hide that.
+			if polling && o["pollError"] != nil {
+				h["pollError"] = o["pollError"]
+			}
 			// A host that stopped polling shows no problems: its staleness is the signal.
-			if seen > 0 && float64(now)-seen < hostStaleMs && o["problems"] != nil {
+			if polling && o["problems"] != nil {
 				h["problems"] = o["problems"]
 			}
 		}

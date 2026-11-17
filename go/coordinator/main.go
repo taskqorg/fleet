@@ -333,16 +333,24 @@ func (q *Request) ctx() context.Context { return q.r.Context() }
 
 type handler func(*Request) (any, error)
 
-func writeError(w http.ResponseWriter, err error) {
-	var he *HTTPError
-	code, msg := 500, err.Error()
+// errorAnswer: the status and message an error answers with (writeError, and the host poll's failure record).
+func errorAnswer(err error) (code int, msg string, he *HTTPError) {
 	if errors.As(err, &he) {
-		code = he.Code
+		return he.Code, err.Error(), he
+	}
+	if pgCode(err) == "42501" { // a write outside the person's scope (row-level security): 403, not 500
+		return 403, "Not in your scope", nil
+	}
+	return 500, err.Error(), nil
+}
+
+func writeError(w http.ResponseWriter, err error) {
+	code, msg, he := errorAnswer(err)
+	if he != nil {
 		if code == 403 || he.Refused {
 			obs.MarkRefused(w) // a missing role or grant, a removed host: a decision, not an error (fleet-telemetry.md §1)
 		}
-	} else if pgCode(err) == "42501" { // a write outside the person's scope (row-level security): 403, not 500
-		code, msg = 403, "Not in your scope"
+	} else if code == 403 {
 		obs.MarkRefused(w)
 	} else {
 		log.Printf("error: %v", err)
