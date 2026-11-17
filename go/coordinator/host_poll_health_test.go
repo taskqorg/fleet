@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 	"testing"
 
 	"fleet/contract"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Requirement: one command whose handoff fails (an authority refusal, a missing execution) is stopped with its reason
@@ -82,6 +85,13 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		native, err := get(q, mapOf(pipelinePlanEntry(run, 0)["dispatch"])["nativeExecutionId"], "execution")
+		if err != nil {
+			return err
+		}
+		if native["state"] != "cancelled" || native["stopDetail"] != "refused: Pipeline initiating actor no longer has project access" {
+			return fmt.Errorf("refused script's execution is %v (%v), want cancelled with the reason", native["state"], native["stopDetail"])
+		}
 		if phase := mapOf(pipelinePlanEntry(run, 0)["dispatch"])["phase"]; phase != "prepared" {
 			return fmt.Errorf("refused run's dispatch is %v, want still prepared (never handed off)", phase)
 		}
@@ -95,6 +105,30 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPollCommandRefusal(t *testing.T) {
+	for _, c := range []struct {
+		err     error
+		reason  string
+		outcome pollCommandOutcome
+	}{
+		{fail(403, "Pipeline connection or tool is no longer granted"), "refused: Pipeline connection or tool is no longer granted", pollStopsCommand},
+		{fail(404, "Not found"), "handoff failed: Not found", pollStopsCommand},
+		{fail(409, "Pipeline pinned profile changed before dispatch"), "handoff failed: Pipeline pinned profile changed before dispatch", pollStopsCommand},
+		{fail(503, "store unreachable"), "", pollRetriesCommand},
+		{fail(429, "busy"), "", pollRetriesCommand},
+		{&pgconn.PgError{Code: "40001"}, "", pollFails},
+		{&pgconn.PgError{Code: "40P01"}, "", pollFails},
+		{&pgconn.PgError{Code: "55P03"}, "", pollRetriesCommand},
+		{&pgconn.PgError{Code: "22P02"}, "handoff failed: database error 22P02", pollStopsCommand},
+		{&pgconn.PgError{Code: "42501"}, "refused: not in scope", pollStopsCommand},
+		{fmt.Errorf("wrapped: %w", context.Canceled), "", pollFails},
+	} {
+		if reason, outcome := pollCommandRefusal(c.err); reason != c.reason || outcome != c.outcome {
+			t.Errorf("%v: %q %v, want %q %v", c.err, reason, outcome, c.reason, c.outcome)
+		}
 	}
 }
 

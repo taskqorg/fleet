@@ -104,11 +104,7 @@ func (a *App) enterHostPoll(hostID string) {
 	a.ensureRuntime()
 	now := nowMs()
 	a.pollMu.Lock()
-	hb := a.heartbeats[hostID]
-	if hb == nil {
-		hb = &hostHeartbeat{}
-		a.heartbeats[hostID] = hb
-	}
+	hb := a.heartbeatOf(hostID)
 	hb.activePolls++
 	if now > hb.lastSeenAt {
 		hb.lastSeenAt = now
@@ -159,11 +155,7 @@ func (a *App) heartbeatNeedsFlush(hostID, stateSig, storesSig string, now int64)
 func (a *App) commitHostHeartbeat(hostID, stateSig, storesSig string, persistedAt int64) {
 	a.ensureRuntime()
 	a.pollMu.Lock()
-	hb := a.heartbeats[hostID]
-	if hb == nil {
-		hb = &hostHeartbeat{}
-		a.heartbeats[hostID] = hb
-	}
+	hb := a.heartbeatOf(hostID)
 	hb.lastPersistedAt = persistedAt
 	hb.stateSig = stateSig
 	hb.storesSig = storesSig
@@ -320,19 +312,28 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			}
 			fresh, err := a.pollReadyCommand(wq, hostDoc, c)
 			if err != nil {
-				reason, ok := pollCommandRefusal(err)
-				if !ok {
-					return err // the database or the request itself: the whole poll fails and is retried
+				reason, outcome := pollCommandRefusal(err)
+				if outcome == pollFails {
+					return err // a deadlock, a lost connection, the request leaving: the whole poll fails and is retried
 				}
 				if err := exec(wq, "ROLLBACK TO SAVEPOINT poll_command"); err != nil {
 					return err
 				}
-				if !strings.HasPrefix(reason, "refused:") {
-					errtrack.Capture(err, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": astr(c["kind"])})
+				if outcome == pollRetriesCommand {
+					log.Printf("host %s command %s waits: %v", host, astr(c["id"]), err)
+					continue // transient for this command only: it stays pending for the next poll
+				}
+				if err := a.refusePollCommand(wq, c, reason); err != nil {
+					return err
 				}
 				log.Printf("host %s command %s stopped: %s", host, astr(c["id"]), reason)
-				if err := stopPipelineCommand(wq, c, reason); err != nil {
-					return err
+				if !strings.HasPrefix(reason, "refused:") {
+					cerr, kind := err, astr(c["kind"])
+					onEnd(wq.tx, func(committed bool) { // once, for the attempt that committed the stop
+						if committed {
+							errtrack.Capture(cerr, map[string]string{"route": "POST /api/hosts/poll", "host": host, "command": kind})
+						}
+					})
 				}
 				continue
 			}
@@ -377,35 +378,69 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
 	return get(wq, c["id"], "command")
 }
 
-// pollCommandRefusal: the stop reason of a command whose preparation failed, when the failure is the command's own (an
-// authorization refusal, a missing or inconsistent stored row, a statement error). ok false: a serialization failure, a
-// deadlock, a lost connection or the request leaving, which fail the poll as before (and are retried).
-func pollCommandRefusal(err error) (string, bool) {
+// pollCommandRefusal: what a command's failed preparation does. The command's own failure (an authorization refusal, a
+// missing or inconsistent stored row, a statement error) stops it with the reason; a busy dependency leaves it pending
+// for the next poll; a serialization failure, a deadlock, a lost connection or the request leaving fail the poll as
+// before (and are retried).
+func pollCommandRefusal(err error) (string, pollCommandOutcome) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return "", false
+		return "", pollFails
 	}
 	var he *HTTPError
 	if errors.As(err, &he) {
-		if he.Code == 403 {
-			return "refused: " + he.Msg, true // an authorization refusal: never handed over, never widened
+		switch {
+		case he.Code == 403:
+			return "refused: " + he.Msg, pollStopsCommand // an authorization refusal: never handed over, never widened
+		case he.Code == 429 || he.Code > 500:
+			return "", pollRetriesCommand // a busy or unreachable dependency
 		}
-		return "handoff failed: " + he.Msg, true
+		return "handoff failed: " + he.Msg, pollStopsCommand
 	}
 	code := pgCode(err)
 	if code == "42501" {
-		return "refused: not in scope", true
+		return "refused: not in scope", pollStopsCommand
 	}
-	// Class 40 (serialization, deadlock), 08 (connection), 53 (resources) and 57 (operator intervention) are transient.
-	// A lost connection without a code fails the savepoint rollback, and with it the poll.
-	for _, class := range []string{"40", "08", "53", "57"} {
+	// Class 40 (serialization, deadlock), 08 (connection) and 57 (operator intervention, statement timeout) fail the
+	// poll for its retry; a lost connection without a code fails the savepoint rollback, and with it the poll. Class 53
+	// (resources), 55 (lock not available) and a unique-key race (23505) are retried with the command's next poll.
+	for _, class := range []string{"40", "08", "57"} {
 		if strings.HasPrefix(code, class) {
-			return "", false
+			return "", pollFails
 		}
 	}
-	if code == "" {
-		return "handoff failed: internal error", true
+	if strings.HasPrefix(code, "53") || strings.HasPrefix(code, "55") || code == "23505" {
+		return "", pollRetriesCommand
 	}
-	return "handoff failed: database error " + code, true
+	if code == "" {
+		return "handoff failed: internal error", pollStopsCommand
+	}
+	return "handoff failed: database error " + code, pollStopsCommand
+}
+
+type pollCommandOutcome int
+
+const (
+	pollFails pollCommandOutcome = iota
+	pollRetriesCommand
+	pollStopsCommand
+)
+
+// refusePollCommand settles a command that will never be handed off: it is stopped with its reason, and a start or a
+// script also ends its execution that has not started (cancelled with the reason, as a refused start of the dispatch
+// pass), so no execution waits on a command that cannot come; a pipeline step sees its native execution end.
+func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
+	if err := stopPipelineCommand(wq, c, reason); err != nil {
+		return err
+	}
+	if !pipelineDispatchKind(c["kind"]) {
+		return nil
+	}
+	e, err := maybe(wq, c["executionId"], "execution")
+	if err != nil || e == nil || terminal(e) || e["state"] == "running" {
+		return err
+	}
+	e["state"], e["stopDetail"] = "cancelled", reason
+	return put(wq, "execution", e)
 }
 
 // poll answers one host poll and records its health: a failure the host cannot report (it gets no reply to report

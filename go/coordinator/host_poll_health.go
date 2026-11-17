@@ -44,7 +44,7 @@ func pollFailureOf(err error) (pollFailure, bool) {
 			f.reason = r
 		}
 	} else if pgCode(err) == "42501" {
-		f.status, f.reason = 403, "http_403"
+		f.status, f.reason, f.message = 403, "http_403", "Not in your scope" // as writeError answers it
 	}
 	if f.status == 410 {
 		return pollFailure{}, false // a removed host: the executor exits; nothing to surface
@@ -59,8 +59,8 @@ func pollFailureOf(err error) (pollFailure, bool) {
 // A bad body (400) is the request's; a 5xx is captured by writeError; a bad credential never reaches the handler.
 func internalPollError(f pollFailure) bool { return f.status > 400 && f.status < 500 }
 
-func (a *App) pollHealth(host string) *hostHeartbeat {
-	a.ensureRuntime()
+// heartbeatOf: the host's cache entry, created when missing; the caller holds pollMu.
+func (a *App) heartbeatOf(host string) *hostHeartbeat {
 	hb := a.heartbeats[host]
 	if hb == nil {
 		hb = &hostHeartbeat{}
@@ -76,17 +76,16 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	if !ok || host == "" {
 		return
 	}
-	if internalPollError(f) {
-		errtrack.Capture(err, map[string]string{"route": "POST /api/hosts/poll", "host": host, "status": fmt.Sprint(f.status), "reason": f.reason})
-	}
 	ctx = context.WithoutCancel(ctx)
+	a.ensureRuntime()
 	a.pollMu.Lock()
-	hb := a.pollHealth(host)
+	hb := a.heartbeatOf(host)
 	hb.pollClean = false
 	hb.pollFailures++
 	a.pollMu.Unlock()
 	now := nowMs()
 	var since float64
+	var changed bool
 	werr := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
 		o, err := maybe(wq, host, "host-observation")
 		if err != nil {
@@ -100,7 +99,8 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 		if s := num(prev["since"]); s > 0 {
 			since = s
 		}
-		if prev != nil && num(prev["status"]) == float64(f.status) && prev["reason"] == f.reason && prev["message"] == f.message {
+		changed = prev == nil || num(prev["status"]) != float64(f.status) || prev["reason"] != f.reason
+		if !changed && prev["message"] == f.message {
 			return nil // unchanged: no write, no change row
 		}
 		o["pollError"] = doc{"status": f.status, "reason": f.reason, "message": f.message, "since": since}
@@ -108,13 +108,19 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	})
 	if werr != nil {
 		log.Printf("host %s poll failure not recorded: %v", host, werr)
+	}
+	// One Bugsink event per run of one failure, not one per poll (a host retries every few seconds).
+	if internalPollError(f) && (changed || werr != nil) {
+		errtrack.Capture(err, map[string]string{"route": "POST /api/hosts/poll", "host": host, "status": fmt.Sprint(f.status), "reason": f.reason})
+	}
+	if werr != nil {
 		return
 	}
 	if float64(now)-since < hostPollProblemAfterMs {
 		return
 	}
 	a.pollMu.Lock()
-	hb = a.pollHealth(host)
+	hb = a.heartbeatOf(host)
 	opened := hb.pollProblem
 	hb.pollProblem = true
 	a.pollMu.Unlock()
@@ -129,7 +135,7 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: doc{"hostId": host, "reason": f.reason}})
 	}); err != nil {
 		a.pollMu.Lock()
-		a.pollHealth(host).pollProblem = false
+		a.heartbeatOf(host).pollProblem = false
 		a.pollMu.Unlock()
 		log.Printf("host %s poll problem: %v", host, err)
 	}
@@ -141,8 +147,9 @@ func (a *App) notePollSuccess(ctx context.Context, host string) {
 	if host == "" {
 		return
 	}
+	a.ensureRuntime()
 	a.pollMu.Lock()
-	hb := a.pollHealth(host)
+	hb := a.heartbeatOf(host)
 	clean, gen := hb.pollClean, hb.pollFailures
 	a.pollMu.Unlock()
 	if clean {
@@ -151,8 +158,16 @@ func (a *App) notePollSuccess(ctx context.Context, host string) {
 	ctx = context.WithoutCancel(ctx)
 	// Under the host's lock only, never GLOBAL: polls stay off the global lock (lock_poll_concurrency_test.go). The
 	// problem's close is one row update of its own cause. A problem opened before a restart is closed by the first good
-	// poll after it; problemClose of no question is a no-op.
+	// poll after it; problemClose of no question is a no-op. A failure noted since this poll read its generation is not
+	// cleared: that failure counts first, then writes under the same host lock.
+	stale := false
 	if err := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
+		a.pollMu.Lock()
+		stale = a.heartbeatOf(host).pollFailures != gen
+		a.pollMu.Unlock()
+		if stale {
+			return nil
+		}
 		if err := exec(wq, "UPDATE document SET data=data-'pollError',updated_at=now() WHERE kind='host-observation' AND id=$1 AND data ? 'pollError'", host); err != nil {
 			return err
 		}
@@ -161,8 +176,11 @@ func (a *App) notePollSuccess(ctx context.Context, host string) {
 		log.Printf("host %s poll failure not cleared: %v", host, err)
 		return
 	}
+	if stale {
+		return
+	}
 	a.pollMu.Lock()
-	if hb = a.pollHealth(host); hb.pollFailures == gen { // no failure recorded meanwhile
+	if hb = a.heartbeatOf(host); hb.pollFailures == gen { // no failure recorded meanwhile
 		hb.pollClean, hb.pollProblem = true, false
 	}
 	a.pollMu.Unlock()
