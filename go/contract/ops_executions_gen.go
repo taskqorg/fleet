@@ -2059,12 +2059,13 @@ func (v *PipelineRunRequest) Validate() error {
 	return nil
 }
 
-// PurgeCount: bytes: stored artifact bytes of the objects (project and experiment).
+// PurgeCount: bytes: stored artifact bytes of the objects (project and experiment). reasons (kept entries): why each id stays.
 type PurgeCount struct {
-	Bytes *int64    `json:"bytes,omitempty"`
-	Count int64     `json:"count"`
-	Ids   []string  `json:"ids"`
-	Kind  PurgeKind `json:"kind"`
+	Bytes   *int64        `json:"bytes,omitempty"`
+	Count   int64         `json:"count"`
+	Ids     []string      `json:"ids"`
+	Kind    PurgeKind     `json:"kind"`
+	Reasons []PurgeReason `json:"reasons,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -2074,6 +2075,11 @@ func (v *PurgeCount) Validate() error {
 	}
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
+	}
+	for i := range v.Reasons {
+		if err := Check(&v.Reasons[i], "reasons"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -2098,6 +2104,17 @@ func (v PurgeKind) Valid() bool {
 		}
 	}
 	return false
+}
+
+// PurgeReason: reason: the first live row that keeps the object ("<table>.<column> <referencing kind> <id>"), a pending command a live host has not finished ("pending <kind> command <id> on host <host>"), or "deferred: time budget" when this call stopped before checking it (run system_purge again).
+type PurgeReason struct {
+	Id     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *PurgeReason) Validate() error {
+	return nil
 }
 
 type QueueListReply struct {
@@ -2281,9 +2298,10 @@ func (v *StopOutcome) Validate() error {
 	return nil
 }
 
-// SystemPurgeReply: removed and kept: one entry per requested kind, host first; kept are tombstoned objects a live row still references, they stay. rows: what goes with the removed projects and experiments, per kind. retryLater: store object and span deletions not done yet; the next purge retries them.
+// SystemPurgeReply: more: the call stopped at its time budget (60 s, under the 100 s of the site proxy) with objects left unchecked; run it again. removed and kept: one entry per requested kind, host first; kept are tombstoned objects a live row still references, they stay. rows: what goes with the removed projects and experiments, per kind. retryLater: store object and span deletions not done yet; the next purge retries them.
 type SystemPurgeReply struct {
 	Kept       []PurgeCount `json:"kept,omitempty"`
+	More       *bool        `json:"more,omitempty"`
 	Purged     bool         `json:"purged"`
 	Removed    []PurgeCount `json:"removed"`
 	RetryLater *int64       `json:"retryLater,omitempty"`

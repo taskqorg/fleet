@@ -12,6 +12,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"fleet/contract"
 
@@ -303,19 +304,39 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 	return out, bytes, nil
 }
 
-// blockedBy: the first live row outside the cascade that keeps one of its objects ("table.column"), "" when none.
+// blockedBy: the first live row outside the cascade that keeps one of its objects, "" when none:
+// "<table>.<column> by <document kind or table> <row id>". One scan per table: its refKeep columns are ORed.
 func (c *cascade) blockedBy(q *Request) (string, error) {
+	tables, refs := []string{}, map[string][]objectRef{}
 	for _, r := range referenceMap {
 		if r.mode != refKeep || len(c.sets[r.kind]) == 0 {
 			continue
 		}
+		if refs[r.table] == nil {
+			tables = append(tables, r.table)
+		}
+		refs[r.table] = append(refs[r.table], r)
+	}
+	for _, t := range tables {
 		a := &args{c: c}
-		ref := r.match(a.of(r.kind))
-		where := ref + " AND NOT coalesce(" + c.goesWith(r.table, a) + ", false)"
-		if ok, err := has(q, "SELECT 1 FROM "+r.table+" WHERE "+andFilter(keptRows[r.table], where), a.vals...); err != nil {
+		conds, label := []string{}, "CASE"
+		for i, r := range refs[t] {
+			m := r.match(a.of(r.kind))
+			conds = append(conds, m)
+			label += fmt.Sprintf(" WHEN %s THEN %d", m, i)
+		}
+		where := "(" + strings.Join(conds, " OR ") + ") AND NOT coalesce(" + c.goesWith(t, a) + ", false)"
+		row, err := first(q, "SELECT "+label+" END AS ref, coalesce(to_jsonb(x)->>'id', to_jsonb(x)->>'task_id', '') AS rid"+
+			", coalesce(to_jsonb(x)->>'kind', '') AS rkind FROM "+t+" x WHERE "+andFilter(keptRows[t], where)+" LIMIT 1", a.vals...)
+		if err != nil {
 			return "", err
-		} else if ok {
-			return r.table + "." + r.sql(), nil
+		}
+		if row != nil {
+			r, by := refs[t][int(num(row["ref"]))], t
+			if t == "document" {
+				by = astr(row["rkind"])
+			}
+			return fmt.Sprintf("%s.%s by %s %s", t, r.sql(), by, astr(row["rid"])), nil
 		}
 	}
 	return "", nil
@@ -511,6 +532,12 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		if last == nil {
 			continue
 		}
+		// A removed host never fetches it (its worktrees went with the host); it would only keep the purge waiting.
+		if live, err := knownHost(q, astr(last["hostId"])); err != nil {
+			return err
+		} else if !live {
+			continue
+		}
 		// Queued after the stop: the executor keeps a worktree with uncommitted or unpushed work (cleanup.keepWhen).
 		if t, err := teardownCommand(q, s, last, false); err != nil {
 			return err
@@ -642,6 +669,19 @@ func purgeCascade(q *Request, c *cascade) error {
 	return nil
 }
 
+// pendingCommands: the unfinished commands of executions ($1) and whether their host is gone (removed or purged).
+const pendingCommands = `SELECT c.id, c.data->>'kind' AS kind, c.data->>'hostId' AS host, (h.id IS NULL OR h.data->>'state'='removed') AS dead
+ FROM document c LEFT JOIN document h ON h.kind='host' AND h.id='host:'||(c.data->>'hostId')
+ WHERE c.kind='command' AND c.data->>'status'='pending' AND c.data->>'executionId'=ANY($1) ORDER BY c.seq`
+
+func idsOf(rs []doc) []string {
+	out := make([]string, len(rs))
+	for i, r := range rs {
+		out[i] = astr(r["id"])
+	}
+	return out
+}
+
 // purgeRootTx: one tombstoned root in its own transaction: blocked (a live row keeps it) or purged.
 func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (rows []contract.KindCount, bytes int64, blocked string, err error) {
 	err = runTx(q.ctx(), q.app, q, !preview, "", func(q *Request) error {
@@ -658,13 +698,22 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 		if blocked, err = c.blockedBy(q); err != nil || blocked != "" {
 			return err
 		}
-		// A stop or teardown a host has not fetched yet keeps the object: purging it would leave the agent running and
-		// the worktree in place. hosts_remove settles the commands of a removed host.
-		if ok, err := has(q, "SELECT 1 FROM document WHERE kind='command' AND data->>'status'='pending' AND data->>'executionId'=ANY($1)", c.sets["execution"]); err != nil || ok {
-			if ok {
-				blocked = "pending command"
-			}
+		// A stop or teardown a live host has not finished keeps the object: purging it would leave the agent running and
+		// the worktree in place. One for a removed (or purged) host is never fetched: it is settled, as hosts_remove does.
+		pending, err := queryRows(q, pendingCommands, c.sets["execution"])
+		if err != nil {
 			return err
+		}
+		for _, p := range pending {
+			if p["dead"] != true {
+				blocked = fmt.Sprintf("pending %s command %s on host %s", astr(p["kind"]), astr(p["id"]), astr(p["host"]))
+				return nil
+			}
+		}
+		if !preview && len(pending) > 0 {
+			if err := exec(q, `UPDATE document SET data=data||'{"status":"stopped","stopDetail":"host-removed"}', updated_at=now() WHERE kind='command' AND id=ANY($1)`, idsOf(pending)); err != nil {
+				return err
+			}
 		}
 		if rows, bytes, err = c.counts(q); err != nil || preview {
 			return err
@@ -677,8 +726,21 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 	return
 }
 
+// purgeBudget: a system_purge call stops starting work after this long and says more; the site's proxy ends a request
+// at 100 s (an empty reply there while the server went on).
+var purgeBudget = 60 * time.Second
+
+const deferred = "deferred: time budget; run system_purge again"
+
 func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPurgeReply, error) {
 	out := contract.SystemPurgeReply{Removed: []contract.PurgeCount{}, Kept: []contract.PurgeCount{}, Rows: []contract.KindCount{}}
+	start, more := time.Now(), false
+	over := func() bool {
+		if time.Since(start) > purgeBudget {
+			more = true
+		}
+		return more
+	}
 	kinds := contract.PurgeKindValues
 	if len(b.Kinds) > 0 {
 		kinds = b.Kinds
@@ -703,15 +765,16 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	// Every root of every kind is checked before any goes, as the preview sees them: a root kept only by another
 	// tombstoned root goes at the next purge, so the confirm removes what the preview listed.
 	type rootSet struct {
-		kind       contract.PurgeKind
-		roots, out []string
+		kind  contract.PurgeKind
+		roots []string
+		kept  []contract.PurgeReason
 	}
 	sets := []rootSet{}
 	for _, kind := range []contract.PurgeKind{contract.PurgeKindExperiment, contract.PurgeKindProject} {
 		if !slices.Contains(kinds, kind) {
 			continue
 		}
-		r := rootSet{kind: kind, out: []string{}}
+		r := rootSet{kind: kind, kept: []contract.PurgeReason{}}
 		if err := runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
 			if err := showDeleted(q); err != nil {
 				return err
@@ -725,6 +788,10 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		if !b.Preview {
 			free := []string{}
 			for _, id := range r.roots {
+				if over() {
+					r.kept = append(r.kept, contract.PurgeReason{Id: id, Reason: deferred})
+					continue
+				}
 				_, _, blocked, err := purgeRootTx(q, kind, id, true)
 				if err != nil {
 					return out, err
@@ -732,7 +799,7 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 				if blocked == "" {
 					free = append(free, id)
 				} else {
-					r.out = append(r.out, id)
+					r.kept = append(r.kept, contract.PurgeReason{Id: id, Reason: blocked})
 				}
 			}
 			r.roots = free
@@ -740,15 +807,20 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		sets = append(sets, r)
 	}
 	for _, r := range sets {
-		removed, kept := contract.PurgeCount{Kind: r.kind, Ids: []string{}}, contract.PurgeCount{Kind: r.kind, Ids: r.out}
+		removed := contract.PurgeCount{Kind: r.kind, Ids: []string{}}
+		kept := r.kept
 		var bytes int64
 		for _, id := range r.roots {
+			if over() {
+				kept = append(kept, contract.PurgeReason{Id: id, Reason: deferred})
+				continue
+			}
 			rs, n, blocked, err := purgeRootTx(q, r.kind, id, b.Preview)
 			if err != nil {
 				return out, fmt.Errorf("purge %s %s: %w", r.kind, id, err)
 			}
 			if blocked != "" {
-				kept.Ids = append(kept.Ids, id)
+				kept = append(kept, contract.PurgeReason{Id: id, Reason: blocked})
 				continue
 			}
 			removed.Ids, bytes = append(removed.Ids, id), bytes+n
@@ -766,8 +838,8 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 				}
 			}
 		}
-		removed.Count, removed.Bytes, kept.Count = int64(len(removed.Ids)), &bytes, int64(len(kept.Ids))
-		out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, kept)
+		removed.Count, removed.Bytes = int64(len(removed.Ids)), &bytes
+		out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, keptCount(r.kind, kept))
 	}
 	for _, k := range contract.ObjectKindValues {
 		if rows[k] != nil {
@@ -776,16 +848,24 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	}
 	var left int64
 	var err error
-	if !b.Preview {
-		left, err = runPurgeTasks(q.ctx(), q.app)
-		out.Purged = true
+	if !b.Preview && !over() {
+		left, err = runPurgeTasks(q.ctx(), q.app, start.Add(purgeBudget))
 	} else {
 		err = runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
 			return q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM document WHERE kind='purge-task'").Scan(&left)
 		})
 	}
-	out.RetryLater = &left
+	out.Purged = !b.Preview
+	out.RetryLater, out.More = &left, &more
 	return out, err
+}
+
+func keptCount(kind contract.PurgeKind, kept []contract.PurgeReason) contract.PurgeCount {
+	ids := make([]string, len(kept))
+	for i, k := range kept {
+		ids[i] = k.Id
+	}
+	return contract.PurgeCount{Kind: kind, Count: int64(len(kept)), Ids: ids, Reasons: kept}
 }
 
 // runPurgeTasks: delete the store objects and spans of earlier purges; what fails stays for the next purge, and a
@@ -793,7 +873,7 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 // holding its object lock (objectLock, which every copy insert of that content takes too), after checking that no
 // copy on that store maps to it again: an upload or a write that deduplicated onto it since the purge keeps it. Span
 // deletes run outside any transaction.
-func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
+func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, error) {
 	var tasks []doc
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		var err error
@@ -804,6 +884,10 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 	}
 	left := int64(0)
 	for _, t := range tasks {
+		if time.Now().After(deadline) { // the rest waits for the next purge
+			left++
+			continue
+		}
 		rest := []any{}
 		if store := astr(t["storeId"]); store != "" {
 			s, err := storeGet(ctx, a, store)
