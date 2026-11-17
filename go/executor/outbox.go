@@ -184,6 +184,7 @@ func edgeRedirect(route string, status int, detail string) {
 	if e, ok := edges[route]; ok {
 		// Lanes asked the route together before its edge answer was known: their answers are one attempt.
 		if route != pollRoute && nowMs() < e.nextAt {
+			e.status, e.detail = status, detail
 			return
 		}
 		attempts = e.attempts + 1
@@ -391,7 +392,6 @@ type laneID struct {
 var (
 	laneMu   sync.Mutex
 	laneBusy = map[laneID]bool{}
-	passes   atomic.Int64 // the latest pass sets the delivery interval
 	// stopUntil, by journal: a lane got unreachable, 429 or 503; until then every lane, of any pass, holds.
 	stopUntil = map[*sql.DB]int64{}
 )
@@ -404,7 +404,6 @@ type outboxPass struct {
 	routes           map[string]bool // routes held for this pass
 	held, sent       bool
 	started          int
-	gen              int64
 	stopErr, failErr error // the coordinator as a whole cannot take rows; a journal failure
 	retryErr         error
 }
@@ -417,6 +416,9 @@ func (p *outboxPass) stopped() bool {
 	}
 	laneMu.Lock()
 	defer laneMu.Unlock()
+	if until, ok := stopUntil[p.db]; ok && nowMs() >= until {
+		delete(stopUntil, p.db)
+	}
 	return nowMs() < stopUntil[p.db]
 }
 
@@ -478,7 +480,7 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 	if err != nil {
 		return nil, err
 	}
-	p := &outboxPass{db: db, url: url, token: token, host: host, routes: map[string]bool{}, gen: passes.Add(1)}
+	p := &outboxPass{db: db, url: url, token: token, host: host, routes: map[string]bool{}}
 	var wg sync.WaitGroup
 	for _, key := range order {
 		k := laneID{db, key}
@@ -487,11 +489,7 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 		go func(k laneID, rows []outboxRow) {
 			defer wg.Done()
 			defer func() { laneMu.Lock(); delete(laneBusy, k); laneMu.Unlock() }()
-			err := bodies(db, rows)
-			if err == nil {
-				err = p.lane(rows)
-			}
-			if err != nil {
+			if err := p.lane(rows); err != nil {
 				p.mu.Lock()
 				if p.failErr == nil {
 					p.failErr = err
@@ -511,9 +509,16 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 			heldOnly.Store(true) // the coordinator as a whole is unreachable or asks to slow down: the longer interval
 			return p.stopErr
 		}
-		// An older pass that ends late does not override a later pass's interval; a scan of busy lanes only sets none.
-		if p.gen == passes.Load() && (p.started > 0 || empty) {
-			heldOnly.Store(p.held && !p.sent)
+		// The longer interval only when nothing moved and no other lane of the journal is still delivering; a scan that
+		// found only busy lanes sets none.
+		if p.started > 0 || empty {
+			laneMu.Lock()
+			others := false
+			for k := range laneBusy {
+				others = others || k.db == db
+			}
+			laneMu.Unlock()
+			heldOnly.Store(p.held && !p.sent && !others)
 		}
 		return p.retryErr
 	}, nil
@@ -551,10 +556,11 @@ func flush(db *sql.DB, url, token, host string) error {
 	return wait()
 }
 
-// lane delivers one lane's rows in order until they are sent or one holds the lane.
+// lane delivers one lane's rows in order until they are sent or one holds the lane. Bodies are read once its head row
+// may go, so a held lane does not reread its backlog on every scan.
 func (p *outboxPass) lane(rows []outboxRow) error {
 	db := p.db
-	single := false
+	single, read := false, false
 	for i := 0; i < len(rows); {
 		if p.stopped() {
 			p.mu.Lock()
@@ -563,7 +569,6 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			return nil
 		}
 		r := rows[i]
-		value := decM(r.body)
 		execution, hasExec := r.execution, r.execution != ""
 		hold := func() {
 			p.mu.Lock()
@@ -587,17 +592,23 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			holdExecution()
 			return nil
 		}
+		if !read {
+			if err := bodies(db, rows); err != nil {
+				return err
+			}
+			read, r = true, rows[i]
+		}
+		value := decM(r.body)
 		// Consecutive event rows of the lane go in one request.
 		batch := []outboxRow{r}
 		if r.route == "/api/hosts/events" && !single {
 			for i+len(batch) < len(rows) {
 				nx := rows[i+len(batch)]
-				next := decM(nx.body)
 				events, _ := value["events"].([]any)
-				if nx.route != r.route || !jEq(next["executionId"], value["executionId"]) || len(events) >= 500 {
+				if nx.route != r.route || nx.execution != r.execution || len(events) >= 500 {
 					break
 				}
-				value["events"] = append(events, jArr(next, "events")...)
+				value["events"] = append(events, jArr(decM(nx.body), "events")...)
 				batch = append(batch, nx)
 			}
 		}
