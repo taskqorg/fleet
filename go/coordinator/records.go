@@ -108,7 +108,10 @@ func put(q *Request, kind string, v doc) error {
 		}
 		// A removed host never fetches a command: written settled, so nothing waits for it (purge, host purge).
 		if astr(v["status"]) == "pending" && astr(v["hostId"]) != "" {
-			if removed, err := has(q, "SELECT 1 FROM document WHERE kind='host' AND id='host:'||$1 AND data->>'state'='removed'", v["hostId"]); err != nil {
+			// unscoped: a host record is visible only to its holder and the owner.
+			if removed, err := unscoped(q, func() (bool, error) {
+				return has(q, "SELECT 1 FROM document WHERE kind='host' AND id='host:'||$1 AND data->>'state'='removed'", v["hostId"])
+			}); err != nil {
 				return err
 			} else if removed {
 				v["status"], v["stopDetail"] = "stopped", "host-removed"

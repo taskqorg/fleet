@@ -769,7 +769,7 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 			var err error
 			r.roots, err = purgeRoots(q, kind)
 			// A random order: a call that stops at its budget reaches other roots next time, so roots a live row keeps
-			// cannot starve the rest.
+			// cannot starve the rest. A preview cut by the budget (more) is partial: the confirm may reach other roots.
 			rand.Shuffle(len(r.roots), func(i, j int) { r.roots[i], r.roots[j] = r.roots[j], r.roots[i] })
 			return err
 		}); err != nil {

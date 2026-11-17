@@ -382,7 +382,7 @@ func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 	sid := astr(s["id"])
 	// A removed host never fetches it: its worktrees went with it, and a pending command would keep purge waiting.
 	if live, err := knownHost(q, astr(last["hostId"])); err != nil || !live {
-		return doc{"sessionId": sid, "cleanup": "skipped", "reason": "host-removed"}, err
+		return doc{"sessionId": sid, "cleanup": "skipped", "reason": "host-gone"}, err
 	}
 	payload := doc{}
 	d := mapOf(last["dispatch"])

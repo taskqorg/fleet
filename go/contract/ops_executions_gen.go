@@ -2298,7 +2298,7 @@ func (v *StopOutcome) Validate() error {
 	return nil
 }
 
-// SystemPurgeReply: more: the call stopped at its time budget (60 s, under the 100 s of the site proxy) with objects left unchecked; run it again. removed and kept: one entry per requested kind, host first; kept are tombstoned objects a live row still references, they stay. rows: what goes with the removed projects and experiments, per kind. retryLater: store object and span deletions not done yet; the next purge retries them.
+// SystemPurgeReply: more: the call stopped at its time budget (60 s, under the 100 s of the site proxy) with objects left unchecked (deferred, in random order per call); run it again; a preview with more is partial. removed and kept: one entry per requested kind, host first; kept are tombstoned objects a live row still references, they stay. rows: what goes with the removed projects and experiments, per kind. retryLater: store object and span deletions not done yet; the next purge retries them.
 type SystemPurgeReply struct {
 	Kept       []PurgeCount `json:"kept,omitempty"`
 	More       *bool        `json:"more,omitempty"`
