@@ -9,6 +9,7 @@ import {randomUUID} from 'node:crypto';
 import {startCoordinator} from '../harness.ts';
 import {SYSTEM_VIEWS, NAV_COUNTER_DEFAULTS} from '../../app/src/system-views.ts';
 
+// R2, R7, OR-33, OR-34; risk: a navigation counter disagrees with its list, counts an ignored project, keeps a stale view or is closed to agents.
 test('nav_counts: counter views by person setting, the focus split, ignored projects left out, equal to the lists, and an agent tool', {timeout: 60_000}, async t => {
   const c = await startCoordinator({name: 'navcounts'}); t.after(() => c.stop());
   const call = async (name: string, body: object, auth = 'Bearer ' + c.secret) => {
