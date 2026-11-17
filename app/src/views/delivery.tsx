@@ -36,9 +36,9 @@ const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
 // Each stage's norm is its P50 and P90 in delivery_baseline (the last 14 days): the key of the history duration it is.
 // Open, Checks failed and Queue failed have none: people work there, and a failure needs a look at once.
 // Waiting in queue is both "set to enter" and "in the queue, waiting for a runner": the queue's norm covers both.
-// A UI-only release installs on no host: its Installing is the time until the site serves its UI (`ui`).
+// A UI-only release installs on no host: its Installing is the time until the site serves its UI (`ui_install`).
 const NORM_KEY: Partial<Record<Stage, string>> = { pr_ci: 'pr_ci', mq_wait: 'queue', mq_ci: 'queue', releasing: 'release', installing: 'install' };
-const normKey = (it: Pick<Item, 'stage' | 'release'>) => it.stage === 'installing' && uiOnly(it.release) ? 'ui' : NORM_KEY[it.stage];
+const normKey = (it: Pick<Item, 'stage' | 'release'>) => it.stage === 'installing' && uiOnly(it.release) ? 'ui_install' : NORM_KEY[it.stage];
 /** The norms are the fleet repository's history: other repositories' pull requests have none. */
 type Norms = { stage: (it: Pick<Item, 'stage' | 'repo' | 'release'>) => [number, number] | null; total: [number, number] | null };
 /** A UI-only release, ui-<backend>-v<UI version> (release.yml): the web app alone, delivered when the site serves it. */
@@ -255,7 +255,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
   </div>;
 }
 const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available', run: 'Queue run',
-  availability_wait: 'Waiting for availability', ui_wait: 'Waiting for the UI on site' };
+  availability_wait: 'Waiting for availability', ui_wait: 'Waiting for the UI on site', ui_install: 'UI-only install' };
 const keyLabel = (k: string) => KEYS[k] ?? k;
 
 // Where the time goes: a pull request's stage durations folded into four parts, in pipeline order; a UI-only release's

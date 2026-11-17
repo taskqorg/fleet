@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -151,7 +152,12 @@ func TestDeliveryCompatibilityAndRefusal(t *testing.T) {
 	if len(regs) != 2 || regs[0].Key != "queue" {
 		t.Fatal(regs)
 	}
+	// exact-install-v1 measured install as now, but its total left UI-only releases out: total compares from delivered-v2 on.
 	base.MetricBasis = ptr("exact-install-v1")
+	if got := deliveryCompare(nil, cur, base, settings); len(got) != 4 || slices.ContainsFunc(got, func(r contract.DeliveryRegression) bool { return r.Key == "total" }) {
+		t.Fatal(got)
+	}
+	base.MetricBasis = ptr(deliveryBasis)
 	if got := deliveryCompare(nil, cur, base, settings); len(got) != 6 {
 		t.Fatal(got)
 	}
@@ -192,7 +198,7 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 	if deref(p.Release) != "ui-1.261117.26-v1.261117.27" || releaseVersionOf(deref(p.Release)) != "1.261117.27" || p.Durations["release"] != 49000 || p.Durations["ui"] != 153000 {
 		t.Fatalf("matched release: %+v", p)
 	}
-	if p.Durations["total"] != 632000 { // 16:01:47 to 16:12:19
+	if p.Durations["total"] != 632000 || p.Durations["ui_install"] != 153000 { // 16:01:47 to 16:12:19
 		t.Fatalf("total is opened to UI on site: %+v", p.Durations)
 	}
 	for _, k := range []string{"install", "availability", "time_to_available"} {
@@ -208,10 +214,17 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 	if len(cur["ui_wait"]) != 1 || cur["ui_wait"][0].pr != 627 || cur["ui_wait"][0].ms != 3600e3 || len(cur["availability_wait"]) != 0 {
 		t.Fatalf("pending: %+v", cur)
 	}
-	base := contract.DeliveryBaseline{MetricBasis: ptr("exact-install-v1"), Stats: []contract.DeliveryStat{{Key: "ui", N: 5, P50Ms: 150000, P90Ms: 200000}}}
+	// Against UI-only installs (ui_install), not ui, which native releases' coordinator restarts dominate.
+	base := contract.DeliveryBaseline{MetricBasis: ptr(deliveryBasis), Stats: []contract.DeliveryStat{{Key: "ui", N: 5, P50Ms: 3600e3, P90Ms: 7200e3}, {Key: "ui_install", N: 5, P50Ms: 150000, P90Ms: 200000}}}
 	regs := deliveryCompare(prs, cur, base, contract.DeliverySettings{Ratio: 1.5, MinSamples: 1, MinDeltaMs: 60000})
-	if len(regs) != 2 || regs[0].Key != "ui_wait" {
-		t.Fatalf("a stalled UI release regresses against the ui stage: %+v", regs)
+	if len(regs) != 2 || regs[0].Key != "ui_wait" || regs[0].BaselineMs != 150000 {
+		t.Fatalf("a stalled UI release regresses against UI-only installs: %+v", regs)
+	}
+	// The minute pass's sighting beats the 10-minute history pass's.
+	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 12, 0, 0, time.UTC))
+	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 20, 0, 0, time.UTC))
+	if uiSeenSnapshot()["9.9.9"] != "2026-11-17T16:12:00Z" {
+		t.Fatal(uiSeenSnapshot())
 	}
 	for tag, want := range map[string]bool{"ui-1.261117.26-v1.261117.27": true, "ui-kit-1.0": false, "ui-v2.0.0": false, "v1.2.3": false} {
 		if uiOnlyRelease(tag) != want || deliveryReleaseTag(tag) != (want || tag[0] == 'v') {

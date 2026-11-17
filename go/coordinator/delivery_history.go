@@ -35,7 +35,11 @@ const (
 )
 
 // deliveryStageKeys: the stage durations of a pull request, in pipeline order (DeliveryPr.durations).
-var deliveryStageKeys = []string{"pr_ci", "enqueue", "queue", "merge", "release", "install", "ui", "lead", "total"}
+var deliveryStageKeys = []string{"pr_ci", "enqueue", "queue", "merge", "release", "install", "ui", "ui_install", "lead", "total"}
+
+// deliveryBasis: what install and total measure. exact-install-v1: total ends at the exact coordinator install;
+// delivered-v2 (now): the same, or for a UI-only release at the site serving its UI. A v1 baseline still compares install.
+const deliveryBasis = "delivered-v2"
 
 var deliveryDefaults = contract.DeliverySettings{Ratio: 1.5, MinSamples: 5, MinDeltaMs: 60_000}
 
@@ -482,8 +486,13 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	if st.UISeen == nil {
 		st.UISeen = map[string]string{}
 	}
-	if v := uiServed(); st.UISeen[v] == "" {
-		st.UISeen[v] = now.Format(time.RFC3339)
+	// The earliest this process saw each UI served: delivery_status's pass notes it every minute, so a UI-only release's
+	// UI on site (its total's end) is not up to this pass's 10 minutes late.
+	noteUISeen(uiServed(), now)
+	for v, at := range uiSeenSnapshot() {
+		if st.UISeen[v] == "" || at < st.UISeen[v] {
+			st.UISeen[v] = at
+		}
 	}
 	hosts := deliveryHostVersions(obs, now)
 	for i := range releases {
@@ -599,6 +608,26 @@ func uiServed() string {
 	return version
 }
 
+// uiSeenAt: UI version to the first time this process saw the site serve it (RFC 3339), noted by every delivery pass.
+var uiSeenAt = struct {
+	sync.Mutex
+	m map[string]string
+}{m: map[string]string{}}
+
+func noteUISeen(v string, at time.Time) {
+	uiSeenAt.Lock()
+	defer uiSeenAt.Unlock()
+	if v != "" && uiSeenAt.m[v] == "" {
+		uiSeenAt.m[v] = at.UTC().Format(time.RFC3339)
+	}
+}
+
+func uiSeenSnapshot() map[string]string {
+	uiSeenAt.Lock()
+	defer uiSeenAt.Unlock()
+	return maps.Clone(uiSeenAt.m)
+}
+
 type hostVersion struct{ version, at string }
 
 // deliveryHostVersions: each host seen in the last hour with its executor version and when it got it (the healthy
@@ -712,7 +741,8 @@ func releaseVersionOf(tag string) string {
 var uiReleaseTag = regexp.MustCompile(`^ui-\d+(?:\.\d+)*-v(\d+(?:\.\d+)*)$`)
 
 // uiOnlyRelease: a ui-<backend>-v<UI version> tag, a release of the web app alone that no host installs. It is delivered
-// when the site serves its UI or a newer one (watch-landing.sh's ui_ready), so its pull requests have no install stage.
+// when the site serves its UI or a newer one, which contains it (a later UI release or a later native release's bundled
+// UI), so its pull requests have no install stage. watch-landing.sh's ui_ready is the exact case of that.
 func uiOnlyRelease(tag string) bool { return uiReleaseTag.MatchString(tag) }
 
 // deliveryReleaseTag: a tag that delivers the merges it covers, a native v<version> or a UI-only release; both share one
@@ -798,15 +828,17 @@ func deliveryDerive(prs []contract.DeliveryPr, runs []contract.DeliveryRun, rele
 		}
 		// Delivered: on the PDS18 coordinator, or, for a UI-only release, when the site serves its UI (no install stage).
 		// Every pass derives this again from the stored records, so records stored before UI-only releases counted get it too.
-		done := installed
+		// ui_install: the UI-only release's own install (publication to the site serving it), apart from ui, which for a
+		// native release is mostly the coordinator's install and restart.
+		done, uiInstall := installed, (*int64)(nil)
 		if uiOnlyRelease(deref(p.Release)) {
-			done = p.UiOnSite
+			done, uiInstall = p.UiOnSite, msBetween(p.Released, p.UiOnSite)
 		}
 		d := map[string]*int64{
 			"availability": msBetween(p.Released, available), "time_to_available": msBetween(&p.Opened, available),
 			"pr_ci": msBetween(&p.Opened, p.PrCiDone), "enqueue": msBetween(p.PrCiDone, p.Enqueued), "queue": msBetween(p.Enqueued, p.MqCiDone),
 			"merge": msBetween(p.MqCiDone, &p.Merged), "release": msBetween(&p.Merged, p.Released), "install": msBetween(p.Released, installed),
-			"ui": msBetween(p.Released, p.UiOnSite), "lead": msBetween(&p.Opened, &p.Merged), "total": msBetween(&p.Opened, done),
+			"ui": msBetween(p.Released, p.UiOnSite), "ui_install": uiInstall, "lead": msBetween(&p.Opened, &p.Merged), "total": msBetween(&p.Opened, done),
 		}
 		p.Durations = map[string]int64{}
 		for k, v := range d {
@@ -888,7 +920,7 @@ func deliveryPending(s deliverySeries, prs []contract.DeliveryPr, from, now, ins
 		case installsFrom != "" && *p.Released >= installsFrom && p.Available["coordinator"] == "" && strings.HasPrefix(deref(p.Release), "v"):
 			add("availability_wait", p, *p.Released)
 		case installsFrom != "" && *p.Released >= installsFrom && p.UiOnSite == nil && uiOnlyRelease(deref(p.Release)):
-			add("ui_wait", p, *p.Released) // a UI-only release not on the site yet, compared with the ui stage
+			add("ui_wait", p, *p.Released) // a UI-only release not on the site yet, compared with ui_install
 		}
 	}
 	for k := range s {
@@ -939,7 +971,7 @@ func baselineFrom(t time.Time) time.Time {
 
 func deliveryWindow(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from, until time.Time) contract.DeliveryBaseline {
 	f, u := from.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339)
-	b := contract.DeliveryBaseline{MetricBasis: ptr("exact-install-v1"), From: f, Until: u, Stats: deliveryValues(prs, runs, f, u).stats()}
+	b := contract.DeliveryBaseline{MetricBasis: ptr(deliveryBasis), From: f, Until: u, Stats: deliveryValues(prs, runs, f, u).stats()}
 	for _, p := range prs {
 		if p.Merged >= f && p.Merged < u {
 			b.Counts.Prs++
@@ -964,7 +996,8 @@ func deliveryWindow(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from
 func deliveryCompare(prs []contract.DeliveryPr, cur deliverySeries, base contract.DeliveryBaseline, s contract.DeliverySettings) []contract.DeliveryRegression {
 	bs := map[string]contract.DeliveryStat{}
 	for _, b := range base.Stats {
-		if (b.Key == "install" || b.Key == "total") && deref(base.MetricBasis) != "exact-install-v1" {
+		basis := deref(base.MetricBasis)
+		if b.Key == "install" && basis != "exact-install-v1" && basis != deliveryBasis || b.Key == "total" && basis != deliveryBasis {
 			continue
 		}
 		bs[b.Key] = b
@@ -982,7 +1015,7 @@ func deliveryCompare(prs []contract.DeliveryPr, cur deliverySeries, base contrac
 		case "availability_wait":
 			baselineKey = "availability"
 		case "ui_wait":
-			baselineKey = "ui"
+			baselineKey = "ui_install"
 		}
 		b, ok := bs[baselineKey]
 		if !ok || c.N < s.MinSamples || b.N < s.MinSamples {

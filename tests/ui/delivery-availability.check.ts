@@ -108,7 +108,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
   ];
   const stat = (key: string, p50: number, p90: number) => ({key, n: 20, p50Ms: p50 * min, p90Ms: p90 * min});
   const base = {from: iso(dayStart(14)), until: iso(now), counts: {prs: 20, runs: 20, removals: 0, flakes: 0},
-    stats: [stat('pr_ci', 7, 40), stat('enqueue', 1, 8), stat('queue', 6, 16), stat('release', 1, 4), stat('install', 1, 2), stat('ui', 2, 3), stat('total', 21, 74)]};
+    stats: [stat('pr_ci', 7, 40), stat('enqueue', 1, 8), stat('queue', 6, 16), stat('release', 1, 4), stat('install', 1, 2), stat('ui_install', 2, 3), stat('total', 21, 74)]};
   const settings = {ratio: 1.5, minSamples: 5, minDeltaMs: 60000, baseline: 'rolling'};
   await page.route('**/api/ops/delivery_status', r => r.fulfill({json: {source: 'key', refreshedAt: iso(now), items, samples: [], landing: 0}}));
   await page.route('**/api/ops/delivery_baseline', r => r.fulfill({json: {rolling: base, snapshots: [], trend: [], settings}}));

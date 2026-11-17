@@ -224,6 +224,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	}
 	now := time.Now().UTC()
 	ui := uiServed() // once per pass, like the host versions
+	noteUISeen(ui, now)
 	deliveryMu.Lock()
 	prev := deliveryLast
 	// Keyless reads share GitHub's 60 an hour per address: a keyless repository is read at most every 6 minutes even
@@ -513,7 +514,7 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 		switch {
 		case r == nil:
 			out = append(out, item(p, contract.DeliveryStageReleasing, m))
-		case r.uiOnly && (ui == "" || versionLess(ui, r.version)), !r.uiOnly && !installed(r.version, versions):
+		case r.uiOnly && versionLess(ui, r.version), !r.uiOnly && !installed(r.version, versions):
 			it := item(p, contract.DeliveryStageInstalling, r.published)
 			it.Release = &r.tag
 			out = append(out, it)
