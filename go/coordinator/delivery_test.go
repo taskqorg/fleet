@@ -157,10 +157,9 @@ func TestDeliveryRecordedUIRelease(t *testing.T) {
 		t.Fatalf("a recorded release the read has is not added twice: %+v", g.releases)
 	}
 	items, _ := deliveryStages("fleet", githubPublicRepo, g, []string{"1.261117.28"}, "1.261117.28", now)
-	for _, it := range items {
-		if it.Number == 626 && (it.Stage != "installed" || deref(it.Release) != ui.Tag) {
-			t.Fatalf("#626: %+v", it)
-		}
+	i := slices.IndexFunc(items, func(it contract.DeliveryItem) bool { return it.Number == 626 })
+	if i < 0 || items[i].Stage != "installed" || deref(items[i].Release) != ui.Tag {
+		t.Fatalf("#626: %+v", items)
 	}
 }
 

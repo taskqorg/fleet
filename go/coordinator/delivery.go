@@ -225,19 +225,28 @@ func deliveryPass(ctx context.Context, a *App) error {
 				versions = append(versions, astr(o["version"]))
 			}
 		}
-		// The UI-only releases the delivery history recorded (it pages through every release): GitHub's release list is
-		// not by date, and a ui-* tag sorts among older native ones, past what one read here returns (#626).
-		rs, err := rows(q, "SELECT data FROM document WHERE kind='delivery-release' AND id LIKE 'delivery-release:ui-%'")
-		for _, r := range rs {
-			var x contract.DeliveryRelease
-			if json.Unmarshal(jsonBytes(r), &x) == nil {
-				recordedUI = append(recordedUI, ghRelease{Tag: x.Tag, Target: x.Target, Published: x.Published})
-			}
-		}
-		return err
+		return nil
 	})
 	if err != nil {
 		return err
+	}
+	// The UI-only releases the delivery history recorded (it reads 100 releases a pass): GitHub's release list is not by
+	// date, and a ui-* tag sorts among older native ones, past the 30 the releases read returns (#626). Extra evidence
+	// only, in its own transaction: a failed read leaves the pass as it was.
+	if byKey[strings.ToLower(githubPublicRepo)] != nil {
+		if rerr := runTx(ctx, a, nil, false, "", func(q *Request) error {
+			rs, err := rows(q, "SELECT data FROM document WHERE kind='delivery-release' AND id LIKE 'delivery-release:ui-%'")
+			for _, r := range rs {
+				var x contract.DeliveryRelease
+				if json.Unmarshal(jsonBytes(r), &x) == nil && uiOnlyRelease(x.Tag) {
+					recordedUI = append(recordedUI, ghRelease{Tag: x.Tag, Target: x.Target, Published: x.Published})
+				}
+			}
+			return err
+		}); rerr != nil {
+			recordedUI = nil
+			log.Printf("delivery: recorded UI releases unread: %v", rerr)
+		}
 	}
 	now := time.Now().UTC()
 	deliveryMu.Lock()

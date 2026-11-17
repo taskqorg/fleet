@@ -955,11 +955,11 @@ const providersJSON = `
    },
    "releases": {
     "method": "GET",
-    "path": "/repos/{owner}/{repo}/releases?per_page=100",
+    "path": "/repos/{owner}/{repo}/releases?per_page=30",
     "unit": "requests",
     "idempotent": true,
     "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
-    "description": "The first 100 releases as GitHub lists them (not strictly newest first: a ui-* tag sorts among older ones).",
+    "description": "The 30 newest releases.",
     "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
    }
