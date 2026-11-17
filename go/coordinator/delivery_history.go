@@ -38,7 +38,8 @@ const (
 var deliveryStageKeys = []string{"pr_ci", "enqueue", "queue", "merge", "release", "install", "ui", "ui_install", "lead", "total"}
 
 // deliveryBasis: what install and total measure. exact-install-v1: total ends at the exact coordinator install;
-// delivered-v2 (now): the same, or for a UI-only release at the site serving its UI. A v1 baseline still compares install.
+// delivered-v2 (now): the same, or for a UI-only release at the site serving its UI, whose UI on site is ui_install, no
+// longer ui. A v1 baseline still compares install, not total or ui.
 const deliveryBasis = "delivered-v2"
 
 var deliveryDefaults = contract.DeliverySettings{Ratio: 1.5, MinSamples: 5, MinDeltaMs: 60_000}
@@ -703,8 +704,8 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 	}
 	if r.UiOnSite == nil {
 		for uv, at := range st.UISeen {
-			// Its own version exists only once published: seen earlier is the coordinator's clock behind GitHub's.
-			if uv == v && at < r.Published {
+			// Its own version seen up to a minute before GitHub's publication time is the coordinator's clock behind GitHub's.
+			if p, err := time.Parse(time.RFC3339, r.Published); err == nil && uv == v && at < r.Published && at >= p.Add(-time.Minute).Format(time.RFC3339) {
 				at = r.Published
 			}
 			if !versionLess(uv, v) && at >= r.Published && (r.UiOnSite == nil || at < *r.UiOnSite) {
@@ -1002,7 +1003,7 @@ func deliveryCompare(prs []contract.DeliveryPr, cur deliverySeries, base contrac
 	bs := map[string]contract.DeliveryStat{}
 	for _, b := range base.Stats {
 		basis := deref(base.MetricBasis)
-		if b.Key == "install" && basis != "exact-install-v1" && basis != deliveryBasis || b.Key == "total" && basis != deliveryBasis {
+		if b.Key == "install" && basis != "exact-install-v1" && basis != deliveryBasis || (b.Key == "total" || b.Key == "ui") && basis != deliveryBasis {
 			continue
 		}
 		bs[b.Key] = b

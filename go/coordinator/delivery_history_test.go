@@ -222,6 +222,8 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 		t.Fatalf("a stalled UI release regresses against UI-only installs: %+v", regs)
 	}
 	// The minute pass's sighting beats the 10-minute history pass's.
+	saved := uiSeenSnapshot()
+	t.Cleanup(func() { uiSeenAt.Lock(); uiSeenAt.m = saved; uiSeenAt.Unlock() })
 	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 12, 0, 0, time.UTC))
 	noteUISeen("9.9.9", time.Date(2026, 11, 17, 16, 20, 0, 0, time.UTC))
 	if uiSeenSnapshot()["9.9.9"] != "2026-11-17T16:12:00Z" {
@@ -232,6 +234,12 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 	deliveryInstalls(&r, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T17:00:00Z", "1.261117.28": "2026-11-17T16:59:00Z"}}, nil, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
 	if deref(r.UiOnSite) != "2026-11-17T17:00:01Z" {
 		t.Fatal(r)
+	}
+	// Seen well before publication is no install of this release (a candidate of the same UI): not a zero ui_install.
+	early := contract.DeliveryRelease{Tag: "ui-1.261117.26-v1.261117.29", Published: "2026-11-17T17:00:01Z"}
+	deliveryInstalls(&early, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T16:50:00Z"}}, nil, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))
+	if early.UiOnSite != nil {
+		t.Fatal(early)
 	}
 	odd := contract.DeliveryRelease{Tag: "ui-kit-v1.2", Published: "2026-11-17T17:00:01Z"}
 	deliveryInstalls(&odd, dhState{UISeen: map[string]string{"1.261117.29": "2026-11-17T17:01:00Z"}}, nil, time.Date(2026, 11, 17, 17, 5, 0, 0, time.UTC))

@@ -365,7 +365,7 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
           icon={r.conclusion === 'success' ? 'circle-check' : r.conclusion === 'cancelled' ? 'circle-slash' : 'octagon-x'} label={`Run ${r.attempt > 1 ? `${r.id} · attempt ${r.attempt}` : r.id}`}
           meta={r.conclusion === 'success' ? 'all checks passed' : `${r.conclusion}: ${r.jobs.filter(j => j.conclusion !== 'success').map(j => j.name).join(', ') || 'no failed job recorded'}`}
           value={<Num m={sec(r.wallMs ?? null)} kind="duration" />} />)}</DetailSection>
-        <DetailSection title="Installed">{uiOnly(x.release) ? x.uiOnSite ? <KvRow icon="panels-top-left" label="Site" meta={releaseLabel(x.release!)} value={<AgeChip t={ms(x.uiOnSite)} now={now} />} />
+        <DetailSection title="Installed">{uiOnly(x.release) ? x.uiOnSite ? <KvRow icon="panels-top-left" label="Site" meta="serves this UI or a newer one" value={<AgeChip t={ms(x.uiOnSite)} now={now} />} />
             : <Empty text="UI-only release: hosts install nothing; the site does not serve it yet." />
           : Object.keys(x.installed ?? {}).length === 0 ? <Empty text={x.released ? 'Not installed on any host yet.' : 'Not released yet.'} />
           : Object.entries(x.installed).map(([host, t]) => <KvRow key={host} icon="terminal" label={host} meta={x.installedVersions?.[host]} value={<AgeChip t={ms(t)} now={now} />} />)}</DetailSection>
