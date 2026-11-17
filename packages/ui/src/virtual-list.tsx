@@ -59,13 +59,19 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (!el) return true;
     return p.follow === 'top' ? el.scrollTop < 2 : el.scrollHeight - el.scrollTop - el.clientHeight < 2;
   };
+  // TanStack also scrolls to compensate for measured rows. Record those writes before their scroll events.
+  const scrollTo: typeof elementScroll = (offset, options, instance) => {
+    elementScroll(offset, options, instance);
+    const el = instance.scrollElement;
+    if (el) prev.current.top = el.scrollTop;
+  };
   const opts = {
     count: p.items.length,
     getScrollElement: () => scroller.current,
     estimateSize: () => p.rowHeight,
     getItemKey: (i: number) => p.getKey(p.items[i]),
     overscan: 10,
-    scrollToFn: elementScroll,
+    scrollToFn: scrollTo,
     observeElementRect,
     observeElementOffset,
     onChange: () => rerender(0),
@@ -95,10 +101,6 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (el) prev.current.top = el.scrollTop;
     if (prev.current.atEdge && unseen) setUnseen(0);
   };
-  // This control's own scroll writes (to the end, an anchor kept, a restore) move the position before their scroll
-  // event too. Record them so the next render does not count them twice.
-  const wrote = () => { const el = scroller.current; if (el) prev.current.top = el.scrollTop; };
-
   // Runs before paint whenever items change: keep the anchor row where it was, or follow the edge.
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -115,22 +117,22 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const wasAtEdge = prev.current.atEdge;
     prev.current.keys = new Set(p.items.map(p.getKey));
     if (wasAtEdge) {
-      if (p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); wrote(); }
+      if (p.follow === 'bottom' && p.items.length) v.scrollToIndex(p.items.length - 1, { align: 'end' });
       return;
     }
     const a = anchor.current;
     if (a) {
       const i = p.items.findIndex(it => p.getKey(it) === a.key);
-      if (i >= 0) { v.scrollToOffset(v.getOffsetForIndex(i, 'start')![0] - a.delta); wrote(); }
+      if (i >= 0) v.scrollToOffset(v.getOffsetForIndex(i, 'start')![0] - a.delta);
       // The anchor left with the old window (reload to newest): show the followed edge.
-      else if (replaced && p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); prev.current.atEdge = true; wrote(); }
+      else if (replaced && p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); prev.current.atEdge = true; }
     }
     if (added) setUnseen(n => n + added);
   }, [p.items]);
 
   // Viewport and measured heights can change without a new items array.
   useLayoutEffect(() => {
-    if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) { v.scrollToEnd(); wrote(); }
+    if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) v.scrollToEnd();
   });
 
   const jump = () => {
@@ -146,10 +148,10 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const r = requested.current, el = scroller.current; if (!r || !el) return;
     requested.current = null;
     const i = p.items.findIndex(item => p.getKey(item) === r.key);
-    if (i < 0) { if (!p.items.length) { v.scrollToOffset(0); anchor.current = null; wrote(); } return; }
+    if (i < 0) { if (!p.items.length) { v.scrollToOffset(0); anchor.current = null; } return; }
     const start = v.getOffsetForIndex(i, 'start')?.[0];
     const offset = r.align ? v.getOffsetForIndex(i, r.align)?.[0] : start === undefined ? undefined : start - (r.offsetPx ?? 0);
-    if (offset !== undefined && start !== undefined) { v.scrollToOffset(Math.max(0, offset)); anchor.current = { key: r.key, delta: start - el.scrollTop }; prev.current.atEdge = false; wrote(); }
+    if (offset !== undefined && start !== undefined) { v.scrollToOffset(Math.max(0, offset)); anchor.current = { key: r.key, delta: start - el.scrollTop }; prev.current.atEdge = false; }
   });
 
   // Asked once per window edge (length and edge row), so a replaced window of the same length asks again.

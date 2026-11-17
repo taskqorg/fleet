@@ -35,11 +35,11 @@ test('mounted bottom VirtualList keeps a scroll up that a render overtakes, and 
   const result = await build({ stdin: { contents: `
     import {render} from 'preact';import {VirtualList} from './packages/ui/src/index.ts';
     const w=window;w.items=Array.from({length:200},(_,i)=>'row-'+i);
-    w.draw=()=>render(<VirtualList items={w.items} getKey={x=>x} rowHeight={32} follow="bottom" label="Fixture" render={x=><span>{x}</span>}/>,document.body);w.draw();
+    w.draw=()=>render(<VirtualList items={w.items} getKey={x=>x} rowHeight={32} dynamic follow="bottom" label="Fixture" render={x=><span>{x}</span>}/>,document.body);w.draw();
   `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
   try {
-    await page.setContent('<body></body>'); await page.addStyleTag({ content: readFileSync('packages/ui/src/styles.css','utf8') + '.vl{height:300px}.vl-wrap{width:500px}' });
+    await page.setContent('<body></body>'); await page.addStyleTag({ content: readFileSync('packages/ui/src/styles.css','utf8') + '.vl{height:300px}.vl-wrap{width:500px}.vl-row.dyn{height:32px}' });
     await page.addScriptTag({ content: result.outputFiles[0].text }); await page.getByRole('grid').waitFor();
     const grid = page.getByRole('grid'), gap = () => grid.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight);
     for (let i = 0; i < 50 && await gap() >= 2; i++) await page.waitForTimeout(20);
@@ -57,6 +57,23 @@ test('mounted bottom VirtualList keeps a scroll up that a render overtakes, and 
     await page.waitForTimeout(100);
     assert.equal(await grid.evaluate(el => el.scrollTop), top2, 'an append racing the scroll up keeps it');
     assert.equal(await page.locator('.pill').textContent(), '2 new');
+    await page.locator('.pill').click();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.vl')!;
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+    });
+    // TanStack adjusts the scroll offset when an overscanned row above the viewport shrinks.
+    const shortRow = grid.locator('[data-key="row-187"]');
+    await shortRow.waitFor();
+    const height = await grid.evaluate(el => el.scrollHeight);
+    await shortRow.evaluate(el => { (el as HTMLElement).style.height = '12px'; });
+    await page.waitForFunction(before => document.querySelector('.vl')!.scrollHeight < before, height);
+    await page.evaluate(() => { const w = window as any; w.items = [...w.items, 'after-measure']; w.draw(); });
+    await grid.locator('[data-key="after-measure"]').waitFor();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.vl')!;
+      return el.scrollHeight - el.scrollTop - el.clientHeight < 2 && !document.querySelector('.pill');
+    });
   } finally { await browser.close(); }
 });
 // Requirement: a 'top' list (newest first) keeps the row being read when rows arrive above it.
