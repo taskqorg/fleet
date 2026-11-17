@@ -207,16 +207,20 @@ func TestSessionTitles(t *testing.T) {
 	 ('session','s-resumed',NULL,'{"id":"s-resumed"}'),
 	 ('message','m-resumed',NULL,'{"sessionId":"s-resumed","text":"Resumed execution"}'),
 	 ('session','s-moved','prj-new','{"id":"s-moved","projectId":"prj-new"}'),
+	 ('session','s-native','prj-new','{"id":"s-native","projectId":"prj-new"}'),
+	 ('message','m-native','prj-new','{"sessionId":"s-native","text":"Native event scope"}'),
 	 ('message','m-moved','prj-old','{"sessionId":"s-moved","text":"Old project text"}');
 	 INSERT INTO execution(id,kind,state,session_id,project_id,started_at,ended_at,data) VALUES
 	 ('e-resumed-failed','agent_run','failed','s-resumed',NULL,now()-interval '3 min',now(),'{}'),
 	 ('e-resumed-success','agent_run','succeeded','s-resumed',NULL,now()-interval '1 min',now(),'{}'),
-	 ('e-moved','agent_run','succeeded','s-moved','prj-new',now()-interval '2 min',now(),'{}')`)
-	insertTitleReplies(t, e, "'e-resumed-success','e-moved'")
+	 ('e-moved','agent_run','succeeded','s-moved','prj-new',now()-interval '2 min',now(),'{}'),
+	 ('e-native','agent_run','succeeded','s-native','prj-new',now()-interval '2 min',now(),'{}')`)
+	insertTitleReplies(t, e, "'e-resumed-success','e-moved','e-native'")
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET project_id=NULL WHERE id='e-native-reply'`)
 	if err := sessionTitlePass(e.ctx, e.app); err != nil {
 		t.Fatal(err)
 	}
-	if calls["Resumed"] != 1 || calls["Old"] != 0 {
+	if calls["Resumed"] != 1 || calls["Native"] != 1 || calls["Old"] != 0 {
 		t.Fatalf("reply selection or project isolation: %v", calls)
 	}
 

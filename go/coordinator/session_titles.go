@@ -204,7 +204,7 @@ var titleCandidates = `SELECT s.id, s.project_id, m.text AS first_message, r.id 
    AND EXISTS (
     SELECT 1 FROM document d
      WHERE d.kind IN ('event','event-delta') AND d.data->>'executionId'=e.id
-      AND d.project_id IS NOT DISTINCT FROM s.project_id
+      AND (d.project_id IS NULL OR d.project_id IS NOT DISTINCT FROM s.project_id)
       AND jsonb_path_exists(d.data, '$.data.fleetNormalized.blocks[*] ? (@.kind == "text" && (!exists(@.role) || @.role == "agent") && @.markdown like_regex "[^[:space:]]")')
    )
    AND (e.ended_at IS NOT NULL OR e.started_at < now()-interval '` + titleWaitReply + `')
@@ -247,7 +247,9 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		if ungranted[astr(r["project_id"])] {
 			err = errConnUnavailable
 		} else if err = runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
-			if err := exec(q, "SELECT set_config('fleet.project_ids',$1,true)", firstString(r["project_id"], ",")); err != nil {
+			// Some native events carry no project column; the candidate ties them to a run in this project.
+			// Read that run's events with its project and projectless rows visible, never a different explicit project.
+			if err := exec(q, "SELECT set_config('fleet.project_ids',$1,true)", astr(r["project_id"])+","); err != nil {
 				return err
 			}
 			reply, err = replyTextUpTo(q, astr(r["reply_execution"]), 1500)
