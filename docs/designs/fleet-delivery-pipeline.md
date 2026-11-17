@@ -30,7 +30,7 @@ Facts from 2026-11-11:
 ## Goals
 
 * Every pull request is tested as part of its queue group: `main` plus everything ahead of it plus itself. No pull request waits for a second run of its own.
-* A worker enables auto-merge on its own pull request after `/code-review`, and only then; GitHub merges. The orchestrator can take any pull request out of the queue ([section 8](#8-workers-merge-and-watch-their-own-pull-requests)).
+* A worker reviews its change with `/code-review` before it opens the pull request and enables auto-merge on its own pull request after the `code-review` status, and only then; GitHub merges. The orchestrator can take any pull request out of the queue ([section 8](#8-workers-merge-and-watch-their-own-pull-requests)).
 * A flaky failure is recorded and never turns a red run green. A merge always needs a clean pass.
 * Every green `main` batch releases without a person. The pipeline computes the version, so there is no tag date to get wrong.
 * Releases come only from the pipeline. One switch held by the orchestrator pauses releasing.
@@ -60,7 +60,7 @@ Checked against GitHub's docs on 2026-11-11:
 ## Technical Plan
 
 ```
-worker: /code-review, code-review status ──► gh pr merge --auto <n>   (orchestrator: dequeue veto)
+worker: /code-review, open PR, status ─────► gh pr merge --auto <n>   (orchestrator: dequeue veto)
                                              │
 GitHub merge queue ── merge_group run of ci on main+ahead+PR, in parallel:
         │   go, app, browser (required;   release-build: version of the commit, tarballs, selftest,
@@ -162,8 +162,9 @@ Amendment of 2026-11-11, decided by the owner. Data from pull requests #171 to #
 
 **Review gate.**
 
-* A worker runs `/code-review` on its final head. When the review has no open finding, the worker posts the commit status `code-review` = `success` on that head: `gh api repos/taskqorg/fleet/statuses/<sha> -f state=success -f context=code-review -f description="<review level, findings fixed>"`.
-* The ruleset requires `code-review` next to `go`, `app` and `browser`, so the queue refuses a pull request without it. A status belongs to one commit: any new push drops it, and the worker posts it again after reviewing the new head. A worker rebases only to resolve a conflict (below), so a rebased head always holds new hand-made lines and is reviewed again.
+* A worker runs `/code-review` on its whole branch (`git fetch origin`, then the diff `origin/main...HEAD`) before the first push and fixes the findings there; only then does it push and open the pull request. Reviewed after opening, each review fix was another push and another PR CI run while the pull request waited: in `delivery_history`, `pr_ci` rose from about 140 s to about 1000 s on 2026-11-16 and 17, while the CI run on the final head stayed about 160 s.
+* Once the pull request is open, the worker posts the commit status `code-review` = `success` on its head, the commit it reviewed: `gh api repos/taskqorg/fleet/statuses/<sha> -f state=success -f context=code-review -f description="<review level, findings fixed>"`.
+* The ruleset requires `code-review` next to `go`, `app` and `browser`, so the queue refuses a pull request without it. A status belongs to one commit: any new push (a CI fix, a conflict rebase) drops it, so the worker reviews the whole branch again before that push and posts the status on the new head.
 * In the queue, `.github/workflows/review-gate.yml` (only `on: merge_group`) reports a job named `code-review` on the group commit. It does not review anything: the pull request could only enter the queue with the status on its head. It runs on no other event, so no skipped `code-review` check ever satisfies the rule on a pull request.
 * The status is a statement by the worker, not a security control: every lane uses the owner's GitHub login and could post it, and an admin can bypass the ruleset (`gh pr merge --admin`). Workers never use `--admin`. The status is still worth one command: the queue now refuses a pull request whose head was pushed after the review, which a rule in prose cannot do.
 
