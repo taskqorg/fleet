@@ -151,6 +151,12 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	}
 	equal(`SELECT count(*)::text FROM resource_contribution WHERE execution_id='pause-healthy-1'`, "1")
 	equal(`SELECT attempts::text||' '||last_error_class||' '||(next_attempt_at>clock_timestamp())::text FROM resource_work WHERE execution_id='pause-poison'`, "1 projection_failed true")
+	// Losing a COMMIT acknowledgement after its claimed rows were deleted leaves later work due.
+	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('pause-later','tool_run','succeeded','PAUSE')`)
+	if err := resourceReplaceFailed(ctx, a, "pause-later", []string{"00000000-0000-0000-0000-000000000001"}, errors.New("commit response lost")); err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT attempts::text||' '||(next_attempt_at<=clock_timestamp())::text FROM resource_work WHERE execution_id='pause-later'`, "0 true")
 	// Paused: the next passes leave it alone and keep serving new healthy work at full pace.
 	for _, id := range []string{"pause-healthy-2", "pause-healthy-3"} {
 		sql(`INSERT INTO execution(id,kind,state,project_id) VALUES($1,'tool_run','succeeded','PAUSE')`, id)

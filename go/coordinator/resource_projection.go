@@ -149,18 +149,18 @@ func resourceRetryDelay(failures int) time.Duration {
 }
 
 // resourcePause records one more failure of the item key names, in its own transaction under locks. selectSQL reads
-// the item's attempts ($1 item, locking its row); updateSQL gets $1 the item, $2 the new attempts and $3 the pause in
+// the item's attempts ($1 item, then selectArgs), locking its row when needed. updateSQL gets $1 the item, $2 the new attempts and $3 the pause in
 // microseconds (resourceRetryDelay of the earlier attempts), plus extra. A hold's count carries over into the row. A
 // pause that cannot be written holds the item in memory instead (resourceHeld) and returns the write's error; a
 // written one releases any hold.
-func resourcePause(ctx context.Context, a *App, locks []string, key, selectSQL, updateSQL, item string, extra ...any) error {
+func resourcePause(ctx context.Context, a *App, locks []string, key, selectSQL, updateSQL, item string, selectArgs []any, extra ...any) error {
 	attempts := resourceHeld.count(key)
 	if id, ok := strings.CutPrefix(key, "execution:"); ok {
 		attempts = max(attempts, resourceHeld.count("scope:"+id))
 	}
 	err := runTxLocksOnce(ctx, a, nil, true, locks, func(q *Request) error {
 		var durable int
-		if err := q.tx.QueryRow(q.ctx(), selectSQL, item).Scan(&durable); errors.Is(err, pgx.ErrNoRows) {
+		if err := q.tx.QueryRow(q.ctx(), selectSQL, append([]any{item}, selectArgs...)...).Scan(&durable); errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		} else if err != nil {
 			return err
@@ -881,7 +881,6 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 	defer func() { span.End(finalErr) }()
 	var projects []string
 	hinted := map[string]bool{}
-	claimed := []string{}
 	for {
 		scopeStart := time.Now()
 		ps, err := resourceScopeHint(ctx, a, id)
@@ -909,6 +908,7 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 			locks = append(locks, "project:"+p)
 		}
 		var bodyFinished time.Time
+		var claimed []string
 		lockStart := time.Now()
 		err = runTxLocksOnce(ctx, a, nil, true, locks, func(q *Request) error {
 			span.Set("fleet.resource.lock_ms", strconv.FormatInt(time.Since(lockStart).Milliseconds(), 10))
@@ -950,7 +950,7 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 		} // Clearing preserves every claimed UUID.
 		if err != nil {
 			finalErr = err
-			pauseErr := resourceReplaceFailed(ctx, a, id, err)
+			pauseErr := resourceReplaceFailed(ctx, a, id, claimed, err)
 			if errors.Is(err, errResourceOwnership) {
 				// The repair's success must not hide a pause that could not be written.
 				if repairErr := repairTotalsOwnership(ctx, a, id); pauseErr != nil || repairErr != nil {
@@ -975,14 +975,15 @@ const resourceWorkAttemptsSQL = `SELECT coalesce(max(attempts),0) FROM resource_
 // and new rows do not restart its count. Only the execution's own lock is taken: a refused project lock must not keep
 // the pause from being written. A pause that cannot be written holds the execution in memory (resourceHeld); its
 // error is returned.
-func resourceReplaceFailed(ctx context.Context, a *App, id string, err error) error {
+func resourceReplaceFailed(ctx context.Context, a *App, id string, claimed []string, err error) error {
 	if ctx.Err() != nil {
 		return nil
 	}
+	// A committed replacement deletes its claims. An uncertain COMMIT must not pause work that came after it.
 	return resourcePause(ctx, a, []string{"execution:" + id}, "execution:"+id,
-		resourceWorkAttemptsSQL,
+		resourceWorkAttemptsSQL+` HAVING coalesce(cardinality($2::uuid[]),0)=0 OR bool_or(work_id=ANY($2))`,
 		`UPDATE resource_work SET attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',last_error_class=$4 WHERE execution_id=$1`,
-		id, resourceErrorClass(err))
+		id, []any{claimed}, resourceErrorClass(err))
 }
 
 // A cohort may hold every same-project leaf of one pass (the pass selects at most 100 due IDs): each extra transaction
@@ -1231,7 +1232,11 @@ func resourceBisectCohort(ids []string, batch func([]string) error, single func(
 	if errors.Is(err, errResourceClearing) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		var all []error
 		for _, id := range ids {
-			all = append(all, single(id))
+			e := single(id)
+			all = append(all, e)
+			if errors.Is(e, errResourceStall) {
+				break
+			}
 		}
 		return errors.Join(all...)
 	}
@@ -1763,7 +1768,7 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		} else if ctx.Err() == nil {
 			finalErr = errors.Join(finalErr, e)
 			finalErr = errors.Join(finalErr, resourcePause(ctx, a, nil, "build:"+p, `SELECT attempts FROM resource_build WHERE project_id=$1 FOR UPDATE`,
-				`UPDATE resource_build SET last_error='build_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',updated_at=clock_timestamp() WHERE project_id=$1 AND generation=$4::uuid`, p, generation))
+				`UPDATE resource_build SET last_error='build_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',updated_at=clock_timestamp() WHERE project_id=$1 AND generation=$4::uuid`, p, nil, generation))
 		}
 	}
 	for _, r := range repairs {
@@ -1772,7 +1777,7 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		} else if ctx.Err() == nil {
 			finalErr = errors.Join(finalErr, e)
 			finalErr = errors.Join(finalErr, resourcePause(ctx, a, nil, "repair:"+r, `SELECT attempts FROM resource_metadata_repair WHERE repair_id=$1::uuid FOR UPDATE`,
-				`UPDATE resource_metadata_repair SET last_error='metadata_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond' WHERE repair_id=$1::uuid`, r))
+				`UPDATE resource_metadata_repair SET last_error='metadata_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond' WHERE repair_id=$1::uuid`, r, nil))
 		}
 	}
 	for _, k := range workless {
