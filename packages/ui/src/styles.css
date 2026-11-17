@@ -305,7 +305,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .divider,.divider-ctl{width:var(--size-hit-phone);margin-left:calc(-1 * var(--size-hit-phone) / 2)}
   .divider::after,.divider-ctl::after{left:calc(50% - var(--space-2) / 2);right:auto}
   .rail :is(a,button),.split-list :is(a,button,input,label):not(.pill){position:relative;z-index:5}
-  .vl-row{z-index:5}
+  .vl-row,.nav-toggle{position:relative;z-index:5}
   .split-list .vl{position:relative;z-index:5}
 }
 /* Until the person's settings are first read (at most 1.5 s) the shell is laid out but not shown, so a stored width or collapsed rail never jumps in (OR-23). */
@@ -741,7 +741,10 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .focus-btn{padding:0 var(--space-2)}
   .focus-panel{position:fixed;top:calc(var(--size-control) + 3 * var(--space-2));left:var(--space-3);right:var(--space-3);width:auto;max-height:calc(100% - var(--size-control) - 6 * var(--space-2))}
 }
-@media (pointer:coarse){.focus-btn,.focus-outside,.focus-act,.shell-search{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}}
+@media (pointer:coarse){
+  .focus-btn,.focus-outside,.focus-act,.shell-search{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}
+  .focus-list label,.focus-ignored>.group-h{min-height:var(--size-hit-phone)}
+}
 
 /* ---------- Day chart, share bar, norm bar (controls/day-chart.md, share-bar.md, norm-bar.md) ---------- */
 .dc,.sb{--gap:var(--surface);--stripes:repeating-linear-gradient(45deg,transparent 0 3px,var(--gap) 3px 5px)}

@@ -14,9 +14,9 @@
   4. When any project is ignored, a folded "Ignored (n)" group; open, each row has Restore (`undo-2`).
 
 **Behaviour.**
-* A click on the chip opens or closes the panel. Escape, a click outside or Tab away closes it and returns the focus to the chip (`useDismiss`). The panel floats and moves nothing (an OR-14 exception, like Spotlight); it stays an informational surface of its own colour, border and shadow (OR-16).
-* A checkbox adds or removes a project at once; a preset sets the focus in one click (ignored projects in it are left out); "All projects" clears the focus.
-* Ignore hides the project for this person everywhere: lists, counts and `search`, also with All projects. It leaves the focus. A view whose URL names the project still shows it. Restore brings it back.
+* A click on the chip opens or closes the panel. Escape, a click outside or Tab away closes it; Escape returns the focus to the chip (`useDismiss`). The panel floats and moves nothing (an OR-14 exception, like Spotlight); it stays an informational surface of its own colour, border and shadow (OR-16).
+* A checkbox adds or removes a project at once; a preset sets the focus in one click (ignored projects in it are left out; a preset whose projects are all ignored cannot be picked); "All projects" clears the focus.
+* Ignore hides the project for this person everywhere (the empty texts still speak of "the focused projects" only while a focus is set): lists, counts and `search`, also with All projects. It leaves the focus. A view whose URL names the project still shows it. Restore brings it back.
 * The outside count is the [Needs you](../patterns/needs-you.md) items (open questions and Needs-you problems) of projects outside what lists show; a click opens `/overview?all`. Nothing shows at 0, and nothing is counted while every project is shown.
 * Focus, presets and ignored projects are person settings (`focus`, `focusPresets`, `ignored` in `person_settings_*`); agents read and write them. The app applies them as the project filter of every list that names no project (`prefs.ts`: `focusIds`, `withFocus`).
 

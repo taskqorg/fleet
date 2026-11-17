@@ -39,7 +39,7 @@ test('search finds tasks by title and id prefix, applies field terms, keeps gran
   assert.deepEqual(ids(await op({query: 'deploy fix'})), ['abc12345-flaky']);
 });
 
-// OR-34 ignore; risk: an ignored project's tasks or project hit still show in the person's Spotlight, or one person's
+// Requirement: OR-34 ignore; risk: an ignored project's tasks or project hit still show in the person's Spotlight, or one person's
 // ignore hides hits from another or from a query that names the project.
 test('search leaves out the projects the person ignores, unless the query names the project', {timeout: 30_000}, async t => {
   const c = await startCoordinator({name: 'search-ignore'}); t.after(() => c.stop());

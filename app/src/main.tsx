@@ -155,7 +155,8 @@ function App() {
   useEffect(() => {
     if (access.value.state !== 'open' || !prefsRead.value || !NAV.some(n => n.id === current)) return;
     const parsed = (VIEWS as string[]).includes(current) ? parseView(loc + (query ? '?' + query : '')) : null;
-    noteView(current, parsed ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + current);
+    // The Overview keeps no view of its own: /overview?all (every project, from the outside-focus count) is never kept.
+    noteView(current, parsed && current !== 'overview' ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + current);
     if (left.current && left.current !== current) saveOnLeave(left.current, false);
     left.current = current;
   }, [loc, query, access.value.state, prefsRead.value]);
@@ -210,7 +211,7 @@ function useOutside() {
   const all = useDoc<{ projects: (string | null)[] }>(scope ? 'needs-you-all' : null, async () => {
     const [q, e] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { needsYou: true })]);
     return { projects: [...q.questions, ...e.executions].map((x: any) => x.projectId ?? null) };
-  }, c => ['task', 'question', 'execution'].includes(c.kind));
+  }, c => c.kind === 'question' || c.kind === 'execution');
   return scope ? (all.data?.projects ?? []).filter(p => outsideScope(p, scope)).length : 0;
 }
 

@@ -11,7 +11,7 @@ import {
 import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
-import { usePins, withFocus, setFocus } from '../prefs.ts';
+import { usePins, prefs, setFocus } from '../prefs.ts';
 import { useListPage, ListPagePanel } from '../list-page.tsx';
 import { ScopedRollupDetails, buildExecTree, resourceTotals } from './resources.tsx';
 
@@ -42,7 +42,8 @@ export function Tasks({ id }: { id?: string }) {
   const canPause = (t: TaskRow) => !TERMINAL.includes(t.state) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
   const bulk = (action: 'pause' | 'resume' | 'cancel', ts: TaskRow[]) => page.bulk(ts, t => op('task_update', { taskId: t.id, action }), `did not ${action}`);
   const now = Date.now();
-  const { filtered } = page, focused = !view.project?.length && !!withFocus(view).project?.length;
+  // The empty text names the focus only when a focus is set: ignored projects alone are not a focus "Show all projects" could clear.
+  const { filtered } = page, focused = !view.project?.length && prefs.value.focus.length > 0;
   const listPane = <>
     <header class="page-h"><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
     <ListPagePanel page={page} noun="Tasks" placeholder="Search tasks, agent:claude host:mac" family="task" groups={GROUPS} sorts={SORTS} focused={id}

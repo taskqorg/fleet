@@ -64,6 +64,13 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     assert.ok(await until(async () => await outside.count() === 1), 'the outside-focus indicator shows');
     assert.match(await outside.getAttribute('aria-label') ?? '', /^\d+ need you outside focus/);
     await shoot('header-focus');
+    // Phone width: the header keeps its icons and pushes nothing out sideways (OR-43).
+    await p.setViewportSize({ width: 390, height: 844 }); await p.waitForTimeout(250);
+    const narrow = await p.evaluate(() => { const h = document.querySelector('[data-ui=shell-header]')!, r = h.getBoundingClientRect();
+      return { out: [...h.children].filter(c => c.getBoundingClientRect().right > r.right + 1).map(c => c.className), page: document.documentElement.scrollWidth - innerWidth,
+        icons: ['.focus-btn', '.focus-outside', '.shell-search'].every(s => (h.querySelector(s)?.getBoundingClientRect().width ?? 0) > 0) }; });
+    assert.deepEqual(narrow, { out: [], page: 0, icons: true }, 'at 390 px the header fits with its icons');
+    await p.setViewportSize({ width: 1440, height: 900 });
     // Ignore Bravo from its row in the panel: it leaves the focus, the list and the picker, and shows under Ignored.
     await chip.click(); await panel.waitFor();
     await panel.getByRole('button', { name: 'Ignore Bravo' }).click();

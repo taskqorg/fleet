@@ -1,9 +1,9 @@
 // Overview (docs/design-system/pages/overview.md): what needs the operator, operational counts, workers per host, projects.
 import { useLocation, useSearch } from 'wouter-preact';
-import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection, actor } from '../../../packages/ui/src/index.ts';
+import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, Button, keyConnection, actor } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { focusIds, scopeReady } from '../prefs.ts';
+import { focusIds, scopeReady, prefs } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
@@ -33,12 +33,12 @@ export function Overview() {
         { label: 'queued', icon: 'list-ordered', value: { value: data.counts.queued ?? 0, basis: 'measured' }, href: '/tasks?state=queued' },
   ] as const).filter(x => x.value.value > 0);
   return <>
-    <header class="page-h">{all && <span class="muted">Every project, focus not applied</span>}<span class="grow" /><OfflineMarker state={state} now={now} /></header>
+    <header class="page-h">{all && <><span class="muted">Every project, focus not applied</span><Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} /></>}<span class="grow" /><OfflineMarker state={state} now={now} /></header>
     <OpsSummary>
       {ops.length > 0 && <StatStrip label="Operations" stats={ops} />}
       <div class="cols">
         <NeedsYou>
-          {!data.questions.length && !data.problems.length && <Empty text={focus ? 'Nothing is waiting for you in the focused projects.' : 'Nothing is waiting for you.'} />}
+          {!data.questions.length && !data.problems.length && <Empty text={!all && prefs.value.focus.length ? 'Nothing is waiting for you in the focused projects.' : 'Nothing is waiting for you.'} />}
           <Latest items={needsYou(data, now).map(x => x.q ? <DecisionBlock key={x.q.id} question={x.q.text} askedBy={actor(x.q.askedBy) || x.q.kind} addressedTo="you" since={x.at} now={now}
             waits={x.q.taskId ? <a class="row-link" href={`/tasks/${encodeURIComponent(x.q.taskId)}`} aria-label="Open task" data-tip="Open task" onClick={ev => { ev.preventDefault(); go(`/tasks/${encodeURIComponent(x.q.taskId)}`); }}><Icon name="external-link" /></a> : undefined}
             options={(Array.isArray(x.q.options) ? x.q.options : x.q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(x.q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}

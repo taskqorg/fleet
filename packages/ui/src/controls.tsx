@@ -920,7 +920,7 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
   if (value.includes('-') || presets.some(p => p.projects.includes('-'))) projects = [{ id: '-', name: 'No project' }, ...projects.filter(p => p.id !== '-')];
   const offered = projects.filter(p => !ignored.includes(p.id)), hidden = ignored.map(id => ({ id, name: name(id) }));
   const names = value.slice(0, 2).map(name), more = value.length - names.length;
-  const summary = value.length ? names.join(', ') + (more > 0 ? ` and ${more} more` : '') : 'All projects';
+  const label = value.length ? names.join(', ') : 'All projects', summary = label + (more > 0 ? ` and ${more} more` : '');
   const same = (a: string[], b: string[]) => { const x = a.filter(p => !ignored.includes(p)); return x.length === b.length && x.every(p => b.includes(p)); };
   const shown = offered.filter(p => `${p.name} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id]);
@@ -930,13 +930,15 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
       <Icon name="bell" /><span class="num">{outside.n}</span><span class="nm">need you outside focus</span></button>}
     <button type="button" class="focus-btn" aria-expanded={open} aria-label={`Focus: ${summary}`} onClick={() => setOpen(!open)}>
       <span class="focus-ic" data-tip={`Focus: ${summary}`} data-tip-narrow><Icon name="focus" /></span>
-      <span class="nm">{value.length ? names.join(', ') : 'All projects'}</span>{more > 0 && <span class="more">+{more}</span>}<Icon name="chevron-down" /></button>
+      <span class="nm">{label}</span>{more > 0 && <span class="more">+{more}</span>}<Icon name="chevron-down" /></button>
     {open && <div class="focus-panel" role="group" aria-label="Focus projects">
       <div class="presets">
         <span class={`preset${value.length === 0 ? ' on' : ''}`}><button type="button" aria-pressed={value.length === 0} onClick={() => onChange([])}>All projects</button></span>
-        {presets.map(p => <span key={p.name} class={`preset${value.length && same(p.projects, value) ? ' on' : ''}`}>
-          <button type="button" aria-pressed={!!value.length && same(p.projects, value)} onClick={() => onChange(p.projects.filter(x => !ignored.includes(x)))}>{p.name}</button>
-          <button type="button" class="x" aria-label={`Remove focus preset ${p.name}`} data-tip="Remove" onClick={() => onRemovePreset(p.name)}><Icon name="x" /></button></span>)}
+        {presets.map(p => { const live = p.projects.filter(x => !ignored.includes(x)); return <span key={p.name} class={`preset${value.length && same(p.projects, value) ? ' on' : ''}`}>
+          {/* A preset whose projects are all ignored would clear the focus: it cannot be picked until one is restored. */}
+          <button type="button" aria-pressed={!!value.length && same(p.projects, value)} aria-disabled={!live.length || undefined} data-tip={live.length ? undefined : 'Every project in it is ignored'}
+            onClick={() => { if (live.length) onChange(live); }}>{p.name}</button>
+          <button type="button" class="x" aria-label={`Remove focus preset ${p.name}`} data-tip="Remove" onClick={() => onRemovePreset(p.name)}><Icon name="x" /></button></span>; })}
         {value.length > 0 && (naming === null
           ? <Button label="Save focus preset" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
           : <span class="naming"><input value={naming} placeholder="Preset name" aria-label="Preset name" ref={focusOnMount} onInput={e => setNaming((e.target as HTMLInputElement).value)}

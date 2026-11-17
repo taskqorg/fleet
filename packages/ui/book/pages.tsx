@@ -5,12 +5,13 @@ import { useState } from 'preact/hooks';
 import { Router, Route, Switch, useLocation } from 'wouter-preact';
 import { useHashLocation } from 'wouter-preact/use-hash-location';
 import {
-  AppShell, FocusControl, TaskListView, ROW2, StatStrip, AreaChart, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Thread,
+  AppShell, TaskListView, ROW2, StatStrip, AreaChart, DecisionBlock, ProblemRow, FillBar, StateBadge, Num, Totals, AgeChip, ExecTree, Thread,
   ResultViewer, EntityCode, SettingField, SplitButton, Button, Empty, VirtualList, Icon, Stale, StateCounters, FilterBar,
   ListDetail, DefinitionEditor, Choice, DraftBar, StepList, FlowStrip, HarnessMark, type StepItem, type FlowNode, type Harness, type StateOf, NeedsYou, OpsSummary, ListFrame, OutcomeBlock, DetailSection, KvRow, HarnessCounts, type TaskRow,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
 import { Delivery } from './delivery.tsx';
+import { FocusDemo } from './focus-demo.tsx';
 import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtures.ts';
 import tokens from '../tokens.json';
 
@@ -31,15 +32,7 @@ function PageHead({ title, children }: { title: string; children?: ComponentChil
   return children ? <header class="page-h" aria-label={title}><span class="grow" />{children}</header> : null;
 }
 
-/** The mockups' focus chip (OR-34): local state only. */
-function MockFocus() {
-  const [value, setValue] = useState<string[]>([]), [ignored, setIgnored] = useState<string[]>([]);
-  const [presets, setPresets] = useState([{ name: 'Core', projects: ['fleet', 'specq'] }]);
-  const projects = [{ id: 'fleet', name: 'Fleet' }, { id: 'desiign', name: 'Desiign' }, { id: 'cs', name: 'CS' }, { id: 'specq', name: 'specq' }];
-  return <FocusControl projects={projects} value={value} presets={presets} ignored={ignored} outside={{ n: value.length ? 2 : 0, onOpen: () => setValue([]) }}
-    onChange={ids => setValue(ids.filter(x => !ignored.includes(x)))} onSavePreset={n => setPresets([...presets.filter(x => x.name !== n), { name: n, projects: value }])}
-    onRemovePreset={n => setPresets(presets.filter(x => x.name !== n))} onIgnore={(id, on) => { setIgnored(on ? [...ignored, id] : ignored.filter(x => x !== id)); if (on) setValue(value.filter(x => x !== id)); }} />;
-}
+
 const Panel = ({ title, actions, children, class: c }: { title?: string; actions?: ComponentChildren; children: ComponentChildren; class?: string }) => (
   <section class={`panel ${c ?? ''}`}>{title && <header class="panel-h"><h2>{title}</h2><span class="grow" />{actions}</header>}{children}</section>
 );
@@ -550,7 +543,7 @@ function Catalogue() {
 function App() {
   const [loc, go] = useLocation();
   const cur = loc.split('/')[1] || 'overview';
-  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} focus={<MockFocus />} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
+  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} focus={<FocusDemo />} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
     <Switch>
       <Route path="/tasks/:id">{(p: { id: string }) => <Tasks id={p.id} />}</Route>
       <Route path="/tasks"><Tasks /></Route>
