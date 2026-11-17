@@ -122,7 +122,7 @@ func purgeableHosts(q *Request) (gone []string, kept []contract.PurgeReason, err
 	WHEN EXISTS (SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=d.data->>'hostId' AND c.state<>'deleted') THEN 'artifact_copy on its store'
 	WHEN EXISTS (SELECT 1 FROM route_decision r WHERE r.host_id=d.data->>'hostId') THEN 'route_decision.host_id'
 	WHEN EXISTS (SELECT 1 FROM document x WHERE x.kind='session' AND x.data->>'hostId'=d.data->>'hostId') THEN 'document.data->>''hostId'' by session'
-	WHEN EXISTS (SELECT 1 FROM document x WHERE x.kind='command' AND x.data->>'status'='pending' AND x.data->>'hostId'=d.data->>'hostId') THEN 'document.data->>''hostId'' by pending command' END AS referenced
+	WHEN EXISTS (SELECT 1 FROM document x WHERE x.kind='command' AND x.data->>'hostId'=d.data->>'hostId') THEN 'document.data->>''hostId'' by command' END AS referenced
 	FROM document d WHERE d.kind='host' AND d.data->>'state'='removed' ORDER BY d.seq`)
 	if err != nil {
 		return nil, nil, err

@@ -750,87 +750,95 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	}
 	rows := map[contract.ObjectKind]*contract.KindCount{}
 	// Every root of every kind is checked before any goes, as the preview sees them: a root kept only by another
-	// tombstoned root goes at the next purge, so the confirm removes what the preview listed.
-	type rootSet struct {
-		kind  contract.PurgeKind
-		roots []string
-		kept  []contract.PurgeReason
+	// tombstoned root goes at the next purge, so the confirm removes what the preview listed. The roots of all kinds
+	// go in one random order: a call that stops at its budget reaches others next time, so roots a live row keeps
+	// cannot starve the rest. A preview cut by the budget (more) is partial: the confirm may reach other roots.
+	type root struct {
+		kind contract.PurgeKind
+		id   string
 	}
-	sets := []rootSet{}
-	for _, kind := range []contract.PurgeKind{contract.PurgeKindExperiment, contract.PurgeKindProject} {
+	order := []contract.PurgeKind{contract.PurgeKindExperiment, contract.PurgeKindProject}
+	roots := []root{}
+	for _, kind := range order {
 		if !slices.Contains(kinds, kind) {
 			continue
 		}
-		r := rootSet{kind: kind, kept: []contract.PurgeReason{}}
 		if err := runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
 			if err := showDeleted(q); err != nil {
 				return err
 			}
-			var err error
-			r.roots, err = purgeRoots(q, kind)
-			// A random order: a call that stops at its budget reaches other roots next time, so roots a live row keeps
-			// cannot starve the rest. A preview cut by the budget (more) is partial: the confirm may reach other roots.
-			rand.Shuffle(len(r.roots), func(i, j int) { r.roots[i], r.roots[j] = r.roots[j], r.roots[i] })
+			ids, err := purgeRoots(q, kind)
+			for _, id := range ids {
+				roots = append(roots, root{kind, id})
+			}
 			return err
 		}); err != nil {
 			return out, err
 		}
-		if !b.Preview {
-			free := []string{}
-			for _, id := range r.roots {
-				if time.Since(start) > purgeBudget/2 { // the checks leave the deletes half the budget
-					more = true
-					r.kept = append(r.kept, contract.PurgeReason{Id: id, Reason: deferred})
-					continue
-				}
-				_, _, blocked, err := purgeRootTx(q, kind, id, true)
-				if err != nil {
-					return out, err
-				}
-				if blocked == "" {
-					free = append(free, id)
-				} else {
-					r.kept = append(r.kept, contract.PurgeReason{Id: id, Reason: blocked})
-				}
-			}
-			r.roots = free
-		}
-		sets = append(sets, r)
 	}
-	for _, r := range sets {
-		removed := contract.PurgeCount{Kind: r.kind, Ids: []string{}}
-		kept := r.kept
-		var bytes int64
-		for _, id := range r.roots {
-			if over() {
-				kept = append(kept, contract.PurgeReason{Id: id, Reason: deferred})
+	rand.Shuffle(len(roots), func(i, j int) { roots[i], roots[j] = roots[j], roots[i] })
+	kept := map[contract.PurgeKind][]contract.PurgeReason{}
+	removed := map[contract.PurgeKind]*contract.PurgeCount{}
+	for _, kind := range order {
+		removed[kind] = &contract.PurgeCount{Kind: kind, Ids: []string{}, Bytes: new(int64)}
+		kept[kind] = []contract.PurgeReason{}
+	}
+	if !b.Preview {
+		free := []root{}
+		for _, r := range roots {
+			if time.Since(start) > purgeBudget/2 { // the checks leave the deletes half the budget
+				more = true
+				kept[r.kind] = append(kept[r.kind], contract.PurgeReason{Id: r.id, Reason: deferred})
 				continue
 			}
-			rs, n, blocked, err := purgeRootTx(q, r.kind, id, b.Preview)
+			_, _, blocked, err := purgeRootTx(q, r.kind, r.id, true)
 			if err != nil {
-				return out, fmt.Errorf("purge %s %s: %w", r.kind, id, err)
+				return out, err
 			}
-			if blocked != "" {
-				kept = append(kept, contract.PurgeReason{Id: id, Reason: blocked})
-				continue
-			}
-			removed.Ids, bytes = append(removed.Ids, id), bytes+n
-			for _, x := range rs {
-				if rows[x.Kind] == nil {
-					rows[x.Kind] = &contract.KindCount{Kind: x.Kind}
-				}
-				rows[x.Kind].Count += x.Count
-				if x.Bytes != nil {
-					sum := *x.Bytes
-					if rows[x.Kind].Bytes != nil {
-						sum += *rows[x.Kind].Bytes
-					}
-					rows[x.Kind].Bytes = &sum
-				}
+			if blocked == "" {
+				free = append(free, r)
+			} else {
+				kept[r.kind] = append(kept[r.kind], contract.PurgeReason{Id: r.id, Reason: blocked})
 			}
 		}
-		removed.Count, removed.Bytes = int64(len(removed.Ids)), &bytes
-		out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, keptCount(r.kind, kept))
+		roots = free
+	}
+	for _, r := range roots {
+		if over() {
+			kept[r.kind] = append(kept[r.kind], contract.PurgeReason{Id: r.id, Reason: deferred})
+			continue
+		}
+		rs, n, blocked, err := purgeRootTx(q, r.kind, r.id, b.Preview)
+		if err != nil {
+			return out, fmt.Errorf("purge %s %s: %w", r.kind, r.id, err)
+		}
+		if blocked != "" {
+			kept[r.kind] = append(kept[r.kind], contract.PurgeReason{Id: r.id, Reason: blocked})
+			continue
+		}
+		rm := removed[r.kind]
+		rm.Ids, *rm.Bytes = append(rm.Ids, r.id), *rm.Bytes+n
+		for _, x := range rs {
+			if rows[x.Kind] == nil {
+				rows[x.Kind] = &contract.KindCount{Kind: x.Kind}
+			}
+			rows[x.Kind].Count += x.Count
+			if x.Bytes != nil {
+				sum := *x.Bytes
+				if rows[x.Kind].Bytes != nil {
+					sum += *rows[x.Kind].Bytes
+				}
+				rows[x.Kind].Bytes = &sum
+			}
+		}
+	}
+	for _, kind := range order {
+		if !slices.Contains(kinds, kind) {
+			continue
+		}
+		rm := removed[kind]
+		rm.Count = int64(len(rm.Ids))
+		out.Removed, out.Kept = append(out.Removed, *rm), append(out.Kept, keptCount(kind, kept[kind]))
 	}
 	for _, k := range contract.ObjectKindValues {
 		if rows[k] != nil {

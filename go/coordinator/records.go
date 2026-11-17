@@ -106,7 +106,7 @@ func put(q *Request, kind string, v doc) error {
 		if err := commandTrace(q, v); err != nil {
 			return err
 		}
-		// A removed host never fetches a command: written settled, so nothing waits for it (purge, host purge).
+		// A removed host never fetches a command: written settled, so no purge waits for it.
 		if astr(v["status"]) == "pending" && astr(v["hostId"]) != "" {
 			// unscoped: a host record is visible only to its holder and the owner.
 			if removed, err := unscoped(q, func() (bool, error) {
