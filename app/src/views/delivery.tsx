@@ -230,7 +230,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
       facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />),
     ...failed.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={`${it.title} · ${fmt(Math.max(0, now - ms(it.since)))} ago`}
       actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
-    ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it)![1])}`}
+    ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${it.stage === 'installing' && uiOnly(it.release) ? 'waiting for the UI on site' : states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it)![1])}`}
       facts={it.title} actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
   ];
   return <div class="stack-pad" data-ui="delivery-overview">
@@ -366,7 +366,7 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
           meta={r.conclusion === 'success' ? 'all checks passed' : `${r.conclusion}: ${r.jobs.filter(j => j.conclusion !== 'success').map(j => j.name).join(', ') || 'no failed job recorded'}`}
           value={<Num m={sec(r.wallMs ?? null)} kind="duration" />} />)}</DetailSection>
         <DetailSection title="Installed">{uiOnly(x.release) ? x.uiOnSite ? <KvRow icon="panels-top-left" label="Site" meta="serves this UI or a newer one" value={<AgeChip t={ms(x.uiOnSite)} now={now} />} />
-            : <Empty text="UI-only release: hosts install nothing; the site does not serve it yet." />
+            : <Empty text={`UI-only release: hosts install nothing; ${unrecorded(x, h.data?.installsFrom ? ms(h.data.installsFrom) : null) ? `its UI on site was not recorded (recorded from ${day(ms(h.data!.installsFrom!), now)})` : 'the site does not serve it yet'}.`} />
           : Object.keys(x.installed ?? {}).length === 0 ? <Empty text={x.released ? 'Not installed on any host yet.' : 'Not released yet.'} />
           : Object.entries(x.installed).map(([host, t]) => <KvRow key={host} icon="terminal" label={host} meta={x.installedVersions?.[host]} value={<AgeChip t={ms(t)} now={now} />} />)}</DetailSection>
       </> : item ? <>

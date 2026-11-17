@@ -103,6 +103,7 @@ func TestDeliveryStages(t *testing.T) {
 			{Tag: "v1.2.11", Target: "m12", Published: "2026-11-12T11:10:00Z"},
 			{Tag: "ui-1.2.11-v1.2.12", Target: "m20", Published: "2026-11-12T11:25:00Z"},
 			{Tag: "ui-1.2.11-v1.2.13", Target: "m21", Published: "2026-11-12T11:35:00Z"},
+			{Tag: "ui-ts-v1.2.14", Target: "m22", Published: "2026-11-12T11:45:00Z"}, // not ui-<backend>-v<UI version>: no release
 		},
 	}
 	// Another repository's ui-* tags are no Fleet UI releases: its merges wait for a v* release.
