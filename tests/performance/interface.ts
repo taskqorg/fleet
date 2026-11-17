@@ -210,7 +210,8 @@ export function ephemeralCertificate(out: string) {
   execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost', '-keyout', key, '-out', cert], { stdio: ['ignore', 'ignore', 'pipe'] }); // a failure carries openssl's stderr
   const pem = readFileSync(cert); return { key: readFileSync(key), cert: pem, fingerprint256: new X509Certificate(pem).fingerprint256 };
 }
-export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number; transport?: Transport }) {
+export async function serve(o: { out: string; history: number; projects: number; cardinality: number; port: number; development: boolean; placement: string; longEvents?: number; transport?: Transport; explainSlowMs?: number }) {
+  if (o.explainSlowMs !== undefined && !(Number.isInteger(o.explainSlowMs) && o.explainSlowMs > 0)) throw Error('explain-slow-ms must be a positive integer');
   const transport: Transport = o.transport ?? 'h1';
   if (!['h1', 'h2'].includes(transport)) throw Error('transport must be h1 or h2');
   const f = fixture(o.history, o.projects, o.cardinality), ids = projectIDs(f);
@@ -238,10 +239,14 @@ export async function serve(o: { out: string; history: number; projects: number;
   const sink = spanSink(spans, error => { if (!log.writableEnded && !log.destroyed) emit('span-export-incomplete', { error }); });
   await new Promise<void>(r => sink.listen(0, '127.0.0.1', r));
   const pgdata = process.env.FLEET_TRIAL_PGDATA!;
+  if (o.explainSlowMs && existsSync(resolve(pgdata, 'PG_VERSION'))) throw Error('explain-slow-ms needs a fresh database: its setting is written once, at initdb');
   if (!existsSync(resolve(pgdata, 'PG_VERSION'))) {
     mkdirSync(pgdata, { recursive: true });
     execFileSync('initdb', ['-D', pgdata, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions'], { stdio: 'ignore' });
-    appendFileSync(resolve(pgdata, 'postgresql.auto.conf'), "\nshared_preload_libraries='pg_stat_statements'\ntrack_io_timing=on\nlog_lock_waits=on\ndeadlock_timeout='100ms'\n");
+    appendFileSync(resolve(pgdata, 'postgresql.auto.conf'), "\nshared_preload_libraries='pg_stat_statements'"+(o.explainSlowMs?",auto_explain":"")+"\ntrack_io_timing=on\nlog_lock_waits=on\ndeadlock_timeout='100ms'\n");
+    // Diagnostic: the actual plan of every statement slower than explainSlowMs goes to the server log. Row counts and
+    // buffers are kept, per-node timing is off, so instrumentation stays cheap; the run records the setting.
+    if (o.explainSlowMs) appendFileSync(resolve(pgdata, 'postgresql.auto.conf'), `auto_explain.log_min_duration=${o.explainSlowMs}\nauto_explain.log_analyze=on\nauto_explain.log_timing=off\nauto_explain.log_buffers=on\nauto_explain.log_format=json\n`);
   }
   const env = { FLEET_RESOURCE_PROCESSOR: 'off', FLEET_RESOURCE_READS: 'on', FLEET_LOST_AFTER_MS: '864000000', FLEET_CLICKHOUSE_URL: 'http://127.0.0.1:' + (sink.address() as any).port, FLEET_CLICKHOUSE_ENV: '/nonexistent' };
   let c: Coordinator;
@@ -463,7 +468,7 @@ export async function serve(o: { out: string; history: number; projects: number;
           const path = req.url.split('?')[0]; let b: any = {};
           if (req.method === 'POST') { const chunks: Buffer[] = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > 1024 * 1024) throw Error('measurement body too large'); chunks.push(chunk); } b = JSON.parse(Buffer.concat(chunks).toString()); }
           let result: unknown;
-          if (path === '/__interface/config') result = { fixture: f, projects: ids, marker, longEvents: o.longEvents ?? 0, development: o.development, hostname: hostname(), candidate: sourceCandidate.sha, run: run?.id, transport, certificatePEM: tls?.cert.toString() ?? null };
+          if (path === '/__interface/config') result = { fixture: f, projects: ids, marker, longEvents: o.longEvents ?? 0, explainSlowMs: o.explainSlowMs ?? null, development: o.development, hostname: hostname(), candidate: sourceCandidate.sha, run: run?.id, transport, certificatePEM: tls?.cert.toString() ?? null };
           else if (path === '/__interface/clock') result = { monotonic: stamp(), wall: Date.now() };
           else if (path === '/__interface/start') {
             if (run && !run.done) throw Error('run already active');
@@ -723,7 +728,7 @@ export async function browse(o: { origin: string; out: string; spec: Workload; p
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = Object.fromEntries(process.argv.slice(3).map(a => { const [k, v] = a.replace(/^--/, '').split('='); return [k, v ?? 'true']; }));
   const out = resolve(args.out ?? '.egm/interface-performance-run');
-  if (process.argv[2] === 'serve') await serve({ out, history: Number(args.history ?? 618), projects: Number(args.projects ?? 1), cardinality: Number(args.cardinality ?? 3), longEvents: Number(args['long-events'] ?? 0), port: Number(args.port ?? 9479), development: args.development === 'true', placement: args.placement, transport: (args.transport ?? 'h1') as Transport });
+  if (process.argv[2] === 'serve') await serve({ out, history: Number(args.history ?? 618), projects: Number(args.projects ?? 1), cardinality: Number(args.cardinality ?? 3), longEvents: Number(args['long-events'] ?? 0), port: Number(args.port ?? 9479), development: args.development === 'true', placement: args.placement, transport: (args.transport ?? 'h1') as Transport, explainSlowMs: args['explain-slow-ms'] === undefined ? undefined : Number(args['explain-slow-ms']) });
   else if (process.argv[2] === 'browse') await browse({ origin: args.origin ?? 'http://127.0.0.1:9479', out, placement: args.placement, spec: { readers: Number(args.readers ?? 1), rate: Number(args.rate ?? 1), warmup: Number(args.warmup ?? 60), duration: Number(args.duration ?? 600), burst: Number(args.burst ?? 1000), recovery: Number(args.recovery ?? 60), sourceDistribution: (args['source-distribution'] ?? 'hot') as SourceDistribution, mode: args.mode as Workload['mode'] ?? 'connected', network: args.network as Workload['network'] ?? 'unshaped' } });
   else throw Error('usage: interface.ts serve|browse --placement=<json> --out=<ignored directory> [--key=value]');
 }
