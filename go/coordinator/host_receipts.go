@@ -252,6 +252,14 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	if err != nil {
 		return nil, "", err
 	}
+	if err := lockExecutionTask(q, b.ExecutionId); err != nil {
+		return nil, "", err
+	}
+	// Match executionStop's row lock so an overlapping started/accepted
+	// receipt cannot overwrite a durable stop request.
+	if err := exec(q, "SELECT 1 FROM execution WHERE id=$1 FOR UPDATE", b.ExecutionId); err != nil {
+		return nil, "", err
+	}
 	status := string(b.Status) // an enum value: Validate refused any other
 	cur := receiptRank[astr(c["status"])]
 	if receiptRank[status] < cur || (cur == 3 && status != c["status"]) {
@@ -321,6 +329,15 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	}
 	if err := put(q, "execution", e); err != nil {
 		return nil, "", err
+	}
+	// Once an execution is terminal, withheld pending work no longer owns
+	// a delivery or cleanup obligation. Keep started commands for late receipts.
+	if e["taskStopRequested"] == true && terminal(e) {
+		if err := exec(q, `UPDATE document SET data=data||'{"status":"stopped"}'::jsonb,updated_at=now()
+			WHERE kind='command' AND execution_ref=$1 AND data->>'status'='pending'
+			AND data->>'kind'=ANY($2)`, b.ExecutionId, stopWithheldKinds); err != nil {
+			return nil, "", err
+		}
 	}
 	if confirmed {
 		if err := markObservation(q, e["id"], "confirmed"); err != nil {

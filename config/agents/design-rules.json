@@ -2,7 +2,7 @@
   "connections": [
     "youtrack"
   ],
-  "effort": "low",
+  "effort": "medium",
   "id": "design-rules",
   "instructions": "Create the requested files in output/. Before designing the website, call design-rules get_design_rules with empty arguments and apply its heading, palette and layout to the generated HTML and CSS. Do not use subagents.",
   "mcpServers": [
@@ -19,5 +19,5 @@
       "id": "design-rules"
     }
   ],
-  "model": "gpt-6.1-sol"
+  "model": "gpt-6.2-sol"
 }

@@ -206,9 +206,24 @@ func init() {
 	route("POST /api/executions/{id}/stop", func(q *Request) (any, error) { return executionStop(q, q.r.PathValue("id")) })
 }
 
+// lockExecutionTask keeps execution writers in task-before-execution order.
+func lockExecutionTask(q *Request, id string) error {
+	return exec(q, `SELECT 1 FROM task WHERE id=(
+		SELECT coalesce(e.task_id,s.data->>'taskId') FROM execution e
+		LEFT JOIN document s ON s.id=e.session_id AND s.kind='session' WHERE e.id=$1
+	) FOR NO KEY UPDATE`, id)
+}
+
 // executionStop: one stop command; an execution no host can confirm is settled here.
 func executionStop(q *Request, id string) (contract.ExecutionStopReply, error) {
+	return requestExecutionStop(q, id, false)
+}
+
+func requestExecutionStop(q *Request, id string, taskCancellation bool) (contract.ExecutionStopReply, error) {
 	var rep contract.ExecutionStopReply
+	if err := lockExecutionTask(q, id); err != nil {
+		return rep, err
+	}
 	// The execution row, locked: the dispatch claim locks it too (claimRow), so a claim and a stop never interleave
 	// between read and write, whatever advisory locks either holds. Unlocked, a claim committed between this read and the
 	// write below was overwritten (cancelled, yet preparing on a host) or overwrote the stop.
@@ -233,13 +248,25 @@ func executionStop(q *Request, id string) (contract.ExecutionStopReply, error) {
 		}
 	}
 	e["stopRequested"] = true
+	if taskCancellation {
+		e["taskStopRequested"] = true
+	}
 	known := false
 	if h := astr(e["hostId"]); h != "" {
 		if known, err = knownHost(q, h); err != nil {
 			return rep, err
 		}
 	}
-	if !known && !terminal(e) {
+	neverHandedOut := false
+	if taskCancellation && known && e["state"] == "preparing" {
+		neverHandedOut, err = has(q, `SELECT 1 FROM document
+			WHERE kind='command' AND execution_ref=$1 AND data->>'kind' IN ('start','script')
+			AND data->>'status'='pending' AND data->'handedOut'='false'::jsonb`, id)
+		if err != nil {
+			return rep, err
+		}
+	}
+	if (!known || neverHandedOut) && !terminal(e) {
 		pending, err := all(q, "command", doc{"executionId": e["id"], "status": "pending"})
 		if err != nil {
 			return rep, err
@@ -251,7 +278,7 @@ func executionStop(q *Request, id string) (contract.ExecutionStopReply, error) {
 			}
 		}
 		e["state"], e["stopDetail"] = "cancelled", "stopped before dispatch"
-		if e["hostId"] != nil {
+		if !known && e["hostId"] != nil {
 			e["stopDetail"] = "host never registered"
 		}
 		if c, err = get(q, c["id"], "command"); err != nil {

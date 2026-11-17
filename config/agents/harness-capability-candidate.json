@@ -1,6 +1,6 @@
 {
   "collaborationTools": false,
-  "effort": "low",
+  "effort": "medium",
   "fleetTools": false,
   "id": "harness-capability-candidate",
   "instructions": "Perform only the bounded qualification request on the supplied fixture. Read existing source and write the requested receipt under output/. Do not change source, configuration, accounts, grants or external systems. Do not use subagents. This is an experimental capability candidate, not a promoted default.",
@@ -19,7 +19,7 @@
       "id": "serena-go"
     }
   ],
-  "model": "gpt-6.1-sol",
+  "model": "gpt-6.2-sol",
   "skills": [
     "capability-startup"
   ]

@@ -133,6 +133,104 @@ func taskTransition(q *Request, id, trigger, reason string) (string, error) {
 	return to, exec(q, "UPDATE task SET state=$2,wait_reason=$3,state_before_pause=$4,pause_reason=$5,updated_at=now() WHERE id=$1", id, to, wr, before, pauseReason)
 }
 
+// taskAllowsWork fences a new task-bound turn against a concurrent cancellation.
+func taskAllowsWork(q *Request, id string) error {
+	if id == "" {
+		return nil
+	}
+	task, err := first(q, "SELECT state::text FROM task WHERE id=$1 FOR SHARE", id)
+	if err != nil {
+		return err
+	}
+	if task["state"] == "cancelled" {
+		return fail(409, "Task is cancelled")
+	}
+	return nil
+}
+
+func cancelTask(q *Request, id string) error {
+	// Dispatch uses the same fence before claims and promotions. Admitted turns
+	// hold the task row until they commit, so the sweep includes them.
+	if err := acquireTxLock(q, DISPATCH); err != nil {
+		return err
+	}
+	if _, err := taskTransition(q, id, "cancel", ""); err != nil {
+		return err
+	}
+	// The scoped transition above checked the operator's authority. The
+	// selected work may have coordinator-owned commands without a project.
+	_, err := unscoped(q, func() (struct{}, error) { return struct{}{}, cancelTaskWork(q, id) })
+	return err
+}
+
+func cancelTaskWork(q *Request, id string) error {
+	linked, err := queryRows(q, `WITH roots AS (
+		SELECT id,kind FROM execution r
+		WHERE r.task_id=$1 OR (r.task_id IS NULL AND EXISTS (
+			SELECT 1 FROM document s WHERE s.kind='session' AND s.id=r.session_id AND s.data->>'taskId'=$1
+		))
+	)
+	SELECT e.id,e.kind FROM execution e
+	WHERE e.state IN ('preparing','running','waiting')
+	AND (e.id IN (SELECT id FROM roots) OR (e.task_id IS NULL AND (
+		(e.delegation IS NOT NULL AND e.parent_execution_id IN (SELECT id FROM roots)) OR
+		e.data->>'pipelineRunId' IN (SELECT id FROM roots WHERE kind='pipeline_run')
+	))) AND e.kind IN ('pipeline_run','agent_run','host_job')
+	ORDER BY (e.kind='pipeline_run') DESC,e.seq FOR UPDATE`, id)
+	if err != nil {
+		return err
+	}
+	for _, e := range linked {
+		eid := astr(e["id"])
+		if e["kind"] == "pipeline_run" {
+			owned, run, err := pipelineCancelIn(q, eid)
+			if pipelineFormatUnsupported(err) {
+				// A historical plan cannot run. Its retained native executions
+				// are handled below without decoding or resuming the old plan.
+				if err := exec(q, "UPDATE execution SET state='cancelled',observation='unconfirmed',ended_at=now() WHERE id=$1", eid); err != nil {
+					return err
+				}
+				if err := writeTotals(q, eid); err != nil {
+					return err
+				}
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if run != nil {
+				onEnd(q.tx, func(committed bool) {
+					if committed {
+						notifyFinished(q.app, run)
+					}
+				})
+			}
+			if owned == "" {
+				continue
+			}
+			eid = owned
+		} else if active, err := getExecution(q, eid); err != nil || terminal(active) {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := requestExecutionStop(q, eid, true); err != nil {
+			return err
+		}
+	}
+	if err := exec(q, `UPDATE document m SET data=m.data||'{"state":"cancelled"}'::jsonb,updated_at=now()
+		WHERE m.kind='queued-message' AND m.data->>'state' IN ('queued','steering')
+		AND m.tombstoned_at IS NULL
+		AND (m.data->>'taskId'=$1 OR (m.data->>'taskId' IS NULL AND EXISTS (
+			SELECT 1 FROM document s WHERE s.kind='session' AND s.id=m.session_ref AND s.data->>'taskId'=$1
+		)))`, id); err != nil {
+		return err
+	}
+	return exec(q, `DELETE FROM document w USING document s
+		WHERE w.kind='watch' AND s.kind='session' AND s.id=w.session_ref AND s.data->>'taskId'=$1`, id)
+}
+
 // settleTask moves an open task toward target through the transitions whose guards hold now.
 func settleTask(q *Request, id, target string) (string, error) {
 	t, err := taskRow(q, id)
@@ -1179,7 +1277,11 @@ func init() {
 			if trig == "" {
 				return none, fail(400, "Unknown task action")
 			}
-			if _, err := taskTransition(q, id, trig, ""); err != nil {
+			if trig == "cancel" {
+				if err := cancelTask(q, id); err != nil {
+					return none, err
+				}
+			} else if _, err := taskTransition(q, id, trig, ""); err != nil {
 				return none, err
 			}
 			if trig == "resume" { // runs may have ended or a decision been withdrawn while it was paused
@@ -1218,7 +1320,11 @@ func init() {
 			if !idOK(r.TaskId) {
 				return contract.TaskDetail{}, fail(400, "Expected taskId")
 			}
-			if _, err := taskTransition(q, r.TaskId, x.trig, ""); err != nil {
+			if x.trig == "cancel" {
+				if err := cancelTask(q, r.TaskId); err != nil {
+					return contract.TaskDetail{}, err
+				}
+			} else if _, err := taskTransition(q, r.TaskId, x.trig, ""); err != nil {
 				return contract.TaskDetail{}, err
 			}
 			return taskDetail(q, r.TaskId)

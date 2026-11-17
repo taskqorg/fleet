@@ -59,6 +59,9 @@ func knownHost(q *Request, id string) (bool, error) {
 
 // enqueue: a queued execution and its message. Late choice: host and subscription are picked at dispatch.
 func enqueue(q *Request, s doc, input, requestID string, payload, execution doc, host string, provenance ...doc) (doc, error) {
+	if err := taskAllowsWork(q, firstString(execution["deliveryId"], s["deliveryId"], s["taskId"])); err != nil {
+		return nil, err
+	}
 	if pending := mapOf(s["pendingTransition"]); pending != nil {
 		priorPerson := q.person
 		q.person = q.peopleSnapshot().person(astr(s["directedBy"]))
@@ -263,6 +266,9 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 		}
 		return queueView(q, queued[0])
 	}
+	if err := taskAllowsWork(q, firstString(s["deliveryId"], s["taskId"])); err != nil {
+		return nil, err
+	}
 	// A repeated request answered above without checking its files again; a new one checks them now.
 	attachments, err := messageAttachments(q, ids, s)
 	if err != nil {
@@ -421,6 +427,9 @@ func agentOnReceipt(q *Request, c, e doc, status string) error {
 			return err
 		}
 		m := ms[0]
+		if m["state"] == "cancelled" {
+			return nil
+		}
 		switch status {
 		case "completed":
 			m["state"] = "steered"
@@ -1450,7 +1459,7 @@ func sessionAttach(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := get(q, sid, "session")
+	s, err := getForUpdate(q, sid, "session")
 	if err != nil {
 		return nil, err
 	}
@@ -1471,6 +1480,27 @@ func sessionAttach(q *Request, b doc) (doc, error) {
 	}
 	if astr(s["taskId"]) != "" || other {
 		return nil, fail(409, "Session already belongs to a task")
+	}
+	// The session and the target task were checked in the caller's
+	// scope. A coordinator-owned delegate may have no project column.
+	active, err := unscoped(q, func() (bool, error) {
+		return has(q, `SELECT 1 WHERE EXISTS (
+		SELECT 1 FROM execution e WHERE e.state IN ('preparing','running','waiting')
+		AND (e.session_id=$1 OR EXISTS (SELECT 1 FROM execution p WHERE p.session_id=$1 AND (
+			(e.delegation IS NOT NULL AND e.parent_execution_id=p.id) OR
+			(p.kind='pipeline_run' AND e.data->>'pipelineRunId'=p.id)
+		)))
+	) OR EXISTS (
+		SELECT 1 FROM document WHERE kind='queued-message' AND session_ref=$1 AND data->>'state' IN ('queued','steering')
+	)`, sid)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if active {
+		if err := taskAllowsWork(q, tid); err != nil {
+			return nil, err
+		}
 	}
 	s["taskId"] = tid
 	return doc{"sessionId": sid, "taskId": tid}, put(q, "session", s)

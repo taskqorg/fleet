@@ -956,6 +956,9 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if err != nil {
 		return nil, err
 	}
+	if err := taskAllowsWork(q, firstString(e["deliveryId"], s["deliveryId"], s["taskId"])); err != nil {
+		return nil, err
+	}
 	d := mapOf(e["dispatch"])
 	liveSession := s
 	s = mapOf(clone(s))
@@ -1063,7 +1066,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	if st := astr(s["starter"]); st != "" {
 		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\nThis conversation's preset. " + st))
 	}
-	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending"}
+	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending", "handedOut": false}
 	if err := agentDecorate(q, s, e, p); err != nil {
 		return nil, err
 	}
