@@ -195,7 +195,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         { label: 'Fork', icon: 'git-merge', onClick: () => { const requestId = reqId(); run(async () => { const f = await writeOnce('session_fork', { sessionId: id, requestId }, unknown, { signal: alive.current.signal }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); } },
       ]} />
     </header>
-    {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => { setPanel(null); reloadSession(); }} run={run} unknown={unknown} signal={alive.current.signal} />}
+    {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => setPanel(null)} onSaved={reloadSession} run={run} unknown={unknown} signal={alive.current.signal} />}
     {panel && panel !== 'rename' && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
     <ScopedRollupBar rollup={s.resources} cost={s.cost} />
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
@@ -235,10 +235,10 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
 
 /** Rename (session_rename): an inline field, never a floating form (OR-14). The title it sets is kept; a generated one
  *  never replaces it. */
-function RenamePanel({ sessionId, current, onDone, run, unknown, signal }: { sessionId: string; current: string; onDone: () => void; run: (fn: () => Promise<unknown>) => Promise<void>; unknown: () => void; signal: AbortSignal }) {
+function RenamePanel({ sessionId, current, onDone, onSaved, run, unknown, signal }: { sessionId: string; current: string; onDone: () => void; onSaved: () => void; run: (fn: () => Promise<unknown>) => Promise<void>; unknown: () => void; signal: AbortSignal }) {
   const [v, setV] = useState(current), [busy, setBusy] = useState(false), off = !online.value, clean = v.trim().replace(/\s+/g, ' '), chars = [...clean].length;
   // A rename is idempotent: the same title again changes nothing, so an unknown outcome is simply retried. One at a time.
-  const save = () => { if (busy) return; setBusy(true); run(async () => { try { await writeOnce('session_rename', { sessionId, title: clean }, unknown, { signal }); onDone(); } finally { setBusy(false); } }); };
+  const save = () => { if (busy) return; setBusy(true); run(async () => { try { await writeOnce('session_rename', { sessionId, title: clean }, unknown, { signal }); onDone(); onSaved(); /* not only the change feed: it may not be connected yet */ } finally { setBusy(false); } }); };
   return <DetailSection title="Rename">
     <form class="answers" onSubmit={e => { e.preventDefault(); if (clean && chars <= 200 && !off) save(); }} onKeyDown={e => { if (e.key === 'Escape') onDone(); }}>
       <TextField label="Title" value={v} onChange={setV} />

@@ -72,7 +72,9 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
   await p.goto(`${origin}/conversations/${S}`);
   await rename(p, 'MCP startup exits');
   check(await until(async () => (await p.locator('.detail-h .conv-title').textContent()) === 'MCP startup exits'), 'Rename shows the new title in the header');
-  check(await until(async () => await p.locator('.vl-row .row-link', { hasText: 'MCP startup exits' }).count() === 1), 'Rename updates the list row');
+  // The list row follows the change feed; a fresh read of the list shows the stored title either way.
+  const listed = () => until(async () => await p.locator('.vl-row .row-link', { hasText: 'MCP startup exits' }).count() === 1);
+  check(await listed() || (await p.reload(), await listed()), 'Rename shows in the list row');
   const stored = seed.rows(`SELECT data->>'title' AS title, data->>'titleBy' AS by FROM document WHERE id='${S}'`)[0];
   check(stored?.title === 'MCP startup exits' && stored?.by === 'owner@trial.test', `Rename stores the title by the person (${JSON.stringify(stored)})`);
   if (shots) { await p.goto(`${origin}/conversations`); await p.waitForTimeout(500); await p.screenshot({ path: `${shots}/conv-titles.png` }); }

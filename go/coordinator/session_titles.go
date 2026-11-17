@@ -229,7 +229,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		}); err != nil {
 			// A conflict, a lost connection or a timeout is the database's (classes 40, 08, 57, as host_poll.go reads
 			// them); any other read failure is this session's own: it uses a try and the batch goes on.
-			if c := pgCode(err); strings.HasPrefix(c, "40") || strings.HasPrefix(c, "08") || strings.HasPrefix(c, "57") {
+			if c := pgCode(err); c == "" || strings.HasPrefix(c, "40") || strings.HasPrefix(c, "08") || strings.HasPrefix(c, "57") { // no SQLSTATE: a lost connection
 				err = fmt.Errorf("%w: reply: %w", errTitleShared, err)
 			} else {
 				err = fmt.Errorf("reply: %w", err)
@@ -269,7 +269,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 		if err != nil {
 			log.Printf("session title %s: %v", id, err)
 			// Only a failure that is not the session's own fails the pass; a refused project and a session's own failure
-			// (a 400 for its prompt, an empty answer) are logged.
+			// (its reply read, an empty answer) are logged.
 			if errors.Is(err, errConnUnavailable) {
 				ungranted[astr(r["project_id"])] = true
 			} else if errors.Is(err, errTitleShared) {
