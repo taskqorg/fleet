@@ -281,7 +281,7 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 		// execution's work, a project build or a metadata repair, and items the processor holds in memory
 		// (resourceHeld). One system question names them; it closes once they succeed.
 		failing, err := queryRows(q, `SELECT 'execution '||execution_id AS item FROM (SELECT DISTINCT execution_id FROM resource_work WHERE last_error_class IS NOT NULL AND attempts>=$1) w
-			UNION ALL SELECT 'build of project '||project_id FROM resource_build WHERE attempts>=$1
+			UNION ALL SELECT 'build of project '||project_id FROM resource_build WHERE NOT ready AND attempts>=$1
 			UNION ALL SELECT 'metadata repair '||repair_id::text FROM resource_metadata_repair WHERE attempts>=$1 ORDER BY 1`, resourceFailingAttempts())
 		if err != nil {
 			return err

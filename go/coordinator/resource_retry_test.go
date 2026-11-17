@@ -250,6 +250,12 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		}
 	}
 	equal(`SELECT ready::text||' '||attempts::text FROM resource_build WHERE project_id='PAUSE_BUILD'`, "true 0")
+	if err := resourcePause(ctx, a, "", "build:PAUSE_BUILD", resourceBuildPauseSelect,
+		`UPDATE resource_build SET attempts=$2,next_attempt_at=clock_timestamp()+$3*interval '1 microsecond' WHERE project_id=$1`,
+		"PAUSE_BUILD", nil); err != nil {
+		t.Fatal(err)
+	}
+	equal(`SELECT ready::text||' '||attempts::text FROM resource_build WHERE project_id='PAUSE_BUILD'`, "true 0")
 
 	// A pause that cannot be written holds the execution in memory: it neither spins nor stalls the others.
 	owner(`SELECT set_config('fleet.project_ids','*',false); INSERT INTO execution(id,kind,state,project_id) VALUES('pause-stall','tool_run','succeeded','');
