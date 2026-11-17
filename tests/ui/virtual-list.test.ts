@@ -52,5 +52,32 @@ test('mounted bottom VirtualList keeps a scroll up that a render overtakes, and 
     await page.waitForTimeout(100);
     assert.equal(await grid.evaluate(el => el.scrollTop), top, 'an appended row leaves the view where the reader is');
     assert.equal(await page.locator('.pill').textContent(), '1 new');
+    // An append in the same task as a further scroll up (the items effect before the scroll event).
+    const top2 = await grid.evaluate(el => { el.scrollTop -= 100; const t = el.scrollTop; const w = window as any; w.items = [...w.items, 'appended-2']; w.draw(); return t; });
+    await page.waitForTimeout(100);
+    assert.equal(await grid.evaluate(el => el.scrollTop), top2, 'an append racing the scroll up keeps it');
+    assert.equal(await page.locator('.pill').textContent(), '2 new');
+  } finally { await browser.close(); }
+});
+// Requirement: a 'top' list (newest first) keeps the row being read when rows arrive above it.
+// Risk: the same race on a newest-first list: an insert before the scroll event follows the top it already left.
+test('mounted top VirtualList keeps the row being read when an insert overtakes a scroll down', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
+  const result = await build({ stdin: { contents: `
+    import {render} from 'preact';import {VirtualList} from './packages/ui/src/index.ts';
+    const w=window;w.items=Array.from({length:200},(_,i)=>'row-'+i);
+    w.draw=()=>render(<VirtualList items={w.items} getKey={x=>x} rowHeight={32} follow="top" label="Fixture" render={x=><span>{x}</span>}/>,document.body);w.draw();
+  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+  const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
+  try {
+    await page.setContent('<body></body>'); await page.addStyleTag({ content: readFileSync('packages/ui/src/styles.css','utf8') + '.vl{height:300px}.vl-wrap{width:500px}' });
+    await page.addScriptTag({ content: result.outputFiles[0].text }); await page.getByRole('grid').waitFor();
+    const grid = page.getByRole('grid');
+    const rowTop = (k: string) => grid.evaluate((el, k) => { const r = el.querySelector<HTMLElement>(`[data-key="${k}"]`); return r ? Math.round(r.getBoundingClientRect().top - el.getBoundingClientRect().top) : null; }, k);
+    await grid.evaluate(el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); }); await page.waitForTimeout(50);
+    // Scroll down to row 20 and insert a row at the top in one task.
+    await grid.evaluate(el => { el.scrollTop = 640; const w = window as any; w.items = ['inserted', ...w.items]; w.draw(); });
+    await page.waitForTimeout(100);
+    assert.equal(await rowTop('row-20'), 0, 'the row being read stays where the scroll put it');
+    assert.equal(await page.locator('.pill').textContent(), '1 new');
   } finally { await browser.close(); }
 });

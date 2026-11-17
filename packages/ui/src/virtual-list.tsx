@@ -83,19 +83,26 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     if (el) prev.current.top = el.scrollTop;
     if (prev.current.atEdge && unseen) setUnseen(0);
   };
-  // The person scrolled up from the followed bottom and its scroll event has not run yet (it fires on the next frame): a
-  // render in between must not read the old atEdge and pull the view back to the end. Rows appended below and a resized
-  // viewport leave scrollTop as it was; only a scroll moves it up.
-  const leftBottom = () => { const el = scroller.current; return !!el && p.follow === 'bottom' && prev.current.atEdge && el.scrollTop < prev.current.top - 1; };
-  // This control's own scroll to the end moves the position too, before its scroll event: record it, or a scroll up
-  // right after it would compare against the older position.
-  const followed = () => { const el = scroller.current; if (el && prev.current.atEdge) prev.current.top = el.scrollTop; };
+  // A scroll whose event has not run yet (it fires on the next frame): a render in between must not use the captured
+  // anchor and edge as they were before it, or it undoes the scroll (the view pulled back to the end, the next row
+  // followed instead of counted). The anchor row moved by the same distance; the edge is read again, except for a
+  // bottom list whose position moved down, where only its own scroll event can tell rows appended below from a scroll.
+  const sync = () => {
+    const el = scroller.current; if (!el) return;
+    const d = el.scrollTop - prev.current.top; if (Math.abs(d) <= 1) return;
+    if (anchor.current) anchor.current.delta -= d;
+    prev.current.top = el.scrollTop;
+    if (p.follow === 'top' || d < 0) prev.current.atEdge = atEdge();
+  };
+  // This control's own scroll writes (to the end, an anchor kept, a restore) move the position before their scroll
+  // event too: record it, so sync() counts only a move nobody here made.
+  const wrote = () => { const el = scroller.current; if (el) prev.current.top = el.scrollTop; };
 
   // Runs before paint whenever items change: keep the anchor row where it was, or follow the edge.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    if (leftBottom()) capture();
+    sync();
     // ponytail: O(n) key diff per update; switch to a server-provided "new since" count if lists reach millions client-side.
     // New rows counted for the pill: for 'bottom' (threads) the rows after the last row already shown; for 'top' (newest-first
     // lists, possibly grouped) the rows placed before the last old row. Rows paged in on the far side (older history) are not new.
@@ -108,23 +115,23 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const wasAtEdge = prev.current.atEdge;
     prev.current.keys = new Set(p.items.map(p.getKey));
     if (wasAtEdge) {
-      if (p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); followed(); }
+      if (p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); wrote(); }
       return;
     }
     const a = anchor.current;
     if (a) {
       const i = p.items.findIndex(it => p.getKey(it) === a.key);
-      if (i >= 0) v.scrollToOffset(v.getOffsetForIndex(i, 'start')![0] - a.delta);
+      if (i >= 0) { v.scrollToOffset(v.getOffsetForIndex(i, 'start')![0] - a.delta); wrote(); }
       // The anchor left with the old window (reload to newest): show the followed edge.
-      else if (replaced && p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); prev.current.atEdge = true; followed(); }
+      else if (replaced && p.follow === 'bottom' && p.items.length) { v.scrollToIndex(p.items.length - 1, { align: 'end' }); prev.current.atEdge = true; wrote(); }
     }
     if (added) setUnseen(n => n + added);
   }, [p.items]);
 
   // Viewport and measured heights can change without a new items array.
   useLayoutEffect(() => {
-    if (leftBottom()) { capture(); return; }
-    if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) { v.scrollToEnd(); followed(); }
+    sync();
+    if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) { v.scrollToEnd(); wrote(); }
   });
 
   const jump = () => {
@@ -139,10 +146,10 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const r = requested.current, el = scroller.current; if (!r || !el) return;
     requested.current = null;
     const i = p.items.findIndex(item => p.getKey(item) === r.key);
-    if (i < 0) { if (!p.items.length) { v.scrollToOffset(0); anchor.current = null; } return; }
+    if (i < 0) { if (!p.items.length) { v.scrollToOffset(0); anchor.current = null; wrote(); } return; }
     const start = v.getOffsetForIndex(i, 'start')?.[0];
     const offset = r.align ? v.getOffsetForIndex(i, r.align)?.[0] : start === undefined ? undefined : start - (r.offsetPx ?? 0);
-    if (offset !== undefined && start !== undefined) { v.scrollToOffset(Math.max(0, offset)); anchor.current = { key: r.key, delta: start - el.scrollTop }; prev.current.atEdge = false; }
+    if (offset !== undefined && start !== undefined) { v.scrollToOffset(Math.max(0, offset)); anchor.current = { key: r.key, delta: start - el.scrollTop }; prev.current.atEdge = false; wrote(); }
   });
 
   // Asked once per window edge (length and edge row), so a replaced window of the same length asks again.

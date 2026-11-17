@@ -1550,8 +1550,9 @@ const taskLineageCTEs = `WITH RECURSIVE
     )
  )` + spawnedExecsCTEs
 
-// spawnedExecsCTEs: the executions of the spawned tasks (usually none), joined from those tasks through indexed
-// equalities. One join of every execution with every task under an OR condition was planned as a nested loop over
+// spawnedExecsCTEs: the executions of the spawned tasks (usually none), joined from those tasks: executions through
+// indexed column equalities, their sessions by one scan of the session documents (under row-level security a JSON path
+// is never an index condition, migration 70), and only when a spawned task exists. One join of every execution with every task under an OR condition was planned as a nested loop over
 // both tables once statistics were current: 40 s for one task of a 20000-task store, under the global write lock
 // when task_update returns the task.
 const spawnedExecsCTEs = `,
