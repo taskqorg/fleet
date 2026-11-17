@@ -157,6 +157,25 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	equal(`SELECT attempts::text||' '||(next_attempt_at<=clock_timestamp())::text FROM resource_work WHERE execution_id='pause-later'`, "0 true")
+	sql(`UPDATE resource_work SET attempts=2 WHERE execution_id='pause-later'`)
+	busy, err := env.ownerStore.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Rollback(context.Background())
+	if _, err := busy.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('execution:pause-later',0))"); err != nil {
+		t.Fatal(err)
+	}
+	busyCtx, cancelBusy := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelBusy()
+	err = resourceReplaceFailed(busyCtx, a, "pause-later", nil, errors.New("replacement failed"))
+	if err == nil || busyCtx.Err() != nil || resourceHeld.count("execution:pause-later") != 3 {
+		t.Fatal("busy execution lost its durable attempts or waited for the lock", err)
+	}
+	if err := busy.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	resourceHeld.forgetExecution("pause-later")
 	// Paused: the next passes leave it alone and keep serving new healthy work at full pace.
 	for _, id := range []string{"pause-healthy-2", "pause-healthy-3"} {
 		sql(`INSERT INTO execution(id,kind,state,project_id) VALUES($1,'tool_run','succeeded','PAUSE')`, id)
@@ -250,7 +269,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		}
 	}
 	equal(`SELECT ready::text||' '||attempts::text FROM resource_build WHERE project_id='PAUSE_BUILD'`, "true 0")
-	if err := resourcePause(ctx, a, "", "build:PAUSE_BUILD", resourceBuildPauseSelect,
+	if err := resourcePause(ctx, a, "", "build:PAUSE_BUILD", resourceBuildPauseSelect+" FOR UPDATE NOWAIT", resourceBuildPauseSelect,
 		`UPDATE resource_build SET attempts=$2,next_attempt_at=clock_timestamp()+$3*interval '1 microsecond' WHERE project_id=$1`,
 		"PAUSE_BUILD", nil); err != nil {
 		t.Fatal(err)

@@ -66,6 +66,7 @@ func startResourceProcessor(ctx context.Context, a *App) {
 			if errors.Is(err, errResourceStall) {
 				failures++
 				if failures >= resourceFailingAttempts() && !asked {
+					closeOnce = true // An open with an uncertain COMMIT still needs a close after recovery.
 					asked = resourceStallProblem(ctx, a, true)
 				}
 				select {
@@ -157,15 +158,16 @@ func resourceTryLock(q *Request, lock string) (bool, error) {
 }
 
 // resourcePause records one more failure of the item key names, in its own transaction under locks. selectSQL reads
-// the item's attempts ($1 item, then selectArgs), locking its row when needed. updateSQL gets $1 the item, $2 the new attempts and $3 the pause in
+// the item's attempts ($1 item, then selectArgs), locking its row when needed. readSQL reads them without locks on failure. updateSQL gets $1 the item, $2 the new attempts and $3 the pause in
 // microseconds (resourceRetryDelay of the earlier attempts), plus extra. A hold's count carries over into the row. A
 // pause that cannot be written holds the item in memory instead (resourceHeld) and returns the write's error; a
 // written one releases any hold.
-func resourcePause(ctx context.Context, a *App, lock, key, selectSQL, updateSQL, item string, selectArgs []any, extra ...any) error {
+func resourcePause(ctx context.Context, a *App, lock, key, lockedSQL, readSQL, updateSQL, item string, selectArgs []any, extra ...any) error {
 	attempts := resourceHeld.count(key)
 	if id, ok := strings.CutPrefix(key, "execution:"); ok {
 		attempts = max(attempts, resourceHeld.count("scope:"+id))
 	}
+	args := append([]any{item}, selectArgs...)
 	err := runTxLocksOnce(ctx, a, nil, true, nil, func(q *Request) error {
 		if lock != "" {
 			held, err := resourceTryLock(q, lock)
@@ -177,7 +179,7 @@ func resourcePause(ctx context.Context, a *App, lock, key, selectSQL, updateSQL,
 			}
 		}
 		var durable int
-		if err := q.tx.QueryRow(q.ctx(), selectSQL, append([]any{item}, selectArgs...)...).Scan(&durable); errors.Is(err, pgx.ErrNoRows) {
+		if err := q.tx.QueryRow(q.ctx(), lockedSQL, args...).Scan(&durable); errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		} else if err != nil {
 			return err
@@ -186,7 +188,18 @@ func resourcePause(ctx context.Context, a *App, lock, key, selectSQL, updateSQL,
 		return exec(q, updateSQL, append([]any{item, attempts + 1, resourceRetryDelay(attempts).Microseconds()}, extra...)...)
 	})
 	if err != nil {
-		resourceHeld.fail(key, attempts)
+		if ctx.Err() != nil {
+			return err
+		}
+		var durable int
+		readErr := runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error {
+			return q.tx.QueryRow(q.ctx(), readSQL, args...).Scan(&durable)
+		})
+		// A missing or resolved item does not need a hold. If even the reader is unavailable,
+		// keep the highest count already observed in memory or in the write attempt.
+		if !errors.Is(readErr, pgx.ErrNoRows) && ctx.Err() == nil {
+			resourceHeld.fail(key, max(attempts, durable))
+		}
 		return err
 	}
 	if id, ok := strings.CutPrefix(key, "execution:"); ok {
@@ -984,7 +997,9 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 	}
 }
 
-const resourceBuildPauseSelect = `SELECT attempts FROM resource_build WHERE project_id=$1 AND NOT ready FOR UPDATE NOWAIT`
+const resourceBuildPauseSelect = `SELECT attempts FROM resource_build WHERE project_id=$1 AND NOT ready`
+const resourceRepairPauseSelect = `SELECT attempts FROM resource_metadata_repair WHERE repair_id=$1::uuid`
+const resourceClaimsRemainSQL = ` HAVING coalesce(cardinality($2::uuid[]),0)=0 OR bool_or(work_id=ANY($2))`
 
 const resourceWorkAttemptsSQL = `SELECT coalesce(max(attempts),0) FROM resource_work WHERE execution_id=$1`
 
@@ -1002,7 +1017,7 @@ func resourceReplaceFailed(ctx context.Context, a *App, id string, claimed []str
 	return resourcePause(ctx, a, "execution:"+id, "execution:"+id,
 		`SELECT coalesce(max(attempts),0) FROM (
 			SELECT attempts,work_id FROM resource_work WHERE execution_id=$1 FOR UPDATE NOWAIT
-		) pending HAVING coalesce(cardinality($2::uuid[]),0)=0 OR bool_or(work_id=ANY($2))`,
+		) pending`+resourceClaimsRemainSQL, resourceWorkAttemptsSQL+resourceClaimsRemainSQL,
 		`UPDATE resource_work SET attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',last_error_class=$4 WHERE execution_id=$1`,
 		id, []any{claimed}, resourceErrorClass(err))
 }
@@ -1789,7 +1804,7 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 			resourceHeld.forget("build:" + p)
 		} else if ctx.Err() == nil {
 			finalErr = errors.Join(finalErr, e)
-			finalErr = errors.Join(finalErr, resourcePause(ctx, a, "", "build:"+p, resourceBuildPauseSelect,
+			finalErr = errors.Join(finalErr, resourcePause(ctx, a, "", "build:"+p, resourceBuildPauseSelect+" FOR UPDATE NOWAIT", resourceBuildPauseSelect,
 				`UPDATE resource_build SET last_error='build_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',updated_at=clock_timestamp() WHERE project_id=$1 AND generation=$4::uuid`, p, nil, generation))
 		}
 	}
@@ -1798,7 +1813,7 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 			resourceHeld.forget("repair:" + r)
 		} else if ctx.Err() == nil {
 			finalErr = errors.Join(finalErr, e)
-			finalErr = errors.Join(finalErr, resourcePause(ctx, a, "", "repair:"+r, `SELECT attempts FROM resource_metadata_repair WHERE repair_id=$1::uuid FOR UPDATE NOWAIT`,
+			finalErr = errors.Join(finalErr, resourcePause(ctx, a, "", "repair:"+r, resourceRepairPauseSelect+" FOR UPDATE NOWAIT", resourceRepairPauseSelect,
 				`UPDATE resource_metadata_repair SET last_error='metadata_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond' WHERE repair_id=$1::uuid`, r, nil))
 		}
 	}
