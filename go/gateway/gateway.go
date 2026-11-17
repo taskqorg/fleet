@@ -163,7 +163,7 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 		}
 		p.BaseUrl = strings.TrimRight(p.BaseUrl, "/")
 		for toolName, t := range p.Tools {
-			if t.File != nil && *t.File == contract.GatewayFileModeUpload && t.Method != "POST" {
+			if t.File != nil && *t.File == contract.GatewayFileModeUpload && strings.ToUpper(t.Method) != "POST" {
 				return nil, fmt.Errorf("upload tool %s must POST", toolName)
 			}
 			if t.Method != "GET" {
@@ -1288,7 +1288,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	case readErr != nil || staged != r.ContentLength:
 		refuse(refusal(400, "error", "bad-request", "the file ended before Content-Length; nothing was sent"), nil)
 		return
-	case scan.found || newScanner(patterns).write([]byte(name+"\n"+mediaType)) || g.newKeyIn(file, patterns, held()):
+	case scan.found || newScanner(held()).write([]byte(name+"\n"+mediaType)) || g.newKeyIn(file, patterns, held()):
 		// No transfer record: its name may be the secret.
 		refuse(refusal(422, "error", "secret-found", "the file, its name or media type contains a key value or the caller's token; nothing was sent"), nil)
 		return
@@ -1425,7 +1425,7 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 		return fail(502, "error", "provider-redirect", fmt.Sprintf("the file request answered HTTP %d; the redirect is not followed", status))
 	case status < 200 || status > 299:
 		return fail(502, "error", fmt.Sprintf("provider-%d", status), fmt.Sprintf("the file request answered HTTP %d", status))
-	case response.ContentLength >= 0 && response.ContentLength != size:
+	case response.ContentLength >= 0 && response.ContentLength != size, size == 0 && response.ContentLength != 0:
 		return fail(502, "error", "provider-body", "the file's length differs from the lookup size")
 	}
 	started := g.line(q, &answer{status: 200, outcome: "unknown", err: "download-unfinished", key: lookup.key, usage: lookup.usage})

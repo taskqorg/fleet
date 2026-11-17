@@ -748,7 +748,7 @@ func init() {
 		next := doc{}
 		for k, v := range given {
 			n, ok := v.(float64)
-			if !ok || n < 1 || n != float64(int64(n)) {
+			if !ok || n < 1 || n > 1<<53 || n != float64(int64(n)) {
 				return nil, fail(400, "limits."+k+" must be a positive integer")
 			}
 			next[k] = n
