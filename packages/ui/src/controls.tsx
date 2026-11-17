@@ -753,7 +753,8 @@ export function Presets({ system = [], presets, active, onPick, onSave, onUnpin,
   const [menu, setMenu] = useState<{ name: string; at: { x: number; y: number } } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   // The view's menu: at the pointer, or under the chip from the keyboard.
-  const menuOn = (n: string) => !onCount ? {} : {
+  // '-' is the setting's off value, so a view of that name cannot be counted.
+  const menuOn = (n: string) => !onCount || n === '-' ? {} : {
     onContextMenu: (e: MouseEvent) => { e.preventDefault(); setMenu({ name: n, at: { x: e.clientX, y: e.clientY } }); },
     onKeyDown: (e: KeyboardEvent) => {
       if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;

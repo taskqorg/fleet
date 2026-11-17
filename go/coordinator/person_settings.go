@@ -279,12 +279,22 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	if r.NavCollapsed != nil {
 		next.NavCollapsed = *r.NavCollapsed
 	}
-	// The navigation counter views (nav_counts.go): merged by section; a saved view must be in the views after this change.
+	// The navigation counter views (nav_counts.go): merged by section; a saved view must be in the views after this change,
+	// and a removed one leaves its counter (the default counts again), so a later view of the same name is not counted
+	// unchosen.
+	if r.NavCounters != nil || r.Views != nil || r.ViewDelete != nil {
+		next.NavCounters = maps.Clone(prev.NavCounters)
+		for k, v := range next.NavCounters {
+			if v != navCounterOff && !slices.ContainsFunc(navSystemViews[k], func(x navView) bool { return x.name == v }) &&
+				!slices.ContainsFunc(next.Views, func(x contract.SavedView) bool { return x.List == k && x.Name == v }) {
+				delete(next.NavCounters, k)
+			}
+		}
+	}
 	if r.NavCounters != nil {
 		if err := checkNavCounters(r.NavCounters, next.Views); err != nil {
 			return contract.PersonSettings{}, err
 		}
-		next.NavCounters = maps.Clone(prev.NavCounters)
 		for k, v := range r.NavCounters {
 			if v == "" {
 				delete(next.NavCounters, k)

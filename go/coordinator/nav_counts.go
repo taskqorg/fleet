@@ -42,7 +42,7 @@ var navSystemViews = map[string][]navView{
 
 var navDefaults = map[string]string{"tasks": "Running", "conversations": "Running", "delivery": "In flight", "results": "Last 24 h", "hosts": "Offline"}
 
-// navCounterOff: the navCounters value that turns a section's counter off.
+// navCounterOff: the navCounters value that turns a section's counter off; a saved view named "-" cannot be counted.
 const navCounterOff = "-"
 
 // checkNavCounters: each key is a counted section; each value is empty (the default), off, a system view of that
@@ -115,6 +115,12 @@ func navList(v map[string]any, states []string, s navScope) doc {
 	return f
 }
 
+// navSessionBase: the sessions as sessionBase gives them to sessionWhere without a search (id, code, data, project and
+// the state of the latest execution).
+const navSessionBase = `WITH x AS (SELECT d.id, d.code, d.data, d.project_id,
+ coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state
+ FROM document d WHERE d.kind='session')`
+
 func splitCount(q *Request, sql string, p []any) (int64, int64, error) {
 	var in, all int64
 	err := q.tx.QueryRow(q.ctx(), sql, p...).Scan(&in, &all)
@@ -157,14 +163,28 @@ func navCounts(q *Request, _ *contract.NavCountsRequest) (contract.NavCountsRepl
 				view = navView{name: name, label: name, states: strs(saved["state"])}
 			}
 		}
-		if view.name == "" {
-			for _, v := range navSystemViews[section] {
-				if v.name == navDefaults[section] {
-					view = v
-				}
+		def := navView{}
+		for _, v := range navSystemViews[section] {
+			if v.name == navDefaults[section] {
+				def = v
 			}
 		}
-		in, outside, err := navCount(q, section, view, saved, s)
+		if view.name == "" {
+			view = def
+		}
+		// A saved view that names its projects is that list whatever the focus (withFocus in the app): all of it counts as
+		// in focus.
+		sc := s
+		if ps, _ := saved["project"].([]any); len(ps) > 0 && section != "delivery" {
+			sc = navScope{ignored: s.ignored}
+		}
+		in, outside, err := navCount(q, section, view, saved, sc)
+		if err != nil && len(saved) > 0 {
+			// A saved view the list filters no longer take (a state since renamed) is refused before any statement runs:
+			// the section counts its default rather than failing every counter.
+			view = def
+			in, outside, err = navCount(q, section, view, nil, s)
+		}
 		if err != nil {
 			return out, err
 		}
@@ -189,7 +209,13 @@ func navCount(q *Request, section string, v navView, saved map[string]any, s nav
 		if err != nil {
 			return 0, 0, err
 		}
-		return splitCount(q, sessionBase+" SELECT count(*) FILTER (WHERE "+s.split(&p, "x.project_id")+"),count(*) FROM x"+where(c), p)
+		// Without a search the count needs only each session's state: not sessionBase's message and activity scans,
+		// which this read, repeated on execution changes, would run every few seconds.
+		base := sessionBase
+		if f := navList(saved, v.states, s); f["search"] == nil {
+			base = navSessionBase
+		}
+		return splitCount(q, base+" SELECT count(*) FILTER (WHERE "+s.split(&p, "x.project_id")+"),count(*) FROM x"+where(c), p)
 	case "delivery":
 		return navDelivery(q, v, saved, s)
 	case "results":
@@ -228,24 +254,20 @@ func navDelivery(q *Request, v navView, saved map[string]any, s navScope) (int64
 		return (len(v.states) == 0 || slices.Contains(v.states, string(it.Stage))) &&
 			matchSearch(text, fmt.Sprintf("%s #%d %s", it.Title, it.Number, it.Repo), map[string]string{"state": string(it.Stage), "project": it.ProjectId})
 	}
-	focused := map[string]bool{}
-	if len(s.focus) > 0 {
-		for _, it := range deliveryReply(last, func(p string) bool { return may(p) && s.inFocus(p) }).Items {
+	// Two passes, as the list reads them: an item names the first listing project the caller sees, which the focus changes.
+	count := func(may func(string) bool) (n int64) {
+		for _, it := range deliveryReply(last, may).Items {
 			if match(it) {
-				focused[fmt.Sprintf("%s#%d", strings.ToLower(it.Repo), it.Number)] = true
+				n++
 			}
 		}
+		return n
 	}
-	all := int64(0)
-	for _, it := range deliveryReply(last, may).Items {
-		if match(it) {
-			all++
-		}
-	}
+	all := count(may)
 	if len(s.focus) == 0 {
 		return all, 0, nil
 	}
-	in := int64(len(focused))
+	in := count(func(p string) bool { return may(p) && s.inFocus(p) })
 	return in, max(0, all-in), nil
 }
 

@@ -1,16 +1,18 @@
 // System presets of the lists with saved views (OR-33): fixed, shown before the person's own views. A system preset sets
 // the state filter only; grouping, sort, projects and search stay as the person set them. The coordinator counts the same
 // presets for the navigation counters (go/coordinator/nav_counts.go navSystemViews; tests/go/nav-counts.test.ts compares).
-import type { View } from '../../packages/view-url/view-url.ts';
+import { DELIVERY_STAGES, type View } from '../../packages/view-url/view-url.ts';
 
 type System = { name: string; view: View };
+/** Delivery stages that are done (merged, installed) and failed: a new stage is in flight unless named here. */
+export const DELIVERY_DONE: string[] = ['installed', 'merged'], DELIVERY_FAILED: string[] = ['pr_failed', 'mq_failed'];
 export const SYSTEM_VIEWS = {
   tasks: [{ name: 'Needs me', view: { view: 'tasks', state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'tasks', state: ['queued', 'in_progress', 'waiting', 'held', 'paused'] } }],
   conversations: [{ name: 'Needs me', view: { view: 'conversations', state: ['failed', 'waiting'] } }, { name: 'Running', view: { view: 'conversations', state: ['preparing', 'running', 'waiting'] } }],
   delivery: [
-    { name: 'Needs me', view: { view: 'delivery', state: ['pr_failed', 'mq_failed'] } },
-    { name: 'In flight', view: { view: 'delivery', state: ['pr_open', 'pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'mq_failed', 'releasing', 'installing'] } },
-    { name: 'Installed', view: { view: 'delivery', state: ['installed', 'merged'] } },
+    { name: 'Needs me', view: { view: 'delivery', state: DELIVERY_FAILED } },
+    { name: 'In flight', view: { view: 'delivery', state: DELIVERY_STAGES.filter(s => !DELIVERY_DONE.includes(s)) } },
+    { name: 'Installed', view: { view: 'delivery', state: DELIVERY_DONE } },
   ],
 } satisfies Record<string, System[]>;
 

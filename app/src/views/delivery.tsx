@@ -12,7 +12,7 @@ import {
 import { op, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { useListPage, ListPagePanel, type LocalList } from '../list-page.tsx';
-import { SYSTEM_VIEWS } from '../system-views.ts';
+import { SYSTEM_VIEWS, DELIVERY_DONE, DELIVERY_FAILED } from '../system-views.ts';
 import { useUrlView } from '../url.ts';
 import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, type View } from '../../../packages/view-url/view-url.ts';
 import { scopeIds, prefs, prefsRead } from '../prefs.ts';
@@ -31,9 +31,9 @@ type Row = { id: string; code: string; sortKey: (string | number)[]; it: Item };
 const MIN = 6e4, DAY = 864e5;
 const FLEET = 'taskqorg/fleet';
 const ORDER = DELIVERY_ORDER;
-const DONE: Stage[] = ['installed', 'merged'];
+const DONE = DELIVERY_DONE as Stage[];
 const doneOnly = (v: View) => !!v.state?.length && v.state.every(s => DONE.includes(s as Stage));
-const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
+const FAILED = DELIVERY_FAILED as Stage[];
 // Each stage's norm is its P50 and P90 in delivery_baseline (the last 14 days): the key of the history duration it is.
 // Open, Checks failed and Queue failed have none: people work there, and a failure needs a look at once.
 // Waiting in queue is both "set to enter" and "in the queue, waiting for a runner": the queue's norm covers both.
