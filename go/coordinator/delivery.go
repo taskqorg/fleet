@@ -80,26 +80,26 @@ func deliveryStatus(q *Request, r *contract.DeliveryStatusRequest) (contract.Del
 
 // deliveryReply: the part of the last pass a caller may see. A repository (its items, landing count, error and
 // samples) is visible when the caller may see a project listing it; a sample recorded before samples carried their
-// repository, when the caller may see its project.
+// repository, when the caller may see its project. An item or sample names the repository's first project; when the
+// caller may not see that one (no access, outside the focus, ignored), it names the first listing project the caller sees.
 func deliveryReply(last deliveryState, may func(project string) bool) contract.DeliveryStatusReply {
-	visible := func(projects ...string) bool {
-		for _, p := range projects {
-			if may(p) {
-				return true
-			}
+	shown := func(r *deliveryRepo) (string, bool) {
+		if r == nil {
+			return "", false
 		}
-		return false
+		i := slices.IndexFunc(r.projects, may)
+		if i < 0 {
+			return "", false
+		}
+		return r.projects[i], true
 	}
 	out := contract.DeliveryStatusReply{Source: last.source, RefreshedAt: last.refreshedAt, Items: []contract.DeliveryItem{}, Samples: []contract.DeliverySample{}}
 	var problems []string
 	for _, r := range last.repos {
-		if visible(r.projects...) {
-			// An item names the repository's first project; when the caller may not see that one (no access, outside the
-			// focus, ignored), it names the first project listing the repository that the caller sees.
-			shown := r.projects[slices.IndexFunc(r.projects, may)]
+		if p, ok := shown(r); ok {
 			for _, it := range r.items {
 				if !may(it.ProjectId) {
-					it.ProjectId = shown
+					it.ProjectId = p
 				}
 				out.Items = append(out.Items, it)
 			}
@@ -110,10 +110,12 @@ func deliveryReply(last deliveryState, may func(project string) bool) contract.D
 		}
 	}
 	for _, s := range last.samples {
-		if r := last.repos[strings.ToLower(deref(s.Repo))]; r != nil && visible(r.projects...) || s.Repo == nil && visible(s.ProjectId) {
-			if !may(s.ProjectId) { // a repository's sample, as its items: a project the caller sees
-				s.ProjectId = r.projects[slices.IndexFunc(r.projects, may)]
+		if p, ok := shown(last.repos[strings.ToLower(deref(s.Repo))]); ok {
+			if !may(s.ProjectId) {
+				s.ProjectId = p
 			}
+			out.Samples = append(out.Samples, s)
+		} else if s.Repo == nil && may(s.ProjectId) {
 			out.Samples = append(out.Samples, s)
 		}
 	}

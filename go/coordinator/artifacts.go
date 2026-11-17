@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1242,10 +1243,8 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]doc, error) {
 	}
 	if len(f.ExcludeProjectIDs) > 0 { // the person's ignored projects (OR-34); '-' or null is no project
 		ids, null := splitNull(f.ExcludeProjectIDs)
-		if null {
-			ids = append(ids, "-")
-		}
-		c = projectNotIn(c, &p, "project_id", ids)
+		named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
+		c = notInProjects(c, &p, "project_id", named, null || len(named) < len(ids))
 	}
 	if len(f.States) > 0 {
 		add("state=ANY($?)", f.States)

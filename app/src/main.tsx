@@ -88,7 +88,7 @@ const found = (kind: Hit['kind'], go: (to: string) => void): SpotlightProvider =
   const w = KINDS[kind];
   return { id: kind, label: w.label, find: async (query, signal) => {
     // The focus without ignored projects, as lists apply it; the server leaves ignored projects out itself.
-    const { ignored } = prefs.value, focus = prefs.value.focus.filter(p => !ignored.includes(p)), key = JSON.stringify([query, focus, ignored]);
+    const { ignored } = prefs.value, focus = scopeIds().projectIds ?? [], key = JSON.stringify([query, focus, ignored]);
     const fresh = () => last?.key === key && Date.now() - last.at < 2000;
     if (!fresh()) {
       await new Promise(r => setTimeout(r, 150));
