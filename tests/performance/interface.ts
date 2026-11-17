@@ -239,6 +239,7 @@ export async function serve(o: { out: string; history: number; projects: number;
   const sink = spanSink(spans, error => { if (!log.writableEnded && !log.destroyed) emit('span-export-incomplete', { error }); });
   await new Promise<void>(r => sink.listen(0, '127.0.0.1', r));
   const pgdata = process.env.FLEET_TRIAL_PGDATA!;
+  if (o.explainSlowMs && existsSync(resolve(pgdata, 'PG_VERSION'))) throw Error('explain-slow-ms needs a fresh database: its setting is written once, at initdb');
   if (!existsSync(resolve(pgdata, 'PG_VERSION'))) {
     mkdirSync(pgdata, { recursive: true });
     execFileSync('initdb', ['-D', pgdata, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions'], { stdio: 'ignore' });
