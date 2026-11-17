@@ -66,6 +66,17 @@ func TestResourceBisectCohort(t *testing.T) {
 	if err != nil || batches != 1 || singles != len(ids) {
 		t.Fatalf("a failure of every leaf must not bisect: err=%v batches=%d singles=%d", err, batches, singles)
 	}
+	batches, singles = 0, 0
+	err = resourceBisectCohort(ids[:4], func(part []string) error {
+		batches++
+		if len(part) == 4 {
+			return errors.New("split cohort")
+		}
+		return errResourceStall
+	}, func(string) error { singles++; return nil })
+	if !errors.Is(err, errResourceStall) || batches != 2 || singles != 0 {
+		t.Fatalf("the shared stall did not stop the split: err=%v batches=%d singles=%d", err, batches, singles)
+	}
 	if !strings.Contains(resourceCandidatesSQL, "LIMIT "+strconv.Itoa(resourceCohortSize)+") candidates") {
 		t.Fatal("cohort size must equal the pass bound in resourceCandidatesSQL")
 	}

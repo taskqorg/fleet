@@ -307,16 +307,11 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 		}
 		if len(items) > 0 {
 			f := contract.Finding{Rule: "resource-failing", Subject: "resource processor", Value: float64(len(items)), Cause: "problem:resource:failing", Exemplars: []string{}}
-			shown := items[:min(len(items), 5)]
-			more := ""
-			if len(items) > len(shown) {
-				more = fmt.Sprintf(" and %d more", len(items)-len(shown))
-			}
 			noun := "items"
 			if len(items) == 1 {
 				noun = "item"
 			}
-			text(&f, fmt.Sprintf("Resource processing keeps failing for %d %s (%s%s); each retries every %s.", len(items), noun, strings.Join(shown, ", "), more, resourceRetryEvery()))
+			text(&f, fmt.Sprintf("Resource processing keeps failing for %d %s (%s); retry pauses up to %s.", len(items), noun, strings.Join(items, ", "), resourceRetryEvery()))
 			out = append(out, f)
 		}
 		// Hosts the span rules may name: not removed, intake not paused.

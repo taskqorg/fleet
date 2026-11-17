@@ -272,6 +272,22 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		t.Helper()
 		return scalar(`SELECT count(*)::text FROM question WHERE cause='problem:resource:stalled' AND state='open'`)
 	}
+	guard, err := env.ownerStore.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Rollback(context.Background())
+	if _, err := guard.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", GLOBAL); err != nil {
+		t.Fatal(err)
+	}
+	notifyCtx, cancelNotify := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelNotify()
+	if resourceStallProblem(notifyCtx, a, true) || notifyCtx.Err() != nil {
+		t.Fatal("the resource processor waited for the notification lock")
+	}
+	if err := guard.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
 	resourceStallProblem(ctx, a, true)
 	resourceStallProblem(ctx, a, true)
 	if stalled() != "1" {

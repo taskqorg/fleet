@@ -102,7 +102,12 @@ func startResourceProcessor(ctx context.Context, a *App) {
 // keep failing to select work, which no item's attempts can show. It reports whether the write
 // succeeded; a failed open is tried again on the next stalled pass, since the database may be what fails.
 func resourceStallProblem(ctx context.Context, a *App, open bool) bool {
-	err := runTxLocksOnce(ctx, a, nil, true, []string{GLOBAL}, func(q *Request) error {
+	var held bool
+	err := runTxLocksOnce(ctx, a, nil, true, nil, func(q *Request) error {
+		// A busy Fleet write must not stop resource publication just to update its owner notification.
+		if err := q.tx.QueryRow(q.ctx(), "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))", GLOBAL).Scan(&held); err != nil || !held {
+			return err
+		}
 		if !open {
 			return problemClose(q, "problem:resource:stalled")
 		}
@@ -111,7 +116,7 @@ func resourceStallProblem(ctx context.Context, a *App, open bool) bool {
 	if err != nil && ctx.Err() == nil {
 		log.Printf("resource processor stall problem: %v", err)
 	}
-	return err == nil
+	return err == nil && held
 }
 
 // resourceRetryEvery: the maximum pause as the owner reads it.
@@ -1234,7 +1239,11 @@ func resourceBisectCohort(ids []string, batch func([]string) error, single func(
 		return errors.Join(all...)
 	}
 	mid := len(ids) / 2
-	return errors.Join(resourceBisectCohort(ids[:mid], batch, single), resourceBisectCohort(ids[mid:], batch, single))
+	leftErr := resourceBisectCohort(ids[:mid], batch, single)
+	if errors.Is(leftErr, errResourceStall) {
+		return leftErr
+	}
+	return errors.Join(leftErr, resourceBisectCohort(ids[mid:], batch, single))
 }
 
 func resourceErrorClass(err error) string {
