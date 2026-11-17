@@ -1191,7 +1191,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		refuse(refusal(400, "error", "file-expected", "an upload tool takes the file bytes as application/octet-stream with X-Fleet-Args"), nil)
 		return
 	}
-	if r.ContentLength < 0 {
+	if r.ContentLength < 0 || r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		refuse(refusal(411, "error", "length-required", "an upload needs Content-Length"), nil)
 		return
 	}
@@ -1474,8 +1474,8 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 	hash, buf := sha256.New(), make([]byte, copyBytes)
 	var delivered int64
 	code := ""
-	// At least one read, so an empty file is also checked for a provider body that is not empty.
-	for first := true; code == "" && (delivered < size || first); first = false {
+	defer control.SetWriteDeadline(time.Time{}) // net/http clears it too; the kept-alive connection never inherits it
+	for code == "" && delivered < size {
 		timer.Reset(stall)
 		// One byte past the file's end shows a longer body; the last bytes leave only once the provider body ends with
 		// them, since a caller that has Content-Length bytes takes the file as whole.
