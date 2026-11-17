@@ -2442,3 +2442,12 @@ CREATE TEMP TABLE system_read ON COMMIT DROP AS
    OR (parent_execution_id IS NULL AND data->>'tokenName' = 'github-read' AND project_id IS NOT NULL AND directed_by IS NULL));
 UPDATE execution SET system_actor = 'coordinator', data = data || '{"legacySystemRead": true}' WHERE id IN (SELECT id FROM system_read);
 SELECT resource_enqueue_source(id, project_id, project_id) FROM system_read;
+
+-- migration 70: the references of a document as indexed columns (cleanup.go, reference map). Under row-level security a
+-- JSON path is never an index condition (jsonb_object_field_text is not leakproof), so each delete and purge check of
+-- data->>'executionId' or data->>'sessionId' read and detoasted every document (2.3 s per check on 39k documents in
+-- production). A stored generated column compares with texteq, which is leakproof, so its index serves those reads.
+ALTER TABLE document ADD COLUMN execution_ref text GENERATED ALWAYS AS (data->>'executionId') STORED,
+ ADD COLUMN session_ref text GENERATED ALWAYS AS (data->>'sessionId') STORED;
+CREATE INDEX document_execution_ref ON document(execution_ref) WHERE execution_ref IS NOT NULL;
+CREATE INDEX document_session_ref ON document(session_ref) WHERE session_ref IS NOT NULL;

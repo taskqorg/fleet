@@ -36,11 +36,12 @@ const (
 )
 
 // objectRef: table.column names an object of kind. expr is the SQL over the row when it is not the column itself (a
-// JSON path, a polymorphic scope); array: the column is a text[] of ids.
+// JSON path, a polymorphic scope); array: the column is a text[] of ids; guard: the rows the reference exists on (a
+// document kind), so a check reads them through an index instead of every document.
 type objectRef struct {
 	table, column, kind string
 	mode                refMode
-	expr                string
+	expr, guard         string
 	array               bool
 }
 
@@ -52,10 +53,14 @@ func (r objectRef) sql() string {
 }
 
 func (r objectRef) match(param string) string {
+	m := r.sql() + " = ANY(" + param + ")"
 	if r.array {
-		return r.sql() + " && " + param
+		m = r.sql() + " && " + param
 	}
-	return r.sql() + " = ANY(" + param + ")"
+	if r.guard != "" {
+		return "(" + r.guard + " AND " + m + ")"
+	}
+	return m
 }
 
 // referenceMap: every column of schema.sql that names an object, and every *_id column (TestReferenceMapCoversSchema).
@@ -76,17 +81,19 @@ var referenceMap = []objectRef{
 	{table: "document", column: "id", kind: "session", mode: refOwn},
 	{table: "document", column: "project_id", kind: "project", mode: refOwn},
 	// Events, commands, run tokens, conflicts. A session's transcript (messages, queued messages, transitions, handoffs)
-	// belongs to the session: a task's runs in a live session leave its turns in place.
-	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "(CASE WHEN kind NOT IN ('message','queued-message','session-transition','handoff') THEN data->>'executionId' END)"},
-	{table: "document", column: "data", kind: "session", mode: refOwn, expr: "data->>'sessionId'"},       // messages, transitions, queued messages
-	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'"}, // the sessions of a run's steps
+	// belongs to the session: a task's runs in a live session leave its turns in place. execution_ref and session_ref are
+	// data->>'executionId' and data->>'sessionId' as indexed columns (migration 70): a JSON path cannot be an index
+	// condition under row-level security (not leakproof), so every check of it read and detoasted every document.
+	{table: "document", column: "execution_ref", kind: "execution", mode: refOwn, guard: "kind NOT IN ('message','queued-message','session-transition','handoff')"},
+	{table: "document", column: "session_ref", kind: "session", mode: refOwn},                                                                      // messages, transitions, queued messages
+	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'", guard: "kind IN ('session','run-token')"}, // the sessions and tokens of a run's steps
 	// A session working for a task outlives it (session and task lifecycles are separate): the reference goes stale.
 	{table: "document", column: "data", kind: "task", mode: refNone, expr: "data->>'taskId'"},
 	{table: "document", column: "data", kind: "host", mode: refKeep, expr: "data->>'hostId'"},
-	{table: "document", column: "data", kind: "execution", mode: refKeep, expr: "data->>'createdByExecutionId'"},
-	{table: "document", column: "data", kind: "session", mode: refKeep, expr: "data->>'createdBySessionId'"},
-	{table: "document", column: "data", kind: "session", mode: refKeep, expr: "data->>'sourceSessionId'"},
-	{table: "document", column: "data", kind: "execution", mode: refKeep, expr: "data->>'continuationExecutionId'"},
+	{table: "document", column: "data", kind: "execution", mode: refKeep, expr: "data->>'createdByExecutionId'", guard: "kind='session'"},
+	{table: "document", column: "data", kind: "session", mode: refKeep, expr: "data->>'createdBySessionId'", guard: "kind='session'"},
+	{table: "document", column: "data", kind: "session", mode: refKeep, expr: "data->>'sourceSessionId'", guard: "kind IN ('session','session-fork')"},
+	{table: "document", column: "data", kind: "execution", mode: refKeep, expr: "data->>'continuationExecutionId'", guard: "kind='delegation'"},
 	{table: "agent_tool_receipt", column: "id", mode: refNone},
 	{table: "agent_tool_receipt", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "artifact", column: "id", kind: "artifact", mode: refOwn},
@@ -528,7 +535,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 			return err
 		}
 	}
-	if tag, err := q.tx.Exec(q.ctx(), "UPDATE document SET data=data||jsonb_build_object('revokedAt',$2::bigint) WHERE kind='run-token' AND data->>'executionId'=ANY($1) AND NOT data ? 'revokedAt'", ids, nowMs()); err != nil {
+	if tag, err := q.tx.Exec(q.ctx(), "UPDATE document SET data=data||jsonb_build_object('revokedAt',$2::bigint) WHERE kind='run-token' AND execution_ref=ANY($1) AND NOT data ? 'revokedAt'", ids, nowMs()); err != nil {
 		return err
 	} else if tag.RowsAffected() > 0 {
 		publish(q)
@@ -540,7 +547,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		return err
 	}
 	// Messages still waiting for a turn never start one (host receipts see deleted rows and promote queued messages).
-	if err := exec(q, `UPDATE document SET data=data||'{"state":"deleted"}', updated_at=now() WHERE kind='queued-message' AND data->>'sessionId'=ANY($1) AND data->>'state' IN ('queued','steering')`, c.sets["session"]); err != nil {
+	if err := exec(q, `UPDATE document SET data=data||'{"state":"deleted"}', updated_at=now() WHERE kind='queued-message' AND session_ref=ANY($1) AND data->>'state' IN ('queued','steering')`, c.sets["session"]); err != nil {
 		return err
 	}
 	teardowns := int64(0)
@@ -721,7 +728,7 @@ const pendingCommands = `SELECT c.id, c.data->>'kind' AS kind, c.data->>'hostId'
   OR (h.id IS NULL AND c.data->>'hostId' IS DISTINCT FROM $2
    AND NOT EXISTS (SELECT 1 FROM document o WHERE o.kind='host-observation' AND o.id=c.data->>'hostId'))) AS dead
  FROM document c LEFT JOIN document h ON h.kind='host' AND h.id='host:'||(c.data->>'hostId')
- WHERE c.kind='command' AND c.data->>'status'='pending' AND c.data->>'executionId'=ANY($1) ORDER BY c.seq`
+ WHERE c.kind='command' AND c.execution_ref=ANY($1) AND c.data->>'status'='pending' ORDER BY c.seq`
 
 // purgeRootTx: one tombstoned root in its own transaction: blocked (a live row keeps it) or purged.
 func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (rows []contract.KindCount, bytes int64, blocked string, err error) {
@@ -938,7 +945,74 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 		return 0, err
 	}
 	left := int64(0)
+	// Spans of every task go in batched statements (one lightweight DELETE took ~125 ms on prod, one per purged root).
+	var spanTasks []doc
+	others := []doc{}
 	for _, t := range tasks {
+		if ids := strs(t["executionIds"]); len(ids) > 0 && t["storeId"] == nil {
+			spanTasks = append(spanTasks, t)
+		} else {
+			others = append(others, t)
+		}
+	}
+	// The ids of every span task in chunks of 500 (each a URL parameter of one DELETE), the deadline checked before
+	// each; a failed chunk does not stop the next. A task goes once all its ids went; one partly done keeps the rest.
+	all := []string{}
+	for _, t := range spanTasks {
+		all = append(all, strs(t["executionIds"])...)
+	}
+	gone := map[string]bool{}
+	for i := 0; i < len(all) && !time.Now().After(deadline); i += 500 {
+		part := all[i:min(i+500, len(all))]
+		if spanStore != nil { // no span store configured: no spans to delete
+			if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
+				slog.Warn("purge: spans", "err", err)
+				continue
+			}
+		}
+		for _, id := range part {
+			gone[id] = true
+		}
+	}
+	if len(spanTasks) > 0 {
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			for _, t := range spanTasks {
+				rest := []string{}
+				for _, id := range strs(t["executionIds"]) {
+					if !gone[id] {
+						rest = append(rest, id)
+					}
+				}
+				var err error
+				switch {
+				case len(rest) == 0:
+					err = exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
+				case len(rest) < len(strs(t["executionIds"])):
+					next := doc{} // a copy: a retried transaction reads the task as stored
+					for k, v := range t {
+						next[k] = v
+					}
+					next["executionIds"] = rest
+					err = exec(q, "UPDATE document SET data=$2, updated_at=now() WHERE kind='purge-task' AND id=$1", t["id"], jsonBytes(next))
+				}
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return left, err
+		}
+		for _, t := range spanTasks {
+			for _, id := range strs(t["executionIds"]) {
+				if !gone[id] {
+					left++
+					break
+				}
+			}
+		}
+	}
+	for _, t := range others {
 		if time.Now().After(deadline) { // the rest waits for the next purge
 			left++
 			continue
@@ -985,24 +1059,6 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 				}
 			}
 			t["objects"] = rest
-		} else if ids := strs(t["executionIds"]); len(ids) > 0 && spanStore != nil {
-			for i := 0; i < len(ids); i += 200 {
-				part := ids[i:min(i+200, len(ids))]
-				if time.Now().After(deadline) {
-					for _, id := range ids[i:] {
-						rest = append(rest, id)
-					}
-					break
-				}
-				if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
-					slog.Warn("purge: spans", "err", err)
-					for _, id := range ids[i:] {
-						rest = append(rest, id)
-					}
-					break
-				}
-			}
-			t["executionIds"] = rest
 		}
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			if len(rest) == 0 {
