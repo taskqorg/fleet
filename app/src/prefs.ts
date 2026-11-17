@@ -114,9 +114,13 @@ export function focusIds(): string[] | undefined {
 }
 /** The scope is known: preferences are read and, while a project is ignored, the project list too (or it failed). */
 export const scopeReady = computed(() => prefsRead.value && (!prefs.value.ignored.length || knownProjects.value !== null));
-/** The project is outside what lists show (focus and ignore): '-' is work outside projects; null counts as '-'. */
-export function outsideScope(project: string | null | undefined, ids = focusIds()) {
-  return !!ids && !ids.includes(project ?? '-');
+/**
+ * The project of an item that needs the person lies outside the focus (the "N need you outside focus" count): a focus is
+ * set and does not hold it, and it is not ignored. Ignore is full silence; with no focus (All projects) nothing is outside.
+ */
+export function outsideFocus(project: string | null | undefined) {
+  const { focus, ignored } = prefs.value, p = project ?? '-', f = focus.filter(x => !ignored.includes(x));
+  return f.length > 0 && !f.includes(p) && !ignored.includes(p);
 }
 // Views whose URL codec has a project key, so the focus is part of the list key (store and IndexedDB identity).
 const FOCUSED = ['tasks', 'results', 'conversations'];

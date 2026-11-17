@@ -7,7 +7,7 @@ registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsV
 registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
 await ensureAccessGeneration();
 import { readFileSync } from 'node:fs';
-import { prefs, prefsRead, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds, setFocus, setIgnored, knownProjects, scopeReady, outsideScope, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
+import { prefs, prefsRead, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds, setFocus, setIgnored, knownProjects, scopeReady, outsideFocus, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
 
 const sent: [string, any][] = [], kept: any[] = [];
 const pendingReplies = new Set<Promise<void>>();
@@ -56,9 +56,8 @@ test('OR-34 ignored projects leave every list that names no project, also with e
   assert.deepEqual(focusIds(), ['fleet', 'other', '-']);
   assert.deepEqual(withFocus({ view: 'tasks' }).project, ['fleet', 'other', null]);
   assert.deepEqual(withFocus({ view: 'tasks', project: ['muted'] }).project, ['muted']);
-  assert.equal(outsideScope('muted'), true); assert.equal(outsideScope(null), false);
   prefs.value = { ...prefs.value, ignored: ['muted', '-'] };
-  assert.deepEqual(focusIds(), ['fleet', 'other']); assert.equal(outsideScope(null), true);
+  assert.deepEqual(focusIds(), ['fleet', 'other']);
   prefs.value = { ...prefs.value, ignored: ['fleet', 'muted', 'other', '-'] };
   assert.deepEqual(withFocus({ view: 'tasks' }).project?.length, 1, 'everything ignored shows nothing, never everything');
   // The project list not read yet: lists wait; failed: nothing is left out rather than nothing shown.
@@ -74,6 +73,17 @@ test('OR-34 ignored projects leave every list that names no project, also with e
   await settle();
   assert.deepEqual(sent.map(x => x[1]), [{ ignore: { project: 'muted', ignored: true } }, { focus: ['fleet'] }, { ignore: { project: 'muted', ignored: false } }]);
   prefs.value = { ...prefs.value, focus: [], ignored: [] }; knownProjects.value = null;
+});
+
+// Risk: the outside-focus count brings an ignored project back, or alerts with no focus set (owner: ignore is full silence).
+test('OR-34 the outside-focus count leaves out ignored projects and counts nothing with All projects', () => {
+  prefs.value = { ...prefs.value, focus: [], ignored: ['muted'] };
+  assert.deepEqual(['other', 'muted', null].map(outsideFocus), [false, false, false], 'All projects: nothing is outside');
+  prefs.value = { ...prefs.value, focus: ['fleet'], ignored: ['muted'] };
+  assert.deepEqual(['fleet', 'other', 'muted', null].map(outsideFocus), [false, true, false, true]);
+  prefs.value = { ...prefs.value, ignored: ['muted', '-'] };
+  assert.equal(outsideFocus(null), false, "ignored '-' silences work outside projects");
+  prefs.value = { ...prefs.value, focus: [], ignored: [] };
 });
 
 test('OR-33 system presets come first and cannot be overwritten; personal views are written to the server', async () => {

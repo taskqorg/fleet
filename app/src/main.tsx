@@ -11,7 +11,7 @@ import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalid
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
 import { preferencesTouched } from './invalidation.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, knownProjects, focusIds, outsideScope } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, knownProjects, outsideFocus } from './prefs.ts';
 import { useDoc } from './store.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
@@ -209,18 +209,18 @@ function Focus({ go }: { go: (to: string) => void }) {
 
 /**
  * How many items need the person (open questions and Needs-you problems, the Overview's set) in projects outside the
- * focus, ignored ones too; 0 while lists show every project. Read only while the scope is narrowed; a new problem shows
- * within a minute.
+ * focus that are not ignored (prefs.ts outsideFocus); 0 with no focus. Read only while a focus is set; a new problem
+ * shows within a minute.
  */
 function useOutside() {
-  const scope = focusIds();
-  const all = useDoc<{ projects: (string | null)[] }>(scope ? 'needs-you-all' : null, async () => {
+  const { focus, ignored } = prefs.value, focused = focus.some(p => !ignored.includes(p));
+  const all = useDoc<{ projects: (string | null)[] }>(focused ? 'needs-you-all' : null, async () => {
     const [q, e] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { needsYou: true })]);
     return { projects: [...q.questions, ...e.executions].map((x: any) => x.projectId ?? null) };
   // Questions change rarely and are read at once; executions change many times a second (gateway calls), so problems are
   // read again once a minute instead of on each change.
   }, c => c.kind === 'question', 60_000);
-  return scope ? (all.data?.projects ?? []).filter(p => outsideScope(p, scope)).length : 0;
+  return focused ? (all.data?.projects ?? []).filter(outsideFocus).length : 0;
 }
 
 render(<Router><App /></Router>, document.getElementById('app')!);

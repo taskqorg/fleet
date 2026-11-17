@@ -2,7 +2,8 @@
 // controls/focus-control.md). Called by conversations.check.ts.
 // Requirement: one header right of the navigation shows the section title and a search icon that opens Spotlight; the focus
 // chip is toned when a focus is set; an ignored project leaves the list and the picker, shows in "Ignored (n)" and can be
-// restored; items that need the person outside the focus show as "N need you outside focus" and open the Overview unfocused.
+// restored; items that need the person outside the focus (never in an ignored project) show as "N need you outside focus"
+// and open the Overview unfocused.
 // Risk: the header loses the title or search, a set focus looks like "All projects", or an ignored project stays visible.
 // With HEADER_SHOTS=<dir> it also saves dark screenshots at 1440x900 and 390 px: the header with All projects (header-all),
 // with a focus of two projects and the outside indicator (header-focus), and the open panel with Ignored expanded (header-panel).
@@ -94,6 +95,10 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     await p.reload(); assert.ok(await until(async () => await outside.count() === 1), 'the indicator shows after a reload');
     await outside.click(); await p.waitForURL('**/overview?all');
     await p.getByText('Ship Charlie today?').waitFor();
+    // Ignore is full silence: an ignored project's question is not counted outside the focus.
+    await call('person_settings_set', { ignore: { project: 'hdr-charlie', ignored: true } });
+    await p.goto(origin + '/tasks'); await row('Alpha').waitFor();
+    assert.ok(await until(async () => await outside.count() === 0, 3000) && !await until(async () => await outside.count() > 0, 1500), 'an ignored project is not counted');
     assert.deepEqual(errors, []);
     console.log('ok Shell header: title, search icon opens Spotlight, focus chip toned, ignore hides a project from list and picker and restores, outside-focus indicator opens the Overview');
   } finally {

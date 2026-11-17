@@ -905,7 +905,7 @@ export type FocusProject = { id: string; name: string };
  * panel anchored under it (an overlay that moves nothing, an OR-14 exception like Spotlight). The panel holds the presets
  * (system "All projects" and saved ones), the project list with an ignore action per row, and a folded "Ignored (n)"
  * section to restore them. Ignored projects are never offered for the focus. `outside` is the count of items that need the
- * person in projects outside the focus (ignored ones too); it shows only when above 0.
+ * person in projects outside the focus that are not ignored; it shows only when above 0.
  */
 export function FocusControl({ projects, value, presets, ignored = [], outside, onChange, onSavePreset, onRemovePreset, onIgnore }: {
   projects: FocusProject[]; value: string[]; presets: { name: string; projects: string[] }[]; ignored?: string[];
