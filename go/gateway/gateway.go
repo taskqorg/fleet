@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"fleet/contract"
@@ -208,6 +210,10 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 			return nil, fmt.Errorf("connection %s names an unknown provider", name)
 		}
 		if l := c.Limits; l != nil {
+			if *l == (contract.GatewayLimits{}) {
+				c.Limits = nil // no limits: defaults everywhere
+				s.Connections[name] = c
+			}
 			for _, v := range []*int64{l.FileBytes, l.ReplyBytes, l.StallMs, l.AnswerMs} {
 				if v != nil && *v < 1 {
 					return nil, fmt.Errorf("connection %s limits must be positive", name)
@@ -520,13 +526,15 @@ type body struct {
 var errStalled, errUnsent = errors.New("provider stalled"), errors.New("provider read nothing")
 
 // progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end. Once
-// the provider's first response byte arrived (end), neither a late read by the transport nor the timer acts again.
+// the provider's answer began (a first response byte, also a 1xx), a late read by the transport no longer touches the
+// timer; each response progress resets it to the stall limit, so a provider that starts answering and stops is still
+// cut after stallMs.
 type progress struct {
 	io.Reader
-	timer         *time.Timer
-	stall, answer time.Duration
-	lock          sync.Mutex
-	read, ended   bool
+	timer           *time.Timer
+	stall, answer   time.Duration
+	lock            sync.Mutex
+	read, answering bool
 }
 
 func (p *progress) Read(b []byte) (int, error) {
@@ -535,7 +543,7 @@ func (p *progress) Read(b []byte) (int, error) {
 	defer p.lock.Unlock()
 	p.read = true
 	switch {
-	case p.ended:
+	case p.answering:
 	case err == io.EOF:
 		p.timer.Reset(p.answer)
 	default:
@@ -544,20 +552,19 @@ func (p *progress) Read(b []byte) (int, error) {
 	return n, err
 }
 
-// end stops the send timer for good and reports whether any byte of the body was read.
-func (p *progress) end() bool {
+// answered: the provider sent response bytes; the rest of its headers must follow within the stall limit.
+func (p *progress) answered() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.ended = true
-	p.timer.Stop()
-	return p.read
+	p.answering = true
+	p.timer.Reset(p.stall)
 }
 
-// live: the timer may still act (no response byte yet).
-func (p *progress) live() bool {
+// sent reports whether any byte of the body was read.
+func (p *progress) sent() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return !p.ended
+	return p.read
 }
 
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
@@ -568,23 +575,18 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 	var timedOut atomic.Bool
 	var reader io.Reader
 	var file *progress
-	wait, expire := g.config.requestTimeout, func() { timedOut.Store(true); cancel() }
+	wait := g.config.requestTimeout
 	switch {
 	case b.open != nil:
 		file = &progress{Reader: b.open(), stall: b.stall, answer: b.answer}
 		reader, wait = file, b.stall
-		expire = func() {
-			if file.live() {
-				timedOut.Store(true)
-				cancel()
-			}
-		}
-		// The provider began to answer: from here its reply has requestTimeout, as a JSON reply.
-		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotFirstResponseByte: func() { file.end() }})
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+			GotFirstResponseByte: file.answered,
+			Got1xxResponse:       func(int, textproto.MIMEHeader) error { file.answered(); return nil }})
 	case b.data != nil:
 		reader = bytes.NewReader(b.data)
 	}
-	timer := time.AfterFunc(wait, expire)
+	timer := time.AfterFunc(wait, func() { timedOut.Store(true); cancel() })
 	defer timer.Stop()
 	if file != nil {
 		file.lock.Lock()
@@ -610,17 +612,11 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 		request.Header.Set("Content-Type", b.contentType)
 	}
 	response, err := g.client.Do(request)
-	if file != nil {
-		read := file.end()
-		switch {
-		case err != nil && timedOut.Load() && !read:
+	if file != nil && err != nil && timedOut.Load() {
+		if !file.sent() {
 			return nil, nil, errUnsent
-		case err != nil && timedOut.Load():
-			return nil, nil, errStalled
-		case err == nil:
-			timer = time.AfterFunc(g.config.requestTimeout, func() { timedOut.Store(true); cancel() })
-			defer timer.Stop()
 		}
+		return nil, nil, errStalled
 	}
 	if err != nil {
 		if timedOut.Load() {
@@ -823,8 +819,8 @@ func (g *gateway) health() map[string]any {
 	for name, c := range s.Connections {
 		keys += len(c.Keys)
 		usable += len(g.usable(c))
-		if l := c.Limits; l != nil && (l.FileBytes != nil || l.ReplyBytes != nil || l.StallMs != nil || l.AnswerMs != nil) {
-			limits[name] = l
+		if c.Limits != nil {
+			limits[name] = c.Limits
 		}
 	}
 	status := "ok"
@@ -1107,13 +1103,18 @@ func (s *scanner) write(chunk []byte) bool {
 
 var mediaTypeText = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`)
 
+// bidiControl: a mark that reorders the text around it, so a shown name could hide its real extension.
+func bidiControl(r rune) bool {
+	return r == 0x061c || r == 0x200e || r == 0x200f || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069
+}
+
 // fileName: a name that stays inside the multipart header's quotes (no ", no \ escape) and names no path.
 func fileName(name string) bool {
 	if name == "" || len(name) > 255 || !utf8.ValidString(name) {
 		return false
 	}
 	for _, r := range name {
-		if r < 0x20 || r == 0x7f || r == '"' || r == '/' || r == '\\' {
+		if unicode.IsControl(r) || bidiControl(r) || r == '"' || r == '/' || r == '\\' {
 			return false
 		}
 	}
@@ -1337,6 +1338,10 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 		return fail(502, "error", "provider-unreachable", "the file request got no answer")
 	}
 	defer response.Body.Close()
+	if !timer.Stop() && stalled.Load() {
+		// The answer wait ran out as the headers came: the fetch is cancelled, so no byte of it can be read.
+		return fail(504, "error", "provider-stalled", "the provider did not answer the file request in time")
+	}
 	switch status := response.StatusCode; {
 	case status >= 300 && status <= 399:
 		return fail(502, "error", "provider-redirect", fmt.Sprintf("the file request answered HTTP %d; the redirect is not followed", status))
@@ -1673,6 +1678,10 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 	if server.Shutdown(ctx) != nil {
 		logf("drain timed out; remaining calls are cut")
 		server.Close()
+		// A cut file call still writes its spool line (a post cut at the drain end may have been stored).
+		for end := time.Now().Add(5 * time.Second); g.transfers.Load() > 0 && time.Now().Before(end); {
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 	fmt.Printf("fleet-gateway: drained, lost spool lines: %d\n", g.spool.lost.Load())
 	return nil

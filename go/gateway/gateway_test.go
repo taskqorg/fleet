@@ -1077,7 +1077,7 @@ func TestJSONToFileToolRefused(t *testing.T) {
 // names over 255 bytes are refused. Risk: a crafted name adds a header or a part, or names a path.
 func TestUploadBadFileNameRefused(t *testing.T) {
 	gw, p := newFileFixture(t, nil)
-	for _, name := range []string{"", "a\rb", "a\nb", "a\x01b", `a"b`, `notes\`, "a/b", strings.Repeat("я", 128)} {
+	for _, name := range []string{"", "a\rb", "a\nb", "a\x01b", `a"b`, `notes\`, "invoice\u202efdp.exe", "a\u0085b", "a/b", strings.Repeat("я", 128)} {
 		status, v := gw.uploadBytes([]byte("x"), map[string]any{"issue": "TGT-12", "name": name})
 		expect(t, []any{status, v["error"]}, []any{400, "bad-file-name"}, fmt.Sprintf("%q", name))
 	}
@@ -1376,5 +1376,40 @@ func TestScannerFindsValueAcrossAnySplit(t *testing.T) {
 	}
 	if s := newScanner([][]byte{value}); s.write(data[:57]) || s.write(data[58:]) {
 		t.Fatal("found a value with a byte missing")
+	}
+}
+
+// Requirement: §9 stall: once the provider starts answering an upload (a 1xx, or part of its status line), the rest of
+// its answer must still progress within stallMs. Risk: a provider that sends one byte or a 100 Continue and stops holds
+// the call, its staged file and the caller's connection forever.
+func TestUploadProviderStallsAfterFirstByte(t *testing.T) {
+	gw, p := newFileFixture(t, map[string]any{"stallMs": 300})
+	done := make(chan struct{})
+	defer close(done)
+	for _, start := range []string{"HTTP/1.1 100 Continue\r\n\r\n", "HTTP/1.1 2"} {
+		p.onUpload = func(w http.ResponseWriter, read func()) {
+			read()
+			conn, buffered, _ := w.(http.Hijacker).Hijack()
+			buffered.WriteString(start)
+			buffered.Flush()
+			<-done
+			conn.Close()
+		}
+		begun, answered := time.Now(), make(chan []any, 1)
+		go func() {
+			data := []byte("invented")
+			status, _, v, _ := gw.upload(bytes.NewReader(data), int64(len(data)), shaHex(data), map[string]any{"issue": "TGT-12", "name": "a.txt"}, nil)
+			answered <- []any{status, v["error"]}
+		}()
+		select {
+		case got := <-answered:
+			expect(t, got, []any{504, "provider-stalled"}, fmt.Sprintf("%q", start))
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%q: the call hangs after the provider's first byte", start)
+		}
+		if held := time.Since(begun); held > 1200*time.Millisecond {
+			t.Fatalf("%q: the call took %v with stallMs 300", start, held)
+		}
+		expect(t, lastLine(t, gw)["outcome"], "unknown", "outcome")
 	}
 }
