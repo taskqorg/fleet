@@ -57,7 +57,6 @@ type codeServer struct {
 	jobs   map[string]*codeJob
 	order  []string
 	rt     *codeRuntime
-	starts int
 	seq    int
 	closed bool // the server is shutting down: no new runtime
 }
@@ -201,7 +200,7 @@ func (s *codeServer) code(source string, detach time.Duration) M {
 		return codeResult(M{"error": "source required"}, true)
 	}
 	s.mu.Lock()
-	rt, restarted, err := s.runtime()
+	rt, started, err := s.runtime()
 	if err != nil {
 		s.mu.Unlock()
 		return codeResult(M{"error": "runtime did not start: " + err.Error()}, true)
@@ -219,8 +218,8 @@ func (s *codeServer) code(source string, detach time.Duration) M {
 		}
 	}()
 	r := s.wait(j, detach)
-	if restarted {
-		r["restarted"] = true
+	if started {
+		r["newRuntime"] = true
 	}
 	return codeResult(r, has(r, "error"))
 }
@@ -313,8 +312,9 @@ func (s *codeServer) finish(j *codeJob, ok bool, value, err any) {
 	close(j.done)
 }
 
-// runtime returns the live Node process, starting one if none runs; restarted reports a replaced runtime whose state
-// is gone. The caller holds s.mu.
+// runtime returns the live Node process, starting one if none runs; started reports a new runtime, whose `state` is
+// empty: the first one of this code server (a new execution's server has none of an earlier one's state) or a
+// replacement. The caller holds s.mu.
 func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	if s.closed {
 		return nil, false, errors.New("the code server is stopping")
@@ -331,21 +331,26 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 		cmd.Dir = jStr(s.spec, "dir")
 	}
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "NODE_NO_WARNINGS=1"}
-	cmd.Stderr = os.Stderr
+	// The protocol has its own pipe (fd 3): a raw write to fd 1 (fs.writeSync(1, ...)) cannot corrupt a protocol line; it
+	// goes to this server's stderr log.
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, false, err
 	}
-	stdout, err := cmd.StdoutPipe()
+	stdout, proto, err := os.Pipe()
 	if err != nil {
 		return nil, false, err
 	}
-	if err := cmd.Start(); err != nil {
+	cmd.ExtraFiles = []*os.File{proto}
+	err = cmd.Start()
+	proto.Close()
+	if err != nil {
+		stdout.Close()
 		return nil, false, err
 	}
 	rt := &codeRuntime{cmd: cmd, in: in, dead: make(chan struct{})}
 	s.rt = rt
-	s.starts++
 	go s.read(rt, stdout)
 	// The granted names become real properties of `fleet` and `conn`: a typo or a probe (`then`, `toJSON`) is undefined
 	// in the runtime, not a call.
@@ -359,7 +364,7 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	}
 	slices.Sort(fleetNames)
 	rt.send(M{"type": "tools", "fleet": anyStrings(fleetNames), "conns": names}) // before any run line
-	return rt, s.starts > 1, nil
+	return rt, true, nil
 }
 
 // codeArgv is the runtime command: Node with its permission model (no writes, child processes, workers or addons; reads
@@ -640,22 +645,35 @@ func mcpValue(r any) (any, M) {
 	return v, nil
 }
 
-// codeHost finds the host's Node (with --permission) and sandbox for the runtime. It keeps a ready result while its
-// files exist and a failure for one minute: a host made ready later (or a transient failure) needs no executor restart,
-// and a hanging sandbox costs one 30 s probe a minute, not one per launch. Tests replace it.
+// codeHost finds the host's Node (with --permission) and sandbox for the runtime. The first call probes; after that it
+// answers from the last result. A ready result whose files are gone probes again at once; a failure older than one minute
+// is probed again in the background, so a hanging sandbox never holds the launch path (and the executor's process loop)
+// more than once. A host made ready later needs no executor restart. Tests replace it.
 // ponytail: one minute; a readiness event from the host settings if hosts change often.
 var codeHost = func() func() (string, string, error) {
 	var mu sync.Mutex
 	var node, sandbox string
 	var err error
 	var at time.Time
+	var probing bool
+	probe := func() {
+		n, sb, e := probeCodeHost()
+		mu.Lock()
+		node, sandbox, err, at, probing = n, sb, e, time.Now(), false
+		mu.Unlock()
+	}
 	return func() (string, string, error) {
 		mu.Lock()
-		defer mu.Unlock()
-		if at.IsZero() || err == nil && !(isFile(node) && isFile(sandbox)) || err != nil && time.Since(at) >= time.Minute {
-			node, sandbox, err = probeCodeHost()
-			at = time.Now()
+		switch {
+		case at.IsZero() || err == nil && !(isFile(node) && isFile(sandbox)):
+			mu.Unlock()
+			probe()
+			mu.Lock()
+		case err != nil && time.Since(at) >= time.Minute && !probing:
+			probing = true
+			go probe()
 		}
+		defer mu.Unlock()
 		return node, sandbox, err
 	}
 }()
@@ -727,7 +745,11 @@ func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFlee
 	}
 	spec := M{"dir": read[0], "read": []any{}, "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox, "instructions": []any{}}
 	if mode == "only" {
-		spec["instructions"] = conns
+		instr := []any{}
+		for _, c := range conns {
+			instr = append(instr, M{"name": jAt(c, "name"), "instructions": jAt(c, "instructions")})
+		}
+		spec["instructions"] = instr
 	}
 	if fleet != nil {
 		spec["journal"], spec["context"] = fleet.journal, fleet.context

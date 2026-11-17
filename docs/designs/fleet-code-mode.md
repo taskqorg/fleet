@@ -45,7 +45,7 @@ Input: `{source: string, detachAfterSeconds?: number}`.
 - A thrown error returns `isError: true`, `status: "failed"` and `error: {message, stack}`, with the output printed before it.
 - The runtime does not cut `output` or `value`. The agent controls their size in its code.
 
-`detachAfterSeconds` defaults to 25. When the code is still running at that time, `code` replies with `status: "running"` and the output so far. The code keeps running. The executor's MCP filter forwards one request at a time, so a second call waits for the first reply; with the 25 s default, two calls in a row still answer within Codex's default MCP tool timeout of 60 seconds. A value above 50 counts as 50: a longer reply wait would lose the reply in Codex and hold every later call, `poll` reset included. The value is a reply time, not a limit on how long the code runs.
+`detachAfterSeconds` defaults to 25. When the code is still running at that time, `code` replies with `status: "running"` and the output so far. The code keeps running. The executor's MCP filter forwards one request at a time, so a second call waits for the first reply; with the 25 s default, two calls in a row still answer within Codex's default MCP tool timeout of 60 seconds; a third parallel call can miss it. A value above 50 counts as 50: a longer reply wait would lose the reply in Codex and hold every later call, `poll` reset included. The value is a reply time, not a limit on how long the code runs.
 
 ### `poll`
 
@@ -82,6 +82,7 @@ Code mode adds no authority. The code server bridges only the tools that the exe
 - File reads follow symlinks inside the read roots. That adds no authority: the same files are readable through the harness's own read tools, and the run file is readable by the same OS user anyway ([threat model](fleet-connections.md#4-per-run-tokens)).
 - The host needs a Node with `--permission` (22.13 or later in 22, 23.5 or later in 23, any later major) and a sandbox that starts. The executor runs the sandbox to check it, with a 30 s bound. It keeps a ready result while its files exist and a failure for one minute, so a host made ready later, or a Node moved, needs no executor restart. Without them, the launch fails with `code-mode-unready: <reason>`, for example on Linux without user namespaces. Hosts without such a sandbox, such as Windows, cannot use code mode.
 - Not built: Node on PDS18, which has none today; `bwrap --unshare-net` works there for the `fleet-agent` user.
+- Not built: code mode readiness as a host capability for placement. Today a host that is not ready fails the launch with `code-mode-unready` instead of being skipped.
 
 ## Unknown outcomes
 
@@ -93,9 +94,11 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 - Arguments that do not serialize (a `BigInt`, a cycle) reject with `code: "bad-arguments"`.
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
 - A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent. A stored reply that does not decode is such a failure.
-- An unawaited rejection or a throw inside a timer is printed, not fatal: the runtime, its other jobs and `state` survive.
+- An unawaited rejection or a throw inside a timer is printed into the output of the job that made the failed call, not fatal: the runtime, its other jobs and `state` survive.
+- The runtime talks to the code server over its own pipe (fd 3). A raw write to fd 1 cannot corrupt that protocol; it goes to the code server's log, not to a job's output.
+- A reply from a call that started a runtime carries `newRuntime: true`: its `state` is empty. That is the first call of each code server, so a resumed session in a new execution sees that earlier `state` is gone, and the first call after a crash or reset.
 - When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. A job with bridged calls still in flight ends when they do, with their outcomes in `calls`, so no effect goes unreported.
-- When the harness closes the code server, the runtime stops and calls still in flight end with the process. A journal write is one SQLite transaction, so it is recorded or not, and the agent sees no reply, as for any lost reply. The next `code` call starts a new runtime, and its reply says so: `restarted: true`.
+- When the harness closes the code server, the runtime stops and calls still in flight end with the process. A journal write is one SQLite transaction, so it is recorded or not, and the agent sees no reply, as for any lost reply. The next `code` call starts a new runtime, and its reply says so with `newRuntime: true`.
 
 ## Observability
 

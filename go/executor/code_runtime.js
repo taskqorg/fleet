@@ -6,7 +6,9 @@ const readline = require('node:readline');
 const util = require('node:util');
 const { AsyncLocalStorage } = require('node:async_hooks');
 
-const out = process.stdout.write.bind(process.stdout);
+// The protocol pipe is fd 3, so fd 1 stays free for raw writes.
+const fs = require('node:fs');
+const out = (text) => fs.writeSync(3, text);
 const send = (m) => out(JSON.stringify(m) + '\n');
 const job = new AsyncLocalStorage();
 const pending = new Map();
@@ -22,15 +24,16 @@ class FleetCallError extends Error {
 
 function call(server, tool, args) {
   const id = nextId++;
+  const owner = job.getStore() ?? null;
   return new Promise((resolve, reject) => {
     let line;
     try {
-      line = JSON.stringify({ type: 'call', job: job.getStore() ?? null, id, server, tool, args: args ?? {} });
+      line = JSON.stringify({ type: 'call', job: owner, id, server, tool, args: args ?? {} });
     } catch (e) {
       const label = server.startsWith('conn:') ? server.slice(5) + '.' + tool : tool;
-      return reject(new FleetCallError({ tool: label, outcome: 'error', code: 'bad-arguments', output: String(e.message) }));
+      return reject(new FleetCallError({ tool: label, outcome: 'error', code: 'bad-arguments', output: String(e.message), job: owner }));
     }
-    pending.set(id, { resolve, reject });
+    pending.set(id, { resolve, reject, owner });
     out(line + '\n');
   });
 }
@@ -62,8 +65,10 @@ process.stdout.write = (chunk, encoding, callback) => {
   return true;
 };
 // An unawaited rejection or a throw in a timer is reported, not fatal: the runtime, its other jobs and `state` survive.
-process.on('unhandledRejection', (e) => print('Unhandled rejection:', e));
-process.on('uncaughtException', (e) => print('Uncaught exception:', e));
+// The report goes to the job that made the failed call (FleetCallError carries it), else to the job in context.
+const report = (what, e) => send({ type: 'print', job: e?.job ?? job.getStore() ?? null, text: util.format(what, e) + '\n' });
+process.on('unhandledRejection', (e) => report('Unhandled rejection:', e));
+process.on('uncaughtException', (e) => report('Uncaught exception:', e));
 
 function plain(v) {
   if (v === undefined) return null;
@@ -85,7 +90,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (m.type === 'reply') {
     const p = pending.get(m.id);
     pending.delete(m.id);
-    if (p) m.ok ? p.resolve(m.value) : p.reject(new FleetCallError(m.error));
+    if (p) m.ok ? p.resolve(m.value) : p.reject(new FleetCallError({ ...m.error, job: p.owner }));
     return;
   }
   if (m.type !== 'run') return;

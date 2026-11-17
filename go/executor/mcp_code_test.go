@@ -84,10 +84,11 @@ func TestCodeModeStatePersists(t *testing.T) {
 	if list, _ := dec(c.out.Text()); !strings.Contains(jStr(jArr(list, "result", "tools")[0], "description"), "No file reads") {
 		t.Fatalf("a runtime without read roots promises reads: %v", list)
 	}
-	if r, bad := c.code(`state.n = 41; print("set", state.n); return {ok: true}`); bad || r["output"] != "set 41\n" || jAt(r, "value", "ok") != true {
+	// The first call starts the runtime and says so: `state` is empty, whatever an earlier execution stored.
+	if r, bad := c.code(`state.n = 41; print("set", state.n); require("node:fs").writeSync(1, "raw"); return {ok: true}`); bad || r["output"] != "set 41\n" || jAt(r, "value", "ok") != true || r["newRuntime"] != true {
 		t.Fatalf("first call: %v %v", bad, r)
 	}
-	if r, bad := c.code(`return state.n + 1`); bad || enc(r["value"]) != "42" {
+	if r, bad := c.code(`return state.n + 1`); bad || enc(r["value"]) != "42" || r["newRuntime"] != nil {
 		t.Fatalf("state lost: %v %v", bad, r)
 	}
 	// A plain declaration lives only inside its call.
@@ -165,6 +166,10 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 		t.Fatalf("tools: %v", r["value"])
 	}
 
+	// An unawaited failed call is reported in its job's output.
+	if r, _ := c.code(`conn.web.broken({}); await new Promise(r => setTimeout(r, 100)); return 1`); !strings.Contains(jStr(r, "output"), "Unhandled rejection") {
+		t.Fatalf("unhandled rejection not in the job's output: %v", r)
+	}
 	// A call started just before the return is part of the job: the final reply carries its outcome.
 	if r, _ := c.code(`conn.web.search({}); return 1`); len(jArr(r, "calls")) != 1 {
 		t.Fatalf("unawaited call before return: %v", r)
@@ -234,7 +239,7 @@ func TestCodeModeReset(t *testing.T) {
 	if r, bad := c.call("poll", M{"jobId": id, "waitSeconds": 5}); !bad || !strings.HasPrefix(jStr(r, "error", "message"), "runtime-exited") {
 		t.Fatalf("spun job: %v", r)
 	}
-	if r, bad := c.code(`return state.kept ?? "gone"`); bad || r["value"] != "gone" || r["restarted"] != true {
+	if r, bad := c.code(`return state.kept ?? "gone"`); bad || r["value"] != "gone" || r["newRuntime"] != true {
 		t.Fatalf("after reset: %v", r)
 	}
 }
@@ -312,10 +317,10 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 		t.Fatalf("exit: %v %v", bad, r)
 	}
 	r, bad = c.code(`return state.kept ?? "gone"`)
-	if bad || r["value"] != "gone" || r["restarted"] != true {
+	if bad || r["value"] != "gone" || r["newRuntime"] != true {
 		t.Fatalf("restart: %v %v", bad, r)
 	}
-	if r, bad := c.code(`throw new Error("boom")`); !bad || jStr(r, "error", "message") != "boom" || r["restarted"] != nil {
+	if r, bad := c.code(`throw new Error("boom")`); !bad || jStr(r, "error", "message") != "boom" || r["newRuntime"] != nil {
 		t.Fatalf("throw: %v %v", bad, r)
 	}
 	if r, bad := c.code(`throw Object.create(null)`); !bad || jStr(r, "error", "message") != "unprintable thrown value" {
@@ -325,7 +330,7 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 	c.code(`state.n = 2; setTimeout(() => { throw new Error("late") }, 10)`)
 	r, bad = c.code(`await new Promise(r => setTimeout(r, 100)); await new Promise(r => process.stdout.write("w", r))
 		process.stdout.write("a"); process.stdout.write(new Uint8Array([98, 10])); process.stdout.write("aGk=", "base64"); return state.n`)
-	if bad || enc(r["value"]) != "2" || r["restarted"] != nil || r["output"] != "wab\nhi" {
+	if bad || enc(r["value"]) != "2" || r["newRuntime"] != nil || r["output"] != "wab\nhi" {
 		t.Fatalf("after timer throw: %v %v", bad, r)
 	}
 }

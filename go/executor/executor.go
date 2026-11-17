@@ -1085,6 +1085,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 	}
 	gatewayConns := map[string]bool{}
+	codeMode := jStr(p, "agentConfig", "codeMode")
 	var bridged []any // the granted connections with the tools their direct servers expose, for code mode
 	for _, spec := range granted {
 		conn := jStr(spec, "name")
@@ -1098,7 +1099,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 				connectionTools = append(connectionTools, "mcp__"+conn+"__"+n)
 			}
 		}
-		if jStr(p, "agentConfig", "codeMode") != "" {
+		if codeMode != "" {
 			b := jObj(jClone(spec))
 			b["tools"] = specs
 			bridged = append(bridged, b)
@@ -1110,7 +1111,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		gatewayConns[conn] = true
 	}
 	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
-	if mode := jStr(p, "agentConfig", "codeMode"); mode != "" {
+	if mode := codeMode; mode != "" {
 		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), []string{work, inputDir}); err != nil {
 			return fail(1, err.Error())
 		}
