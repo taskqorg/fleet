@@ -1037,7 +1037,9 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 	}
 	hints, err := resourceBatchHints(ctx, a, ids)
 	if err != nil {
-		return err
+		// The cohort's hints are one read of the shared pool; the caller already read them, so this failure is the
+		// pool's: the pass stalls.
+		return fmt.Errorf("%w: %w", errResourceStall, err)
 	}
 	project := hints[ids[0]]
 	if project == "" {
@@ -1189,6 +1191,9 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 			func(part []string) error { return resourceReplaceBatch(ctx, a, part) },
 			func(id string) error { return resourceReplaceAttempt(ctx, a, id, true) }); e != nil {
 			finalErr = errors.Join(finalErr, e)
+			if errors.Is(e, errResourceStall) {
+				return finalErr
+			}
 		}
 	}
 	return finalErr
@@ -1206,6 +1211,9 @@ func resourceBisectCohort(ids []string, batch func([]string) error, single func(
 	err := batch(ids)
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, errResourceStall) {
+		return err // the shared read pool failed, not a leaf: halving would only repeat the read
 	}
 	if errors.Is(err, errResourceClearing) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		var all []error
