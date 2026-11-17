@@ -291,10 +291,12 @@ func init() {
 			return contract.SearchReply{Hits: hits}, nil
 		}
 		if _, named := s.fields["project"]; !named && q.person != nil && q.agent == "" {
-			// ponytail: a failed settings read searches every project rather than failing the palette.
-			if ps, err := personSettings(q, q.person.Email); err == nil {
-				s.ignored = ps.Ignored
+			// A failed read fails the search: the operation's transaction cannot go on after a failed statement.
+			ps, err := personSettings(q, q.person.Email)
+			if err != nil {
+				return contract.SearchReply{}, err
 			}
+			s.ignored = ps.Ignored
 		}
 		for _, p := range searchProviders {
 			h, err := p(q, s, limit)

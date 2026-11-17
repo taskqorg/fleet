@@ -10,7 +10,7 @@
 * The panel, under the chip, right-aligned:
   1. Presets: the system "All projects", the person's saved presets (each with a remove cross), and Save focus preset (icon) while a focus is set.
   2. Find project (a search field) when more than 8 projects are offered.
-  3. The projects: a checkbox per project and an Ignore action (`circle-slash`, tooltip "Ignore: hide everywhere"; off for the only focused project, which would widen the lists to every project; the server refuses it too unless the same change sets the focus). Ignored projects are not listed. "No project" (`-`) is listed when the focus or a preset holds it and cannot be ignored here.
+  3. The projects: a checkbox per project and an Ignore action (`circle-slash`, tooltip "Ignore: hide everywhere"; off for the only focused project, which would widen the lists to every project; the server refuses it too unless the same change clears the focus). Ignored projects are not listed. "No project" (`-`) is listed when the focus or a preset holds it and cannot be ignored here.
   4. When any project is ignored, a folded "Ignored (n)" group; open, each row has Restore (`undo-2`).
 
 **Behaviour.**
