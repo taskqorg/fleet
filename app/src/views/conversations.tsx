@@ -6,10 +6,11 @@ import {
   EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
   StateBadge, HarnessMark, Button, Thread, Composer, DecisionBlock, SearchField, ActionMenu, DetailSection, type VirtualListHandle,
   Empty, ErrorBanner, Skeleton, OfflineMarker, harnesses, type Harness, type StateOf, states as states_,
-  writeClip, zone,
+  writeClip, zone, DropZone, agentLabel, type ComposerChip,
   keyConnection, ShellStatus, ShellActions } from '../../../packages/ui/src/index.ts';
-import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, type Ops } from '../api.ts';
+import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, type Ops } from '../api.ts';
 import { NewConversation } from './conversation-new.tsx';
+import { useAttachments } from '../uploads.ts';
 import { useDoc } from '../store.ts';
 import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/view-url/view-url.ts';
 import { nextUrl } from '../url.ts';
@@ -148,6 +149,8 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [panel, setPanel] = useState<'switch' | 'handoff' | null>(null);
   const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
   const handle = useRef<VirtualListHandle | null>(null);
+  // Files for the next message: uploaded as they are added (picker, paste, drop over the conversation).
+  const files = useAttachments({ sessionId: id });
   // The hit is scrolled to once the replaced window is on screen.
   const [jumpTo, setJumpTo] = useState<string | null>(null);
   useEffect(() => { if (jumpTo && thread.win?.blocks.some(b => b.key === jumpTo)) { handle.current?.scrollToKey(jumpTo, 'center'); setJumpTo(null); } }, [thread.win, jumpTo]);
@@ -164,7 +167,8 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const active = (s.executions ?? []).filter(running).at(-1);
   const openQs = (s.questions ?? []).filter((q: any) => (answers[q.id] ?? q).state === 'open');
   const w = thread.win;
-  const lastMessage: string | undefined = (s.messages ?? []).at(-1)?.text;
+  const last = (s.messages ?? []).at(-1), lastMessage: string | undefined = last?.text;
+  const lastFiles: string[] = (last?.attachments ?? []).map((a: any) => a.artifactId).filter(Boolean);
   return <article class="detail conversation" data-ui="detail" tabIndex={-1} aria-label="Conversation">
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
@@ -177,7 +181,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <Button label="Copy thread as markdown" icon="file-text" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => copySel(all()!)} />
       {/* Menu actions (design "Controls"): each calls the existing operation; the result shows as a new boundary in this thread. */}
       <ActionMenu label="Actions" disabledReason={off ? 'offline' : undefined} items={[
-        { label: 'Retry last message', icon: 'rotate-ccw', disabledReason: lastMessage ? undefined : 'no message yet', onClick: () => { const requestId = reqId(); run(() => writeOnce('message_send', { sessionId: id, requestId, text: lastMessage }, unknown, { signal: alive.current.signal })); } },
+        { label: 'Retry last message', icon: 'rotate-ccw', disabledReason: lastMessage || lastFiles.length ? undefined : 'no message yet', onClick: () => { const requestId = reqId(); run(() => writeOnce('message_send', { sessionId: id, requestId, text: lastMessage ?? '', ...(lastFiles.length ? { attachments: lastFiles } : {}) }, unknown, { signal: alive.current.signal })); } },
         { label: 'Switch profile or model', icon: 'sliders-horizontal', onClick: () => setPanel('switch') },
         { label: 'Hand off to another agent', icon: 'bot', onClick: () => setPanel('handoff') },
         { label: 'Fork', icon: 'git-merge', onClick: () => { const requestId = reqId(); run(async () => { const f = await writeOnce('session_fork', { sessionId: id, requestId }, unknown, { signal: alive.current.signal }); go(nextUrl(location.pathname + location.search, 'conversations', { focus: f.sessionId })); }); } },
@@ -186,8 +190,8 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     {panel && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
     <ScopedRollupBar rollup={s.resources} cost={s.cost} />
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
-    <div class="pane">
-      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks.map(b => b.kind === 'question' && answers[b.questionId] ? { ...b, state: answers[b.questionId].state, answer: answers[b.questionId].answer, answeredBy: answers[b.questionId].answeredBy ?? undefined, answeredAt: answers[b.questionId].answeredAt ? new Date(answers[b.questionId].answeredAt!).getTime() : null } : b)} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} handle={handle} onStart={thread.older} onEnd={thread.newer}
+    <div class="pane"><DropZone onFiles={files.add} disabledReason={off ? 'offline' : undefined}>
+      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks.map(b => b.kind === 'question' && answers[b.questionId] ? { ...b, state: answers[b.questionId].state, answer: answers[b.questionId].answer, answeredBy: answers[b.questionId].answeredBy ?? undefined, answeredAt: answers[b.questionId].answeredAt ? new Date(answers[b.questionId].answeredAt!).getTime() : null } : b)} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} resultSrc={r => '/api/results/' + encodeURIComponent(r)} handle={handle} onStart={thread.older} onEnd={thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
         onAnswer={(questionId, answer) => run(() => answerQuestion(questionId, answer))} onCopyFail={copyFail} onSecret={(q: string, c: string, v: string) => addRequestedKey(q, c, v, alive.current.signal)}
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}
@@ -198,18 +202,41 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive.current.signal) : undefined} />)}
       <div class="composer-bar">
         {active && <EntityCode id={active.id} what="Run" />}
-        {active && <Button label="Stop" icon="pause" disabledReason={off ? 'offline' : undefined} onClick={() => run(() => op('execution_stop', { executionId: active.id }))} />}
       </div>
       <Composer draftPersistence={s && !restored && verifiedTarget === id ? createDraftPersistence(authorizedDraftScope({ kind: 'session', id })) : undefined} disabledReason={off ? 'offline' : verifiedTarget !== id ? 'Validating conversation' : undefined} placeholder={active ? 'Steer' : 'Message'}
+        onAttach={files.add} attachments={files.items} onRemoveAttachment={files.remove} chips={composerChips(s, active, () => setPanel('switch'))}
+        onStop={active ? () => run(() => op('execution_stop', { executionId: active.id })) : undefined} stopReason={off ? 'offline' : undefined}
         onSend={async text => {
-          // One requestId per draft text until it is sent, kept next to the draft: a resend after a failure or a reload is the
-          // same write, never a second one. A definite error (nothing stored) clears it.
+          // Files still uploading finish first; a failed one fails the send and stays on its chip.
+          let attachments: string[];
+          try { attachments = await files.ready(); } catch (e: any) { setFailure({ text: `Attachment not uploaded: ${e?.message ?? e}` }); throw e; }
+          // One requestId per draft text and files until it is sent, kept next to the draft with the complete body: a resend
+          // of the same text and files after a failure or a reload is the same write, never a second one; other files make
+          // a new message (submissionKey). A definite error (nothing stored) clears it. A message with files is queued
+          // while the agent runs (its files are staged before a turn), so it is never a steer.
           const scope = authorizedDraftScope({ kind: 'session', id });
-          const request = await prepareSending(scope, 'message_send', { sessionId: id, text, ...(active ? { delivery: 'steer' } : {}) });
+          const body = { sessionId: id, text, ...(attachments.length ? { attachments } : active ? { delivery: 'steer' } : {}) };
+          const request = await prepareSending(scope, 'message_send', body), key = submissionKey(body);
           setFailure(null);
-          try { await writeOnce('message_send', request, unknown, { signal: alive.current.signal }); sendingId(scope, null, text); setFailure(null); }
-          catch (e: any) { if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) { if (!unknownOutcome(e)) sendingId(scope, null, text); setFailure({ text: e.message }); } throw e; } }} /></div>
+          try { await writeOnce('message_send', request, unknown, { signal: alive.current.signal }); sendingId(scope, null, key); files.clear(attachments); setFailure(null); }
+          catch (e: any) { if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) { if (!unknownOutcome(e)) sendingId(scope, null, key); setFailure({ text: e.message }); } throw e; } }} />
+    </DropZone></div>
   </article>;
+}
+
+/**
+ * The composer's facts (controls/composer.md): the agent profile with its model and effort (a click opens Switch profile
+ * or model), and the permissions the profile grants, shown only.
+ */
+function composerChips(s: any, active: any, onSwitch: () => void): ComposerChip[] {
+  const cfg = s.agentConfig ?? {}, harness: string | null = cfg.harness ?? active?.harness ?? s.harness ?? null;
+  const mark = agentLabel(active?.model ?? cfg.model, active?.effort ?? cfg.effort);
+  const chips: ComposerChip[] = [{ harness, icon: 'bot', label: mark || cfg.id || 'Agent', tip: `${cfg.id ? `Profile ${cfg.id}` : 'No profile'} · switch profile or model`, onClick: onSwitch }];
+  const tools: string[] = Array.isArray(cfg.tools) ? cfg.tools : [];
+  const network = cfg.gitNetwork === true, mode = typeof cfg.settings?.mode === 'string' ? cfg.settings.mode : null;
+  chips.push({ icon: 'shield', label: [mode ?? 'Workspace', network ? 'network' : null].filter(Boolean).join(' · '),
+    tip: `Permissions of the profile: ${tools.length ? `tools ${tools.join(', ')}` : 'the harness tools'}${network ? ', git network' : cfg.gitNetwork === false ? ', no git network' : ', git network as the project grants'}${cfg.settings?.sandbox === false ? ', no sandbox' : ''}` });
+  return chips;
 }
 
 /**

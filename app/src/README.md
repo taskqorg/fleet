@@ -14,6 +14,7 @@
 - [`invalidation.ts`](invalidation.ts) supplies the personal-preference and mounted-project definition predicates over authoritative change metadata, retaining conservative unknown/legacy fallbacks.
 - [`lists.ts`](lists.ts), [`threads.ts`](threads.ts), [`selection.ts`](selection.ts), and [`url.ts`](url.ts) hold pure list/thread/selection logic and URL hooks.
 - [`list-page.tsx`](list-page.tsx) exports `useListPage` and `ListPagePanel`, the list-view pattern Tasks, Conversations and Delivery share: saved views and system presets, pins read by id, grouping with collapse remembered per person (`listGroups`), selection mode with bulk actions, and the row menu. A page that reads its whole list itself (Delivery) passes `local` in place of a server list kind.
+- [`uploads.ts`](uploads.ts) exports `uploadFile` (`artifact_upload_begin`, then `PUT` parts with `Content-Range`, resuming at the server's `received`) and `useAttachments`, the composer's files for one target: upload on add with progress, remove, `ready()` before a send, clear after it ([Attachments](../../docs/designs/fleet-conversations.md#attachments)).
 - [`offline.ts`](offline.ts) owns the IndexedDB read cache; [`prefs.ts`](prefs.ts) reads and patches per-person settings and turns the focus and ignored projects into the scope of lists that name no project (`scopeIds`, `withFocus`): the focus as the project filter, otherwise the ignored projects as the server-side exclusion; focus-dependent loads wait for `prefsRead`.
 - [`views`](views/README.md) exports the routed screen components.
 
@@ -30,6 +31,7 @@
 ## Side Effects
 
 - `errors.ts` sends Sentry envelopes to the same-origin tunnel `POST /api/errors` (the SDK's own fetch, outside `op()`).
+- `uploads.ts` sends same-origin `PUT /api/uploads/:id` parts with `XMLHttpRequest` (for upload progress).
 - `api.ts` sends same-origin `POST /api/ops/:name` requests; `feed.ts` opens `EventSource('/api/stream…')` and polls `changes_since` after repeated failures.
 - `offline.ts` reads, writes, and deletes IndexedDB cache entries; `prefs.ts` writes person settings through coordinator operations.
 - `main.tsx` registers `/sw.js`, changes browser history, and can redirect to Cloudflare Access logout.

@@ -17,6 +17,7 @@ import { checkSpotlight } from './spotlight.check.ts';
 import { checkShellHeader } from './shell-header.check.ts';
 import { checkConversationsList } from './conversations-list.check.ts';
 import { checkNewConversation } from './conversation-new.check.ts';
+import { checkAttachments } from './attachments.check.ts';
 
 execFileSync(process.execPath, ['--test', 'tests/ui/composer.test.ts', 'tests/ui/virtual-list.test.ts', 'tests/ui/interface-browser-failure.test.ts', 'tests/ui/interface-eventsource.test.ts', 'tests/ui/scoped-invalidation.test.ts', 'tests/ui/version.test.ts'], { stdio: 'inherit', env: { ...process.env, FLEET_CONTROL_BROWSER: '1' } });
 
@@ -322,6 +323,7 @@ try {
   if (rtt.length) time('thread_entries page round trip (median)', [...rtt].sort((x, y) => x - y)[rtt.length >> 1]);
   await checkConversationsList(b, origin, seed);
   await checkNewConversation(b, origin);
+  await checkAttachments(b, origin, seed);
   await checkProjects(b, origin, host);
   await checkProjectEditor(b, origin, host);
   await checkAccessGate(b, c, seed);

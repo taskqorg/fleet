@@ -138,12 +138,13 @@ func (v *DirectSearchRequest) Validate() error {
 type MessageSendReply = map[string]json.RawMessage
 
 type MessageSendRequest struct {
-	Delivery  *string         `json:"delivery,omitempty"`
-	RequestId *string         `json:"requestId,omitempty"`
-	SessionId *string         `json:"sessionId,omitempty"`
-	Setup     json.RawMessage `json:"setup,omitempty"`
-	Source    json.RawMessage `json:"source,omitempty"`
-	Text      *string         `json:"text,omitempty"`
+	Attachments []string        `json:"attachments,omitempty"`
+	Delivery    *string         `json:"delivery,omitempty"`
+	RequestId   *string         `json:"requestId,omitempty"`
+	SessionId   *string         `json:"sessionId,omitempty"`
+	Setup       json.RawMessage `json:"setup,omitempty"`
+	Source      json.RawMessage `json:"source,omitempty"`
+	Text        *string         `json:"text,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -638,6 +639,7 @@ func (v *SessionStartReply) Validate() error {
 type SessionStartRequest struct {
 	Access            *SessionAccess  `json:"access,omitempty"`
 	Account           *string         `json:"account,omitempty"`
+	Attachments       []string        `json:"attachments,omitempty"`
 	Branch            *bool           `json:"branch,omitempty"`
 	CallerExecutionId *string         `json:"callerExecutionId,omitempty"`
 	CallerSessionId   *string         `json:"callerSessionId,omitempty"`
@@ -788,24 +790,30 @@ func (v *SessionsListRequest) Validate() error {
 	return nil
 }
 
-// TextBlock: role agent or operator; by: the sender of an operator message; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text.
+// TextBlock: role agent or operator; by: the sender of an operator message; attachments: the files an operator message carried; stream open or cut-off while a delta is the newest text; harness, model and effort mark agent text.
 type TextBlock struct {
-	At          *int64  `json:"at,omitempty"`
-	By          *string `json:"by,omitempty"`
-	Effort      *string `json:"effort,omitempty"`
-	ExecutionId *string `json:"executionId,omitempty"`
-	Harness     *string `json:"harness,omitempty"`
-	Key         string  `json:"key"`
-	Kind        string  `json:"kind"`
-	Markdown    string  `json:"markdown"`
-	Model       *string `json:"model,omitempty"`
-	Plain       *string `json:"plain,omitempty"`
-	Role        string  `json:"role"`
-	Stream      *string `json:"stream,omitempty"`
+	At          *int64           `json:"at,omitempty"`
+	Attachments []ResultArtifact `json:"attachments,omitempty"`
+	By          *string          `json:"by,omitempty"`
+	Effort      *string          `json:"effort,omitempty"`
+	ExecutionId *string          `json:"executionId,omitempty"`
+	Harness     *string          `json:"harness,omitempty"`
+	Key         string           `json:"key"`
+	Kind        string           `json:"kind"`
+	Markdown    string           `json:"markdown"`
+	Model       *string          `json:"model,omitempty"`
+	Plain       *string          `json:"plain,omitempty"`
+	Role        string           `json:"role"`
+	Stream      *string          `json:"stream,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *TextBlock) Validate() error {
+	for i := range v.Attachments {
+		if err := Check(&v.Attachments[i], "attachments"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1141,7 +1149,7 @@ func init() {
 		"ask":                 {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"question\":{\"$comment\":\"Fresh ask text. Requires requestId; do not combine with resume.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"resume\":{\"$comment\":\"Existing question ID to read, never continuation prose. Do not combine with question or requestId.\",\"type\":\"string\"},\"taskId\":{\"$comment\":\"Fresh ask about this granted task; does not attach the PM session. Omit for a session-only question or bound-worker inference.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"changes_since":       {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).\",\"additionalProperties\":true,\"properties\":{\"cursor\":{\"type\":\"integer\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"direct_search":       {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\"}")},
-		"message_send":        {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"delivery\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"setup\":{},\"source\":{},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"message_send":        {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"delivery\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"setup\":{},\"source\":{},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"recommendation_set":  {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"methodId\"],\"type\":\"object\"}")},
 		"reply":               {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{},\"questionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_archive":     {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
@@ -1152,7 +1160,7 @@ func init() {
 		"session_presets":     {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"$comment\":\"Absent: the system presets for a conversation outside projects.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_profile":     {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"workingDirectory\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"profileId\"],\"type\":\"object\"}")},
 		"session_resume":      {Read: false, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"session_start":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"read: the agent may read and run read-only tools but not change files (StartPayload.readOnly); write: the profile's own grant.\",\"enum\":[\"read\",\"write\"],\"type\":\"string\"},\"account\":{\"type\":\"string\"},\"branch\":{\"$comment\":\"false: no session branch (a detached worktree); default true, or the preset's.\",\"type\":\"boolean\"},\"callerExecutionId\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"preset\":{\"$comment\":\"A preset id of session_presets for this project: its role or profile, access, branch and starter apply; explicit role, profileId, access and branch override it.\",\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"$comment\":\"Absent (people only): a conversation outside projects, with the system presets.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"role\":{\"type\":\"string\"},\"setup\":{},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"session_start":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"read: the agent may read and run read-only tools but not change files (StartPayload.readOnly); write: the profile's own grant.\",\"enum\":[\"read\",\"write\"],\"type\":\"string\"},\"account\":{\"type\":\"string\"},\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"branch\":{\"$comment\":\"false: no session branch (a detached worktree); default true, or the preset's.\",\"type\":\"boolean\"},\"callerExecutionId\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"preset\":{\"$comment\":\"A preset id of session_presets for this project: its role or profile, access, branch and starter apply; explicit role, profileId, access and branch override it.\",\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"$comment\":\"Absent (people only): a conversation outside projects, with the system presets.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"role\":{\"type\":\"string\"},\"setup\":{},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_task_attach": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"boundProject\":{},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_transition":  {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_unarchive":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.\",\"additionalProperties\":false,\"properties\":{\"reason\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"reason\"],\"type\":\"object\"}")},

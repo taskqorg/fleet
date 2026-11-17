@@ -170,6 +170,9 @@ func enqueue(q *Request, s doc, input, requestID string, payload, execution doc,
 		return nil, err
 	}
 	m := doc{"id": newID(), "sessionId": s["id"], "executionId": id, "requestId": requestID, "text": input, "projectId": s["projectId"], "sentBy": director(q)}
+	if at := anys(payload["attachments"]); len(at) > 0 {
+		m["attachments"], m["attachmentRequest"] = at, payload["attachmentRequest"]
+	}
 	if len(provenance) > 0 {
 		for _, k := range []string{"sentBy", "source"} {
 			if v := provenance[0][k]; v != nil {
@@ -227,9 +230,13 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	text, err := strArg(b, "text", "text", 0)
+	ids, err := attachmentArg(b)
 	if err != nil {
 		return nil, err
+	}
+	text, isText := b["text"].(string)
+	if _, given := b["text"]; given && !isText || text == "" && len(ids) == 0 {
+		return nil, fail(400, "Expected text")
 	}
 	if setup, ok := b["setup"]; ok {
 		if setup != "run" && setup != "skip" {
@@ -243,7 +250,7 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 	if sent, err := all(q, "message", doc{"sessionId": sid, "requestId": requestID}); err != nil {
 		return nil, err
 	} else if len(sent) > 0 {
-		if astr(sent[0]["text"]) != text {
+		if astr(sent[0]["text"]) != text || strings.Join(strList(sent[0]["attachmentRequest"]), ",") != strings.Join(ids, ",") {
 			return nil, fail(409, "Request identity conflict")
 		}
 		return get(q, astr(sent[0]["executionId"]), "execution")
@@ -251,10 +258,15 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 	if queued, err := all(q, "queued-message", doc{"sessionId": sid, "requestId": requestID}); err != nil {
 		return nil, err
 	} else if len(queued) > 0 {
-		if astr(queued[0]["text"]) != text {
+		if astr(queued[0]["text"]) != text || strings.Join(strList(queued[0]["attachmentRequest"]), ",") != strings.Join(ids, ",") {
 			return nil, fail(409, "Request identity conflict")
 		}
 		return queueView(q, queued[0])
+	}
+	// A repeated request answered above without checking its files again; a new one checks them now.
+	attachments, err := messageAttachments(q, ids, s)
+	if err != nil {
+		return nil, err
 	}
 	active, err := activeOf(q, sid)
 	if err != nil {
@@ -276,16 +288,20 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 		if err := refreshProfile(q, s); err != nil {
 			return nil, err
 		}
-		return enqueue(q, s, text, requestID, nil, nil, "", provenance)
+		return enqueue(q, s, text, requestID, attachmentPayload(attachments, ids), nil, "", provenance)
 	}
 	m := doc{"id": newID(), "sessionId": sid, "projectId": s["projectId"], "requestId": requestID, "text": text, "state": "queued", "createdAt": nowMs()}
+	if len(attachments) > 0 {
+		m["attachments"], m["attachmentRequest"] = attachments, ids
+	}
 	if task := astr(s["taskId"]); task != "" {
 		m["taskId"] = task
 	}
 	for k, v := range provenance {
 		m[k] = v
 	}
-	if b["delivery"] == "steer" && active != nil && astr(active["state"]) == "running" {
+	// A message with attachments is queued, never steered: its files are staged before a turn starts.
+	if b["delivery"] == "steer" && active != nil && astr(active["state"]) == "running" && len(attachments) == 0 {
 		ok, err := capable(q, "steer")
 		if err != nil {
 			return nil, err
@@ -379,7 +395,7 @@ func agentPromote(q *Request) error {
 			if err := refreshProfile(q, s); err != nil {
 				return nil, err
 			}
-			return enqueue(q, s, astr(m["text"]), astr(m["requestId"]), nil, nil, "", m)
+			return enqueue(q, s, astr(m["text"]), astr(m["requestId"]), attachmentPayload(anys(m["attachments"]), strList(m["attachmentRequest"])), nil, "", m)
 		}()
 		if err != nil {
 			if pgCode(err) != "" {
@@ -1611,8 +1627,12 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		return nil, err
 	}
 	out := doc{"sessionId": s["id"], "projectId": nilIf(pid), "taskId": nilIf(taskID), "role": nilIf(role), "profileId": profile["id"], "account": nilIf(account), "preset": nilIf(presetID), "access": access, "branch": branch, "executionId": nil, "hostId": nil}
-	if t, _ := b["text"].(string); t != "" {
-		first, err := submit(q, doc{"sessionId": s["id"], "requestId": "start:" + rid, "text": t})
+	ids, err := attachmentArg(b)
+	if err != nil {
+		return nil, err
+	}
+	if t, _ := b["text"].(string); t != "" || len(ids) > 0 {
+		first, err := submit(q, doc{"sessionId": s["id"], "requestId": "start:" + rid, "text": t, "attachments": b["attachments"]})
 		if err != nil {
 			return nil, err
 		}
@@ -1633,13 +1653,13 @@ var agentDescriptions = map[string]string{
 	"session_fork":           "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown",
 	"session_resume":         "Native resume/fork argv and captured native sessions for a session",
 	"session_handoffs":       "Context handoffs of a session with delivery state",
-	"session_start":          "Start a new session in a project: projectId, requestId, preset (an id from session_presets: its role or profile, access, branch and starter) or role (project roles map) or profileId, optional access read|write and branch true|false (override the preset; default write with a branch), account/hostId, taskId (the session works for that task of the project), text, setup run|skip. The creator is woken when it finishes",
+	"session_start":          "Start a new session in a project: projectId, requestId, preset (an id from session_presets: its role or profile, access, branch and starter) or role (project roles map) or profileId, optional access read|write and branch true|false (override the preset; default write with a branch), account/hostId, taskId (the session works for that task of the project), text, attachments (artifact ids, as message_send), setup run|skip. The creator is woken when it finishes",
 	"session_task_attach":    "Attach a taskless session to a task (sessionId, taskId): it joins the task thread; earlier turns join without copying",
 	"project_detail":         "Read a project definition and revision independently of resource statistics; requires projectId",
 	"project_resources":      "Read prepared project resource figures/version and current progress; requires projectId",
 	"project_resource_items": "Read a bounded prepared tools/costs/prices window with an epoch-bound cursor or surviving anchor; requires projectId",
 	"project_readiness":      "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status",
-	"message_send":           "Send a message; starts a turn, or queues/steers it while the session is busy",
+	"message_send":           "Send a message; starts a turn, or queues/steers it while the session is busy. attachments: artifact ids of the session's project (artifact_save output or an operator upload); the receiving agent gets them as files under FLEET_INPUT_DIR/attachments, listed in its turn. A message with attachments is queued, never steered",
 	"queue_list":             "Queued messages",
 	"ask":                    "Ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume",
 	"reply":                  "Answer a question; delivered to the asker as its next message",

@@ -545,6 +545,7 @@ The shapes are copied from t3code (`apps/server/src/mcp/toolkits/attachment/tool
     *   `question_ask({text, options?, task_id?})` and `question_answer({question_id, answer})` map to `questions.*`.
     *   Every tool applies the permission rule in §6.
 *   **Files as paths, not content.** Inputs and earlier results reach the agent as paths in the prompt, as both t3code and Orca do. The agent reads what it needs.
+*   **Message attachments.** Files a person or an agent sends with a message are artifacts too: an operator upload is a stored artifact with role `attachment` and the conversation's `session_id`; the start command stages each under `FLEET_INPUT_DIR/attachments/<execution>/` and the turn lists their paths ([Fleet Conversations, Attachments](fleet-conversations.md#attachments)).
 *   **Real schemas.** Every tool gets a real `inputSchema` instead of today's `{type:'object'}`, wherever that stub appears.
 *   **Instructions on demand.**
     *   A short `fleet` skill stub says what the output folder is and lists the tool names.

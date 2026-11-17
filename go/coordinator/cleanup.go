@@ -100,6 +100,7 @@ var referenceMap = []objectRef{
 	{table: "artifact", column: "project_id", kind: "project", mode: refOwn},
 	{table: "artifact", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "artifact", column: "task_id", kind: "task", mode: refOwn},
+	{table: "artifact", column: "session_id", kind: "session", mode: refOwn}, // a conversation takes its uploaded attachments
 	{table: "artifact", column: "previous_artifact_id", kind: "artifact", mode: refKeep},
 	{table: "artifact", column: "derived_from_artifact_id", kind: "artifact", mode: refKeep},
 	{table: "artifact", column: "legacy_id", mode: refNone},

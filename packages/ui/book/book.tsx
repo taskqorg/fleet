@@ -5,7 +5,7 @@ import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
   Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, spotlightMemory, FocusPresets, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
-  Composer, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, StartFacts, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
+  Composer, DropZone, TextRow, type ComposerAttachment, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, StartFacts, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage, type SpotlightProvider, type SpotlightItem,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
@@ -459,12 +459,28 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['text-field', 'Text field', 'text-field', () => <DraftFieldDemo />, <>Draft values stay local until the form is submitted.</>],
   ['setting-field', 'Setting field', 'setting-field', () => <SettingsDemo />, <>Click a value to edit it inline.</>],
   ['start-picker', 'Start a conversation: project, preset, start facts', 'preset-pick', () => <StartDemo />, <>/conversations/new. Focused and recent projects first, No project is one choice, search finds the rest (OR-9). A preset card says what it sets in words; the chips under the composer show the project, agent, access and branch, and access and branch flip in one click.</>],
-  ['composer', 'Composer', 'composer', () => <div class="pane"><Composer onSend={() => {}} /></div>, <>Enter sends, Shift+Enter adds a line; the draft is kept per conversation.</>],
+  ['composer', 'Composer: idle, with files, running', 'composer', () => <ComposerDemo />, <>One box: the files above the text, then + (attach), the agent profile (opens Switch profile or model), the permissions and one Send button, Stop while the agent runs and the box is empty. Enter sends, Shift+Enter adds a line; files also come by paste (screenshots, files, long text as a .txt) and by drop anywhere over the conversation. Send waits for uploads. A sent message shows its files: images as thumbnails, other files as chips; each opens in the result viewer.</>],
   ['code-editor', 'Code editor and diff text', 'code-editor', () => <div class="pane"><CodeEditor label="config/pipelines/search-basic.json" value={'{\n  "id": "search-basic",\n  "steps": [],\n  "version": 2\n}\n'} onChange={() => {}} problems={[{ path: '', message: 'Invalid pipeline: steps' }]} /><DiffText label="Draft against revision 3" text={'@@ -1,4 +1,4 @@\n {\n-  "id": "hello"\n+  "id": "search-basic"\n }'} /></div>, <>A definition's text is edited in place and kept as a draft; problems come from the coordinator and do not block typing.</>],
   ['offline-marker', 'Offline marker', 'offline-marker', () => <div class="row"><OfflineMarker state="updating" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="offline" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="signed-out" now={NOW} /></div>, <>Stored data is never shown as current (D3).</>],
   ['problem-row', 'Problem row', 'problem-row', () => <ProblemDemo />],
   ['status-states', 'Loading, empty, error, stale', 'status-states', () => <StatesDemo />],
 ];
+
+const BOOK_DOT = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGN4VqFBEmIY1TCqYfhqAAAUGoYQFRF6QAAAAABJRU5ErkJggg==';
+function ComposerDemo() {
+  const chips = [{ harness: 'claude', label: 'opus-5.5 · high', tip: 'Profile claude-worker · switch profile or model', onClick: () => {} }, { icon: 'shield' as const, label: 'Workspace', tip: 'Permissions of the profile: the harness tools, no git network' }];
+  const [files, setFiles] = useState<ComposerAttachment[]>([
+    { id: 'a', name: 'screenshot.png', size: 48_210, mediaType: 'image/png', state: 'ready', preview: BOOK_DOT },
+    { id: 'b', name: 'build-log.txt', size: 2_400_000, mediaType: 'text/plain', state: 'uploading', progress: 0.42 },
+  ]);
+  return <div class="col">
+    <div class="pane"><Composer onSend={() => {}} onAttach={() => {}} chips={chips} /></div>
+    <div class="pane"><DropZone onFiles={() => {}}><Composer onSend={() => {}} onAttach={() => {}} chips={chips} attachments={files} onRemoveAttachment={id => setFiles(f => f.filter(x => x.id !== id))} /></DropZone></div>
+    <div class="pane"><Composer placeholder="Steer" onSend={() => {}} onAttach={() => {}} chips={chips} onStop={() => {}} /></div>
+    <div class="pane"><TextRow who="operator" by="owner@fleet" markdown="Quote the word in the note and name the colour of the dot." at={NOW - 4 * 60_000} now={NOW}
+      attachments={[{ id: 'a', name: 'dot.png', size: 210, mediaType: 'image/png' }, { id: 'b', name: 'note.txt', size: 31, mediaType: 'text/plain' }]} src={() => BOOK_DOT} /></div>
+  </div>;
+}
 
 function Book() {
   return <div class="page">

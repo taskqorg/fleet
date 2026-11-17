@@ -525,15 +525,29 @@ export function AgentMark({ harness, model, effort }: Mark) {
 
 /** An operator or agent message: a head line with who wrote it and when (OR-2), then the content; copy on the right (OR-21).
  *  Copy writes the head line and the body as plain markdown and as chat-safe HTML (clip.ts, formats.md "Copy"). */
-export function TextRow({ who, markdown, mark, by, at, now, onCopyFail }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void }) {
+export function TextRow({ who, markdown, mark, by, at, now, onCopyFail, attachments, onOpen, src }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void;
+  /** The files the message carried; images show a thumbnail from src, every one opens in the result viewer. */
+  attachments?: ArtifactMeta[]; onOpen?: (id: string) => void; src?: (id: string) => string }) {
   const t = now ?? Date.now(), name = author({ role: who, by, ...mark });
   return <div class={`th-row th-text ${who}`} data-ui="thread-row">
     <div class="th-main">
       <div class="th-who">{who === 'operator' ? <span class="who" data-tip={by ?? undefined}>{name}</span> : <AgentMark {...(mark ?? {})} />}
         {at ? <Ago t={at} now={t} /> : null}</div>
-      <Markdown text={markdown} onCopyFail={onCopyFail} /></div>
-    <span class="th-svc"><Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, markdown)).catch(e => onCopyFail?.(e))} /></span>
+      {markdown && <Markdown text={markdown} onCopyFail={onCopyFail} />}
+      {attachments?.length ? <MessageFiles files={attachments} onOpen={onOpen} src={src} /> : null}</div>
+    <span class="th-svc"><Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, [markdown, ...(attachments ?? []).map(a => `Attachment: ${a.name}`)].filter(Boolean).join('\n\n'))).catch(e => onCopyFail?.(e))} /></span>
   </div>;
+}
+
+/** A message's files: an image as a fixed-size thumbnail, any other file as a chip with its name and size (controls/composer.md). */
+export function MessageFiles({ files, onOpen, src }: { files: ArtifactMeta[]; onOpen?: (id: string) => void; src?: (id: string) => string }) {
+  return <div class="msg-files" aria-label="Attachments">{files.map(a => {
+    const image = viewOf(a.mediaType) === 'image' && src;
+    return <a key={a.id} class={`att${image ? ' img' : ''}`} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.name} · ${bytes(a.size).text}`}
+      onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>
+      {image ? <img class="att-thumb" src={src!(a.id)} alt={a.name} loading="lazy" /> : <><span class="att-thumb"><Icon name="file-text" /></span><span class="att-name">{a.name}</span><span class="att-size">{bytes(a.size).text}</span></>}
+    </a>;
+  })}</div>;
 }
 
 const raw = (v: unknown) => typeof v === 'string' ? v : JSON.stringify(v, null, 1) ?? '';
@@ -602,10 +616,10 @@ export type { ThreadBlock };
  * A thread: one row per block in a measured VirtualList that follows the bottom, loads older rows upward (onStart) and
  * newer ones downward (onEnd), and jumps through `handle`. Open tool and reasoning rows are kept by key across the window.
  */
-export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, onOpenResult, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail, onSecret }: {
+export function Thread({ blocks, label, now, marked, selected, onRowClick, showSession, onOpenResult, resultSrc, handle, pending, onStart, onEnd, onStop, stopReason, onAnswer, onCopyFail, onSecret }: {
   blocks: ThreadBlock[]; label: string; now: number; marked?: string | null;
   /** Cross-message selection: rows in it are tinted; a click on a row (Shift extends) selects it, buttons and links excepted. */
-  selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; onOpenResult?: (id: string) => void; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
+  selected?: (key: string) => boolean; onRowClick?: (key: string, shift: boolean) => void; showSession?: boolean; onOpenResult?: (id: string) => void; /** The bytes URL of a result, for message image thumbnails. */ resultSrc?: (id: string) => string; handle?: { current: VirtualListHandle | null }; pending?: { count: number; onJump: () => void };
   onStart?: () => void; onEnd?: () => void; onStop?: (executionId: string) => void; stopReason?: string;
   onAnswer?: (questionId: string, answer: string) => void; onCopyFail?: (e: unknown) => void;
   /** A key request row (its options name a connection): the owner's value goes here, never to onAnswer. */
@@ -616,7 +630,7 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
   const markOf = (b: Mark): Mark => ({ harness: b.harness, model: b.model, effort: b.effort });
   const row = (b: ThreadBlock) => {
     switch (b.kind) {
-      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} />;
+      case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} attachments={b.attachments} onOpen={onOpenResult} src={resultSrc} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
       case 'question': { const conn = keyConnection(b.options); return <QuestionRow text={b.text} options={Array.isArray(b.options) ? b.options : conn ? ['decline'] : []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} onSecret={conn && onSecret ? v => onSecret(b.questionId, conn, v) : undefined} />; }
@@ -1275,19 +1289,36 @@ export const KvRow = ({ icon, label, meta, value }: { icon: IconName; label: str
 /* ---------- Composer (controls/composer.md) ---------- */
 
 export type ComposerPersistence = { key: string; read(): string; write(text: string): void; clearIfUnchanged(text: string): void };
-export type ComposerProps = { onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftPersistence?: ComposerPersistence };
+/** A file on its way to the message: uploading with progress 0..1, ready, or failed with the reason. */
+export type ComposerAttachment = { id: string; name: string; size: number; mediaType: string; state: 'uploading' | 'ready' | 'failed'; progress?: number; error?: string; preview?: string };
+/** A fact of the composer's target in its bottom row (agent profile, permissions); a click acts when onClick is given. */
+export type ComposerChip = { icon?: IconName; harness?: string | null; label: string; tip?: string; onClick?: () => void };
+export type ComposerProps = {
+  onSend: (text: string) => Promise<void> | void; disabledReason?: string; placeholder?: string; draftPersistence?: ComposerPersistence;
+  /** Files from the "+" picker or a paste (images, files, and text longer than longPaste characters as a .txt file). */
+  onAttach?: (files: File[]) => void; attachments?: ComposerAttachment[]; onRemoveAttachment?: (id: string) => void;
+  chips?: ComposerChip[];
+  /** While the agent runs: the one button of an empty composer is Stop. */
+  onStop?: () => void; stopReason?: string;
+  longPaste?: number;
+};
+/** Pasted text longer than this many characters becomes a .txt attachment (controls/composer.md). */
+export const LONG_PASTE = 4000;
 /** App-owned scoped persistence; a target change resets private input and busy state synchronously. */
 export function Composer(props: ComposerProps) { return <ScopedComposer key={props.draftPersistence?.key ?? 'memory'} {...props} />; }
-function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draftPersistence }: ComposerProps) {
+function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draftPersistence, onAttach, attachments = [], onRemoveAttachment, chips = [], onStop, stopReason, longPaste = LONG_PASTE }: ComposerProps) {
   const [text, setText] = useState(''), [busy, setBusy] = useState(false), [warning, setWarning] = useState('');
   const current = useRef({ text, key: draftPersistence?.key }); current.current = { text, key: draftPersistence?.key };
+  const picker = useRef<HTMLInputElement>(null);
   useEffect(() => { try { const value = draftPersistence?.read() ?? ''; current.current.text = value; setText(value); setWarning(''); } catch { setWarning('Draft storage unavailable; keep this page open.'); } }, [draftPersistence?.key]);
   const keep = (value: string) => { current.current.text = value; setText(value); try { draftPersistence?.write(value); } catch { setWarning('Draft storage unavailable; keep this page open.'); } };
+  const files = attachments.length > 0, failed = attachments.some(a => a.state === 'failed');
   const send = async () => {
     const original = text, value = original.trim(), adapter = draftPersistence, key = adapter?.key;
-    if (!value || busy || disabledReason) return;
+    if ((!value && !files) || busy || disabledReason || failed) return;
     setBusy(true);
     try {
+      // The app's onSend waits for uploads still running; the button stays busy until then.
       await onSend(value);
       // The captured adapter fences old generations; compare original, untrimmed input.
       adapter?.clearIfUnchanged(original);
@@ -1295,12 +1326,59 @@ function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draft
     } catch { /* caller shows send errors; authored text remains */ }
     finally { if (current.current.key === key) setBusy(false); }
   };
-  return <div class="composer" data-ui="composer">
+  const paste = (e: ClipboardEvent) => {
+    if (!onAttach || !e.clipboardData) return;
+    const pasted = [...e.clipboardData.files], t = e.clipboardData.getData('text/plain');
+    // A rich copy (spreadsheet cells, a document paragraph) carries its text and a picture of it: the text wins.
+    const picture = pasted.length > 0 && pasted.every(f => /^image\//.test(f.type)) && t.trim() !== '';
+    if (pasted.length && !picture) { e.preventDefault(); onAttach(pasted); return; }
+    if (t.length > longPaste) { e.preventDefault(); onAttach([new File([t], `pasted-${attachments.length + 1}.txt`, { type: 'text/plain' })]); }
+  };
+  const stop = !!onStop && !text.trim() && !files && !busy;
+  return <div class={`composer${disabledReason ? ' off' : ''}`} data-ui="composer">
+    {files && <div class="composer-files" role="list" aria-label="Attachments">{attachments.map(a =>
+      <span key={a.id} role="listitem" class={`att${a.state === 'failed' ? ' failed' : ''}`} data-tip={a.error ?? `${a.mediaType} · ${bytes(a.size).text}`}>
+        {a.preview && /^image\//.test(a.mediaType) ? <img class="att-thumb" src={a.preview} alt="" /> : <span class="att-thumb"><Icon name="file-text" /></span>}
+        <span class="att-name">{a.name}</span>
+        <span class="att-size">{a.state === 'uploading' ? `${Math.round((a.progress ?? 0) * 100)}%` : a.state === 'failed' ? 'failed' : bytes(a.size).text}</span>
+        {onRemoveAttachment && <button type="button" class="att-x" aria-label={`Remove ${a.name}`} onClick={() => onRemoveAttachment(a.id)}><Icon name="x" /></button>}
+        {a.state === 'uploading' && <span class="att-bar" style={{ width: `${Math.round((a.progress ?? 0) * 100)}%` }} />}
+      </span>)}</div>}
     <textarea value={text} placeholder={placeholder} aria-label={placeholder} rows={2} disabled={!!disabledReason}
-      onInput={e => keep((e.target as HTMLTextAreaElement).value)}
-      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }} />
-    <Button label="Send" kind="primary" busy={busy} disabledReason={disabledReason} onClick={send} />
-    {warning && <span role="status">{warning}</span>}
+      onInput={e => keep((e.target as HTMLTextAreaElement).value)} onPaste={paste}
+      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void send(); } }} />
+    <div class="composer-row">
+      {onAttach && <><Button label="Attach files" icon="plus" iconOnly kind="quiet" disabledReason={disabledReason} onClick={() => picker.current?.click()} />
+        <input ref={picker} type="file" multiple hidden aria-hidden="true" tabIndex={-1} onChange={e => { const t = e.target as HTMLInputElement; if (t.files?.length) onAttach([...t.files]); t.value = ''; }} /></>}
+      {chips.map(c => {
+        const body = <>{c.harness && c.harness in harnesses ? <HarnessMark h={c.harness as Harness} /> : c.icon ? <Icon name={c.icon} /> : null}<span>{c.label}</span></>;
+        return c.onClick ? <button key={c.label} type="button" class="composer-chip" data-tip={c.tip} disabled={!!disabledReason} onClick={c.onClick}>{body}</button>
+          : <span key={c.label} class="composer-chip" data-tip={c.tip}>{body}</span>;
+      })}
+      <span class="grow" />
+      {warning && <span role="status" class="muted">{warning}</span>}
+      {/* Stop stays in reach while a draft is in the box: a quiet Stop beside Send. */}
+      {!!onStop && !stop && <Button label="Stop" icon="square" iconOnly kind="quiet" disabledReason={stopReason} onClick={onStop} />}
+      {stop ? <Button label="Stop" icon="square" iconOnly kind="primary" disabledReason={stopReason} onClick={onStop} />
+        : <Button label="Send" icon="arrow-up" iconOnly kind="primary" busy={busy} disabledReason={disabledReason ?? (failed ? 'Remove the failed file' : undefined)} onClick={send} />}
+    </div>
+  </div>;
+}
+
+/**
+ * Files dropped anywhere over its children (a conversation): a highlight covers the area while files are dragged over
+ * it and moves nothing (OR-23); a drop hands the files to onFiles.
+ */
+export function DropZone({ onFiles, label = 'Drop files to attach', disabledReason, children }: { onFiles: (files: File[]) => void; label?: string; disabledReason?: string; children: ComponentChildren }) {
+  const [over, setOver] = useState(false), depth = useRef(0);
+  const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  return <div class="drop-zone" data-ui="drop-zone"
+    onDragEnter={e => { if (!hasFiles(e) || disabledReason) return; e.preventDefault(); depth.current++; setOver(true); }}
+    onDragOver={e => { if (!hasFiles(e) || disabledReason) return; e.preventDefault(); e.dataTransfer!.dropEffect = 'copy'; }}
+    onDragLeave={e => { if (!hasFiles(e)) return; depth.current = Math.max(0, depth.current - 1); if (!depth.current) setOver(false); }}
+    onDrop={e => { if (!hasFiles(e) || disabledReason) return; e.preventDefault(); depth.current = 0; setOver(false); const f = [...(e.dataTransfer?.files ?? [])]; if (f.length) onFiles(f); }}>
+    {children}
+    {over && <div class="drop-over" aria-hidden="true"><Icon name="paperclip" /><span>{label}</span></div>}
   </div>;
 }
 

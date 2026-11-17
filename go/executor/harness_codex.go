@@ -257,8 +257,11 @@ func (s *codexSession) config() any {
 }
 
 func (s *codexSession) turnRequest() M {
-	params := M{"threadId": s.thread, "model": s.profile["model"], "effort": s.profile["effort"],
-		"input": []any{M{"type": "text", "text": s.profile["text"], "text_elements": []any{}}}}
+	input := []any{M{"type": "text", "text": s.profile["text"], "text_elements": []any{}}}
+	for _, path := range jArr(s.profile, "localImages") { // attached images (attachments.go)
+		input = append(input, M{"type": "localImage", "path": path})
+	}
+	params := M{"threadId": s.thread, "model": s.profile["model"], "effort": s.profile["effort"], "input": input}
 	if jIsTrue(s.profile, "readOnly") {
 		params["sandboxPolicy"] = M{"type": "readOnly"}
 	} else if has(s.profile, "writableRoots") {

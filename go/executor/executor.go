@@ -89,7 +89,7 @@ func platform() string {
 }
 
 func capabilities() []string {
-	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1"}
+	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1", "attachments"}
 	if v := ffmpegVersion(); v != "" {
 		c = append(c, "ffmpeg:"+v)
 	}
@@ -933,6 +933,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if h == nil {
 		return fail(1, "unknown harness")
 	}
+	attachTurn(p, filepath.Join(dir, "input"), name) // the same folder as FLEET_INPUT_DIR below
 	cmd, nativeInput, err := h.Command(dir, native, p)
 	if err != nil {
 		return fail(1, err.Error())
