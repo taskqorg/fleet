@@ -33,7 +33,7 @@ func write(t *testing.T, path string, data string) string {
 	return path
 }
 
-func refused(t *testing.T, path, base, why string) {
+func guardRefused(t *testing.T, path, base, why string) {
 	t.Helper()
 	f, _, err := openForUpload(path, base)
 	if err == nil {
@@ -78,10 +78,10 @@ func TestGuardRefuses(t *testing.T) {
 		filepath.Join(claudeDir, ".credentials.json"), filepath.Join(codexDir, "auth.json"),
 	} {
 		write(t, p, "secret")
-		refused(t, p, work, p)
+		guardRefused(t, p, work, p)
 	}
 	for _, p := range []string{os.Getenv("FLEET_TOKEN_FILE"), os.Getenv("FLEET_CF_ACCESS_FILE"), runFilePath, other} {
-		refused(t, p, work, p)
+		guardRefused(t, p, work, p)
 	}
 	// In a run HOME is the harness's home: the run file names the executor user's home and the executor's own stores
 	// (data folder with the journal, host secret). The default data folder and the gateway's state are covered too.
@@ -96,25 +96,25 @@ func TestGuardRefuses(t *testing.T) {
 		filepath.Join(data, "journal.sqlite"), write(t, filepath.Join(outside, "host-secret"), "s"),
 		filepath.Join(home, dataDefault), filepath.Join(home, ".local/share/fleet/gateway/state/spool/d.jsonl")} {
 		write(t, p, "secret")
-		refused(t, p, work, p)
+		guardRefused(t, p, work, p)
 	}
 	// Reached through a symlink in the work folder, a symlinked folder, or a relative path.
 	os.Symlink(filepath.Join(home, ".ssh/id_ed25519"), filepath.Join(work, "innocent.png"))
-	refused(t, "innocent.png", work, "symlink to a key")
+	guardRefused(t, "innocent.png", work, "symlink to a key")
 	os.Symlink(filepath.Join(home, ".ssh"), filepath.Join(work, "keys"))
-	refused(t, "keys/id_ed25519", work, "symlinked folder")
+	guardRefused(t, "keys/id_ed25519", work, "symlinked folder")
 	rel, _ := filepath.Rel(work, filepath.Join(home, ".netrc"))
-	refused(t, rel, work, "relative path")
+	guardRefused(t, rel, work, "relative path")
 	// A hard link to a credential, a FIFO, a directory.
 	os.Link(filepath.Join(home, ".codex/auth.json"), filepath.Join(work, "auth-copy.json"))
-	refused(t, "auth-copy.json", work, "hard link")
+	guardRefused(t, "auth-copy.json", work, "hard link")
 	syscall.Mkfifo(filepath.Join(work, "pipe"), 0o600)
-	refused(t, "pipe", work, "FIFO")
-	refused(t, outside, work, "directory")
-	refused(t, "missing.png", work, "missing")
+	guardRefused(t, "pipe", work, "FIFO")
+	guardRefused(t, outside, work, "directory")
+	guardRefused(t, "missing.png", work, "missing")
 	// A file swapped for a symlink between resolving and opening.
 	guardBeforeOpen = func() { os.Remove(ok); os.Symlink(filepath.Join(home, ".ssh/id_ed25519"), ok) }
-	refused(t, "shot.png", work, "swapped for a symlink")
+	guardRefused(t, "shot.png", work, "swapped for a symlink")
 	// Sessions and worktrees inside the executor's data folder stay uploadable; its stores do not.
 	if runtime.GOOS == "darwin" {
 		shot := write(t, filepath.Join(home, "Library/Application Support/Fleet/executor/sessions/s1/worktree/out.png"), "png")
@@ -138,13 +138,13 @@ func TestGuardRefuses(t *testing.T) {
 		os.RemoveAll(filepath.Dir(decoy))
 		os.Symlink(filepath.Join(home, ".ssh"), filepath.Dir(decoy))
 	}
-	refused(t, "sub/id_ed25519", work, "folder swapped for a symlink")
+	guardRefused(t, "sub/id_ed25519", work, "folder swapped for a symlink")
 	guardBeforeOpen = func() {}
 	// Code mode: a bridged upload reads only inside the sandbox's read roots.
 	uploadRoots = []string{filepath.Join(work, "allowed")}
 	write(t, filepath.Join(work, "allowed", "a.txt"), "a")
 	write(t, filepath.Join(work, "elsewhere.txt"), "e")
-	refused(t, "elsewhere.txt", work, "outside the code read roots")
+	guardRefused(t, "elsewhere.txt", work, "outside the code read roots")
 	if f, _, err := openForUpload("allowed/a.txt", work); err != nil {
 		t.Fatalf("inside the code read roots: %v", err)
 	} else {
@@ -155,8 +155,8 @@ func TestGuardRefuses(t *testing.T) {
 	t.Setenv("FLEET_FILES_ROOTS", work)
 	write(t, filepath.Join(outside, "notes.txt"), "n")
 	os.Symlink(filepath.Join(outside, "notes.txt"), filepath.Join(work, "notes.txt"))
-	refused(t, "notes.txt", work, "symlink out of the root")
-	refused(t, "../"+filepath.Base(outside)+"/notes.txt", work, ".. out of the root")
+	guardRefused(t, "notes.txt", work, "symlink out of the root")
+	guardRefused(t, "../"+filepath.Base(outside)+"/notes.txt", work, ".. out of the root")
 	write(t, filepath.Join(work, "in.txt"), "i")
 	if f, _, err := openForUpload("in.txt", work); err != nil {
 		t.Fatalf("inside the root: %v", err)
