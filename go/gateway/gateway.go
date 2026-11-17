@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -173,8 +174,9 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 				switch {
 				case !t.File.Valid():
 					return nil, fmt.Errorf("tool %s file mode is unknown", toolName)
-				case *t.File == contract.GatewayFileModeUpload && t.Method != "POST":
-					return nil, fmt.Errorf("upload tool %s must POST", toolName)
+				case *t.File == contract.GatewayFileModeUpload && (t.Method != "POST" || len(t.Inject) > 0):
+					// The multipart body holds the file part only: an inject field would be dropped.
+					return nil, fmt.Errorf("upload tool %s must POST and inject nothing", toolName)
 				case *t.File == contract.GatewayFileModeDownload && t.FileFrom == nil:
 					return nil, fmt.Errorf("download tool %s needs fileFrom", toolName)
 				}
@@ -506,23 +508,41 @@ type body struct {
 }
 
 // errStalled: a file body's provider stopped reading it, or did not answer within answerMs of its last byte.
-var errStalled = errors.New("provider stalled")
+// errUnsent: the timeout came before the provider read any byte of the file body, so it cannot have stored it.
+var errStalled, errUnsent = errors.New("provider stalled"), errors.New("provider read nothing")
 
-// progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end.
+// progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end. Once
+// the provider answered (end), a late read by the transport no longer touches the timer.
 type progress struct {
 	io.Reader
 	timer         *time.Timer
 	stall, answer time.Duration
+	lock          sync.Mutex
+	read, ended   bool
 }
 
 func (p *progress) Read(b []byte) (int, error) {
 	n, err := p.Reader.Read(b)
-	if err == io.EOF {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.read = true
+	switch {
+	case p.ended:
+	case err == io.EOF:
 		p.timer.Reset(p.answer)
-	} else {
+	default:
 		p.timer.Reset(p.stall)
 	}
 	return n, err
+}
+
+// end stops the send timer for good and reports whether any byte of the body was read.
+func (p *progress) end() bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.ended = true
+	p.timer.Stop()
+	return p.read
 }
 
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
@@ -538,9 +558,11 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 	timer := time.AfterFunc(wait, func() { timedOut.Store(true); cancel() })
 	defer timer.Stop()
 	var reader io.Reader
+	var file *progress
 	switch {
 	case b.open != nil:
-		reader = &progress{Reader: b.open(), timer: timer, stall: b.stall, answer: b.answer}
+		file = &progress{Reader: b.open(), timer: timer, stall: b.stall, answer: b.answer}
+		reader = file
 	case b.data != nil:
 		reader = bytes.NewReader(b.data)
 	}
@@ -562,10 +584,20 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 		request.Header.Set(k, v)
 	}
 	response, err := g.client.Do(request)
-	if err != nil {
-		if timedOut.Load() && b.open != nil {
+	if file != nil {
+		read := file.end()
+		switch {
+		case err != nil && timedOut.Load() && !read:
+			return nil, nil, errUnsent
+		case err != nil && timedOut.Load():
 			return nil, nil, errStalled
+		case err == nil:
+			// The reply body gets a timer of its own, out of reach of the file body's progress resets.
+			timer = time.AfterFunc(g.config.requestTimeout, func() { timedOut.Store(true); cancel() })
+			defer timer.Stop()
 		}
+	}
+	if err != nil {
 		if timedOut.Load() {
 			return nil, nil, context.DeadlineExceeded
 		}
@@ -613,6 +645,11 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		case err != nil && ctx.Err() != nil:
 			// The caller left: no failover, and a request already sent may still have been charged.
 			a := refusal(499, "unknown", "caller-cancelled", "the caller cancelled the call")
+			a.key = id
+			return a
+		case errors.Is(err, errUnsent):
+			// No byte of the file was read: the provider cannot have stored it.
+			a := refusal(504, "error", "provider-stalled", "the provider did not take the file in time; nothing was stored")
 			a.key = id
 			return a
 		case errors.Is(err, errStalled):
@@ -990,11 +1027,15 @@ func limits(c connection) (fileBytes, replyBytes int64, stall, answer time.Durat
 		if l.ReplyBytes != nil {
 			replyBytes = *l.ReplyBytes
 		}
+		// More milliseconds than a Duration holds (about 292 years) saturate instead of wrapping negative.
+		ms := func(v int64) time.Duration {
+			return time.Duration(min(v, int64(math.MaxInt64/time.Millisecond))) * time.Millisecond
+		}
 		if l.StallMs != nil {
-			stall = time.Duration(*l.StallMs) * time.Millisecond
+			stall = ms(*l.StallMs)
 		}
 		if l.AnswerMs != nil {
-			answer = time.Duration(*l.AnswerMs) * time.Millisecond
+			answer = ms(*l.AnswerMs)
 		}
 	}
 	return
@@ -1037,13 +1078,13 @@ func (s *scanner) write(chunk []byte) bool {
 
 var mediaTypeText = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`)
 
-// fileName: a name that stays inside the multipart header's quotes and names no path.
+// fileName: a name that stays inside the multipart header's quotes (no ", no \ escape) and names no path.
 func fileName(name string) bool {
 	if name == "" || len(name) > 255 || !utf8.ValidString(name) {
 		return false
 	}
 	for _, r := range name {
-		if r < 0x20 || r == 0x7f || r == '"' || r == '/' {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '/' || r == '\\' {
 			return false
 		}
 	}
@@ -1056,7 +1097,14 @@ func fileName(name string) bool {
 func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request) {
 	g.transfers.Add(1)
 	defer g.transfers.Add(-1)
+	control, staging := http.NewResponseController(w), false
 	refuse := func(a *answer, transfer *contract.CallTransfer) {
+		if !staging && r.Header.Get("Expect") == "" {
+			// A client that sends at once loses the reason to a reset when unread bytes meet the close: a small,
+			// short read first, as for JSON refusals. With Expect: 100-continue the body is never sent.
+			control.SetReadDeadline(time.Now().Add(refusedPatience))
+			io.CopyN(io.Discard, r.Body, refusedBytes)
+		}
 		w.Header().Set("Connection", "close")
 		g.finish(w, q, a, transfer)
 	}
@@ -1092,12 +1140,8 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	delete(args, "name")
 	delete(args, "mediaType")
 	path, ok := fillPath(q.t, args)
-	for k := range args {
-		// fillPath used the path fields; inject fields are the catalogue's. Any other argument has no place in a file call.
-		if _, injected := q.t.Inject[k]; !injected {
-			ok = false
-		}
-	}
+	// fillPath took the path fields; any other argument has no place in a file call.
+	ok = ok && len(args) == 0
 	mediaType = strings.ToLower(mediaType)
 	if mediaType == "" {
 		mediaType = "application/octet-stream"
@@ -1108,7 +1152,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		refuse(refusal(400, "error", "bad-request", "X-Fleet-Args takes the path fields, name and mediaType; X-Fleet-Sha256 is the file's lowercase hex SHA-256"), nil)
 		return
 	case nameErr != nil || !fileName(name):
-		refuse(refusal(400, "error", "bad-file-name", "the file name must be 1 to 255 bytes of UTF-8 without control characters, \" or /"), nil)
+		refuse(refusal(400, "error", "bad-file-name", "the file name must be 1 to 255 bytes of UTF-8 without control characters, \", \\ or /"), nil)
 		return
 	}
 
@@ -1121,7 +1165,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	defer os.Remove(part)
 	defer file.Close()
 	// A stop cancels the staging read at once: nothing reached the provider, so the caller may simply retry.
-	control := http.NewResponseController(w)
+	staging = true
 	var drained atomic.Bool
 	g.stagingLock.Lock()
 	g.staging[q.id] = func() { drained.Store(true); control.SetReadDeadline(time.Now()) }
@@ -1284,8 +1328,25 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 	code := ""
 	for code == "" && delivered < size {
 		timer.Reset(stall)
-		n, err := response.Body.Read(buf[:min(int64(len(buf)), size-delivered)])
+		// One byte past the file's end shows a longer body; the last bytes leave only once the provider body ends with
+		// them, since a caller that has Content-Length bytes takes the file as whole.
+		n, err := response.Body.Read(buf[:min(int64(len(buf)), size-delivered+1)])
+		longer, last := delivered+int64(n) > size, delivered+int64(n) == size
+		if last && err == nil {
+			var one [1]byte
+			for k := 0; k == 0 && err == nil; {
+				k, err = response.Body.Read(one[:])
+				longer = k > 0
+			}
+		}
 		timer.Stop() // a slow caller is not a stalled provider
+		if longer {
+			code = "provider-body"
+			break
+		}
+		if last && err != nil && err != io.EOF {
+			n = 0
+		}
 		if n > 0 {
 			control.SetWriteDeadline(time.Now().Add(stall))
 			written, werr := w.Write(buf[:n])
@@ -1317,9 +1378,11 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 			}
 		}
 	}
+	// No usage, disabled key or key problem: those rode on the started line and must not count twice.
 	done := contract.CallLine{CallId: q.id, Connection: q.connection, Tool: q.tool, Status: 200, Outcome: contract.CallOutcomeOk,
 		StartedAt: q.startedMs, Ms: time.Since(q.begun).Milliseconds(), ExecutionId: started.ExecutionId, TokenSha256: started.TokenSha256,
-		Phase: ptr(contract.CallPhaseCompleted), Transfer: &contract.CallTransfer{Direction: contract.CallTransferDirectionDownload, Bytes: delivered, MediaType: mediaType, Name: name}}
+		KeyFingerprint: started.KeyFingerprint, Phase: ptr(contract.CallPhaseCompleted),
+		Transfer: &contract.CallTransfer{Direction: contract.CallTransferDirectionDownload, Bytes: delivered, MediaType: mediaType, Name: name}}
 	if code == "" {
 		sum := hex.EncodeToString(hash.Sum(nil))
 		done.Transfer.Sha256 = &sum

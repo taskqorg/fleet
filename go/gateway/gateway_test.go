@@ -726,8 +726,8 @@ type fileProvider struct {
 	fetches []string // Authorization of each blob fetch
 	other   atomic.Int32
 	// Overrides; nil keeps the default behaviour.
-	meta     func() map[string]any                   // lookup reply
-	blob     func(w http.ResponseWriter)             // the file at /blob
+	meta     func() map[string]any                    // lookup reply
+	blob     func(w http.ResponseWriter)              // the file at /blob
 	onUpload func(w http.ResponseWriter, read func()) // the upload handler: read() reads the multipart
 }
 
@@ -1077,7 +1077,7 @@ func TestJSONToFileToolRefused(t *testing.T) {
 // names over 255 bytes are refused. Risk: a crafted name adds a header or a part, or names a path.
 func TestUploadBadFileNameRefused(t *testing.T) {
 	gw, p := newFileFixture(t, nil)
-	for _, name := range []string{"", "a\rb", "a\nb", "a\x01b", `a"b`, "a/b", strings.Repeat("я", 128)} {
+	for _, name := range []string{"", "a\rb", "a\nb", "a\x01b", `a"b`, `notes\`, "a/b", strings.Repeat("я", 128)} {
 		status, v := gw.uploadBytes([]byte("x"), map[string]any{"issue": "TGT-12", "name": name})
 		expect(t, []any{status, v["error"]}, []any{400, "bad-file-name"}, fmt.Sprintf("%q", name))
 	}
@@ -1127,7 +1127,9 @@ func TestDownloadFetchCarriesNoKey(t *testing.T) {
 func TestDownloadAbsoluteURLRefused(t *testing.T) {
 	gw, p := newFileFixture(t, nil)
 	for _, link := range []string{"http://other/x", "//other/x", "blob/85-1"} {
-		p.meta = func() map[string]any { return map[string]any{"name": "a", "size": 3, "mimeType": "text/plain", "url": link} }
+		p.meta = func() map[string]any {
+			return map[string]any{"name": "a", "size": 3, "mimeType": "text/plain", "url": link}
+		}
 		response, err := gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true)
 		if err != nil {
 			t.Fatal(err)
@@ -1187,6 +1189,23 @@ func TestDownloadShortBodyAborts(t *testing.T) {
 	line := lastLine(t, gw)
 	expect(t, []any{line["phase"], line["outcome"], line["errorCode"], field(line, "transfer", "bytes"), field(line, "transfer", "sha256")},
 		[]any{"completed", "error", "download-cut", 300, nil}, "completed line")
+	// A chunked body longer than the lookup size is not this file either: the caller never gets all its bytes.
+	p.blob = func(w http.ResponseWriter) {
+		w.Write(blobBytes)
+		w.(http.Flusher).Flush()
+		time.Sleep(100 * time.Millisecond) // the file's bytes arrive alone first
+		w.Write([]byte("more"))
+	}
+	if response, err = gw.download(`{"issue":"TGT-12","attachment":"85-1"}`, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err = io.ReadAll(response.Body)
+	response.Body.Close()
+	if err == nil {
+		t.Fatalf("a longer body ended cleanly after %d bytes", len(data))
+	}
+	line = lastLine(t, gw)
+	expect(t, []any{line["outcome"], line["errorCode"], field(line, "transfer", "sha256")}, []any{"error", "provider-body", nil}, "longer body")
 }
 
 // Requirement: §9: file bytes are never redacted; the sha256 in the completed line is that of the bytes sent.
