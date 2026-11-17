@@ -1954,8 +1954,17 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	 +(SELECT count(*) FROM resource_work_scope WHERE project_id='')+(SELECT count(*) FROM resource_repair_scope WHERE project_id='')`).Scan(&left); err != nil || left != 0 {
 		t.Fatal("after migration 68", err, left)
 	}
+	// The refused lock paused the work (resourceReplaceFailed); make it due so the replace below has to consume it.
+	if _, err := env.ownerStore.pool.Exec(ctx, `SELECT set_config('fleet.project_ids','*',false); UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='`+id+`'`); err != nil {
+		t.Fatal(err)
+	}
 	if err := resourceReplace(ctx, a, id); err != nil {
 		t.Fatal("resource replace after migration 68", err)
+	}
+	if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+		return q.tx.QueryRow(ctx, "SELECT count(*) FROM resource_work WHERE execution_id=$1", id).Scan(&pending)
+	}); err != nil || pending != 0 {
+		t.Fatal("pending work after migration 68", err, pending)
 	}
 	err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
 		return exec(q, `INSERT INTO execution(id,kind,state,project_id) VALUES('empty-project','tool_run','succeeded','')`)
