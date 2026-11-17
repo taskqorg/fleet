@@ -136,12 +136,14 @@ function bucketsOf(range: Range): Bucket[] {
 }
 const q = quantile;
 const inB = (b: { start: number; end: number }) => HIST.filter(h => h.merged >= b.start && h.merged < b.end);
+// As the app: a pull request merged within a day and not installed yet is pending, not unmeasured.
+const due = (hs: Hist[]) => hs.filter(h => h.d.total !== undefined || h.merged < D0 + 5 * DAY || NOW - h.merged > DAY).length;
 /** Open to installed per bucket: P50 and P90 of the pull requests with every stage measured; none measured is "not measured", never 0. */
 function totalMark(b: Bucket): DayMark {
   const all = inB(b), xs = all.map(h => h.d.total).filter((v): v is number => v !== undefined);
   if (!all.length) return { v: null, missing: 'nothing merged' };
   if (!xs.length) return { v: null, missing: b.start < D0 + 5 * DAY ? `install times recorded from ${day(D0 + 5 * DAY)} ${hourLabel(D0 + 5 * DAY)}` : 'not installed yet' };
-  return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < all.length ? `${xs.length} of ${all.length} measured` : undefined, partial: b.today ? 'so far' : undefined };
+  return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < due(all) ? `${xs.length} of ${due(all)} measured` : undefined, partial: b.today ? 'so far' : undefined };
 }
 const mergedMark = (b: Bucket): DayMark => ({ v: inB(b).length, partial: b.today ? 'so far' : undefined });
 const STAGES: { label: string; key: 'pr_ci' | 'queue' | 'release' | 'install'; tone: SharePart['tone'] }[] = [

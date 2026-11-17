@@ -95,7 +95,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     // Installed, but its install time was not matched to its release: unmeasured, so yesterday is partly measured.
     {...pr(662, 'Merged yesterday, no install time', dayStart(1) + 15 * 3600e3, {pr_ci: 9 * min, queue: 6 * min, release: 2 * min}), installed: {coordinator: iso(dayStart(1) + 16 * 3600e3)}},
     // Merged minutes ago and still on its way: pending, never "unmeasured".
-    {...pr(663, 'Merged just now', now - 10 * min, {pr_ci: 9 * min, queue: 6 * min}), released: iso(now - 5 * min)},
+    {...pr(663, 'Merged just now', Math.max(now - 10 * min, dayStart(0) + 30e3), {pr_ci: 9 * min, queue: 6 * min}), released: iso(now)},
   ];
   const stat = (key: string, p50: number, p90: number) => ({key, n: 20, p50Ms: p50 * min, p90Ms: p90 * min});
   const base = {from: iso(dayStart(14)), until: iso(now), counts: {prs: 20, runs: 20, removals: 0, flakes: 0},
