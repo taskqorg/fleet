@@ -498,7 +498,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 	case "list":
 		req := contract.HostArtifactListRequest{HostId: c.host, ExecutionId: jStr(body, "executionId")}
 		if f, ok := body["filter"].(map[string]any); ok {
-			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(jStr(f, "executionId")), TaskId: optStr(jStr(f, "taskId")), MediaType: optStr(jStr(f, "mediaType"))}
+			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(jStr(f, "executionId")), TaskId: optStr(jStr(f, "taskId")), MediaType: optStr(jStr(f, "mediaType")), Cursor: optStr(jStr(f, "cursor"))}
 		}
 		return c.post("/api/hosts/artifacts/list", req)
 	}
