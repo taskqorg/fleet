@@ -268,7 +268,7 @@ func sideText(q *Request, kind, id string, s contract.DiffSide) (string, bool, e
 		if *s.Revision < 1 {
 			return "", false, fail(400, "revision: 1 or more")
 		}
-		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL", *s.Revision, kind, id)
+		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", *s.Revision, kind, id)
 		if err != nil || len(xs) == 0 {
 			if err == nil {
 				err = fail(404, "Unknown definition or revision")
@@ -482,7 +482,7 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 	}
 	// A live experiment names it as its pipeline, or anywhere in its variants (a method's pipelineId, a profile
 	// override) or evaluators: a JSON string equal to the id.
-	rs, err := queryRows(q, `SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND (pipeline_id=$1
+	rs, err := queryRows(q, `SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombstoned_at IS NULL AND (pipeline_id=$1
 	  OR jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text))
 	  OR jsonb_path_exists(evaluators, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text))) ORDER BY id`, r.Id)
 	if err != nil {
@@ -504,7 +504,7 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 	// An open session whose profile it is would take no further turn.
 	var sessions int64
 	if r.Kind == contract.DefinitionKindAgent {
-		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM document WHERE kind='session' AND data->'agentConfig'->>'id'=$1 AND NOT data ? 'archivedAt'", r.Id).Scan(&sessions); err != nil {
+		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM document WHERE kind='session' AND data->'agentConfig'->>'id'=$1 AND NOT data ? 'archivedAt' AND tombstoned_at IS NULL", r.Id).Scan(&sessions); err != nil {
 			return out, err
 		}
 	}
