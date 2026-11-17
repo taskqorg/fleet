@@ -163,6 +163,9 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 		}
 		p.BaseUrl = strings.TrimRight(p.BaseUrl, "/")
 		for toolName, t := range p.Tools {
+			if t.File != nil && *t.File == contract.GatewayFileModeUpload && t.Method != "POST" {
+				return nil, fmt.Errorf("upload tool %s must POST", toolName)
+			}
 			if t.Method != "GET" {
 				t.Method = "POST"
 			}
@@ -178,12 +181,12 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 				switch {
 				case !t.File.Valid():
 					return nil, fmt.Errorf("tool %s file mode is unknown", toolName)
-				case *t.File == contract.GatewayFileModeUpload && (t.Method != "POST" || len(t.Inject) > 0 || t.Idempotent):
+				case *t.File == contract.GatewayFileModeUpload && (len(t.Inject) > 0 || t.Idempotent):
 					// The multipart body holds the file part only (an inject field would be dropped); an upload is never
 					// sent twice, so it fails over to no other key.
-					return nil, fmt.Errorf("upload tool %s must POST, inject nothing and not be idempotent", toolName)
-				case *t.File == contract.GatewayFileModeDownload && t.FileFrom == nil:
-					return nil, fmt.Errorf("download tool %s needs fileFrom", toolName)
+					return nil, fmt.Errorf("upload tool %s must inject nothing and not be idempotent", toolName)
+				case *t.File == contract.GatewayFileModeDownload && (t.FileFrom == nil || t.FileFrom.Url == "" || t.FileFrom.Bytes == ""):
+					return nil, fmt.Errorf("download tool %s needs fileFrom url and bytes", toolName)
 				}
 			}
 			if t.Unit == "" {
@@ -1236,8 +1239,12 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		return drained.Load() || g.draining.Load()
 	}
 	draining := refusal(503, "error", "draining", "the gateway is stopping; the file was not sent, try again")
-	patterns := [][]byte{[]byte(q.bearer)}
-	g.values.Range(func(_, v any) bool { patterns = append(patterns, []byte(v.(string))); return true })
+	held := func() [][]byte {
+		patterns := [][]byte{[]byte(q.bearer)}
+		g.values.Range(func(_, v any) bool { patterns = append(patterns, []byte(v.(string))); return true })
+		return patterns
+	}
+	patterns := held()
 	scan, hash := newScanner(patterns), sha256.New()
 	buf := make([]byte, copyBytes)
 	var staged int64
@@ -1281,7 +1288,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	case readErr != nil || staged != r.ContentLength:
 		refuse(refusal(400, "error", "bad-request", "the file ended before Content-Length; nothing was sent"), nil)
 		return
-	case scan.found || newScanner(patterns).write([]byte(name+"\n"+mediaType)):
+	case scan.found || newScanner(patterns).write([]byte(name+"\n"+mediaType)) || g.newKeyIn(file, patterns, held()):
 		// No transfer record: its name may be the secret.
 		refuse(refusal(422, "error", "secret-found", "the file, its name or media type contains a key value or the caller's token; nothing was sent"), nil)
 		return
@@ -1316,6 +1323,33 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		length: int64(len(head)) + staged + int64(len(tail)), contentType: "multipart/form-data; boundary=" + boundary,
 		stall: stall, answer: answerWait})
 	g.finish(w, &again, a, transfer)
+}
+
+// newKeyIn: a key value loaded while the file was staging is in the staged file.
+func (g *gateway) newKeyIn(file *os.File, before, now [][]byte) bool {
+	seen, added := map[string]bool{}, [][]byte{}
+	for _, p := range before {
+		seen[string(p)] = true
+	}
+	for _, p := range now {
+		if !seen[string(p)] {
+			added = append(added, p)
+		}
+	}
+	if len(added) == 0 {
+		return false
+	}
+	scan, buf := newScanner(added), make([]byte, copyBytes)
+	for offset := int64(0); ; {
+		n, err := file.ReadAt(buf, offset)
+		if n > 0 && scan.write(buf[:n]) {
+			return true
+		}
+		offset += int64(n)
+		if err != nil {
+			return false
+		}
+	}
 }
 
 func randomHex(n int) string {

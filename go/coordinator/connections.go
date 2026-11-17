@@ -742,7 +742,7 @@ func init() {
 			return nil, err
 		}
 		given := mapOf(b["limits"])
-		if given == nil || !keysOnly(given, "fileBytes", "replyBytes", "stallMs", "answerMs") {
+		if !keysOnly(b, "connection", "limits") || given == nil || !keysOnly(given, "fileBytes", "replyBytes", "stallMs", "answerMs") {
 			return nil, fail(400, "limits: {fileBytes, replyBytes, stallMs, answerMs}")
 		}
 		next := doc{}
