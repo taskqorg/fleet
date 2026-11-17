@@ -47,9 +47,9 @@ export async function checkNewConversation(browser: Browser, origin: string) {
       assert.deepEqual(await cards.locator('b').allTextContents(), ['Discuss', 'Design', 'Fix / build', 'Review', 'Investigate a problem']);
       assert.equal(await cards.first().getAttribute('aria-pressed'), 'true', 'the first preset is picked');
       const fact = (k: string) => facts.locator(`[data-fact=${k}]`), said = async (k: string) => (await fact(k).locator(':scope > span:last-child').textContent())?.trim();
-      assert.ok(await until(async () => await said('access') === 'Read only'), 'Discuss is read only');
+      assert.ok(await until(async () => await said('access') === 'Code read only'), 'Discuss is read only');
       assert.equal(await said('branch'), 'No branch');
-      assert.match((await cards.first().locator('.pc-f').textContent())!, /Read only · No branch/, 'the card says what it sets');
+      assert.match((await cards.first().locator('.pc-f').textContent())!, /Code read only · No branch/, 'the card says what it sets');
       assert.ok(!/coding-worker|claude-reviewer/.test((await cards.allTextContents()).join(' ')), 'cards show what a preset sets, not raw profile ids');
       await shot('new-presets');
       // A preset picks the profile: Fix / build is the coding worker (a system profile, cs maps no role), with its branch.
@@ -59,7 +59,7 @@ export async function checkNewConversation(browser: Browser, origin: string) {
       assert.equal(await said('branch'), 'fleet-test/new');
       assert.equal(await fact('branch').evaluate(e => e.tagName), 'SPAN', 'edits always get a branch: the chip does not flip');
       await fact('access').click();
-      assert.equal(await said('access'), 'Read only', 'the access chip flips');
+      assert.equal(await said('access'), 'Code read only', 'the access chip flips');
       await fact('branch').click();
       assert.equal(await said('branch'), 'No branch', 'read only may go without a branch');
       await fact('access').click();

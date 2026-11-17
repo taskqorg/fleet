@@ -18,7 +18,7 @@ const isHarness = (h: string | null | undefined): h is Harness => !!h && h in ha
 /** What a preset sets, in words: agent, access, branch, starter (never a raw id alone). */
 function factsOf(p: Preset, inProject: boolean): string[] {
   const agent = [isHarness(p.harness) ? harnesses[p.harness].label : p.harness, agentLabel(p.model, p.effort)].filter(Boolean).join(' ');
-  return [agent || p.profileId || '', p.access === 'read' ? 'Read only' : 'Can edit', inProject ? (p.branch ? 'New branch' : 'No branch') : '', p.starter ? 'Starter instruction' : ''].filter(Boolean);
+  return [agent || p.profileId || '', p.access === 'read' ? 'Code read only' : 'Can edit', inProject ? (p.branch ? 'New branch' : 'No branch') : '', p.starter ? 'Starter instruction' : ''].filter(Boolean);
 }
 
 export function NewConversation({ initialProject, initialRole, onStarted }: { initialProject: string | null; initialRole?: string | null; onStarted: (sessionId: string) => void }) {
@@ -51,7 +51,7 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   const facts: StartFact[] = chosen ? [
     { key: 'project', icon: 'folder-open', text: name, tip: project ? 'Project' : 'Outside projects' },
     { key: 'agent', harness: isHarness(chosen.harness) ? chosen.harness : undefined, icon: 'bot', text: agentLabel(chosen.model, chosen.effort) || chosen.profileId || '', tip: `Profile ${chosen.profileId}${chosen.role ? `, the project's ${chosen.role} role` : ', a system profile'}` },
-    { key: 'access', icon: 'shield', text: access === 'read' ? 'Read only' : 'Can edit', tip: access === 'read' ? 'The agent reads and runs read-only tools; click to let it edit' : 'The agent may edit files; click for read only', onClick: () => setOverride(o => ({ ...o, access: access === 'read' ? 'write' : 'read' })) },
+    { key: 'access', icon: 'shield', text: access === 'read' ? 'Code read only' : 'Can edit', tip: access === 'read' ? 'The agent reads the code and runs read-only tools; Fleet operations such as tasks and pipelines stay allowed. Click to let it edit' : 'The agent may edit files; click for code read only', onClick: () => setOverride(o => ({ ...o, access: access === 'read' ? 'write' : 'read' })) },
     ...(project ? [{ key: 'branch', icon: 'git-pull-request' as IconName, text: branch ? `${presets.data?.branchPrefix ?? 'fleet'}/new` : 'No branch',
       tip: access === 'write' ? `A new branch from ${presets.data?.base ?? 'the default branch'}; edits always get their own branch` : branch ? `A new branch from ${presets.data?.base ?? 'the default branch'}; click for no branch` : `A detached copy of ${presets.data?.base ?? 'the default branch'}, no branch; click for a new branch`,
       onClick: access === 'write' ? undefined : () => setOverride(o => ({ ...o, branch: !branch })) }] : []),

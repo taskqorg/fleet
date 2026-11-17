@@ -409,11 +409,11 @@ function DraftDemo() {
 
 // Start a conversation (controls/start-picker.md): the system presets on a project without roles, as /conversations/new shows them.
 const START_PRESETS = [
-  { id: 'discuss', name: 'Discuss', icon: 'messages-square', description: 'Talk an idea or a question through. Nothing in the repository changes.', facts: ['Codex gpt-6.1-sol · low', 'Read only', 'No branch'], access: 'read', branch: false },
+  { id: 'discuss', name: 'Discuss', icon: 'messages-square', description: 'Talk an idea or a question through. The code does not change; tasks and pipelines can be started.', facts: ['Codex gpt-6.1-sol · low', 'Code read only', 'No branch'], access: 'read', branch: false },
   { id: 'design', name: 'Design', icon: 'panels-top-left', description: 'Design or change an interface on its own branch, from the design system.', facts: ['Codex gpt-6.1-sol · medium', 'Can edit', 'New branch', 'Starter instruction'], access: 'write', branch: true },
   { id: 'fix', name: 'Fix / build', icon: 'terminal', description: 'Fix a bug or build a feature on its own branch.', facts: ['Codex gpt-6.1-sol · medium', 'Can edit', 'New branch'], access: 'write', branch: true },
-  { id: 'review', name: 'Review', icon: 'check-check', description: 'Review code or a change and report the findings. Nothing changes.', facts: ['Claude sonnet', 'Read only', 'No branch'], access: 'read', branch: false },
-  { id: 'investigate', name: 'Investigate a problem', icon: 'search', description: 'Find the cause of a problem in errors, logs and code. Nothing changes.', facts: ['Codex gpt-6.1-sol · low', 'Read only', 'No branch', 'Starter instruction'], access: 'read', branch: false },
+  { id: 'review', name: 'Review', icon: 'check-check', description: 'Review code or a change and report the findings. The code does not change.', facts: ['Claude sonnet', 'Code read only', 'No branch'], access: 'read', branch: false },
+  { id: 'investigate', name: 'Investigate a problem', icon: 'search', description: 'Find the cause of a problem in errors, logs and code. The code does not change; tasks can be written.', facts: ['Codex gpt-6.1-sol · low', 'Code read only', 'No branch', 'Starter instruction'], access: 'read', branch: false },
 ] as const;
 function StartDemo() {
   const [project, setProject] = useState<string | null>('cs'), [preset, setPreset] = useState('discuss');
@@ -426,7 +426,7 @@ function StartDemo() {
     <StartFacts facts={[
       { key: 'project', icon: 'folder-open', text: project ? 'cyprus.bz' : 'No project', tip: 'Project' },
       { key: 'agent', harness: p.id === 'review' ? 'claude' : 'codex', text: p.facts[0].replace(/^(Codex|Claude) /, ''), tip: 'Profile pm, a system profile' },
-      { key: 'access', icon: 'shield', text: access ? 'Read only' : 'Can edit', tip: access ? 'Click to let it edit' : 'Click for read only', onClick: () => setRead(!access) },
+      { key: 'access', icon: 'shield', text: access ? 'Code read only' : 'Can edit', tip: access ? 'Click to let it edit' : 'Click for read only', onClick: () => setRead(!access) },
       { key: 'branch', icon: 'git-pull-request', text: br ? 'fleet-test/new' : 'No branch', tip: br ? 'A new branch from origin/main' : 'A detached copy of origin/main', onClick: () => setBranch(!br) },
     ]} />
   </div>;

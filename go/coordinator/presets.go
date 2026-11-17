@@ -18,13 +18,13 @@ type preset struct {
 // systemPresets: the defaults Fleet ships. Each names a project role and the system profile used when the project does
 // not map that role (a project without roles, such as cs), so a conversation can always start.
 var systemPresets = []preset{
-	{ID: "discuss", Name: "Discuss", Description: "Talk an idea or a question through. Nothing in the repository changes.", Role: "pm", Profile: "pm", Access: "read"},
+	{ID: "discuss", Name: "Discuss", Description: "Talk an idea or a question through. The code does not change; tasks and pipelines can be started.", Role: "pm", Profile: "pm", Access: "read"},
 	{ID: "design", Name: "Design", Description: "Design or change an interface on its own branch, from the design system.", Role: "worker", Profile: "coding-worker", Access: "write", Branch: true,
 		Starter: "Design work. Before you change an interface, read the project's design rules: docs/design-system/owner-rules.md and the design book (docs/design-system/README.md) where the project has them. Build screens only from packages/ui and run pnpm run check:design."},
 	{ID: "fix", Name: "Fix / build", Description: "Fix a bug or build a feature on its own branch.", Role: "worker", Profile: "coding-worker", Access: "write", Branch: true},
-	{ID: "review", Name: "Review", Description: "Review code or a change and report the findings. Nothing changes.", Role: "reviewer", Profile: "claude-reviewer", Access: "read"},
-	{ID: "investigate", Name: "Investigate a problem", Description: "Find the cause of a problem in errors, logs and code. Nothing changes.", Role: "pm", Profile: "pm", Access: "read",
-		Starter: "Investigate the problem the person describes. Read the project's errors with the bugsink connection tools where the project grants them (the Bugsink projects its settings name in errors.bugsink), the execution logs and telemetry through Fleet operations, and the code. Report the cause with its evidence and a proposed fix; change nothing."},
+	{ID: "review", Name: "Review", Description: "Review code or a change and report the findings. The code does not change.", Role: "reviewer", Profile: "claude-reviewer", Access: "read"},
+	{ID: "investigate", Name: "Investigate a problem", Description: "Find the cause of a problem in errors, logs and code. The code does not change; tasks can be written.", Role: "pm", Profile: "pm", Access: "read",
+		Starter: "Investigate the problem the person describes. Read the project's errors with the bugsink connection tools where the project grants them (the Bugsink projects its settings name in errors.bugsink), the execution logs and telemetry through Fleet operations, and the code. Report the cause with its evidence and a proposed fix; do not change the code (you may write a task for the fix)."},
 }
 
 var presetKeys = []string{"id", "name", "description", "role", "profile", "access", "branch", "starter"}
