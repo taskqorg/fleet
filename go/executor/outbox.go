@@ -113,7 +113,7 @@ func classify(r *http.Response, err error) answer {
 		// A 2xx body cut while it is read (the request deadline, or a heartbeat poll cancelled when its exchange ends) is
 		// a transport failure, not an edge answer: its partial JSON is no login or app page. Other statuses keep their
 		// class; their body is only the reason text.
-		if rerr != nil {
+		if rerr != nil && !json.Valid(body) {
 			a := transportAnswer(rerr)
 			a.text = fmt.Sprintf("%d answer cut after %d bytes read: %v", s, len(body), rerr)
 			return a

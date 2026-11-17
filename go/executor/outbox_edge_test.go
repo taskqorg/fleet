@@ -48,28 +48,39 @@ func cutBodyServer(status int) (*httptest.Server, chan struct{}) {
 // never an edge answer that is not JSON (17 Nov 2026: owner-mac logged one with nearly every exchange). A cut 503 keeps
 // its status, so the flush still slows down.
 func TestCutBodyIsRetryNotEdge(t *testing.T) {
-	for _, status := range []int{200, 503} {
+	cut := func(t *testing.T, status int) answer {
 		srv, _ := cutBodyServer(status)
+		defer srv.Close()
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		r, err := postJSONCtx(ctx, outboxClient, srv.URL, "t", M{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cancel()
-		a := classify(r, err)
-		srv.Close()
-		if status == 503 {
-			if a.kind != answerRetry || a.status != 503 {
-				t.Fatalf("cut 503 body: %+v", a)
-			}
-			continue
-		}
-		if a.kind != answerRetry || a.status != 0 || !strings.Contains(a.text, "200 answer cut after") {
-			t.Fatalf("cut 200 body: %+v", a)
-		}
-		if ok, perr := pollSignal(a); ok || perr != "network" {
-			t.Fatalf("poll signal = %v %q", ok, perr)
-		}
+		return classify(r, err)
+	}
+	if a := cut(t, 200); a.kind != answerRetry || a.status != 0 || !strings.Contains(a.text, "200 answer cut after") {
+		t.Fatalf("cut 200 body: %+v", a)
+	} else if ok, perr := pollSignal(a); ok || perr != "network" {
+		t.Fatalf("poll signal = %v %q", ok, perr)
+	}
+	if a := cut(t, 503); a.kind != answerRetry || a.status != 503 {
+		t.Fatalf("cut 503 body: %+v", a)
+	}
+}
+
+// A whole JSON body whose connection then breaks (a short Content-Length) is still the coordinator's answer.
+func TestWholeBodyThenReadErrorIsOK(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, buf, _ := w.(http.Hijacker).Hijack()
+		defer conn.Close()
+		buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 40\r\n\r\n{\"ok\":true}")
+		buf.Flush()
+	}))
+	defer srv.Close()
+	if a := classify(postJSON(outboxClient, srv.URL, "t", M{})); a.kind != answerOK || string(a.value) != `{"ok":true}` {
+		t.Fatalf("got %+v", a)
 	}
 }
 
