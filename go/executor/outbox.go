@@ -367,70 +367,176 @@ func retryDone(n int64) {
 	delete(retryRows, n)
 }
 
-// flush delivers queued rows in order. A 4xx row is moved to outbox_failed and reported as an executor event; the
-// following rows keep flowing. A row with an edge answer stays queued and holds, for this flush, its route and its
-// execution. A row with a 5xx, 429 or timeout stays queued with its own backoff and holds only its execution (its route
-// when it has none): one slow row must not stop other executions' events and receipts (16 Nov 2026: a cancelled
-// project operation at the head held 435 rows and the update drain). When the coordinator as a whole cannot be reached
-// (dial refused or timed out) or answers 429 or 503, the flush stops and retries later.
-func flush(db *sql.DB, url, token, host string) error {
-	type row struct {
-		n           int64
-		route, body string
+// Outbox lanes: the rows of one execution are one lane, delivered in rowid order; a row without an execution is in
+// its route's lane. Lanes are delivered concurrently (one events request carries one execution,
+// contracts/host-protocol.schema.json HostEvents), so an agent tool, delegation or project request waits only behind
+// its own execution's earlier rows, never behind other executions' event backlog (17 Nov 2026: with 10-20 executions
+// per host their event rows interleaved, went one request each, and agent tool calls waited minutes behind them).
+type outboxRow struct {
+	n                          int64
+	route, body, execution, ln string
+}
+
+// laneBusy: lanes with a delivery in flight, by journal. A scan skips them; their newer rows go with their next run, in
+// order.
+type laneID struct {
+	db  *sql.DB
+	key string
+}
+
+var (
+	laneMu   sync.Mutex
+	laneBusy = map[laneID]bool{}
+)
+
+// outboxPass is one scan's state, shared by the lanes it started.
+type outboxPass struct {
+	db               *sql.DB
+	url, token, host string
+	mu               sync.Mutex
+	routes           map[string]bool // routes held for this pass
+	held, sent       bool
+	started          int
+	stopErr, failErr error // the coordinator as a whole cannot take rows; a journal failure
+	retryErr         error
+}
+
+func (p *outboxPass) stopped() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.stopErr != nil || p.failErr != nil
+}
+
+func (p *outboxPass) routeHeld(route string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.routes[route]
+}
+
+// startFlush scans the outbox and starts every idle lane on its own goroutine. wait returns once they finish: it sets
+// the delivery interval (heldOnly) and reports the pass's error. A 4xx row is moved to outbox_failed and reported as an
+// executor event; the lane's following rows keep flowing. A row with an edge answer stays queued and holds, for this
+// pass, its route and its lane. A row with a 5xx, 429 or timeout stays queued with its own backoff and holds only its
+// execution (its route when it has none): one slow row must not stop other executions' events and receipts (16 Nov
+// 2026: a cancelled project operation at the head held 435 rows and the update drain). When the coordinator as a whole
+// cannot be reached (dial refused or timed out) or answers 429 or 503, every lane of the pass stops and retries later.
+func startFlush(db *sql.DB, url, token, host string) (wait func() error, err error) {
+	// The lane key is read in SQL: a scan every 100 ms does not decode every queued body; a body that is not JSON is in
+	// its route's lane.
+	rs, err := db.Query(`SELECT rowid,route,body,CASE WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
+		THEN json_extract(body,'$.executionId') ELSE '' END ELSE '' END FROM outbox ORDER BY rowid`)
+	if err != nil {
+		return nil, err
 	}
-	rs, err := db.Query("SELECT rowid,route,body FROM outbox ORDER BY rowid")
+	lanes := map[string][]outboxRow{}
+	var order []string
+	for rs.Next() {
+		var r outboxRow
+		if err := rs.Scan(&r.n, &r.route, &r.body, &r.execution); err != nil {
+			rs.Close()
+			return nil, err
+		}
+		r.ln = "route " + r.route
+		if r.execution != "" {
+			r.ln = "execution " + r.execution
+		}
+		if _, ok := lanes[r.ln]; !ok {
+			order = append(order, r.ln)
+		}
+		lanes[r.ln] = append(lanes[r.ln], r)
+	}
+	err = rs.Err()
+	rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	p := &outboxPass{db: db, url: url, token: token, host: host, routes: map[string]bool{}}
+	var wg sync.WaitGroup
+	for _, key := range order {
+		k := laneID{db, key}
+		laneMu.Lock()
+		busy := laneBusy[k]
+		laneBusy[k] = true
+		laneMu.Unlock()
+		if busy {
+			continue
+		}
+		p.started++
+		wg.Add(1)
+		go func(k laneID, rows []outboxRow) {
+			defer wg.Done()
+			defer func() { laneMu.Lock(); delete(laneBusy, k); laneMu.Unlock() }()
+			if err := p.lane(rows); err != nil {
+				p.mu.Lock()
+				if p.failErr == nil {
+					p.failErr = err
+				}
+				p.mu.Unlock()
+			}
+		}(k, lanes[key])
+	}
+	return func() error {
+		wg.Wait()
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		switch {
+		case p.failErr != nil:
+			return p.failErr
+		case p.stopErr != nil:
+			heldOnly.Store(true) // the coordinator as a whole is unreachable or asks to slow down: the longer interval
+			return p.stopErr
+		}
+		if p.started > 0 || len(order) == 0 {
+			heldOnly.Store(p.held && !p.sent)
+		}
+		return p.retryErr
+	}, nil
+}
+
+// flush delivers the queued rows of every idle lane and returns when they are done.
+func flush(db *sql.DB, url, token, host string) error {
+	wait, err := startFlush(db, url, token, host)
 	if err != nil {
 		return err
 	}
-	var rows []row
-	for rs.Next() {
-		var r row
-		if err := rs.Scan(&r.n, &r.route, &r.body); err != nil {
-			rs.Close()
-			return err
-		}
-		rows = append(rows, r)
-	}
-	rs.Close()
-	routes, executions := map[string]bool{}, map[string]bool{}
-	held, sent, single := false, false, false
-	var retryErr error
+	return wait()
+}
+
+// lane delivers one lane's rows in order until they are sent or one holds the lane.
+func (p *outboxPass) lane(rows []outboxRow) error {
+	db := p.db
+	single := false
 	for i := 0; i < len(rows); {
+		if p.stopped() {
+			return nil
+		}
 		r := rows[i]
 		value := decM(r.body)
 		execution, hasExec := value["executionId"].(string)
 		hold := func() {
-			routes[r.route] = true
-			if hasExec {
-				executions[execution] = true
-			}
-			held = true
-			i++
+			p.mu.Lock()
+			p.routes[r.route] = true
+			p.held = true
+			p.mu.Unlock()
 		}
 		holdExecution := func() {
-			if hasExec && execution != "" {
-				executions[execution] = true
-			} else {
-				routes[r.route] = true
+			p.mu.Lock()
+			if !hasExec || execution == "" {
+				p.routes[r.route] = true
 			}
-			held = true
-			i++
+			p.held = true
+			p.mu.Unlock()
 		}
-		// A row behind a held execution waits without holding its route.
-		if hasExec && executions[execution] {
-			i++
-			continue
-		}
-		if routes[r.route] || edgeWait(r.route) {
+		if p.routeHeld(r.route) || edgeWait(r.route) {
 			hold()
-			continue
+			return nil
 		}
 		if retryWait(r.n) {
 			holdExecution()
-			continue
+			return nil
 		}
-		// Consecutive event rows of one execution go in one request.
-		batch := []row{r}
+		// Consecutive event rows of the lane go in one request.
+		batch := []outboxRow{r}
 		if r.route == "/api/hosts/events" && !single {
 			for i+len(batch) < len(rows) {
 				nx := rows[i+len(batch)]
@@ -443,15 +549,19 @@ func flush(db *sql.DB, url, token, host string) error {
 				batch = append(batch, nx)
 			}
 		}
-		a := sendWithClient(context.Background(), deliveryClient, url, token, r.route, r.route, value)
+		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
 		var response any
 		switch a.kind {
 		case answerOK:
 			response = a.value
 		case answerRetry:
 			if a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable {
-				heldOnly.Store(true) // the coordinator as a whole is unreachable or asks to slow down: the longer interval
-				return fmt.Errorf("%s", a.text)
+				p.mu.Lock()
+				if p.stopErr == nil {
+					p.stopErr = fmt.Errorf("%s", a.text)
+				}
+				p.mu.Unlock()
+				return nil
 			}
 			if len(batch) > 1 && a.timeout {
 				single = true // A large idempotent event batch may exceed the transport deadline; let individual rows progress.
@@ -460,14 +570,16 @@ func flush(db *sql.DB, url, token, host string) error {
 			for _, b := range batch {
 				retryFailed(b.n)
 			}
-			if retryErr == nil {
-				retryErr = fmt.Errorf("%s", a.text)
+			p.mu.Lock()
+			if p.retryErr == nil {
+				p.retryErr = fmt.Errorf("%s", a.text)
 			}
+			p.mu.Unlock()
 			holdExecution()
-			continue
+			return nil
 		case answerEdge:
 			hold()
-			continue
+			return nil
 		case answerReject:
 			reason := fmt.Sprintf("coordinator %d %s", a.status, a.text)
 			_, deleg := value["delegation"]
@@ -482,43 +594,7 @@ func flush(db *sql.DB, url, token, host string) error {
 				single = true // retry this batch row by row so only the poisoned row is set aside
 				continue
 			} else {
-				now := nowMs()
-				tx, err := db.Begin()
-				if err != nil {
-					return err
-				}
-				if _, err := tx.Exec("INSERT INTO outbox_failed(route,body,status,reason,failed_at) VALUES(?,?,?,?,?)", r.route, r.body, a.status, reason, now); err != nil {
-					tx.Rollback()
-					return err
-				}
-				if _, err := tx.Exec("DELETE FROM outbox WHERE rowid=?", r.n); err != nil {
-					tx.Rollback()
-					return err
-				}
-				own := false
-				// Only the event types are read: a batch that does not decode otherwise still counts by its types.
-				var batch struct {
-					Events []struct {
-						Type string `json:"type"`
-					} `json:"events"`
-				}
-				json.Unmarshal([]byte(enc(value)), &batch)
-				for _, e := range batch.Events {
-					if e.Type == string(contract.FleetEventTypeOutboxFailed) {
-						own = true
-					}
-				}
-				if hasExec && !own {
-					// ponytail: seq offset 1e12+rowid keeps clear of harness sequences.
-					data := contract.OutboxFailed{Route: r.route, Status: int64(a.status), Reason: reason}
-					ev := contract.HostEvent{Id: fmt.Sprintf("outbox-failed-%d", r.n), Seq: 1_000_000_000_000 + r.n, Type: string(contract.FleetEventTypeOutboxFailed),
-						Timestamp: now, Data: json.RawMessage(enc(data))}
-					if err := queue(tx, "/api/hosts/events", contract.HostEvents{HostId: host, ExecutionId: execution, Events: []contract.HostEvent{ev}}); err != nil {
-						tx.Rollback()
-						return err
-					}
-				}
-				if err := tx.Commit(); err != nil {
+				if err := p.poisoned(r, value, execution, hasExec, a, reason); err != nil {
 					return err
 				}
 				retryDone(r.n)
@@ -530,7 +606,9 @@ func flush(db *sql.DB, url, token, host string) error {
 			retryDone(b.n)
 		}
 		i += len(batch)
-		sent = true
+		p.mu.Lock()
+		p.sent = true
+		p.mu.Unlock()
 		k, hasKey := value["agentToolKey"].(string)
 		if !hasKey {
 			if d, ok := value["delegation"]; ok {
@@ -548,22 +626,72 @@ func flush(db *sql.DB, url, token, host string) error {
 			}
 		}
 	}
-	heldOnly.Store(held && !sent)
-	return retryErr
+	return nil
 }
 
-// spawnOutbox runs delivery on its own goroutine until the process exits.
+// poisoned moves a rejected row to outbox_failed and reports it as an event of its execution.
+func (p *outboxPass) poisoned(r outboxRow, value M, execution string, hasExec bool, a answer, reason string) error {
+	now := nowMs()
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec("INSERT INTO outbox_failed(route,body,status,reason,failed_at) VALUES(?,?,?,?,?)", r.route, r.body, a.status, reason, now); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM outbox WHERE rowid=?", r.n); err != nil {
+		tx.Rollback()
+		return err
+	}
+	own := false
+	// Only the event types are read: a batch that does not decode otherwise still counts by its types.
+	var batch struct {
+		Events []struct {
+			Type string `json:"type"`
+		} `json:"events"`
+	}
+	json.Unmarshal([]byte(enc(value)), &batch)
+	for _, e := range batch.Events {
+		if e.Type == string(contract.FleetEventTypeOutboxFailed) {
+			own = true
+		}
+	}
+	if hasExec && !own {
+		// ponytail: seq offset 1e12+rowid keeps clear of harness sequences.
+		data := contract.OutboxFailed{Route: r.route, Status: int64(a.status), Reason: reason}
+		ev := contract.HostEvent{Id: fmt.Sprintf("outbox-failed-%d", r.n), Seq: 1_000_000_000_000 + r.n, Type: string(contract.FleetEventTypeOutboxFailed),
+			Timestamp: now, Data: json.RawMessage(enc(data))}
+		if err := queue(tx, "/api/hosts/events", contract.HostEvents{HostId: p.host, ExecutionId: execution, Events: []contract.HostEvent{ev}}); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// spawnOutbox runs delivery on its own goroutines until the process exits: every 100 ms (2 s while every row is held or
+// the coordinator cannot take rows) a scan starts the lanes that are not delivering yet, so a new row of an idle lane
+// leaves at once while other lanes are still sending.
 func spawnOutbox(db *sql.DB, url, token, host string) {
 	go func() {
 		for {
-			if err := flush(db, url, token, host); err != nil {
-				fmt.Fprintln(os.Stderr, "executor outbox delivery failed; rows retained, retry pending")
+			wait, err := startFlush(db, url, token, host)
+			if err == nil {
+				go func() { logFlush(wait()) }()
+			} else {
+				logFlush(err)
 			}
-			d := 100 * time.Millisecond
+			time.Sleep(100 * time.Millisecond)
 			if heldOnly.Load() {
-				d = 2 * time.Second
+				time.Sleep(1900 * time.Millisecond)
 			}
-			time.Sleep(d)
 		}
 	}()
+}
+
+func logFlush(err error) {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "executor outbox delivery failed; rows retained, retry pending")
+	}
 }
