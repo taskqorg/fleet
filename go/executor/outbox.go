@@ -401,20 +401,51 @@ type laneID struct {
 var (
 	laneMu   sync.Mutex
 	laneBusy = map[laneID]bool{}
-	// stopUntil, by journal: a lane got unreachable, 429 or 503; until then every lane, of any pass, holds.
-	stopMu    sync.Mutex
-	stopUntil = map[*sql.DB]int64{}
+	// stops, by journal: a lane got unreachable, 429 or 503. Until then every lane, of any pass, holds; after it one
+	// request at a time probes the coordinator until one is answered (as the sequential flush did), so a coordinator
+	// that asks to slow down is not asked by every lane at once.
+	stopMu sync.Mutex
+	stops  = map[*sql.DB]*coordinatorStop{}
 	// lastSent: when a row was last delivered (Unix ms); the longer interval needs a quiet outbox.
 	lastSent atomic.Int64
 )
 
+type coordinatorStop struct {
+	until   int64
+	probing bool
+}
+
 func stoppedUntil(db *sql.DB) bool {
 	stopMu.Lock()
 	defer stopMu.Unlock()
-	if until, ok := stopUntil[db]; ok && nowMs() >= until {
-		delete(stopUntil, db)
+	s := stops[db]
+	return s != nil && nowMs() < s.until
+}
+
+// mayAsk: whether a lane may send now; after a stop only the one probing request.
+func mayAsk(db *sql.DB) bool {
+	stopMu.Lock()
+	defer stopMu.Unlock()
+	s := stops[db]
+	if s == nil {
+		return true
 	}
-	return nowMs() < stopUntil[db]
+	if nowMs() < s.until || s.probing {
+		return false
+	}
+	s.probing = true
+	return true
+}
+
+// answered records whether the coordinator as a whole took the request (any answer but unreachable, 429 or 503).
+func answered(db *sql.DB, took bool) {
+	stopMu.Lock()
+	defer stopMu.Unlock()
+	if took {
+		delete(stops, db)
+		return
+	}
+	stops[db] = &coordinatorStop{until: nowMs() + 2000}
 }
 
 // outboxPass is one scan's state, shared by the lanes it started.
@@ -450,7 +481,8 @@ func (p *outboxPass) routeHeld(route string) bool {
 // pass, its route and its lane. A row with a 5xx, 429 or timeout stays queued with its own backoff and holds only its
 // execution (its route when it has none): one slow row must not stop other executions' events and receipts (16 Nov
 // 2026: a cancelled project operation at the head held 435 rows and the update drain). When the coordinator as a whole
-// cannot be reached (dial refused or timed out) or answers 429 or 503, every lane of the pass stops and retries later.
+// cannot be reached (dial refused or timed out) or answers 429 or 503, every lane holds for 2 s, then one request probes
+// it (mayAsk).
 func startFlush(db *sql.DB, url, token, host string) (wait func() error, err error) {
 	// The scan reads lane keys only (in SQL; a body that is not JSON is in its route's lane) and claims idle lanes under
 	// laneMu: a lane run that ends meanwhile releases its lane after the scan, so no claimed lane holds rows its earlier
@@ -587,27 +619,21 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			return nil
 		}
 		r := rows[i]
-		hasExec := r.execution != ""
-		hold := func() {
+		// hold ends the lane; route also holds the route for this pass's other lanes.
+		hold := func(route bool) {
 			p.mu.Lock()
-			p.routes[r.route] = true
-			p.held = true
-			p.mu.Unlock()
-		}
-		holdExecution := func() {
-			p.mu.Lock()
-			if !hasExec {
+			if route {
 				p.routes[r.route] = true
 			}
 			p.held = true
 			p.mu.Unlock()
 		}
 		if p.routeHeld(r.route) || edgeWait(r.route) {
-			hold()
+			hold(true)
 			return nil
 		}
 		if retryWait(r.n) {
-			holdExecution()
+			hold(false)
 			return nil
 		}
 		if !read {
@@ -634,16 +660,19 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 				batch = append(batch, nx)
 			}
 		}
+		if !mayAsk(db) {
+			hold(false)
+			return nil
+		}
 		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
+		stop := a.kind == answerRetry && (a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)
+		answered(db, !stop)
 		var response any
 		switch a.kind {
 		case answerOK:
 			response = a.value
 		case answerRetry:
-			if a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable {
-				stopMu.Lock()
-				stopUntil[p.db] = nowMs() + 2000
-				stopMu.Unlock()
+			if stop {
 				p.mu.Lock()
 				if p.stopErr == nil {
 					p.stopErr = fmt.Errorf("%s", a.text)
@@ -663,10 +692,10 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 				p.retryErr = fmt.Errorf("%s", a.text)
 			}
 			p.mu.Unlock()
-			holdExecution()
+			hold(false)
 			return nil
 		case answerEdge:
-			hold()
+			hold(true)
 			return nil
 		case answerReject:
 			reason := fmt.Sprintf("coordinator %d %s", a.status, a.text)
