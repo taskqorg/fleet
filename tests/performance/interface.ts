@@ -243,7 +243,7 @@ export async function serve(o: { out: string; history: number; projects: number;
   if (!existsSync(resolve(pgdata, 'PG_VERSION'))) {
     mkdirSync(pgdata, { recursive: true });
     execFileSync('initdb', ['-D', pgdata, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions'], { stdio: 'ignore' });
-    appendFileSync(resolve(pgdata, 'postgresql.auto.conf'), "\nshared_preload_libraries='pg_stat_statements'"+(o.explainSlowMs?",auto_explain":"")+"\ntrack_io_timing=on\nlog_lock_waits=on\ndeadlock_timeout='100ms'\n");
+    appendFileSync(resolve(pgdata, 'postgresql.auto.conf'), "\nshared_preload_libraries='pg_stat_statements"+(o.explainSlowMs?",auto_explain":"")+"'\ntrack_io_timing=on\nlog_lock_waits=on\ndeadlock_timeout='100ms'\n");
     // Diagnostic: the actual plan of every statement slower than explainSlowMs goes to the server log. Row counts and
     // buffers are kept, per-node timing is off, so instrumentation stays cheap; the run records the setting.
     if (o.explainSlowMs) appendFileSync(resolve(pgdata, 'postgresql.auto.conf'), `auto_explain.log_min_duration=${o.explainSlowMs}\nauto_explain.log_analyze=on\nauto_explain.log_timing=off\nauto_explain.log_buffers=on\nauto_explain.log_format=json\n`);
