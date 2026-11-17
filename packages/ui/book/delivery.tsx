@@ -136,8 +136,8 @@ function bucketsOf(range: Range): Bucket[] {
 }
 const q = quantile;
 const inB = (b: { start: number; end: number }) => HIST.filter(h => h.merged >= b.start && h.merged < b.end);
-// As the app: a pull request merged within a day and not installed yet is pending, not unmeasured.
-const due = (hs: Hist[]) => hs.filter(h => h.d.total !== undefined || h.merged < D0 + 5 * DAY || NOW - h.merged > DAY).length;
+// As the app: due a measure when it has one or recording had not begun (the fixture installs everything it measures).
+const due = (hs: Hist[]) => hs.filter(h => h.d.total !== undefined || h.merged < D0 + 5 * DAY).length;
 /** Open to installed per bucket: P50 and P90 of the pull requests with every stage measured; none measured is "not measured", never 0. */
 function totalMark(b: Bucket): DayMark {
   const all = inB(b), xs = all.map(h => h.d.total).filter((v): v is number => v !== undefined);
