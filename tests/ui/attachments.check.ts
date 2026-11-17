@@ -88,11 +88,11 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     const [message] = seed.rows(`SELECT data FROM document WHERE kind='message' AND data->>'sessionId'='${S}'`);
     assert.deepEqual(message.data.attachments.map((a: any) => [a.name, a.mediaType]), [['screenshot.png', 'image/png'], ['note.txt', 'text/plain']]);
     assert.ok(await until(async () => await chips.count() === 0), 'the chips leave the composer after the send');
-    assert.equal(await box.inputValue(), '');
+    assert.equal(await composer.locator('textarea').inputValue(), '', 'the text leaves with the send');
 
     // The transcript shows the files of the message; the execution it started is running: Stop in the composer.
     const row = p.locator('.th-text.operator', { hasText: 'Quote the word' });
-    assert.ok(await until(async () => await row.locator('.msg-files .att').count() === 2), 'the sent message shows its two files');
+    assert.ok(await until(async () => await row.locator('.msg-files .att').count() === 2), 'the sent message shows its two files: ' + await p.locator('.transcript, [data-ui=detail]').first().innerText().catch(e => String(e)));
     assert.equal(await row.locator('.msg-files img.att-thumb').count(), 1, 'the image as a thumbnail');
     assert.ok(await until(async () => await row.locator('img.att-thumb').evaluate(i => (i as HTMLImageElement).naturalWidth > 0)), 'the thumbnail loads from the store');
     const execution = message.data.executionId;
@@ -112,8 +112,43 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     // A click on a file opens the result viewer.
     await row.locator('.msg-files .att', { hasText: 'note.txt' }).click();
     assert.ok(await until(async () => new URL(p.url()).pathname.startsWith('/results/')), 'a message file opens in the result viewer');
+
+    // The new-conversation page takes files the same way, and session_start carries them into the first message.
+    await p.goto(`${origin}/conversations/new?in=cs`);
+    const form = p.locator('[data-ui=detail][aria-label="New conversation"]'), fbox = form.locator('[data-ui=composer] textarea');
+    await form.locator('[data-ui=preset-pick] .preset-card').first().waitFor();
+    // The header + on the new page goes to its composer (never a dead click).
+    await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await p.locator('[data-ui=shell-header]').getByRole('button', { name: 'New conversation' }).click();
+    assert.ok(await until(async () => await fbox.evaluate(e => e === document.activeElement)), 'the header + focuses the new composer');
+    // The same composer as in a conversation: + opens the file picker, and the start facts are its chips.
+    assert.ok(await form.locator('[data-ui=composer] .composer-row [data-fact=agent]').count() === 1, 'the start facts are chips inside the composer');
+    const chooser = p.waitForEvent('filechooser');
+    await form.locator('[data-ui=composer]').getByRole('button', { name: 'Attach files' }).click();
+    await (await chooser).setFiles({ name: 'chosen.txt', mimeType: 'text/plain', buffer: Buffer.from('chosen by the picker\n') });
+    await fbox.click();
+    await p.evaluate(b64 => {
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)), dt = new DataTransfer();
+      dt.items.add(new File([bytes], 'start.png', { type: 'image/png' }));
+      document.querySelector('[aria-label="New conversation"] [data-ui="composer"] textarea')!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      const drop = new DataTransfer(); drop.items.add(new File(['start note\n'], 'start.txt', { type: 'text/plain' }));
+      const zone = document.querySelector('[aria-label="New conversation"] .drop-zone')!;
+      for (const t of ['dragenter', 'dragover', 'drop']) zone.dispatchEvent(new DragEvent(t, { dataTransfer: drop, bubbles: true, cancelable: true }));
+    }, png);
+    const fchips = form.locator('.composer-files .att');
+    assert.ok(await until(async () => await fchips.count() === 3), 'the new page takes a picked, a pasted and a dropped file');
+    assert.ok(await until(async () => (await fchips.locator('.att-size').allTextContents()).every(t => !t.endsWith('%'))), 'both stored');
+    await fbox.fill('Start with these files.');
+    await shoot('new-conversation-files');
+    await form.locator('[data-ui=composer]').getByRole('button', { name: 'Send' }).click();
+    await p.waitForURL(u => /^\/conversations\/[0-9a-f-]{36}$/.test(new URL(u).pathname), { timeout: 15000 });
+    const started = new URL(p.url()).pathname.split('/').pop()!;
+    const [first] = seed.rows(`SELECT data FROM document WHERE kind='message' AND data->>'sessionId'='${started}'`);
+    assert.deepEqual(first?.data.attachments?.map((x: any) => x.name), ['chosen.txt', 'start.png', 'start.txt'], 'session_start carries the files into the first message');
+    assert.ok(await until(async () => await p.locator('.th-text.operator .msg-files .att').count() === 3, 15000), 'the started conversation shows them');
+    await shoot('new-conversation-started');
     assert.deepEqual(errors, []);
-    console.log('ok Composer attachments: paste and drop become chips with progress, Send waits for uploads, the transcript shows the files, Stop while running');
+    console.log('ok Composer attachments: paste and drop become chips with progress, Send waits for uploads, the transcript shows the files, Stop while running; the new-conversation page starts with files');
   } finally { release(); await context.close(); }
 }
 

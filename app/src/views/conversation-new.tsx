@@ -1,14 +1,16 @@
 // Start a conversation (docs/designs/fleet-conversations.md "Start a conversation"; docs/design-system/pages/conversations.md):
 // /conversations/new in the work area. A project (focused and recent first, ignored left out; "No project" is one more
 // choice), a preset of what we are doing now (session_presets), the composer, and the facts the start will use.
-// Starting calls session_start with the preset, the access and the branch shown, the same call agents make.
+// Starting calls session_start with the preset, the access and the branch shown, the same call agents make. Files added to
+// the composer (picker, paste, drop over the page) upload into the chosen project and go with the first message.
 import { useEffect, useState } from 'preact/hooks';
 import {
-  Composer, DetailSection, ErrorBanner, ProjectPick, PresetPicker, StartFacts, Skeleton, agentLabel, harnesses,
-  type Harness, type IconName, type PickProject, type PresetOption, type StartFact } from '../../../packages/ui/src/index.ts';
-import { op, online, writeOnce, sendingId, prepareSending, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
+  Composer, DropZone, DetailSection, ErrorBanner, ProjectPick, PresetPicker, Skeleton, agentLabel, harnesses,
+  type Harness, type IconName, type PickProject, type PresetOption, type StartFact, type ComposerChip } from '../../../packages/ui/src/index.ts';
+import { op, online, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { prefs } from '../prefs.ts';
+import { useAttachments } from '../uploads.ts';
 
 type Preset = Ops['session_presets']['reply']['presets'][number];
 // The system presets' icons (OR-1); a project's own presets show their name only.
@@ -21,6 +23,9 @@ function factsOf(p: Preset, inProject: boolean): string[] {
   return [agent || p.profileId || '', p.access === 'read' ? 'Code read only' : 'Can edit', inProject ? (p.branch ? 'New branch' : 'No branch') : '', p.starter ? 'Starter instruction' : ''].filter(Boolean);
 }
 
+/** A start fact as a chip in the composer's bottom row, where a conversation shows its profile and permissions. */
+const chipOf = (f: StartFact): ComposerChip => ({ key: f.key, icon: f.icon, harness: f.harness, label: f.text, tip: f.tip, onClick: f.onClick });
+
 export function NewConversation({ initialProject, initialRole, onStarted }: { initialProject: string | null; initialRole?: string | null; onStarted: (sessionId: string) => void }) {
   const alive = useAlive();
   const projects = useDoc<any>('conversation-projects', () => op('project_list', {}), c => c.kind === 'definition');
@@ -32,6 +37,8 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [override, setOverride] = useState<{ access?: 'read' | 'write'; branch?: boolean }>({});
   const [error, setError] = useState('');
+  // Files belong to the project they upload into: another project starts without them.
+  const files = useAttachments({ projectId: project });
   // The flipped access and branch belong to one preset: any change of the effective preset resets them.
   const chosenId = (presets.data?.presets ?? []).find(p => p.id === picked[key] && !p.unavailable)?.id ?? (presets.data?.presets ?? []).find(p => !p.unavailable)?.id;
   useEffect(() => { setOverride({}); setError(''); }, [key, chosenId]);
@@ -68,23 +75,29 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   const reason = !online.value ? 'offline' : !chosen ? (presets.error ? 'Presets did not load' : presets.data ? 'No preset can start here' : 'Loading presets') : undefined;
   const send = async (text: string) => {
     const scope = authorizedDraftScope(target);
+    // Files still uploading finish first; a failed one fails the start and stays on its chip.
+    let attachments: string[];
+    try { attachments = await files.ready(); } catch (e: any) { setError(`Attachment not uploaded: ${e?.message ?? e}`); throw e; }
+    const body = { ...(project ? { projectId: project, branch } : {}), preset: chosen!.id, access, text, ...(attachments.length ? { attachments } : {}) };
+    const key = submissionKey(body);
     try {
       setError('');
-      const request = await prepareSending(scope, 'session_start', { ...(project ? { projectId: project, branch } : {}), preset: chosen!.id, access, text });
+      const request = await prepareSending(scope, 'session_start', body);
       // A retry of an unknown send keeps its original body (api.ts); never start it with other settings than shown.
       if (request.access !== access || (project && request.branch !== branch)) {
         throw Object.assign(Error('This text was sent with other settings and its outcome is unknown; change the text to start anew.'), { keep: true });
       }
       const r = await writeOnce('session_start', request, () => setError('unknown, retrying'), { signal: alive });
-      sendingId(scope, null, text);
+      sendingId(scope, null, key);
+      files.clear(attachments);
       onStarted(r.sessionId);
     } catch (e: any) {
       // A kept unknown send stays fenced: its identity is cleared only by a definite answer.
-      if (!e?.keep && !(e instanceof AccessChanged) && !unknownOutcome(e) && !(e instanceof OpError && e.message === 'aborted')) sendingId(scope, null, text);
+      if (!e?.keep && !(e instanceof AccessChanged) && !unknownOutcome(e) && !(e instanceof OpError && e.message === 'aborted')) sendingId(scope, null, key);
       setError(e.message); throw e;
     }
   };
-  return <article class="detail new-conversation" data-ui="detail" tabIndex={-1} aria-label="New conversation">
+  return <article class="detail new-conversation" data-ui="detail" tabIndex={-1} aria-label="New conversation"><DropZone onFiles={files.add} disabledReason={reason}>
     <DetailSection title="Project">
       {projects.data ? <ProjectPick projects={ordered} value={project} onChange={p => { setTouched(true); setProject(p); }} /> : <Skeleton rows={1} />}
     </DetailSection>
@@ -92,7 +105,7 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
       {presets.error ? <ErrorBanner text={`Presets did not load: ${presets.error}`} /> : presets.data ? <PresetPicker presets={options} value={chosen?.id ?? null} onChange={id => setPicked(p => ({ ...p, [key]: id }))} /> : <Skeleton rows={2} />}
     </DetailSection>
     {error && <ErrorBanner text={error} />}
-    <Composer draftPersistence={createDraftPersistence(authorizedDraftScope(page))} placeholder={project ? `Describe the work in ${name}` : 'Describe the work'} disabledReason={reason} onSend={send} />
-    <StartFacts facts={facts} />
-  </article>;
+    <Composer draftPersistence={createDraftPersistence(authorizedDraftScope(page))} placeholder={project ? `Describe the work in ${name}` : 'Describe the work'} disabledReason={reason} onSend={send}
+      onAttach={files.add} attachments={files.items} onRemoveAttachment={files.remove} chips={facts.map(chipOf)} />
+  </DropZone></article>;
 }
