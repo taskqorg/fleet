@@ -1209,7 +1209,17 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 		return nil
 	})
 	ended := time.Now()
+	var busy advisoryBusyError
+	contended := errors.As(resultErr, &busy)
+	projectBusy := contended && string(busy) == "project:"+project
 	for i, member := range members {
+		if contended {
+			member.span.End(nil)
+			if projectBusy {
+				resourceHeld.deferBusy("execution:" + ids[i])
+			}
+			continue
+		}
 		if !bodyFinished.IsZero() {
 			member.span.Set("fleet.resource.transaction_end_us", strconv.FormatInt(ended.Sub(bodyFinished).Microseconds(), 10))
 		}
@@ -1223,6 +1233,9 @@ func resourceReplaceBatch(ctx context.Context, a *App, ids []string) (resultErr 
 		if resultErr == nil {
 			resourceHeld.forgetExecution(ids[i]) // a success ends a hold on every path
 		}
+	}
+	if projectBusy {
+		return nil
 	}
 	return resultErr
 }

@@ -186,6 +186,30 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	resourceHeld.forgetExecution("pause-later")
+	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('lock-project-first','tool_run','succeeded','PAUSE'),('lock-project-second','tool_run','succeeded','PAUSE')`)
+	projectLock, err := env.ownerStore.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer projectLock.Rollback(context.Background())
+	if _, err := projectLock.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('project:PAUSE',0))"); err != nil {
+		t.Fatal(err)
+	}
+	projectCtx, cancelProject := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelProject()
+	cohort := []string{"lock-project-first", "lock-project-second"}
+	if err := resourceReplaceBatch(context.WithValue(projectCtx, resourcePassLocksKey{}, true), a, cohort); err != nil {
+		t.Fatal("project contention should defer the full cohort", err)
+	}
+	for _, id := range cohort {
+		if !slices.Contains(resourceHeld.ids("execution:", true), id) || resourceHeld.count("execution:"+id) != 0 {
+			t.Fatal("cohort member was not briefly deferred", id)
+		}
+		resourceHeld.forgetExecution(id)
+	}
+	if err := projectLock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
 	// Paused: the next passes leave it alone and keep serving new healthy work at full pace.
 	for _, id := range []string{"pause-healthy-2", "pause-healthy-3"} {
 		sql(`INSERT INTO execution(id,kind,state,project_id) VALUES($1,'tool_run','succeeded','PAUSE')`, id)

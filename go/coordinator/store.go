@@ -141,6 +141,11 @@ func acquireTxLocks(ctx context.Context, tx pgx.Tx, keys ...string) error {
 
 var errAdvisoryBusy = errors.New("advisory lock busy")
 
+type advisoryBusyError string
+
+func (e advisoryBusyError) Error() string { return fmt.Sprintf("%s: %q", errAdvisoryBusy, string(e)) }
+func (e advisoryBusyError) Unwrap() error { return errAdvisoryBusy }
+
 func tryAdvisoryLock(ctx context.Context, tx pgx.Tx, key string) (bool, error) {
 	var held bool
 	err := tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))", key).Scan(&held)
@@ -185,7 +190,7 @@ func acquireTxLocksMode(ctx context.Context, tx pgx.Tx, noWait bool, keys ...str
 				return err
 			}
 			if !held {
-				return fmt.Errorf("%w: %q", errAdvisoryBusy, k)
+				return advisoryBusyError(k)
 			}
 		} else if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", k); err != nil {
 			return err
