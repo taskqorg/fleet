@@ -12,7 +12,7 @@ import { checkProjects } from './projects.check.ts';
 import { checkProjectEditor } from './project-editor.check.ts';
 import { checkQuestionReplies } from './question-replies.check.ts';
 import { checkTaskStory } from './task-story.check.ts';
-import { checkDeliveryAvailability } from './delivery-availability.check.ts';
+import { checkDeliveryAvailability, checkDeliveryList } from './delivery-availability.check.ts';
 import { checkSpotlight } from './spotlight.check.ts';
 import { checkConversationsList } from './conversations-list.check.ts';
 import { checkPublicationInputs } from './publication-inputs.check.ts';
@@ -326,6 +326,7 @@ try {
   await checkSpotlight(b, origin);
   await checkTaskStory(b, origin);
   await checkDeliveryAvailability(b, origin);
+  await checkDeliveryList(b, origin);
   await checkPublicationInputs(b, origin);
   await checkQuestionReplies(b, origin);
 } finally { await b.close(); await close(); }

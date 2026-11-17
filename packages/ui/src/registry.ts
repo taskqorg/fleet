@@ -36,6 +36,7 @@ export const states = {
     pr_failed: { label: 'Checks failed', tone: 'danger', icon: 'octagon-x' },
     mq_wait: { label: 'Waiting in queue', tone: 'neutral', icon: 'list-ordered' },
     mq_ci: { label: 'Queue checks', tone: 'running', icon: 'git-merge' },
+    mq_failed: { label: 'Queue failed', tone: 'danger', icon: 'circle-x' },
     releasing: { label: 'Releasing', tone: 'running', icon: 'archive' },
     installing: { label: 'Installing', tone: 'running', icon: 'download' },
     installed: { label: 'Installed', tone: 'success', icon: 'circle-check' },
@@ -159,6 +160,10 @@ export const stepKinds = {
   pipeline: { label: 'Pipeline', icon: 'network' },
 } as const satisfies Record<string, { label: string; icon: IconName }>;
 export type StepKind = keyof typeof stepKinds;
+
+/** Delivery stages in attention order (the list's stage groups, Moving now): failed first, then the merge queue and
+ *  checks, then the release tail. */
+export const DELIVERY_ORDER: StateOf<'delivery'>[] = ['pr_failed', 'mq_failed', 'mq_ci', 'mq_wait', 'pr_ci', 'pr_open', 'releasing', 'installing', 'installed', 'merged'];
 
 /** Action icons used by controls. One meaning per icon. */
 export const actions = {

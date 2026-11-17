@@ -18,4 +18,4 @@
 
 **Do.** Show the numbers the chart summarises next to it (`Totals`, `CostFigures`, or summary metrics). **Don't.** Use a chart as the only place a value appears (`OR-19`), add `<svg>` elements (`OR-8`), add directional arrows (`OR-7`), or put `<button>` elements inside `role="img"`.
 
-**Used in.** [Hosts](../pages/hosts.md) Limits cards; [Projects](../pages/projects.md) resource analytics; [Delivery](../pages/delivery.md) (stacked, and one per stage card).
+**Used in.** [Hosts](../pages/hosts.md) Limits cards; [Projects](../pages/projects.md) resource analytics.

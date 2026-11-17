@@ -22,6 +22,42 @@ export function stamp(t: number, now: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() === new Date(now).getFullYear() ? '' : ' ' + d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Calendar day in the viewer's zone: "16 Nov" (the year when it is not the year of `now`). */
+export function day(t: number, now = Date.now()): string {
+  const d = new Date(t);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() === new Date(now).getFullYear() ? '' : ' ' + d.getFullYear()}`;
+}
+
+/** Start of the calendar day of `t` in the viewer's zone, `n` days later (negative: earlier). */
+export function dayStart(t: number, n = 0): number {
+  // The date moves first: in a zone whose clocks skip midnight, the day then starts at its first real hour.
+  const d = new Date(t);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + n);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** Start of the local slot of `hours` (a divisor of 24) that holds `t`, `n` slots later; local clock hours, so a daylight-saving change keeps the labels. */
+export function slotStart(t: number, hours: number, n = 0): number {
+  const d = new Date(t);
+  d.setHours(d.getHours() - d.getHours() % hours + n * hours, 0, 0, 0);
+  return d.getTime();
+}
+
+/** A link key of a local calendar day ("2026-11-16") or, with `hour`, of a local hour slot ("2026-11-16T14"): the same
+ *  calendar day or hour in every zone, and stable while the page stays open. */
+export function dateKey(t: number, hour = false): string {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}${hour ? 'T' + pad(d.getHours()) : ''}`;
+}
+
+/** Hour of the day in the viewer's zone, for buckets shorter than a day: "14:00". */
+export function hourLabel(t: number): string {
+  const d = new Date(t);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Time left until a future moment (a reset countdown): 40s, 4m, 2h, 3d, then the date; "now" when it has passed. */
 export function countdown(t: number, now: number): Formatted {
   const s = Math.floor((t - now) / 1000);

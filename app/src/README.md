@@ -13,7 +13,7 @@
 - [`feed.ts`](feed.ts) exports `startFeed`, `subscribe`, `currentCursor`, and `feedState`; [`store.ts`](store.ts) exports `useList`, `useDoc`, list loading, and live-change application.
 - [`invalidation.ts`](invalidation.ts) supplies the personal-preference and mounted-project definition predicates over authoritative change metadata, retaining conservative unknown/legacy fallbacks.
 - [`lists.ts`](lists.ts), [`threads.ts`](threads.ts), [`selection.ts`](selection.ts), and [`url.ts`](url.ts) hold pure list/thread/selection logic and URL hooks.
-- [`list-page.tsx`](list-page.tsx) exports `useListPage` and `ListPagePanel`, the list-view pattern Tasks and Conversations share: saved views and system presets, pins read by id, grouping with collapse, selection mode with bulk actions, and the row menu.
+- [`list-page.tsx`](list-page.tsx) exports `useListPage` and `ListPagePanel`, the list-view pattern Tasks, Conversations and Delivery share: saved views and system presets, pins read by id, grouping with collapse, selection mode with bulk actions, and the row menu. A page that reads its whole list itself (Delivery) passes `local` in place of a server list kind.
 - [`offline.ts`](offline.ts) owns the IndexedDB read cache; [`prefs.ts`](prefs.ts) reads and patches per-person settings.
 - [`views`](views/README.md) exports the routed screen components.
 

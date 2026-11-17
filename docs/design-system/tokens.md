@@ -24,6 +24,7 @@ Colour carries meaning only ([principles §1](principles.md#1-density-and-calm))
 | `neutral-*` | Queued, paused, cancelled, unknown. |
 | `estimated-fg` | Estimated numbers ([number](controls/number.md)). |
 | `data-1` … `data-4` | Series in fill bars and charts, in order. More series reuse `data-1..4` with a pattern, never new hues. |
+| `data-1-ink` … `data-4-ink` | Text set inside a `data-N` fill (a [share bar](controls/share-bar.md) segment): near-white or near-black by the fill's luminance, at least 4.5:1. |
 
 State to colour mapping lives in [state badge](controls/state-badge.md).
 

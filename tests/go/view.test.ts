@@ -4,7 +4,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startCoordinator} from '../harness.ts';
-import {formatView, parseView, TASK_SORTS, SESSION_SORTS, SESSION_GROUPS, type View} from '../../packages/view-url/view-url.ts';
+import {formatView, parseView, TASK_SORTS, SESSION_SORTS, SESSION_GROUPS, DELIVERY_SORTS, DELIVERY_GROUPS, type View} from '../../packages/view-url/view-url.ts';
 
 const ORIGIN = 'https://fleet.trial.test';
 
@@ -24,6 +24,8 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
       {view: 'conversations', archived: true, state: ['running'], q: 'x+y', extra: {tab: 'log', 'odd key': 'é'}},
       {view: 'conversations', group: 'state', sort: 'created'}, {view: 'conversations', group: 'project', sort: '-activity'}, {view: 'conversations', group: 'none', sort: '-created'},
       {view: 'results', state: ['stored'], project: ['p1']},
+      ...DELIVERY_GROUPS.flatMap(group => DELIVERY_SORTS.map(sort => ({view: 'delivery' as const, group, sort}))),
+      {view: 'delivery', state: ['mq_failed', 'pr_failed'], preset: 'Needs me', sel: ['taskqorg~fleet~1'], q: 'x', extra: {range: '30d', at: '2026-11-16'}},
       {view: 'hosts', focus: 'pds18'},
       {view: 'hosts', focus: '..'},
       {view: 'projects'},
@@ -43,6 +45,8 @@ test('V1 view_link gives agents the operator-app link the app itself writes, and
       [{view: {view: 'tasks', sort: 'title'}}, new RegExp('sort must be one of ' + [...TASK_SORTS].sort().join(', ') + '$')],
       [{view: {view: 'conversations', sort: 'changed'}}, new RegExp('sort must be one of ' + [...SESSION_SORTS].sort().join(', ') + '$')],
       [{view: {view: 'conversations', group: 'priority'}}, new RegExp('group must be one of ' + [...SESSION_GROUPS].sort().join(', ') + '$')],
+      [{view: {view: 'delivery', sort: 'changed'}}, new RegExp('sort must be one of ' + [...DELIVERY_SORTS].sort().join(', ') + '$')],
+      [{view: {view: 'delivery', state: ['failed']}}, /state must be a list of/],
       [{url: 'https://elsewhere.test/tasks'}, /Not a Fleet view URL/],
       [{url: '/settings'}, /Not a Fleet view URL/],
       [{}, /exactly one of view or url/],

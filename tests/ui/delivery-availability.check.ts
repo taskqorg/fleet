@@ -64,3 +64,106 @@ export async function checkDeliveryAvailability(browser: Browser, origin: string
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 }
+
+// Requirement (docs/design-system/pages/delivery.md, decisions 2026-11-17): the Delivery list is the shared list view, its
+// system presets set the stages only, Installed starts collapsed, Pace shows calendar days where a day without install
+// times is "not measured" (never zero), and a picked day filters the list to the pull requests merged that day.
+// Risk: a preset resets the person's sort, installed rows bury what moves, a missing stage reads as a fast day, or a day
+// pick shows the wrong rows.
+export async function checkDeliveryList(browser: Browser, origin: string) {
+  const context = await browser.newContext(), page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const now = Date.now(), iso = (t: number) => new Date(t).toISOString(), min = 60e3;
+  // Local midnight of today and of n days before, as the page computes them (dayStart in the viewer's zone).
+  const dayStart = (n: number) => { const d = new Date(now); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - n); return d.getTime(); };
+  const it = (number: number, title: string, stage: string, since: number, extra: Record<string, unknown> = {}) =>
+    ({projectId: 'fleet', repo: 'taskqorg/fleet', number, title, url: `https://github.com/taskqorg/fleet/pull/${number}`, stage, since: iso(since), opened: iso(since - 30 * min), ...extra});
+  const items = [
+    it(701, 'Checks failed here', 'pr_failed', now - 20 * min), it(702, 'Left the merge queue', 'mq_failed', now - 15 * min),
+    it(703, 'Checks running long', 'pr_ci', now - 50 * min), it(704, 'Waiting for review', 'pr_open', now - 3 * 3600e3),
+    it(690, 'Installed one', 'installed', now - 4 * 3600e3, {release: 'v1.1.1'}), it(691, 'Installed two', 'installed', now - 5 * 3600e3, {release: 'v1.1.1'}),
+  ];
+  // History: three days ago merged before install times were recorded (not measured); yesterday measured.
+  const pr = (number: number, title: string, merged: number, durations: Record<string, number>) =>
+    ({number, title, url: `https://github.com/taskqorg/fleet/pull/${number}`, headSha: 'h', mergeSha: 'm' + number, opened: iso(merged - 30 * min), merged: iso(merged), installed: durations.total ? {coordinator: iso(merged + 5 * min)} : {},
+      durations, queueRuns: 1, queueRemovals: 0, flakes: 0});
+  const prs = [
+    pr(650, 'Merged before installs were recorded', dayStart(3) + 12 * 3600e3, {pr_ci: 8 * min, queue: 6 * min, release: 2 * min}),
+    pr(660, 'Merged yesterday A', dayStart(1) + 11 * 3600e3, {pr_ci: 8 * min, queue: 6 * min, release: 2 * min, install: min, total: 17 * min}),
+    pr(661, 'Merged yesterday B', dayStart(1) + 13 * 3600e3, {pr_ci: 10 * min, queue: 7 * min, release: 2 * min, install: min, total: 95 * min}),
+  ];
+  const stat = (key: string, p50: number, p90: number) => ({key, n: 20, p50Ms: p50 * min, p90Ms: p90 * min});
+  const base = {from: iso(dayStart(14)), until: iso(now), counts: {prs: 20, runs: 20, removals: 0, flakes: 0},
+    stats: [stat('pr_ci', 7, 40), stat('enqueue', 1, 8), stat('queue', 6, 16), stat('release', 1, 4), stat('install', 1, 2), stat('total', 21, 74)]};
+  const settings = {ratio: 1.5, minSamples: 5, minDeltaMs: 60000, baseline: 'rolling'};
+  await page.route('**/api/ops/delivery_status', r => r.fulfill({json: {source: 'key', refreshedAt: iso(now), items, samples: [], landing: 0}}));
+  await page.route('**/api/ops/delivery_baseline', r => r.fulfill({json: {rolling: base, snapshots: [], trend: [], settings}}));
+  await page.route('**/api/ops/delivery_history', r => r.fulfill({json: {repo: 'taskqorg/fleet', backfilledFrom: iso(dayStart(20)), installsFrom: iso(dayStart(2)), prs, runs: [], releases: []}}));
+  await page.route('**/api/ops/delivery_regressions', r => r.fulfill({json: {regressions: [], settings}}));
+  try {
+    await page.goto(origin + '/delivery?sort=-opened');
+    const list = page.getByRole('grid', {name: 'Pull requests', exact: true});
+    await list.getByRole('link', {name: 'Checks failed here'}).waitFor();
+    // Installed starts collapsed: its header says 2, its rows are not shown.
+    const installed = page.locator('.group-h', {hasText: 'Installed'});
+    assert.equal(await installed.getAttribute('aria-expanded'), 'false', 'Installed is collapsed by default');
+    assert.equal(await list.getByRole('link', {name: 'Installed one'}).count(), 0, 'installed rows hidden');
+    // The red time chip: PR checks for 50m is past its 40m P90; Open has no norm.
+    assert.equal(await list.locator('.vl-row', {hasText: 'Checks running long'}).locator('.chip-age.alert').count(), 1, 'past the P90 is red');
+    assert.equal(await list.locator('.vl-row', {hasText: 'Waiting for review'}).locator('.chip-age.alert').count(), 0, 'Open has no norm');
+    // A system preset sets the stages only: the sort and grouping the person chose stay.
+    await page.getByRole('button', {name: 'Needs me', exact: true}).click();
+    await page.waitForURL(u => u.searchParams.get('state') === 'mq_failed,pr_failed');
+    assert.equal(new URL(page.url()).searchParams.get('sort'), '-opened', 'preset keeps the sort');
+    assert.equal(await list.getByRole('link').count(), 2, 'Needs me shows the failed pull requests only');
+    await page.getByRole('button', {name: 'In flight', exact: true}).click();
+    await page.waitForURL(u => (u.searchParams.get('state') ?? '').split(',').length === 8);
+    assert.equal(await list.getByRole('link', {name: 'Waiting for review'}).count(), 1);
+    // The Installed preset shows its rows: the group collapsed by default opens for a filter to installed rows.
+    await page.getByRole('button', {name: 'Installed', exact: true}).click();
+    await list.getByRole('link', {name: 'Installed one'}).waitFor();
+    await page.goto(origin + '/delivery');
+    // Moving now: a norm bar per pull request in flight, past the norm for the long PR checks.
+    const moving = page.getByRole('grid', {name: 'Pull requests in flight'});
+    await moving.getByRole('img', {name: /PR checks #703: 50m; norm P50 7m, P90 40m, past the norm/}).waitFor();
+    // Pace: a day with merges but no install times is not measured, never zero.
+    const chart = page.getByRole('group', {name: 'Open to installed per day, P50 and P90'});
+    await chart.waitFor();
+    const cols = chart.getByRole('button');
+    assert.equal(await cols.count(), 7, 'seven calendar days');
+    assert.match((await cols.nth(3).getAttribute('aria-label'))!, /: not measured \(install times recorded from /, 'three days ago is not measured');
+    assert.match((await cols.nth(5).getAttribute('aria-label'))!, /P50 \d+m, P90 1h 35m · above the 14-day P90 1h 14m/, 'yesterday is measured, its P90 red');
+    assert.ok(await page.locator('.dc-vals .alert').count() >= 1, 'the P90 above the norm is red in the values row');
+    // A picked day filters the list to the pull requests merged that day, with a removable chip.
+    await cols.nth(5).click();
+    const y = new Date(dayStart(1)), pad = (n: number) => String(n).padStart(2, '0');
+    await page.waitForURL(u => u.searchParams.get('at') === `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`);
+    await list.getByRole('link', {name: 'Merged yesterday A'}).waitFor();
+    assert.equal(await list.getByRole('link', {name: 'Checks failed here'}).count(), 0, 'the current rows give way to the day');
+    // A link to the day opens it once the history is in, and keeps it in the link.
+    const at = new URL(page.url()).searchParams.get('at')!;
+    await page.goto(origin + '/delivery?at=' + at);
+    await list.getByRole('link', {name: 'Merged yesterday B'}).waitFor();
+    assert.equal(new URL(page.url()).searchParams.get('at'), at, 'the picked day stays in the link');
+    await page.getByRole('button', {name: /Remove filter Merged/}).click();
+    await page.waitForURL(u => !u.searchParams.has('at'));
+    // The ranges: 24 h is twelve two-hour buckets, 30 days starts at the first recorded day.
+    await page.getByRole('button', {name: '24 h', exact: true}).click();
+    await page.waitForURL(u => u.searchParams.get('range') === '24h');
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Open to installed per day, P50 and P90"] button').length === 12);
+    await page.getByRole('button', {name: '30 days', exact: true}).click();
+    await page.waitForFunction(() => document.querySelectorAll('[aria-label="Open to installed per day, P50 and P90"] button').length === 21);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+}
+
+// Standalone: pnpm run build && node tests/ui/delivery-availability.check.ts
+if (import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]!).href) {
+  const {chromium} = await import('playwright');
+  const {checkServer} = await import('./seed.ts');
+  const {origin, close} = await checkServer();
+  const b = await chromium.launch();
+  try { await checkDeliveryAvailability(b, origin); console.log('ok   delivery availability'); await checkDeliveryList(b, origin); console.log('ok   delivery list and pace'); }
+  finally { await b.close(); await close(); }
+}

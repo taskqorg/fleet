@@ -4,7 +4,7 @@
 
 **Purpose.** Shows where one run sits in a time window, so a column of runs reads as a compact Gantt chart.
 
-**Anatomy.** 8 px track on `neutral-bg` with `radius-md`, full width of its column; one bar from the run's start to its end in the tone of its [execution state](state-badge.md). A running run reaches now and has a 2 px edge in `fg`. A run that started before the window starts at its left edge; a bar is at least 2 px wide. With `parts`, one lane holds several consecutive bars (the stages of a pull request on Delivery), each in its own tone with its name as a tooltip; the strip's accessible name lists them.
+**Anatomy.** 8 px track on `neutral-bg` with `radius-md`, full width of its column; one bar from the run's start to its end in the tone of its [execution state](state-badge.md). A running run reaches now and has a 2 px edge in `fg`. A run that started before the window starts at its left edge; a bar is at least 2 px wide. With `parts`, one lane holds several consecutive bars, each in its own tone with its name as a tooltip; the strip's accessible name lists them.
 
 **States.** Ended (bar between start and end); running (bar to now, edge mark).
 
@@ -14,4 +14,4 @@
 
 **Do.** Use one window for every strip on a page. **Don't.** Add axis labels to each strip: the panel head names the window.
 
-**Used in.** [Runners](../pages/runners.md).
+**Used in.** [Runners](../pages/runners.md); the stages of an opened pull request on [Delivery](../pages/delivery.md).

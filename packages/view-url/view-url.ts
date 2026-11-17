@@ -25,7 +25,12 @@ export const DEFAULT_SESSION_GROUP = 'project';
 export const DEFAULT_SESSION_SORT = '-activity';
 export const ARTIFACT_STATES = ['stored', 'pending', 'failed', 'deleted'] as const;
 /** Delivery stages (delivery_status DeliveryStage); the Delivery list's state filter. */
-export const DELIVERY_STAGES = ['pr_open', 'pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'releasing', 'installing', 'installed', 'merged'] as const;
+export const DELIVERY_STAGES = ['pr_open', 'pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'mq_failed', 'releasing', 'installing', 'installed', 'merged'] as const;
+/** Delivery list grouping and order (attention order of stages inside a group); oldest in its stage first by default. */
+export const DELIVERY_GROUPS = ['stage', 'project', 'none'] as const;
+export const DELIVERY_SORTS = ['-opened', '-since', 'opened', 'since'] as const;
+export const DEFAULT_DELIVERY_GROUP = 'stage';
+export const DEFAULT_DELIVERY_SORT = 'since';
 export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview', 'results', 'projects', 'delivery'];
 const NO_PROJECT = '-';
 
@@ -101,14 +106,19 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
   },
   // Results (docs/designs/fleet-conversations.md Stage 4): task, execution, media and since ride in extra.
   results: { project, q: text('q', true), state: listKey_('state', ARTIFACT_STATES) },
-  // Delivery: group, sort, the pace range and the picked bucket ride in extra (group, sort, range, at).
-  delivery: { q: text('q', true), state: listKey_('state', DELIVERY_STAGES) },
+  // Delivery: the list keys of a list view; the pace range and the picked bucket ride in extra (range, at).
+  delivery: {
+    group: choice('group', DELIVERY_GROUPS, DEFAULT_DELIVERY_GROUP),
+    preset: text('preset', false), q: text('q', true), sel: listKey_('sel'), state: listKey_('state', DELIVERY_STAGES),
+    sort: choice('sort', DELIVERY_SORTS, DEFAULT_DELIVERY_SORT),
+  },
   hosts: {}, overview: {}, projects: {},
 };
 // The groups and sorts each list view takes, with its defaults (task_page and sessions_list).
 const ORDER: Partial<Record<ViewName, { groups: readonly string[]; sorts: readonly string[]; group: string; sort: string }>> = {
   tasks: { groups: TASK_GROUPS, sorts: TASK_SORTS, group: DEFAULT_TASK_GROUP, sort: DEFAULT_TASK_SORT },
   conversations: { groups: SESSION_GROUPS, sorts: SESSION_SORTS, group: DEFAULT_SESSION_GROUP, sort: DEFAULT_SESSION_SORT },
+  delivery: { groups: DELIVERY_GROUPS, sorts: DELIVERY_SORTS, group: DEFAULT_DELIVERY_GROUP, sort: DEFAULT_DELIVERY_SORT },
 };
 
 /**
@@ -121,7 +131,7 @@ export function viewProblem(v: unknown): string | null {
   if (!(VIEWS as string[]).includes(o.view as string)) return 'view.view must be one of ' + VIEWS.join(', ');
   const name = o.view as ViewName, table = TABLE[name];
   const strs = (x: unknown) => Array.isArray(x) && x.every(i => typeof i === 'string' && i !== '');
-  const states: readonly string[] = name === 'tasks' ? TASK_STATES : name === 'results' ? ARTIFACT_STATES : SESSION_STATES;
+  const states: readonly string[] = name === 'tasks' ? TASK_STATES : name === 'results' ? ARTIFACT_STATES : name === 'delivery' ? DELIVERY_STAGES : SESSION_STATES;
   for (const [k, x] of Object.entries(o)) {
     if (k === 'view' || x === undefined) continue;
     if (k === 'focus') { if (typeof x !== 'string' || !x) return 'focus must be a non-empty string'; continue; }

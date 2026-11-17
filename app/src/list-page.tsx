@@ -5,7 +5,7 @@ import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import {
   ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, VirtualList, ContextMenu, SelectBar, SelectToggle, RowPin, RowCheck, copyText, actions,
-  EntityCode, ErrorBanner, Skeleton, type IconName, type Family, type StateOf,
+  EntityCode, ErrorBanner, Skeleton, type IconName, type Family, type StateOf, type Chip, type Tone, type SortField,
 } from '../../packages/ui/src/index.ts';
 import tokens from '../../packages/ui/tokens.json';
 import { op, online } from './api.ts';
@@ -18,6 +18,13 @@ import type { Change } from './feed.ts';
 
 /** A server list row: its id, code and the server sort key whose first part is the group key. */
 export type ListRow = { id: string; code?: string | null; sortKey: (string | number)[] };
+/**
+ * A list the page reads whole and filters, groups and sorts itself (Delivery: delivery_status holds every pull request), in
+ * place of a server list kind. `rows` are in group order, each row's sortKey[0] its group key; `all` is unfiltered (pins).
+ */
+export type LocalList<R> = { rows: R[]; all: R[]; counts: Record<string, number>; groups: { key: string; label: string; count: number }[];
+  /** Rows before the search and the state filter: the "of M" of the count. */ total: number;
+  pending: boolean; error: string | null; reload: () => void };
 export type ListItem<R> = { kind: 'group'; key: string; label: string; count: number; icon?: 'pin' } | { kind: 'row'; r: R; pinned?: boolean };
 type MenuItems = Parameters<typeof ContextMenu>[0]['items'];
 type BarActions = Parameters<typeof SelectBar>[0]['actions'];
@@ -27,18 +34,22 @@ const PINNED = '\u0000pinned'; // group key of the pinned rows; never a server g
 export type ListPageOptions = {
   /** URL view name; also the pins and saved-views list name. */
   view: ViewName;
-  /** Server list kind (`useList`, `list_membership`). */
-  kind: Kind;
+  /** Server list kind (`useList`, `list_membership`); a page with `local` has none. */
+  kind?: Kind;
+  /** The list built by the page from the view, in place of a server list; fixed for the page's lifetime. */
+  local?: (v: View) => LocalList<ListRow>;
+  /** Group keys collapsed when the page opens (Delivery: installed). */
+  closedGroups?: string[];
   defaultGroup: string;
   defaultSort: string;
   /** System presets (OR-33): fixed, shown before the person's views; each sets the state filter only. */
   system: SavedView[];
-  /** Doc name prefix of the pin read. */
-  pinDoc: string;
+  /** Doc name prefix of the pin read (server lists; a local list finds pinned rows in its own rows). */
+  pinDoc?: string;
   /** The pin read's filter, and the parts of the view it depends on (added to the doc name). */
-  pinRead: (v: View) => { key: unknown[]; filter: Record<string, unknown> };
+  pinRead?: (v: View) => { key: unknown[]; filter: Record<string, unknown> };
   /** Whether a change touches a pinned row. */
-  pinTouches: (c: Change, pinned: (id: string) => boolean) => boolean;
+  pinTouches?: (c: Change, pinned: (id: string) => boolean) => boolean;
   groupLabel: (group: string, label: string | null) => string;
   /** A saved personal view as it is matched and restored (e.g. a default for a key older views lack). */
   savedView?: (v: View) => View;
@@ -55,7 +66,7 @@ export type ListPageOptions = {
 
 export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const { view, set, href } = useUrlView(o.view);
-  const [closed, setClosed] = useState<string[]>([]);
+  const [closed, setClosed] = useState<string[]>(o.closedGroups ?? []);
   // A new query ends the preset that was active when the person typed it. A preset picked while the debounced query waits
   // stays: the commit reads the URL as it is then (url.ts) and leaves a different preset alone.
   const typedPreset = useRef<string | undefined>(undefined);
@@ -66,7 +77,9 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const setQuery = (t: string) => { typedPreset.current = view.preset; setText(t); };
   const pins = usePins(o.view);
   const views = useViews(o.view, o.system);
-  const list = useList(o.kind, view);
+  // A page passes `local` for its whole life or never, so the hook order never changes between renders.
+  const local = o.local?.(view);
+  const list = local ? localList(local, view) : useList(o.kind!, view);
   const group = view.group ?? o.defaultGroup, sort = view.sort ?? o.defaultSort, states = view.state ?? [];
   // Rows on screen may still be the previous list (pending): headers and chips follow that list's own grouping.
   const rowsGroup = list.shownView.group ?? o.defaultGroup;
@@ -87,18 +100,18 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   useEffect(() => { if (firstList.current) { firstList.current = false; return; } setSelectOn(false); setConfirm(null); setBulkError(null); }, [o.listId?.(view)]);
   // Pinned rows stay in the list whatever the filter, search or grouping (OR-12): they are read by id with the page's pin
   // filter and live through row changes; the filtered page supplies the rest.
-  const pinRead = o.pinRead(view);
-  const pinnedDoc = useDoc<R[]>(pins.ids.length ? JSON.stringify([o.pinDoc, pins.ids, sort, ...pinRead.key]) : null,
+  const pinRead = o.pinRead?.(view) ?? { key: [], filter: {} };
+  const pinnedDoc = useDoc<R[]>(pins.ids.length && !local ? JSON.stringify([o.pinDoc, pins.ids, sort, ...pinRead.key]) : null,
     async () => {
       const found: R[] = [];
       // The operation accepts at most 1,000 IDs; sequential batches avoid a request burst for a large pin collection.
       for (const ids of chunks(pins.ids, 1000)) {
-        const reply = await op('list_membership', { ids, lists: [{ name: o.kind, filter: pinRead.filter, group: 'none', sort }] });
+        const reply = await op('list_membership', { ids, lists: [{ name: o.kind!, filter: pinRead.filter, group: 'none', sort }] });
         found.push(...reply.lists[0].rows as unknown as R[]);
       }
       return found;
-    }, c => o.pinTouches(c, pins.has));
-  const byId = new Map((pinnedDoc.data ?? []).map(r => [r.id, r]));
+    }, c => !!o.pinTouches?.(c, pins.has));
+  const byId = new Map(((local?.all as R[] | undefined) ?? pinnedDoc.data ?? []).map(r => [r.id, r]));
   // The page supplies a just-pinned row while its independent read is pending. Its grouping key is irrelevant here.
   const pinned = pins.ids.map(x => byId.get(x) ?? rows.find(r => r.id === x))
     .filter((r): r is R => !!r).sort((a, b) => compareKeys(a.sortKey.slice(1), b.sortKey.slice(1)));
@@ -152,14 +165,23 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   // setQuery('') also drops a typed query not yet committed, which the URL sync alone would leave in the box.
   const filtered = !!(states.length || view.q || view.project?.length);
   const clearFilters = () => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); };
-  const shown = states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
+  const shown = local ? local.rows.length : states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
   return {
     view, set, href, query, setQuery, pins, views, list, group, sort, states, rowsGroup, rows, items, displayed, chosen, closed, toggleGroup,
     sel, selecting, setSelectOn, select, leave, confirm, setConfirm, bulkError, busy, bulk, off, pinAll, menu, setMenu, closeMenu,
-    pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown,
+    pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown, isLocal: !!local,
   };
 }
 export type ListPage<R extends ListRow> = ReturnType<typeof useListPage<R>>;
+
+/** A page-built list in the shape useList returns: always loaded, one page, counts from the page. */
+function localList(l: LocalList<ListRow>, view: View) {
+  return {
+    rows: l.rows as unknown as ReturnType<typeof useList>['rows'], counts: l.counts, total: l.total, groups: l.groups, at: 0, error: l.error,
+    pending: l.pending, shownKey: l.pending && !l.rows.length ? null : listKey(view), shownView: view, more: () => Promise.resolve(), reload: () => { l.reload(); return Promise.resolve(); },
+    state: 'current' as const,
+  };
+}
 
 
 /** The list section: filter bar (search, saved views, state counters, tools, selection bar), banners, the rows and the row menu. */
@@ -170,9 +192,15 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   placeholder: string;
   family: F;
   groups: readonly (readonly [G, string])[];
-  sorts: readonly (readonly [string, string])[];
+  sorts: readonly SortField[];
   /** Tools after Select, Group and Sort. */
   tools?: ComponentChildren;
+  /** Filters applied from outside the query (Delivery: the picked pace day), each removable. */
+  chips?: Chip[]; onRemoveChip?: (c: Chip) => void;
+  /** The state counters' accessible name; `<noun> by state` by default. */
+  countersLabel?: string;
+  /** Counts per state that are unknown (`?`, never 0): some source data did not load. */
+  countsUnknown?: boolean;
   /** Selection bar actions after Pin and Unpin; built only in selection mode. */
   actions: () => BarActions;
   /** Row menu items after Open, Pin, Select, Copy code and Copy link. */
@@ -183,7 +211,10 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
   empty: ComponentChildren;
   listLabel: string;
   title: (r: R) => string;
-  groupIcon: (group: string) => IconName;
+  /** A group header's icon, from the grouping and the group key. */
+  groupIcon: (group: string, key: string) => IconName;
+  /** A group header's tone (Delivery: the stage's); neutral by default. */
+  groupTone?: (group: string, key: string) => Tone;
   /** The state icon cell. */
   state: (r: R) => ComponentChildren;
   /** Content before the title link. */
@@ -201,10 +232,10 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
     ...p.menu(r),
   ];
   return <section class="panel">
-    <ListFrame pending={list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={list.total}
+    <ListFrame pending={list.pending} bar={<FilterBar query={g.query} placeholder={p.placeholder} onQuery={g.setQuery} shown={g.shown} total={list.total} chips={p.chips} onRemove={p.onRemoveChip}
       extra={<Presets system={views.list.filter(v => v.system).map(v => v.name)} presets={views.list.filter(v => !v.system).map(v => v.name)} active={g.activePreset} onPick={g.pick}
         onSave={g.save} onUnpin={views.remove} />}
-      counters={<StateCounters family={p.family} label={`${p.noun} by state`} pending={list.pending} counts={list.counts as any} active={g.states as StateOf<F>[]} onAll={() => set({ state: [], preset: undefined })}
+      counters={<StateCounters family={p.family} label={p.countersLabel ?? `${p.noun} by state`} pending={list.pending} counts={(p.countsUnknown ? Object.fromEntries(Object.keys(list.counts).map(k => [k, null])) : list.counts) as any} active={g.states as StateOf<F>[]} onAll={() => set({ state: [], preset: undefined })}
         onToggle={(x: StateOf<F>) => { const s = String(x); set({ state: g.states.includes(s) ? g.states.filter(y => y !== s) : [...g.states, s], preset: undefined }); }} />}
       tools={<>
         <SelectToggle on={selecting} onClick={() => selecting ? g.leave() : g.setSelectOn(true)} />
@@ -221,13 +252,13 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
       {g.bulkError && <ErrorBanner text={g.bulkError} />}
       {list.error && <ErrorBanner text={`${p.noun} did not load: ${list.error}`} onRetry={list.reload} />}
       {pinnedDoc.error && <ErrorBanner text={`Pinned ${p.noun.toLowerCase()} did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
-      {!displayed.length && (list.shownKey === null || list.pending || (pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
+      {!displayed.length && (list.shownKey === null || list.pending || (!g.isLocal && pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
         : !displayed.length ? (list.error || pinnedDoc.error ? null : p.empty)
         : <VirtualList items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={ROW} follow="top" label={p.listLabel} onEnd={list.more}
           columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.r.id === p.focused ? 'sel' : ''}${sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
           onRowMenu={(i, at) => { if (i.kind === 'row') g.setMenu({ r: i.r, at }); }}
           render={i => i.kind === 'group'
-            ? <GroupHeader icon={i.icon ?? p.groupIcon(g.rowsGroup)} label={i.label} count={i.count} open={!g.closed.includes(i.key)} onToggle={() => g.toggleGroup(i.key)} />
+            ? <GroupHeader icon={i.icon ?? p.groupIcon(g.rowsGroup, i.key)} tone={i.icon ? undefined : p.groupTone?.(g.rowsGroup, i.key)} label={i.label} count={i.count} open={!g.closed.includes(i.key)} onToggle={() => g.toggleGroup(i.key)} />
             : <>
               {selecting && <span class="lead"><RowCheck checked={sel.includes(i.r.id)} label={'Select ' + p.title(i.r)} onToggle={() => g.select(i.r)} /></span>}
               {i.pinned && <span class="lead"><RowPin label={p.title(i.r)} onUnpin={() => {

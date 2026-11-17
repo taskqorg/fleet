@@ -17,7 +17,8 @@ const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m);
 // Text-on-background pairs the controls use.
 export const PAIRS = [['fg', 'surface'], ['fg-muted', 'surface'], ['fg-muted', 'bg'], ['fg-muted', 'hover'], ['fg-muted', 'neutral-bg'], ['fg', 'selected'], ['accent', 'surface'], ['accent', 'bg'], ['on-accent', 'accent'],
   ['attention-fg', 'attention-bg'], ['attention-fg', 'attention-soft'], ['fg', 'attention-soft'], ['fg-muted', 'attention-soft'], ['danger-fg', 'danger-bg'], ['danger-fg', 'surface'], ['danger-fg', 'attention-soft'], ['running-fg', 'running-bg'],
-  ['success-fg', 'success-bg'], ['success-fg', 'surface'], ['neutral-fg', 'neutral-bg'], ['estimated-fg', 'surface'], ['fg', 'float']];
+  ['success-fg', 'success-bg'], ['success-fg', 'surface'], ['neutral-fg', 'neutral-bg'], ['estimated-fg', 'surface'], ['fg', 'float'],
+  ['data-1-ink', 'data-1'], ['data-2-ink', 'data-2'], ['data-3-ink', 'data-3'], ['data-4-ink', 'data-4']];
 export function contrastProblems(t = tokens) {
   const out = [];
   for (const th of ['light', 'dark']) for (const [f, b] of PAIRS) { const r = ratio(t.color[th][f], t.color[th][b]); if (r < 4.5) out.push(`${th}: ${f} on ${b} = ${r.toFixed(2)}:1`); }

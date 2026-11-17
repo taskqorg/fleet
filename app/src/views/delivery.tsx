@@ -1,19 +1,21 @@
 // Delivery (docs/design-system/pages/delivery.md): the pull requests of every connected project by delivery stage in the
-// control column, like Tasks; the work area answers, in this order, what needs a look, what moves now and what the pace
-// is, or shows the opened pull request. Data: delivery_status (GitHub read by the coordinator every minute with a key),
-// delivery_history, delivery_baseline and delivery_regressions (the fleet repository's recorded history). Both reach the
-// page through the change stream (kind delivery), so nothing here waits for a poll.
-import { useCallback } from 'preact/hooks';
+// control column, the shared list view (list-page.tsx) over the rows delivery_status holds; the work area answers, in
+// this order, what needs a look, what moves now and what the pace is, or shows the opened pull request. Data:
+// delivery_status (GitHub read by the coordinator every minute with a key), delivery_history, delivery_baseline and
+// delivery_regressions (the fleet repository's recorded history). Both reach the page through the change stream (kind
+// delivery), so nothing here waits for a poll. Red everywhere means past the stage's P90 over the last 14 days.
+import { useCallback, useEffect, useRef } from 'preact/hooks';
 import {
-  ListDetail, ListFrame, FilterBar, StateCounters, GroupHeader, GroupControl, SortControl, StateBadge, AgeChip, Num, Totals, AreaChart, TimeStrip,
-  ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts, Latest, matchSearch, states,
-  type ChartSeries, type ChartBucket, type StateOf, type StripPart,
+  ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
+  Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
+  type StateOf, type DayCol, type DayMark, type SharePart,
 } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { useUrlView, useSearchBox } from '../url.ts';
-import { parseView } from '../../../packages/view-url/view-url.ts';
-import { focusIds, prefsRead } from '../prefs.ts';
+import { useListPage, ListPagePanel, type LocalList } from '../list-page.tsx';
+import { useUrlView } from '../url.ts';
+import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, DELIVERY_STAGES, type View } from '../../../packages/view-url/view-url.ts';
+import { focusIds, prefsRead, type SavedView } from '../prefs.ts';
 import type { Change } from '../../../contracts/generated/ops.ts';
 
 type Stage = StateOf<'delivery'>;
@@ -21,230 +23,290 @@ type Status = Ops['delivery_status']['reply'];
 type Item = Status['items'][number];
 type History = Ops['delivery_history']['reply'];
 type HistoryPr = History['prs'][number];
-type Row = { kind: 'group'; key: string; label: string; stage?: Stage; count: number } | { kind: 'item'; it: Item };
+type Baseline = Ops['delivery_baseline']['reply'];
+type Regressions = Ops['delivery_regressions']['reply'];
+/** A list row: the pull request, its focus id, its code (#number) and its group and order keys. */
+type Row = { id: string; code: string; sortKey: (string | number)[]; it: Item };
 
-const MIN = 6e4, HOUR = 36e5, DAY = 864e5;
+const MIN = 6e4, DAY = 864e5;
 const FLEET = 'taskqorg/fleet';
-// Seconds in a stage after which a pull request needs a look; none for the stages people work in.
-const LIMIT: Partial<Record<Stage, number>> = { pr_ci: 1800, mq_wait: 900, mq_ci: 1800, releasing: 1200, installing: 1200 };
-// Attention order: failed checks first, then the merge queue and checks, then the release tail.
-const ORDER: Stage[] = ['pr_failed', 'mq_ci', 'mq_wait', 'pr_ci', 'pr_open', 'releasing', 'installing', 'installed', 'merged'];
+const ORDER = DELIVERY_ORDER;
 const DONE: Stage[] = ['installed', 'merged'];
+const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
+// Each stage's norm is its P50 and P90 in delivery_baseline (the last 14 days): the key of the history duration it is.
+// Open, Checks failed and Queue failed have none: people work there, and a failure needs a look at once.
+// Waiting in queue is both "set to enter" and "in the queue, waiting for a runner": the queue's norm covers both.
+const NORM_KEY: Partial<Record<Stage, string>> = { pr_ci: 'pr_ci', mq_wait: 'queue', mq_ci: 'queue', releasing: 'release', installing: 'install' };
+/** The norms are the fleet repository's history: other repositories' pull requests have none. */
+type Norms = { stage: (s: Stage, repo?: string) => [number, number] | null; total: [number, number] | null };
 const GROUPS = [['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const;
-const SORTS = [['since', 'In stage since', ['Newest first', 'Oldest first']], ['opened', 'Opened', ['Newest first', 'Oldest first']]] as const;
-const RANGES = [{ id: '24h', label: '24 h', ms: DAY, bucket: 2 * HOUR }, { id: '7d', label: '7 days', ms: 7 * DAY, bucket: DAY }, { id: '30d', label: '30 days', ms: 30 * DAY, bucket: DAY }];
+const SORTS = [['since', 'In stage since'], ['opened', 'Opened']] as const;
+// System presets (OR-33) set the stage filter only; grouping, sort and search stay.
+const SYSTEM_VIEWS: SavedView[] = [
+  { name: 'Needs me', view: { view: 'delivery', state: [...FAILED] } },
+  { name: 'In flight', view: { view: 'delivery', state: DELIVERY_STAGES.filter(s => !DONE.includes(s)) } },
+  { name: 'Installed', view: { view: 'delivery', state: [...DONE] } },
+];
+const RANGES = [{ id: '24h', label: '24 h' }, { id: '7d', label: '7 days' }, { id: '30d', label: '30 days' }];
 const ms = (s?: string | null) => s ? Date.parse(s) : NaN;
-const late = (it: Item, now: number) => LIMIT[it.stage] !== undefined && now - ms(it.since) >= LIMIT[it.stage]! * 1000;
+const fmt = (v: number) => duration(v / 1000).text;
 /** The focus segment of a pull request: owner~repo~number (stable, readable, no slash). */
 const idOf = (it: { repo: string; number: number }) => `${it.repo.replace('/', '~')}~${it.number}`;
 // Current rows change with delivery-state:<project>; the recorded history (records and the regression check) with the rest.
 const touchesStatus = (c: Change) => c.kind === 'delivery' && c.id.startsWith('delivery-state:');
 const touchesHistory = (c: Change) => c.kind === 'delivery' && !c.id.startsWith('delivery-state:');
 const NONE = 'none' as const; // no history kept (404): known, unlike still loading
-const p = (xs: number[], q: number) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)]; };
+const no404 = <T,>(p: Promise<T>) => p.catch(e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; });
+const q = quantile;
 const sec = (v: number | null | undefined) => ({ value: v == null ? null : v / 1000, basis: v == null ? 'unavailable' as const : 'measured' as const, reason: v == null ? 'no pull requests' : undefined });
 
-type DeliveryExtra = { group?: string; sort?: string; range?: string; at?: string };
-/** The Delivery keys of a link: valid values other than the defaults. A link may carry anything (an old one has the text "undefined"). */
+type DeliveryExtra = { range?: string; at?: string };
+/** The pace keys of a link: valid values other than the defaults. A link may carry anything (an old one has the text "undefined"). */
 export function deliveryExtra(x: Record<string, string | undefined> | undefined): DeliveryExtra {
   const out: DeliveryExtra = {};
-  if (x?.group && x.group !== 'stage' && GROUPS.some(g => g[0] === x.group)) out.group = x.group;
-  if (x?.sort && x.sort !== 'since' && /^-?[a-z]+$/.test(x.sort) && SORTS.some(f => f[0] === x.sort!.replace(/^-/, ''))) out.sort = x.sort;
   if (x?.range && x.range !== '7d' && RANGES.some(r => r.id === x.range)) out.range = x.range;
-  if (x?.at && /^[1-9]\d*$/.test(x.at)) out.at = x.at;
+  if (x?.at && /^\d{4}-\d{2}-\d{2}(T\d{2})?$/.test(x.at)) out.at = x.at;
+  return out;
+}
+
+/* ---------- Buckets: calendar days (or two-hour slots) in the viewer's zone ---------- */
+
+type Bucket = DayCol & { start: number; end: number; today: boolean };
+/** 24 h: twelve two-hour slots of local time ending with the current one; 7 and 30 days: calendar days to today, from the first recorded day. */
+export function bucketsOf(range: string, now: number, first?: number): Bucket[] {
+  if (range === '24h') {
+    return Array.from({ length: 12 }, (_, i) => { const s = slotStart(now, 2, i - 11), e = slotStart(now, 2, i - 10);
+      return { key: dateKey(s, true), start: s, end: e, label: hourLabel(s), tip: `${day(s, now)} ${hourLabel(s)}–${hourLabel(e)}${e > now ? ', so far' : ''}`, today: e > now }; });
+  }
+  const out: Bucket[] = [];
+  let s = dayStart(now, range === '30d' ? -29 : -6);
+  if (first && first > s) s = dayStart(first);
+  for (; s <= now; s = dayStart(s, 1)) { const t = s === dayStart(now); out.push({ key: dateKey(s), start: s, end: dayStart(s, 1), label: day(s, now), tip: t ? `${day(s, now)}, today so far` : day(s, now), today: t }); }
   return out;
 }
 
 export function Delivery({ id }: { id?: string }) {
-  const { view, set, href } = useUrlView('delivery');
-  const ex = deliveryExtra(view.extra);
-  const [query, setQuery] = useSearchBox(view.q, q => set({ q: q || undefined }, 'type'));
   const focus = focusIds() ?? [];
-  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
-  const range = RANGES.find(r => r.id === ex.range) ?? RANGES[1];
   const now = Date.now();
+  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
+  // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
+  const baseDoc = useDoc<Baseline | typeof NONE>(prefsRead.value ? 'delivery-baseline:14' : null, () => no404(op('delivery_baseline', { days: 14 })), touchesHistory, 600000);
+  const base = baseDoc.data === NONE ? null : baseDoc.data;
+  const stat = (k: string) => base?.rolling.stats.find(s => s.key === k);
+  const norms: Norms = {
+    stage: (s, repo = FLEET) => { const x = repo === FLEET && NORM_KEY[s] && stat(NORM_KEY[s]!); return x ? [x.p50Ms, x.p90Ms] : null; },
+    total: stat('total') ? [stat('total')!.p50Ms, stat('total')!.p90Ms] : null,
+  };
   // The recorded history covers the fleet repository only; a 404 (no history kept) or a focus away from fleet hides Pace.
   const fleetShown = !focus.length || focus.includes('fleet');
-  const paceDoc = useDoc<{ h: History; b: Ops['delivery_baseline']['reply']; r: Ops['delivery_regressions']['reply'] } | typeof NONE>(
-    prefsRead.value && fleetShown ? 'delivery-pace:' + range.id : null,
-    () => Promise.all([op('delivery_history', { since: new Date(Date.now() - range.ms).toISOString() }), op('delivery_baseline', { days: 14 }), op('delivery_regressions', {})])
-      .then(([h, b, r]) => ({ h, b, r }), e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; }), touchesHistory, 600000);
-  const pace = { data: paceDoc.data === NONE ? null : paceDoc.data, error: paceDoc.error, none: paceDoc.data === NONE };
-
-  const data = status.data;
-  const items = data?.items ?? [];
-  const incomplete = !!data?.error;
-  const stages = (view.state ?? []) as Stage[];
-  const group = ex.group ?? 'stage', sort = ex.sort ?? 'since';
-  // Built from the URL at the moment of the change (url.ts), keeping only valid values that are not the defaults.
-  const setExtra = (patch: Partial<Record<keyof DeliveryExtra, string | undefined>>) => set({ extra: deliveryExtra({ ...parseView(location.pathname + location.search)?.extra, ...patch }) });
-  // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows.
-  const at = ex.at ? Number(ex.at) : null;
-  const picked: Item[] | null = at !== null && pace.data ? pace.data.h.prs.filter(x => ms(x.merged) >= at && ms(x.merged) < at + range.bucket).map(fromHistory) : null;
-  const source = picked ?? items;
-  const shown = source.filter(it => (!stages.length || stages.includes(it.stage)) && matchSearch(query, `${it.title} #${it.number} ${it.repo}`, { state: it.stage, project: it.projectId }));
-  const desc = sort.startsWith('-'), field = desc ? sort.slice(1) : sort;
-  const key = (it: Item) => ms(field === 'opened' ? it.opened : it.since) || 0;
-  shown.sort((a, b) => desc ? key(b) - key(a) : key(a) - key(b));
-  const counts: Partial<Record<Stage, number | null>> = {};
-  for (const s of ORDER) counts[s] = incomplete && !picked ? null : source.filter(it => it.stage === s).length;
-  const rows: Row[] = [];
-  if (group === 'none') for (const it of shown) rows.push({ kind: 'item', it });
-  else {
-    const keys = group === 'stage' ? ORDER : [...new Set(shown.map(it => it.projectId))].sort();
-    for (const k of keys) {
-      const its = shown.filter(it => (group === 'stage' ? it.stage : it.projectId) === k);
-      if (!its.length) continue;
-      rows.push(group === 'stage' ? { kind: 'group', key: k, label: states.delivery[k as Stage].label, stage: k as Stage, count: its.length } : { kind: 'group', key: k, label: k || 'No project', count: its.length });
-      for (const it of its) rows.push({ kind: 'item', it });
-    }
-  }
-  const open = items.find(it => idOf(it) === id) ?? (pace.data?.h.prs.map(fromHistory).find(it => idOf(it) === id));
+  // A stage this app does not know yet (a newer coordinator) is left out rather than breaking the page.
+  const data = status.data, items = (data?.items ?? []).filter(it => it.stage in states.delivery), incomplete = !!data?.error;
+  // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
+  const urlRange = deliveryExtra(useUrlView('delivery').view.extra).range ?? '7d';
+  // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
+  const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
+    () => no404(op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }).then(h => ({ h }))), touchesHistory, 600000);
+  const hist = histDoc.data === NONE ? null : histDoc.data;
+  const regDoc = useDoc<Regressions | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
+  const regressions = regDoc.data === NONE ? [] : regDoc.data?.regressions ?? [];
+  const histLoading = !prefsRead.value || fleetShown && histDoc.data === null && !histDoc.error;
+  const paceOf = (v: View) => {
+    const ex = deliveryExtra(v.extra), range = ex.range ?? '7d', buckets = bucketsOf(range, now, hist?.h.backfilledFrom ? ms(hist.h.backfilledFrom) : undefined);
+    return { ex, range, buckets, picked: ex.at ? buckets.find(b => b.key === ex.at) ?? null : null };
+  };
+  const local = (v: View): LocalList<Row> => {
+    const { picked } = paceOf(v);
+    // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows; none
+    // while the history loads.
+    const source = !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(x => fromHistory(x, hist.h.installsFrom)) : [];
+    const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
+    const rowsOf = source.map(row);
+    const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo}`, { state: r.it.stage, project: r.it.projectId }));
+    const counts: Record<string, number> = Object.fromEntries(ORDER.map(s => [s, 0]));
+    for (const r of searched) counts[r.it.stage]++;
+    const st = v.state ?? [], group = v.group ?? DEFAULT_DELIVERY_GROUP, sort = v.sort ?? DEFAULT_DELIVERY_SORT;
+    const desc = sort.startsWith('-'), field = desc ? sort.slice(1) : sort;
+    const key = (r: Row) => ms(field === 'opened' ? r.it.opened : r.it.since) || 0;
+    const gkey = (r: Row) => group === 'stage' ? r.it.stage : group === 'project' ? r.it.projectId || '' : '';
+    const order = group === 'stage' ? ORDER as string[] : [...new Set(searched.map(gkey))].sort(), at = new Map(order.map((k, i) => [k, i]));
+    // The order key carries the direction, as a server list's does, so pinned rows (compareKeys) follow it too.
+    const keyed = (r: Row): Row => ({ ...r, sortKey: [gkey(r), desc ? -key(r) : key(r)] });
+    const rows = searched.filter(r => !st.length || st.includes(r.it.stage)).map(keyed)
+      .sort((a, b) => at.get(String(a.sortKey[0]))! - at.get(String(b.sortKey[0]))! || (a.sortKey[1] as number) - (b.sortKey[1] as number));
+    const per = new Map<string, number>();
+    for (const r of rows) per.set(String(r.sortKey[0]), (per.get(String(r.sortKey[0])) ?? 0) + 1);
+    const groups = order.filter(k => per.has(k)).map(k => ({ key: k, label: group === 'stage' ? states.delivery[k as Stage].label : k || 'No project', count: per.get(k)! }));
+    // Pinned rows stay whatever the filter or the picked day (OR-12): the current rows and the day's, in the page's order.
+    const current = items.map(row), ids = new Set(current.map(r => r.id));
+    const all = [...current, ...rowsOf.filter(r => !ids.has(r.id))].map(keyed);
+    // The rows come from the history while a day is picked: its failure is the list's, never "none merged then".
+    const error = picked ? (hist ? null : histDoc.error && `history: ${histDoc.error}`) : status.error && !data ? status.error : null;
+    return { rows, all, counts, groups, total: rowsOf.length, pending: !picked && !data && !status.error || !!picked && histLoading, error, reload: picked ? histDoc.reload : status.reload };
+  };
+  const page = useListPage<Row>({
+    view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: ['installed'],
+    defaultGroup: DEFAULT_DELIVERY_GROUP, defaultSort: DEFAULT_DELIVERY_SORT, system: SYSTEM_VIEWS, groupLabel: (_g, l) => l ?? '',
+  });
+  const { view, set } = page;
+  const { ex, range, buckets, picked } = paceOf(view);
+  // A link saved while the "undefined" bug was live, or one with an old range, carries keys the page ignores: drop them.
+  // So does a picked bucket outside the range, or one with no history to show (none kept, or focused away from fleet).
+  const keep: DeliveryExtra = { ...ex, at: ex.at && (picked && (hist || histLoading || histDoc.error)) ? ex.at : undefined };
+  useEffect(() => { const x = view.extra ?? {}; if (Object.keys(x).some(k => (x as Record<string, string | undefined>)[k] !== (keep as Record<string, string | undefined>)[k])) set({ extra: deliveryExtra(keep) }, 'type'); }, [JSON.stringify(view.extra), !!hist, histLoading]);
+  // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
+  // most installed) or a filter to installed rows opens it.
+  const doneOnly = !!view.state?.length && view.state.every(s => DONE.includes(s as Stage));
+  // The page's default (closedGroups) holds again once the day or the filter goes, unless the person opened it.
+  const opened = useRef(false);
+  useEffect(() => {
+    const want = !(ex.at || doneOnly), shut = page.closed.includes('installed');
+    if (!want && shut) { page.toggleGroup('installed'); opened.current = true; }
+    else if (want && !shut && opened.current) { page.toggleGroup('installed'); opened.current = false; }
+  }, [ex.at, doneOnly]);
+  const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
+  const open = !id ? undefined : items.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, hist.h.installsFrom))[0] : undefined);
+  const p = keep.at ? picked : null;
 
   const list = <>
     <header class="page-h"><h1>Delivery</h1><span class="grow" />
       {data?.source === 'public' && <span class="chip-age t-attention" data-tip="No github key in API keys: unauthenticated reads of the fleet repository every 6 minutes">public GitHub</span>}
       {data?.refreshedAt && <AgeChip t={ms(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}</header>
-    <section class="panel">
-      <ListFrame bar={<FilterBar query={query} onQuery={setQuery} placeholder="Search pull requests, state:mq_wait project:fleet" shown={shown.length} total={source.length}
-        chips={picked && at !== null ? [{ field: 'Merged', value: bucketLabel(at, range.bucket) }] : []} onRemove={() => setExtra({ at: undefined })}
-        counters={<StateCounters family="delivery" label="Pull requests by stage" counts={counts} active={stages} onAll={() => set({ state: [] })}
-          onToggle={s => set({ state: stages.includes(s) ? stages.filter(x => x !== s) : [...stages, s] })} />}
-        tools={<>
-          <GroupControl value={group as typeof GROUPS[number][0]} options={GROUPS} onChange={g => setExtra({ group: g === 'stage' ? undefined : g })} />
-          <SortControl value={sort} fields={SORTS} onChange={v => setExtra({ sort: v === 'since' ? undefined : v })} />
-        </>} />}>
-        {status.error && !data ? <ErrorBanner text={`Delivery did not load: ${status.error}`} />
-          : !data ? <Skeleton rows={6} />
-          : <>
-            {data.error && <ErrorBanner text={`GitHub: ${data.error}`} />}
-            {incomplete && <p class="muted type-sm stack-pad">Some GitHub data is unavailable: current totals are unknown; the rows are the last ones read.</p>}
-            {!rows.length ? <Empty text={picked ? 'No pull requests merged then.' : stages.length || query ? 'No pull requests match.' : incomplete ? 'Unavailable. GitHub data is incomplete.' : 'No pull requests in flight.'} />
-              : <div class="vl-wrap" role="grid" aria-label="Pull requests" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>{rows.map(r => r.kind === 'group'
-                ? <div key={'g' + r.key} class="vl-row static grp" role="row"><GroupHeader icon={r.stage ? states.delivery[r.stage].icon : 'folder-open'} tone={r.stage ? states.delivery[r.stage].tone : 'neutral'} label={r.label} count={r.count} open onToggle={() => {}} /></div>
-                : <PrRow key={idOf(r.it)} it={r.it} now={now} sel={idOf(r.it) === id} href={href({ focus: idOf(r.it) })} onOpen={() => go(r.it)} />)}</div>}
-          </>}
-      </ListFrame>
-    </section>
+    {data?.error && <ErrorBanner text={`GitHub: ${data.error}`} />}
+    {incomplete && <p class="muted type-sm stack-pad">Some GitHub data is unavailable: current totals are unknown; the rows are the last ones read.</p>}
+    <ListPagePanel page={page} noun="Pull requests" placeholder="Search pull requests, state:mq_wait project:fleet" family="delivery" groups={GROUPS} sorts={SORTS} focused={id} countersLabel="Pull requests by stage"
+      countsUnknown={incomplete && !p} chips={p ? [{ field: 'Merged', value: p.tip ?? p.label }] : []} onRemoveChip={() => setPace({ at: undefined })}
+      listLabel="Pull requests" title={r => r.it.title || `#${r.it.number}`}
+      groupIcon={(g, k) => g === 'stage' && k in states.delivery ? states.delivery[k as Stage].icon : 'folder-open'} groupTone={(g, k) => g === 'stage' && k in states.delivery ? states.delivery[k as Stage].tone : 'neutral'}
+      state={r => <StateBadge family="delivery" state={r.it.stage} compact />} actions={() => []}
+      menu={r => [{ label: 'Open on GitHub', icon: actions.open, onClick: () => window.open(r.it.url, '_blank', 'noopener') }]}
+      empty={<Empty text={p ? 'No pull requests merged then.' : page.filtered ? 'No pull requests match.' : incomplete ? 'Unavailable. GitHub data is incomplete.' : 'No pull requests in flight.'} />}
+      facts={r => <RowFacts>
+        {r.it.repo !== FLEET && <Fact text={r.it.repo} tip="Repository" />}
+        {r.it.release && <Fact text={r.it.release.replace(/^v/, '')} tip="Release" />}
+        <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} now={now} alertAfter={alertOf(norms, r.it)} alertLabel="past the stage's P90" /></Fact>
+      </RowFacts>} />
   </>;
   return <ListDetail list={list} detailKey={id}
-    idle={<Overview now={now} items={items} incomplete={incomplete} pace={pace.data ?? null} paceError={pace.error} fleetShown={fleetShown && !pace.none} range={range} at={at} href={it => href({ focus: idOf(it) })}
-      onRange={r => setExtra({ range: r === '7d' ? undefined : r, at: undefined })} onAt={a => setExtra({ at: a === null ? undefined : String(a) })} onOpen={go} />}
-    detail={id ? <PrDetail key={id} id={id} item={open} now={now} onClose={() => go()} /> : undefined} />;
+    idle={<Overview now={now} items={items} incomplete={incomplete} norms={norms} hist={hist} regressions={regressions} histError={histDoc.error} fleetShown={fleetShown && histDoc.data !== NONE}
+      range={range} buckets={buckets} picked={p} href={it => page.href({ focus: idOf(it) })} onOpen={go}
+      onRange={r => setPace({ range: r, at: undefined })} onPick={k => setPace({ at: ex.at === k ? undefined : k })} />}
+    detail={id ? <PrDetail key={id} id={id} item={open} now={now} norms={norms} onClose={() => go()} /> : undefined} />;
 }
+
+/** Seconds in a stage after which its time is red: the stage's P90 over the last 14 days; none for stages without a norm. */
+const alertOf = (n: Norms, it: Item) => { const x = n.stage(it.stage, it.repo); return x ? x[1] / 1000 : undefined; };
 
 /** A recorded (merged) pull request as a list row: its stage from how far it got. */
-function fromHistory(x: HistoryPr): Item {
-  const installed = !!x.installed?.coordinator, stage: Stage = installed ? 'installed' : x.released ? 'installing' : 'releasing';
+function fromHistory(x: HistoryPr, installsFrom?: string): Item {
+  // Released before installs were recorded: its install is unknown, so it is done (merged), not installing for weeks.
+  const unrecorded = !!x.released && !!installsFrom && x.released < installsFrom;
+  const installed = !!x.installed?.coordinator, stage: Stage = installed ? 'installed' : unrecorded ? 'merged' : x.released ? 'installing' : 'releasing';
   return { projectId: 'fleet', repo: FLEET, number: x.number, title: x.title, url: x.url, stage, since: (installed ? x.installed.coordinator : x.released ?? x.merged) as string, opened: x.opened, merged: x.merged, release: x.release };
-}
-const bucketLabel = (at: number, len: number) => len >= DAY ? new Date(at).toUTCString().slice(5, 11) : `${new Date(at).toISOString().slice(11, 16)} UTC`;
-
-function PrRow({ it, now, sel, href, onOpen }: { it: Item; now: number; sel: boolean; href: string; onOpen: () => void }) {
-  return <div role="row" class={`vl-row static${sel ? ' sel' : ''}`}>
-    <span class="lead"><StateBadge family="delivery" state={it.stage} compact /></span>
-    <span class="tt" style={{ flexWrap: 'wrap', rowGap: 0 }}>
-      <a class="title row-link" style={{ flex: '0 0 100%' }} href={href} onClick={e => { e.preventDefault(); onOpen(); }}>{it.title || `#${it.number}`}</a>
-      <span class="id">#{it.number}</span>{it.repo !== FLEET && <span class="id">{it.repo}</span>}{it.release && <span class="id">{it.release.replace(/^v/, '')}</span>}</span>
-    <span class="rz"><RowFacts><Fact tip={`${states.delivery[it.stage].label} for`}><AgeChip t={ms(it.since)} now={now} alertAfter={LIMIT[it.stage]} alertLabel="past the stage limit" /></Fact></RowFacts></span>
-  </div>;
 }
 
 /** The work area while no pull request is open: what needs a look, what moves now, the pace. */
-function Overview({ now, items, incomplete, pace, paceError, fleetShown, range, at, onRange, onAt, onOpen, href }: {
-  now: number; items: Item[]; incomplete: boolean; pace: { h: History; b: Ops['delivery_baseline']['reply']; r: Ops['delivery_regressions']['reply'] } | null; paceError: string | null;
-  fleetShown: boolean; range: typeof RANGES[number]; at: number | null; onRange: (r: string) => void; onAt: (a: number | null) => void; onOpen: (it: Item) => void; href: (it: Item) => string;
+function Overview({ now, items, incomplete, norms, hist, regressions, histError, fleetShown, range, buckets, picked, onRange, onPick, onOpen, href }: {
+  now: number; items: Item[]; incomplete: boolean; norms: Norms; hist: { h: History } | null; regressions: Regressions['regressions']; histError: string | null; fleetShown: boolean;
+  range: string; buckets: Bucket[]; picked: Bucket | null; onRange: (r: string) => void; onPick: (k: string) => void; onOpen: (it: Item) => void; href: (it: Item) => string;
 }) {
   const moving = ORDER.filter(s => !DONE.includes(s)).flatMap(s => items.filter(it => it.stage === s));
-  const failed = items.filter(it => it.stage === 'pr_failed'), stuck = moving.filter(it => late(it, now));
+  const over = (it: Item) => { const n = norms.stage(it.stage, it.repo); return !!n && now - ms(it.since) > n[1]; };
+  const failed = items.filter(it => FAILED.includes(it.stage)), stuck = moving.filter(over);
   const look = [
-    ...(pace?.r.regressions ?? []).map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${mins(g.currentMs)}, baseline ${mins(g.baselineMs)}`}
-      facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => open(g.compareUrl!) }] : [])]} />),
-    ...failed.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} checks failed`} facts={`${it.title} · ${fmtAge(ms(it.since), now)} ago`} actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
-    ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${states.delivery[it.stage].label.toLowerCase()} for ${fmtAge(ms(it.since), now)}, limit ${LIMIT[it.stage]! / 60}m`}
+    ...regressions.map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
+      facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />),
+    ...failed.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={`${it.title} · ${fmt(Math.max(0, now - ms(it.since)))} ago`}
+      actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
+    ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it.stage, it.repo)![1])}`}
       facts={it.title} actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
   ];
   return <div class="stack-pad" data-ui="delivery-overview">
     {look.length > 0 && <DetailSection title="Needs a look"><Latest items={look} n={3} /></DetailSection>}
-    <DetailSection title="Moving now, 6 hours">
+    <DetailSection title="Moving now">
       {!moving.length ? <Empty text={incomplete ? 'Unavailable. GitHub data is incomplete.' : 'Nothing in flight.'} />
-        : <div class="vl-wrap" role="grid" aria-label="Pull requests in flight" style={{ '--cols': '3.5rem minmax(0,1fr) 3rem' }}>{moving.map(it =>
-          <div key={idOf(it)} class="vl-row static" role="row">
+        : <div class="vl-wrap" role="grid" aria-label="Pull requests in flight" style={{ '--cols': '1.25rem 3.5rem minmax(0,1fr) minmax(0,1.3fr) 2.75rem 4.5rem' }}>{moving.map(it => {
+          const n = norms.stage(it.stage, it.repo), el = Math.max(0, now - ms(it.since)), red = over(it);
+          return <div key={idOf(it)} class="vl-row static" role="row">
+            <span class="lead"><StateBadge family="delivery" state={it.stage} compact /></span>
             <a class="mono row-link" href={href(it)} onClick={e => { e.preventDefault(); onOpen(it); }}>#{it.number}</a>
-            <TimeStrip from={now - 6 * HOUR} to={now} now={now} label={`#${it.number} ${it.title}`} parts={lane(it, now)} />
-            <span class="r"><AgeChip t={ms(it.since)} now={now} alertAfter={LIMIT[it.stage]} alertLabel="past the stage limit" /></span>
-          </div>)}</div>}
+            <span class="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</span>
+            <NormBar elapsed={el} p50={n?.[0]} p90={n?.[1]} label={`${states.delivery[it.stage].label} #${it.number}`} value={fmt} />
+            <span class="r"><AgeChip t={ms(it.since)} now={now} alertAfter={alertOf(norms, it)} alertLabel="past the stage's P90" /></span>
+            <span class={`r mono type-sm${red ? ' t-danger' : ' muted'}`} style={red ? { color: 'var(--tone-fg)' } : undefined}
+              data-tip={n ? `${states.delivery[it.stage].label}: P50 ${fmt(n[0])}, P90 ${fmt(n[1])} over 14 days` : undefined}>{n ? `P90 ${fmt(n[1])}` : 'no norm'}</span>
+          </div>;
+        })}</div>}
       {incomplete && moving.length > 0 && <p class="muted type-sm">The last rows read; GitHub coverage is incomplete.</p>}
     </DetailSection>
-    {fleetShown && <Pace pace={pace} error={paceError} now={now} range={range} at={at} onRange={onRange} onAt={onAt} />}
+    {fleetShown && <Pace hist={hist?.h ?? null} error={histError} now={now} norms={norms} range={range} buckets={buckets} picked={picked} onRange={onRange} onPick={onPick} />}
   </div>;
 }
-const open = (url: string) => window.open(url, '_blank', 'noopener');
-const mins = (ms: number) => ms >= HOUR ? `${Math.floor(ms / HOUR)}h ${String(Math.round(ms % HOUR / MIN)).padStart(2, '0')}m` : `${Math.round(ms / MIN)}m`;
-const fmtAge = (t: number, now: number) => mins(Math.max(0, now - t));
-const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available', run: 'Queue run' };
+const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available' };
 const keyLabel = (k: string) => KEYS[k] ?? k;
 
-/** A pull request's lane: what came before its current stage (known only as one span), then the current stage. */
-function lane(it: Item, now: number): StripPart[] {
-  const since = ms(it.since), opened = ms(it.opened), over = late(it, now);
-  const parts: StripPart[] = [];
-  if (opened && opened < since) parts.push({ start: opened, end: since, tone: 'neutral', label: 'Earlier stages' });
-  parts.push({ start: since, end: null, tone: over ? 'danger' : states.delivery[it.stage].tone, label: `${states.delivery[it.stage].label}${over ? ', past the limit' : ''}` });
-  return parts;
-}
-
-// Where the time goes: a pull request's stage durations folded into four layers, bottom up in pipeline order.
-const LAYERS: { label: string; tone: ChartSeries['tone']; keys: string[] }[] = [
+// Where the time goes: a pull request's stage durations folded into four parts, in pipeline order.
+const PARTS: { label: string; tone: SharePart['tone']; keys: string[] }[] = [
   { label: 'PR checks', tone: 'd1', keys: ['pr_ci'] }, { label: 'Queue', tone: 'd2', keys: ['enqueue', 'queue', 'merge'] },
   { label: 'Release', tone: 'd3', keys: ['release'] }, { label: 'Install', tone: 'd4', keys: ['install'] },
 ];
+const partOf = (x: HistoryPr, keys: string[]) => keys.reduce((s, k) => s + (x.durations[k] ?? 0), 0);
+// Measured through install: every part has its own duration (enqueue and merge may be absent when there was no wait).
+const complete = (x: HistoryPr) => ['pr_ci', 'queue', 'release', 'install'].every(k => typeof x.durations[k] === 'number');
 
-function Pace({ pace, error, now, range, at, onRange, onAt }: { pace: { h: History; b: Ops['delivery_baseline']['reply'] } | null; error: string | null; now: number; range: typeof RANGES[number]; at: number | null; onRange: (r: string) => void; onAt: (a: number | null) => void }) {
-  const choice = <div class="state-line"><Choice label="Range" options={RANGES} value={range.id} onChange={onRange} /></div>;
-  if (error && !pace) return <DetailSection title="Pace">{choice}<ErrorBanner text={`Delivery history did not load: ${error}`} /></DetailSection>;
-  if (!pace) return <DetailSection title="Pace">{choice}<Skeleton rows={3} /></DetailSection>;
-  const from = now - range.ms, prs = pace.h.prs.filter(x => ms(x.merged) >= from);
-  const total = prs.map(x => x.durations.total).filter((v): v is number => typeof v === 'number');
-  const base = (k: string) => pace.b.rolling.stats.find(s => s.key === k);
+/** Open to installed in a bucket: P50 and P90 of its pull requests measured through install; none measured is "not measured", never 0. */
+export function totalMark(prs: HistoryPr[], b: Bucket, installsFrom: number | null): DayMark {
+  const xs = prs.map(x => x.durations.total).filter((v): v is number => typeof v === 'number');
+  if (!prs.length) return { v: null, missing: 'nothing merged' };
+  if (!xs.length) return { v: null, missing: installsFrom && b.end <= installsFrom ? `install times recorded from ${day(installsFrom)}` : 'not installed yet' };
+  const part = [xs.length < prs.length ? `${xs.length} of ${prs.length} measured` : '', b.today ? 'so far' : ''].filter(Boolean).join(', ');
+  return { v: q(xs, 0.5), hi: q(xs, 0.9), partial: part || undefined };
+}
+
+function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick }: {
+  hist: History | null; error: string | null; now: number; norms: Norms; range: string; buckets: Bucket[]; picked: Bucket | null; onRange: (r: string) => void; onPick: (k: string) => void;
+}) {
+  const choice = <div class="state-line"><Choice label="Range" options={RANGES} value={range} onChange={onRange} />
+    {hist?.backfilledFrom && buckets[0] && buckets[0].start <= ms(hist.backfilledFrom) && <span class="muted type-sm">recorded from {day(ms(hist.backfilledFrom), now)}</span>}</div>;
+  if (error && !hist) return <DetailSection title="Pace">{choice}<ErrorBanner text={`Delivery history did not load: ${error}`} /></DetailSection>;
+  if (!hist || !buckets.length) return <DetailSection title="Pace">{choice}<Skeleton rows={3} /></DetailSection>;
+  const from = buckets[0].start, prs = hist.prs.filter(x => ms(x.merged) >= from);
+  const inB = (b: Bucket) => prs.filter(x => ms(x.merged) >= b.start && ms(x.merged) < b.end);
+  const installsFrom = hist.installsFrom ? ms(hist.installsFrom) : null;
+  const total = buckets.map(b => totalMark(inB(b), b, installsFrom));
+  const merged: DayMark[] = buckets.map(b => ({ v: inB(b).length, partial: b.today ? 'so far' : undefined }));
+  const totals = prs.map(x => x.durations.total).filter((v): v is number => typeof v === 'number');
   const removals = prs.reduce((n, x) => n + x.queueRemovals, 0), flakes = prs.reduce((n, x) => n + x.flakes, 0);
-  const n = Math.ceil(range.ms / range.bucket), start = (i: number) => now - (n - i) * range.bucket;
-  const inBucket = (i: number) => prs.filter(x => ms(x.merged) >= start(i) && ms(x.merged) < start(i) + range.bucket);
-  const med = (xs: HistoryPr[], keys: string[]) => p(xs.map(x => keys.reduce((s, k) => s + (x.durations[k] ?? 0), 0)).filter(v => v > 0), 0.5) ?? 0;
-  // Step series: one point per bucket start, and the last value again at now, so the last bucket is drawn to the edge.
-  const steps = (v: (i: number) => number) => [...Array.from({ length: n }, (_, i) => ({ at: start(i), v: v(i) })), { at: now, v: v(n - 1) }];
-  const byStage: ChartSeries[] = LAYERS.map(l => ({ label: l.label, tone: l.tone, step: true, points: steps(i => med(inBucket(i), l.keys) / MIN) }));
-  const merged: ChartSeries[] = [{ label: 'Merged', tone: 'd1', step: true, points: steps(i => inBucket(i).length) }];
-  const stackMax = Math.max(10, ...Array.from({ length: n }, (_, i) => byStage.reduce((s, l) => s + l.points[i].v, 0)));
-  const buckets: ChartBucket[] = n <= 31 ? Array.from({ length: n }, (_, i) => ({ key: String(start(i)), label: bucketLabel(start(i), range.bucket), valueLabel: `${inBucket(i).length} merged` })) : [];
-  const perDay = prs.length / (range.ms / DAY);
-  return <DetailSection title="Pace">
+  const scope = picked ? inB(picked) : prs, done = scope.filter(complete);
+  const mean = (keys: string[]) => done.reduce((s, x) => s + partOf(x, keys), 0) / (done.length || 1);
+  const share: SharePart[] = PARTS.map(p => ({ label: p.label, v: mean(p.keys), tone: p.tone, tip: `${p.label}: mean ${fmt(mean(p.keys))}, P50 ${fmt(q(done.map(x => partOf(x, p.keys)), 0.5) ?? 0)}` }));
+  const days = Math.max(1, (now - from) / DAY), base = norms.total;
+  const pick = (k: string) => onPick(k);
+  return <DetailSection title="Pace"><div style={{ display: 'grid', gap: 'var(--space-4)', minWidth: 0 }}>
     {choice}
     <Totals items={[
-      { label: 'Open to installed P50', m: sec(p(total, 0.5)), kind: 'duration', note: base('total') ? `baseline ${mins(base('total')!.p50Ms)}` : undefined },
-      { label: 'Open to installed P90', m: sec(p(total, 0.9)), kind: 'duration', note: base('total') ? `baseline ${mins(base('total')!.p90Ms)}` : undefined },
-      { label: 'Merged', m: { value: prs.length, basis: 'measured' }, kind: 'count', note: range.ms > DAY ? `${perDay.toFixed(perDay < 10 ? 1 : 0)} a day` : undefined },
+      { label: 'Open to installed P50', m: sec(q(totals, 0.5)), kind: 'duration', note: base ? `baseline ${fmt(base[0])}` : undefined },
+      { label: 'Open to installed P90', m: sec(q(totals, 0.9)), kind: 'duration', note: base ? `baseline ${fmt(base[1])}` : undefined },
+      { label: 'Merged', m: { value: prs.length, basis: 'measured' }, kind: 'count', note: range === '24h' ? undefined : `${(prs.length / days).toFixed(prs.length / days < 10 ? 1 : 0)} a day` },
       { label: 'Queue removals', m: { value: removals, basis: 'measured' }, kind: 'count', note: flakes ? `${flakes} flaky` : undefined },
     ]} />
-    <div class="cols">
-      <div><b class="type-sm">Where the time goes, P50 per stage</b>
-        <AreaChart label="Time per stage, P50 per bucket" series={byStage} stacked from={from} to={now} now={now} max={stackMax} value={v => mins(v * MIN)}
-          buckets={buckets} selectedBucket={at === null ? null : String(at)} onSelectBucket={k => onAt(at === Number(k) ? null : Number(k))} /></div>
-      <div><b class="type-sm">Merged per {range.bucket >= DAY ? 'day' : '2 hours'}</b>
-        <AreaChart label="Pull requests merged per bucket" series={merged} from={from} to={now} now={now} max={Math.max(4, ...merged[0].points.map(q => q.v))} value={v => String(Math.round(v))} /></div>
-    </div>
-    <p class="muted type-sm">{at === null ? 'A bucket shows the pull requests merged in it in the list.' : `The list shows the pull requests merged ${bucketLabel(at, range.bucket)}.`}</p>
-  </DetailSection>;
+    <DayChart title="Open to installed" label="Open to installed per day, P50 and P90" kind="range" cols={buckets} marks={total} value={fmt}
+      cap={capOf(total.flatMap(m => [m.v, m.hi]), { floor: 10 * MIN, unit: MIN })} capNote="about P95 of the figures shown; a figure over four times their median is drawn cut, with its value"
+      names={['P50', 'P90']} values alertAbove={base?.[1]} alertLabel={base ? `above the 14-day P90 ${fmt(base[1])}` : undefined} selected={picked?.key ?? null} onSelect={pick} />
+    <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={buckets} marks={merged} value={v => String(Math.round(v))}
+      cap={capOf(merged.map(m => m.v), { floor: 4, fence: Infinity })} tone="d2" axis selected={picked?.key ?? null} onSelect={pick} />
+    <ShareBar title="Where the time goes" label="Where the time goes" parts={share} value={fmt}
+      note={`mean per pull request, ${done.length} of ${scope.length} measured${picked ? ` · ${picked.tip ?? picked.label}` : ''}`} />
+  </div></DetailSection>;
 }
 
 /** The opened pull request: its stages on one time axis, queue runs, release and installs per host (the fleet repository
  *  has a recorded history; other repositories show what the current read knows). */
-function PrDetail({ id, item, now, onClose }: { id: string; item?: Item; now: number; onClose: () => void }) {
+function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; now: number; norms: Norms; onClose: () => void }) {
   const [owner, repo, num] = id.split('~'), number = Number(num), fleet = `${owner}/${repo}` === FLEET;
-  const hd = useDoc<History | typeof NONE>(fleet ? 'delivery-pr:' + number : null, () => op('delivery_history', { number }).catch(e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; }), touchesHistory, 600000);
+  const hd = useDoc<History | typeof NONE>(fleet ? 'delivery-pr:' + number : null, () => no404(op('delivery_history', { number })), touchesHistory, 600000);
   const h = { data: hd.data === NONE ? null : hd.data, error: hd.error, loading: fleet && hd.data === null && !hd.error };
-  const x = h.data?.prs.find(q => q.number === number);
+  const x = h.data?.prs.find(p => p.number === number);
   // The merge queue splits at its last successful run's start: waiting for a runner before, its checks after.
   const qStart = h.data?.runs.filter(r => r.conclusion === 'success' && r.started).map(r => r.started!).sort().at(-1);
   const title = item?.title || x?.title || `#${number}`;
@@ -257,9 +319,10 @@ function PrDetail({ id, item, now, onClose }: { id: string; item?: Item; now: nu
   const known = steps.filter(([, , a]) => a);
   const ended = known.map(([l, s, a, b], i) => [l, s, a, b ?? known.slice(i + 1).map(k => k[2]).find(Boolean)] as const);
   const t0 = ms(x?.opened ?? item?.opened ?? item?.since), t1 = now;
+  const url = item?.url || x?.url;
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={title}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><span class="muted mono">{owner}/{repo} #{number}</span><span class="grow" />
-      {(item?.url || x?.url) && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => open((item?.url || x?.url)!)} />}</header>
+      {url && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(url, '_blank', 'noopener')} />}</header>
     <h2 class="detail-title">{title}</h2>
     <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} now={now} />}
       {(item?.release || x?.release) && <span class="id">{(item?.release || x?.release)!.replace(/^v/, '')}</span>}</div>
@@ -282,8 +345,9 @@ function PrDetail({ id, item, now, onClose }: { id: string; item?: Item; now: nu
           : Object.entries(x.installed).map(([host, t]) => <KvRow key={host} icon="terminal" label={host} meta={x.installedVersions?.[host]} value={<AgeChip t={ms(t)} now={now} />} />)}</DetailSection>
       </> : item ? <>
         <DetailSection title="Now">
-          <KvRow icon={states.delivery[item.stage].icon} label={states.delivery[item.stage].label} meta={item.stage === 'pr_failed' ? 'the last checks on its head failed' : undefined}
-            value={<AgeChip t={ms(item.since)} now={now} alertAfter={LIMIT[item.stage]} alertLabel="past the stage limit" />} />
+          <KvRow icon={states.delivery[item.stage].icon} label={states.delivery[item.stage].label}
+            meta={item.stage === 'pr_failed' ? 'the last checks on its head failed' : item.stage === 'mq_failed' ? 'its last merge-queue run failed; it left the queue' : undefined}
+            value={<AgeChip t={ms(item.since)} now={now} alertAfter={alertOf(norms, item)} alertLabel="past the stage's P90" />} />
           {item.opened && <KvRow icon="git-pull-request" label="Opened" value={<AgeChip t={ms(item.opened)} now={now} />} />}
         </DetailSection>
         <p class="muted type-sm">{fleet ? 'The stage history is recorded once the pull request merges.' : 'Stage history is recorded for the fleet repository only.'}</p>
@@ -291,4 +355,3 @@ function PrDetail({ id, item, now, onClose }: { id: string; item?: Item; now: nu
     </div>
   </article>;
 }
-
