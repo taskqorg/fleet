@@ -20,7 +20,7 @@ type preset struct {
 var systemPresets = []preset{
 	{ID: "discuss", Name: "Discuss", Description: "Talk an idea or a question through. The code does not change; tasks and pipelines can be started.", Role: "pm", Profile: "pm", Access: "read"},
 	{ID: "design", Name: "Design", Description: "Design or change an interface on its own branch, from the design system.", Role: "worker", Profile: "coding-worker", Access: "write", Branch: true,
-		Starter: "Design work. Before you change an interface, read the project's design rules: docs/design-system/owner-rules.md and the design book (docs/design-system/README.md) where the project has them. Build screens only from packages/ui and run pnpm run check:design."},
+		Starter: "Design work. Before you change an interface, read the project's design rules: docs/design-system/owner-rules.md and the design book (docs/design-system/README.md) where the project has them. Where the project has packages/ui, build screens only from it and run pnpm run check:design."},
 	{ID: "fix", Name: "Fix / build", Description: "Fix a bug or build a feature on its own branch.", Role: "worker", Profile: "coding-worker", Access: "write", Branch: true},
 	{ID: "review", Name: "Review", Description: "Review code or a change and report the findings. The code does not change.", Role: "reviewer", Profile: "claude-reviewer", Access: "read"},
 	{ID: "investigate", Name: "Investigate a problem", Description: "Find the cause of a problem in errors, logs and code. The code does not change; tasks can be written.", Role: "pm", Profile: "pm", Access: "read",

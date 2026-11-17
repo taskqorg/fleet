@@ -1491,10 +1491,13 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		return nil, err
 	} else if len(old) > 0 {
 		o := old[0]
-		for _, k := range []string{"preset", "access", "branch"} {
+		for _, k := range []string{"preset", "access", "branch", "role"} {
 			if v, given := b[k]; given && o[k] != nil && v != o[k] {
 				return nil, fail(409, "requestId already started a session with another "+k)
 			}
+		}
+		if v, given := b["profileId"]; given && v != mapOf(o["agentConfig"])["id"] {
+			return nil, fail(409, "requestId already started a session with another profileId")
 		}
 		return doc{"sessionId": o["id"], "projectId": nilIf(pid), "role": o["role"], "profileId": mapOf(o["agentConfig"])["id"], "account": o["account"], "preset": o["preset"], "access": o["access"], "branch": o["branch"], "existing": true}, nil
 	}

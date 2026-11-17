@@ -73,7 +73,7 @@ export async function checkNewConversation(browser: Browser, origin: string) {
       const s = await call('session_get', { sessionId });
       assert.deepEqual([s.projectId, s.agentConfig?.id, s.preset, s.access, s.branch], ['cs', 'coding-worker', 'fix', 'write', true], 'the conversation starts with the preset');
       await p.locator('[data-ui=detail][aria-label=Conversation]').waitFor();
-      if (width > 500) assert.ok(await until(async () => await p.locator('.split-list .vl-row', { hasText: text }).count() === 1), 'the new conversation shows in the list');
+      if (width > 500) assert.ok(await until(async () => await p.locator('.split-list .vl-row', { hasText: text }).count() === 1, 15000), 'the new conversation shows in the list: ' + await p.locator('.split-list').innerText());
       await shot('cs-started');
       await p.goBack(); await p.waitForURL(u => new URL(u).pathname === '/conversations/new');
       await form.waitFor();

@@ -399,6 +399,9 @@ func teardown(dir, session, top string, project any, deleteBranch, detached bool
 		out.Reason = new("worktree-remove-failed")
 		return out
 	}
+	if detached { // no session branch was ever made: nothing to delete or report
+		return out
+	}
 	flag := "-d"
 	if deleteBranch {
 		flag = "-D"

@@ -405,16 +405,11 @@
       "idempotentHint": true,
       "openWorldHint": false
     },
-    "description": "List your project's presets for session_start: id, name, what it does, the profile it starts (only profiles your project maps to roles can start), access read|write, branch, starter instruction; unavailable says why one cannot start.",
+    "description": "List your own project's presets for session_start: id, name, what it does, the profile it starts (only profiles your project maps to roles can start), access read|write, branch, starter instruction; unavailable says why one cannot start.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {
-        "projectId": {
-          "type": "string",
-          "description": "One of your focused projects; default your own"
-        }
-      }
+      "properties": {}
     }
   },
   {

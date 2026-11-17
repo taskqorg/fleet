@@ -32,7 +32,9 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [override, setOverride] = useState<{ access?: 'read' | 'write'; branch?: boolean }>({});
   const [error, setError] = useState('');
-  useEffect(() => { setOverride({}); setError(''); }, [key, picked[key]]);
+  // The flipped access and branch belong to one preset: any change of the effective preset resets them.
+  const chosenId = (presets.data?.presets ?? []).find(p => p.id === picked[key] && !p.unavailable)?.id ?? (presets.data?.presets ?? []).find(p => !p.unavailable)?.id;
+  useEffect(() => { setOverride({}); setError(''); }, [key, chosenId]);
 
   // Order (OR-34): focused projects, then recent ones, then the rest by name; ignored projects are left out unless named.
   const { focus, ignored } = prefs.value;

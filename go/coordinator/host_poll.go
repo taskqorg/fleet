@@ -310,7 +310,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 				continue
 			}
 			// A read-only or branchless start waits for an executor that honours it, also if this host went back a release.
-			if pl := mapOf(c["payload"]); c["kind"] == "start" && (pl["readOnly"] == true || pl["branch"] == false) && !inList(caps, "start-access-v1") {
+			if pl := mapOf(c["payload"]); (c["kind"] == "start" && pl["readOnly"] == true || pl["branch"] == false && pl["projectId"] != nil) && !inList(caps, "start-access-v1") {
 				continue
 			}
 			// Each command is prepared under its own savepoint: one command that cannot be handed off is stopped with
