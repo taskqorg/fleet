@@ -302,7 +302,10 @@ jobs:
       go: true
       clickhouse: ${{ matrix.clickhouse }}
       # The service's per-job port is in FLEET_TEST_CLICKHOUSE_URL (ci-part.sh clickhouse uses a fixed port and name).
-      env: GOFLAGS=-mod=readonly
+      # OUTSIDE_JOBS: the hosted runner's measured 4, not the guest's nproc, which its other pool runners share.
+      env: |
+        GOFLAGS=-mod=readonly
+        OUTSIDE_JOBS=4
       script: scripts/ci-part.sh ${{ matrix.part }} test
   # App: bundle and UI unit tests. The release tarballs are release-build's.
   app-tests:
