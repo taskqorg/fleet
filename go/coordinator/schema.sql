@@ -2348,3 +2348,62 @@ UPDATE question SET state=CASE WHEN state='open' THEN 'withdrawn'::question_stat
  WHERE cause LIKE 'problem:client-error:%' AND state IN ('open','answered');
 DROP TABLE client_error_report;
 DROP TABLE client_error;
+
+-- migration 67: delete and purge (docs/designs/fleet-system-management.md, Archive, delete, purge). object_delete
+-- tombstones an object with every row that goes with it (cleanup.go, reference map): a deleted project keeps its
+-- definition row (deleted_at and retired_at; purged_at once system_purge removed its rows), so its id is never reused;
+-- every other row of the cascade gets tombstoned_at (artifact.deleted_at already means "bytes removed by retention").
+-- A restrictive SELECT policy on every project-owned table hides tombstoned rows and every row of a deleted project
+-- from every read, the owner's and the coordinator's own passes included. fleet.deleted=on shows them: host calls, so
+-- the stop and teardown of deleted work still land, and delete and purge themselves. The change feed (pruned after a
+-- day) and the resource tables (read only after a project check) keep their own lifecycle.
+ALTER TABLE definition ADD COLUMN deleted_at timestamptz NULL, ADD COLUMN purged_at timestamptz NULL;
+ALTER TABLE execution ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE task ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE experiment ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE question ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE artifact ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE document ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE score ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE experiment_note ADD COLUMN tombstoned_at timestamptz NULL;
+CREATE FUNCTION fleet_show_deleted() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT coalesce(current_setting('fleet.deleted', true), '') = 'on' $$;
+CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql STABLE AS
+ $$ SELECT coalesce(array_agg(id), '{}') FROM definition WHERE kind = 'project' AND deleted_at IS NOT NULL $$;
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY ARRAY['execution','task','experiment','question','artifact','document','score','experiment_note'] LOOP
+  EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted() OR (tombstoned_at IS NULL'
+   ' AND (project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[])%s)))', t,
+   CASE WHEN t = 'document' THEN ' OR kind IN (''setting-change'', ''transport-audit'')' ELSE '' END); -- audit outlives the project
+ END LOOP;
+ FOREACH t IN ARRAY ARRAY['artifact_copy','artifact_rule_confirmation','entity_code','execution_totals','purged_hash',
+  'route_decision','task_dependency','task_derived'] LOOP
+  EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted()'
+   ' OR project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))', t);
+ END LOOP;
+END $$;
+-- A row a host's own call writes later for a tombstoned execution (an event, a receipt, a stop landing after the
+-- delete) is born tombstoned.
+CREATE FUNCTION fleet_inherit_tombstone() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE e text; BEGIN
+ -- Only a writer that sees deleted rows: for any other one a tombstoned row would fail the policy's check on an upsert.
+ IF NEW.tombstoned_at IS NOT NULL OR NOT fleet_show_deleted() THEN RETURN NEW; END IF;
+ IF TG_TABLE_NAME = 'document' THEN
+  IF NEW.kind IN ('setting-change', 'transport-audit', 'purge-task') THEN RETURN NEW; END IF; -- audit outlives the object
+  e := NEW.data->>'executionId';
+  IF e IS NULL AND NEW.data->>'sessionId' IS NOT NULL AND EXISTS (SELECT 1 FROM document WHERE kind = 'session' AND id = NEW.data->>'sessionId' AND tombstoned_at IS NOT NULL) THEN
+   NEW.tombstoned_at := now(); RETURN NEW;
+  END IF;
+ ELSE e := to_jsonb(NEW)->>TG_ARGV[0]; END IF;
+ IF e IS NOT NULL AND EXISTS (SELECT 1 FROM execution WHERE id = e AND tombstoned_at IS NOT NULL) THEN NEW.tombstoned_at := now(); END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER document_tombstone BEFORE INSERT ON document FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone();
+CREATE TRIGGER artifact_tombstone BEFORE INSERT ON artifact FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+CREATE TRIGGER question_tombstone BEFORE INSERT ON question FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+CREATE TRIGGER execution_tombstone BEFORE INSERT ON execution FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('parent_execution_id');
+-- Notes stay append-only for every writer but delete, which tombstones a deleted experiment's notes, and system_purge,
+-- which removes them.
+CREATE OR REPLACE FUNCTION fleet_note_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF TG_OP = 'DELETE' AND coalesce(current_setting('fleet.purge', true), '') = 'on' THEN RETURN OLD; END IF;
+ IF TG_OP = 'UPDATE' AND to_jsonb(NEW) - 'tombstoned_at' = to_jsonb(OLD) - 'tombstoned_at' THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'experiment notes are append-only';
+END $$;

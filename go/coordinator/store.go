@@ -39,6 +39,15 @@ type Scope struct{ ProjectIDs, Person string }
 // fleet.actor from it, which fleet_change() records as change.actor (docs/designs/fleet-pm-agent.md §1).
 type actorKey struct{}
 
+// showDeletedKey: the context value of an executor-internal host call (true); its transactions set fleet.deleted=on
+// (migration 67), so the stop and teardown of deleted work are still delivered and their results land.
+type showDeletedKey struct{}
+
+// deletedHostRoutes: the host routes that see deleted rows. Every other host route (agent tools, project operations,
+// child runs, artifact reads and transfers) reads as everyone does: a late upload of deleted work gets 404 and the
+// executor sets it aside.
+var deletedHostRoutes = map[string]bool{"/api/hosts/poll": true, "/api/hosts/receipts": true, "/api/hosts/events": true, "/api/hosts/spans": true}
+
 // Canonical advisory-lock hierarchy. Within any transaction, requested locks are sorted and deduplicated by (rank, key),
 // and dynamic lock acquisition rejects any lock ordered before or equal to a lock already held in the transaction:
 //
@@ -350,6 +359,11 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, sortedLocks []s
 		}
 		if sc != nil {
 			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)", sc.ProjectIDs, sc.Person); err != nil {
+				return err
+			}
+		}
+		if show, _ := ctx.Value(showDeletedKey{}).(bool); show {
+			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.deleted','on',true)"); err != nil {
 				return err
 			}
 		}

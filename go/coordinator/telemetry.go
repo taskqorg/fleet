@@ -228,10 +228,10 @@ func spanScope(p *Person, params map[string]string) string {
 	ids := []string{}
 	for _, g := range p.Grants {
 		if g.Kind == "project" {
-			ids = append(ids, "'"+strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(g.ID)+"'")
+			ids = append(ids, g.ID)
 		}
 	}
-	params["scope"] = "[" + strings.Join(ids, ",") + "]"
+	params["scope"] = clickhouseStrings(ids)
 	return "project_id IN {scope:Array(String)}"
 }
 

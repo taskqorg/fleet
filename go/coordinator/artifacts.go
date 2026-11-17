@@ -409,7 +409,8 @@ func artifacts(ctx context.Context, a *App, where string, args ...any) ([]Artifa
 }
 
 func artifactRow(ctx context.Context, a *App, id string) (*Artifact, error) {
-	r, err := artifacts(ctx, a, "WHERE id=$1 OR legacy_id=$1", id)
+	// A deleted artifact is unknown, whoever asks (RLS hides it too; a host route that sees deleted rows does not read it).
+	r, err := artifacts(ctx, a, "WHERE (id=$1 OR legacy_id=$1) AND tombstoned_at IS NULL", id)
 	if err != nil {
 		return nil, err
 	}
@@ -605,19 +606,49 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		return nil, err
 	}
 	at := target
-	// An empty file has nothing to upload (stores refuse an empty multipart part): the coordinator writes it itself.
-	if same == nil && size == 0 {
-		if hash != emptySHA256 {
-			return nil, fail(400, "Empty file with a non-empty hash")
-		}
-		w, _, err := writeObject(ctx, a, e.ProjectID, scope, nil, media)
-		if err != nil {
-			return nil, err
-		}
-		at = w
+	if size == 0 && hash != emptySHA256 {
+		return nil, fail(400, "Empty file with a non-empty hash")
 	}
+	gone := false
 	if same != nil || size == 0 {
-		err := txCtx(ctx, a, func(tx pgx.Tx) error {
+		// Without the GLOBAL lock when this is the request's own transaction: an empty file's store write happens in it,
+		// and the object lock (writeObject, objectLock) is what serializes these rows with a purge of the content.
+		tx := func(fn func(pgx.Tx) error) error {
+			if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+				return fn(tx)
+			}
+			return a.store.Tx(ctx, nil, true, NOLOCK, fn)
+		}
+		err := tx(func(tx pgx.Tx) error {
+			// An empty file has nothing to upload (stores refuse an empty multipart part): the coordinator writes it
+			// itself, under the object lock (writeObject: a Head, and a Put only when the object is missing).
+			if size == 0 && same == nil {
+				w, _, err := writeObject(context.WithValue(ctx, txKey{}, tx), a, e.ProjectID, scope, nil, media)
+				if err != nil {
+					return err
+				}
+				at = w
+			}
+			// Checked again under the object lock: system_purge deletes an object nobody maps to under the same lock
+			// (cleanup.go runPurgeTasks), so a copy found before it may be gone now; then this upload stores its own.
+			if err := objectLock(ctx, tx, at.ID, keyOf(&Artifact{ProjectID: e.ProjectID, Scope: scope, ContentHash: hash})); err != nil {
+				return err
+			}
+			if same != nil {
+				if err := tx.QueryRow(ctx, "SELECT NOT EXISTS(SELECT 1 FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.project_id IS NOT DISTINCT FROM $1 AND a.scope=$2 AND a.content_hash=$3 AND c.store_id=$4 AND c.state='verified')", e.ProjectID, scope, hash, target.ID).Scan(&gone); err != nil {
+					return err
+				}
+				if gone && size > 0 {
+					return nil // uploaded below
+				}
+				if gone { // an empty object a purge removed: written again
+					w, _, err := writeObject(context.WithValue(ctx, txKey{}, tx), a, e.ProjectID, scope, nil, media)
+					if err != nil {
+						return err
+					}
+					at, gone = w, false
+				}
+			}
 			if err := insert(tx, "stored"); err != nil {
 				return err
 			}
@@ -627,10 +658,12 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		if err != nil {
 			return nil, err
 		}
-		if err := settleWaiting(ctx, a, e.ID); err != nil {
-			return nil, err
+		if !gone {
+			if err := settleWaiting(ctx, a, e.ID); err != nil {
+				return nil, err
+			}
+			return contract.ArtifactReserveReply{ArtifactId: id, State: "stored", StoreId: &at.ID}, nil
 		}
-		return contract.ArtifactReserveReply{ArtifactId: id, State: "stored", StoreId: &at.ID}, nil
 	}
 	staging := stagingOf(&Artifact{ID: id, ProjectID: e.ProjectID, Scope: scope, ContentHash: hash}, target.ID)
 	c, err := tunnel(target)
@@ -642,6 +675,10 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		return nil, err
 	}
 	err = txCtx(ctx, a, func(tx pgx.Tx) error {
+		// A new copy of this content: a purge of the same object waits for it, or finished before it (cleanup.go).
+		if err := objectLock(ctx, tx, target.ID, keyOf(&Artifact{ProjectID: e.ProjectID, Scope: scope, ContentHash: hash})); err != nil {
+			return err
+		}
 		if err := insert(tx, "pending"); err != nil {
 			return err
 		}
@@ -1205,6 +1242,7 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]doc, error) {
 	if f.NoExamples {
 		c = append(c, "role<>'example'")
 	}
+	c = append(c, "tombstoned_at IS NULL")
 	paged := f.Limit != nil && *f.Limit > 0
 	if paged && f.Before != nil {
 		add("seq<$?", *f.Before)
@@ -1442,6 +1480,13 @@ func writeObject(ctx context.Context, a *App, projectID *string, scope string, d
 	}
 	hash := sha256hex(data)
 	key := keyOf(&Artifact{ProjectID: projectID, Scope: scope, ContentHash: hash})
+	// In the caller's transaction, the object lock holds until its copy row commits: a purge of this content either
+	// finished before the Head below (the object is written again) or waits and then sees the copy (cleanup.go).
+	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+		if err := objectLock(ctx, tx, target.ID, key); err != nil {
+			return nil, "", err
+		}
+	}
 	t, err := tunnel(target)
 	if err != nil {
 		return nil, "", err
@@ -1460,18 +1505,29 @@ func writeObject(ctx context.Context, a *App, projectID *string, scope string, d
 // saveObject: an output the coordinator writes for an execution (pipeline step output.json, example inputs), stored and
 // verified at once.
 func saveObject(ctx context.Context, a *App, projectID *string, scope, executionID, name string, data []byte, media string) (string, string, error) {
-	target, hash, err := writeObject(ctx, a, projectID, scope, data, media)
-	if err != nil {
-		return "", "", err
-	}
-	id := newID()
-	err = txCtx(ctx, a, func(tx pgx.Tx) error {
+	// The object is written in the row transaction under its object lock (writeObject), so a purge of the same content
+	// either finished before (the object is written again) or sees this copy.
+	id, hash := "", ""
+	write := func(tx pgx.Tx) error {
+		target, h, err := writeObject(context.WithValue(ctx, txKey{}, tx), a, projectID, scope, data, media)
+		if err != nil {
+			return err
+		}
+		id, hash = newID(), h
 		if _, err := tx.Exec(ctx, "INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'stored')", id, projectID, scope, hash, len(data), media, name, executionID); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", id, target.ID, projectID)
+		_, err = tx.Exec(ctx, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", id, target.ID, projectID)
 		return err
-	})
+	}
+	var err error
+	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+		err = write(tx)
+	} else {
+		// No GLOBAL lock: two new rows; the object lock (writeObject) is what serializes this write with a purge, so
+		// the Head under it does not hold every other write.
+		err = a.store.Tx(ctx, nil, true, NOLOCK, write)
+	}
 	return id, hash, err
 }
 

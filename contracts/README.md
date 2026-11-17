@@ -20,7 +20,7 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-analytics` | `analytics` |
   | `ops-artifacts` | `artifact`, `store`, `stores` |
   | `ops-definitions` | `definition`, `agent`, `harness`, `profiles`, `catalogue`, `setting`, `reconcile` |
-  | `ops-executions` | `execution`, `executions`, `pipeline`, `queue`, `route`, `hosts`, `system` |
+  | `ops-executions` | `execution`, `executions`, `pipeline`, `queue`, `route`, `hosts`, `system`, `object` |
   | `ops-lab` | `lab` |
   | `ops-people` | `me`, `people`, `person`, `focus`, `view`, `list`, `search` |
   | `ops-sessions` | `session`, `sessions`, `thread`, `message`, `reply`, `ask`, `direct`, `watch`, `worker`, `changes`, `recommendation` |
