@@ -272,6 +272,27 @@ func (v *SearchHit) Validate() error {
 	return nil
 }
 
+// SessionAccess: read: the agent may read and run read-only tools but not change files (StartPayload.readOnly); write: the profile's own grant.
+type SessionAccess string
+
+const (
+	SessionAccessRead  SessionAccess = "read"
+	SessionAccessWrite SessionAccess = "write"
+)
+
+// SessionAccessValues lists every SessionAccess in schema order.
+var SessionAccessValues = []SessionAccess{SessionAccessRead, SessionAccessWrite}
+
+// Valid: v is one of the schema's values.
+func (v SessionAccess) Valid() bool {
+	for _, x := range SessionAccessValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // SessionArchiveReply: {sessionId, archivedAt, teardown: null} when no execution is left to tear down, else the teardown command it queued (id, executionId, hostId, kind teardown, payload, status).
 type SessionArchiveReply = map[string]json.RawMessage
 
@@ -330,10 +351,12 @@ func (v *SessionForkRequest) Validate() error {
 
 // SessionGetReply: The session view: the session row with its executions, questions, focus, handoffs, cost and scoped resources.
 type SessionGetReply struct {
+	Access                  *string                      `json:"access,omitempty"`
 	Account                 *string                      `json:"account,omitempty"`
 	Actor                   *string                      `json:"actor,omitempty"`
 	AgentConfig             json.RawMessage              `json:"agentConfig,omitempty"`
 	ArchivedAt              *int64                       `json:"archivedAt,omitempty"`
+	Branch                  *bool                        `json:"branch,omitempty"`
 	Code                    *string                      `json:"code"`
 	Cost                    []CostFigure                 `json:"cost"`
 	CreatedAt               *int64                       `json:"createdAt,omitempty"`
@@ -359,6 +382,7 @@ type SessionGetReply struct {
 	PendingHandoffId        *string                      `json:"pendingHandoffId,omitempty"`
 	PendingTransition       json.RawMessage              `json:"pendingTransition,omitempty"`
 	PipelineRunId           *string                      `json:"pipelineRunId,omitempty"`
+	Preset                  *string                      `json:"preset,omitempty"`
 	ProjectId               *string                      `json:"projectId,omitempty"`
 	Questions               []map[string]json.RawMessage `json:"questions"`
 	Queued                  []map[string]json.RawMessage `json:"queued"`
@@ -368,6 +392,7 @@ type SessionGetReply struct {
 	SessionId               string                       `json:"sessionId"`
 	Setup                   json.RawMessage              `json:"setup,omitempty"`
 	StartRequest            json.RawMessage              `json:"startRequest,omitempty"`
+	Starter                 *string                      `json:"starter,omitempty"`
 	TaskId                  *string                      `json:"taskId,omitempty"`
 	Transitions             []map[string]json.RawMessage `json:"transitions"`
 	UpdatedAt               *int64                       `json:"updatedAt,omitempty"`
@@ -446,6 +471,83 @@ func (v *SessionHandoffsRequest) Validate() error {
 	return nil
 }
 
+type SessionPreset struct {
+	Access      SessionAccess       `json:"access"`
+	Branch      bool                `json:"branch"`
+	Description string              `json:"description"`
+	Effort      *string             `json:"effort,omitempty"`
+	Harness     *string             `json:"harness,omitempty"`
+	Id          string              `json:"id"`
+	Model       *string             `json:"model,omitempty"`
+	Name        string              `json:"name"`
+	ProfileId   *string             `json:"profileId,omitempty"`
+	Role        *string             `json:"role,omitempty"`
+	Source      SessionPresetSource `json:"source"`
+	Starter     *string             `json:"starter,omitempty"`
+	Unavailable *string             `json:"unavailable,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionPreset) Validate() error {
+	if err := Check(&v.Access, "access"); err != nil {
+		return err
+	}
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SessionPresetSource: project: settings.presets of the project; system: the defaults Fleet ships.
+type SessionPresetSource string
+
+const (
+	SessionPresetSourceProject SessionPresetSource = "project"
+	SessionPresetSourceSystem  SessionPresetSource = "system"
+)
+
+// SessionPresetSourceValues lists every SessionPresetSource in schema order.
+var SessionPresetSourceValues = []SessionPresetSource{SessionPresetSourceProject, SessionPresetSourceSystem}
+
+// Valid: v is one of the schema's values.
+func (v SessionPresetSource) Valid() bool {
+	for _, x := range SessionPresetSourceValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// SessionPresetsReply: The project's presets (settings.presets) or the system defaults, each resolved to a profile: its role when the project maps it, else the preset's system profile.
+type SessionPresetsReply struct {
+	Base         *string         `json:"base,omitempty"`
+	BranchPrefix *string         `json:"branchPrefix,omitempty"`
+	Presets      []SessionPreset `json:"presets"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionPresetsReply) Validate() error {
+	if v.Presets == nil {
+		return Missing("presets")
+	}
+	for i := range v.Presets {
+		if err := Check(&v.Presets[i], "presets"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SessionPresetsRequest struct {
+	ProjectId *string `json:"projectId,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionPresetsRequest) Validate() error {
+	return nil
+}
+
 // SessionProfileReply: transition, handoffId and nativeSessionId only when the session has a native session to move.
 type SessionProfileReply struct {
 	Account         *string `json:"account"`
@@ -514,10 +616,13 @@ func (v *SessionResumeRequest) Validate() error {
 
 // SessionStartReply: existing: the requestId already started this session.
 type SessionStartReply struct {
+	Access      json.RawMessage `json:"access,omitempty"`
 	Account     json.RawMessage `json:"account,omitempty"`
+	Branch      json.RawMessage `json:"branch,omitempty"`
 	ExecutionId json.RawMessage `json:"executionId,omitempty"`
 	Existing    *bool           `json:"existing,omitempty"`
 	HostId      json.RawMessage `json:"hostId,omitempty"`
+	Preset      json.RawMessage `json:"preset,omitempty"`
 	ProfileId   json.RawMessage `json:"profileId,omitempty"`
 	ProjectId   json.RawMessage `json:"projectId,omitempty"`
 	Role        json.RawMessage `json:"role,omitempty"`
@@ -531,10 +636,13 @@ func (v *SessionStartReply) Validate() error {
 }
 
 type SessionStartRequest struct {
+	Access            *SessionAccess  `json:"access,omitempty"`
 	Account           *string         `json:"account,omitempty"`
+	Branch            *bool           `json:"branch,omitempty"`
 	CallerExecutionId *string         `json:"callerExecutionId,omitempty"`
 	CallerSessionId   *string         `json:"callerSessionId,omitempty"`
 	HostId            *string         `json:"hostId,omitempty"`
+	Preset            *string         `json:"preset,omitempty"`
 	ProfileId         *string         `json:"profileId,omitempty"`
 	ProjectId         *string         `json:"projectId,omitempty"`
 	RequestId         *string         `json:"requestId,omitempty"`
@@ -546,6 +654,11 @@ type SessionStartRequest struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionStartRequest) Validate() error {
+	if v.Access != nil {
+		if err := Check(v.Access, "access"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1036,9 +1149,10 @@ func init() {
 		"session_fork":        {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"strategy\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\"}")},
 		"session_get":         {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_handoffs":    {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
+		"session_presets":     {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"$comment\":\"Absent: the system presets for a conversation outside projects.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_profile":     {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"workingDirectory\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"profileId\"],\"type\":\"object\"}")},
 		"session_resume":      {Read: false, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"session_start":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"callerExecutionId\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"role\":{\"type\":\"string\"},\"setup\":{},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"session_start":       {Read: false, Long: false, Errors: []int{400, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"read: the agent may read and run read-only tools but not change files (StartPayload.readOnly); write: the profile's own grant.\",\"enum\":[\"read\",\"write\"],\"type\":\"string\"},\"account\":{\"type\":\"string\"},\"branch\":{\"$comment\":\"false: no session branch (a detached worktree); default true, or the preset's.\",\"type\":\"boolean\"},\"callerExecutionId\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"preset\":{\"$comment\":\"A preset id of session_presets for this project: its role or profile, access, branch and starter apply; explicit role, profileId, access and branch override it.\",\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"$comment\":\"Absent (people only): a conversation outside projects, with the system presets.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"role\":{\"type\":\"string\"},\"setup\":{},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_task_attach": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"boundProject\":{},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_transition":  {Read: false, Long: false, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_unarchive":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.\",\"additionalProperties\":false,\"properties\":{\"reason\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"reason\"],\"type\":\"object\"}")},

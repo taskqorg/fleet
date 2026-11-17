@@ -21,6 +21,9 @@ type acpSession struct {
 func newACPSession(root, resume string, profile, servers M) *acpSession {
 	s := &acpSession{root: root, resume: resume, profile: profile, servers: servers}
 	s.mode, _ = str(jAt(s.config(), "settings", "mode"))
+	if jIsTrue(profile, "readOnly") {
+		s.mode = "plan"
+	}
 	return s
 }
 

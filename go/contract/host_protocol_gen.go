@@ -1280,6 +1280,7 @@ func (v *SpanBatchRequest) Validate() error {
 type StartPayload struct {
 	Account          *string                    `json:"account,omitempty"`
 	AgentConfig      map[string]json.RawMessage `json:"agentConfig,omitempty"`
+	Branch           *bool                      `json:"branch,omitempty"`
 	Connections      []json.RawMessage          `json:"connections,omitempty"`
 	Effort           *string                    `json:"effort,omitempty"`
 	FleetOperations  []json.RawMessage          `json:"fleetOperations,omitempty"`
@@ -1292,6 +1293,7 @@ type StartPayload struct {
 	NativeSessionId  *string                    `json:"nativeSessionId,omitempty"`
 	Project          map[string]json.RawMessage `json:"project,omitempty"`
 	ProjectId        *string                    `json:"projectId,omitempty"`
+	ReadOnly         *bool                      `json:"readOnly,omitempty"`
 	RunToken         *string                    `json:"runToken,omitempty"`
 	Setup            *string                    `json:"setup,omitempty"`
 	Skills           []json.RawMessage          `json:"skills,omitempty"`

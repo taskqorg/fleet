@@ -22,6 +22,7 @@
 - A process or provider action with uncertain external outcome stays `unknown`; it is not silently retried as a known failure ([executor.go: `reconcile`](executor.go), [mcp_connection.go: `connectionCall`](mcp_connection.go)).
 - Source resolution does not fetch, read working-tree rules, or execute Git hooks or filters. It requires the declared commit, exact blobs, digests, origin identity, and allowed owned storage ([attempt_context.go: `resolveAttemptContext`](attempt_context.go)).
 - Worktree cleanup keeps work when configured reasons such as uncommitted changes, unpushed commits, or teardown failure apply ([worktree.go: `teardown`](worktree.go)).
+- A start with `branch: false` gets a worktree detached at its base, with no session branch ([worktree.go: `worktree`](worktree.go)); a start with `readOnly: true` runs codex in its read-only sandbox, claude with Read, Glob and Grep only, and ACP agents in plan mode ([harness_codex.go](harness_codex.go), [harness_command.go: `readOnlyTools`](harness_command.go), [harness_acp.go](harness_acp.go)).
 
 - Update drain retains the activity lease for live ownership, unfinished commands, queued transport, retryable archived status 401 and active transfers; nonretryable archived rejection history remains preserved without blocking idle replacement ([update_drain.go](update_drain.go), [outbox.go](outbox.go)).
 

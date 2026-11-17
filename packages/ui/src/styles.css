@@ -288,6 +288,25 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .shell-h>.grow{flex:1 0 0}
 .shell-status{display:flex;align-items:center;gap:var(--space-2);min-width:0;overflow:hidden;white-space:nowrap}
 .shell-status:empty{display:none}
+.shell-actions{flex:none;display:flex;align-items:center;gap:var(--space-1)}
+/* Start a conversation (controls/start-picker.md): project chips, preset cards, start facts under the composer. */
+.project-pick{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1)}
+.preset-pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(12rem,1fr));gap:var(--space-2)}
+.preset-card{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-1);min-width:0;padding:var(--space-3);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface);color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.preset-card:hover{background:var(--hover)}
+.preset-card.on{border-color:var(--accent);background:var(--selected)}
+.preset-card[aria-disabled=true]{color:var(--fg-faint);cursor:not-allowed;background:var(--surface)}
+.preset-card .pc-h{display:inline-flex;align-items:center;gap:var(--space-2)}
+.preset-card .pc-h .icon{width:var(--size-icon-sm);height:var(--size-icon-sm);color:var(--fg-muted)}
+.preset-card.on .pc-h .icon{color:var(--accent)}
+.preset-card .pc-d{font-size:var(--font-size-sm);color:var(--fg-muted)}
+.preset-card .pc-f{font-size:var(--font-size-xs);color:var(--fg-muted)}
+.start-facts{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1)}
+.start-fact{gap:var(--space-1);padding:0 var(--space-2);background:none;color:var(--fg-muted);font:inherit;font-size:var(--font-size-sm)}
+button.start-fact{cursor:pointer}
+button.start-fact:hover{background:var(--hover);color:var(--fg)}
+.start-fact .harness .icon{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.shell-actions:empty{display:none}
 .nav-toggle,.shell-search{flex:none}
 .nav-toggle .btn{border-color:transparent;background:none}
 .shell-search:hover{background:var(--hover);color:var(--fg)}

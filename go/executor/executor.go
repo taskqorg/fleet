@@ -786,7 +786,7 @@ func (e *executor) run(c M) error {
 		repo, hasRepo := repoPath(p, e.host)
 		data := refusedTeardown("no-worktree")
 		if e.insideDirs(dir) && exists(filepath.Join(dir, "worktree", ".git")) {
-			_, top, created, ok, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
+			_, top, created, ok, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"), false)
 			switch {
 			case err != nil:
 				data = refusedTeardown(err.Error())
@@ -944,7 +944,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	repo, hasRepo := repoPath(p, e.host)
 	checkoutTop := ""
-	w, top, created, hasW, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"))
+	w, top, created, hasW, err := worktree(dir, workspaceSession(session, p), repo, hasRepo, projectRoots(), e.forbidden(), jAt(p, "project"), jAt(p, "branch") == false)
 	if err != nil {
 		return fail(1, err.Error())
 	}

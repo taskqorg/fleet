@@ -1361,6 +1361,55 @@ export function Choice({ label, options, value, onChange }: {
     <button type="button" key={o.id} class={`seg${on(o.id) ? ' on' : ''}`} aria-pressed={on(o.id)} onClick={() => onChange?.(o.id)}>{o.icon && <Icon name={o.icon} />}{o.label}</button>)}</span>;
 }
 
+/* ---------- Start a conversation: project pick, preset pick and start facts (controls/start-picker.md) ---------- */
+
+export type PickProject = { id: string; name: string };
+/**
+ * One project out of many (OR-9): the first `n` as chips in the caller's order (focused, then recent), "No project" as one
+ * more choice, and a search over all of them once there are more. A picked project outside the first `n` stays shown.
+ */
+export function ProjectPick({ projects, value, onChange, n = 6, label = 'Project' }: {
+  projects: PickProject[]; value: string | null; onChange: (id: string | null) => void; n?: number; label?: string;
+}) {
+  const [q, setQ] = useState(''), t = q.trim().toLowerCase();
+  const found = t ? projects.filter(p => `${p.name} ${p.id}`.toLowerCase().includes(t)) : projects.slice(0, n);
+  const picked = value !== null && !found.some(p => p.id === value) ? projects.find(p => p.id === value) : undefined;
+  const shown = [...found.slice(0, t ? 12 : n), ...(picked && !t ? [picked] : [])];
+  const more = (t ? found.length : projects.length) - shown.length;
+  const chip = (id: string | null, name: string) => <button type="button" key={id ?? '-'} class={`seg${value === id ? ' on' : ''}`} aria-pressed={value === id} onClick={() => onChange(id)}>{name}</button>;
+  return <div class="project-pick" data-ui="project-pick" role="group" aria-label={label}>
+    {shown.map(p => chip(p.id, p.name))}
+    {!t && chip(null, 'No project')}
+    {more > 0 && <span class="muted num" aria-label={`${more} more projects: search to find them`}>+{more}</span>}
+    {projects.length > n && <SearchBox label="Find project" value={q} onInput={setQ} />}
+  </div>;
+}
+
+export type PresetOption = { id: string; name: string; description: string; icon?: IconName;
+  /** What the preset sets, in words (agent, access, branch, starter), shown on the card. */ facts: string[];
+  /** Why it cannot start here; the card stays visible and disabled. */ unavailable?: string };
+/** What a new conversation does (fleet-conversations.md "Start a conversation"): one card per preset, its description and what it sets. */
+export function PresetPicker({ presets, value, onChange, label = 'Preset' }: { presets: PresetOption[]; value: string | null; onChange: (id: string) => void; label?: string }) {
+  return <div class="preset-pick" data-ui="preset-pick" role="group" aria-label={label}>{presets.map(p =>
+    <button type="button" key={p.id} class={`preset-card${value === p.id ? ' on' : ''}`} aria-pressed={value === p.id} aria-disabled={!!p.unavailable || undefined}
+      data-tip={p.unavailable} onClick={() => { if (!p.unavailable) onChange(p.id); }}>
+      <span class="pc-h">{p.icon && <Icon name={p.icon} />}<b>{p.name}</b></span>
+      <span class="pc-d">{p.description}</span>
+      <span class="pc-f">{p.unavailable ?? p.facts.join(' · ')}</span>
+    </button>)}</div>;
+}
+
+export type StartFact = { key: string; icon?: IconName; harness?: Harness; text: string; tip: string;
+  /** A fact the person can flip here (access, branch): the chip is a button. */ onClick?: () => void };
+/** The facts a start will use, as chips under the composer: project, agent, access, branch. */
+export function StartFacts({ facts, label = 'Start settings' }: { facts: StartFact[]; label?: string }) {
+  return <div class="start-facts" data-ui="start-facts" role="group" aria-label={label}>{facts.map(f => {
+    const inner = <>{f.harness ? <HarnessMark h={f.harness} /> : f.icon && <Icon name={f.icon} />}<span>{f.text}</span></>;
+    return f.onClick ? <button type="button" key={f.key} class="chip start-fact" data-fact={f.key} data-tip={f.tip} onClick={f.onClick}>{inner}</button>
+      : <span key={f.key} class="chip start-fact" data-fact={f.key} data-tip={f.tip}>{inner}</span>;
+  })}</div>;
+}
+
 /* ---------- Draft bar: a definition that differs from its saved revision (controls/draft-bar.md) ---------- */
 
 export function DraftBar({ changes, base, note, actions: acts }: {

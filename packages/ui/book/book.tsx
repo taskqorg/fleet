@@ -5,7 +5,7 @@ import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
   Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, spotlightMemory, FocusPresets, StatStrip,
   TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
-  Composer, CodeEditor, DiffText, OfflineMarker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
+  Composer, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, StartFacts, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage, type SpotlightProvider, type SpotlightItem,
 } from '../src/index.ts';
 import { NAV } from './nav.ts';
@@ -407,6 +407,31 @@ function DraftDemo() {
   </div>;
 }
 
+// Start a conversation (controls/start-picker.md): the system presets on a project without roles, as /conversations/new shows them.
+const START_PRESETS = [
+  { id: 'discuss', name: 'Discuss', icon: 'messages-square', description: 'Talk an idea or a question through. Nothing in the repository changes.', facts: ['Codex gpt-6.1-sol · low', 'Read only', 'No branch'], access: 'read', branch: false },
+  { id: 'design', name: 'Design', icon: 'panels-top-left', description: 'Design or change an interface on its own branch, from the design system.', facts: ['Codex gpt-6.1-sol · medium', 'Can edit', 'New branch', 'Starter instruction'], access: 'write', branch: true },
+  { id: 'fix', name: 'Fix / build', icon: 'terminal', description: 'Fix a bug or build a feature on its own branch.', facts: ['Codex gpt-6.1-sol · medium', 'Can edit', 'New branch'], access: 'write', branch: true },
+  { id: 'review', name: 'Review', icon: 'check-check', description: 'Review code or a change and report the findings. Nothing changes.', facts: ['Claude sonnet', 'Read only', 'No branch'], access: 'read', branch: false },
+  { id: 'investigate', name: 'Investigate a problem', icon: 'search', description: 'Find the cause of a problem in errors, logs and code. Nothing changes.', facts: ['Codex gpt-6.1-sol · low', 'Read only', 'No branch', 'Starter instruction'], access: 'read', branch: false },
+] as const;
+function StartDemo() {
+  const [project, setProject] = useState<string | null>('cs'), [preset, setPreset] = useState('discuss');
+  const p = START_PRESETS.find(x => x.id === preset)!, [read, setRead] = useState<boolean | null>(null), [branch, setBranch] = useState<boolean | null>(null);
+  const access = read ?? p.access === 'read', br = branch ?? p.branch;
+  return <div class="stack">
+    <ProjectPick value={project} onChange={setProject} n={4} projects={[{ id: 'fleet', name: 'fleet' }, { id: 'cs', name: 'cyprus.bz' }, { id: 'desiign', name: 'desiign' }, { id: 'specq', name: 'specq' }, { id: 'pilotq', name: 'pilotq' }, { id: 'assetq', name: 'assetq' }]} />
+    <PresetPicker value={preset} onChange={id => { setPreset(id); setRead(null); setBranch(null); }} presets={START_PRESETS.map(x => ({ ...x, facts: [...x.facts] }))} />
+    <div class="pane"><Composer onSend={() => {}} placeholder="Describe the work in cyprus.bz" /></div>
+    <StartFacts facts={[
+      { key: 'project', icon: 'folder-open', text: project ? 'cyprus.bz' : 'No project', tip: 'Project' },
+      { key: 'agent', harness: p.id === 'review' ? 'claude' : 'codex', text: p.facts[0].replace(/^(Codex|Claude) /, ''), tip: 'Profile pm, a system profile' },
+      { key: 'access', icon: 'shield', text: access ? 'Read only' : 'Can edit', tip: access ? 'Click to let it edit' : 'Click for read only', onClick: () => setRead(!access) },
+      { key: 'branch', icon: 'git-pull-request', text: br ? 'fleet-test/new' : 'No branch', tip: br ? 'A new branch from origin/main' : 'A detached copy of origin/main', onClick: () => setBranch(!br) },
+    ]} />
+  </div>;
+}
+
 const SECTIONS: [string, string, string | undefined, () => ComponentChildren, ComponentChildren?][] = [
   ['tokens', 'Tokens', undefined, () => <TokensDemo />, <>Colour carries meaning only. Numbers and IDs use the monospace stack.</>],
   ['navigation', 'Navigation anchors', undefined, () => <NavDemo />, <>OR-3: one stable icon per workspace, from the registry.</>],
@@ -433,6 +458,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['result-viewer', 'Result viewer shell', 'result-viewer', () => <ResultDemo />],
   ['text-field', 'Text field', 'text-field', () => <DraftFieldDemo />, <>Draft values stay local until the form is submitted.</>],
   ['setting-field', 'Setting field', 'setting-field', () => <SettingsDemo />, <>Click a value to edit it inline.</>],
+  ['start-picker', 'Start a conversation: project, preset, start facts', 'preset-pick', () => <StartDemo />, <>/conversations/new. Focused and recent projects first, No project is one choice, search finds the rest (OR-9). A preset card says what it sets in words; the chips under the composer show the project, agent, access and branch, and access and branch flip in one click.</>],
   ['composer', 'Composer', 'composer', () => <div class="pane"><Composer onSend={() => {}} /></div>, <>Enter sends, Shift+Enter adds a line; the draft is kept per conversation.</>],
   ['code-editor', 'Code editor and diff text', 'code-editor', () => <div class="pane"><CodeEditor label="config/pipelines/search-basic.json" value={'{\n  "id": "search-basic",\n  "steps": [],\n  "version": 2\n}\n'} onChange={() => {}} problems={[{ path: '', message: 'Invalid pipeline: steps' }]} /><DiffText label="Draft against revision 3" text={'@@ -1,4 +1,4 @@\n {\n-  "id": "hello"\n+  "id": "search-basic"\n }'} /></div>, <>A definition's text is edited in place and kept as a draft; problems come from the coordinator and do not block typing.</>],
   ['offline-marker', 'Offline marker', 'offline-marker', () => <div class="row"><OfflineMarker state="updating" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="offline" since={NOW - 18 * hr} now={NOW} /><OfflineMarker state="signed-out" now={NOW} /></div>, <>Stored data is never shown as current (D3).</>],

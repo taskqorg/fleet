@@ -128,9 +128,10 @@ func gitFetch(top string, project any) bool {
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 // worktree: a project session whose working directory is a git repository runs in its own worktree (branch
-// <prefix>/<session>). The payload path is untrusted: it must resolve under a configured project root and outside the
-// executor and session dirs. Returns (worktree, checkout toplevel, created); ok false means no worktree.
-func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string, project any) (w, top string, created, ok bool, err error) {
+// <prefix>/<session>, or detached at the same base when the start says branch false: a session with no branch). The
+// payload path is untrusted: it must resolve under a configured project root and outside the executor and session dirs.
+// Returns (worktree, checkout toplevel, created); ok false means no worktree.
+func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string, project any, detached bool) (w, top string, created, ok bool, err error) {
 	if !hasRepo {
 		return
 	}
@@ -191,10 +192,14 @@ func worktree(dir, session, repo string, hasRepo bool, roots, forbidden []string
 	v := hardenedGit("-C", top, "rev-parse", "--verify", "--quiet", branch)
 	v.Env = append(v.Env, ceil)
 	args := []string{"-C", top, "worktree", "add"}
-	if v.Run() == nil {
+	if !detached && v.Run() == nil {
 		args = append(args, w, branch)
 	} else {
-		args = append(args, "--no-track", "-b", branch, w)
+		if detached {
+			args = append(args, "--detach", w)
+		} else {
+			args = append(args, "--no-track", "-b", branch, w)
+		}
 		// Base: explicit baseRef, else fresh origin/<defaultBranch> when startFromOrigin, else HEAD.
 		if jIsStr(wt, "baseRef") {
 			args = append(args, jStr(wt, "baseRef"))

@@ -350,7 +350,7 @@
   },
   {
     "name": "session_start",
-    "description": "Start a new Fleet session in your project: requestId, role (pm|worker|reviewer from the project roles) or profileId, optional text (first turn), setup run|skip. You are woken with a message when it finishes.",
+    "description": "Start a new Fleet session in your project: requestId, preset (discuss, design, fix, review, investigate or the project's own) or role (pm|worker|reviewer from the project roles) or profileId, optional access read|write and branch true|false (override the preset), text (first turn), setup run|skip. You are woken with a message when it finishes.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -377,6 +377,19 @@
         },
         "setup": {
           "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "branch": {
+          "type": "boolean"
         }
       },
       "required": [

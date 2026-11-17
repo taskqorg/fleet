@@ -992,6 +992,16 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		}
 		e["workspaceSnapshot"] = workspaces[key]
 	}
+	// The session's preset (presets.go): read access, no branch and its starter instruction, on every turn.
+	if s["access"] == "read" {
+		p.ReadOnly = ptr(true)
+	}
+	if s["branch"] == false {
+		p.Branch = ptr(false)
+	}
+	if st := astr(s["starter"]); st != "" {
+		p.Instructions = ptr(strings.TrimSpace(deref(p.Instructions) + "\n\nThis conversation's preset. " + st))
+	}
 	command := doc{"id": newID(), "executionId": e["id"], "sessionId": s["id"], "hostId": host, "kind": string(contract.CommandKindStart), "payload": p, "status": "pending"}
 	if err := agentDecorate(q, s, e, p); err != nil {
 		return nil, err

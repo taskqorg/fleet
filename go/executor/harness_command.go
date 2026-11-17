@@ -381,6 +381,9 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 			return fail(err.Error())
 		}
 		tools = append(tools, claudeExtraTools(p)...)
+		if jIsTrue(p, "readOnly") {
+			tools = readOnlyTools(tools)
+		}
 		c.Args = append(c.Args, "--tools", strings.Join(tools, ","))
 		if native != "" {
 			if !safeNativeID(native) {
@@ -495,6 +498,18 @@ func claudeExtraTools(p any) []string {
 		t = append(t, "Skill")
 	}
 	return t
+}
+
+// readOnlyTools: the Claude tools of a read-only start (StartPayload.readOnly): reading and search, never edit, write,
+// shell or subagents. Fleet MCP tools keep their own authority.
+func readOnlyTools(tools []string) []string {
+	out := []string{}
+	for _, t := range tools {
+		if slices.Contains([]string{"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Skill"}, t) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // claudeNativeTools preserves ordinary harness work unless the profile selects a narrower grant.

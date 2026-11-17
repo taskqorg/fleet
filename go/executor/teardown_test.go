@@ -72,12 +72,12 @@ func TestTransitionWorkspacesPreserveDirtyOldCheckout(t *testing.T) {
 	oldDir, newDir := e.commandDir("session", old), e.commandDir("session", newer)
 	os.MkdirAll(oldDir, 0o755)
 	os.MkdirAll(newDir, 0o755)
-	w, _, _, ok, err := worktree(oldDir, workspaceSession("session", old), top, true, []string{top}, nil, M{})
+	w, _, _, ok, err := worktree(oldDir, workspaceSession("session", old), top, true, []string{top}, nil, M{}, false)
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(w, "dirty"), []byte("keep"), 0o600)
-	fresh, _, _, ok, err := worktree(newDir, workspaceSession("session", newer), top, true, []string{top}, nil, M{})
+	fresh, _, _, ok, err := worktree(newDir, workspaceSession("session", newer), top, true, []string{top}, nil, M{}, false)
 	if err != nil || !ok || fresh == w {
 		t.Fatal(err, fresh, w)
 	}
@@ -130,5 +130,37 @@ func TestTransitionFailureRetainsProcessClosedStderr(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("process.closed omitted transitioned stderr")
+	}
+}
+
+// Requirement: fleet-conversations.md "Start a conversation": a preset without a branch gets a worktree detached at the
+// base, so no session branch is created; the teardown removes it. Risk: every read-only conversation leaves a branch.
+func TestDetachedWorktreeHasNoBranch(t *testing.T) {
+	top, dir := t.TempDir(), t.TempDir()
+	top, _ = filepath.EvalSymlinks(top)
+	run := func(d string, args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", d, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatal(args, err, string(out))
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(top, "init", "-q", "-b", "main")
+	run(top, "commit", "-q", "--allow-empty", "-m", "base")
+	run(top, "remote", "add", "origin", "https://example.invalid/r.git")
+	run(top, "update-ref", "refs/remotes/origin/main", "main")
+	w, _, created, ok, err := worktree(dir, "s1", top, true, []string{top}, nil, M{"worktree": M{"startFromOrigin": false}}, true)
+	if err != nil || !ok || !created {
+		t.Fatal(err, ok, created)
+	}
+	if b := run(w, "branch", "--show-current"); b != "" {
+		t.Fatalf("detached worktree is on branch %q", b)
+	}
+	if run(top, "branch", "--list", "fleet/s1") != "" {
+		t.Fatal("a session branch was created")
+	}
+	if r := teardown(dir, "s1", top, M{}, false); !r.Removed {
+		t.Fatalf("removed: %+v", r)
 	}
 }

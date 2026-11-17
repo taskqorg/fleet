@@ -127,7 +127,7 @@ export async function prepareSending<K extends 'message_send' | 'session_start'>
   const retained = previous.operation === operation && previous.body ? previous.body as Ops[K]['request'] : { ...body, requestId } as Ops[K]['request'];
   const fields = retained as Record<string, unknown>;
   const targetMatches = operation === 'message_send' ? scope.target.kind === 'session' && fields.sessionId === scope.target.id
-    : scope.target.kind === 'project' && fields.projectId === scope.target.id && fields.role === scope.target.roleId;
+    : scope.target.kind === 'project' && (fields.projectId ?? '-') === scope.target.id && (fields.preset ?? fields.role) === scope.target.roleId;
   if (!targetMatches || fields.text !== text || fields.requestId !== requestId) throw Error('Stored submission does not match its authorized target');
   const bodySha = await digest(retained); checkScope(scope);
   if (previous.bodySha && previous.bodySha !== bodySha) throw Error('Stored submission differs from its original body');
