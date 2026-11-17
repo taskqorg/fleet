@@ -733,7 +733,7 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		if err != nil {
 			return err
 		}
-		if e["dispatch"] == nil || e["hostId"] != nil || e["state"] != "preparing" || e["stopRequested"] == true {
+		if !claimable(e) {
 			continue
 		}
 		if sid := astr(e["sessionId"]); sid != "" && !txHasLock(q.tx, "session:"+sid) {
@@ -741,12 +741,13 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				if err := acquireTxLock(q, "session:"+sid); err != nil {
 					return err
 				}
-				// Re-read after acquiring the session lock so any concurrent session write is visible.
+				// Re-read after acquiring the session lock so any concurrent session write is visible (a stop does not take it:
+				// the row lock of claimRow serializes with that).
 				e, err = get(q, id, "execution")
 				if err != nil {
 					return err
 				}
-				if e["dispatch"] == nil || e["hostId"] != nil || e["state"] != "preparing" || e["stopRequested"] == true {
+				if !claimable(e) {
 					continue
 				}
 			} else {
@@ -779,6 +780,15 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 				continue
 			}
 			if polling != "" && best.Host != polling {
+				continue
+			}
+			// Lock the row and read it again before the claim: a stop (or any writer) committed since the read above
+			// wins, and none commits between here and this claim. Only before a write, never per candidate: a row lock
+			// gives the pass a transaction id, which holds back the change stream until it ends (stream.go visible).
+			if e, err = claimRow(q, id); err != nil {
+				return err
+			}
+			if e == nil {
 				continue
 			}
 			delete(e, "waitReason")
@@ -829,6 +839,13 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 		}
 		if first != nil && first.Stop {
+			// As before a claim: a stop committed since the unlocked read wins.
+			if e, err = claimRow(q, id); err != nil {
+				return err
+			}
+			if e == nil {
+				continue
+			}
 			e["state"], e["stopDetail"], e["waitReason"], e["waitDetail"] = "cancelled", reason, waitKindOf(cause), reason
 			if err := put(q, "execution", e); err != nil {
 				return err
@@ -838,6 +855,15 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			}
 			continue
 		}
+		if e["waitDetail"] != reason {
+			if e, err = claimRow(q, id); err != nil {
+				return err
+			}
+			if e == nil {
+				continue
+			}
+		}
+		// Checked again on the locked row: an overlapping pass may have written the same wait meanwhile.
 		if e["waitDetail"] != reason {
 			e["waitReason"], e["waitDetail"] = waitKindOf(cause), reason
 			if err := put(q, "execution", e); err != nil {
@@ -892,6 +918,27 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		}
 	}
 	return nil
+}
+
+// claimRow locks an execution's row for this transaction and returns it while it is still claimable, nil otherwise.
+// executionStop takes the same row lock; every dispatch write of a queued execution goes through here.
+func claimRow(q *Request, id string) (doc, error) {
+	if err := exec(q, "SELECT 1 FROM execution WHERE id=$1 FOR UPDATE", id); err != nil {
+		return nil, err
+	}
+	e, err := get(q, id, "execution")
+	if err != nil {
+		return nil, err
+	}
+	if !claimable(e) {
+		return nil, nil
+	}
+	return e, nil
+}
+
+// claimable: queued agent work no host has and no stop asked for.
+func claimable(e doc) bool {
+	return e["dispatch"] != nil && e["hostId"] == nil && e["state"] == "preparing" && e["stopRequested"] != true
 }
 
 // openCauseQuestion opens a needs-you operator_decision question keyed by cause, addressed to one person.

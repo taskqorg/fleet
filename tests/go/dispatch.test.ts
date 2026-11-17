@@ -86,12 +86,56 @@ test('A4 an event whose seq another event holds is retained as a blocked transpo
   assert.equal(r.eventCount, 1);
 });
 
-test('A5 stopping work no host has taken settles it as stopped with its stop command (requirement: fleet.md task states; risk: a stop before dispatch leaves the execution open forever)', {timeout: 30_000}, async () => {
+test('A5 stopping work no host has taken settles it as stopped with its stop command (requirement: fleet.md task states; risk: a stop before dispatch leaves the execution open forever)', {timeout: 30_000}, async (t) => {
+  // No host may take it: trial-host, the only host registered so far in this file, is polled with intake all, and the
+  // dispatch pass woken by the message would otherwise claim it first (the stop then waits for that host). t.after
+  // reopens it when an assertion fails before the reopen below.
+  const h = await host('trial-host');
+  ok(await op('hosts_update', {id: 'trial-host', intake: 'paused'}));
+  t.after(async () => { ok(await op('hosts_update', {id: 'trial-host', intake: 'all'})); });
   const {sessionId, executionId} = await queued();
+  assert.equal((await execution(sessionId, executionId)).hostId ?? null, null, 'no host took it');
   const c = ok(await call('POST', `/api/executions/${executionId}/stop`, {}, owner));
   assert.equal(c.kind, 'stop'); assert.equal(c.status, 'stopped');
   const e = await execution(sessionId, executionId);
   assert.equal(e.state, 'cancelled'); assert.equal(e.stopDetail, 'stopped before dispatch');
+  // The stop is final: once the host is open again, its poll (which waits for the dispatch pass) leaves it unclaimed.
+  ok(await op('hosts_update', {id: 'trial-host', intake: 'all'}));
+  assert.ok(!ok(await h('/api/hosts/poll', poll)).commands.some((x: any) => x.executionId === executionId), 'no start command for stopped work');
+  const after = await execution(sessionId, executionId);
+  assert.deepEqual([after.state, after.hostId ?? null], ['cancelled', null]);
+});
+
+test('A5b a stop racing the dispatch claim is never overwritten: a stop that settled stays cancelled with no host, otherwise the host gets it (requirement: fleet.md task states; risk: a claim committed beside the stop overwrites the cancelled execution, which then runs)', {timeout: 60_000}, async (t) => {
+  const h = await host('trial-host');
+  ok(await h('/api/hosts/poll', poll));
+  let settled = 0, handed = 0;
+  // Batches of stops 0-30 ms after their message, while the woken dispatch pass may claim each for trial-host.
+  for (let i = 0; i < 6; i++) {
+    const raced = await Promise.all(Array.from({length: 10}, async () => {
+      const q = await queued();
+      await new Promise(r => setTimeout(r, Math.random() * 30));
+      return {...q, stop: ok(await call('POST', `/api/executions/${q.executionId}/stop`, {}, owner))};
+    }));
+    // A poll returns once the dispatch pass of these messages has ended: a claim that lost the race has committed.
+    ok(await h('/api/hosts/poll', poll));
+    for (const {sessionId, executionId, stop} of raced) {
+      const e = await execution(sessionId, executionId);
+      if (stop.status === 'stopped') {
+        settled++;
+        assert.deepEqual([e.state, e.hostId ?? null], ['cancelled', null], 'a settled stop stays settled');
+      } else {
+        handed++;
+        assert.equal(stop.status, 'pending', 'an unsettled stop waits for the host that has the work');
+        assert.equal(stop.hostId, e.hostId); assert.ok(secrets.has(e.hostId), 'a host of this file has it');
+        // That host confirms it: no stray claimed work for the later tests.
+        ok(await (await host(e.hostId))('/api/hosts/receipts', {commandId: stop.id, executionId, status: 'stopped'}));
+        assert.equal((await execution(sessionId, executionId)).state, 'cancelled');
+      }
+    }
+  }
+  // Both outcomes depend on timing; the split is reported, not required.
+  t.diagnostic(`settled ${settled}, handed to the host ${handed}`);
 });
 
 test('A6 hosts: a duplicate id is 409, a host secret never shows, the list carries the last poll (requirement: docs/designs/fleet-people-access.md host secrets; risk: a second host shadows the first or a secret leaks)', {timeout: 30_000}, async () => {
