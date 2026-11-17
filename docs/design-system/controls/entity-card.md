@@ -48,7 +48,7 @@ Not covered, by decision:
 * Needs-you and problem rows: their text names hosts and harnesses as words, not codes; they open their item already.
 * Price ids (Resources) and other ids that name no entity: a `CopyButton`.
 
-**Keyboard.** Tab reaches the reference; Enter or Space opens the card and moves focus to Open; Tab moves through the actions; Escape closes it and returns focus to the reference. A pointer open leaves focus where it was.
+**Keyboard.** Tab reaches the reference; Enter or Space opens the card and moves focus to Open; Tab moves through the actions; Escape, Tab past the last action, Shift+Tab before the first and Open close it and return focus to the reference. A pointer open leaves focus where it was.
 
 **Accessibility.** The reference is a button, `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls` while open, named "Task T-FLT-42: show details". The card is a non-modal `role="dialog"` named by kind and code (OR-14 allows it: it holds information and the open and copy actions only, no form). States are badges with their word; copy results are announced by a status region. Touch: the reference is 44 px high on coarse pointers, the buttons too.
 

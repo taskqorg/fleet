@@ -578,7 +578,13 @@ export function EntityCardLayer() {
     place();
     const close = (refocus: boolean) => { showCard(null); if (refocus) cur.anchor.focus({ preventScroll: true }); };
     const inside = (n: EventTarget | null) => n instanceof Node && (el.contains(n) || cur.anchor.contains(n));
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(true); } };
+    // Tab past the last action (or Shift+Tab before the first) leaves the card at its code, not at the end of the page.
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(true); return; }
+      if (e.key !== 'Tab' || !el.contains(document.activeElement)) return;
+      const all = [...el.querySelectorAll<HTMLElement>('a[tabindex],a[href],button')], at = all.indexOf(document.activeElement as HTMLElement);
+      if (e.shiftKey ? at <= 0 : at === all.length - 1) { e.preventDefault(); close(true); }
+    };
     const down = (e: PointerEvent) => { if (!inside(e.target)) close(false); };
     const out = (e: FocusEvent) => { if (e.relatedTarget && !inside(e.relatedTarget)) close(false); };
     // A scroll (the person's, or a live list keeping its anchor) moves the card with its code; the size changes too (the
@@ -598,20 +604,21 @@ export function EntityCardLayer() {
   // The card takes its code's theme where a region sets one (the book's light and dark frames).
   const theme = cur.anchor.closest('.th-dark') ? ' th-dark' : cur.anchor.closest('.th-light') ? ' th-light' : '';
   return <div ref={box} id={CARD_ID} class={`ecard${theme}`} data-ui="entity-card" role="dialog" aria-label={`${k.label}${cur.ref.code ? ' ' + cur.ref.code : ''}`}>
-    <CardBody key={JSON.stringify(cur.ref)} r={cur.ref} onOpen={() => showCard(null)} /></div>;
+    <CardBody key={JSON.stringify(cur.ref)} r={cur.ref} onOpen={() => { const a = cur.anchor; showCard(null); if (a.isConnected) a.focus({ preventScroll: true }); }} /></div>;
 }
 
 function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
   const source = useContext(EntityCards);
   const read: EntityCardRead = source ? source.useCard(r) : { data: null, error: 'Details are not available here' };
   const k = entityKinds[r.kind], c = read.data, now = Date.now();
-  const code = c ? c.code : r.code;
+  // Before it loads, a release names itself by its tag (the reference may show a label such as UI 1.2.5).
+  const code = c ? c.code : r.kind === 'release' ? r.id : r.code;
   // Copy actions: the code (a pull request: owner/repo#n), the UUID, the id of a kind with neither, a result's hash.
   const copies: [string, string][] = c ? [
     ...(c.code ? [[c.kind === 'pull_request' ? 'Copy reference' : 'Copy code', c.kind === 'pull_request' ? c.id : c.code] as [string, string]] : []),
     ...(c.uuid ? [['Copy UUID', c.uuid] as [string, string]] : []),
     ...(!c.code && !c.uuid ? [['Copy id', c.id] as [string, string]] : []),
-    ...(c.hash ? [['Copy SHA-256', c.hash] as [string, string]] : [])] : code && codeKind[code[0]] && /^[TQC]-/.test(code) ? [['Copy code', code]] : [];
+    ...(c.hash ? [['Copy SHA-256', c.hash] as [string, string]] : [])] : code && /^[TQC]-/.test(code) ? [['Copy code', code]] : [];
   const at = c?.at ? Date.parse(c.at) : NaN;
   const go = (e: MouseEvent) => {
     if (!c?.path) { e.preventDefault(); return; }

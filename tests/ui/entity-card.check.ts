@@ -64,6 +64,11 @@ export async function checkEntityCard(browser: Browser, origin: string, seed: Re
     assert.ok(await until(() => card.getByRole('link', { name: 'Open' }).evaluate(e => document.activeElement === e)), 'focus moves to Open');
     await p.keyboard.press('Escape'); await card.waitFor({ state: 'detached' });
     assert.ok(await code.evaluate(e => document.activeElement === e), 'focus back on the code');
+    // Shift+Tab before the first action leaves the card at its code, not at the end of the page.
+    await p.keyboard.press('Enter'); await card.waitFor();
+    assert.ok(await until(() => card.getByRole('link', { name: 'Open' }).evaluate(e => document.activeElement === e)), 'focus on Open again');
+    await p.keyboard.press('Shift+Tab'); await card.waitFor({ state: 'detached' });
+    assert.ok(await code.evaluate(e => document.activeElement === e), 'Shift+Tab out of the card returns to the code');
     // Open goes to the task.
     await code.click(); await card.getByRole('link', { name: 'Open' }).click();
     await p.waitForURL('**/tasks/' + task.id); assert.equal(await card.count(), 0);

@@ -216,16 +216,8 @@ func deliveryPass(ctx context.Context, a *App) error {
 				targets = append(targets, key)
 			}
 		}
-		obs, err := all(q, "host-observation", nil)
-		if err != nil {
-			return err
-		}
-		for _, o := range obs {
-			if seen := a.effectiveHostSeen(astr(o["id"]), num(o["lastSeenAt"])); nowMs()-int64(seen) < 3600_000 && astr(o["version"]) != "" {
-				versions = append(versions, astr(o["version"]))
-			}
-		}
-		return nil
+		versions, err = liveHostVersions(q)
+		return err
 	})
 	if err != nil {
 		return err
@@ -572,6 +564,19 @@ func withReleases(read, recorded []ghRelease) []ghRelease {
 		}
 	}
 	return out
+}
+
+// liveHostVersions: the executor version of every host seen within the hour that reports one, the hosts a release
+// must reach to be installed (deliveryPass, the release card).
+func liveHostVersions(q *Request) ([]string, error) {
+	obs, err := all(q, "host-observation", nil)
+	versions := []string{}
+	for _, o := range obs {
+		if seen := q.app.effectiveHostSeen(astr(o["id"]), num(o["lastSeenAt"])); nowMs()-int64(seen) < 3600_000 && astr(o["version"]) != "" {
+			versions = append(versions, astr(o["version"]))
+		}
+	}
+	return versions, err
 }
 
 // installed: every host runs version or newer (1.261112.31 compares part by part); no host known is not installed.

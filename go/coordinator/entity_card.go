@@ -221,7 +221,7 @@ func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 
 // architect: definitions and Lab are the architect's to read (people.go architectOps); an agent without a person passes.
 func architect(q *Request) bool {
-	return q.person == nil || fullAccess(q.person) || hasRole(q.person, "architect")
+	return fullAccess(q.person) || hasRole(q.person, "architect")
 }
 
 func cardExperiment(q *Request, id string) (*contract.EntityCardReply, error) {
@@ -248,7 +248,7 @@ func cardProject(q *Request, id string) (*contract.EntityCardReply, error) {
 	if q.person != nil && !mayAccessProjectID(q.person, id) {
 		return nil, nil
 	}
-	xs, err := definitionRows(q, "d.kind='project' AND d.id=$1 AND d.retired_at IS NULL", 0, id)
+	xs, err := definitionRows(q, "d.kind='project' AND d.id=$1 AND d.deleted_at IS NULL", 0, id)
 	if err != nil || len(xs) == 0 {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func cardDefinition(kind string) cardReader {
 		if !architect(q) {
 			return nil, nil
 		}
-		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2 AND d.retired_at IS NULL", 0, kind, id)
+		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL", 0, kind, id) // retired ones still open, as definition_get
 		if err != nil || len(xs) == 0 {
 			return nil, err
 		}
@@ -444,15 +444,9 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 		c.Facts = facts(fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
 		return c, nil
 	}
-	obs, err := all(q, "host-observation", nil)
+	versions, err := liveHostVersions(q)
 	if err != nil {
 		return nil, err
-	}
-	versions := []string{}
-	for _, o := range obs { // as deliveryPass reads them
-		if seen := q.app.effectiveHostSeen(astr(o["id"]), num(o["lastSeenAt"])); nowMs()-int64(seen) < 3600_000 && astr(o["version"]) != "" {
-			versions = append(versions, astr(o["version"]))
-		}
 	}
 	if !known && !slices.Contains(versions, version) {
 		return nil, nil
