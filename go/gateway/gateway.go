@@ -602,7 +602,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 				a.outcome = "unknown"
 			}
 		}
-		if status == 403 && (p.ForbiddenIsCall == nil || !*p.ForbiddenIsCall) {
+		if status == 403 && (t.ForbiddenIsCall == nil || !*t.ForbiddenIsCall) {
 			// Redact over the whole body first, so a key cut at the 500-character mark cannot leave a prefix behind.
 			message := []rune(strings.ReplaceAll(strings.ToValidUTF8(string(data), "�"), value, "[key]"))
 			text := string(message[:min(len(message), 500)])
