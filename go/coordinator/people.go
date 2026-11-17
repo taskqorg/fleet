@@ -250,7 +250,8 @@ func (a *App) ownSubscription(q *Request, name string, b map[string]any) bool {
 		return false
 	}
 	var holder string
-	a.store.pool.QueryRow(q.ctx(), "SELECT coalesce(data->>'holder','') FROM document WHERE kind='managed-account' AND id=$1", id).Scan(&holder)
+	ctx := withTx(q) // inside a request transaction, its own connection
+	conn(ctx, q.app).QueryRow(ctx, "SELECT coalesce(data->>'holder','') FROM document WHERE kind='managed-account' AND id=$1", id).Scan(&holder)
 	return holder == q.person.Email
 }
 

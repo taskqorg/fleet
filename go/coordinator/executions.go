@@ -297,7 +297,7 @@ func declaredNames(declared []string) []string {
 // artifactGate: a completed start waits for its required artifacts; a missing or failed one fails it.
 func artifactGate(q *Request, e doc, declared []string) (doc, error) {
 	names := declaredNames(declared)
-	r, err := artifactRequirement(q.ctx(), q.app, astr(e["id"]), names)
+	r, err := artifactRequirement(withTx(q), q.app, astr(e["id"]), names) // the receipt transaction's connection, not a second one
 	if err != nil {
 		return nil, err
 	}
