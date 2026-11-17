@@ -1,7 +1,8 @@
 // Filter-path check (docs/designs/fleet-view-urls-and-list-path.md §4). For each size: a fresh Go coordinator (tests/harness.ts) with
 // that many tasks, operation latency over HTTP, then in Chromium every list change (state counter, grouping,
 // "All", preset, focus, row check, search, Back) watched each animation frame; then a search and Clear filters end the
-// preset, and a bulk action that fails for one row keeps only that row selected. Prints a report. With --assert it exits 1
+// preset, a bulk action that fails for one row keeps only that row selected, and collapsed groups stay collapsed (and a
+// default-collapsed group the person opened stays open) from the first frame after leaving the section and after a reload. Prints a report. With --assert it exits 1
 // when a rule fails at a size up to 20,000 tasks; larger sizes are report-only (growth factor).
 // Run: pnpm run build && node tests/ui/filter.check.ts [--assert] [--sizes 3000,20000,100000]
 import { chromium, type Page } from 'playwright';
@@ -37,6 +38,8 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
       const id = seed.task({ title: ['Render prop batch', 'Fix CI cache key', 'Rework hero copy', 'Write release notes', 'Compare 3D methods'][i % 5] + ' ' + i, projectId: p, priority: ['urgent', 'normal', 'background'][i % 3], ...(i % 5 === 0 ? { state: 'in_progress' } : {}) });
       if (i % 5 === 0) seed.execution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: p, hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' });
     }
+    // Two completed tasks: the Completed group of state grouping (collapsed by default) for the remembered-groups check.
+    for (let i = 0; i < 2; i++) seed.task({ title: 'Shipped notes ' + i, projectId: 'fleet', priority: 'normal', state: 'completed' });
   });
   console.log(`fixture load: ${((performance.now() - t) / 1000).toFixed(1)} s`);
   httpMedians[N] = {};
@@ -197,6 +200,46 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     await page.waitForFunction(b => new URLSearchParams(location.search).get('sel') === b, badId, { timeout: 5000 }).catch(() => {});
     { const sel = new URL(origin + await url()).searchParams.get('sel'); rule(N, sel === badId, `after a partial bulk failure sel should be only the failed row ${badId}, got ${sel}`); }
     await page.unroute('**/api/ops/task_update');
+    // Collapsed groups are remembered per person (list-view.md, prefs listGroups), both ways: under state grouping In
+    // progress (3) and Queued (4) are collapsed by the person, Completed (7, collapsed by default) is opened. Leaving the
+    // section and coming back, and a reload, show them so from the first frame the headers are on screen.
+    const header = (k: string) => page.locator(`.vl-row[data-key="g:${k}"] .group-h`);
+    await page.goto(origin + '/tasks?group=state'); await header('3').waitFor();
+    rule(N, await header('3').getAttribute('aria-expanded') === 'true', 'In progress is not open by default');
+    let settingsInFlight = 0;
+    const isSet = (r: { url(): string }) => r.url().endsWith('/api/ops/person_settings_set');
+    page.on('request', r => { if (isSet(r)) settingsInFlight++; });
+    page.on('requestfinished', r => { if (isSet(r)) settingsInFlight--; }); page.on('requestfailed', r => { if (isSet(r)) settingsInFlight--; });
+    const saved = page.waitForResponse(r => r.url().endsWith('/api/ops/person_settings_set') && (r.request().postData() ?? '').includes('listGroups'));
+    await header('3').click(); await header('4').click(); await header('7').waitFor();
+    rule(N, await header('7').getAttribute('aria-expanded') === 'false', 'Completed does not start collapsed under state grouping');
+    await header('7').click();
+    rule(N, await header('7').getAttribute('aria-expanded') === 'true', 'Completed did not open');
+    const want = 'false,false,true';
+    // Every frame's headers 3, 4 and 7 (aria-expanded, - when not on screen), recorded from a start until the list settles.
+    const RECORD = `window.__groups = []; const tick = () => { const s = ['3', '4', '7'].map(k => document.querySelector('.vl-row[data-key="g:' + k + '"] .group-h')?.getAttribute('aria-expanded') ?? '-').join(','); if (window.__groups.at(-1) !== s) window.__groups.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
+    const flashed = (seen: string[]) => seen.filter(s => s.split(',').some((x, i) => x !== '-' && x !== want.split(',')[i]));
+    await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
+    await saved; // leaving the section sent the toggles without waiting for the debounce
+    for (let i = 0; i < 100 && settingsInFlight; i++) await page.waitForTimeout(50); // every toggle reached the server
+    const returned = await page.evaluate(async rec => {
+      (0, eval)(rec); (document.querySelector('.rail [data-id="tasks"] a') as HTMLElement).click();
+      for (let f = 0; f < 300 && !(window as any).__groups.at(-1)?.endsWith('true'); f++) await new Promise(r => requestAnimationFrame(r));
+      return (window as any).__groups as string[];
+    }, RECORD);
+    console.log(`groups 3,4,7 per frame back to Tasks: ${returned.join(' > ')}`);
+    rule(N, returned.at(-1) === want && !flashed(returned).length, `back to Tasks: groups not as left from the first frame: ${returned.join(' > ')}`);
+    await page.addInitScript(RECORD);
+    await page.reload(); await header('7').waitFor(); await page.waitForTimeout(300);
+    const reloaded = await page.evaluate(() => (window as any).__groups as string[]);
+    console.log(`groups 3,4,7 per frame after a reload: ${reloaded.join(' > ')}`);
+    rule(N, reloaded.at(-1) === want && !flashed(reloaded).length, `after a reload: groups not as left from the first frame: ${reloaded.join(' > ')}`);
+    // Grouping by project and back to state keeps them too.
+    await page.locator('[data-ui=group-control] button').first().click();
+    await page.locator('[data-ui=group-control] [role=menuitemradio]', { hasText: 'Project' }).click(); await page.waitForURL(u => !u.search.includes('group=state'));
+    await page.locator('[data-ui=group-control] button').first().click();
+    await page.locator('[data-ui=group-control] [role=menuitemradio]', { hasText: 'State' }).click(); await header('7').waitFor();
+    rule(N, [await header('3').getAttribute('aria-expanded'), await header('4').getAttribute('aria-expanded'), await header('7').getAttribute('aria-expanded')].join(',') === want, 'switching the grouping back lost the collapsed groups');
   } finally { await page.close(); await close(); }
 }
 

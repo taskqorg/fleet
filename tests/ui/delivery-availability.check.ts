@@ -66,7 +66,8 @@ export async function checkDeliveryAvailability(browser: Browser, origin: string
 }
 
 // Requirement (docs/design-system/pages/delivery.md, decisions 2026-11-17): the Delivery list is the shared list view, its
-// system presets set the stages only, Installed starts collapsed, Pace shows calendar days where a day without install
+// system presets set the stages only, Installed starts collapsed (and stays open once the person opened it, from the first
+// frame after leaving the section and after a reload), Pace shows calendar days where a day without install
 // times is "not measured" (never zero), and a picked day filters the list to the pull requests merged that day.
 // Risk: a preset resets the person's sort, installed rows bury what moves, a missing stage reads as a fast day, or a day
 // pick shows the wrong rows.
@@ -109,6 +110,26 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     const installed = page.locator('.group-h', {hasText: 'Installed'});
     assert.equal(await installed.getAttribute('aria-expanded'), 'false', 'Installed is collapsed by default');
     assert.equal(await list.getByRole('link', {name: 'Installed one'}).count(), 0, 'installed rows hidden');
+    // The person opens Installed: it is remembered (prefs listGroups, delivery:stage), so leaving the section and coming
+    // back, and a reload, show it open from the first frame its header is on screen.
+    await installed.click(); await list.getByRole('link', {name: 'Installed one'}).waitFor();
+    const RECORD = `window.__inst = []; const tick = () => { const s = [...document.querySelectorAll('.group-h')].find(b => b.textContent.includes('Installed'))?.getAttribute('aria-expanded') ?? '-'; if (window.__inst.at(-1) !== s) window.__inst.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
+    await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
+    const stored = () => page.evaluate(() => fetch('/api/ops/person_settings_get', {method: 'POST', headers: {'content-type': 'application/json'}, body: '{}'}).then(r => r.json()).then(s => s.listGroups?.['delivery:stage'] ?? []));
+    for (let i = 0; i < 100 && !(await stored()).includes('installed'); i++) await page.waitForTimeout(50);
+    assert.deepEqual(await stored(), ['installed'], 'leaving the section stored the opened Installed');
+    const back: string[] = await page.evaluate(async rec => {
+      (0, eval)(rec); (document.querySelector('.rail [data-id="delivery"] a') as HTMLElement).click();
+      for (let f = 0; f < 300 && (window as any).__inst.at(-1) !== 'true'; f++) await new Promise(r => requestAnimationFrame(r));
+      return (window as any).__inst;
+    }, RECORD);
+    assert.ok(back.at(-1) === 'true' && !back.includes('false'), 'back to Delivery: Installed not open from the first frame: ' + back.join(' > '));
+    await page.addInitScript(RECORD);
+    await page.reload(); await list.getByRole('link', {name: 'Installed one'}).waitFor(); await page.waitForTimeout(300);
+    const reloaded: string[] = await page.evaluate(() => (window as any).__inst);
+    assert.ok(reloaded.at(-1) === 'true' && !reloaded.includes('false'), 'after a reload: Installed not open from the first frame: ' + reloaded.join(' > '));
+    // Back to the default, for the steps below.
+    await installed.click(); await page.waitForFunction(() => [...document.querySelectorAll('.group-h')].find(b => b.textContent!.includes('Installed'))?.getAttribute('aria-expanded') === 'false');
     // The red time chip: PR checks for 50m is past its 40m P90; Open has no norm.
     assert.equal(await list.locator('.vl-row', {hasText: 'Checks running long'}).locator('.chip-age.alert').count(), 1, 'past the P90 is red');
     assert.equal(await list.locator('.vl-row', {hasText: 'Waiting for review'}).locator('.chip-age.alert').count(), 0, 'Open has no norm');

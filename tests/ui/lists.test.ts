@@ -1,7 +1,7 @@
 // Entity-store list rules (D4): the server decides membership and order; the client merges by sort key.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyMembership, compareKeys, touched, type Row } from '../../app/src/lists.ts';
+import { applyMembership, compareKeys, touched, closedGroups, flipGroup, type Row } from '../../app/src/lists.ts';
 
 const row = (id: string, g: string, seq: number): Row => ({ id, sortKey: [g, -seq, id] });
 
@@ -53,4 +53,12 @@ test('chunks split membership ids at the server bound', async () => {
   const ids = Array.from({ length: 2500 }, (_, i) => 't' + i);
   assert.deepEqual(chunks(ids, 1000).map(c => c.length), [1000, 1000, 500]);
   assert.deepEqual(chunks([], 1000), []);
+});
+
+test('collapsed groups are the page defaults with the person\'s flips applied, both ways (requirement: list-view.md, collapsed groups remembered per person; risk: a remembered group opens a default-collapsed one by mistake, or a toggle back to the default stays stored)', () => {
+  assert.deepEqual([...closedGroups(['7', '8'], [])].sort(), ['7', '8']);
+  assert.deepEqual([...closedGroups(['7', '8'], ['8', 'fleet'])].sort(), ['7', 'fleet']); // cancelled opened, fleet collapsed
+  assert.deepEqual([...closedGroups([], ['a'])], ['a']);
+  assert.deepEqual(flipGroup(['a'], 'b'), ['a', 'b']);
+  assert.deepEqual(flipGroup(['a', 'b'], 'a'), ['b']); // back to the default: nothing stored for it
 });

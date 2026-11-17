@@ -28,6 +28,9 @@ export type VirtualListProps<T> = {
   onRowMenu?: (item: T, at: { x: number; y: number }) => void;
   /** Infinite scroll (OR-11): called once per list length when the last rows come into view. */
   onEnd?: () => void;
+  /** Data behind the end that the items do not show (rows loaded into a collapsed group): a change calls onEnd again while
+   * the end is in view, so a collapsed group that fills the loaded page does not stop the loading. */
+  endKey?: string;
   /** Upward loading (threads): called once per list length when the first rows come into view. */
   onStart?: () => void;
   /** New rows the owner knows of but has not loaded (a thread after a jump): shown in the same pill; a click calls onJump. */
@@ -133,7 +136,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   });
 
   // Asked once per window edge (length and edge row), so a replaced window of the same length asks again.
-  const edgeKey = (side: 'start' | 'end') => `${p.items.length}:${p.items.length ? p.getKey(p.items[side === 'start' ? 0 : p.items.length - 1]) : ''}`;
+  const edgeKey = (side: 'start' | 'end') => `${p.items.length}:${p.items.length ? p.getKey(p.items[side === 'start' ? 0 : p.items.length - 1]) : ''}${side === 'end' ? ':' + (p.endKey ?? '') : ''}`;
   const endFor = useRef('');
   useLayoutEffect(() => { const el = scroller.current, lastVisible = el ? v.getVirtualItemForOffset(el.scrollTop + el.clientHeight)?.index ?? -1 : -1; if (lastVisible < p.items.length - 5) endFor.current = ''; if (p.onEnd && p.items.length && lastVisible >= p.items.length - 5 && endFor.current !== edgeKey('end')) { endFor.current = edgeKey('end'); p.onEnd(); } });
 

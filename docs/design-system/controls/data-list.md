@@ -12,7 +12,7 @@
 
 Every list follows the same order: state first, then name with ID, then the service zone (OR-22, [D12](../decisions.md)). The traceability check in `check:design` (after a row's pin or checkbox) warns about any list row whose first cell is not a state badge.
 
-**Grouping.** Lists can group rows. Each group header row shows the group's icon, name and count. Groups collapse; completed and cancelled start collapsed. Anchor keeping works across groups.
+**Grouping.** Lists can group rows. Each group header row shows the group's icon, name and count. Groups collapse; completed and cancelled start collapsed, and the person's own collapses are remembered ([list view](../patterns/list-view.md)). `endKey` tells the list that rows were loaded behind its end without new items (into a collapsed group), so `onEnd` fires again while the end is in view. Anchor keeping works across groups.
 
 **Sizes.** Row `size-row` (32 px), compact `size-row-compact` per person. A catalogue in the control column uses two-line rows, `size-row-2` ([list and detail](../patterns/list-detail.md)), as does the phone (`size-row-phone`).
 

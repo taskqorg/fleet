@@ -34,6 +34,9 @@ export function Tasks({ id }: { id?: string }) {
     view: 'tasks', kind: 'tasks', defaultGroup: DEFAULT_TASK_GROUP, defaultSort: DEFAULT_TASK_SORT, system: SYSTEM_VIEWS, groupLabel,
     pinDoc: 'task-pins', pinRead: () => ({ key: [], filter: {} }), pinTouches: (c, has) => c.kind === 'task' && has(c.id) || !!c.taskId && has(c.taskId),
     savedView, saveGroup: DEFAULT_TASK_GROUP,
+    // Completed (7) and cancelled (8) start collapsed under state grouping (the state group keys of task_page, attention
+    // order). The default does not change with the filter, so a remembered flip means the same in every view.
+    closedGroups: { state: ['7', '8'] },
   });
   const { view, set, list, chosen, off, rowsGroup, confirm } = page;
   const canPause = (t: TaskRow) => !TERMINAL.includes(t.state) && t.state !== 'paused', canResume = (t: TaskRow) => t.state === 'paused';
