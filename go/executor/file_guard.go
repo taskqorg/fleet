@@ -119,6 +119,48 @@ func inRoots(path string, roots []string) bool {
 	return false
 }
 
+// resolveUploadPath checks each path component before following a symlink, including the parent of its target.
+func resolveUploadPath(path string, deny map[ident]string) (string, error) {
+	resolved, pending := "/", strings.Split(path, "/")
+	links := 0
+	for len(pending) > 0 {
+		component := pending[0]
+		pending = pending[1:]
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, component)
+		var st unix.Stat_t
+		if err := unix.Lstat(next, &st); err != nil {
+			return "", guardError{"the file does not exist or cannot be resolved"}
+		}
+		if entry, ok := deny[identOf(&st)]; ok {
+			return "", guardError{"the file is in a credential store (" + entry + ")"}
+		}
+		if st.Mode&unix.S_IFMT != unix.S_IFLNK {
+			if len(pending) > 0 && st.Mode&unix.S_IFMT != unix.S_IFDIR {
+				return "", guardError{"a part of the path is not a folder"}
+			}
+			resolved = next
+			continue
+		}
+		target, err := os.Readlink(next)
+		links++
+		if err != nil || links > 255 { // match filepath.EvalSymlinks' traversal bound
+			return "", guardError{"the file does not exist or cannot be resolved"}
+		}
+		if filepath.IsAbs(target) {
+			resolved = "/"
+		}
+		pending = append(strings.Split(target, "/"), pending...)
+	}
+	return resolved, nil
+}
+
 // openForUpload resolves path (relative to base) and opens it when it is one regular file with a single link, outside
 // every denylisted entry and inside FLEET_FILES_ROOTS (and uploadRoots) when set. The resolved path is walked from / one
 // component at a time with O_NOFOLLOW, so a folder or the file swapped for a symlink after resolving is refused, and
@@ -128,11 +170,15 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 		return nil, nil, guardError{"path is required"}
 	}
 	if !filepath.IsAbs(path) {
+		if !filepath.IsAbs(base) {
+			return nil, nil, guardError{"the upload base is unavailable"}
+		}
 		path = filepath.Join(base, path)
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	deny := deniedIdents()
+	resolved, err := resolveUploadPath(path, deny)
 	if err != nil {
-		return nil, nil, guardError{"the file does not exist or cannot be resolved"}
+		return nil, nil, err
 	}
 	if roots := os.Getenv("FLEET_FILES_ROOTS"); roots != "" && !inRoots(resolved, filepath.SplitList(roots)) {
 		return nil, nil, guardError{"the file is outside FLEET_FILES_ROOTS"}
@@ -141,7 +187,6 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 		return nil, nil, guardError{"the file is outside the folders this session may read"}
 	}
 	guardBeforeOpen()
-	deny := deniedIdents()
 	fd, err := unix.Open("/", dirSearch|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, nil, guardError{"the file cannot be opened"}

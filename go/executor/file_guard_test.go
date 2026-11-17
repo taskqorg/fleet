@@ -84,6 +84,17 @@ func TestGuardRefuses(t *testing.T) {
 		write(t, p, "secret")
 		guardRefused(t, p, work, p)
 	}
+	// A symlink in a credential directory is still a credential, even if its target is elsewhere.
+	displaced := write(t, filepath.Join(outside, "displaced"), "secret")
+	sshLink := filepath.Join(home, ".ssh", "id_external")
+	if err := os.Symlink(displaced, sshLink); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(work, "alias")
+	if err := os.Symlink(sshLink, alias); err != nil {
+		t.Fatal(err)
+	}
+	guardRefused(t, alias, work, filepath.Join(home, ".ssh"))
 	for _, p := range []string{os.Getenv("FLEET_TOKEN_FILE"), os.Getenv("FLEET_CF_ACCESS_FILE"), runFilePath, other} {
 		guardRefused(t, p, work, p)
 	}
@@ -306,8 +317,9 @@ func TestClientTripwire(t *testing.T) {
 	split := strings.Repeat("a", 256<<10-5) + "invented-run-token-0123456789" + strings.Repeat("b", 100)
 	write(t, filepath.Join(work, "split.log"), split)
 	write(t, filepath.Join(work, "access.txt"), "x invented-access-secret y")
+	write(t, filepath.Join(work, "invented-access-secret.txt"), "clean")
 	write(t, filepath.Join(work, "clean.txt"), "clean")
-	for url, files := range map[string][]string{gw.URL: {"split.log", "access.txt"}, "https://" + gw.Listener.Addr().String(): {"split.log", "access.txt"}} {
+	for url, files := range map[string][]string{gw.URL: {"split.log", "access.txt", "invented-access-secret.txt"}, "https://" + gw.Listener.Addr().String(): {"split.log", "access.txt"}} {
 		t.Setenv("FLEET_GATEWAY_URL", url)
 		for _, f := range files {
 			l := connectionCall("youtrack", tool, M{"issue": "TGT-1", "path": f})

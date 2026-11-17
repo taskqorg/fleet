@@ -146,6 +146,26 @@ func TestUploadInterruptedBeforeBodyEnd(t *testing.T) {
 	}
 }
 
+// Requirement: a definitive gateway refusal survives a cut reply body.
+// Risk: the caller treats an upload refused before staging as possibly stored.
+func TestUploadCutRefusalStillDefinitive(t *testing.T) {
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Fleet-Call-Id", "c1")
+		w.Header().Set("X-Fleet-Outcome", "error")
+		w.Header().Set("X-Fleet-Error", "draining")
+		w.Header().Set("Content-Length", "50")
+		w.WriteHeader(503)
+		w.(http.Flusher).Flush()
+		cut(w)
+	}))
+	defer gw.Close()
+	l := GatewayUpload(context.Background(), target(gw.URL, false), "youtrack", "attachment_add", nil,
+		Upload{File: strings.NewReader("data"), Size: 4, Name: "p.png", Sha256: shaOf([]byte("data"))})
+	if l.Outcome != CallOutcomeError || code(l) != "draining" {
+		t.Fatalf("%s %s", l.Outcome, code(l))
+	}
+}
+
 // Requirement: mark an upload potentially sent when transport receives its last byte.
 // Risk: a disconnect before a separate EOF read is reported as safe to retry.
 func TestUploadLastByteMarksBodySent(t *testing.T) {
@@ -318,6 +338,49 @@ func TestDownloadCutLeavesNoFile(t *testing.T) {
 	defer gw.Close()
 	if l := GatewayDownload(context.Background(), target(gw.URL, true), "y", "g", []byte(`{}`), Download{Root: root, Folder: []string{"TGT-1"}, Prefix: "1"}); code(l) != "reply-too-large" || l.CallId != "c2" {
 		t.Fatalf("refusal: %s", code(l))
+	}
+}
+
+// Requirement: publish only under the selected download folder.
+// Risk: moving the folder during a download saves the file in a different location.
+func TestDownloadMovedFolderRefused(t *testing.T) {
+	root := t.TempDir()
+	moved := filepath.Join(t.TempDir(), "moved")
+	release := make(chan struct{})
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		meta := []byte(`{"name":"shot.png","mediaType":"image/png","bytes":4}`)
+		w.Header().Set("X-Fleet-Call-Id", "c1")
+		w.Header().Set("X-Fleet-File", base64.RawURLEncoding.EncodeToString(meta))
+		w.Header().Set("Content-Length", "4")
+		w.(http.Flusher).Flush()
+		<-release
+		io.WriteString(w, "file")
+	}))
+	defer gw.Close()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	done := make(chan CallLine, 1)
+	go func() {
+		done <- GatewayDownload(context.Background(), target(gw.URL, true), "y", "g", []byte(`{}`),
+			Download{Root: root, Folder: []string{"TGT-1"}, Prefix: "85-1"})
+	}()
+	for deadline := time.Now().Add(5 * time.Second); len(entries(t, root)) == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("part file was not created")
+		}
+	}
+	if err := os.Rename(filepath.Join(root, "TGT-1"), moved); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	l := <-done
+	if l.Outcome != CallOutcomeError || code(l) != "path-refused" || len(entries(t, moved)) != 0 {
+		t.Fatalf("moved folder: outcome=%s code=%s files=%v", l.Outcome, code(l), entries(t, moved))
 	}
 }
 

@@ -161,7 +161,13 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		x.fail(CallOutcomeError, "invalid-response") // the tool may be repeated: nothing is lost
 		return x.line
 	}
-	folder, path, err := openFolder(d)
+	root, err := openDownloadRoot(d.Root)
+	if err != nil {
+		x.fail(CallOutcomeError, "path-refused")
+		return x.line
+	}
+	defer root.Close()
+	folder, err := openFolder(root, d.Folder)
 	if err != nil {
 		x.fail(CallOutcomeError, "path-refused")
 		return x.line
@@ -176,7 +182,8 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		x.fail(CallOutcomeError, "path-refused") // a symlink or folder planted at the final name
 		return x.line
 	}
-	final := filepath.Join(path, name)
+	relative := filepath.Join(d.Folder...)
+	final := filepath.Join(d.Root, relative, name)
 	part := name + "." + partTag() + ".part"
 	// Inside the opened folder: os.Root never leaves it, and O_EXCL refuses a planted part file or symlink.
 	file, err := folder.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -224,7 +231,17 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		x.fail(CallOutcomeError, "download-cut")
 		return x.line
 	}
-	if file.Sync() != nil || file.Close() != nil || folder.Rename(part, name) != nil {
+	if file.Sync() != nil || file.Close() != nil {
+		x.fail(CallOutcomeError, "write-failed")
+		return x.line
+	}
+	original, err := folder.Stat(".")
+	current, statErr := root.Lstat(filepath.Join(".", relative))
+	if err != nil || statErr != nil || !os.SameFile(original, current) {
+		x.fail(CallOutcomeError, "path-refused")
+		return x.line
+	}
+	if err := root.Rename(filepath.Join(relative, part), filepath.Join(relative, name)); err != nil {
 		x.fail(CallOutcomeError, "write-failed")
 		return x.line
 	}
@@ -243,26 +260,28 @@ var partTag = func() string {
 	return hex.EncodeToString(tag)
 }
 
-// openFolder opens each component relative to its parent's descriptor and verifies the opened directory's identity
-// before proceeding. os.Root constrains resolution, and the identity check rejects substitution inside that root.
-func openFolder(d Download) (*os.Root, string, error) {
-	if err := os.MkdirAll(d.Root, 0o700); err != nil {
-		return nil, "", err
+func openDownloadRoot(path string) (*os.Root, error) {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return nil, err
 	}
-	folder, err := os.OpenRoot(d.Root)
+	return os.OpenRoot(path)
+}
+
+// openFolder opens components relative to their parents and verifies each opened directory's identity.
+func openFolder(root *os.Root, parts []string) (*os.Root, error) {
+	folder, err := root.OpenRoot(".")
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	path := d.Root
-	for _, name := range d.Folder {
+	for _, name := range parts {
 		next, err := openDownloadChild(folder, name)
 		folder.Close()
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
-		folder, path = next, filepath.Join(path, name)
+		folder = next
 	}
-	return folder, path, nil
+	return folder, nil
 }
 
 func openDownloadChild(parent *os.Root, name string) (*os.Root, error) {

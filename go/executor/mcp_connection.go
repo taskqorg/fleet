@@ -132,6 +132,16 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 	if secret != "" {
 		patterns = append(patterns, []byte(secret))
 	}
+	// The opened file's name, in the gateway's file-name rules (no quote, backslash, control or bidi character).
+	fileName := strings.ReplaceAll(contract.SafeName(filepath.Base(f.Name())), `"`, "_") // the file opened, not a link to it
+	if strings.TrimSpace(fileName) == "" {
+		fileName = "file" // the gateway refuses a blank name
+	}
+	for _, pattern := range patterns {
+		if bytes.Contains([]byte(fileName), pattern) {
+			return refusedLine(connection, tool, "secret-in-file", "the upload name holds this client's Fleet token or Access secret; nothing was sent")
+		}
+	}
 	sum, found, err := scanFile(io.NewSectionReader(f, 0, info.Size()), patterns)
 	if err != nil {
 		return refusedLine(connection, tool, "path-refused", "the file cannot be read")
@@ -141,11 +151,6 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 	}
 	head := make([]byte, 512)
 	n, _ := f.ReadAt(head, 0)
-	// The opened file's name, in the gateway's file-name rules (no quote, backslash, control or bidi character).
-	fileName := strings.ReplaceAll(contract.SafeName(filepath.Base(f.Name())), `"`, "_") // the file opened, not a link to it
-	if strings.TrimSpace(fileName) == "" {
-		fileName = "file" // the gateway refuses a blank name
-	}
 	return contract.GatewayUpload(context.Background(), t, connection, tool, args, contract.Upload{File: f, Size: info.Size(),
 		Name: fileName, MediaType: mediaTypeOf(fileName, head[:n]), Sha256: sum})
 }

@@ -268,7 +268,9 @@ func textOf(b []byte) json.RawMessage {
 func (x *exchange) answerJSON() CallLine {
 	body, err := io.ReadAll(x.reader())
 	if err != nil {
-		if x.dog.fired.Load() {
+		if code := x.res.Header.Get("x-fleet-error"); x.line.CallId != "" && x.res.Header.Get("x-fleet-outcome") == "error" && code != "" {
+			x.fail(CallOutcomeError, code)
+		} else if x.dog.fired.Load() {
 			x.fail(CallOutcomeUnknown, "client-timeout")
 		} else {
 			x.fail(CallOutcomeUnknown, "connection-lost")
