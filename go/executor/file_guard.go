@@ -1,7 +1,8 @@
 package main
 
-// Path guard and client tripwire for connection file uploads (docs/designs/fleet-connections.md §9 Files). Every check
-// runs on the opened descriptor, compared with the resolved path by device and inode.
+// Path guard and client tripwire for connection file uploads (docs/designs/fleet-connections.md §9 Files). The file is
+// opened by walking its resolved path one folder at a time with O_NOFOLLOW, and every folder and the file itself are
+// checked, by device and inode of the opened descriptor, against the credential denylist.
 
 import (
 	"bytes"
@@ -11,22 +12,46 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // runFilePath is the run file this server read its token from (`mcp connection` argument 3); it is denylisted.
 var runFilePath string
 
-// denyEntries are the credential stores no upload may read: Fleet's own credentials and the common secret stores of
-// the hosts' harnesses and tools. A directory covers everything below it; a missing entry is skipped. Built on every
-// upload, so a file created later is covered too.
+// uploadRoots, when not nil, are folders an upload must lie in, besides FLEET_FILES_ROOTS: the code server's sandbox
+// read roots, so a bridged upload reads nothing the sandbox could not.
+var uploadRoots []string
+
+// homeEntries are the credential stores under one home folder.
+func homeEntries(home string) []string {
+	if home == "" {
+		return nil
+	}
+	data := ".local/state/fleet/executor" // the executor's default data folder: journal (run tokens), run files
+	if runtime.GOOS == "darwin" {
+		data = "Library/Application Support/Fleet/executor"
+	}
+	list := []string{}
+	for _, rel := range []string{".config/fleet", ".local/share/fleet/gateway", data, ".ssh", ".aws", ".gnupg", ".netrc",
+		".config/gh", ".hermes/.env", "Library/Keychains", ".claude/.credentials.json", ".codex/auth.json"} {
+		list = append(list, filepath.Join(home, rel))
+	}
+	return list
+}
+
+// denyEntries are the credential stores no upload may read: Fleet's own credentials (owner and run tokens, the Access
+// file, the executor's data folder with its journal and run files, host secret, gateway keys and state) and the common
+// secret stores of the hosts' harnesses and tools. A directory covers everything below it; a missing entry is skipped.
+// Built on every upload, so a file created later is covered too. In a Fleet run HOME is the harness's home, so the run
+// file names the executor user's home (FLEET_USER_HOME) and the executor's own stores (FLEET_RUN_DENY) as well.
 func denyEntries() []string {
 	home, _ := os.UserHomeDir()
-	at := func(rel string) string { return filepath.Join(home, rel) }
-	list := []string{os.Getenv("FLEET_TOKEN_FILE"), os.Getenv("FLEET_CF_ACCESS_FILE"),
-		at(".config/fleet"), at(".ssh"), at(".aws"), at(".gnupg"), at(".netrc"), at(".config/gh"), at(".hermes/.env"),
-		at("Library/Keychains"), at(".claude/.credentials.json"), at(".codex/auth.json")}
+	list := append(homeEntries(home), homeEntries(os.Getenv("FLEET_USER_HOME"))...)
+	list = append(list, os.Getenv("FLEET_TOKEN_FILE"), os.Getenv("FLEET_CF_ACCESS_FILE"), os.Getenv("FLEET_DATA_DIR"), os.Getenv("FLEET_HOST_SECRET_FILE"))
+	list = append(list, filepath.SplitList(os.Getenv("FLEET_RUN_DENY"))...)
 	if runFilePath != "" {
 		// The run file's folder holds every live run's token file, not this run's alone.
 		list = append(list, runFilePath, filepath.Dir(runFilePath))
@@ -40,6 +65,26 @@ func denyEntries() []string {
 	return list
 }
 
+// ident is a file's device and inode.
+type ident struct{ dev, ino uint64 }
+
+func identOf(st *unix.Stat_t) ident { return ident{uint64(st.Dev), uint64(st.Ino)} }
+
+// deniedIdents: each existing entry's device and inode, mapped to the entry's name.
+func deniedIdents() map[ident]string {
+	out := map[ident]string{}
+	for _, entry := range denyEntries() {
+		if entry == "" {
+			continue
+		}
+		var st unix.Stat_t
+		if unix.Stat(entry, &st) == nil {
+			out[identOf(&st)] = entry
+		}
+	}
+	return out
+}
+
 // guardBeforeOpen runs between resolving and opening (a test swaps the file there).
 var guardBeforeOpen = func() {}
 
@@ -48,8 +93,19 @@ type guardError struct{ reason string }
 
 func (e guardError) Error() string { return e.reason }
 
-// openForUpload resolves path (relative to base), opens it without following a last symlink and answers the open file
-// when it is one regular file outside every denylisted entry and, when FLEET_FILES_ROOTS is set, inside one of them.
+func inRoots(path string, roots []string) bool {
+	for _, r := range roots {
+		if rr, err := filepath.EvalSymlinks(r); err == nil && (path == rr || strings.HasPrefix(path, rr+string(filepath.Separator))) {
+			return true
+		}
+	}
+	return false
+}
+
+// openForUpload resolves path (relative to base) and opens it when it is one regular file with a single link, outside
+// every denylisted entry and inside FLEET_FILES_ROOTS (and uploadRoots) when set. The resolved path is walked from / one
+// component at a time with O_NOFOLLOW, so a folder or the file swapped for a symlink after resolving is refused, and
+// the checks see the folders actually opened.
 func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 	if path == "" {
 		return nil, nil, guardError{"path is required"}
@@ -61,66 +117,62 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 	if err != nil {
 		return nil, nil, guardError{"the file does not exist or cannot be resolved"}
 	}
-	if roots := os.Getenv("FLEET_FILES_ROOTS"); roots != "" {
-		inside := false
-		for _, r := range filepath.SplitList(roots) {
-			if rr, err := filepath.EvalSymlinks(r); err == nil && (resolved == rr || strings.HasPrefix(resolved, rr+string(filepath.Separator))) {
-				inside = true
-			}
-		}
-		if !inside {
-			return nil, nil, guardError{"the file is outside FLEET_FILES_ROOTS"}
-		}
+	if roots := os.Getenv("FLEET_FILES_ROOTS"); roots != "" && !inRoots(resolved, filepath.SplitList(roots)) {
+		return nil, nil, guardError{"the file is outside FLEET_FILES_ROOTS"}
+	}
+	if uploadRoots != nil && !inRoots(resolved, uploadRoots) {
+		return nil, nil, guardError{"the file is outside the folders this session may read"}
 	}
 	guardBeforeOpen()
-	// O_NONBLOCK: opening a FIFO never waits for a writer; it is refused below as not a regular file.
-	f, err := os.OpenFile(resolved, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	deny := deniedIdents()
+	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, nil, guardError{"the file cannot be opened"}
 	}
-	info, err := f.Stat()
-	refuse := func(reason string) (*os.File, os.FileInfo, error) { f.Close(); return nil, nil, guardError{reason} }
-	if err != nil {
-		return refuse("the file cannot be read")
-	}
-	if !info.Mode().IsRegular() {
-		return refuse("not a regular file")
-	}
-	if st, ok := info.Sys().(*syscall.Stat_t); !ok || uint64(st.Nlink) != 1 {
-		return refuse("the file has more than one hard link")
-	}
-	if now, err := os.Stat(resolved); err != nil || !os.SameFile(now, info) {
-		return refuse("the file changed while it was opened")
-	}
-	// The file itself and each folder above it, against every denylisted entry.
-	chain := []os.FileInfo{info}
-	for dir := filepath.Dir(resolved); ; dir = filepath.Dir(dir) {
-		if d, err := os.Stat(dir); err == nil {
-			chain = append(chain, d)
+	parts := strings.Split(strings.TrimPrefix(resolved, "/"), "/")
+	for i := 0; ; i++ {
+		var st unix.Stat_t
+		if err := unix.Fstat(fd, &st); err != nil {
+			unix.Close(fd)
+			return nil, nil, guardError{"the file cannot be read"}
 		}
-		if dir == filepath.Dir(dir) {
-			break
+		if entry, ok := deny[identOf(&st)]; ok {
+			unix.Close(fd)
+			return nil, nil, guardError{"the file is in a credential store (" + entry + ")"}
 		}
-	}
-	for _, entry := range denyEntries() {
-		if entry == "" {
-			continue
-		}
-		er, err := filepath.EvalSymlinks(entry)
-		if err != nil {
-			continue
-		}
-		ei, err := os.Stat(er)
-		if err != nil {
-			continue
-		}
-		for _, c := range chain {
-			if os.SameFile(ei, c) {
-				return refuse("the file is in a credential store (" + entry + ")")
+		if i == len(parts) {
+			switch {
+			case st.Mode&unix.S_IFMT != unix.S_IFREG:
+				unix.Close(fd)
+				return nil, nil, guardError{"not a regular file"}
+			case uint64(st.Nlink) != 1:
+				unix.Close(fd)
+				return nil, nil, guardError{"the file has more than one hard link"}
 			}
+			f := os.NewFile(uintptr(fd), resolved)
+			info, err := f.Stat()
+			if err != nil {
+				f.Close()
+				return nil, nil, guardError{"the file cannot be read"}
+			}
+			return f, info, nil
 		}
+		if i > 0 && st.Mode&unix.S_IFMT != unix.S_IFDIR {
+			unix.Close(fd)
+			return nil, nil, guardError{"not a regular file"}
+		}
+		// O_NONBLOCK: opening a FIFO never waits for a writer; it is refused above as not a regular file.
+		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK
+		if i < len(parts)-1 {
+			flags |= unix.O_DIRECTORY
+		}
+		next, err := unix.Openat(fd, parts[i], flags, 0)
+		unix.Close(fd)
+		if err != nil {
+			return nil, nil, guardError{"the path changed while it was opened, or a part of it is a symlink"}
+		}
+		fd = next
 	}
-	return f, info, nil
 }
 
 // scanFile is the first pass over an open file: its sha256, and whether it holds one of patterns (the caller's bearer,

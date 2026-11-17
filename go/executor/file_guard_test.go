@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -82,6 +83,21 @@ func TestGuardRefuses(t *testing.T) {
 	for _, p := range []string{os.Getenv("FLEET_TOKEN_FILE"), os.Getenv("FLEET_CF_ACCESS_FILE"), runFilePath, other} {
 		refused(t, p, work, p)
 	}
+	// In a run HOME is the harness's home: the run file names the executor user's home and the executor's own stores
+	// (data folder with the journal, host secret). The default data folder and the gateway's state are covered too.
+	userHome, data := t.TempDir(), t.TempDir()
+	t.Setenv("FLEET_USER_HOME", userHome)
+	t.Setenv("FLEET_RUN_DENY", data+string(filepath.ListSeparator)+filepath.Join(outside, "host-secret"))
+	dataDefault := ".local/state/fleet/executor/journal.sqlite"
+	if runtime.GOOS == "darwin" {
+		dataDefault = "Library/Application Support/Fleet/executor/journal.sqlite"
+	}
+	for _, p := range []string{filepath.Join(userHome, ".ssh/id_ed25519"), filepath.Join(userHome, ".config/fleet/host-secret"),
+		filepath.Join(data, "journal.sqlite"), write(t, filepath.Join(outside, "host-secret"), "s"),
+		filepath.Join(home, dataDefault), filepath.Join(home, ".local/share/fleet/gateway/state/spool/d.jsonl")} {
+		write(t, p, "secret")
+		refused(t, p, work, p)
+	}
 	// Reached through a symlink in the work folder, a symlinked folder, or a relative path.
 	os.Symlink(filepath.Join(home, ".ssh/id_ed25519"), filepath.Join(work, "innocent.png"))
 	refused(t, "innocent.png", work, "symlink to a key")
@@ -99,7 +115,25 @@ func TestGuardRefuses(t *testing.T) {
 	// A file swapped for a symlink between resolving and opening.
 	guardBeforeOpen = func() { os.Remove(ok); os.Symlink(filepath.Join(home, ".ssh/id_ed25519"), ok) }
 	refused(t, "shot.png", work, "swapped for a symlink")
+	// A folder on the path swapped for a symlink to the key folder: the walk opens each folder without following links.
+	decoy := write(t, filepath.Join(work, "sub", "id_ed25519"), "decoy")
+	guardBeforeOpen = func() {
+		os.RemoveAll(filepath.Dir(decoy))
+		os.Symlink(filepath.Join(home, ".ssh"), filepath.Dir(decoy))
+	}
+	refused(t, "sub/id_ed25519", work, "folder swapped for a symlink")
 	guardBeforeOpen = func() {}
+	// Code mode: a bridged upload reads only inside the sandbox's read roots.
+	uploadRoots = []string{filepath.Join(work, "allowed")}
+	write(t, filepath.Join(work, "allowed", "a.txt"), "a")
+	write(t, filepath.Join(work, "elsewhere.txt"), "e")
+	refused(t, "elsewhere.txt", work, "outside the code read roots")
+	if f, _, err := openForUpload("allowed/a.txt", work); err != nil {
+		t.Fatalf("inside the code read roots: %v", err)
+	} else {
+		f.Close()
+	}
+	uploadRoots = nil
 	// Roots: a link inside a root to a file outside it, and .. that leaves the root.
 	t.Setenv("FLEET_FILES_ROOTS", work)
 	write(t, filepath.Join(outside, "notes.txt"), "n")
@@ -210,8 +244,7 @@ func TestConnectionFileTools(t *testing.T) {
 		t.Fatalf("upload: %s, args %v", resultText(r[2]), gw.args)
 	}
 	down := decM(resultText(r[3]))
-	resolved, _ := filepath.EvalSymlinks(input)
-	want := filepath.Join(resolved, "attachments", "TGT-1", "85-7-screen.png")
+	want := filepath.Join(input, "attachments", "TGT-1", "85-7-screen.png")
 	sum := sha256.Sum256(body)
 	if jAt(r[3], "result", "isError") != false || jStr(down, "path") != want || jStr(down, "mimeType") != "image/png" || jStr(down, "sha256") != hex.EncodeToString(sum[:]) ||
 		enc(jAt(down, "bytes")) != strconv.Itoa(len(body)) || jStr(down, "name") != "screen.png" {
@@ -225,8 +258,7 @@ func TestConnectionFileTools(t *testing.T) {
 	out := t.TempDir()
 	t.Setenv("FLEET_FILES_OUT", out)
 	r = mcpSession(t, M{"method": "tools/call", "params": M{"name": "attachment_get", "arguments": M{"issue": "TGT-1", "attachment": "85-7"}}})
-	resolved, _ = filepath.EvalSymlinks(out)
-	if p := jStr(decM(resultText(r[1])), "path"); p != filepath.Join(resolved, "TGT-1", "85-7-screen.png") {
+	if p := jStr(decM(resultText(r[1])), "path"); p != filepath.Join(out, "TGT-1", "85-7-screen.png") {
 		t.Fatalf("owner host download: %s", resultText(r[1]))
 	}
 }

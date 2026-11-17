@@ -7,11 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // File calls (docs/designs/fleet-connections.md §9): an upload sends a local file's raw bytes, a download writes the
@@ -57,7 +60,8 @@ func GatewayUpload(ctx context.Context, t GatewayTarget, connection, tool string
 }
 
 // Download names where a downloaded file goes: <Root>/<Folder...>/<Prefix>-<name>, name from the gateway's X-Fleet-File
-// made safe (SafeName). Folder and Prefix come from the call's arguments.
+// made safe (SafeName). Root is the caller's trusted folder (the run's input folder, FLEET_FILES_OUT); Folder elements
+// (for example attachments, TGT-12) and Prefix come from the caller and the call's arguments.
 type Download struct {
 	Root   string
 	Folder []string
@@ -73,19 +77,27 @@ func segment(s string) bool {
 
 // SafeName is a provider's file name as one local path element: '/', '\', control and bidi characters and a leading '.'
 // become '_', and it is cut to 200 bytes.
-func SafeName(name string) string {
+func SafeName(name string) string { return cutName(safeChars(name), 200) }
+
+// cutName cuts name to at most n bytes on a rune boundary; an empty name is "file".
+func cutName(name string, n int) string {
+	for len(name) > n {
+		_, size := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-size]
+	}
+	if name == "" {
+		return "file"
+	}
+	return name
+}
+
+func safeChars(name string) string {
 	var b strings.Builder
 	for i, r := range strings.ToValidUTF8(name, "_") {
 		if r == '/' || r == '\\' || unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || i == 0 && r == '.' {
 			r = '_'
 		}
-		if b.Len()+len(string(r)) > 200 {
-			break
-		}
 		b.WriteRune(r)
-	}
-	if b.Len() == 0 {
-		return "file"
 	}
 	return b.String()
 }
@@ -123,20 +135,26 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		return x.line
 	}
 	x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionDownload, Bytes: size, MediaType: meta.MediaType, Name: meta.Name}
-	folder, err := folderIn(d)
+	folder, path, err := openFolder(d)
 	if err != nil {
 		x.fail(CallOutcomeError, "path-refused")
 		return x.line
 	}
-	name := SafeName(meta.Name)
+	defer folder.Close()
+	name := safeChars(meta.Name)
 	if d.Prefix != "" {
 		name = d.Prefix + "-" + name
 	}
-	final := filepath.Join(folder, name)
-	tag := make([]byte, 8)
-	rand.Read(tag)
-	part := final + "." + hex.EncodeToString(tag) + ".part"
-	file, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	// 200 bytes leave room for the part suffix inside a 255-byte file name.
+	name = cutName(name, 200)
+	if fi, err := folder.Lstat(name); err == nil && !fi.Mode().IsRegular() {
+		x.fail(CallOutcomeError, "path-refused") // a symlink or folder planted at the final name
+		return x.line
+	}
+	final := filepath.Join(path, name)
+	part := name + "." + partTag() + ".part"
+	// Inside the opened folder: os.Root never leaves it, and O_EXCL refuses a planted part file or symlink.
+	file, err := folder.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		x.fail(CallOutcomeError, "write-failed")
 		return x.line
@@ -145,11 +163,11 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 	defer func() {
 		if !kept {
 			file.Close()
-			os.Remove(part)
+			folder.Remove(part)
 		}
 	}()
 	hash, buf := sha256.New(), make([]byte, 256<<10)
-	body := &progressReader{r: x.res.Body, dog: x.dog, stall: x.stall, after: x.stall}
+	body := x.reader()
 	var got int64
 	for {
 		n, rerr := body.Read(buf)
@@ -178,7 +196,7 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		x.fail(CallOutcomeError, "download-cut")
 		return x.line
 	}
-	if file.Sync() != nil || file.Close() != nil || os.Rename(part, final) != nil {
+	if file.Sync() != nil || file.Close() != nil || folder.Rename(part, name) != nil {
 		x.fail(CallOutcomeError, "write-failed")
 		return x.line
 	}
@@ -190,26 +208,43 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 	return x.line
 }
 
-// folderIn creates <Root>/<Folder...> (0700) and answers its resolved path, which must stay inside the resolved root:
-// a symlinked folder that leads elsewhere is refused.
-func folderIn(d Download) (string, error) {
+// partTag makes a download's part file name unpredictable (a test fixes it).
+var partTag = func() string {
+	tag := make([]byte, 8)
+	rand.Read(tag)
+	return hex.EncodeToString(tag)
+}
+
+// openFolder opens <Root>/<Folder...>, creating missing folders 0700, without following a symlink anywhere below Root:
+// each element is checked with Lstat inside an os.Root, which never resolves outside Root even if an element is swapped
+// for a symlink after the check. It answers the opened folder and its path.
+func openFolder(d Download) (*os.Root, string, error) {
 	if err := os.MkdirAll(d.Root, 0o700); err != nil {
-		return "", err
+		return nil, "", err
 	}
-	root, err := filepath.EvalSymlinks(d.Root)
+	root, err := os.OpenRoot(d.Root)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
-	path := filepath.Join(append([]string{root}, d.Folder...)...)
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return "", err
+	defer root.Close()
+	rel := "."
+	for _, s := range d.Folder {
+		rel = filepath.Join(rel, s)
+		fi, err := root.Lstat(rel)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			if err := root.Mkdir(rel, 0o700); err != nil {
+				return nil, "", err
+			}
+		case err != nil:
+			return nil, "", err
+		case !fi.IsDir():
+			return nil, "", fs.ErrPermission // a symlink or a file where a folder belongs
+		}
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	folder, err := root.OpenRoot(rel)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
-	if resolved != root && !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
-		return "", os.ErrPermission
-	}
-	return resolved, nil
+	return folder, filepath.Join(d.Root, rel), nil
 }

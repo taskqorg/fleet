@@ -19,7 +19,7 @@
 - Context sources require unique repository IDs, a full 40-hex revision, nonempty core files, safe unique relative paths, and SHA-256 digests. They cannot name commands, credentials, or caller-selected host paths ([context_sources.go](context_sources.go)).
 - Profile validation is shared: a profile accepted by the coordinator is checked again before the executor spawns it. Harness-specific grants and mapped Antigravity settings are restricted ([profile.go](profile.go)).
 - Gateway calls have no total deadline: `FLEET_STALL_MS` (default 60 s) bounds each wait for progress and a JSON call's header wait, `FLEET_ANSWER_MS` (default 180 s) the header wait after a file request's last byte. They distinguish failures that leave the provider-side outcome unknown from failures known not to have sent a request: the gateway's `x-fleet-outcome` decides; a 5xx without `x-fleet-call-id` (the edge) is `edge-<status>`, `unknown` unless the tool is idempotent; a cut before an upload's last byte is `upload-interrupted` ([gateway_call.go](gateway_call.go)).
-- A download is written to `<final>.<random>.part` (`O_EXCL`, 0600), counted against `Content-Length`, hashed, fsynced and renamed; any failure removes the part file. Its folder (0700) must resolve inside the given root ([gateway_file.go](gateway_file.go)).
+- A download is written inside an `os.Root` of the trusted root: each folder below it is created 0700 or refused when it is a symlink, the file goes to `<name>.<random>.part` (`O_EXCL`, 0600), is counted against `Content-Length`, hashed, fsynced and renamed in the same folder; any failure removes the part file ([gateway_file.go](gateway_file.go)).
 
 ## Side effects
 

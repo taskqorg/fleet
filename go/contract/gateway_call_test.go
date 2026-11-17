@@ -221,7 +221,8 @@ func entries(t *testing.T, dir string) []string {
 }
 
 // Requirement: §9 download writer: the file lands in <root>/<issue>/<attachment>-<name> whatever the provider's name
-// holds, and a folder that is a symlink leading out of the root is refused. Risk: a name such as ../../.ssh/x writes
+// holds; a symlink planted at the attachments folder, the issue folder, the part file or the final name is refused and
+// nothing is written outside the root. Risk: a name such as ../../.ssh/x writes
 // outside the download folder.
 func TestDownloadWriteStaysInFolder(t *testing.T) {
 	body := []byte("\x89PNG bytes")
@@ -233,28 +234,51 @@ func TestDownloadWriteStaysInFolder(t *testing.T) {
 	}
 	var out map[string]any
 	json.Unmarshal(l.Output, &out)
-	resolved, _ := filepath.EvalSymlinks(root)
-	want := filepath.Join(resolved, "TGT-1", "85-1-_._.._.ssh__evil_gnp.png")
+	want := filepath.Join(root, "TGT-1", "85-1-_._.._.ssh__evil_gnp.png")
 	if out["path"] != want || out["sha256"] != shaOf(body) || out["bytes"] != float64(len(body)) || *l.Transfer.Sha256 != shaOf(body) {
 		t.Fatalf("output %s, want %s", l.Output, want)
 	}
 	if b, _ := os.ReadFile(want); !bytes.Equal(b, body) {
 		t.Fatal("content")
 	}
-	if got := entries(t, resolved); len(got) != 1 {
+	if got := entries(t, root); len(got) != 1 {
 		t.Fatalf("files %v", got)
 	}
-	if fi, _ := os.Stat(filepath.Join(resolved, "TGT-1")); fi.Mode().Perm() != 0o700 {
+	if fi, _ := os.Stat(filepath.Join(root, "TGT-1")); fi.Mode().Perm() != 0o700 {
 		t.Fatalf("folder mode %v", fi.Mode())
 	}
-	// A folder argument that is a path, and a symlinked folder that leads out of the root.
+	// A repeat download of the same attachment replaces the file.
+	if l := GatewayDownload(context.Background(), target(gw.URL, true), "youtrack", "attachment_get", []byte(`{}`), Download{Root: root, Folder: []string{"TGT-1"}, Prefix: "85-1"}); l.Outcome != CallOutcomeOk {
+		t.Fatalf("repeat: %s", code(l))
+	}
+	// A folder argument that is a path.
 	if l := GatewayDownload(context.Background(), target(gw.URL, true), "y", "g", []byte(`{}`), Download{Root: root, Folder: []string{".."}, Prefix: "1"}); code(l) != "bad-request" {
 		t.Fatalf("..: %s", code(l))
 	}
+	// Symlinks planted below the root: the attachments folder, the issue folder, the part file and the final name.
 	outside := t.TempDir()
-	os.Symlink(outside, filepath.Join(root, "TGT-2"))
-	if l := GatewayDownload(context.Background(), target(gw.URL, true), "y", "g", []byte(`{}`), Download{Root: root, Folder: []string{"TGT-2"}, Prefix: "1"}); code(l) != "path-refused" || len(entries(t, outside)) != 0 {
-		t.Fatalf("symlinked folder: %s", code(l))
+	gw = fileServer(t, "shot.png", body, -1)
+	input := t.TempDir()
+	os.Symlink(outside, filepath.Join(input, "attachments"))
+	os.MkdirAll(filepath.Join(root, "attachments"), 0o700)
+	os.Symlink(outside, filepath.Join(root, "attachments", "TGT-2"))
+	os.MkdirAll(filepath.Join(root, "attachments", "TGT-3"), 0o700)
+	os.Symlink(filepath.Join(outside, "final"), filepath.Join(root, "attachments", "TGT-3", "1-shot.png"))
+	os.MkdirAll(filepath.Join(root, "attachments", "TGT-4"), 0o700)
+	os.Symlink(filepath.Join(outside, "part"), filepath.Join(root, "attachments", "TGT-4", "1-shot.png.fixed.part"))
+	random := partTag
+	partTag = func() string { return "fixed" }
+	defer func() { partTag = random }()
+	for _, c := range []struct {
+		root, issue, want string
+	}{{input, "TGT-1", "path-refused"}, {root, "TGT-2", "path-refused"}, {root, "TGT-3", "path-refused"}, {root, "TGT-4", "write-failed"}} {
+		l := GatewayDownload(context.Background(), target(gw.URL, true), "y", "g", []byte(`{}`), Download{Root: c.root, Folder: []string{"attachments", c.issue}, Prefix: "1"})
+		if code(l) != c.want {
+			t.Fatalf("%s %s: %s", c.root, c.issue, code(l))
+		}
+	}
+	if got := entries(t, outside); len(got) != 0 {
+		t.Fatalf("written outside: %v", got)
 	}
 }
 

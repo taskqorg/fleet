@@ -123,9 +123,11 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, argumen
 // attachment_get {issue, attachment}: <root>/TGT-12/85-1234-screen.png).
 func connectionDownload(t contract.GatewayTarget, connection string, tool any, arguments any) contract.CallLine {
 	name := jStr(tool, "name")
-	root := os.Getenv("FLEET_FILES_OUT")
+	// The trusted root is the run's input folder (the executor made it) or the host's output folder; the attachments
+	// folder below the input folder is the agent's to change, so it is opened without following links like the rest.
+	root, folder := os.Getenv("FLEET_FILES_OUT"), []string{}
 	if in := os.Getenv("FLEET_INPUT_DIR"); in != "" {
-		root = filepath.Join(in, "attachments")
+		root, folder = in, []string{"attachments"}
 	} else if root == "" {
 		home, _ := os.UserHomeDir()
 		root = filepath.Join(home, ".local/share/fleet/files")
@@ -138,9 +140,9 @@ func connectionDownload(t contract.GatewayTarget, connection string, tool any, a
 		}
 		parts = append(parts, v)
 	}
-	d := contract.Download{Root: root}
+	d := contract.Download{Root: root, Folder: folder}
 	if len(parts) > 0 {
-		d.Folder, d.Prefix = parts[:len(parts)-1], parts[len(parts)-1]
+		d.Folder, d.Prefix = append(folder, parts[:len(parts)-1]...), parts[len(parts)-1]
 	}
 	return contract.GatewayDownload(context.Background(), t, connection, name, []byte(enc(arguments)), d)
 }
@@ -226,9 +228,10 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 	return sc.Err()
 }
 
-// runFileKeys are the keys a run file may set: the token, gateway and Access file, and the run's work and input folders
-// (the base of relative upload paths and the download folder).
-var runFileKeys = map[string]bool{"FLEET_RUN_TOKEN": true, "FLEET_GATEWAY_URL": true, "FLEET_CF_ACCESS_FILE": true, "FLEET_WORK_DIR": true, "FLEET_INPUT_DIR": true}
+// runFileKeys are the keys a run file may set: the token, gateway and Access file, the run's work and input folders
+// (the base of relative upload paths and the download folder), and the upload denylist's anchors (file_guard.go).
+var runFileKeys = map[string]bool{"FLEET_RUN_TOKEN": true, "FLEET_GATEWAY_URL": true, "FLEET_CF_ACCESS_FILE": true, "FLEET_WORK_DIR": true, "FLEET_INPUT_DIR": true,
+	"FLEET_USER_HOME": true, "FLEET_RUN_DENY": true}
 
 // loadRunFile reads KEY=value lines from the executor's private run file into this process's environment. Only
 // runFileKeys are taken. The file is denylisted for uploads.

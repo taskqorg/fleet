@@ -60,23 +60,31 @@ func newWatchdog(cancel context.CancelFunc, wait time.Duration) *watchdog {
 
 func (w *watchdog) arm(wait time.Duration) { w.timer.Reset(wait) }
 
-// progressReader re-arms the watchdog with each read; at the end of a request body it arms the answer wait.
+// progressReader re-arms the watchdog with each read. For a request body of want bytes it is done, and arms the answer
+// wait, only once all want bytes were read: a file that shrank since its first pass never left whole.
 type progressReader struct {
 	r            io.Reader
 	dog          *watchdog
 	stall, after time.Duration
+	want, n      int64
 	done         atomic.Bool
 }
 
 func (p *progressReader) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
-	if err == io.EOF {
+	p.n += int64(n)
+	if err == io.EOF && p.n == p.want {
 		p.done.Store(true)
 		p.dog.arm(p.after)
 	} else {
 		p.dog.arm(p.stall)
 	}
 	return n, err
+}
+
+// reader is the answer body with the stall wait re-armed on each read.
+func (x *exchange) reader() io.Reader {
+	return &progressReader{r: x.res.Body, dog: x.dog, stall: x.stall, after: x.stall}
 }
 
 // exchange is one request to the gateway with its answer still open; line holds the outcome when the request failed.
@@ -116,7 +124,7 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 	var upload *progressReader
 	var reader io.Reader = bytes.NewReader(args)
 	if body != nil {
-		upload = &progressReader{r: body, dog: x.dog, stall: stall, after: wait}
+		upload = &progressReader{r: body, dog: x.dog, stall: stall, after: wait, want: length}
 		reader = upload
 		if length == 0 {
 			upload.done.Store(true)
@@ -183,14 +191,14 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 
 // readSome is the first 2000 bytes of an answer as {"text": ...}.
 func readSome(x *exchange) json.RawMessage {
-	b, _ := io.ReadAll(io.LimitReader(&progressReader{r: x.res.Body, dog: x.dog, stall: x.stall, after: x.stall}, 2000))
+	b, _ := io.ReadAll(io.LimitReader(x.reader(), 2000))
 	text, _ := json.Marshal(map[string]string{"text": strings.ToValidUTF8(string(b), "�")})
 	return text
 }
 
 // answerJSON reads a JSON answer into the call line: ok, the gateway's refusal or the provider's status.
 func (x *exchange) answerJSON() CallLine {
-	body, err := io.ReadAll(&progressReader{r: x.res.Body, dog: x.dog, stall: x.stall, after: x.stall})
+	body, err := io.ReadAll(x.reader())
 	if err != nil {
 		if x.dog.fired.Load() {
 			x.fail(CallOutcomeUnknown, "client-timeout")
