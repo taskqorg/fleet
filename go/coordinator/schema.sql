@@ -2380,18 +2380,16 @@ DO $$ DECLARE t text; BEGIN
    ' OR project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))', t);
  END LOOP;
 END $$;
--- A row written later for a tombstoned execution (a host's event or receipt, a pipeline output, an assessment) is born
--- tombstoned.
-CREATE FUNCTION fleet_inherit_tombstone() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE e text; shown text := current_setting('fleet.deleted', true); hit boolean;
-BEGIN
- IF NEW.tombstoned_at IS NOT NULL THEN RETURN NEW; END IF;
- IF TG_TABLE_NAME = 'document' THEN e := NEW.data->>'executionId'; ELSE e := to_jsonb(NEW)->>TG_ARGV[0]; END IF;
- IF e IS NULL THEN RETURN NEW; END IF;
- PERFORM set_config('fleet.deleted', 'on', true); -- the tombstone is checked whoever writes
- hit := EXISTS (SELECT 1 FROM execution WHERE id = e AND tombstoned_at IS NOT NULL);
- PERFORM set_config('fleet.deleted', coalesce(shown, ''), true);
- IF hit THEN NEW.tombstoned_at := now(); END IF;
+-- A row a host's own call writes later for a tombstoned execution (an event, a receipt, a stop landing after the
+-- delete) is born tombstoned.
+CREATE FUNCTION fleet_inherit_tombstone() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE e text; BEGIN
+ -- Only a writer that sees deleted rows: for any other one a tombstoned row would fail the policy's check on an upsert.
+ IF NEW.tombstoned_at IS NOT NULL OR NOT fleet_show_deleted() THEN RETURN NEW; END IF;
+ IF TG_TABLE_NAME = 'document' THEN
+  IF NEW.kind IN ('setting-change', 'transport-audit', 'purge-task') THEN RETURN NEW; END IF; -- audit outlives the object
+  e := NEW.data->>'executionId';
+ ELSE e := to_jsonb(NEW)->>TG_ARGV[0]; END IF;
+ IF e IS NOT NULL AND EXISTS (SELECT 1 FROM execution WHERE id = e AND tombstoned_at IS NOT NULL) THEN NEW.tombstoned_at := now(); END IF;
  RETURN NEW;
 END $$;
 CREATE TRIGGER document_tombstone BEFORE INSERT ON document FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone();

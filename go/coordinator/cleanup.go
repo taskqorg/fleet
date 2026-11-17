@@ -692,28 +692,31 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		}
 	}
 	rows := map[contract.ObjectKind]*contract.KindCount{}
+	// Every root of every kind is checked before any goes, as the preview sees them: a root kept only by another
+	// tombstoned root goes at the next purge, so the confirm removes what the preview listed.
+	type rootSet struct {
+		kind       contract.PurgeKind
+		roots, out []string
+	}
+	sets := []rootSet{}
 	for _, kind := range []contract.PurgeKind{contract.PurgeKindExperiment, contract.PurgeKindProject} {
 		if !slices.Contains(kinds, kind) {
 			continue
 		}
-		var roots []string
+		r := rootSet{kind: kind, out: []string{}}
 		if err := runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
 			if err := showDeleted(q); err != nil {
 				return err
 			}
 			var err error
-			roots, err = purgeRoots(q, kind)
+			r.roots, err = purgeRoots(q, kind)
 			return err
 		}); err != nil {
 			return out, err
 		}
-		removed, kept := contract.PurgeCount{Kind: kind, Ids: []string{}}, contract.PurgeCount{Kind: kind, Ids: []string{}}
-		var bytes int64
-		// The roots unblocked before any goes, as the preview sees them: a root kept only by another tombstoned root
-		// goes at the next purge.
 		if !b.Preview {
 			free := []string{}
-			for _, id := range roots {
+			for _, id := range r.roots {
 				_, _, blocked, err := purgeRootTx(q, kind, id, true)
 				if err != nil {
 					return out, err
@@ -721,40 +724,41 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 				if blocked == "" {
 					free = append(free, id)
 				} else {
-					kept.Ids = append(kept.Ids, id)
+					r.out = append(r.out, id)
 				}
 			}
-			roots = free
+			r.roots = free
 		}
-		left := []string{}
-		for _, id := range roots {
-			rs, n, blocked, err := purgeRootTx(q, kind, id, b.Preview)
+		sets = append(sets, r)
+	}
+	for _, r := range sets {
+		removed, kept := contract.PurgeCount{Kind: r.kind, Ids: []string{}}, contract.PurgeCount{Kind: r.kind, Ids: r.out}
+		var bytes int64
+		for _, id := range r.roots {
+			rs, n, blocked, err := purgeRootTx(q, r.kind, id, b.Preview)
 			if err != nil {
-				return out, fmt.Errorf("purge %s %s: %w", kind, id, err)
+				return out, fmt.Errorf("purge %s %s: %w", r.kind, id, err)
 			}
 			if blocked != "" {
-				left = append(left, id)
+				kept.Ids = append(kept.Ids, id)
 				continue
 			}
 			removed.Ids, bytes = append(removed.Ids, id), bytes+n
-			for _, r := range rs {
-				if rows[r.Kind] == nil {
-					rows[r.Kind] = &contract.KindCount{Kind: r.Kind}
+			for _, x := range rs {
+				if rows[x.Kind] == nil {
+					rows[x.Kind] = &contract.KindCount{Kind: x.Kind}
 				}
-				rows[r.Kind].Count += r.Count
-				if r.Bytes != nil {
-					sum := *r.Bytes
-					if rows[r.Kind].Bytes != nil {
-						sum += *rows[r.Kind].Bytes
+				rows[x.Kind].Count += x.Count
+				if x.Bytes != nil {
+					sum := *x.Bytes
+					if rows[x.Kind].Bytes != nil {
+						sum += *rows[x.Kind].Bytes
 					}
-					rows[r.Kind].Bytes = &sum
+					rows[x.Kind].Bytes = &sum
 				}
 			}
 		}
-		roots = left
-		removed.Count, removed.Bytes = int64(len(removed.Ids)), &bytes
-		kept.Ids = append(kept.Ids, roots...)
-		kept.Count = int64(len(kept.Ids))
+		removed.Count, removed.Bytes, kept.Count = int64(len(removed.Ids)), &bytes, int64(len(kept.Ids))
 		out.Removed, out.Kept = append(out.Removed, removed), append(out.Kept, kept)
 	}
 	for _, k := range contract.ObjectKindValues {
@@ -851,7 +855,8 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 			if len(rest) == 0 {
 				return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
 			}
-			return put(q, "purge-task", t)
+			// An update, never an insert: a task another purge finished meanwhile stays gone.
+			return exec(q, "UPDATE document SET data=$2, updated_at=now() WHERE kind='purge-task' AND id=$1", t["id"], jsonBytes(t))
 		}); err != nil {
 			return left, err
 		}
