@@ -75,12 +75,17 @@ func bugsinkIngest(d sentryDSN) string {
 	return d.scheme + "://" + d.host
 }
 
-// bugsinkURL: Bugsink's public address, for issue links: FLEET_BUGSINK_URL, else the provider catalogue's.
+// bugsinkURL: Bugsink's public address, for issue links people open: FLEET_BUGSINK_URL, else the web DSN's host, else
+// https://bugsink.ufobe.com. The gateway reads the API on PDS18's loopback (snapshotProviders): the public API is
+// behind Cloudflare Access.
 func bugsinkURL() string {
 	if v := strings.TrimRight(os.Getenv("FLEET_BUGSINK_URL"), "/"); v != "" {
 		return v
 	}
-	return astr(mapOf(providers[bugsinkConn])["baseUrl"])
+	if d, ok := bugsinkWebDSN(); ok {
+		return d.scheme + "://" + d.host
+	}
+	return "https://bugsink.ufobe.com"
 }
 
 // bugsinkTunnel: Sentry's tunnel (docs.sentry.io, "Dealing with Ad-Blockers"): the browser SDK posts its envelope to
@@ -367,27 +372,19 @@ func bugsinkText(issue, project, reason string) string {
 	return what + where + ": " + bugsinkURL() + "/issues/issue/" + issue + "/ (bugsink issue_get {\"issue\": \"" + issue + "\"})."
 }
 
-// bugsinkFleetProject: the live Fleet project whose settings errors.bugsink list the Bugsink project; "" for none.
+// bugsinkFleetProject: the live Fleet project whose settings errors.bugsink list the Bugsink project; "" for none. A
+// project revision is the bundle {settings, contextFiles} (project_update, shippedDefinitions); only that path is read.
 func bugsinkFleetProject(q *Request, name string) (string, error) {
 	if name == "" {
 		return "", nil
 	}
-	heads, err := headTexts(q, "project")
-	for _, h := range heads {
-		var p struct {
-			Errors struct {
-				Bugsink []string `json:"bugsink"`
-			} `json:"errors"`
-		}
-		if json.Unmarshal(h.text, &p) == nil {
-			for _, n := range p.Errors.Bugsink {
-				if n == name {
-					return h.id, err
-				}
-			}
-		}
+	row, err := first(q, `SELECT d.id FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
+		WHERE d.kind='project' AND d.retired_at IS NULL AND jsonb_typeof(r.content::jsonb #> '{settings,errors,bugsink}')='array'
+		AND (r.content::jsonb #> '{settings,errors,bugsink}') ? $1 ORDER BY d.id LIMIT 1`, name)
+	if err != nil || row == nil {
+		return "", err
 	}
-	return "", err
+	return astr(row["id"]), nil
 }
 
 // bugsinkResolvedPass closes the problem of every issue Bugsink now reports resolved, or no longer has. Without the

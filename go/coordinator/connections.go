@@ -94,7 +94,7 @@ func connKeys(q *Request, name string) ([]doc, error) {
 
 // Snapshot (§3). Built in its own read transaction, so it shows only committed rows.
 func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
-	snap := contract.GatewaySnapshot{Schema: 2, GeneratedMs: nowMs(), Providers: gatewayProviders, Connections: map[string]contract.GatewayConnection{},
+	snap := contract.GatewaySnapshot{Schema: 2, GeneratedMs: nowMs(), Providers: snapshotProviders(), Connections: map[string]contract.GatewayConnection{},
 		Tokens: []contract.GatewayRunToken{}, UsageTokenSha256: sha256hex([]byte(usageToken))}
 	blocked, err := blockedConnections(q)
 	if err != nil {

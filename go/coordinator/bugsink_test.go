@@ -197,6 +197,12 @@ func TestBugsinkAlert(t *testing.T) {
 	if code, _ := e.post(t, path+"s3cret", alertBody("NEW", issue), nil); code != 404 {
 		t.Fatalf("unconfigured: %d", code)
 	}
+	// hello-world (a shipped project) names the Bugsink project fleet-web: its revision is the {settings, contextFiles}
+	// bundle every project write stores.
+	if _, err := e.ownerStore.pool.Exec(e.ctx, `UPDATE definition_revision r SET content=jsonb_set(r.content::jsonb,'{settings,errors}','{"bugsink":["fleet-web"]}')::text
+		FROM definition d WHERE d.kind='project' AND d.id='hello-world' AND r.kind=d.kind AND r.id=d.id AND r.revision=d.head`); err != nil {
+		t.Fatal(err)
+	}
 	file := filepath.Join(t.TempDir(), "alert-secret")
 	os.WriteFile(file, []byte("s3cret\n"), 0o600)
 	t.Setenv("FLEET_BUGSINK_ALERT_SECRET_FILE", file)
@@ -229,9 +235,12 @@ func TestBugsinkAlert(t *testing.T) {
 			t.Fatalf("new: %d %s", code, body)
 		}
 	}
-	var text, to string
-	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT text,addressed_to FROM question WHERE cause=$1 AND state='open'", bugsinkCause+issue).Scan(&text, &to); err != nil {
+	var text, to, project string
+	if err := e.ownerStore.pool.QueryRow(e.ctx, "SELECT text,addressed_to,coalesce(project_id,'') FROM question WHERE cause=$1 AND state='open'", bugsinkCause+issue).Scan(&text, &to, &project); err != nil {
 		t.Fatal(err)
+	}
+	if project != "hello-world" {
+		t.Fatalf("problem project %q: errors.bugsink of hello-world names fleet-web", project)
 	}
 	want := "A new error issue in Bugsink project fleet-web: https://bugsink.test/issues/issue/" + issue + "/ (bugsink issue_get {\"issue\": \"" + issue + "\"})."
 	if text != want || to != testOwnerEmail || count("open") != 1 {
@@ -340,5 +349,20 @@ func TestIssueClosed(t *testing.T) {
 		if closed != c.closed || (err != nil) != c.fail {
 			t.Fatalf("%s: %v %v", name, closed, err)
 		}
+	}
+}
+
+// Requirement: fleet-error-tracking.md, agent read access: the gateway reads Bugsink at FLEET_BUGSINK_INGEST, the one
+// loopback setting the tunnel uses too, and other providers keep their catalogue address. Risk: moving Bugsink's port
+// breaks agent reads and the resolution pass until a code release.
+func TestSnapshotProviders(t *testing.T) {
+	t.Setenv("FLEET_BUGSINK_INGEST", "")
+	if got := snapshotProviders()[bugsinkConn].BaseUrl; got != "http://127.0.0.1:9510" {
+		t.Fatalf("default %s", got)
+	}
+	t.Setenv("FLEET_BUGSINK_INGEST", "http://127.0.0.1:9999/")
+	p := snapshotProviders()
+	if p[bugsinkConn].BaseUrl != "http://127.0.0.1:9999" || p["github"].BaseUrl != "https://api.github.com" || gatewayProviders[bugsinkConn].BaseUrl != "http://127.0.0.1:9510" {
+		t.Fatalf("override: %s %s %s", p[bugsinkConn].BaseUrl, p["github"].BaseUrl, gatewayProviders[bugsinkConn].BaseUrl)
 	}
 }
