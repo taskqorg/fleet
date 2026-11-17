@@ -177,7 +177,11 @@ func reconcileDefinitions(q *Request, files []definitionFile, broken map[string]
 			continue
 		}
 		// The repository moved (or the file came back): record it; the head stays (state repository-changed or synced).
-		if err := exec(q, `UPDATE definition SET repo_sha=$3,repo_content=$4,repo_content_sha=$5,ever_shipped=true,retired_at=CASE WHEN deleted_at IS NULL THEN NULL ELSE retired_at END WHERE kind=$1 AND id=$2`,
+		// A deleted agent or pipeline whose file came back is the repository's again (shipped wins); a deleted project
+		// stays deleted: its data is gone and its id only reserved.
+		if err := exec(q, `UPDATE definition SET repo_sha=$3,repo_content=$4,repo_content_sha=$5,ever_shipped=true,
+		  deleted_at=CASE WHEN kind='project' THEN deleted_at END,
+		  retired_at=CASE WHEN kind='project' AND deleted_at IS NOT NULL THEN retired_at END WHERE kind=$1 AND id=$2`,
 			f.kind, f.id, blob, text, csha); err != nil {
 			return err
 		}

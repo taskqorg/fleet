@@ -474,8 +474,10 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 		return out, err
 	}
 	// Every pin, not only the first one of its kind (execution.pipeline_id and profile_id keep the first).
-	if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM execution WHERE definitions @> jsonb_build_array(jsonb_build_object('kind',$1::text,'id',$2::text))
-	  AND state IN ('preparing','running','waiting')`, r.Kind, r.Id).Scan(&out.Running); err != nil {
+	// Older runs name it only in data (pipelineId) or config_ref (profileId).
+	if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM execution WHERE state IN ('preparing','running','waiting')
+	  AND (definitions @> jsonb_build_array(jsonb_build_object('kind',$1::text,'id',$2::text))
+	   OR ($1='pipeline' AND (pipeline_id=$2 OR data->>'pipelineId'=$2)) OR ($1='agent' AND (profile_id=$2 OR config_ref->>'profileId'=$2)))`, r.Kind, r.Id).Scan(&out.Running); err != nil {
 		return out, err
 	}
 	// A live experiment names it as its pipeline, or anywhere in its variants (a method's pipelineId, a profile
