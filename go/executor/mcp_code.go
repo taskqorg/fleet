@@ -160,11 +160,11 @@ func (s *codeServer) serve(m any) M {
 	return reply
 }
 
-// seconds is a reply wait: absent or not positive means 25 s, and more than 50 s means 50 s. The executor's MCP filter
+// seconds is a reply wait: absent or negative means 25 s, 0 answers at once, and more than 50 s means 50 s. The executor's MCP filter
 // forwards one request at a time and Codex times out an MCP call at 60 s, so a longer reply wait would lose the reply and
 // hold every later call, reset included; a longer job keeps running and is read with further polls.
 func seconds(v any) time.Duration {
-	if f, ok := num(v); ok && f > 0 {
+	if f, ok := num(v); ok && f >= 0 {
 		return time.Duration(math.Min(f, 50) * float64(time.Second))
 	}
 	return 25 * time.Second
@@ -241,6 +241,9 @@ func (s *codeServer) wait(j *codeJob, d time.Duration) M {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.jobs[j.id] != j {
+		return M{"jobId": j.id, "error": "unknown jobId: never started or already returned"} // another wait returned it
+	}
 	// Each reply carries only the output and calls since the job's previous reply; the server keeps nothing replied.
 	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String(), "calls": append([]any{}, j.calls...)}
 	j.output.Reset()
@@ -431,7 +434,12 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		s.mu.Unlock()
 		if ended {
 			// A call made after its job ended (an unawaited promise or a timer) would have an effect nobody sees.
-			go rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": callError("error", "job-ended", nil)})
+			fail := callError("error", "job-ended", nil)
+			fail["tool"] = jStr(m, "tool")
+			if c, ok := strings.CutPrefix(jStr(m, "server"), "conn:"); ok {
+				fail["tool"] = c + "." + jStr(m, "tool")
+			}
+			go rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": fail})
 			return
 		}
 		go s.call(rt, j, m)
@@ -535,6 +543,10 @@ func mcpValue(r any) (any, M) {
 			v = text
 		}
 	}
+	if jStr(v, "status") == "pending-or-rejected" {
+		// request_child without a host answer: unknown; a retry with the same requestId is the same request.
+		return nil, callError("unknown", "pending", v)
+	}
 	if jAt(r, "isError") == true {
 		if jStr(v, "status") == "pending" {
 			// An unconfirmed mutation: unknown, read later with fleet.agent_tool_result({requestKey}), never repeated.
@@ -623,22 +635,10 @@ type codeFleet struct {
 // addCodeServer adds the `code` server to a launch's servers; mode `only` removes the fleet and connection servers it
 // bridges. A Claude profile without Read, Grep, Glob or Bash gets no file reads in the runtime.
 // The spec goes to specFile (0600), not argv: fleet operations and connection schemas can exceed one argv string.
-func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFleet, granted []any, gatewayConns map[string]bool, runFile, specFile string, read []string) error {
-	// The same tools the direct connection servers expose: names of letters, digits and '_'.
-	conns := []any{}
-	for _, c := range granted {
-		if !gatewayConns[jStr(c, "name")] {
-			continue
-		}
-		tools := []any{}
-		for _, t := range jArr(c, "tools") {
-			if n := jStr(t, "name"); n != "" && onlyBytes(n, func(b byte) bool { return alnum(b) || b == '_' }) {
-				tools = append(tools, t)
-			}
-		}
-		conn := jObj(jClone(c))
-		conn["tools"] = tools
-		conns = append(conns, conn)
+// conns are the launch's connection servers' specs, with the tools those servers expose.
+func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFleet, conns []any, runFile, specFile string, read []string) error {
+	if conns == nil {
+		conns = []any{}
 	}
 	if fleet == nil && len(conns) == 0 {
 		return errors.New("codeMode needs Fleet tools or a connection")
@@ -664,8 +664,8 @@ func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFlee
 	}
 	if mode == "only" {
 		delete(servers, "fleet")
-		for c := range gatewayConns {
-			delete(servers, c)
+		for _, c := range conns {
+			delete(servers, jStr(c, "name"))
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(specFile), 0o700); err != nil {

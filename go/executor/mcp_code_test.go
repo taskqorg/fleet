@@ -145,11 +145,15 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	if r, _ := c.code(`return (await conn.web.$tools()).map(t => t.name)`); enc(r["value"]) != `["search","broken"]` {
 		t.Fatalf("tools: %v", r["value"])
 	}
+	// $get and $call reach names that built-ins probe; here they reach ordinary ones the same way.
+	if r, bad := c.code(`return (await conn.$get("web").$call("search", {q: 1})).results.length`); bad || enc(r["value"]) != "2" {
+		t.Fatalf("$get/$call: %v %v", bad, r)
+	}
 
 	// A call made after its job ended is refused, not sent.
 	before = calls.Load()
-	c.code(`setTimeout(() => conn.web.search({}).catch(e => { state.late = e.code }), 50); return 1`)
-	if r, _ := c.code(`await new Promise(r => setTimeout(r, 300)); return state.late`); r["value"] != "job-ended" || calls.Load() != before {
+	c.code(`setTimeout(() => conn.web.search({}).catch(e => { state.late = e.code + " " + e.tool }), 50); return 1`)
+	if r, _ := c.code(`await new Promise(r => setTimeout(r, 300)); return state.late`); r["value"] != "job-ended web.search" || calls.Load() != before {
 		t.Fatalf("late call: %v, gateway calls %d", r["value"], calls.Load()-before)
 	}
 }
@@ -180,7 +184,7 @@ func TestCodeModeDetachAndPoll(t *testing.T) {
 // Risk: a reply wait past Codex's 60 s MCP timeout loses the reply and holds every later call behind the serial MCP
 // filter (fleet-code-mode.md, code).
 func TestCodeModeReplyWait(t *testing.T) {
-	for in, want := range map[any]time.Duration{nil: 25 * time.Second, float64(-1): 25 * time.Second, float64(3): 3 * time.Second, float64(1e300): 50 * time.Second} {
+	for in, want := range map[any]time.Duration{nil: 25 * time.Second, float64(-1): 25 * time.Second, float64(0): 0, float64(3): 3 * time.Second, float64(1e300): 50 * time.Second} {
 		if got := seconds(in); got != want {
 			t.Errorf("seconds(%v) = %v, want %v", in, got, want)
 		}
@@ -288,8 +292,9 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 	}
 	// A throw in a timer and a write callback keep the runtime and its state.
 	c.code(`state.n = 2; setTimeout(() => { throw new Error("late") }, 10)`)
-	r, bad = c.code(`await new Promise(r => setTimeout(r, 100)); await new Promise(r => process.stdout.write("w", r)); return state.n`)
-	if bad || enc(r["value"]) != "2" || r["restarted"] != nil || r["output"] != "w\n" {
+	r, bad = c.code(`await new Promise(r => setTimeout(r, 100)); await new Promise(r => process.stdout.write("w", r))
+		process.stdout.write("a"); process.stdout.write(new Uint8Array([98, 10])); return state.n`)
+	if bad || enc(r["value"]) != "2" || r["restarted"] != nil || r["output"] != "wab\n" {
 		t.Fatalf("after timer throw: %v %v", bad, r)
 	}
 }
@@ -306,6 +311,10 @@ func TestCodeModeFleetResults(t *testing.T) {
 	}
 	if v, fail := mcpValue(M{"content": []any{M{"type": "text", "text": "plain"}}}); fail != nil || v != "plain" {
 		t.Fatalf("text: %v", v)
+	}
+	child := mcpText(M{"status": "pending-or-rejected", "response": nil}, &no)
+	if _, fail := mcpValue(child); jStr(fail, "outcome") != "unknown" {
+		t.Fatalf("request_child without an answer: %v", fail)
 	}
 
 	c := newCodeClient(t, M{"dir": t.TempDir(), "journal": filepath.Join(t.TempDir(), "journal.sqlite"),
@@ -324,7 +333,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	old := codeHost
 	defer func() { codeHost = old }()
 	codeHost = func() (string, string, error) { return "/node", "/sandbox", nil }
-	granted := []any{M{"name": "web", "tools": []any{M{"name": "search"}, M{"name": "foo-bar"}}}}
+	granted := []any{M{"name": "web", "tools": []any{M{"name": "search"}}}}
 	launch := func(mode, harness string, profile M, journal string) (M, M, error) {
 		servers := M{"fleet": M{}, "web": M{}, "serena": M{}}
 		var fleet *codeFleet
@@ -332,7 +341,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 			fleet = &codeFleet{journal, M{"commandId": "c"}}
 		}
 		file := filepath.Join(t.TempDir(), "runs", "x.code.json")
-		err := addCodeServer(servers, mode, harness, profile, fleet, granted, map[string]bool{"web": true}, "/run.env", file, []string{"/work", "/input"})
+		err := addCodeServer(servers, mode, harness, profile, fleet, granted, "/run.env", file, []string{"/work", "/input"})
 		if err != nil {
 			return servers, nil, err
 		}

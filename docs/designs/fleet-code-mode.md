@@ -40,7 +40,7 @@ Input: `{source: string, detachAfterSeconds?: number}`.
 
 - `source` is the body of an async function. It may use `await`, `return` and `Promise.all`.
 - The runtime keeps one global object for the whole execution. `state` is a persistent object for values that later calls read, for example `state.issues = await ...`. Variables declared with `let`, `const` or `var` live only inside one call.
-- `print(...values)` and `console.log` append text to the call's output.
+- `print(...values)` and `console.log` append a line to the call's output; `process.stdout.write` appends its text as is.
 - The reply is `{jobId, status, output, value, calls}`. `status` is `done`, `failed` or `running`. `value` is the JSON form of the returned value, `null` for none. `output` holds the printed text. `calls` lists the bridged calls.
 - A thrown error returns `isError: true`, `status: "failed"` and `error: {message, stack}`, with the output printed before it.
 - The runtime does not cut `output` or `value`. The agent controls their size in its code.
@@ -52,7 +52,7 @@ Input: `{source: string, detachAfterSeconds?: number}`.
 Input: `{jobId: string, waitSeconds?: number}`.
 
 - Replies with the job's final result, in the `code` reply shape, once the job ends.
-- Replies `status: "running"` with the text printed so far when `waitSeconds` (default 25, at most 50) pass first.
+- Replies `status: "running"` with the text printed so far when `waitSeconds` (default 25, at most 50; 0 answers at once) pass first.
 - Each reply for a job carries only the output and `calls` added since that job's previous reply.
 - A final result is returned once. The code server then drops the job, so it keeps no delivered output or value, and a later `poll` of that `jobId` answers `unknown jobId`.
 - `poll` without `jobId` lists the unfinished and undelivered jobs with their status.
@@ -65,7 +65,7 @@ Input: `{jobId: string, waitSeconds?: number}`.
 - `fleet.$tools()` and `conn["<connection>"].$tools()` return the names, descriptions and input schemas. The agent looks up a tool there instead of loading every schema into its context.
 - A bridge function returns the tool's result, parsed from JSON when the result is JSON. A tool error rejects the promise with `FleetCallError {tool, outcome, code, output}`.
 - Calls may run in parallel. The code server serves each bridge call on its own goroutine.
-- Built-ins that probe objects (`await`, `JSON.stringify`, `String()`) send no bridge call: `then`, `toJSON`, `toString`, `valueOf`, `constructor` and `inspect` are not tool names.
+- Built-ins that probe objects (`await`, `JSON.stringify`, `String()`) send no bridge call: `then`, `toJSON`, `toString`, `valueOf`, `constructor` and `inspect` read as undefined. A tool or connection with such a name is reached with `fleet.$call("<tool>", args)`, `conn.$get("<connection>")` and `conn.$get("<connection>").$call("<tool>", args)`.
 
 ## Authority
 
@@ -86,7 +86,7 @@ Code mode adds no authority. The code server bridges only the tools that the exe
 
 Bridge calls follow the existing rule: an uncertain effect stays unknown and is never repeated automatically.
 
-- A Fleet mutation without an answer rejects with `FleetCallError` with `outcome: "unknown"`, `code: "pending"` and `output: {status: "pending", requestKey}`. The code reads it later with `fleet.agent_tool_result({requestKey})`. The bridge never retries it.
+- A Fleet mutation without an answer rejects with `FleetCallError` with `outcome: "unknown"`, `code: "pending"` and `output: {status: "pending", requestKey}`. A `request_child` without a host answer (`status: "pending-or-rejected"`) rejects the same way; a retry with the same `requestId` is the same request. The code reads it later with `fleet.agent_tool_result({requestKey})`. The bridge never retries it.
 - A bridged call made after its job ended (an unawaited promise or a timer) is refused with `code: "job-ended"` and never sent: its effect would reach no reply. Code awaits every call it starts.
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
 - A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent. A stored reply that does not decode is such a failure.

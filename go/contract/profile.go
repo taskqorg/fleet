@@ -133,7 +133,7 @@ func (p Profile) check() error {
 		}
 		seenServers[server.Id] = true
 		if server.Id != "design-rules" {
-			if !grantID.MatchString(server.Id) || server.Id == "fleet" || server.Id == "connection" || server.Id == "code" || len(server.Data) != 1 {
+			if !grantID.MatchString(server.Id) || slices.Contains(ExecutorMCPServers, server.Id) || server.Id == "connection" || len(server.Data) != 1 {
 				return errors.New("MCP grant needs a unique named connection and explicit tools only")
 			}
 			var tools []string

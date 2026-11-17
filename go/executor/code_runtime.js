@@ -28,21 +28,34 @@ function call(server, tool, args) {
   });
 }
 
-// Names that built-ins probe (`await`, JSON.stringify, String(), util.inspect) stay undefined, so probing sends no call;
-// tool names are snake_case. `$tools` lists the tools; no granted tool name starts with `$`.
+// Names that built-ins probe (`await`, JSON.stringify, String(), util.inspect) stay undefined, so probing sends no call.
+// `$tools` lists the tools and `$call(tool, args)` reaches a tool with one of those names; no granted name starts with
+// `$`. `conn.$get(name)` reaches a connection with one of them.
 const probed = new Set(['then', 'toJSON', 'toString', 'valueOf', 'constructor', 'inspect', 'asymmetricMatch', 'nodeType']);
-const tools = (server) => new Proxy({}, { get: (_, tool) => (typeof tool === 'string' && !probed.has(tool) ? (args) => call(server, tool, args) : undefined) });
-const print = (...xs) => send({ type: 'print', job: job.getStore() ?? null, text: util.format(...xs) + '\n' });
+const tools = (server) => new Proxy({}, {
+  get: (_, tool) => {
+    if (tool === '$call') return (name, args) => call(server, name, args);
+    return typeof tool === 'string' && !probed.has(tool) ? (args) => call(server, tool, args) : undefined;
+  },
+});
+const emit = (text) => send({ type: 'print', job: job.getStore() ?? null, text });
+const print = (...xs) => emit(util.format(...xs) + '\n');
 
 globalThis.fleet = tools('fleet');
-globalThis.conn = new Proxy({}, { get: (_, name) => (typeof name === 'string' && !probed.has(name) ? tools('conn:' + name) : undefined) });
+globalThis.conn = new Proxy({}, {
+  get: (_, name) => {
+    if (name === '$get') return (n) => tools('conn:' + n);
+    return typeof name === 'string' && !probed.has(name) ? tools('conn:' + name) : undefined;
+  },
+});
 globalThis.state = {};
 globalThis.print = print;
 globalThis.require = require;
 globalThis.FleetCallError = FleetCallError;
 for (const k of ['log', 'info', 'warn', 'error', 'debug']) console[k] = print;
+// Raw writes keep their bytes: no added newline, typed arrays as text.
 process.stdout.write = (chunk, encoding, callback) => {
-  print(String(chunk).replace(/\n$/, ''));
+  emit(typeof chunk === 'string' ? chunk : Buffer.from(chunk.buffer ?? chunk, chunk.byteOffset, chunk.byteLength).toString(typeof encoding === 'string' ? encoding : 'utf8'));
   const done = typeof encoding === 'function' ? encoding : callback;
   if (typeof done === 'function') process.nextTick(done);
   return true;

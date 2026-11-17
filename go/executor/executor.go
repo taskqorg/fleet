@@ -1050,11 +1050,6 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		servers["fleet"] = server
 	}
 	observed["fleetTools"], observed["collaborationTools"] = fleetTools, collaboration
-	if name == "codex" {
-		observed["fleetMcpTools"] = fleetMCP
-	} else {
-		observed["fleetMcpTools"] = anyStrings(sortedKeys(servers))
-	}
 	observed["cwd"], observed["worktree"], observed["platform"] = work, hasW, platform()
 	// Granted connections: one `<executor> mcp connection` server each, calling fleet-gateway with this run's token. The
 	// token and gateway URL reach the servers through the harness environment, never a file or argv.
@@ -1090,18 +1085,22 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 	}
 	gatewayConns := map[string]bool{}
+	var bridged []any // the granted connections with the tools their direct servers expose, for code mode
 	for _, spec := range granted {
 		conn := jStr(spec, "name")
 		if conn == "" || !onlyBytes(conn, func(b byte) bool { return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' }) {
 			continue
 		}
-		tools := []any{}
+		tools, specs := []any{}, []any{}
 		for _, t := range jArr(spec, "tools") {
 			if n := jStr(t, "name"); n != "" && onlyBytes(n, func(b byte) bool { return alnum(b) || b == '_' }) {
-				tools = append(tools, n)
+				tools, specs = append(tools, n), append(specs, t)
 				connectionTools = append(connectionTools, "mcp__"+conn+"__"+n)
 			}
 		}
+		b := jObj(jClone(spec))
+		b["tools"] = specs
+		bridged = append(bridged, b)
 		if has(servers, conn) {
 			return fail(1, "MCP server name collides with a granted connection")
 		}
@@ -1110,26 +1109,25 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
 	if mode := jStr(p, "agentConfig", "codeMode"); mode != "" {
-		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), codeFleetTools, granted, gatewayConns, runFile, codeSpecFile(e.root, execution), []string{work, inputDir}); err != nil {
+		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), []string{work, inputDir}); err != nil {
 			return fail(1, err.Error())
 		}
-		observed["codeMode"] = mode
-		observed["codeTools"] = []any{"code", "poll"}
+		observed["codeMode"], observed["codeTools"] = mode, []any{"code", "poll"}
 		if mode == "only" {
-			connectionTools = nil
-			if name == "codex" {
-				observed["fleetMcpTools"] = []any{} // the fleet server is gone; its tools are reached through code
+			connectionTools, fleetMCP = nil, []any{} // the fleet server is gone; its tools are reached through code
+		}
+	}
+	// Codex: the fleet server's tools; other harnesses: the launch's servers without the connection servers.
+	if name == "codex" {
+		observed["fleetMcpTools"] = fleetMCP
+	} else {
+		var direct []string
+		for _, k := range sortedKeys(servers) {
+			if !gatewayConns[k] {
+				direct = append(direct, k)
 			}
 		}
-		if name != "codex" {
-			var direct []string
-			for _, k := range sortedKeys(servers) {
-				if !gatewayConns[k] { // as before code mode: the servers without the connection servers
-					direct = append(direct, k)
-				}
-			}
-			observed["fleetMcpTools"] = anyStrings(direct)
-		}
+		observed["fleetMcpTools"] = anyStrings(direct)
 	}
 	// Built-in web for pipeline agent steps: off unless the step's run sets webRoute builtin.
 	if name == "codex" && sp.WebRoute != nil {
