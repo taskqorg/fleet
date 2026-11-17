@@ -103,8 +103,13 @@ func (a *App) bugsinkTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, bugsinkBodyMax))
-	if err != nil {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
 		writeError(w, &HTTPError{Code: 413, Msg: "An envelope is at most 1 MiB"})
+		return
+	}
+	if err != nil {
+		writeError(w, fail(400, "The envelope was cut off"))
 		return
 	}
 	out, items, err := tunnelEnvelope(body, dsn, actor(q, ""))
@@ -411,7 +416,7 @@ func bugsinkResolvedPass(ctx context.Context, a *App) error {
 		}
 		if closed {
 			if err := runTx(ctx, a, nil, true, "", func(q *Request) error { return problemClose(q, cause) }); err != nil {
-				return err
+				failed = errors.Join(failed, err)
 			}
 		}
 	}

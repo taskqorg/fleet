@@ -10,6 +10,8 @@ import {
 import bugsink from '../../config/bugsink.json';
 
 let ignored: (e: unknown) => boolean = () => false;
+/** A URL without query and fragment. */
+const pathOnly = (u: string) => u.replace(/[?#].*$/, '');
 let release: () => string | null = () => null;
 
 /** What is not reported (an operation's own failure, an access change) and the Fleet version this tab runs. */
@@ -23,8 +25,18 @@ if (bugsink.web) {
     // Errors only: no sessions, tracing or replay.
     defaultIntegrations: [functionToStringIntegration(), browserApiErrorsIntegration(), breadcrumbsIntegration(), globalHandlersIntegration(),
       linkedErrorsIntegration(), dedupeIntegration(), httpContextIntegration()],
+    // Query strings can carry tokens or search text: only the origin and path of a URL leave the browser.
+    beforeBreadcrumb(crumb) {
+      if (crumb.data) for (const k of ['url', 'from', 'to']) if (typeof crumb.data[k] === 'string') crumb.data[k] = pathOnly(crumb.data[k]);
+      return crumb;
+    },
     beforeSend(event, hint) {
       if (ignored(hint.originalException)) return null;
+      if (event.request) {
+        if (event.request.url) event.request.url = pathOnly(event.request.url);
+        delete event.request.query_string;
+        if (event.request.headers) { delete event.request.headers.Referer; delete event.request.headers.referer; }
+      }
       // The version as system_versions and the version chip show it; unknown until the first version check.
       const v = release();
       if (v) event.release = v;

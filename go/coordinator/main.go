@@ -338,9 +338,6 @@ func writeError(w http.ResponseWriter, err error) {
 	code, msg := 500, err.Error()
 	if errors.As(err, &he) {
 		code = he.Code
-		if code == 500 {
-			errtrack.Capture(err, map[string]string{"status": "500"})
-		}
 		if code == 403 || he.Refused {
 			obs.MarkRefused(w) // a missing role or grant, a removed host: a decision, not an error (fleet-telemetry.md §1)
 		}
@@ -349,7 +346,9 @@ func writeError(w http.ResponseWriter, err error) {
 		obs.MarkRefused(w)
 	} else {
 		log.Printf("error: %v", err)
-		errtrack.Capture(err, map[string]string{"status": "500"}) // an unexpected 5xx (fleet-error-tracking.md)
+	}
+	if code == 500 {
+		errtrack.Capture(err, map[string]string{"status": "500"}) // an unexpected server error (fleet-error-tracking.md)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)

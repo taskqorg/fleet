@@ -51,8 +51,12 @@ func Start(dsn, service, host, release string) error {
 			if strings.HasPrefix(name, "pass.") {
 				Flush(2 * time.Second)
 			}
-		} else {
-			Capture(err, map[string]string{"span": name})
+		} else if err != nil && !errors.Is(err, context.Canceled) && Enabled() {
+			// One issue per pass: a pass's messages vary (hosts, ids, addresses), and each would open its own issue.
+			capture(map[string]string{"span": name}, func(h *sentry.Hub) {
+				h.ConfigureScope(func(s *sentry.Scope) { s.SetFingerprint([]string{"pass", name}) })
+				h.CaptureException(err)
+			})
 		}
 	})
 	return nil

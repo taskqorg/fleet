@@ -45,7 +45,8 @@ try {
   const context = await browser.newContext(), page = await context.newPage();
   const tunnelled: string[] = [];
   page.on('request', r => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/errors') tunnelled.push(new URL(r.url()).origin); });
-  await page.goto(server.origin + '/tasks');
+  // A query value only a foreign link could carry: no URL leaves the browser with its query.
+  await page.goto(server.origin + '/tasks?token=not-for-bugsink');
   await page.locator('header.page-h, .tr-body, [data-ui]').first().waitFor();
   await page.evaluate(() => { setTimeout(() => { throw new Error('bugsink browser check'); }); });
   const thrown = await event(ev => ev.exception?.values?.some((v: any) => v.value === 'bugsink browser check'), 'thrown error');
@@ -54,6 +55,7 @@ try {
   assert.deepEqual(thrown.event.user, { id: OWNER }, 'the coordinator sets the person, id only');
   assert.equal(thrown.event.tags?.['fleet.actor'], OWNER);
   assert.equal(thrown.event.environment, 'production');
+  assert.ok(!JSON.stringify(thrown.event).includes('not-for-bugsink'), 'no query string reaches Bugsink');
   const frames = thrown.event.exception.values.at(-1).stacktrace?.frames ?? [];
   assert.ok(frames.some((f: any) => /\/assets\/main-[^/]+\.js$/.test(f.filename ?? '')), 'the error has a frame in the app script');
   assert.ok(thrown.event.debug_meta?.images?.some((i: any) => i.type === 'sourcemap' && /^[0-9a-f-]{36}$/.test(i.debug_id)), 'the script carries its debug ID for source maps');

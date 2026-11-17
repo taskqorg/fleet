@@ -14,7 +14,7 @@ One Bugsink team `fleet` with one project per component: `fleet-web` (the operat
 
 ### 2. Browser tunnel
 
-The app ([`app/src/errors.ts`](../../app/src/errors.ts)) initialises `@sentry/browser` before any other module, with the DSN of `fleet-web` from [`config/bugsink.json`](../../config/bugsink.json) (built into the bundle), `environment: 'production'`, errors only (no sessions, tracing or replay) and no personal data (`dataCollection` without user fields, cookies or bodies, the SDK 11 form of `sendDefaultPii` off). `release` is the Fleet version the tab runs, as `system_versions` and the version chip show it; it is unknown until the first version check. An `OpError` or `AccessChanged` is not reported: an operation's own failure is in the coordinator's spans, and an access change aborts reads on purpose. The render boundary (`main.tsx:RenderBoundary`, "This page failed to render." with Reload) also captures the crash.
+The app ([`app/src/errors.ts`](../../app/src/errors.ts)) initialises `@sentry/browser` before any other module, with the DSN of `fleet-web` from [`config/bugsink.json`](../../config/bugsink.json) (built into the bundle), `environment: 'production'`, errors only (no sessions, tracing or replay) and no personal data (`dataCollection` without user fields, cookies or bodies, the SDK 11 form of `sendDefaultPii` off). URLs leave the browser without query or fragment (the event's request URL and breadcrumbs), and without `Referer`: a query can carry a token or search text. `release` is the Fleet version the tab runs, as `system_versions` and the version chip show it; it is unknown until the first version check. An `OpError` or `AccessChanged` is not reported: an operation's own failure is in the coordinator's spans, and an access change aborts reads on purpose. The render boundary (`main.tsx:RenderBoundary`, "This page failed to render." with Reload) also captures the crash.
 
 The SDK sends with `tunnel: '/api/errors'` ([Sentry tunnel](https://docs.sentry.io/platforms/javascript/troubleshooting/#dealing-with-ad-blockers)): Fleet's own origin, so blockers keep the events and Bugsink needs no public ingest for Fleet. The coordinator's `POST /api/errors` ([`bugsink.go`](../../go/coordinator/bugsink.go)):
 
@@ -32,7 +32,7 @@ Without `FLEET_BUGSINK_WEB_DSN` the route answers 404 and nothing is forwarded.
 The coordinator and the executor use `sentry-go` through [`go/errtrack`](../../go/errtrack/errtrack.go): one DSN each from `FLEET_BUGSINK_DSN` (the executor falls back to `bugsinkDsn` in its release defaults, `config/executor-defaults.json`; set but empty turns it off), `release` the Fleet version, `environment` production, `server_name` the host id, tag `service`. No DSN, no events, so tests and development need nothing. Reported:
 
 *   a panic in an HTTP handler or a periodic pass, through the `obs` fail hook (`obs.Handler`, `obs.Pass`), tagged with the span name; a pass's panic ends the process, so its delivery is awaited for up to 2 s; a handler's panic is recovered by `net/http` and waits for nothing;
-*   a failed pass (`obs.Pass` returning an error other than its context ending);
+*   a failed pass (`obs.Pass` returning an error other than its context ending), fingerprinted by the pass, so one failing pass is one issue however its messages vary;
 *   a coordinator 500 (`writeError` of an unexpected error or an `HTTPError` 500);
 
 Each capture runs on a clone of the process hub, so concurrent events keep their own tags.
@@ -93,3 +93,4 @@ Bugsink alerts (new issue, regression, unmute; [alerts](https://www.bugsink.com/
 ## Not built
 
 - Bugsink's own retention, quotas and backup are Bugsink's host configuration, outside this repository.
+- A cap on the problems alerts open: each new Bugsink issue opens one, and Bugsink's grouping, not Fleet, bounds their number.

@@ -62,7 +62,8 @@ func (u *updater) sendSourcemaps(app, ver, base, org, token string) (int, error)
 	if err != nil || n == 0 {
 		return 0, err
 	}
-	client := &http.Client{Timeout: time.Minute}
+	// Short: the upload runs before the restart, and a hung Bugsink must not hold it.
+	client := &http.Client{Timeout: 15 * time.Second}
 	call := func(method, url, contentType string, body io.Reader) ([]byte, error) {
 		req, err := http.NewRequest(method, url, body)
 		if err != nil {
@@ -114,10 +115,12 @@ func (u *updater) sendSourcemaps(app, ver, base, org, token string) (int, error)
 		return 0, err
 	}
 	var state struct {
-		State string `json:"state"`
+		State         string   `json:"state"`
+		Detail        string   `json:"detail"`
+		MissingChunks []string `json:"missingChunks"`
 	}
-	if json.Unmarshal(b, &state) == nil && state.State == "not_found" {
-		return 0, errors.New("assemble: chunks missing")
+	if json.Unmarshal(b, &state) != nil || len(state.MissingChunks) > 0 || (state.State != "created" && state.State != "ok" && state.State != "assembling") {
+		return 0, fmt.Errorf("assemble: state %q %s, %d chunks missing", state.State, state.Detail, len(state.MissingChunks))
 	}
 	return n, nil
 }
