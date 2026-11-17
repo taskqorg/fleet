@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -48,11 +49,26 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 		return nil, callError("error", "sandbox", err.Error())
 	}
 	policy := jAt(s.spec, "shell")
-	argv, err := shellArgv(policy, jStr(s.spec, "sandbox"), cwd, tmp, command)
+	var argsList []string
+	for _, arg := range jArr(args, "args") {
+		value, ok := str(arg)
+		if !ok {
+			return nil, callError("error", "bad-arguments", "args must contain strings")
+		}
+		argsList = append(argsList, value)
+	}
+	argv, err := shellArgv(policy, jStr(s.spec, "sandbox"), cwd, tmp, command, argsList)
 	if err != nil {
 		return nil, callError("error", "sandbox", err.Error())
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
+	lease, release, err := os.Pipe()
+	if err != nil {
+		return nil, callError("error", "sh-start", err.Error())
+	}
+	defer lease.Close()
+	defer release.Close()
+	filterArg := "none"
+	files := []*os.File{lease}
 	if jAt(policy, "sandbox") == true {
 		filter, err := shellSocketFilter()
 		if err != nil {
@@ -60,12 +76,22 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 		}
 		if filter != nil {
 			defer filter.Close()
-			cmd.ExtraFiles = []*os.File{filter}
-			cmd.Args = slices.Insert(cmd.Args, 1, "--seccomp", "3")
+			files = append(files, filter)
+			filterArg = "seccomp"
+			argv = slices.Insert(argv, 1, "--seccomp", "3")
 		}
 	}
+	cmd := exec.Command(exe(), append([]string{"code-shell", filterArg}, argv...)...)
+	cmd.ExtraFiles = files
 	cmd.Dir = cwd
 	cmd.Env = shellEnv(jAt(s.spec, "env"), jAt(s.spec, "shell"))
+	if has(s.spec, "gitEnv") {
+		var gitEnv []string
+		for _, kv := range jArr(s.spec, "gitEnv") {
+			gitEnv = append(gitEnv, jStr(kv))
+		}
+		gitApply(cmd, gitEnv)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -123,6 +149,42 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 		r["code"] = cmd.ProcessState.ExitCode()
 	}
 	return r, nil
+}
+
+// codeShellGuardian owns the shell group and kills it when the server's lease closes, including after SIGKILL.
+func codeShellGuardian(args []string) error {
+	if len(args) < 2 || syscall.Getpgrp() != os.Getpid() {
+		return errors.New("code shell requires its own process group and control pipe")
+	}
+	lease := os.NewFile(3, "shell lifetime")
+	defer lease.Close()
+	syscall.CloseOnExec(3)
+	go func() {
+		io.Copy(io.Discard, lease)
+		syscall.Kill(-os.Getpid(), syscall.SIGKILL)
+	}()
+	cmd := exec.Command(args[1], args[2:]...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if args[0] == "seccomp" {
+		filter := os.NewFile(4, "shell seccomp")
+		defer filter.Close()
+		syscall.CloseOnExec(4)
+		cmd.ExtraFiles = []*os.File{filter}
+	}
+	if err := cmd.Run(); err != nil {
+		if _, ok := err.(*exec.ExitError); !ok {
+			return err
+		}
+		st, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+		if ok && st.Signaled() {
+			sig := st.Signal()
+			signal.Reset(sig)
+			syscall.Kill(os.Getpid(), sig)
+			os.Exit(128 + int(sig))
+		}
+		os.Exit(cmd.ProcessState.ExitCode())
+	}
+	return nil
 }
 
 // shProc is one running sh command. Its group is killed only while the leader is unreaped.
@@ -262,38 +324,55 @@ func darwinShellProfile(roots, protected, hidden, visible []string, network bool
 // sandbox that reads files, writes only the policy's write roots and the temporary directories (nothing for a read-only
 // start), signals only inside itself, reaches no host Unix socket, and has network only when the policy says so. A write
 // root's .git stays read-only unless another write root lies inside it, as in Codex. tmp is the private /tmp on Linux.
-func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) {
+func shellArgv(policy any, sandbox, cwd, tmp, command string, args []string) ([]string, error) {
 	bash := "/bin/bash"
 	if !isFile(bash) {
 		bash = "/bin/sh"
 	}
-	run := []string{bash, "-c", command}
+	run := append([]string{bash, "-c", command, "fleet-code"}, args...)
 	if jAt(policy, "sandbox") != true {
 		return run, nil
 	}
 	network, readOnly := jAt(policy, "network") == true, jAt(policy, "readOnly") == true
-	paths := func(list []any) []string {
+	pinned := jAt(policy, "pinned") == true
+	paths := func(list []any, fixed bool) ([]string, error) {
 		var out []string
 		for _, r := range list {
 			if p, ok := str(r); ok && p != "" {
-				if c, err := canon(p); err == nil && !slices.Contains(out, c) {
+				c, err := canon(p)
+				if fixed && (err != nil || c != p) {
+					return nil, errors.New("shell sandbox grant path changed")
+				}
+				if err == nil && !slices.Contains(out, c) {
 					out = append(out, c)
 				}
 			}
 		}
-		return out
+		return out, nil
 	}
 	// hide: the executor's data directory (run files with run tokens, MCP sockets), unreadable but for the read roots, the
 	// write roots and a HOME inside it (a harness home: its Git configuration).
-	hide, read := paths(jArr(policy, "hide")), paths(jArr(policy, "read"))
-	if home, err := canon(os.Getenv("HOME")); err == nil && os.Getenv("HOME") != "" && slices.ContainsFunc(hide, func(h string) bool { return under(home, h) }) {
+	hide, err := paths(jArr(policy, "hide"), pinned)
+	if err != nil {
+		return nil, err
+	}
+	read, err := paths(jArr(policy, "read"), pinned)
+	if err != nil {
+		return nil, err
+	}
+	if home, err := canon(os.Getenv("HOME")); err == nil && os.Getenv("HOME") != "" &&
+		(slices.ContainsFunc(hide, func(h string) bool { return under(home, h) }) || runtime.GOOS == "linux" && under(home, "/tmp")) {
 		read = append(read, home)
 	}
 	var roots []string // none for a read-only start, not even the temporary directories
 	if !readOnly {
-		roots = paths(jArr(policy, "write"))
+		roots, err = paths(jArr(policy, "write"), pinned)
+		if err != nil {
+			return nil, err
+		}
 		if runtime.GOOS == "darwin" { // on Linux /tmp is private and TMPDIR points there
-			for _, r := range paths([]any{os.Getenv("TMPDIR"), "/private/tmp"}) {
+			temps, _ := paths([]any{os.Getenv("TMPDIR"), "/private/tmp"}, false)
+			for _, r := range temps {
 				if !slices.Contains(roots, r) {
 					roots = append(roots, r)
 				}
@@ -432,11 +511,17 @@ func codeFile(dir, tool string, args any) (any, M) {
 		}
 		return nil, callError("error", "io", err.Error())
 	}
-	cur, err := os.OpenRoot(real)
+	root, err := os.OpenRoot(real)
 	if err != nil {
 		return fail(err)
 	}
-	defer func() { cur.Close() }()
+	defer root.Close()
+	cur := root
+	defer func() {
+		if cur != root {
+			cur.Close()
+		}
+	}()
 	git, gitErr := cur.Lstat(".git")
 	isGit := func(st os.FileInfo) bool { return gitErr == nil && os.SameFile(st, git) }
 	if d := filepath.Dir(rel); d != "." {
@@ -452,7 +537,9 @@ func codeFile(dir, tool string, args any) (any, M) {
 			}
 			opened, err := next.Stat(".")
 			link, lerr := cur.Lstat(c) // after the open: a component swapped for a symlink in between does not match
-			cur.Close()
+			if cur != root {
+				cur.Close()
+			}
 			cur = next
 			if err != nil || lerr != nil || link.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, link) {
 				return nil, callError("error", "outside-worktree", rel+" changed while it was written")
@@ -514,7 +601,18 @@ func codeFile(dir, tool string, args any) (any, M) {
 		err = cerr
 	}
 	if err == nil {
-		err = cur.Rename(tmp, name)
+		// Resolve the destination again from the worktree at publication. A renamed directory handle cannot
+		// serve as the authority for the final path.
+		relTmp := filepath.Join(filepath.Dir(rel), tmp)
+		staged, stageErr := cur.Lstat(tmp)
+		atPath, pathErr := root.Lstat(relTmp)
+		dir := filepath.Join(real, filepath.Dir(rel))
+		resolved, resolveErr := canon(dir)
+		if stageErr != nil || pathErr != nil || resolveErr != nil || resolved != dir || !os.SameFile(staged, atPath) {
+			cur.Remove(tmp)
+			return nil, callError("error", "outside-worktree", rel+" changed while it was written")
+		}
+		err = root.Rename(relTmp, rel)
 	}
 	if err != nil {
 		cur.Remove(tmp)

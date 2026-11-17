@@ -984,6 +984,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if err := e.event(c, 0, contract.FleetEventTypePreparation, evidence); err != nil {
 		return err
 	}
+	var gitAccess []string
 	if jObj(p, "project") != nil {
 		// Repo of this host's environment (env.repo), else the project's single/first repo.
 		var envRepo any
@@ -997,6 +998,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if err != nil {
 			return fail(1, err.Error())
 		}
+		gitAccess = access
 		gitApply(cmd, access)
 	}
 	requirements := projectRequirements(jAt(p, "project"), jStr(p, "agentConfig", "id"))
@@ -1129,6 +1131,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if codeMode != "" {
 		auth := codeAuthorityFor(name, jAt(p, "agentConfig"), work, []string{work, inputDir}, gitRoots, p["gitNetwork"] == true, jIsTrue(p, "readOnly"), e.root)
 		auth.env = M{"FLEET_INPUT_DIR": inputDir, "FLEET_OUTPUT_DIR": outputDir}
+		if jObj(p, "project") != nil {
+			auth.gitEnv = anyStrings(gitAccess)
+		}
 		// The worktree's Git directories stay readable to a sandboxed sh that hides the data directory. They come from the
 		// checkout the executor made, now, never from .git files the sandboxed commands can rewrite.
 		if jAt(auth.shell, "sandbox") == true && checkoutTop != "" {
@@ -1137,6 +1142,28 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 				roots, _ = nativeGitRoots(checkoutTop, work) // on a failure no extra read: sh lacks Git, nothing more
 			}
 			auth.shell["read"] = append(jArr(auth.shell, "read"), roots...)
+		}
+		if jAt(auth.shell, "sandbox") == true {
+			auth.shell["pinned"] = true
+			workRoot, err := canon(work)
+			if err != nil {
+				return fail(1, "code-mode work root: "+err.Error())
+			}
+			for _, key := range []string{"read", "write", "hide"} {
+				var paths []any
+				for _, path := range jArr(auth.shell, key) {
+					c, err := canon(jStr(path))
+					if err != nil {
+						return fail(1, "code-mode shell root: "+err.Error())
+					}
+					// The work root already covers its children. Avoid a separate bind of a movable descendant.
+					if key == "read" && c != workRoot && under(c, workRoot) {
+						continue
+					}
+					paths = append(paths, c)
+				}
+				auth.shell[key] = paths
+			}
 		}
 		if err := addCodeServer(servers, codeMode, codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), work, auth); err != nil {
 			return fail(1, err.Error())

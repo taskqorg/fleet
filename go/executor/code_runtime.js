@@ -135,13 +135,16 @@ const host = {
   sh: (cmd, ...rest) => {
     let opts = {};
     if (Array.isArray(cmd) && Array.isArray(cmd.raw)) {
-      // A tagged template: each interpolated value is one shell word, an array several.
-      const word = (v) => Array.isArray(v) ? v.map(word).join(' ') : "'" + String(v).replaceAll("'", "'\\''") + "'";
-      cmd = cmd.raw.reduce((a, s, i) => a + word(rest[i - 1]) + s);
+      if (rest.length) return Promise.reject(new FleetCallError({tool: 'sh', outcome: 'error', code: 'bad-arguments',
+        output: 'Use sh(command, {args: [...]}) with quoted shell positional parameters for dynamic values'}));
+      cmd = cmd.raw[0];
     } else {
       opts = rest[0] ?? {};
     }
-    return call('host', 'sh', { command: String(cmd), cwd: opts.cwd, timeoutMs: opts.timeoutMs }).then((r) => new ShResult(r));
+    if (opts.args != null && (!Array.isArray(opts.args) || opts.args.some((x) => typeof x !== 'string'))) {
+      return Promise.reject(new FleetCallError({tool: 'sh', outcome: 'error', code: 'bad-arguments', output: 'args must be an array of strings'}));
+    }
+    return call('host', 'sh', { command: String(cmd), cwd: opts.cwd, timeoutMs: opts.timeoutMs, args: opts.args }).then((r) => new ShResult(r));
   },
 };
 class ShResult {
@@ -192,6 +195,7 @@ const compiles = (body) => { try { new AsyncFunction(body); return true; } catch
 const continues = /^\s*([-+*/%<>=&|^?:,.)\]}]|!=)/;
 const declaration = /^\s*((async\s+)?function\b|class\b)/;
 const assignment = /^\s*[A-Za-z_$][\w$]*(\s*(\.\s*[A-Za-z_$][\w$]*|\[[^\]]*\]))*\s*([-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?!=)/;
+const leadingTrivia = /^(\s|\/\/[^\n]*(\n|$)|\/\*[\s\S]*?\*\/)+/;
 function body(source) {
   if (!compiles(source)) return source; // its own syntax error, unchanged
   for (let i = source.length; i >= 0; i--) {
@@ -203,10 +207,13 @@ function body(source) {
       .find((t) => compiles('return (' + t + '\n)')); // most tails fail at their first tokens: about one parse per call
     if (tail === undefined || tail.trim() === '' || i > 0 && source[i - 1] === '\n' && continues.test(tail)) continue;
     // An assignment (state.x = ...) keeps its value for later calls; returning it would put it into the reply.
-    if (assignment.test(tail)) continue;
+    const statement = tail.replace(leadingTrivia, '');
+    if (assignment.test(statement)) continue;
     // `return (function f() {})` would no longer hoist f, also after a comment.
-    if (declaration.test(tail.replace(/^(\s|\/\/[^\n]*(\n|$)|\/\*[\s\S]*?\*\/)*/, ''))) continue;
+    if (declaration.test(statement)) continue;
     const prefix = source.slice(0, i);
+    // JavaScript inserts a semicolon after a bare return across a line break.
+    if (/\breturn\b\s*(?:(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/)\s*)*$/.test(prefix)) return source;
     // A `;` inside a trailing line comment is no statement end: there `prefix (` still compiles, the `(` commented out.
     if (source[i - 1] === ';' && compiles(prefix + ' (')) continue;
     const wrapped = prefix + '\nreturn (' + tail + '\n)';

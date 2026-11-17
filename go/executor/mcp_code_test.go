@@ -56,6 +56,11 @@ func newCodeClient(t *testing.T, spec M) *codeClient {
 
 // parts sends one tools/call and returns its text parts and isError.
 func (c *codeClient) parts(tool string, args M) ([]string, bool) {
+	texts, _, bad := c.response(tool, args)
+	return texts, bad
+}
+
+func (c *codeClient) response(tool string, args M) ([]string, M, bool) {
 	c.t.Helper()
 	c.id++
 	io.WriteString(c.in, enc(M{"jsonrpc": "2.0", "id": c.id, "method": "tools/call", "params": M{"name": tool, "arguments": args}})+"\n")
@@ -71,33 +76,23 @@ func (c *codeClient) parts(tool string, args M) ([]string, bool) {
 	for _, p := range jArr(r, "content") {
 		texts = append(texts, jStr(p, "text"))
 	}
-	return texts, jAt(r, "isError") == true
+	return texts, jObj(r, "structuredContent"), jAt(r, "isError") == true
 }
 
 // call returns the reply as one object (fleet-code-mode.md, reply): the `[code] ` part's fields, `output` from the
 // printed part and, for a finished job, `value` from the value part (JSON when it decodes, else the text itself).
 func (c *codeClient) call(tool string, args M) (M, bool) {
 	c.t.Helper()
-	texts, bad := c.parts(tool, args)
-	v := M{}
-	var plain []string
-	for _, t := range texts {
-		if meta, ok := strings.CutPrefix(t, "[code] "); ok {
-			m, err := dec(meta)
-			if err != nil {
-				c.t.Fatal(err)
-			}
-			for k, x := range m.(M) {
-				v[k] = x
-			}
-			continue
-		}
-		plain = append(plain, t)
+	plain, v, bad := c.response(tool, args)
+	if len(v) > 0 {
+		plain = plain[:len(plain)-1]
+	} else {
+		v = M{}
 	}
 	if !has(v, "status") && !has(v, "error") && !has(v, "jobs") && !has(v, "reset") {
 		v["status"] = "done"
 		if len(plain) == 0 {
-			c.t.Fatalf("finished job without a value part: %q", texts)
+			c.t.Fatalf("finished job without a value part: %q", plain)
 		}
 		last := plain[len(plain)-1]
 		if x, err := dec(last); err == nil {
@@ -108,7 +103,7 @@ func (c *codeClient) call(tool string, args M) (M, bool) {
 		plain = plain[:len(plain)-1]
 	}
 	if len(plain) > 1 {
-		c.t.Fatalf("more than one output part: %q", texts)
+		c.t.Fatalf("more than one output part: %q", plain)
 	}
 	v["output"] = strings.Join(plain, "")
 	return v, bad
@@ -563,6 +558,8 @@ func TestCodeModeReplyAndLastExpression(t *testing.T) {
 		"const ok = false\n!ok":                                             "true",
 		"const x = \"abc\"\nx.length; // size":                              "3",
 		"state.big = \"x\".repeat(10)":                                      "null",
+		"// save for the next call\nstate.big = \"x\".repeat(10)":           "null",
+		"return\n({answer: 42})":                                            "null",
 		"const u = \"http://x\"\nu + \"\"":                                  `"http://x"`,
 		"const r = helper(2)\nasync function helper(x) { return x * 2 }\nr": "4",
 		"print(1)\nfunction f() {}":                                         "null",
@@ -575,6 +572,9 @@ func TestCodeModeReplyAndLastExpression(t *testing.T) {
 		if r, bad := c.code(src); bad || enc(r["value"]) != want {
 			t.Errorf("%q: %v %v, want %s", src, bad, r, want)
 		}
+	}
+	if r, bad := c.code(`print("[code] printed"); return "[code] value"`); bad || r["value"] != "[code] value" || r["output"] != "[code] printed\n" {
+		t.Fatalf("metadata-like text: %v %v", bad, r)
 	}
 }
 
@@ -686,18 +686,23 @@ func TestCodeModeShell(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: elsewhere\n"), 0o644)
 	t.Setenv("TMPDIR", t.TempDir()) // the temporary directory the sandbox may write; `outside` is not under it
 	t.Setenv("FLEET_RUN_TOKEN", "invented")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "marker"), []byte("owned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	port := strings.TrimPrefix(srv.URL, "http://127.0.0.1:")
 	httpGet := `exec 3<>/dev/tcp/127.0.0.1/` + port + ` && printf 'GET / HTTP/1.0\r\n\r\n' >&3 && cat <&3 >/dev/null`
 	probe := `const run = async (cmd) => (await sh(cmd)).code
-		return {pwd: (await sh("pwd -P")).text(), word: (await sh` + "`printf %s ${\"a b\"}`" + `).stdout, json: (await sh("echo '{\"k\":1}'")).json(),
+		return {pwd: (await sh("pwd -P")).text(), word: (await sh('printf %s "$1"', {args:["a 'b'"]})).stdout, json: (await sh("echo '{\"k\":1}'")).json(),
 			exit: await run("exit 3"), inside: await run("echo x > made.txt"), outside: await run("echo x > ` + filepath.Join(outside, "o.txt") + `"),
 			tmp: await run("echo x > \"$TMPDIR/t.txt\""), git: await run("echo x >> .git"), net: await run(` + enc(httpGet) + `),
 			signal: await run("kill ` + fmt.Sprint(sleeper.Process.Pid) + `"), token: (await sh("echo ${FLEET_RUN_TOKEN:-none}")).text()}`
 	sandboxed := M{"sandbox": true, "write": []any{dir}, "network": false}
-	c := newCodeClient(t, M{"dir": dir, "shell": sandboxed})
+	c := newCodeClient(t, M{"dir": dir, "shell": sandboxed, "gitEnv": []any{"GIT_AUTHOR_NAME=Fixture"}})
 	r, bad := c.code(probe)
 	real, _ := canon(dir)
-	if bad || jStr(r, "value", "pwd") != real || jStr(r, "value", "word") != "a b" || enc(jAt(r, "value", "json")) != `{"k":1}` || jStr(r, "value", "token") != "none" {
+	if bad || jStr(r, "value", "pwd") != real || jStr(r, "value", "word") != "a 'b'" || enc(jAt(r, "value", "json")) != `{"k":1}` || jStr(r, "value", "token") != "none" {
 		t.Fatalf("sh: %v %v", bad, r)
 	}
 	for k, want := range map[string]bool{"exit": false, "inside": true, "outside": false, "tmp": true, "git": false, "net": false, "signal": false} {
@@ -707,6 +712,9 @@ func TestCodeModeShell(t *testing.T) {
 	}
 	if enc(jAt(r, "value", "exit")) != "3" {
 		t.Errorf("exit: %v", jAt(r, "value", "exit"))
+	}
+	if r, bad := c.code(`(await sh('printf "%s " "$GIT_AUTHOR_NAME"; cat "$HOME/marker"')).text()`); bad || r["value"] != "Fixture owned" {
+		t.Fatalf("Git settings or isolated HOME: %v %v", bad, r)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "made.txt")); err != nil {
 		t.Error("the write inside the worktree is missing")
@@ -744,6 +752,44 @@ func TestCodeModeShell(t *testing.T) {
 	c = newCodeClient(t, M{"dir": dir, "shell": M{"sandbox": false}})
 	if r, _ := c.code(`(await sh("echo x > ` + filepath.Join(outside, "free.txt") + `")).code`); enc(r["value"]) != "0" {
 		t.Fatalf("unsandboxed: %v", r)
+	}
+}
+
+// Risk: aborting the MCP code server leaves its shell group alive after the execution ends.
+func TestCodeModeShellLease(t *testing.T) {
+	lease, release, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	defer release.Close()
+	cmd := exec.Command(exe(), "code-shell", "none", "/bin/sh", "-c", "printf 'ready\\n'; exec sleep 30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.ExtraFiles = []*os.File{lease}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+	if line, err := bufio.NewReader(out).ReadString('\n'); err != nil || line != "ready\n" {
+		t.Fatalf("shell did not start: %q %v", line, err)
+	}
+	if err := release.Close(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+			t.Fatalf("expected shell group kill: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("shell outlived its lifetime pipe")
 	}
 }
 

@@ -70,7 +70,7 @@ func codeDescription(spec any) string {
 		b.WriteString("- edit(path, old, new, {all}) replaces old, which must occur once unless all: true.\n")
 	}
 	if can("sh") {
-		b.WriteString("- sh`cmd ${arg}` (each ${} is quoted as one word) or sh(cmd, {cwd, timeoutMs}) -> {code, stdout, stderr} with .text(), .json(), .lines(); a non-zero code does not throw.")
+		b.WriteString("- sh`cmd` or sh(cmd, {cwd, timeoutMs, args}) -> {code, stdout, stderr} with .text(), .json(), .lines(). For dynamic values pass args and reference them in the command as \"$1\", \"$2\", etc. A non-zero code does not throw.")
 		if shell := jAt(spec, "shell"); jAt(shell, "sandbox") == true {
 			if jAt(shell, "readOnly") == true {
 				b.WriteString(" Commands write nothing")
@@ -143,17 +143,21 @@ func codeReply(r M) M {
 		meta["newRuntime"] = true
 	}
 	calls := jArr(r, "calls")
-	if status == "failed" && len(calls) > 0 || slices.ContainsFunc(calls, func(c any) bool { return jStr(c, "outcome") != "ok" }) {
+	if status != "done" && len(calls) > 0 || slices.ContainsFunc(calls, func(c any) bool { return jStr(c, "outcome") != "ok" }) {
 		meta["calls"] = calls
 	}
 	if len(meta) > 0 || len(parts) == 0 {
 		add("[code] " + enc(meta))
 	}
-	return M{"content": parts, "isError": status == "failed"}
+	reply := M{"content": parts, "isError": status == "failed"}
+	if len(meta) > 0 {
+		reply["structuredContent"] = meta
+	}
+	return reply
 }
 
 func codeNote(v M, isError bool) M {
-	return M{"content": []any{M{"type": "text", "text": "[code] " + enc(v)}}, "isError": isError}
+	return M{"content": []any{M{"type": "text", "text": "[code] " + enc(v)}}, "structuredContent": v, "isError": isError}
 }
 
 type codeJob struct {
@@ -468,6 +472,9 @@ func (s *codeServer) finish(j *codeJob, ok bool, value, err any) {
 		return
 	default:
 	}
+	if j.rt != nil && j.rt.stopped {
+		ok, value, err = false, nil, runtimeExited()
+	}
 	j.ok, j.value, j.err = ok, value, err
 	close(j.done)
 }
@@ -718,7 +725,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		s.mu.Lock()
 		// After the code returned, a call is still part of the job while another of its calls is in flight (a chain such as
 		// fleet.a().then(fleet.b)); once none is, a call (a timer) is late.
-		ended := j == nil || jobStatus(j) != "running" || j.ended != nil && j.busy == 0
+		ended := j == nil || rt.stopped || jobStatus(j) != "running" || j.ended != nil && j.busy == 0
 		if !ended {
 			j.busy++
 		}
@@ -985,6 +992,7 @@ type codeAuthority struct {
 	write, edit bool
 	shell       M
 	env         M // FLEET_INPUT_DIR and FLEET_OUTPUT_DIR for sh, as the harness has them
+	gitEnv      []any
 }
 
 // codeAuthorityFor mirrors the harness's own tools for this execution, never more. work is the worktree; writable are
@@ -1059,6 +1067,9 @@ func addCodeServer(servers M, mode string, fleet *codeFleet, conns []any, runFil
 	spec := M{"dir": dir, "read": anyStrings(auth.read), "write": auth.write, "edit": auth.edit, "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox, "instructions": []any{}}
 	if auth.shell != nil {
 		spec["shell"], spec["env"] = auth.shell, auth.env
+		if auth.gitEnv != nil {
+			spec["gitEnv"] = auth.gitEnv
+		}
 	}
 	if mode == "only" {
 		instr := []any{}
