@@ -230,7 +230,7 @@ const SPOT_HITS: { kind: 'tasks' | 'conversations' | 'projects'; family?: Family
   { kind: 'conversations', family: 'session', state: 'waiting', label: 'Plan the deploy window with the PM', code: 'C-FLT-12', project: 'fleet', ago: 15 * min },
   // Found by a word deep in a long first message: the title is the instruction's start, the snippet shows the match.
   { kind: 'conversations', family: 'session', state: 'idle', label: 'You are a worker agent. Read AGENTS.md and every contract on the path before you start', code: 'C-DSG-3', project: 'design-system',
-    ago: 3 * hr, snippet: '…start. Task: deploy the book to the review site and check its links before you…' },
+    ago: 3 * hr, snippet: '…Task: deploy the book to the review site and check its links before you start…' },
   { kind: 'projects', label: 'Website', project: 'website', ago: 0 },
 ];
 function spotDemo(focus: string[], onFocus: (f: string[]) => void): SpotlightProvider[] {

@@ -271,11 +271,10 @@ func sessionHits(rs []doc, words string) []contract.Found {
 	return out
 }
 
-// Snippet geometry: a match within the first snippetShown characters is in the title's visible start, also at phone
-// width, so no snippet; a
+// Snippet geometry: a match within the first snippetShown characters is in the title's visible start, so no snippet; a
 // snippet is up to snippetLen characters from the word start at most snippetLead characters before the match, so the
-// match stays in the part a phone-width row shows.
-const snippetShown, snippetLen, snippetLead = 24, 80, 16
+// match comes first in the line, where a narrow row still shows it.
+const snippetShown, snippetLen, snippetLead = 24, 80, 8
 
 // matchSnippet: up to snippetLen characters of text (whitespace collapsed) from just before the first match of a word of
 // words that the title does not show (its first match lies past the start), with an ellipsis where it is cut; "" when

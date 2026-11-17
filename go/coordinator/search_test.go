@@ -33,14 +33,14 @@ func TestMatchSnippet(t *testing.T) {
 	if got := matchSnippet(long, "health contract"); !strings.Contains(got, "contract") {
 		t.Fatalf("earliest word: %q", got)
 	}
-	if got := matchSnippet(long, "request."); got != "…and the pull request." {
+	if got := matchSnippet(long, "request."); got != "…pull request." {
 		t.Fatalf("end: %q", got)
 	}
 	// A short message: the snippet still starts just before the match, never repeating the whole title.
-	if got := matchSnippet("Please review the queue setup notes and then check the zeppelin", "zeppelin"); got != "…then check the zeppelin" {
+	if got := matchSnippet("Please review the queue setup notes and then check the zeppelin", "zeppelin"); got != "…the zeppelin" {
 		t.Fatalf("short: %q", got)
 	}
-	if got := matchSnippet("Ünïcode prefix that runs past forty runes ÄÖÜ then İstanbul deploy", "deploy"); !strings.HasSuffix(got, "İstanbul deploy") {
+	if got := matchSnippet("Ünïcode prefix that runs past forty runes ÄÖÜ then İstanbul deploy", "deploy"); got != "…deploy" {
 		t.Fatalf("non-ASCII offsets: %q", got)
 	}
 }
