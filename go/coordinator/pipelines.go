@@ -1206,8 +1206,14 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	// script; a job it had started under the step (the coordinator's own publication job) ends with it.
 	if kind != "api" && kind != "agent" && kind != "script" {
 		return false, tx(func(q *Request) error {
-			if err := exec(q, "UPDATE execution SET state='failed',ended_at=now(),problem='step:unknown-kind' WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting')", row); err != nil {
+			jobs, err := queryRows(q, "UPDATE execution SET state='failed',ended_at=now(),problem='step:unknown-kind' WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting') RETURNING id", row)
+			if err != nil {
 				return err
+			}
+			for _, j := range jobs {
+				if err := writeTotals(q, astr(j["id"])); err != nil {
+					return err
+				}
 			}
 			return failStep(q, run, i, "step:unknown-kind", "Step kind "+kind+" is no longer run")
 		})
