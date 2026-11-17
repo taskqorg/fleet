@@ -1297,6 +1297,7 @@ func TestDownloadBytesUnchanged(t *testing.T) {
 	got, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	expect(t, string(got), string(data), "bytes")
+	gw.halt() // The client can finish reading before the download handler appends its completed line.
 	expect(t, field(lastLine(t, gw), "transfer", "sha256"), shaHex(data), "sha")
 }
 
@@ -1334,6 +1335,7 @@ func TestDownloadWritesTwoLines(t *testing.T) {
 	expect(t, len(data), len(blobBytes), "bytes")
 	expect(t, []any{started["callId"], started["phase"], started["outcome"], started["errorCode"], started["status"], field(started, "transfer", "bytes"), field(started, "transfer", "sha256"), started["keyFingerprint"]},
 		[]any{response.Header.Get("X-Fleet-Call-Id"), "started", "unknown", "download-unfinished", 200, len(blobBytes), nil, fp("invented-key-a")}, "started line")
+	gw.halt() // Wait for the handler to append its completed line.
 	lines, _ := gw.spool()
 	expect(t, len(lines), 2, "lines")
 	done := lines[1]
