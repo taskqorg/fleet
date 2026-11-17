@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -40,7 +41,7 @@ func GatewayUpload(ctx context.Context, t GatewayTarget, connection, tool string
 	fields["name"], fields["mediaType"] = u.Name, u.MediaType
 	encoded, _ := json.Marshal(fields)
 	_, answer := clientWaits()
-	x := send(ctx, t, connection, tool, nil, io.NewSectionReader(u.File, 0, u.Size), u.Size, map[string]string{
+	x := send(ctx, t, connection, tool, func() io.Reader { return io.NewSectionReader(u.File, 0, u.Size) }, u.Size, true, map[string]string{
 		"Content-Type":   "application/octet-stream",
 		"X-Fleet-Args":   base64.RawURLEncoding.EncodeToString(encoded),
 		"X-Fleet-Sha256": u.Sha256,
@@ -115,13 +116,17 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 			return refused
 		}
 	}
-	x := send(ctx, t, connection, tool, args, nil, 0, map[string]string{"Accept": "application/octet-stream", "Accept-Encoding": "identity"}, answer)
+	x := send(ctx, t, connection, tool, func() io.Reader { return bytes.NewReader(args) }, int64(len(args)), false, map[string]string{"Accept": "application/octet-stream", "Accept-Encoding": "identity"}, answer)
 	defer x.close()
 	if x.failed {
 		return x.line
 	}
 	if x.res.StatusCode != 200 {
-		return x.answerJSON()
+		line := x.answerJSON()
+		if line.Outcome == CallOutcomeOk {
+			x.fail(CallOutcomeError, "invalid-response") // a 2xx without the file stream: nothing was saved
+		}
+		return x.line
 	}
 	var meta struct {
 		Name      string `json:"name"`

@@ -71,7 +71,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 			<-start
 			won := false
 			err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-				_, token, claim, err := claimPipelineAPI(q, "api-claim", stepRow(run, 0), "fixture", "system_one")
+				_, token, claim, _, err := claimPipelineAPI(q, "api-claim", stepRow(run, 0), "fixture", "system_one")
 				won = claim
 				if claim && token == "" {
 					return errors.New("winning claim has no token")
@@ -114,7 +114,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		_, token, won, err := claimPipelineAPI(q, "api-revoked", stepRow(reserved, 0), "fixture", "system_one")
+		_, token, won, _, err := claimPipelineAPI(q, "api-revoked", stepRow(reserved, 0), "fixture", "system_one")
 		if token != "" || won {
 			t.Fatal("revoked connection authorized dispatch")
 		}

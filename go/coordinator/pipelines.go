@@ -1059,13 +1059,8 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 	var won, idempotent bool
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		var err error
-		if claimed, token, won, err = claimPipelineAPI(q, astr(run["id"]), executionID, connection, tool); err != nil || !won {
-			return err
-		}
-		// The minted token names this connection, so its row exists; a failed read only makes an edge error unknown.
-		c, _ := maybe(q, "connection:"+connection, "api-connection")
-		idempotent = mapOf(providerTools(astr(c["provider"]))[tool])["idempotent"] == true
-		return nil
+		claimed, token, won, idempotent, err = claimPipelineAPI(q, astr(run["id"]), executionID, connection, tool)
+		return err
 	})
 	if err != nil {
 		unavailable.ErrorCode = ptr("pipeline-authority-denied")

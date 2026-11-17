@@ -2,11 +2,17 @@
 // only), access and intake. Key values go in, never come out: the add field is write-only and the answer is a fingerprint.
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, StateBadge, DetailSection, KvRow, Empty, Button, SettingField, AgeChip } from '../../../packages/ui/src/index.ts';
+import { ListDetail, StateBadge, DetailSection, KvRow, Empty, Button, SettingField, AgeChip, bytes, duration } from '../../../packages/ui/src/index.ts';
 import { op, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
 const ids = (v: string) => v.split(',').map(x => x.trim()).filter(Boolean);
+
+// A connection's file limits with the gateway defaults filled in (fleet-connections.md §9): no size caps, 60 s stall, 120 s answer.
+const fileLimits = (l: { fileBytes?: number; replyBytes?: number; stallMs?: number; answerMs?: number } | undefined) => [
+  `upload ${l?.fileBytes ? bytes(l.fileBytes).text : 'no cap'}`, `download ${l?.replyBytes ? bytes(l.replyBytes).text : 'no cap'}`,
+  `stall ${duration((l?.stallMs ?? 60_000) / 1000).text}`, `answer ${duration((l?.answerMs ?? 120_000) / 1000).text}`,
+].join(' · ');
 
 export function Keys({ id }: { id?: string }) {
   const [, go] = useLocation();
@@ -58,7 +64,7 @@ export function Keys({ id }: { id?: string }) {
         onSave={v => run('connections_set_access', { connection: sel.name, access: { ...sel.access, experiments: ids(v) } })} />
       <KvRow icon="activity" label="Intake" value={<Button label={sel.intake === 'all' ? 'Pause' : 'Resume'} icon={sel.intake === 'all' ? 'pause' : 'play'} onClick={() => run('connections_set_intake', { connection: sel.name, intake: sel.intake === 'all' ? 'paused' : 'all' })} />} />
       {/* File limits (fleet-connections.md §9) are set by the connections_set_limits operation; the screen shows them. */}
-      <KvRow icon="gauge" label="Limits" value={Object.keys(sel.limits ?? {}).length ? Object.entries(sel.limits).map(([k, v]) => `${k} ${v}`).join(', ') : 'No caps'} />
+      <KvRow icon="gauge" label="Limits" value={fileLimits(sel.limits)} />
     </DetailSection>
   </article>;
   return <ListDetail list={list} detail={detail || undefined} detailKey={id} />;

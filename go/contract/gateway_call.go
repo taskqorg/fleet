@@ -109,10 +109,11 @@ func (x *exchange) close() {
 	x.cancel()
 }
 
-// send makes the request. body nil sends args as JSON; else body is a file upload of length bytes, counted by a
-// progress reader, so a failure before its last byte is known to have reached nothing. wait is the header wait after
-// the request's last byte.
-func send(ctx context.Context, t GatewayTarget, connection, tool string, args []byte, body io.Reader, length int64, headers map[string]string, wait time.Duration) *exchange {
+// send makes the request. open makes the body afresh (the transport may resend a body that a stale kept-alive
+// connection never took), length bytes long, counted by a progress reader, so a failure before its last byte is known
+// to have reached nothing. file marks a file upload. wait is the header wait after the request's last byte; dial, TLS
+// and the write run under the stall wait.
+func send(ctx context.Context, t GatewayTarget, connection, tool string, open func() io.Reader, length int64, file bool, headers map[string]string, wait time.Duration) *exchange {
 	stall, _ := clientWaits()
 	ctx, cancel := context.WithCancel(ctx)
 	x := &exchange{line: CallLine{Tool: tool, Connection: connection, Outcome: CallOutcomeError}, stall: stall, cancel: cancel}
@@ -121,36 +122,26 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 		x.fail(CallOutcomeError, "connection-unavailable")
 		return x
 	}
-	var upload *progressReader
-	var reader io.Reader
-	var jsonBody atomic.Pointer[progressReader] // the JSON body last handed to the transport (GetBody may replace it)
-	if body != nil {
-		upload = &progressReader{r: body, dog: x.dog, stall: stall, after: wait, want: length}
-		reader = upload
-		if length == 0 {
-			upload.done.Store(true)
-			reader = http.NoBody
-			x.dog.arm(wait)
-		}
+	var current atomic.Pointer[progressReader] // the body last handed to the transport
+	fresh := func() *progressReader {
+		p := &progressReader{r: open(), dog: x.dog, stall: stall, after: wait, want: length}
+		current.Store(p)
+		return p
+	}
+	var reader io.Reader = http.NoBody
+	if length > 0 {
+		reader = fresh()
 	} else {
-		// The JSON body too arms the header wait only once it was read whole; dial, TLS and the write run under stall.
-		jsonBody.Store(&progressReader{r: bytes.NewReader(args), dog: x.dog, stall: stall, after: wait, want: int64(len(args))})
-		reader = jsonBody.Load()
+		x.dog.arm(wait)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(t.URL, "/")+"/v1/call/"+connection+"/"+tool, reader)
 	if err != nil {
 		x.fail(CallOutcomeError, "unreachable")
 		return x
 	}
-	if body != nil {
-		req.ContentLength = length
-	} else {
-		// Rewindable, so the transport may resend a JSON body that a stale kept-alive connection never took.
-		req.ContentLength = int64(len(args))
-		req.GetBody = func() (io.ReadCloser, error) {
-			jsonBody.Store(&progressReader{r: bytes.NewReader(args), dog: x.dog, stall: stall, after: wait, want: int64(len(args))})
-			return io.NopCloser(jsonBody.Load()), nil
-		}
+	req.ContentLength = length
+	if length > 0 {
+		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(fresh()), nil }
 	}
 	for k, v := range t.Header {
 		req.Header.Set(k, v)
@@ -164,21 +155,21 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 	}
 	req.Header.Set("User-Agent", "fleet-connection/1")
 	res, err := gatewayClient.Do(req)
-	sentAll := upload != nil && upload.done.Load() || upload == nil && jsonBody.Load().done.Load()
+	sentAll := length == 0 || current.Load().done.Load()
 	if err != nil {
 		var timeout net.Error
 		var op *net.OpError
 		switch {
 		case errors.As(err, &op) && op.Op == "dial":
 			x.fail(CallOutcomeError, "unreachable") // not connected: nothing was sent
-		case !sentAll && upload != nil:
+		case !sentAll && file:
 			// The gateway sends an upload on only once it has every byte: a cut before the last one reached nothing.
 			x.fail(CallOutcomeError, "upload-interrupted")
 		case !sentAll:
 			x.fail(CallOutcomeError, "unreachable") // the request never left whole, so the gateway cannot have run it
 		case x.dog.fired.Load() || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout():
 			x.fail(CallOutcomeUnknown, "client-timeout")
-		case upload != nil:
+		case file:
 			x.fail(CallOutcomeUnknown, "connection-lost")
 		default:
 			x.fail(CallOutcomeUnknown, "unreachable")
@@ -241,15 +232,10 @@ func (x *exchange) answerJSON() CallLine {
 	if code == "" || providerCode.MatchString(code) {
 		code = fmt.Sprintf("http-%d", res.StatusCode)
 	}
-	outcome := CallOutcomeError
-	switch res.Header.Get("x-fleet-outcome") {
-	case "unknown":
+	// The gateway's outcome header decides; without one (not the gateway's answer) the code does.
+	outcome, named := CallOutcomeError, res.Header.Get("x-fleet-outcome")
+	if named == "unknown" || named == "" && gatewayUnknown[code] {
 		outcome = CallOutcomeUnknown
-	case "error":
-	default:
-		if gatewayUnknown[code] {
-			outcome = CallOutcomeUnknown
-		}
 	}
 	x.fail(outcome, code)
 	return x.line
@@ -260,7 +246,7 @@ func (x *exchange) answerJSON() CallLine {
 // ok|error|unknown, errorCode, the gateway's callId and status, and the provider's reply as output; it never fails.
 func GatewayCall(ctx context.Context, t GatewayTarget, connection, tool string, args []byte) CallLine {
 	stall, _ := clientWaits()
-	x := send(ctx, t, connection, tool, args, nil, 0, nil, stall)
+	x := send(ctx, t, connection, tool, func() io.Reader { return bytes.NewReader(args) }, int64(len(args)), false, nil, stall)
 	defer x.close()
 	if x.failed {
 		return x.line

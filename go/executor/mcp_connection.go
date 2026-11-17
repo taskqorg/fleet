@@ -117,8 +117,8 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, argumen
 	}
 	head := make([]byte, 512)
 	n, _ := f.ReadAt(head, 0)
-	// The name the caller gave, in the gateway's file-name rules (no quote, backslash, control or bidi character).
-	fileName := strings.ReplaceAll(contract.SafeName(filepath.Base(path)), `"`, "_")
+	// The opened file's name, in the gateway's file-name rules (no quote, backslash, control or bidi character).
+	fileName := strings.ReplaceAll(contract.SafeName(filepath.Base(f.Name())), `"`, "_") // the file opened, not a link to it
 	return contract.GatewayUpload(context.Background(), t, connection, tool, args, contract.Upload{File: f, Size: info.Size(),
 		Name: fileName, MediaType: mediaTypeOf(fileName, head[:n]), Sha256: sum})
 }
@@ -239,7 +239,7 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 // runFileKeys are the keys a run file may set: the token, gateway and Access file, the run's work and input folders
 // (the base of relative upload paths and the download folder), and the upload denylist's anchors (file_guard.go).
 var runFileKeys = map[string]bool{"FLEET_RUN_TOKEN": true, "FLEET_GATEWAY_URL": true, "FLEET_CF_ACCESS_FILE": true, "FLEET_WORK_DIR": true, "FLEET_INPUT_DIR": true,
-	"FLEET_USER_HOME": true, "FLEET_RUN_DENY": true, "FLEET_FILES_ROOTS": true}
+	"FLEET_USER_HOME": true, "FLEET_RUN_DENY": true, "FLEET_FILES_ROOTS": true, "FLEET_STALL_MS": true, "FLEET_ANSWER_MS": true}
 
 // loadRunFile reads KEY=value lines from the executor's private run file into this process's environment. Only
 // runFileKeys are taken. The file is denylisted for uploads.

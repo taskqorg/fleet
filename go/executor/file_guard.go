@@ -210,13 +210,18 @@ func scanFile(r io.Reader, patterns [][]byte) (string, bool, error) {
 		if n > 0 {
 			hash.Write(buf[:n])
 			if !found && longest > 0 {
-				window := append(tail, buf[:n]...)
+				// The chunk in place, and the boundary: the previous tail joined with this chunk's first bytes.
+				edge := append(tail, buf[:min(n, longest-1)]...)
 				for _, p := range patterns {
-					if len(p) > 0 && bytes.Contains(window, p) {
+					if len(p) > 0 && (bytes.Contains(buf[:n], p) || bytes.Contains(edge, p)) {
 						found = true
 					}
 				}
-				tail = append([]byte(nil), window[max(0, len(window)-(longest-1)):]...)
+				if n >= longest-1 {
+					tail = append(tail[:0], buf[n-(longest-1):n]...)
+				} else {
+					tail = append([]byte(nil), edge[max(0, len(edge)-(longest-1)):]...)
+				}
 			}
 		}
 		if err == io.EOF {
@@ -263,8 +268,10 @@ func uploadDenyLines(dataDir string) string {
 	if !strings.ContainsAny(userHome, "\n\r") {
 		lines += "FLEET_USER_HOME=" + userHome + "\n"
 	}
-	if roots := os.Getenv("FLEET_FILES_ROOTS"); roots != "" && !strings.ContainsAny(roots, "\n\r") {
-		lines += "FLEET_FILES_ROOTS=" + roots + "\n"
+	for _, k := range []string{"FLEET_FILES_ROOTS", "FLEET_STALL_MS", "FLEET_ANSWER_MS"} {
+		if v := os.Getenv(k); v != "" && !strings.ContainsAny(v, "\n\r") {
+			lines += k + "=" + v + "\n" // the executor's client settings reach its runs' connection servers
+		}
 	}
 	return lines
 }
