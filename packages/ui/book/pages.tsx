@@ -551,6 +551,7 @@ function App() {
       <Route path="/pipelines/:id">{(p: { id: string }) => <Pipelines key={p.id} id={p.id} />}</Route>
       <Route path="/pipelines"><Pipelines key="issue-to-pr" /></Route>
       <Route path="/catalogue"><Catalogue /></Route>
+      <Route path="/delivery/:v">{(p: { v: string }) => <Delivery key={p.v} variant={p.v} />}</Route>
       <Route path="/delivery"><Delivery /></Route>
       <Route path="/"><Overview /></Route>
       <Route path="/overview"><Overview /></Route>

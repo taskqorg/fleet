@@ -22,6 +22,26 @@ export function stamp(t: number, now: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() === new Date(now).getFullYear() ? '' : ' ' + d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Calendar day in the viewer's zone: "16 Nov" (the year when it is not the year of `now`). */
+export function day(t: number, now = t): string {
+  const d = new Date(t);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() === new Date(now).getFullYear() ? '' : ' ' + d.getFullYear()}`;
+}
+
+/** Start of the calendar day of `t` in the viewer's zone, `n` days later (negative: earlier). */
+export function dayStart(t: number, n = 0): number {
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + n);
+  return d.getTime();
+}
+
+/** Hour of the day in the viewer's zone, for buckets shorter than a day: "14:00". */
+export function hourLabel(t: number): string {
+  const d = new Date(t);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Time left until a future moment (a reset countdown): 40s, 4m, 2h, 3d, then the date; "now" when it has passed. */
 export function countdown(t: number, now: number): Formatted {
   const s = Math.floor((t - now) / 1000);

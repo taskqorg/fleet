@@ -7,9 +7,10 @@
 ## Interface
 
 - `controls.tsx` exports controls for navigation, lists, details, threads, forms, artifacts, metrics, and charts.
+- `charts.tsx` exports the day charts for pace pages: `DayChart`, `DayStrip`, `ShareBar`, `NormBar` and the scale helper `capOf`.
 - `patterns.tsx` exports assembled layouts including `AppShell`, `ListDetail`, `ListFrame`, `TaskListView`, and `DefinitionEditor`.
 - `virtual-list.tsx:VirtualList` exports keyed virtual rendering and `VirtualListHandle`.
-- `registry.ts` exports icons, state families, workspaces, actions, harnesses, and stages; `format.ts` exports compact value formatting and actor/file helpers.
+- `registry.ts` exports icons, state families, workspaces, actions, harnesses, and stages; `format.ts` exports compact value formatting (including calendar days in the viewer's zone: `day`, `dayStart`, `hourLabel`) and actor/file helpers.
 - `markdown.ts`/`markdown.tsx` export parsing and Preact markdown rendering; `clip.ts` exports clipboard message/HTML helpers; `search.ts:matchSearch` applies supported search fields.
 
 ## Invariants
