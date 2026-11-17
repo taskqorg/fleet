@@ -904,7 +904,8 @@ export type FocusPreset = { name: string; projects: string[] };
 const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x));
 
 /** The focus presets as one-click chips: "All projects" (the system preset, an empty focus) and the saved ones. The
- *  focus control and the empty Spotlight palette show them; children follow on the same line. */
+ *  empty Spotlight palette shows them. Unlike the focus chip panel, which keeps a preset of only ignored projects disabled
+ *  so it can be removed, the palette offers only presets it can apply. Children follow on the same line. */
 export function FocusPresets({ value, presets, ignored = [], onChange, onRemove, icon, children }: {
   value: string[]; presets: FocusPreset[]; onChange: (ids: string[]) => void; onRemove?: (name: string) => void;
   /** Ignored projects (OR-34): left out of each preset; a preset of only ignored projects is not offered. */ ignored?: string[];

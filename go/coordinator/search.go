@@ -25,6 +25,8 @@ type searchQuery struct {
 	focus  []string // the caller's project focus ('-' is work outside projects); empty: every project
 	// ignored: the calling person's ignored project ids ('-' is no project), left out of the hits.
 	ignored []string
+	// listIgnored: every ignored project, as the lists leave them out (a project: term lifts the ignore for hits only).
+	listIgnored []string
 }
 
 // searchFields: the field:value terms the syntax knows; any other `word:rest` stays free text (a URL, a time).
@@ -112,7 +114,7 @@ var searchCounters = map[contract.FoundKind]func(q *Request, s searchQuery) (int
 		if err != nil {
 			return 0, err
 		}
-		c = projectNotIn(c, &p, "t.project_id", s.ignored)
+		c = projectNotIn(c, &p, "t.project_id", s.listIgnored)
 		return countOf(q, "SELECT count(*) FROM task t"+where(c), p...)
 	},
 	contract.FoundKindConversation: func(q *Request, s searchQuery) (int64, error) {
@@ -121,15 +123,13 @@ var searchCounters = map[contract.FoundKind]func(q *Request, s searchQuery) (int
 		if err != nil {
 			return 0, err
 		}
-		c = projectNotIn(c, &p, "x.project_id", s.ignored)
+		c = projectNotIn(c, &p, "x.project_id", s.listIgnored)
 		return countOf(q, sessionBase+" SELECT count(*) FROM x"+where(c), p...)
 	},
 	contract.FoundKindResult: func(q *Request, s searchQuery) (int64, error) {
 		p := []any{}
-		c := projectNotIn(artifactSearch(s.raw, &p), &p, "project_id", s.ignored)
-		if len(s.focus) > 0 {
-			c = append(c, s.inFocus(&p, "project_id"))
-		}
+		c := projectNotIn(artifactSearch(s.raw, &p), &p, "project_id", s.listIgnored)
+		c, p = projectIn(c, p, s.focus) // the bare column, as artifact_list filters, so its index serves
 		return countOf(q, "SELECT count(*) FROM artifact"+where(c), p...)
 	},
 }
@@ -471,6 +471,7 @@ func init() {
 			}
 			// A project: term naming an ignored project exactly finds it; a term that only contains part of an id does not.
 			s.ignored = slices.DeleteFunc(slices.Clone(ps.Ignored), func(id string) bool { return strings.EqualFold(id, s.fields["project"]) })
+			s.listIgnored = ps.Ignored
 		}
 		// coded: kinds a code jump found; jumped: those hits, which lead whatever the focus (an exact code is what was asked for).
 		coded, jumped := map[contract.FoundKind]bool{}, map[string]bool{}
@@ -510,7 +511,8 @@ func init() {
 			if all == 0 {
 				continue
 			}
-			if all >= limit || coded[kind] {
+			// A lifted ignore finds hits the list leaves out: then the count is the list's own too.
+			if all >= limit || coded[kind] || len(s.ignored) < len(s.listIgnored) {
 				var err error
 				if n, err = count(q, s); err != nil {
 					return contract.SearchReply{}, err

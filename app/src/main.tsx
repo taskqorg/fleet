@@ -101,7 +101,8 @@ const found = (kind: Hit['kind'], go: (to: string) => void): SpotlightProvider =
       // The project is not repeated on every row when a one-project focus already names it (OR-17).
       return { key: kind + ':' + h.id, icon: w.icon, label: h.title, code: h.code ?? undefined, sub: kind === 'project' || focus.length === 1 && focus[0] === (h.projectId ?? '-') ? undefined : h.projectId ?? undefined,
         state: w.family && h.state ? { family: w.family, state: h.state } : undefined, at: Number.isFinite(at) ? at : undefined, outside,
-        action: kind === 'project' ? { label: pinned ? 'Remove from focus' : 'Add to focus', icon: 'focus' as const, pressed: pinned, run: () => toggleFocus(h.id) } : undefined,
+        // An ignored project (found by naming it) cannot join the focus until it is restored, so it offers no focus action.
+        action: kind === 'project' && !ignored.includes(h.id) ? { label: pinned ? 'Remove from focus' : 'Add to focus', icon: 'focus' as const, pressed: pinned, run: () => toggleFocus(h.id) } : undefined,
         run: () => go(w.path(h)) };
     });
     // "All N in <Section>": the list holds more than the focused rows shown; it opens with the same query (OR-36).

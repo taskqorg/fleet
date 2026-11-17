@@ -137,7 +137,9 @@ test('search finds conversations, results, agents and pipelines; the focus leads
   assert.ok(quiet.hits.every((h: any) => h.projectId !== 'hello-world'), JSON.stringify(quiet.hits.map((h: any) => h.kind + ':' + h.id)));
   assert.deepEqual(kinds(quiet, 'result'), []);
   assert.equal(quiet.counts.result, undefined);
-  assert.equal((await search({query: 'rocket project:hello-world'})).hits.filter((h: any) => h.kind === 'result').length, 1, 'naming the project finds it');
+  const named = await search({query: 'rocket project:hello-world'});
+  assert.equal(named.hits.filter((h: any) => h.kind === 'result').length, 1, 'naming the project finds it');
+  assert.equal(named.counts.result, 0, 'the Results list still leaves the ignored project out, so "All N" counts none');
   await op('person_settings_set', {ignored: []});
   // Definitions are the architect's: a person without the role finds none; grants still apply.
   const people = (await op('people_list', {})).people;
