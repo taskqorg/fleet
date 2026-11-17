@@ -1167,11 +1167,12 @@ func resourceCandidateCohorts(ids []string, hints map[string]string) [][]string 
 // Consume only this selected set before the existing build/metadata pass boundary.
 func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error {
 	hints, err := resourceBatchHints(ctx, a, ids)
-	var finalErr error
 	if err != nil {
-		hints = nil
-		finalErr = err
+		// The hints are one read of the shared pool: when it fails, every execution's own scope read would fail too,
+		// so the pass stalls (the processor pauses) instead of failing and holding each candidate alone.
+		return fmt.Errorf("%w: %w", errResourceStall, err)
 	}
+	var finalErr error
 	for _, cohort := range resourceCandidateCohorts(ids, hints) {
 		if len(cohort) == 1 {
 			if e := resourceReplace(ctx, a, cohort[0]); e != nil {
