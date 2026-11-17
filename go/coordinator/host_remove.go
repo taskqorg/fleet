@@ -129,7 +129,7 @@ func purgeableHosts(q *Request) (gone []string, kept []contract.PurgeReason, err
 	}
 	for _, r := range rows {
 		if by := astr(r["referenced"]); by != "" {
-			kept = append(kept, contract.PurgeReason{Id: astr(r["id"]), Reason: by + " (history names it; it goes once nothing does)"})
+			kept = append(kept, contract.PurgeReason{Id: astr(r["id"]), Reason: by + " (a removed host stays while any row names it)"})
 		} else {
 			gone = append(gone, astr(r["id"]))
 		}

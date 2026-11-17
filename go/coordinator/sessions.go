@@ -369,6 +369,9 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	if last == nil {
 		return doc{"sessionId": sid, "archivedAt": s["archivedAt"], "teardown": nil}, nil
 	}
+	if live, err := knownHost(q, astr(last["hostId"])); err != nil || !live { // its worktrees went with the host
+		return doc{"sessionId": sid, "archivedAt": s["archivedAt"], "teardown": nil}, err
+	}
 	return teardownCommand(q, s, last, false)
 }
 

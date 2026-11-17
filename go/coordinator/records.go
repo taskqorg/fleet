@@ -106,6 +106,14 @@ func put(q *Request, kind string, v doc) error {
 		if err := commandTrace(q, v); err != nil {
 			return err
 		}
+		// A removed host never fetches a command: written settled, so nothing waits for it (purge, host purge).
+		if astr(v["status"]) == "pending" && astr(v["hostId"]) != "" {
+			if removed, err := has(q, "SELECT 1 FROM document WHERE kind='host' AND id='host:'||$1 AND data->>'state'='removed'", v["hostId"]); err != nil {
+				return err
+			} else if removed {
+				v["status"], v["stopDetail"] = "stopped", "host-removed"
+			}
+		}
 	case "queued-message":
 		if !validTraceparent(v["traceparent"]) {
 			v["traceparent"] = originTrace(q)

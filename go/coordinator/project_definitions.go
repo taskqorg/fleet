@@ -396,21 +396,24 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	live := []doc{} // a removed host never fetches a removal
+	for _, o := range obs {
+		if ok, err := knownHost(q, astr(o["id"])); err != nil {
+			return nil, err
+		} else if ok {
+			live = append(live, o)
+		}
+	}
 	for _, c := range conns {
 		if used[c] {
 			continue
 		}
-		for _, o := range obs {
+		for _, o := range live {
 			host := astr(o["id"])
 			if !slices.Contains(strs(o["gitConnections"]), c) {
 				continue
 			}
-			if live, err := knownHost(q, host); err != nil || !live { // a removed host never fetches it
-				if err != nil {
-					return nil, err
-				}
-				continue
-			}
+
 			if dup, err := has(q, "SELECT 1 FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=$2", host, c); err != nil || dup {
 				if err != nil {
 					return nil, err
