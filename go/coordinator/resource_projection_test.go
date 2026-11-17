@@ -1818,9 +1818,9 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 	if scopeRows > float64(queueScopes+len(ids)) {
 		t.Fatalf("selected hints revisited unrelated queue scopes: %.0f > %d", scopeRows, queueScopes+len(ids))
 	}
-	// Same canonical union as the scalar hint: NULL/empty source, deleted/missing
-	// source, old contribution and retained cross-project work all remain distinct.
-	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('hint-null','agent_run','succeeded',NULL),('hint-empty','agent_run','succeeded',''),('hint-moving','agent_run','succeeded','HINT_A'),('hint-pending-multi','agent_run','succeeded','HINT_A'),('hint-deleted','agent_run','succeeded','HINT_A'),('hint-from-null','agent_run','succeeded',NULL)`)
+	// Same canonical union as the scalar hint: NULL source (an empty project id is rejected, migration 68),
+	// deleted/missing source, old contribution and retained cross-project work all remain distinct.
+	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('hint-null','agent_run','succeeded',NULL),('hint-moving','agent_run','succeeded','HINT_A'),('hint-pending-multi','agent_run','succeeded','HINT_A'),('hint-deleted','agent_run','succeeded','HINT_A'),('hint-from-null','agent_run','succeeded',NULL)`)
 	for _, id := range []string{"hint-moving", "hint-deleted", "hint-from-null"} {
 		if e := resourceReplace(ctx, a, id); e != nil {
 			t.Fatal(e)
@@ -1829,7 +1829,7 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 	sql(`UPDATE execution SET project_id='HINT_B' WHERE id IN ('hint-moving','hint-pending-multi');
  UPDATE execution SET project_id='HINT_A' WHERE id IN ('hint-pending-multi','hint-from-null');
  DELETE FROM execution WHERE id='hint-deleted'`)
-	edge := []string{"hint-null", "hint-empty", "hint-moving", "hint-pending-multi", "hint-deleted", "hint-from-null", "hint-missing", "hint-0000", "hint-0000"}
+	edge := []string{"hint-null", "hint-moving", "hint-pending-multi", "hint-deleted", "hint-from-null", "hint-missing", "hint-0000", "hint-0000"}
 	hints, e := resourceBatchHints(ctx, a, edge)
 	if e != nil {
 		t.Fatal(e)
@@ -1899,4 +1899,68 @@ func resourceApply(q *Request, c contract.ResourceContributionV1, sign int64) er
 		return err
 	}
 	return d.flush(q)
+}
+
+// Requirement: a projectless call is recorded with no project, and resource processing consumes it; risk: an empty
+// project id (from a read token minted for a projectless pass) made every scope lock "project:", so its work failed every pass.
+func TestResourceProjectlessToolRunPostgres(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	a, ctx := env.app, env.ctx
+	sha, parent, callID := "projectless-sha", "bugsink-read:projectless", "projectless-call"
+	if err := runTx(ctx, a, nil, true, GLOBAL, func(q *Request) error {
+		// A token minted before the fix stored projectId "".
+		row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": parent, "projectId": "", "step": true, "connections": []any{"bugsink"}, "createdAt": nowMs()}
+		if err := put(q, "run-token", row); err != nil {
+			return err
+		}
+		_, err := connRecord(q, contract.CallLine{CallId: callID, Connection: "bugsink", Tool: "issue_get", Outcome: contract.CallOutcomeOk, Status: 200,
+			TokenSha256: &sha, ExecutionId: &parent, StartedAt: nowMs(), Ms: 5})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id := "call:" + callID
+	var project *string
+	if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+		return q.tx.QueryRow(ctx, "SELECT project_id FROM execution WHERE id=$1", id).Scan(&project)
+	}); err != nil || project != nil {
+		t.Fatal("projectless call project", err, project)
+	}
+	if err := resourceReplace(ctx, a, id); err != nil {
+		t.Fatal("resource replace", err)
+	}
+	var pending int
+	if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+		return q.tx.QueryRow(ctx, "SELECT count(*) FROM resource_work WHERE execution_id=$1", id).Scan(&pending)
+	}); err != nil || pending != 0 {
+		t.Fatal("pending work", err, pending)
+	}
+	// Replay migration 68 over a row written before it, with its totals and the pending work it enqueued.
+	ownerURL := fmt.Sprintf("postgresql://fleet@/%s?host=%s&port=%d", env.dbName, env.sockDir, env.pgPort)
+	if _, err := env.ownerStore.pool.Exec(ctx, `ALTER TABLE execution DROP CONSTRAINT execution_project_id_not_empty;
+	 DELETE FROM schema_migration WHERE version=68; UPDATE execution SET project_id='' WHERE id='`+id+`';
+	 WITH r AS (INSERT INTO resource_metadata_repair(metadata_id,old_class,new_class) VALUES('projectless','{}','{}') RETURNING repair_id)
+	 INSERT INTO resource_repair_scope(repair_id,project_id) SELECT repair_id,'' FROM r`); err != nil {
+		t.Fatal(err)
+	}
+	if err := resourceReplace(ctx, a, id); err == nil || !strings.Contains(err.Error(), `unknown advisory lock scope "project:"`) {
+		t.Fatal("resource replace before migration 68", err)
+	}
+	if err := migrate(ctx, ownerURL); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := env.ownerStore.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM execution WHERE project_id='')+(SELECT count(*) FROM execution_totals WHERE project_id='')
+	 +(SELECT count(*) FROM resource_work_scope WHERE project_id='')+(SELECT count(*) FROM resource_repair_scope WHERE project_id='')`).Scan(&left); err != nil || left != 0 {
+		t.Fatal("after migration 68", err, left)
+	}
+	if err := resourceReplace(ctx, a, id); err != nil {
+		t.Fatal("resource replace after migration 68", err)
+	}
+	err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+		return exec(q, `INSERT INTO execution(id,kind,state,project_id) VALUES('empty-project','tool_run','succeeded','')`)
+	})
+	if err == nil || !strings.Contains(err.Error(), "execution_project_id_not_empty") {
+		t.Fatal("empty project accepted", err)
+	}
 }

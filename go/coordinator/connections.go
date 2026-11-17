@@ -921,7 +921,7 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 			refused = append(refused, n)
 		}
 	}
-	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": run["executionId"], "directedBy": run["directedBy"], "projectId": run["projectId"],
+	row := doc{"id": "run-token:" + sha, "sha256": sha, "executionId": run["executionId"], "directedBy": run["directedBy"], "projectId": projectOrNil(run["projectId"]),
 		"experimentId": run["experimentId"], "pipelineRunId": run["pipelineRunId"], "connections": names, "createdAt": nowMs()}
 	if run["step"] == true {
 		row["step"] = true

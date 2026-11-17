@@ -65,7 +65,7 @@ func createExecution(q *Request, v doc) (bool, error) {
 	}
 	tag, err := q.tx.Exec(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,task_id,parent_execution_id,session_id,host_id,harness,model,config_ref,data,experiment_id,variant,account_id,request_id,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision)
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) ON CONFLICT DO NOTHING`,
-		v["id"], v["kind"], v["state"], v["projectId"], v["taskId"], v["parentExecutionId"], v["sessionId"], v["hostId"], v["harness"], v["model"], cfg, js(data), experiment, variant, v["accountId"], v["requestId"],
+		v["id"], v["kind"], v["state"], projectOrNil(v["projectId"]), v["taskId"], v["parentExecutionId"], v["sessionId"], v["hostId"], v["harness"], v["model"], cfg, js(data), experiment, variant, v["accountId"], v["requestId"],
 		v["directedBy"], v["pipelineId"], v["pipelineRevision"], v["stepId"], v["profileId"], v["profileRevision"])
 	return err == nil && tag.RowsAffected() > 0, err
 }

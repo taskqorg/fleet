@@ -302,7 +302,7 @@ func putRun(q *Request, run doc) error {
 	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant),
 	  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
 	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),parent_execution_id=coalesce(execution.parent_execution_id,excluded.parent_execution_id)`,
-		run["id"], state, obs, run["projectId"], msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"], taskID, sessID, dir, pipeID, pipeRev, run["parentExecutionId"]); err != nil {
+		run["id"], state, obs, projectOrNil(run["projectId"]), msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"], taskID, sessID, dir, pipeID, pipeRev, run["parentExecutionId"]); err != nil {
 		return err
 	}
 	if run["definitions"] != nil {
@@ -338,7 +338,7 @@ func putRun(q *Request, run doc) error {
 		  experiment_id=excluded.experiment_id,variant=excluded.variant,
 		  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
 		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-			stepRow(run, i), st, sobs, run["projectId"], run["id"], msTime(s["startedAt"]), ended, jsonBytes(data), taskID, sessID, dir, pipeID, pipeRev, nilIf(astr(s["id"])), run["experimentId"], run["variant"]); err != nil {
+			stepRow(run, i), st, sobs, projectOrNil(run["projectId"]), run["id"], msTime(s["startedAt"]), ended, jsonBytes(data), taskID, sessID, dir, pipeID, pipeRev, nilIf(astr(s["id"])), run["experimentId"], run["variant"]); err != nil {
 			return err
 		}
 	}
