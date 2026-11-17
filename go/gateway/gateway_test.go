@@ -579,6 +579,76 @@ func TestBugsinkCatalogue(t *testing.T) {
 	}
 }
 
+// Requirement: fleet-connections.md §1, YouTrack: each youtrack catalogue tool (coordinator providers.go) reaches the
+// YouTrack REST path it names with the key as bearer; a search query is query-escaped, and an issue id that is not an id
+// is refused. Risk: a query adds or ends a parameter, or a crafted id walks to another API path with the agents' token.
+func TestYouTrackCatalogue(t *testing.T) {
+	src, err := os.ReadFile("../coordinator/providers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	text = text[strings.Index(text, "const providersJSON = `")+len("const providersJSON = `"):]
+	var catalogue map[string]map[string]any
+	if err := json.Unmarshal([]byte(text[:strings.Index(text, "`")]), &catalogue); err != nil {
+		t.Fatal(err)
+	}
+	type seen struct{ method, path, query, auth, body string }
+	got := make(chan seen, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- seen{r.Method, r.URL.Path, r.URL.Query().Get("query"), r.Header.Get("Authorization"), string(b)}
+		io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(server.Close)
+	yt := catalogue["youtrack"]
+	yt["baseUrl"] = server.URL
+	tools := []string{}
+	for name := range yt["tools"].(map[string]any) {
+		tools = append(tools, name)
+	}
+	gw := newFixture(t, server.URL, "invented-youtrack-key")
+	os.MkdirAll(filepath.Join(gw.dir, "keys/youtrack"), 0o700)
+	os.WriteFile(filepath.Join(gw.dir, "keys/youtrack", fp("invented-youtrack-key")), []byte("invented-youtrack-key\n"), 0o600)
+	snap := testSnapshot(server.URL, []keyState{{"invented-youtrack-key", "active"}}, nil, "all")
+	snap["providers"].(map[string]any)["youtrack"] = yt
+	snap["connections"].(map[string]any)["youtrack"] = map[string]any{"provider": "youtrack", "tools": tools, "intake": "all",
+		"keys": []map[string]any{{"id": fp("invented-youtrack-key"), "state": "active"}}, "blocked": []string{}}
+	snap["tokens"] = []map[string]any{{"sha256": sha(testToken), "executionId": "exec-1", "projectId": "fleet", "connections": []string{"youtrack"}}}
+	gw.write(snap)
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
+
+	query := "project: TGT #Unresolved & fields=x?y"
+	for tool, c := range map[string]struct {
+		body string
+		want seen
+	}{
+		"projects":       {`{}`, seen{"GET", "/api/admin/projects", "", "", ""}},
+		"issues_search":  {`{"query":"` + query + `","skip":"50"}`, seen{"GET", "/api/issues", query, "", ""}},
+		"issue_get":      {`{"issue":"TGT-12"}`, seen{"GET", "/api/issues/TGT-12", "", "", ""}},
+		"issue_comments": {`{"issue":"TGT-12"}`, seen{"GET", "/api/issues/TGT-12/comments", "", "", ""}},
+		"issue_create":   {`{"project":{"id":"0-1"},"summary":"s"}`, seen{"POST", "/api/issues", "", "", `{"project":{"id":"0-1"},"summary":"s"}`}},
+		"issue_update":   {`{"issue":"TGT-12","summary":"s"}`, seen{"POST", "/api/issues/TGT-12", "", "", `{"summary":"s"}`}},
+		"comment_add":    {`{"issue":"TGT-12","text":"t"}`, seen{"POST", "/api/issues/TGT-12/comments", "", "", `{"text":"t"}`}},
+		"command":        {`{"query":"State Open","issues":[{"idReadable":"TGT-12"}]}`, seen{"POST", "/api/commands", "", "", `{"issues":[{"idReadable":"TGT-12"}],"query":"State Open"}`}},
+	} {
+		status, _, _ := gw.raw("POST", "/v1/call/youtrack/"+tool, "Bearer "+testToken, c.body)
+		if status != 200 {
+			t.Fatalf("%s: %d", tool, status)
+		}
+		c.want.auth = "Bearer invented-youtrack-key"
+		expect(t, <-got, c.want, tool)
+	}
+	for tool, body := range map[string]string{"issue_get": `{"issue":"../admin/users"}`, "issue_comments": `{"issue":"TGT-1?x"}`, "issues_search": `{"query":"a","skip":"1&x"}`} {
+		if status, _, _ := gw.raw("POST", "/v1/call/youtrack/"+tool, "Bearer "+testToken, body); status != 400 {
+			t.Fatalf("%s %s: %d", tool, body, status)
+		}
+	}
+	if len(tools) != 8 {
+		t.Fatalf("youtrack tools: %v", tools)
+	}
+}
+
 func TestPathPatternsAndUsageField(t *testing.T) {
 	model := "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
 	field := "usageMetadata.totalTokenCount"

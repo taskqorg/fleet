@@ -23,7 +23,7 @@
       "inject": {"$comment": "Body fields the gateway adds to every call (Tavily include_usage).", "type": "object", "additionalProperties": true},
       "headers": {"$comment": "Fixed request headers, e.g. a provider's opt-in flag.", "type": "object", "additionalProperties": {"type": "string"}},
       "textReply": {"$comment": "The tool answers text (Bugsink's Markdown stacktrace): a 2xx reply that is not JSON reaches the caller as {\"text\": ...}.", "type": "boolean"},
-      "pathPatterns": {"$comment": "Pattern per {field} of path; a value that does not match is refused before a key is attached. A field without a pattern takes letters, digits, - and _.", "type": "object", "additionalProperties": {"type": "string"}},
+      "pathPatterns": {"$comment": "Pattern per {field} of path; a value that does not match is refused before a key is attached. A field without a pattern takes letters, digits, - and _. A value after the path's ? is query-escaped.", "type": "object", "additionalProperties": {"type": "string"}},
       "adoptMatch": {"$comment": "Primary submitted identity field required for uncertain job adoption; absent returned input stays unknown.", "type": "string"},
       "adoptFields": {"$comment": "Additional submitted fields that must be returned unchanged to adopt a job.", "type": "array", "items": {"type": "string"}},
       "usageField": {"$comment": "Dotted reply field holding the usage amount (Google AI usageMetadata.totalTokenCount); absent: usage.<unit>.", "type": "string"},

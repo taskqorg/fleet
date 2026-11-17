@@ -88,6 +88,7 @@ The `anthropic` catalogue entry uses native [Messages](https://platform.claude.c
 *   **HTTP:** `POST /v1/call/<connection>/<tool>`, body the tool's JSON, `Authorization: Bearer <run token>`. Replies use (`unauthenticated`, `bad-request`, `no-usable-key`, `key-disabled-<status>`, `provider-unreachable`, `provider-body`, `provider-timeout`; provider status passes through).
 *   **Pipeline calls:** the coordinator makes `api` step calls in-process over HTTP with the step's run token. A call answers one `CallLine` (`contract.GatewayCall`, shared with the executor's connection MCP server): `{tool, connection, callId, status, outcome, errorCode?, output}`; error classification (`infra:`/`unknown:`/`step:` problems in fleet-lab.md) stays.
 *   **MCP:** `fleet-executor mcp connection <connection> <spec>` (`go/executor/mcp_connection.go`), one stdio MCP server per connection; the start command's `connections: [{name, instructions, tools: [{name, description, inputSchema}]}]` gives the spec, so hosts need no connection files. The executor adds it to each run's MCP config and allowlists `mcp__<connection>__<tool>`, (`go/executor/executor.go`).
+*   **Path fields.** A `{field}` in a catalogue path takes that body field and leaves the body. Before the path's `?` the value must match the tool's `pathPatterns` entry (or be a plain id) and is inserted as is; after the `?` it is query-escaped, so a free-text value (a YouTrack search) cannot add or end a parameter.
 *   A tool marked `textReply` in the catalogue passes a 2xx reply that is not JSON as `{"text": ...}`, so the JSON-only clients read it (Bugsink's Markdown stacktrace, [error tracking](fleet-error-tracking.md#4-agent-read-access)).
 *   The gateway spool is the accounting record; an agent-authored local call file is not accounting authority.
 *   **Built-in web** stays off unless the profile says `web_route: builtin` (fleet-lab.md R3.4).
@@ -105,6 +106,10 @@ The `anthropic` catalogue entry uses native [Messages](https://platform.claude.c
 ### 7. Deleting Pipe (stage C4)
 
 Fleet has no Pipe bridge or dual accounting path. The gateway replaces its read lane; subscriptions remain outside it. Deployment cleanup and the archived AssetQ service are covered by [infrastructure](../infrastructure-build.md) and [asset pipelines](fleet-asset-pipelines.md#2-deleting-assetq-s2-after-s1). This heading remains for existing citations; historical rollout tasks live in pull requests.
+
+### 8. YouTrack
+
+The owner's task tracker is YouTrack at `youtrack.ufobe.com` (it replaces Asana). The `youtrack` catalogue entry calls its REST API at `127.0.0.1:9520`, the container's loopback port on PDS18, with a permanent token of the YouTrack user `fleet-agents` as bearer. That user is in the YouTrack group `Agents` (agent accounts may not set Done or Won't fix) and in the same project teams as Tight, so Fleet agents see the projects Tight sees and their changes are attributed to `fleet-agents`, not to the owner. Tools: `projects`, `issues_search` (YouTrack query, 50 per page), `issue_get`, `issue_comments`, `issue_create`, `issue_update`, `comment_add` and `command` (YouTrack commands set fields, tags and links). Reads are idempotent; writes are never replayed. Tight on PDS18 keeps its own YouTrack token as `tight@kirs.online`, outside the gateway, as it kept its Asana token.
 
 ## Failure and recovery
 

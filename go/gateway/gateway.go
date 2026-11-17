@@ -852,6 +852,7 @@ func blockedScope(c connection, run *token) string {
 }
 
 // fillPath puts body fields into {field} in the catalogue path (Meshy task id); a used field leaves the body.
+// A field after the path's "?" is query-escaped; a field before it is inserted as matched by its pattern.
 // The caller never selects a key: api_key is dropped, and catalogue fields (Tavily include_usage) are added.
 func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 	delete(body, "api_key")
@@ -884,6 +885,10 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 			return "", false
 		}
 		delete(body, field)
+		if strings.IndexByte(path[:start], '?') >= 0 {
+			// A query value (a YouTrack search) is escaped, so it cannot add or end a parameter.
+			value = url.QueryEscape(value)
+		}
 		path = path[:start] + value + path[start+length+1:]
 	}
 }
