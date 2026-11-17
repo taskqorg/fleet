@@ -271,7 +271,7 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	equal(`SELECT ready::text||' '||attempts::text FROM resource_build WHERE project_id='PAUSE_BUILD'`, "true 0")
 	if err := resourcePause(ctx, a, "", "build:PAUSE_BUILD", resourceBuildPauseSelect+" FOR UPDATE NOWAIT", resourceBuildPauseSelect,
 		`UPDATE resource_build SET attempts=$2,next_attempt_at=clock_timestamp()+$3*interval '1 microsecond' WHERE project_id=$1`,
-		"PAUSE_BUILD", nil); err != nil {
+		"PAUSE_BUILD", []any{scalar(`SELECT generation::text FROM resource_build WHERE project_id='PAUSE_BUILD'`), time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	equal(`SELECT ready::text||' '||attempts::text FROM resource_build WHERE project_id='PAUSE_BUILD'`, "true 0")

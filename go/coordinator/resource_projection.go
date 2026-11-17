@@ -997,8 +997,8 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 	}
 }
 
-const resourceBuildPauseSelect = `SELECT attempts FROM resource_build WHERE project_id=$1 AND NOT ready`
-const resourceRepairPauseSelect = `SELECT attempts FROM resource_metadata_repair WHERE repair_id=$1::uuid`
+const resourceBuildPauseSelect = `SELECT attempts FROM resource_build WHERE project_id=$1 AND NOT ready AND generation=$2::uuid AND updated_at=$3`
+const resourceRepairPauseSelect = `SELECT attempts FROM resource_metadata_repair WHERE repair_id=$1::uuid AND after_execution_id IS NOT DISTINCT FROM $2::text AND done=$3`
 const resourceClaimsRemainSQL = ` HAVING coalesce(cardinality($2::uuid[]),0)=0 OR bool_or(work_id=ANY($2))`
 
 const resourceWorkAttemptsSQL = `SELECT coalesce(max(attempts),0) FROM resource_work WHERE execution_id=$1`
@@ -1706,8 +1706,11 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 	var finalErr error
 	defer func() { span.End(finalErr) }()
 	// Discover projects from the configuration catalogue, never by rescanning execution history.
-	var projects, repairs, ids []string
-	var build, generation string
+	var projects, ids []string
+	var build, generation, repair string
+	var buildUpdatedAt time.Time
+	var repairAfter *string
+	var repairDone bool
 	var gone, workless []string
 	err := runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error {
 		// Held projects are left out here, so they cannot take every slot of the page.
@@ -1742,25 +1745,21 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		return finalErr
 	}
 	err = runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error {
-		e := q.tx.QueryRow(q.ctx(), `SELECT project_id,generation::text FROM resource_build WHERE NOT ready AND next_attempt_at<=statement_timestamp()
- AND project_id<>ALL($1::text[]) ORDER BY updated_at,project_id COLLATE "C" LIMIT 1`, resourceHeld.ids("build:", true)).Scan(&build, &generation)
+		e := q.tx.QueryRow(q.ctx(), `SELECT project_id,generation::text,updated_at FROM resource_build WHERE NOT ready AND next_attempt_at<=statement_timestamp()
+ AND project_id<>ALL($1::text[]) ORDER BY updated_at,project_id COLLATE "C" LIMIT 1`, resourceHeld.ids("build:", true)).Scan(&build, &generation, &buildUpdatedAt)
 		if errors.Is(e, pgx.ErrNoRows) {
 			e = nil
 		}
 		if e != nil {
 			return e
 		}
-		rs, e := q.tx.Query(q.ctx(), `SELECT repair_id::text FROM resource_metadata_repair r WHERE next_attempt_at<=statement_timestamp() AND repair_id<>ALL($1::uuid[])
+		e = q.tx.QueryRow(q.ctx(), `SELECT repair_id::text,after_execution_id,done FROM resource_metadata_repair r WHERE next_attempt_at<=statement_timestamp() AND repair_id<>ALL($1::uuid[])
  AND (NOT done OR NOT EXISTS(SELECT 1 FROM resource_work w WHERE w.repair_id=r.repair_id))
- ORDER BY next_attempt_at,created_at LIMIT 1`, resourceHeld.ids("repair:", true))
-		if e != nil {
+ ORDER BY next_attempt_at,created_at LIMIT 1`, resourceHeld.ids("repair:", true)).Scan(&repair, &repairAfter, &repairDone)
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return e
 		}
-		repairs, e = pgx.CollectRows(rs, pgx.RowTo[string])
-		if e != nil {
-			return e
-		}
-		rs, e = q.tx.Query(q.ctx(), resourceCandidatesSQL, append(resourceHeld.ids("execution:", true), resourceHeld.ids("scope:", true)...))
+		rs, e := q.tx.Query(q.ctx(), resourceCandidatesSQL, append(resourceHeld.ids("execution:", true), resourceHeld.ids("scope:", true)...))
 		if e != nil {
 			return e
 		}
@@ -1797,24 +1796,24 @@ func resourceProcessorPass(ctx context.Context, a *App) error {
 		return finalErr
 	}
 	// A failed build page or metadata page pauses only that build or repair (resourcePause). Only the row lock, like an
-	// execution's pause: the project lock may be what failed. The generation read before the page keeps an older
-	// failure off a concurrent resourceRebuild's reset.
+	// execution's pause: the project lock may be what failed. Compare the selected checkpoint before recording
+	// a failure. A newer generation or a committed page with an uncertain response must keep its progress.
 	if p := build; p != "" {
 		if e := resourceBuildPage(ctx, a, p); e == nil {
 			resourceHeld.forget("build:" + p)
 		} else if ctx.Err() == nil {
 			finalErr = errors.Join(finalErr, e)
 			finalErr = errors.Join(finalErr, resourcePause(ctx, a, "", "build:"+p, resourceBuildPauseSelect+" FOR UPDATE NOWAIT", resourceBuildPauseSelect,
-				`UPDATE resource_build SET last_error='build_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',updated_at=clock_timestamp() WHERE project_id=$1 AND generation=$4::uuid`, p, nil, generation))
+				`UPDATE resource_build SET last_error='build_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',updated_at=clock_timestamp() WHERE project_id=$1`, p, []any{generation, buildUpdatedAt}))
 		}
 	}
-	for _, r := range repairs {
+	if r := repair; r != "" {
 		if e := resourceMetadataPage(ctx, a, r); e == nil {
 			resourceHeld.forget("repair:" + r)
 		} else if ctx.Err() == nil {
 			finalErr = errors.Join(finalErr, e)
 			finalErr = errors.Join(finalErr, resourcePause(ctx, a, "", "repair:"+r, resourceRepairPauseSelect+" FOR UPDATE NOWAIT", resourceRepairPauseSelect,
-				`UPDATE resource_metadata_repair SET last_error='metadata_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond' WHERE repair_id=$1::uuid`, r, nil))
+				`UPDATE resource_metadata_repair SET last_error='metadata_failed',attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond' WHERE repair_id=$1::uuid`, r, []any{repairAfter, repairDone}))
 		}
 	}
 	for _, k := range workless {
