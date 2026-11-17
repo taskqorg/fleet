@@ -29,6 +29,9 @@ func newCodeClient(t *testing.T, spec M) *codeClient {
 	t.Helper()
 	node, sandbox, err := codeHost()
 	if err != nil {
+		if os.Getenv("FLEET_REQUIRE_CODE_MODE") != "" { // CI's hosted unit job, where the sandbox must work
+			t.Fatal(err)
+		}
 		t.Skip(err.Error())
 	}
 	spec["node"], spec["sandbox"] = node, sandbox
@@ -75,6 +78,12 @@ func (c *codeClient) code(source string) (M, bool) { return c.call("code", M{"so
 // (fleet-code-mode.md, code).
 func TestCodeModeStatePersists(t *testing.T) {
 	c := newCodeClient(t, M{"dir": t.TempDir()})
+	c.id++
+	io.WriteString(c.in, enc(M{"jsonrpc": "2.0", "id": c.id, "method": "tools/list"})+"\n")
+	c.out.Scan()
+	if list, _ := dec(c.out.Text()); !strings.Contains(jStr(jArr(list, "result", "tools")[0], "description"), "No file reads") {
+		t.Fatalf("a runtime without read roots promises reads: %v", list)
+	}
 	if r, bad := c.code(`state.n = 41; print("set", state.n); return {ok: true}`); bad || r["output"] != "set 41\n" || jAt(r, "value", "ok") != true {
 		t.Fatalf("first call: %v %v", bad, r)
 	}

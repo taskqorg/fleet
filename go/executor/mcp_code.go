@@ -64,6 +64,7 @@ type codeServer struct {
 }
 
 type codeRuntime struct {
+	gone bool // its stdout ended (under codeServer.mu)
 	cmd  *exec.Cmd
 	mu   sync.Mutex // serializes writes to stdin
 	in   io.WriteCloser
@@ -157,7 +158,12 @@ func (s *codeServer) serve(m any) M {
 	case "ping":
 		reply["result"] = M{}
 	case "tools/list":
-		reply["result"] = M{"tools": codeTools}
+		tools := jClone(codeTools).([]any)
+		if len(jArr(s.spec, "read")) == 0 { // a profile without read tools gets no file reads in code either
+			d := tools[0].(M)
+			d["description"] = strings.Replace(jStr(d, "description"), "Files under the working directory are readable with require('node:fs'); writes", "No file reads; writes", 1)
+		}
+		reply["result"] = M{"tools": tools}
 	case "tools/call":
 		args := jAt(params, "arguments")
 		switch jStr(params, "name") {
@@ -210,7 +216,7 @@ func (s *codeServer) code(source string, detach time.Duration) M {
 	// and poll reset ends the send.
 	go func() {
 		if err := rt.send(M{"type": "run", "job": j.id, "source": source}); err != nil {
-			s.finish(j, false, nil, M{"message": "runtime-exited: the runtime stopped; state is lost"})
+			s.finish(j, false, nil, runtimeExited())
 		}
 	}()
 	r := s.wait(j, detach)
@@ -242,10 +248,23 @@ func (s *codeServer) poll(id string, wait time.Duration) M {
 func jobStatus(j *codeJob) string {
 	select {
 	case <-j.done:
-		return map[bool]string{true: "done", false: "failed"}[j.ok]
+		if j.ok {
+			return "done"
+		}
+		return "failed"
 	default:
 		return "running"
 	}
+}
+
+func runtimeExited() M { return M{"message": "runtime-exited: the runtime stopped; state is lost"} }
+
+// callLabel names a bridged call as in `calls` and FleetCallError.tool: `<connection>.<tool>` or the Fleet tool.
+func callLabel(server, tool string) string {
+	if c, ok := strings.CutPrefix(server, "conn:"); ok {
+		return c + "." + tool
+	}
+	return tool
 }
 
 // wait replies with the job's end, or with its output so far when the wait passes first; the job keeps running.
@@ -262,7 +281,11 @@ func (s *codeServer) wait(j *codeJob, d time.Duration) M {
 		return M{"jobId": j.id, "error": "unknown jobId: never started or already returned"} // another wait returned it
 	}
 	// Each reply carries only the output and calls since the job's previous reply; the server keeps nothing replied.
-	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String(), "calls": append([]any{}, j.calls...)}
+	calls := j.calls
+	if calls == nil {
+		calls = []any{}
+	}
+	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String(), "calls": calls}
 	j.output.Reset()
 	j.calls = nil
 	if r["status"] == "running" {
@@ -297,12 +320,8 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	if s.closed {
 		return nil, false, errors.New("the code server is stopping")
 	}
-	if s.rt != nil {
-		select {
-		case <-s.rt.dead:
-		default:
-			return s.rt, false, nil
-		}
+	if s.rt != nil && !s.rt.gone {
+		return s.rt, false, nil
 	}
 	argv, err := codeArgv(s.spec)
 	if err != nil {
@@ -409,9 +428,12 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.Reader) {
 			break
 		}
 	}
+	s.mu.Lock()
+	rt.gone = true // from here no new job uses this runtime: runtime() starts a fresh one
+	s.mu.Unlock()
 	rt.cmd.Process.Kill()
 	rt.cmd.Wait()
-	exited := M{"message": "runtime-exited: the runtime stopped; state is lost"}
+	exited := runtimeExited()
 	s.mu.Lock()
 	var open []*codeJob
 	for _, j := range s.jobs {
@@ -470,20 +492,17 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 	case "call":
 		s.mu.Lock()
 		ended := j == nil || jobStatus(j) != "running" || j.ended != nil // the code returned: a timer's call is late
+		if !ended {
+			j.busy++
+		}
 		s.mu.Unlock()
 		if ended {
-			// A call made after its job ended (an unawaited promise or a timer) would have an effect nobody sees.
+			// A call made after its job ended (a timer) would have an effect nobody sees.
 			fail := callError("error", "job-ended", nil)
-			fail["tool"] = jStr(m, "tool")
-			if c, ok := strings.CutPrefix(jStr(m, "server"), "conn:"); ok {
-				fail["tool"] = c + "." + jStr(m, "tool")
-			}
+			fail["tool"] = callLabel(jStr(m, "server"), jStr(m, "tool"))
 			go rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": fail})
 			return
 		}
-		s.mu.Lock()
-		j.busy++
-		s.mu.Unlock()
 		s.inflight.Add(1)
 		go func() {
 			defer s.inflight.Done()
@@ -497,10 +516,7 @@ func (s *codeServer) call(rt *codeRuntime, j *codeJob, m any) {
 	start := time.Now()
 	server, tool, args := jStr(m, "server"), jStr(m, "tool"), jAt(m, "args")
 	value, fail := s.bridge(server, tool, args)
-	label := tool
-	if c, ok := strings.CutPrefix(server, "conn:"); ok {
-		label = c + "." + tool
-	}
+	label := callLabel(server, tool)
 	outcome := "ok"
 	if fail != nil {
 		outcome = jStr(fail, "outcome")
@@ -626,23 +642,22 @@ type codeHostResult struct {
 	err           error
 }
 
-// codeHostProbe keeps only a ready result: a failed probe runs again at the next launch, so a host made ready later (or
-// a transient failure) does not need an executor restart.
+// codeHostProbe keeps a ready result while its files exist, and a failure for one minute: a host made ready later (or
+// a transient failure) needs no executor restart, and a hanging sandbox costs one 30 s probe a minute, not one per launch.
+// ponytail: one minute; a readiness event from the host settings if hosts change often.
 var codeHostProbe = func() func() codeHostResult {
 	var mu sync.Mutex
-	var ready *codeHostResult
+	var last *codeHostResult
+	var failedAt time.Time
 	return func() codeHostResult {
 		mu.Lock()
 		defer mu.Unlock()
-		if ready != nil && isFile(ready.node) && isFile(ready.sandbox) {
-			return *ready
+		if last != nil && (last.err == nil && isFile(last.node) && isFile(last.sandbox) || last.err != nil && time.Since(failedAt) < time.Minute) {
+			return *last
 		}
 		node, sandbox, err := probeCodeHost()
-		r := codeHostResult{node, sandbox, err}
-		if err == nil {
-			ready = &r
-		}
-		return r
+		last, failedAt = &codeHostResult{node, sandbox, err}, time.Now()
+		return *last
 	}
 }()
 
@@ -705,7 +720,7 @@ func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFlee
 		return errors.New("codeMode needs Fleet tools or a connection")
 	}
 	if has(servers, "code") {
-		return errors.New("MCP server name collides with the code server")
+		return errors.New("a granted connection is named code, the code server's name: rename the connection")
 	}
 	node, sandbox, err := codeHost()
 	if err != nil {
@@ -735,6 +750,6 @@ func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFlee
 	if err := os.WriteFile(specFile, []byte(enc(spec)), 0o600); err != nil {
 		return err
 	}
-	servers["code"] = M{"command": exe(), "args": []any{"mcp", "code", specFile}, "tools": []any{"code", "poll"}, "env": []any{"HOME", "PATH"}}
+	servers["code"] = M{"command": exe(), "args": []any{"mcp", "code", specFile}, "tools": mcpToolNames(M{"tools": codeTools}), "env": []any{"HOME", "PATH"}}
 	return nil
 }

@@ -281,6 +281,8 @@ jobs:
       - run: scripts/ci-part.sh "$PART" test
         env:
           PART: ${{ matrix.part }}
+          # The code mode runtime tests fail instead of skipping where the step above set up bwrap.
+          FLEET_REQUIRE_CODE_MODE: ${{ matrix.part == 'unit' && '1' || '' }}
   # The same parts on the warm PDS18 pool (.github/workflows/pds18.yml at main: the pool admits only main's workflows).
   go-tests-pds18:
     needs: selection

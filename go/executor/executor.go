@@ -1112,7 +1112,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), []string{work, inputDir}); err != nil {
 			return fail(1, err.Error())
 		}
-		observed["codeMode"], observed["codeTools"] = mode, []any{"code", "poll"}
+		observed["codeMode"], observed["codeTools"] = mode, mcpToolNames(M{"tools": codeTools})
 		if mode == "only" {
 			connectionTools, fleetMCP = nil, []any{} // the fleet server is gone; its tools are reached through code
 		}
