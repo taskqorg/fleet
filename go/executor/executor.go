@@ -1250,7 +1250,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		pw.Close()
 		closeAll()
 		e.release(execution)
-		return e.finish(c, "failed", native)
+		return fail(1, "harness did not start: "+err.Error())
 	}
 	pw.Close()
 	exited := make(chan struct{})
@@ -2477,17 +2477,32 @@ func (e *executor) exchange() (err error) {
 		if err := e.tick(); err != nil {
 			return err
 		}
-		c := reply.bodies[index]
-		if e.run(c) != nil {
-			if _, isLive := e.live[jStr(c, "executionId")]; isLive {
-				continue
-			}
-			if b, ok := e.commandBody(jStr(c, "id"), true); ok && b == enc(c) {
-				if err := e.finish(c, "failed", ""); err != nil {
-					return err
-				}
-			}
+		if err := e.runOrFail(reply.bodies[index]); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// runOrFail runs one command. A command that errors before its run is live fails, and a start or input says why:
+// without the reason an execution failed with no problem and no preparation.failed event.
+func (e *executor) runOrFail(c M) error {
+	err := e.run(c)
+	if err == nil {
+		return nil
+	}
+	if _, isLive := e.live[jStr(c, "executionId")]; isLive {
+		return nil
+	}
+	b, ok := e.commandBody(jStr(c, "id"), true)
+	if !ok || b != enc(c) {
+		return nil
+	}
+	if k := jStr(c, "kind"); k == "start" || k == "input" {
+		// A fresh seq: the failure may follow events of this command that took the low ones.
+		if err := e.event(c, uint64(nowMs()), contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "executor error before the harness started: " + err.Error()}); err != nil {
+			return err
+		}
+	}
+	return e.finish(c, "failed", "")
 }
