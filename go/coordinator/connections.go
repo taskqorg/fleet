@@ -960,7 +960,13 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 		tools := []any{}
 		for _, t := range anys(c["tools"]) {
 			if spec := mapOf(mapOf(p["tools"])[astr(t)]); spec != nil {
-				tools = append(tools, doc{"name": t, "description": spec["description"], "inputSchema": spec["inputSchema"]})
+				// file and idempotent tell the client the transfer mode and how an edge error reads; its MCP server
+				// keeps them from the model.
+				entry := doc{"name": t, "description": spec["description"], "inputSchema": spec["inputSchema"], "idempotent": spec["idempotent"] == true}
+				if spec["file"] != nil {
+					entry["file"] = spec["file"]
+				}
+				tools = append(tools, entry)
 			}
 		}
 		specs = append(specs, doc{"name": c["name"], "instructions": p["instructions"], "tools": tools})
@@ -1471,13 +1477,14 @@ func connReconcile(ctx context.Context, a *App) {
 	}
 }
 
-// gatewayCall: one in-process call through fleet-gateway (contract.GatewayCall).
-func gatewayCall(ctx context.Context, token, connection, tool string, args any) contract.CallLine {
-	var header map[string]string
-	if strings.HasPrefix(gatewayURL(), "https://") {
-		header = cfAccessHeaders()
+// gatewayCall: one in-process call through fleet-gateway (contract.GatewayCall). idempotent is the catalogue tool's
+// flag: an edge 5xx (no gateway call id) on a tool that may not be repeated reads unknown.
+func gatewayCall(ctx context.Context, token, connection, tool string, args any, idempotent bool) contract.CallLine {
+	t := contract.GatewayTarget{URL: gatewayURL(), Token: token, Idempotent: idempotent}
+	if strings.HasPrefix(t.URL, "https://") {
+		t.Header = cfAccessHeaders()
 	}
-	return contract.GatewayCall(ctx, gatewayURL(), token, connection, tool, jsonBytes(args), header)
+	return contract.GatewayCall(ctx, t, connection, tool, jsonBytes(args))
 }
 
 func cfAccessHeaders() map[string]string {

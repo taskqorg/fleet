@@ -812,12 +812,17 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 			return nil, callError("error", "connection-not-granted", nil)
 		}
 		if tool == "$tools" {
-			return jArr(spec, "tools"), nil
+			listed := []any{}
+			for _, t := range jArr(spec, "tools") {
+				listed = append(listed, modelTool(t))
+			}
+			return listed, nil
 		}
-		if !slices.ContainsFunc(jArr(spec, "tools"), func(t any) bool { return jStr(t, "name") == tool }) {
+		i := slices.IndexFunc(jArr(spec, "tools"), func(t any) bool { return jStr(t, "name") == tool })
+		if i < 0 {
 			return nil, callError("error", "tool-not-granted", nil)
 		}
-		line := connectionCall(name, tool, args)
+		line := connectionCall(name, jArr(spec, "tools")[i], args)
 		var output any
 		if len(line.Output) > 0 {
 			output, _ = dec(string(line.Output))

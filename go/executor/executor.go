@@ -1061,7 +1061,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	observed["fleetTools"], observed["collaborationTools"] = fleetTools, collaboration
 	observed["cwd"], observed["worktree"], observed["platform"] = work, hasW, platform()
 	// Granted connections: one `<executor> mcp connection` server each, calling fleet-gateway with this run's token. The
-	// token and gateway URL reach the servers through the harness environment, never a file or argv.
+	// token and gateway URL reach the servers through the private run file below, never the harness environment or argv.
 	var connectionTools []string
 	runFile, launched := "", false
 	defer func() {
@@ -1080,8 +1080,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			return fail(1, "connections granted but FLEET_GATEWAY_URL or the run token is missing")
 		}
 		// The run token, gateway URL and Access file path reach only the connection servers, through a private run file
-		// in the executor's data directory; the harness environment never carries them.
-		lines := "FLEET_RUN_TOKEN=" + str0(sp.RunToken) + "\nFLEET_GATEWAY_URL=" + gateway + "\n"
+		// in the executor's data directory; the harness environment never carries them. The work and input folders are
+		// the base of relative upload paths and the parent of downloaded attachments (fleet-connections.md §9).
+		lines := "FLEET_RUN_TOKEN=" + str0(sp.RunToken) + "\nFLEET_GATEWAY_URL=" + gateway + "\nFLEET_WORK_DIR=" + work + "\nFLEET_INPUT_DIR=" + inputDir + "\n"
 		if f := accessFile(); f != "" && isFile(f) {
 			lines += "FLEET_CF_ACCESS_FILE=" + f + "\n"
 		}

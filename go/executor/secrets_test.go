@@ -32,14 +32,17 @@ func TestAccessHeadersOnlyForStoreHosts(t *testing.T) {
 // the token from its own environment and calls the gateway outside the granted tools.
 func TestRunFileLoadsOnlyConnectionKeys(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "run.env")
-	os.WriteFile(f, []byte("FLEET_RUN_TOKEN=tok\nFLEET_GATEWAY_URL=https://gw\nPATH=/evil\n"), 0o600)
+	os.WriteFile(f, []byte("FLEET_RUN_TOKEN=tok\nFLEET_GATEWAY_URL=https://gw\nFLEET_WORK_DIR=/w\nFLEET_INPUT_DIR=/i\nPATH=/evil\nFLEET_FILES_ROOTS=/\n"), 0o600)
 	path := os.Getenv("PATH")
-	t.Setenv("FLEET_RUN_TOKEN", "")
-	t.Setenv("FLEET_GATEWAY_URL", "")
+	for _, k := range []string{"FLEET_RUN_TOKEN", "FLEET_GATEWAY_URL", "FLEET_WORK_DIR", "FLEET_INPUT_DIR", "FLEET_FILES_ROOTS"} {
+		t.Setenv(k, "")
+	}
+	t.Cleanup(func() { runFilePath = "" })
 	if err := loadRunFile(f); err != nil {
 		t.Fatal(err)
 	}
-	if os.Getenv("FLEET_RUN_TOKEN") != "tok" || os.Getenv("FLEET_GATEWAY_URL") != "https://gw" || os.Getenv("PATH") != path {
+	if os.Getenv("FLEET_RUN_TOKEN") != "tok" || os.Getenv("FLEET_GATEWAY_URL") != "https://gw" || os.Getenv("FLEET_WORK_DIR") != "/w" ||
+		os.Getenv("FLEET_INPUT_DIR") != "/i" || os.Getenv("PATH") != path || os.Getenv("FLEET_FILES_ROOTS") != "" || runFilePath != f {
 		t.Fatal("run file keys")
 	}
 }

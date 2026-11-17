@@ -1056,11 +1056,16 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 	}
 	var token string
 	var claimed doc
-	var won bool
+	var won, idempotent bool
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		var err error
-		claimed, token, won, err = claimPipelineAPI(q, astr(run["id"]), executionID, connection, tool)
-		return err
+		if claimed, token, won, err = claimPipelineAPI(q, astr(run["id"]), executionID, connection, tool); err != nil || !won {
+			return err
+		}
+		// The minted token names this connection, so its row exists; a failed read only makes an edge error unknown.
+		c, _ := maybe(q, "connection:"+connection, "api-connection")
+		idempotent = mapOf(providerTools(astr(c["provider"]))[tool])["idempotent"] == true
+		return nil
 	})
 	if err != nil {
 		unavailable.ErrorCode = ptr("pipeline-authority-denied")
@@ -1074,7 +1079,7 @@ func connCallFor(ctx context.Context, a *App, run doc, connection, executionID, 
 	// expected revision aligned without replacing its retained step observations.
 	run["plan"] = claimed["plan"]
 	writeSnapshot(ctx, a) // the gateway must see the token before the call
-	line := gatewayCall(ctx, token, connection, tool, args)
+	line := gatewayCall(ctx, token, connection, tool, args, idempotent)
 	// Revoked even when the caller left: a live token would keep the key reachable until the next start.
 	if err := runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error {
 		return revokeTokens(q, executionID)

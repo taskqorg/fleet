@@ -603,7 +603,35 @@ func TestYouTrackCatalogue(t *testing.T) {
 	}
 	type seen struct{ method, path, query, skip, auth, body string }
 	got := make(chan seen, 1)
+	file := []byte("\x89PNG shot")
+	var files struct {
+		sync.Mutex
+		part, partName, lookupAuth, fetchAuth string
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		files.Lock()
+		defer files.Unlock()
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/issues/TGT-12/attachments":
+			reader, err := r.MultipartReader()
+			if err != nil {
+				w.WriteHeader(400)
+				return
+			}
+			part, _ := reader.NextPart()
+			b, _ := io.ReadAll(part)
+			files.part, files.partName = string(b), part.FileName()
+			io.WriteString(w, `[{"id":"85-1","name":"shot.png","size":10,"mimeType":"image/png"}]`)
+			return
+		case r.URL.Path == "/api/issues/TGT-12/attachments/85-1":
+			files.lookupAuth = r.Header.Get("Authorization")
+			fmt.Fprintf(w, `{"id":"85-1","name":"shot.png","size":%d,"mimeType":"image/png","url":"/api/files/85-1?sign=invented"}`, len(file))
+			return
+		case r.URL.Path == "/api/files/85-1":
+			files.fetchAuth = r.Header.Get("Authorization")
+			w.Write(file)
+			return
+		}
 		b, _ := io.ReadAll(r.Body)
 		got <- seen{r.Method, r.URL.Path, r.URL.Query().Get("query"), r.URL.Query().Get("$skip"), r.Header.Get("Authorization"), string(b)}
 		if strings.Contains(string(b), "State Done") || r.URL.Path == "/api/issues/TGT-403" {
@@ -678,8 +706,43 @@ func TestYouTrackCatalogue(t *testing.T) {
 		t.Fatalf("numeric skip: %d", status)
 	}
 	expect(t, (<-got).skip, "100", "numeric skip")
-	if len(tools) != 8 {
+	if len(tools) != 10 {
 		t.Fatalf("youtrack tools: %v", tools)
+	}
+	// The model never gets a signed URL: issue_get asks for attachment ids, not urls.
+	if path := yt["tools"].(map[string]any)["issue_get"].(map[string]any)["path"].(string); strings.Contains(path, "url") || !strings.Contains(path, "attachments(id,") {
+		t.Fatalf("issue_get fields: %s", path)
+	}
+	// attachment_add: the raw file becomes one multipart part sent with the key.
+	request, _ := http.NewRequest("POST", "http://"+gw.address+"/v1/call/youtrack/attachment_add", bytes.NewReader(file))
+	args, _ := json.Marshal(map[string]any{"issue": "TGT-12", "name": "shot.png", "mediaType": "image/png"})
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Header.Set("X-Fleet-Args", base64.RawURLEncoding.EncodeToString(args))
+	request.Header.Set("X-Fleet-Sha256", shaHex(file))
+	response, err := http.DefaultClient.Do(request)
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("attachment_add: %v %v", err, response)
+	}
+	response.Body.Close()
+	files.Lock()
+	expect(t, []string{files.part, files.partName}, []string{string(file), "shot.png"}, "attachment_add part")
+	files.Unlock()
+	// attachment_get: the lookup carries the key, the fetch of the signed URL does not.
+	request, _ = http.NewRequest("POST", "http://"+gw.address+"/v1/call/youtrack/attachment_get", strings.NewReader(`{"issue":"TGT-12","attachment":"85-1"}`))
+	request.Header.Set("Authorization", "Bearer "+testToken)
+	request.Header.Set("Accept", "application/octet-stream")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil || response.StatusCode != 200 {
+		t.Fatalf("attachment_get: %v %v", err, response)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	files.Lock()
+	expect(t, []string{string(body), files.lookupAuth, files.fetchAuth}, []string{string(file), "Bearer invented-youtrack-key", ""}, "attachment_get")
+	files.Unlock()
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/attachment_get", "Bearer "+testToken, `{"issue":"TGT-12","attachment":"../x"}`); status != 400 {
+		t.Fatalf("attachment id pattern: %d", status)
 	}
 }
 

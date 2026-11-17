@@ -1,14 +1,21 @@
 package main
 
-// `executor mcp connection <connection> <tools.json>`: MCP stdio server with a granted connection's tools
-// (docs/designs/fleet-connections.md §5). Calls go to fleet-gateway: POST <FLEET_GATEWAY_URL>/v1/call/<connection>/<tool>
-// with the run's token (FLEET_RUN_TOKEN) as the bearer. The gateway holds the keys and records every call, so this
-// client writes no record of its own. A remote host adds the Cloudflare Access service token from FLEET_CF_ACCESS_FILE
-// (default ~/.config/fleet/cf-access-machine.env).
+// `executor mcp connection <connection> <spec> [run file]`: MCP stdio server with a granted connection's tools
+// (docs/designs/fleet-connections.md §5, §9). Calls go to fleet-gateway: POST <FLEET_GATEWAY_URL>/v1/call/<connection>/<tool>
+// with the run's token (FLEET_RUN_TOKEN, or an owner token from FLEET_TOKEN_FILE) as the bearer. The gateway holds the
+// keys and records every call, so this client writes no record of its own. A remote host adds the Cloudflare Access
+// service token from FLEET_CF_ACCESS_FILE (default ~/.config/fleet/cf-access-machine.env).
+//
+// A spec tool with file: upload takes {<path fields>, path}: the local file passes the path guard and the client
+// tripwire (file_guard.go), then its raw bytes go to the gateway. A tool with file: download writes the attachment to
+// FLEET_INPUT_DIR/attachments in a Fleet run, else FLEET_FILES_OUT (default ~/.local/share/fleet/files), and answers its
+// path. file and idempotent stay out of tools/list.
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -43,29 +50,134 @@ func accessHeaders() map[string]string {
 	return out
 }
 
-// connectionCall is one gateway call (contract.GatewayCall) with this run's token.
-func connectionCall(connection, tool string, arguments any) contract.CallLine {
-	url, token := os.Getenv("FLEET_GATEWAY_URL"), os.Getenv("FLEET_RUN_TOKEN")
+// gatewayTarget is this process's gateway, bearer and Access headers.
+func gatewayTarget() contract.GatewayTarget {
+	t := contract.GatewayTarget{URL: os.Getenv("FLEET_GATEWAY_URL"), Token: os.Getenv("FLEET_RUN_TOKEN")}
 	// An owner connection token lives in a 0600 file (FLEET_TOKEN_FILE), never in the session config.
-	if f := os.Getenv("FLEET_TOKEN_FILE"); token == "" && f != "" {
+	if f := os.Getenv("FLEET_TOKEN_FILE"); t.Token == "" && f != "" {
 		b, _ := os.ReadFile(f)
-		token = strings.TrimSpace(string(b))
+		t.Token = strings.TrimSpace(string(b))
 	}
-	var header map[string]string
-	if strings.HasPrefix(url, "https://") {
-		header = accessHeaders()
+	if strings.HasPrefix(t.URL, "https://") {
+		t.Header = accessHeaders()
 	}
-	return contract.GatewayCall(context.Background(), url, token, connection, tool, []byte(enc(arguments)), header)
+	return t
+}
+
+func refusedLine(connection, tool, code, reason string) contract.CallLine {
+	out, _ := json.Marshal(map[string]string{"reason": reason})
+	return contract.CallLine{Connection: connection, Tool: tool, Outcome: contract.CallOutcomeError, ErrorCode: &code, Output: out}
+}
+
+// connectionCall is one call of a spec tool ({name, file?, idempotent}) with this process's token: a JSON call, an
+// upload or a download by the tool's file mode. Its output is what the agent reads.
+func connectionCall(connection string, tool any, arguments any) contract.CallLine {
+	name := jStr(tool, "name")
+	t := gatewayTarget()
+	t.Idempotent = jAt(tool, "idempotent") == true
+	switch jStr(tool, "file") {
+	case "upload":
+		return connectionUpload(t, connection, name, arguments)
+	case "download":
+		return connectionDownload(t, connection, tool, arguments)
+	}
+	return contract.GatewayCall(context.Background(), t, connection, name, []byte(enc(arguments)))
+}
+
+func connectionUpload(t contract.GatewayTarget, connection, tool string, arguments any) contract.CallLine {
+	args := map[string]any{}
+	for k, v := range jObj(arguments) {
+		args[k] = v
+	}
+	path, _ := str(args["path"])
+	delete(args, "path")
+	base := os.Getenv("FLEET_WORK_DIR")
+	if base == "" {
+		base, _ = os.Getwd()
+	}
+	f, info, err := openForUpload(path, base)
+	if err != nil {
+		return refusedLine(connection, tool, "path-refused", err.Error())
+	}
+	defer f.Close()
+	// The tripwire: this caller's own bearer and Access secret never leave in a file.
+	patterns := [][]byte{[]byte(t.Token)}
+	if s := t.Header["CF-Access-Client-Secret"]; s != "" {
+		patterns = append(patterns, []byte(s))
+	}
+	sum, found, err := scanFile(io.NewSectionReader(f, 0, info.Size()), patterns)
+	if err != nil {
+		return refusedLine(connection, tool, "path-refused", "the file cannot be read")
+	}
+	if found {
+		return refusedLine(connection, tool, "secret-in-file", "the file holds this client's Fleet token or Access secret; nothing was sent")
+	}
+	head := make([]byte, 512)
+	n, _ := f.ReadAt(head, 0)
+	fileName := filepath.Base(path)
+	return contract.GatewayUpload(context.Background(), t, connection, tool, args, contract.Upload{File: f, Size: info.Size(),
+		Name: fileName, MediaType: mediaTypeOf(fileName, head[:n]), Sha256: sum})
+}
+
+// connectionDownload: the file lands in <root>/<required arguments but the last...>/<last>-<name> (for
+// attachment_get {issue, attachment}: <root>/TGT-12/85-1234-screen.png).
+func connectionDownload(t contract.GatewayTarget, connection string, tool any, arguments any) contract.CallLine {
+	name := jStr(tool, "name")
+	root := os.Getenv("FLEET_FILES_OUT")
+	if in := os.Getenv("FLEET_INPUT_DIR"); in != "" {
+		root = filepath.Join(in, "attachments")
+	} else if root == "" {
+		home, _ := os.UserHomeDir()
+		root = filepath.Join(home, ".local/share/fleet/files")
+	}
+	var parts []string
+	for _, field := range jArr(tool, "inputSchema", "required") {
+		v, ok := str(jAt(arguments, jStr(field)))
+		if !ok {
+			return refusedLine(connection, name, "bad-request", fmt.Sprintf("%s is required", jStr(field)))
+		}
+		parts = append(parts, v)
+	}
+	d := contract.Download{Root: root}
+	if len(parts) > 0 {
+		d.Folder, d.Prefix = parts[:len(parts)-1], parts[len(parts)-1]
+	}
+	return contract.GatewayDownload(context.Background(), t, connection, name, []byte(enc(arguments)), d)
+}
+
+// modelTool is a spec tool as the model sees it: without the client's file and idempotent flags.
+func modelTool(tool any) any {
+	m := M{}
+	for k, v := range jObj(tool) {
+		if k != "file" && k != "idempotent" {
+			m[k] = v
+		}
+	}
+	return m
+}
+
+// callText is a call line as the MCP text result.
+func callText(line contract.CallLine) (string, bool) {
+	ok := line.Outcome == contract.CallOutcomeOk
+	text := string(line.Output)
+	if text == "" {
+		text = "null"
+	}
+	if !ok {
+		text = fmt.Sprintf("Call %s: %s", line.Outcome, *line.ErrorCode)
+		if o := string(line.Output); o != "" && o != "null" {
+			text += " " + o
+		}
+	}
+	return text, ok
 }
 
 func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error {
-	tools, _ := jAt(spec, "tools").([]any)
-	if tools == nil {
-		tools = []any{}
-	}
-	names := map[string]bool{}
+	tools := jArr(spec, "tools")
+	byName, listed := map[string]any{}, []any{}
 	for _, t := range tools {
-		names[jStr(jAt(t, "name"))] = true
+		byName[jStr(t, "name")] = t
+		listed = append(listed, modelTool(t))
 	}
 	out := bufio.NewWriter(w)
 	sc := bufio.NewScanner(in)
@@ -91,29 +203,19 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 		case "ping":
 			reply["result"] = M{}
 		case "tools/list":
-			reply["result"] = M{"tools": tools}
+			reply["result"] = M{"tools": listed}
 		case "tools/call":
 			name, _ := str(params["name"])
 			code := "tool-not-granted"
 			line := contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: &code}
-			if names[name] && name != "" {
+			if tool, ok := byName[name]; ok && name != "" {
 				args := params["arguments"]
 				if !truth(args) {
 					args = M{}
 				}
-				line = connectionCall(connection, name, args)
+				line = connectionCall(connection, tool, args)
 			}
-			ok := line.Outcome == contract.CallOutcomeOk
-			text := string(line.Output)
-			if text == "" {
-				text = "null"
-			}
-			if !ok {
-				text = fmt.Sprintf("Call %s: %s", line.Outcome, *line.ErrorCode)
-				if o := string(line.Output); o != "" && o != "null" {
-					text += " " + o
-				}
-			}
+			text, ok := callText(line)
 			reply["result"] = M{"content": []any{M{"type": "text", "text": text}}, "isError": !ok}
 		default:
 			reply["error"] = M{"code": -32601, "message": "method not found"}
@@ -124,17 +226,86 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 	return sc.Err()
 }
 
-// loadRunFile reads KEY=value lines (FLEET_RUN_TOKEN, FLEET_GATEWAY_URL, FLEET_CF_ACCESS_FILE) from the executor's private
-// run file into this process's environment. Only those keys are taken.
+// runFileKeys are the keys a run file may set: the token, gateway and Access file, and the run's work and input folders
+// (the base of relative upload paths and the download folder).
+var runFileKeys = map[string]bool{"FLEET_RUN_TOKEN": true, "FLEET_GATEWAY_URL": true, "FLEET_CF_ACCESS_FILE": true, "FLEET_WORK_DIR": true, "FLEET_INPUT_DIR": true}
+
+// loadRunFile reads KEY=value lines from the executor's private run file into this process's environment. Only
+// runFileKeys are taken. The file is denylisted for uploads.
 func loadRunFile(path string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
+	runFilePath = path
 	for _, l := range strings.Split(string(b), "\n") {
-		if k, v, ok := strings.Cut(l, "="); ok && (k == "FLEET_RUN_TOKEN" || k == "FLEET_GATEWAY_URL" || k == "FLEET_CF_ACCESS_FILE") {
+		if k, v, ok := strings.Cut(l, "="); ok && runFileKeys[k] {
 			os.Setenv(k, v)
 		}
 	}
 	return nil
+}
+
+// connectionCLI: `fleet-executor connection call <connection> <tool> [spec file]` reads the arguments as JSON on stdin
+// and writes one CallLine as JSON on stdout, with the same environment as the MCP server. With a spec file (a
+// connection spec, a list of them or a connections_token_create reply) a file tool uses its file mode; without one the
+// tool is called as JSON.
+func connectionCLI(args []string) error {
+	ok, err := connectionCommand(args, os.Stdin, os.Stdout)
+	if err == nil && !ok {
+		os.Exit(1) // the call line is printed; the exit status tells a script the call did not succeed
+	}
+	return err
+}
+
+func connectionCommand(args []string, stdin io.Reader, stdout io.Writer) (bool, error) {
+	if len(args) < 3 || args[0] != "call" {
+		return false, fmt.Errorf("usage: connection call <connection> <tool> [spec file] < args.json")
+	}
+	connection, name := args[1], args[2]
+	tool := any(M{"name": name})
+	if len(args) > 3 {
+		b, err := os.ReadFile(args[3])
+		if err != nil {
+			return false, err
+		}
+		spec, err := dec(string(b))
+		if err != nil {
+			return false, fmt.Errorf("spec file: %w", err)
+		}
+		specs := jArr(spec)
+		if specs == nil {
+			specs = jArr(spec, "connections")
+		}
+		if specs == nil {
+			specs = []any{spec}
+		}
+		found := false
+		for _, s := range specs {
+			if n := jStr(s, "name"); n != connection && (n != "" || len(specs) > 1) {
+				continue
+			}
+			for _, t := range jArr(s, "tools") {
+				if jStr(t, "name") == name {
+					tool, found = t, true
+				}
+			}
+		}
+		if !found {
+			return false, fmt.Errorf("tool %s of %s is not in the spec file", name, connection)
+		}
+	}
+	in, err := io.ReadAll(stdin)
+	if err != nil {
+		return false, err
+	}
+	var arguments any = M{}
+	if len(bytes.TrimSpace(in)) > 0 {
+		if arguments, err = dec(string(in)); err != nil {
+			return false, fmt.Errorf("arguments: %w", err)
+		}
+	}
+	line := connectionCall(connection, tool, arguments)
+	fmt.Fprintln(stdout, enc(line))
+	return line.Outcome == contract.CallOutcomeOk, nil
 }

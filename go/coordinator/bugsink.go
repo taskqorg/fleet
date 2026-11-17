@@ -427,7 +427,7 @@ var bugsinkIssueClosed = func(ctx context.Context, a *App, project, issue string
 	if err != nil {
 		return false, err
 	}
-	return issueClosed(gatewayCall(ctx, token, bugsinkConn, "issue_get", map[string]string{"issue": issue}), issue)
+	return issueClosed(gatewayCall(ctx, token, bugsinkConn, "issue_get", map[string]string{"issue": issue}, true), issue)
 }
 
 // issueClosed reads an issue_get answer: resolved, or Bugsink's own 404 ({"detail": ...}, the REST framework's not

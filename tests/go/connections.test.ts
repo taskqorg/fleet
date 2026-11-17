@@ -971,6 +971,18 @@ test('C9 connections_set_limits: holder (an architect) or owner only, one histor
   assert.equal(ok(await op('connections_list')).connections.find((x: any) => x.name === c).limits, undefined);
 });
 
+test('C11 minted spec carries file and idempotent (requirement: docs/designs/fleet-connections.md §9, the client picks the transfer mode and reads an edge 5xx by the tool\'s flags; risk: an upload sent as JSON, or an edge error on a write read as safe to retry)', async () => {
+  const c = name('youtrack');
+  ok(await op('connections_create', {name: c, provider: 'youtrack'}));
+  ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
+  const m = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  const tools = Object.fromEntries(m.connections[0].tools.map((x: any) => [x.name, x]));
+  assert.deepEqual([tools.attachment_add.file, tools.attachment_add.idempotent], ['upload', false]);
+  assert.deepEqual([tools.attachment_get.file, tools.attachment_get.idempotent], ['download', true]);
+  assert.deepEqual([tools.issue_get.file, tools.issue_get.idempotent], [undefined, true]);
+  assert.deepEqual(tools.attachment_add.inputSchema.required, ['issue', 'path']);
+});
+
 // Coordinator phases and real local shell/HTTP receipts; the gateway/S3 are synthetic, no provider call.
 test('Pipeline step terminal ends agree across sequential API/script success, failure, cancellation and retry (requirement: observed pipeline-step timing; risk: finished steps read unfinished, retry rewrites history or containers count as work)', async () => {
   const read = async (id: string) => ok(await op('pipeline_get', {runId: id}));
