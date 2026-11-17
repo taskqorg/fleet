@@ -580,7 +580,8 @@ export function EntityCardLayer() {
     const inside = (n: EventTarget | null) => n instanceof Node && (el.contains(n) || cur.anchor.contains(n));
     // Tab past the last action (or Shift+Tab before the first) leaves the card at its code, not at the end of the page.
     const key = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(true); return; }
+      // Escape belongs to the card while focus is in it or on its code; typed elsewhere (a composer) it only closes the card.
+      if (e.key === 'Escape') { const mine = inside(document.activeElement); if (mine) { e.stopPropagation(); e.preventDefault(); } close(mine); return; }
       if (e.key !== 'Tab' || !el.contains(document.activeElement)) return;
       const all = [...el.querySelectorAll<HTMLElement>('a[tabindex],a[href],button')], at = all.indexOf(document.activeElement as HTMLElement);
       if (e.shiftKey ? at <= 0 : at === all.length - 1) { e.preventDefault(); close(true); }
@@ -591,7 +592,7 @@ export function EntityCardLayer() {
     // loaded card is taller than the skeleton). The card closes once its code is out of sight (clipped by its column or
     // scrolled away); EntityCode closes it when the code unmounts.
     const sized = new ResizeObserver(place); sized.observe(el);
-    const seen = new IntersectionObserver(es => { if (es.some(x => !x.isIntersecting)) close(false); }); seen.observe(cur.anchor);
+    const seen = new IntersectionObserver(es => { if (es.some(x => !x.isIntersecting)) close(el.contains(document.activeElement)); }); seen.observe(cur.anchor);
     document.addEventListener('keydown', key, true); document.addEventListener('pointerdown', down, true); document.addEventListener('scroll', place, true);
     document.addEventListener('focusout', out, true); addEventListener('resize', place);
     return () => { document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', down, true); document.removeEventListener('scroll', place, true);

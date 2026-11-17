@@ -83,6 +83,9 @@ func facts(fs ...contract.EntityFact) []contract.EntityFact {
 	return fs[:min(4, len(fs))]
 }
 
+// timeOf: an RFC 3339 time, zero when unreadable (compared as times, not as text: fractions differ in length).
+func timeOf(s string) time.Time { t, _ := time.Parse(time.RFC3339Nano, s); return t }
+
 // sizeOf: a byte size, "" (no fact) when none is recorded.
 func sizeOf(v any) string {
 	if v == nil || v == "" {
@@ -279,7 +282,7 @@ func cardHost(q *Request, id string) (*contract.EntityCardReply, error) {
 			continue
 		}
 		state, seen := "offline", int64(num(h["lastSeenAt"]))
-		if h["lastSeenAt"] != nil && nowMs()-seen <= hostStaleMs {
+		if h["lastSeenAt"] != nil && nowMs()-seen < hostStaleMs { // polling, as hostsList and the Hosts page decide it
 			state = "online"
 			if h["pollError"] != nil {
 				state = "failing"
@@ -382,7 +385,7 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 	switch {
 	case done != "":
 		stage, at = "installed", done
-	case x.Released != nil && st.InstallsFrom != "" && *x.Released < st.InstallsFrom:
+	case x.Released != nil && st.InstallsFrom != "" && timeOf(*x.Released).Before(timeOf(st.InstallsFrom)):
 		stage, at = "merged", *x.Released
 	case x.Released != nil:
 		stage, at = "installing", *x.Released
@@ -419,10 +422,15 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 		_ = json.Unmarshal(jsonBytes(rec["data"]), &history)
 	}
 	version, known := releaseVersionOf(tag), prs > 0 || rec != nil
-	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), State: ptr("installing"), Path: ptr("/delivery?q=" + url.QueryEscape(tag))}
+	// Open lists its pull requests while the pass holds them; an older release opens Delivery, whose history has it.
+	path := "/delivery"
+	if prs > 0 {
+		path += "?q=" + url.QueryEscape(tag)
+	}
+	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), State: ptr("installing"), Path: ptr(path)}
 	if uiOnlyRelease(tag) {
 		on := uiServed()
-		if !known && on != version {
+		if !known && (on != version || !fullAccess(q.person)) {
 			return nil, nil
 		}
 		c.Title, c.Facts = "UI release "+version, facts(fact("Site serves", contract.EntityFactTypeCode, on), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))
