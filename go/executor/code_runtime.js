@@ -87,6 +87,9 @@ async function textOf(f) {
     await h.close();
   }
 }
+// A rejected bad-arguments call when an argument is not a string, else undefined.
+const strings = (tool, ...xs) => xs.every((x) => typeof x === 'string') ? undefined :
+  Promise.reject(new FleetCallError({ tool, outcome: 'error', code: 'bad-arguments', output: 'path and text must be strings', job: job.getStore() ?? null }));
 const host = {
   read: (p) => fs.promises.readFile(resolve(p), 'utf8'),
   glob: async (pattern, opts) => (await files(opts, pattern)).map(shown),
@@ -94,14 +97,17 @@ const host = {
     const flags = (pattern instanceof RegExp ? pattern.flags.replace(/[gyi]/g, '') : '') + (opts?.ignoreCase || pattern?.flags?.includes('i') ? 'i' : '');
     const re = new RegExp(pattern instanceof RegExp ? pattern.source : String(pattern), flags);
     const hits = [];
-    for (const f of await files(opts, opts?.glob)) {
-      const t = await textOf(f);
-      t?.split('\n').forEach((text, i) => { if (re.test(text)) hits.push({ file: shown(f), line: i + 1, text }); });
+    // 32 files at a time, in walk order; a file that cannot be read as text (too large for a string) is skipped.
+    const list = await files(opts, opts?.glob);
+    for (let i = 0; i < list.length; i += 32) {
+      const texts = await Promise.all(list.slice(i, i + 32).map((f) => textOf(f).catch(() => null)));
+      texts.forEach((t, k) => t?.split('\n').forEach((text, n) => { if (re.test(text)) hits.push({ file: shown(list[i + k]), line: n + 1, text }); }));
     }
     return hits;
   },
-  write: (p, text) => call('host', 'write', { path: String(p), text: String(text) }),
-  edit: (p, old, text, opts) => call('host', 'edit', { path: String(p), old: String(old), new: String(text), all: opts?.all === true }),
+  // A missing or non-string text is an error, never the file contents "undefined".
+  write: (p, text) => strings('write', p, text) ?? call('host', 'write', { path: p, text }),
+  edit: (p, old, text, opts) => strings('edit', p, old, text) ?? call('host', 'edit', { path: p, old, new: text, all: opts?.all === true }),
   sh: (cmd, ...rest) => {
     let opts = {};
     if (Array.isArray(cmd) && Array.isArray(cmd.raw)) {

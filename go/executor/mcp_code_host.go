@@ -38,7 +38,7 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 		cwd = filepath.Join(dir, cwd)
 	}
 	s.mu.Lock()
-	if s.closed || rt != nil && rt.stopped {
+	if s.closed || rt != nil && (rt.stopped || rt.gone) {
 		s.mu.Unlock()
 		return nil, callError("error", "job-ended", "the runtime was reset or the code server is stopping")
 	}
@@ -57,10 +57,11 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// ponytail: 1 s for a background child that keeps the output open after the command exits; then its group is killed.
+	// The group is killed when the command exits. ponytail: 1 s for a child that left the group (setsid) and keeps the
+	// output open; then the output is closed and the call returns.
 	cmd.WaitDelay = time.Second
 	s.mu.Lock()
-	if s.closed || rt != nil && rt.stopped { // a reset between the check above and here
+	if s.closed || rt != nil && (rt.stopped || rt.gone) { // a reset or a dead runtime: nobody gets the result
 		s.mu.Unlock()
 		return nil, callError("error", "job-ended", "the runtime was reset or the code server is stopping")
 	}
@@ -71,32 +72,30 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	p := &shProc{cmd: cmd}
 	s.procs[p] = true
 	s.mu.Unlock()
-	timedOut := false
 	if ms, ok := num(jAt(args, "timeoutMs")); ok && ms > 0 {
-		t := time.AfterFunc(time.Duration(ms*float64(time.Millisecond)), func() {
-			if p.timeout() {
-				s.mu.Lock()
-				timedOut = true
-				s.mu.Unlock()
-			}
-		})
+		t := time.AfterFunc(time.Duration(ms*float64(time.Millisecond)), p.timeout)
 		defer t.Stop()
 	}
 	// Until cmd.Wait reaps it, the exited leader stays a zombie, so its PID and process group id cannot be reused: what
-	// the command left running in its group is killed before then, never another command's group.
-	waitExited(cmd.Process.Pid)
+	// the command left running in its group is killed before then, never another command's group. Without waitid the
+	// group is not killed: a kill after the reap could hit another group.
+	exited := waitExited(cmd.Process.Pid)
 	p.mu.Lock()
 	p.exited = true // a timeout from here on comes too late: the command had ended
 	p.mu.Unlock()
-	p.kill()
+	if exited {
+		p.kill()
+	}
 	p.reap()
 	s.mu.Lock()
 	delete(s.procs, p)
+	s.mu.Unlock()
 	r := M{"code": nil, "stdout": stdout.String(), "stderr": stderr.String()}
-	if timedOut {
+	p.mu.Lock()
+	if p.timedOut {
 		r["timedOut"] = true
 	}
-	s.mu.Unlock()
+	p.mu.Unlock()
 	if st, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && st.Signaled() {
 		r["signal"] = st.Signal().String()
 	} else {
@@ -107,28 +106,28 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 
 // shProc is one running sh command. Its group is killed only while the leader is unreaped.
 type shProc struct {
-	cmd            *exec.Cmd
-	mu             sync.Mutex
-	exited, reaped bool
+	cmd                      *exec.Cmd
+	mu                       sync.Mutex
+	exited, reaped, timedOut bool
 }
 
-// timeout kills a command whose leader still runs; it reports whether it did.
-func (p *shProc) timeout() bool {
-	p.mu.Lock()
-	exited := p.exited
-	p.mu.Unlock()
-	return !exited && p.kill()
-}
-
-// kill kills the command's process group unless the leader was already reaped; it reports whether it did.
-func (p *shProc) kill() bool {
+// timeout kills a command whose leader still runs and marks it timed out, in one step with that check.
+func (p *shProc) timeout() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.reaped {
-		return false
+	if !p.exited && !p.reaped {
+		p.timedOut = true
+		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 	}
-	syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-	return true
+}
+
+// kill kills the command's process group unless the leader was already reaped.
+func (p *shProc) kill() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.reaped {
+		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+	}
 }
 
 func (p *shProc) reap() {
@@ -259,11 +258,6 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) 
 	if home, err := canon(os.Getenv("HOME")); err == nil && os.Getenv("HOME") != "" && slices.ContainsFunc(hide, func(h string) bool { return under(home, h) }) {
 		read = append(read, home)
 	}
-	if len(hide) > 0 { // a worktree's Git directories stay readable wherever they are
-		for _, r := range paths(jArr(policy, "write")) {
-			read = append(read, paths(gitDirs(r))...)
-		}
-	}
 	var roots []string // none for a read-only start, not even the temporary directories
 	if !readOnly {
 		roots = paths(jArr(policy, "write"))
@@ -336,39 +330,65 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string) ([]string, error) 
 	return nil, errors.New("no shell sandbox on " + runtime.GOOS)
 }
 
-// gitDirs are a linked worktree's Git directory and common directory, read from its .git file ("gitdir: <dir>") and
-// that directory's commondir file; none for a checkout whose .git is a directory inside it.
-func gitDirs(work string) []any {
-	b, err := os.ReadFile(filepath.Join(work, ".git"))
-	d, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
-	if err != nil || !ok {
-		return nil
-	}
-	if !filepath.IsAbs(d) {
-		d = filepath.Join(work, d)
-	}
-	dirs := []any{d}
-	if c, err := os.ReadFile(filepath.Join(d, "commondir")); err == nil {
-		common := strings.TrimSpace(string(c))
-		if !filepath.IsAbs(common) {
-			common = filepath.Join(d, common)
-		}
-		dirs = append(dirs, common)
-	}
-	return dirs
-}
-
 // codeFileMu makes each write and edit one step: an edit's read and write never interleave with another's.
 var codeFileMu sync.Mutex
 
-// codeFile serves write and edit inside the worktree dir. It walks the path by directory handle (os.Root: no step leaves
-// the directory it is in) and compares each directory, and the file, with the worktree's .git by file identity, so no
-// symlink, other spelling (macOS ignores case) or concurrent rename reaches .git. The file itself is opened without
-// following a symlink.
+// resolveIn follows the symlinks of rel inside the worktree real, as the native Write tool does: the result has none
+// left, or the path leaves the worktree (an error).
+func resolveIn(real, rel string) (string, error) {
+	for hops := 0; ; {
+		parts := strings.Split(rel, "/")
+		changed := false
+		for i := range parts {
+			at := filepath.Join(append([]string{real}, parts[:i+1]...)...)
+			st, err := os.Lstat(at)
+			if err != nil {
+				break // not there yet: write creates it
+			}
+			if st.Mode()&os.ModeSymlink == 0 {
+				continue
+			}
+			if hops++; hops > 40 {
+				return "", errors.New(rel + ": too many symlinks")
+			}
+			target, err := os.Readlink(at)
+			if err != nil {
+				return "", err
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(at), target)
+			}
+			if c, err := canon(filepath.Dir(target)); err == nil { // the real spelling (/var is /private/var on macOS)
+				target = filepath.Join(c, filepath.Base(target))
+			}
+			next, err := worktreePath(real, filepath.Join(append([]string{target}, parts[i+1:]...)...))
+			if err != nil {
+				return "", err
+			}
+			rel, changed = next, true
+			break
+		}
+		if !changed {
+			return rel, nil
+		}
+	}
+}
+
+// codeFile serves write and edit inside the worktree dir. It resolves the path's symlinks inside the worktree, then
+// walks it by directory handle (os.Root), checking that no component became a symlink meanwhile and comparing each
+// directory, and the file, with the worktree's .git by file identity: no symlink, other spelling (macOS ignores case)
+// or concurrent rename reaches .git. The file itself is opened without following a symlink.
 func codeFile(dir, tool string, args any) (any, M) {
 	codeFileMu.Lock()
 	defer codeFileMu.Unlock()
+	real, err := canon(dir)
+	if err != nil {
+		return nil, callError("error", "io", err.Error())
+	}
 	rel, err := worktreePath(dir, jStr(args, "path"))
+	if err == nil {
+		rel, err = resolveIn(real, rel)
+	}
 	if err != nil {
 		return nil, callError("error", "outside-worktree", err.Error())
 	}
@@ -382,7 +402,7 @@ func codeFile(dir, tool string, args any) (any, M) {
 		}
 		return nil, callError("error", "io", err.Error())
 	}
-	cur, err := os.OpenRoot(dir)
+	cur, err := os.OpenRoot(real)
 	if err != nil {
 		return fail(err)
 	}
@@ -400,9 +420,14 @@ func codeFile(dir, tool string, args any) (any, M) {
 			if err != nil {
 				return fail(err)
 			}
+			opened, err := next.Stat(".")
+			link, lerr := cur.Lstat(c) // after the open: a component swapped for a symlink in between does not match
 			cur.Close()
 			cur = next
-			if st, err := cur.Stat("."); err != nil || isGit(st) {
+			if err != nil || lerr != nil || link.Mode()&os.ModeSymlink != 0 || !os.SameFile(opened, link) {
+				return nil, callError("error", "outside-worktree", rel+" changed while it was written")
+			}
+			if isGit(opened) {
 				return nil, callError("error", "outside-worktree", rel+" is under .git")
 			}
 		}

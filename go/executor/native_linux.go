@@ -43,13 +43,13 @@ func signalOwned(pid int, expected string, sig syscall.Signal) error {
 }
 
 // waitExited blocks until pid exits without reaping it (waitid with WNOWAIT): its PID stays taken until the caller
-// reaps it.
-func waitExited(pid int) {
+// reaps it. It reports false when waitid fails: the process may still run.
+func waitExited(pid int) bool {
 	var info [128]byte // siginfo_t
 	for {
 		_, _, e := syscall.Syscall6(syscall.SYS_WAITID, 1 /* P_PID */, uintptr(pid), uintptr(unsafe.Pointer(&info[0])), 4|0x01000000 /* WEXITED|WNOWAIT */, 0, 0)
 		if e != syscall.EINTR {
-			return
+			return e == 0
 		}
 	}
 }

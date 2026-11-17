@@ -1129,6 +1129,15 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	if codeMode != "" {
 		auth := codeAuthorityFor(name, jAt(p, "agentConfig"), work, []string{work, inputDir}, gitRoots, p["gitNetwork"] == true, jIsTrue(p, "readOnly"), e.root)
 		auth.env = M{"FLEET_INPUT_DIR": inputDir, "FLEET_OUTPUT_DIR": outputDir}
+		// The worktree's Git directories stay readable to a sandboxed sh that hides the data directory. They come from the
+		// checkout the executor made, now, never from .git files the sandboxed commands can rewrite.
+		if jAt(auth.shell, "sandbox") == true && checkoutTop != "" {
+			roots := gitRoots
+			if roots == nil {
+				roots, _ = nativeGitRoots(checkoutTop, work) // on a failure no extra read: sh lacks Git, nothing more
+			}
+			auth.shell["read"] = append(jArr(auth.shell, "read"), roots...)
+		}
 		if err := addCodeServer(servers, codeMode, codeFleetTools, bridged, runFile, codeSpecFile(e.root, execution), work, auth); err != nil {
 			return fail(1, err.Error())
 		}

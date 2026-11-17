@@ -100,7 +100,7 @@ func codeDescription(spec any) string {
 	if len(jArr(spec, "connections")) > 0 {
 		lines = append(lines, `const bugs = await conn["tracker"].search({query: "open bugs"})`)
 		fields = append(fields, "bugs: bugs.map(b => b.id)")
-	} else {
+	} else if jStr(spec, "journal") != "" { // Fleet tools
 		lines = append(lines, `const me = await fleet.execution_status({})`)
 		fields = append(fields, "status: me.status")
 	}
@@ -1031,8 +1031,9 @@ func codeAuthorityFor(harness string, profile any, work string, read []string, w
 	return a
 }
 
-// codeCovered are the native Claude tools that host functions cover: `codeMode: only` hides them.
-var codeCovered = []string{"Bash", "Read", "Write", "Edit", "Glob", "Grep"}
+// codeCovered are the native Claude tools that host functions cover: `codeMode: only` hides them. Read stays: it is
+// the only way the agent sees an attached image or PDF, which read() returns as text.
+var codeCovered = []string{"Bash", "Write", "Edit", "Glob", "Grep"}
 
 // codeVisible is the Claude tool grant without the covered tools when the profile's code mode is `only`.
 func codeVisible(tools []string, codeMode string) []string {

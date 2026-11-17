@@ -99,14 +99,20 @@ func processExecutable(pid int) (string, error) {
 }
 
 // waitExited blocks until pid exits without reaping it (waitid with WNOWAIT): its PID stays taken until the caller
-// reaps it. Without waitid it returns at once.
-func waitExited(pid int) {
+// reaps it. It reports false, at once, without waitid or when waitid fails: the process may still run.
+func waitExited(pid int) bool {
 	if waitid == nil || errnoPtr == nil {
-		return
+		return false
 	}
 	runtime.LockOSThread() // errno is per thread
 	defer runtime.UnlockOSThread()
 	var info [104]byte // siginfo_t
-	for waitid(1 /* P_PID */, int32(pid), &info[0], 0x4|0x20 /* WEXITED|WNOWAIT */) != 0 && *errnoPtr() == int32(syscall.EINTR) {
+	for {
+		if waitid(1 /* P_PID */, int32(pid), &info[0], 0x4|0x20 /* WEXITED|WNOWAIT */) == 0 {
+			return true
+		}
+		if *errnoPtr() != int32(syscall.EINTR) {
+			return false
+		}
 	}
 }

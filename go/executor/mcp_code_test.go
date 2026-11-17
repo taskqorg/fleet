@@ -490,7 +490,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 		t.Fatalf("read-only description: %s", d)
 	}
 	// only hides the Claude tools that host functions cover; add keeps them.
-	for mode, want := range map[string]string{"only": "Task,TaskStop", "add": "Read,Edit,Write,Bash,Glob,Grep,Task,TaskStop"} {
+	for mode, want := range map[string]string{"only": "Read,Task,TaskStop", "add": "Read,Edit,Write,Bash,Glob,Grep,Task,TaskStop"} {
 		c := exec.Command("not-executed")
 		claudeMCP(c, M{"codeMode": mode}, M{}, nil)
 		if got := c.Args[len(c.Args)-1]; got != want {
@@ -595,14 +595,21 @@ func TestCodeModeFiles(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Join(dir, ".git")); len(entries) != 0 {
 		t.Fatalf("written under .git: %v", entries)
 	}
-	// Parallel edits of one file both land; a final symlink is not followed; grep's ignoreCase and a file path with glob.
+	// Parallel edits of one file both land; symlinks inside the worktree are followed, as by the native Write tool, even
+	// upward; a missing text is refused; grep's ignoreCase and a file path with glob.
 	os.Symlink(filepath.Join(dir, "a", "b.txt"), filepath.Join(dir, "lnk"))
+	os.Mkdir(filepath.Join(dir, "pkg"), 0o755)
+	os.Symlink("../a", filepath.Join(dir, "pkg", "shared"))
 	r, bad = c.code(`await write("c.txt", "a b")
 		const fail = async (f) => { try { await f(); return "allowed" } catch (e) { return e.code } }
 		await Promise.all([edit("c.txt", "a", "A"), edit("c.txt", "b", "B")])
-		;[await read("c.txt"), await fail(() => write("lnk", "x")), (await grep(/a B/, {ignoreCase: true})).length, (await glob("*.txt", {path: "c.txt"})).length]`)
-	if bad || enc(r["value"]) != `["A B","outside-worktree",1,1]` {
-		t.Fatalf("parallel edits, symlink, grep: %v %v", bad, r)
+		;[await read("c.txt"), await fail(() => write("lnk", "x")), await fail(() => write("pkg/shared/n.txt", "n")), await fail(() => write("c.txt")),
+			(await grep(/a B/, {ignoreCase: true})).length, (await glob("*.txt", {path: "c.txt"})).length]`)
+	if bad || enc(r["value"]) != `["A B","allowed","allowed","bad-arguments",1,1]` {
+		t.Fatalf("parallel edits, symlinks, grep: %v %v", bad, r)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "a", "n.txt")); string(b) != "n" {
+		t.Fatalf("upward symlink: %q", b)
 	}
 	if runtime.GOOS == "darwin" { // a case-insensitive file system: .GIT through a symlink is the same directory
 		os.Symlink(filepath.Join(dir, ".GIT"), filepath.Join(dir, "g2"))
@@ -708,12 +715,15 @@ func TestCodeModeShell(t *testing.T) {
 // authority per harness).
 func TestCodeModeShellHost(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: elsewhere\n"), 0o644)
 	sockDir, err := os.MkdirTemp("/var/tmp", "fcs") // short: a Unix socket path has about 100 bytes
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	// A planted .git file pointing into the hidden data directory grants no read: grants come from the launch only.
+	planted := "gitdir: " + sockDir + "\n"
+	os.WriteFile(filepath.Join(dir, ".git"), []byte(planted), 0o644)
+	os.WriteFile(filepath.Join(sockDir, "commondir"), []byte(".\n"), 0o644)
 	sock := filepath.Join(sockDir, "s")
 	os.WriteFile(filepath.Join(sockDir, "run.env"), []byte("FLEET_RUN_TOKEN=invented\n"), 0o600) // like the executor data directory
 	l, err := net.Listen("unix", sock)
@@ -753,7 +763,7 @@ func TestCodeModeShellHost(t *testing.T) {
 		if enc(jAt(r, "value", "upper")) == "0" || enc(jAt(r, "value", "launchd")) == "0" {
 			t.Fatalf(".GIT or a launchd job: %v", r["value"])
 		}
-		if b, _ := os.ReadFile(filepath.Join(dir, ".git")); string(b) != "gitdir: elsewhere\n" {
+		if b, _ := os.ReadFile(filepath.Join(dir, ".git")); string(b) != planted {
 			t.Fatalf(".git changed through .GIT: %q", b)
 		}
 	case "linux":
