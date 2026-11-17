@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -40,7 +41,7 @@ func captureLabAssessment(dir string) (doc, error) {
 	if err != nil || !os.SameFile(info, actual) {
 		return nil, fmt.Errorf("assessment directory changed during open")
 	}
-	f, err := publicationRegular(evaluation, "assessment.json")
+	f, err := regularFile(evaluation, "assessment.json")
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -184,4 +185,35 @@ func validateLabAssessmentSnapshot(q *Request, trial, example, result doc) error
 		}
 	}
 	return nil
+}
+
+// Regular files only; hardlinks could otherwise disclose bytes outside the root.
+func regularFile(root *os.Root, name string) (*os.File, error) {
+	st, e := root.Lstat(name)
+	if e != nil {
+		return nil, e
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("non-regular file rejected")
+	}
+	sys := reflect.ValueOf(st.Sys())
+	if sys.Kind() == reflect.Pointer {
+		sys = sys.Elem()
+	}
+	if sys.Kind() == reflect.Struct {
+		n := sys.FieldByName("Nlink")
+		if n.IsValid() && n.CanUint() && n.Uint() != 1 {
+			return nil, fmt.Errorf("hardlink rejected")
+		}
+	}
+	f, e := root.Open(name)
+	if e != nil {
+		return nil, e
+	}
+	actual, e := f.Stat()
+	if e != nil || !os.SameFile(st, actual) {
+		f.Close()
+		return nil, fmt.Errorf("file changed during open")
+	}
+	return f, nil
 }

@@ -196,17 +196,17 @@ test('PM8 profile: a PM session carries its skills and sees the task tools (requ
 
 test('PM9 definitions: an architect\'s PM saves a definition and the revision names its execution and director; an operator\'s PM may not (requirement: fleet-definition-editors.md Rights, who saved; risk: an agent change looks like the person did it, or an operator\'s agent edits definitions)', async () => {
   const pm = await agent(OWNER, {projectId: PROJECT, role: 'pm'});
-  const g = ok(await pm.tool('definition_get', {kind: 'pipeline', id: 'hello-search'}));
+  const g = ok(await pm.tool('definition_get', {kind: 'pipeline', id: 'search-basic'}));
   const c = JSON.parse(JSON.stringify(g.content)); c.pipeline.steps[0].arguments = {...c.pipeline.steps[0].arguments, pm9: true};
-  const s = ok(await pm.tool('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head, content: c, message: 'PM9'}));
+  const s = ok(await pm.tool('definition_save', {kind: 'pipeline', id: 'search-basic', baseRevision: g.head, content: c, message: 'PM9'}));
   assert.deepEqual([s.revision.source, s.revision.actor.kind, s.revision.actor.executionId, s.revision.actor.directedBy.email], ['agent', 'agent', pm.executionId, OWNER]);
   const own = ok(await op('executions_list', {})).executions.find((e: any) => e.id === pm.executionId);
   assert.deepEqual(own.definitions.map((d: any) => [d.kind, d.id]), [['agent', 'pm'], ['project', PROJECT]], 'an agent run pins its profile and effective project revision');
-  const h = ok(await op('definition_history', {kind: 'pipeline', id: 'hello-search'}));
+  const h = ok(await op('definition_history', {kind: 'pipeline', id: 'search-basic'}));
   assert.equal(h.revisions[0].actor.executionId, pm.executionId, 'the history shows the agent as author');
   const member = await agent(MEMBER, {projectId: PROJECT, role: 'pm'});
   assert.ok(!(await member.list()).includes('definition_save'), 'an operator\'s PM has no definition tools');
-  assert.notEqual((await member.tool('definition_get', {kind: 'pipeline', id: 'hello-search'})).status, 200);
+  assert.notEqual((await member.tool('definition_get', {kind: 'pipeline', id: 'search-basic'})).status, 200);
 });
 
 test('W5 project question: ask is idempotent by requestId, answer and history read the question columns (requirement: fleet-data-foundation.md §1 typed rows; risk: a question read from a stale data blob, or a lost answer)', async () => {

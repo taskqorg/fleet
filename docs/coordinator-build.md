@@ -38,7 +38,6 @@ The coordinator is one Go binary, `fleet-coordinator`, built from `go/coordinato
 | `FLEET_CONNECTION_TICK_MS`, `FLEET_PIPELINE_TICK_MS`, `FLEET_WATCH_TICK_MS`, `FLEET_RECONCILE_MS`, `FLEET_STREAM_PING_MS` | 3000, 5000, 15000, 600000, 25000 | Loop periods; test seams. `FLEET_CONNECTION_TICK_MS=0` turns the connection loop off. |
 | `FLEET_CLICKHOUSE_URL` | `http://127.0.0.1:9480` when the env file below exists, else empty | ClickHouse HTTP interface of the span store ([telemetry](designs/fleet-telemetry.md)); `off` turns telemetry off. Without a store, spans are dropped and `telemetry_summary` answers `enabled: false`. |
 | `FLEET_CLICKHOUSE_ENV` | `~/.config/fleet/clickhouse.env` | The ClickHouse Quadlet's env file; the coordinator reads `CLICKHOUSE_DB`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` from it. |
-| `FLEET_TEST_SITE_ROOT` | empty: route answers 404 | Example sites served under `/test-sites/` ([website-example.md](website-example.md)). |
 
 ## HTTP and storage
 

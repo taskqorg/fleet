@@ -35,7 +35,3 @@ test('R2 GET /api/reconciliation returns the latest reconcile report (requiremen
   assert.ok(r.body.reconciliation && typeof r.body.reconciliation === 'object', JSON.stringify(r.body));
 });
 
-test('R3 /test-sites refuses unknown sites and file names (requirement: docs/coordinator-build.md test-sites; risk: the sandboxed example-site route is missing or serves arbitrary paths)', async () => {
-  assert.equal((await call('GET', '/test-sites/other/index.html')).status, 404);
-  assert.equal((await call('GET', '/test-sites/hello-world/..%2Fx.html')).status, 404);
-});

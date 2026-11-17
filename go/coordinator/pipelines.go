@@ -69,7 +69,7 @@ func validatePipeline(d doc) (doc, error) {
 	if len(steps) == 0 {
 		return bad("steps")
 	}
-	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}, "publication": {"id", "kind", "files"}}
+	allowed := map[string][]string{"api": {"id", "kind", "connection", "tool", "arguments", "mode", "output", "status_tool", "recent_tool"}, "agent": {"id", "kind", "profile", "prompt"}, "script": {"id", "kind", "command", "timeout_ms", "host"}}
 	seen := map[string]bool{}
 	for _, x := range steps {
 		s := mapOf(x)
@@ -125,16 +125,6 @@ func validatePipeline(d doc) (doc, error) {
 			}
 			if _, ok := s["prompt"].(string); !ok {
 				return bad("agent step " + id)
-			}
-		case "publication":
-			files := mapOf(s["files"])
-			if len(files) == 0 || files["index.html"] == nil {
-				return bad("publication step " + id + " requires index.html")
-			}
-			for name, path := range files {
-				if !testSiteFile.MatchString(name) || astr(path) == "" {
-					return bad("publication step " + id + " files")
-				}
 			}
 		case "script":
 			t, has := s["timeout_ms"]
@@ -1211,9 +1201,6 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	tx := func(fn func(q *Request) error) error { return runPipelineTransition(ctx, a, run, fn) }
 	failNow := func(problem, message string) (bool, error) {
 		return false, tx(func(q *Request) error { return failStep(q, run, i, problem, message) })
-	}
-	if kind == "publication" {
-		return runPublication(ctx, a, run, i, def)
 	}
 	connection := astr(def["connection"])
 

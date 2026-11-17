@@ -134,6 +134,39 @@ func runTestPSQL(t *testing.T, binDir, sockDir string, port int, db, user, sqlIn
 	return string(out)
 }
 
+// testConfigDir: the shipped config/ (but its Lab assets) plus the fixture projects of tests/fixtures/projects, in a
+// fresh directory per test (tests/harness.ts testConfig does the same for the outside tests).
+func testConfigDir(t *testing.T, root string) string {
+	t.Helper()
+	dir := t.TempDir()
+	copyTree := func(from, to string, skip string) {
+		err := filepath.WalkDir(from, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if skip != "" && path == skip {
+				return filepath.SkipDir
+			}
+			rel, _ := filepath.Rel(from, path)
+			target := filepath.Join(to, rel)
+			if d.IsDir() {
+				return os.MkdirAll(target, 0o755)
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(target, b, 0o644)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	copyTree(filepath.Join(root, "config"), dir, filepath.Join(root, "config", "lab"))
+	copyTree(filepath.Join(root, "tests", "fixtures", "projects"), filepath.Join(dir, "projects"), "")
+	return dir
+}
+
 type testCoordEnv struct {
 	app           *App
 	ownerStore    *Store
@@ -165,7 +198,7 @@ func openTestCoordinator(t *testing.T, withDispatchLoop bool) *testCoordEnv {
 
 	root := filepath.Join("..", "..")
 	t.Setenv("FLEET_PROFILES_DIRECTORY", filepath.Join(root, "config", "agents"))
-	t.Setenv("FLEET_PROJECT_CONFIG_DIRECTORY", filepath.Join(root, "config"))
+	t.Setenv("FLEET_PROJECT_CONFIG_DIRECTORY", testConfigDir(t, root))
 	t.Setenv("FLEET_LAB_DIRECTORY", filepath.Join(root, "config", "lab"))
 
 	ctx, cancel := context.WithCancel(context.Background())

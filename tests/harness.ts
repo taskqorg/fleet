@@ -6,7 +6,7 @@
 // (default ~/.cache/fleet-trial/pg; created with initdb and started on first use), FLEET_TRIAL_PGPORT (default 54329).
 import {execFileSync, spawn} from 'node:child_process';
 import {createHash, randomBytes} from 'node:crypto';
-import {copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync} from 'node:fs';
+import {copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {homedir, tmpdir} from 'node:os';
 import {basename, join} from 'node:path';
@@ -18,6 +18,15 @@ const pgArgs = ['-h', pgdata, '-p', pgport, '-U', 'postgres'];
 const sh = (cmd: string, args: string[], input?: string) => execFileSync(cmd, args, {input, encoding: 'utf8', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']});
 const ready = () => { try { sh('pg_isready', pgArgs); return true; } catch { return false; } };
 export const freePort = () => new Promise<number>(r => { const s = createServer().listen(0, '127.0.0.1', () => { const p = (s.address() as any).port; s.close(() => r(p)); }); });
+
+// testConfig: the shipped config/ (but its Lab assets, read from config/lab) plus the fixture projects of
+// tests/fixtures/projects, in a fresh directory per coordinator: definition writes never touch the checkout.
+export function testConfig(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-config-'));
+  cpSync(join(root, 'config'), dir, {recursive: true, filter: src => !src.startsWith(join(root, 'config/lab'))});
+  cpSync(join(root, 'tests/fixtures/projects'), join(dir, 'projects'), {recursive: true});
+  return dir;
+}
 
 // SQL literal for seed statements (psql has no parameters on stdin).
 export const lit = (v: unknown): string => v === null || v === undefined ? 'NULL' : typeof v === 'number' || typeof v === 'boolean' ? String(v)
@@ -44,13 +53,13 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
   // A copy: people_set rewrites the file it was started with.
   const people = join(mkdtempSync(join(tmpdir(), 'fleet-people-')), 'people.json');
   copyFileSync(o.people ?? join(root, 'tests/trial/people.json'), people);
-  const port = await freePort(), secret = randomBytes(24).toString('hex'), base = `http://127.0.0.1:${port}`;
+  const port = await freePort(), secret = randomBytes(24).toString('hex'), base = `http://127.0.0.1:${port}`, config = testConfig();
   let server: ReturnType<typeof spawn>, exited = false, gone: Promise<void> = Promise.resolve();
   const launch = async () => {
     exited = false;
     const child = server = spawn(process.env.FLEET_TRIAL_SERVER || 'go/bin/fleet-coordinator', {cwd: root, shell: true, detached: true, stdio: ['ignore', 'inherit', 'inherit'], env: {...process.env,
       PORT: String(port), FLEET_DATABASE_URL: url('fleet_app'), FLEET_MIGRATION_DATABASE_URL: url('fleet'),
-      FLEET_PEOPLE_FILE: people, FLEET_BROWSER_SECRET: secret, FLEET_HOST_ID: 'trial-host',
+      FLEET_PEOPLE_FILE: people, FLEET_BROWSER_SECRET: secret, FLEET_HOST_ID: 'trial-host', FLEET_PROJECT_CONFIG_DIRECTORY: config,
       // Never the host's own span store (~/.config/fleet/clickhouse.env): a test names its ClickHouse.
       FLEET_CLICKHOUSE_URL: 'off', FLEET_CLICKHOUSE_ENV: '/nonexistent',
       // Never GitHub from tests: the Runners CI pass would spend the runner's keyless 60 requests an hour.

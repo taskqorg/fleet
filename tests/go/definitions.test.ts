@@ -26,7 +26,7 @@ test('D1 a fresh store imports every shipped definition as revision 1 from the r
   assert.deepEqual([g.meta.source, g.meta.actor.kind, g.head], ['repo', 'system', 1]);
   assert.equal(g.content.agent.id, 'pm');
   const pipes = ok(await op('definition_list', {kind: 'pipeline'})).items;
-  assert.ok(pipes.some((x: any) => x.id === 'hello-search'));
+  assert.ok(pipes.some((x: any) => x.id === 'search-basic'));
   assert.equal(ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'})).content.catalogue.capability.length > 0, true);
 });
 
@@ -40,16 +40,16 @@ test('D2 definition reads are the architect\'s; unknown ones are 404 (requiremen
 const content = (g: any) => JSON.parse(JSON.stringify(g.content));
 
 test('D3 a save from the head is revision n+1; a second save from the same base is 409 base-moved with the head (requirement: Save and conflicts; risk: a silent overwrite of another person\'s save)', async () => {
-  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'hello-search'}));
+  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'search-basic'}));
   const c = content(g); c.pipeline.steps[0].arguments = {...c.pipeline.steps[0].arguments, extra: 'd3'};
-  const s = ok(await op('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head, content: c, message: 'D3 edit'}));
+  const s = ok(await op('definition_save', {kind: 'pipeline', id: 'search-basic', baseRevision: g.head, content: c, message: 'D3 edit'}));
   assert.deepEqual([s.revision.revision, s.revision.source, s.revision.actor.person.email, s.state], [g.head + 1, 'editor', OWNER, 'ahead']);
-  const again = await op('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head, content: c, message: 'D3 again'});
+  const again = await op('definition_save', {kind: 'pipeline', id: 'search-basic', baseRevision: g.head, content: c, message: 'D3 again'});
   assert.deepEqual([again.status, again.body.reason, again.body.head], [409, 'base-moved', g.head + 1]);
-  assert.equal((await op('definition_save', {kind: 'pipeline', id: 'hello-search', baseRevision: g.head + 1, content: c, message: 'same'})).body.reason, 'no-change');
-  const h = ok(await op('definition_history', {kind: 'pipeline', id: 'hello-search'}));
+  assert.equal((await op('definition_save', {kind: 'pipeline', id: 'search-basic', baseRevision: g.head + 1, content: c, message: 'same'})).body.reason, 'no-change');
+  const h = ok(await op('definition_history', {kind: 'pipeline', id: 'search-basic'}));
   assert.deepEqual(h.revisions.map((r: any) => r.revision), [g.head + 1, g.head]);
-  const d = ok(await op('definition_diff', {kind: 'pipeline', id: 'hello-search', from: {repository: true}, to: {revision: g.head + 1}}));
+  const d = ok(await op('definition_diff', {kind: 'pipeline', id: 'search-basic', from: {repository: true}, to: {revision: g.head + 1}}));
   assert.ok(d.unified.includes('+') && d.fields.some((f: any) => f.path.endsWith('/arguments/extra') && f.op === 'add'), JSON.stringify(d.fields));
 });
 
@@ -87,7 +87,7 @@ test('D5 a draft is the caller\'s and is dropped by the save; create makes a sto
 });
 
 test('D6 runs read definitions from the store: a pipeline that exists only as a store revision runs (requirement: Resolve, readers read the head; risk: a saved definition has no effect until a release)', async () => {
-  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'hello-search'}));
+  const g = ok(await op('definition_get', {kind: 'pipeline', id: 'search-basic'}));
   const n = content(g); n.pipeline.id = 'd6-store';
   ok(await op('definition_create', {kind: 'pipeline', id: 'd6-store', content: n, message: 'D6'}));
   const r = await fetch(BASE + '/api/pipelines/d6-store/runs', {method: 'POST', headers: {authorization: 'Bearer ' + SECRET, 'x-fleet-person': OWNER, 'content-type': 'application/json'}, body: JSON.stringify({requestId: 'd6', example: {}})});
@@ -128,7 +128,7 @@ test('D8 pipeline_run_create runs the head or the caller\'s draft and lists what
 });
 
 test('D9 pipeline_rerun starts a run of a finished run on the current definition and is idempotent by requestId (requirement: pipeline_rerun; risk: a rerun of a running run, or one retried twice)', async () => {
-  const first = ok(await op('pipeline_run_create', {pipelineId: 'hello-search', requestId: 'd9', example: {}}));
+  const first = ok(await op('pipeline_run_create', {pipelineId: 'search-basic', requestId: 'd9', example: {}}));
   let state = '';
   for (let i = 0; i < 50 && state !== 'failed'; i++) { state = ok(await op('pipeline_get', {runId: first.runId})).state; if (state !== 'failed') await new Promise(r => setTimeout(r, 100)); }
   assert.equal(state, 'failed', 'a missing example reference fails step one');
@@ -148,8 +148,11 @@ test('D10 definition_usage counts the runs that pinned a definition, per revisio
   assert.equal(u.total.runs, before.total.runs + 1);
   assert.ok(u.byRevision.some((r: any) => r.revision === 1 && r.window.runs >= 1), JSON.stringify(u.byRevision));
   assert.ok(ok(await op('definition_list', {kind: 'pipeline'})).items.find((x: any) => x.id === 'web-research').last30.runs >= 1);
-  // hello-search is a catalogue method's pipeline; design-rules a method's agentProfile.
-  assert.deepEqual(ok(await op('definition_usage', {kind: 'pipeline', id: 'hello-search'})).usedBy, [{kind: 'catalogue', id: 'catalogue'}]);
+  // search-basic is a catalogue method's pipeline; design-rules becomes a method's agentProfile.
+  assert.deepEqual(ok(await op('definition_usage', {kind: 'pipeline', id: 'search-basic'})).usedBy, [{kind: 'catalogue', id: 'catalogue'}]);
+  const cat = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'})), cc = content(cat);
+  cc.catalogue.methods.push({id: 'd10-guided', name: 'Guided discovery', pipeline: 'search-basic.json', scope: 'shared', agentProfile: 'design-rules'});
+  ok(await op('definition_save', {kind: 'catalogue', id: 'catalogue', baseRevision: cat.head, content: cc, message: 'D10 guided method'}));
   assert.ok(ok(await op('definition_usage', {kind: 'agent', id: 'design-rules'})).usedBy.some((k: any) => k.kind === 'catalogue'));
   // A draft run is not a run of its base revision.
   const g = ok(await op('definition_get', {kind: 'pipeline', id: 'web-research'}));

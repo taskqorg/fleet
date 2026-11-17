@@ -1,6 +1,7 @@
 # tests
 
 * `trial/*.test.ts`, `go/*.test.ts`: outside tests of the Go coordinator over HTTP, run by `tests/go/run.sh` (part of `pnpm test`). `harness.ts` starts the binary on a fresh Postgres database; `s3-fake.ts` is the fake store.
+* `fixtures/projects/`: the projects `hello-world` and `hello-world-alt` the tests run against. No deployment ships them: `harness.ts` (`testConfig`) and the coordinator's Go tests (`testConfigDir`) start the coordinator on a fresh copy of `config/` with these added.
 * `ui/*.test.ts`: unit tests for `packages/ui` and the app, run by `pnpm test`. `*.check.ts` and `*.check.mjs` are browser checks against the Go binary (`seed.ts` writes their fixtures).
 * [`performance/`](performance/README.md): deterministic synthetic interface fixture/manifest, isolated coordinator/PostgreSQL and separate Chromium workload driver. Full capacity runs require reserved Linux/browser placement; ordinary CI runs only its small pure fixture assertions, not heavy load. Original-reference, alternate-profile, deployed/live and missing proof stay separate.
 * `executor/*.test.ts`: MCP adapter tests (captured stdio replay, artifact path confinement) against the Go executor binary (`FLEET_EXECUTOR_BIN`, else `go build`). The executor's own tests are `go test ./executor` in `go/`.

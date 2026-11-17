@@ -74,7 +74,7 @@ Keep scenario-led design, shared primitives, explicit uncertainties and experime
 
 ## Proposed next package
 
-Use the [Hello World website exercise](website-example.md) first: one shared developer configuration, a short project specification, ordinary tools and an accessible preview. A pipeline is optional. Describe resolved inputs, representative tool interactions and a run history supporting adherence review. Then test alternate hosts/harnesses and context associations from F3/F4. CSGO follows later for domain complexity.
+Use a small website exercise first: one shared developer configuration, a short project specification, ordinary tools and an accessible preview. A pipeline is optional. Describe resolved inputs, representative tool interactions and a run history supporting adherence review. Then test alternate hosts/harnesses and context associations from F3/F4. CSGO follows later for domain complexity.
 
 First produce inspectable definitions and example exchanges, not a universal schema or a product UI. Then perform a bounded runtime qualification as a separately authorized step. Successful coverage of this package would justify choosing implementation technologies and a first vertical slice; it would not qualify the whole distributed system.
 

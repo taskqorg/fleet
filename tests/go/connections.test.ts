@@ -306,23 +306,23 @@ test('P1 pipeline run is idempotent by requestId and refuses a changed body (req
   if (!connections.some((entry:any)=>entry.name==='tavily')) ok(await op('connections_create',{name:'tavily',provider:'tavily'}));
   ok(await op('connections_set_access',{connection:'tavily',access:{projects:['*']}}));
   const requestId = randomUUID();
-  const a = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
-  const b = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}}));
+  const a = ok(await call('POST', '/api/pipelines/search-basic/runs', {requestId, example: {}}));
+  const b = ok(await call('POST', '/api/pipelines/search-basic/runs', {requestId, example: {}}));
   assert.equal(a.id, b.id);
   // A run is read only in its own project's scope (risk: pipeline_get without projectId returned any run).
   assert.equal((await op('pipeline_get', {runId: a.id}, OUTSIDER)).status, 404);
   assert.equal(ok(await op('pipeline_get', {runId: a.id})).id, a.id);
-  assert.equal((await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {query: 'x'}})).status, 409);
-  assert.equal((await call('POST', '/api/pipelines/hello-search/runs', {requestId: randomUUID(), bogus: 1})).status, 400);
+  assert.equal((await call('POST', '/api/pipelines/search-basic/runs', {requestId, example: {query: 'x'}})).status, 409);
+  assert.equal((await call('POST', '/api/pipelines/search-basic/runs', {requestId: randomUUID(), bogus: 1})).status, 400);
   // A missing reference fails the step before any call: problem ref:<path>.
-  const done = await until(async () => { const r = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId, example: {}})); return r.state !== 'running' ? r : undefined; }, 'run ends');
+  const done = await until(async () => { const r = ok(await call('POST', '/api/pipelines/search-basic/runs', {requestId, example: {}})); return r.state !== 'running' ? r : undefined; }, 'run ends');
   assert.equal(done.state, 'failed'); assert.equal(done.observedSteps[0].problem, 'ref:example.query');
 });
 
 test('P2 api step without a usable connection fails as infra, and an unanswered call is unknown, never replayed (requirement: docs/designs/fleet-asset-pipelines.md; risk: a charged call sent twice)', async () => {
   // No connection named tavily-less: refused at mint, nothing is sent.
   const seenBefore = seen.length;
-  const none = await until(async () => { const r = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId: 'p2a', example: {query: 'q'}})); return r.state !== 'running' ? r : undefined; }, 'run ends');
+  const none = await until(async () => { const r = ok(await call('POST', '/api/pipelines/search-basic/runs', {requestId: 'p2a', example: {query: 'q'}})); return r.state !== 'running' ? r : undefined; }, 'run ends');
   // tavily may exist from an import; then the call reaches the gateway and is unknown. Either way never "completed".
   if (seen.length === seenBefore) { assert.equal(none.state, 'failed'); assert.equal(none.observedSteps[0].problem, 'infra:connection-unavailable'); }
   // With a usable connection the gateway sees one call with a run token; 502 provider-timeout leaves the outcome unknown.
@@ -333,7 +333,7 @@ test('P2 api step without a usable connection fails as infra, and an unanswered 
   }, 'tavily connection');
   assert.equal(c.name, 'tavily');
   const n = seen.length;
-  const r = await until(async () => { const x = ok(await call('POST', '/api/pipelines/hello-search/runs', {requestId: 'p2b', example: {query: 'q'}})); return x.state !== 'running' ? x : undefined; }, 'run ends');
+  const r = await until(async () => { const x = ok(await call('POST', '/api/pipelines/search-basic/runs', {requestId: 'p2b', example: {query: 'q'}})); return x.state !== 'running' ? x : undefined; }, 'run ends');
   assert.deepEqual([r.state, r.observation], ['failed', 'unconfirmed']); assert.equal(r.observedSteps[0].problem, 'unknown:provider-timeout');
   assert.equal(seen.length - n, 1, 'one call, not replayed');
   assert.match(seen.at(-1)!, /^Bearer \S+$/);
@@ -353,7 +353,7 @@ test('P3 pipeline_run waits for the run of the project method and is idempotent 
 test('L1 Lab registry and experiment validation (requirement: docs/designs/fleet-lab.md; risk: an experiment created over an unknown example or pipeline)', async () => {
   const reg = ok(await call('GET', '/api/lab/registry'));
   assert.ok(reg.useCases.length > 0 && reg.useCases.every((u: any) => typeof u.id === 'string'));
-  assert.equal((await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'hello-search', examples: ['nope'], variants: [{label: 'a'}]})).status, 400);
+  assert.equal((await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'search-basic', examples: ['nope'], variants: [{label: 'a'}]})).status, 400);
   assert.equal((await call('POST', '/api/lab/experiments', {kind: 'loop'})).status, 400);
   assert.equal((await call('POST', '/api/lab/experiments', {kind: 'single', projectId: 'hello-world', pipelineId: 'no-such-pipeline', examples: ['x'], variants: [{label: 'a'}]})).status >= 400, true);
   assert.equal((await call('GET', '/api/lab/experiments/no-such')).status, 404);
@@ -733,9 +733,9 @@ test('L2 missing primary evidence stops a loop without optional no_gain (require
   const example = JSON.parse(readFileSync('config/lab/examples/fleet-typed-decision-smoke.json', 'utf8'));
   example.version = 7000000 + Math.floor(Math.random() * 1e8);
   const {examples: [pin]} = ok(await op('lab_examples_add', {examples: [example], approved: true}));
-  // hello-search expects example.query, which a judge's input intentionally does not contain: it fails before any provider call.
+  // search-basic expects example.query, which a judge's input intentionally does not contain: it fails before any provider call.
   const exp = ok(await op('lab_experiment_create', {kind: 'loop', projectId: 'hello-world', pipelineId: 'typed-decision', examples: [pin.artifactId], variants: [{label: 'baseline'}], repeats: 1, goal: 'Protect loop primary evidence', hypothesis: 'Only complete current scores can advance a loop',
-    evaluators: [{kind: 'judge', ref: 'hello-search', form: 'pass_fail'}], primaryEvaluator: 'judge:hello-search:pass_fail',
+    evaluators: [{kind: 'judge', ref: 'search-basic', form: 'pass_fail'}], primaryEvaluator: 'judge:search-basic:pass_fail',
     strategy: {generator: {kind: 'list', params: {variants: [{label: 'extra', overrides: {}}]}}, allocator: {kind: 'full'}}}));
   ok(await op('lab_experiment_action', {experimentId: exp.id, action: 'launch'}));
   const done: any = await until(async () => { const x = ok(await op('lab_experiment_get', {experimentId: exp.id})); return ['done', 'stopped'].includes(x.state) ? x : undefined; }, 'loop missing primary');
@@ -835,7 +835,7 @@ test('Catalogue reports a compatible observed partial mean and keeps banded sour
   const banded = await create('banded-evidence', {prompt: 'Catalogue banded fixture', bands: {yes: 0.95, no: 0.05}});
   const collisionHead = ok(await op('definition_get', {kind: 'catalogue', id: 'catalogue'}));
   const collisionContent = structuredClone(collisionHead.content);
-  collisionContent.catalogue.methods.push({id: 'banded-ref-collision', name: 'Other executable', scope: 'hello-world', pipeline: 'hello-search.json', configRef: banded.variants[0].config_ref});
+  collisionContent.catalogue.methods.push({id: 'banded-ref-collision', name: 'Other executable', scope: 'hello-world', pipeline: 'search-basic.json', configRef: banded.variants[0].config_ref});
   ok(await op('definition_save', {kind: 'catalogue', id: 'catalogue', baseRevision: collisionHead.head, content: collisionContent, message: 'Explicit ref collision fixture'}));
   const b = ok(await op('lab_promote', {experimentId: banded.id, variant: 'banded-evidence'}));
   assert.equal(b.method.overrides.bands, undefined);

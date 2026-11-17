@@ -10,8 +10,6 @@ Each use case has a stable anchor (`#uc1` … `#uc11`) that never changes when a
 
 Status: accepted. Source: this section; Lab registry entry `fleet:UC1` in [`config/lab/use-cases/fleet.json`](../config/lab/use-cases/fleet.json).
 
-Use the [Hello World example](website-example.md) as the first representative design exercise, then progress to deployment, revisions, fixes and more complex pages. Its example exchanges are not a universal required workflow.
-
 An operator wants a new product page in an existing project. Project context and rules are available; the operator opens an ordinary agent session with the PM role.
 
 ### Work flow

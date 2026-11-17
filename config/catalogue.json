@@ -6,19 +6,6 @@
       "name": "Basic source discovery",
       "pipeline": "search-basic.json",
       "scope": "shared"
-    },
-    {
-      "id": "hello-search",
-      "name": "Hello World source discovery",
-      "pipeline": "hello-search.json",
-      "scope": "hello-world"
-    },
-    {
-      "agentProfile": "design-rules",
-      "id": "hello-guided",
-      "name": "Guided Hello World delivery",
-      "pipeline": "hello-search.json",
-      "scope": "hello-world"
     }
   ],
   "sharedDefault": "search-basic"
