@@ -112,10 +112,6 @@ export const setWidth = (key: string, px: number) =>
 const here = new Map<string, string>();
 onClear.add(() => here.clear());
 export function noteView(section: string, url: string) { here.set(section, url); }
-export function saveView(section: string) {
-  const p = viewPatch(section);
-  if (p) savePrefs(p.change, p.patch);
-}
 type Pending = { change: (s: Settings) => Partial<Settings>; patch: Patch };
 function viewPatch(section: string): Pending | null {
   const url = here.get(section);
@@ -159,10 +155,10 @@ function groupsPatch(): Pending | null {
   }, patch: { listGroups: patch } };
 }
 /**
- * The page hides or goes away (visibilitychange hidden, pagehide): the section's list view and the unsent group toggles
- * go in one request with keepalive, so it outlives the page.
+ * The person leaves a section, or the page hides or goes away (visibilitychange hidden, pagehide; keepalive, so the
+ * request outlives the page): the section's list view and the unsent group toggles go in one request.
  */
-export function saveOnLeave(section: string | null) {
+export function saveOnLeave(section: string | null, keepalive = true) {
   const ps = [section ? viewPatch(section) : null, groupsPatch()].filter((p): p is Pending => !!p);
-  if (ps.length) savePrefs(s => Object.assign({}, ...ps.map(p => p.change(s))), Object.assign({}, ...ps.map(p => p.patch)), true);
+  if (ps.length) savePrefs(s => Object.assign({}, ...ps.map(p => p.change(s))), Object.assign({}, ...ps.map(p => p.patch)), keepalive);
 }

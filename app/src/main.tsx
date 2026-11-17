@@ -11,7 +11,7 @@ import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalid
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
 import { preferencesTouched } from './invalidation.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset, noteView, saveView, sectionPath, saveOnLeave, saveListGroups } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave } from './prefs.ts';
 import { useDoc } from './store.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
@@ -156,7 +156,7 @@ function App() {
     if (access.value.state !== 'open' || !prefsRead.value || !NAV.some(n => n.id === current)) return;
     const parsed = (VIEWS as string[]).includes(current) ? parseView(loc + (query ? '?' + query : '')) : null;
     noteView(current, parsed ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + current);
-    if (left.current && left.current !== current) { saveView(left.current); saveListGroups(); }
+    if (left.current && left.current !== current) saveOnLeave(left.current, false);
     left.current = current;
   }, [loc, query, access.value.state, prefsRead.value]);
   useEffect(() => {

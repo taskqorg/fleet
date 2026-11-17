@@ -206,11 +206,6 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     const header = (k: string) => page.locator(`.vl-row[data-key="g:${k}"] .group-h`);
     await page.goto(origin + '/tasks?group=state'); await header('3').waitFor();
     rule(N, await header('3').getAttribute('aria-expanded') === 'true', 'In progress is not open by default');
-    let settingsInFlight = 0;
-    const isSet = (r: { url(): string }) => r.url().endsWith('/api/ops/person_settings_set');
-    page.on('request', r => { if (isSet(r)) settingsInFlight++; });
-    page.on('requestfinished', r => { if (isSet(r)) settingsInFlight--; }); page.on('requestfailed', r => { if (isSet(r)) settingsInFlight--; });
-    const saved = page.waitForResponse(r => r.url().endsWith('/api/ops/person_settings_set') && (r.request().postData() ?? '').includes('listGroups'));
     await header('3').click(); await header('4').click(); await header('7').waitFor();
     rule(N, await header('7').getAttribute('aria-expanded') === 'false', 'Completed does not start collapsed under state grouping');
     await header('7').click();
@@ -220,8 +215,10 @@ async function run(N: number, browser: Awaited<ReturnType<typeof chromium.launch
     const RECORD = `window.__groups = []; const tick = () => { const s = ['3', '4', '7'].map(k => document.querySelector('.vl-row[data-key="g:' + k + '"] .group-h')?.getAttribute('aria-expanded') ?? '-').join(','); if (window.__groups.at(-1) !== s) window.__groups.push(s); requestAnimationFrame(tick); }; requestAnimationFrame(tick);`;
     const flashed = (seen: string[]) => seen.filter(s => s.split(',').some((x, i) => x !== '-' && x !== want.split(',')[i]));
     await page.locator('.rail [data-id="hosts"] a').first().click(); await page.waitForURL('**/hosts**');
-    await saved; // leaving the section sent the toggles without waiting for the debounce
-    for (let i = 0; i < 100 && settingsInFlight; i++) await page.waitForTimeout(50); // every toggle reached the server
+    // Every toggle reached the server.
+    const stored = () => page.evaluate(() => fetch('/api/ops/person_settings_get', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(r => r.json()).then(s => JSON.stringify(s.listGroups?.['tasks:state'] ?? [])));
+    for (let i = 0; i < 100 && await stored() !== '["3","4","7"]'; i++) await page.waitForTimeout(50);
+    rule(N, await stored() === '["3","4","7"]', `leaving the section did not store the toggles: ${await stored()}`);
     const returned = await page.evaluate(async rec => {
       (0, eval)(rec); (document.querySelector('.rail [data-id="tasks"] a') as HTMLElement).click();
       for (let f = 0; f < 300 && !(window as any).__groups.at(-1)?.endsWith('true'); f++) await new Promise(r => requestAnimationFrame(r));
