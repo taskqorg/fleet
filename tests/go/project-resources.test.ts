@@ -12,6 +12,8 @@ test('prepared resource processor qualifies against isolated PostgreSQL; off res
  const env={FLEET_RESOURCE_PROCESSOR:'off',FLEET_LOST_AFTER_MS:'3600000'};
  const c=await startCoordinator({name:'resource-processor',env});
  try{
+  // Queue tables keep their empty tail: truncation's ACCESS EXCLUSIVE lock stalls capture and claims (migration 65).
+  assert.equal(c.sql("SELECT string_agg(relname,',' ORDER BY relname) FROM pg_class WHERE relname IN ('resource_work','resource_work_scope','wake_outbox') AND 'vacuum_truncate=false'=ANY(reloptions)").trim(),'resource_work,resource_work_scope,wake_outbox');
   c.sql("INSERT INTO execution(id,kind,state,project_id) VALUES('off-restart','tool_run','succeeded','OFF')");
   const id=c.sql("SELECT work_id FROM resource_work WHERE execution_id='off-restart'").trim();
   await c.restart();
