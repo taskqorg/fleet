@@ -876,7 +876,15 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 		}
 		field := rest[start+1 : start+length]
 		var value string
-		if json.Unmarshal(body[field], &value) != nil || value == "" {
+		if json.Unmarshal(body[field], &value) != nil {
+			// A whole number (a page offset sent as 50, not "50") is taken as its digits.
+			var n json.Number
+			if json.Unmarshal(body[field], &n) != nil {
+				return "", false
+			}
+			value = n.String()
+		}
+		if value == "" {
 			return "", false
 		}
 		if pattern, ok := t.PathPatterns[field]; ok {

@@ -599,7 +599,7 @@ func TestYouTrackCatalogue(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		got <- seen{r.Method, r.URL.Path, r.URL.Query().Get("query"), r.URL.Query().Get("$skip"), r.Header.Get("Authorization"), string(b)}
-		if strings.Contains(string(b), "State Done") {
+		if strings.Contains(string(b), "State Done") || r.URL.Path == "/api/issues/TGT-403" {
 			w.WriteHeader(403)
 			io.WriteString(w, `{"error":"forbidden"}`)
 			return
@@ -656,7 +656,21 @@ func TestYouTrackCatalogue(t *testing.T) {
 	}
 	<-got
 	lines, _ := gw.spool()
-	expect(t, lines[len(lines)-1]["keyProblem"], nil, "a 403 is not a key problem")
+	last := lines[len(lines)-1]
+	expect(t, []any{last["tool"], last["status"], last["keyProblem"]}, []any{"command", float64(403), nil}, "a 403 on a write is not a key problem")
+	// A 403 on a read can mean the key lost access, so it is still recorded on the key.
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/issue_get", "Bearer "+testToken, `{"issue":"TGT-403"}`); status != 403 {
+		t.Fatalf("forbidden read: %d", status)
+	}
+	<-got
+	lines, _ = gw.spool()
+	last = lines[len(lines)-1]
+	expect(t, []any{last["tool"], field(last, "keyProblem", "key")}, []any{"issue_get", fp("invented-youtrack-key")}, "a 403 on a read is a key problem")
+	// A page offset sent as a number is taken as its digits.
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/issues_search", "Bearer "+testToken, `{"query":"a","skip":100}`); status != 200 {
+		t.Fatalf("numeric skip: %d", status)
+	}
+	expect(t, (<-got).skip, "100", "numeric skip")
 	if len(tools) != 8 {
 		t.Fatalf("youtrack tools: %v", tools)
 	}
