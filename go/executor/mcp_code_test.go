@@ -23,9 +23,11 @@ type codeClient struct {
 
 func newCodeClient(t *testing.T, spec M) *codeClient {
 	t.Helper()
-	if _, err := codeNode(); err != nil {
+	node, sandbox, err := codeHost()
+	if err != nil {
 		t.Skip(err.Error())
 	}
+	spec["node"], spec["sandbox"] = node, sandbox
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	done := make(chan error, 1)
@@ -39,7 +41,7 @@ func newCodeClient(t *testing.T, spec M) *codeClient {
 		}
 	})
 	sc := bufio.NewScanner(outR)
-	sc.Buffer(nil, 64<<20)
+	sc.Buffer(nil, 256<<20)
 	return &codeClient{t: t, in: inW, out: sc}
 }
 
@@ -136,7 +138,7 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	if enc(r["value"]) != enc([]any{"tool-not-granted", "connection-not-granted", "no-fleet-tools"}) || calls.Load() != before {
 		t.Fatalf("ungranted calls: %v, gateway calls %d", r["value"], calls.Load()-before)
 	}
-	if r, _ := c.code(`return (await conn.web.tools()).map(t => t.name)`); enc(r["value"]) != `["search","broken"]` {
+	if r, _ := c.code(`return (await conn.web.$tools()).map(t => t.name)`); enc(r["value"]) != `["search","broken"]` {
 		t.Fatalf("tools: %v", r["value"])
 	}
 }
@@ -160,22 +162,47 @@ func TestCodeModeDetachAndPoll(t *testing.T) {
 // Risk: code writes, runs commands or opens the network outside the harness sandbox, so code mode adds authority
 // (fleet-code-mode.md, authority).
 func TestCodeModePermissions(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer srv.Close()
 	dir := t.TempDir()
 	c := newCodeClient(t, M{"dir": dir, "read": []any{dir}})
 	src := `const fs = require("node:fs"); const out = {}
 		try { fs.writeFileSync(` + enc(filepath.Join(dir, "x")) + `, "1"); out.write = "allowed" } catch (e) { out.write = e.code }
 		try { require("node:child_process").execSync("true"); out.exec = "allowed" } catch (e) { out.exec = e.code }
 		out.read = fs.readdirSync(` + enc(dir) + `).length
-		for (const m of ["node:net", "http", "node:dns"]) try { require(m); out[m] = "allowed" } catch (e) { out[m] = e.code }
-		try { await import("node:https"); out.import = "allowed" } catch (e) { out.import = e.code }
-		out.fetch = typeof fetch
-		try { process.binding("tcp_wrap"); out.binding = "allowed" } catch (e) { out.binding = e.code }
+		try { await fetch(` + enc(srv.URL) + `); out.fetch = "allowed" } catch (e) { out.fetch = "refused" }
+		out.raw = await new Promise(done => {
+			const r = new (require("_http_client").ClientRequest)(` + enc(srv.URL) + `, () => done("allowed"))
+			r.on("error", () => done("refused")); r.end() })
 		return out`
 	r, bad := c.code(src)
-	const denied = `"ERR_ACCESS_DENIED"`
-	if bad || enc(r["value"]) != `{"binding":`+denied+`,"exec":`+denied+`,"fetch":"undefined","http":`+denied+`,"import":`+denied+`,"node:dns":`+denied+`,"node:net":`+denied+`,"read":0,"write":`+denied+`}` {
-		t.Fatalf("permissions: %v %v", bad, r)
+	if bad || enc(r["value"]) != `{"exec":"ERR_ACCESS_DENIED","fetch":"refused","raw":"refused","read":0,"write":"ERR_ACCESS_DENIED"}` || hits.Load() != 0 {
+		t.Fatalf("permissions: %v %v, server hits %d", bad, r, hits.Load())
 	}
+}
+
+// Risk: one large line stalls the runtime, so every later call stays running (fleet-code-mode.md, code: output is not
+// cut).
+func TestCodeModeLargeValueAndConcurrentRequests(t *testing.T) {
+	c := newCodeClient(t, M{"dir": t.TempDir()})
+	if r, bad := c.code(`return "x".repeat(70e6).length`); bad || enc(r["value"]) != "70000000" {
+		t.Fatalf("setup: %v", r)
+	}
+	r, bad := c.code(`return "x".repeat(70e6)`)
+	if bad || len(jStr(r, "value")) != 70e6 {
+		t.Fatalf("large value: %v %d", bad, len(jStr(r, "value")))
+	}
+	// A ping sent while a code call runs is answered first.
+	io.WriteString(c.in, enc(M{"jsonrpc": "2.0", "id": 100, "method": "tools/call", "params": M{"name": "code", "arguments": M{"source": `await new Promise(r => setTimeout(r, 1500)); return 1`}}})+"\n")
+	io.WriteString(c.in, enc(M{"jsonrpc": "2.0", "id": 101, "method": "ping"})+"\n")
+	start := time.Now()
+	c.out.Scan()
+	first, _ := dec(c.out.Text())
+	if enc(jAt(first, "id")) != "101" || time.Since(start) > time.Second {
+		t.Fatalf("ping waited for code: %v after %v", jAt(first, "id"), time.Since(start))
+	}
+	c.out.Scan()
 }
 
 // Risk: a dead runtime hangs its job, or a new runtime hides that state was lost (fleet-code-mode.md, unknown outcomes).
@@ -211,7 +238,7 @@ func TestCodeModeFleetResults(t *testing.T) {
 
 	c := newCodeClient(t, M{"dir": t.TempDir(), "journal": filepath.Join(t.TempDir(), "journal.sqlite"),
 		"context": M{"commandId": "cmd", "executionId": "ex", "hostId": "h"}})
-	r, bad := c.code(`const names = (await fleet.tools()).map(t => t.name)
+	r, bad := c.code(`const names = (await fleet.$tools()).map(t => t.name)
 		let code; try { await fleet.task_create({}) } catch (e) { code = e.code }
 		return {start: names.includes("session_start"), project: names.includes("task_create"), code}`)
 	if bad || enc(r["value"]) != `{"code":"tool-not-granted","project":false,"start":true}` {
@@ -222,13 +249,17 @@ func TestCodeModeFleetResults(t *testing.T) {
 // Risk: `only` leaves the direct servers, a read-restricted Claude profile reads files through code, or code mode starts
 // with nothing to bridge (fleet-code-mode.md, profile setting).
 func TestCodeModeLaunchServers(t *testing.T) {
-	old := codeNode
-	defer func() { codeNode = old }()
-	codeNode = func() (string, error) { return "/node", nil }
+	old := codeHost
+	defer func() { codeHost = old }()
+	codeHost = func() (string, string, error) { return "/node", "/sandbox", nil }
 	granted := []any{M{"name": "web", "tools": []any{M{"name": "search"}}}}
 	launch := func(mode, harness string, profile M, journal string) (M, M, error) {
 		servers := M{"fleet": M{}, "web": M{}, "serena": M{}}
-		err := addCodeServer(servers, mode, harness, profile, journal, M{"commandId": "c"}, granted, map[string]bool{"web": true}, "/run.env", []string{"/work", "/input"})
+		var fleet *codeFleet
+		if journal != "" {
+			fleet = &codeFleet{journal, M{"commandId": "c"}}
+		}
+		err := addCodeServer(servers, mode, harness, profile, fleet, granted, map[string]bool{"web": true}, "/run.env", []string{"/work", "/input"})
 		if err != nil {
 			return servers, nil, err
 		}
@@ -253,8 +284,23 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	if _, _, err := launch("add", "codex", M{}, ""); err == nil || err.Error() != "codeMode needs Fleet tools or a connection" {
 		t.Fatalf("empty: %v", err)
 	}
-	codeNode = func() (string, error) { return "", errors.New("code-mode-unready: node is not installed") }
+	codeHost = func() (string, string, error) { return "", "", errors.New("code-mode-unready: node is not installed") }
 	if _, _, err := launch("add", "codex", M{}, "/journal"); err == nil || !strings.HasPrefix(err.Error(), "code-mode-unready") {
 		t.Fatalf("no node: %v", err)
+	}
+}
+
+// Risk: a journal failure after the request may be committed reaches code as a plain failure, so the code repeats the
+// mutation (fleet-code-mode.md, unknown outcomes).
+func TestCodeModeJournalErrorIsUnknown(t *testing.T) {
+	db, err := openJournal(filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := M{"commandId": "cmd", "executionId": "ex", "hostId": "h"}
+	s := &codeServer{db: db, ctx: ctx, fleet: map[string]bool{"message_send": true}}
+	db.Close()
+	if _, fail := s.bridge("fleet", "message_send", M{"text": "hi"}); jStr(fail, "outcome") != "unknown" || jStr(fail, "code") != "journal-error" {
+		t.Fatalf("closed journal: %v", fail)
 	}
 }

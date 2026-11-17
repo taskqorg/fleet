@@ -6,18 +6,6 @@ const readline = require('node:readline');
 const util = require('node:util');
 const { AsyncLocalStorage } = require('node:async_hooks');
 
-// No network: bridged calls go through the code server, so the runtime needs none, and a harness without network
-// (Codex without gitNetwork) gets none through code. Node 22's permission model has no network rule; this hook refuses
-// the network modules for require and import, and --permission already refuses process.binding.
-const offline = new Set(['net', 'http', 'https', 'http2', 'tls', 'dgram', 'dns', 'dns/promises', 'inspector', 'inspector/promises']);
-require('node:module').registerHooks({
-  resolve(specifier, context, next) {
-    if (offline.has(specifier.replace(/^node:/, ''))) throw Object.assign(new Error(`${specifier}: no network in code mode`), { code: 'ERR_ACCESS_DENIED' });
-    return next(specifier, context);
-  },
-});
-for (const k of ['fetch', 'WebSocket', 'EventSource']) delete globalThis[k];
-
 const out = process.stdout.write.bind(process.stdout);
 const send = (m) => out(JSON.stringify(m) + '\n');
 const job = new AsyncLocalStorage();
@@ -40,7 +28,8 @@ function call(server, tool, args) {
   });
 }
 
-// `then` stays undefined so `await fleet` or `await conn.x` is not taken for a promise.
+// `then` stays undefined so `await fleet` or `await conn.x` is not taken for a promise. `$tools` lists the tools; no
+// granted tool name starts with `$`.
 const tools = (server) => new Proxy({}, { get: (_, tool) => (typeof tool === 'string' && tool !== 'then' ? (args) => call(server, tool, args) : undefined) });
 const print = (...xs) => send({ type: 'print', job: job.getStore() ?? null, text: util.format(...xs) + '\n' });
 

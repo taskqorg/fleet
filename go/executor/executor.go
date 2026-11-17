@@ -1038,11 +1038,12 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		profiles = []any{}
 	}
 	fleetMCP := []any{}
-	var fleetContext any
+	var codeFleetTools *codeFleet
 	if fleetTools {
 		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
-		server := delegationServer(context, filepath.Join(e.root, "journal.sqlite"))
-		fleetContext = context
+		journal := filepath.Join(e.root, "journal.sqlite")
+		server := delegationServer(context, journal)
+		codeFleetTools = &codeFleet{journal, context}
 		fleetMCP = jArr(server, "tools")
 		servers["fleet"] = server
 	}
@@ -1104,15 +1105,24 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 	}
 	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
 	if mode := jStr(p, "agentConfig", "codeMode"); mode != "" {
-		var journal string
-		if fleetContext != nil {
-			journal = filepath.Join(e.root, "journal.sqlite")
-		}
-		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), journal, fleetContext, granted, gatewayConns, runFile, []string{work, inputDir}); err != nil {
+		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), codeFleetTools, granted, gatewayConns, runFile, []string{work, inputDir}); err != nil {
 			return fail(1, err.Error())
 		}
+		observed["codeMode"] = mode
 		if mode == "only" {
 			connectionTools = nil
+			if name == "codex" {
+				observed["fleetMcpTools"] = []any{}
+			}
+		}
+		if name != "codex" {
+			var direct []string
+			for _, k := range sortedKeys(servers) {
+				if !gatewayConns[k] { // as before code mode: the servers without the connection servers
+					direct = append(direct, k)
+				}
+			}
+			observed["fleetMcpTools"] = anyStrings(direct)
 		}
 	}
 	// Built-in web for pipeline agent steps: off unless the step's run sets webRoute builtin.

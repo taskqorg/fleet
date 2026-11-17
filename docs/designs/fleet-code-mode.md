@@ -57,9 +57,10 @@ Input: `{jobId: string, waitSeconds?: number}`.
 
 - `fleet.<tool>(args)` calls each tool of the `fleet` server for this execution: `session_start`, `session_fork`, `message_send`, `ask`, `execution_status`, `artifact_save`, the project operations, the director's operations and the others ([tool list](../../go/executor/mcp-tools.json)). The code server runs the same handler as the `fleet` server, with the same context and journal.
 - `conn["<connection>"].<tool>(args)` calls a granted connection's tool through the gateway with this run's token ([call methods](fleet-connections.md#5-call-methods)).
-- `fleet.tools()` and `conn["<connection>"].tools()` return the names, descriptions and input schemas. The agent looks up a tool there instead of loading every schema into its context.
+- `fleet.$tools()` and `conn["<connection>"].$tools()` return the names, descriptions and input schemas. The agent looks up a tool there instead of loading every schema into its context.
 - A bridge function returns the tool's result, parsed from JSON when the result is JSON. A tool error rejects the promise with `FleetCallError {tool, outcome, code, output}`.
 - Calls may run in parallel. The code server serves each bridge call on its own goroutine.
+- The code server also serves MCP requests concurrently: a long `code` call never delays a ping, a `poll` or a second `code` call.
 
 ## Authority
 
@@ -68,9 +69,10 @@ Code mode adds no authority. The code server bridges only the tools that the exe
 - The runtime runs with Node's permission model: `node --permission`. It reads the worktree and the execution input directory. It writes nothing, starts no child process, and loads no native addon or worker. Writes and commands go through the native harness tools under their own sandbox.
 - A Claude profile whose `tools` list has none of `Read`, `Grep`, `Glob` or `Bash` gets no file reads in the runtime.
 - The runtime environment has no run token, gateway URL or Access file. The code server keeps them, as the connection servers do ([per-run tokens](fleet-connections.md#4-per-run-tokens)).
-- The runtime has no network. Bridged calls go through the code server, so the runtime needs none, and a harness without network (Codex without `gitNetwork`) gets none through code. Node 22's permission model has no network rule, so a module hook refuses `net`, `http`, `https`, `http2`, `tls`, `dgram`, `dns` and `inspector` for both `require` and `import`, and the runtime deletes `fetch`, `WebSocket` and `EventSource`. `--permission` already refuses `process.binding`. This is a runtime rule, not an OS boundary.
+- The runtime has no network. Bridged calls go through the code server, so the runtime needs none, and a harness without network (Codex without `gitNetwork`) gets none through code. Node 22's permission model has no network rule, so the runtime runs inside an OS sandbox: `sandbox-exec` with `(deny network*)` on macOS, `bwrap --unshare-net` on Linux. Its stdin and stdout pipes to the code server still work.
 - File reads follow symlinks inside the read roots. That adds no authority: the same files are readable through the harness's own read tools, and the run file is readable by the same OS user anyway ([threat model](fleet-connections.md#4-per-run-tokens)).
-- The host needs Node 22.15 or later for that module hook. Without it, the launch fails with `code-mode-unready: node ...`. Not built: Node on PDS18, which has none today.
+- The host needs Node 22.13 or later (for `--permission`) and the sandbox tool. Without them, the launch fails with `code-mode-unready: <reason>`. Hosts without such a sandbox, such as Windows, cannot use code mode.
+- Not built: Node on PDS18, which has none today; `bwrap --unshare-net` works there for the `fleet-agent` user.
 
 ## Unknown outcomes
 
@@ -78,6 +80,7 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 
 - A Fleet mutation without an answer returns `{status: "pending", requestKey}`, as it does outside code. The code reads it later with `fleet.agent_tool_result({requestKey})`. The bridge never retries it.
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
+- A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent.
 - When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. The next `code` call starts a new runtime, and its reply says so: `restarted: true`.
 
 ## Observability
@@ -85,6 +88,7 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 - Each `code` and `poll` call is a harness tool call. It appears in the transcript blocks and tool metrics like any MCP tool ([harness blocks](../../go/executor/harness_blocks.go)).
 - Each bridged Fleet call is a journal request, and each connection call is a gateway `CallLine` and a `tool_run` row, the same as a direct call.
 - The `code` and `poll` replies carry `calls: [{tool, ms, outcome}]` for the job's bridged calls. A connection call shows as `<connection>.<tool>`.
+- The launch's observed harness record carries `codeMode`, and its MCP tool list shows the `code` server and no removed server.
 - Not built: one span per `code` call with child spans per bridged call.
 
 ## Coordination through code
@@ -125,4 +129,4 @@ Run from `go/`:
 go test ./executor -run CodeMode
 ```
 
-The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes and commands, refused network modules, a restarted runtime, and the launch servers for `add` and `only`. The runtime tests skip when the host has no Node 22.15 or later.
+The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes, commands and network (`fetch` and the internal `_http_client` reach no server), a 70 MB value, a ping answered during a running `code` call, a restarted runtime, a journal error as `unknown`, and the launch servers for `add` and `only`. The runtime tests skip when the host has no Node 22.13 or later or no sandbox tool.
