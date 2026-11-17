@@ -209,6 +209,12 @@ func init() {
 // executionStop: one stop command; an execution no host can confirm is settled here.
 func executionStop(q *Request, id string) (contract.ExecutionStopReply, error) {
 	var rep contract.ExecutionStopReply
+	// The execution row, locked: the dispatch claim locks it too (claimRow), so a claim and a stop never interleave
+	// between read and write, whatever advisory locks either holds. Unlocked, a claim committed between this read and the
+	// write below was overwritten (cancelled, yet preparing on a host) or overwrote the stop.
+	if err := exec(q, "SELECT 1 FROM execution WHERE id=$1 FOR UPDATE", id); err != nil {
+		return rep, err
+	}
 	e, err := get(q, id, "execution")
 	if err != nil {
 		return rep, err

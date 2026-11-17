@@ -776,6 +776,15 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 			if polling != "" && best.Host != polling {
 				continue
 			}
+			// Lock the row and read it again before the claim: a stop (or any writer) committed since the read above
+			// wins, and none commits between here and this claim. Only here: a row lock gives the pass a transaction id,
+			// which holds back the change stream until it ends (stream.go visible).
+			if e, err = claimRow(q, id); err != nil {
+				return err
+			}
+			if e == nil {
+				continue
+			}
 			delete(e, "waitReason")
 			delete(e, "waitDetail")
 			// A refused start ends this execution only: returning would fail the whole pass, and every later pass,
@@ -887,6 +896,22 @@ func (a *App) dispatchRun(q *Request, polling string) error {
 		}
 	}
 	return nil
+}
+
+// claimRow locks an execution's row for this transaction and returns it while it is still claimable (preparing, no host,
+// no stop requested), nil otherwise. executionStop takes the same row lock.
+func claimRow(q *Request, id string) (doc, error) {
+	if err := exec(q, "SELECT 1 FROM execution WHERE id=$1 FOR UPDATE", id); err != nil {
+		return nil, err
+	}
+	e, err := get(q, id, "execution")
+	if err != nil {
+		return nil, err
+	}
+	if e["dispatch"] == nil || e["hostId"] != nil || e["state"] != "preparing" || e["stopRequested"] == true {
+		return nil, nil
+	}
+	return e, nil
 }
 
 // openCauseQuestion opens a needs-you operator_decision question keyed by cause, addressed to one person.
