@@ -192,6 +192,10 @@ A run or test from a draft records `{kind, id, revision: <base>, contentSha, dra
 
 Lab variants keep `config_ref` (the hash of pipeline and overrides, `lab.go`) and the existing `execution.config_ref` column, unchanged in meaning. Their trial executions get `definitions` like any run, so an assessment points at exact revisions.
 
+### Delete
+
+`definition_delete {kind: agent|pipeline, id, preview}` (owner) removes a definition nothing uses: its state is `store-only` or `repository-deleted`, no definition names it (`definition_usage` `usedBy`), no unfinished execution pins it and no live Lab experiment (draft, running, paused) runs it. A shipped definition (`synced`, `ahead`, `repository-changed`) is refused: the next release would import it again; its file is deleted instead. The preview answers `refused` with the first reason; the confirm refuses with 409 and the same text. Like a deleted project, the row and its revisions stay (`deleted_at`, `retired_at`): the id is never reused (`definition_create` refuses it), executions keep the revisions they pinned, and the definition leaves every list, read, draft and run. Drafts of it go; one `setting-change` audit row records it.
+
 ### Rights
 
 Two roles, as in [fleet-people-access.md](fleet-people-access.md) "Operations per role". `architectOps` (`go/coordinator/people.go`) gains `definition_`, `agent_effective`, `agent_compatibility`, `agent_test` and `harness_models` (exact names, not an `agent_` prefix). So every definition read and write is architect only, as `profiles_list` is today; `agent_test` is architect only too, because it runs unsaved or new profile content. Exceptions:

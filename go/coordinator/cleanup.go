@@ -65,7 +65,7 @@ var referenceMap = []objectRef{
 	{table: "execution", column: "task_id", kind: "task", mode: refOwn},
 	{table: "execution", column: "experiment_id", kind: "experiment", mode: refOwn},
 	{table: "execution", column: "parent_execution_id", kind: "execution", mode: refOwn}, // child runs, pipeline steps, delegations
-	{table: "execution", column: "session_id", kind: "session", mode: refKeep},
+	{table: "execution", column: "session_id", kind: "session", mode: refOwn}, // a session takes its executions
 	{table: "execution", column: "host_id", kind: "host", mode: refKeep},
 	{table: "execution", column: "account_id", mode: refNone},
 	{table: "execution", column: "environment_id", mode: refNone},
@@ -78,7 +78,8 @@ var referenceMap = []objectRef{
 	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'executionId'"},   // events, commands, run tokens, conflicts
 	{table: "document", column: "data", kind: "session", mode: refOwn, expr: "data->>'sessionId'"},       // messages, transitions, queued messages
 	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'"}, // the sessions of a run's steps
-	{table: "document", column: "data", kind: "task", mode: refKeep, expr: "data->>'taskId'"},
+	// A session working for a task outlives it (session and task lifecycles are separate): the reference goes stale.
+	{table: "document", column: "data", kind: "task", mode: refNone, expr: "data->>'taskId'"},
 	{table: "document", column: "data", kind: "host", mode: refKeep, expr: "data->>'hostId'"},
 	{table: "document", column: "data", kind: "execution", mode: refKeep, expr: "data->>'createdByExecutionId'"},
 	{table: "document", column: "data", kind: "session", mode: refKeep, expr: "data->>'createdBySessionId'"},
@@ -139,7 +140,7 @@ var referenceMap = []objectRef{
 	{table: "question", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "question", column: "options", kind: "experiment", mode: refOwn, expr: "options->>'experiment_id'"}, // ratings
 	{table: "question", column: "data", kind: "experiment", mode: refOwn, expr: "data->>'experimentId'"},        // budget questions
-	{table: "question", column: "session_id", kind: "session", mode: refKeep},
+	{table: "question", column: "session_id", kind: "session", mode: refOwn},
 	{table: "question", column: "request_id", mode: refNone},
 	{table: "resource_build", column: "project_id", kind: "project", mode: refOwn},
 	{table: "resource_build", column: "after_execution_id", mode: refNone}, // a cursor
@@ -308,6 +309,17 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 // blockedBy: the first live row outside the cascade that keeps one of its objects, "" when none:
 // "<table>.<column> by <document kind or table> <row id>". One scan per table: its refKeep columns are ORed.
 func (c *cascade) blockedBy(q *Request) (string, error) {
+	// A session's executions that ran for a live task are that task's history: delete the task first.
+	if c.kind == "session" && len(c.sets["execution"]) > 0 {
+		row, err := first(q, `SELECT t.id FROM execution e JOIN task t ON t.id=e.task_id WHERE e.id=ANY($1) AND t.tombstoned_at IS NULL
+		  AND NOT t.id=ANY($2::text[]) AND (t.project_id IS NULL OR NOT t.project_id=ANY(fleet_deleted_projects())) LIMIT 1`, c.sets["execution"], nonNilStrs(c.sets["task"]))
+		if err != nil {
+			return "", err
+		}
+		if row != nil {
+			return "execution.task_id by task " + astr(row["id"]), nil
+		}
+	}
 	tables, refs := []string{}, map[string][]objectRef{}
 	for _, r := range referenceMap {
 		if r.mode != refKeep || len(c.sets[r.kind]) == 0 {
@@ -355,8 +367,13 @@ func hideDeleted(q *Request) error {
 // deleteRoot: the root row as the caller sees it; 404 when unknown, 409 when already deleted.
 func deleteRoot(q *Request, kind contract.DeleteKind, id string) error {
 	live, gone := "SELECT 1 FROM experiment WHERE id=$1", "SELECT 1 FROM experiment WHERE id=$1 AND tombstoned_at IS NOT NULL"
-	if kind == contract.DeleteKindProject {
+	switch kind {
+	case contract.DeleteKindProject:
 		live, gone = "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND deleted_at IS NULL", "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND deleted_at IS NOT NULL"
+	case contract.DeleteKindTask:
+		live, gone = "SELECT 1 FROM task WHERE id=$1", "SELECT 1 FROM task WHERE id=$1 AND tombstoned_at IS NOT NULL"
+	case contract.DeleteKindSession:
+		live, gone = "SELECT 1 FROM document WHERE kind='session' AND id=$1", "SELECT 1 FROM document WHERE kind='session' AND id=$1 AND tombstoned_at IS NOT NULL"
 	}
 	if err := showDeleted(q); err != nil {
 		return err
@@ -598,8 +615,15 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 // purgeRoots: the tombstoned objects of kind, oldest first. An experiment of a deleted project goes with its project.
 func purgeRoots(q *Request, kind contract.PurgeKind) ([]string, error) {
 	sql := "SELECT id FROM definition WHERE kind='project' AND deleted_at IS NOT NULL AND purged_at IS NULL ORDER BY deleted_at,id"
-	if kind == contract.PurgeKindExperiment {
+	switch kind {
+	case contract.PurgeKindExperiment:
 		sql = "SELECT id FROM experiment WHERE tombstoned_at IS NOT NULL AND NOT project_id=ANY(fleet_deleted_projects()) ORDER BY tombstoned_at,id"
+	case contract.PurgeKindTask:
+		sql = "SELECT id FROM task WHERE tombstoned_at IS NOT NULL AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) ORDER BY tombstoned_at,id"
+	case contract.PurgeKindSession:
+		// A trial step's session goes with its experiment (pipelineRunId), not as a root of its own.
+		sql = `SELECT id FROM document WHERE kind='session' AND tombstoned_at IS NOT NULL AND NOT data ? 'pipelineRunId'
+		  AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) ORDER BY tombstoned_at,id`
 	}
 	rs, err := queryRows(q, sql)
 	out := []string{}
@@ -763,7 +787,7 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		kind contract.PurgeKind
 		id   string
 	}
-	order := []contract.PurgeKind{contract.PurgeKindExperiment, contract.PurgeKindProject}
+	order := []contract.PurgeKind{contract.PurgeKindExperiment, contract.PurgeKindTask, contract.PurgeKindSession, contract.PurgeKindProject}
 	roots := []root{}
 	for _, kind := range order {
 		if !slices.Contains(kinds, kind) {

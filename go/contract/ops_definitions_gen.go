@@ -329,6 +329,55 @@ func (v *DefinitionCreateRequest) Validate() error {
 	return nil
 }
 
+// DefinitionDeleteReply: usedBy: definitions naming it; running: unfinished executions pinning it; experiments: live Lab experiments running it; refused: why it cannot be deleted now.
+type DefinitionDeleteReply struct {
+	Deleted     bool            `json:"deleted"`
+	Experiments []string        `json:"experiments"`
+	Id          string          `json:"id"`
+	Kind        DefinitionKind  `json:"kind"`
+	Refused     *string         `json:"refused,omitempty"`
+	Running     int64           `json:"running"`
+	State       DefinitionState `json:"state"`
+	UsedBy      []DefinitionKey `json:"usedBy"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDeleteReply) Validate() error {
+	if v.Experiments == nil {
+		return Missing("experiments")
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	if err := Check(&v.State, "state"); err != nil {
+		return err
+	}
+	if v.UsedBy == nil {
+		return Missing("usedBy")
+	}
+	for i := range v.UsedBy {
+		if err := Check(&v.UsedBy[i], "usedBy"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DefinitionDeleteRequest: Owner only (fleet-definition-editors.md, Delete). Deletes a definition nothing uses: an agent or pipeline in state store-only or repository-deleted that no definition names (definition_usage usedBy), no unfinished execution runs and no live Lab experiment runs. A shipped definition is refused: the repository would bring it back; delete its file. preview true changes nothing and answers refused with the reason; false refuses with 409 and that reason. The definition row and its revisions stay (retired and deleted), so the id is never reused; it leaves every list, read and run.
+type DefinitionDeleteRequest struct {
+	Id      string         `json:"id"`
+	Kind    DefinitionKind `json:"kind"`
+	Preview bool           `json:"preview"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *DefinitionDeleteRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
 type DefinitionDiffReply struct {
 	Fields  []FieldChange `json:"fields"`
 	Unified string        `json:"unified"`
@@ -1268,6 +1317,7 @@ func init() {
 		"agent_effective":          {Read: true, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"id\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"id\",\"projectId\"],\"type\":\"object\"}")},
 		"catalogue":                {Read: true, Long: false, Errors: []int{404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"definition_create":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"$comment\":\"Exactly one property, matching the kind.\",\"properties\":{\"agent\":{\"additionalProperties\":false,\"properties\":{\"collaborationTools\":{\"type\":\"boolean\"},\"connections\":{\"$comment\":\"At most 32 granted connection names.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"delegationProfiles\":{\"$comment\":\"At most 8 profile ids this profile may delegate to.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"effort\":{\"$comment\":\"Codex only (required there); null or absent for the other harnesses.\",\"type\":[\"string\",\"null\"]},\"fleetOperations\":{\"type\":\"boolean\"},\"fleetTools\":{\"type\":\"boolean\"},\"gitNetwork\":{\"$comment\":\"The agent may use the network for git.\",\"type\":\"boolean\"},\"harness\":{\"enum\":[\"codex\",\"claude\",\"antigravity\",\"acp\"],\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"instructionRole\":{\"$comment\":\"codex: developer (or absent); claude: system; antigravity and acp: user.\",\"type\":\"string\"},\"instructions\":{\"type\":\"string\"},\"mcpServers\":{\"$comment\":\"Unique named MCP selections with explicit tool allowlists; legacy design-rules data retained.\",\"items\":{\"additionalProperties\":false,\"properties\":{\"data\":{\"$comment\":\"Legacy design-rules experiment data, otherwise only tools: explicit unique tool names.\",\"type\":\"object\"},\"id\":{\"$comment\":\"Named host MCP binding or design-rules; no executable or environment values.\",\"type\":\"string\"}},\"required\":[\"id\",\"data\"],\"type\":\"object\"},\"type\":\"array\"},\"model\":{\"type\":\"string\"},\"settings\":{\"additionalProperties\":false,\"properties\":{\"includeDefaultCustomizations\":{\"$comment\":\"Only false is supported.\",\"type\":\"boolean\"},\"mode\":{\"enum\":[\"plan\",\"accept-edits\"],\"type\":\"string\"},\"sandbox\":{\"type\":\"boolean\"}},\"type\":\"object\"},\"skills\":{\"$comment\":\"At most 32 skill ids.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"tools\":{\"$comment\":\"Claude only: absent preserves ordinary native tools; an explicit list restricts them.\",\"items\":{\"enum\":[\"Read\",\"Edit\",\"Write\",\"Bash\",\"Glob\",\"Grep\",\"Task\",\"TaskStop\"],\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"id\",\"model\",\"instructions\",\"mcpServers\"],\"type\":\"object\"},\"catalogue\":{\"$comment\":\"The whole config/catalogue.json as it is today (one capability).\",\"properties\":{\"capability\":{\"type\":\"string\"},\"methods\":{\"items\":{\"properties\":{\"agentProfile\":{\"type\":\"string\"},\"configRef\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipeline\":{\"type\":\"string\"},\"scope\":{\"type\":\"string\"},\"sourceExperiment\":{\"type\":\"string\"}},\"required\":[\"id\",\"name\",\"scope\",\"pipeline\"],\"type\":\"object\"},\"type\":\"array\"},\"sharedDefault\":{\"type\":\"string\"}},\"required\":[\"capability\",\"methods\"],\"type\":\"object\"},\"pipeline\":{\"$comment\":\"A pipeline file (config/pipelines/\\u003cid\\u003e.json); validatePipeline is its full check.\",\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"resultStep\":{\"type\":\"string\"},\"steps\":{\"items\":{\"$comment\":\"kind api (connection, tool, arguments, mode, output), agent (profile, prompt) or script (command, timeout_ms, host); validatePipeline is the full check.\",\"properties\":{\"arguments\":{},\"command\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\"},\"host\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"mode\":{\"type\":\"string\"},\"output\":{},\"profile\":{\"type\":\"string\"},\"prompt\":{\"type\":\"string\"},\"recent_tool\":{\"type\":\"string\"},\"status_tool\":{\"type\":\"string\"},\"timeout_ms\":{\"type\":\"integer\"},\"tool\":{\"type\":\"string\"},\"when\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"equals\":{\"type\":\"boolean\"},\"kind\":{\"const\":\"boolean\"},\"source\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"step\":{\"type\":\"string\"}},\"required\":[\"step\",\"path\"],\"type\":\"object\"}},\"required\":[\"kind\",\"source\",\"equals\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"domain\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"equals\":{\"type\":\"string\"},\"kind\":{\"const\":\"enum\"},\"source\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"step\":{\"type\":\"string\"}},\"required\":[\"step\",\"path\"],\"type\":\"object\"}},\"required\":[\"kind\",\"source\",\"domain\",\"equals\"],\"type\":\"object\"}]}},\"required\":[\"id\",\"kind\"],\"type\":\"object\"},\"type\":\"array\"},\"version\":{\"type\":\"integer\"}},\"required\":[\"version\",\"id\",\"steps\"],\"type\":\"object\"},\"project\":{\"properties\":{\"contextFiles\":{\"items\":{\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\"},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\"}},\"type\":\"object\"},\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"},\"message\":{\"type\":\"string\"}},\"required\":[\"kind\",\"id\",\"content\",\"message\"],\"type\":\"object\"}")},
+		"definition_delete":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only (fleet-definition-editors.md, Delete). Deletes a definition nothing uses: an agent or pipeline in state store-only or repository-deleted that no definition names (definition_usage usedBy), no unfinished execution runs and no live Lab experiment runs. A shipped definition is refused: the repository would bring it back; delete its file. preview true changes nothing and answers refused with the reason; false refuses with 409 and that reason. The definition row and its revisions stay (retired and deleted), so the id is never reused; it leaves every list, read and run.\",\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"kind\",\"id\",\"preview\"],\"type\":\"object\"}")},
 		"definition_diff":          {Read: true, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"properties\":{\"from\":{\"$comment\":\"Exactly one of revision, draft (the caller's draft) or repository (the shipped file).\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"repository\":{\"type\":\"boolean\"},\"revision\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"},\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"},\"to\":{\"$comment\":\"Exactly one of revision, draft (the caller's draft) or repository (the shipped file).\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"repository\":{\"type\":\"boolean\"},\"revision\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}},\"required\":[\"kind\",\"id\",\"from\",\"to\"],\"type\":\"object\"}")},
 		"definition_draft_discard": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"}")},
 		"definition_draft_get":     {Read: true, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"enum\":[\"agent\",\"pipeline\",\"catalogue\",\"project\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"}")},

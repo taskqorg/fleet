@@ -170,9 +170,9 @@ func draftOf(q *Request, kind, id string) (*draftRow, error) {
 	return &d, err
 }
 
-// headOf: the definition's head row, nil when it does not exist.
+// headOf: the definition's head row, nil when it does not exist or was deleted (definition_delete).
 func headOf(q *Request, kind, id string, lock bool) (*definitionRow, error) {
-	where := "d.kind=$1 AND d.id=$2"
+	where := "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL"
 	if lock {
 		if _, err := q.tx.Exec(q.ctx(), "SELECT 1 FROM definition WHERE kind=$1 AND id=$2 FOR UPDATE", kind, id); err != nil {
 			return nil, err
@@ -268,7 +268,7 @@ func sideText(q *Request, kind, id string, s contract.DiffSide) (string, bool, e
 		if *s.Revision < 1 {
 			return "", false, fail(400, "revision: 1 or more")
 		}
-		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", *s.Revision, kind, id)
+		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL", *s.Revision, kind, id)
 		if err != nil || len(xs) == 0 {
 			if err == nil {
 				err = fail(404, "Unknown definition or revision")
@@ -451,6 +451,82 @@ func definitionCreate(q *Request, r *contract.DefinitionCreateRequest) (contract
 	return contract.DefinitionCreateReply{Revision: rev}, err
 }
 
+// definitionDelete (fleet-definition-editors.md, Delete): an agent or pipeline nothing uses goes from every list, read and
+// run. The row and its revisions stay (deleted_at, retired_at): the id is never reused (definition_create refuses it) and
+// executions that pinned a revision keep their history. A shipped definition is refused: the repository brings it back.
+func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract.DefinitionDeleteReply, error) {
+	out := contract.DefinitionDeleteReply{Kind: r.Kind, Id: r.Id, UsedBy: []contract.DefinitionKey{}, Experiments: []string{}}
+	if err := definitionKind(r.Kind); err != nil {
+		return out, err
+	}
+	if r.Kind != contract.DefinitionKindAgent && r.Kind != contract.DefinitionKindPipeline {
+		return out, fail(400, "kind: agent or pipeline (a project goes with object_delete; the catalogue exists once)")
+	}
+	head, err := headOf(q, string(r.Kind), r.Id, !r.Preview)
+	if err != nil || head == nil {
+		if err == nil {
+			err = fail(404, "Unknown definition")
+		}
+		return out, err
+	}
+	out.State = head.state()
+	if out.UsedBy, err = usedByDefinitions(q, string(r.Kind), r.Id); err != nil {
+		return out, err
+	}
+	col := "pipeline_id"
+	if r.Kind == contract.DefinitionKindAgent {
+		col = "profile_id"
+	}
+	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE "+col+"=$1 AND state IN ('preparing','running','waiting')", r.Id).Scan(&out.Running); err != nil {
+		return out, err
+	}
+	if r.Kind == contract.DefinitionKindPipeline {
+		rs, err := queryRows(q, "SELECT id FROM experiment WHERE pipeline_id=$1 AND state IN ('draft','running','paused') ORDER BY id", r.Id)
+		if err != nil {
+			return out, err
+		}
+		for _, x := range rs {
+			out.Experiments = append(out.Experiments, astr(x["id"]))
+		}
+	}
+	refused := ""
+	switch {
+	case out.State != contract.DefinitionStateStoreOnly && out.State != contract.DefinitionStateRepositoryDeleted:
+		refused = "shipped by the repository (" + head.Path + "): the next release would bring it back; delete the file instead"
+	case len(out.UsedBy) > 0:
+		names := []string{}
+		for _, k := range out.UsedBy {
+			names = append(names, string(k.Kind)+"/"+k.Id)
+		}
+		refused = "used by " + strings.Join(names, ", ")
+	case out.Running > 0:
+		refused = fmt.Sprintf("%d unfinished executions run it", out.Running)
+	case len(out.Experiments) > 0:
+		refused = "live Lab experiments run it: " + strings.Join(out.Experiments, ", ")
+	}
+	if refused != "" {
+		out.Refused = &refused
+	}
+	if r.Preview {
+		return out, nil
+	}
+	if refused != "" {
+		return out, fail(409, "Not deleted: "+refused)
+	}
+	if err := exec(q, "UPDATE definition SET deleted_at=now(),retired_at=coalesce(retired_at,now()) WHERE kind=$1 AND id=$2", r.Kind, r.Id); err != nil {
+		return out, err
+	}
+	if err := exec(q, "DELETE FROM definition_draft WHERE kind=$1 AND id=$2", r.Kind, r.Id); err != nil {
+		return out, err
+	}
+	if err := put(q, "setting-change", doc{"id": newID(), "target": "definition:" + string(r.Kind) + "/" + r.Id, "field": "deletedAt", "previous": nil, "value": nowMs(),
+		"actor": actor(q, "operator"), "at": nowMs(), "note": js(doc{"state": out.State, "head": head.Head})}); err != nil {
+		return out, err
+	}
+	out.Deleted = true
+	return out, nil
+}
+
 func definitionHistory(q *Request, r *contract.DefinitionHistoryRequest) (contract.DefinitionHistoryReply, error) {
 	out := contract.DefinitionHistoryReply{Revisions: []contract.Revision{}}
 	head, err := headOf(q, string(r.Kind), r.Id, false)
@@ -541,6 +617,7 @@ func init() {
 	gatedObjOp("definition_diff", true, typedOp(definitionDiff))
 	gatedObjOp("definition_save", false, typedOp(definitionSave))
 	gatedObjOp("definition_create", false, typedOp(definitionCreate))
+	operation("definition_delete", false, ownerFirst("Only the owner deletes", typedOp(definitionDelete)))
 	gatedObjOp("definition_history", true, typedOp(definitionHistory))
 	gatedObjOp("definition_export", true, typedOp(definitionExport))
 }

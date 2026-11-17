@@ -419,7 +419,7 @@ func definitionGet(q *Request, r *contract.DefinitionGetRequest) (contract.Defin
 			return out, fail(400, "revision: 1 or more")
 		}
 	}
-	xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", rev, string(r.Kind), r.Id)
+	xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL", rev, string(r.Kind), r.Id)
 	if err != nil {
 		return out, err
 	}
@@ -433,7 +433,7 @@ func definitionGet(q *Request, r *contract.DefinitionGetRequest) (contract.Defin
 	}
 	state := x.state()
 	if rev > 0 && rev != x.Head { // state is the definition's: compute it from its head
-		hs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", 0, string(r.Kind), r.Id)
+		hs, err := definitionRows(q, "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL", 0, string(r.Kind), r.Id)
 		if err != nil {
 			return out, err
 		}
