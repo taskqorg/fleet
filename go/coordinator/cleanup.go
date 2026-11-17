@@ -955,43 +955,58 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 			others = append(others, t)
 		}
 	}
-	// In batches of whole tasks (about 1,000 ids each), the deadline checked before each: a failed batch keeps only
-	// its own tasks and the ones after it.
-	if spanStore == nil { // no span store configured: no spans to delete
-		ids := []string{}
-		for _, t := range spanTasks {
-			ids = append(ids, astr(t["id"]))
-		}
-		if len(ids) > 0 {
-			if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-				return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=ANY($1)", ids)
-			}); err != nil {
-				return left, err
+	// The ids of every span task in chunks of 500 (each a URL parameter of one DELETE), the deadline checked before
+	// each; a failed chunk does not stop the next. A task goes once all its ids went; one partly done keeps the rest.
+	all := []string{}
+	for _, t := range spanTasks {
+		all = append(all, strs(t["executionIds"])...)
+	}
+	gone := map[string]bool{}
+	for i := 0; i < len(all) && !time.Now().After(deadline); i += 500 {
+		part := all[i:min(i+500, len(all))]
+		if spanStore != nil { // no span store configured: no spans to delete
+			if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
+				slog.Warn("purge: spans", "err", err)
+				continue
 			}
 		}
-		spanTasks = nil
+		for _, id := range part {
+			gone[id] = true
+		}
 	}
-	for len(spanTasks) > 0 {
-		batch, ids, taskIDs := 0, []string{}, []string{}
-		for batch < len(spanTasks) && (len(ids) == 0 || len(ids)+len(strs(spanTasks[batch]["executionIds"])) <= 1000) {
-			ids, taskIDs = append(ids, strs(spanTasks[batch]["executionIds"])...), append(taskIDs, astr(spanTasks[batch]["id"]))
-			batch++
-		}
-		if time.Now().After(deadline) {
-			left += int64(len(spanTasks))
-			break
-		}
-		if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(ids)}); err != nil {
-			slog.Warn("purge: spans", "err", err)
-			left += int64(len(spanTasks))
-			break
-		}
+	if len(spanTasks) > 0 {
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-			return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=ANY($1)", taskIDs)
+			for _, t := range spanTasks {
+				rest := []string{}
+				for _, id := range strs(t["executionIds"]) {
+					if !gone[id] {
+						rest = append(rest, id)
+					}
+				}
+				var err error
+				switch {
+				case len(rest) == 0:
+					err = exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
+				case len(rest) < len(strs(t["executionIds"])):
+					t["executionIds"] = rest
+					err = exec(q, "UPDATE document SET data=$2, updated_at=now() WHERE kind='purge-task' AND id=$1", t["id"], jsonBytes(t))
+				}
+				if err != nil {
+					return err
+				}
+			}
+			return nil
 		}); err != nil {
 			return left, err
 		}
-		spanTasks = spanTasks[batch:]
+		for _, t := range spanTasks {
+			for _, id := range strs(t["executionIds"]) {
+				if !gone[id] {
+					left++
+					break
+				}
+			}
+		}
 	}
 	for _, t := range others {
 		if time.Now().After(deadline) { // the rest waits for the next purge
