@@ -294,8 +294,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        jobs: [1, 2, 3, 4]
-        rep: [a, b]
+        jobs: [3, 4]
+        rep: [a, b, c, d]
     env:
       GOFLAGS: -mod=readonly
       FLEET_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123

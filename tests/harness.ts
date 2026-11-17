@@ -35,16 +35,12 @@ export const lit = (v: unknown): string => v === null || v === undefined ? 'NULL
 export type Coordinator = {base: string, secret: string, pid: number, sql: (text: string) => string, exited: () => boolean, stop: () => Promise<void>, restart: () => Promise<void>};
 
 // name: a database name suffix, so parallel users in one worktree do not share a database.
-// startPostgres: the shared local server, created and started on first use. Parallel callers start it once beforehand
-// (tests/go/run-files.ts): two first uses at once would both run initdb.
-export function startPostgres() {
-  if (ready()) return;
-  if (!existsSync(join(pgdata, 'PG_VERSION'))) { mkdirSync(pgdata, {recursive: true}); sh('initdb', ['-D', pgdata, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions']); }
-  // ponytail: max_connections 400 fits N=4 worktrees with one pool each; raise it for more parallel worktrees.
-  sh('pg_ctl', ['-D', pgdata, '-l', join(pgdata, 'server.log'), '-w', '-o', `-k ${pgdata} -p ${pgport} -c listen_addresses= -c max_connections=400`, 'start']);
-}
 export async function startCoordinator(o: {name?: string, env?: Record<string, string>, people?: string} = {}): Promise<Coordinator> {
-  startPostgres();
+  if (!ready()) {
+    if (!existsSync(join(pgdata, 'PG_VERSION'))) { mkdirSync(pgdata, {recursive: true}); sh('initdb', ['-D', pgdata, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--no-instructions']); }
+    // ponytail: max_connections 400 fits N=4 worktrees with one pool each; raise it for more parallel worktrees.
+    sh('pg_ctl', ['-D', pgdata, '-l', join(pgdata, 'server.log'), '-w', '-o', `-k ${pgdata} -p ${pgport} -c listen_addresses= -c max_connections=400`, 'start']);
+  }
   // deploy/infrastructure/fleet-postgres.sql itself, with only the database name changed (roles are per server).
   const db = 'fleet_trial_' + basename(root.replace(/\/$/, '')).replace(/\W/g, '_').toLowerCase().slice(0, 24) + '_' + createHash('sha256').update(root + (o.name ?? '')).digest('hex').slice(0, 6) + (o.name ? '_' + o.name.replace(/\W/g, '_').slice(0, 10) : '');
   const psql = (args: string[], input?: string) => sh('psql', [...pgArgs, '-v', 'ON_ERROR_STOP=1', '-q', ...args], input);
