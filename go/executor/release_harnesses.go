@@ -109,15 +109,16 @@ func probeCLIVersion(path string, sample *cliObservation) {
 	cmd.Env = []string{}
 	cmd.WaitDelay = time.Second
 	o, err := cmd.Output()
+	var observed *string
+	if err == nil {
+		if v := cliSemver.FindString(string(o)); v != "" {
+			observed = &v
+		}
+	}
 	cliObservationsMu.Lock()
 	defer cliObservationsMu.Unlock()
-	if cliObservations[path] != sample {
-		return
-	}
-	sample.at = time.Now()
-	if err == nil {
-		if observed := cliSemver.FindString(string(o)); observed != "" {
-			sample.version = &observed
-		}
+	if cliObservations[path] == sample {
+		sample.at = time.Now()
+		sample.version = observed
 	}
 }
