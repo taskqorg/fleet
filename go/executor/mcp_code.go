@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	_ "embed"
 	"errors"
@@ -38,6 +39,8 @@ type codeJob struct {
 	rt     *codeRuntime
 	output strings.Builder // output not yet replied
 	calls  []any           // calls not yet replied
+	busy   int             // bridged calls in flight
+	ended  *[3]any         // the runtime's done line (ok, value, error) while calls are in flight
 	done   chan struct{}
 	ok     bool
 	value  any
@@ -326,7 +329,7 @@ func codeArgv(spec any) ([]string, error) {
 		}
 	}
 	args = append(args, "-e", codeRuntimeJS)
-	return sandboxArgv(jStr(spec, "sandbox"), node, jArr(spec, "read"), args)
+	return sandboxArgv(jStr(spec, "sandbox"), jArr(spec, "read"), args)
 }
 
 // codeProfile is the macOS sandbox for the runtime: no network (Unix sockets included), no file writes except /dev/null,
@@ -336,7 +339,8 @@ const codeProfile = noNetworkProfile + `(deny file-write*)(allow file-write-data
 // sandboxArgv wraps a command in the OS sandbox: no network (Unix sockets included), no writes, no signals to other
 // processes. On Linux the sandbox has its own PID namespace and sees only the system directories, Node's own install and
 // the read roots, read-only, with its own /tmp, /proc and /dev.
-func sandboxArgv(sandbox, node string, read []any, args []string) ([]string, error) {
+// args[0] is Node's resolved path: on Linux only that file of its install is mounted.
+func sandboxArgv(sandbox string, read []any, args []string) ([]string, error) {
 	switch runtime.GOOS {
 	case "darwin":
 		return append([]string{sandbox, "-p", codeProfile}, args...), nil
@@ -345,11 +349,8 @@ func sandboxArgv(sandbox, node string, read []any, args []string) ([]string, err
 		for _, d := range []string{"/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc"} {
 			argv = append(argv, "--ro-bind-try", d, d)
 		}
-		if real, err := filepath.EvalSymlinks(node); err == nil {
-			prefix := filepath.Dir(filepath.Dir(real)) // <prefix>/bin/node
-			argv = append(argv, "--ro-bind", prefix, prefix)
-		}
-		argv = append(argv, "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp") // before the roots: a root may be under /tmp
+		argv = append(argv, "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp") // before the binds: one may be under /tmp
+		argv = append(argv, "--ro-bind", args[0], args[0])
 		for _, r := range read {
 			if p, ok := str(r); ok && p != "" {
 				argv = append(argv, "--ro-bind", p, p)
@@ -426,7 +427,18 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		}
 	case "done":
 		if j != nil {
-			s.finish(j, jAt(m, "ok") == true, jAt(m, "value"), jAt(m, "error"))
+			// A call started before the return (unawaited) is still part of the job: the final reply waits for it, so
+			// its outcome is in `calls`.
+			s.mu.Lock()
+			end := [3]any{jAt(m, "ok") == true, jAt(m, "value"), jAt(m, "error")}
+			wait := j.busy > 0
+			if wait {
+				j.ended = &end
+			}
+			s.mu.Unlock()
+			if !wait {
+				s.finish(j, end[0] == true, end[1], end[2])
+			}
 		}
 	case "call":
 		s.mu.Lock()
@@ -442,6 +454,9 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 			go rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": fail})
 			return
 		}
+		s.mu.Lock()
+		j.busy++
+		s.mu.Unlock()
 		go s.call(rt, j, m)
 	}
 }
@@ -459,15 +474,21 @@ func (s *codeServer) call(rt *codeRuntime, j *codeJob, m any) {
 	if fail != nil {
 		outcome = jStr(fail, "outcome")
 	}
-	s.mu.Lock()
-	j.calls = append(j.calls, M{"tool": label, "ms": time.Since(start).Milliseconds(), "outcome": outcome})
-	s.mu.Unlock()
 	reply := M{"type": "reply", "id": jAt(m, "id"), "ok": fail == nil, "value": value}
 	if fail != nil {
 		fail["tool"] = label
 		reply["error"] = fail
 	}
 	rt.send(reply)
+	s.mu.Lock()
+	j.calls = append(j.calls, M{"tool": label, "ms": time.Since(start).Milliseconds(), "outcome": outcome})
+	j.busy--
+	end := j.ended
+	last := j.busy == 0 && end != nil
+	s.mu.Unlock()
+	if last {
+		s.finish(j, end[0] == true, end[1], end[2])
+	}
 }
 
 func callError(outcome, code string, output any) M {
@@ -544,8 +565,11 @@ func mcpValue(r any) (any, M) {
 		}
 	}
 	if jStr(v, "status") == "pending-or-rejected" {
-		// request_child without a host answer: unknown; a retry with the same requestId is the same request.
-		return nil, callError("unknown", "pending", v)
+		if jAt(v, "response") == nil {
+			// request_child without a host answer: unknown; a retry with the same requestId is the same request.
+			return nil, callError("unknown", "pending", v)
+		}
+		return nil, callError("error", "tool-error", v) // the host answered and refused it
 	}
 	if jAt(r, "isError") == true {
 		if jStr(v, "status") == "pending" {
@@ -579,7 +603,7 @@ var codeHostProbe = func() func() codeHostResult {
 	return func() codeHostResult {
 		mu.Lock()
 		defer mu.Unlock()
-		if ready != nil {
+		if ready != nil && isFile(ready.node) && isFile(ready.sandbox) {
 			return *ready
 		}
 		node, sandbox, err := probeCodeHost()
@@ -593,10 +617,16 @@ var codeHostProbe = func() func() codeHostResult {
 
 func probeCodeHost() (node, sandbox string, err error) {
 	node, err = exec.LookPath("node")
+	if err == nil {
+		node, err = filepath.EvalSymlinks(node) // the binary itself: the Linux sandbox mounts only this file
+	}
 	if err != nil {
 		return "", "", errors.New("code-mode-unready: node is not installed")
 	}
-	out, err := exec.Command(node, "--version").Output()
+	// A probe that hangs (a stuck sandbox setup) fails the launch instead of holding every later one.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, node, "--version").Output()
 	v := strings.TrimSpace(string(out))
 	var major, minor int
 	// --permission (not only --experimental-permission): 22.13 or later in 22, 23.5 or later in 23, every later major.
@@ -611,9 +641,9 @@ func probeCodeHost() (node, sandbox string, err error) {
 		return "", "", errors.New("code-mode-unready: " + tool + " is not installed")
 	}
 	// The sandbox must start here: a host without network namespaces (Linux user-namespace limits) fails the launch.
-	argv, err := sandboxArgv(sandbox, node, nil, []string{node, "--permission", "-e", ""})
+	argv, err := sandboxArgv(sandbox, nil, []string{node, "--permission", "-e", ""})
 	if err == nil {
-		err = exec.Command(argv[0], argv[1:]...).Run()
+		err = exec.CommandContext(ctx, argv[0], argv[1:]...).Run()
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("code-mode-unready: %s does not start: %v", tool, err)

@@ -23,8 +23,15 @@ class FleetCallError extends Error {
 function call(server, tool, args) {
   const id = nextId++;
   return new Promise((resolve, reject) => {
+    let line;
+    try {
+      line = JSON.stringify({ type: 'call', job: job.getStore() ?? null, id, server, tool, args: args ?? {} });
+    } catch (e) {
+      const label = server.startsWith('conn:') ? server.slice(5) + '.' + tool : tool;
+      return reject(new FleetCallError({ tool: label, outcome: 'error', code: 'bad-arguments', output: String(e.message) }));
+    }
     pending.set(id, { resolve, reject });
-    send({ type: 'call', job: job.getStore() ?? null, id, server, tool, args: args ?? {} });
+    out(line + '\n');
   });
 }
 
@@ -55,7 +62,8 @@ globalThis.FleetCallError = FleetCallError;
 for (const k of ['log', 'info', 'warn', 'error', 'debug']) console[k] = print;
 // Raw writes keep their bytes: no added newline, typed arrays as text.
 process.stdout.write = (chunk, encoding, callback) => {
-  emit(typeof chunk === 'string' ? chunk : Buffer.from(chunk.buffer ?? chunk, chunk.byteOffset, chunk.byteLength).toString(typeof encoding === 'string' ? encoding : 'utf8'));
+  const bytes = typeof chunk === 'string' ? Buffer.from(chunk, typeof encoding === 'string' ? encoding : 'utf8') : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  emit(bytes.toString('utf8'));
   const done = typeof encoding === 'function' ? encoding : callback;
   if (typeof done === 'function') process.nextTick(done);
   return true;

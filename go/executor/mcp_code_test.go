@@ -101,7 +101,7 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 		w.Header().Set("x-fleet-call-id", "c")
 		switch r.URL.Path {
 		case "/v1/call/web/search":
-			time.Sleep(300 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 			w.Write([]byte(`{"results":[{"title":"a"},{"title":"b"}]}`))
 		case "/v1/call/web/broken":
 			w.Header().Set("x-fleet-error", "provider-502")
@@ -121,8 +121,8 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	if bad || enc(r["value"]) != "8" {
 		t.Fatalf("parallel search: %v %v", bad, r)
 	}
-	if d := time.Since(start); d > time.Second {
-		t.Fatalf("4 calls of 300 ms took %v: not parallel", d)
+	if d := time.Since(start); d > 1500*time.Millisecond {
+		t.Fatalf("4 calls of 500 ms took %v: not parallel (in a row: 2 s)", d)
 	}
 	if n := len(jArr(r, "calls")); n != 4 || jStr(jArr(r, "calls")[0], "tool") != "web.search" {
 		t.Fatalf("calls summary: %v", r["calls"])
@@ -150,6 +150,14 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 		t.Fatalf("$get/$call: %v %v", bad, r)
 	}
 
+	// A call started just before the return is part of the job: the final reply carries its outcome.
+	if r, _ := c.code(`conn.web.search({}); return 1`); len(jArr(r, "calls")) != 1 {
+		t.Fatalf("unawaited call before return: %v", r)
+	}
+	// Arguments that do not serialize reject as FleetCallError, not a raw TypeError.
+	if r, _ := c.code(`try { await conn.web.search({n: 1n}) } catch (e) { return [e.name, e.code, e.tool] }`); enc(r["value"]) != `["FleetCallError","bad-arguments","web.search"]` {
+		t.Fatalf("bigint: %v", r["value"])
+	}
 	// A call made after its job ended is refused, not sent.
 	before = calls.Load()
 	c.code(`setTimeout(() => conn.web.search({}).catch(e => { state.late = e.code + " " + e.tool }), 50); return 1`)
@@ -293,8 +301,8 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 	// A throw in a timer and a write callback keep the runtime and its state.
 	c.code(`state.n = 2; setTimeout(() => { throw new Error("late") }, 10)`)
 	r, bad = c.code(`await new Promise(r => setTimeout(r, 100)); await new Promise(r => process.stdout.write("w", r))
-		process.stdout.write("a"); process.stdout.write(new Uint8Array([98, 10])); return state.n`)
-	if bad || enc(r["value"]) != "2" || r["restarted"] != nil || r["output"] != "wab\n" {
+		process.stdout.write("a"); process.stdout.write(new Uint8Array([98, 10])); process.stdout.write("aGk=", "base64"); return state.n`)
+	if bad || enc(r["value"]) != "2" || r["restarted"] != nil || r["output"] != "wab\nhi" {
 		t.Fatalf("after timer throw: %v %v", bad, r)
 	}
 }
@@ -315,6 +323,10 @@ func TestCodeModeFleetResults(t *testing.T) {
 	child := mcpText(M{"status": "pending-or-rejected", "response": nil}, &no)
 	if _, fail := mcpValue(child); jStr(fail, "outcome") != "unknown" {
 		t.Fatalf("request_child without an answer: %v", fail)
+	}
+	refused := mcpText(M{"status": "pending-or-rejected", "response": M{"error": "no such profile"}}, &yes)
+	if _, fail := mcpValue(refused); jStr(fail, "outcome") != "error" {
+		t.Fatalf("request_child refused: %v", fail)
 	}
 
 	c := newCodeClient(t, M{"dir": t.TempDir(), "journal": filepath.Join(t.TempDir(), "journal.sqlite"),

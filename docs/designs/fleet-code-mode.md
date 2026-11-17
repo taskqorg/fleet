@@ -54,7 +54,7 @@ Input: `{jobId: string, waitSeconds?: number}`.
 - Replies with the job's final result, in the `code` reply shape, once the job ends.
 - Replies `status: "running"` with the text printed so far when `waitSeconds` (default 25, at most 50; 0 answers at once) pass first.
 - Each reply for a job carries only the output and `calls` added since that job's previous reply.
-- A final result is returned once. The code server then drops the job, so it keeps no delivered output or value, and a later `poll` of that `jobId` answers `unknown jobId`.
+- A final result is returned once. The code server then drops the job, so it keeps no delivered output or value, and a later `poll` of that `jobId` answers `unknown jobId`. An undelivered job keeps its output until it is polled or the execution ends.
 - `poll` without `jobId` lists the unfinished and undelivered jobs with their status.
 - `poll {reset: true}` stops the runtime, for code that never yields (`while (true) {}`). Every running job fails with `runtime-exited`, and `state` is lost.
 
@@ -76,18 +76,20 @@ Code mode adds no authority. The code server bridges only the tools that the exe
 - The runtime environment has no run token, gateway URL or Access file. The code server keeps them, as the connection servers do ([per-run tokens](fleet-connections.md#4-per-run-tokens)).
 - The runtime has no network. Bridged calls go through the code server, so the runtime needs none, and a harness without network (Codex without `gitNetwork`) gets none through code. Node 22's permission model has no network rule, so the runtime runs inside an OS sandbox. Its stdin and stdout pipes to the code server still work.
   - macOS: `sandbox-exec` with `(deny network*)`, which also refuses Unix sockets, plus `(deny file-write*)` except `/dev/null` and `(deny signal)` except to itself.
-  - Linux: `bwrap --unshare-net --unshare-ipc --unshare-pid`. The sandbox sees only the system directories, Node's own install directory and the read roots, all read-only, with its own `/tmp`, `/proc` and `/dev`. Host Unix sockets outside the read roots are unreachable, and other processes are invisible to signals.
+  - Linux: `bwrap --unshare-net --unshare-ipc --unshare-pid`. The sandbox sees only the system directories, the Node binary itself and the read roots, all read-only, with its own `/tmp`, `/proc` and `/dev`. A Node installed under the home directory therefore exposes no other file of it. Host Unix sockets outside the read roots are unreachable, and other processes are invisible to signals.
 - The OS sandbox, not only Node's permission model, refuses writes and signals: Node documents its model as a seat belt against mistakes, not a boundary against hostile code.
 - File reads follow symlinks inside the read roots. That adds no authority: the same files are readable through the harness's own read tools, and the run file is readable by the same OS user anyway ([threat model](fleet-connections.md#4-per-run-tokens)).
-- The host needs a Node with `--permission` (22.13 or later in 22, 23.5 or later in 23, any later major) and a sandbox that starts. The executor runs the sandbox to check it and keeps only a ready result, so a host made ready later needs no executor restart. Without them, the launch fails with `code-mode-unready: <reason>`, for example on Linux without user namespaces. Hosts without such a sandbox, such as Windows, cannot use code mode.
+- The host needs a Node with `--permission` (22.13 or later in 22, 23.5 or later in 23, any later major) and a sandbox that starts. The executor runs the sandbox to check it, with a 30 s bound, and keeps only a ready result while its files exist, so a host made ready later, or a Node moved, needs no executor restart. Without them, the launch fails with `code-mode-unready: <reason>`, for example on Linux without user namespaces. Hosts without such a sandbox, such as Windows, cannot use code mode.
 - Not built: Node on PDS18, which has none today; `bwrap --unshare-net` works there for the `fleet-agent` user.
 
 ## Unknown outcomes
 
 Bridge calls follow the existing rule: an uncertain effect stays unknown and is never repeated automatically.
 
-- A Fleet mutation without an answer rejects with `FleetCallError` with `outcome: "unknown"`, `code: "pending"` and `output: {status: "pending", requestKey}`. A `request_child` without a host answer (`status: "pending-or-rejected"`) rejects the same way; a retry with the same `requestId` is the same request. The code reads it later with `fleet.agent_tool_result({requestKey})`. The bridge never retries it.
-- A bridged call made after its job ended (an unawaited promise or a timer) is refused with `code: "job-ended"` and never sent: its effect would reach no reply. Code awaits every call it starts.
+- A Fleet mutation without an answer rejects with `FleetCallError` with `outcome: "unknown"`, `code: "pending"` and `output: {status: "pending", requestKey}`. A `request_child` without a host answer (`status: "pending-or-rejected"` and no `response`) rejects the same way; a retry with the same `requestId` is the same request. A host refusal rejects with `outcome: "error"`. The code reads it later with `fleet.agent_tool_result({requestKey})`. The bridge never retries it.
+- A bridged call started before the code returns is part of its job, awaited or not: the final reply waits for it and lists its outcome in `calls`.
+- A bridged call made after its job ended (a timer) is refused with `code: "job-ended"` and never sent: its effect would reach no reply.
+- Arguments that do not serialize (a `BigInt`, a cycle) reject with `code: "bad-arguments"`.
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
 - A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent. A stored reply that does not decode is such a failure.
 - An unawaited rejection or a throw inside a timer is printed, not fatal: the runtime, its other jobs and `state` survive.
