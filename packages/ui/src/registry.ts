@@ -36,6 +36,7 @@ export const states = {
     pr_failed: { label: 'Checks failed', tone: 'danger', icon: 'octagon-x' },
     mq_wait: { label: 'Waiting in queue', tone: 'neutral', icon: 'list-ordered' },
     mq_ci: { label: 'Queue checks', tone: 'running', icon: 'git-merge' },
+    mq_failed: { label: 'Queue failed', tone: 'danger', icon: 'circle-x' },
     releasing: { label: 'Releasing', tone: 'running', icon: 'archive' },
     installing: { label: 'Installing', tone: 'running', icon: 'download' },
     installed: { label: 'Installed', tone: 'success', icon: 'circle-check' },

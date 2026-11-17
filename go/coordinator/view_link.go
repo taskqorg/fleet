@@ -31,9 +31,11 @@ var (
 	viewOrder = map[string]listOrder{
 		"tasks":         {slices.Sorted(maps.Keys(taskGroups)), bothWays(taskSorts), defaultTaskGroup, defaultTaskSort},
 		"conversations": {slices.Sorted(maps.Keys(sessionGroups)), bothWays(sessionSorts), defaultSessionGroup, defaultSessionSort},
+		// Delivery groups and sorts its rows in the browser (delivery_status is read whole); view-url.ts DELIVERY_GROUPS.
+		"delivery": {[]string{"none", "project", "stage"}, []string{"-opened", "-since", "opened", "since"}, "stage", "since"},
 	}
 	viewKeys = map[string][]string{"tasks": {"group", "preset", "project", "q", "sel", "sort", "state"},
-		"conversations": {"archived", "group", "preset", "project", "q", "sel", "sort", "state"}, "results": {"project", "q", "state"}, "delivery": {"q", "state"}}
+		"conversations": {"archived", "group", "preset", "project", "q", "sel", "sort", "state"}, "results": {"project", "q", "state"}, "delivery": {"group", "preset", "q", "sel", "sort", "state"}}
 	schemeURL = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
 )
 

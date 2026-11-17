@@ -724,10 +724,10 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .focus-list .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.focus-list .row-check{flex:none}
 .rail.mini .focus-btn{justify-content:center;padding:0}.rail.mini .focus-btn .nm{display:none}
 
-/* ---------- Day chart, share bar, norm bar, day strip (controls/day-chart.md, share-bar.md, norm-bar.md, day-strip.md) ---------- */
-.dc,.sb,.ds-wrap{--gap:var(--surface);--stripes:repeating-linear-gradient(45deg,transparent 0 3px,var(--gap) 3px 5px)}
-.dc .d1,.sb .d1,.ds .d1{--dc-c:var(--data-1);--ink:var(--data-1-ink)}.dc .d2,.sb .d2,.ds .d2{--dc-c:var(--data-2);--ink:var(--data-2-ink)}
-.dc .d3,.sb .d3,.ds .d3{--dc-c:var(--data-3);--ink:var(--data-3-ink)}.dc .d4,.sb .d4,.ds .d4{--dc-c:var(--data-4);--ink:var(--data-4-ink)}
+/* ---------- Day chart, share bar, norm bar (controls/day-chart.md, share-bar.md, norm-bar.md) ---------- */
+.dc,.sb{--gap:var(--surface);--stripes:repeating-linear-gradient(45deg,transparent 0 3px,var(--gap) 3px 5px)}
+.dc .d1,.sb .d1{--dc-c:var(--data-1);--ink:var(--data-1-ink)}.dc .d2,.sb .d2{--dc-c:var(--data-2);--ink:var(--data-2-ink)}
+.dc .d3,.sb .d3{--dc-c:var(--data-3);--ink:var(--data-3-ink)}.dc .d4,.sb .d4{--dc-c:var(--data-4);--ink:var(--data-4-ink)}
 .dc{--dc-h:calc(var(--size-control) * 4);--dc-head:14px;--dc-gut:calc(var(--size-control) * 1.75);display:flex;flex-direction:column;gap:var(--space-1);min-width:0}
 .dc-sm{--dc-h:calc(var(--size-control) * 2.5)}
 .dc-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--space-1) var(--space-4);font-size:var(--font-size-xs);color:var(--fg-muted)}
@@ -746,7 +746,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .dc-col:focus-visible{outline:var(--size-focus-ring) solid var(--accent);outline-offset:-2px}
 .dc-col[tabindex="-1"]{cursor:default}
 .dc-area{position:absolute;left:0;right:0;bottom:0;top:var(--dc-head)}
-.dc i,.ds i{font-style:normal}
+.dc i{font-style:normal}
 .dc-bar,.dc-hi{position:absolute;bottom:0;left:50%;width:min(24px,62%);transform:translateX(-50%);background-color:var(--dc-c);border-radius:4px 4px 0 0}
 .dc-hi{opacity:.34}
 .dc-col.part .dc-bar,.dc-col.part .dc-hi{background-image:var(--stripes)}
@@ -754,16 +754,11 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .dc-none{position:absolute;inset:0 18%;background:repeating-linear-gradient(135deg,var(--line) 0 1px,transparent 1px 6px);border-radius:4px 4px 0 0}
 .dc-lab{position:absolute;left:0;right:0;transform:translateY(-2px);text-align:center;font-size:var(--font-size-xs);line-height:12px;color:var(--fg);white-space:nowrap;pointer-events:none}
 .dc-true{position:absolute;top:0;left:50%;transform:translateX(-50%);font-size:var(--font-size-xs);line-height:12px;font-weight:var(--font-weight-bold);color:var(--fg);white-space:nowrap;pointer-events:none}
-.dc-over{position:absolute;left:var(--dc-gut);right:0;bottom:0;top:var(--dc-head);pointer-events:none}
-.dc-line,.dc-band{position:absolute;inset:0;background:var(--dc-c)}
-.dc-band{opacity:.16}
-.dc-whisk{position:absolute;width:2px;margin-left:-1px;background:var(--dc-c);opacity:.45}
-.dc-dot{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--dc-c);box-shadow:0 0 0 2px var(--gap)}
-.dc-dot.part{background:var(--gap);box-shadow:inset 0 0 0 2px var(--dc-c),0 0 0 2px var(--gap)}
 .dc-vals,.dc-axis{font-size:var(--font-size-xs);text-align:center;line-height:1.5}
 .dc-vals>span,.dc-axis>span{min-width:0;overflow:hidden;white-space:nowrap}
 .dc-vals .dc-g{text-align:right;padding-right:var(--space-2);color:var(--fg-muted)}
 .dc-vals .on,.dc-axis .on{color:var(--fg);font-weight:var(--font-weight-bold)}
+.dc-vals .alert{color:var(--danger-fg);font-weight:var(--font-weight-bold)}
 .dc-axis{color:var(--fg-muted)}
 .sb{display:flex;flex-direction:column;gap:var(--space-2);min-width:0}
 .sb-bar{display:flex;gap:2px;height:var(--size-badge);min-width:0}
@@ -781,26 +776,3 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .nb.clip .nb-fill::after{content:"";position:absolute;right:5px;top:-1px;bottom:-1px;width:3px;background:var(--surface);transform:skewX(-20deg)}
 .nb-p50,.nb-p90{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--fg-muted)}
 .nb-p90{left:50%;width:2px;margin-left:-1px;background:var(--fg)}
-.ds-wrap{min-width:0;overflow-x:auto}
-.ds{width:100%;border-collapse:collapse;table-layout:fixed;font-size:var(--font-size-xs)}
-.ds th,.ds td{padding:var(--space-1) var(--space-2);border-bottom:1px solid var(--line-soft);text-align:right;white-space:nowrap;overflow:hidden}
-.ds thead th{padding:0;border-bottom:1px solid var(--line);font-weight:var(--font-weight-regular);color:var(--fg-muted)}
-.ds thead th.ds-lh{width:var(--size-total)}
-.ds thead button{width:100%;height:var(--size-chip);padding:0 var(--space-2);border:0;background:none;color:inherit;font:inherit;text-align:right;cursor:pointer;border-radius:var(--radius-sm)}
-.ds thead button:hover{background:var(--hover);color:var(--fg)}
-.ds thead th.on button{color:var(--fg);font-weight:var(--font-weight-bold)}
-.ds tbody th{text-align:left;font-weight:var(--font-weight-regular);color:var(--fg-muted);font-size:var(--font-size-sm);text-overflow:ellipsis}
-.ds tr.strong th{color:var(--fg)}
-.ds tr.strong .ds-v{font-weight:var(--font-weight-bold);font-size:var(--font-size-sm)}
-.ds tr.sep th,.ds tr.sep td{border-top:1px solid var(--line)}
-.ds td{cursor:pointer;color:var(--fg)}
-.ds td:hover{background:var(--hover)}
-.ds td.on,.ds thead th.on{background:var(--selected)}
-.ds td.none{color:var(--fg-faint);background-image:repeating-linear-gradient(135deg,var(--line-soft) 0 1px,transparent 1px 6px)}
-.ds td.part .ds-v{color:var(--fg-muted)}
-.ds td.part .ds-bar i{background-image:var(--stripes)}
-.ds td.alert .ds-v{color:var(--tone-fg);font-weight:var(--font-weight-bold)}
-.ds-v{display:block;line-height:1.4}
-.ds-bar{display:block;height:3px;margin-top:2px;background:var(--line-soft);border-radius:var(--radius-sm);overflow:hidden}
-.ds-bar i{display:block;height:100%;margin-left:auto;background-color:var(--dc-c)}
-.ds-bar i.clip{background-image:linear-gradient(90deg,transparent 0 3px,var(--gap) 3px 5px,transparent 5px)}

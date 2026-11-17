@@ -477,7 +477,7 @@ func (v DeliverySource) Valid() bool {
 	return false
 }
 
-// DeliveryStage: pr_failed: open, no run active, and the last finished pull_request run on its head failed (read only with a GitHub key)
+// DeliveryStage: pr_failed: open, no run active, and the last finished pull_request run on its head failed; mq_failed: open, not in the merge queue and not set to enter it, and its last finished merge_group run failed after the last finished check of its head (it was removed from the queue); both read only with a GitHub key
 type DeliveryStage string
 
 const (
@@ -486,6 +486,7 @@ const (
 	DeliveryStagePrFailed   DeliveryStage = "pr_failed"
 	DeliveryStageMqWait     DeliveryStage = "mq_wait"
 	DeliveryStageMqCi       DeliveryStage = "mq_ci"
+	DeliveryStageMqFailed   DeliveryStage = "mq_failed"
 	DeliveryStageReleasing  DeliveryStage = "releasing"
 	DeliveryStageInstalling DeliveryStage = "installing"
 	DeliveryStageInstalled  DeliveryStage = "installed"
@@ -493,7 +494,7 @@ const (
 )
 
 // DeliveryStageValues lists every DeliveryStage in schema order.
-var DeliveryStageValues = []DeliveryStage{DeliveryStagePrOpen, DeliveryStagePrCi, DeliveryStagePrFailed, DeliveryStageMqWait, DeliveryStageMqCi, DeliveryStageReleasing, DeliveryStageInstalling, DeliveryStageInstalled, DeliveryStageMerged}
+var DeliveryStageValues = []DeliveryStage{DeliveryStagePrOpen, DeliveryStagePrCi, DeliveryStagePrFailed, DeliveryStageMqWait, DeliveryStageMqCi, DeliveryStageMqFailed, DeliveryStageReleasing, DeliveryStageInstalling, DeliveryStageInstalled, DeliveryStageMerged}
 
 // Valid: v is one of the schema's values.
 func (v DeliveryStage) Valid() bool {

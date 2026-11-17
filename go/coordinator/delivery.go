@@ -143,6 +143,7 @@ type ghRepo struct {
 	open, closed []ghPull
 	runs         []ghRun
 	finished     []ghRun // the latest finished pull_request runs (keyed reads only)
+	queueDone    []ghRun // the latest finished merge_group runs (keyed reads only)
 	releases     []ghRelease
 }
 
@@ -220,7 +221,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			}
 		}
 		var g ghRepo
-		var active, queued, finished struct {
+		var active, queued, finished, queueDone struct {
 			Runs []ghRun `json:"workflow_runs"`
 		}
 		var err error
@@ -258,8 +259,16 @@ func deliveryPass(ctx context.Context, a *App) error {
 			} else {
 				log.Printf("delivery %s: failed checks unread: %v", name, ferr)
 			}
+			// Removed from the merge queue: the latest finished merge_group runs, the same way (runs_completed_mq).
+			if body, ferr := githubReadKeyed(ctx, a, t.projects[0], "runs_completed_mq", map[string]string{"owner": t.owner, "repo": t.repo}); ferr == nil {
+				if uerr := json.Unmarshal(body, &queueDone); uerr != nil {
+					log.Printf("delivery %s: failed queue checks unreadable: %v", name, uerr)
+				}
+			} else {
+				log.Printf("delivery %s: failed queue checks unread: %v", name, ferr)
+			}
 		}
-		g.runs, g.finished = append(active.Runs, queued.Runs...), finished.Runs
+		g.runs, g.finished, g.queueDone = append(active.Runs, queued.Runs...), finished.Runs, queueDone.Runs
 		its, l := deliveryStages(t.projects[0], name, g, versions, now)
 		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l}
 		c := map[string]int64{}
@@ -345,10 +354,24 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			latest[k] = r
 		}
 	}
-	failedAt := map[string]string{}
+	failedAt, checkedAt := map[string]string{}, map[string]string{}
 	for k, r := range latest {
 		if (r.Conclusion == "failure" || r.Conclusion == "timed_out") && r.UpdatedAt > failedAt[k.sha] {
 			failedAt[k.sha] = r.UpdatedAt
+		}
+		checkedAt[k.sha] = max(checkedAt[k.sha], r.UpdatedAt)
+	}
+	// The latest finished merge_group run per pull request (queue branch pr-<n>-): a failure there removed it from the
+	// queue. Cancelled runs are left out: the queue cancels a group when an entry ahead fails and starts it again.
+	queueLast := map[int64]ghRun{}
+	for _, r := range g.queueDone {
+		m := queueBranch.FindStringSubmatch(r.Branch)
+		if r.Event != "merge_group" || m == nil || r.Conclusion == "cancelled" || r.Conclusion == "skipped" {
+			continue
+		}
+		n, _ := strconv.ParseInt(m[1], 10, 64)
+		if o, ok := queueLast[n]; !ok || r.UpdatedAt > o.UpdatedAt {
+			queueLast[n] = r
 		}
 	}
 	// The earliest active run per pull request: pull_request runs by head commit, merge_group runs by queue branch.
@@ -388,6 +411,9 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, now time.
 			out = append(out, item(p, contract.DeliveryStagePrCi, r.at))
 		} else if at, ok := failedAt[p.Head.SHA]; ok {
 			out = append(out, item(p, contract.DeliveryStagePrFailed, at))
+		} else if q, ok := queueLast[p.Number]; ok && p.AutoMerge == nil && (q.Conclusion == "failure" || q.Conclusion == "timed_out") && q.UpdatedAt > checkedAt[p.Head.SHA] {
+			// Removed from the queue and not set to enter it again, with no new check of its head since: it waits on a person.
+			out = append(out, item(p, contract.DeliveryStageMqFailed, q.UpdatedAt))
 		} else if p.AutoMerge != nil {
 			out = append(out, item(p, contract.DeliveryStageMqWait, p.CreatedAt))
 		} else {

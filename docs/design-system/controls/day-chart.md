@@ -1,14 +1,13 @@
 # Day chart
 
-**Code.** `DayChart` and `capOf` in `packages/ui` (`src/charts.tsx`). Demo: the Delivery mockup variants (`pages/mockups.html#/delivery/a`, `/b`).
+**Code.** `DayChart` and `capOf` in `packages/ui` (`src/charts.tsx`). Demo: the Delivery mockup (`pages/mockups.html#/delivery`).
 
 **Purpose.** Shows one figure per calendar day (or per shorter bucket) on a column grid that other day charts share, so charts stacked under each other line up day by day. Used for pace: open to installed P50 and P90 per day, pull requests merged per day.
 
-**Anatomy.** A head line (title, then a key for the textures in use); a left gutter with the scale top in `font-mono` at the top gridline, never over the plot; one column per day; under the plot optional rows of values (`P50` in ink, `P90` muted) and the day axis (`16 Nov`, `day` from `format.ts`, in the viewer's zone). Marks take `data-1..4`.
+**Anatomy.** A head line (title, then a key for the textures in use); a left gutter with the scale top in `font-mono` at the top gridline, never over the plot; one column per day; under the plot optional rows of values (`P50` in ink, `P90` muted) and the day axis (`16 Nov`, `day` from `format.ts`, in the viewer's zone; two-hour buckets as `14:00`). Marks take `data-1..4`. A value above the norm the caller gives (`alertAbove`, a baseline P90) is red and bold in the values rows, and its column's tooltip says so (OR-18).
 
 * `bar`: a bar per day (at most 24 px, 4 px rounded top), its value on the cap.
 * `range`: a bar to the value (P50) and a lighter extension to the upper mark (P90).
-* `line`: the value as a 2 px line with 8 px dots, the upper mark as a band; a day that is not measured breaks the line.
 
 **Scale.** `capOf` takes about P95 of the figures shown, rounded up to a clean step in the display unit. With a week of daily figures P95 is the maximum, so a figure over four times their median is left out first (`fence`; counts pass `Infinity`, since a busy day is no outlier). A figure above the scale is drawn to the top with a break and its true value above it.
 
@@ -20,4 +19,4 @@
 
 **Do.** Put every day chart of a section on the same columns; show the axis on the last one only. **Don't.** Sum medians into a stack, use two scales in one plot, or add `<svg>` (OR-8).
 
-**Used in.** [Delivery](../pages/delivery.md) Pace (variants A and B, under review).
+**Used in.** [Delivery](../pages/delivery.md) Pace.

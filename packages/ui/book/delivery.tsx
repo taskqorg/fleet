@@ -1,12 +1,11 @@
 // Delivery mockup (docs/design-system/pages/delivery.md): the pull requests by stage in the control column; the work area
 // answers what needs a look, what moves now and the pace, or shows the opened pull request. Fixture data only.
-// Pace variants for the owner's choice: /delivery/a (charts stacked on one day axis), /delivery/b (one combined chart
-// beside the stage share and what moves now), /delivery/c (a day strip table). /delivery shows A.
+// Pace: small charts stacked on one calendar-day axis (variant A, owner 2026-11-17; decisions.md D-delivery-pace).
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import {
   ListDetail, ListFrame, FilterBar, StateCounters, GroupHeader, GroupControl, SortControl, SelectToggle, StateBadge, AgeChip, Num, Totals,
-  TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Stale, Fact, RowFacts, Presets, Latest, DayChart, ShareBar, NormBar, DayStrip,
+  TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Stale, Fact, RowFacts, Presets, Latest, DayChart, ShareBar, NormBar,
   capOf, day, dayStart, hourLabel, duration, states, type StateOf, type DayCol, type DayMark, type SharePart,
 } from '../src/index.ts';
 import { NOW, min, hr } from './fixtures.ts';
@@ -14,7 +13,7 @@ import { NOW, min, hr } from './fixtures.ts';
 type Stage = StateOf<'delivery'>;
 const DAY = 24 * hr;
 // Attention order of the stage groups.
-const ORDER: Stage[] = ['pr_failed', 'mq_ci', 'mq_wait', 'pr_ci', 'pr_open', 'releasing', 'installing', 'installed', 'merged'];
+const ORDER: Stage[] = ['pr_failed', 'mq_failed', 'mq_ci', 'mq_wait', 'pr_ci', 'pr_open', 'releasing', 'installing', 'installed', 'merged'];
 /** Each stage's norm: its P50 and P90 over the last 14 days (delivery_baseline rolling, read 17 Nov 2026), in ms. Open has none: people work there. */
 const NORM: Partial<Record<Stage, [number, number]>> = {
   pr_ci: [6.5 * min, 42 * min], mq_wait: [0.8 * min, 8 * min], mq_ci: [5.8 * min, 15.6 * min], releasing: [1.2 * min, 4.4 * min], installing: [1.1 * min, 2.1 * min],
@@ -54,11 +53,11 @@ const HIST: Hist[] = [];
 }
 
 /* ---------- Current pull requests: 9 in flight and the latest installed ---------- */
-type Pr = { n: number; title: string; stage: Stage; since: number; opened: number; runs: number; removals: number; release?: string; author: string; repo?: string; failing?: string };
+type Pr = { n: number; title: string; stage: Stage; since: number; opened: number; runs: number; removals: number; release?: string; author: string; repo?: string };
 const INSTALLED: Pr[] = HIST.slice(-26).reverse().map((h, i) => ({ n: h.n, title: h.title, stage: 'installed', since: h.merged + (h.d.release + (h.d.install ?? 0)), opened: h.merged - h.d.pr_ci - (h.d.queue ?? 0), runs: 1 + h.removals, removals: h.removals, release: `1.261117.${30 - i}`, author: i % 3 ? 'agent' : 'kirs' }));
 const PRS: Pr[] = [
   { n: 612, title: 'Delivery: pace by calendar day', stage: 'pr_failed', since: NOW - 25 * min, opened: NOW - 70 * min, runs: 0, removals: 0, author: 'agent' },
-  { n: 611, title: 'Gateway: drain before snapshot swap', stage: 'mq_ci', since: NOW - 9 * min, opened: NOW - 48 * min, runs: 2, removals: 1, author: 'agent', failing: 'browser-tests (1) failing' },
+  { n: 611, title: 'Gateway: drain before snapshot swap', stage: 'mq_failed', since: NOW - 9 * min, opened: NOW - 48 * min, runs: 2, removals: 1, author: 'agent' },
   { n: 610, title: 'Version beside the person; one reliable update control', stage: 'mq_wait', since: NOW - 11 * min, opened: NOW - 95 * min, runs: 1, removals: 0, author: 'kirs' },
   { n: 609, title: 'Lists: row menu, selection mode, Pinned group', stage: 'pr_ci', since: NOW - 14 * min, opened: NOW - 16 * min, runs: 0, removals: 0, author: 'agent' },
   { n: 608, title: 'Hosts: limits card with projection', stage: 'pr_open', since: NOW - 2 * hr, opened: NOW - 5 * hr, runs: 1, removals: 1, author: 'agent' },
@@ -68,8 +67,8 @@ const PRS: Pr[] = [
   { n: 250, title: 'Catalogue: frame step before the export', stage: 'pr_open', since: NOW - 8 * DAY, opened: NOW - 8 * DAY, runs: 0, removals: 0, author: 'kirs', repo: 'Amoenum/desiign' },
   ...INSTALLED,
 ];
-/** Needs me: checks failed, queue checks failing, or removed from the queue and not back in it. */
-const needsMe = (p: Pr) => p.stage === 'pr_failed' || !!p.failing || (p.removals > 0 && (p.stage === 'pr_open' || p.stage === 'pr_ci'));
+/** Needs me: checks failed, or queue checks failed and the pull request left the merge queue (the stages only, OR-33). */
+const needsMe = (p: Pr) => p.stage === 'pr_failed' || p.stage === 'mq_failed';
 const PRESETS: Record<string, (p: Pr) => boolean> = { 'Needs me': needsMe, 'In flight': p => p.stage !== 'installed' && p.stage !== 'merged', Installed: p => p.stage === 'installed' };
 
 /* ---------- The control column (all variants) ---------- */
@@ -90,7 +89,6 @@ function PrList({ sel, onSel, picked, onUnpick }: { sel?: number; onSel: (n: num
     <span class="tt" style={{ flexWrap: 'wrap', rowGap: 0 }}><a class="title row-link" style={{ flex: '0 0 100%' }} href="#/delivery" onClick={e => { e.preventDefault(); onSel(p.n); }}>{p.title}</a>
       <span class="id">#{p.n}</span>{p.repo && <span class="id">{p.repo}</span>}{p.release && <span class="id">{p.release}</span>}</span>
     <span class="rz"><RowFacts>
-      {p.failing && <Fact icon="octagon-x" tip={p.failing} label={p.failing} />}
       {p.removals > 0 && <Fact icon="rotate-ccw" text={String(p.removals)} tip={`${p.removals} removed from the queue`} />}
       <Fact tip={`${states.delivery[p.stage].label} for`}><AgeChip t={p.since} now={NOW} alertAfter={NORM[p.stage] && NORM[p.stage]![1] / 1000} alertLabel="past the stage norm (P90)" /></Fact>
     </RowFacts></span>
@@ -148,12 +146,6 @@ function totalMark(b: Bucket): DayMark {
   return { v: q(xs, 0.5), hi: q(xs, 0.9), partial: part || undefined };
 }
 const mergedMark = (b: Bucket): DayMark => ({ v: inB(b).length, partial: b.today ? 'so far' : undefined });
-const stageMark = (b: Bucket, k: 'pr_ci' | 'queue' | 'release' | 'install'): DayMark => {
-  const all = inB(b), xs = all.map(h => h.d[k]).filter((v): v is number => v !== undefined);
-  if (!all.length) return { v: null, missing: 'nothing merged' };
-  if (!xs.length) return { v: null, missing: k === 'queue' ? `queue times recorded from ${day(D0 + 2 * DAY)}` : `install times recorded from ${day(D0 + 5 * DAY)}` };
-  return { v: q(xs, 0.5), partial: xs.length < all.length ? `${xs.length} of ${all.length} measured` : b.today ? 'so far' : undefined };
-};
 const STAGES: { label: string; key: 'pr_ci' | 'queue' | 'release' | 'install'; tone: SharePart['tone'] }[] = [
   { label: 'PR checks', key: 'pr_ci', tone: 'd1' }, { label: 'Queue', key: 'queue', tone: 'd2' }, { label: 'Release', key: 'release', tone: 'd3' }, { label: 'Install', key: 'install', tone: 'd4' }];
 
@@ -215,7 +207,7 @@ function Moving({ compact }: { compact?: boolean }) {
 const look = [
   <ProblemRow key="r" severity="warning" title="Merge queue P90 is 26m, baseline 16m" facts={`Since ${pr(598)} · 7 runs · 3 removals for flaky browser checks`} actions={[{ label: 'Compare', primary: true }]} />,
   <ProblemRow key="f" severity="failure" title={`${pr(612)} checks failed`} facts="Delivery: pace by calendar day · 25m ago" actions={[{ label: `Open ${pr(612)}`, primary: true }]} />,
-  <ProblemRow key="q" severity="failure" title={`${pr(611)} queue checks failing`} facts="browser-tests (1) · removed once before" actions={[{ label: `Open ${pr(611)}`, primary: true }]} />,
+  <ProblemRow key="q" severity="failure" title={`${pr(611)} removed from the merge queue`} facts="browser-tests (1) failed · removed once before" actions={[{ label: `Open ${pr(611)}`, primary: true }]} />,
   <ProblemRow key="w" severity="warning" title={`${pr(610)} waiting in queue for 11m, norm 8m`} facts="Version beside the person; one reliable update control" actions={[{ label: `Open ${pr(610)}`, primary: true }]} />,
 ];
 
@@ -238,59 +230,11 @@ function IdleA(p: PaceProps) {
       <RangeLine {...p} />
       <PaceTotals d={d} range={p.range} />
       <DayChart title="Open to installed" label="Open to installed per day, P50 and P90" kind="range" cols={d.bs} marks={d.total} value={fmt} cap={d.capTotal}
-        capNote="about P95 of the figures shown; a figure over four times their median is drawn cut, with its value" names={['P50', 'P90']} values selected={p.at} onSelect={pick} />
+        capNote="about P95 of the figures shown; a figure over four times their median is drawn cut, with its value" names={['P50', 'P90']} values
+        alertAbove={BASE_TOTAL[1]} alertLabel={`above the 14-day P90 ${fmt(BASE_TOTAL[1])}`} selected={p.at} onSelect={pick} />
       <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={d.bs} marks={d.merged} value={v => String(Math.round(v))} cap={d.capMerged} tone="d2" axis selected={p.at} onSelect={pick} />
       <Where d={d} />
     </Gap></DetailSection>
-  </div>;
-}
-
-/** B: the pace first, as one chart (the P50 line with its P90 band over the merged bars, one hit column per day), with
- *  the stage share and what moves now beside it; what needs a look stays on top. */
-function IdleB(p: PaceProps) {
-  const d = usePace(p.range, p.at), pick = pickOf(p);
-  return <div class="stack-pad">
-    <DetailSection title="Needs a look"><Latest items={look} n={3} /></DetailSection>
-    <DetailSection title="Pace"><Gap>
-      <RangeLine {...p} />
-      <PaceTotals d={d} range={p.range} />
-      <div class="cols">
-        <div>
-          <DayChart title="Open to installed, P50 and P90 band" label="Open to installed per day, P50 line and P90 band" kind="line" cols={d.bs} marks={d.total} value={fmt} cap={d.capTotal}
-            capNote="about P95 of the figures shown; a figure over four times their median is drawn cut, with its value" names={['P50', 'P90']} values selected={p.at} onSelect={pick} />
-          <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={d.bs} marks={d.merged} value={v => String(Math.round(v))} cap={d.capMerged} tone="d2" axis selected={p.at} onSelect={pick} />
-        </div>
-        <div>
-          <Where d={d} />
-          <h3 class="type-sm muted" style={{ marginTop: 'var(--space-4)' }}>Moving now</h3>
-          <Moving compact />
-        </div>
-      </div>
-    </Gap></DetailSection>
-  </div>;
-}
-
-/** C: a day strip: one column per day, one row per figure, the exact values with a small bar under each. */
-function IdleC(p: PaceProps) {
-  const d = usePace(p.range, p.at), pick = pickOf(p);
-  const stage = (k: typeof STAGES[number]['key']) => d.bs.map(b => stageMark(b, k));
-  const base: Record<string, number> = { pr_ci: 42 * min, queue: 15.6 * min, release: 4.4 * min, install: 2.1 * min };
-  const cap = (ms: DayMark[], floor: number) => capOf(ms.map(m => m.v), { floor, unit: min });
-  const stageRows = STAGES.map(s => { const ms = stage(s.key); return { label: `${s.label} P50`, marks: ms, value: fmt, cap: Math.min(cap(ms, min), base[s.key] * 2), tone: s.tone, alertAbove: base[s.key], alertLabel: `above the 14-day P90 ${fmt(base[s.key])}` }; });
-  return <div class="stack-pad">
-    <DetailSection title="Needs a look"><Latest items={look} n={3} /></DetailSection>
-    <DetailSection title="Pace"><Gap>
-      <RangeLine {...p} />
-      <PaceTotals d={d} range={p.range} />
-      <DayStrip label="Pace per day" cols={d.bs} selected={p.at} onSelect={pick} rows={[
-        { label: 'Merged', marks: d.merged, value: v => String(Math.round(v)), cap: d.capMerged, tone: 'd2' },
-        { label: 'To installed P50', marks: d.total, value: fmt, cap: d.capTotal, strong: true, sep: true, alertAbove: BASE_TOTAL[1], alertLabel: `above the 14-day P90 ${fmt(BASE_TOTAL[1])}` },
-        { label: 'To installed P90', marks: d.total.map(m => ({ ...m, v: m.v === null ? null : m.hi ?? null })), value: fmt, cap: d.capTotal, alertAbove: BASE_TOTAL[1] * 2, alertLabel: `over twice the 14-day P90` },
-        ...stageRows.map((r, i) => ({ ...r, sep: i === 0 })),
-      ]} />
-      <Where d={d} />
-    </Gap></DetailSection>
-    <DetailSection title="Moving now"><Moving /></DetailSection>
   </div>;
 }
 
@@ -310,15 +254,13 @@ function PrDetail({ p, onClose }: { p: Pr; onClose: () => void }) {
   </article>;
 }
 
-const IDLE = { a: IdleA, b: IdleB, c: IdleC };
-export function Delivery({ variant = 'a' }: { variant?: string }) {
+export function Delivery() {
   const [sel, setSel] = useState<number | undefined>(undefined);
   const [at, setAt] = useState<string | null>(null);
   const [range, setRange] = useState<Range>('7d');
   const p = PRS.find(x => x.n === sel);
-  const Idle = IDLE[variant as keyof typeof IDLE] ?? IdleA;
   const b = at ? bucketsOf(range).find(x => x.key === at) : undefined;
   const picked = b ? { label: b.tip ?? b.label, rows: inB(b).map(h => PRS.find(x => x.n === h.n) ?? { n: h.n, title: h.title, stage: 'installed' as Stage, since: h.merged + h.d.release + (h.d.install ?? 0), opened: h.merged - h.d.pr_ci, runs: 1 + h.removals, removals: h.removals, author: 'agent' }) } : null;
   return <ListDetail list={<PrList sel={sel} onSel={setSel} picked={picked} onUnpick={() => setAt(null)} />} detailKey={sel}
-    idle={<Idle range={range} onRange={r => { setRange(r); setAt(null); }} at={at} onAt={setAt} />} detail={p && <PrDetail p={p} onClose={() => setSel(undefined)} />} />;
+    idle={<IdleA range={range} onRange={r => { setRange(r); setAt(null); }} at={at} onAt={setAt} />} detail={p && <PrDetail p={p} onClose={() => setSel(undefined)} />} />;
 }

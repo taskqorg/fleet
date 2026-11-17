@@ -933,6 +933,16 @@ const providersJSON = `
     "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
     "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
    },
+   "runs_completed_mq": {
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/actions/runs?event=merge_group&status=completed&per_page=100",
+    "unit": "requests",
+    "idempotent": true,
+    "headers": {"Accept": "application/vnd.github+json", "User-Agent": "fleet-gateway"},
+    "description": "The latest finished merge_group workflow runs (delivery: a pull request removed from the merge queue).",
+    "inputSchema": {"type": "object", "required": ["owner", "repo"], "properties": {"owner": {"type": "string"}, "repo": {"type": "string"}}},
+    "pathPatterns": {"owner": "^[A-Za-z0-9_.-]+$", "repo": "^[A-Za-z0-9_.-]+$"}
+   },
    "runs_queued": {
     "method": "GET",
     "path": "/repos/{owner}/{repo}/actions/runs?status=queued&per_page=100",

@@ -18,7 +18,6 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [time-strip](time-strip.md) | Where a run sits in a time window |
 | [area-chart](area-chart.md) | Quota and resource usage trends (CSS only) |
 | [day-chart](day-chart.md) | One figure per calendar day on a shared day axis |
-| [day-strip](day-strip.md) | Several figures per day as a compact table |
 | [share-bar](share-bar.md) | One whole split into parts, values on the parts |
 | [norm-bar](norm-bar.md) | Time in the current stage against the stage's norm |
 | [code-editor](code-editor.md) | Definition text and unified revision diffs |

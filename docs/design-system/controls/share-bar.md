@@ -14,4 +14,4 @@
 
 **Do.** Keep the part order and tones fixed (pipeline order). **Don't.** Use it for a fill against capacity; that is the [fill bar](fill-bar.md).
 
-**Used in.** [Delivery](../pages/delivery.md) Pace (variants under review).
+**Used in.** [Delivery](../pages/delivery.md) Pace.
