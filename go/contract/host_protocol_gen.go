@@ -1277,10 +1277,24 @@ func (v *SpanBatchRequest) Validate() error {
 	return nil
 }
 
+type StartAttachment struct {
+	ArtifactId string `json:"artifactId"`
+	MediaType  string `json:"mediaType"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StartAttachment) Validate() error {
+	return nil
+}
+
 // StartPayload: start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them.
 type StartPayload struct {
 	Account          *string                    `json:"account,omitempty"`
 	AgentConfig      map[string]json.RawMessage `json:"agentConfig,omitempty"`
+	Attachments      []StartAttachment          `json:"attachments,omitempty"`
 	Branch           *bool                      `json:"branch,omitempty"`
 	Connections      []json.RawMessage          `json:"connections,omitempty"`
 	Effort           *string                    `json:"effort,omitempty"`
@@ -1307,6 +1321,11 @@ type StartPayload struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *StartPayload) Validate() error {
+	for i := range v.Attachments {
+		if err := Check(&v.Attachments[i], "attachments"); err != nil {
+			return err
+		}
+	}
 	for i := range v.Inputs {
 		if err := Check(&v.Inputs[i], "inputs"); err != nil {
 			return err

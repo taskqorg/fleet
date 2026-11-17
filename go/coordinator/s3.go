@@ -406,6 +406,20 @@ func (s *S3) UploadPartCopy(bucket, key, uploadID string, n int, source, rng str
 	return etag, nil
 }
 
+// UploadPart sends one part of a multipart upload and returns its ETag.
+func (s *S3) UploadPart(bucket, key, uploadID string, n int, body []byte) (string, error) {
+	res, err := s.send("PUT", s.path(bucket, key), map[string]string{"partNumber": strconv.Itoa(n), "uploadId": uploadID}, nil, body)
+	if err != nil {
+		return "", err
+	}
+	drain(res, nil)
+	etag := res.Header.Get("ETag")
+	if etag == "" {
+		return "", &S3Error{200, "InvalidResponse", "UploadPart returned no ETag"}
+	}
+	return etag, nil
+}
+
 func (s *S3) CompleteMultipartUpload(bucket, key, uploadID string, parts []S3Part) error {
 	var b strings.Builder
 	b.WriteString("<CompleteMultipartUpload>")

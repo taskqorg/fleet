@@ -995,33 +995,8 @@ func artifactVerified(q *Request, b *contract.ArtifactVerifiedRequest) (any, err
 	if err != nil {
 		return nil, err
 	}
-	final := keyOf(x)
-	n, err := t.Head(s.Bucket, final)
-	if err != nil {
+	if err := promote(t, s.Bucket, staging, keyOf(x), x.Size); err != nil {
 		return nil, err
-	}
-	src := s.Bucket + "/" + staging
-	if n < 0 {
-		if x.Size <= copyLimit {
-			err = t.Copy(s.Bucket, final, src)
-		} else {
-			up, err2 := t.CreateMultipartUpload(s.Bucket, final, "")
-			if err2 != nil {
-				return nil, err2
-			}
-			done := []S3Part{}
-			for i, k := int64(0), 1; i < x.Size; i, k = i+copyPart, k+1 {
-				etag, err := t.UploadPartCopy(s.Bucket, final, up, k, src, fmt.Sprintf("bytes=%d-%d", i, min(x.Size, i+copyPart)-1))
-				if err != nil {
-					return nil, err
-				}
-				done = append(done, S3Part{k, etag})
-			}
-			err = t.CompleteMultipartUpload(s.Bucket, final, up, done)
-		}
-		if err != nil {
-			return nil, err
-		}
 	}
 	if err := t.Delete(s.Bucket, staging); err != nil {
 		return nil, err
@@ -1483,6 +1458,32 @@ func keys(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// promote copies a verified staging object to its content key when that key is absent (a verified object is never
+// overwritten); above copyLimit as a multipart copy.
+func promote(t *S3, bucket, staging, final string, size int64) error {
+	n, err := t.Head(bucket, final)
+	if err != nil || n >= 0 {
+		return err
+	}
+	src := bucket + "/" + staging
+	if size <= copyLimit {
+		return t.Copy(bucket, final, src)
+	}
+	up, err := t.CreateMultipartUpload(bucket, final, "")
+	if err != nil {
+		return err
+	}
+	done := []S3Part{}
+	for i, k := int64(0), 1; i < size; i, k = i+copyPart, k+1 {
+		etag, err := t.UploadPartCopy(bucket, final, up, k, src, fmt.Sprintf("bytes=%d-%d", i, min(size, i+copyPart)-1))
+		if err != nil {
+			return err
+		}
+		done = append(done, S3Part{k, etag})
+	}
+	return t.CompleteMultipartUpload(bucket, final, up, done)
 }
 
 // writeObject: an object the coordinator writes itself, straight to its content key when absent.

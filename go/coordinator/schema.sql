@@ -2451,3 +2451,11 @@ ALTER TABLE document ADD COLUMN execution_ref text GENERATED ALWAYS AS (data->>'
  ADD COLUMN session_ref text GENERATED ALWAYS AS (data->>'sessionId') STORED;
 CREATE INDEX document_execution_ref ON document(execution_ref) WHERE execution_ref IS NOT NULL;
 CREATE INDEX document_session_ref ON document(session_ref) WHERE session_ref IS NOT NULL;
+-- migration 71: message attachments (docs/designs/fleet-conversations.md, Attachments). An operator upload is an artifact
+-- with role 'attachment' and no execution; session_id names the conversation it was attached to (set by the upload or by
+-- the first message_send/session_start that carries it). The change feed names that session for its rows.
+ALTER TABLE artifact ADD COLUMN IF NOT EXISTS session_id text NULL;
+CREATE INDEX IF NOT EXISTS artifact_session ON artifact(session_id, seq) WHERE session_id IS NOT NULL;
+ALTER TABLE artifact DROP CONSTRAINT artifact_role_check;
+ALTER TABLE artifact ADD CONSTRAINT artifact_role_check CHECK (role IN ('original', 'thumbnail', 'poster', 'example', 'example-file', 'attachment'));
+CREATE OR REPLACE FUNCTION fleet_artifact_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; p text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'store' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'observed_at' - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW) - 'observed_at' - 'updated_at') THEN RETURN NULL; END IF; k := 'host'; i := r.host_id; h := r.host_id; ELSE IF TG_TABLE_NAME = 'artifact_copy' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - 'lease_expires_at' - 'updated_at') IS NOT DISTINCT FROM (to_jsonb(NEW) - 'lease_expires_at' - 'updated_at') THEN RETURN NULL; END IF; i := r.artifact_id; ELSE i := r.id; END IF; k := 'artifact'; p := r.project_id; SELECT coalesce(a.task_id, e.task_id), coalesce(a.session_id, e.session_id) INTO t, s FROM artifact a LEFT JOIN execution e ON e.id = a.execution_id WHERE a.id = i; IF TG_TABLE_NAME = 'artifact' THEN s := coalesce(s, r.session_id); END IF; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op) VALUES (k, i, t, s, h, p, left(TG_OP, 1)); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $$;

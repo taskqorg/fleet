@@ -182,6 +182,32 @@ func (v *ArtifactRulePreviewRequest) Validate() error {
 	return nil
 }
 
+// ArtifactUploadBeginReply: url: PUT the bytes there in order, at most partBytes per request, each with Content-Range: bytes <first>-<last>/<size>; the reply to the last part is the stored ArtifactView (docs/designs/fleet-conversations.md, Attachments).
+type ArtifactUploadBeginReply struct {
+	PartBytes int64  `json:"partBytes"`
+	UploadId  string `json:"uploadId"`
+	Url       string `json:"url"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactUploadBeginReply) Validate() error {
+	return nil
+}
+
+// ArtifactUploadBeginRequest: An operator upload (a message attachment) into the artifact store: the project of the session when sessionId is given, else projectId (absent or null: no project). Access is the project grant. No size limit beyond store capacity.
+type ArtifactUploadBeginRequest struct {
+	MediaType *string `json:"mediaType,omitempty"`
+	Name      string  `json:"name"`
+	ProjectId *string `json:"projectId,omitempty"`
+	SessionId *string `json:"sessionId,omitempty"`
+	Size      int64   `json:"size"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactUploadBeginRequest) Validate() error {
+	return nil
+}
+
 // ArtifactView: One artifact with its copies; availability available (with an authenticated same-origin /api/results/:id URL for people and agent tools), unavailable, or the artifact state. Host transfer reads retain presigned store URLs.
 type ArtifactView struct {
 	Availability          string              `json:"availability"`
@@ -292,6 +318,7 @@ func init() {
 		"artifact_purge":               {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Operator only.\",\"additionalProperties\":true,\"properties\":{\"contentHash\":{\"type\":\"string\"},\"projectId\":{\"type\":[\"string\",\"null\"]},\"reason\":{\"type\":\"string\"},\"scope\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"contentHash\",\"reason\"],\"type\":\"object\"}")},
 		"artifact_rule_confirm":        {Read: false, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Operator only. ruleHash: the preview's hash; a changed rule is 409.\",\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":[\"string\",\"null\"]},\"rule\":{},\"ruleHash\":{\"type\":\"string\"}},\"required\":[\"rule\"],\"type\":\"object\"}")},
 		"artifact_rule_preview":        {Read: true, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Operator only. rule: a retention rule of the project settings.\",\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":[\"string\",\"null\"]},\"rule\":{}},\"required\":[\"rule\"],\"type\":\"object\"}")},
+		"artifact_upload_begin":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"An operator upload (a message attachment) into the artifact store: the project of the session when sessionId is given, else projectId (absent or null: no project). Access is the project grant. No size limit beyond store capacity.\",\"additionalProperties\":true,\"properties\":{\"mediaType\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"projectId\":{\"type\":[\"string\",\"null\"]},\"sessionId\":{\"type\":\"string\"},\"size\":{\"minimum\":0,\"type\":\"integer\"}},\"required\":[\"name\",\"size\"],\"type\":\"object\"}")},
 		"store_set_free_space_warning": {Read: false, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Operator only. bytes: a whole number; null clears the warning.\",\"additionalProperties\":true,\"properties\":{\"bytes\":{\"type\":[\"number\",\"null\"]},\"storeId\":{\"type\":\"string\"}},\"required\":[\"storeId\"],\"type\":\"object\"}")},
 		"stores_list":                  {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 	} {

@@ -22,5 +22,5 @@ const s3 = createServer(async (req, res) => {
   res.writeHead(200, {'content-length': o.length}); res.end(req.method === 'HEAD' ? undefined : o);
 });
 const port = await new Promise<number>(r => s3.listen(0, '127.0.0.1', () => r((s3.address() as any).port)));
-  return {port, objects, close: () => s3.close()};
+  return {port, objects, uploads, close: () => s3.close()};
 }

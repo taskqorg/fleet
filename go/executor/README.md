@@ -8,6 +8,7 @@
 
 - The executable dispatches `mcp`, `qualify-mcp`, `mcp-guardian`, `reproject`, and `selftest`; otherwise it runs the host executor loop or an owned MCP dependency command.
 - Command handling covers native harness sessions, scripts, project setup/teardown, account inspection and limit probes, artifact transfer, and host readiness.
+- [`attachments.go`](attachments.go) `attachTurn`: a start payload's message attachments, already staged under `FLEET_INPUT_DIR/attachments/<execution>/` by `stageInputs`, are listed in the turn text with absolute path, type and size; Codex also gets each image as a `localImage` input, Claude the input folder as `--add-dir` ([Attachments](../../docs/designs/fleet-conversations.md#attachments)).
 - `resolveAttemptContext` verifies and stages declared immutable instruction sources from local Git objects; `prepareInstructions` gives the resolved payload to the selected harness.
 - The executor records command and process state in its SQLite journal and communicates with the coordinator through typed `contract` requests and events.
 

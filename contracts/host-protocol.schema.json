@@ -708,6 +708,13 @@
             "$ref": "#/$defs/InputArtifact"
           }
         },
+        "attachments": {
+          "$comment": "Message attachments, each also in inputs at its path under FLEET_INPUT_DIR; the executor lists them in the turn text and passes images natively where the harness supports it",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StartAttachment"
+          }
+        },
         "fleetOperations": {
           "type": "array",
           "items": {}
@@ -742,6 +749,34 @@
         }
       },
       "$comment": "start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them."
+    },
+    "StartAttachment": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "artifactId",
+        "path",
+        "name",
+        "mediaType",
+        "size"
+      ]
     },
     "InputArtifact": {
       "type": "object",

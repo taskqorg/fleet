@@ -385,6 +385,8 @@ func commandRegistry(dir, native string, p0 map[string]any, path string) (*exec.
 			tools = readOnlyTools(tools)
 		}
 		c.Args = append(c.Args, "--tools", strings.Join(tools, ","))
+		// The session's input folder (FLEET_INPUT_DIR: message attachments of this and earlier turns, attachments.go).
+		c.Args = append(c.Args, "--add-dir", filepath.Join(dir, "input"))
 		if native != "" {
 			if !safeNativeID(native) {
 				return fail("invalid native session id")

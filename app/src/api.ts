@@ -119,10 +119,14 @@ export function sendingId(scope: DraftScope, text: string | null, expectedText?:
   return requestId;
 }
 
-/** Freeze the complete authored submission, including delivery mode, for an explicit identical-text retry. */
+/** The identity of a submission for its frozen request: its text, and its files when it has any, so the same text with
+ *  other files (or files alone after other files) is a new message, never a replay of the earlier one. */
+export const submissionKey = (body: { text?: string; attachments?: string[] }) => (body.text ?? '') + (body.attachments?.length ? '\n\u0000' + body.attachments.join(',') : '');
+
+/** Freeze the complete authored submission, including delivery mode and files, for an explicit identical retry. */
 export async function prepareSending<K extends 'message_send' | 'session_start'>(scope: DraftScope, operation: K, body: Omit<Ops[K]['request'], 'requestId'>): Promise<Ops[K]['request']> {
   const text = body.text; if (typeof text !== 'string') throw Error('Submission text is required');
-  const requestId = sendingId(scope, text), record = readInput(scope), previous = record.sending!;
+  const key = submissionKey(body as { text?: string; attachments?: string[] }), requestId = sendingId(scope, key), record = readInput(scope), previous = record.sending!;
   const digest = async (value: unknown) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value))))].map(byte => byte.toString(16).padStart(2, '0')).join('');
   const retained = previous.operation === operation && previous.body ? previous.body as Ops[K]['request'] : { ...body, requestId } as Ops[K]['request'];
   const fields = retained as Record<string, unknown>;
@@ -132,7 +136,7 @@ export async function prepareSending<K extends 'message_send' | 'session_start'>
   const bodySha = await digest(retained); checkScope(scope);
   if (previous.bodySha && previous.bodySha !== bodySha) throw Error('Stored submission differs from its original body');
   const current = readInput(scope); if (current.sending?.requestId !== requestId) throw Error('Submission was superseded before sending');
-  try { writeInput(scope, { ...current, sending: { text, requestId, operation, body: retained, bodySha } }); }
+  try { writeInput(scope, { ...current, sending: { text: key, requestId, operation, body: retained, bodySha } }); }
   catch (error) { if (error instanceof AccessChanged) throw error; /* original body and identity remain in authorized memory */ }
   return retained;
 }

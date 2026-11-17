@@ -202,7 +202,7 @@ func questionBlock(qu doc, seq int64) doc {
 	return blockDoc(b)
 }
 
-const rowExpr = `jsonb_build_object('id',id,'executionId',data->>'executionId','type',data->>'type','text',data->'text','blocks',data->'data'->'fleetNormalized'->'blocks','deltaOf',data->'data'->'fleetNormalized'->'deltaOf','closes',data->'data'->'fleetNormalized'->'closes','at',updated_at,'sentBy',data->>'sentBy')`
+const rowExpr = `jsonb_build_object('id',id,'executionId',data->>'executionId','type',data->>'type','text',data->'text','blocks',data->'data'->'fleetNormalized'->'blocks','deltaOf',data->'data'->'fleetNormalized'->'deltaOf','closes',data->'data'->'fleetNormalized'->'closes','at',updated_at,'sentBy',data->>'sentBy','attachments',data->'attachments')`
 
 type trow struct {
 	seq int64
@@ -266,7 +266,12 @@ func expand(q *Request, r trow, m map[string]member) ([]doc, error) {
 		if !ok {
 			return nil, nil
 		}
-		return []doc{blockDoc(contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: strPtr(v["executionId"]), Role: "operator", Markdown: t, Plain: &t, At: msPtr(v["at"]), By: strPtr(v["sentBy"])})}, nil
+		b := contract.TextBlock{Kind: "text", Key: at(0), ExecutionId: strPtr(v["executionId"]), Role: "operator", Markdown: t, Plain: &t, At: msPtr(v["at"]), By: strPtr(v["sentBy"])}
+		for _, x := range anys(v["attachments"]) {
+			m := mapOf(x)
+			b.Attachments = append(b.Attachments, contract.ResultArtifact{Id: astr(m["artifactId"]), Name: astr(m["name"]), MediaType: astr(m["mediaType"]), Size: int64(num(m["size"]))})
+		}
+		return []doc{blockDoc(b)}, nil
 	case "event-delta":
 		text, open, err := streamText(q, astr(v["executionId"]), astr(v["deltaOf"]))
 		if err != nil || !open {
@@ -796,6 +801,24 @@ func clipTime(ms any, loc *time.Location) string {
 	return t.Format("2 Jan 15:04")
 }
 
+// mdCode: a file name as a markdown code span: literal, fenced by more backticks than it holds.
+func mdCode(s string) string {
+	n := 0
+	for run, i := 0, 0; i < len(s); i++ {
+		if s[i] == '`' {
+			run++
+			n = max(n, run)
+		} else {
+			run = 0
+		}
+	}
+	f := strings.Repeat("`", n+1)
+	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") {
+		return f + " " + s + " " + f
+	}
+	return f + s + f
+}
+
 // whoOf: the author line of a text block: the person (email local part) or the agent as harness, model and effort.
 func whoOf(b doc) string {
 	if astr(b["role"]) == "operator" {
@@ -837,7 +860,11 @@ func markdownOf(b doc, from, to *point, loc *time.Location) string {
 		if t := clipTime(b["at"], loc); t != "" {
 			head += " · " + t
 		}
-		return fmt.Sprintf("**%s**\n%s\n", head, cut(firstString(b["plain"], b["markdown"])))
+		s := fmt.Sprintf("**%s**\n%s\n", head, cut(firstString(b["plain"], b["markdown"])))
+		for _, x := range anys(b["attachments"]) {
+			s += "*Attachment:* " + mdCode(astr(mapOf(x)["name"])) + "\n"
+		}
+		return s
 	case "reasoning":
 		return fmt.Sprintf("*Reasoning:*\n\n%s\n", cut(firstString(b["plain"], b["markdown"])))
 	case "tool":

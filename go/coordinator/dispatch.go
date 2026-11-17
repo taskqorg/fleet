@@ -531,6 +531,11 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip(id+" executor lacks workspace-key-v1; update required", "host:"+id+":workspace-version")
 				continue
 			}
+			// An executor before message attachments would stage the files but never tell the agent about them.
+			if len(anys(mapOf(x["payload"])["attachments"])) > 0 && !inList(k.caps[id], "attachments") {
+				skip(id+" executor lacks attachments; update required", "host:"+id+":attachments-version")
+				continue
+			}
 			if !a.hostMayRun(h, projectID, director) {
 				skip(fmt.Sprintf("%s is held by %s, who has no grant on %v", id, h["holder"], jsText(projectID)), "host:"+id+":trust")
 				continue
@@ -965,6 +970,10 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 		if err := json.Unmarshal(jsonBytes(v), &p.Inputs); err != nil {
 			return nil, failf(400, "execution %v: pipeline inputs are not [{artifactId, path}]: %v", e["id"], err)
 		}
+	}
+	if list := anys(extra["attachments"]); len(list) > 0 {
+		inputs, attachments := startAttachments(astr(e["id"]), list)
+		p.Inputs, p.Attachments = append(p.Inputs, inputs...), attachments
 	}
 	p.Skills, p.WebRoute = rawList(extra["skills"]), strPtr(extra["webRoute"])
 	if snapshot := mapOf(e["projectSnapshot"]); snapshot != nil {
