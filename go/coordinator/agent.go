@@ -1535,7 +1535,9 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	if pre != nil {
 		access, branch = pre.Access, pre.Branch
 	}
-	if callerRead {
+	if _, branchGiven := b["branch"]; callerRead && !branchGiven {
+		access, branch = "read", false
+	} else if callerRead {
 		access = "read"
 	}
 	if v, given := b["access"]; given {

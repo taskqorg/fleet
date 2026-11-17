@@ -25,7 +25,7 @@ export function NewConversation({ initialProject, onStarted }: { initialProject:
   const alive = useAlive();
   const projects = useDoc<any>('conversation-projects', () => op('project_list', {}), c => c.kind === 'definition');
   // Recent: the projects of the latest conversations, newest first (sessions_list, latest activity first).
-  const recent = useDoc<Ops['sessions_list']['reply']>('conversation-recent-projects', () => op('sessions_list', { group: 'none', sort: '-activity', limit: 50 }), c => c.kind === 'session');
+  const recent = useDoc<Ops['sessions_list']['reply']>('conversation-recent-projects', () => op('sessions_list', { group: 'none', sort: '-activity', limit: 50 }), () => false); // an ordering hint, read once
   const [project, setProject] = useState<string | null>(initialProject);
   const key = project ?? '-';
   const presets = useDoc<Ops['session_presets']['reply']>('session-presets:' + key, () => op('session_presets', project ? { projectId: project } : {}), c => c.kind === 'definition');
@@ -65,11 +65,16 @@ export function NewConversation({ initialProject, onStarted }: { initialProject:
     try {
       setError('');
       const request = await prepareSending(scope, 'session_start', { ...(project ? { projectId: project, branch } : {}), preset: chosen!.id, access, text });
+      // A retry of an unknown send keeps its original body (api.ts); never start it with other settings than shown.
+      if (request.access !== access || (project && request.branch !== branch)) {
+        throw Object.assign(Error('This text was sent with other settings and its outcome is unknown; change the text to start anew.'), { keep: true });
+      }
       const r = await writeOnce('session_start', request, () => setError('unknown, retrying'), { signal: alive });
       sendingId(scope, null, text);
       onStarted(r.sessionId);
     } catch (e: any) {
-      if (!(e instanceof AccessChanged) && !unknownOutcome(e) && !(e instanceof OpError && e.message === 'aborted')) sendingId(scope, null, text);
+      // A kept unknown send stays fenced: its identity is cleared only by a definite answer.
+      if (!e?.keep && !(e instanceof AccessChanged) && !unknownOutcome(e) && !(e instanceof OpError && e.message === 'aborted')) sendingId(scope, null, text);
       setError(e.message); throw e;
     }
   };

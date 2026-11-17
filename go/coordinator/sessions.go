@@ -460,7 +460,7 @@ func sessionCreate(q *Request) (doc, error) {
 	}
 	s := doc{"id": newID(), "createdAt": nowMs(), "directedBy": director(q)}
 	if callerReadOnly(q) { // an agent of a read-only conversation creates read-only sessions (presets.go)
-		s["access"] = "read"
+		s["access"], s["branch"] = "read", false
 	}
 	if err := put(q, "session", s); err != nil {
 		return nil, err
