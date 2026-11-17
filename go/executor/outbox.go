@@ -182,6 +182,10 @@ func edgeRedirect(route string, status int, detail string) {
 	defer edgeMu.Unlock()
 	attempts := 0
 	if e, ok := edges[route]; ok {
+		// Lanes asked the route together before its edge answer was known: their answers are one attempt.
+		if route != pollRoute && nowMs() < e.nextAt {
+			return
+		}
 		attempts = e.attempts + 1
 	}
 	if attempts == 0 {
@@ -387,6 +391,9 @@ type laneID struct {
 var (
 	laneMu   sync.Mutex
 	laneBusy = map[laneID]bool{}
+	passes   atomic.Int64 // the latest pass sets the delivery interval
+	// stopUntil, by journal: a lane got unreachable, 429 or 503; until then every lane, of any pass, holds.
+	stopUntil = map[*sql.DB]int64{}
 )
 
 // outboxPass is one scan's state, shared by the lanes it started.
@@ -397,6 +404,7 @@ type outboxPass struct {
 	routes           map[string]bool // routes held for this pass
 	held, sent       bool
 	started          int
+	gen              int64
 	stopErr, failErr error // the coordinator as a whole cannot take rows; a journal failure
 	retryErr         error
 }
@@ -404,7 +412,12 @@ type outboxPass struct {
 func (p *outboxPass) stopped() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.stopErr != nil || p.failErr != nil
+	if p.stopErr != nil || p.failErr != nil {
+		return true
+	}
+	laneMu.Lock()
+	defer laneMu.Unlock()
+	return nowMs() < stopUntil[p.db]
 }
 
 func (p *outboxPass) routeHeld(route string) bool {
@@ -421,24 +434,33 @@ func (p *outboxPass) routeHeld(route string) bool {
 // 2026: a cancelled project operation at the head held 435 rows and the update drain). When the coordinator as a whole
 // cannot be reached (dial refused or timed out) or answers 429 or 503, every lane of the pass stops and retries later.
 func startFlush(db *sql.DB, url, token, host string) (wait func() error, err error) {
-	// The lane key is read in SQL: a scan every 100 ms does not decode every queued body; a body that is not JSON is in
-	// its route's lane.
-	rs, err := db.Query(`SELECT rowid,route,body,CASE WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
+	// The scan reads lane keys only (in SQL; a body that is not JSON is in its route's lane) and claims idle lanes under
+	// laneMu: a lane run that ends meanwhile releases its lane after the scan, so no claimed lane holds rows its earlier
+	// run already sent. Bodies are read for the claimed lanes only.
+	laneMu.Lock()
+	rs, err := db.Query(`SELECT rowid,route,CASE WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
 		THEN json_extract(body,'$.executionId') ELSE '' END ELSE '' END FROM outbox ORDER BY rowid`)
 	if err != nil {
+		laneMu.Unlock()
 		return nil, err
 	}
 	lanes := map[string][]outboxRow{}
 	var order []string
+	empty := true
 	for rs.Next() {
 		var r outboxRow
-		if err := rs.Scan(&r.n, &r.route, &r.body, &r.execution); err != nil {
+		if err := rs.Scan(&r.n, &r.route, &r.execution); err != nil {
 			rs.Close()
+			laneMu.Unlock()
 			return nil, err
 		}
+		empty = false
 		r.ln = "route " + r.route
 		if r.execution != "" {
 			r.ln = "execution " + r.execution
+		}
+		if laneBusy[laneID{db, r.ln}] {
+			continue
 		}
 		if _, ok := lanes[r.ln]; !ok {
 			order = append(order, r.ln)
@@ -447,26 +469,29 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 	}
 	err = rs.Err()
 	rs.Close()
+	if err == nil {
+		for _, key := range order {
+			laneBusy[laneID{db, key}] = true
+		}
+	}
+	laneMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
-	p := &outboxPass{db: db, url: url, token: token, host: host, routes: map[string]bool{}}
+	p := &outboxPass{db: db, url: url, token: token, host: host, routes: map[string]bool{}, gen: passes.Add(1)}
 	var wg sync.WaitGroup
 	for _, key := range order {
 		k := laneID{db, key}
-		laneMu.Lock()
-		busy := laneBusy[k]
-		laneBusy[k] = true
-		laneMu.Unlock()
-		if busy {
-			continue
-		}
 		p.started++
 		wg.Add(1)
 		go func(k laneID, rows []outboxRow) {
 			defer wg.Done()
 			defer func() { laneMu.Lock(); delete(laneBusy, k); laneMu.Unlock() }()
-			if err := p.lane(rows); err != nil {
+			err := bodies(db, rows)
+			if err == nil {
+				err = p.lane(rows)
+			}
+			if err != nil {
 				p.mu.Lock()
 				if p.failErr == nil {
 					p.failErr = err
@@ -486,11 +511,35 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 			heldOnly.Store(true) // the coordinator as a whole is unreachable or asks to slow down: the longer interval
 			return p.stopErr
 		}
-		if p.started > 0 || len(order) == 0 {
+		// An older pass that ends late does not override a later pass's interval; a scan of busy lanes only sets none.
+		if p.gen == passes.Load() && (p.started > 0 || empty) {
 			heldOnly.Store(p.held && !p.sent)
 		}
 		return p.retryErr
 	}, nil
+}
+
+// bodies reads the claimed rows' bodies; only their lane deletes them, so every one is still queued.
+func bodies(db *sql.DB, rows []outboxRow) error {
+	ids := make([]int64, len(rows))
+	at := map[int64]int{}
+	for i, r := range rows {
+		ids[i], at[r.n] = r.n, i
+	}
+	rs, err := db.Query("SELECT rowid,body FROM outbox WHERE rowid IN (SELECT value FROM json_each(?))", enc(ids))
+	if err != nil {
+		return err
+	}
+	defer rs.Close()
+	for rs.Next() {
+		var n int64
+		var body string
+		if err := rs.Scan(&n, &body); err != nil {
+			return err
+		}
+		rows[at[n]].body = body
+	}
+	return rs.Err()
 }
 
 // flush delivers the queued rows of every idle lane and returns when they are done.
@@ -508,11 +557,14 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 	single := false
 	for i := 0; i < len(rows); {
 		if p.stopped() {
+			p.mu.Lock()
+			p.held = true
+			p.mu.Unlock()
 			return nil
 		}
 		r := rows[i]
 		value := decM(r.body)
-		execution, hasExec := value["executionId"].(string)
+		execution, hasExec := r.execution, r.execution != ""
 		hold := func() {
 			p.mu.Lock()
 			p.routes[r.route] = true
@@ -521,7 +573,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 		}
 		holdExecution := func() {
 			p.mu.Lock()
-			if !hasExec || execution == "" {
+			if !hasExec {
 				p.routes[r.route] = true
 			}
 			p.held = true
@@ -556,6 +608,9 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			response = a.value
 		case answerRetry:
 			if a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable {
+				laneMu.Lock()
+				stopUntil[p.db] = nowMs() + 2000
+				laneMu.Unlock()
 				p.mu.Lock()
 				if p.stopErr == nil {
 					p.stopErr = fmt.Errorf("%s", a.text)

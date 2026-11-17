@@ -15,26 +15,25 @@ type laneServer struct {
 	got     []string // route and executionId of each answered request, in answer order
 	events  map[string][]string
 	release chan struct{}
+	waiting chan struct{} // an events request is waiting for its release
 }
 
 // laneFixture: /api/hosts/events answers wait until an agent tool request arrived (2 s at most), as a coordinator busy
 // with event backlog; every other route answers at once.
 func laneFixture(t *testing.T) (*httptest.Server, *laneServer) {
 	t.Helper()
-	s := &laneServer{events: map[string][]string{}, release: make(chan struct{})}
+	s := &laneServer{events: map[string][]string{}, release: make(chan struct{}), waiting: make(chan struct{}, 1000)}
 	var once sync.Once
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		body := decM(string(b))
 		execution := jStr(body, "executionId")
-		switch r.URL.Path {
-		case "/api/hosts/events":
+		if r.URL.Path == "/api/hosts/events" {
+			s.waiting <- struct{}{}
 			select {
 			case <-s.release:
 			case <-time.After(2 * time.Second):
 			}
-		case "/api/hosts/agent-tools":
-			once.Do(func() { close(s.release) })
 		}
 		s.mu.Lock()
 		s.got = append(s.got, r.URL.Path+" "+execution)
@@ -42,6 +41,9 @@ func laneFixture(t *testing.T) (*httptest.Server, *laneServer) {
 			s.events[execution] = append(s.events[execution], jStr(e, "id"))
 		}
 		s.mu.Unlock()
+		if r.URL.Path == "/api/hosts/agent-tools" { // recorded before the events it releases
+			once.Do(func() { close(s.release) })
+		}
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"result":{"ok":true}}`)
 	}))
@@ -132,7 +134,7 @@ func TestNewRowLeavesWhileAnotherLaneDelivers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(50 * time.Millisecond) // the slow lane's request is in flight
+	<-s.waiting // the slow lane's request is in flight
 	queue(db, "/api/hosts/events", M{"hostId": "h", "executionId": "slow", "events": []any{M{"id": "2"}}})
 	queue(db, "/api/hosts/agent-tools", M{"hostId": "h", "executionId": "caller", "commandId": "c", "agentToolKey": "c:agent:1"})
 	if err := flush(db, srv.URL, "invented-token", "fixture-host"); err != nil {
