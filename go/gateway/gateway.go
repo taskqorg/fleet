@@ -534,7 +534,8 @@ type body struct {
 
 // errStalled: a file body's provider stopped reading it, or did not answer within answerMs of its last byte.
 // errUnsent: the timeout came before the provider read any byte of the file body, so it cannot have stored it.
-var errStalled, errUnsent = errors.New("provider stalled"), errors.New("provider read nothing")
+// errNoBody: the request failed (no connection, a reset) before the provider read any byte of the file.
+var errStalled, errUnsent, errNoBody = errors.New("provider stalled"), errors.New("provider read nothing"), errors.New("file not sent")
 
 // progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end. Each
 // response progress (a first byte, every 1xx) resets it to the stall limit, so a provider that starts answering and
@@ -643,6 +644,8 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 			return nil, nil, errUnsent
 		case err != nil && timedOut.Load():
 			return nil, nil, errStalled
+		case err != nil && !sent && ctx.Err() == nil:
+			return nil, nil, errNoBody
 		}
 	}
 	if err != nil {
@@ -693,6 +696,10 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		case err != nil && ctx.Err() != nil:
 			// The caller left: no failover, and a request already sent may still have been charged.
 			a := refusal(499, "unknown", "caller-cancelled", "the caller cancelled the call")
+			a.key = id
+			return a
+		case errors.Is(err, errNoBody):
+			a := refusal(502, "error", "provider-unreachable", "no byte of the file reached the provider; nothing was stored")
 			a.key = id
 			return a
 		case errors.Is(err, errUnsent):
