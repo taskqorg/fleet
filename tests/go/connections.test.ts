@@ -972,8 +972,9 @@ test('Pipeline step terminal ends agree across sequential API/script success, fa
   const retry = ok(await op('pipeline_rerun', {runId: bad.id, mode: 'failed', requestId: randomUUID()}));
   const retryStart = await read(retry.runId);
   assert.equal(retryStart.observedSteps[0].finishedAt, bad.observedSteps[0].finishedAt, 'reused prefix keeps original timing');
-  const preparing = ok(await op('executions_list', {parentExecutionId: retry.runId, limit: 100})).executions;
-  assert.equal(preparing.find((x: any) => x.id === `${retry.runId}:step:1`).endedAt, null, 'retry suffix does not inherit the failed end');
+  // The retry's suffix step row is created asynchronously; wait for it instead of reading the list once.
+  const suffix = await until(async () => ok(await op('executions_list', {parentExecutionId: retry.runId, limit: 100})).executions.find((x: any) => x.id === `${retry.runId}:step:1`), 'retry suffix step row');
+  assert.equal(suffix.endedAt, null, 'retry suffix does not inherit the failed end');
   const recovered = await failed.complete(retry.runId, false);await typed(recovered);
   assert.equal(seen.length, seenBefore, 'local suffix retry does not repeat the API call');
   assert.deepEqual((await read(bad.id)).observedSteps, bad.observedSteps, 'retry does not rewrite source history');
