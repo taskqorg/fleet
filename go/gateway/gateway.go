@@ -163,7 +163,7 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 		}
 		p.BaseUrl = strings.TrimRight(p.BaseUrl, "/")
 		for toolName, t := range p.Tools {
-			if t.File != nil && *t.File == contract.GatewayFileModeUpload && strings.ToUpper(t.Method) != "POST" {
+			if t.File != nil && *t.File == contract.GatewayFileModeUpload && t.Method != "" && strings.ToUpper(t.Method) != "POST" {
 				return nil, fmt.Errorf("upload tool %s must POST", toolName)
 			}
 			if t.Method != "GET" {
@@ -181,10 +181,10 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 				switch {
 				case !t.File.Valid():
 					return nil, fmt.Errorf("tool %s file mode is unknown", toolName)
-				case *t.File == contract.GatewayFileModeUpload && (len(t.Inject) > 0 || t.Idempotent):
+				case *t.File == contract.GatewayFileModeUpload && (len(t.Inject) > 0 || t.Idempotent || t.UsageOnce != nil):
 					// The multipart body holds the file part only (an inject field would be dropped); an upload is never
 					// sent twice, so it fails over to no other key.
-					return nil, fmt.Errorf("upload tool %s must inject nothing and not be idempotent", toolName)
+					return nil, fmt.Errorf("upload tool %s must inject nothing, not be idempotent and not count usage once", toolName)
 				case *t.File == contract.GatewayFileModeDownload && (t.FileFrom == nil || t.FileFrom.Url == "" || t.FileFrom.Bytes == ""):
 					return nil, fmt.Errorf("download tool %s needs fileFrom url and bytes", toolName)
 				}
