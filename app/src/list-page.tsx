@@ -10,10 +10,10 @@ import {
 import tokens from '../../packages/ui/tokens.json';
 import { op, online } from './api.ts';
 import { useList, useDoc, type Kind } from './store.ts';
-import { chunks, compareKeys } from './lists.ts';
+import { chunks, compareKeys, closedGroups, flipGroup } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
-import { usePins, useViews, type SavedView } from './prefs.ts';
+import { usePins, useViews, listGroups, setListGroups, type SavedView } from './prefs.ts';
 import type { Change } from './feed.ts';
 
 /** A server list row: its id, code and the server sort key whose first part is the group key. */
@@ -38,12 +38,17 @@ export type ListPageOptions = {
   kind?: Kind;
   /** The list built by the page from the view, in place of a server list; fixed for the page's lifetime. */
   local?: (v: View) => LocalList<ListRow>;
-  /** Group keys collapsed when the page opens (Delivery: installed). */
-  closedGroups?: string[];
   defaultGroup: string;
   defaultSort: string;
   /** System presets (OR-33): fixed, shown before the person's views; each sets the state filter only. */
   system: SavedView[];
+  /** Group keys collapsed by default, by grouping (Tasks: completed and cancelled under state; Delivery: installed under
+   * stage). The person's own toggles are remembered on the server per `<view>:<grouping>` (`listGroups`) and win. */
+  closedGroups?: Partial<Record<string, readonly string[]>>;
+  /** A context of the view with defaults and remembered groups of its own, kept as `<grouping>-<context>` (Delivery:
+   * `merged` for a picked day or a filter to merged rows, where Installed is open by default). A default never changes
+   * inside one context, so a remembered flip means the same every time. */
+  groupsContext?: (v: View) => string | undefined;
   /** Doc name prefix of the pin read (server lists; a local list finds pinned rows in its own rows). */
   pinDoc?: string;
   /** The pin read's filter, and the parts of the view it depends on (added to the doc name). */
@@ -66,7 +71,6 @@ export type ListPageOptions = {
 
 export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const { view, set, href } = useUrlView(o.view);
-  const [closed, setClosed] = useState<string[]>(o.closedGroups ?? []);
   // A new query ends the preset that was active when the person typed it. A preset picked while the debounced query waits
   // stays: the commit reads the URL as it is then (url.ts) and leaves a different preset alone.
   const typedPreset = useRef<string | undefined>(undefined);
@@ -116,19 +120,42 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const pinned = pins.ids.map(x => byId.get(x) ?? rows.find(r => r.id === x))
     .filter((r): r is R => !!r).sort((a, b) => compareKeys(a.sortKey.slice(1), b.sortKey.slice(1)));
   const rest = rows.filter(r => !pins.has(r.id)), displayed = [...pinned, ...rest];
+  // Collapsed groups: the page's defaults for the grouping on screen with the person's flips (prefs listGroups), read in
+  // render, so the first frame after the preferences load already has them. The Pinned group is one list per view.
+  const context = o.groupsContext?.(list.shownView), grouping = context ? `${rowsGroup}-${context}` : rowsGroup;
+  const groupsList = `${o.view}:${grouping}`, pinList = `${o.view}:pinned`;
+  const closed = closedGroups(o.closedGroups?.[grouping] ?? [], listGroups(groupsList));
+  if (listGroups(pinList).includes('pinned')) closed.add(PINNED);
+  const toggleGroup = (key: string) => key === PINNED ? setListGroups(pinList, flipGroup(listGroups(pinList), 'pinned'))
+    : setListGroups(groupsList, flipGroup(listGroups(groupsList), key));
   const items: ListItem<R>[] = [];
   // Pinned rows come first, as a group of their own (OR-12); each shows its pin before the state (RowPin).
   if (pinned.length) {
     items.push({ kind: 'group', key: PINNED, label: 'Pinned', count: pinned.length, icon: 'pin' });
-    if (!closed.includes(PINNED)) for (const r of pinned) items.push({ kind: 'row', r, pinned: true });
+    if (!closed.has(PINNED)) for (const r of pinned) items.push({ kind: 'row', r, pinned: true });
   }
   let last: string | null = null;
+  const shownGroups = new Set<string>();
   for (const r of rest) {
     const g = String(r.sortKey[0]);
-    if (rowsGroup !== 'none' && g !== last) { const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: o.groupLabel(rowsGroup, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
-    if (!closed.includes(g)) items.push({ kind: 'row', r });
+    if (rowsGroup !== 'none' && g !== last) { shownGroups.add(g); const meta = list.groups.find(x => x.key === g); items.push({ kind: 'group', key: g, label: o.groupLabel(rowsGroup, meta?.label ?? null), count: meta?.count ?? 0 }); last = g; }
+    if (!closed.has(g)) items.push({ kind: 'row', r });
   }
-  const toggleGroup = (key: string) => setClosed(c => c.includes(key) ? c.filter(x => x !== key) : [...c, key]);
+  // Loaded rows that end inside a collapsed group show no new items, so the list end would stop asking for pages. The
+  // collapsed groups after it (the server's groups, in row order) show their headers without reading their rows, up to and
+  // with the first open group, whose rows each loaded page keeps asking for (endKey). Collapsed groups at the end (Completed, Cancelled)
+  // are not read through.
+  const tail = rest.length && rowsGroup !== 'none' ? String(rest[rest.length - 1].sortKey[0]) : null;
+  let endKey = '';
+  if (tail !== null && closed.has(tail)) {
+    const at = list.groups.findIndex(x => x.key === tail);
+    if (at < 0) endKey = String(rows.length); // the group counts do not know the tail yet: keep loading
+    for (const meta of at < 0 ? [] : list.groups.slice(at + 1)) {
+      if (shownGroups.has(meta.key)) continue; // a live row placed it already
+      items.push({ kind: 'group', key: meta.key, label: o.groupLabel(rowsGroup, meta.label ?? null), count: meta.count });
+      if (!closed.has(meta.key)) { endKey = String(rows.length); break; }
+    }
+  }
   const chosen = displayed.filter(r => sel.includes(r.id));
   // One operation per row; failures are counted in one banner. The rows that succeeded leave the selection as it is now
   // (not when the operation began), whatever the others did; failed rows stay selected.
@@ -167,7 +194,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const clearFilters = () => { setQuery(''); set({ state: [], q: undefined, project: [], preset: undefined }); };
   const shown = local ? local.rows.length : states.length ? states.reduce((n, s) => n + (list.counts[s] ?? 0), 0) : list.total;
   return {
-    view, set, href, query, setQuery, pins, views, list, group, sort, states, rowsGroup, rows, items, displayed, chosen, closed, toggleGroup,
+    view, set, href, query, setQuery, pins, views, list, group, sort, states, rowsGroup, rows, items, endKey, displayed, chosen, closed, toggleGroup,
     sel, selecting, setSelectOn, select, leave, confirm, setConfirm, bulkError, busy, bulk, off, pinAll, menu, setMenu, closeMenu,
     pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown, isLocal: !!local,
   };
@@ -254,11 +281,11 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
       {pinnedDoc.error && <ErrorBanner text={`Pinned ${p.noun.toLowerCase()} did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
       {!displayed.length && (list.shownKey === null || list.pending || (!g.isLocal && pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
         : !displayed.length ? (list.error || pinnedDoc.error ? null : p.empty)
-        : <VirtualList items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={ROW} follow="top" label={p.listLabel} onEnd={list.more}
+        : <VirtualList items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={ROW} follow="top" label={p.listLabel} onEnd={list.more} endKey={g.endKey}
           columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.r.id === p.focused ? 'sel' : ''}${sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
           onRowMenu={(i, at) => { if (i.kind === 'row') g.setMenu({ r: i.r, at }); }}
           render={i => i.kind === 'group'
-            ? <GroupHeader icon={i.icon ?? p.groupIcon(g.rowsGroup, i.key)} tone={i.icon ? undefined : p.groupTone?.(g.rowsGroup, i.key)} label={i.label} count={i.count} open={!g.closed.includes(i.key)} onToggle={() => g.toggleGroup(i.key)} />
+            ? <GroupHeader icon={i.icon ?? p.groupIcon(g.rowsGroup, i.key)} tone={i.icon ? undefined : p.groupTone?.(g.rowsGroup, i.key)} label={i.label} count={i.count} open={!g.closed.has(i.key)} onToggle={() => g.toggleGroup(i.key)} />
             : <>
               {selecting && <span class="lead"><RowCheck checked={sel.includes(i.r.id)} label={'Select ' + p.title(i.r)} onToggle={() => g.select(i.r)} /></span>}
               {i.pinned && <span class="lead"><RowPin label={p.title(i.r)} onUnpin={() => {

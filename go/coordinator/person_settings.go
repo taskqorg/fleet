@@ -12,6 +12,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 func init() {
@@ -82,6 +84,9 @@ func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 	}
 	if ps.RowPins == nil {
 		ps.RowPins = map[string][]string{}
+	}
+	if ps.ListGroups == nil {
+		ps.ListGroups = map[string][]string{}
 	}
 	return ps, nil
 }
@@ -232,6 +237,19 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			}
 		}
 	}
+	if r.ListGroups != nil {
+		next.ListGroups = maps.Clone(prev.ListGroups)
+		for k, keys := range r.ListGroups {
+			if len(keys) == 0 {
+				delete(next.ListGroups, k)
+			} else {
+				next.ListGroups[k] = unique(keys)
+			}
+		}
+		if len(next.ListGroups) > maxListGroupLists {
+			return contract.PersonSettings{}, fail(400, "listGroups: at most 64 lists in all")
+		}
+	}
 	if r.NavCollapsed != nil {
 		next.NavCollapsed = *r.NavCollapsed
 	}
@@ -262,7 +280,7 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	by := actor(q, "operator")
 	_, err = unscoped(q, func() (struct{}, error) {
 		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(next.Order), "pins": next.Pins,
-			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed, "lastViews": next.LastViews}); err != nil {
+			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed, "lastViews": next.LastViews, "listGroups": next.ListGroups}); err != nil {
 			return struct{}{}, err
 		}
 		change := func(field string, previous, value any) error {
@@ -278,7 +296,8 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			previous, value any
 		}{{"pins", prev.Pins, next.Pins}, {"views", prev.Views, next.Views}, {"focus", prev.Focus, next.Focus},
 			{"focusPresets", prev.FocusPresets, next.FocusPresets}, {"widths", prev.Widths, next.Widths}, {"rowPins", prev.RowPins, next.RowPins}, {"navCollapsed", prev.NavCollapsed, next.NavCollapsed}} {
-			// lastViews is where the person was, not a setting: it changes on every navigation and is not audited.
+			// lastViews is where the person was and listGroups which groups they folded, not settings: they change as the person
+			// moves around a list and are not audited.
 			a, _ := json.Marshal(f.previous)
 			b, _ := json.Marshal(f.value)
 			if string(a) != string(b) {
@@ -310,6 +329,11 @@ func checkView(v contract.SavedView) error {
 }
 
 var sectionID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// listGroupsKey: <section>:<grouping>, a section id and a grouping name (a lower-case slug; pinned is the Pinned group).
+var listGroupsKey = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9_-]{0,31}$`)
+
+const maxListGroupLists, maxListGroupKeys, maxGroupKeyBytes = 64, 256, 256
 
 // checkPrefs: names are present and unique (views per list), each view is a valid view of its list (viewProblem, the
 // view_link check), widths are not negative.
@@ -357,6 +381,24 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 	// lower-case words and a request names at most 64 of them.
 	if len(r.LastViews) > 64 {
 		return fail(400, "lastViews: at most 64 sections")
+	}
+	// A list's group keys are the server's or the page's own (project ids, state ranks, agent names, '' for an empty one): short, no
+	// control characters, at most 256 per list; a request names at most 64 lists and the stored document holds at most 64.
+	if len(r.ListGroups) > maxListGroupLists {
+		return fail(400, "listGroups: at most 64 lists")
+	}
+	for k, keys := range r.ListGroups {
+		if !listGroupsKey.MatchString(k) {
+			return fail(400, "listGroups: "+k+" is not <section>:<grouping>")
+		}
+		if len(keys) > maxListGroupKeys {
+			return fail(400, "listGroups: "+k+" names more than 256 groups")
+		}
+		for _, g := range keys {
+			if len(g) > maxGroupKeyBytes || !utf8.ValidString(g) || strings.IndexFunc(g, unicode.IsControl) >= 0 {
+				return fail(400, "listGroups: "+k+": a group key is longer than 256 bytes or has control characters")
+			}
+		}
 	}
 	for k, v := range r.LastViews {
 		if !sectionID.MatchString(k) {

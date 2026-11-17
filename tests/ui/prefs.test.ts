@@ -7,13 +7,13 @@ registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsV
 registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
 await ensureAccessGeneration();
 import { readFileSync } from 'node:fs';
-import { prefs, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds } from '../../app/src/prefs.ts';
+import { prefs, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
 
-const sent: [string, any][] = [];
+const sent: [string, any][] = [], kept: any[] = [];
 const pendingReplies = new Set<Promise<void>>();
 // The server applies the patch; the mock answers with what the tab shows, which is enough to test what is sent.
 (globalThis as any).fetch = async (url: string, init: any) => {
-  if (url.endsWith('_set')) sent.push([url, JSON.parse(init.body)]);
+  if (url.endsWith('_set')) sent.push([url, JSON.parse(init.body)]); if (init.keepalive) kept.push(JSON.parse(init.body));
   const pending = new Promise<void>(resolve => setTimeout(resolve, 5)); pendingReplies.add(pending);
   await pending; pendingReplies.delete(pending); const reply = prefs.value; return { type: 'basic', status: 200, ok: true, json: async () => reply };
 };
@@ -68,6 +68,37 @@ test('OR-41 a width is sent by key only; 0 resets it', async () => {
   setWidth('nav', 0); assert.equal(prefs.value.widths.nav, undefined);
   await settle();
   assert.deepEqual(sent.at(-1)?.[1], { widths: { nav: 0 } });
+});
+
+test('list group toggles show at once, are sent once per flush with only the lists that changed, and the stored copy shows after (requirement: list-view.md collapsed groups remembered per person; risk: every toggle is a request, or the group springs open between the flush and the reply)', async () => {
+  await settle(); sent.length = 0;
+  setListGroups('tasks:project', ['fleet']); setListGroups('tasks:project', ['fleet', '~']); setListGroups('tasks:state', []);
+  assert.deepEqual(listGroups('tasks:project'), ['fleet', '~']);
+  assert.equal(sent.length, 0, 'a toggle waits for the debounce');
+  saveListGroups();
+  assert.deepEqual(listGroups('tasks:project'), ['fleet', '~'], 'shown from the saved copy');
+  await settle();
+  assert.deepEqual(sent.map(x => x[1]), [{ listGroups: { 'tasks:project': ['fleet', '~'] } }]);
+  setListGroups('tasks:project', []); saveListGroups(); await settle();
+  assert.deepEqual(sent.at(-1)?.[1], { listGroups: { 'tasks:project': [] } });
+  assert.deepEqual(prefs.value.listGroups, {});
+  saveListGroups(); await settle();
+  assert.equal(sent.length, 2, 'nothing unsent: no request');
+  setListGroups('tasks:state', ['7']); await new Promise(r => setTimeout(r, 600)); await settle();
+  assert.deepEqual(sent.at(-1)?.[1], { listGroups: { 'tasks:state': ['7'] } }, 'the debounce sends it');
+});
+
+test('leaving the page (pagehide, hidden tab) sends the section\'s list view and the unsent group toggles in one keepalive request, after the saves before it (risk: the last toggles are lost when the tab closes, or an older patch lands last)', async () => {
+  await settle(); kept.length = 0; sent.length = 0;
+  noteView('tasks', '/tasks?group=agent'); setListGroups('tasks:agent', ['codex']); saveOnLeave('tasks');
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.deepEqual(kept, [{ lastViews: { tasks: '/tasks?group=agent' }, listGroups: { 'tasks:agent': ['codex'] } }], 'one request, at once with nothing in flight');
+  setWidth('nav', 210); setListGroups('tasks:agent', []); saveOnLeave(null);
+  await settle();
+  assert.deepEqual(sent.slice(-2).map(x => x[1]), [{ widths: { nav: 210 } }, { listGroups: { 'tasks:agent': [] } }]);
+  assert.equal(prefs.value.listGroups['tasks:agent'], undefined);
+  saveOnLeave('tasks'); await settle();
+  assert.equal(sent.length, 3, 'nothing unsent: no request');
 });
 
 test('OR-33 OR-34 OR-41 preferences never use browser storage', () => {

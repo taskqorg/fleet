@@ -4,7 +4,7 @@
 // delivery_status (GitHub read by the coordinator every minute with a key), delivery_history, delivery_baseline and
 // delivery_regressions (the fleet repository's recorded history). Both reach the page through the change stream (kind
 // delivery), so nothing here waits for a poll. Red everywhere means past the stage's P90 over the last 14 days.
-import { useCallback, useEffect, useRef } from 'preact/hooks';
+import { useCallback, useEffect } from 'preact/hooks';
 import {
   ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
   Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
@@ -32,6 +32,7 @@ const MIN = 6e4, DAY = 864e5;
 const FLEET = 'taskqorg/fleet';
 const ORDER = DELIVERY_ORDER;
 const DONE: Stage[] = ['installed', 'merged'];
+const doneOnly = (v: View) => !!v.state?.length && v.state.every(s => DONE.includes(s as Stage));
 const FAILED: Stage[] = ['pr_failed', 'mq_failed'];
 // Each stage's norm is its P50 and P90 in delivery_baseline (the last 14 days): the key of the history duration it is.
 // Open, Checks failed and Queue failed have none: people work there, and a failure needs a look at once.
@@ -144,7 +145,11 @@ export function Delivery({ id }: { id?: string }) {
     return { rows, all, counts, groups, total: rowsOf.length, pending: !picked && !data && !status.error || !!picked && histLoading, error, reload: picked ? histDoc.reload : status.reload };
   };
   const page = useListPage<Row>({
-    view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: ['installed'],
+    view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: { stage: ['installed'] },
+    // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
+    // most installed) or a filter to installed rows is its own context, where it starts open.
+    // The day in the URL, not the bucket found in the history: the context does not change when the history arrives.
+    groupsContext: v => deliveryExtra(v.extra).at || doneOnly(v) ? 'merged' : undefined,
     defaultGroup: DEFAULT_DELIVERY_GROUP, defaultSort: DEFAULT_DELIVERY_SORT, system: SYSTEM_VIEWS, groupLabel: (_g, l) => l ?? '',
   });
   const { view, set } = page;
@@ -153,16 +158,6 @@ export function Delivery({ id }: { id?: string }) {
   // So does a picked bucket outside the range, or one with no history to show (none kept, or focused away from fleet).
   const keep: DeliveryExtra = { ...ex, at: ex.at && (picked && (hist || histLoading || histDoc.error)) ? ex.at : undefined };
   useEffect(() => { const x = view.extra ?? {}; if (Object.keys(x).some(k => (x as Record<string, string | undefined>)[k] !== (keep as Record<string, string | undefined>)[k])) set({ extra: deliveryExtra(keep) }, 'type'); }, [JSON.stringify(view.extra), !!hist, histLoading]);
-  // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
-  // most installed) or a filter to installed rows opens it.
-  const doneOnly = !!view.state?.length && view.state.every(s => DONE.includes(s as Stage));
-  // The page's default (closedGroups) holds again once the day or the filter goes, unless the person opened it.
-  const opened = useRef(false);
-  useEffect(() => {
-    const want = !(ex.at || doneOnly), shut = page.closed.includes('installed');
-    if (!want && shut) { page.toggleGroup('installed'); opened.current = true; }
-    else if (want && !shut && opened.current) { page.toggleGroup('installed'); opened.current = false; }
-  }, [ex.at, doneOnly]);
   const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
   const open = !id ? undefined : items.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, hist.h.installsFrom))[0] : undefined);

@@ -11,7 +11,7 @@ import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalid
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
 import { preferencesTouched } from './invalidation.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset, noteView, saveView, sectionPath } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave } from './prefs.ts';
 import { useDoc } from './store.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
@@ -150,17 +150,20 @@ function App() {
   useEffect(() => { if (signedOut.value) { invalidateAccess('signed out'); void clearAll(true); } }, [signedOut.value]);
   // Each section's list view is noted as it changes and saved when the person leaves the section or the tab hides, so the
   // navigation returns to it (prefs.ts). The open item and checked rows are not part of it (view-url drops focus and sel).
+  // Unsent list group toggles are sent on the same section leave.
   const left = useRef<string | null>(null);
   useEffect(() => {
     if (access.value.state !== 'open' || !prefsRead.value || !NAV.some(n => n.id === current)) return;
     const parsed = (VIEWS as string[]).includes(current) ? parseView(loc + (query ? '?' + query : '')) : null;
     noteView(current, parsed ? formatView({ ...parsed, focus: undefined, sel: undefined }) : '/' + current);
-    if (left.current && left.current !== current) saveView(left.current);
+    if (left.current && left.current !== current) saveOnLeave(left.current, false);
     left.current = current;
   }, [loc, query, access.value.state, prefsRead.value]);
   useEffect(() => {
-    const flush = () => { if (document.visibilityState === 'hidden' && left.current) saveView(left.current); };
-    const leave = () => { if (left.current) saveView(left.current); };
+    // Unsent list group toggles go with them, in one keepalive request: a hidden tab may be closed without pagehide
+    // (prefs.ts saveOnLeave; a section leave sends the same request without keepalive above).
+    const flush = () => { if (document.visibilityState === 'hidden') saveOnLeave(left.current); };
+    const leave = () => saveOnLeave(left.current);
     document.addEventListener('visibilitychange', flush); addEventListener('pagehide', leave);
     return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
   }, []);

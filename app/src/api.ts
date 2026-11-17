@@ -19,11 +19,12 @@ export type { Ops };
 export type OpName = keyof Ops;
 
 // op calls one operation of contracts/ops-<domain>.schema.json: the name picks the request and reply types.
-export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opts: { signal?: AbortSignal } = {}): Promise<Ops[K]['reply']> {
+// keepalive: the request outlives the page (a save sent on pagehide).
+export async function op<K extends OpName>(name: K, body: Ops[K]['request'], opts: { signal?: AbortSignal; keepalive?: boolean } = {}): Promise<Ops[K]['reply']> {
   const generation = accessGeneration();
   await ensureAccessGeneration(); assertAccessGeneration(generation);
   const signal = opts.signal ? AbortSignal.any([opts.signal, accessSignal(generation)]) : accessSignal(generation);
-  return request(name, body, signal, () => assertAccessGeneration(generation));
+  return request(name, body, signal, () => assertAccessGeneration(generation), undefined, opts.keepalive);
 }
 
 /** Only the injected identity validator and no-cursor baseline transport use this boundary. */
@@ -32,10 +33,10 @@ export function accessControlOp<K extends 'me' | 'changes_since'>(name: K, body:
   if (name === 'changes_since' && Object.keys(body).length) throw new Error('Access baseline must have no cursor or options');
   return request(name, body, opts.signal, () => { if (opts.signal?.aborted) throw new AccessChanged(); });
 }
-async function request<K extends OpName>(name: K, body: unknown, signal: AbortSignal | undefined, fence: () => void, path = '/api/ops/' + name): Promise<Ops[K]['reply']> {
+async function request<K extends OpName>(name: K, body: unknown, signal: AbortSignal | undefined, fence: () => void, path = '/api/ops/' + name, keepalive = false): Promise<Ops[K]['reply']> {
   fence();
   let r: Response;
-  try { r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin', redirect: 'manual', signal }); }
+  try { r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin', redirect: 'manual', signal, keepalive }); }
   catch (e) { fence(); if (signal?.aborted) throw new OpError('aborted', 0); online.value = false; throw new OpError('offline', 0); }
   fence(); online.value = true;
   if (r.type === 'opaqueredirect' || r.status === 401 || r.status === 403) { signedOut.value = true; throw new OpError('signed out', r.status); }

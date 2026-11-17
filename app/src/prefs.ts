@@ -1,6 +1,6 @@
 // Per-person preferences, stored server-side in the person's settings (person_settings_get / person_settings_set,
 // docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus and focus
-// presets, column widths, the collapsed navigation. Agents read and write the same fields through the same operations.
+// presets, column widths, the collapsed navigation, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
 import { signal } from '@preact/signals';
 import { op, type Ops } from './api.ts';
 import { onClear } from './offline.ts';
@@ -8,7 +8,7 @@ import type { View } from '../../packages/view-url/view-url.ts';
 
 type Settings = Ops['person_settings_get']['reply'];
 type Patch = Omit<Ops['person_settings_set']['request'], 'email'>;
-const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {} };
+const empty: Settings = { email: '', order: 'list', pins: [], views: [], focus: [], focusPresets: [], widths: {}, rowPins: {}, navCollapsed: false, lastViews: {}, listGroups: {} };
 export const prefs = signal<Settings>(empty);
 /**
  * The person's preferences are known: read (or the read failed, so lists still load). Focus-dependent loads (useList, the
@@ -44,12 +44,16 @@ export function loadPrefs(): Promise<void> {
 function refreshAfterWrites() {
   if (!pending && refreshAfterSave) { refreshAfterSave = false; void loadPrefs(); }
 }
-/** Show the change at once and send its patch. */
-export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Patch) {
+/**
+ * Show the change at once and send its patch. keepalive (pagehide, a hidden tab): the request outlives the page. It still
+ * waits for the saves before it, so an older patch of the same key never lands last; with none in flight it starts at once.
+ */
+export function savePrefs(change: (s: Settings) => Partial<Settings>, patch: Patch, keepalive = false) {
   const n = ++seq, e = epoch, before = prefs.value;
   prefs.value = { ...before, ...change(before) };
   pending++;
-  chain = chain.then(() => e !== epoch ? null : op('person_settings_set', patch))
+  const send = () => e !== epoch ? null : op('person_settings_set', patch, { keepalive });
+  chain = chain.then(send)
     .then(s => { if (e !== epoch) return; pending--; if (s && seq === n) prefs.value = s; refreshAfterWrites(); }, () => { if (e !== epoch) return; pending--; if (seq === n) { prefs.value = before; loadPrefs(); } refreshAfterWrites(); });
 }
 
@@ -107,10 +111,53 @@ export const setWidth = (key: string, px: number) =>
 const here = new Map<string, string>();
 onClear.add(() => here.clear());
 export function noteView(section: string, url: string) { here.set(section, url); }
-export function saveView(section: string) {
+type Pending = { change: (s: Settings) => Partial<Settings>; patch: Patch };
+function viewPatch(section: string): Pending | null {
   const url = here.get(section);
-  if (!url || prefs.value.lastViews?.[section] === url) return;
-  savePrefs(s => ({ lastViews: { ...s.lastViews, [section]: url } }), { lastViews: { [section]: url } });
+  if (!url || prefs.value.lastViews?.[section] === url) return null;
+  return { change: s => ({ lastViews: { ...s.lastViews, [section]: url } }), patch: { lastViews: { [section]: url } } };
 }
 /** The path the navigation opens for a section: its list as last left (this tab first, then the stored one), or the section. */
 export const sectionPath = (section: string) => here.get(section) ?? prefs.value.lastViews?.[section] ?? '/' + section;
+
+/**
+ * The groups of each list (`<section>:<grouping>`, `<section>:pinned` for the Pinned group) whose collapse the person
+ * flipped away from the page default. A toggle shows at once from this tab's copy and is sent debounced, and at once when
+ * the person leaves the section or the tab hides, through savePrefs like any other preference.
+ */
+const groupsHere = signal<Record<string, string[]>>({});
+let groupsTimer: ReturnType<typeof setTimeout> | undefined;
+onClear.add(() => { clearTimeout(groupsTimer); groupsHere.value = {}; });
+/** The flipped group keys of a list: this tab's unsent toggles first, then the stored ones. */
+export const listGroups = (list: string): string[] => groupsHere.value[list] ?? prefs.value.listGroups?.[list] ?? [];
+/** At most this many flips per list are kept (the server bound); the oldest go first. */
+const MAX_FLIPS = 256;
+export function setListGroups(list: string, flipped: string[]) {
+  groupsHere.value = { ...groupsHere.value, [list]: flipped.slice(-MAX_FLIPS) };
+  clearTimeout(groupsTimer); groupsTimer = setTimeout(saveListGroups, 500);
+}
+/** Send this tab's unsent toggles when the debounce ends (a section leave and the tab hiding send them with saveOnLeave). */
+export function saveListGroups() {
+  const p = groupsPatch();
+  if (p) savePrefs(p.change, p.patch);
+}
+function groupsPatch(): Pending | null {
+  clearTimeout(groupsTimer); groupsTimer = undefined;
+  const here = groupsHere.value, stored = prefs.value.listGroups ?? {};
+  const patch = Object.fromEntries(Object.entries(here).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(stored[k] ?? [])));
+  groupsHere.value = {};
+  if (!Object.keys(patch).length) return null;
+  return { change: s => {
+    const next = { ...s.listGroups };
+    for (const [k, v] of Object.entries(patch)) if (v.length) next[k] = v; else delete next[k];
+    return { listGroups: next };
+  }, patch: { listGroups: patch } };
+}
+/**
+ * The person leaves a section, or the page hides or goes away (visibilitychange hidden, pagehide; keepalive, so the
+ * request outlives the page): the section's list view and the unsent group toggles go in one request.
+ */
+export function saveOnLeave(section: string | null, keepalive = true) {
+  const ps = [section ? viewPatch(section) : null, groupsPatch()].filter((p): p is Pending => !!p);
+  if (ps.length) savePrefs(s => Object.assign({}, ...ps.map(p => p.change(s))), Object.assign({}, ...ps.map(p => p.patch)), keepalive);
+}

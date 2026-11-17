@@ -58,6 +58,29 @@ test('P5 lastViews keeps each section\'s last list view, merged by section, remo
   await op('person_settings_set', {lastViews: {tasks: ''}});
 });
 
+test('P5 listGroups keeps the groups each list has folded away from its default, merged by <section>:<grouping>, removed by [], strictly checked and not audited (requirement: list-view.md "collapsed groups are remembered per person"; risk: a section forgets the groups folded in another, a toggle floods the audit, or a bad key is stored)', async () => {
+  const me = (await op('person_settings_get')).email;
+  const before = (await op('setting_changes', {target: 'person:' + me})).changes.length;
+  let s = await op('person_settings_set', {listGroups: {'tasks:project': ['fleet', '~', 'fleet'], 'tasks:state': ['7'], 'delivery:stage': ['installed'], 'tasks:pinned': ['pinned']}});
+  assert.deepEqual(s.listGroups, {'tasks:project': ['fleet', '~'], 'tasks:state': ['7'], 'delivery:stage': ['installed'], 'tasks:pinned': ['pinned']});
+  s = await op('person_settings_set', {listGroups: {'tasks:project': ['other'], 'tasks:pinned': []}});
+  assert.deepEqual(s.listGroups, {'tasks:project': ['other'], 'tasks:state': ['7'], 'delivery:stage': ['installed']});
+  assert.deepEqual((await op('person_settings_get')).listGroups, s.listGroups);
+  assert.equal((await op('setting_changes', {target: 'person:' + me})).changes.length, before);
+  const many = Object.fromEntries(Array.from({length: 65}, (_, i) => ['tasks:g' + i, ['x']]));
+  for (const bad of [{listGroups: {tasks: ['x']}}, {listGroups: {'Tasks:project': ['x']}}, {listGroups: {'tasks:pro ject': ['x']}}, {listGroups: {'tasks:project': ['a\u0000b']}}, {listGroups: {'tasks:project': ['x'.repeat(257)]}}, {listGroups: {'tasks:project': Array.from({length: 257}, (_, i) => 'g' + i)}}, {listGroups: many}]) {
+    const b = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify(bad)});
+    assert.equal(b.status, 400, JSON.stringify(bad).slice(0, 200));
+  }
+  // The whole document holds at most 64 lists: 3 stored plus 62 new ones are refused, 61 are taken.
+  const fill = (n: number) => Object.fromEntries(Array.from({length: n}, (_, i) => ['conversations:g' + i, ['x']]));
+  const over = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify({listGroups: fill(62)})});
+  assert.equal(over.status, 400);
+  assert.equal(Object.keys((await op('person_settings_set', {listGroups: fill(61)})).listGroups).length, 64);
+  await op('person_settings_set', {listGroups: Object.fromEntries(Object.keys((await op('person_settings_get')).listGroups).map(k => [k, []]))});
+  assert.deepEqual((await op('person_settings_get')).listGroups, {});
+});
+
 test('P3 per-item changes (viewPut, viewDelete, rowPin, focusPresetPut, focusPresetDelete) apply to the stored lists, so concurrent saves keep each other (requirement: OR-33, OR-34 stored per person; risk: two devices saving views at once lose one)', async () => {
   const v = (name: string) => ({list: 'tasks', name, view: {view: 'tasks', state: ['failed']}});
   await Promise.all([op('person_settings_set', {viewPut: v('A')}), op('person_settings_set', {viewPut: v('B')}), op('person_settings_set', {rowPin: {list: 'tasks', id: 'x', pinned: true}}), op('person_settings_set', {rowPin: {list: 'tasks', id: 'y', pinned: true}})]);

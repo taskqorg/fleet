@@ -51,3 +51,15 @@ export function chunks<T>(xs: T[], size: number): T[][] {
   for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
   return out;
 }
+
+/**
+ * The collapsed groups of a list: its default collapsed groups with the person's flips applied (a stored key collapses a
+ * group open by default and opens one collapsed by default).
+ */
+export function closedGroups(defaults: readonly string[], flipped: readonly string[]): Set<string> {
+  const out = new Set(defaults);
+  for (const k of flipped) if (out.has(k)) out.delete(k); else out.add(k);
+  return out;
+}
+/** The flips after the person toggles one group: its key is added, or removed when the toggle returns it to its default. */
+export const flipGroup = (flipped: readonly string[], key: string): string[] => flipped.includes(key) ? flipped.filter(k => k !== key) : [...flipped, key];
