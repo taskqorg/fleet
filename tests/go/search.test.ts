@@ -56,6 +56,7 @@ test('search leaves out the projects the person ignores, unless the query names 
   assert.deepEqual(await hits('zebra'), ['task:t-free', 'task:t-keep']);
   assert.deepEqual(await hits('muted'), [], 'the ignored project is not a project hit either');
   assert.deepEqual(await hits('zebra project:muted'), ['task:t-muted'], 'a query naming the project still finds it');
+  assert.deepEqual(await hits('zebra project:mut'), [], 'only a term that names the ignored project exactly lifts the ignore');
   const people = (await call('people_list', {})).people;
   await call('people_set', {people: [...people.filter((p: any) => p.email !== 'other@trial.test'), {email: 'other@trial.test', name: 'Other', roles: ['operator'], grants: [{kind: 'project', id: 'keep'}, {kind: 'project', id: 'muted'}]}]});
   assert.ok((await hits('zebra', 'other@trial.test')).includes('task:t-muted'), "one person's ignore does not hide hits from another");

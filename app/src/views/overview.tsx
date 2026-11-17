@@ -3,7 +3,7 @@ import { useLocation, useSearch } from 'wouter-preact';
 import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, Button, keyConnection, actor, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { focusIds, scopeReady, prefs } from '../prefs.ts';
+import { focusIds, scopeReady, prefs, knownProjects } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
@@ -19,10 +19,11 @@ async function fetchOverview(projectIds?: string[]): Promise<Overview> {
 export function Overview() {
   // ?all: every project, focus and ignore not applied; the header's "need you outside focus" opens it (app-shell.md).
   const all = new URLSearchParams(useSearch()).has('all');
-  const focus = all ? undefined : focusIds();
+  // ?all drops the focus, not the ignore: ignore is full silence (OR-34).
+  const focus = focusIds(!all);
   const alive = useAlive();
   const [, go] = useLocation();
-  const { data, state, error } = useDoc<Overview>(scopeReady.value ? 'overview:' + (all ? '*' : (focus ?? []).join(',')) : null, () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
+  const { data, state, error } = useDoc<Overview>(scopeReady.value && (!all || !prefs.value.ignored.length || knownProjects.value !== null) ? 'overview:' + (all ? '*:' : '') + (focus ?? []).join(',') : null, () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
   const hostsRec = useDoc<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = Date.now();
   const hosts = hostsRec.data, hostNow = hosts ? hosts.serverNow + (now - hosts.fetchedAt) : now;
@@ -34,7 +35,7 @@ export function Overview() {
   ] as const).filter(x => x.value.value > 0);
   return <>
     <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
-    {all && <header class="page-h"><span class="muted">Every project, focus not applied</span><Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} /></header>}
+    {all && <header class="page-h"><span class="muted">Focus not applied</span><Button label="Apply the focus" icon="focus" iconOnly kind="quiet" onClick={() => go('/overview')} /></header>}
     <OpsSummary>
       {ops.length > 0 && <StatStrip label="Operations" stats={ops} />}
       <div class="cols">

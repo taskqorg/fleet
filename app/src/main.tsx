@@ -201,7 +201,7 @@ function Focus({ go }: { go: (to: string) => void }) {
     if (JSON.stringify(cur) !== JSON.stringify(next)) knownProjects.value = next;
   });
   const { focus, focusPresets, ignored } = prefs.value;
-  // Not shown where it leads: the Overview with every project.
+  // Not shown where it leads: the Overview without the focus.
   const [loc] = useLocation(), search = useSearch(), here = loc === '/overview' && new URLSearchParams(search).has('all'), outside = useOutside();
   return <FocusControl projects={list} value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} outside={{ n: here ? 0 : outside, onOpen: () => go('/overview?all') }}
     onChange={setFocus} onSavePreset={n => saveFocusPreset(n)} onRemovePreset={removeFocusPreset} onIgnore={setIgnored} />;

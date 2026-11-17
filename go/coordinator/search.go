@@ -13,7 +13,7 @@ import (
 // field:value terms, the list search syntax. Each entity kind is one provider in searchProviders; a new kind plugs in
 // by appending a provider. A provider that cannot apply a term of the query finds nothing, so `agent:claude` lists tasks only.
 // A person's ignored projects (OR-34) are left out of tasks, questions and projects; a query that names a project
-// (`project:x`) or is a code jump names its target itself and finds it anyway, as a list whose view names a project
+// (`project:<its id>`) or is a code jump names its target itself and finds it anyway, as a list whose view names a project
 // shows it. An agent's search sees every project its grants allow.
 
 type searchQuery struct {
@@ -290,13 +290,14 @@ func init() {
 		if s.text == "" && len(s.fields) == 0 {
 			return contract.SearchReply{Hits: hits}, nil
 		}
-		if _, named := s.fields["project"]; !named && q.person != nil && q.agent == "" {
+		if q.person != nil && q.agent == "" {
 			// A failed read fails the search: the operation's transaction cannot go on after a failed statement.
 			ps, err := personSettings(q, q.person.Email)
 			if err != nil {
 				return contract.SearchReply{}, err
 			}
-			s.ignored = ps.Ignored
+			// A project: term naming an ignored project exactly finds it; a term that only contains part of an id does not.
+			s.ignored = slices.DeleteFunc(slices.Clone(ps.Ignored), func(id string) bool { return strings.EqualFold(id, s.fields["project"]) })
 		}
 		for _, p := range searchProviders {
 			h, err := p(q, s, limit)

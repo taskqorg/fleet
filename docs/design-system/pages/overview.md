@@ -8,7 +8,7 @@
 * the [ops summary](../patterns/ops-summary.md) [stat strip](../controls/stat-strip.md);
 * two columns: [needs you](../patterns/needs-you.md) on the left (wider), and workers per host, accounts and projects on the right.
 
-The focus and ignored projects (OR-34) narrow every part. `/overview?all` shows every project, focus and ignore not applied, and its head says so; the header's "N need you outside focus" opens it ([app shell](../patterns/app-shell.md)).
+The focus and ignored projects (OR-34) narrow every part. `/overview?all` drops the focus (ignored projects stay hidden), and its head says so; the header's "N need you outside focus" opens it ([app shell](../patterns/app-shell.md)).
 
 Counters follow OR-29: the stat strip, a host row and a project row show only non-zero values, a project row starts with its bold total, and a block with nothing above zero is hidden. A host row shows its running workers only while the host is live; an offline host shows its state badge and last-seen age, never a stale count (it used to read `≥ 0`).
 

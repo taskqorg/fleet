@@ -85,6 +85,9 @@ test('OR-34 the outside-focus count leaves out ignored projects and counts nothi
   assert.deepEqual(['fleet', 'other', 'muted', null].map(outsideFocus), [false, true, false, true]);
   prefs.value = { ...prefs.value, ignored: ['muted', '-'] };
   assert.equal(outsideFocus(null), false, "ignored '-' silences work outside projects");
+  knownProjects.value = ['fleet', 'muted', 'other'];
+  assert.deepEqual(focusIds(false), ['fleet', 'other'], 'without the focus (Overview ?all) ignored projects stay out');
+  knownProjects.value = null;
   prefs.value = { ...prefs.value, focus: [], ignored: [] };
 });
 

@@ -90,11 +90,12 @@ export async function checkShellHeader(browser: Browser, origin: string, seed: R
     await panel.getByRole('button', { name: 'Restore Bravo' }).click();
     assert.ok(await until(async () => await row('Bravo').count() === 1), 'a restored project shows again');
     await p.keyboard.press('Escape');
-    // The outside indicator opens the Overview with every project.
+    // The outside indicator opens the Overview without the focus.
     await call('person_settings_set', { focus: ['hdr-alpha'] });
     await p.reload(); assert.ok(await until(async () => await outside.count() === 1), 'the indicator shows after a reload');
     await outside.click(); await p.waitForURL('**/overview?all');
     await p.getByText('Ship Charlie today?').waitFor();
+    assert.ok(await p.getByText('Focus not applied').count() === 1, 'its head says the focus is off');
     // Ignore is full silence: an ignored project's question is not counted outside the focus.
     await call('person_settings_set', { ignore: { project: 'hdr-charlie', ignored: true } });
     await p.goto(origin + '/tasks'); await row('Alpha').waitFor();

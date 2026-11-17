@@ -307,7 +307,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .divider,.divider-ctl{width:var(--size-hit-phone);margin-left:calc(-1 * var(--size-hit-phone) / 2)}
   .divider::after,.divider-ctl::after{left:calc(50% - var(--space-2) / 2);right:auto}
   .rail :is(a,button),.split-list :is(a,button,input,label):not(.pill){position:relative;z-index:5}
-  .vl-row,.nav-toggle{position:relative;z-index:5}
+  .vl-row{z-index:5}.nav-toggle{position:relative;z-index:5}
   .split-list .vl{position:relative;z-index:5}
 }
 /* Until the person's settings are first read (at most 1.5 s) the shell is laid out but not shown, so a stored width or collapsed rail never jumps in (OR-23). */
