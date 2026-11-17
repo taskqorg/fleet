@@ -68,7 +68,28 @@ func (v ClaudeTool) Valid() bool {
 	return false
 }
 
+type CodeMode string
+
+const (
+	CodeModeAdd  CodeMode = "add"
+	CodeModeOnly CodeMode = "only"
+)
+
+// CodeModeValues lists every CodeMode in schema order.
+var CodeModeValues = []CodeMode{CodeModeAdd, CodeModeOnly}
+
+// Valid: v is one of the schema's values.
+func (v CodeMode) Valid() bool {
+	for _, x := range CodeModeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type Profile struct {
+	CodeMode           *CodeMode            `json:"codeMode,omitempty"`
 	CollaborationTools *bool                `json:"collaborationTools,omitempty"`
 	Connections        []string             `json:"connections,omitempty"`
 	DelegationProfiles []string             `json:"delegationProfiles,omitempty"`
@@ -89,6 +110,11 @@ type Profile struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Profile) Validate() error {
+	if v.CodeMode != nil {
+		if err := Check(v.CodeMode, "codeMode"); err != nil {
+			return err
+		}
+	}
 	if v.Harness != nil {
 		if err := Check(v.Harness, "harness"); err != nil {
 			return err

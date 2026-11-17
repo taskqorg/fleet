@@ -45,6 +45,7 @@ func TestParseProfile(t *testing.T) {
 		`{"id":"p","harness":"claude","model":"m","instructionRole":"system","instructions":"x","mcpServers":[],"tools":["Task","TaskStop"]}`,
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"gitNetwork":true}`,
 		`{"id":"p","harness":"claude","model":"m","effort":null,"instructionRole":"system","instructions":"x","mcpServers":[],"tools":["Read","Bash"],"gitNetwork":true}`,
+		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"fleetTools":true,"codeMode":"only"}`,
 	} {
 		if _, err := ParseProfile([]byte(good)); err != nil {
 			t.Error(good, err)
@@ -60,6 +61,7 @@ func TestParseProfile(t *testing.T) {
 		`{"id":"p","model":"m","effort":"low","mcpServers":[]}`,                                                           // no instructions
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"skills":["-rf"]}`,
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"delegationProfiles":null}`,
+		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"codeMode":"all"}`,
 	} {
 		if _, err := ParseProfile([]byte(bad)); err == nil {
 			t.Error("accepted", bad)

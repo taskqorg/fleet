@@ -115,6 +115,9 @@ func (p Profile) check() error {
 	if badArg(p.Id) || len(p.Id) > 80 || badArg(p.Model) || len(p.Instructions) > 16384 {
 		return errors.New("unsupported agent profile: id, model or instructions")
 	}
+	if p.CodeMode != nil && !p.CodeMode.Valid() {
+		return errors.New("codeMode must be add or only")
+	}
 	seenServers := map[string]bool{}
 	for _, server := range p.McpServers {
 		if seenServers[server.Id] {
@@ -122,7 +125,7 @@ func (p Profile) check() error {
 		}
 		seenServers[server.Id] = true
 		if server.Id != "design-rules" {
-			if !grantID.MatchString(server.Id) || server.Id == "fleet" || server.Id == "connection" || len(server.Data) != 1 {
+			if !grantID.MatchString(server.Id) || server.Id == "fleet" || server.Id == "connection" || server.Id == "code" || len(server.Data) != 1 {
 				return errors.New("MCP grant needs a unique named connection and explicit tools only")
 			}
 			var tools []string

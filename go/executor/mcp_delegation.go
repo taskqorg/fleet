@@ -492,6 +492,16 @@ func mcpRun(args []string) error {
 		if ctx, err = dec(s); err != nil {
 			return err
 		}
+	case "code":
+		s, err := arg(1, "spec")
+		if err != nil {
+			return err
+		}
+		spec, err := dec(s)
+		if err != nil {
+			return err
+		}
+		return codeMCP(spec, os.Stdin, os.Stdout)
 	case "connection":
 		conn, err := arg(1, "connection")
 		if err != nil {

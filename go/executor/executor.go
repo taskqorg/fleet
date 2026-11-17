@@ -1038,9 +1038,11 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		profiles = []any{}
 	}
 	fleetMCP := []any{}
+	var fleetContext any
 	if fleetTools {
 		context := M{"hostId": e.host, "commandId": c["id"], "executionId": c["executionId"], "profiles": profiles, "projectId": p["projectId"], "workdir": work, "inputDir": inputDir, "spool": filepath.Join(e.root, "spool"), "operations": p["fleetOperations"]}
 		server := delegationServer(context, filepath.Join(e.root, "journal.sqlite"))
+		fleetContext = context
 		fleetMCP = jArr(server, "tools")
 		servers["fleet"] = server
 	}
@@ -1099,6 +1101,19 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		}
 		servers[conn] = M{"command": exe(), "args": []any{"mcp", "connection", conn, enc(spec), runFile}, "tools": tools, "env": []any{"HOME"}}
 		gatewayConns[conn] = true
+	}
+	// Code mode (docs/designs/fleet-code-mode.md): one `code` server bridges the fleet server and the connection servers.
+	if mode := jStr(p, "agentConfig", "codeMode"); mode != "" {
+		var journal string
+		if fleetContext != nil {
+			journal = filepath.Join(e.root, "journal.sqlite")
+		}
+		if err := addCodeServer(servers, mode, name, jAt(p, "agentConfig"), journal, fleetContext, granted, gatewayConns, runFile, []string{work, inputDir}); err != nil {
+			return fail(1, err.Error())
+		}
+		if mode == "only" {
+			connectionTools = nil
+		}
 	}
 	// Built-in web for pipeline agent steps: off unless the step's run sets webRoute builtin.
 	if name == "codex" && sp.WebRoute != nil {
