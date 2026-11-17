@@ -156,7 +156,7 @@ One pull request per step or area, so one revert restores it. A file is deleted 
 | Configuration | `configuration.md` | `project-context.md`, `capabilities-and-pipelines.md`, `project-settings-*.md`, `project-setup-and-access.md` | `real-projects-survey.md` |
 | Runtime and build | `deployment.md`, `runtime-integration.md`, `execution-continuity.md`, `coordinator-build.md`, `executor-build.md`, `infrastructure-build.md`, `pds-codex-environment.md` | `runtime-boundary-review.md` | `harness-session-comparison.md`, `agentq-reuse-boundary.md`, `agent-tools-inventory.md`, `component-reuse-review.md` (conclusions fold in) |
 | Prototype plan | `prototype-implementation-plan.md` until code stops citing T1-T16, then deleted | `architecture-breadth-plan.md`, `project-pipeline-prototype.md` | `test-results-T1-T16.md` and `multiharness-*.md` move to `evidence/` if still cited |
-| Use cases | `use-cases.md`, `website-example.md` | none | none |
+| Use cases | `use-cases.md` | none | none |
 | Design system | its controls, patterns and pages files | `owner-rules-table.md` into `owner-rules.md`, `methodology-brief.md` into `README.md` | `reviews/2026-11-10/`, `explorations/`, `pages/shots/`; fix the 7 broken links |
 
 Where a row lists several targets, each stays its own topic with its own index row; only the middle column merges. The data foundation splits into `designs/fleet-data-store.md`, `designs/fleet-data-ingest.md` and `designs/fleet-data-isolation.md`. The table is the starting map; step 1 confirms each target against code citations and may move a file between rows. A merge that loses a cited heading keeps it as a heading in the target.

@@ -130,16 +130,8 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
 }
 
 // reads: what a step's arguments or prompt reference (${example.x}, ${steps.<id>.output…}).
-const readsOf = (s: any, sources: Set<string>) => {
+const readsOf = (s: any) => {
   const refs = [...(JSON.stringify(s) ?? '').matchAll(/\$\{(example|steps\.[\w-]+)/g)].map(m => m[1].replace('steps.', ''));
-  if (s.kind === 'publication' && s.files && typeof s.files === 'object' && !Array.isArray(s.files)) {
-    for (const value of Object.values(s.files)) {
-      if (typeof value !== 'string' || /[\\\x00-\x1f]/.test(value)) continue;
-      const parts = value.split('/');
-      if (parts.length < 2 || !sources.has(parts[0]) || parts.some(p => !p || p === '.' || p === '..' || /^[a-z]:/i.test(p))) continue;
-      refs.push(value);
-    }
-  }
   return [...new Set(refs)].join(', ') || 'nothing';
 };
 
@@ -148,7 +140,7 @@ function Steps({ text }: { text: string }) {
   try { const definition = JSON.parse(text); steps = definition?.steps; resultStep = definition?.resultStep; } catch { return null; }
   if (!Array.isArray(steps)) return null;
   steps = steps.filter(s => s && typeof s === 'object');
-  const items: StepItem[] = steps.map((s, i) => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : (s.kind === 'script' || s.kind === 'publication') ? 'program' : 'agent', executor: s.kind === 'publication' ? 'coordinator · publish-static' : s.profile ?? s.tool ?? s.command ?? '', reads: readsOf(s, new Set(['example', ...steps.slice(0, i).map(s => s.id)])), writes: 'output', result: s.id === resultStep, condition: s.when ? `${s.when.source?.step}.${(s.when.source?.path ?? []).join('.')} = ${JSON.stringify(s.when.equals)}` : undefined }));
+  const items: StepItem[] = steps.map(s => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : s.kind === 'agent' ? 'agent' : 'program', executor: s.kind === 'api' || s.kind === 'agent' || s.kind === 'script' ? s.profile ?? s.tool ?? s.command ?? '' : `${s.kind}: no longer run`, reads: readsOf(s), writes: 'output', result: s.id === resultStep, condition: s.when ? `${s.when.source?.step}.${(s.when.source?.path ?? []).join('.')} = ${JSON.stringify(s.when.equals)}` : undefined }));
   return <DetailSection title="Steps"><StepList items={items} label="Steps" /></DetailSection>;
 }
 

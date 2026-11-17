@@ -15,7 +15,6 @@ import { checkTaskStory } from './task-story.check.ts';
 import { checkDeliveryAvailability, checkDeliveryList } from './delivery-availability.check.ts';
 import { checkSpotlight } from './spotlight.check.ts';
 import { checkConversationsList } from './conversations-list.check.ts';
-import { checkPublicationInputs } from './publication-inputs.check.ts';
 
 execFileSync(process.execPath, ['--test', 'tests/ui/composer.test.ts', 'tests/ui/virtual-list.test.ts', 'tests/ui/interface-browser-failure.test.ts', 'tests/ui/interface-eventsource.test.ts', 'tests/ui/scoped-invalidation.test.ts', 'tests/ui/version.test.ts'], { stdio: 'inherit', env: { ...process.env, FLEET_CONTROL_BROWSER: '1' } });
 
@@ -327,7 +326,6 @@ try {
   await checkTaskStory(b, origin);
   await checkDeliveryAvailability(b, origin);
   await checkDeliveryList(b, origin);
-  await checkPublicationInputs(b, origin);
   await checkQuestionReplies(b, origin);
 } finally { await b.close(); await close(); }
 

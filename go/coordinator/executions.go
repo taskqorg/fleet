@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -381,7 +378,7 @@ func stopExecution(ctx context.Context, a *App, id string) error {
 }
 
 // Routes and operations the first Go port left out:
-// execution_differences with GET /api/executions/{id}/differences, GET /api/reconciliation and GET /test-sites.
+// execution_differences with GET /api/executions/{id}/differences and GET /api/reconciliation.
 
 const differenceTextLimit = 131072
 
@@ -482,8 +479,6 @@ func executionDifferences(q *Request, id, previousID string) (contract.Execution
 	return contract.ExecutionDifferencesReply{SessionId: strPtr(current["sessionId"]), PreviousExecutionId: strPtr(previous["id"]), ExecutionId: astr(current["id"]), Files: files}, nil
 }
 
-var testSiteFile = regexp.MustCompile(`^[a-zA-Z0-9_-]+\.(html|css)$`)
-
 func init() {
 	gatedObjOp("execution_differences", true, typedOp(func(q *Request, r *contract.ExecutionDifferencesRequest) (contract.ExecutionDifferencesReply, error) {
 		return executionDifferences(q, r.ExecutionId, r.Previous)
@@ -500,36 +495,6 @@ func init() {
 			return doc{"reconciliation": nil}, nil
 		}
 		return doc{"reconciliation": r["data"]}, nil
-	})
-	// The example sites an agent builds (docs/website-example.md), served sandboxed from FLEET_TEST_SITE_ROOT.
-	gatedRoute("GET /test-sites/{project}/{file}", func(q *Request) (any, error) {
-		root, project, name := os.Getenv("FLEET_TEST_SITE_ROOT"), q.r.PathValue("project"), q.r.PathValue("file")
-		if !mayAccessProjectID(q.person, project) {
-			return nil, fail(404, "Unknown test site")
-		}
-		if root == "" || (project != "hello-world" && project != "hello-world-alt") || !testSiteFile.MatchString(name) {
-			return nil, fail(404, "Unknown test site")
-		}
-		f, err := publicationSiteFile(filepath.Join(root, project), name)
-		if err != nil {
-			return nil, fail(404, "Unknown test site")
-		}
-		defer f.Close()
-		b, err := io.ReadAll(f)
-		if err != nil {
-			return nil, fail(404, "Unknown test site")
-		}
-
-		return raw(func(w http.ResponseWriter) error {
-			w.Header().Set("Content-Security-Policy", "sandbox allow-same-origin; default-src 'none'; style-src 'self' 'unsafe-inline'; img-src data:; frame-ancestors 'self'")
-			media := "text/html"
-			if strings.HasSuffix(name, ".css") {
-				media = "text/css"
-			}
-			w.Header().Set("Content-Type", media)
-			_, err := w.Write(b)
-			return err
-		}), nil
 	})
 }
 

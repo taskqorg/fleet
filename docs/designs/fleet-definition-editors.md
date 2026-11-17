@@ -58,13 +58,13 @@ This design adds those operations. Saved definitions live in the coordinator's d
 
 ### CUJ 2: Concurrent save
 
-*   **Given**: the owner and the PM agent both drafted `hello-search` from revision 2.
+*   **Given**: the owner and the PM agent both drafted `search-basic` from revision 2.
 *   **When**: the PM agent saves first (revision 3); the owner saves with base 2.
 *   **Then**: the owner gets 409 `base-moved` with `head: 3`; the app shows `definition_diff` 2 to 3 and the owner's draft; the owner calls `definition_draft_put` with base 3 and saves again.
 
 ### CUJ 3: Release changes a file under a store revision
 
-*   **Given**: `hello-search` has store revision 3 (editor), based on repository file A; a release ships file B.
+*   **Given**: `search-basic` has store revision 3 (editor), based on repository file A; a release ships file B.
 *   **When**: the coordinator starts and reconciles definitions.
 *   **Then**: the definition state is `repository-changed` (the same when nobody had edited it: the store wins after first boot); executions keep using revision 3; the Draft bar offers the diff 3 against B; saving requires `repoSha: B` in the request, either with B's content ("take repository") or another content ("keep mine"); export leaves the definition out until that save. No save is lost and no release is lost.
 
@@ -103,7 +103,7 @@ writers: definition_save, Lab Promote, PM agent tools ──▶ new revision (on
 git: definition_export  ──▶  unified diff of every ahead definition against the shipped file
 ```
 
-* **Identity.** `kind` is `agent`, `pipeline` or `catalogue`. `id` is the file stem for agents and pipelines (`idPattern`). A catalogue method's `pipeline` value is a file name (`hello-search.json`); resolve strips `.json` to get the pipeline id. The catalogue is **one definition**, id `catalogue`, path `config/catalogue.json`, whatever capabilities it holds: one file, one revision line, one `repoSha`. Split it only when the file is split.
+* **Identity.** `kind` is `agent`, `pipeline` or `catalogue`. `id` is the file stem for agents and pipelines (`idPattern`). A catalogue method's `pipeline` value is a file name (`search-basic.json`); resolve strips `.json` to get the pipeline id. The catalogue is **one definition**, id `catalogue`, path `config/catalogue.json`, whatever capabilities it holds: one file, one revision line, one `repoSha`. Split it only when the file is split.
 * **Paths.** `path` is relative to the repository root. Reconcile reads the directories the coordinator reads today: `FLEET_PROFILES_DIRECTORY` (default `config/agents`), `FLEET_PROJECT_CONFIG_DIRECTORY` (default `config`, for `catalogue.json`) and the pipeline directory under `projectConfigDir()`. With an override, `path` is still written as the default repository path, so export patches the repository.
 * **Content** is the parsed JSON, validated by the kind's existing validator before it is stored: `validatePipeline` for pipelines, `contract.ParseProfile` (`go/contract/profile.go`, schema `contracts/profile.schema.json`, already taking content) for agents, the checks in `catalogue()` for the catalogue. The validators move to take content instead of a path. Content is stored canonical (keys sorted, two-space indent, trailing newline) so the diff and `contentSha` are stable and match a file written by export. The build commits the shipped files once in canonical form, and a Go test fails when a file under `config/agents`, `config/pipelines` or `config/catalogue.json` is not canonical, so the first export does not reformat whole files.
 * **Classification at reconcile.** A file in the profile directory that fails `readTrustedProfile` (`contract.ParseProfile` plus the file-name check) is not a definition: it is skipped, as `listProfiles` skips it today, and listed in a start log line. A pipeline or catalogue file that fails validation keeps the last valid revision (or, with none, no definition) and raises one needs-you question with the problem, as a malformed `people.json` does.

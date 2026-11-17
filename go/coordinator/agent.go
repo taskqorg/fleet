@@ -1535,7 +1535,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 }
 
 var agentDescriptions = map[string]string{
-	"pipeline_run_create": "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get. The shipped publish-static pipeline requires example.inputs [{path: \"index.html\", text: \"<html>…</html>\"}]. It publishes only to the project's configured dedicated Fleet test-site destination, using stored same-project input artifacts and protected HTTP byte/hash verification; output has url/version/verified/files. An arbitrary path, URL, command or credentials cannot select a destination. A generating pipeline can use a publication step files mapping from earlier-step input paths. Publication success and task acceptance are separate.",
+	"pipeline_run_create": "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get.",
 
 	"executions_list":        "Read executions with optional project/task/session/parent/problem/needsYou filters. For bounded enumeration set limit (1..1000); reply has executions and hasMore, plus nextAfter when more rows exist. Repeat identical filters with after=nextAfter until hasMore=false. Order is seq,id; pages use fresh snapshots. Without limit returns the complete legacy executions wrapper, without paging metadata. after requires limit; inaccessible, unknown or filter-mismatched cursors return 400.",
 	"search":                 "Find tasks, questions, projects and hosts by text, id or code (T-FLT-42, old codes too); field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). Hits list ids; tasks recently changed first",

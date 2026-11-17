@@ -1,0 +1,1 @@
+{"id":"hello-world","name":"Hello World","capability":"web-research","recommendedMethod":"search-basic","integration":{"mode":"direct"},"contextFiles":["rules.md","reference.json"]}
