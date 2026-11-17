@@ -1,28 +1,21 @@
 #!/bin/sh
 # Outside tests of the Go coordinator: tests/trial and tests/go against go/bin/fleet-coordinator on a fresh local Postgres
-# database (tests/trial/run.ts). Build first: pnpm run go:build
-# run.ts exits non-zero when a test fails or the coordinator does not start; set -e stops at the first failing file.
+# database per file (tests/trial/run.ts). Build first: pnpm run go:build
 #   tests/go/run.sh [index total]   run only every total-th file starting at index (CI shards; default all files).
+# OUTSIDE_JOBS: files run at once (default 1). Each file gets its own database, secret directories and gateway port; its
+# output is printed whole when it ends, with its duration. A failed file starts no new ones; the run fails after the
+# running files end, naming the failed files.
 set -e
 cd "$(dirname "$0")/../.."
 index=${1:-0} total=${2:-1}
 [ "$index" -ge 0 ] && [ "$index" -lt "$total" ] || { echo "shard index $index outside total $total"; exit 1; }
-secrets=$(mktemp -d)
-trap 'rm -rf "$secrets"' EXIT
-# One run per file: each file registers its own hosts, so each gets a fresh database.
-# ponytail: round-robin sharding; weight by measured duration if one shard stays much longer than the others.
-i=0 ran=0
+files=
+i=0
 for f in tests/trial/*.test.ts tests/go/*.test.ts; do
   n=$i; i=$((i + 1))
-  [ $((n % total)) -eq "$index" ] || continue
-  ran=$((ran + 1))
-  # The fake gateway of connections.test.ts on a free port: runs on one host side by side (the PDS18 runner pool) must
-  # not share it; a taken fixed port left that file waiting forever.
-  gateway=$(node -e 'const s=require("node:net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
-  FLEET_TRIAL_SERVER=go/bin/fleet-coordinator FLEET_STORE_SECRETS="$secrets" FLEET_STORE_ENDPOINT_HOSTS=127.0.0.1 \
-  FLEET_DEFAULT_ARTIFACT_LOCATIONS=trial-host \
-  FLEET_SECRET_DIR="$secrets/secret" FLEET_GATEWAY_DIR="$secrets/gateway" FLEET_GATEWAY_URL=http://127.0.0.1:$gateway FLEET_CONNECTION_TICK_MS=200 FLEET_PIPELINE_TICK_MS=200 FLEET_STREAM_PING_MS=300 FLEET_WATCH_TICK_MS=200 \
-  FLEET_TRIAL_TESTS="$f" node tests/trial/run.ts
+  [ $((n % total)) -eq "$index" ] && files="$files $f"
 done
-[ "$ran" -gt 0 ] || { echo "shard $index/$total ran no files"; exit 1; }
-echo "shard $index/$total ran $ran files"
+[ -n "$files" ] || { echo "shard $index/$total ran no files"; exit 1; }
+# shellcheck disable=SC2086
+node tests/go/run-files.ts "${OUTSIDE_JOBS:-1}" $files
+echo "shard $index/$total ran $(echo $files | wc -w | tr -d ' ') files"

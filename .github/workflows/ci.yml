@@ -285,6 +285,41 @@ jobs:
           PART: ${{ matrix.part }}
           # The code mode runtime tests fail instead of skipping where the step above set up bwrap.
           FLEET_REQUIRE_CODE_MODE: ${{ matrix.part == 'unit' && '1' || '' }}
+  # TEMPORARY measurement (removed before merge): outside tests at OUTSIDE_JOBS 1-4 on hosted runners.
+  outside-experiment:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        jobs: [1, 2, 3, 4]
+        rep: [a, b]
+    env:
+      GOFLAGS: -mod=readonly
+      FLEET_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
+      OUTSIDE_JOBS: ${{ matrix.jobs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: scripts/ci-part.sh clickhouse start
+      - uses: ./.github/actions/go
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-outside-${{ hashFiles('go/**') }}
+          restore-keys: go-outside-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: nproc; free -g; grep -m1 'model name' /proc/cpuinfo
+      - run: scripts/ci-part.sh outside-0 build
+      - run: scripts/ci-part.sh clickhouse wait
+      - run: scripts/ci-part.sh outside-0 test
   # The same parts on the warm PDS18 pool (.github/workflows/pds18.yml at main: the pool admits only main's workflows).
   go-tests-pds18:
     needs: selection
