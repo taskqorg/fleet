@@ -23,7 +23,7 @@ func TestResourceRetryDelay(t *testing.T) {
 		step := min(5*time.Minute, 100*time.Millisecond<<min(n, 30))
 		for range 20 {
 			low := step
-			if step*3/2 > 5*time.Minute {
+			if step == 5*time.Minute {
 				low = min(step, 5*time.Minute*3/4) // at the maximum the jitter goes below it
 			}
 			if d := resourceRetryDelay(n); d < low || d > min(5*time.Minute, step*3/2) {
@@ -38,8 +38,9 @@ func TestResourceRetryDelay(t *testing.T) {
 	for range 3 {
 		h.fail("project:p", 0)
 	}
+	before := time.Now()
 	h.fail("execution:e", 12) // continues a durable pause at the maximum
-	if h.items["execution:e"].failures != 13 || time.Until(h.items["execution:e"].until) < 4*time.Minute {
+	if h.items["execution:e"].failures != 13 || h.items["execution:e"].until.Sub(before) < 225*time.Second {
 		t.Fatal("hold did not continue the durable pause", h.items["execution:e"])
 	}
 	if strings.Join(h.ids("project:", true), ",") != "p" || h.count("project:q") != 0 || strings.Join(h.failing(4), ",") != "execution:e" || strings.Join(h.failing(3), ",") != "execution:e,project:p" {
@@ -64,6 +65,12 @@ func TestResourceRetryDelay(t *testing.T) {
 		withResourceRetry(t, time.Millisecond, d)
 		if got := resourceRetryEvery(); got != want {
 			t.Fatalf("every %v = %q", d, got)
+		}
+	}
+	withResourceRetry(t, 100*time.Millisecond, 110*time.Millisecond)
+	for range 20 {
+		if d := resourceRetryDelay(0); d < 100*time.Millisecond || d > 110*time.Millisecond {
+			t.Fatalf("uncapped step jitter exceeded its bounds: %v", d)
 		}
 	}
 	withResourceRetry(t, time.Second, time.Second)
@@ -183,6 +190,21 @@ func TestResourceRetryPausePostgres(t *testing.T) {
 	if f := finding(); !strings.HasPrefix(f, "problem:resource:failing ") || !strings.Contains(f, "execution pause-poison") {
 		t.Fatal("persistent failure not surfaced", f)
 	}
+	// One open question tracks the current failure without asking again or rewriting an answered question.
+	syncFinding := func(text string) {
+		t.Helper()
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			return problemsSync(q, "rules", []Problem{{Cause: "problem:resource:failing", Text: text, Rule: "resource-failing", RefreshText: true}})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	syncFinding("execution pause-poison")
+	syncFinding("execution another-poison")
+	equal(`SELECT count(*)::text||' '||max(text) FROM question WHERE cause='problem:resource:failing'`, "1 execution another-poison")
+	sql(`UPDATE question SET state='answered' WHERE cause='problem:resource:failing'`)
+	syncFinding("execution third-poison")
+	equal(`SELECT count(*)::text||' '||max(text) FROM question WHERE cause='problem:resource:failing'`, "1 execution another-poison")
 	// The fix (migration 68's move) lets it succeed: its work is consumed and the problem goes.
 	owner(`SELECT set_config('fleet.project_ids','*',false); UPDATE execution SET project_id='PAUSE' WHERE id='pause-poison'; DELETE FROM resource_work_scope WHERE project_id=''`)
 	sql(`UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='pause-poison'`)

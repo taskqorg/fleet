@@ -138,11 +138,12 @@ var (
 
 func resourceRetryDelay(failures int) time.Duration {
 	d := float64(resourceRetryBase) * math.Pow(2, float64(min(max(failures, 0), 62)))
-	if j := d * (1 + rand.Float64()/2); j <= float64(resourceRetryMax) {
-		return time.Duration(j)
+	cap := float64(resourceRetryMax)
+	if d < cap {
+		return time.Duration(d + rand.Float64()*min(d/2, cap-d))
 	}
 	// At the maximum the jitter goes below it (up to a quarter), so items paused at the maximum still spread.
-	return time.Duration(float64(resourceRetryMax) * (1 - rand.Float64()/4))
+	return time.Duration(cap * (1 - rand.Float64()/4))
 }
 
 // resourcePause records one more failure of the item key names, in its own transaction under locks. selectSQL reads
@@ -152,6 +153,9 @@ func resourceRetryDelay(failures int) time.Duration {
 // written one releases any hold.
 func resourcePause(ctx context.Context, a *App, locks []string, key, selectSQL, updateSQL, item string, extra ...any) error {
 	attempts := resourceHeld.count(key)
+	if id, ok := strings.CutPrefix(key, "execution:"); ok {
+		attempts = max(attempts, resourceHeld.count("scope:"+id))
+	}
 	err := runTxLocks(ctx, a, nil, true, locks, func(q *Request) error {
 		var durable int
 		if err := q.tx.QueryRow(q.ctx(), selectSQL, item).Scan(&durable); errors.Is(err, pgx.ErrNoRows) {
@@ -858,10 +862,10 @@ func resourceFlushDeltas(q *Request, projects []string, deltas map[string]*resou
 // resourceReplace consumes only the UUIDs claimed by this attempt. The callback is replayable:
 // every retry resets its local claims, snapshot and candidate. Scope expansion restarts the whole Tx.
 func resourceReplace(ctx context.Context, a *App, id string) error {
-	return resourceReplaceAttempt(ctx, a, id, false)
+	return resourceReplaceAttempt(ctx, a, id, false, true)
 }
 
-func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) error {
+func resourceReplaceAttempt(ctx context.Context, a *App, id string, once, holdHint bool) error {
 	ctx, span := obs.Start(obs.WithRun(ctx, obs.Run{ExecutionID: id}), "resource.replace", "internal")
 	var finalErr error
 	defer func() { span.End(finalErr) }()
@@ -872,13 +876,18 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 		scopeStart := time.Now()
 		ps, err := resourceScopeHint(ctx, a, id)
 		if err != nil {
-			// The hint is a read of the shared pool: its failure is held in memory under its own key, so it neither
-			// raises the durable attempts of every execution while the pool fails nor retries this one at once.
+			// An isolated hint error pauses only this execution. A batch hint failure followed by this
+			// error pauses the whole processor; leaving this execution eligible lets the next pass probe recovery.
 			finalErr = err
-			if ctx.Err() == nil {
-				resourceHeld.fail("scope:"+id, 0)
+			if holdHint && ctx.Err() == nil {
+				var durable int
+				readErr := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+					return q.tx.QueryRow(q.ctx(), resourceWorkAttemptsSQL, id).Scan(&durable)
+				})
+				resourceHeld.fail("scope:"+id, max(durable, resourceHeld.count("execution:"+id)))
+				finalErr = errors.Join(finalErr, readErr)
 			}
-			return fmt.Errorf("%w: %w", errResourceHint, err)
+			return fmt.Errorf("%w: %w", errResourceHint, finalErr)
 		}
 		// A scope expansion that teaches no new scope set would repeat at once: it fails like any other error.
 		key := strings.Join(ps, "\x00")
@@ -952,6 +961,8 @@ func resourceReplaceAttempt(ctx context.Context, a *App, id string, once bool) e
 	}
 }
 
+const resourceWorkAttemptsSQL = `SELECT coalesce(max(attempts),0) FROM resource_work WHERE execution_id=$1`
+
 // resourceReplaceFailed pauses the failed execution's work (resourceRetryDelay) in its own transaction: rollback must
 // never commit a half replacement. The execution is the item: every work row of it, claimed or not, gets the next
 // attempt count of the execution and one pause, so a failure before the claim (scope read, lock set) pauses it as well
@@ -963,7 +974,7 @@ func resourceReplaceFailed(ctx context.Context, a *App, id string, err error) er
 		return nil
 	}
 	return resourcePause(ctx, a, []string{"execution:" + id}, "execution:"+id,
-		`SELECT coalesce(max(attempts),0) FROM resource_work WHERE execution_id=$1`,
+		resourceWorkAttemptsSQL,
 		`UPDATE resource_work SET attempts=$2,next_attempt_at=statement_timestamp()+$3*interval '1 microsecond',last_error_class=$4 WHERE execution_id=$1`,
 		id, resourceErrorClass(err))
 }
@@ -1175,21 +1186,20 @@ func resourceReplaceCandidates(ctx context.Context, a *App, ids []string) error 
 	var finalErr error
 	if err != nil {
 		// Every candidate goes alone. If its own scope read fails too, the shared read pool is failing: the pass
-		// stalls there (the processor pauses) rather than failing and holding each candidate in turn. A failure of
-		// one candidate alone holds only that one, so the others still go on the next pass.
+		// stalls there. An isolated hint failure after a successful batch read holds only that candidate.
 		hints, finalErr = nil, err
 	}
 	for _, cohort := range resourceCandidateCohorts(ids, hints) {
 		if len(cohort) == 1 {
-			if e := resourceReplace(ctx, a, cohort[0]); e != nil {
+			if e := resourceReplaceAttempt(ctx, a, cohort[0], false, err == nil); e != nil {
 				finalErr = errors.Join(finalErr, e)
-				if hints == nil && errors.Is(e, errResourceHint) {
+				if err != nil && errors.Is(e, errResourceHint) {
 					return fmt.Errorf("%w: %w", errResourceStall, finalErr)
 				}
 			}
 		} else if e := resourceBisectCohort(cohort,
 			func(part []string) error { return resourceReplaceBatch(ctx, a, part) },
-			func(id string) error { return resourceReplaceAttempt(ctx, a, id, true) }); e != nil {
+			func(id string) error { return resourceReplaceAttempt(ctx, a, id, true, true) }); e != nil {
 			finalErr = errors.Join(finalErr, e)
 			if errors.Is(e, errResourceStall) {
 				return finalErr

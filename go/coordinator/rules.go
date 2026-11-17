@@ -95,7 +95,7 @@ func rulesPass(ctx context.Context, a *App) error {
 		if f.Text != nil {
 			txt = *f.Text
 		}
-		p := Problem{Cause: f.Cause, Text: txt, Rule: f.Rule, Data: doc{"exemplars": f.Exemplars, "value": f.Value}}
+		p := Problem{Cause: f.Cause, Text: txt, Rule: f.Rule, RefreshText: f.Rule == "resource-failing", Data: doc{"exemplars": f.Exemplars, "value": f.Value}}
 		if f.HostId != nil {
 			p.Data["hostId"] = *f.HostId
 		}
