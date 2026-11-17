@@ -143,6 +143,27 @@ func TestDeliveryStages(t *testing.T) {
 	}
 }
 
+// Requirement: a UI-only release the live read of the release list missed (GitHub sorts a ui-* tag among older native
+// ones, past the page read) still delivers its pull request, from the release the history recorded.
+// Risk: #626 matched to a later native release (or none) although the site served its UI release minutes after merge.
+func TestDeliveryRecordedUIRelease(t *testing.T) {
+	s := func(v string) *string { return &v }
+	now, _ := time.Parse(time.RFC3339, "2026-11-17T18:20:00Z")
+	read := []ghRelease{{Tag: "v1.261117.28", Target: "m627", Published: "2026-11-17T16:33:37Z"}}
+	ui := ghRelease{Tag: "ui-1.261117.26-v1.261117.27", Target: "m626", Published: "2026-11-17T16:09:46Z"}
+	g := ghRepo{closed: []ghPull{{Number: 626, MergedAt: s("2026-11-17T16:08:57Z"), MergeSHA: "m626"}, {Number: 627, MergedAt: s("2026-11-17T16:30:00Z"), MergeSHA: "m627"}},
+		releases: withReleases(read, []ghRelease{ui, read[0]})}
+	if len(g.releases) != 2 {
+		t.Fatalf("a recorded release the read has is not added twice: %+v", g.releases)
+	}
+	items, _ := deliveryStages("fleet", githubPublicRepo, g, []string{"1.261117.28"}, "1.261117.28", now)
+	for _, it := range items {
+		if it.Number == 626 && (it.Stage != "installed" || deref(it.Release) != ui.Tag) {
+			t.Fatalf("#626: %+v", it)
+		}
+	}
+}
+
 // Requirement: a person sees only the delivery data of repositories listed by projects they may see.
 // Risk: pull requests, landing counts, errors or samples of another project's private repository reach the page.
 func TestDeliveryReplyScoped(t *testing.T) {
