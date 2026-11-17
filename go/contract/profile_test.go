@@ -62,6 +62,7 @@ func TestParseProfile(t *testing.T) {
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"skills":["-rf"]}`,
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"delegationProfiles":null}`,
 		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"codeMode":"all"}`,
+		`{"id":"p","model":"m","effort":"low","instructions":"x","mcpServers":[],"codeMode":"only","fleetTools":false}`,
 	} {
 		if _, err := ParseProfile([]byte(bad)); err == nil {
 			t.Error("accepted", bad)

@@ -38,6 +38,8 @@ type codeJob struct {
 	rt     *codeRuntime
 	output strings.Builder
 	calls  []any
+	sent   int // bytes of output already replied
+	sentC  int // calls already replied
 	done   chan struct{}
 	ok     bool
 	value  any
@@ -156,14 +158,12 @@ func (s *codeServer) serve(m any) M {
 	return reply
 }
 
-// seconds is a reply wait in seconds; absent or not positive means the 25 s default. The executor's MCP filter forwards
-// one request at a time, so two calls in a row still answer within Codex's 60 s MCP tool timeout.
+// seconds is a reply wait: absent or not positive means 25 s, and more than 50 s means 50 s. The executor's MCP filter
+// forwards one request at a time and Codex times out an MCP call at 60 s, so a longer reply wait would lose the reply and
+// hold every later call, reset included; a longer job keeps running and is read with further polls.
 func seconds(v any) time.Duration {
 	if f, ok := num(v); ok && f > 0 {
-		if f >= math.MaxInt64/float64(time.Second) {
-			return math.MaxInt64
-		}
-		return time.Duration(f * float64(time.Second))
+		return time.Duration(math.Min(f, 50) * float64(time.Second))
 	}
 	return 25 * time.Second
 }
@@ -187,9 +187,13 @@ func (s *codeServer) code(source string, detach time.Duration) M {
 	s.jobs[j.id] = j
 	s.order = append(s.order, j.id)
 	s.mu.Unlock()
-	if err := rt.send(M{"type": "run", "job": j.id, "source": source}); err != nil {
-		s.finish(j, false, nil, M{"message": "runtime-exited: the runtime stopped; state is lost"})
-	}
+	// The send may block while the runtime does not read (a job that never yields); the reply still comes at detach,
+	// and poll reset ends the send.
+	go func() {
+		if err := rt.send(M{"type": "run", "job": j.id, "source": source}); err != nil {
+			s.finish(j, false, nil, M{"message": "runtime-exited: the runtime stopped; state is lost"})
+		}
+	}()
 	r := s.wait(j, detach)
 	if restarted {
 		r["restarted"] = true
@@ -235,7 +239,9 @@ func (s *codeServer) wait(j *codeJob, d time.Duration) M {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String(), "calls": append([]any{}, j.calls...)}
+	// Each reply carries only the output and calls since the job's previous reply.
+	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String()[j.sent:], "calls": append([]any{}, j.calls[j.sentC:]...)}
+	j.sent, j.sentC = j.output.Len(), len(j.calls)
 	if r["status"] == "running" {
 		return r
 	}
@@ -322,7 +328,7 @@ func codeArgv(spec any) ([]string, error) {
 func sandboxArgv(sandbox, node string, read []any, args []string) ([]string, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		return append([]string{sandbox, "-p", "(version 1)(allow default)(deny network*)"}, args...), nil
+		return append([]string{sandbox, "-p", noNetworkProfile}, args...), nil
 	case "linux":
 		argv := []string{sandbox, "--unshare-net", "--unshare-ipc", "--die-with-parent", "--new-session"}
 		for _, d := range []string{"/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc"} {
@@ -412,6 +418,14 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 			s.finish(j, jAt(m, "ok") == true, jAt(m, "value"), jAt(m, "error"))
 		}
 	case "call":
+		s.mu.Lock()
+		ended := j == nil || jobStatus(j) != "running"
+		s.mu.Unlock()
+		if ended {
+			// A call made after its job ended (an unawaited promise or a timer) would have an effect nobody sees.
+			go rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": callError("error", "job-ended", nil)})
+			return
+		}
 		go s.call(rt, j, m)
 	}
 }
@@ -429,11 +443,9 @@ func (s *codeServer) call(rt *codeRuntime, j *codeJob, m any) {
 	if fail != nil {
 		outcome = jStr(fail, "outcome")
 	}
-	if j != nil {
-		s.mu.Lock()
-		j.calls = append(j.calls, M{"tool": label, "ms": time.Since(start).Milliseconds(), "outcome": outcome})
-		s.mu.Unlock()
-	}
+	s.mu.Lock()
+	j.calls = append(j.calls, M{"tool": label, "ms": time.Since(start).Milliseconds(), "outcome": outcome})
+	s.mu.Unlock()
 	reply := M{"type": "reply", "id": jAt(m, "id"), "ok": fail == nil, "value": value}
 	if fail != nil {
 		fail["tool"] = label
@@ -497,7 +509,7 @@ func (s *codeServer) bridge(server, tool string, args any) (any, M) {
 }
 
 // mcpValue unwraps an MCP tool result: a text result parsed as JSON when it is JSON; a result with non-text parts as its
-// parts; isError becomes a call error, except a pending mutation.
+// parts; isError becomes a call error.
 func mcpValue(r any) (any, M) {
 	content := jArr(r, "content")
 	if content == nil {
@@ -517,15 +529,35 @@ func mcpValue(r any) (any, M) {
 	}
 	if jAt(r, "isError") == true {
 		if jStr(v, "status") == "pending" {
-			return v, nil // an unconfirmed mutation: the caller reads it later with agent_tool_result, never repeats it
+			// An unconfirmed mutation: unknown, read later with fleet.agent_tool_result({requestKey}), never repeated.
+			return nil, callError("unknown", "pending", v)
 		}
 		return nil, callError("error", "tool-error", v)
 	}
 	return v, nil
 }
 
-// codeHost finds the host's Node (22.13 or later, for --permission) and network sandbox for the runtime.
-var codeHost = func() (node, sandbox string, err error) {
+// codeHost finds the host's Node (22.13 or later, for --permission) and network sandbox for the runtime. The probe runs
+// once per executor process, like unshareWorks.
+var codeHost = func() (string, string, error) {
+	r := codeHostProbe()
+	if r.err != nil {
+		return "", "", r.err
+	}
+	return r.node, r.sandbox, nil
+}
+
+type codeHostResult struct {
+	node, sandbox string
+	err           error
+}
+
+var codeHostProbe = sync.OnceValue(func() codeHostResult {
+	node, sandbox, err := probeCodeHost()
+	return codeHostResult{node, sandbox, err}
+})
+
+func probeCodeHost() (node, sandbox string, err error) {
 	node, err = exec.LookPath("node")
 	if err != nil {
 		return "", "", errors.New("code-mode-unready: node is not installed")
@@ -569,11 +601,21 @@ type codeFleet struct {
 // bridges. A Claude profile without Read, Grep, Glob or Bash gets no file reads in the runtime.
 // The spec goes to specFile (0600), not argv: fleet operations and connection schemas can exceed one argv string.
 func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFleet, granted []any, gatewayConns map[string]bool, runFile, specFile string, read []string) error {
+	// The same tools the direct connection servers expose: names of letters, digits and '_'.
 	conns := []any{}
 	for _, c := range granted {
-		if gatewayConns[jStr(c, "name")] {
-			conns = append(conns, c)
+		if !gatewayConns[jStr(c, "name")] {
+			continue
 		}
+		tools := []any{}
+		for _, t := range jArr(c, "tools") {
+			if n := jStr(t, "name"); n != "" && onlyBytes(n, func(b byte) bool { return alnum(b) || b == '_' }) {
+				tools = append(tools, t)
+			}
+		}
+		conn := jObj(jClone(c))
+		conn["tools"] = tools
+		conns = append(conns, conn)
 	}
 	if fleet == nil && len(conns) == 0 {
 		return errors.New("codeMode needs Fleet tools or a connection")

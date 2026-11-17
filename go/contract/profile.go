@@ -118,6 +118,11 @@ func (p Profile) check() error {
 	if p.CodeMode != nil && !p.CodeMode.Valid() {
 		return errors.New("codeMode must be add or only")
 	}
+	// fleetTools defaults to true in the executor; without it (the fleet server) and without a connection, code mode
+	// has nothing to bridge.
+	if p.CodeMode != nil && p.FleetTools != nil && !*p.FleetTools && len(p.Connections) == 0 {
+		return errors.New("codeMode needs Fleet tools or a connection")
+	}
 	seenServers := map[string]bool{}
 	for _, server := range p.McpServers {
 		if seenServers[server.Id] {

@@ -142,6 +142,13 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	if r, _ := c.code(`return (await conn.web.$tools()).map(t => t.name)`); enc(r["value"]) != `["search","broken"]` {
 		t.Fatalf("tools: %v", r["value"])
 	}
+
+	// A call made after its job ended is refused, not sent.
+	before = calls.Load()
+	c.code(`setTimeout(() => conn.web.search({}).catch(e => { state.late = e.code }), 50); return 1`)
+	if r, _ := c.code(`await new Promise(r => setTimeout(r, 300)); return state.late`); r["value"] != "job-ended" || calls.Load() != before {
+		t.Fatalf("late call: %v, gateway calls %d", r["value"], calls.Load()-before)
+	}
 }
 
 // Risk: a long run hits the harness MCP timeout (Codex: 60 s) and its result is lost (fleet-code-mode.md, poll).
@@ -155,7 +162,7 @@ func TestCodeModeDetachAndPoll(t *testing.T) {
 	if r, _ := c.call("poll", M{}); jStr(jArr(r, "jobs")[0], "status") != "running" {
 		t.Fatalf("list: %v", r)
 	}
-	if r, bad := c.call("poll", M{"jobId": id, "waitSeconds": 5}); bad || r["status"] != "done" || r["value"] != "late" {
+	if r, bad := c.call("poll", M{"jobId": id, "waitSeconds": 5}); bad || r["status"] != "done" || r["value"] != "late" || r["output"] != "" {
 		t.Fatalf("poll: %v %v", bad, r)
 	}
 	// A final result is returned once; the server keeps nothing of it.
@@ -164,6 +171,16 @@ func TestCodeModeDetachAndPoll(t *testing.T) {
 	}
 	if r, _ := c.call("poll", M{}); len(jArr(r, "jobs")) != 0 {
 		t.Fatalf("delivered job listed: %v", r)
+	}
+}
+
+// Risk: a reply wait past Codex's 60 s MCP timeout loses the reply and holds every later call behind the serial MCP
+// filter (fleet-code-mode.md, code).
+func TestCodeModeReplyWait(t *testing.T) {
+	for in, want := range map[any]time.Duration{nil: 25 * time.Second, float64(-1): 25 * time.Second, float64(3): 3 * time.Second, float64(1e300): 50 * time.Second} {
+		if got := seconds(in); got != want {
+			t.Errorf("seconds(%v) = %v, want %v", in, got, want)
+		}
 	}
 }
 
@@ -263,8 +280,8 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 // outcomes).
 func TestCodeModeFleetResults(t *testing.T) {
 	pending := mcpText(M{"status": "pending", "requestKey": "k"}, &yes)
-	if v, fail := mcpValue(pending); fail != nil || jStr(v, "requestKey") != "k" {
-		t.Fatalf("pending: %v %v", v, fail)
+	if _, fail := mcpValue(pending); jStr(fail, "outcome") != "unknown" || jStr(fail, "code") != "pending" || jStr(fail, "output", "requestKey") != "k" {
+		t.Fatalf("pending: %v", fail)
 	}
 	if _, fail := mcpValue(mcpText(M{"error": "nope"}, &yes)); jStr(fail, "code") != "tool-error" || jStr(fail, "output", "error") != "nope" {
 		t.Fatalf("error: %v", fail)
@@ -289,7 +306,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 	old := codeHost
 	defer func() { codeHost = old }()
 	codeHost = func() (string, string, error) { return "/node", "/sandbox", nil }
-	granted := []any{M{"name": "web", "tools": []any{M{"name": "search"}}}}
+	granted := []any{M{"name": "web", "tools": []any{M{"name": "search"}, M{"name": "foo-bar"}}}}
 	launch := func(mode, harness string, profile M, journal string) (M, M, error) {
 		servers := M{"fleet": M{}, "web": M{}, "serena": M{}}
 		var fleet *codeFleet
@@ -309,7 +326,7 @@ func TestCodeModeLaunchServers(t *testing.T) {
 		return servers, spec.(M), nil
 	}
 	servers, spec, err := launch("add", "codex", M{}, "/journal")
-	if err != nil || !has(servers, "fleet") || !has(servers, "web") || enc(spec["read"]) != `["/work","/input"]` || jStr(spec, "journal") != "/journal" || len(jArr(spec, "connections")) != 1 {
+	if err != nil || !has(servers, "fleet") || !has(servers, "web") || enc(spec["read"]) != `["/work","/input"]` || jStr(spec, "journal") != "/journal" || enc(jAt(jArr(spec, "connections")[0], "tools")) != `[{"name":"search"}]` {
 		t.Fatalf("add: %v %v %v", err, sortedKeys(servers), spec)
 	}
 	servers, _, _ = launch("only", "codex", M{}, "/journal")

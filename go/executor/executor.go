@@ -1064,6 +1064,9 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if runFile != "" && !launched {
 			os.Remove(runFile) // K2-6: a launch that failed never needs its run token
 		}
+		if !launched {
+			os.Remove(codeSpecFile(e.root, execution)) // nor its code server spec
+		}
 	}()
 	granted := jArr(p, "connections")
 	if len(granted) > 0 {

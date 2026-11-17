@@ -57,6 +57,9 @@ func demuxer(media string) string {
 	return ""
 }
 
+// noNetworkProfile is the macOS sandbox-exec profile for helpers without network: previews and the code mode runtime.
+const noNetworkProfile = "(version 1)(allow default)(deny network*)"
+
 // previewCommand: low priority, no network. Memory cap on Linux through `prlimit --as` in the command line (Go has no
 // pre_exec); RLIMIT_AS is not enforced on macOS, where the time bound and idle priority remain.
 func previewCommand(src, out string, poster bool, format string) *exec.Cmd {
@@ -68,7 +71,7 @@ func previewCommand(src, out string, poster bool, format string) *exec.Cmd {
 	var wrap []string
 	switch {
 	case runtime.GOOS == "darwin":
-		wrap = []string{"-n", "19", "sandbox-exec", "-p", "(version 1)(allow default)(deny network*)"}
+		wrap = []string{"-n", "19", "sandbox-exec", "-p", noNetworkProfile}
 	case unshareWorks():
 		wrap = []string{"-n", "19", "unshare", "--user", "--map-root-user", "--net"}
 	default:
