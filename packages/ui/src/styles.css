@@ -252,10 +252,11 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .rail-head{display:flex;align-items:center;gap:var(--space-2);padding-left:var(--space-3)}
 .rail-head{height:var(--size-control)}
 /* OR-42: collapsed and expanded map 1:1. Same items, same heights; only labels go. */
-.rail.mini{width:auto;min-width:calc(2 * var(--size-control))}
+/* Collapsed, every icon stays exactly where it is expanded (the same paddings); the rail is its icon column wide:
+   rail padding + item padding on both sides of the icon, plus its 1 px border. Only the labels go, so nothing moves. */
+.rail.mini{width:calc(2 * var(--space-2) + 2 * var(--space-3) + var(--size-icon) + 1px)}
 .rail.mini .nm,.rail.mini .nav-pin,.rail.mini .rail-menu:not(.up),.rail.mini .brand,.rail.mini .waiting{display:none}
 .rail.mini .rail-h{visibility:hidden;width:0;padding:var(--space-1) 0;overflow:hidden;white-space:nowrap}
-.rail.mini .rail-head{padding-left:var(--space-2)}
 .rail-user{position:relative;display:flex;align-items:center;gap:var(--space-1)}
 /* Version beside the person (nav-rail.md, Version) and its overview panel. */
 .rail-ver{flex:none;height:var(--size-control);padding:0 var(--space-2);border:0;border-radius:var(--radius-sm);background:none;color:var(--fg-muted);font-family:var(--font-mono);font-size:var(--font-size-xs);font-variant-numeric:tabular-nums;cursor:pointer}
@@ -276,7 +277,6 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .rail-user-b:hover,.rail-user-b[aria-expanded=true]{background:var(--hover);color:var(--fg)}
 .rail-user-b .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .avatar{flex:none;display:inline-grid;place-items:center;width:var(--size-icon);height:var(--size-icon);border-radius:50%;background:var(--selected);color:var(--fg);font-size:var(--font-size-xs);font-weight:var(--font-weight-bold)}
-.rail.mini .rail-user-b{padding:0 var(--space-2)}
 .rail-menu.up{position:fixed;top:auto;right:auto}
 /* OR-41 dividers; OR-43 the shell header with the OR-42 toggle */
 .shell-col{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
@@ -312,7 +312,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 }
 /* Until the person's settings are first read (at most 1.5 s) the shell is laid out but not shown, so a stored width or collapsed rail never jumps in (OR-23). */
 .shell.pending{visibility:hidden}
-.rail.mini .nav-i a{padding:0 var(--space-2);position:relative}
+.rail.mini .nav-i a{position:relative}
 .rail.mini .nav-count{position:absolute;top:calc(-1 * var(--space-1));right:calc(-1 * var(--space-1));padding:0 var(--space-1)}
 .rail-g{list-style:none;margin:0;padding:0}
 .rail-g.pinned{padding-bottom:var(--space-3);border-bottom:1px solid var(--line)}

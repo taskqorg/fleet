@@ -209,7 +209,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
             and the section title on the left; the focus chip and search on the right. A right-panel toggle goes last, after
             search, once a right panel exists (app-shell.md); until then nothing is rendered for it. */}
         <header class="shell-h" data-ui="shell-header">
-          <span class="nav-toggle"><Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></span>
+          <span class="nav-toggle"><Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon={mini ? 'panel-left-open' : 'panel-left-close'} iconOnly pressed={mini} onClick={toggle} /></span>
           <h1 class="shell-title">{title ?? nav.find(n => n.id === current)?.label ?? ''}</h1>
           <span class="shell-status" ref={setSlot} />
           <span class="grow" />

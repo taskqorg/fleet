@@ -63,9 +63,14 @@ export async function layoutFindings(p: Page): Promise<string[]> {
     // Collapsed and expanded map 1:1: every rail row keeps its top and height.
     const rows = () => p.$$eval('[data-ui=nav-rail] > *, [data-ui=nav-rail] li', es => es.map(e => { const r = e.getBoundingClientRect(); return `${Math.round(r.top)}/${Math.round(r.height)}`; }).join(' '));
     const flip = () => p.$eval('.nav-toggle button', b => (b as HTMLElement).click());
+    // Every icon (brand mark, section icons, avatar) keeps its place too, and the toggle shows the action it will take.
+    const icons = () => p.$$eval('[data-ui=nav-rail] :is(.brand-mark, .nav-ic, .avatar)', es => es.map(e => { const r = e.getBoundingClientRect(); return `${Math.round(r.left)},${Math.round(r.top)}`; }).join(' '));
+    const glyph = () => p.$eval('.nav-toggle svg', s => s.getAttribute('class') ?? '');
     if (await p.$('.nav-toggle button')) {
-      const a = await rows(); await flip(); const b = await rows(); await flip();
+      const a = await rows(), ia = await icons(), ga = await glyph(); await flip(); const b = await rows(), ib = await icons(), gb = await glyph(); await flip();
       if (a !== b) out.push('OR-42 navigation rows move when it collapses');
+      if (ia !== ib) out.push('OR-42 navigation icons move when it collapses');
+      if (ga === gb) out.push('OR-42 the collapse toggle shows the same icon collapsed and expanded');
     }
   }
   // OR-26: a click on the row's left padding, away from the title, opens it.
