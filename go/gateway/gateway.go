@@ -1281,9 +1281,9 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	case readErr != nil || staged != r.ContentLength:
 		refuse(refusal(400, "error", "bad-request", "the file ended before Content-Length; nothing was sent"), nil)
 		return
-	case scan.found || newScanner(patterns).write([]byte(name)):
+	case scan.found || newScanner(patterns).write([]byte(name+"\n"+mediaType)):
 		// No transfer record: its name may be the secret.
-		refuse(refusal(422, "error", "secret-found", "the file or its name contains a key value or the caller's token; nothing was sent"), nil)
+		refuse(refusal(422, "error", "secret-found", "the file, its name or media type contains a key value or the caller's token; nothing was sent"), nil)
 		return
 	case sum != want:
 		refuse(refusal(400, "error", "sha-mismatch", "the received bytes do not match X-Fleet-Sha256; nothing was sent"), transfer)
@@ -1315,7 +1315,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		},
 		length: int64(len(head)) + staged + int64(len(tail)), contentType: "multipart/form-data; boundary=" + boundary,
 		stall: stall, answer: answerWait})
-	g.finish(w, q, a, transfer)
+	g.finish(w, &again, a, transfer)
 }
 
 func randomHex(n int) string {
