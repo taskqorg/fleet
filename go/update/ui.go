@@ -124,7 +124,7 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 	}
 	st := &State{}
 	readJSON(stateFile, st)
-	p := &part{r: r, name: "ui", root: root, stage: stage, uiBackend: backend, st: st, restart: func() error { return nil }}
+	p := &part{r: r, name: "ui", root: root, stage: stage, uiBackend: backend, app: ".", st: st, restart: func() error { return nil }}
 	p.health = func(ver string) probe {
 		resp, err := u.client.Get(strings.TrimSuffix(u.coordURL, "/api/health") + "/ui-release.json")
 		if err != nil {
@@ -227,6 +227,7 @@ func (u *updater) cycleUI(backend, autoUpdate, root, stage, stateFile string) er
 	if err := u.install(p, candidate, dir); err != nil {
 		return err
 	}
+	u.uploadSourcemaps(filepath.Join(root, candidate, p.app), candidate)
 	st.Last = u.settle(p, candidate, true)
 	if st.Last.State == "failed" {
 		if err := r.Remove("current"); err != nil && !os.IsNotExist(err) {

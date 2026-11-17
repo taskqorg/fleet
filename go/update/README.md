@@ -17,13 +17,14 @@
 - A release requires a signed `SHA256SUMS`, a matching artifact digest, the requested version in `release.json`, and successful binary selftests before installation ([update.go: `fetch`](update.go)).
 - Archive extraction permits only local regular-file and directory entries. Installed files become read-only, and release links are changed through temporary symlinks ([update.go: `unpack`, `install`, `relink`](update.go)).
 - A release must become healthy after restart; after three unhealthy starts the updater restores `previous`, records the refusal, and retains the pre-deploy database dump where applicable ([update.go: `settle`, `pruneDumps`](update.go)).
+- After installing a coordinator or UI release and before its restart, the app's source maps go to Bugsink when `/etc/fleet/bugsink/` holds `ci-token` and `ingest-url` (PDS18); a failed upload is only a warning ([sourcemaps.go: `uploadSourcemaps`](sourcemaps.go), [error tracking](../../docs/designs/fleet-error-tracking.md#6-source-maps)).
 - Cached release metadata is returned only after validation. UI state remains independent from native rollout state ([update.go: `getCached`](update.go), [ui.go: `cycleUI`](ui.go)).
 
 ## Side effects
 
 - Downloads release metadata and archives, writes cached metadata and update state, installs release trees and symlinks, restarts services, and prunes obsolete releases ([update.go: `fetch`, `install`, `pruneReleases`](update.go)).
 - Executor mode may write the target-file trigger unit through `runExecutor` and `ensureTrigger` ([main.go](main.go), [trigger.go: `triggerFor`](trigger.go)).
-- On PDS18 it may run `pg_dump`, copy the verified updater to its root-owned path, and update UI release files ([main.go: `runPDS18`, `installUpdater`](main.go), [ui.go: `cycleUI`](ui.go)).
+- On PDS18 it may upload source maps to Bugsink's loopback address, run `pg_dump`, copy the verified updater to its root-owned path, and update UI release files ([main.go: `runPDS18`, `installUpdater`](main.go), [ui.go: `cycleUI`](ui.go)).
 
 ## Verification
 

@@ -58,6 +58,13 @@ try {
   assert.ok(frames.some((f: any) => /\/assets\/main-[^/]+\.js$/.test(f.filename ?? '')), 'the error has a frame in the app script');
   assert.ok(thrown.event.debug_meta?.images?.some((i: any) => i.type === 'sourcemap' && /^[0-9a-f-]{36}$/.test(i.debug_id)), 'the script carries its debug ID for source maps');
   assert.ok(tunnelled.length > 0 && tunnelled.every(o => o === server.origin), 'the SDK posts only to the app origin');
+  // The build's source maps are never served.
+  const script = frames.map((f: any) => f.filename).find((f: string) => /\/assets\/main-[^/]+\.js$/.test(f ?? ''));
+  const name = script.split('/').pop();
+  for (const path of [`/sourcemaps/${name}.map`, `/assets/${name}.map`]) {
+    const r = await page.request.get(server.origin + path);
+    assert.ok(!(await r.text()).includes('"mappings"'), `${path} serves no source map`);
+  }
 
   // A render crash: Overview receives a reply it cannot render, shows a recoverable error and reports it.
   await page.route('**/api/ops/questions_list', route => route.fulfill({ json: { questions: null } }));

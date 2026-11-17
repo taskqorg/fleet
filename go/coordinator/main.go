@@ -338,6 +338,9 @@ func writeError(w http.ResponseWriter, err error) {
 	code, msg := 500, err.Error()
 	if errors.As(err, &he) {
 		code = he.Code
+		if code == 500 {
+			errtrack.Capture(err, map[string]string{"status": "500"})
+		}
 		if code == 403 || he.Refused {
 			obs.MarkRefused(w) // a missing role or grant, a removed host: a decision, not an error (fleet-telemetry.md §1)
 		}

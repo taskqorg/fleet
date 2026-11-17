@@ -1,6 +1,6 @@
 // Fleet operator app entry (docs/designs/fleet-operator-app.md): shell, routes, identity check, feed start, service worker.
 // errors.ts first: error tracking starts before the other modules run.
-import { captureRender } from './errors.ts';
+import { captureRender, configureErrors } from './errors.ts';
 import { Projects } from './views/projects.tsx';
 import { render, Component, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -26,6 +26,10 @@ import { Keys } from './views/keys.tsx';
 import { Results } from './views/results.tsx';
 import { Definitions } from './views/definitions.tsx';
 import { Delivery } from './views/delivery.tsx';
+
+// Not reported: an operation's own failure (OpError) is in the coordinator's spans, and an access change aborts reads on
+// purpose. The release is the version this tab runs.
+configureErrors({ ignore: e => e instanceof OpError || e instanceof AccessChanged, release: () => tabVersion.value });
 
 /** A render crash shows a recoverable error in the work area instead of a blank page; navigating away clears it. */
 class RenderBoundary extends Component<{ at: string; children: ComponentChildren }, { failed: boolean }> {

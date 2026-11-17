@@ -69,9 +69,10 @@ func storeEndpointHosts() []string {
 	return releaseDefaults().StoreEndpointHosts
 }
 
-// bugsinkDSN: FLEET_BUGSINK_DSN, else the release default (the fleet-executor Bugsink project); a DSN is not a secret.
+// bugsinkDSN: FLEET_BUGSINK_DSN, else the release default (the fleet-executor Bugsink project); set but empty turns
+// error tracking off. A DSN is not a secret.
 func bugsinkDSN() string {
-	if v := os.Getenv("FLEET_BUGSINK_DSN"); v != "" {
+	if v, ok := os.LookupEnv("FLEET_BUGSINK_DSN"); ok {
 		return v
 	}
 	return releaseDefaults().BugsinkDSN

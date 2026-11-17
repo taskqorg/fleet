@@ -497,8 +497,17 @@ func TestTextReplyBecomesJSON(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	gw := newFixture(t, server.URL, "invented-key-a")
-	status, _, v := gw.raw("POST", "/v1/call/tavily/status", "Bearer "+testToken, `{"jobId":"j1"}`)
-	expect(t, []any{status, v}, []any{200, map[string]any{"text": "# Error\n  at f (main.tsx:3) [key]\n"}}, "text reply")
+	// Without textReply a text answer stays as it was (the caller's client reports it invalid).
+	if status, _, v := gw.raw("POST", "/v1/call/tavily/status", "Bearer "+testToken, `{"jobId":"j1"}`); status != 200 || v != nil {
+		t.Fatalf("plain tool: %d %v", status, v)
+	}
+	snap := testSnapshot(server.URL, []keyState{{"invented-key-a", "active"}}, []string{testToken}, "all")
+	status := field(snap, "providers", "tavily", "tools", "status").(map[string]any)
+	status["textReply"] = true
+	gw.write(snap)
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
+	code, _, v := gw.raw("POST", "/v1/call/tavily/status", "Bearer "+testToken, `{"jobId":"j1"}`)
+	expect(t, []any{code, v}, []any{200, map[string]any{"text": "# Error\n  at f (main.tsx:3) [key]\n"}}, "text reply")
 }
 
 // Requirement: fleet-error-tracking.md, agent read access: each bugsink catalogue tool (coordinator providers.go) reaches

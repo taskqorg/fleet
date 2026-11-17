@@ -214,6 +214,7 @@ type GatewayTool struct {
 	Method       string                     `json:"method"`
 	Path         string                     `json:"path"`
 	PathPatterns map[string]string          `json:"pathPatterns,omitempty"`
+	TextReply    *bool                      `json:"textReply,omitempty"`
 	Unit         string                     `json:"unit"`
 	UsageField   *string                    `json:"usageField,omitempty"`
 	UsageOnce    *string                    `json:"usageOnce,omitempty"`

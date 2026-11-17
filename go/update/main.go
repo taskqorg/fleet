@@ -158,7 +158,7 @@ func (u *updater) runPDS18() error {
 	pruneReleases(coordR)
 	pruneReleases(execR)
 	pruneDumps("/backup/fleet/pre-deploy", coordR, st.Coordinator)
-	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true,
+	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true, app: "dist/app",
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},
 		restart: command("systemctl", "--user", "-M", "fleet@", "restart", "fleet", "fleet-gateway", "fleet-access-guard"),
 		health:  u.coordinatorHealth, st: st.Coordinator}

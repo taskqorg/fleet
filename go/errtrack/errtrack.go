@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -44,7 +45,12 @@ func Start(dsn, service, host, release string) error {
 	}
 	obs.SetFailHook(func(name string, p any, err error) {
 		if p != nil {
-			Panic(p, map[string]string{"span": name})
+			// A handler's panic is recovered by net/http and the request goes on; a pass's panic ends the process, so
+			// only that one waits for delivery.
+			capture(map[string]string{"span": name}, func(h *sentry.Hub) { h.RecoverWithContext(context.Background(), p) })
+			if strings.HasPrefix(name, "pass.") {
+				Flush(2 * time.Second)
+			}
 		} else {
 			Capture(err, map[string]string{"span": name})
 		}
@@ -60,12 +66,18 @@ func Capture(err error, tags map[string]string) {
 	if !enabled.Load() || err == nil || errors.Is(err, context.Canceled) {
 		return
 	}
-	sentry.WithScope(func(s *sentry.Scope) {
+	capture(tags, func(h *sentry.Hub) { h.CaptureException(err) })
+}
+
+// capture sends on a clone of the process hub, so concurrent captures never see each other's tags.
+func capture(tags map[string]string, send func(*sentry.Hub)) {
+	h := sentry.CurrentHub().Clone()
+	h.ConfigureScope(func(s *sentry.Scope) {
 		for k, v := range tags {
 			s.SetTag(k, v)
 		}
-		sentry.CaptureException(err)
 	})
+	send(h)
 }
 
 // Panic sends a recovered panic value with tags and waits briefly for delivery, since the process may end with it.
@@ -74,12 +86,7 @@ func Panic(p any, tags map[string]string) {
 	if !enabled.Load() || p == nil {
 		return
 	}
-	sentry.WithScope(func(s *sentry.Scope) {
-		for k, v := range tags {
-			s.SetTag(k, v)
-		}
-		sentry.CurrentHub().RecoverWithContext(context.Background(), p)
-	})
+	capture(tags, func(h *sentry.Hub) { h.RecoverWithContext(context.Background(), p) })
 	sentry.Flush(2 * time.Second)
 }
 

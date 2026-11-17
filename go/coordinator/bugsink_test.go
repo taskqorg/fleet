@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"fleet/contract"
 )
 
 // fakeBugsink records the envelopes it receives and answers with status.
@@ -65,9 +67,36 @@ func (e *testCoordEnv) post(t *testing.T, path string, body []byte, headers map[
 
 func envelope(dsn string, event map[string]any) []byte {
 	ev, _ := json.Marshal(event)
-	return []byte(`{"event_id":"0123456789abcdef0123456789abcdef","dsn":"` + dsn + `","sdk":{"name":"sentry.javascript.browser"}}` + "\n" +
+	return []byte(`{"event_id":"0123456789abcdef0123456789abcdef","dsn":"` + dsn + `","sdk":{"name":"sentry.javascript.browser"},"trace":{"user_id":"spoof@x"}}` + "\n" +
 		`{"type":"event","length":` + fmt.Sprint(len(ev)) + `}` + "\n" + string(ev) + "\n" +
+		`{"type":"session"}` + "\n" + `{"did":"spoof@x"}` + "\n" +
 		`{"type":"client_report"}` + "\n" + `{"discarded_events":[]}` + "\n")
+}
+
+// forwardedEvent: the event and the item types of the one envelope the fake Bugsink received last.
+func forwardedEvent(t *testing.T, f *fakeBugsink) (header map[string]any, types []string, ev struct {
+	Message string            `json:"message"`
+	User    map[string]any    `json:"user"`
+	Tags    map[string]string `json:"tags"`
+}) {
+	t.Helper()
+	got := f.envelopes()
+	lines := strings.Split(strings.TrimSuffix(string(got[len(got)-1].body), "\n"), "\n")
+	json.Unmarshal([]byte(lines[0]), &header)
+	for i := 1; i+1 < len(lines); i += 2 {
+		var item struct {
+			Type   string `json:"type"`
+			Length int    `json:"length"`
+		}
+		if json.Unmarshal([]byte(lines[i]), &item) != nil || item.Length != len(lines[i+1]) {
+			t.Fatalf("item %q %q", lines[i], lines[i+1])
+		}
+		types = append(types, item.Type)
+		if item.Type == "event" && json.Unmarshal([]byte(lines[i+1]), &ev) != nil {
+			t.Fatalf("event %q", lines[i+1])
+		}
+	}
+	return
 }
 
 // Requirement: fleet-error-tracking.md, tunnel: only a signed-in person's envelope for the configured web DSN (host and
@@ -77,7 +106,7 @@ func envelope(dsn string, event map[string]any) []byte {
 func TestBugsinkTunnel(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	owner := e.ownerHeaders()
-	good := envelope("http://webkey@bugsink.test/7", map[string]any{"message": "boom", "user": map[string]any{"email": "spoof@x", "ip_address": "1.2.3.4"}, "tags": map[string]any{"source": "render"}})
+	good := envelope("http://webkey@bugsink.test/7", map[string]any{"message": "boom", "user": map[string]any{"email": "spoof@x", "ip_address": "1.2.3.4"}, "tags": map[string]any{"source": "render", "fleet.actor": "spoof@x"}})
 
 	t.Setenv("FLEET_BUGSINK_WEB_DSN", "")
 	if code, body := e.post(t, "/api/errors", good, owner); code != 404 {
@@ -100,6 +129,8 @@ func TestBugsinkTunnel(t *testing.T) {
 		"bad header":    {[]byte("not json\n"), 400},
 		"bad length":    {[]byte(`{"dsn":"http://webkey@bugsink.test/7"}` + "\n" + `{"type":"event","length":99}` + "\n{}\n"), 400},
 		"bad event":     {[]byte(`{"dsn":"http://webkey@bugsink.test/7"}` + "\n" + `{"type":"event"}` + "\n[1]\n"), 400},
+		"bad tags":      {envelope("http://webkey@bugsink.test/7", map[string]any{"message": "x", "tags": "fleet.actor=spoof@x"}), 400},
+		"bad tag pair":  {envelope("http://webkey@bugsink.test/7", map[string]any{"message": "x", "tags": []any{[]any{"fleet.actor"}}}), 400},
 		"too large":     {append(envelope("http://webkey@bugsink.test/7", map[string]any{"message": "x"}), bytes.Repeat([]byte(" "), bugsinkBodyMax)...), 413},
 	} {
 		if code, body := e.post(t, "/api/errors", c.body, owner); code != c.code {
@@ -118,24 +149,25 @@ func TestBugsinkTunnel(t *testing.T) {
 	if len(got) != 1 || got[0].path != "/api/7/envelope/" || !strings.Contains(got[0].auth, "sentry_key=webkey") || got[0].contentType != "application/x-sentry-envelope" {
 		t.Fatalf("forwarded: %+v", got)
 	}
-	lines := strings.Split(string(got[0].body), "\n")
-	var item struct {
-		Type   string `json:"type"`
-		Length int    `json:"length"`
-	}
-	var ev struct {
-		Message string            `json:"message"`
-		User    map[string]any    `json:"user"`
-		Tags    map[string]string `json:"tags"`
-	}
-	if json.Unmarshal([]byte(lines[1]), &item) != nil || item.Type != "event" || item.Length != len(lines[2]) || json.Unmarshal([]byte(lines[2]), &ev) != nil {
-		t.Fatalf("event item: %q %q", lines[1], lines[2])
+	header, types, ev := forwardedEvent(t, fake)
+	if header["trace"] != nil || header["dsn"] != "http://webkey@bugsink.test/7" || strings.Join(types, ",") != "event,client_report" {
+		t.Fatalf("envelope: header %v, items %v", header, types)
 	}
 	if ev.Message != "boom" || len(ev.User) != 1 || ev.User["id"] != testOwnerEmail || ev.Tags["fleet.actor"] != testOwnerEmail || ev.Tags["source"] != "render" {
 		t.Fatalf("event: %+v", ev)
 	}
-	if lines[3] != `{"type":"client_report"}` || lines[4] != `{"discarded_events":[]}` {
-		t.Fatalf("other item changed: %q %q", lines[3], lines[4])
+	// The pair-list form of tags with a forged actor: normalised, the actor replaced.
+	pairs := envelope("http://webkey@bugsink.test/7", map[string]any{"message": "pairs", "tags": []any{[]any{"fleet.actor", "spoof@x"}, []any{"source", "error"}}})
+	if code, body := e.post(t, "/api/errors", pairs, owner); code != 200 {
+		t.Fatalf("pairs: %d %s", code, body)
+	}
+	if _, _, ev := forwardedEvent(t, fake); ev.Message != "pairs" || ev.Tags["fleet.actor"] != testOwnerEmail || ev.Tags["source"] != "error" || len(ev.Tags) != 2 {
+		t.Fatalf("pairs event: %+v", ev)
+	}
+	// Only items Fleet does not forward: accepted, nothing sent.
+	n := len(fake.envelopes())
+	if code, _ := e.post(t, "/api/errors", []byte(`{"dsn":"http://webkey@bugsink.test/7"}`+"\n"+`{"type":"session"}`+"\n{}\n"), owner); code != 200 || len(fake.envelopes()) != n {
+		t.Fatalf("session only: %d, %d forwarded", code, len(fake.envelopes())-n)
 	}
 
 	fake.mu.Lock()
@@ -285,5 +317,28 @@ func TestClientErrorStoreDropped(t *testing.T) {
 	}
 	if tables != 0 || held != 0 || open != 0 {
 		t.Fatalf("after migration 66: %d tables, %d held causes, %d open", tables, held, open)
+	}
+}
+
+// Requirement: fleet-error-tracking.md, Owner Needs you: a problem closes when issue_get reports the issue resolved or
+// Bugsink's own 404; any other answer (a gateway refusal's 404, an unreadable reply) is an error. Risk: a moved API or a
+// refused tool withdraws every held problem at once.
+func TestIssueClosed(t *testing.T) {
+	code := func(s string) *string { return &s }
+	for name, c := range map[string]struct {
+		line         contract.CallLine
+		closed, fail bool
+	}{
+		"resolved":     {contract.CallLine{Outcome: contract.CallOutcomeOk, Output: json.RawMessage(`{"is_resolved":true}`)}, true, false},
+		"open":         {contract.CallLine{Outcome: contract.CallOutcomeOk, Output: json.RawMessage(`{"is_resolved":false}`)}, false, false},
+		"no field":     {contract.CallLine{Outcome: contract.CallOutcomeOk, Output: json.RawMessage(`{}`)}, false, true},
+		"bugsink 404":  {contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: code("http-404"), Output: json.RawMessage(`{"detail":"No Issue matches the given query."}`)}, true, false},
+		"other 404":    {contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: code("http-404"), Output: json.RawMessage(`{"text":"Not Found"}`)}, false, true},
+		"unknown tool": {contract.CallLine{Outcome: contract.CallOutcomeError, ErrorCode: code("unknown-tool"), Output: json.RawMessage(`{"detail":"x"}`)}, false, true},
+	} {
+		closed, err := issueClosed(c.line, "i")
+		if closed != c.closed || (err != nil) != c.fail {
+			t.Fatalf("%s: %v %v", name, closed, err)
+		}
 	}
 }

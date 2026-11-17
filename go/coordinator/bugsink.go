@@ -107,9 +107,14 @@ func (a *App) bugsinkTunnel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, &HTTPError{Code: 413, Msg: "An envelope is at most 1 MiB"})
 		return
 	}
-	out, err := tunnelEnvelope(body, dsn, actor(q, ""))
+	out, items, err := tunnelEnvelope(body, dsn, actor(q, ""))
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	if items == 0 {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Write([]byte("{}\n")) // nothing Fleet forwards (sessions, attachments): accepted, dropped
 		return
 	}
 	req, err := http.NewRequestWithContext(r.Context(), "POST", bugsinkIngest(dsn)+"/api/"+dsn.project+"/envelope/", bytes.NewReader(out))
@@ -130,29 +135,47 @@ func (a *App) bugsinkTunnel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fail(502, "Bugsink answered "+itoa(res.StatusCode)))
 		return
 	}
+	// The SDK backs off on Bugsink's rate limits, so they pass through.
+	for _, k := range []string{"Retry-After", "X-Sentry-Rate-Limits"} {
+		if v := res.Header.Get(k); v != "" {
+			w.Header().Set(k, v)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(res.StatusCode)
 	w.Write(reply)
 }
 
-// tunnelEnvelope checks the envelope header's DSN (host and project id) and rewrites each event item's user to the
-// person's actor (id only; whatever the browser sent as user is dropped) with tag fleet.actor. Other items pass
-// unchanged. A malformed envelope is 400, another DSN 403.
-func tunnelEnvelope(body []byte, want sentryDSN, actorID string) ([]byte, error) {
+// tunnelItems: the envelope item types the tunnel forwards; every other item (sessions, attachments, user feedback,
+// profiles) is dropped, so no item Fleet does not rewrite carries identity.
+var tunnelItems = map[string]bool{"event": true, "client_report": true}
+
+// tunnelEnvelope checks the envelope header's DSN (host and project id) and rebuilds the envelope from what Fleet
+// forwards: the header's event_id, dsn, sdk and sent_at; each event with the person's actor as its only user field and
+// tag fleet.actor (whatever the browser sent for either is dropped); client reports unchanged. items counts the
+// forwarded items. A malformed envelope is 400, another DSN 403.
+func tunnelEnvelope(body []byte, want sentryDSN, actorID string) (out []byte, items int, err error) {
 	header, rest, _ := bytes.Cut(body, []byte("\n"))
-	var h struct {
-		DSN string `json:"dsn"`
+	var h map[string]json.RawMessage
+	if json.Unmarshal(header, &h) != nil || h == nil {
+		return nil, 0, fail(400, "Invalid envelope header")
 	}
-	if json.Unmarshal(header, &h) != nil {
-		return nil, fail(400, "Invalid envelope header")
-	}
-	got, ok := parseDSN(h.DSN)
+	var dsn string
+	json.Unmarshal(h["dsn"], &dsn)
+	got, ok := parseDSN(dsn)
 	if !ok || got.host != want.host || got.project != want.project {
-		return nil, fail(403, "Envelope for another DSN")
+		return nil, 0, fail(403, "Envelope for another DSN")
 	}
-	var out bytes.Buffer
-	out.Write(header)
-	out.WriteByte('\n')
+	kept := map[string]json.RawMessage{}
+	for _, k := range []string{"event_id", "dsn", "sdk", "sent_at"} {
+		if v, ok := h[k]; ok {
+			kept[k] = v
+		}
+	}
+	header, _ = json.Marshal(kept)
+	var buf bytes.Buffer
+	buf.Write(header)
+	buf.WriteByte('\n')
 	for len(rest) > 0 {
 		line, after, _ := bytes.Cut(rest, []byte("\n"))
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -161,13 +184,13 @@ func tunnelEnvelope(body []byte, want sentryDSN, actorID string) ([]byte, error)
 		}
 		var item map[string]json.RawMessage
 		if json.Unmarshal(line, &item) != nil || item == nil {
-			return nil, fail(400, "Invalid envelope item header")
+			return nil, 0, fail(400, "Invalid envelope item header")
 		}
 		var payload []byte
 		if raw, ok := item["length"]; ok {
 			var n int
 			if json.Unmarshal(raw, &n) != nil || n < 0 || n > len(after) {
-				return nil, fail(400, "Invalid envelope item length")
+				return nil, 0, fail(400, "Invalid envelope item length")
 			}
 			payload, rest = after[:n], after[n:]
 			rest = bytes.TrimPrefix(rest, []byte("\n"))
@@ -176,37 +199,54 @@ func tunnelEnvelope(body []byte, want sentryDSN, actorID string) ([]byte, error)
 		}
 		var kind string
 		json.Unmarshal(item["type"], &kind)
+		if !tunnelItems[kind] {
+			continue
+		}
 		if kind == "event" {
 			p, err := eventWithActor(payload, actorID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			payload = p
-			item["length"] = json.RawMessage(itoa(len(payload)))
-			line, _ = json.Marshal(item)
 		}
-		out.Write(line)
-		out.WriteByte('\n')
-		out.Write(payload)
-		out.WriteByte('\n')
+		line, _ = json.Marshal(map[string]any{"type": kind, "length": len(payload)})
+		buf.Write(line)
+		buf.WriteByte('\n')
+		buf.Write(payload)
+		buf.WriteByte('\n')
+		items++
 	}
-	return out.Bytes(), nil
+	return buf.Bytes(), items, nil
 }
 
+// eventWithActor sets the event's user to {id: actorID} and its tag fleet.actor to actorID. Tags come as an object or
+// as a list of [key, value] pairs (both are Sentry's forms); they are normalised to an object, and any other form is
+// refused (400), so a client-sent fleet.actor never survives.
 func eventWithActor(payload []byte, actorID string) ([]byte, error) {
 	var ev map[string]json.RawMessage
 	if json.Unmarshal(payload, &ev) != nil || ev == nil {
 		return nil, fail(400, "Invalid event item")
 	}
 	ev["user"], _ = json.Marshal(map[string]string{"id": actorID})
-	tags := map[string]any{}
-	if raw, ok := ev["tags"]; ok && json.Unmarshal(raw, &tags) != nil {
-		tags = nil // the pair-list form: kept as sent
+	tags := map[string]json.RawMessage{}
+	if raw, ok := ev["tags"]; ok && string(raw) != "null" {
+		if json.Unmarshal(raw, &tags) != nil {
+			var pairs [][]json.RawMessage
+			if json.Unmarshal(raw, &pairs) != nil {
+				return nil, fail(400, "Invalid event tags")
+			}
+			tags = map[string]json.RawMessage{}
+			for _, p := range pairs {
+				var k string
+				if len(p) != 2 || json.Unmarshal(p[0], &k) != nil {
+					return nil, fail(400, "Invalid event tags")
+				}
+				tags[k] = p[1]
+			}
+		}
 	}
-	if tags != nil {
-		tags["fleet.actor"] = actorID
-		ev["tags"], _ = json.Marshal(tags)
-	}
+	tags["fleet.actor"], _ = json.Marshal(actorID)
+	ev["tags"], _ = json.Marshal(tags)
 	return json.Marshal(ev)
 }
 
@@ -363,7 +403,10 @@ func bugsinkResolvedPass(ctx context.Context, a *App) error {
 		cause := astr(h["cause"])
 		closed, err := bugsinkIssueClosed(ctx, a, astr(h["project"]), strings.TrimPrefix(cause, bugsinkCause))
 		if err != nil {
-			failed = errors.Join(failed, err)
+			// A project the connection is not granted to: its problems close through their answers only.
+			if !strings.Contains(err.Error(), "connection-unavailable") {
+				failed = errors.Join(failed, err)
+			}
 			continue
 		}
 		if closed {
@@ -375,29 +418,35 @@ func bugsinkResolvedPass(ctx context.Context, a *App) error {
 	return failed
 }
 
-// bugsinkIssueClosed: whether Bugsink reports the issue resolved or no longer has it (HTTP 404 from Bugsink itself,
-// not a gateway refusal), read with the bugsink connection's issue_get as project. A variable so tests answer without
-// a gateway.
+// bugsinkIssueClosed: whether Bugsink reports the issue resolved or no longer has it, read with the bugsink
+// connection's issue_get as project. A variable so tests answer without a gateway.
 var bugsinkIssueClosed = func(ctx context.Context, a *App, project, issue string) (bool, error) {
 	token, err := readTokenFor(ctx, a, bugsinkConn, project)
 	if err != nil {
 		return false, err
 	}
-	line := gatewayCall(ctx, token, bugsinkConn, "issue_get", map[string]string{"issue": issue})
+	return issueClosed(gatewayCall(ctx, token, bugsinkConn, "issue_get", map[string]string{"issue": issue}), issue)
+}
+
+// issueClosed reads an issue_get answer: resolved, or Bugsink's own 404 ({"detail": ...}, the REST framework's not
+// found). A 404 of another shape (a gateway refusal, a moved API) is an error, so it never withdraws every problem.
+func issueClosed(line contract.CallLine, issue string) (bool, error) {
 	if line.Outcome != contract.CallOutcomeOk {
-		code := deref(line.ErrorCode)
-		if code == "http-404" {
+		var nf struct {
+			Detail *string `json:"detail"`
+		}
+		if deref(line.ErrorCode) == "http-404" && json.Unmarshal(line.Output, &nf) == nil && nf.Detail != nil {
 			return true, nil
 		}
-		return false, errors.New("bugsink issue_get " + issue + ": " + code)
+		return false, errors.New("bugsink issue_get " + issue + ": " + deref(line.ErrorCode))
 	}
 	var is struct {
-		IsResolved bool `json:"is_resolved"`
+		IsResolved *bool `json:"is_resolved"`
 	}
-	if err := json.Unmarshal(line.Output, &is); err != nil {
-		return false, errors.New("bugsink issue_get " + issue + ": " + err.Error())
+	if err := json.Unmarshal(line.Output, &is); err != nil || is.IsResolved == nil {
+		return false, errors.New("bugsink issue_get " + issue + ": no is_resolved")
 	}
-	return is.IsResolved, nil
+	return *is.IsResolved, nil
 }
 
 // bugsinkKeyed: the gateway is configured and the bugsink connection takes calls with an active key. A variable so

@@ -8,10 +8,11 @@ import { gzipSync } from 'node:zlib';
 import { tokensCss, tokens } from '../packages/ui/scripts/tokens.mjs';
 
 const root = new URL('..', import.meta.url), out = new URL('../dist/app/', import.meta.url);
-// Source maps stay out of the served directory: the release uploads them to Bugsink (docs/designs/fleet-error-tracking.md).
-const maps = new URL('../dist/app-sourcemaps/', import.meta.url);
-rmSync(out, { recursive: true, force: true }); rmSync(maps, { recursive: true, force: true });
-mkdirSync(new URL('assets/', maps), { recursive: true });
+// Source maps go to dist/app/sourcemaps, which the coordinator never serves (it serves assets/ and named entry files);
+// the host that installs a release uploads them to Bugsink (docs/designs/fleet-error-tracking.md, Source maps).
+const maps = new URL('sourcemaps/', out);
+rmSync(out, { recursive: true, force: true });
+mkdirSync(maps, { recursive: true });
 mkdirSync(new URL('assets/', out), { recursive: true }); mkdirSync(new URL('manifests/', out), { recursive: true }); mkdirSync(new URL('icons/', out), { recursive: true });
 
 const res = await build({
@@ -27,11 +28,11 @@ const ids = {};
 for (const f of res.outputFiles) if (f.path.endsWith('.js')) {
   const id = ids[f.path] = debugId(f.text);
   const js = f.text + `!function(){try{var e="undefined"!=typeof window?window:"undefined"!=typeof globalThis?globalThis:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&(e._sentryDebugIds=e._sentryDebugIds||{},e._sentryDebugIds[n]="${id}",e._sentryDebugIdIdentifier="sentry-dbid-${id}")}catch(e){}}();\n//# debugId=${id}\n`;
-  writeFileSync(f.path, js); writeFileSync(new URL('assets/' + basename(f.path), maps), js);
+  writeFileSync(f.path, js);
 }
 for (const f of res.outputFiles) if (f.path.endsWith('.js.map')) {
   const id = ids[f.path.slice(0, -4)], map = JSON.parse(f.text);
-  writeFileSync(new URL('assets/' + basename(f.path), maps), JSON.stringify({ ...map, debug_id: id, debugId: id }));
+  writeFileSync(new URL(basename(f.path), maps), JSON.stringify({ ...map, debug_id: id, debugId: id }));
 }
 for (const p of Object.keys(res.metafile.outputs)) if (p.endsWith('.map')) delete res.metafile.outputs[p];
 const files = Object.keys(res.metafile.outputs).map(p => p.split('/dist/app/')[1] ?? p.replace(/^.*dist\/app\//, ''));
