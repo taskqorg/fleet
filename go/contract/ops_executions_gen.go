@@ -66,16 +66,18 @@ func (v *CoordinatorVersion) Validate() error {
 	return nil
 }
 
-// DeleteKind: Kinds object_delete deletes.
+// DeleteKind: Kinds object_delete deletes. A task takes its executions (with their child runs), questions and artifacts; a session takes its executions, messages and questions.
 type DeleteKind string
 
 const (
 	DeleteKindProject    DeleteKind = "project"
 	DeleteKindExperiment DeleteKind = "experiment"
+	DeleteKindTask       DeleteKind = "task"
+	DeleteKindSession    DeleteKind = "session"
 )
 
 // DeleteKindValues lists every DeleteKind in schema order.
-var DeleteKindValues = []DeleteKind{DeleteKindProject, DeleteKindExperiment}
+var DeleteKindValues = []DeleteKind{DeleteKindProject, DeleteKindExperiment, DeleteKindTask, DeleteKindSession}
 
 // Valid: v is one of the schema's values.
 func (v DeleteKind) Valid() bool {
@@ -1265,7 +1267,7 @@ func (v *ObjectDeleteReply) Validate() error {
 	return nil
 }
 
-// ObjectDeleteRequest: Owner only (fleet-system-management.md, Archive, delete, purge). preview true changes nothing and returns what goes with the object; both refuse (409) while a live row outside the object keeps one of its objects (another experiment's score citing a trial). false tombstones it with its tasks, executions (and their child runs), sessions, experiments, questions and artifacts: running work is stopped (pipeline runs cancelled, agent runs stopped with stopDetail deleted), run tokens revoked, open questions withdrawn, worktrees of its sessions get a teardown; a project's connections no other project uses are removed as project_archive does. Deleted objects leave every list, detail, search, queue, dispatch and analytics read; system_purge removes their rows later.
+// ObjectDeleteRequest: A task another live task depends on (task_dependency), whose artifacts a live task accepted, or that a live session or task names as its creator stays (409 Kept by); a session that a live session forked or was created from, that created a live task, or whose executions belong to a live task stays too (delete the task first). Owner only (fleet-system-management.md, Archive, delete, purge). preview true changes nothing and returns what goes with the object; both refuse (409) while a live row outside the object keeps one of its objects (another experiment's score citing a trial). false tombstones it with its tasks, executions (and their child runs), sessions, experiments, questions and artifacts: running work is stopped (pipeline runs cancelled, agent runs stopped with stopDetail deleted), run tokens revoked, open questions withdrawn, worktrees of its sessions get a teardown; a project's connections no other project uses are removed as project_archive does. Deleted objects leave every list, detail, search, queue, dispatch and analytics read; system_purge removes their rows later.
 type ObjectDeleteRequest struct {
 	Id      string     `json:"id"`
 	Kind    DeleteKind `json:"kind"`
@@ -2084,17 +2086,19 @@ func (v *PurgeCount) Validate() error {
 	return nil
 }
 
-// PurgeKind: Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects and experiments deleted by object_delete.
+// PurgeKind: Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects, experiments, tasks and sessions deleted by object_delete.
 type PurgeKind string
 
 const (
 	PurgeKindHost       PurgeKind = "host"
 	PurgeKindProject    PurgeKind = "project"
 	PurgeKindExperiment PurgeKind = "experiment"
+	PurgeKindTask       PurgeKind = "task"
+	PurgeKindSession    PurgeKind = "session"
 )
 
 // PurgeKindValues lists every PurgeKind in schema order.
-var PurgeKindValues = []PurgeKind{PurgeKindHost, PurgeKindProject, PurgeKindExperiment}
+var PurgeKindValues = []PurgeKind{PurgeKindHost, PurgeKindProject, PurgeKindExperiment, PurgeKindTask, PurgeKindSession}
 
 // Valid: v is one of the schema's values.
 func (v PurgeKind) Valid() bool {
@@ -2457,7 +2461,7 @@ func init() {
 		"hosts_remove":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host (fleet-system-management.md, Hosts). preview true changes nothing and returns the counts; false removes: running work is cancelled, the secret and settings are dropped, the host record stays as a tombstone (state removed) for history.\",\"properties\":{\"id\":{\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"id\",\"preview\"],\"type\":\"object\"}")},
 		"hosts_rotate_secret":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"id\":{\"type\":\"string\"},\"secretSha256\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"id\"],\"type\":\"object\"}")},
 		"hosts_update":          {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner, or the holder for their own host.\",\"additionalProperties\":true,\"properties\":{\"autoUpdate\":{},\"harnesses\":{},\"id\":{\"type\":\"string\"},\"intake\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}")},
-		"object_delete":         {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only (fleet-system-management.md, Archive, delete, purge). preview true changes nothing and returns what goes with the object; both refuse (409) while a live row outside the object keeps one of its objects (another experiment's score citing a trial). false tombstones it with its tasks, executions (and their child runs), sessions, experiments, questions and artifacts: running work is stopped (pipeline runs cancelled, agent runs stopped with stopDetail deleted), run tokens revoked, open questions withdrawn, worktrees of its sessions get a teardown; a project's connections no other project uses are removed as project_archive does. Deleted objects leave every list, detail, search, queue, dispatch and analytics read; system_purge removes their rows later.\",\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"Kinds object_delete deletes.\",\"enum\":[\"project\",\"experiment\"],\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"kind\",\"id\",\"preview\"],\"type\":\"object\"}")},
+		"object_delete":         {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"A task another live task depends on (task_dependency), whose artifacts a live task accepted, or that a live session or task names as its creator stays (409 Kept by); a session that a live session forked or was created from, that created a live task, or whose executions belong to a live task stays too (delete the task first). Owner only (fleet-system-management.md, Archive, delete, purge). preview true changes nothing and returns what goes with the object; both refuse (409) while a live row outside the object keeps one of its objects (another experiment's score citing a trial). false tombstones it with its tasks, executions (and their child runs), sessions, experiments, questions and artifacts: running work is stopped (pipeline runs cancelled, agent runs stopped with stopDetail deleted), run tokens revoked, open questions withdrawn, worktrees of its sessions get a teardown; a project's connections no other project uses are removed as project_archive does. Deleted objects leave every list, detail, search, queue, dispatch and analytics read; system_purge removes their rows later.\",\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"Kinds object_delete deletes. A task takes its executions (with their child runs), questions and artifacts; a session takes its executions, messages and questions.\",\"enum\":[\"project\",\"experiment\",\"task\",\"session\"],\"type\":\"string\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"kind\",\"id\",\"preview\"],\"type\":\"object\"}")},
 		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\"],\"type\":\"object\"}")},
 		"pipeline_history":      {Read: true, Long: false, Errors: []int{404, 409}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"pipeline_rerun":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"mode\":{\"enum\":[\"failed\",\"all\"],\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\",\"mode\"],\"type\":\"object\"}")},
@@ -2465,7 +2469,7 @@ func init() {
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},
-		"system_purge":          {Read: false, Long: true, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Removes tombstoned objects (kinds, default all) that no live row references, with every row that goes with them (the reference map in go/coordinator/cleanup.go): a removed host with no execution, session, command, store or artifact copy naming it; a deleted experiment or project whose rows no row outside it names. A purged project keeps its definition row, so its id is never reused. preview true counts them and changes nothing; the confirm recomputes with the same queries, deletes the rows, then the store objects no remaining artifact shares and the ClickHouse spans of the removed executions.\",\"properties\":{\"kinds\":{\"items\":{\"$comment\":\"Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects and experiments deleted by object_delete.\",\"enum\":[\"host\",\"project\",\"experiment\"],\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"preview\"],\"type\":\"object\"}")},
+		"system_purge":          {Read: false, Long: true, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Owner only. Removes tombstoned objects (kinds, default all) that no live row references, with every row that goes with them (the reference map in go/coordinator/cleanup.go): a removed host with no execution, session, command, store or artifact copy naming it; a deleted experiment or project whose rows no row outside it names. A purged project keeps its definition row, so its id is never reused. preview true counts them and changes nothing; the confirm recomputes with the same queries, deletes the rows, then the store objects no remaining artifact shares and the ClickHouse spans of the removed executions.\",\"properties\":{\"kinds\":{\"items\":{\"$comment\":\"Tombstoned objects system_purge removes: hosts removed by hosts_remove, projects, experiments, tasks and sessions deleted by object_delete.\",\"enum\":[\"host\",\"project\",\"experiment\",\"task\",\"session\"],\"type\":\"string\"},\"type\":\"array\"},\"preview\":{\"type\":\"boolean\"}},\"required\":[\"preview\"],\"type\":\"object\"}")},
 		"system_versions":       {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)

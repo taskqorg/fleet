@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -371,5 +372,108 @@ func TestDeletedHostRoutesAreRegistered(t *testing.T) {
 		if !slices.ContainsFunc(routeTable, func(r registeredRoute) bool { return r.pattern == "POST "+path }) {
 			t.Errorf("deletedHostRoutes names %s, which no route registers", path)
 		}
+	}
+}
+
+// Requirement: fleet-system-management.md, Archive, delete, purge (object_delete kinds task and session): a task takes
+// its executions, questions and artifacts; a session its executions and messages; a live dependent refuses the delete
+// with its reason. Risk: deleting a task another live task depends on, or a session whose runs belong to a live task or
+// that a live session forked from, leaves live work pointing at nothing.
+func TestDeleteTaskAndSession(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO definition(kind,id,path,head,project_id) VALUES ('project','keep','config/projects/keep/project.json',1,'keep');
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('project','keep',1,'{"settings":{"id":"keep","name":"Keep","contextFiles":[]},"contextFiles":[]}','y','editor','person','t');
+INSERT INTO task(id,title,project_id,state) VALUES ('t1','old task','keep','completed'),('t2','live task','keep','queued'),('t3','needed task','keep','completed');
+INSERT INTO task_dependency(task_id,depends_on_task_id,project_id) VALUES ('t2','t3','keep');
+INSERT INTO document(kind,id,data,project_id) VALUES ('session','s1','{"id":"s1","projectId":"keep","taskId":"t1"}','keep'),
+ ('session','s2','{"id":"s2","projectId":"keep"}','keep'), ('session','s3','{"id":"s3","projectId":"keep","sourceSessionId":"s2"}','keep'),
+ ('message','m1','{"id":"m1","sessionId":"s1","text":"hi"}','keep');
+INSERT INTO execution(id,kind,state,project_id,task_id,session_id,data) VALUES ('e1','agent_run','succeeded','keep','t1','s1','{"id":"e1","sessionId":"s1"}');
+INSERT INTO question(id,kind,text,project_id,task_id,state) VALUES ('q1','operator_decision','decide','keep','t1','answered');
+INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,task_id,state) VALUES ('a1','keep','prod','h1',4,'text/plain','n','e1','t1','stored');`)
+	call := func(body any) (int, map[string]any) {
+		return e.callJSON(t, "POST", "/api/ops/object_delete", body, e.ownerHeaders())
+	}
+	if c, b := call(doc{"kind": "task", "id": "t3", "preview": true}); c != 409 || !strings.Contains(astr(b["message"]), "task_dependency.depends_on_task_id") {
+		t.Fatalf("a task a live task depends on = %d %v", c, b)
+	}
+	if c, b := call(doc{"kind": "session", "id": "s1", "preview": true}); c != 409 || !strings.Contains(astr(b["message"]), "execution.task_id by task t1") {
+		t.Fatalf("a session whose run belongs to a live task = %d %v", c, b)
+	}
+	if c, b := call(doc{"kind": "session", "id": "s2", "preview": true}); c != 409 || !strings.Contains(astr(b["message"]), "sourceSessionId") {
+		t.Fatalf("a session a live session forked from = %d %v", c, b)
+	}
+	if c, b := call(doc{"kind": "task", "id": "t1", "preview": true}); c != 409 || !strings.Contains(astr(b["message"]), "open session s1") {
+		t.Fatalf("a task an open session works for = %d %v", c, b)
+	}
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET data=data||'{"archivedAt":1}' WHERE id='s1'`)
+	c, b := call(doc{"kind": "task", "id": "t1", "preview": false})
+	if want := map[string]float64{"task": 1, "execution": 1, "question": 1, "artifact": 1, "artifact.bytes": 4}; c != 200 || !mapsEqual(kindCounts(b["affected"]), want) {
+		t.Fatalf("task delete = %d %v", c, b)
+	}
+	c, b = call(doc{"kind": "session", "id": "s1", "preview": false})
+	if c != 200 || !mapsEqual(kindCounts(b["affected"]), map[string]float64{"session": 1}) {
+		t.Fatalf("session delete once its task went = %d %v", c, b)
+	}
+	if n := appCount(t, e, false, "SELECT count(*) FROM document WHERE id IN ('s1','m1')"); n != 0 {
+		t.Fatalf("the deleted session or its message is still read: %d", n)
+	}
+	if n := appCount(t, e, false, "SELECT count(*) FROM task WHERE id IN ('t2','t3')"); n != 2 {
+		t.Fatalf("live tasks hidden: %d", n)
+	}
+	c, p := e.callJSON(t, "POST", "/api/ops/system_purge", doc{"preview": false, "kinds": []string{"task", "session"}}, e.ownerHeaders())
+	removed := map[string][]string{}
+	for _, x := range anys(p["removed"]) {
+		removed[astr(mapOf(x)["kind"])] = strs(mapOf(x)["ids"])
+	}
+	if c != 200 || !slices.Equal(removed["task"], []string{"t1"}) || !slices.Equal(removed["session"], []string{"s1"}) {
+		t.Fatalf("purge = %d %v", c, p)
+	}
+	for _, sql := range []string{"SELECT count(*) FROM task WHERE id='t1'", "SELECT count(*) FROM execution WHERE id='e1'", "SELECT count(*) FROM question WHERE id='q1'",
+		"SELECT count(*) FROM artifact WHERE id='a1'", "SELECT count(*) FROM document WHERE id IN ('s1','m1')"} {
+		if n := psqlLines(t, e, sql); n[0] != "0" {
+			t.Errorf("purge left %s = %v", sql, n)
+		}
+	}
+}
+
+// Requirement: fleet-definition-editors.md, Delete (definition_delete). Risk: a definition still in use, or one the
+// repository ships, disappears (and comes back with the next release); or a deleted id is taken again.
+func TestDefinitionDelete(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	pipe := `{"id":"%s","steps":[{"id":"s","kind":"script","command":"true"}],"version":2}`
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", strings.NewReplacer("%a", fmt.Sprintf(pipe, "p-store"), "%b", fmt.Sprintf(pipe, "p-exp")).Replace(`
+INSERT INTO definition(kind,id,path,head) VALUES ('pipeline','p-store','config/pipelines/p-store.json',1),('pipeline','p-exp','config/pipelines/p-exp.json',1);
+INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
+ ('pipeline','p-store',1,'%a','x','editor','person','t'),('pipeline','p-exp',1,'%b','y','editor','person','t');
+INSERT INTO experiment(id,project_id,kind,pipeline_id,state) VALUES ('x1','keep','single','p-exp','draft');`))
+	call := func(op string, body any) (int, map[string]any) {
+		return e.callJSON(t, "POST", "/api/ops/"+op, body, e.ownerHeaders())
+	}
+	if c, b := call("definition_delete", doc{"kind": "pipeline", "id": "search-basic", "preview": true}); c != 200 || !strings.HasPrefix(astr(b["refused"]), "shipped by the repository") {
+		t.Fatalf("a shipped pipeline = %d %v", c, b)
+	}
+	if c, b := call("definition_delete", doc{"kind": "pipeline", "id": "p-exp", "preview": false}); c != 409 || !strings.Contains(astr(b["message"]), "live Lab experiments run it: x1") {
+		t.Fatalf("a pipeline a live experiment runs = %d %v", c, b)
+	}
+	if c, b := call("definition_delete", doc{"kind": "pipeline", "id": "p-store", "preview": true}); c != 200 || b["refused"] != nil || b["state"] != "store-only" || b["deleted"] != false {
+		t.Fatalf("preview = %d %v", c, b)
+	}
+	if c, b := call("definition_delete", doc{"kind": "pipeline", "id": "p-store", "preview": false}); c != 200 || b["deleted"] != true {
+		t.Fatalf("delete = %d %v", c, b)
+	}
+	if c, _ := call("definition_get", doc{"kind": "pipeline", "id": "p-store"}); c != 404 {
+		t.Fatalf("a deleted definition is still read: %d", c)
+	}
+	if c, b := call("definition_list", doc{"kind": "pipeline"}); c != 200 || strings.Contains(js(b), `"p-store"`) {
+		t.Fatalf("a deleted definition is still listed: %d", c)
+	}
+	if c, _ := call("definition_create", doc{"kind": "pipeline", "id": "p-store", "content": doc{"pipeline": doc{"id": "p-store", "version": 2, "steps": []any{doc{"id": "s", "kind": "script", "command": "true"}}}}, "message": "again"}); c != 409 {
+		t.Fatalf("a deleted id was taken again: %d", c)
+	}
+	if c, _ := call("definition_delete", doc{"kind": "pipeline", "id": "p-store", "preview": true}); c != 404 {
+		t.Fatalf("a second delete: %d", c)
 	}
 }

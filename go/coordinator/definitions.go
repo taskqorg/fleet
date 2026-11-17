@@ -177,7 +177,11 @@ func reconcileDefinitions(q *Request, files []definitionFile, broken map[string]
 			continue
 		}
 		// The repository moved (or the file came back): record it; the head stays (state repository-changed or synced).
-		if err := exec(q, `UPDATE definition SET repo_sha=$3,repo_content=$4,repo_content_sha=$5,ever_shipped=true,retired_at=CASE WHEN deleted_at IS NULL THEN NULL ELSE retired_at END WHERE kind=$1 AND id=$2`,
+		// A deleted agent or pipeline whose file came back is the repository's again (shipped wins); a deleted project
+		// stays deleted: its data is gone and its id only reserved.
+		if err := exec(q, `UPDATE definition SET repo_sha=$3,repo_content=$4,repo_content_sha=$5,ever_shipped=true,
+		  deleted_at=CASE WHEN kind='project' THEN deleted_at END,
+		  retired_at=CASE WHEN kind='project' AND deleted_at IS NOT NULL THEN retired_at END WHERE kind=$1 AND id=$2`,
 			f.kind, f.id, blob, text, csha); err != nil {
 			return err
 		}
@@ -343,6 +347,33 @@ func definitionKind(k contract.DefinitionKind) error {
 	return fail(400, "kind: agent, pipeline or catalogue")
 }
 
+// projectRoleProfiles: profile -> "project:role" for every live project's roles; with execution, also the profiles its
+// settings.execution.profiles name ("project:execution.profiles").
+func projectRoleProfiles(q *Request, execution bool) (map[string][]string, error) {
+	out := map[string][]string{}
+	ids, err := projectIDs(q)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		s := projectSettingsOf(q, id)
+		for role, v := range mapOf(s["roles"]) {
+			p := astr(v)
+			if p == "" {
+				p = astr(mapOf(v)["profile"])
+			}
+			out[p] = append(out[p], id+":"+role)
+		}
+		if execution {
+			for _, v := range anys(mapOf(s["execution"])["profiles"]) {
+				p := firstString(astr(v), astr(mapOf(v)["id"]), astr(mapOf(v)["profile"]))
+				out[p] = append(out[p], id+":execution.profiles")
+			}
+		}
+	}
+	return out, nil
+}
+
 func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.DefinitionListReply, error) {
 	out := contract.DefinitionListReply{Items: []contract.DefinitionListItem{}}
 	if err := definitionKind(r.Kind); err != nil {
@@ -350,7 +381,7 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 	}
 	where := "d.kind=$1 AND d.retired_at IS NULL"
 	if r.IncludeRetired != nil && *r.IncludeRetired {
-		where = "d.kind=$1"
+		where = "d.kind=$1 AND d.deleted_at IS NULL" // a deleted definition is gone, retired or not
 	}
 	xs, err := definitionRows(q, where, 0, string(r.Kind))
 	if err != nil {
@@ -358,18 +389,9 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 	}
 	roles := map[string][]string{} // profile -> project:role, read once per list
 	if r.Kind == contract.DefinitionKindAgent {
-		ids, err := projectIDs(q)
-		if err != nil {
+		var err error
+		if roles, err = projectRoleProfiles(q, false); err != nil {
 			return out, err
-		}
-		for _, id := range ids {
-			for role, v := range mapOf(projectSettingsOf(q, id)["roles"]) {
-				p := astr(v)
-				if p == "" {
-					p = astr(mapOf(v)["profile"])
-				}
-				roles[p] = append(roles[p], id+":"+role)
-			}
 		}
 	}
 	windows, _, err := usageWindows(q, string(r.Kind), "", 30) // one grouped read for the whole list
@@ -419,7 +441,12 @@ func definitionGet(q *Request, r *contract.DefinitionGetRequest) (contract.Defin
 			return out, fail(400, "revision: 1 or more")
 		}
 	}
-	xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2", rev, string(r.Kind), r.Id)
+	// A deleted definition is gone; a revision an execution pinned stays readable by its number.
+	live := "d.kind=$1 AND d.id=$2 AND d.deleted_at IS NULL"
+	if rev > 0 {
+		live = "d.kind=$1 AND d.id=$2"
+	}
+	xs, err := definitionRows(q, live, rev, string(r.Kind), r.Id)
 	if err != nil {
 		return out, err
 	}
