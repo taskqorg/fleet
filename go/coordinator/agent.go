@@ -1500,14 +1500,11 @@ func sessionStart(q *Request, b doc) (doc, error) {
 		if err != nil {
 			return nil, err
 		}
-		for i := range ps {
-			if ps[i].ID == id {
-				pre = &ps[i]
-			}
-		}
-		if pre == nil {
+		i := slices.IndexFunc(ps, func(p preset) bool { return p.ID == id })
+		if i < 0 {
 			return nil, fail(400, "Unknown preset "+id)
 		}
+		pre = &ps[i]
 	}
 	role, profileID := astr(b["role"]), astr(b["profileId"])
 	_, givenProfile := b["profileId"]
@@ -1533,12 +1530,7 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	}
 	// A read-only conversation stays read-only one hop later: the sessions its agent starts are read-only too, by default
 	// and by rule.
-	callerRead := false
-	if c := astr(b["callerSessionId"]); c != "" {
-		if caller, _ := maybe(q, c, "session"); caller != nil {
-			callerRead = caller["access"] == "read"
-		}
-	}
+	callerRead := callerReadOnly(q)
 	access, branch := "write", true
 	if pre != nil {
 		access, branch = pre.Access, pre.Branch

@@ -459,6 +459,9 @@ func sessionCreate(q *Request) (doc, error) {
 		return nil, fail(400, "session_create takes no identity or linkage fields")
 	}
 	s := doc{"id": newID(), "createdAt": nowMs(), "directedBy": director(q)}
+	if callerReadOnly(q) { // an agent of a read-only conversation creates read-only sessions (presets.go)
+		s["access"] = "read"
+	}
 	if err := put(q, "session", s); err != nil {
 		return nil, err
 	}

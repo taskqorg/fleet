@@ -68,6 +68,8 @@ test('P3 a person starts outside projects with a preset; a project defines its o
   assert.equal(ok(await op('session_start', {preset: 'investigate', requestId: rid})).sessionId, s.sessionId, 'the same request is the same start');
   const member = {authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'member@trial.test'};
   assert.equal((await call('/api/ops/session_start', {preset: 'investigate', requestId: rid}, member)).status, 403, 'outside projects needs full access; a request id never reaches another caller\'s start');
+  const theirs = await call('/api/ops/session_presets', {}, member);
+  assert.ok(theirs.status === 200 && theirs.body.presets.every((p: any) => p.unavailable === 'Starting outside projects needs full access'), 'the listing says so: ' + JSON.stringify(theirs.body));
   assert.equal((await op('session_start', {preset: 'investigate', taskId: 'x', requestId: randomUUID()})).status, 400, 'a task needs its project');
   const content = (presets: unknown) => ({settings: {id: 'preset-p', name: 'Preset P', contextFiles: ['rules.md'], roles: {pm: 'pm'}, presets}, contextFiles: [{path: 'rules.md', text: 'x'}]});
   assert.equal((await op('project_create', {id: 'preset-p', requestId: randomUUID(), content: content([{id: 'x', name: 'X', role: 'worker'}])})).status, 400, 'an unmapped role without a profile');
@@ -108,4 +110,6 @@ test('P4 an agent starts only profiles its project maps, also through a preset, 
   const reader = await agent({preset: 'discuss'});
   assert.equal((await reader.tool('session_start', {role: 'pm', access: 'write', requestId: randomUUID()})).status, 403, 'a read-only conversation cannot start a writer');
   assert.equal(ok(await reader.tool('session_start', {role: 'pm', requestId: randomUUID()})).access, 'read', 'its starts are read by default');
+  const created = ok(await reader.tool('session_create', {}));
+  assert.equal(ok(await op('session_get', {sessionId: created.sessionId})).access, 'read', 'a session it creates is read-only too');
 });

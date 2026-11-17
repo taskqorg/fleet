@@ -163,4 +163,20 @@ func TestDetachedWorktreeHasNoBranch(t *testing.T) {
 	if r := teardown(dir, "s1", top, M{}, false); !r.Removed {
 		t.Fatalf("removed: %+v", r)
 	}
+	// Based on a local commit the remote lacks: still not the session's own work, so it goes.
+	run(top, "commit", "-q", "--allow-empty", "-m", "local only")
+	if _, _, _, _, err := worktree(dir, "s2", top, true, []string{top}, nil, M{"worktree": M{"startFromOrigin": false}}, true); err != nil {
+		t.Fatal(err)
+	}
+	if r := teardown(dir, "s2", top, M{}, false); !r.Removed {
+		t.Fatalf("a checkout's local commit kept the detached worktree: %+v", r)
+	}
+	// Its own commit keeps it.
+	if _, _, _, _, err := worktree(dir, "s3", top, true, []string{top}, nil, M{"worktree": M{"startFromOrigin": false}}, true); err != nil {
+		t.Fatal(err)
+	}
+	run(filepath.Join(dir, "worktree"), "commit", "-q", "--allow-empty", "-m", "work")
+	if r := teardown(dir, "s3", top, M{}, false); r.Removed || str0(r.Reason) != "unpushed" {
+		t.Fatalf("its own commit keeps it: %+v", r)
+	}
 }

@@ -127,7 +127,10 @@ func projectWrite(q *Request, create bool) (any, error) {
 		}
 	}
 	// A preset starts with its role's profile or its own: both must be trusted profiles, so a saved preset can start.
-	presets, _ := parsePresets(nonNil(mapOf(bundle["settings"])["presets"], []any{}))
+	presets, err := parsePresets(nonNil(mapOf(bundle["settings"])["presets"], []any{}))
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range presets {
 		if p.Profile != "" {
 			if _, err := readTrustedProfile(q, p.Profile); err != nil {

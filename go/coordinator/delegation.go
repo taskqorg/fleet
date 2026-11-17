@@ -70,8 +70,8 @@ func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (
 	if ps["account"] != nil {
 		session["account"] = ps["account"]
 	}
-	if ps["access"] == "read" { // a read-only conversation's child is read-only too (presets.go)
-		session["access"] = "read"
+	if ps["access"] == "read" { // a read-only conversation's child is read-only too, with no branch (presets.go)
+		session["access"], session["branch"] = "read", false
 	}
 	if err := put(q, "session", session); err != nil {
 		return nil, err

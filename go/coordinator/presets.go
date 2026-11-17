@@ -24,7 +24,7 @@ var systemPresets = []preset{
 	{ID: "fix", Name: "Fix / build", Description: "Fix a bug or build a feature on its own branch.", Role: "worker", Profile: "coding-worker", Access: "write", Branch: true},
 	{ID: "review", Name: "Review", Description: "Review code or a change and report the findings. Nothing changes.", Role: "reviewer", Profile: "claude-reviewer", Access: "read"},
 	{ID: "investigate", Name: "Investigate a problem", Description: "Find the cause of a problem in errors, logs and code. Nothing changes.", Role: "pm", Profile: "pm", Access: "read",
-		Starter: "Investigate the problem the person describes. Read the project's errors with the bugsink connection tools (the Bugsink projects its settings name in errors.bugsink), the execution logs and telemetry, and the code. Report the cause with its evidence and a proposed fix; change nothing."},
+		Starter: "Investigate the problem the person describes. Read the project's errors with the bugsink connection tools where the project grants them (the Bugsink projects its settings name in errors.bugsink), the execution logs and telemetry through Fleet operations, and the code. Report the cause with its evidence and a proposed fix; change nothing."},
 }
 
 var presetKeys = []string{"id", "name", "description", "role", "profile", "access", "branch", "starter"}
@@ -102,6 +102,20 @@ func resolvePreset(q *Request, p preset, settings doc) (role, profileID string, 
 	return role, profileID, profile, ""
 }
 
+// callerReadOnly: the call comes from an agent whose own session is read-only; the sessions it creates are read-only too.
+func callerReadOnly(q *Request) bool {
+	id, ok := strings.CutPrefix(q.agent, "execution:")
+	if !ok {
+		return false
+	}
+	e, _ := maybe(q, id, "execution")
+	if e == nil {
+		return false
+	}
+	s, _ := maybe(q, astr(e["sessionId"]), "session")
+	return s != nil && s["access"] == "read"
+}
+
 // profileInRoles: the project maps some role to this profile; an agent starts only such profiles.
 func profileInRoles(settings doc, profileID string) bool {
 	for _, v := range mapOf(settings["roles"]) {
@@ -136,6 +150,9 @@ func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.Ses
 		role, profileID, profile, unavailable := resolvePreset(q, p, settings)
 		if unavailable == "" && q.agent != "" && !profileInRoles(settings, profileID) { // what session_start refuses an agent
 			unavailable = "Your project maps no role to profile " + profileID
+		}
+		if unavailable == "" && settings == nil && !mayAccessProjectID(q.person, "") { // what session_start refuses outside projects
+			unavailable = "Starting outside projects needs full access"
 		}
 		x := contract.SessionPreset{Id: p.ID, Name: p.Name, Description: p.Description, Access: contract.SessionAccess(p.Access), Branch: p.Branch, Source: source,
 			Role: optStr(role), ProfileId: optStr(profileID), Starter: optStr(p.Starter), Unavailable: optStr(unavailable)}

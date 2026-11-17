@@ -380,8 +380,14 @@ func teardown(dir, session, top string, project any, deleteBranch bool) contract
 	// Delivered work (deleteBranch: the task was accepted) is not unpushed even when its squash-merged remote branch
 	// was deleted and pruned; uncommitted changes still keep the worktree.
 	if keep["unpushed"] && !deleteBranch {
-		// Commits on no remote-tracking branch (session branches are created --no-track, so there is no @{u} to ask).
-		ahead, err := hardenedGit("-C", w, "rev-list", "-n", "1", "HEAD", "--not", "--remotes").Output()
+		// Commits on no remote-tracking branch (session branches are created --no-track, so there is no @{u} to ask). A
+		// detached worktree (a session with no branch) also started from the checkout's own branches: what they hold is not
+		// its work, so a local unpushed commit of the checkout never keeps it.
+		not := []string{"-C", w, "rev-list", "-n", "1", "HEAD", "--not", "--remotes"}
+		if hardenedGit("-C", w, "symbolic-ref", "-q", "HEAD").Run() != nil {
+			not = append(not, "--branches")
+		}
+		ahead, err := hardenedGit(not...).Output()
 		if err != nil || len(strings.TrimSpace(string(ahead))) > 0 {
 			out.Reason = new("unpushed")
 			return out

@@ -409,7 +409,12 @@
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {}
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "description": "One of your focused projects; default your own"
+        }
+      }
     }
   },
   {
