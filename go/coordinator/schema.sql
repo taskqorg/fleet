@@ -2699,3 +2699,15 @@ UPDATE document d SET data = d.data || '{"actor": "program-worker"}'
   AND NOT EXISTS (SELECT 1 FROM document m WHERE m.session_ref = d.id AND m.kind = 'message')
   AND EXISTS (SELECT 1 FROM execution e WHERE e.session_id = d.id AND e.data->>'actor' = 'program-worker')
   AND NOT EXISTS (SELECT 1 FROM execution e WHERE e.session_id = d.id AND coalesce(e.data->>'actor', '') <> 'program-worker');
+
+-- migration 74: failing resource work pauses (resource_projection.go, resourcePause). On 2026-11-17 nine work rows
+-- failed before their claim, so no attempt was recorded and every 100 ms pass failed them again (about 30k failed
+-- resource calls per 5 minutes for 8 hours). Work rows already had attempts; a project build and a metadata repair now
+-- have them too, and a build its own next attempt, so each failing item pauses exponentially up to the maximum while
+-- the others keep their pace; resource-failing (rules.go) asks once about an item whose pause reached the maximum.
+ALTER TABLE resource_build ADD COLUMN attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+ ADD COLUMN next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp();
+ALTER TABLE resource_metadata_repair ADD COLUMN attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0);
+-- Work attempts counted under the old 1 s cap start the new ramp, so no row starts at the maximum pause or asks at once.
+SELECT set_config('fleet.project_ids', '*', true);
+UPDATE resource_work SET attempts = 0, next_attempt_at = least(next_attempt_at, clock_timestamp()) WHERE attempts > 0;

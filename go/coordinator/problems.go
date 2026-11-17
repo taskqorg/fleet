@@ -17,6 +17,7 @@ type Problem struct {
 	Cause, Text, Rule string
 	ProjectID         string // "" for a system cause
 	AddressedTo       string // "": the owner (a project cause names its director here)
+	RefreshText       bool   // Refresh the text while this question is open.
 	Data              doc    // hostId, storeId, executionId, exemplars, value
 }
 
@@ -70,9 +71,9 @@ func problemsClose(q *Request, causes []string) error {
 // problemsSync: the full current set of one source (rules): new causes are asked; a held cause absent for
 // problemCleanRuns runs in a row is closed; a present one resets its miss count.
 func problemsSync(q *Request, source string, current []Problem) error {
-	now := map[string]bool{}
+	now := map[string]Problem{}
 	for _, p := range current {
-		now[p.Cause] = true
+		now[p.Cause] = p
 	}
 	held, err := queryRows(q, "SELECT id,cause,coalesce(data->>'misses','0') AS misses FROM question WHERE cause LIKE 'problem:%' AND state IN ('open','answered') AND data->>'source'=$1", source)
 	if err != nil {
@@ -82,8 +83,13 @@ func problemsSync(q *Request, source string, current []Problem) error {
 	for _, h := range held {
 		c := astr(h["cause"])
 		have[c] = true
-		if now[c] {
-			if err := exec(q, "UPDATE question SET data=data-'misses' WHERE id=$1 AND data ? 'misses'", h["id"]); err != nil {
+		if p, present := now[c]; present {
+			if p.RefreshText {
+				if err := exec(q, `UPDATE question SET text=CASE WHEN state='open' THEN $2 ELSE text END, data=data-'misses'
+					WHERE id=$1 AND (data ? 'misses' OR (state='open' AND text IS DISTINCT FROM $2))`, h["id"], p.Text); err != nil {
+					return err
+				}
+			} else if err := exec(q, "UPDATE question SET data=data-'misses' WHERE id=$1 AND data ? 'misses'", h["id"]); err != nil {
 				return err
 			}
 			continue

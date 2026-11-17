@@ -41,11 +41,9 @@ test('C1 concurrent host polls, non-terminal receipts, and session message appen
   const e1 = ok(await call('POST', `/api/sessions/${s1}/messages`, {requestId: randomUUID(), text: 'first'}, owner));
   const e2 = ok(await call('POST', `/api/sessions/${s2}/messages`, {requestId: randomUUID(), text: 'second'}, owner));
 
-  let cmds: any[] = [];
-  for (let i = 0; i < 20; i++) {
-    cmds = ok(await cmdHost('/api/hosts/poll?wait=250ms', pollBody())).commands;
-    if (cmds.some(c => c.executionId === e1.id) && cmds.some(c => c.executionId === e2.id)) break;
-  }
+  // An immediate poll waits for the dispatch generation requested by both message commits.
+  // A long poll can return the first unacknowledged command repeatedly before dispatch claims the second.
+  const cmds = ok(await cmdHost('/api/hosts/poll', pollBody())).commands as any[];
   const c1 = cmds.find(c => c.executionId === e1.id);
   const c2 = cmds.find(c => c.executionId === e2.id);
   assert.ok(c1 && c2, `expected start commands for both executions, got ${JSON.stringify(cmds)}`);

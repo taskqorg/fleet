@@ -113,6 +113,8 @@ The owner runs Fleet from the app without a shell: add, pause and remove hosts; 
 | `problem:store:<id>:fill` | rule `store-fill` | free below `free_space_warning` | owner | stage 1 |
 | `problem:execution:<id>:stuck` | rule `stuck` | no activity 30 min | director | stage 1 |
 | `problem:execution:<id>:orphans` | rule `orphan` | processes alive after end | owner | stage 1 |
+| `problem:resource:failing` | rule `resource-failing` | a resource processor item paused at its maximum retry pause | owner | built |
+| `problem:resource:stalled` | direct: resource processor | passes keep failing to select work, at the maximum pause | owner | built |
 | `problem:backup:missing` | direct: backup pass | no good dump for 48 h | owner | stage 1 (M6) |
 | `problem:backup:drill-failed` | direct: drill | last drill failed | owner | stage 1 (M6) |
 | `problem:telemetry:clickhouse` | direct: span writer | 3 failed flushes | owner | stage 1 |

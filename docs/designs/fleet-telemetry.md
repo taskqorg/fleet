@@ -253,6 +253,7 @@ One rules pass in the coordinator runs every minute (`pass.rules`). Each rule is
 | `unknown` | 1 | executions ended with no terminal span; `outbox_failed` rows; dropped spans above 0 | kind | `problem:unknown:<kind>` |
 | `orphan` | 1 | an execution end span with `fleet.orphans` above 0, or a `fleet-launch@…:<execution>` unit still running for an ended execution | execution | `problem:execution:<id>:orphans` |
 | `host-saturation` | 1 | `load1` above the CPU count, or `mem_free` below 5% of memory, for 5 beats in a row | host | `problem:host:<id>:saturated` |
+| `resource-failing` | 1 | a resource processor item whose retry pause reached its maximum ([prepared resources](fleet-analytics.md#publication-contract)); one system question names them all | resource processor | `problem:resource:failing` |
 | `process-cpu` | 2 | a process's CPU seconds per beat above 0.9 x the CPU count for 10 beats, or above 3 x its own 7-day median | process on host | `problem:process-cpu:<host>:<process>` |
 | `process-leak` | 2 | a process's RSS rises in at least 50 of the last 60 beats and is above 2 x its 7-day median | process on host | `problem:process-leak:<host>:<process>` |
 | `error-burn` | 2 | 1-hour and 5-minute error ratios both above 14.4 x the operation's 7-day ratio | operation | `problem:error-burn:<service>:<name>` |

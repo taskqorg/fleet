@@ -66,6 +66,17 @@ func TestResourceBisectCohort(t *testing.T) {
 	if err != nil || batches != 1 || singles != len(ids) {
 		t.Fatalf("a failure of every leaf must not bisect: err=%v batches=%d singles=%d", err, batches, singles)
 	}
+	batches, singles = 0, 0
+	err = resourceBisectCohort(ids[:4], func(part []string) error {
+		batches++
+		if len(part) == 4 {
+			return errors.New("split cohort")
+		}
+		return errResourceStall
+	}, func(string) error { singles++; return nil })
+	if !errors.Is(err, errResourceStall) || batches != 2 || singles != 0 {
+		t.Fatalf("the shared stall did not stop the split: err=%v batches=%d singles=%d", err, batches, singles)
+	}
 	if !strings.Contains(resourceCandidatesSQL, "LIMIT "+strconv.Itoa(resourceCohortSize)+") candidates") {
 		t.Fatal("cohort size must equal the pass bound in resourceCandidatesSQL")
 	}
@@ -1546,7 +1557,7 @@ func TestResourceCohortPostgres(t *testing.T) {
  INSERT INTO execution(id,kind,state,project_id) VALUES('cohort-healthy-other','tool_run','succeeded','COHORT_OTHER')`)
 	var candidates []string
 	if e = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-		rows, e := q.tx.Query(ctx, resourceCandidatesSQL)
+		rows, e := q.tx.Query(ctx, resourceCandidatesSQL, []string{})
 		if e != nil {
 			return e
 		}
@@ -1596,7 +1607,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 			t.Helper()
 			var ids []string
 			if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-				rows, e := q.tx.Query(q.ctx(), resourceCandidatesSQL)
+				rows, e := q.tx.Query(q.ctx(), resourceCandidatesSQL, []string{})
 				if e != nil {
 					return e
 				}
@@ -1954,8 +1965,17 @@ func TestResourceProjectlessToolRunPostgres(t *testing.T) {
 	 +(SELECT count(*) FROM resource_work_scope WHERE project_id='')+(SELECT count(*) FROM resource_repair_scope WHERE project_id='')`).Scan(&left); err != nil || left != 0 {
 		t.Fatal("after migration 68", err, left)
 	}
+	// The refused lock paused the work (resourceReplaceFailed); make it due so the replace below has to consume it.
+	if _, err := env.ownerStore.pool.Exec(ctx, `SELECT set_config('fleet.project_ids','*',false); UPDATE resource_work SET next_attempt_at=clock_timestamp() WHERE execution_id='`+id+`'`); err != nil {
+		t.Fatal(err)
+	}
 	if err := resourceReplace(ctx, a, id); err != nil {
 		t.Fatal("resource replace after migration 68", err)
+	}
+	if err := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
+		return q.tx.QueryRow(ctx, "SELECT count(*) FROM resource_work WHERE execution_id=$1", id).Scan(&pending)
+	}); err != nil || pending != 0 {
+		t.Fatal("pending work after migration 68", err, pending)
 	}
 	err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
 		return exec(q, `INSERT INTO execution(id,kind,state,project_id) VALUES('empty-project','tool_run','succeeded','')`)
