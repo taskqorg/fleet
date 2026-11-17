@@ -186,6 +186,13 @@ func TestDeliveryStatusExclude(t *testing.T) {
 			t.Errorf("%+v: %v, want %v", c.r, got, c.want)
 		}
 	}
+	// o/b's items name p2; with p2 left out they name p3, which lists o/b too, so no row shows the ignored project.
+	out, _ := deliveryStatus(&Request{}, &contract.DeliveryStatusRequest{ExcludeProjectIds: []string{"p2"}})
+	for _, it := range out.Items {
+		if it.ProjectId == "p2" {
+			t.Fatalf("an item names the excluded project: %+v", it)
+		}
+	}
 }
 
 // Requirement: a delivery pass that changes a project's pull requests reaches watchers through the change stream.

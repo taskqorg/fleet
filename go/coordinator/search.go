@@ -276,20 +276,21 @@ func sessionHits(rs []doc, words string) []contract.Found {
 // match stays in the part a phone-width row shows.
 const snippetShown, snippetLen, snippetLead = 40, 80, 16
 
-// matchSnippet: up to snippetLen characters of text (whitespace collapsed) from just before the first place a word of
-// words is found, with an ellipsis where it is cut; "" when no word is found or the first one found is near the start.
+// matchSnippet: up to snippetLen characters of text (whitespace collapsed) from just before the first match of a word of
+// words that the title does not show (its first match lies past the start), with an ellipsis where it is cut; "" when
+// every word found is in the start or none is found.
 func matchSnippet(text, words string) string {
 	c := strings.Join(strings.Fields(text), " ")
 	low := strings.ToLower(c) // rune by rune: the same rune offsets as c
 	at := -1
 	for _, w := range strings.Fields(strings.ToLower(words)) {
 		if i := strings.Index(low, w); i >= 0 {
-			if r := utf8.RuneCountInString(low[:i]); at < 0 || r < at {
+			if r := utf8.RuneCountInString(low[:i]); r >= snippetShown && (at < 0 || r < at) {
 				at = r
 			}
 		}
 	}
-	if at < snippetShown {
+	if at < 0 {
 		return ""
 	}
 	t := []rune(c)

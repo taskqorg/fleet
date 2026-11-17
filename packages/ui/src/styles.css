@@ -696,7 +696,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 /* The project keeps its width (up to 8rem, then an ellipsis); a long title truncates instead. */
 .spot-list [role=option] .sub{flex:none;color:var(--fg-muted);max-width:8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* A row with a snippet: the title over one muted line of the matching text. */
-.spot-list [role=option].snip{height:auto;min-height:var(--size-control);padding-block:var(--space-1)}
+.spot-list [role=option].snip{height:auto;padding-block:var(--space-1)}
 .spot-list [role=option] .txt{flex:0 1 auto;min-width:0;display:flex;flex-direction:column}
 .spot-list [role=option] .snippet{color:var(--fg-muted);font-size:var(--font-size-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .spot-list [role=option] .id,.spot-list [role=option] .when,.spot-list [role=option] .icon,.spot-list [role=option] .state{flex:none;white-space:nowrap}

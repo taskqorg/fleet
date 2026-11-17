@@ -94,7 +94,15 @@ func deliveryReply(last deliveryState, may func(project string) bool) contract.D
 	var problems []string
 	for _, r := range last.repos {
 		if visible(r.projects...) {
-			out.Items = append(out.Items, r.items...)
+			// An item names the repository's first project; when the caller may not see that one (no access, outside the
+			// focus, ignored), it names the first project listing the repository that the caller sees.
+			shown := r.projects[slices.IndexFunc(r.projects, may)]
+			for _, it := range r.items {
+				if !may(it.ProjectId) {
+					it.ProjectId = shown
+				}
+				out.Items = append(out.Items, it)
+			}
 			out.Landing += r.landing
 			if r.problem != "" {
 				problems = append(problems, r.problem)

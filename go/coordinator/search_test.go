@@ -25,6 +25,10 @@ func TestMatchSnippet(t *testing.T) {
 	if got := matchSnippet(long, ""); got != "" {
 		t.Fatalf("no words, no snippet: %q", got)
 	}
+	// A word the title shows does not hide another found only deep in the message.
+	if got := matchSnippet(long, "worker deploy"); !strings.Contains(got, "deploy") {
+		t.Fatalf("a shown word hid a deep one: %q", got)
+	}
 	// The earliest of the words leads; near the end the snippet starts at a word and has no closing ellipsis.
 	if got := matchSnippet(long, "health contract"); !strings.Contains(got, "contract") {
 		t.Fatalf("earliest word: %q", got)

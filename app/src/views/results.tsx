@@ -29,7 +29,7 @@ export function Results({ id }: { id?: string }) {
   const extra = { ...view.extra, ...typed.terms };
   const media = extra.media?.toLowerCase();
   const scoped = withFocus(view);
-  const filter = { q: typed.text || undefined, states: states.length ? states : undefined, projectIds: scoped.project?.length ? scoped.project : undefined, excludeProjectIds: scoped.exclude, taskId: extra.task, executionId: extra.execution,
+  const filter = { q: typed.text || undefined, states: states.length ? states : undefined, projectIds: scoped.project?.length ? scoped.project : undefined, excludeProjectIds: scoped.exclude?.map(p => p ?? '-'), taskId: extra.task, executionId: extra.execution,
     mediaType: media ? MEDIA[media] : undefined, since: extra.since && SINCE[extra.since] ? Date.now() - SINCE[extra.since] : undefined };
   const fkey = JSON.stringify({ ...filter, since: extra.since });
   const [rows, setRows] = useState<Row[] | null>(null), [next, setNext] = useState<number | null>(null), [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);

@@ -101,8 +101,8 @@ export function scopeIds(withFocus = true): { projectIds?: string[]; excludeProj
   const { focus, ignored } = prefs.value, f = withFocus ? focus.filter(p => !ignored.includes(p)) : [];
   return f.length ? { projectIds: f } : ignored.length ? { excludeProjectIds: ignored } : {};
 }
-/** The focused projects without ignored ones; undefined: no focus (every project but the ignored ones). */
-export const focusIds = (withFocus = true) => scopeIds(withFocus).projectIds;
+/** A scope id as a list filter value: '-' (no project) is null. */
+export const noProject = (p: string) => p === '-' ? null : p;
 /**
  * The project of an item that needs the person lies outside the focus (the "N need you outside focus" count): a focus is
  * set and does not hold it, and it is not ignored. Ignore is full silence; with no focus (All projects) nothing is outside.
@@ -119,7 +119,7 @@ const FOCUSED = ['tasks', 'results', 'conversations'];
  */
 export function withFocus(v: View): View {
   if (v.project?.length || !FOCUSED.includes(v.view)) return v;
-  const { projectIds, excludeProjectIds } = scopeIds(), noProject = (p: string) => p === '-' ? null : p;
+  const { projectIds, excludeProjectIds } = scopeIds();
   return projectIds ? { ...v, project: projectIds.map(noProject) } : excludeProjectIds ? { ...v, exclude: excludeProjectIds.map(noProject) } : v;
 }
 export function saveFocusPreset(name: string, projects = prefs.value.focus) {

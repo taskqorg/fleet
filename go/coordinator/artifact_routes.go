@@ -365,7 +365,8 @@ func opArtifactList(q *Request) (any, error) {
 		ExecutionID, TaskID, MediaType, ProjectID, Q *string
 		States                                       []string
 		Since                                        *float64
-		ProjectIDs, ExcludeProjectIDs                []*string
+		ProjectIDs                                   []*string
+		ExcludeProjectIDs                            []string
 		Limit                                        *float64
 		Before                                       *float64
 	}

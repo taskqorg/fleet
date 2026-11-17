@@ -3,13 +3,13 @@ import { useLocation, useSearch } from 'wouter-preact';
 import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, Button, keyConnection, actor, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { scopeIds, prefsRead, prefs } from '../prefs.ts';
+import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
 // The focus and ignored projects (OR-34) narrow every part: questions, problems, counts and project rows.
 async function fetchOverview(scope: ReturnType<typeof scopeIds>): Promise<Overview> {
-  const { projectIds, excludeProjectIds } = scope, noProject = (x: string) => x === '-' ? null : x;
+  const { projectIds, excludeProjectIds } = scope;
   const [q, p, page] = await Promise.all([op('questions_list', { state: 'open', ...scope }), op('executions_list', { needsYou: true, ...scope }),
     op('task_page', { group: 'project', groupCounts: true, limit: 1, filter: { ...(projectIds && { projectId: projectIds.map(noProject) }), ...(excludeProjectIds && { excludeProjectId: excludeProjectIds.map(noProject) }) } })]);
   // One grouped call: each project's per-state counts (groupCounts); tasks without a project are their own group.

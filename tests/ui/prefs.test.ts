@@ -8,7 +8,7 @@ registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }))
 await ensureAccessGeneration();
 import { readFileSync } from 'node:fs';
 import { listKey, toPageParams } from '../../packages/view-url/view-url.ts';
-import { prefs, prefsRead, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds, scopeIds, setFocus, setIgnored, outsideFocus, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
+import { prefs, prefsRead, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, scopeIds, setFocus, setIgnored, outsideFocus, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
 
 const sent: [string, any][] = [], kept: any[] = [];
 const pendingReplies = new Set<Promise<void>>();
@@ -37,9 +37,9 @@ test('OR-34 focus applies to every list keyed by project (tasks, results, conver
   prefs.value = { ...prefs.value, focus: ['fleet'] };
   for (const v of ['tasks', 'results', 'conversations'] as const) assert.deepEqual(withFocus({ view: v }).project, ['fleet']);
   assert.equal(withFocus({ view: 'hosts' }).project, undefined);
-  assert.deepEqual(focusIds(), ['fleet']);
+  assert.deepEqual(scopeIds(), { projectIds: ['fleet'] });
   prefs.value = { ...prefs.value, focus: [] };
-  assert.equal(focusIds(), undefined);
+  assert.deepEqual(scopeIds(), {});
 });
 
 test('OR-34 focus is the project filter of a view that names no project; an explicit project wins', () => {
@@ -54,7 +54,6 @@ test('OR-34 focus is the project filter of a view that names no project; an expl
 // Risk (review of #617): ignore as an allow-list of known projects hid work of a project missing from the project list.
 test('OR-34 ignored projects are a server-side exclusion of every list that names no project, also with every project in focus; an explicit project wins', async () => {
   prefs.value = { ...prefs.value, focus: [], ignored: ['muted'] };
-  assert.equal(focusIds(), undefined, 'no focus: no allow-list of projects');
   assert.deepEqual(scopeIds(), { excludeProjectIds: ['muted'] });
   for (const v of ['tasks', 'results', 'conversations'] as const) {
     const scoped = withFocus({ view: v });

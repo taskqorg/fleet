@@ -41,7 +41,7 @@ test('excludeProjectId(s) leave out only the named projects in task_page, sessio
   assert.deepEqual(sorted(m.lists[0].rows, 't-'), of('t-', 'keep', 'free'), 'a changed task of an ignored project does not join the list');
   assert.deepEqual(sorted(m.lists[1].rows, 's-'), of('s-', 'keep', 'free'));
 
-  // questions_list and executions_list ('-' is no project), artifact_list (null is no project).
+  // questions_list, executions_list and artifact_list ('-' is no project).
   for (const [name, key, prefix] of [['questions_list', 'questions', 'q-'], ['executions_list', 'executions', 'e-']] as const) {
     assert.deepEqual(sorted((await op(name, {excludeProjectIds: ['muted']}))[key], prefix), of(prefix, 'keep', 'stray', 'free'), name);
     assert.deepEqual(sorted((await op(name, {excludeProjectIds: ['muted', '-']}))[key], prefix), of(prefix, 'keep', 'stray'), name + ' with -');
@@ -52,6 +52,6 @@ test('excludeProjectId(s) leave out only the named projects in task_page, sessio
   const rest = await op('executions_list', {excludeProjectIds: ['muted'], limit: 1000, after: page.nextAfter});
   assert.ok(![...page.executions, ...rest.executions].some((e: any) => e.id === 'e-muted'), 'paging keeps the exclusion');
   assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted']})).artifacts, 'a-'), of('a-', 'keep', 'stray', 'free'));
-  assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted', null]})).artifacts, 'a-'), of('a-', 'keep', 'stray'));
+  assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted', '-']})).artifacts, 'a-'), of('a-', 'keep', 'stray'), "'-' is no project, as in the other operations");
   assert.deepEqual(sorted((await op('artifact_list', {projectIds: ['keep', 'muted'], excludeProjectIds: ['muted'], limit: 10})).artifacts, 'a-'), ['a-keep']);
 });

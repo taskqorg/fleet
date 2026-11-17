@@ -1189,8 +1189,8 @@ func artifactGetView(ctx context.Context, a *App, id, hostID string) (doc, error
 
 type listFilter struct {
 	ExecutionID, TaskID, MediaType, ProjectID, Q *string
-	ProjectIDs, ExcludeProjectIDs                []*string
-	States                                       []string
+	ProjectIDs                                   []*string
+	ExcludeProjectIDs, States                    []string
 	Since                                        *float64
 	Limit, Before                                *int64
 	NoExamples                                   bool
@@ -1240,10 +1240,7 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]doc, error) {
 		}
 		add(cond, named)
 	}
-	if len(f.ExcludeProjectIDs) > 0 { // the person's ignored projects (OR-34); null is work outside projects
-		named, null := splitNull(f.ExcludeProjectIDs)
-		c = notInProjects(c, &p, "project_id", named, null)
-	}
+	c = projectNotIn(c, &p, "project_id", f.ExcludeProjectIDs) // the person's ignored projects (OR-34); '-' is no project
 	if len(f.States) > 0 {
 		add("state=ANY($?)", f.States)
 	}
