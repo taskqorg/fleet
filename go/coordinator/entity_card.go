@@ -199,15 +199,22 @@ func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 	 FROM artifact a LEFT JOIN task t ON t.id=coalesce(a.task_id,(SELECT e.task_id FROM execution e WHERE e.id=a.execution_id)) WHERE a.id=$1 OR a.legacy_id=$1`, id)
 	if r == nil && err == nil { // a legacy result kept as a document (task_view's latest_result reads both)
 		r, err = first(q, `SELECT d.id,coalesce(d.data->>'path',d.data->>'name') AS name,'stored' AS state,coalesce(d.project_id,d.data->>'projectId') AS project_id,
-		 d.data->>'mediaType' AS media_type,d.data->>'size' AS size,d.data->>'sha256' AS content_hash,d.updated_at AS created_at,t.code AS task_code
+		 d.data->>'mediaType' AS media_type,d.data->>'size' AS size,d.data->>'sha256' AS content_hash,d.updated_at AS created_at,t.code AS task_code,t.id AS legacy_task
 		 FROM document d LEFT JOIN execution e ON e.id=d.data->>'executionId' LEFT JOIN task t ON t.id=e.task_id WHERE d.kind='artifact' AND d.id=$1`, id)
 	}
 	if r == nil || err != nil {
 		return nil, err
 	}
 	id = astr(r["id"])
+	path := itemPath("results", id)
+	if _, legacy := r["legacy_task"]; legacy { // Results reads the artifact table only: a legacy result opens its task
+		path = nil
+		if t := astr(r["legacy_task"]); t != "" {
+			path = itemPath("tasks", t)
+		}
+	}
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Hash: optStr(astr(r["content_hash"])), Title: firstString(astr(r["name"]), "Result"), State: optStr(astr(r["state"])),
-		ProjectId: optStr(astr(r["project_id"])), At: optStr(astr(r["created_at"])), AtLabel: ptr("stored"), Path: itemPath("results", id),
+		ProjectId: optStr(astr(r["project_id"])), At: optStr(astr(r["created_at"])), AtLabel: ptr("stored"), Path: path,
 		Facts: facts(fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])), fact("Type", contract.EntityFactTypeCode, astr(r["media_type"])),
 			fact("Size", contract.EntityFactTypeBytes, sizeOf(r["size"])))}, nil
 }
@@ -353,7 +360,7 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 	if !strings.EqualFold(repo, ciOwner+"/"+ciRepo) || deliveryMay(q) != nil {
 		return nil, nil
 	}
-	d, err := first(q, "SELECT data FROM document WHERE kind='delivery-pr' AND data->>'number'=$1", strconv.FormatInt(number, 10))
+	d, err := first(q, "SELECT data FROM document WHERE id=$1 AND kind='delivery-pr'", "delivery-pr:"+strconv.FormatInt(number, 10))
 	if d == nil || err != nil {
 		return nil, err
 	}
@@ -376,7 +383,7 @@ func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.En
 	case done != "":
 		stage, at = "installed", done
 	case x.Released != nil && st.InstallsFrom != "" && *x.Released < st.InstallsFrom:
-		stage = "merged"
+		stage, at = "merged", *x.Released
 	case x.Released != nil:
 		stage, at = "installing", *x.Released
 	}
@@ -396,17 +403,22 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 	if !nativeReleaseTag.MatchString(tag) && !uiOnlyRelease(tag) {
 		return nil, fail(400, "Expected a release tag such as v1.2.3")
 	}
-	prs := 0
+	prs, installing := 0, false
 	for _, it := range deliveryVisible(q).Items {
 		if deref(it.Release) == tag {
 			prs++
+			installing = installing || it.Stage != contract.DeliveryStageInstalled
 		}
 	}
-	recorded, err := has(q, "SELECT 1 FROM document WHERE kind='delivery-release' AND data->>'tag'=$1", tag)
+	rec, err := first(q, "SELECT data FROM document WHERE id=$1 AND kind='delivery-release'", "delivery-release:"+tag)
 	if err != nil {
 		return nil, err
 	}
-	version, known := releaseVersionOf(tag), prs > 0 || recorded
+	var history contract.DeliveryRelease
+	if rec != nil {
+		_ = json.Unmarshal(jsonBytes(rec["data"]), &history)
+	}
+	version, known := releaseVersionOf(tag), prs > 0 || rec != nil
 	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), State: ptr("installing"), Path: ptr("/delivery?q=" + url.QueryEscape(tag))}
 	if uiOnlyRelease(tag) {
 		on := uiServed()
@@ -421,15 +433,12 @@ func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
 	}
 	c.Title = "Release " + version
 	if !fullAccess(q.person) {
-		// A person sees only the hosts they hold: the state is the one the delivery pass gave this release's pull requests.
+		// A person sees only the hosts they hold: the state is the one the delivery pass gave this release's pull requests,
+		// else the delivery history's record of its install on the coordinator.
 		if !known {
 			return nil, nil
 		}
-		installing := false
-		for _, it := range deliveryVisible(q).Items {
-			installing = installing || deref(it.Release) == tag && it.Stage != contract.DeliveryStageInstalled
-		}
-		if prs > 0 && !installing {
+		if prs > 0 && !installing || prs == 0 && history.Installed["coordinator"] != "" {
 			c.State = ptr("installed")
 		}
 		c.Facts = facts(fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))

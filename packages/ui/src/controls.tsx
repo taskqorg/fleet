@@ -611,7 +611,7 @@ function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
     ...(c.code ? [[c.kind === 'pull_request' ? 'Copy reference' : 'Copy code', c.kind === 'pull_request' ? c.id : c.code] as [string, string]] : []),
     ...(c.uuid ? [['Copy UUID', c.uuid] as [string, string]] : []),
     ...(!c.code && !c.uuid ? [['Copy id', c.id] as [string, string]] : []),
-    ...(c.hash ? [['Copy SHA-256', c.hash] as [string, string]] : [])] : code ? [['Copy code', code]] : [];
+    ...(c.hash ? [['Copy SHA-256', c.hash] as [string, string]] : [])] : code && codeKind[code[0]] && /^[TQC]-/.test(code) ? [['Copy code', code]] : [];
   const at = c?.at ? Date.parse(c.at) : NaN;
   const go = (e: MouseEvent) => {
     if (!c?.path) { e.preventDefault(); return; }

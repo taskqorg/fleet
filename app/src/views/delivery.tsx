@@ -345,7 +345,7 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
       {url && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(url, '_blank', 'noopener')} />}</header>
     <h2 class="detail-title">{title}</h2>
     <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} now={now} />}
-      {rel && <EntityCode code={rel} id={rel} kind="release" />}</div>
+      {rel && <EntityCode code={releaseLabel(rel)} id={rel} kind="release" />}</div>
     <div class="stack-pad">
       {h.error && !h.data && <ErrorBanner text={`History did not load: ${h.error}`} />}
       {x ? <>
