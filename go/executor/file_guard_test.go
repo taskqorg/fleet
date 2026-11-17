@@ -115,6 +115,23 @@ func TestGuardRefuses(t *testing.T) {
 	// A file swapped for a symlink between resolving and opening.
 	guardBeforeOpen = func() { os.Remove(ok); os.Symlink(filepath.Join(home, ".ssh/id_ed25519"), ok) }
 	refused(t, "shot.png", work, "swapped for a symlink")
+	// Sessions and worktrees inside the executor's data folder stay uploadable; its stores do not.
+	if runtime.GOOS == "darwin" {
+		shot := write(t, filepath.Join(home, "Library/Application Support/Fleet/executor/sessions/s1/worktree/out.png"), "png")
+		if f, _, err := openForUpload(shot, work); err != nil {
+			t.Fatalf("a worktree file in the data folder: %v", err)
+		} else {
+			f.Close()
+		}
+	}
+	// A root of / holds every path.
+	t.Setenv("FLEET_FILES_ROOTS", "/")
+	if f, _, err := openForUpload(write(t, filepath.Join(work, "plain.png"), "p"), work); err != nil {
+		t.Fatalf("root /: %v", err)
+	} else {
+		f.Close()
+	}
+	t.Setenv("FLEET_FILES_ROOTS", "")
 	// A folder on the path swapped for a symlink to the key folder: the walk opens each folder without following links.
 	decoy := write(t, filepath.Join(work, "sub", "id_ed25519"), "decoy")
 	guardBeforeOpen = func() {
@@ -322,5 +339,27 @@ func TestConnectionCLI(t *testing.T) {
 	}
 	if _, err := connectionCommand([]string{"call", "youtrack", "nope", spec}, strings.NewReader(`{}`), &out); err == nil {
 		t.Fatal("a tool missing from the spec file")
+	}
+}
+
+// Requirement: §9 path guard in a run: the run file anchors the denylist on the executor user's home, the executor's
+// stores and every registry account's login folders, and carries the executor's FLEET_FILES_ROOTS. Risk: an agent whose
+// HOME is the harness home attaches another account's Claude or Codex login, or the journal with every run token.
+func TestUploadDenyLines(t *testing.T) {
+	dir := t.TempDir()
+	native, credential := filepath.Join(dir, "b-native"), filepath.Join(dir, "b-home")
+	registry := write(t, filepath.Join(dir, "accounts.json"), enc(M{"b": M{"harness": "claude", "home": filepath.Join(dir, "b"), "nativeHome": native, "credentialHome": credential}}))
+	t.Setenv("FLEET_NATIVE_ACCOUNTS", registry)
+	t.Setenv("FLEET_CODEX_HOME", filepath.Join(dir, "codex"))
+	t.Setenv("FLEET_FILES_ROOTS", "/srv/share")
+	lines := uploadDenyLines(filepath.Join(dir, "data"))
+	for _, want := range []string{native, filepath.Join(credential, ".claude/.credentials.json"), filepath.Join(dir, "data", "journal.sqlite"),
+		filepath.Join(dir, "data", "runs"), filepath.Join(dir, "codex"), registry, "FLEET_FILES_ROOTS=/srv/share\n", "FLEET_USER_HOME="} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("%s missing from %s", want, lines)
+		}
+	}
+	if strings.Contains(lines, filepath.Join(dir, "data")+string(filepath.ListSeparator)) {
+		t.Fatal("the whole data folder (sessions and worktrees) is denied")
 	}
 }

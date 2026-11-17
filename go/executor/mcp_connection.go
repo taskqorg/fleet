@@ -231,7 +231,7 @@ func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error
 // runFileKeys are the keys a run file may set: the token, gateway and Access file, the run's work and input folders
 // (the base of relative upload paths and the download folder), and the upload denylist's anchors (file_guard.go).
 var runFileKeys = map[string]bool{"FLEET_RUN_TOKEN": true, "FLEET_GATEWAY_URL": true, "FLEET_CF_ACCESS_FILE": true, "FLEET_WORK_DIR": true, "FLEET_INPUT_DIR": true,
-	"FLEET_USER_HOME": true, "FLEET_RUN_DENY": true}
+	"FLEET_USER_HOME": true, "FLEET_RUN_DENY": true, "FLEET_FILES_ROOTS": true}
 
 // loadRunFile reads KEY=value lines from the executor's private run file into this process's environment. Only
 // runFileKeys are taken. The file is denylisted for uploads.

@@ -1086,16 +1086,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 		if f := accessFile(); f != "" && isFile(f) {
 			lines += "FLEET_CF_ACCESS_FILE=" + f + "\n"
 		}
-		// The harness's HOME is not this user's home: the upload denylist also covers the executor user's home and the
-		// executor's own stores (data folder with journal and run files, host secret, Codex account, account registry).
-		userHome, _ := os.UserHomeDir()
-		deny := []string{e.root, envOr("FLEET_HOST_SECRET_FILE", defaultSecretFile())}
-		for _, k := range []string{"FLEET_CODEX_HOME", "FLEET_NATIVE_ACCOUNTS"} {
-			if v := os.Getenv(k); v != "" {
-				deny = append(deny, v)
-			}
-		}
-		lines += "FLEET_USER_HOME=" + userHome + "\nFLEET_RUN_DENY=" + strings.Join(deny, string(filepath.ListSeparator)) + "\n"
+		lines += uploadDenyLines(e.root)
 		dir := filepath.Join(e.root, "runs")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err

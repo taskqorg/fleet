@@ -131,7 +131,8 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 			reader = http.NoBody
 		}
 	} else {
-		x.dog.arm(wait)
+		// The JSON body too arms the header wait only once it was read whole; dial, TLS and the write run under stall.
+		reader = &progressReader{r: bytes.NewReader(args), dog: x.dog, stall: stall, after: wait, want: int64(len(args))}
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(t.URL, "/")+"/v1/call/"+connection+"/"+tool, reader)
 	if err != nil {
@@ -140,6 +141,12 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 	}
 	if body != nil {
 		req.ContentLength = length
+	} else {
+		// Rewindable, so the transport may resend a JSON body that a stale kept-alive connection never took.
+		req.ContentLength = int64(len(args))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(&progressReader{r: bytes.NewReader(args), dog: x.dog, stall: stall, after: wait, want: int64(len(args))}), nil
+		}
 	}
 	for k, v := range t.Header {
 		req.Header.Set(k, v)

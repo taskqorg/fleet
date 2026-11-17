@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -25,17 +26,30 @@ var runFilePath string
 // read roots, so a bridged upload reads nothing the sandbox could not.
 var uploadRoots []string
 
+// dataStores are the credential stores inside an executor data folder: the journal (start commands with run tokens),
+// the run files, the spool and the account registry copy. Sessions and worktrees in it stay uploadable.
+func dataStores(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	list := []string{}
+	for _, rel := range []string{"journal.sqlite", "journal.sqlite-wal", "journal.sqlite-shm", "runs", "spool", "accounts.json"} {
+		list = append(list, filepath.Join(dir, rel))
+	}
+	return list
+}
+
 // homeEntries are the credential stores under one home folder.
 func homeEntries(home string) []string {
 	if home == "" {
 		return nil
 	}
-	data := ".local/state/fleet/executor" // the executor's default data folder: journal (run tokens), run files
+	data := ".local/state/fleet/executor" // the executor's default data folder
 	if runtime.GOOS == "darwin" {
 		data = "Library/Application Support/Fleet/executor"
 	}
-	list := []string{}
-	for _, rel := range []string{".config/fleet", ".local/share/fleet/gateway", data, ".ssh", ".aws", ".gnupg", ".netrc",
+	list := dataStores(filepath.Join(home, data))
+	for _, rel := range []string{".config/fleet", ".local/share/fleet/gateway", ".ssh", ".aws", ".gnupg", ".netrc",
 		".config/gh", ".hermes/.env", "Library/Keychains", ".claude/.credentials.json", ".codex/auth.json"} {
 		list = append(list, filepath.Join(home, rel))
 	}
@@ -50,7 +64,8 @@ func homeEntries(home string) []string {
 func denyEntries() []string {
 	home, _ := os.UserHomeDir()
 	list := append(homeEntries(home), homeEntries(os.Getenv("FLEET_USER_HOME"))...)
-	list = append(list, os.Getenv("FLEET_TOKEN_FILE"), os.Getenv("FLEET_CF_ACCESS_FILE"), os.Getenv("FLEET_DATA_DIR"), os.Getenv("FLEET_HOST_SECRET_FILE"))
+	list = append(list, os.Getenv("FLEET_TOKEN_FILE"), os.Getenv("FLEET_CF_ACCESS_FILE"), os.Getenv("FLEET_HOST_SECRET_FILE"))
+	list = append(list, dataStores(os.Getenv("FLEET_DATA_DIR"))...)
 	list = append(list, filepath.SplitList(os.Getenv("FLEET_RUN_DENY"))...)
 	if runFilePath != "" {
 		// The run file's folder holds every live run's token file, not this run's alone.
@@ -95,7 +110,7 @@ func (e guardError) Error() string { return e.reason }
 
 func inRoots(path string, roots []string) bool {
 	for _, r := range roots {
-		if rr, err := filepath.EvalSymlinks(r); err == nil && (path == rr || strings.HasPrefix(path, rr+string(filepath.Separator))) {
+		if rr, err := filepath.EvalSymlinks(r); err == nil && (path == rr || rr == "/" || strings.HasPrefix(path, rr+string(filepath.Separator))) {
 			return true
 		}
 	}
@@ -223,4 +238,25 @@ func mediaTypeOf(name string, head []byte) string {
 	}
 	t, _, _ := strings.Cut(http.DetectContentType(head), ";")
 	return strings.TrimSpace(t)
+}
+
+// uploadDenyLines are the run file lines that anchor a run's upload denylist (the harness's HOME is not this user's
+// home): the executor user's home, the executor's own stores (data folder stores, host secret, Codex account, account
+// registry) and every registry account's login folders, and the executor's FLEET_FILES_ROOTS.
+func uploadDenyLines(dataDir string) string {
+	userHome, _ := os.UserHomeDir()
+	deny := append(dataStores(dataDir), envOr("FLEET_HOST_SECRET_FILE", defaultSecretFile()), os.Getenv("FLEET_CODEX_HOME"), os.Getenv("FLEET_NATIVE_ACCOUNTS"))
+	if registry, err := readRegistry(); err == nil {
+		for _, a := range registry {
+			deny = append(deny, a.NativeHome) // CODEX_HOME, CLAUDE_CONFIG_DIR or GEMINI_HOME: the login itself
+			deny = append(deny, homeEntries(a.Home)...)
+			deny = append(deny, homeEntries(a.CredentialHome)...)
+		}
+	}
+	deny = slices.DeleteFunc(deny, func(p string) bool { return p == "" || strings.ContainsAny(p, "\n\r") })
+	lines := "FLEET_USER_HOME=" + userHome + "\nFLEET_RUN_DENY=" + strings.Join(deny, string(filepath.ListSeparator)) + "\n"
+	if roots := os.Getenv("FLEET_FILES_ROOTS"); roots != "" && !strings.ContainsAny(roots, "\n\r") {
+		lines += "FLEET_FILES_ROOTS=" + roots + "\n"
+	}
+	return lines
 }

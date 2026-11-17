@@ -115,7 +115,7 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 			return refused
 		}
 	}
-	x := send(ctx, t, connection, tool, args, nil, 0, map[string]string{"Accept": "application/octet-stream"}, answer)
+	x := send(ctx, t, connection, tool, args, nil, 0, map[string]string{"Accept": "application/octet-stream", "Accept-Encoding": "identity"}, answer)
 	defer x.close()
 	if x.failed {
 		return x.line
@@ -141,12 +141,11 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		return x.line
 	}
 	defer folder.Close()
-	name := safeChars(meta.Name)
+	name := SafeName(meta.Name)
 	if d.Prefix != "" {
-		name = d.Prefix + "-" + name
+		// 200 bytes leave room for the part suffix inside a 255-byte file name.
+		name = cutName(d.Prefix+"-"+name, 200)
 	}
-	// 200 bytes leave room for the part suffix inside a 255-byte file name.
-	name = cutName(name, 200)
 	if fi, err := folder.Lstat(name); err == nil && !fi.Mode().IsRegular() {
 		x.fail(CallOutcomeError, "path-refused") // a symlink or folder planted at the final name
 		return x.line
