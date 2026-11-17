@@ -231,7 +231,7 @@ Go rules:
 
 ## Verification
 
-Pull requests reach `main` only through the GitHub merge queue. A worker enables auto-merge on its own pull request after `/code-review` and the `code-review` status; the orchestrator can take any pull request out of the queue. Branches are rebased on `main`, never merged with it, and are not stacked ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)).
+Pull requests reach `main` only through the GitHub merge queue. A worker runs `/code-review` before it opens its pull request and enables auto-merge on it after the `code-review` status; the orchestrator can take any pull request out of the queue. Branches are rebased on `main`, never merged with it, and are not stacked ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)).
 
 The full fallback merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && test -z "$(git status --porcelain)" && go vet ./... && CGO_ENABLED=1 go test -race ./...) && pnpm test`. CI splits it into the jobs `go`, `app` and `browser` and builds the outside-test coordinator with `-race`.
 

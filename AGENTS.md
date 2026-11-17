@@ -26,11 +26,11 @@ Docs work: before editing `docs/`, read the open `docs-order` issue (label `docs
 
 Rules: [delivery pipeline, section 8](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests). One task, one branch from `origin/main`, one pull request; no stacks.
 
-1. Push and open the pull request. Wait for CI (`gh pr checks <n> --watch`).
-2. Run `/code-review` on the final head and fix its findings. Then post the status: `gh api repos/taskqorg/fleet/statuses/$(gh pr view <n> --json headRefOid -q .headRefOid) -f state=success -f context=code-review -f description="<level>, <n> findings fixed"`. Any new push drops it; post it again after reviewing the new head. Never `gh pr merge --admin`.
+1. Commit, `git fetch origin`, run `/code-review <level> origin/main...HEAD` on the whole branch and fix its findings, all before the first push. Then push, open the pull request and wait for CI (`gh pr checks <n> --watch`). Every later push (a CI fix, a rebase) is reviewed the same way before it is pushed.
+2. Post the status on the reviewed head: `gh api repos/taskqorg/fleet/statuses/$(gh pr view <n> --json headRefOid -q .headRefOid) -f state=success -f context=code-review -f description="<level>, <n> findings fixed"`. Any later push drops it; post it again on the new head. Never `gh pr merge --admin`.
 3. Enable auto-merge on your own pull request only: `gh pr merge <n> --auto`. If the orchestrator disabled it, do not enable it again until it says so.
 4. Without a `Landing: wait — live check: <what>` line in your task, report done now; the orchestrator watches the landing (`scripts/watch-landings.sh`) and sends failures back. With it, run `scripts/watch-landing.sh <n>` (in the background) and act on its last line:
-    * `not merged: ..., merge_conflict`: `git fetch origin && git rebase origin/main`, `git push --force-with-lease`, step 2 again, then step 3. Never `git merge main`; CI fails a branch with a merge commit.
+    * `not merged: ..., merge_conflict`: `git fetch origin && git rebase origin/main`, review as in step 1, `git push --force-with-lease`, step 2 again, then step 3. Never `git merge main`; CI fails a branch with a merge commit.
     * a conflict in `go/contract/*_gen.go`: take either side, `cd go && go generate ./contract`, `git add`, continue the rebase.
     * `not merged: ..., failed_checks`: read the failed test. The first time, run it once more (`gh pr merge <n> --auto` after a queue removal; for `failed_checks (head)`, a red required check before the queue, auto-merge is still on: `gh run rerun <run>` with the `/actions/runs/<run>` id from `gh pr checks <n>`, then wait until `gh pr checks <n>` shows it pending), then step 4 again; if that run is green, add the test and both run links to the open `flaky` issue (section 3). A second failure is yours to fix.
     * `not merged: ..., auto-merge off` or `CLOSED`: the orchestrator used its veto or closed it; ask it before doing anything.
