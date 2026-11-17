@@ -63,6 +63,8 @@ test('OR-34 ignored projects leave every list that names no project, also with e
   // The project list not read yet: lists wait; failed: nothing is left out rather than nothing shown.
   const wasRead = prefsRead.value; prefsRead.value = true;
   knownProjects.value = null; assert.equal(scopeReady.value, false);
+  prefs.value = { ...prefs.value, focus: ['zz'] }; assert.equal(scopeReady.value, true, 'a focus needs no project list');
+  prefs.value = { ...prefs.value, focus: [] };
   knownProjects.value = 'failed'; assert.equal(focusIds(), undefined); assert.equal(scopeReady.value, true); prefsRead.value = wasRead;
   knownProjects.value = ['fleet', 'muted'];
   prefs.value = { ...prefs.value, focus: ['fleet', 'muted'], ignored: [] };

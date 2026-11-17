@@ -112,8 +112,9 @@ export function focusIds(): string[] | undefined {
   const ids = [...known.filter(p => !ignored.includes(p)), ...(ignored.includes('-') ? [] : ['-'])];
   return ids.length ? ids : [NO_PROJECT];
 }
-/** The scope is known: preferences are read and, while a project is ignored, the project list too (or it failed). */
-export const scopeReady = computed(() => prefsRead.value && (!prefs.value.ignored.length || knownProjects.value !== null));
+/** The scope is known: preferences are read and, while a project is ignored with no focus, the project list too (or it failed). */
+export const scopeReady = computed(() => { const { focus, ignored } = prefs.value;
+  return prefsRead.value && (!ignored.length || focus.some(p => !ignored.includes(p)) || knownProjects.value !== null); });
 /**
  * The project of an item that needs the person lies outside the focus (the "N need you outside focus" count): a focus is
  * set and does not hold it, and it is not ignored. Ignore is full silence; with no focus (All projects) nothing is outside.
