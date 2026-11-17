@@ -185,7 +185,7 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		return x.line
 	}
 	// From here bytes are read: the transfer counts what arrived.
-	x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionDownload, Bytes: size, MediaType: meta.MediaType, Name: meta.Name}
+	x.line.Transfer = &CallTransfer{Direction: CallTransferDirectionDownload, MediaType: meta.MediaType, Name: meta.Name}
 	kept := false
 	defer func() {
 		if !kept {
@@ -200,12 +200,13 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 	for {
 		n, rerr := body.Read(buf)
 		if n > 0 {
+			got += int64(n)
+			x.line.Transfer.Bytes = got
 			if _, werr := file.Write(buf[:n]); werr != nil {
 				x.fail(CallOutcomeError, "write-failed")
 				return x.line
 			}
 			hash.Write(buf[:n])
-			got += int64(n)
 		}
 		if rerr == io.EOF {
 			break
@@ -219,7 +220,6 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 			return x.line
 		}
 	}
-	x.line.Transfer.Bytes = got
 	if got != size {
 		x.fail(CallOutcomeError, "download-cut")
 		return x.line
@@ -243,40 +243,50 @@ var partTag = func() string {
 	return hex.EncodeToString(tag)
 }
 
-// openFolder opens <Root>/<Folder...>, creating missing folders 0700, without following a symlink anywhere below Root:
-// each element is checked with Lstat inside an os.Root, which never resolves outside Root even if an element is swapped
-// for a symlink after the check. It answers the opened folder and its path.
+// openFolder opens each component relative to its parent's descriptor and verifies the opened directory's identity
+// before proceeding. os.Root constrains resolution, and the identity check rejects substitution inside that root.
 func openFolder(d Download) (*os.Root, string, error) {
 	if err := os.MkdirAll(d.Root, 0o700); err != nil {
 		return nil, "", err
 	}
-	root, err := os.OpenRoot(d.Root)
+	folder, err := os.OpenRoot(d.Root)
 	if err != nil {
 		return nil, "", err
 	}
-	defer root.Close()
-	rel := "."
-	for _, s := range d.Folder {
-		rel = filepath.Join(rel, s)
-		fi, err := root.Lstat(rel)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			// A concurrent download may create it first; then it is checked like any existing folder.
-			if err := root.Mkdir(rel, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-				return nil, "", err
-			}
-			if fi, err := root.Lstat(rel); err != nil || !fi.IsDir() {
-				return nil, "", fs.ErrPermission
-			}
-		case err != nil:
+	path := d.Root
+	for _, name := range d.Folder {
+		next, err := openDownloadChild(folder, name)
+		folder.Close()
+		if err != nil {
 			return nil, "", err
-		case !fi.IsDir():
-			return nil, "", fs.ErrPermission // a symlink or a file where a folder belongs
 		}
+		folder, path = next, filepath.Join(path, name)
 	}
-	folder, err := root.OpenRoot(rel)
+	return folder, path, nil
+}
+
+func openDownloadChild(parent *os.Root, name string) (*os.Root, error) {
+	expected, err := parent.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := parent.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+		expected, err = parent.Lstat(name)
+	}
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return folder, filepath.Join(d.Root, rel), nil
+	if !expected.IsDir() {
+		return nil, fs.ErrPermission
+	}
+	child, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	actual, err := child.Stat(".")
+	if err != nil || !os.SameFile(expected, actual) {
+		child.Close()
+		return nil, fs.ErrPermission
+	}
+	return child, nil
 }

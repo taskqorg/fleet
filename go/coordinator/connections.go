@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -134,6 +135,20 @@ func connSnapshot(q *Request) (contract.GatewaySnapshot, error) {
 			} else {
 				gc.Limits = &limits
 			}
+		}
+		if gc.Provider == "youtrack" && !slices.Contains(gc.Tools, "attachment_get") {
+			// Keep the existing issue_get URLs until the owner grants the replacement download tool.
+			const legacyProvider = "youtrack-legacy-attachments"
+			if _, ok := snap.Providers[legacyProvider]; !ok {
+				p := snap.Providers[gc.Provider]
+				p.Tools = maps.Clone(p.Tools)
+				issue := p.Tools["issue_get"]
+				issue.Path = strings.Replace(issue.Path, "attachments(id,name,size,mimeType,comment(id))", "attachments(name,url,size)", 1)
+				p.Tools["issue_get"] = issue
+				snap.Providers = maps.Clone(snap.Providers)
+				snap.Providers[legacyProvider] = p
+			}
+			gc.Provider = legacyProvider
 		}
 		snap.Connections[name] = gc
 	}

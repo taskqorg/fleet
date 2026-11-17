@@ -125,8 +125,12 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 	defer f.Close()
 	// The tripwire: this caller's own bearer and Access secret never leave in a file.
 	patterns := [][]byte{[]byte(t.Token)}
-	if s := t.Header["CF-Access-Client-Secret"]; s != "" {
-		patterns = append(patterns, []byte(s))
+	secret := t.Header["CF-Access-Client-Secret"]
+	if t.Header == nil {
+		secret = accessHeaders()["CF-Access-Client-Secret"]
+	}
+	if secret != "" {
+		patterns = append(patterns, []byte(secret))
 	}
 	sum, found, err := scanFile(io.NewSectionReader(f, 0, info.Size()), patterns)
 	if err != nil {
@@ -189,6 +193,15 @@ func modelTool(tool any) any {
 	return m
 }
 
+// callErrorOutput includes the bytes that may have reached the provider so the caller can verify an uncertain upload.
+func callErrorOutput(line contract.CallLine) json.RawMessage {
+	if line.Outcome == contract.CallOutcomeUnknown && line.Transfer != nil && line.Transfer.Direction == contract.CallTransferDirectionUpload {
+		output, _ := json.Marshal(M{"transfer": line.Transfer, "callId": line.CallId, "reply": line.Output})
+		return output
+	}
+	return line.Output
+}
+
 // callText is a call line as the MCP text result.
 func callText(line contract.CallLine) (string, bool) {
 	ok := line.Outcome == contract.CallOutcomeOk
@@ -198,7 +211,7 @@ func callText(line contract.CallLine) (string, bool) {
 	}
 	if !ok {
 		text = fmt.Sprintf("Call %s: %s", line.Outcome, *line.ErrorCode)
-		if o := string(line.Output); o != "" && o != "null" {
+		if o := string(callErrorOutput(line)); o != "" && o != "null" {
 			text += " " + o
 		}
 	}

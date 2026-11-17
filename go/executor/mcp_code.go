@@ -830,8 +830,8 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 		}
 		line := connectionCall(name, jArr(spec, "tools")[i], args)
 		var output any
-		if len(line.Output) > 0 {
-			output, _ = dec(string(line.Output))
+		if raw := callErrorOutput(line); len(raw) > 0 {
+			output, _ = dec(string(raw))
 		}
 		if string(line.Outcome) != "ok" {
 			code := ""

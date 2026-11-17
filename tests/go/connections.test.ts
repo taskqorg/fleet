@@ -975,6 +975,15 @@ test('C11 minted spec carries file and idempotent (requirement: docs/designs/fle
   const c = name('youtrack');
   ok(await op('connections_create', {name: c, provider: 'youtrack'}));
   ok(await op('connections_set_access', {connection: c, access: {projects: ['*']}}));
+  const issuePath = () => {
+    const s = snapshot();
+    return s.providers[s.connections[c].provider].tools.issue_get.path;
+  };
+  const existingTools = ['issue_get', 'issue_comments'];
+  ok(await op('connections_set_tools', {connection: c, tools: existingTools}));
+  await until(() => issuePath().includes('attachments(name,url,size)') || undefined, 'legacy reads before granting download');
+  ok(await op('connections_set_tools', {connection: c, tools: [...existingTools, 'attachment_add', 'attachment_get']}));
+  await until(() => issuePath().includes('attachments(id,name,size,mimeType,comment(id))') || undefined, 'attachment IDs after granting download');
   const m = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
   const tools = Object.fromEntries(m.connections[0].tools.map((x: any) => [x.name, x]));
   assert.deepEqual([tools.attachment_add.file, tools.attachment_add.idempotent], ['upload', false]);

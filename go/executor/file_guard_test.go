@@ -57,6 +57,10 @@ func TestGuardRefuses(t *testing.T) {
 	t.Setenv("CODEX_HOME", codexDir)
 	t.Setenv("FLEET_TOKEN_FILE", write(t, filepath.Join(outside, "owner-token"), "tok"))
 	t.Setenv("FLEET_CF_ACCESS_FILE", write(t, filepath.Join(outside, "access.env"), "CF_ACCESS_CLIENT_SECRET=s"))
+	gitConnections := filepath.Join(outside, "forge-keys")
+	t.Setenv("FLEET_CONNECTIONS_DIR", gitConnections)
+	gitKey := write(t, filepath.Join(gitConnections, "repo", "id_ed25519"), "invented key")
+	guardRefused(t, gitKey, work, gitConnections)
 	t.Setenv("FLEET_FILES_ROOTS", "")
 	runs := filepath.Join(outside, "runs")
 	runFilePath = write(t, filepath.Join(runs, "exec-1.env"), "FLEET_RUN_TOKEN=x")
@@ -303,7 +307,7 @@ func TestClientTripwire(t *testing.T) {
 	write(t, filepath.Join(work, "split.log"), split)
 	write(t, filepath.Join(work, "access.txt"), "x invented-access-secret y")
 	write(t, filepath.Join(work, "clean.txt"), "clean")
-	for url, files := range map[string][]string{gw.URL: {"split.log"}, "https://" + gw.Listener.Addr().String(): {"split.log", "access.txt"}} {
+	for url, files := range map[string][]string{gw.URL: {"split.log", "access.txt"}, "https://" + gw.Listener.Addr().String(): {"split.log", "access.txt"}} {
 		t.Setenv("FLEET_GATEWAY_URL", url)
 		for _, f := range files {
 			l := connectionCall("youtrack", tool, M{"issue": "TGT-1", "path": f})

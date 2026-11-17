@@ -146,6 +146,18 @@ func TestUploadInterruptedBeforeBodyEnd(t *testing.T) {
 	}
 }
 
+// Requirement: mark an upload potentially sent when transport receives its last byte.
+// Risk: a disconnect before a separate EOF read is reported as safe to retry.
+func TestUploadLastByteMarksBodySent(t *testing.T) {
+	dog := newWatchdog(func() {}, time.Minute)
+	defer dog.stop()
+	p := &bodyReader{r: strings.NewReader("data"), dog: dog, stall: time.Minute, after: time.Minute, want: 4}
+	buf := make([]byte, 4)
+	if n, err := p.Read(buf); n != len(buf) || err != nil || !p.done.Load() {
+		t.Fatalf("last byte: n=%d err=%v sent=%v", n, err, p.done.Load())
+	}
+}
+
 // Requirement: §9 upload: the second pass streams the file as it is now, so a file changed after the first pass reaches
 // the gateway with another hash than X-Fleet-Sha256 (and the gateway refuses it, sha-mismatch). Risk: bytes nobody
 // hashed reach YouTrack under a matching hash.
@@ -289,7 +301,7 @@ func TestDownloadCutLeavesNoFile(t *testing.T) {
 	root := t.TempDir()
 	gw := fileServer(t, "shot.png", body, 1000)
 	l := GatewayDownload(context.Background(), target(gw.URL, true), "youtrack", "attachment_get", []byte(`{}`), Download{Root: root, Folder: []string{"TGT-1"}, Prefix: "85-1"})
-	if l.Outcome != CallOutcomeError || code(l) != "download-cut" {
+	if l.Outcome != CallOutcomeError || code(l) != "download-cut" || l.Transfer == nil || l.Transfer.Bytes != 1000 {
 		t.Fatalf("%s %s", l.Outcome, code(l))
 	}
 	if got := entries(t, root); len(got) != 0 {

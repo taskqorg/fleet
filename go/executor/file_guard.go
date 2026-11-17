@@ -283,7 +283,7 @@ func uploadDenyLines(dataDir string) string {
 // registry, the forge's GitHub store, the artifact store's config and key file, and the browser bindings with each
 // project's Access file.
 func executorStores() []string {
-	list := []string{os.Getenv("FLEET_CODEX_HOME"), os.Getenv("FLEET_NATIVE_ACCOUNTS"), os.Getenv("FLEET_FORGE_CONFIG_DIR"), os.Getenv("FLEET_STORE_CONFIG"), os.Getenv("FLEET_BROWSER_BINDINGS")}
+	list := []string{connectionsDir(), os.Getenv("FLEET_CODEX_HOME"), os.Getenv("FLEET_NATIVE_ACCOUNTS"), os.Getenv("FLEET_FORGE_CONFIG_DIR"), os.Getenv("FLEET_STORE_CONFIG"), os.Getenv("FLEET_BROWSER_BINDINGS")}
 	if c := storeConfig(); c != nil {
 		list = append(list, jStr(c, "keyFile"))
 	}

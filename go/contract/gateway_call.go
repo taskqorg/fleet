@@ -113,8 +113,10 @@ type bodyReader struct {
 func (p *bodyReader) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
 	p.n += int64(n)
-	if err == io.EOF && p.n == p.want {
-		p.done.Store(true)
+	if p.n == p.want {
+		if p.done.Swap(true) {
+			return n, err
+		}
 		wait := p.after
 		if p.file {
 			wait += time.Since(p.begun)
