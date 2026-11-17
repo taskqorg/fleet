@@ -539,14 +539,15 @@ var errStalled, errUnsent, errNoBody = errors.New("provider stalled"), errors.Ne
 
 // progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end. Each
 // response progress (a first byte, every 1xx) resets it to the stall limit, so a provider that starts answering and
-// stops is still cut after stallMs. Once the request returned (done), reads no longer touch the timer.
+// stops is still cut after stallMs, also when the body ends after that (no answer wait once answering began). Once
+// the request returned (done), reads no longer touch the timer.
 type progress struct {
 	io.Reader
-	timer         *time.Timer
-	stall, answer time.Duration
-	lock          sync.Mutex
-	read          bool
-	done          bool // the request returned: later reads no longer touch the timer
+	timer           *time.Timer
+	stall, answer   time.Duration
+	lock            sync.Mutex
+	read, answering bool
+	done            bool // the request returned: later reads no longer touch the timer
 }
 
 func (p *progress) Read(b []byte) (int, error) {
@@ -559,7 +560,7 @@ func (p *progress) Read(b []byte) (int, error) {
 	p.read = true
 	switch {
 	case p.done:
-	case err == io.EOF:
+	case err == io.EOF && !p.answering:
 		p.timer.Reset(p.answer)
 	default:
 		p.timer.Reset(p.stall) // also while the provider already answers: a body still sent is progress
@@ -579,11 +580,12 @@ func (p *progress) reopen(r io.Reader) {
 func (p *progress) answered() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	p.answering = true
 	p.timer.Reset(p.stall)
 }
 
-// sent reports whether any byte of the body was read; after it the reads no longer touch the timer.
-func (p *progress) sent() bool {
+// finish ends the timer's tracking of the body (the request returned) and reports whether any byte of it was read.
+func (p *progress) finish() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	p.done = true
@@ -639,7 +641,7 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 	response, err := g.client.Do(request)
 	if file != nil {
 		// Always called: it also stops late body reads from touching the timer re-armed for the reply below.
-		sent := file.sent()
+		sent := file.finish()
 		switch {
 		case err != nil && timedOut.Load() && !sent:
 			return nil, nil, errUnsent
@@ -1180,8 +1182,6 @@ func fileName(name string) bool {
 // for every key value the gateway holds and the caller's token; only a whole, matching, clean file is sent, as one
 // multipart part. Every refusal closes the connection, so an unread body is never taken as the next request.
 func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request) {
-	g.transfers.Add(1)
-	defer g.transfers.Add(-1)
 	control, staging := http.NewResponseController(w), false
 	refuse := func(a *answer, transfer *contract.CallTransfer) {
 		if !staging && r.Header.Get("Expect") == "" {
@@ -1197,6 +1197,8 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		refuse(a, nil)
 		return
 	}
+	g.transfers.Add(1)
+	defer g.transfers.Add(-1)
 	fileBytes, _, stall, answerWait := limits(q.c)
 	contentType, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
 	if strings.TrimSpace(strings.ToLower(contentType)) != "application/octet-stream" {
