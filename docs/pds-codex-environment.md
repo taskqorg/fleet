@@ -2,6 +2,26 @@
 
 > Historical record. It was written against the TypeScript coordinator and the Rust and Python executor, which the Go port deleted; file names in it are not current code. Current code: `go/coordinator`, `go/executor`, `go/gateway` ([stack](designs/fleet-stack.md)).
 
+## Harness binaries now (2026-11-18)
+
+The paths moved with the `fleet-agent` user (uid 1006): env `/home/fleet-agent/.config/fleet/executor-pds18.env`, registry `/home/fleet-agent/.config/fleet/native-accounts.pds18.json`, systemd user unit `fleet-executor`. An account run takes the binary from the registry's `executable` and a run without an account from `FLEET_CODEX_BIN`, so both name the same file.
+
+Codex 0.169.0 replaced 0.162.0, which refused `gpt-6.2-sol` ("not supported when using Codex with a ChatGPT account"). Antigravity 1.5.10 replaced 1.5.3. The old directories were removed once Discuss turns with `gpt-6.2-sol` had succeeded on all three hosts.
+
+| Item | Path | Source and check | SHA256 |
+|---|---|---|---|
+| Codex CLI 0.169.0 | `/opt/fleet-agent/runtime/codex-0.169.0/codex` (link to `bin/codex` of the release package; `FLEET_CODEX_BIN` and the registry name it) | `codex-package-x86_64-unknown-linux-musl.tar.gz` of [rust-v0.169.0](https://github.com/openai/codex/releases/tag/rust-v0.169.0). The tarball SHA256 `3b8ed091149cc63a59046b9f094bcfa21cdb4dda15ede441ce369bcee4a71ba0` matches `codex-package_SHA256SUMS` and the GitHub asset digest. `cosign verify-blob` (v3.1.4) checks its `.sigstore` bundle against identity `https://github.com/openai/codex/.github/workflows/rust-release.yml@refs/tags/rust-v0.169.0` and issuer `https://token.actions.githubusercontent.com` | `bin/codex` `b452ca20f838a8855a88a41050ee4a694033fff4ea3ecdad5633e6e0e8d13f2b` |
+| Antigravity `agy` 1.5.10 | `/opt/fleet-agent/runtime/agy-1.5.10/agy` | `cli_linux_x64.tar.gz` from the official manifest `manifests/linux_amd64.json` of the Antigravity auto-updater, with the manifest's sha512 checked | `20d6f74672ce28084f50296a26860c143590b76d128d422919ef4931fbb83432` |
+
+The other executor hosts got the same releases on the same day:
+
+| Host | Codex 0.169.0 | Claude Code 2.1.326 | Antigravity 1.5.10 |
+|---|---|---|---|
+| `windows` (WSL, `alexk`) | `~/.local/share/fleet/runtime/codex-0.169.0/codex` replaced npm 0.159.3. It is the same linux-musl package with the same cosign check. `FLEET_CODEX_BIN` was added to `executor-windows.env` | `claude install 2.1.326`; `versions/2.1.326` SHA256 `b6b3647d981130dc44fc670846ae97b6cde531ffb667cf9c4d17cfcafb38cb37` (linux-x64 in the release manifest) | `~/.local/share/fleet/runtime/agy-1.5.10/agy`, already installed; it is byte-identical to the PDS18 binary |
+| `owner-mac` | `~/.local/share/fleet/runtime/codex-0.169.0/codex` from `codex-package-aarch64-apple-darwin.tar.gz`. The SHA256SUMS line matches, and it is signed with Developer ID `OpenAI OpCo, LLC (2DC432GLL2)`. `bin/codex` SHA256 is `739cda86e15d30a6e2b40cf8dcbbfb988aaf48b305b27065573bb8e9fd41d002`. It replaced the npm `/usr/local/bin/codex` 0.167.0 in `executor.env` and the registry | `claude install 2.1.326`; SHA256 `e214ad76dcc0e846b03be28ed1c2734aacd4e27acb527cb7f8a9e2bed644e837` (darwin-arm64 in the manifest), Team ID `Q6L2SF6YDW` | `~/.local/share/fleet/runtime/agy-1.5.10/agy` from `cli_mac_arm64.tar.gz`, with the manifest sha512 checked. SHA256 `780ee763a9938a37b45c7f9d6ae31747d7c574358fd10c64d3a1cdc36faf2798`, Team ID `EQHXZ8M8AV` |
+
+The sections below record the first provisioning.
+
 2026-11-09. Infra-only provisioning on `root@pds18.ufobe.com` (Ubuntu 26.04.1, x86_64), `fleet` user (uid 1005, linger on). No repo code was changed and the coordinator was not redeployed. The live turns are listed below. Claude is not installed and never runs on PDS: the executor's readiness refuses Claude where `FLEET_CLAUDE_PLACEMENT` does not match the platform (`claudePlacement`, `go/executor/readiness.go`).
 
 ## Installed
