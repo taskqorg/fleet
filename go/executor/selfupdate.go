@@ -32,6 +32,11 @@ func envOr(k, def string) string {
 
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
+	return dataDirIn(home)
+}
+
+// dataDirIn is the executor's default data folder under a home folder.
+func dataDirIn(home string) string {
 	if runtime.GOOS == "darwin" {
 		return filepath.Join(home, "Library", "Application Support", "Fleet", "executor")
 	}

@@ -969,7 +969,18 @@ func mint(q *Request, run doc, requested []string) (doc, error) {
 				tools = append(tools, entry)
 			}
 		}
-		specs = append(specs, doc{"name": c["name"], "instructions": p["instructions"], "tools": tools})
+		spec := doc{"name": c["name"], "instructions": p["instructions"], "tools": tools}
+		// The gateway's waits, so the client waits longer than the gateway does (fleet-connections.md §9).
+		waits := doc{}
+		for _, k := range []string{"stallMs", "answerMs"} {
+			if v := mapOf(c["limits"])[k]; v != nil {
+				waits[k] = v
+			}
+		}
+		if len(waits) > 0 {
+			spec["limits"] = waits
+		}
+		specs = append(specs, spec)
 	}
 	for _, n := range uniq {
 		ok := false

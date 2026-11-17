@@ -40,7 +40,7 @@ func GatewayUpload(ctx context.Context, t GatewayTarget, connection, tool string
 	}
 	fields["name"], fields["mediaType"] = u.Name, u.MediaType
 	encoded, _ := json.Marshal(fields)
-	_, answer := clientWaits()
+	_, answer := t.waits()
 	x := send(ctx, t, connection, tool, func() io.Reader { return io.NewSectionReader(u.File, 0, u.Size) }, u.Size, true, map[string]string{
 		"Content-Type":   "application/octet-stream",
 		"X-Fleet-Args":   base64.RawURLEncoding.EncodeToString(encoded),
@@ -56,8 +56,10 @@ func GatewayUpload(ctx context.Context, t GatewayTarget, connection, tool string
 		}
 		return x.line
 	}
-	x.line.Transfer = transfer
 	line := x.answerJSON()
+	if line.Outcome != CallOutcomeError {
+		line.Transfer = transfer // sent, or may have been stored; a refusal sent nothing on
+	}
 	if line.Outcome == CallOutcomeOk {
 		line.Output, _ = json.Marshal(map[string]any{"reply": line.Output, "name": u.Name, "mediaType": u.MediaType, "bytes": u.Size, "sha256": u.Sha256, "callId": line.CallId})
 	}
@@ -121,7 +123,7 @@ func safeChars(name string) string {
 // hashed and fsynced, then renamed over the final name; any failure removes the part file. The output on ok is
 // {path, name, bytes, mimeType, sha256, callId}.
 func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool string, args []byte, d Download) CallLine {
-	_, answer := clientWaits()
+	_, answer := t.waits()
 	refused := CallLine{Tool: tool, Connection: connection, Outcome: CallOutcomeError}
 	for i, s := range append([]string{d.Prefix}, d.Folder...) {
 		if (i > 0 || s != "") && !segment(s) {
@@ -191,7 +193,8 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		}
 	}()
 	hash, buf := sha256.New(), make([]byte, 256<<10)
-	body := x.reader()
+	// At most one byte past the announced size: a longer stream is cut, never written to disk whole.
+	body := io.LimitReader(x.reader(), size+1)
 	var got int64
 	for {
 		n, rerr := body.Read(buf)

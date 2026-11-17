@@ -84,26 +84,26 @@ func TestEdge5xxUnknownForNonIdempotent(t *testing.T) {
 
 // Requirement: §9 Client timeouts: the client waits on progress, not on a total deadline; a slow, steady answer longer
 // than the stall wait succeeds, a silence longer than it fails client-timeout. Risk: a long transfer cut by a fixed
-// 60 s request deadline. (FLEET_STALL_MS scaled down.)
+// 60 s request deadline. (FLEET_STALL_MS scaled down to 1 s: 250 ms gaps for 2 s, then 2.5 s of silence.)
 func TestStallTimeoutNotTotalDeadline(t *testing.T) {
-	t.Setenv("FLEET_STALL_MS", "300")
+	t.Setenv("FLEET_STALL_MS", "1000")
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Fleet-Call-Id", "c1")
 		if r.URL.Path == "/v1/call/c/silent" {
-			time.Sleep(600 * time.Millisecond)
+			time.Sleep(2500 * time.Millisecond)
 			return
 		}
 		io.WriteString(w, "[")
 		for i := 0; i < 8; i++ {
 			w.(http.Flusher).Flush()
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(250 * time.Millisecond)
 			io.WriteString(w, "1,")
 		}
 		io.WriteString(w, "1]")
 	}))
 	defer gw.Close()
 	started := time.Now()
-	if l := GatewayCall(context.Background(), target(gw.URL, true), "c", "steady", []byte(`{}`)); l.Outcome != CallOutcomeOk || time.Since(started) < 900*time.Millisecond {
+	if l := GatewayCall(context.Background(), target(gw.URL, true), "c", "steady", []byte(`{}`)); l.Outcome != CallOutcomeOk || time.Since(started) < 1800*time.Millisecond {
 		t.Fatalf("steady: %s %s after %v", l.Outcome, code(l), time.Since(started))
 	}
 	if l := GatewayCall(context.Background(), target(gw.URL, true), "c", "silent", []byte(`{}`)); l.Outcome != CallOutcomeUnknown || code(l) != "client-timeout" {

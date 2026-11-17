@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"fleet/contract"
 )
@@ -70,24 +71,42 @@ func refusedLine(connection, tool, code, reason string) contract.CallLine {
 	return contract.CallLine{Connection: connection, Tool: tool, Outcome: contract.CallOutcomeError, ErrorCode: &code, Output: out}
 }
 
+// connectionLimits are each connection spec's gateway waits (stallMs, answerMs), set by the server that loaded it.
+var connectionLimits = map[string]any{}
+
 // connectionCall is one call of a spec tool ({name, file?, idempotent}) with this process's token: a JSON call, an
 // upload or a download by the tool's file mode. Its output is what the agent reads.
 func connectionCall(connection string, tool any, arguments any) contract.CallLine {
 	name := jStr(tool, "name")
 	t := gatewayTarget()
 	t.Idempotent = jAt(tool, "idempotent") == true
+	// The client outwaits the gateway: its stall wait at least the connection's, its answer wait a minute beyond.
+	ms := func(k string) time.Duration {
+		n, _ := num(jAt(connectionLimits[connection], k))
+		return time.Duration(n) * time.Millisecond
+	}
+	if s := ms("stallMs"); s > 0 {
+		t.Stall = s
+	}
+	if a := ms("answerMs"); a > 0 {
+		t.Answer = a + time.Minute
+	}
 	switch jStr(tool, "file") {
 	case "upload":
-		return connectionUpload(t, connection, name, arguments)
+		return connectionUpload(t, connection, name, jObj(tool, "inputSchema", "properties"), arguments)
 	case "download":
 		return connectionDownload(t, connection, tool, arguments)
 	}
 	return contract.GatewayCall(context.Background(), t, connection, name, []byte(enc(arguments)))
 }
 
-func connectionUpload(t contract.GatewayTarget, connection, tool string, arguments any) contract.CallLine {
+func connectionUpload(t contract.GatewayTarget, connection, tool string, properties M, arguments any) contract.CallLine {
 	args := map[string]any{}
 	for k, v := range jObj(arguments) {
+		if _, known := properties[k]; properties != nil && !known {
+			// The gateway takes the path fields only; name the extra argument before any file is read.
+			return refusedLine(connection, tool, "bad-request", "unknown argument "+k)
+		}
 		args[k] = v
 	}
 	path, _ := str(args["path"])
@@ -185,6 +204,7 @@ func callText(line contract.CallLine) (string, bool) {
 
 func connectionMCP(connection string, spec any, in io.Reader, w io.Writer) error {
 	tools := jArr(spec, "tools")
+	connectionLimits[connection] = jAt(spec, "limits")
 	byName, listed := map[string]any{}, []any{}
 	for _, t := range tools {
 		byName[jStr(t, "name")] = t
@@ -316,6 +336,7 @@ func connectionCommand(args []string, stdin io.Reader, stdout io.Writer) (bool, 
 			for _, t := range jArr(s, "tools") {
 				if jStr(t, "name") == name {
 					tool, found = t, true
+					connectionLimits[connection] = jAt(s, "limits")
 				}
 			}
 		}

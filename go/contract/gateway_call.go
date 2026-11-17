@@ -28,6 +28,14 @@ type GatewayTarget struct {
 	URL, Token string
 	Header     map[string]string
 	Idempotent bool
+	// Stall and Answer override the client waits when longer (a connection's raised stallMs/answerMs); 0 keeps them.
+	Stall, Answer time.Duration
+}
+
+// waits are the client waits for this target: the environment's, raised to the target's when those are longer.
+func (t GatewayTarget) waits() (stall, answer time.Duration) {
+	stall, answer = clientWaits()
+	return max(stall, t.Stall), max(answer, t.Answer)
 }
 
 // clientWaits are the progress timeouts (docs/designs/fleet-connections.md §9 Client timeouts): stall, the longest
@@ -163,7 +171,7 @@ func (x *exchange) close() {
 // to have reached nothing. file marks a file upload. wait is the header wait after the request's last byte; dial, TLS
 // and the write run under the stall wait.
 func send(ctx context.Context, t GatewayTarget, connection, tool string, open func() io.Reader, length int64, file bool, headers map[string]string, wait time.Duration) *exchange {
-	stall, _ := clientWaits()
+	stall, _ := t.waits()
 	ctx, cancel := context.WithCancel(ctx)
 	x := &exchange{line: CallLine{Tool: tool, Connection: connection, Outcome: CallOutcomeError}, stall: stall, cancel: cancel}
 	x.dog = newWatchdog(cancel, stall)
@@ -298,7 +306,7 @@ func (x *exchange) answerJSON() CallLine {
 // coordinator (api steps) and by the executor's connection MCP server. It answers the call line with outcome
 // ok|error|unknown, errorCode, the gateway's callId and status, and the provider's reply as output; it never fails.
 func GatewayCall(ctx context.Context, t GatewayTarget, connection, tool string, args []byte) CallLine {
-	stall, _ := clientWaits()
+	stall, _ := t.waits()
 	x := send(ctx, t, connection, tool, func() io.Reader { return bytes.NewReader(args) }, int64(len(args)), false, nil, stall)
 	defer x.close()
 	if x.failed {

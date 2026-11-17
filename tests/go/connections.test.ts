@@ -981,6 +981,10 @@ test('C11 minted spec carries file and idempotent (requirement: docs/designs/fle
   assert.deepEqual([tools.attachment_get.file, tools.attachment_get.idempotent], ['download', true]);
   assert.deepEqual([tools.issue_get.file, tools.issue_get.idempotent], [undefined, true]);
   assert.deepEqual(tools.attachment_add.inputSchema.required, ['issue', 'path']);
+  assert.equal(m.connections[0].limits, undefined, 'no limits set: the client keeps its own waits');
+  ok(await op('connections_set_limits', {connection: c, limits: {answerMs: 300000}}));
+  const raised = ok(await op('connections_token_create', {name: name('t'), connections: [c]}));
+  assert.deepEqual(raised.connections[0].limits, {answerMs: 300000}, 'the client outwaits a raised gateway wait');
 });
 
 // Coordinator phases and real local shell/HTTP receipts; the gateway/S3 are synthetic, no provider call.

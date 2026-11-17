@@ -220,6 +220,7 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 	}
 	for _, c := range jArr(spec, "connections") {
 		s.conns[jStr(c, "name")] = c
+		connectionLimits[jStr(c, "name")] = jAt(c, "limits")
 	}
 	if f := jStr(spec, "runFile"); f != "" {
 		if err := loadRunFile(f); err != nil {

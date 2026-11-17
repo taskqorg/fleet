@@ -9,11 +9,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -45,11 +45,7 @@ func homeEntries(home string) []string {
 	if home == "" {
 		return nil
 	}
-	data := ".local/state/fleet/executor" // the executor's default data folder
-	if runtime.GOOS == "darwin" {
-		data = "Library/Application Support/Fleet/executor"
-	}
-	list := dataStores(filepath.Join(home, data))
+	list := dataStores(dataDirIn(home)) // the executor's default data folder
 	for _, rel := range []string{".config/fleet", ".local/share/fleet/gateway", ".ssh", ".aws", ".gnupg", ".netrc",
 		".config/gh", ".hermes/.env", "Library/Keychains", ".claude/.credentials.json", ".codex/auth.json",
 		".git-credentials", ".config/git/credentials", ".docker/config.json", ".kube/config", ".npmrc", ".pypirc",
@@ -189,8 +185,13 @@ func openForUpload(path, base string) (*os.File, os.FileInfo, error) {
 		}
 		next, err := unix.Openat(fd, parts[i], flags, 0)
 		unix.Close(fd)
-		if err != nil {
-			return nil, nil, guardError{"the path changed while it was opened, or a part of it is a symlink"}
+		switch {
+		case errors.Is(err, unix.EACCES):
+			return nil, nil, guardError{"a folder on the path cannot be read (permission denied)"}
+		case errors.Is(err, unix.ENOENT):
+			return nil, nil, guardError{"the file was moved or removed while it was opened"}
+		case err != nil:
+			return nil, nil, guardError{"a part of the path is a symlink, or changed while it was opened"}
 		}
 		fd = next
 	}
