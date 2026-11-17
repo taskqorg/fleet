@@ -2331,3 +2331,11 @@ BEGIN
  IF EXISTS(SELECT 1 FROM jsonb_each_text(merged) WHERE value::bigint<0) THEN RAISE EXCEPTION 'negative resource reason count'; END IF;
  RETURN merged;
 END $$;
+
+-- migration 65: resource_work, its scopes and wake_outbox are queues whose rows are inserted and deleted within seconds.
+-- Autovacuum's truncation of their empty tail pages takes ACCESS EXCLUSIVE on the table; in the combined qualification
+-- (m20r2) it coincided with a 10 s processor stall during a burst and a late source window, because every capture
+-- trigger and claim waits for that lock. The space is reused by the next inserts anyway, so the tail is kept.
+ALTER TABLE resource_work SET (vacuum_truncate=false);
+ALTER TABLE resource_work_scope SET (vacuum_truncate=false);
+ALTER TABLE wake_outbox SET (vacuum_truncate=false);
