@@ -123,8 +123,10 @@ func codeReply(r M) M {
 	}
 	meta := M{}
 	if status == "done" {
-		if v, ok := r["value"].(string); ok {
+		if v, ok := r["value"].(string); ok && v != "" {
 			add(v)
+		} else if ok {
+			add(`""`) // an empty text part is refused by the Claude API
 		} else {
 			add(enc(r["value"]))
 		}

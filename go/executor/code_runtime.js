@@ -83,7 +83,7 @@ function globRe(g) {
     } else if (c === '*') re += '[^/]*';
     else if (c === '?') re += '[^/]';
     else if (c === '{' && end > i) { re += '(?:' + g.slice(i + 1, end).split(',').map(part).join('|') + ')'; i = end; }
-    else if (c === '[' && end > i) { re += g.slice(i, end + 1); i = end; }
+    else if (c === '[' && end > i) { re += '[' + g.slice(i + 1, end).replace(/^!/, '^').replace(/\//g, '') + ']'; i = end; } // [!x] is negation
     else re += lit(c).replace(/[[\]{}*?]/g, '\\$&');
   }
   return new RegExp('^' + re + '$');
@@ -94,7 +94,7 @@ async function files(opts, pattern) {
   const dir = (await fs.promises.stat(start)).isDirectory();
   const all = dir ? await walk(start, []) : [start];
   // A file given as path matches by its name.
-  const re = pattern == null ? null : globRe(String(pattern));
+  const re = pattern == null ? null : globRe(String(pattern).replace(/^(\.\/)+/, '')); // ./src/*.ts is src/*.ts
   return all.filter((f) => re == null || re.test(dir ? path.relative(start, f) : path.basename(f)));
 }
 // A file's text, or null when its first 8 KiB hold a NUL byte (binary): then the rest is not read.
@@ -191,17 +191,21 @@ const compiles = (body) => { try { new AsyncFunction(body); return true; } catch
 // `!` alone starts a new statement (a semicolon is inserted before it); `!=` continues.
 const continues = /^\s*([-+*/%<>=&|^?:,.)\]}]|!=)/;
 const declaration = /^\s*((async\s+)?function\b|class\b)/;
+const assignment = /^\s*[A-Za-z_$][\w$]*(\s*(\.\s*[A-Za-z_$][\w$]*|\[[^\]]*\]))*\s*([-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?!=)/;
 function body(source) {
   if (!compiles(source)) return source; // its own syntax error, unchanged
   for (let i = source.length; i >= 0; i--) {
     if (i > 0 && source[i - 1] !== '\n' && source[i - 1] !== ';') continue;
-    const tail = source.slice(i).replace(/[\s;]+$/, '');
-    if (tail.trim() === '' || i > 0 && source[i - 1] === '\n' && continues.test(tail)) continue;
+    // Trailing semicolons and whitespace are not part of the expression; nor is a last line comment after a `;`
+    // (`x.length; // size`), tried second, since `//` may sit in a string.
+    const plain = source.slice(i).replace(/[\s;]+$/, '');
+    const tail = [plain, plain.replace(/;\s*\/\/[^\n]*$/, '').replace(/[\s;]+$/, '')]
+      .find((t) => compiles('return (' + t + '\n)')); // most tails fail at their first tokens: about one parse per call
+    if (tail === undefined || tail.trim() === '' || i > 0 && source[i - 1] === '\n' && continues.test(tail)) continue;
+    // An assignment (state.x = ...) keeps its value for later calls; returning it would put it into the reply.
+    if (assignment.test(tail)) continue;
     // `return (function f() {})` would no longer hoist f, also after a comment.
     if (declaration.test(tail.replace(/^(\s|\/\/[^\n]*(\n|$)|\/\*[\s\S]*?\*\/)*/, ''))) continue;
-    // The tail alone first: most tails fail at their first tokens, so a script without a last expression costs about
-    // one parse, not one per line.
-    if (!compiles('return (' + tail + '\n)')) continue;
     const prefix = source.slice(0, i);
     // A `;` inside a trailing line comment is no statement end: there `prefix (` still compiles, the `(` commented out.
     if (source[i - 1] === ';' && compiles(prefix + ' (')) continue;

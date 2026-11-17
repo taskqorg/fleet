@@ -489,7 +489,7 @@ func codeFile(dir, tool string, args any) (any, M) {
 		}
 		data = []byte(strings.ReplaceAll(string(b), old, jStr(args, "new")))
 	}
-	tmp := fmt.Sprintf(".%s.fleet-%d.tmp", name, time.Now().UnixNano())
+	tmp := fmt.Sprintf(".fleet-%d.tmp", time.Now().UnixNano()) // short: any legal name stays legal beside it
 	f, err := cur.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, mode)
 	if err != nil {
 		return fail(err)

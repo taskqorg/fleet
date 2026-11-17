@@ -533,6 +533,9 @@ func TestCodeModeReplyAndLastExpression(t *testing.T) {
 	if p, bad := c.parts("code", M{"source": `print("hi"); return {a: [1, "x"]}`}); bad || enc(p) != `["hi\n","{\"a\":[1,\"x\"]}"]` {
 		t.Fatalf("done: %q", p)
 	}
+	if p, _ := c.parts("code", M{"source": `""`}); enc(p) != `["\"\""]` {
+		t.Fatalf("empty string: %q", p)
+	}
 	if p, _ := c.parts("code", M{"source": `if (state) {}`}); enc(p) != `["null"]` {
 		t.Fatalf("no value: %q", p)
 	}
@@ -552,7 +555,10 @@ func TestCodeModeReplyAndLastExpression(t *testing.T) {
 		"const o = {\n  k: 1,\n}\no.k":                       "1",
 		"const f = (x) =>\n  x + 1\nf(1)":                    "2",
 		"const r = await Promise.all([\n  Promise.resolve(1),\n  Promise.resolve(2),\n])\nr": "[1,2]",
-		"const ok = false\n!ok": "true",
+		"const ok = false\n!ok":                                             "true",
+		"const x = \"abc\"\nx.length; // size":                              "3",
+		"state.big = \"x\".repeat(10)":                                      "null",
+		"const u = \"http://x\"\nu + \"\"":                                  `"http://x"`,
 		"const r = helper(2)\nasync function helper(x) { return x * 2 }\nr": "4",
 		"print(1)\nfunction f() {}":                                         "null",
 		"const r = f(2);\n// helper\nfunction f(x) { return x * 2 }":        "null",
@@ -624,8 +630,8 @@ func TestCodeModeFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, ".github", "ci.yml"), []byte("on: push"), 0o644)
 	r, bad = c.code(`const fail = async (f) => { try { await f(); return "allowed" } catch (e) { return e.code } }
 		;[await fail(() => write("hard", "evil")), await fail(() => write("sub/.git/hooks/x", "")), await fail(() => edit("run.sh", "x", "y")),
-			(await grep("n", {glob: "*.txt"})).map(h => h.file).sort(), await glob("**/*.yml")]`)
-	if bad || enc(r["value"]) != `["allowed","outside-worktree","allowed",["a/n.txt"],[".github/ci.yml"]]` {
+			(await grep("n", {glob: "*.txt"})).map(h => h.file).sort(), await glob("**/*.yml"), await glob("./**/*.yml"), await glob("[!r]*.txt")]`)
+	if bad || enc(r["value"]) != `["allowed","outside-worktree","allowed",["a/n.txt"],[".github/ci.yml"],[".github/ci.yml"],["c.txt"]]` {
 		t.Fatalf("hard link, nested .git, grep glob: %v %v", bad, r)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, ".git", "config")); string(b) != "[core]\n" {
