@@ -1142,7 +1142,8 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
     return () => c.abort();
   }, [q, refresh]);
   const groups = shownOf(q, found), flat = groups.flatMap(g => g.items), cur = Math.min(at, flat.length - 1);
-  mem.q = q; mem.found = found; mem.key = flat[cur]?.key;
+  // Kept for the next opening: results only of the query they answer (before its providers are asked, they are an older one's).
+  mem.q = q; mem.found = asked === q ? found : []; mem.key = asked === q ? flat[cur]?.key : undefined;
   const move = (k: number) => { setAt(k); keep.current = flat[k]?.key; };
   const open = (i: SpotlightItem | undefined) => {
     if (!i) return;
