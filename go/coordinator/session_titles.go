@@ -76,7 +76,7 @@ var sessionTitleCall = func(ctx context.Context, a *App, project, prompt string)
 		"model":             titleModel,
 		"systemInstruction": doc{"parts": []any{doc{"text": titleSystem}}},
 		"contents":          []any{doc{"role": "user", "parts": []any{doc{"text": prompt}}}},
-		"generationConfig":  doc{"maxOutputTokens": 64, "thinkingConfig": doc{"thinkingLevel": "minimal"}},
+		"generationConfig":  doc{"maxOutputTokens": 256, "thinkingConfig": doc{"thinkingLevel": "minimal"}},
 	})
 	if line.Outcome != contract.CallOutcomeOk {
 		code := deref(line.ErrorCode)
@@ -91,7 +91,8 @@ var sessionTitleCall = func(ctx context.Context, a *App, project, prompt string)
 	}
 	var r struct {
 		Candidates []struct {
-			Content struct {
+			FinishReason string `json:"finishReason"`
+			Content      struct {
 				Parts []struct {
 					Text    string `json:"text"`
 					Thought bool   `json:"thought"`
@@ -104,6 +105,9 @@ var sessionTitleCall = func(ctx context.Context, a *App, project, prompt string)
 	}
 	out := ""
 	for _, c := range r.Candidates {
+		if c.FinishReason == "MAX_TOKENS" { // a cut answer is no title; it counts as an empty one
+			return "", line.CallId, nil
+		}
 		for _, p := range c.Content.Parts {
 			if !p.Thought {
 				out += p.Text
