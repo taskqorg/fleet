@@ -602,7 +602,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 				a.outcome = "unknown"
 			}
 		}
-		if status == 403 {
+		if status == 403 && (t.ForbiddenIsCall == nil || !*t.ForbiddenIsCall) {
 			// Redact over the whole body first, so a key cut at the 500-character mark cannot leave a prefix behind.
 			message := []rune(strings.ReplaceAll(strings.ToValidUTF8(string(data), "�"), value, "[key]"))
 			text := string(message[:min(len(message), 500)])
@@ -852,30 +852,44 @@ func blockedScope(c connection, run *token) string {
 }
 
 // fillPath puts body fields into {field} in the catalogue path (Meshy task id); a used field leaves the body.
+// A field after the path's "?" is query-escaped; a field before it is inserted as matched by its pattern.
 // The caller never selects a key: api_key is dropped, and catalogue fields (Tavily include_usage) are added.
 func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 	delete(body, "api_key")
 	for k, v := range t.Inject {
 		body[k] = v
 	}
-	path := t.Path
+	// The template is read once from the left, so an inserted value is never read as a field, and whether a field is in
+	// the query depends on the template's own "?", not on what earlier values contain.
+	var out strings.Builder
+	rest, query := t.Path, false
 	for {
-		start := strings.IndexByte(path, '{')
+		start := strings.IndexByte(rest, '{')
 		if start < 0 {
-			return path, true
+			out.WriteString(rest)
+			return out.String(), true
 		}
-		length := strings.IndexByte(path[start:], '}')
+		query = query || strings.IndexByte(rest[:start], '?') >= 0
+		length := strings.IndexByte(rest[start:], '}')
 		if length < 0 {
 			return "", false
 		}
-		field := path[start+1 : start+length]
+		field := rest[start+1 : start+length]
 		var value string
-		if json.Unmarshal(body[field], &value) != nil || value == "" {
+		if json.Unmarshal(body[field], &value) != nil {
+			// A whole number (a page offset sent as 50, not "50") is taken as its digits.
+			var n json.Number
+			if json.Unmarshal(body[field], &n) != nil {
+				return "", false
+			}
+			value = n.String()
+		}
+		if value == "" {
 			return "", false
 		}
 		if pattern, ok := t.PathPatterns[field]; ok {
-			// Patterns compiled when the snapshot loaded; a "." or ".." segment never reaches the provider.
-			if !regexp.MustCompile(pattern).MatchString(value) || dotSegment(value) {
+			// Patterns compiled when the snapshot loaded; a "." or ".." path segment never reaches the provider.
+			if !regexp.MustCompile(pattern).MatchString(value) || !query && dotSegment(value) {
 				return "", false
 			}
 		} else if strings.IndexFunc(value, func(r rune) bool {
@@ -884,7 +898,13 @@ func fillPath(t tool, body map[string]json.RawMessage) (string, bool) {
 			return "", false
 		}
 		delete(body, field)
-		path = path[:start] + value + path[start+length+1:]
+		if query {
+			// A query value (a YouTrack search) is escaped, so it cannot add or end a parameter.
+			value = url.QueryEscape(value)
+		}
+		out.WriteString(rest[:start])
+		out.WriteString(value)
+		rest = rest[start+length+1:]
 	}
 }
 

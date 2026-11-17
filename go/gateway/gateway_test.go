@@ -579,6 +579,103 @@ func TestBugsinkCatalogue(t *testing.T) {
 	}
 }
 
+// Requirement: fleet-connections.md §5 path fields and §8 YouTrack: each youtrack catalogue tool (coordinator providers.go) reaches the
+// YouTrack REST path it names with the key as bearer; a search query is query-escaped, and an issue id that is not an id
+// is refused; a 403 is not recorded on the key. Risk: a query adds or ends a parameter, a crafted id walks to another
+// API path with the agents' token, or every refused action marks the only key as broken.
+func TestYouTrackCatalogue(t *testing.T) {
+	src, err := os.ReadFile("../coordinator/providers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	text = text[strings.Index(text, "const providersJSON = `")+len("const providersJSON = `"):]
+	var catalogue map[string]map[string]any
+	if err := json.Unmarshal([]byte(text[:strings.Index(text, "`")]), &catalogue); err != nil {
+		t.Fatal(err)
+	}
+	type seen struct{ method, path, query, skip, auth, body string }
+	got := make(chan seen, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- seen{r.Method, r.URL.Path, r.URL.Query().Get("query"), r.URL.Query().Get("$skip"), r.Header.Get("Authorization"), string(b)}
+		if strings.Contains(string(b), "State Done") || r.URL.Path == "/api/issues/TGT-403" {
+			w.WriteHeader(403)
+			io.WriteString(w, `{"error":"forbidden"}`)
+			return
+		}
+		io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(server.Close)
+	yt := catalogue["youtrack"]
+	yt["baseUrl"] = server.URL
+	tools := []string{}
+	for name := range yt["tools"].(map[string]any) {
+		tools = append(tools, name)
+	}
+	gw := newFixture(t, server.URL, "invented-youtrack-key")
+	os.MkdirAll(filepath.Join(gw.dir, "keys/youtrack"), 0o700)
+	os.WriteFile(filepath.Join(gw.dir, "keys/youtrack", fp("invented-youtrack-key")), []byte("invented-youtrack-key\n"), 0o600)
+	snap := testSnapshot(server.URL, []keyState{{"invented-youtrack-key", "active"}}, nil, "all")
+	snap["providers"].(map[string]any)["youtrack"] = yt
+	snap["connections"].(map[string]any)["youtrack"] = map[string]any{"provider": "youtrack", "tools": tools, "intake": "all",
+		"keys": []map[string]any{{"id": fp("invented-youtrack-key"), "state": "active"}}, "blocked": []string{}}
+	snap["tokens"] = []map[string]any{{"sha256": sha(testToken), "executionId": "exec-1", "projectId": "fleet", "connections": []string{"youtrack"}}}
+	gw.write(snap)
+	gw.adopt(func(h map[string]any) bool { return field(h, "snapshot", "revision") == gw.revision })
+
+	query := "project: TGT #Unresolved & fields=x?y {skip} ../a sort by: created asc"
+	for tool, c := range map[string]struct {
+		body string
+		want seen
+	}{
+		"projects":       {`{}`, seen{"GET", "/api/admin/projects", "", "", "", ""}},
+		"issues_search":  {`{"query":"` + query + `","skip":"50"}`, seen{"GET", "/api/issues", query, "50", "", ""}},
+		"issue_get":      {`{"issue":"TGT-12"}`, seen{"GET", "/api/issues/TGT-12", "", "", "", ""}},
+		"issue_comments": {`{"issue":"TGT-12"}`, seen{"GET", "/api/issues/TGT-12/comments", "", "", "", ""}},
+		"issue_create":   {`{"project":{"id":"0-1"},"summary":"s"}`, seen{"POST", "/api/issues", "", "", "", `{"project":{"id":"0-1"},"summary":"s"}`}},
+		"issue_update":   {`{"issue":"TGT-12","summary":"s"}`, seen{"POST", "/api/issues/TGT-12", "", "", "", `{"summary":"s"}`}},
+		"comment_add":    {`{"issue":"TGT-12","text":"t"}`, seen{"POST", "/api/issues/TGT-12/comments", "", "", "", `{"text":"t"}`}},
+		"command":        {`{"query":"State Open","issues":[{"idReadable":"TGT-12"}]}`, seen{"POST", "/api/commands", "", "", "", `{"issues":[{"idReadable":"TGT-12"}],"query":"State Open"}`}},
+	} {
+		status, _, _ := gw.raw("POST", "/v1/call/youtrack/"+tool, "Bearer "+testToken, c.body)
+		if status != 200 {
+			t.Fatalf("%s: %d", tool, status)
+		}
+		c.want.auth = "Bearer invented-youtrack-key"
+		expect(t, <-got, c.want, tool)
+	}
+	for tool, body := range map[string]string{"issue_get": `{"issue":"../admin/users"}`, "issue_comments": `{"issue":"TGT-1?x"}`, "issues_search": `{"query":"a","skip":"1&x"}`} {
+		if status, _, _ := gw.raw("POST", "/v1/call/youtrack/"+tool, "Bearer "+testToken, body); status != 400 {
+			t.Fatalf("%s %s: %d", tool, body, status)
+		}
+	}
+	// An action the account may not do (Agents cannot set Done) answers 403; that refuses the call, not the shared key.
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/command", "Bearer "+testToken, `{"query":"State Done","issues":[{"idReadable":"TGT-12"}]}`); status != 403 {
+		t.Fatalf("forbidden command: %d", status)
+	}
+	<-got
+	lines, _ := gw.spool()
+	last := lines[len(lines)-1]
+	expect(t, []any{last["tool"], last["status"], last["keyProblem"]}, []any{"command", float64(403), nil}, "a 403 on a write is not a key problem")
+	// A 403 on a read can mean the key lost access, so it is still recorded on the key.
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/issue_get", "Bearer "+testToken, `{"issue":"TGT-403"}`); status != 403 {
+		t.Fatalf("forbidden read: %d", status)
+	}
+	<-got
+	lines, _ = gw.spool()
+	last = lines[len(lines)-1]
+	expect(t, []any{last["tool"], field(last, "keyProblem", "key")}, []any{"issue_get", fp("invented-youtrack-key")}, "a 403 on a read is a key problem")
+	// A page offset sent as a number is taken as its digits.
+	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/issues_search", "Bearer "+testToken, `{"query":"a","skip":100}`); status != 200 {
+		t.Fatalf("numeric skip: %d", status)
+	}
+	expect(t, (<-got).skip, "100", "numeric skip")
+	if len(tools) != 8 {
+		t.Fatalf("youtrack tools: %v", tools)
+	}
+}
+
 func TestPathPatternsAndUsageField(t *testing.T) {
 	model := "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
 	field := "usageMetadata.totalTokenCount"

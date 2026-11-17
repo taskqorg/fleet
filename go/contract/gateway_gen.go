@@ -206,19 +206,20 @@ func (v *GatewaySnapshot) Validate() error {
 }
 
 type GatewayTool struct {
-	AdoptFields  []string                   `json:"adoptFields,omitempty"`
-	AdoptMatch   *string                    `json:"adoptMatch,omitempty"`
-	Headers      map[string]string          `json:"headers,omitempty"`
-	Idempotent   bool                       `json:"idempotent"`
-	Inject       map[string]json.RawMessage `json:"inject,omitempty"`
-	Method       string                     `json:"method"`
-	Path         string                     `json:"path"`
-	PathPatterns map[string]string          `json:"pathPatterns,omitempty"`
-	TextReply    *bool                      `json:"textReply,omitempty"`
-	Unit         string                     `json:"unit"`
-	UsageField   *string                    `json:"usageField,omitempty"`
-	UsageOnce    *string                    `json:"usageOnce,omitempty"`
-	UsageWhen    *GatewayUsageWhen          `json:"usageWhen,omitempty"`
+	AdoptFields     []string                   `json:"adoptFields,omitempty"`
+	AdoptMatch      *string                    `json:"adoptMatch,omitempty"`
+	ForbiddenIsCall *bool                      `json:"forbiddenIsCall,omitempty"`
+	Headers         map[string]string          `json:"headers,omitempty"`
+	Idempotent      bool                       `json:"idempotent"`
+	Inject          map[string]json.RawMessage `json:"inject,omitempty"`
+	Method          string                     `json:"method"`
+	Path            string                     `json:"path"`
+	PathPatterns    map[string]string          `json:"pathPatterns,omitempty"`
+	TextReply       *bool                      `json:"textReply,omitempty"`
+	Unit            string                     `json:"unit"`
+	UsageField      *string                    `json:"usageField,omitempty"`
+	UsageOnce       *string                    `json:"usageOnce,omitempty"`
+	UsageWhen       *GatewayUsageWhen          `json:"usageWhen,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
