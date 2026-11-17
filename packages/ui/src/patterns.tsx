@@ -1,7 +1,7 @@
 // Patterns: compositions of controls for recurring jobs. Specs: docs/design-system/patterns/*.md.
 import { createContext, render, type ComponentChildren } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, HarnessMark, StageChip, Spotlight, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
+import { Button, Icon, Ago, EntityCode, Empty, StateBadge, Num, AgeChip, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, NavRail, ContextMenu, SelectBar, useTick, SelectToggle, RowCheck, RowPin, copyText, TooltipLayer, EntityCardLayer, HarnessMark, StageChip, Spotlight, sectionProvider, spotlightMemory, type SpotlightProvider, type Chip, type NavItem } from './controls.tsx';
 import { VirtualList } from './virtual-list.tsx';
 import { matchSearch } from './search.ts';
 import { states, actions, harnesses, type StateOf, type StateDef, type Harness, type Stage, type IconName, type Tone } from './registry.ts';
@@ -230,6 +230,7 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
       </div>
       {spot === privateGeneration && privateReady && <Spotlight key={privateGeneration} providers={[sectionProvider(nav, onGo), ...search]} memory={spotMem.current.m} idle={searchIdle} onClose={() => setSpot(null)} />}
       <TooltipLayer />
+      <EntityCardLayer />
     </div></Widths.Provider>
   );
 }

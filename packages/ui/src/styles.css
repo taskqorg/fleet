@@ -895,3 +895,27 @@ button.composer-chip:hover{background:var(--hover);color:var(--fg)}
 .nb.clip .nb-fill::after{content:"";position:absolute;right:5px;top:-1px;bottom:-1px;width:3px;background:var(--surface);transform:skewX(-20deg)}
 .nb-p50,.nb-p90{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--fg-muted)}
 .nb-p90{left:50%;width:2px;margin-left:-1px;background:var(--fg)}
+/* Entity reference and card (controls/entity-card.md): the code is a button that keeps the code's look; the card is a
+   floating informational layer (OR-14, OR-16) under or over it, inside the window, never moving the page (OR-23). */
+.ec-code{border:0;background:none;padding:0;font:inherit;font-family:var(--font-mono);font-size:var(--font-size-sm);color:var(--fg-muted);white-space:nowrap;cursor:pointer;border-radius:var(--radius-sm)}
+.ec-code.id{margin-left:var(--space-3)}
+.vl-row .ec-code.id,.ec-code.inline{margin-left:0}
+.ec-code.id:hover,.ec-code[aria-expanded=true]{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+.md .ec-code.inline{font-size:.95em;color:var(--accent)}
+.ecard{position:fixed;z-index:9;top:0;left:0;display:flex;flex-direction:column;gap:var(--space-3);width:min(calc(var(--size-list) + var(--space-7)),calc(100vw - 2 * var(--space-3)));padding:var(--space-4);background:var(--float);border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--elevation-popover);color:var(--fg);font-size:var(--font-size-md);line-height:var(--font-line);white-space:normal;text-align:left}
+.ec-h{display:flex;align-items:center;gap:var(--space-2);min-height:var(--size-badge);color:var(--fg-muted)}
+.ec-h .id{margin:0}
+.ec-t{margin:0;font-weight:var(--font-weight-bold);font-size:var(--font-size-lg);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.ec-m{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);font-size:var(--font-size-sm);color:var(--fg-muted)}
+.ec-f{margin:0;display:grid;grid-template-columns:auto 1fr;gap:var(--space-1) var(--space-4);font-size:var(--font-size-sm)}
+.ec-f>div{display:contents}
+.ec-f dt{color:var(--fg-muted)}
+.ec-f dd{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ec-a{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);padding-top:var(--space-3);border-top:1px solid var(--line-soft)}
+a.btn{text-decoration:none}
+.ec-err{display:flex;align-items:center;gap:var(--space-2);min-height:calc(var(--size-row) * 2);color:var(--fg-muted)}
+.ec-sk{display:flex;flex-direction:column;gap:var(--space-3);min-height:calc(var(--size-row) * 2)}
+.ec-sk i{display:block;height:var(--space-4);border-radius:var(--radius-sm);background:var(--line-soft)}
+.ec-sk i:first-child{width:85%}.ec-sk i:nth-child(2){width:55%}.ec-sk i:nth-child(3){width:70%}
+@media (pointer:coarse){.ec-code.id{display:inline-flex;align-items:center;min-height:var(--size-hit-phone)}}
+.deps{display:inline-flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}

@@ -1,9 +1,9 @@
 // Fleet controls. Specs: docs/design-system/controls/*.md. Styling: styles.css with tokens only.
-import { Fragment, type ComponentChildren, type TargetedMouseEvent } from 'preact';
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind } from './registry.ts';
-import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, bytes, exact, stamp, percent, duration, agentLabel, actor } from './format.ts';
-import type { Block as ThreadBlock, ResourceSummary } from '../../../contracts/generated/ops.ts';
+import { Fragment, createContext, type ComponentChildren, type TargetedMouseEvent } from 'preact';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind, entityKinds, codeKind, ENTITY_CODE, type EntityKind } from './registry.ts';
+import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, bytes, exact, stamp, percent, duration, count, agentLabel, actor } from './format.ts';
+import type { Block as ThreadBlock, ResourceSummary, EntityCardReply } from '../../../contracts/generated/ops.ts';
 import { matchSearch, searchFields } from './search.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
 import { parse, renderBlocks } from './markdown.tsx';
@@ -492,29 +492,165 @@ export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefre
 /** Writes text to the clipboard; the caller shows a failure (status line with retry). */
 export const copyText = (text: string) => navigator.clipboard.writeText(text);
 
-/** The one formatter of an entity id (D17, OR-38). With a human code: `T-FLT-42` in mono after the name. Without one
- *  (conversation, run, experiment) and with `what`: a copy icon; otherwise nothing. The UUID is never shown as text:
- *  it is the tooltip, and a click or Enter copies it without opening the row (OR-26). */
-export function EntityCode({ code, id, cls, what }: { code?: string | null; id: string; cls?: string; what?: string }) {
-  const [tip, setTip] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  useEffect(() => setTip(null), [id]);
-  if (!code && !what) return null;
-  const copy = (e: Event) => {
+/* ---------- Entity code and card (controls/entity-card.md; D17, OR-38) ---------- */
+
+export type EntityCardData = EntityCardReply;
+/** A reference: a kind with its id, or a D17 code alone (the card resolves it). */
+export type EntityRef = { kind: EntityKind; id?: string; code?: string };
+export type EntityCardRead = { data: EntityCardData | null; error: string | null; retry?: () => void };
+/** Where cards come from: the app reads `entity_card` through its store; the book serves fixtures. `useCard` is a hook,
+ *  called once per open card; `open` goes to an in-app path (default: a full page load). */
+export type EntityCardSource = { useCard: (ref: EntityRef) => EntityCardRead; open?: (path: string) => void };
+export const EntityCards = createContext<EntityCardSource | null>(null);
+
+// The one open card (one at a time): which reference, the code it hangs from, and whether a key opened it.
+type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean };
+let shown: Shown | null = null;
+const watchers = new Set<() => void>();
+const showCard = (s: Shown | null) => { shown = s; for (const w of watchers) w(); };
+function useShownCard() {
+  const [, set] = useState(0);
+  useEffect(() => { const w = () => set(n => n + 1); watchers.add(w); return () => { watchers.delete(w); }; }, []);
+  return shown;
+}
+const CARD_ID = 'entity-card';
+
+/** The one formatter of an entity reference (D17, OR-38). A human code (`T-FLT-42`, a pull request's number, `v1.2.3`) in mono after the
+ *  name; a kind without a code (run, result, experiment) as its kind icon. A click, tap, Enter or Space opens its
+ *  EntityCard and never the row (OR-26); the same again closes it. The UUID is never shown: the card copies it. */
+export function EntityCode({ code, id, kind, cls }: { code?: string | null; id?: string | null; kind?: EntityKind; cls?: string }) {
+  const el = useRef<HTMLButtonElement>(null);
+  const cur = useShownCard();
+  const k = kind ?? (code ? codeKind[code[0]] : undefined);
+  if (!k || !id && !code) return null;
+  const open = !!cur && !!el.current && cur.anchor === el.current;
+  const toggle = (e: TargetedMouseEvent<HTMLButtonElement>) => {
     e.preventDefault(); e.stopPropagation();
-    const show = (t: string) => { setTip(t); clearTimeout(timer.current); timer.current = setTimeout(() => setTip(null), 1500); };
-    copyText(id).then(() => show('UUID copied'), () => show('Copy failed'));
+    // The open card is read now, not from the last render: a second click before a re-render still closes it. A click
+    // from the keyboard (Enter, Space) has no pointer detail: focus then moves into the card.
+    showCard(shown?.anchor === e.currentTarget ? null : { ref: id ? { kind: k, id, ...(code ? { code } : {}) } : { kind: k, code: code! }, anchor: e.currentTarget, keyboard: e.detail === 0 });
   };
-  const label = `${code ?? what}, copy UUID`, dataTip = tip ?? `${what ? what + ' ' : ''}${id} · click to copy`;
-  if (!code) return <button type="button" class={`btn quiet icon-only${cls ? ' ' + cls : ''}`} data-ui="entity-code" aria-label={label} data-tip={dataTip} onClick={copy}><Icon name={actions.copy} /></button>;
-  return <span class={`id code${cls ? ' ' + cls : ''}`} data-ui="entity-code" role="button" tabIndex={0} aria-label={label} data-tip={dataTip}
-    onClick={copy} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') copy(e); }}>{code}</span>;
+  const what = entityKinds[k].label;
+  return <button ref={el} type="button" class={`${code ? 'id ec-code' : 'btn quiet icon-only ec-code'}${cls ? ' ' + cls : ''}`} data-ui="entity-code" aria-haspopup="dialog" aria-expanded={open}
+    aria-controls={open ? CARD_ID : undefined} aria-label={`${what}${code ? ' ' + code : ''}: show details`} data-tip={open ? undefined : 'Show details'} onClick={toggle}>
+    {code ?? <Icon name={entityKinds[k].icon} />}</button>;
 }
 
-/** Markdown (markdown.tsx): built as nodes, never as HTML; each fenced code block has its own copy button. */
+/** D17 codes in a text as references (agent messages, OR-38): every other part stays text. */
+export function linkCodes(text: string, key: number): ComponentChildren {
+  const out: ComponentChildren[] = []; let last = 0;
+  for (const m of text.matchAll(ENTITY_CODE)) {
+    if (m.index! > last) out.push(text.slice(last, m.index));
+    out.push(<EntityCode key={`${key}:${m.index}`} code={m[0]} cls="inline" />);
+    last = m.index! + m[0].length;
+  }
+  if (!out.length) return text;
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/** The floating card of the open EntityCode: mount once (AppShell does). A non-modal dialog (OR-14 informational, OR-16
+ *  surface): under the code, above it when there is no room, kept inside the window. Escape, a click outside, a scroll,
+ *  focus leaving it or the code again close it; Escape and the Open action give focus back to the code. */
+export function EntityCardLayer() {
+  const cur = useShownCard();
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { // layout, not a later effect: a click right after opening already closes it
+    if (!cur) return;
+    const close = (refocus: boolean) => { showCard(null); if (refocus) cur.anchor.focus({ preventScroll: true }); };
+    const inside = (n: EventTarget | null) => n instanceof Node && (!!box.current?.contains(n) || cur.anchor.contains(n));
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(true); } };
+    const down = (e: PointerEvent) => { if (!inside(e.target)) close(false); };
+    const scroll = (e: Event) => { if (!inside(e.target)) close(false); };
+    const out = (e: FocusEvent) => { if (e.relatedTarget && !inside(e.relatedTarget)) close(false); };
+    const gone = () => close(false);
+    document.addEventListener('keydown', key, true); document.addEventListener('pointerdown', down, true); document.addEventListener('scroll', scroll, true);
+    document.addEventListener('focusout', out, true); addEventListener('resize', gone);
+    // The code left the page (its row scrolled out of a virtual list, the view changed): the card goes with it.
+    const watch = setInterval(() => { if (!cur.anchor.isConnected) close(false); }, 250);
+    return () => { document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', down, true); document.removeEventListener('scroll', scroll, true);
+      document.removeEventListener('focusout', out, true); removeEventListener('resize', gone); clearInterval(watch); };
+  }, [cur]);
+  // Placed after every render (the skeleton and the loaded card can differ): below, else above, else the roomier side.
+  useLayoutEffect(() => {
+    const el = box.current; if (!cur || !el) return;
+    const a = cur.anchor.getBoundingClientRect(), r = el.getBoundingClientRect(), gap = 4, edge = 8;
+    const below = a.bottom + gap + r.height <= innerHeight - edge || a.top - gap - r.height < edge && innerHeight - a.bottom > a.top;
+    el.style.top = `${Math.max(edge, below ? a.bottom + gap : a.top - gap - r.height)}px`;
+    el.style.left = `${Math.max(edge, Math.min(a.left, innerWidth - edge - r.width))}px`;
+    el.dataset.side = below ? 'below' : 'above';
+  });
+  useEffect(() => { if (cur?.keyboard) box.current?.querySelector<HTMLElement>('a[href],button')?.focus({ preventScroll: true }); }, [cur]);
+  if (!cur) return null;
+  const k = entityKinds[cur.ref.kind];
+  // The card takes its code's theme where a region sets one (the book's light and dark frames).
+  const theme = cur.anchor.closest('.th-dark') ? ' th-dark' : cur.anchor.closest('.th-light') ? ' th-light' : '';
+  return <div ref={box} id={CARD_ID} class={`ecard${theme}`} data-ui="entity-card" role="dialog" aria-label={`${k.label}${cur.ref.code ? ' ' + cur.ref.code : ''}`}>
+    <CardBody key={JSON.stringify(cur.ref)} r={cur.ref} onOpen={() => showCard(null)} /></div>;
+}
+
+function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
+  const source = useContext(EntityCards);
+  const read: EntityCardRead = source ? source.useCard(r) : { data: null, error: 'Details are not available here' };
+  const [copied, setCopied] = useState<{ label: string; ok: boolean } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const k = entityKinds[r.kind], c = read.data, now = Date.now();
+  const copy = (label: string, value: string) => {
+    const done = (ok: boolean) => { setCopied({ label, ok }); clearTimeout(timer.current); timer.current = setTimeout(() => setCopied(null), 1500); };
+    copyText(value).then(() => done(true), () => done(false));
+  };
+  const code = c ? c.code : r.code;
+  // Copy actions: the code (a pull request: owner/repo#n), the UUID, the id of a kind with neither, a result's hash.
+  const copies: [string, string][] = c ? [
+    ...(c.code ? [[c.kind === 'pull_request' ? 'Copy reference' : 'Copy code', c.kind === 'pull_request' ? c.id : c.code] as [string, string]] : []),
+    ...(c.uuid ? [['Copy UUID', c.uuid] as [string, string]] : []),
+    ...(!c.code && !c.uuid ? [['Copy id', c.id] as [string, string]] : []),
+    ...(c.hash ? [['Copy SHA-256', c.hash] as [string, string]] : [])] : code ? [['Copy code', code]] : [];
+  const at = c?.at ? Date.parse(c.at) : NaN;
+  const go = (e: MouseEvent) => {
+    if (!c?.path || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault(); onOpen();
+    if (source?.open) source.open(c.path); else location.assign(c.path);
+  };
+  const family = k.family, state = c?.state && family && c.state in states[family] ? c.state : null;
+  return <>
+    <div class="ec-h"><Icon name={k.icon} label={k.label} />{code && <span class="id">{code}</span>}<span class="grow" />
+      {state && family && <StateBadge family={family} state={state as never} />}</div>
+    {c ? <>
+      <p class="ec-t">{c.title}</p>
+      {(c.projectId || c.harness || Number.isFinite(at)) && <p class="ec-m">{c.projectId && <span class="mono">{c.projectId}</span>}
+        {c.harness && c.harness in harnesses && <HarnessMark h={c.harness as Harness} />}
+        {Number.isFinite(at) && <span>{c.atLabel ? c.atLabel + ' ' : ''}<Ago t={at} now={now} /></span>}</p>}
+      {c.facts.length > 0 && <dl class="ec-f">{c.facts.map(f => <div key={f.label}><dt>{f.label}</dt><dd class={f.type === 'text' || f.type === 'time' ? undefined : 'mono'}>{factText(f, now)}</dd></div>)}</dl>}
+    </> : read.error ? <div class="ec-err" role="alert"><Icon name="circle-alert" /><span>{read.error}</span>{read.retry && <Button label="Retry" icon={actions.retry} iconOnly kind="quiet" onClick={read.retry} />}</div>
+      : <div class="ec-sk" aria-busy="true" aria-label="Loading"><i /><i /><i /></div>}
+    <div class="ec-a">
+      {c?.path ? <a class="btn primary" data-ui="button" href={c.path} onClick={go}><Icon name="arrow-right" /><span>Open</span></a>
+        : <Button label="Open" icon="arrow-right" kind="primary" disabledReason={read.error ? 'Not available' : 'Loading'} />}
+      {/* Feedback swaps the icon only (OR-23: the row keeps its width) and is announced in the status below. */}
+      {copies.map(([label, value]) => <Button key={label} label={label} icon={copied?.label !== label ? actions.copy : copied.ok ? 'check' : 'circle-x'} kind="quiet" onClick={() => copy(label, value)} />)}
+      {c?.url && <a class="btn quiet icon-only" data-ui="button" href={c.url} target="_blank" rel="noopener noreferrer" aria-label="Open on GitHub" data-tip="Open on GitHub"><Icon name="github" /></a>}
+    </div>
+    <span class="sr-only" role="status">{copied ? (copied.ok ? copied.label.replace('Copy ', '') + ' copied' : 'Copy failed') : ''}</span>
+  </>;
+}
+
+function factText(f: EntityCardData['facts'][number], now: number): ComponentChildren {
+  const n = Number(f.value);
+  switch (f.type) {
+    case 'time': { const t = Date.parse(f.value); return Number.isFinite(t) ? <Ago t={t} now={now} /> : f.value; }
+    case 'count': return Number.isFinite(n) ? count(n).text : f.value;
+    case 'bytes': return Number.isFinite(n) ? bytes(n).text : f.value;
+    case 'duration': return Number.isFinite(n) ? duration(n).text : f.value;
+    default: return f.value;
+  }
+}
+
+/** Markdown (markdown.tsx): built as nodes, never as HTML; each fenced code block has its own copy button; D17 codes in
+ *  its text are entity references (linkCodes). */
 export function Markdown({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknown) => void }) {
-  return <div class="md">{renderBlocks(parse(text), (code, _lang, k) => <div class="code" key={k}><pre><code>{code}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(code).catch(e => onCopyFail?.(e))} /></span></div>)}</div>;
+  return <div class="md">{renderBlocks(parse(text), (code, _lang, k) => <div class="code" key={k}><pre><code>{code}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(code).catch(e => onCopyFail?.(e))} /></span></div>, linkCodes)}</div>;
 }
 
 type Mark = { harness?: string | null; model?: string | null; effort?: string | null };
@@ -597,7 +733,7 @@ export function BoundaryRow({ session, executionId, state, mark, startedAt, ende
   const secs = resources?.durations?.executionWallMs != null ? resources.durations.executionWallMs / 1000 : startedAt != null ? ((endedAt ?? now) - startedAt) / 1000 : null;
   const elapsedSecs = resources?.durations?.elapsedMs != null ? resources.durations.elapsedMs / 1000 : null;
   const durTip = elapsedSecs != null && secs != null && Math.abs(elapsedSecs - secs) >= 1 ? `Active wall ${duration(secs).long}; elapsed ${duration(elapsedSecs).long}` : undefined;
-  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <EntityCode id={session} what="Conversation" />}<EntityCode id={executionId} what="Run" /><span class="grow" />
+  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <EntityCode id={session} kind="conversation" />}<EntityCode id={executionId} kind="execution" /><span class="grow" />
     <span class="th-svc">
       <AgentMark {...mark} />
       {secs !== null && <span class="chip-age" data-tip={durTip}>{duration(secs).text}</span>}
@@ -1298,7 +1434,7 @@ export function StageChip({ stage }: { stage: Stage }) {
 /* ---------- Outcome block (D11, B2) ---------- */
 
 export function OutcomeBlock({ outcome, requirements, inputs, depends }: {
-  outcome: string; requirements: { text: string; met: boolean }[]; inputs: { icon: IconName; label: string }[]; depends?: string;
+  outcome: string; requirements: { text: string; met: boolean }[]; inputs: { icon: IconName; label: string }[]; depends?: ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
   const met = requirements.filter(r => r.met).length;

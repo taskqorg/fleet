@@ -6,6 +6,7 @@
 // delivery), so nothing here waits for a poll. Red everywhere means past the stage's P90 over the last 14 days.
 import { useCallback, useEffect } from 'preact/hooks';
 import {
+  EntityCode,
   ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
   Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
   type StateOf, type DayCol, type DayMark, type SharePart, ShellStatus } from '../../../packages/ui/src/index.ts';
@@ -147,7 +148,7 @@ export function Delivery({ id }: { id?: string }) {
     return { rows, all, counts, groups, total: rowsOf.length, pending: !picked && !data && !status.error || !!picked && histLoading, error, reload: picked ? histDoc.reload : status.reload };
   };
   const page = useListPage<Row>({
-    view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: { stage: ['installed'] },
+    view: 'delivery', entity: 'pull_request', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: { stage: ['installed'] },
     // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
     // most installed) or a filter to installed rows is its own context, where it starts open.
     // The day in the URL, not the bucket found in the history: the context does not change when the history arrives.
@@ -344,7 +345,7 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
       {url && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(url, '_blank', 'noopener')} />}</header>
     <h2 class="detail-title">{title}</h2>
     <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} now={now} />}
-      {rel && <span class="id" data-tip={uiOnly(rel) ? `UI-only release ${rel}: hosts install nothing` : undefined}>{releaseLabel(rel)}</span>}</div>
+      {rel && <EntityCode code={releaseLabel(rel)} id={rel} kind="release" />}</div>
     <div class="stack-pad">
       {h.error && !h.data && <ErrorBanner text={`History did not load: ${h.error}`} />}
       {x ? <>

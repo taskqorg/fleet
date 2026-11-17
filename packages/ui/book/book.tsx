@@ -4,10 +4,11 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   Choice, DraftBar, StepList, FlowStrip, TimeStrip,
   Icon, Button, StateBadge, Num, CostFigures, Totals, AgeChip, FillBar, AreaChart, ExecTree, DecisionBlock, ResultViewer, SplitButton, ActionMenu, NavRail, Spotlight, sectionProvider, spotlightMemory, FocusPresets, StatStrip,
-  TextField, SettingField, ProblemRow, TooltipLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
+  TextField, SettingField, ProblemRow, TooltipLayer, EntityCardLayer, Skeleton, Empty, ErrorBanner, Stale, Thread, TaskListView, workspaces, states, actions, GroupControl, SortControl, SelectToggle, SelectBar,
   Composer, DropZone, TextRow, type ComposerAttachment, CodeEditor, DiffText, OfflineMarker, ProjectPick, PresetPicker, HarnessCounts, HarnessMark, StageChip, OutcomeBlock, DetailSection, KvRow, stages, StateCounters, ListFrame, RowCheck,
   type ThreadBlock, type TreeNode, type Family, type Stage, type SpotlightProvider, type SpotlightItem,
 } from '../src/index.ts';
+import { EntityCardDemo, CardsProvider } from './entity-cards.tsx';
 import { NAV, NAV_FOCUS } from './nav.ts';
 import { FocusDemo } from './focus-demo.tsx';
 import { NOW, min, hr, tasks, mkTask, TREE, transcript, hosts, type Task } from './fixtures.ts';
@@ -442,6 +443,7 @@ const SECTIONS: [string, string, string | undefined, () => ComponentChildren, Co
   ['focus-control', 'Focus chip in the shell header', 'focus-control', () => <div class="stack"><HeaderDemo start={[]} /><HeaderDemo start={['fleet', 'desiign', 'cs']} /></div>, <>OR-34, OR-43. Neutral with every project; toned with a focus, names two projects then +N. The bell counts what needs you outside the focus. The panel floats under the chip: presets, projects with an ignore action, and the folded Ignored section to restore them.</>],
   ['split-button', 'Split button', 'split-button', () => <SplitDemo />, <>Click runs the default action; the chevron opens a short menu of alternatives for the same place (allowed by OR-14).</>],
   ['button', 'Button', 'button', () => <ButtonsDemo />],
+  ['entity-card', 'Entity reference and card', 'entity-card', () => <EntityCardDemo />, <>D17, OR-38. Click, tap, Enter or Space on a code opens its card; Escape, a click outside or the code again closes it. Every kind, a card still loading and one the person may not see; D17 codes inside an agent message are references too.</>],
   ['state-badge', 'State badge', 'state-badge', () => <BadgesDemo />, <>Left: icon and word, for detail views. Right: icon only, the form lists use (B1); hover or focus for the name and reason.</>],
   ['number', 'Numbers, totals, age chips', 'number', () => <NumbersDemo />, <>Measured, estimated (≈), unavailable (—), partial (≥). "Change values" shows the brief tint (OR-6): cost rising tints red, tokens neutral. The 2h chip is red (OR-18).</>],
   ['fill-bar', 'Fill bar', 'fill-bar', () => <FillDemo />],
@@ -485,7 +487,7 @@ function ComposerDemo() {
 }
 
 function Book() {
-  return <div class="page">
+  return <CardsProvider><div class="page">
     <header class="bk-head">
       <h1>Fleet design book</h1>
       <p class="muted">Live demo of <span class="mono">packages/ui</span>, light and dark side by side. Rules: owner-rules.md.</p>
@@ -494,7 +496,8 @@ function Book() {
     <nav class="toc" aria-label="Contents">{SECTIONS.map(s => <a key={s[0]} href={`#${s[0]}`}>{s[1]}</a>)}</nav>
     {SECTIONS.map(([id, title, spec, demo, note]) => <Section key={id} id={id} title={title} spec={spec} note={note}>{demo}</Section>)}
     <TooltipLayer />
-  </div>;
+    <EntityCardLayer />
+  </div></CardsProvider>;
 }
 
 const app = document.getElementById('app');

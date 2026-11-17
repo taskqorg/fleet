@@ -1,0 +1,383 @@
+// entity_card: the card summary of one entity for an entity reference (docs/design-system/controls/entity-card.md), by
+// D17 code or by kind and id. One read for the app's card and for agents (an MCP tool like every operation). Each kind is
+// one reader over the tables and caches the kind's own reads use; row-level security and the reads' own gates decide
+// what a caller sees, and an unknown or forbidden entity both answer 404.
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"fleet/contract"
+)
+
+type cardReader func(q *Request, id string) (*contract.EntityCardReply, error)
+
+var cardReaders = map[contract.EntityKind]cardReader{
+	contract.EntityKindTask: cardTask, contract.EntityKindQuestion: cardQuestion, contract.EntityKindConversation: cardConversation,
+	contract.EntityKindExecution: cardExecution, contract.EntityKindResult: cardResult, contract.EntityKindExperiment: cardExperiment,
+	contract.EntityKindProject: cardProject, contract.EntityKindHost: cardHost, contract.EntityKindAgent: cardDefinition("agent"),
+	contract.EntityKindPipeline: cardDefinition("pipeline"), contract.EntityKindPullRequest: cardPullRequest, contract.EntityKindRelease: cardRelease,
+}
+
+// codeKinds: the D17 type letters the card resolves (spec rules, S-, are not entities).
+var codeKinds = map[string]contract.EntityKind{"T": contract.EntityKindTask, "Q": contract.EntityKindQuestion, "C": contract.EntityKindConversation}
+
+func init() {
+	gatedObjOp("entity_card", true, typedOp(func(q *Request, r *contract.EntityCardRequest) (contract.EntityCardReply, error) {
+		kind, id := contract.EntityKind(""), strings.TrimSpace(deref(r.Id))
+		if r.Kind != nil {
+			kind = *r.Kind
+		}
+		switch {
+		case r.Code != nil && (r.Kind != nil || r.Id != nil):
+			return contract.EntityCardReply{}, fail(400, "Expected a code, or a kind with its id")
+		case r.Code != nil:
+			code := strings.ToUpper(strings.TrimSpace(*r.Code))
+			if m := codePattern.FindString(code); m != code || codeKinds[code[:1]] == "" {
+				return contract.EntityCardReply{}, fail(400, "Expected a code such as T-FLT-42")
+			}
+			found, err := resolveCodes(q, []string{code})
+			if err != nil {
+				return contract.EntityCardReply{}, err
+			}
+			e, ok := found[code]
+			if !ok {
+				return contract.EntityCardReply{}, errNotFound
+			}
+			kind, id = codeKinds[e.Type], e.Id
+		case kind == "" || id == "":
+			return contract.EntityCardReply{}, fail(400, "Expected a code, or a kind with its id")
+		}
+		c, err := cardReaders[kind](q, id)
+		if err != nil {
+			return contract.EntityCardReply{}, err
+		}
+		if c == nil {
+			return contract.EntityCardReply{}, errNotFound
+		}
+		c.Kind = kind
+		if c.Facts == nil {
+			c.Facts = []contract.EntityFact{}
+		}
+		return *c, nil
+	}))
+	agentDescriptions["entity_card"] = "A short card of one entity: code (T-FLT-42, Q-…, C-…, old codes too) or kind (task, question, conversation, execution, result, experiment, project, host, agent, pipeline, pull_request as owner/repo#n, release as its tag) with id. Returns its state, title, project, harness, last time, 1-4 facts, the app path and an outside url; unknown and forbidden are both 404"
+}
+
+func fact(label string, t contract.EntityFactType, value string) contract.EntityFact {
+	return contract.EntityFact{Label: label, Type: t, Value: value}
+}
+
+// facts: the first four facts whose value is known (OR-29: no zero counts), in order.
+func facts(fs ...contract.EntityFact) []contract.EntityFact {
+	fs = slices.DeleteFunc(fs, func(f contract.EntityFact) bool {
+		return f.Value == "" || f.Value == "0" && f.Type == contract.EntityFactTypeCount
+	})
+	return fs[:min(4, len(fs))]
+}
+
+func itemPath(section, id string) *string { return ptr("/" + section + "/" + url.PathEscape(id)) }
+
+// cardRow: one row of sql, nil when the caller sees none.
+func cardRow(q *Request, sql string, args ...any) (doc, error) { return first(q, sql, args...) }
+
+func cardTask(q *Request, id string) (*contract.EntityCardReply, error) {
+	r, err := cardRow(q, `SELECT t.id,t.code,t.title,`+stateSQL+` AS state,t.project_id,t.updated_at,t.wait_reason,t.priority,
+	 coalesce(d.agent,d.last_agent) AS agent,d.host,d.open_questions,(SELECT count(*) FROM execution e WHERE e.task_id=t.id AND e.kind<>'tool_run') AS runs
+	 FROM task t LEFT JOIN task_derived d ON d.task_id=t.id WHERE t.id=$1`, id)
+	if r == nil || err != nil {
+		return nil, err
+	}
+	wait := ""
+	if s := astr(r["state"]); s == "waiting" || s == "held" || s == "paused" {
+		wait = astr(r["wait_reason"])
+	}
+	priority := astr(r["priority"])
+	if priority == "normal" {
+		priority = ""
+	}
+	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Code: optStr(astr(r["code"])), Title: astr(r["title"]), State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"])),
+		Harness: optStr(astr(r["agent"])), At: optStr(astr(r["updated_at"])), AtLabel: ptr("changed"), Path: itemPath("tasks", id),
+		Facts: facts(fact("Waiting for", contract.EntityFactTypeText, wait), fact("Runs", contract.EntityFactTypeCount, fmt.Sprint(num(r["runs"]))),
+			fact("Open questions", contract.EntityFactTypeCount, fmt.Sprint(num(r["open_questions"]))), fact("Host", contract.EntityFactTypeCode, astr(r["host"])),
+			fact("Priority", contract.EntityFactTypeText, priority))}, nil
+}
+
+func cardQuestion(q *Request, id string) (*contract.EntityCardReply, error) {
+	r, err := cardRow(q, `SELECT x.id,x.code,x.text,x.state::text AS state,x.project_id,x.task_id,x.session_id,x.asked_by,x.asked_at,x.answered_by,x.answer,t.code AS task_code
+	 FROM question x LEFT JOIN task t ON t.id=x.task_id WHERE x.id=$1`, id)
+	if r == nil || err != nil {
+		return nil, err
+	}
+	text := []rune(astr(r["text"]))
+	path := ptr("/overview")
+	if t := astr(r["task_id"]); t != "" {
+		path = itemPath("tasks", t)
+	} else if s := astr(r["session_id"]); s != "" {
+		path = itemPath("conversations", s)
+	}
+	answer := []rune(astr(r["answer"]))
+	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Code: optStr(astr(r["code"])), Title: string(text[:min(200, len(text))]), State: optStr(astr(r["state"])),
+		ProjectId: optStr(astr(r["project_id"])), At: optStr(astr(r["asked_at"])), AtLabel: ptr("asked"), Path: path,
+		Facts: facts(fact("Asked by", contract.EntityFactTypeText, astr(r["asked_by"])), fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])),
+			fact("Answer", contract.EntityFactTypeText, string(answer[:min(120, len(answer))])), fact("Answered by", contract.EntityFactTypeText, astr(r["answered_by"])))}, nil
+}
+
+// cardConversation: one session with the sessions_list columns, read for this session only (sessionBase reads all).
+func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) {
+	r, err := cardRow(q, `SELECT d.id,d.code,d.project_id,d.data->'agentConfig'->>'id' AS profile,t.code AS task_code,
+	 coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle') AS state,
+	 coalesce((SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),d.data->'agentConfig'->>'harness') AS harness,
+	 (SELECT m.data->>'text' FROM document m WHERE m.kind='message' AND m.data->>'sessionId'=d.id ORDER BY m.seq LIMIT 1) AS first_message,
+	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM document a WHERE a.kind IN ('message','event') AND a.data->>'sessionId'=d.id)) AS activity_at,
+	 (SELECT count(*) FROM execution e WHERE e.session_id=d.id) AS runs,
+	 (SELECT count(*) FROM question x WHERE x.session_id=d.id AND x.state='open') AS open_questions
+	 FROM document d LEFT JOIN task t ON t.id=d.data->>'taskId' WHERE d.kind='session' AND d.id=$1`, id)
+	if r == nil || err != nil {
+		return nil, err
+	}
+	title := []rune(strings.Join(strings.Fields(firstString(astr(r["first_message"]), astr(r["code"]), "Conversation")), " "))
+	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Code: optStr(astr(r["code"])), Title: string(title[:min(200, len(title))]), State: optStr(astr(r["state"])),
+		ProjectId: optStr(astr(r["project_id"])), Harness: optStr(astr(r["harness"])), At: optStr(astr(r["activity_at"])), AtLabel: ptr("active"), Path: itemPath("conversations", id),
+		Facts: facts(fact("Profile", contract.EntityFactTypeCode, astr(r["profile"])), fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])),
+			fact("Runs", contract.EntityFactTypeCount, fmt.Sprint(num(r["runs"]))), fact("Open questions", contract.EntityFactTypeCount, fmt.Sprint(num(r["open_questions"]))))}, nil
+}
+
+var executionKindLabel = map[string]string{"agent_run": "Agent run", "pipeline_run": "Pipeline run", "pipeline_step": "Pipeline step", "child_agent": "Child agent", "tool_run": "Tool run"}
+
+func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
+	r, err := cardRow(q, `SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.project_id,e.task_id,e.session_id,e.experiment_id,e.host_id,e.harness,e.model,e.problem,
+	 e.started_at,e.ended_at,e.updated_at,extract(epoch FROM e.ended_at-e.started_at) AS secs,t.code AS task_code,t.title AS task_title,s.code AS session_code
+	 FROM execution e LEFT JOIN task t ON t.id=e.task_id LEFT JOIN document s ON s.kind='session' AND s.id=e.session_id WHERE e.id=$1`, id)
+	if r == nil || err != nil {
+		return nil, err
+	}
+	path := ptr("/runners")
+	switch {
+	case astr(r["session_id"]) != "":
+		path = itemPath("conversations", astr(r["session_id"]))
+	case astr(r["task_id"]) != "":
+		path = itemPath("tasks", astr(r["task_id"]))
+	case astr(r["experiment_id"]) != "":
+		path = itemPath("lab", astr(r["experiment_id"]))
+	}
+	secs := ""
+	if r["secs"] != nil {
+		secs = strconv.FormatFloat(num(r["secs"]), 'f', 0, 64)
+	}
+	at, label := firstString(astr(r["ended_at"]), astr(r["started_at"]), astr(r["updated_at"])), "changed"
+	if astr(r["ended_at"]) != "" {
+		label = "ended"
+	} else if astr(r["started_at"]) != "" {
+		label = "started"
+	}
+	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Title: firstString(astr(r["task_title"]), executionKindLabel[astr(r["kind"])]), State: optStr(astr(r["state"])),
+		ProjectId: optStr(astr(r["project_id"])), Harness: optStr(astr(r["harness"])), At: optStr(at), AtLabel: ptr(label), Path: path,
+		Facts: facts(fact("Problem", contract.EntityFactTypeText, astr(r["problem"])), fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])),
+			fact("Conversation", contract.EntityFactTypeCode, astr(r["session_code"])), fact("Host", contract.EntityFactTypeCode, astr(r["host_id"])),
+			fact("Model", contract.EntityFactTypeCode, astr(r["model"])), fact("Duration", contract.EntityFactTypeDuration, secs))}, nil
+}
+
+func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
+	r, err := cardRow(q, `SELECT a.id,a.name,a.state,a.project_id,a.media_type,a.size,a.content_hash,a.created_at,t.code AS task_code
+	 FROM artifact a LEFT JOIN task t ON t.id=coalesce(a.task_id,(SELECT e.task_id FROM execution e WHERE e.id=a.execution_id)) WHERE a.id=$1 OR a.legacy_id=$1`, id)
+	if r == nil || err != nil {
+		return nil, err
+	}
+	id = astr(r["id"])
+	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Hash: optStr(astr(r["content_hash"])), Title: firstString(astr(r["name"]), "Result"), State: optStr(astr(r["state"])),
+		ProjectId: optStr(astr(r["project_id"])), At: optStr(astr(r["created_at"])), AtLabel: ptr("stored"), Path: itemPath("results", id),
+		Facts: facts(fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])), fact("Type", contract.EntityFactTypeCode, astr(r["media_type"])),
+			fact("Size", contract.EntityFactTypeBytes, fmt.Sprint(int64(num(r["size"])))))}, nil
+}
+
+// architect: definitions and Lab are the architect's to read (people.go architectOps); an agent without a person passes.
+func architect(q *Request) bool {
+	return q.person == nil || fullAccess(q.person) || hasRole(q.person, "architect")
+}
+
+func cardExperiment(q *Request, id string) (*contract.EntityCardReply, error) {
+	if !architect(q) {
+		return nil, nil
+	}
+	r, err := cardRow(q, `SELECT x.id,x.kind,x.state,x.project_id,x.pipeline_id,x.goal,x.decision,x.created_at,coalesce(x.launched_at,x.created_at) AS at,
+	 jsonb_array_length(x.variants) AS variants,(SELECT count(*) FROM execution e WHERE e.experiment_id=x.id AND e.kind='pipeline_run') AS trials
+	 FROM experiment x WHERE x.id=$1`, id)
+	if r == nil || err != nil {
+		return nil, err
+	}
+	label := "created"
+	if astr(r["at"]) != astr(r["created_at"]) {
+		label = "launched"
+	}
+	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Title: firstString(astr(r["goal"]), astr(r["pipeline_id"])), State: optStr(astr(r["state"])),
+		ProjectId: optStr(astr(r["project_id"])), At: optStr(astr(r["at"])), AtLabel: ptr(label), Path: itemPath("lab", id),
+		Facts: facts(fact("Pipeline", contract.EntityFactTypeCode, astr(r["pipeline_id"])), fact("Trials", contract.EntityFactTypeCount, fmt.Sprint(num(r["trials"]))),
+			fact("Variants", contract.EntityFactTypeCount, fmt.Sprint(num(r["variants"]))), fact("Decision", contract.EntityFactTypeText, astr(r["decision"])))}, nil
+}
+
+func cardProject(q *Request, id string) (*contract.EntityCardReply, error) {
+	if q.person != nil && !mayAccessProjectID(q.person, id) {
+		return nil, nil
+	}
+	xs, err := definitionRows(q, "d.kind='project' AND d.id=$1 AND d.retired_at IS NULL", 0, id)
+	if err != nil || len(xs) == 0 {
+		return nil, err
+	}
+	var b doc
+	_ = json.Unmarshal(xs[0].Content, &b)
+	r, err := cardRow(q, `SELECT (SELECT code FROM project_code WHERE project_id=$1 AND current) AS code,
+	 (SELECT count(*) FROM task WHERE project_id=$1 AND state IN ('queued','in_progress','waiting','paused')) AS open,
+	 (SELECT count(*) FROM execution WHERE project_id=$1 AND state IN ('preparing','running')) AS running,
+	 (SELECT count(*) FROM question WHERE project_id=$1 AND state='open') AS questions`, id)
+	if err != nil {
+		return nil, err
+	}
+	return &contract.EntityCardReply{Id: id, Code: optStr(astr(r["code"])), Title: firstString(astr(mapOf(b["settings"])["name"]), id),
+		At: ptr(xs[0].At.UTC().Format(time.RFC3339Nano)), AtLabel: ptr("changed"), Path: itemPath("projects", id),
+		Facts: facts(fact("Open tasks", contract.EntityFactTypeCount, fmt.Sprint(num(r["open"]))), fact("Running", contract.EntityFactTypeCount, fmt.Sprint(num(r["running"]))),
+			fact("Open questions", contract.EntityFactTypeCount, fmt.Sprint(num(r["questions"]))))}, nil
+}
+
+// cardHost: one host as hosts_list shows it: online while it polled within hostStaleMs, failing while its polls fail.
+func cardHost(q *Request, id string) (*contract.EntityCardReply, error) {
+	list, err := hostsList(q, false)
+	if err != nil {
+		return nil, err
+	}
+	hosts, _ := list.(doc)["hosts"].([]doc)
+	for _, h := range hosts {
+		if astr(h["id"]) != id {
+			continue
+		}
+		state, seen := "offline", int64(num(h["lastSeenAt"]))
+		if h["lastSeenAt"] != nil && nowMs()-seen <= hostStaleMs {
+			state = "online"
+			if h["pollError"] != nil {
+				state = "failing"
+			}
+		}
+		var at *string
+		if h["lastSeenAt"] != nil {
+			at = ptr(time.UnixMilli(seen).UTC().Format(time.RFC3339Nano))
+		}
+		return &contract.EntityCardReply{Id: id, Title: id, State: ptr(state), At: at, AtLabel: ptr("seen"), Path: itemPath("hosts", id),
+			Facts: facts(fact("Version", contract.EntityFactTypeCode, astr(h["version"])), fact("Running", contract.EntityFactTypeCount, fmt.Sprint(int(num(h["running"])))),
+				fact("Queued", contract.EntityFactTypeCount, fmt.Sprint(int(num(h["queued"])))), fact("Platform", contract.EntityFactTypeText, astr(h["platform"])))}, nil
+	}
+	return nil, nil
+}
+
+func cardDefinition(kind string) cardReader {
+	return func(q *Request, id string) (*contract.EntityCardReply, error) {
+		if !architect(q) {
+			return nil, nil
+		}
+		xs, err := definitionRows(q, "d.kind=$1 AND d.id=$2 AND d.retired_at IS NULL", 0, kind, id)
+		if err != nil || len(xs) == 0 {
+			return nil, err
+		}
+		x := xs[0]
+		var v doc
+		_ = json.Unmarshal(x.Content, &v)
+		c := &contract.EntityCardReply{Id: id, Title: definitionName(x), At: ptr(x.At.UTC().Format(time.RFC3339Nano)), AtLabel: ptr("changed"), Path: itemPath(kind+"s", id)}
+		if c.Title != id {
+			c.Code = ptr(id)
+		}
+		if kind == "agent" {
+			c.Harness = ptr(profileHarness(x.Content))
+			c.Facts = facts(fact("Model", contract.EntityFactTypeCode, astr(v["model"])), fact("Effort", contract.EntityFactTypeText, astr(v["effort"])), fact("Revision", contract.EntityFactTypeCount, fmt.Sprint(x.Revision)))
+		} else {
+			steps, _ := v["steps"].([]any)
+			c.Facts = facts(fact("Steps", contract.EntityFactTypeCount, fmt.Sprint(len(steps))), fact("Revision", contract.EntityFactTypeCount, fmt.Sprint(x.Revision)))
+		}
+		return c, nil
+	}
+}
+
+// deliveryVisible: the last delivery pass as delivery_status shows it to the caller (every project the caller sees).
+func deliveryVisible(q *Request) contract.DeliveryStatusReply {
+	deliveryMu.Lock()
+	last := deliveryLast
+	deliveryMu.Unlock()
+	return deliveryReply(last, func(p string) bool { return fullAccess(q.person) || mayAccessProjectID(q.person, p) })
+}
+
+// cardPullRequest: a pull request of the delivery pass by owner/repo#number (the Delivery list's owner~repo~number too).
+func cardPullRequest(q *Request, id string) (*contract.EntityCardReply, error) {
+	repo, n, ok := strings.Cut(strings.ReplaceAll(id, "~", "/"), "#")
+	if !ok { // owner/repo/number
+		if i := strings.LastIndex(repo, "/"); i > 0 {
+			repo, n = repo[:i], repo[i+1:]
+		}
+	}
+	number, err := strconv.ParseInt(n, 10, 64)
+	if err != nil || strings.Count(repo, "/") != 1 {
+		return nil, fail(400, "Expected a pull request as owner/repo#number")
+	}
+	for _, it := range deliveryVisible(q).Items {
+		if !strings.EqualFold(it.Repo, repo) || it.Number != number {
+			continue
+		}
+		return &contract.EntityCardReply{Id: it.Repo + "#" + n, Code: ptr("#" + n), Title: it.Title, State: ptr(string(it.Stage)), ProjectId: optStr(it.ProjectId),
+			At: ptr(it.Since), AtLabel: ptr("since"), Url: ptr(it.Url), Path: itemPath("delivery", strings.ReplaceAll(it.Repo, "/", "~")+"~"+n),
+			Facts: facts(fact("Repository", contract.EntityFactTypeCode, it.Repo), fact("Release", contract.EntityFactTypeCode, deref(it.Release)),
+				fact("Opened", contract.EntityFactTypeTime, deref(it.Opened)), fact("Merged", contract.EntityFactTypeTime, deref(it.Merged)))}, nil
+	}
+	return nil, nil
+}
+
+var releaseTag = regexp.MustCompile(`^(v\d+(\.\d+)*|ui-\d+(\.\d+)*-v\d+(\.\d+)*)$`)
+
+// cardRelease: a release tag: installed when every host seen within the hour runs it or newer (delivery.go installed);
+// a UI-only release (ui-<backend>-v<UI>) installs on no host and is installed once the site serves that UI or newer.
+func cardRelease(q *Request, id string) (*contract.EntityCardReply, error) {
+	tag := strings.TrimSpace(id)
+	if !releaseTag.MatchString(tag) {
+		return nil, fail(400, "Expected a release tag such as v1.2.3")
+	}
+	prs := 0
+	for _, it := range deliveryVisible(q).Items {
+		if deref(it.Release) == tag {
+			prs++
+		}
+	}
+	if i := strings.LastIndex(tag, "-v"); strings.HasPrefix(tag, "ui-") && i > 0 {
+		ui, on := tag[i+2:], astr(uiRelease()["version"])
+		c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), Title: "UI release " + ui, State: ptr("installing"), Path: ptr("/delivery?q=" + url.QueryEscape(tag)),
+			Facts: facts(fact("Site serves", contract.EntityFactTypeCode, on), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))}
+		if on != "" && !versionLess(on, ui) {
+			c.State = ptr("installed")
+		}
+		return c, nil
+	}
+	version := strings.TrimPrefix(tag, "v")
+	list, err := hostsList(q, false)
+	if err != nil {
+		return nil, err
+	}
+	hosts, _ := list.(doc)["hosts"].([]doc)
+	seen, on := 0, 0
+	for _, h := range hosts {
+		if h["lastSeenAt"] == nil || nowMs()-int64(num(h["lastSeenAt"])) > time.Hour.Milliseconds() {
+			continue
+		}
+		seen++
+		if v := astr(h["version"]); v != "" && !versionLess(v, version) {
+			on++
+		}
+	}
+	c := &contract.EntityCardReply{Id: tag, Code: ptr(tag), Title: "Release " + version, State: ptr("installing"), Path: ptr("/delivery?q=" + url.QueryEscape(tag)),
+		Facts: facts(fact("Hosts", contract.EntityFactTypeText, fmt.Sprintf("%d of %d", on, seen)), fact("Pull requests", contract.EntityFactTypeCount, fmt.Sprint(prs)))}
+	if seen > 0 && on == seen {
+		c.State = ptr("installed")
+	}
+	return c, nil
+}

@@ -160,6 +160,27 @@ export const workspaces = [
 ] as const satisfies readonly { id: string; label: string; icon: IconName; group: string; app: boolean }[];
 export type AppScreen = Extract<(typeof workspaces)[number], { app: true }>['id'];
 
+/** What an entity reference names (EntityCode, EntityCard; the coordinator's EntityKind): its word, icon and the state
+ *  family of its card's state. A D17 code's letter names T task, Q question, C conversation. */
+export const entityKinds = {
+  task: { label: 'Task', icon: 'list', family: 'task' },
+  question: { label: 'Question', icon: 'message-circle-question', family: 'question' },
+  conversation: { label: 'Conversation', icon: 'messages-square', family: 'session' },
+  execution: { label: 'Run', icon: 'play', family: 'execution' },
+  result: { label: 'Result', icon: 'file-text', family: 'artifact' },
+  experiment: { label: 'Experiment', icon: 'chart-no-axes-column', family: 'experiment' },
+  project: { label: 'Project', icon: 'folder-open', family: null },
+  host: { label: 'Host', icon: 'panels-top-left', family: 'host' },
+  agent: { label: 'Agent', icon: 'bot', family: null },
+  pipeline: { label: 'Pipeline', icon: 'network', family: null },
+  pull_request: { label: 'Pull request', icon: 'git-pull-request', family: 'delivery' },
+  release: { label: 'Release', icon: 'archive', family: 'delivery' },
+} as const satisfies Record<string, { label: string; icon: IconName; family: Family | null }>;
+export type EntityKind = keyof typeof entityKinds;
+export const codeKind: Record<string, EntityKind> = { T: 'task', Q: 'question', C: 'conversation' };
+/** D17 codes of entities (tasks, questions, conversations) in free text; spec rules (S-) are not entities. */
+export const ENTITY_CODE = /\b[TQC]-[A-Z][A-Z0-9]{1,4}-[1-9][0-9]*\b/g;
+
 /** What performs a pipeline step (fleet.md: executors are agents, tools, programs or pipelines). */
 export const stepKinds = {
   agent: { label: 'Agent', icon: 'bot' },

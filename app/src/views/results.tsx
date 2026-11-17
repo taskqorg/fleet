@@ -61,7 +61,7 @@ export function Results({ id }: { id?: string }) {
             header={<><span /><span>Result</span><span class="r">Size</span><span class="r">Age</span></>}
             render={r => <>
               <span class="lead"><StateBadge family="artifact" state={r.state} compact /></span>
-              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.name}</a>{r.taskId && <EntityCode code={r.taskCode} id={r.taskId} />}{r.projectId && <span class="id">{r.projectId}</span>}</span>
+              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.name}</a>{r.taskId && <EntityCode code={r.taskCode} id={r.taskId} kind="task" />}{r.projectId && <span class="id">{r.projectId}</span>}</span>
               <span class="r svc">{bytes(r.size).text}</span><span class="r"><AgeChip t={r.createdAt} now={now} /></span>
             </>} />}
       </ListFrame>

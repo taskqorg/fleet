@@ -79,7 +79,7 @@ export function Runners() {
             return <div key={r.id} role="row" class="vl-row static">
               <span class="lead"><StateBadge family="execution" state={r.state} compact /></span>
               <span class="tt">{href ? <a class="title row-link" href={href} onClick={e => { e.preventDefault(); go(href); }}>{title}</a> : <span class="title">{title}</span>}
-                {r.parentExecutionId && <EntityCode id={r.parentExecutionId} what="Parent execution" />}
+                {r.parentExecutionId && <EntityCode id={r.parentExecutionId} kind="execution" />}
                 {r.harness && r.harness in harnesses && <HarnessMark h={r.harness as Harness} />}
                 {r.calls != null && <span class="hc" data-tip="Tool calls"><Num m={m(r.calls)} kind="count" /></span>}
                 {r.failedCalls > 0 && <span class="chip t-danger" data-tip="Failed calls"><Icon name="octagon-x" label="Failed calls" /><Num m={m(r.failedCalls)} kind="count" /></span>}

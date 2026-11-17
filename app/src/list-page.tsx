@@ -5,7 +5,7 @@ import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import {
   ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, VirtualList, ContextMenu, SelectBar, SelectToggle, RowPin, RowCheck, copyText, actions,
-  EntityCode, ErrorBanner, Skeleton, type IconName, type Family, type StateOf, type Chip, type Tone, type SortField,
+  EntityCode, ErrorBanner, type EntityKind, Skeleton, type IconName, type Family, type StateOf, type Chip, type Tone, type SortField,
 } from '../../packages/ui/src/index.ts';
 import tokens from '../../packages/ui/tokens.json';
 import { op, online } from './api.ts';
@@ -19,7 +19,8 @@ import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 import type { Change } from './feed.ts';
 
 /** A server list row: its id, code and the server sort key whose first part is the group key. */
-export type ListRow = { id: string; code?: string | null; sortKey: (string | number)[] };
+/** `card`: the entity the row's code names when it is not the row's own id (Delivery: owner/repo#n). */
+export type ListRow = { id: string; code?: string | null; sortKey: (string | number)[]; card?: { kind: EntityKind; id: string } };
 /**
  * A list the page reads whole and filters, groups and sorts itself (Delivery: delivery_status holds every pull request), in
  * place of a server list kind. `rows` are in group order, each row's sortKey[0] its group key; `all` is unfiltered (pins).
@@ -36,6 +37,8 @@ const PINNED = '\u0000pinned'; // group key of the pinned rows; never a server g
 export type ListPageOptions = {
   /** URL view name; also the pins and saved-views list name. */
   view: ViewName;
+  /** The kind of entity a row is: its code opens that entity's card (EntityCode). */
+  entity: EntityKind;
   /** Server list kind (`useList`, `list_membership`); a page with `local` has none. */
   kind?: Kind;
   /** The list built by the page from the view, in place of a server list; fixed for the page's lifetime. */
@@ -202,7 +205,7 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   return {
     view, set, href, query, setQuery, pins, views, list, group, sort, states, rowsGroup, rows, items, endKey, displayed, chosen, closed, toggleGroup,
     sel, selecting, setSelectOn, select, leave, confirm, setConfirm, bulkError, busy, bulk, off, pinAll, menu, setMenu, closeMenu,
-    pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown, isLocal: !!local,
+    pinnedDoc, activePreset, pick, save, filtered, clearFilters, shown, isLocal: !!local, entity: o.entity,
   };
 }
 export type ListPage<R extends ListRow> = ReturnType<typeof useListPage<R>>;
@@ -307,7 +310,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
                   if (e.key === 'p') { e.preventDefault(); pins.toggle(i.r.id); }
                   else if (e.key === 'x') { e.preventDefault(); g.select(i.r); }
                   // The Menu key and Shift+F10 fire contextmenu on the row: onRowMenu opens the menu.
-                }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.id} /></span>
+                }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.card?.id ?? i.r.id} kind={i.r.card?.kind ?? g.entity} /></span>
               <span class="rz">{p.facts(i.r)}</span>
             </>} />}
     </ListFrame>

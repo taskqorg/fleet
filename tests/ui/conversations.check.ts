@@ -14,6 +14,7 @@ import { checkQuestionReplies } from './question-replies.check.ts';
 import { checkTaskStory } from './task-story.check.ts';
 import { checkDeliveryAvailability, checkDeliveryList } from './delivery-availability.check.ts';
 import { checkSpotlight } from './spotlight.check.ts';
+import { checkEntityCard } from './entity-card.check.ts';
 import { checkShellHeader } from './shell-header.check.ts';
 import { checkNavCounter } from './nav-counter.check.ts';
 import { checkConversationsList } from './conversations-list.check.ts';
@@ -331,6 +332,7 @@ try {
   await checkProjectEditor(b, origin, host);
   await checkAccessGate(b, c, seed);
   await checkSpotlight(b, origin);
+  await checkEntityCard(b, origin, seed);
   await checkShellHeader(b, origin, seed);
   await checkNavCounter(b, origin, seed);
   await checkTaskStory(b, origin);

@@ -36,7 +36,7 @@ export function Conversations({ id }: { id?: string }) {
   // pending confirmation; the toggle and a saved view also drop the checked rows. The rows a bulk action finished leave
   // the selection (list-page.tsx).
   const page = useListPage<SessionRow>({
-    view: 'conversations', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS.conversations, groupLabel,
+    view: 'conversations', entity: 'conversation', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS.conversations, groupLabel,
     pinDoc: 'session-pins', pinRead: v => ({ key: [!!v.archived], filter: { archived: !!v.archived } }),
     pinTouches: (c, has) => (c.kind === 'session' && has(c.id)) || (!!c.sessionId && has(c.sessionId)),
     saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),
@@ -180,7 +180,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
       <h2 class="detail-title conv-title" data-tip={title}>{title}</h2>
-      <EntityCode code={s.code} id={id} what="Conversation" />{s.agentConfig?.id && <span class="muted mono conv-profile">{s.agentConfig.id}</span>}<span class="grow" />
+      <EntityCode code={s.code} id={id} kind="conversation" />{s.agentConfig?.id && <EntityCode code={s.agentConfig.id} id={s.agentConfig.id} kind="agent" cls="conv-profile" />}<span class="grow" />
       <SearchField label="Search thread" value={q} onInput={setQ} onSearch={search} />
       <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
       <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />
@@ -211,7 +211,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         onAnswer={a => run(() => answerQuestion(q.id, a))}
         onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive.current.signal) : undefined} />)}
       <div class="composer-bar">
-        {active && <EntityCode id={active.id} what="Run" />}
+        {active && <EntityCode id={active.id} kind="execution" />}
       </div>
       <Composer draftPersistence={s && !restored && verifiedTarget === id ? createDraftPersistence(authorizedDraftScope({ kind: 'session', id })) : undefined} disabledReason={off ? 'offline' : verifiedTarget !== id ? 'Validating conversation' : undefined} placeholder={active ? 'Steer' : 'Message'}
         onAttach={files.add} attachments={files.items} onRemoveAttachment={files.remove} chips={composerChips(s, active, () => setPanel('switch'))}
