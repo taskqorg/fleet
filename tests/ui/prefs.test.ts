@@ -7,7 +7,8 @@ registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsV
 registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
 await ensureAccessGeneration();
 import { readFileSync } from 'node:fs';
-import { prefs, prefsRead, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds, setFocus, setIgnored, knownProjects, scopeReady, outsideFocus, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
+import { listKey, toPageParams } from '../../packages/view-url/view-url.ts';
+import { prefs, prefsRead, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, scopeIds, setFocus, setIgnored, outsideFocus, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
 
 const sent: [string, any][] = [], kept: any[] = [];
 const pendingReplies = new Set<Promise<void>>();
@@ -36,9 +37,9 @@ test('OR-34 focus applies to every list keyed by project (tasks, results, conver
   prefs.value = { ...prefs.value, focus: ['fleet'] };
   for (const v of ['tasks', 'results', 'conversations'] as const) assert.deepEqual(withFocus({ view: v }).project, ['fleet']);
   assert.equal(withFocus({ view: 'hosts' }).project, undefined);
-  assert.deepEqual(focusIds(), ['fleet']);
+  assert.deepEqual(scopeIds(), { projectIds: ['fleet'] });
   prefs.value = { ...prefs.value, focus: [] };
-  assert.equal(focusIds(), undefined);
+  assert.deepEqual(scopeIds(), {});
 });
 
 test('OR-34 focus is the project filter of a view that names no project; an explicit project wins', () => {
@@ -50,23 +51,27 @@ test('OR-34 focus is the project filter of a view that names no project; an expl
 });
 
 // Risk: an ignored project still shows under "All projects", stays in a focus, or hides a project the view names itself.
-test('OR-34 ignored projects leave every list that names no project, also with every project in focus; an explicit project wins', async () => {
-  knownProjects.value = ['fleet', 'muted', 'other'];
+// Risk (review of #617): ignore as an allow-list of known projects hid work of a project missing from the project list.
+test('OR-34 ignored projects are a server-side exclusion of every list that names no project, also with every project in focus; an explicit project wins', async () => {
   prefs.value = { ...prefs.value, focus: [], ignored: ['muted'] };
-  assert.deepEqual(focusIds(), ['fleet', 'other', '-']);
-  assert.deepEqual(withFocus({ view: 'tasks' }).project, ['fleet', 'other', null]);
-  assert.deepEqual(withFocus({ view: 'tasks', project: ['muted'] }).project, ['muted']);
+  assert.deepEqual(scopeIds(), { excludeProjectIds: ['muted'] });
+  for (const v of ['tasks', 'results', 'conversations'] as const) {
+    const scoped = withFocus({ view: v });
+    assert.deepEqual([scoped.project, scoped.exclude], [undefined, ['muted']], v);
+  }
+  assert.deepEqual(withFocus({ view: 'tasks' }), { view: 'tasks', exclude: ['muted'] });
+  assert.deepEqual(withFocus({ view: 'tasks', project: ['muted'] }), { view: 'tasks', project: ['muted'] }, 'a view naming the project shows it');
+  assert.equal(withFocus({ view: 'hosts' }).exclude, undefined);
   prefs.value = { ...prefs.value, ignored: ['muted', '-'] };
-  assert.deepEqual(focusIds(), ['fleet', 'other']);
-  prefs.value = { ...prefs.value, ignored: ['fleet', 'muted', 'other', '-'] };
-  assert.deepEqual(withFocus({ view: 'tasks' }).project?.length, 1, 'everything ignored shows nothing, never everything');
-  // The project list not read yet: lists wait; failed: nothing is left out rather than nothing shown.
-  const wasRead = prefsRead.value; prefsRead.value = true;
-  knownProjects.value = null; assert.equal(scopeReady.value, false);
-  prefs.value = { ...prefs.value, focus: ['zz'] }; assert.equal(scopeReady.value, true, 'a focus needs no project list');
-  prefs.value = { ...prefs.value, focus: [] };
-  knownProjects.value = 'failed'; assert.equal(focusIds(), undefined); assert.equal(scopeReady.value, true); prefsRead.value = wasRead;
-  knownProjects.value = ['fleet', 'muted'];
+  assert.deepEqual(withFocus({ view: 'tasks' }).exclude, ['muted', null], "'-' leaves out work outside projects");
+  // The exclusion is part of the list key and the page filter, so lists with and without it never share rows.
+  assert.notEqual(listKey(withFocus({ view: 'tasks' })), listKey({ view: 'tasks' }));
+  assert.deepEqual(toPageParams(withFocus({ view: 'tasks' })).filter.excludeProjectId, [null, 'muted']);
+  assert.equal(toPageParams({ view: 'tasks' }).filter.excludeProjectId, undefined);
+  // With a focus the focus is the filter; it never holds an ignored project, so nothing is excluded besides.
+  prefs.value = { ...prefs.value, focus: ['fleet', 'muted'], ignored: ['muted'] };
+  assert.deepEqual(scopeIds(), { projectIds: ['fleet'] }); assert.deepEqual(scopeIds(false), { excludeProjectIds: ['muted'] });
+  assert.deepEqual(withFocus({ view: 'tasks' }), { view: 'tasks', project: ['fleet'] });
   prefs.value = { ...prefs.value, focus: ['fleet', 'muted'], ignored: [] };
   sent.length = 0; setIgnored('muted', true);
   assert.deepEqual([prefs.value.ignored, prefs.value.focus], [['muted'], ['fleet']], 'an ignored project leaves the focus at once');
@@ -74,7 +79,8 @@ test('OR-34 ignored projects leave every list that names no project, also with e
   setIgnored('muted', false);
   await settle();
   assert.deepEqual(sent.map(x => x[1]), [{ ignore: { project: 'muted', ignored: true } }, { focus: ['fleet'] }, { ignore: { project: 'muted', ignored: false } }]);
-  prefs.value = { ...prefs.value, focus: [], ignored: [] }; knownProjects.value = null;
+  prefs.value = { ...prefs.value, focus: [], ignored: [] };
+  assert.deepEqual(scopeIds(), {});
 });
 
 // Risk: the outside-focus count brings an ignored project back, or alerts with no focus set (owner: ignore is full silence).
@@ -85,9 +91,7 @@ test('OR-34 the outside-focus count leaves out ignored projects and counts nothi
   assert.deepEqual(['fleet', 'other', 'muted', null].map(outsideFocus), [false, true, false, true]);
   prefs.value = { ...prefs.value, ignored: ['muted', '-'] };
   assert.equal(outsideFocus(null), false, "ignored '-' silences work outside projects");
-  knownProjects.value = ['fleet', 'muted', 'other'];
-  assert.deepEqual(focusIds(false), ['fleet', 'other'], 'without the focus (Overview ?all) ignored projects stay out');
-  knownProjects.value = null;
+  assert.deepEqual(scopeIds(false), { excludeProjectIds: ['muted', '-'] }, 'without the focus (Overview ?all) ignored projects stay out');
   prefs.value = { ...prefs.value, focus: [], ignored: [] };
 });
 

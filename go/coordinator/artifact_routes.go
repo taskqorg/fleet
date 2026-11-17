@@ -365,12 +365,12 @@ func opArtifactList(q *Request) (any, error) {
 		ExecutionID, TaskID, MediaType, ProjectID, Q *string
 		States                                       []string
 		Since                                        *float64
-		ProjectIDs                                   []*string
+		ProjectIDs, ExcludeProjectIDs                []*string
 		Limit                                        *float64
 		Before                                       *float64
 	}
 	decode(q.body, &b)
-	f := listFilter{ExecutionID: b.ExecutionID, TaskID: b.TaskID, MediaType: b.MediaType, ProjectID: b.ProjectID, Q: b.Q, States: b.States, Since: b.Since, ProjectIDs: b.ProjectIDs}
+	f := listFilter{ExecutionID: b.ExecutionID, TaskID: b.TaskID, MediaType: b.MediaType, ProjectID: b.ProjectID, Q: b.Q, States: b.States, Since: b.Since, ProjectIDs: b.ProjectIDs, ExcludeProjectIDs: b.ExcludeProjectIDs}
 	if b.Limit != nil {
 		if *b.Limit <= 0 || *b.Limit != float64(int64(*b.Limit)) {
 			return nil, fail(400, "Expected positive integer limit")

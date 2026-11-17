@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -144,6 +145,58 @@ func TestDeliveryReplyScoped(t *testing.T) {
 	}
 	if r := deliveryReply(last, func(string) bool { return false }); len(r.Items)+len(r.Samples) != 0 || r.Landing != 0 || r.Error != nil {
 		t.Fatalf("no access sees %+v", r)
+	}
+}
+
+// Requirement: OR-34 ignore is a server-side exclusion: delivery_status leaves out repositories listed only by excluded
+// projects, keeps one another listed project still shows, and applies after projectIds.
+// Risk: an ignored project's pull requests stay on Delivery with All projects, or a repository shared with a shown project vanishes.
+func TestDeliveryStatusExclude(t *testing.T) {
+	deliveryMu.Lock()
+	saved := deliveryLast
+	deliveryLast = deliveryState{source: contract.DeliverySourceKey, repos: map[string]*deliveryRepo{
+		"o/a": {projects: []string{"p1"}, items: []contract.DeliveryItem{{ProjectId: "p1", Repo: "o/a", Number: 1}}},
+		"o/b": {projects: []string{"p2", "p3"}, items: []contract.DeliveryItem{{ProjectId: "p2", Repo: "o/b", Number: 2}}},
+	}, samples: []contract.DeliverySample{{ProjectId: "p2", Repo: ptr("o/b")}}}
+	deliveryMu.Unlock()
+	t.Cleanup(func() { deliveryMu.Lock(); deliveryLast = saved; deliveryMu.Unlock() })
+	numbers := func(r contract.DeliveryStatusRequest) []int64 {
+		out, err := deliveryStatus(&Request{}, &r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ns := []int64{}
+		for _, it := range out.Items {
+			ns = append(ns, it.Number)
+		}
+		slices.Sort(ns)
+		return ns
+	}
+	for _, c := range []struct {
+		r    contract.DeliveryStatusRequest
+		want []int64
+	}{
+		{contract.DeliveryStatusRequest{}, []int64{1, 2}},
+		{contract.DeliveryStatusRequest{ExcludeProjectIds: []string{"p1"}}, []int64{2}},
+		{contract.DeliveryStatusRequest{ExcludeProjectIds: []string{"p2"}}, []int64{1, 2}}, // p3 lists o/b too
+		{contract.DeliveryStatusRequest{ExcludeProjectIds: []string{"p2", "p3", "-"}}, []int64{1}},
+		{contract.DeliveryStatusRequest{ProjectIds: []string{"p1", "p2"}, ExcludeProjectIds: []string{"p1"}}, []int64{2}},
+	} {
+		if got := numbers(c.r); !slices.Equal(got, c.want) {
+			t.Errorf("%+v: %v, want %v", c.r, got, c.want)
+		}
+	}
+	// o/b's items name p2; with p2 left out they name p3, which lists o/b too, so no row shows the ignored project.
+	out, _ := deliveryStatus(&Request{}, &contract.DeliveryStatusRequest{ExcludeProjectIds: []string{"p2"}})
+	for _, it := range out.Items {
+		if it.ProjectId == "p2" {
+			t.Fatalf("an item names the excluded project: %+v", it)
+		}
+	}
+	for _, s := range out.Samples {
+		if s.ProjectId == "p2" {
+			t.Fatalf("a sample names the excluded project: %+v", s)
+		}
 	}
 }
 

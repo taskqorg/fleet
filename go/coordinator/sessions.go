@@ -84,7 +84,7 @@ func (o sessionOrder) cols() string { return o.g + " AS g," + o.s + " AS sk" }
 func (o sessionOrder) by() string   { return o.g + "," + o.s + `,x.id COLLATE "C"` }
 
 func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
-	if err := filterFields(f, "projectId", "state", "search", "archived"); err != nil {
+	if err := filterFields(f, "projectId", "excludeProjectId", "state", "search", "archived"); err != nil {
 		return nil, err
 	}
 	c := []string{"NOT (x.data ? 'archivedAt')"}

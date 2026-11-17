@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1189,11 +1190,24 @@ func artifactGetView(ctx context.Context, a *App, id, hostID string) (doc, error
 
 type listFilter struct {
 	ExecutionID, TaskID, MediaType, ProjectID, Q *string
-	ProjectIDs                                   []*string
+	ProjectIDs, ExcludeProjectIDs                []*string
 	States                                       []string
 	Since                                        *float64
 	Limit, Before                                *int64
 	NoExamples                                   bool
+}
+
+// splitNull: project ids and whether null (work outside projects) is among them.
+func splitNull(xs []*string) ([]string, bool) {
+	named, null := []string{}, false
+	for _, x := range xs {
+		if x == nil {
+			null = true
+		} else {
+			named = append(named, *x)
+		}
+	}
+	return named, null
 }
 
 // artifactList: mediaType ending in '/' matches a family, newest-first pages by seq when limit is given.
@@ -1220,15 +1234,17 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]doc, error) {
 		}
 	}
 	if len(f.ProjectIDs) > 0 {
-		named, null := []string{}, ""
-		for _, x := range f.ProjectIDs {
-			if x == nil {
-				null = " OR project_id IS NULL"
-			} else {
-				named = append(named, *x)
-			}
+		named, null := splitNull(f.ProjectIDs)
+		cond := "(project_id=ANY($?))"
+		if null {
+			cond = "(project_id=ANY($?) OR project_id IS NULL)"
 		}
-		add("(project_id=ANY($?)"+null+")", named)
+		add(cond, named)
+	}
+	if len(f.ExcludeProjectIDs) > 0 { // the person's ignored projects (OR-34); '-' or null is no project
+		ids, null := splitNull(f.ExcludeProjectIDs)
+		named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
+		c = notInProjects(c, &p, "project_id", named, null || len(named) < len(ids))
 	}
 	if len(f.States) > 0 {
 		add("state=ANY($?)", f.States)

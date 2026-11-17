@@ -7,7 +7,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op } from '../api.ts';
-import { withFocus, scopeReady } from '../prefs.ts';
+import { withFocus, prefsRead } from '../prefs.ts';
 import { subscribe } from '../feed.ts';
 import { useDoc } from '../store.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
@@ -28,7 +28,8 @@ export function Results({ id }: { id?: string }) {
   const typed = { terms: known, text: [raw.text, ...Object.entries(raw.terms).filter(([k]) => !(k in known)).map(([k, v]) => `${k}:${v}`)].filter(Boolean).join(' ') };
   const extra = { ...view.extra, ...typed.terms };
   const media = extra.media?.toLowerCase();
-  const filter = { q: typed.text || undefined, states: states.length ? states : undefined, projectIds: withFocus(view).project?.length ? withFocus(view).project : undefined, taskId: extra.task, executionId: extra.execution,
+  const scoped = withFocus(view);
+  const filter = { q: typed.text || undefined, states: states.length ? states : undefined, projectIds: scoped.project?.length ? scoped.project : undefined, excludeProjectIds: scoped.exclude, taskId: extra.task, executionId: extra.execution,
     mediaType: media ? MEDIA[media] : undefined, since: extra.since && SINCE[extra.since] ? Date.now() - SINCE[extra.since] : undefined };
   const fkey = JSON.stringify({ ...filter, since: extra.since });
   const [rows, setRows] = useState<Row[] | null>(null), [next, setNext] = useState<number | null>(null), [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
@@ -42,7 +43,7 @@ export function Results({ id }: { id?: string }) {
       setRows(x => before && x ? [...x, ...(r.artifacts as Row[]).filter(a => !x.some(y => y.id === a.id))] : r.artifacts as Row[]); setNext(r.nextBefore ?? null); setError(null); }
     catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
-  const ready = scopeReady.value; // the filter carries the focus and ignore
+  const ready = prefsRead.value; // the filter carries the focus and ignore
   useEffect(() => { if (!ready) { gen.current++; setRows(null); return; } load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey, ready]);
   const chips: Chip[] = Object.entries(view.extra ?? {}).filter(([k]) => !(k in typed.terms)).filter((e): e is [string, string] => ['media', 'since', 'task', 'execution'].includes(e[0]) && e[1] !== undefined).map(([field, value]) => ({ field, value }));
   const now = Date.now();

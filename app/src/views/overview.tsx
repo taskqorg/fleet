@@ -3,27 +3,28 @@ import { useLocation, useSearch } from 'wouter-preact';
 import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, Button, keyConnection, actor, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { focusIds, scopeReady, prefs, knownProjects } from '../prefs.ts';
+import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
 // The focus and ignored projects (OR-34) narrow every part: questions, problems, counts and project rows.
-async function fetchOverview(projectIds?: string[]): Promise<Overview> {
-  const [q, p, page] = await Promise.all([op('questions_list', { state: 'open', projectIds }), op('executions_list', { needsYou: true, projectIds }),
-    op('task_page', { group: 'project', groupCounts: true, limit: 1, filter: projectIds ? { projectId: projectIds.map(x => x === '-' ? null : x) } : {} })]);
+async function fetchOverview(scope: ReturnType<typeof scopeIds>): Promise<Overview> {
+  const { projectIds, excludeProjectIds } = scope;
+  const [q, p, page] = await Promise.all([op('questions_list', { state: 'open', ...scope }), op('executions_list', { needsYou: true, ...scope }),
+    op('task_page', { group: 'project', groupCounts: true, limit: 1, filter: { ...(projectIds && { projectId: projectIds.map(noProject) }), ...(excludeProjectIds && { excludeProjectId: excludeProjectIds.map(noProject) }) } })]);
   // One grouped call: each project's per-state counts (groupCounts); tasks without a project are their own group.
   const projects = (page.groups as any[]).map(g => ({ id: g.label ?? 'no project', project: g.label ?? null, counts: g.counts }));
   return { questions: q.questions, problems: p.executions, counts: page.counts, hosts: null, projects };
 }
 
 export function Overview() {
-  // ?all: every project, focus and ignore not applied; the header's "need you outside focus" opens it (app-shell.md).
+  // ?all: the focus not applied; the header's "need you outside focus" opens it (app-shell.md).
   const all = new URLSearchParams(useSearch()).has('all');
   // ?all drops the focus, not the ignore: ignore is full silence (OR-34).
-  const focus = focusIds(!all);
+  const scope = scopeIds(!all);
   const alive = useAlive();
   const [, go] = useLocation();
-  const { data, state, error } = useDoc<Overview>(scopeReady.value && (!all || !prefs.value.ignored.length || knownProjects.value !== null) ? 'overview:' + (all ? '*:' : '') + (focus ?? []).join(',') : null, () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
+  const { data, state, error } = useDoc<Overview>(prefsRead.value ? 'overview:' + JSON.stringify(scope) : null, () => fetchOverview(scope), c => ['task', 'question', 'execution'].includes(c.kind));
   const hostsRec = useDoc<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = Date.now();
   const hosts = hostsRec.data, hostNow = hosts ? hosts.serverNow + (now - hosts.fetchedAt) : now;

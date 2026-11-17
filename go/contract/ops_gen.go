@@ -352,10 +352,11 @@ func (v *ExperimentNote) Validate() error {
 
 // ListFilter: The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.
 type ListFilter struct {
-	Archived  *bool    `json:"archived,omitempty"`
-	ProjectId []string `json:"projectId,omitempty"`
-	Search    *string  `json:"search,omitempty"`
-	State     []string `json:"state,omitempty"`
+	Archived         *bool    `json:"archived,omitempty"`
+	ExcludeProjectId []string `json:"excludeProjectId,omitempty"`
+	ProjectId        []string `json:"projectId,omitempty"`
+	Search           *string  `json:"search,omitempty"`
+	State            []string `json:"state,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

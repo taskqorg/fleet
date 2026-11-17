@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"fleet/contract"
 )
@@ -70,21 +71,30 @@ func (s searchQuery) focusFirst(p *[]any, col string) string {
 	return s.inFocus(p, col) + " DESC,"
 }
 
-// listFilter: the search and the focus as a list's own filter (task_page, sessions_list: a null projectId is no project).
+// listFilter: the search, the focus and the ignored projects as a list's own filter (task_page, sessions_list: a null
+// projectId or excludeProjectId is no project), as the app builds it for the list "All N" opens.
 func (s searchQuery) listFilter() doc {
 	f := doc{"search": s.raw}
 	if len(s.focus) > 0 {
-		ps := []any{}
-		for _, x := range s.focus {
-			if x == "-" {
-				ps = append(ps, nil)
-			} else {
-				ps = append(ps, x)
-			}
-		}
-		f["projectId"] = ps
+		f["projectId"] = nullProjects(s.focus)
+	}
+	if len(s.listIgnored) > 0 {
+		f["excludeProjectId"] = nullProjects(s.listIgnored)
 	}
 	return f
+}
+
+// nullProjects: project ids with '-' (no project) as null, the list filter's form.
+func nullProjects(ids []string) []any {
+	ps := []any{}
+	for _, x := range ids {
+		if x == "-" {
+			ps = append(ps, nil)
+		} else {
+			ps = append(ps, x)
+		}
+	}
+	return ps
 }
 
 // focused: a hit is in the focus. Every hit is without a focus, and so is a kind that has no project (host, agent, pipeline).
@@ -114,7 +124,6 @@ var searchCounters = map[contract.FoundKind]func(q *Request, s searchQuery) (int
 		if err != nil {
 			return 0, err
 		}
-		c = projectNotIn(c, &p, "t.project_id", s.listIgnored)
 		return countOf(q, "SELECT count(*) FROM task t"+where(c), p...)
 	},
 	contract.FoundKindConversation: func(q *Request, s searchQuery) (int64, error) {
@@ -123,7 +132,6 @@ var searchCounters = map[contract.FoundKind]func(q *Request, s searchQuery) (int
 		if err != nil {
 			return 0, err
 		}
-		c = projectNotIn(c, &p, "x.project_id", s.listIgnored)
 		return countOf(q, sessionBase+" SELECT count(*) FROM x"+where(c), p...)
 	},
 	contract.FoundKindResult: func(q *Request, s searchQuery) (int64, error) {
@@ -191,21 +199,6 @@ func searchWhere(raw string, p *[]any, text []string, fields map[string]string, 
 	return c
 }
 
-// projectNotIn: the condition "col is not one of ids" ('-' is no project) appended to c; none when ids is empty. A row
-// without a project stays unless '-' is among ids.
-func projectNotIn(c []string, p *[]any, col string, ids []string) []string {
-	if len(ids) == 0 {
-		return c
-	}
-	named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
-	*p = append(*p, named)
-	cond := fmt.Sprintf("NOT coalesce(%s=ANY($%d),false)", col, len(*p))
-	if len(named) < len(ids) {
-		cond += " AND " + col + " IS NOT NULL"
-	}
-	return append(c, cond)
-}
-
 // Task columns of the search syntax; agent and host are subqueries, so every task query can use them without a join.
 // agent: the harness of the task's latest execution (task_derived.last_agent; task_derived.agent is set only while one runs).
 var taskSearchText = []string{"t.title", "t.id", "t.code"}
@@ -266,12 +259,49 @@ func searchQuestions(q *Request, s searchQuery, limit int) ([]contract.Found, er
 
 const sessionHitCols = sessionBase + " SELECT x.id,x.code,x.first_message,x.state,x.project_id," + sessionAgent + " AS agent,x.activity_at AS at FROM x"
 
-func sessionHits(rs []doc) []contract.Found {
+// sessionHits: conversation hits; words (the query's free text) give each the snippet of its first message around them.
+func sessionHits(rs []doc, words string) []contract.Found {
 	out := []contract.Found{}
 	for _, r := range rs {
 		t := []rune(firstString(astr(r["first_message"]), astr(r["code"]), astr(r["id"])))
 		out = append(out, contract.Found{Kind: contract.FoundKindConversation, Id: astr(r["id"]), Code: optStr(astr(r["code"])), Title: string(t[:min(200, len(t))]),
-			State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"])), Agent: optStr(astr(r["agent"])), At: optStr(astr(r["at"]))})
+			State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"])), Agent: optStr(astr(r["agent"])), At: optStr(astr(r["at"])),
+			Snippet: optStr(matchSnippet(astr(r["first_message"]), words))})
+	}
+	return out
+}
+
+// Snippet geometry: a match within the first snippetShown characters is in the title's visible start, so no snippet; a
+// snippet is up to snippetLen characters from the word start at most snippetLead characters before the match, so the
+// match comes first in the line, where a narrow row still shows it.
+const snippetShown, snippetLen, snippetLead = 24, 80, 8
+
+// matchSnippet: up to snippetLen characters of text (whitespace collapsed) from just before the first match of a word of
+// words that the title does not show (its first match lies past the start), with an ellipsis where it is cut; "" when
+// every word found is in the start or none is found.
+func matchSnippet(text, words string) string {
+	c := strings.Join(strings.Fields(text), " ")
+	low := strings.ToLower(c) // rune by rune: the same rune offsets as c
+	at := -1
+	for _, w := range strings.Fields(strings.ToLower(words)) {
+		if i := strings.Index(low, w); i >= 0 {
+			if r := utf8.RuneCountInString(low[:i]); r >= snippetShown && (at < 0 || r < at) {
+				at = r
+			}
+		}
+	}
+	if at < 0 {
+		return ""
+	}
+	t := []rune(c)
+	from := at - snippetLead
+	if i := slices.Index(t[from:at], ' '); t[from-1] != ' ' && i >= 0 { // start at a word; a long token is cut
+		from += i + 1
+	}
+	to := min(len(t), from+snippetLen)
+	out := "…" + strings.TrimSpace(string(t[from:to]))
+	if to < len(t) {
+		out += "…"
 	}
 	return out
 }
@@ -287,7 +317,7 @@ func searchConversations(q *Request, s searchQuery, limit int) ([]contract.Found
 	c = projectNotIn(c, &p, "x.project_id", s.ignored)
 	f := s.focusFirst(&p, "x.project_id")
 	rs, err := rowsOf(q, sessionHitCols+where(c)+" ORDER BY "+f+"x.activity_at DESC,x.id LIMIT "+fmt.Sprint(limit), p...)
-	return sessionHits(rs), err
+	return sessionHits(rs, s.text), err
 }
 
 // artifactSearch: the conditions of a results search as artifact_list applies them: deleted ones left out; results have
@@ -377,7 +407,7 @@ func searchCodes(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 	if err != nil {
 		return nil, err
 	}
-	hits := append(append(taskHits(ts), questionHits(qs)...), sessionHits(cs)...)
+	hits := append(append(taskHits(ts), questionHits(qs)...), sessionHits(cs, s.text)...)
 	byID := map[string]contract.Found{}
 	for _, h := range hits {
 		byID[string(h.Kind)+":"+h.Id] = h

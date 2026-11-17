@@ -65,34 +65,47 @@ func init() {
 }
 
 func deliveryStatus(q *Request, r *contract.DeliveryStatusRequest) (contract.DeliveryStatusReply, error) {
+	if err := excludeCheck(r.ExcludeProjectIds); err != nil {
+		return contract.DeliveryStatusReply{}, err
+	}
 	deliveryMu.Lock()
 	last := deliveryLast
 	deliveryMu.Unlock()
 	full := fullAccess(q.person)
 	in := func(p string) bool {
-		return len(r.ProjectIds) == 0 || slices.Contains(r.ProjectIds, p) || p == "" && slices.Contains(r.ProjectIds, "-")
+		has := func(ids []string) bool { return slices.Contains(ids, p) || p == "" && slices.Contains(ids, "-") }
+		return (len(r.ProjectIds) == 0 || has(r.ProjectIds)) && !has(r.ExcludeProjectIds)
 	}
-	// The focus works like access: a repository shows when a focused project lists it (items carry only its first project).
+	// The focus works like access: a repository shows when a focused project that is not left out (excludeProjectIds, the
+	// person's ignored projects) lists it; items carry only its first project.
 	return deliveryReply(last, func(p string) bool { return (full || mayAccessProjectID(q.person, p)) && in(p) }), nil
 }
 
 // deliveryReply: the part of the last pass a caller may see. A repository (its items, landing count, error and
 // samples) is visible when the caller may see a project listing it; a sample recorded before samples carried their
-// repository, when the caller may see its project.
+// repository, when the caller may see its project. An item or sample names the repository's first project; when the
+// caller may not see that one (no access, outside the focus, ignored), it names the first listing project the caller sees.
 func deliveryReply(last deliveryState, may func(project string) bool) contract.DeliveryStatusReply {
-	visible := func(projects ...string) bool {
-		for _, p := range projects {
-			if may(p) {
-				return true
-			}
+	shown := func(r *deliveryRepo) (string, bool) {
+		if r == nil {
+			return "", false
 		}
-		return false
+		i := slices.IndexFunc(r.projects, may)
+		if i < 0 {
+			return "", false
+		}
+		return r.projects[i], true
 	}
 	out := contract.DeliveryStatusReply{Source: last.source, RefreshedAt: last.refreshedAt, Items: []contract.DeliveryItem{}, Samples: []contract.DeliverySample{}}
 	var problems []string
 	for _, r := range last.repos {
-		if visible(r.projects...) {
-			out.Items = append(out.Items, r.items...)
+		if p, ok := shown(r); ok {
+			for _, it := range r.items {
+				if !may(it.ProjectId) {
+					it.ProjectId = p
+				}
+				out.Items = append(out.Items, it)
+			}
 			out.Landing += r.landing
 			if r.problem != "" {
 				problems = append(problems, r.problem)
@@ -100,7 +113,12 @@ func deliveryReply(last deliveryState, may func(project string) bool) contract.D
 		}
 	}
 	for _, s := range last.samples {
-		if r := last.repos[strings.ToLower(deref(s.Repo))]; r != nil && visible(r.projects...) || s.Repo == nil && visible(s.ProjectId) {
+		if p, ok := shown(last.repos[strings.ToLower(deref(s.Repo))]); ok {
+			if !may(s.ProjectId) {
+				s.ProjectId = p
+			}
+			out.Samples = append(out.Samples, s)
+		} else if s.Repo == nil && may(s.ProjectId) {
 			out.Samples = append(out.Samples, s)
 		}
 	}

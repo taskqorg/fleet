@@ -372,15 +372,23 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 	if r.Ignore != nil && r.Ignore.Project == "" {
 		return fail(400, "ignore: project is required")
 	}
-	// ignore.ignored decodes to false when absent, which would restore the project: it must be given.
-	if r.Ignore != nil {
+	// ignore.ignored and rowPin.pinned decode to false when absent, which would restore the project or unpin the row:
+	// each must be given.
+	if r.Ignore != nil || r.RowPin != nil {
 		var raw struct {
 			Ignore struct {
 				Ignored *bool `json:"ignored"`
 			} `json:"ignore"`
+			RowPin struct {
+				Pinned *bool `json:"pinned"`
+			} `json:"rowPin"`
 		}
-		if json.Unmarshal(q.body, &raw) != nil || raw.Ignore.Ignored == nil {
+		bad := json.Unmarshal(q.body, &raw) != nil
+		if r.Ignore != nil && (bad || raw.Ignore.Ignored == nil) {
 			return fail(400, "ignore: ignored is required")
+		}
+		if r.RowPin != nil && (bad || raw.RowPin.Pinned == nil) {
+			return fail(400, "rowPin: pinned is required")
 		}
 	}
 	if r.RowPin != nil && (r.RowPin.List == "" || r.RowPin.Id == "") {
