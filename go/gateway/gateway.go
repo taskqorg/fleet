@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -217,7 +218,11 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 			}
 			for _, v := range []*int64{l.FileBytes, l.ReplyBytes, l.StallMs, l.AnswerMs} {
 				if v != nil && *v < 1 {
-					return nil, fmt.Errorf("connection %s limits must be positive", name)
+					// Defaults for this connection only: one bad value never holds back every other connection.
+					logf("connection %s: a limit below 1 is ignored; defaults apply", name)
+					c.Limits = nil
+					s.Connections[name] = c
+					break
 				}
 			}
 		}
@@ -371,7 +376,7 @@ type gateway struct {
 	// File calls in flight (/healthz transfers), and the cancel of each upload still staging, by call id: a stop
 	// refuses those with draining, since nothing reached the provider yet.
 	transfers   atomic.Int64
-	handling    sync.WaitGroup // /v1/call requests in their handler
+	handling    atomic.Int64 // /v1/call requests in their handler
 	stagingLock sync.Mutex
 	staging     map[string]func()
 }
@@ -537,6 +542,7 @@ type progress struct {
 	stall, answer   time.Duration
 	lock            sync.Mutex
 	read, answering bool
+	done            bool // the request returned: later reads no longer touch the timer
 }
 
 func (p *progress) Read(b []byte) (int, error) {
@@ -545,7 +551,9 @@ func (p *progress) Read(b []byte) (int, error) {
 	defer p.lock.Unlock()
 	p.read = true
 	switch {
+	case p.done:
 	case p.answering:
+		p.timer.Reset(p.stall) // a body still sent while the provider answers is progress too
 	case err == io.EOF:
 		p.timer.Reset(p.answer)
 	default:
@@ -562,10 +570,11 @@ func (p *progress) answered() {
 	p.timer.Reset(p.stall)
 }
 
-// sent reports whether any byte of the body was read.
+// sent reports whether any byte of the body was read; after it the reads no longer touch the timer.
 func (p *progress) sent() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	p.done = true
 	return p.read
 }
 
@@ -614,10 +623,10 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 		request.Header.Set("Content-Type", b.contentType)
 	}
 	response, err := g.client.Do(request)
+	if file != nil && !file.sent() && err != nil && timedOut.Load() {
+		return nil, nil, errUnsent
+	}
 	if file != nil && err != nil && timedOut.Load() {
-		if !file.sent() {
-			return nil, nil, errUnsent
-		}
 		return nil, nil, errStalled
 	}
 	if err != nil {
@@ -883,6 +892,18 @@ type request struct {
 	begun                time.Time
 }
 
+// resolve reads the call's connection, provider and tool from the current snapshot.
+func (g *gateway) resolve(q *request) {
+	s := g.snapshot.Load()
+	c, known := s.Connections[q.connection]
+	q.c, q.p = c, s.Providers[c.Provider]
+	q.t, q.offered = q.p.Tools[q.tool]
+	q.offered = q.offered && known && contains(c.Tools, q.tool)
+	if q.run != nil {
+		q.run = s.tokens[q.run.Sha256] // nil once revoked
+	}
+}
+
 // admit refuses a call its token, grant, tool, intake or budget does not allow; nil admits it.
 func admit(q *request) *answer {
 	switch {
@@ -924,7 +945,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.handling.Add(1)
-	defer g.handling.Done()
+	defer g.handling.Add(-1)
 	startedMs := nowMs()
 	q := &request{id: fmt.Sprintf("%x-%x-%x", startedMs, os.Getpid(), g.calls.Add(1)-1), connection: connectionName, tool: toolName,
 		startedMs: startedMs, begun: time.Now()}
@@ -932,11 +953,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		q.run, q.bearer = g.authenticate(t), t
 	}
 	// The tool is resolved before the body is read: an upload's body is the file, read only once the call is admitted.
-	s := g.snapshot.Load()
-	c, known := s.Connections[connectionName]
-	q.c, q.p = c, s.Providers[c.Provider]
-	q.t, q.offered = q.p.Tools[toolName]
-	q.offered = q.offered && known && contains(c.Tools, toolName)
+	g.resolve(q)
 	if q.offered && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload {
 		g.serveUpload(w, r, q)
 		return
@@ -950,6 +967,8 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NewResponseController(w).SetReadDeadline(time.Now().Add(patience))
 	raw, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	http.NewResponseController(w).SetReadDeadline(time.Time{})
+	// A pause, budget block or tool change published while the body arrived applies to this call.
+	g.resolve(q)
 	a := admit(q)
 	if a == nil {
 		if a = g.serveJSON(w, r, q, raw, readErr); a == nil {
@@ -1161,7 +1180,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		return
 	}
 	var args map[string]json.RawMessage
-	encoded, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Fleet-Args"))
+	encoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(r.Header.Get("X-Fleet-Args"), "="))
 	if err != nil || json.Unmarshal(encoded, &args) != nil || args == nil {
 		refuse(refusal(400, "error", "bad-request", "X-Fleet-Args must be base64url JSON"), nil)
 		return
@@ -1173,6 +1192,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	}
 	delete(args, "name")
 	delete(args, "mediaType")
+	pathArgs := maps.Clone(args)
 	path, ok := fillPath(q.t, args)
 	// fillPath took the path fields; any other argument has no place in a file call.
 	ok = ok && len(args) == 0
@@ -1259,23 +1279,28 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	case readErr != nil || staged != r.ContentLength:
 		refuse(refusal(400, "error", "bad-request", "the file ended before Content-Length; nothing was sent"), nil)
 		return
+	case scan.found || newScanner(patterns).write([]byte(name)):
+		// No transfer record: its name may be the secret.
+		refuse(refusal(422, "error", "secret-found", "the file or its name contains a key value or the caller's token; nothing was sent"), nil)
+		return
 	case sum != want:
 		refuse(refusal(400, "error", "sha-mismatch", "the received bytes do not match X-Fleet-Sha256; nothing was sent"), transfer)
 		return
-	case scan.found || newScanner(patterns).write([]byte(name)):
-		refuse(refusal(422, "error", "secret-found", "the file or its name contains a key value or the caller's token; nothing was sent"), transfer)
-		return
 	}
 	// Staging can take minutes: the call is admitted again on the current snapshot before the key is attached.
-	now := g.snapshot.Load()
 	again := *q
-	again.run = now.tokens[q.run.Sha256]
-	again.c, again.offered = now.Connections[q.connection]
-	again.p = now.Providers[again.c.Provider]
-	again.t, ok = again.p.Tools[q.tool]
-	again.offered = again.offered && ok && contains(again.c.Tools, q.tool) && again.t.File != nil && *again.t.File == contract.GatewayFileModeUpload
+	g.resolve(&again)
+	again.offered = again.offered && again.t.File != nil && *again.t.File == contract.GatewayFileModeUpload
 	if a := admit(&again); a != nil {
 		refuse(a, transfer)
+		return
+	}
+	if fileBytes, _, _, _ = limits(again.c); fileBytes > 0 && staged > fileBytes {
+		refuse(refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), transfer)
+		return
+	}
+	if path, ok = fillPath(again.t, pathArgs); !ok || len(pathArgs) > 0 {
+		refuse(refusal(400, "error", "bad-request", "the tool's path changed while the file arrived"), transfer)
 		return
 	}
 	// One file part with the caller's name; the name rules keep it inside the quotes (RFC 7578 allows UTF-8).
@@ -1355,7 +1380,7 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 		return fail(502, "error", "provider-unreachable", "the file request got no answer")
 	}
 	defer response.Body.Close()
-	if !timer.Stop() && stalled.Load() {
+	if !timer.Stop() {
 		// The answer wait ran out as the headers came: the fetch is cancelled, so no byte of it can be read.
 		return fail(504, "error", "provider-stalled", "the provider did not answer the file request in time")
 	}
@@ -1695,11 +1720,8 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 		logf("drain timed out; remaining calls are cut")
 		server.Close()
 		// A cut call still writes its spool line (a post cut at the drain end may have been stored).
-		handled := make(chan struct{})
-		go func() { g.handling.Wait(); close(handled) }()
-		select {
-		case <-handled:
-		case <-time.After(5 * time.Second):
+		for end := time.Now().Add(5 * time.Second); g.handling.Load() > 0 && time.Now().Before(end); {
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	fmt.Printf("fleet-gateway: drained, lost spool lines: %d\n", g.spool.lost.Load())

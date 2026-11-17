@@ -1041,6 +1041,9 @@ func TestUploadKeySplitAcrossReadsRefused(t *testing.T) {
 	// The name goes to the provider too.
 	status, v := gw.uploadBytes([]byte("clean"), map[string]any{"issue": "TGT-12", "name": testToken + ".txt"})
 	expect(t, []any{status, v["error"]}, []any{422, "secret-found"}, "a token in the name")
+	if _, text := gw.spool(); strings.Contains(text, testToken) {
+		t.Fatal("the caller's token in the spool")
+	}
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 0, "provider requests")
 	expect(t, len(gw.parts()), 0, "staged files")
