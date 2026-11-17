@@ -52,7 +52,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
   // Anchor = first visible item and its distance from the viewport top, captured before each update.
   const anchor = useRef<{ key: string; delta: number } | null>(null);
   const requested = useRef<{ key: string; offsetPx?: number; align?: 'start' | 'center' | 'end' } | null>(null);
-  const prev = useRef<{ keys: Set<string>; atEdge: boolean }>({ keys: new Set(p.items.map(p.getKey)), atEdge: true });
+  const prev = useRef<{ keys: Set<string>; atEdge: boolean; top: number }>({ keys: new Set(p.items.map(p.getKey)), atEdge: true, top: 0 });
 
   const opts = {
     count: p.items.length,
@@ -80,13 +80,19 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const first = el ? v.getVirtualItemForOffset(el.scrollTop) : undefined;
     if (el && first) anchor.current = { key: String(first.key), delta: first.start - el.scrollTop };
     prev.current.atEdge = atEdge();
+    if (el) prev.current.top = el.scrollTop;
     if (prev.current.atEdge && unseen) setUnseen(0);
   };
+  // The person scrolled up from the followed bottom and its scroll event has not run yet (it fires on the next frame): a
+  // render in between must not read the old atEdge and pull the view back to the end. Rows appended below and a resized
+  // viewport leave scrollTop as it was; only a scroll moves it up.
+  const leftBottom = () => { const el = scroller.current; return !!el && p.follow === 'bottom' && prev.current.atEdge && el.scrollTop < prev.current.top - 1; };
 
   // Runs before paint whenever items change: keep the anchor row where it was, or follow the edge.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    if (leftBottom()) capture();
     // ponytail: O(n) key diff per update; switch to a server-provided "new since" count if lists reach millions client-side.
     // New rows counted for the pill: for 'bottom' (threads) the rows after the last row already shown; for 'top' (newest-first
     // lists, possibly grouped) the rows placed before the last old row. Rows paged in on the far side (older history) are not new.
@@ -114,6 +120,7 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
 
   // Viewport and measured heights can change without a new items array.
   useLayoutEffect(() => {
+    if (leftBottom()) { capture(); return; }
     if (p.follow === 'bottom' && prev.current.atEdge && !atEdge() && p.items.length) v.scrollToEnd();
   });
 

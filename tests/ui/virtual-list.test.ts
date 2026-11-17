@@ -28,3 +28,29 @@ test('mounted VirtualList anchor capture/restore, nearest deleted-key survivor a
     assert.equal(await page.getByRole('grid').evaluate(el=>el.scrollTop),0);
   } finally { await browser.close(); }
 });
+// Requirement: a 'bottom' list follows appended rows only while the reader is at the end (fleet-conversations.md, new-entry pill).
+// Risk: a render between the reader's scroll up and its scroll event pulls the view back to the end; the next row then
+// shows no pill and moves the row being read (CI flake "scrolled up: the pill counts the new entry").
+test('mounted bottom VirtualList keeps a scroll up that a render overtakes, and counts the next row in the pill', { skip: !process.env.FLEET_CONTROL_BROWSER }, async () => {
+  const result = await build({ stdin: { contents: `
+    import {render} from 'preact';import {VirtualList} from './packages/ui/src/index.ts';
+    const w=window;w.items=Array.from({length:200},(_,i)=>'row-'+i);
+    w.draw=()=>render(<VirtualList items={w.items} getKey={x=>x} rowHeight={32} follow="bottom" label="Fixture" render={x=><span>{x}</span>}/>,document.body);w.draw();
+  `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact' });
+  const browser = await chromium.launch({ headless: true }), page = await browser.newPage();
+  try {
+    await page.setContent('<body></body>'); await page.addStyleTag({ content: readFileSync('packages/ui/src/styles.css','utf8') + '.vl{height:300px}.vl-wrap{width:500px}' });
+    await page.addScriptTag({ content: result.outputFiles[0].text }); await page.getByRole('grid').waitFor();
+    const grid = page.getByRole('grid'), gap = () => grid.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight);
+    for (let i = 0; i < 50 && await gap() >= 2; i++) await page.waitForTimeout(20);
+    assert.ok(await gap() < 2, 'opens at the end');
+    // The scroll up and a render in one task: the render runs before the scroll event does.
+    const top = await grid.evaluate(el => { el.scrollTop -= 200; const t = el.scrollTop; const w = window as any; w.draw(); return t; });
+    await page.waitForTimeout(100);
+    assert.equal(await grid.evaluate(el => el.scrollTop), top, 'the render keeps the scroll up');
+    await page.evaluate(() => { const w = window as any; w.items = [...w.items, 'appended']; w.draw(); });
+    await page.waitForTimeout(100);
+    assert.equal(await grid.evaluate(el => el.scrollTop), top, 'an appended row leaves the view where the reader is');
+    assert.equal(await page.locator('.pill').textContent(), '1 new');
+  } finally { await browser.close(); }
+});
