@@ -129,8 +129,14 @@ func GatewayDownload(ctx context.Context, t GatewayTarget, connection, tool stri
 		Bytes     int64  `json:"bytes"`
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(x.res.Header.Get("X-Fleet-File"), "="))
+	if err == nil {
+		err = json.Unmarshal(raw, &meta)
+	}
 	size := x.res.ContentLength
-	if err != nil || json.Unmarshal(raw, &meta) != nil || size < 0 || meta.Bytes != size {
+	if size < 0 {
+		size = meta.Bytes // an edge may re-frame the stream without Content-Length; the gateway named the size
+	}
+	if err != nil || meta.Bytes < 0 || meta.Bytes != size {
 		x.fail(CallOutcomeError, "invalid-response") // the tool may be repeated: nothing is lost
 		return x.line
 	}

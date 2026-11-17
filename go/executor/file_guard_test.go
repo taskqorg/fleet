@@ -87,7 +87,7 @@ func TestGuardRefuses(t *testing.T) {
 	// (data folder with the journal, host secret). The default data folder and the gateway's state are covered too.
 	userHome, data := t.TempDir(), t.TempDir()
 	t.Setenv("FLEET_USER_HOME", userHome)
-	t.Setenv("FLEET_RUN_DENY", data+string(filepath.ListSeparator)+filepath.Join(outside, "host-secret"))
+	t.Setenv("FLEET_RUN_DENY", enc([]any{data, filepath.Join(outside, "host-secret")}))
 	dataDefault := ".local/state/fleet/executor/journal.sqlite"
 	if runtime.GOOS == "darwin" {
 		dataDefault = "Library/Application Support/Fleet/executor/journal.sqlite"
@@ -359,7 +359,7 @@ func TestUploadDenyLines(t *testing.T) {
 			t.Fatalf("%s missing from %s", want, lines)
 		}
 	}
-	if strings.Contains(lines, filepath.Join(dir, "data")+string(filepath.ListSeparator)) {
+	if strings.Contains(lines, `"`+filepath.Join(dir, "data")+`"`) {
 		t.Fatal("the whole data folder (sessions and worktrees) is denied")
 	}
 }

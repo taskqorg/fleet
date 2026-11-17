@@ -91,6 +91,9 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, argumen
 	}
 	path, _ := str(args["path"])
 	delete(args, "path")
+	if t.URL == "" || t.Token == "" {
+		return refusedLine(connection, tool, "connection-unavailable", "no gateway URL or token")
+	}
 	base := os.Getenv("FLEET_WORK_DIR")
 	if base == "" {
 		base, _ = os.Getwd()
@@ -114,7 +117,8 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, argumen
 	}
 	head := make([]byte, 512)
 	n, _ := f.ReadAt(head, 0)
-	fileName := filepath.Base(path)
+	// The name the caller gave, in the gateway's file-name rules (no quote, backslash, control or bidi character).
+	fileName := strings.ReplaceAll(contract.SafeName(filepath.Base(path)), `"`, "_")
 	return contract.GatewayUpload(context.Background(), t, connection, tool, args, contract.Upload{File: f, Size: info.Size(),
 		Name: fileName, MediaType: mediaTypeOf(fileName, head[:n]), Sha256: sum})
 }
@@ -134,9 +138,13 @@ func connectionDownload(t contract.GatewayTarget, connection string, tool any, a
 	}
 	var parts []string
 	for _, field := range jArr(tool, "inputSchema", "required") {
-		v, ok := str(jAt(arguments, jStr(field)))
+		raw := jAt(arguments, jStr(field))
+		v, ok := str(raw)
+		if n, isNumber := raw.(json.Number); isNumber {
+			v, ok = n.String(), true
+		}
 		if !ok {
-			return refusedLine(connection, name, "bad-request", fmt.Sprintf("%s is required", jStr(field)))
+			return refusedLine(connection, name, "bad-request", fmt.Sprintf("%s must be a string", jStr(field)))
 		}
 		parts = append(parts, v)
 	}

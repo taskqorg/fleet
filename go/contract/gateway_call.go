@@ -122,17 +122,20 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 		return x
 	}
 	var upload *progressReader
-	var reader io.Reader = bytes.NewReader(args)
+	var reader io.Reader
+	var jsonBody atomic.Pointer[progressReader] // the JSON body last handed to the transport (GetBody may replace it)
 	if body != nil {
 		upload = &progressReader{r: body, dog: x.dog, stall: stall, after: wait, want: length}
 		reader = upload
 		if length == 0 {
 			upload.done.Store(true)
 			reader = http.NoBody
+			x.dog.arm(wait)
 		}
 	} else {
 		// The JSON body too arms the header wait only once it was read whole; dial, TLS and the write run under stall.
-		reader = &progressReader{r: bytes.NewReader(args), dog: x.dog, stall: stall, after: wait, want: int64(len(args))}
+		jsonBody.Store(&progressReader{r: bytes.NewReader(args), dog: x.dog, stall: stall, after: wait, want: int64(len(args))})
+		reader = jsonBody.Load()
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(t.URL, "/")+"/v1/call/"+connection+"/"+tool, reader)
 	if err != nil {
@@ -145,7 +148,8 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 		// Rewindable, so the transport may resend a JSON body that a stale kept-alive connection never took.
 		req.ContentLength = int64(len(args))
 		req.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(&progressReader{r: bytes.NewReader(args), dog: x.dog, stall: stall, after: wait, want: int64(len(args))}), nil
+			jsonBody.Store(&progressReader{r: bytes.NewReader(args), dog: x.dog, stall: stall, after: wait, want: int64(len(args))})
+			return io.NopCloser(jsonBody.Load()), nil
 		}
 	}
 	for k, v := range t.Header {
@@ -160,16 +164,18 @@ func send(ctx context.Context, t GatewayTarget, connection, tool string, args []
 	}
 	req.Header.Set("User-Agent", "fleet-connection/1")
 	res, err := gatewayClient.Do(req)
-	sentAll := upload == nil || upload.done.Load()
+	sentAll := upload != nil && upload.done.Load() || upload == nil && jsonBody.Load().done.Load()
 	if err != nil {
 		var timeout net.Error
 		var op *net.OpError
 		switch {
 		case errors.As(err, &op) && op.Op == "dial":
 			x.fail(CallOutcomeError, "unreachable") // not connected: nothing was sent
-		case !sentAll:
+		case !sentAll && upload != nil:
 			// The gateway sends an upload on only once it has every byte: a cut before the last one reached nothing.
 			x.fail(CallOutcomeError, "upload-interrupted")
+		case !sentAll:
+			x.fail(CallOutcomeError, "unreachable") // the request never left whole, so the gateway cannot have run it
 		case x.dog.fired.Load() || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout():
 			x.fail(CallOutcomeUnknown, "client-timeout")
 		case upload != nil:

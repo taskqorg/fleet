@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -66,7 +67,10 @@ func denyEntries() []string {
 	list := append(homeEntries(home), homeEntries(os.Getenv("FLEET_USER_HOME"))...)
 	list = append(list, os.Getenv("FLEET_TOKEN_FILE"), os.Getenv("FLEET_CF_ACCESS_FILE"), os.Getenv("FLEET_HOST_SECRET_FILE"))
 	list = append(list, dataStores(os.Getenv("FLEET_DATA_DIR"))...)
-	list = append(list, filepath.SplitList(os.Getenv("FLEET_RUN_DENY"))...)
+	var named []string // FLEET_RUN_DENY is a JSON list: a path may hold the path-list separator
+	json.Unmarshal([]byte(os.Getenv("FLEET_RUN_DENY")), &named)
+	list = append(list, named...)
+	list = append(list, executorStores()...)
 	if runFilePath != "" {
 		// The run file's folder holds every live run's token file, not this run's alone.
 		list = append(list, runFilePath, filepath.Dir(runFilePath))
@@ -245,7 +249,8 @@ func mediaTypeOf(name string, head []byte) string {
 // registry) and every registry account's login folders, and the executor's FLEET_FILES_ROOTS.
 func uploadDenyLines(dataDir string) string {
 	userHome, _ := os.UserHomeDir()
-	deny := append(dataStores(dataDir), envOr("FLEET_HOST_SECRET_FILE", defaultSecretFile()), os.Getenv("FLEET_CODEX_HOME"), os.Getenv("FLEET_NATIVE_ACCOUNTS"))
+	deny := append(dataStores(dataDir), envOr("FLEET_HOST_SECRET_FILE", defaultSecretFile()))
+	deny = append(deny, executorStores()...)
 	if registry, err := readRegistry(); err == nil {
 		for _, a := range registry {
 			deny = append(deny, a.NativeHome) // CODEX_HOME, CLAUDE_CONFIG_DIR or GEMINI_HOME: the login itself
@@ -253,10 +258,31 @@ func uploadDenyLines(dataDir string) string {
 			deny = append(deny, homeEntries(a.CredentialHome)...)
 		}
 	}
-	deny = slices.DeleteFunc(deny, func(p string) bool { return p == "" || strings.ContainsAny(p, "\n\r") })
-	lines := "FLEET_USER_HOME=" + userHome + "\nFLEET_RUN_DENY=" + strings.Join(deny, string(filepath.ListSeparator)) + "\n"
+	deny = slices.DeleteFunc(deny, func(p string) bool { return p == "" })
+	lines := "FLEET_RUN_DENY=" + enc(deny) + "\n" // JSON escapes newlines, so one line
+	if !strings.ContainsAny(userHome, "\n\r") {
+		lines += "FLEET_USER_HOME=" + userHome + "\n"
+	}
 	if roots := os.Getenv("FLEET_FILES_ROOTS"); roots != "" && !strings.ContainsAny(roots, "\n\r") {
 		lines += "FLEET_FILES_ROOTS=" + roots + "\n"
 	}
 	return lines
+}
+
+// executorStores are the executor's other credential stores named by its environment: the Codex account, the account
+// registry, the forge's GitHub store, the artifact store's config and key file, and the browser bindings with each
+// project's Access file.
+func executorStores() []string {
+	list := []string{os.Getenv("FLEET_CODEX_HOME"), os.Getenv("FLEET_NATIVE_ACCOUNTS"), os.Getenv("FLEET_FORGE_CONFIG_DIR"), os.Getenv("FLEET_STORE_CONFIG"), os.Getenv("FLEET_BROWSER_BINDINGS")}
+	if c := storeConfig(); c != nil {
+		list = append(list, jStr(c, "keyFile"))
+	}
+	if b, err := os.ReadFile(os.Getenv("FLEET_BROWSER_BINDINGS")); err == nil {
+		if v, err := dec(string(b)); err == nil {
+			for _, binding := range jObj(v) {
+				list = append(list, jStr(binding, "production", "accessFile"))
+			}
+		}
+	}
+	return slices.DeleteFunc(list, func(p string) bool { return p == "" })
 }
