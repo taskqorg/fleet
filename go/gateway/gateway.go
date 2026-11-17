@@ -644,8 +644,8 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 			return nil, nil, errUnsent
 		case err != nil && timedOut.Load():
 			return nil, nil, errStalled
-		case err != nil && !sent && ctx.Err() == nil:
-			return nil, nil, errNoBody
+		case err != nil && !sent:
+			return nil, nil, errNoBody // also when the caller left before the transport read any byte
 		}
 	}
 	if err != nil {
@@ -693,13 +693,17 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, deref(p.KeyHeader), value, b, t.Headers)
 		var cut errBody
 		switch {
-		case err != nil && ctx.Err() != nil:
-			// The caller left: no failover, and a request already sent may still have been charged.
-			a := refusal(499, "unknown", "caller-cancelled", "the caller cancelled the call")
+		case errors.Is(err, errNoBody) && ctx.Err() != nil:
+			a := refusal(499, "error", "caller-cancelled", "the caller cancelled the call before the file was sent")
 			a.key = id
 			return a
 		case errors.Is(err, errNoBody):
 			a := refusal(502, "error", "provider-unreachable", "no byte of the file reached the provider; nothing was stored")
+			a.key = id
+			return a
+		case err != nil && ctx.Err() != nil:
+			// The caller left: no failover, and a request already sent may still have been charged.
+			a := refusal(499, "unknown", "caller-cancelled", "the caller cancelled the call")
 			a.key = id
 			return a
 		case errors.Is(err, errUnsent):
