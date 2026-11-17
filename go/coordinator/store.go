@@ -43,6 +43,10 @@ type actorKey struct{}
 // teardown and receipts of deleted work still land (migration 67). An agent acting for its director clears it.
 type showDeletedKey struct{}
 
+// agentHostRoutes: host routes that carry an agent's own request (its tools, project operations, child runs); they
+// read as the agent does, without deleted rows.
+var agentHostRoutes = map[string]bool{"/api/hosts/agent-tools": true, "/api/hosts/project-operations": true, "/api/hosts/delegations": true}
+
 // Canonical advisory-lock hierarchy. Within any transaction, requested locks are sorted and deduplicated by (rank, key),
 // and dynamic lock acquisition rejects any lock ordered before or equal to a lock already held in the transaction:
 //

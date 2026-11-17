@@ -619,8 +619,11 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 	gone := false
 	if same != nil || size == 0 {
 		err := txCtx(ctx, a, func(tx pgx.Tx) error {
-			// Checked again under the write lock: system_purge deletes an object nobody maps to under the same lock
+			// Checked again under the object lock: system_purge deletes an object nobody maps to under the same lock
 			// (cleanup.go runPurgeTasks), so a copy found before it may be gone now; then this upload stores its own.
+			if err := objectLock(ctx, tx, at.ID, keyOf(&Artifact{ProjectID: e.ProjectID, Scope: scope, ContentHash: hash})); err != nil {
+				return err
+			}
 			if same != nil && size > 0 {
 				if err := tx.QueryRow(ctx, "SELECT NOT EXISTS(SELECT 1 FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.project_id IS NOT DISTINCT FROM $1 AND a.scope=$2 AND a.content_hash=$3 AND c.store_id=$4 AND c.state='verified')", e.ProjectID, scope, hash, target.ID).Scan(&gone); err != nil || gone {
 					return err
@@ -652,6 +655,10 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		return nil, err
 	}
 	err = txCtx(ctx, a, func(tx pgx.Tx) error {
+		// A new copy of this content: a purge of the same object waits for it, or finished before it (cleanup.go).
+		if err := objectLock(ctx, tx, target.ID, keyOf(&Artifact{ProjectID: e.ProjectID, Scope: scope, ContentHash: hash})); err != nil {
+			return err
+		}
 		if err := insert(tx, "pending"); err != nil {
 			return err
 		}

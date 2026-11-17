@@ -2380,6 +2380,18 @@ DO $$ DECLARE t text; BEGIN
    ' OR project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))', t);
  END LOOP;
 END $$;
+-- A row a host writes later for a tombstoned execution (an event, an artifact, a question, a child run) is born
+-- tombstoned: host calls see deleted rows, and a stop lands only after the delete.
+CREATE FUNCTION fleet_inherit_tombstone() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE e text; BEGIN
+ IF NEW.tombstoned_at IS NOT NULL THEN RETURN NEW; END IF;
+ IF TG_TABLE_NAME = 'document' THEN e := NEW.data->>'executionId'; ELSE e := to_jsonb(NEW)->>TG_ARGV[0]; END IF;
+ IF e IS NOT NULL AND EXISTS (SELECT 1 FROM execution WHERE id = e AND tombstoned_at IS NOT NULL) THEN NEW.tombstoned_at := now(); END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER document_tombstone BEFORE INSERT ON document FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone();
+CREATE TRIGGER artifact_tombstone BEFORE INSERT ON artifact FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+CREATE TRIGGER question_tombstone BEFORE INSERT ON question FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+CREATE TRIGGER execution_tombstone BEFORE INSERT ON execution FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('parent_execution_id');
 -- Notes stay append-only for every writer but delete, which tombstones a deleted experiment's notes, and system_purge,
 -- which removes them.
 CREATE OR REPLACE FUNCTION fleet_note_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN

@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"fleet/contract"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func init() {
@@ -388,20 +390,25 @@ func deletePreview(q *Request, b *contract.ObjectDeleteRequest) (*cascade, contr
 func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectDeleteReply, error) {
 	var out contract.ObjectDeleteReply
 	var c *cascade
-	if err := runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
-		var err error
-		c, out, err = deletePreview(q, b)
-		return err
-	}); err != nil || b.Preview {
+	if b.Preview {
+		err := runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
+			var err error
+			c, out, err = deletePreview(q, b)
+			return err
+		})
 		return out, err
 	}
 	// Pipeline runs are cancelled first, each in its own transaction under its run lock (pipelineCancel), as a Lab
-	// cell cancel does; the step a host holds is stopped like any execution.
-	// The experiments stop first, so Lab launches no new trial meanwhile. ponytail: a pipeline run a task starts between
-	// these transactions is tombstoned uncancelled (hidden, so nothing advances it); cancel it in the last transaction if
-	// that is ever seen.
+	// cell cancel does; the step a host holds is stopped like any execution. The experiments stop first, so Lab
+	// launches no new trial meanwhile; the checks run in that same transaction, so a refused delete stops nothing.
+	// ponytail: a pipeline run a task starts between these transactions is tombstoned uncancelled; receipts of its
+	// steps (host calls see deleted rows) could still advance it. Cancel it in the last transaction if that is seen.
 	runs := []string{}
 	if err := runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
+		var err error
+		if c, out, err = deletePreview(q, b); err != nil {
+			return err
+		}
 		if err := exec(q, "UPDATE experiment SET state='stopped',stop_reason='deleted' WHERE id=ANY($1) AND state IN ('running','paused')", c.sets["experiment"]); err != nil {
 			return err
 		}
@@ -513,18 +520,21 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 			return err
 		}
 	}
-	if c.kind != "project" {
-		for _, t := range tombstoned {
-			a := &args{c: c}
-			if where := c.goesWith(t, a); where != "false" {
-				if err := exec(q, "UPDATE "+t+" SET tombstoned_at=now() WHERE "+andFilter(keptRows[t], where+" AND tombstoned_at IS NULL"), a.vals...); err != nil {
-					return err
-				}
-			}
+	for _, t := range tombstoned {
+		a := &args{c: c}
+		where := c.goesWith(t, a)
+		if where == "false" {
+			continue
+		}
+		if c.kind == "project" { // the project's own rows are hidden by project already
+			where += " AND project_id IS DISTINCT FROM (" + a.of("project") + ")[1]"
+		}
+		if err := exec(q, "UPDATE "+t+" SET tombstoned_at=now() WHERE "+andFilter(keptRows[t], where+" AND tombstoned_at IS NULL"), a.vals...); err != nil {
+			return err
 		}
 	}
-	// Budgets are settings of the object: they go now, with its secrets.
-	if err := exec(q, "DELETE FROM budget WHERE scope=$1 AND scope_id=$2", c.kind, c.id); err != nil {
+	// Budgets are settings of the object and its experiments: they go now, with its secrets.
+	if err := exec(q, "DELETE FROM budget WHERE (scope=$1 AND scope_id=$2) OR (scope='experiment' AND scope_id=ANY($3))", c.kind, c.id, c.sets["experiment"]); err != nil {
 		return err
 	}
 	if c.kind == "project" {
@@ -672,9 +682,8 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		}
 		removed, kept := contract.PurgeCount{Kind: kind, Ids: []string{}}, contract.PurgeCount{Kind: kind, Ids: []string{}}
 		var bytes int64
-		// A root kept only by another tombstoned root goes once that one went: repeat while a pass removes something.
-		for progress := true; progress && len(roots) > 0; {
-			progress = false
+		// One pass, as the preview: a root kept only by another tombstoned root goes at the next purge.
+		{
 			left := []string{}
 			for _, id := range roots {
 				rs, n, blocked, err := purgeRootTx(q, kind, id, b.Preview)
@@ -685,7 +694,6 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 					left = append(left, id)
 					continue
 				}
-				progress = !b.Preview
 				removed.Ids, bytes = append(removed.Ids, id), bytes+n
 				for _, r := range rs {
 					if rows[r.Kind] == nil {
@@ -741,9 +749,9 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 }
 
 // runPurgeTasks: delete the store objects and spans of earlier purges; a task that fails stays for the next purge.
-// Returns the tasks left. A store object is deleted inside a write transaction (the GLOBAL lock artifact_reserve's
-// inserts take too) after checking that no copy on that store maps to it again: an upload that deduplicated onto it,
-// or started a new copy of the same content, since the purge keeps it.
+// Returns the tasks left. A store object is deleted holding its object lock (objectLock, which artifact_reserve's
+// copy inserts take too) after checking that no copy on that store maps to it again: an upload that deduplicated onto
+// it, or started a new copy of the same content, since the purge keeps it. Span deletes run outside any transaction.
 func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 	var tasks []doc
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
@@ -755,15 +763,17 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 	}
 	left := int64(0)
 	for _, t := range tasks {
-		err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-			if err := showDeleted(q); err != nil {
-				return err
-			}
-			rest := []any{}
-			if store := astr(t["storeId"]); store != "" {
+		rest := []any{}
+		var err error
+		if store := astr(t["storeId"]); store != "" {
+			err = runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
+				rest = []any{}
+				if err := showDeleted(q); err != nil {
+					return err
+				}
 				s, err := storeGet(ctx, a, store)
 				if isNotFound(err) { // the store went with its host: nothing to delete
-					return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
+					return nil
 				}
 				var s3 *S3
 				if err == nil && s.State != "unreachable" {
@@ -774,6 +784,9 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 				}
 				for _, x := range anys(t["objects"]) {
 					o := mapOf(x)
+					if err := objectLock(ctx, q.tx, store, astr(o["key"])); err != nil {
+						return err
+					}
 					if o["hash"] != nil {
 						used, err := has(q, `SELECT 1 FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.store_id=$1 AND c.state<>'deleted'
 						  AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4`, store, o["projectId"], o["scope"], o["hash"])
@@ -788,31 +801,46 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 						rest = append(rest, o)
 					}
 				}
-				t["objects"] = rest
-			} else if ids := strs(t["executionIds"]); len(ids) > 0 && spanStore != nil {
-				for i := 0; i < len(ids); i += 200 {
-					part := ids[i:min(i+200, len(ids))]
-					if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
-						slog.Warn("purge: spans", "err", err)
-						for _, id := range ids[i:] {
-							rest = append(rest, id)
-						}
-						break
+				return nil
+			})
+			t["objects"] = rest
+		} else if ids := strs(t["executionIds"]); len(ids) > 0 && spanStore != nil {
+			for i := 0; i < len(ids); i += 200 {
+				part := ids[i:min(i+200, len(ids))]
+				if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
+					slog.Warn("purge: spans", "err", err)
+					for _, id := range ids[i:] {
+						rest = append(rest, id)
 					}
+					break
 				}
-				t["executionIds"] = rest
 			}
-			if len(rest) == 0 {
-				return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
-			}
-			left++
-			return put(q, "purge-task", t)
-		})
+			t["executionIds"] = rest
+		}
+		if err == nil {
+			err = runTx(ctx, a, nil, true, "", func(q *Request) error {
+				if len(rest) == 0 {
+					return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
+				}
+				return put(q, "purge-task", t)
+			})
+		}
 		if err != nil {
 			return left, err
 		}
+		if len(rest) > 0 {
+			left++
+		}
 	}
 	return left, nil
+}
+
+// objectLock: the transaction lock of one store object (content-addressed key): purge's check-and-delete and
+// artifact_reserve's copy inserts of the same content serialize on it, outside the canonical lock order (a leaf lock,
+// held until the transaction ends, never followed by another wait).
+func objectLock(ctx context.Context, tx pgx.Tx, storeID, key string) error {
+	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "object:"+storeID+":"+key)
+	return err
 }
 
 // clickhouseStrings: an Array(String) parameter value (ClickHouse literal syntax).

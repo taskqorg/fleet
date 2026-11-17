@@ -218,6 +218,11 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 	if c, _ := call("object_delete", doc{"kind": "experiment", "id": "x1", "preview": true}, owner); c != 409 {
 		t.Fatalf("a second experiment delete: %d", c)
 	}
+	// A host reports for the deleted trial after the delete: the row is born tombstoned.
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `INSERT INTO document(kind,id,data,project_id) VALUES ('event','event:r1:late','{"id":"event:r1:late","executionId":"r1","seq":1,"type":"x"}','keep')`)
+	if n := appCount(t, e, false, "SELECT count(*) FROM document WHERE id='event:r1:late'"); n != 0 {
+		t.Fatalf("a late row of a deleted trial is read")
+	}
 	// A row written later that names a tombstoned trial keeps it at purge (design test 4).
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", "INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value) VALUES ('sc3','x2','keep','{r1}','j','1','typed','{}')")
 

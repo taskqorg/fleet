@@ -424,7 +424,9 @@ func (a *App) authorize(q *Request) error {
 			return fail(403, "Host requests carry no person")
 		}
 		q.host = host
-		q.r = q.r.WithContext(context.WithValue(q.ctx(), showDeletedKey{}, true))
+		if !agentHostRoutes[q.r.URL.Path] {
+			q.r = q.r.WithContext(context.WithValue(q.ctx(), showDeletedKey{}, true))
+		}
 		return nil
 	}
 	if a.browserSecret == "" || subtle.ConstantTimeCompare([]byte(supplied), []byte(a.browserSecret)) != 1 {
