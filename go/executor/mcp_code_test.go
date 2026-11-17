@@ -269,19 +269,24 @@ func TestCodeModePermissions(t *testing.T) {
 	}
 	defer sleeper.Process.Kill()
 	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "in.txt"), []byte("in"), 0o600)
+	outside := filepath.Join(t.TempDir(), "run.env") // like the run file: outside every read root
+	os.WriteFile(outside, []byte("FLEET_RUN_TOKEN=invented"), 0o600)
 	c := newCodeClient(t, M{"dir": dir, "read": []any{dir}})
 	src := `const fs = require("node:fs"); const out = {}
 		try { process.kill(` + fmt.Sprint(sleeper.Process.Pid) + `, "SIGTERM"); out.signal = "allowed" } catch (e) { out.signal = e.code === "EPERM" || e.code === "ESRCH" ? "refused" : e.code }
 		try { fs.writeFileSync(` + enc(filepath.Join(dir, "x")) + `, "1"); out.write = "allowed" } catch (e) { out.write = e.code }
 		try { require("node:child_process").execSync("true"); out.exec = "allowed" } catch (e) { out.exec = e.code }
 		out.read = fs.readdirSync(` + enc(dir) + `).length
+		out.inside = fs.readFileSync(` + enc(filepath.Join(dir, "in.txt")) + `, "utf8")
+		try { fs.readFileSync(` + enc(outside) + `); out.outside = "allowed" } catch (e) { out.outside = e.code }
 		try { await fetch(` + enc(srv.URL) + `); out.fetch = "allowed" } catch (e) { out.fetch = "refused" }
 		out.raw = await new Promise(done => {
 			const r = new (require("_http_client").ClientRequest)(` + enc(srv.URL) + `, () => done("allowed"))
 			r.on("error", () => done("refused")); r.end() })
 		return out`
 	r, bad := c.code(src)
-	if bad || enc(r["value"]) != `{"exec":"ERR_ACCESS_DENIED","fetch":"refused","raw":"refused","read":0,"signal":"refused","write":"ERR_ACCESS_DENIED"}` || hits.Load() != 0 {
+	if bad || enc(r["value"]) != `{"exec":"ERR_ACCESS_DENIED","fetch":"refused","inside":"in","outside":"ERR_ACCESS_DENIED","raw":"refused","read":1,"signal":"refused","write":"ERR_ACCESS_DENIED"}` || hits.Load() != 0 {
 		t.Fatalf("permissions: %v %v, server hits %d", bad, r, hits.Load())
 	}
 	if sleeper.Process.Signal(syscall.Signal(0)) != nil {
@@ -317,7 +322,7 @@ func TestCodeModeRuntimeRestart(t *testing.T) {
 	c := newCodeClient(t, M{"dir": t.TempDir()})
 	c.code(`state.kept = 1`)
 	r, bad := c.code(`require("node:fs").writeSync(2, "the reason"); process.exit(3)`)
-	if !bad || !strings.HasPrefix(jStr(r, "error", "message"), "runtime-exited") || jStr(r, "error", "stderr") != "the reason" {
+	if !bad || !strings.HasPrefix(jStr(r, "error", "message"), "runtime-exited") || jStr(r, "error", "stderrTail") != "the reason" {
 		t.Fatalf("exit: %v %v", bad, r)
 	}
 	r, bad = c.code(`return state.kept ?? "gone"`)

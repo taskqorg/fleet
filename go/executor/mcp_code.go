@@ -392,12 +392,7 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	for n, spec := range s.conns {
 		names[n] = mcpToolNames(spec)
 	}
-	fleetNames := []string{}
-	for n := range s.fleet {
-		fleetNames = append(fleetNames, n)
-	}
-	slices.Sort(fleetNames)
-	rt.send(M{"type": "tools", "fleet": anyStrings(fleetNames), "conns": names}) // before any run line
+	rt.send(M{"type": "tools", "fleet": anyStrings(sortedKeysOf(s.fleet)), "conns": names}) // before any run line
 	return rt, true, nil
 }
 
@@ -489,7 +484,7 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.Reader) {
 	rt.cmd.Wait()
 	exited := runtimeExited()
 	if t := strings.TrimSpace(rt.tail.String()); t != "" {
-		exited["stderr"] = t // why it stopped: a sandbox that cannot start, a crash
+		exited["stderrTail"] = t // the end of the runtime's stderr: why it stopped, such as a sandbox that cannot start
 	}
 	s.mu.Lock()
 	var open []*codeJob
@@ -517,20 +512,32 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.Reader) {
 func (s *codeServer) line(rt *codeRuntime, line []byte) {
 	m, err := dec(string(line))
 	if err != nil {
+		// Only user code writing to fd 3 breaks a line; every running job of this runtime says so, since its own done or
+		// call line may be the one lost.
+		s.mu.Lock()
+		for _, j := range s.jobs {
+			if j.rt == rt && jobStatus(j) == "running" {
+				j.output.WriteString("[code server: dropped a protocol line that does not decode; fd 3 is the runtime's own pipe]\n")
+			}
+		}
+		s.mu.Unlock()
+		return
+	}
+	if jStr(m, "type") == "print" {
+		s.mu.Lock() // one lock for lookup and write: a concurrent final reply cannot orphan the text
+		if j := s.jobs[jStr(m, "job")]; j != nil {
+			j.output.WriteString(jStr(m, "text"))
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+		fmt.Fprint(os.Stderr, jStr(m, "text"))
 		return
 	}
 	s.mu.Lock()
 	j := s.jobs[jStr(m, "job")]
 	s.mu.Unlock()
 	switch jStr(m, "type") {
-	case "print":
-		if j != nil {
-			s.mu.Lock()
-			j.output.WriteString(jStr(m, "text"))
-			s.mu.Unlock()
-		} else {
-			fmt.Fprint(os.Stderr, jStr(m, "text"))
-		}
 	case "done":
 		if j != nil {
 			// A call started before the return (unawaited) is still part of the job: the final reply waits for it, so
@@ -702,7 +709,8 @@ var codeHost = func() func() (string, string, error) {
 	return func() (string, string, error) {
 		mu.Lock()
 		switch {
-		case at.IsZero() || err == nil && !(isFile(node) && isFile(sandbox)):
+		case !probing && (at.IsZero() || err == nil && !(isFile(node) && isFile(sandbox))):
+			probing = true
 			mu.Unlock()
 			probe()
 			mu.Lock()

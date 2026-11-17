@@ -72,12 +72,13 @@ const report = (what, e) => send({ type: 'print', job: e?.job ?? job.getStore() 
 process.on('unhandledRejection', (e) => report('Unhandled rejection:', e));
 process.on('uncaughtException', (e) => report('Uncaught exception:', e));
 
-function plain(v) {
-  if (v === undefined) return null;
+// The returned value as JSON text, serialized once: undefined or a function is null, a value JSON cannot hold (a cycle,
+// a BigInt) its util.inspect text.
+function valueJSON(v) {
   try {
-    return JSON.parse(JSON.stringify(v));
+    return JSON.stringify(v) ?? 'null';
   } catch {
-    return util.inspect(v, { depth: 6 });
+    return JSON.stringify(util.inspect(v, { depth: 6 }));
   }
 }
 
@@ -99,7 +100,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   job.run(m.job, async () => {
     try {
       const value = await new AsyncFunction(m.source)();
-      send({ type: 'done', job: m.job, ok: true, value: plain(value) });
+      out(`{"type":"done","job":${JSON.stringify(m.job)},"ok":true,"value":${valueJSON(value)}}\n`);
     } catch (e) {
       // Any thrown value ends the job, even one that cannot be turned into a string.
       const text = (f) => { try { const v = f(); return v == null ? null : String(v); } catch { return null; } };
