@@ -703,9 +703,14 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 		}
 	}
 	if r.UiOnSite == nil {
+		// A sighting before GitHub's publication time is the coordinator's clock behind GitHub's: its own version exists only
+		// once release.yml publishes it (versions are never reused), and a newer one seen within a minute is the same skew.
+		skew := r.Published
+		if p, err := time.Parse(time.RFC3339, r.Published); err == nil {
+			skew = p.Add(-time.Minute).Format(time.RFC3339)
+		}
 		for uv, at := range st.UISeen {
-			// Its own version seen up to a minute before GitHub's publication time is the coordinator's clock behind GitHub's.
-			if p, err := time.Parse(time.RFC3339, r.Published); err == nil && uv == v && at < r.Published && at >= p.Add(-time.Minute).Format(time.RFC3339) {
+			if at < r.Published && (uv == v || at >= skew) {
 				at = r.Published
 			}
 			if !versionLess(uv, v) && at >= r.Published && (r.UiOnSite == nil || at < *r.UiOnSite) {
@@ -1000,10 +1005,11 @@ func deliveryWindow(prs []contract.DeliveryPr, runs []contract.DeliveryRun, from
 // deliveryCompare: the regressions of current against base (a stat with enough values in both whose P50 or P90 grew
 // past ratio and by at least minDelta), each with the first value over the baseline's in the window and the range.
 func deliveryCompare(prs []contract.DeliveryPr, cur deliverySeries, base contract.DeliveryBaseline, s contract.DeliverySettings) []contract.DeliveryRegression {
+	// The bases a stat of the baseline compares under (deliveryBasis); a stat not listed compares under any.
+	compatible := map[string][]string{"install": {"exact-install-v1", deliveryBasis}, "total": {deliveryBasis}, "ui": {deliveryBasis}}
 	bs := map[string]contract.DeliveryStat{}
 	for _, b := range base.Stats {
-		basis := deref(base.MetricBasis)
-		if b.Key == "install" && basis != "exact-install-v1" && basis != deliveryBasis || (b.Key == "total" || b.Key == "ui") && basis != deliveryBasis {
+		if ok, listed := compatible[b.Key]; listed && !slices.Contains(ok, deref(base.MetricBasis)) {
 			continue
 		}
 		bs[b.Key] = b
