@@ -31,6 +31,8 @@ const pr = (n: number) => '#' + n;
 type Hist = { n: number; title: string; merged: number; d: { pr_ci: number; queue?: number; release: number; install?: number; total?: number }; removals: number; flakes: number };
 const MERGED = [35, 150, 143, 131, 30, 18, 26, 34, 7];
 const D0 = dayStart(NOW, -(MERGED.length - 1));
+// Install times are recorded from noon of the sixth day: that day is measured for its afternoon only (9 of 18).
+const REC = D0 + 5 * DAY + 12 * hr;
 const rnd = (() => { let s = 0x2545f491; return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s >>> 0) % 1e6) / 1e6; }; })();
 const logn = (median: number, spread: number) => { const z = Math.sqrt(-2 * Math.log(rnd() || 1e-6)) * Math.cos(2 * Math.PI * rnd()); return median * Math.exp(spread * z); };
 const TITLES = ['Delivery: day axis in the viewer zone', 'fix: lease renewal after host sleep', 'Gateway: drain before snapshot swap', 'Lists: row menu on long press', 'fix: interface history fixture',
@@ -45,7 +47,7 @@ const HIST: Hist[] = [];
       const merged = start + span * (k + 0.5) / count, outlier = di === 7 && k % 8 === 3;
       const d: Hist['d'] = { pr_ci: (outlier ? 690 : logn(ci[di], 0.9)) * min, release: logn(rel[di], 0.25) * min };
       if (di >= 2) d.queue = logn(q[di], 0.5) * min;
-      if (di >= 6 || (di === 5 && k % 2 === 0)) { d.install = logn(1.1, 0.3) * min; d.total = d.pr_ci + d.queue! + d.release + d.install; }
+      if (di >= 6 || (di === 5 && merged >= REC)) { d.install = logn(1.1, 0.3) * min; d.total = d.pr_ci + d.queue! + d.release + d.install; }
       const removals = rnd() < 0.12 ? 1 + Math.floor(rnd() * 2) : 0;
       HIST.push({ n: ++n, title: TITLES[n % TITLES.length], merged, d, removals, flakes: removals && rnd() < 0.4 ? 1 : 0 });
     }
@@ -136,13 +138,13 @@ function bucketsOf(range: Range): Bucket[] {
 }
 const q = quantile;
 const inB = (b: { start: number; end: number }) => HIST.filter(h => h.merged >= b.start && h.merged < b.end);
-// As the app: due a measure when it has one or recording had not begun (the fixture installs everything it measures).
-const due = (hs: Hist[]) => hs.filter(h => h.d.total !== undefined || h.merged < D0 + 5 * DAY).length;
+// As the app: due a measure when it has one or was released before recording began (the fixture installs all it measures).
+const due = (hs: Hist[]) => hs.filter(h => h.d.total !== undefined || h.merged < REC).length;
 /** Open to installed per bucket: P50 and P90 of the pull requests with every stage measured; none measured is "not measured", never 0. */
 function totalMark(b: Bucket): DayMark {
   const all = inB(b), xs = all.map(h => h.d.total).filter((v): v is number => v !== undefined);
   if (!all.length) return { v: null, missing: 'nothing merged' };
-  if (!xs.length) return { v: null, missing: b.start < D0 + 5 * DAY ? `install times recorded from ${day(D0 + 5 * DAY)} ${hourLabel(D0 + 5 * DAY)}` : 'not installed yet' };
+  if (!xs.length) return { v: null, missing: all.some(h => h.merged < REC) ? `install times recorded from ${day(REC)} ${hourLabel(REC)}` : 'not installed yet' };
   return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < due(all) ? `${xs.length} of ${due(all)} measured` : undefined, partial: b.today ? 'so far' : undefined };
 }
 const mergedMark = (b: Bucket): DayMark => ({ v: inB(b).length, partial: b.today ? 'so far' : undefined });
@@ -180,7 +182,7 @@ function PaceTotals({ d, range }: { d: PaceData; range: Range }) {
 const RANGES = [{ id: '24h', label: '24 h' }, { id: '7d', label: '7 days' }, { id: '30d', label: '30 days' }];
 function Where({ d }: { d: PaceData }) {
   return <ShareBar title="Where the time goes" label="Where the time goes" parts={d.share} value={fmt}
-    note={`mean per pull request, ${d.done.length} of ${d.scope.length} measured${d.picked ? ` · ${d.picked.tip}` : ''}`} />;
+    note={`mean per pull request, ${d.done.length} of ${d.scope.length} with every stage measured${d.picked ? ` · ${d.picked.tip}` : ''}`} />;
 }
 
 /* ---------- Moving now: each pull request in flight against its stage's norm ---------- */

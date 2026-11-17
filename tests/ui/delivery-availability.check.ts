@@ -90,6 +90,9 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
       durations, queueRuns: 1, queueRemovals: 0, flakes: 0});
   const prs = [
     pr(650, 'Merged before installs were recorded', dayStart(3) + 12 * 3600e3, {pr_ci: 8 * min, queue: 6 * min, release: 2 * min}),
+    // Four days ago: one released before recording began (due, never measured) beside a measured one.
+    pr(640, 'Released before recording', dayStart(4) + 10 * 3600e3, {pr_ci: 8 * min, queue: 6 * min, release: 2 * min}),
+    {...pr(641, 'Measured early', dayStart(4) + 11 * 3600e3, {pr_ci: 8 * min, queue: 6 * min, release: 2 * min, install: min, total: 17 * min})},
     pr(660, 'Merged yesterday A', dayStart(1) + 11 * 3600e3, {pr_ci: 8 * min, queue: 6 * min, release: 2 * min, install: min, total: 17 * min}),
     pr(661, 'Merged yesterday B', dayStart(1) + 13 * 3600e3, {pr_ci: 10 * min, queue: 7 * min, release: 2 * min, install: min, total: 95 * min}),
     // Installed, but its install time was not matched to its release: unmeasured, so yesterday is partly measured.
@@ -137,6 +140,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     const cols = chart.getByRole('button');
     assert.equal(await cols.count(), 7, 'seven calendar days');
     assert.match((await cols.nth(3).getAttribute('aria-label'))!, /: not measured \(install times recorded from /, 'three days ago is not measured');
+    assert.match((await cols.nth(2).getAttribute('aria-label'))!, /· 1 of 2 measured/, 'a release before recording counts against its day');
     assert.match((await cols.nth(5).getAttribute('aria-label'))!, /P50 \d+m, P90 1h 35m · 2 of 3 measured · above the 14-day P90 1h 14m/, 'yesterday is measured in part, its P90 red');
     // A past day measured in part is "partly measured", never "part of the day" (that is today only).
     assert.equal(await cols.nth(5).evaluate(e => e.classList.contains('some') && !e.classList.contains('part')), true, 'yesterday is partly measured');

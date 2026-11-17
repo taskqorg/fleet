@@ -267,12 +267,13 @@ const complete = (x: HistoryPr) => ['pr_ci', 'queue', 'release', 'install'].ever
  */
 export function totalMark(prs: HistoryPr[], b: Bucket, installsFrom: number | null): DayMark {
   const xs = prs.map(x => x.durations.total).filter((v): v is number => typeof v === 'number');
-  const n = prs.filter(x => due(x, installsFrom)).length;
   if (!prs.length) return { v: null, missing: 'nothing merged' };
   // Why none is measured, the most specific first: installed but its install time not matched, recording not begun, on its way.
-  if (!xs.length) return { v: null, missing: prs.some(x => !!x.installed?.coordinator) ? 'install times not recorded'
+  // An installed one without a measure: its hosts took a later release, or its install was not matched to this one.
+  if (!xs.length) return { v: null, missing: prs.some(x => !!x.installed?.coordinator) ? 'installed with a later release, or not matched to its own'
     : installsFrom && (b.end <= installsFrom || prs.some(x => unrecorded(x, installsFrom))) ? `install times recorded from ${day(installsFrom)} ${hourLabel(installsFrom)}`
     : 'not installed yet' };
+  const n = prs.filter(x => due(x, installsFrom)).length;
   return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < n ? `${xs.length} of ${n} measured` : undefined, partial: b.today ? 'so far' : undefined };
 }
 
@@ -310,7 +311,7 @@ function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick
     <DayChart title="Merged" label="Pull requests merged per day" kind="bar" size="sm" cols={buckets} marks={merged} value={v => String(Math.round(v))}
       cap={capOf(merged.map(m => m.v), { floor: 4, fence: Infinity })} tone="d2" axis selected={picked?.key ?? null} onSelect={pick} />
     <ShareBar title="Where the time goes" label="Where the time goes" parts={share} value={fmt}
-      note={`mean per pull request, ${done.length} of ${scope.length} measured${picked ? ` · ${picked.tip ?? picked.label}` : ''}`} />
+      note={`mean per pull request, ${done.length} of ${scope.length} with every stage measured${picked ? ` · ${picked.tip ?? picked.label}` : ''}`} />
   </div></DetailSection>;
 }
 
