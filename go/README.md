@@ -11,6 +11,7 @@ This module builds Fleet's coordinator, executor, connection gateway, updater, s
 - [executor](executor/README.md): host-side command runner, native harness adapter, and local journal.
 - [gateway](gateway/README.md): loopback-only provider-key gateway and Cloudflare Access guard.
 - [gen](gen/README.md): contract-schema-to-Go generator.
+- [errtrack](errtrack/README.md): unexpected errors and panics to Bugsink through sentry-go; a no-op without a DSN.
 - [obs](obs/README.md): trace spans, HTTP instrumentation, and ClickHouse sink.
 - [update](update/README.md): verified native and UI release installer.
 
@@ -29,7 +30,7 @@ This module builds Fleet's coordinator, executor, connection gateway, updater, s
 Run from this directory:
 
 ```sh
-go build ./contract ./gen ./obs
+go build ./contract ./gen ./obs ./errtrack
 CGO_ENABLED=0 go build -o bin/fleet-coordinator ./coordinator
 CGO_ENABLED=0 go build -o bin/fleet-executor ./executor
 CGO_ENABLED=0 go build -o bin/fleet-gateway ./gateway

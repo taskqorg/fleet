@@ -213,43 +213,44 @@ func githubPublic(ctx context.Context, path string) ([]byte, error) {
 	return b, err
 }
 
-// githubTokens: one minted token per connection and project, reused for githubTokenTTL and then revoked. Minting
+// readToks: one minted token per connection and project for the coordinator's own reads (GitHub screens, the Bugsink
+// resolution pass), reused for readTokenTTL and then revoked. Minting
 // and revoking per call (connCallFor) took about 12 s a read on PDS18 (two write transactions, a snapshot rewrite and a
 // spool ingest); the delivery history makes hundreds. The calls become tool_runs when the token is revoked.
-type githubToken struct {
+type readToken struct {
 	token string
 	until time.Time
 }
 
-const githubTokenTTL = 5 * time.Minute
+const readTokenTTL = 5 * time.Minute
 
 var (
-	githubTokMu    sync.Mutex // guards the two maps, never held across a mint
-	githubToks     = map[string]githubToken{}
-	githubTokLocks = map[string]*sync.Mutex{} // per connection and project, held across its mint
+	readTokMu    sync.Mutex // guards the two maps, never held across a mint
+	readToks     = map[string]readToken{}
+	readTokLocks = map[string]*sync.Mutex{} // per connection and project, held across its mint
 )
 
-func githubTokenFor(ctx context.Context, a *App, connection, project string) (string, error) {
+func readTokenFor(ctx context.Context, a *App, connection, project string) (string, error) {
 	if !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(connection) {
-		return "", fmt.Errorf("github %s: connection-unavailable", connection)
+		return "", fmt.Errorf("%s: connection-unavailable", connection)
 	}
 	key := connection + " " + project
-	githubTokMu.Lock()
-	l := githubTokLocks[key]
+	readTokMu.Lock()
+	l := readTokLocks[key]
 	if l == nil {
 		l = &sync.Mutex{}
-		githubTokLocks[key] = l
+		readTokLocks[key] = l
 	}
-	githubTokMu.Unlock()
+	readTokMu.Unlock()
 	l.Lock() // concurrent reads of one key share its mint; other keys never wait
 	defer l.Unlock()
-	githubTokMu.Lock()
-	t, ok := githubToks[key]
-	githubTokMu.Unlock()
+	readTokMu.Lock()
+	t, ok := readToks[key]
+	readTokMu.Unlock()
 	if ok && time.Now().Before(t.until) {
 		return t.token, nil
 	}
-	exec := "github-read:" + newID()
+	exec := connection + "-read:" + newID()
 	var token string
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		m, err := mint(q, doc{"executionId": exec, "projectId": project, "step": true}, []string{connection})
@@ -258,10 +259,10 @@ func githubTokenFor(ctx context.Context, a *App, connection, project string) (st
 		}
 		return err
 	}); err != nil {
-		return "", fmt.Errorf("github token for %s: %w", connection, err)
+		return "", fmt.Errorf("token for %s: %w", connection, err)
 	}
 	if token == "" {
-		return "", fmt.Errorf("github %s: connection-unavailable (not granted to %s, or intake closed)", connection, project)
+		return "", fmt.Errorf("%s: connection-unavailable (not granted to %s, or intake closed)", connection, project)
 	}
 	revoke := func() {
 		if err := runTx(context.Background(), a, nil, true, "", func(q *Request) error {
@@ -278,12 +279,12 @@ func githubTokenFor(ctx context.Context, a *App, connection, project string) (st
 		revoke()
 		return "", err
 	}
-	githubTokMu.Lock()
-	githubToks[key] = githubToken{token, time.Now().Add(githubTokenTTL)}
-	githubTokMu.Unlock()
+	readTokMu.Lock()
+	readToks[key] = readToken{token, time.Now().Add(readTokenTTL)}
+	readTokMu.Unlock()
 	// Revoked at its end whatever happens next (a restart revokes it too: revokeSteps); its calls are ingested then.
-	// ponytail: an access or intake change reaches a cached token within githubTokenTTL, not at the next read.
-	time.AfterFunc(githubTokenTTL+5*time.Second, revoke)
+	// ponytail: an access or intake change reaches a cached token within readTokenTTL, not at the next read.
+	time.AfterFunc(readTokenTTL+5*time.Second, revoke)
 	return token, nil
 }
 
@@ -292,7 +293,7 @@ func githubGateway(ctx context.Context, a *App, connection, project, tool string
 	if gatewayURL() == "" {
 		return nil, fmt.Errorf("github %s: connection-unavailable", tool)
 	}
-	token, err := githubTokenFor(ctx, a, connection, project)
+	token, err := readTokenFor(ctx, a, connection, project)
 	if err != nil {
 		return nil, err
 	}

@@ -7,6 +7,7 @@ Checked-in configuration the coordinator loads at start.
 * `pipelines/*.json`: pipeline definitions run by the coordinator's pipeline runner (`go/coordinator/pipelines.go`).
 * `lab/use-cases/<project>.json`: the Lab use-case registry; `lab/examples/*.json`: owner-written example seeds, imported as lab artifacts ([fleet-lab.md](../docs/designs/fleet-lab.md) "Use-case registry and examples").
 * `projects/<id>/project.json` and `rules.md`: connected projects, their locations and rules; `reference.json` where a project has a reference site.
+* `bugsink.json`: the operator app's Bugsink DSN, built into the bundle; `executor-defaults.json` holds the executor's (`bugsinkDsn`) ([error tracking](../docs/designs/fleet-error-tracking.md)).
 * `connections.example.json`: shape of the host-only connections file. Real connection files and keys never live here.
 
 `agents/`, `pipelines/` and `catalogue.json` are the repository revision of definitions the coordinator keeps in its store

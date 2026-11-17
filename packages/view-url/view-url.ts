@@ -105,8 +105,6 @@ const TABLE: Record<ViewName, Record<string, Key>> = {
   delivery: { q: text('q', true), state: listKey_('state', DELIVERY_STAGES) },
   hosts: {}, overview: {}, projects: {},
 };
-/** The extra (unparsed) query keys each view's own page writes; the browser error reporter keeps only these and the table's keys. */
-export const VIEW_EXTRA: Partial<Record<ViewName, readonly string[]>> = { results: ['task', 'execution', 'media', 'since'], delivery: ['group', 'sort', 'range', 'at'] };
 // The groups and sorts each list view takes, with its defaults (task_page and sessions_list).
 const ORDER: Partial<Record<ViewName, { groups: readonly string[]; sorts: readonly string[]; group: string; sort: string }>> = {
   tasks: { groups: TASK_GROUPS, sorts: TASK_SORTS, group: DEFAULT_TASK_GROUP, sort: DEFAULT_TASK_SORT },

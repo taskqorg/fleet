@@ -66,6 +66,7 @@ func newFixture(t *testing.T) *fixture {
 	}))
 	t.Cleanup(srv.Close)
 	f.u = newUpdater(pub)
+	f.u.bugsinkDir = ""
 	f.u.base, f.u.target, f.u.window, f.u.tick = srv.URL, "linux-amd64", 50*time.Millisecond, 5*time.Millisecond
 	f.root = t.TempDir()
 	r, err := openReleases(f.root)

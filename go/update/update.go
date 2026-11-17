@@ -90,6 +90,7 @@ type part struct {
 	bins              []string
 	dump              bool
 	uiBackend         string // nonempty selects the independently signed UI archive
+	app               string // the release's app directory ("." for a UI release); its source maps go to Bugsink
 	restart           func() error
 	activity          func(string) (func(), error)
 	health            func(ver string) probe
@@ -109,6 +110,7 @@ type updater struct {
 	guardURL     string // Access origin guard /verify on PDS18; "" skips the smoke
 	dumpCmd      func(ver, file string) error
 	cacheDir     string               // conditional GET cache (ETag and body per URL); "" caches nothing
+	bugsinkDir   string               // Bugsink upload settings (ci-token, ingest-url, sentry-org); none: no upload
 	published    map[string]time.Time // release version -> publish time, when a fetch learned it cheaply (lazily made)
 }
 
@@ -116,8 +118,8 @@ func newUpdater(key ed25519.PublicKey) *updater {
 	return &updater{base: releasesURL, repoURL: repoURL, key: key, target: runtime.GOOS + "-" + runtime.GOARCH,
 		client: &http.Client{Timeout: 10 * time.Minute}, now: time.Now, window: 30 * time.Second, tick: time.Second,
 		coordURL: "http://127.0.0.1:9470/api/health", gatewayURL: "http://127.0.0.1:8742/healthz",
-		guardURL: "http://127.0.0.1:9471/verify",
-		dumpCmd:  pgDump}
+		guardURL: "http://127.0.0.1:9471/verify", bugsinkDir: "/etc/fleet/bugsink",
+		dumpCmd: pgDump}
 }
 
 func (u *updater) result(ver, state, msg string) *Result {
@@ -190,6 +192,9 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	}
 	if err := u.install(p, cand, dir); err != nil {
 		return u.result(cand, "error", err.Error())
+	}
+	if p.app != "" {
+		u.uploadSourcemaps(filepath.Join(p.root, cand, p.app), cand)
 	}
 	return u.settle(p, cand, true)
 }

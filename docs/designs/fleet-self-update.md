@@ -242,6 +242,7 @@ All poll changes are additive: an N-1 executor ignores new answer fields and the
 | `FLEET_STORE_ENDPOINT_HOSTS` | the three store tunnel hosts, in shipped `config/executor-defaults.json` |
 | macOS `PATH` | set in the shipped plist's `EnvironmentVariables` (`/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`) |
 | `FLEET_CODEX_BIN` | `codex` on `PATH` |
+| `FLEET_BUGSINK_DSN` | the `fleet-executor` Bugsink DSN, `bugsinkDsn` in `config/executor-defaults.json`; set but empty turns error tracking off ([error tracking](fleet-error-tracking.md#3-server-errors)) |
 
 Env values override defaults; section 5 applies to the executor only (the coordinator keeps its env). The units read `~/.config/fleet/executor.env` only if it exists (`EnvironmentFile=-`; plist `[ -f … ] && .`). PDS18's coordinator env files keep their secret lines; updates never touch env files.
 

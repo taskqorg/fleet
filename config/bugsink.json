@@ -1,0 +1,4 @@
+{
+  "$comment": "Bugsink DSN of the operator app (docs/designs/fleet-error-tracking.md), built into the app bundle; a DSN is not a secret. Empty: the app reports no errors. The coordinator's tunnel accepts only FLEET_BUGSINK_WEB_DSN, which must name the same host and project.",
+  "web": "https://e9c04699ccaf48f396f6ac11b2b54fbd@bugsink.ufobe.com/1"
+}

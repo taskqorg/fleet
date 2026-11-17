@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/errtrack"
 	"fleet/obs"
 )
 
@@ -66,6 +67,10 @@ func startTelemetry(ctx context.Context, a *App) {
 		obs.Service, obs.Version, obs.HostID = "coordinator", version, pds18Host()
 		if obs.HostID == "" {
 			obs.HostID, _ = os.Hostname()
+		}
+		// Unexpected errors and panics go to Bugsink (docs/designs/fleet-error-tracking.md); no DSN, no events.
+		if err := errtrack.Start(os.Getenv("FLEET_BUGSINK_DSN"), "coordinator", obs.HostID, version); err != nil {
+			log.Printf("error tracking off: %v", err)
 		}
 		spanStore = clickhouseFromEnv()
 		spanWriter = &obs.Writer{CH: spanStore, Fails: 3,

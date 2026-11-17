@@ -92,6 +92,25 @@ var (
 	AttrMaxBytes = 256
 )
 
+// failHook receives a panic in Handler or Pass and a Pass error (the error tracker, set by main); nil drops them.
+var failHook atomic.Pointer[func(name string, panicValue any, err error)]
+
+// SetFailHook sets where a recovered panic of Handler or Pass (panicValue, before it is re-raised) and a failed Pass
+// (err) are reported, with the span name; nil drops them. A panic hook may wait briefly for delivery.
+func SetFailHook(f func(name string, panicValue any, err error)) {
+	if f == nil {
+		failHook.Store(nil)
+		return
+	}
+	failHook.Store(&f)
+}
+
+func reportFail(name string, p any, err error) {
+	if f := failHook.Load(); f != nil {
+		(*f)(name, p, err)
+	}
+}
+
 // SetSink sets where finished spans go; nil drops them. The sink must not block.
 func SetSink(f func(*Span)) {
 	if f == nil {
@@ -295,11 +314,15 @@ func Pass(ctx context.Context, name string, fn func(context.Context) (int, error
 		if r := recover(); r != nil {
 			s.Fail("panic")
 			s.End(nil)
+			reportFail("pass."+name, r, nil)
 			panic(r)
 		}
 		u := uint64(max(n, 0))
 		s.Items = &u
 		s.End(err)
+		if err != nil && ctx.Err() == nil {
+			reportFail("pass."+name, nil, err)
+		}
 	}()
 	n, err = fn(ctx)
 }
@@ -384,6 +407,9 @@ func Handler(next http.Handler, name func(*http.Request) string) http.Handler {
 			}
 			s.End(nil)
 			if p != nil {
+				if p != http.ErrAbortHandler {
+					reportFail(n, p, nil)
+				}
 				panic(p)
 			}
 		}()

@@ -2339,3 +2339,12 @@ END $$;
 ALTER TABLE resource_work SET (vacuum_truncate=false);
 ALTER TABLE resource_work_scope SET (vacuum_truncate=false);
 ALTER TABLE wake_outbox SET (vacuum_truncate=false);
+
+-- migration 66: browser errors moved to Bugsink, Fleet's error tracker (docs/designs/fleet-error-tracking.md). The
+-- client_error store of migration 62 is dropped; its open problems are withdrawn and answered ones let go of their cause.
+-- question_cause stays: every cause lookup uses it.
+SELECT set_config('fleet.project_ids','*',true);
+UPDATE question SET state=CASE WHEN state='open' THEN 'withdrawn'::question_state ELSE state END, cause=NULL
+ WHERE cause LIKE 'problem:client-error:%' AND state IN ('open','answered');
+DROP TABLE client_error_report;
+DROP TABLE client_error;

@@ -128,6 +128,7 @@ func TestUICycleSignedRollbackResume(t *testing.T) {
 	beforeDownloads, beforeProbes := downloads, probes
 	old := f.u
 	f.u = newUpdater(f.priv.Public().(ed25519.PublicKey))
+	f.u.bugsinkDir = ""
 	f.u.base, f.u.target, f.u.window, f.u.tick = old.base, old.target, old.window, old.tick
 	f.u.coordURL, f.u.client = old.coordURL, old.client
 	events = nil
