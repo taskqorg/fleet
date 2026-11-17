@@ -422,28 +422,34 @@ func stoppedUntil(db *sql.DB) bool {
 	return s != nil && nowMs() < s.until
 }
 
-// mayAsk: whether a lane may send now; after a stop only the one probing request.
-func mayAsk(db *sql.DB) bool {
+// mayAsk: whether a lane may send now; after a stop only the one probing request (probe).
+func mayAsk(db *sql.DB) (ok, probe bool) {
 	stopMu.Lock()
 	defer stopMu.Unlock()
 	s := stops[db]
 	if s == nil {
-		return true
+		return true, false
 	}
 	if nowMs() < s.until || s.probing {
-		return false
+		return false, false
 	}
 	s.probing = true
-	return true
+	return true, true
 }
 
-// answered records whether the coordinator as a whole took the request (any answer but unreachable, 429 or 503).
-func answered(db *sql.DB, took bool) {
+// answered records whether the coordinator as a whole took the request (any answer but unreachable, 429 or 503). Only
+// the probe's answer lifts a stop: a request sent before the stop says nothing about the coordinator since.
+func answered(db *sql.DB, took, probe bool) {
 	stopMu.Lock()
 	defer stopMu.Unlock()
 	if took {
-		delete(stops, db)
+		if probe {
+			delete(stops, db)
+		}
 		return
+	}
+	if stops[db] != nil && !probe {
+		return // a request sent before the stop: the stop and its probe stand
 	}
 	stops[db] = &coordinatorStop{until: nowMs() + 2000}
 }
@@ -636,6 +642,10 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			hold(false)
 			return nil
 		}
+		if stoppedUntil(db) {
+			hold(false)
+			return nil
+		}
 		if !read {
 			if err := bodies(db, rows); err != nil {
 				return err
@@ -660,13 +670,14 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 				batch = append(batch, nx)
 			}
 		}
-		if !mayAsk(db) {
+		ok, probe := mayAsk(db)
+		if !ok {
 			hold(false)
 			return nil
 		}
 		a := sendWithClient(context.Background(), deliveryClient, p.url, p.token, r.route, r.route, value)
 		stop := a.kind == answerRetry && (a.unreachable || a.status == http.StatusTooManyRequests || a.status == http.StatusServiceUnavailable)
-		answered(db, !stop)
+		answered(db, !stop, probe)
 		var response any
 		switch a.kind {
 		case answerOK:

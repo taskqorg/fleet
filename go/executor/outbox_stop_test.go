@@ -46,14 +46,19 @@ func TestStopProbesWithOneRequest(t *testing.T) {
 		stops[db].until = nowMs() - 1
 		stopMu.Unlock()
 	}
+	got := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return asked
+	}
 	reset()
-	if err := flush(db, srv.URL, "invented-token", "fixture-host"); err != nil || asked != 0 {
-		t.Fatalf("err=%v asked=%d, want every lane held inside the wait", err, asked)
+	if err := flush(db, srv.URL, "invented-token", "fixture-host"); err != nil || got() != 0 {
+		t.Fatalf("err=%v asked=%d, want every lane held inside the wait", err, got())
 	}
 	expire()
 	flush(db, srv.URL, "invented-token", "fixture-host")
-	if asked != 1 || count(db, "outbox") != 5 {
-		t.Fatalf("asked=%d pending=%d, want one probing request after the wait", asked, count(db, "outbox"))
+	if got() != 1 || count(db, "outbox") != 5 {
+		t.Fatalf("asked=%d pending=%d, want one probing request after the wait", got(), count(db, "outbox"))
 	}
 	expire()
 	mu.Lock()
