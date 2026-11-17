@@ -86,13 +86,16 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
   ];
   // History: three days ago merged before install times were recorded (not measured); yesterday measured.
   const pr = (number: number, title: string, merged: number, durations: Record<string, number>) =>
-    ({number, title, url: `https://github.com/taskqorg/fleet/pull/${number}`, headSha: 'h', mergeSha: 'm' + number, opened: iso(merged - 30 * min), merged: iso(merged), installed: durations.total ? {coordinator: iso(merged + 5 * min)} : {},
+    ({number, title, url: `https://github.com/taskqorg/fleet/pull/${number}`, headSha: 'h', mergeSha: 'm' + number, opened: iso(merged - 30 * min), merged: iso(merged), installed: durations.total ? {coordinator: iso(merged + 5 * min)} : {}, ...(durations.release ? {released: iso(merged + durations.release)} : {}),
       durations, queueRuns: 1, queueRemovals: 0, flakes: 0});
   const prs = [
     pr(650, 'Merged before installs were recorded', dayStart(3) + 12 * 3600e3, {pr_ci: 8 * min, queue: 6 * min, release: 2 * min}),
     pr(660, 'Merged yesterday A', dayStart(1) + 11 * 3600e3, {pr_ci: 8 * min, queue: 6 * min, release: 2 * min, install: min, total: 17 * min}),
     pr(661, 'Merged yesterday B', dayStart(1) + 13 * 3600e3, {pr_ci: 10 * min, queue: 7 * min, release: 2 * min, install: min, total: 95 * min}),
-    pr(662, 'Merged yesterday, no install', dayStart(1) + 15 * 3600e3, {pr_ci: 9 * min, queue: 6 * min, release: 2 * min}),
+    // Installed, but its install time was not matched to its release: unmeasured, so yesterday is partly measured.
+    {...pr(662, 'Merged yesterday, no install time', dayStart(1) + 15 * 3600e3, {pr_ci: 9 * min, queue: 6 * min, release: 2 * min}), installed: {coordinator: iso(dayStart(1) + 16 * 3600e3)}},
+    // Merged minutes ago and still on its way: pending, never "unmeasured".
+    {...pr(663, 'Merged just now', now - 10 * min, {pr_ci: 9 * min, queue: 6 * min}), released: iso(now - 5 * min)},
   ];
   const stat = (key: string, p50: number, p90: number) => ({key, n: 20, p50Ms: p50 * min, p90Ms: p90 * min});
   const base = {from: iso(dayStart(14)), until: iso(now), counts: {prs: 20, runs: 20, removals: 0, flakes: 0},
@@ -137,6 +140,7 @@ export async function checkDeliveryList(browser: Browser, origin: string) {
     assert.match((await cols.nth(5).getAttribute('aria-label'))!, /P50 \d+m, P90 1h 35m · 2 of 3 measured · above the 14-day P90 1h 14m/, 'yesterday is measured in part, its P90 red');
     // A past day measured in part is "partly measured", never "part of the day" (that is today only).
     assert.equal(await cols.nth(5).evaluate(e => e.classList.contains('some') && !e.classList.contains('part')), true, 'yesterday is partly measured');
+    assert.match((await cols.nth(6).getAttribute('aria-label'))!, /: not measured \(not installed yet\)/, 'today: a pull request on its way is pending');
     // A regression names its stage: the queue run, not a bare "run".
     await page.getByText('Queue run P50 is 7m, baseline 4m', {exact: true}).waitFor();
     assert.ok(await page.locator('.dc-vals .alert').count() >= 1, 'the P90 above the norm is red in the values row');

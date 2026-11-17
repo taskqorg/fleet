@@ -11,7 +11,7 @@
 
 **Scale.** `capOf` takes about P95 of the figures shown, rounded up to a clean step in the display unit. With a week of daily figures P95 is the maximum, so a figure over four times their median is left out first (`fence`; counts pass `Infinity`, since a busy day is no outlier). A figure above the scale is drawn to the top with a break and its true value above it.
 
-**States.** Measured; *partly measured* (`some`: only some items of the day have the figure, "8 of 22 measured" in the tooltip): the mark at half opacity and its value muted; *part of the day* (`partial`: today, so far): the mark is striped and its value muted; *not measured* (`v: null`, with the reason): a hatched column and `—`, never zero or a gap that reads as zero; selected day: `selected` fill and an `accent` base line in every chart of the stack. The head shows a key only for the states present.
+**States.** Measured; *partly measured* (`some`: only some items of the day have the figure, "8 of 22 measured" in the tooltip): the bar drawn hollow (an outline in its tone) and its value muted; *part of the day* (`partial`: today, so far): the mark is striped and its value muted; *not measured* (`v: null`, with the reason): a hatched column and `—`, never zero or a gap that reads as zero; selected day: `selected` fill and an `accent` base line in every chart of the stack. The head shows a key only for the states present.
 
 **Behaviour.** Each column is a button: hover and focus show the day's figures (`data-tip`, OR-20); a click picks the day and a second click clears it (the caller filters the list). Past 16 columns the cap labels and value rows give way to tooltips, and the axis labels every few days.
 

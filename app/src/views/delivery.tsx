@@ -254,12 +254,18 @@ const partOf = (x: HistoryPr, keys: string[]) => keys.reduce((s, k) => s + (x.du
 // Measured through install: every part has its own duration (enqueue and merge may be absent when there was no wait).
 const complete = (x: HistoryPr) => ['pr_ci', 'queue', 'release', 'install'].every(k => typeof x.durations[k] === 'number');
 
-/** Open to installed in a bucket: P50 and P90 of its pull requests measured through install; none measured is "not measured", never 0. */
+/**
+ * Open to installed in a bucket: P50 and P90 of its pull requests measured through install; none measured is "not
+ * measured", never 0. A pull request still on its way (not installed, released after installs were recorded) is pending,
+ * not unmeasured: only those installed or released before recording began count against "partly measured".
+ */
 export function totalMark(prs: HistoryPr[], b: Bucket, installsFrom: number | null): DayMark {
   const xs = prs.map(x => x.durations.total).filter((v): v is number => typeof v === 'number');
+  const unrecorded = (x: HistoryPr) => !!installsFrom && !!x.released && ms(x.released) < installsFrom;
+  const due = prs.filter(x => typeof x.durations.total === 'number' || !!x.installed?.coordinator || unrecorded(x)).length;
   if (!prs.length) return { v: null, missing: 'nothing merged' };
-  if (!xs.length) return { v: null, missing: installsFrom && b.start < installsFrom ? `install times recorded from ${day(installsFrom)} ${hourLabel(installsFrom)}` : 'not installed yet' };
-  return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < prs.length ? `${xs.length} of ${prs.length} measured` : undefined, partial: b.today ? 'so far' : undefined };
+  if (!xs.length) return { v: null, missing: prs.some(unrecorded) ? `install times recorded from ${day(installsFrom!)} ${hourLabel(installsFrom!)}` : 'not installed yet' };
+  return { v: q(xs, 0.5), hi: q(xs, 0.9), some: xs.length < due ? `${xs.length} of ${due} measured` : undefined, partial: b.today ? 'so far' : undefined };
 }
 
 function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick }: {
