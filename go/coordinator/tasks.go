@@ -493,8 +493,10 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 const questionCols = `id,code,kind,project_id AS "projectId",task_id AS "taskId",execution_id AS "executionId",session_id AS "sessionId",text,options,asked_by AS "askedBy",asked_at AS "askedAt",
  answer,answered_by AS "answeredBy",answered_at AS "answeredAt",state,data->'artifactIds' AS "artifactIds",data->'cause' AS cause`
 
-func questionsList(q *Request, taskID, state, kind string, projects ...string) ([]doc, error) {
+// questionsList: projects keeps those projects only, exclude leaves those out ('-' is no project in both; OR-34).
+func questionsList(q *Request, taskID, state, kind string, projects, exclude []string) ([]doc, error) {
 	c, p := projectIn(nil, nil, projects)
+	c = projectNotIn(c, &p, "project_id", exclude)
 	for _, f := range [][2]string{{taskID, "task_id"}, {state, "state::text"}, {kind, "kind::text"}} {
 		if f[0] != "" {
 			p = append(p, f[0])
@@ -528,6 +530,25 @@ func projectIn(c []string, p []any, ids []string) ([]string, []any) {
 		cond = "(" + cond + " OR project_id IS NULL)"
 	}
 	return append(c, cond), p
+}
+
+// projectNotIn: the condition "col is not one of ids" ('-' is no project) appended to c; none when ids is empty. A row
+// without a project stays unless '-' is among ids.
+func projectNotIn(c []string, p *[]any, col string, ids []string) []string {
+	named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
+	return notInProjects(c, p, col, named, len(named) < len(ids))
+}
+
+// notInProjects: the conditions "col is none of named" and, with null, "col is set" appended to c.
+func notInProjects(c []string, p *[]any, col string, named []string, null bool) []string {
+	if len(named) > 0 {
+		*p = append(*p, named)
+		c = append(c, fmt.Sprintf("NOT coalesce(%s=ANY($%d),false)", col, len(*p)))
+	}
+	if null {
+		c = append(c, col+" IS NOT NULL")
+	}
+	return c
 }
 
 func where(c []string) string {
@@ -664,6 +685,7 @@ func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.Exec
 		AND (project_id IS NULL OR EXISTS (SELECT 1 FROM definition d WHERE d.kind='project' AND d.id=execution.project_id))`)
 	}
 	c, p = projectIn(c, p, f.ProjectIds)
+	c = projectNotIn(c, &p, "project_id", f.ExcludeProjectIds)
 	if f.After != nil {
 		args := append(append([]any{}, p...), *f.After)
 		cursorWhere := append(append([]string{}, c...), fmt.Sprintf("id=$%d", len(args)))
@@ -761,7 +783,7 @@ func taskGet(q *Request, id string) (doc, error) {
 	if t["dependencies"], err = rowsOf(q, "SELECT d.depends_on_task_id AS id,d.kind,t.code FROM task_dependency d LEFT JOIN task t ON t.id=d.depends_on_task_id WHERE d.task_id=$1", id); err != nil {
 		return nil, err
 	}
-	t["questions"], err = questionsList(q, id, "", "")
+	t["questions"], err = questionsList(q, id, "", "", nil, nil)
 	return t, err
 }
 
@@ -840,6 +862,8 @@ func filterFields(f doc, known ...string) error {
 		case "projectId":
 			l, isList := v.([]any)
 			ok = isList && len(l) > 0
+		case "excludeProjectId": // empty: nothing is left out
+			_, ok = v.([]any)
 		case "search":
 			_, ok = v.(string)
 		case "archived":
@@ -853,7 +877,7 @@ func filterFields(f doc, known ...string) error {
 }
 
 func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
-	if err := filterFields(f, "projectId", "state", "search"); err != nil {
+	if err := filterFields(f, "projectId", "excludeProjectId", "state", "search"); err != nil {
 		return nil, err
 	}
 	c, err := projectWhere(f, p, "t.project_id", []string{})
@@ -878,21 +902,15 @@ func taskWhere(f doc, p *[]any, withState bool) ([]string, error) {
 	return c, nil
 }
 
-// projectWhere: the projectId filter (a list; null is work outside projects) as a condition on col.
+// projectWhere: the projectId filter (a list; null is work outside projects) and the excludeProjectId exclusion (the
+// person's ignored projects, OR-34; a project in both is left out) as conditions on col.
 func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 	if pv, ok := f["projectId"]; ok {
-		ps, _ := pv.([]any)
-		ids, o, null := []string{}, []string{}, false
-		for _, x := range ps {
-			switch v := x.(type) {
-			case string:
-				ids = append(ids, v)
-			case nil:
-				null = true
-			default:
-				return nil, fail(400, "Invalid projectId")
-			}
+		ids, null, err := projectList(pv, "projectId")
+		if err != nil {
+			return nil, err
 		}
+		o := []string{}
 		if len(ids) > 0 {
 			*p = append(*p, ids)
 			o = append(o, fmt.Sprintf("%s=ANY($%d)", col, len(*p)))
@@ -904,7 +922,31 @@ func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 			c = append(c, "("+strings.Join(o, " OR ")+")")
 		}
 	}
+	if xv, ok := f["excludeProjectId"]; ok {
+		ids, null, err := projectList(xv, "excludeProjectId")
+		if err != nil {
+			return nil, err
+		}
+		c = notInProjects(c, p, col, ids, null)
+	}
 	return c, nil
+}
+
+// projectList: a list filter's project ids and whether it holds null (work outside projects).
+func projectList(v any, field string) ([]string, bool, error) {
+	ps, _ := v.([]any)
+	ids, null := []string{}, false
+	for _, x := range ps {
+		switch v := x.(type) {
+		case string:
+			ids = append(ids, v)
+		case nil:
+			null = true
+		default:
+			return nil, false, fail(400, "Invalid "+field)
+		}
+	}
+	return ids, null, nil
 }
 
 const taskListCols = "t.id,t.code,t.project_id,t.title,t.state,t.pause_reason,t.wait_reason,t.priority,t.created_at,t.updated_at,t.seq,d.agent,d.host,d.started_at,coalesce(d.open_questions,0) AS open_questions,t.state_at,coalesce(d.executions,0) AS executions,d.last_agent"
@@ -1241,7 +1283,7 @@ func init() {
 		return taskDetail(q, id)
 	}))
 	gatedObjOp("questions_list", true, typedOp(func(q *Request, r *contract.QuestionsListRequest) (contract.QuestionsListReply, error) {
-		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind), r.ProjectIds...)
+		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind), r.ProjectIds, r.ExcludeProjectIds)
 		if err != nil {
 			return contract.QuestionsListReply{}, err
 		}
@@ -1401,7 +1443,7 @@ func rawAny(m json.RawMessage) any {
 }
 
 func findQuestion(q *Request, taskID, id string) (any, error) {
-	qs, err := questionsList(q, taskID, "", "")
+	qs, err := questionsList(q, taskID, "", "", nil, nil)
 	if err != nil {
 		return nil, err
 	}

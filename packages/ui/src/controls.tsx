@@ -1064,6 +1064,7 @@ export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, he
  */
 export type SpotlightItem = {
   key: string; icon: IconName; label: string; code?: string; sub?: string; run: () => void;
+  /** The matching text where the label does not show it (a conversation found by its message): one muted line under the label. */ snippet?: string;
   state?: { family: Family; state: string }; at?: number; outside?: boolean; more?: boolean;
   action?: { label: string; icon: IconName; pressed?: boolean; run: () => void };
 };
@@ -1148,7 +1149,7 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
   const open = (i: SpotlightItem | undefined) => {
     if (!i) return;
     // A recent item is a way back, not a live row: its state and age at the time it was opened would be stale.
-    if (!i.more) mem.recent = [{ ...i, outside: false, action: undefined, state: undefined, at: undefined }, ...mem.recent.filter(x => x.key !== i.key)].slice(0, RECENT);
+    if (!i.more) mem.recent = [{ ...i, outside: false, action: undefined, state: undefined, at: undefined, snippet: undefined }, ...mem.recent.filter(x => x.key !== i.key)].slice(0, RECENT);
     opened.current = true; onClose(); i.run();
   };
   // An action changes what the results show (a project added to the focus): they are asked again, the row stays highlighted.
@@ -1178,10 +1179,10 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
   let n = -1;
   const row = (i: SpotlightItem) => {
     const k = ++n, st = i.state && (states[i.state.family] as Record<string, StateDef>)[i.state.state] ? i.state : undefined;
-    return <li key={i.key} id={`${list}-${k}`} role="option" aria-selected={k === cur} aria-keyshortcuts={i.action ? "Alt+Enter" : undefined} aria-description={i.action ? `Alt+Enter: ${i.action.label}` : undefined} class={[k === cur && 'cur', i.outside && 'out', i.more && 'more'].filter(Boolean).join(' ')}
+    return <li key={i.key} id={`${list}-${k}`} role="option" aria-selected={k === cur} aria-keyshortcuts={i.action ? "Alt+Enter" : undefined} aria-description={i.action ? `Alt+Enter: ${i.action.label}` : undefined} class={[k === cur && 'cur', i.outside && 'out', i.more && 'more', i.snippet && 'snip'].filter(Boolean).join(' ')}
       onPointerMove={() => k !== cur && move(k)} onClick={() => open(i)}>
       {st ? <StateBadge family={st.family} state={st.state as never} compact /> : <Icon name={i.icon} />}
-      <span class="title">{i.label}</span>{i.code && <span class="id">{i.code}</span>}<span class="grow" />{i.sub && <span class="sub">{i.sub}</span>}
+      {i.snippet ? <span class="txt"><span class="title">{i.label}</span><span class="snippet">{i.snippet}</span></span> : <span class="title">{i.label}</span>}{i.code && <span class="id">{i.code}</span>}<span class="grow" />{i.sub && <span class="sub">{i.sub}</span>}
       {i.at !== undefined && <Ago t={i.at} now={now} />}
       {i.action && <button type="button" class="btn quiet icon-only" tabIndex={-1} aria-pressed={i.action.pressed} aria-label={i.action.label} data-tip={`${i.action.label}  ⌥⏎`}
         onPointerDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); act(i); }}><Icon name={i.action.icon} /></button>}

@@ -67,16 +67,17 @@ func (v *ArtifactListReply) Validate() error {
 }
 
 type ArtifactListRequest struct {
-	Before      *int64   `json:"before,omitempty"`
-	ExecutionId *string  `json:"executionId,omitempty"`
-	Limit       *int64   `json:"limit,omitempty"`
-	MediaType   *string  `json:"mediaType,omitempty"`
-	ProjectId   *string  `json:"projectId,omitempty"`
-	ProjectIds  []string `json:"projectIds,omitempty"`
-	Q           *string  `json:"q,omitempty"`
-	Since       *float64 `json:"since,omitempty"`
-	States      []string `json:"states,omitempty"`
-	TaskId      *string  `json:"taskId,omitempty"`
+	Before            *int64   `json:"before,omitempty"`
+	ExcludeProjectIds []string `json:"excludeProjectIds,omitempty"`
+	ExecutionId       *string  `json:"executionId,omitempty"`
+	Limit             *int64   `json:"limit,omitempty"`
+	MediaType         *string  `json:"mediaType,omitempty"`
+	ProjectId         *string  `json:"projectId,omitempty"`
+	ProjectIds        []string `json:"projectIds,omitempty"`
+	Q                 *string  `json:"q,omitempty"`
+	Since             *float64 `json:"since,omitempty"`
+	States            []string `json:"states,omitempty"`
+	TaskId            *string  `json:"taskId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -287,7 +288,7 @@ func init() {
 	for n, o := range map[string]Operation{
 		"artifact_copy_retry":          {Read: false, Long: false, Errors: []int{400, 403, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Operator only.\",\"additionalProperties\":true,\"properties\":{\"artifactId\":{\"type\":\"string\"},\"storeId\":{\"type\":\"string\"}},\"required\":[\"artifactId\",\"storeId\"],\"type\":\"object\"}")},
 		"artifact_get":                 {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"artifactId\":{\"type\":\"string\"}},\"required\":[\"artifactId\"],\"type\":\"object\"}")},
-		"artifact_list":                {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"type\":\"integer\"},\"executionId\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"mediaType\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"q\":{\"type\":\"string\"},\"since\":{\"type\":\"number\"},\"states\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"artifact_list":                {Read: true, Long: false, Errors: []int{400}, InputSchema: json.RawMessage("{\"properties\":{\"before\":{\"type\":\"integer\"},\"excludeProjectIds\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null is work outside projects; applied after projectIds. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"executionId\":{\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"mediaType\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"projectIds\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"q\":{\"type\":\"string\"},\"since\":{\"type\":\"number\"},\"states\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"artifact_purge":               {Read: false, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Operator only.\",\"additionalProperties\":true,\"properties\":{\"contentHash\":{\"type\":\"string\"},\"projectId\":{\"type\":[\"string\",\"null\"]},\"reason\":{\"type\":\"string\"},\"scope\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"contentHash\",\"reason\"],\"type\":\"object\"}")},
 		"artifact_rule_confirm":        {Read: false, Long: false, Errors: []int{400, 403, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Operator only. ruleHash: the preview's hash; a changed rule is 409.\",\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":[\"string\",\"null\"]},\"rule\":{},\"ruleHash\":{\"type\":\"string\"}},\"required\":[\"rule\"],\"type\":\"object\"}")},
 		"artifact_rule_preview":        {Read: true, Long: false, Errors: []int{400, 403}, InputSchema: json.RawMessage("{\"$comment\":\"Operator only. rule: a retention rule of the project settings.\",\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":[\"string\",\"null\"]},\"rule\":{}},\"required\":[\"rule\"],\"type\":\"object\"}")},

@@ -1,7 +1,7 @@
 // Per-person preferences, stored server-side in the person's settings (person_settings_get / person_settings_set,
 // docs/designs/fleet-people-access.md section 8 "Preferences"): section pins, row pins, saved views, focus, focus
 // presets and ignored projects, column widths, the collapsed navigation, the last list views and the folded list groups. Agents read and write the same fields through the same operations.
-import { signal, computed } from '@preact/signals';
+import { signal } from '@preact/signals';
 import { op, type Ops } from './api.ts';
 import { onClear } from './offline.ts';
 import type { View } from '../../packages/view-url/view-url.ts';
@@ -90,32 +90,19 @@ export const setIgnored = (project: string, ignored: boolean) => savePrefs(s => 
   return { ignored: ignored ? [...rest, project] : rest, focus: ignored ? s.focus.filter(x => x !== project) : s.focus };
 }, { ignore: { project, ignored } });
 /**
- * The ids of the projects the person can see (project_list), kept by the shell's focus control; null until it answers,
- * 'failed' when it could not be read. With no focus, "every project but the ignored ones" is this list.
+ * The scope of lists and feeds that name no project, as two filters of an operation ('-' is no project): `projectIds`,
+ * the focus without ignored projects (undefined: every project), and `excludeProjectIds`, the ignored projects, which the
+ * server leaves out (questions_list, executions_list, delivery_status, artifact_list; task_page, sessions_list and
+ * list_membership take them as filter.projectId and filter.excludeProjectId). A focus never holds an ignored project, so
+ * the exclusion is sent only without one; work outside projects and projects missing from the project list stay visible.
+ * withFocus false: every project but the ignored ones (the Overview's ?all, which the outside-focus count opens).
  */
-export const knownProjects = signal<string[] | null | 'failed'>(null);
-onClear.add(() => { knownProjects.value = null; });
-/** Matches no project: every project the person sees is ignored. */
-const NO_PROJECT = '(none)';
-/**
- * The projects lists and feeds show, as the projectIds filter of an operation (questions_list, executions_list,
- * delivery_status, the project filter of task_page, sessions_list and artifact_list); undefined: every project. It is the
- * focus without ignored projects; with no focus, every visible project except the ignored ones, and work outside projects
- * unless '-' is ignored. ponytail: a project with tasks but no definition the person sees is left out while anything is
- * ignored; a server-side exclusion filter if that matters. The project list not read: nothing is left out, never nothing shown.
- */
-// withFocus false: every project but the ignored ones (the Overview's ?all, which the outside-focus count opens).
-export function focusIds(withFocus = true): string[] | undefined {
+export function scopeIds(withFocus = true): { projectIds?: string[]; excludeProjectIds?: string[] } {
   const { focus, ignored } = prefs.value, f = withFocus ? focus.filter(p => !ignored.includes(p)) : [];
-  if (f.length) return f;
-  const known = knownProjects.value;
-  if (!ignored.length || !Array.isArray(known)) return undefined;
-  const ids = [...known.filter(p => !ignored.includes(p)), ...(ignored.includes('-') ? [] : ['-'])];
-  return ids.length ? ids : [NO_PROJECT];
+  return f.length ? { projectIds: f } : ignored.length ? { excludeProjectIds: ignored } : {};
 }
-/** The scope is known: preferences are read and, while a project is ignored with no focus, the project list too (or it failed). */
-export const scopeReady = computed(() => { const { focus, ignored } = prefs.value;
-  return prefsRead.value && (!ignored.length || focus.some(p => !ignored.includes(p)) || knownProjects.value !== null); });
+/** The focused projects without ignored ones; undefined: no focus (every project but the ignored ones). */
+export const focusIds = (withFocus = true) => scopeIds(withFocus).projectIds;
 /**
  * The project of an item that needs the person lies outside the focus (the "N need you outside focus" count): a focus is
  * set and does not hold it, and it is not ignored. Ignore is full silence; with no focus (All projects) nothing is outside.
@@ -126,10 +113,14 @@ export function outsideFocus(project: string | null | undefined) {
 }
 // Views whose URL codec has a project key, so the focus is part of the list key (store and IndexedDB identity).
 const FOCUSED = ['tasks', 'results', 'conversations'];
-/** A view with the focus and ignore as its project filter when the view names no project itself (an explicit project wins). */
+/**
+ * A view with the focus as its project filter, or the ignored projects as its exclusion, when the view names no project
+ * itself (an explicit project wins, also an ignored one).
+ */
 export function withFocus(v: View): View {
-  const f = focusIds();
-  return v.project?.length || !f || !FOCUSED.includes(v.view) ? v : { ...v, project: f.map(p => p === '-' ? null : p) };
+  if (v.project?.length || !FOCUSED.includes(v.view)) return v;
+  const { projectIds, excludeProjectIds } = scopeIds(), noProject = (p: string) => p === '-' ? null : p;
+  return projectIds ? { ...v, project: projectIds.map(noProject) } : excludeProjectIds ? { ...v, exclude: excludeProjectIds.map(noProject) } : v;
 }
 export function saveFocusPreset(name: string, projects = prefs.value.focus) {
   const item = { name, projects };

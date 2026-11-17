@@ -4,8 +4,10 @@ export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'resul
 export type View = {
   view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
   q?: string; sel?: string[]; sort?: string; state?: string[]; archived?: boolean; extra?: Record<string, string | undefined>;
+  /** Not in the URL: projects the list leaves out (the person's ignored ones, OR-34; null is no project). Part of listKey and toPageParams. */
+  exclude?: (string | null)[];
 };
-export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; archived?: boolean }; group?: string; sort?: string };
+export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; excludeProjectId?: (string | null)[]; archived?: boolean }; group?: string; sort?: string };
 
 // The one source of these lists: the coordinator's task_page and sessions_list import them.
 export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'held', 'paused', 'completed', 'failed', 'cancelled'] as const;
@@ -191,10 +193,10 @@ export function formatView(v: View): string {
   return `/${v.view}${focus ? '/' + focus : ''}${q ? '?' + q : ''}`;
 }
 
-/** The store and IndexedDB key of a list: view plus canonical query without focus, sel, preset and unknown keys. */
+/** The store and IndexedDB key of a list: view plus canonical query without focus, sel, preset and unknown keys, plus the excluded projects. */
 export function listKey(v: View): string {
-  const q = join(known(v, k => k.list));
-  return v.view + (q ? '?' + q : '');
+  const q = join(known(v, k => k.list)), x = v.exclude?.length ? project.format({ ...v, project: v.exclude }) : undefined;
+  return v.view + (q ? '?' + q : '') + (x ? '#exclude=' + x : '');
 }
 
 export function toPageParams(v: View): PageParams {
@@ -202,6 +204,7 @@ export function toPageParams(v: View): PageParams {
   if (v.state?.length) filter.state = sorted(v.state);
   if (v.q) filter.search = v.q;
   if (v.project?.length) filter.projectId = sortProjects(v.project);
+  if (v.exclude?.length) filter.excludeProjectId = sortProjects(v.exclude);
   if (v.view === 'conversations') filter.archived = !!v.archived;
   const o = ORDER[v.view];
   return o ? { filter, group: v.group ?? o.group, sort: v.sort ?? o.sort } : { filter };

@@ -693,7 +693,12 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .spot-list{flex:1 1 auto;min-height:0;overflow-y:auto;margin:0;padding:0;list-style:none}
 .spot-list [role=option]{display:flex;align-items:center;gap:var(--space-2);height:var(--size-control);padding:0 var(--space-2);border-radius:var(--radius-sm);cursor:pointer}
 .spot-list [role=option] .title{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.spot-list [role=option] .sub{flex:0 1 auto;color:var(--fg-muted);min-width:0;max-width:12rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The project keeps its width (up to 8rem, then an ellipsis); a long title truncates instead. */
+.spot-list [role=option] .sub{flex:none;color:var(--fg-muted);max-width:8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A row with a snippet: the title over one muted line of the matching text. */
+.spot-list [role=option].snip{height:auto;min-height:var(--size-control);padding-block:var(--space-1)}
+.spot-list [role=option] .txt{flex:0 1 auto;min-width:0;display:flex;flex-direction:column}
+.spot-list [role=option] .snippet{color:var(--fg-muted);font-size:var(--font-size-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .spot-list [role=option] .id,.spot-list [role=option] .when,.spot-list [role=option] .icon,.spot-list [role=option] .state{flex:none;white-space:nowrap}
 .spot-list [role=option] .when{min-width:3ch;text-align:right;font-family:var(--font-mono);font-size:var(--font-size-sm);font-variant-numeric:tabular-nums;color:var(--fg-muted)}
 .spot-list [role=option] .btn.icon-only{flex:none;height:var(--size-chip);padding:0 var(--space-1)}

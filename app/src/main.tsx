@@ -11,7 +11,7 @@ import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalid
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view-url/view-url.ts';
 import { preferencesTouched } from './invalidation.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, knownProjects, outsideFocus } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus } from './prefs.ts';
 import { useDoc } from './store.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
@@ -100,7 +100,7 @@ const found = (kind: Hit['kind'], go: (to: string) => void): SpotlightProvider =
       const pinned = kind === 'project' && focus.includes(h.id), outside = !!h.outside, at = h.at ? Date.parse(h.at) : NaN;
       // The project is not repeated on every row when a one-project focus already names it (OR-17).
       return { key: kind + ':' + h.id, icon: w.icon, label: h.title, code: h.code ?? undefined, sub: kind === 'project' || focus.length === 1 && focus[0] === (h.projectId ?? '-') ? undefined : h.projectId ?? undefined,
-        state: w.family && h.state ? { family: w.family, state: h.state } : undefined, at: Number.isFinite(at) ? at : undefined, outside,
+        state: w.family && h.state ? { family: w.family, state: h.state } : undefined, at: Number.isFinite(at) ? at : undefined, outside, snippet: h.snippet ?? undefined,
         // An ignored project (found by naming it) cannot join the focus until it is restored, so it offers no focus action.
         action: kind === 'project' && !ignored.includes(h.id) ? { label: pinned ? 'Remove from focus' : 'Add to focus', icon: 'focus' as const, pressed: pinned, run: () => toggleFocus(h.id) } : undefined,
         run: () => go(w.path(h)) };
@@ -214,19 +214,10 @@ function PrivateRoutes({ go }: { go: (to: string) => void }) {
     </Switch>;
 }
 
-/**
- * The focus chip with its own project list, so a definition change re-renders only the chip. The list is also the set
- * "every project" means while a project is ignored (prefs.ts knownProjects).
- */
+/** The focus chip with its own project list, so a definition change re-renders only the chip. */
 function Focus({ go }: { go: (to: string) => void }) {
   const projects = useDoc<any>('projects', () => op('project_list', {}), c => c.kind === 'definition');
   const list: { id: string; name: string }[] = (projects.data?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.id }));
-  const ids = list.map(p => p.id).join('\n');
-  // Every render: a store clear resets knownProjects while this chip stays mounted, so it is written again whenever it differs.
-  useEffect(() => {
-    const next = projects.data ? ids ? ids.split('\n') : [] : projects.error ? 'failed' : null, cur = knownProjects.value;
-    if (JSON.stringify(cur) !== JSON.stringify(next)) knownProjects.value = next;
-  });
   const { focus, focusPresets, ignored } = prefs.value;
   // Not shown where it leads: the Overview without the focus.
   const [loc] = useLocation(), search = useSearch(), here = loc === '/overview' && new URLSearchParams(search).has('all'), outside = useOutside();

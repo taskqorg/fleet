@@ -14,7 +14,7 @@ import { useDoc } from '../store.ts';
 import { useListPage, ListPagePanel, type LocalList } from '../list-page.tsx';
 import { useUrlView } from '../url.ts';
 import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, DELIVERY_STAGES, type View } from '../../../packages/view-url/view-url.ts';
-import { focusIds, prefsRead, scopeReady, type SavedView } from '../prefs.ts';
+import { scopeIds, prefs, prefsRead, type SavedView } from '../prefs.ts';
 import type { Change } from '../../../contracts/generated/ops.ts';
 
 type Stage = StateOf<'delivery'>;
@@ -86,9 +86,9 @@ export function bucketsOf(range: string, now: number, first?: number): Bucket[] 
 }
 
 export function Delivery({ id }: { id?: string }) {
-  const focus = focusIds() ?? [];
+  const scope = scopeIds(), focus = scope.projectIds ?? [];
   const now = Date.now();
-  const status = useDoc<Status>(scopeReady.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
+  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + JSON.stringify(scope) : null, () => op('delivery_status', scopeIds()), touchesStatus, 300000);
   // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
   const baseDoc = useDoc<Baseline | typeof NONE>(prefsRead.value ? 'delivery-baseline:14' : null, () => no404(op('delivery_baseline', { days: 14 })), touchesHistory, 600000);
   const base = baseDoc.data === NONE ? null : baseDoc.data;
@@ -97,19 +97,19 @@ export function Delivery({ id }: { id?: string }) {
     stage: (s, repo = FLEET) => { const x = repo === FLEET && NORM_KEY[s] && stat(NORM_KEY[s]!); return x ? [x.p50Ms, x.p90Ms] : null; },
     total: stat('total') ? [stat('total')!.p50Ms, stat('total')!.p90Ms] : null,
   };
-  // The recorded history covers the fleet repository only; a 404 (no history kept) or a focus away from fleet hides Pace.
-  const fleetShown = !focus.length || focus.includes('fleet');
+  // The recorded history covers the fleet repository only; a 404 (no history kept), a focus away from fleet or an ignored fleet hides Pace.
+  const fleetShown = (!focus.length || focus.includes('fleet')) && !prefs.value.ignored.includes('fleet');
   // A stage this app does not know yet (a newer coordinator) is left out rather than breaking the page.
   const data = status.data, items = (data?.items ?? []).filter(it => it.stage in states.delivery), incomplete = !!data?.error;
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
   const urlRange = deliveryExtra(useUrlView('delivery').view.extra).range ?? '7d';
   // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
-  const histDoc = useDoc<{ h: History } | typeof NONE>(scopeReady.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
+  const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
     () => no404(op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }).then(h => ({ h }))), touchesHistory, 600000);
   const hist = histDoc.data === NONE ? null : histDoc.data;
-  const regDoc = useDoc<Regressions | typeof NONE>(scopeReady.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
+  const regDoc = useDoc<Regressions | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
   const regressions = regDoc.data === NONE ? [] : regDoc.data?.regressions ?? [];
-  const histLoading = !scopeReady.value || fleetShown && histDoc.data === null && !histDoc.error;
+  const histLoading = !prefsRead.value || fleetShown && histDoc.data === null && !histDoc.error;
   const paceOf = (v: View) => {
     const ex = deliveryExtra(v.extra), range = ex.range ?? '7d', buckets = bucketsOf(range, now, hist?.h.backfilledFrom ? ms(hist.h.backfilledFrom) : undefined);
     return { ex, range, buckets, picked: ex.at ? buckets.find(b => b.key === ex.at) ?? null : null };

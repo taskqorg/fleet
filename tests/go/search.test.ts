@@ -147,3 +147,22 @@ test('search finds conversations, results, agents and pipelines; the focus leads
   assert.deepEqual((await search({query: 'pm'}, 'searcher@trial.test')).hits.filter((h: any) => h.kind === 'agent' || h.kind === 'pipeline'), []);
   assert.deepEqual(kinds(await search({query: 'rocket'}, 'searcher@trial.test'), 'task').map((h: any) => h.id).sort(), ['rocket-0', 'rocket-1', 'rocket-2', 'rocket-3']);
 });
+
+// Spotlight (spotlight.md); risk: a conversation found by a word deep in a long first message shows a title without it.
+test('search gives a conversation found by words its title does not show a snippet of the matching text', {timeout: 30_000}, async t => {
+  const c = await startCoordinator({name: 'search-snippet'}); t.after(() => c.stop());
+  const op = async (name: string, body: object) => {
+    const r = await fetch(c.base + '/api/ops/' + name, {method: 'POST', headers: {authorization: 'Bearer ' + c.secret, 'x-fleet-person': 'owner@trial.test', 'content-type': 'application/json'}, body: JSON.stringify(body)});
+    const d: any = await r.json(); assert.equal(r.status, 200, name + ' ' + JSON.stringify(d)); return d;
+  };
+  const deep = (await op('session_create', {})).sessionId, near = (await op('session_create', {})).sessionId;
+  c.sql(`INSERT INTO document(kind,id,data) VALUES
+    ('message','m-deep','{"sessionId":"${deep}","text":"You are a worker agent. Follow AGENTS.md fully and read every contract before you start.\\n\\nTask: check the zeppelin fuel valves, then report the result with links to the run, the pull request and the deploy."}'),
+    ('message','m-near','{"sessionId":"${near}","text":"Zeppelin valves checklist"}')`);
+  const hits = (await op('search', {query: 'zeppelin'})).hits.filter((h: any) => h.kind === 'conversation');
+  const d = hits.find((h: any) => h.id === deep), n = hits.find((h: any) => h.id === near);
+  assert.ok(d && n, JSON.stringify(hits));
+  assert.match(d.snippet, /^….*zeppelin fuel valves.*…$/); assert.ok(!d.snippet.includes('\n') && [...d.snippet].length <= 82, d.snippet);
+  assert.equal(n.snippet, undefined, 'a match the title shows has no snippet');
+  assert.equal((await op('search', {query: 'worker'})).hits.find((h: any) => h.id === deep)?.snippet, undefined, 'a word in the visible start has none');
+});

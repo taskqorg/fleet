@@ -94,6 +94,10 @@ test('P3 per-item changes (viewPut, viewDelete, rowPin, focusPresetPut, focusPre
   assert.equal(s.views.some((x: any) => x.name === 'A'), false); assert.deepEqual(s.rowPins.tasks, ['y']); assert.ok(s.focusPresets.some((p: any) => p.name === 'P'));
   s = await op('person_settings_set', {focusPresetDelete: 'P'});
   assert.equal(s.focusPresets.some((p: any) => p.name === 'P'), false);
+  // rowPin without pinned would decode as an unpin: refused, and the pin stays.
+  const bad = await fetch(BASE + '/api/ops/person_settings_set', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + SECRET, 'x-fleet-person': 'owner@trial.test'}, body: JSON.stringify({rowPin: {list: 'tasks', id: 'y'}})});
+  assert.equal(bad.status, 400); assert.match((await bad.json()).message, /pinned is required/);
+  assert.deepEqual((await op('person_settings_get')).rowPins.tasks, ['y'], 'a rowPin without pinned unpins nothing');
 });
 
 test('P4 questions_list, executions_list and delivery_status keep only projectIds when given (requirement: OR-34 focus applies app-wide; risk: Overview and Delivery ignore the focus)', async () => {

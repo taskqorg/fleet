@@ -223,18 +223,21 @@ function TranscriptDemo() {
 }
 
 // Spotlight demo kinds (controls/spotlight.md): invented hits with states, ages and projects; the focus is "fleet".
-const SPOT_HITS: { kind: 'tasks' | 'conversations' | 'projects'; family?: Family; state?: string; label: string; code?: string; project: string; ago: number }[] = [
+const SPOT_HITS: { kind: 'tasks' | 'conversations' | 'projects'; family?: Family; state?: string; label: string; code?: string; project: string; ago: number; snippet?: string }[] = [
   { kind: 'tasks', family: 'task', state: 'in_progress', label: 'Deploy pipeline flaky on the release step', code: 'T-FLT-42', project: 'fleet', ago: 4 * min },
   { kind: 'tasks', family: 'task', state: 'failed', label: 'Deploy docs to the site', code: 'T-FLT-39', project: 'fleet', ago: 2 * hr },
   { kind: 'tasks', family: 'task', state: 'completed', label: 'Deploy preview builds for every pull request', code: 'T-WEB-7', project: 'website', ago: 30 * hr },
   { kind: 'conversations', family: 'session', state: 'waiting', label: 'Plan the deploy window with the PM', code: 'C-FLT-12', project: 'fleet', ago: 15 * min },
+  // Found by a word deep in a long first message: the title is the instruction's start, the snippet shows the match.
+  { kind: 'conversations', family: 'session', state: 'idle', label: 'You are a worker agent. Read AGENTS.md and every contract on the path before you start', code: 'C-DSG-3', project: 'design-system',
+    ago: 3 * hr, snippet: '…start. Task: deploy the book to the review site and check its links before you…' },
   { kind: 'projects', label: 'Website', project: 'website', ago: 0 },
 ];
 function spotDemo(focus: string[], onFocus: (f: string[]) => void): SpotlightProvider[] {
   return (['tasks', 'conversations', 'projects'] as const).map(kind => ({ id: kind, label: workspaces.find(w => w.id === kind)!.label, find: (q: string) => {
-    const items: SpotlightItem[] = SPOT_HITS.filter(h => h.kind === kind && `${h.label} ${h.code ?? ''}`.toLowerCase().includes(q.toLowerCase().split(' ')[0])).map(h => ({
+    const items: SpotlightItem[] = SPOT_HITS.filter(h => h.kind === kind && `${h.label} ${h.code ?? ''} ${h.snippet ?? ''}`.toLowerCase().includes(q.toLowerCase().split(' ')[0])).map(h => ({
       key: kind + h.label, icon: workspaces.find(w => w.id === kind)!.icon, label: h.label, code: h.code, sub: kind === 'projects' ? undefined : h.project,
-      state: h.family && h.state ? { family: h.family, state: h.state } : undefined, at: h.ago ? NOW - h.ago : undefined, outside: !!focus.length && !focus.includes(h.project), run: () => {},
+      state: h.family && h.state ? { family: h.family, state: h.state } : undefined, at: h.ago ? NOW - h.ago : undefined, outside: !!focus.length && !focus.includes(h.project), snippet: h.snippet, run: () => {},
       action: kind === 'projects' ? { label: focus.includes(h.project) ? 'Remove from focus' : 'Add to focus', icon: 'focus', pressed: focus.includes(h.project), run: () => onFocus(focus.includes(h.project) ? focus.filter(x => x !== h.project) : [...focus, h.project]) } : undefined }));
     if (kind === 'tasks' && items.length) items.push({ key: 'tasks:all', icon: 'list', label: 'All 24 in Tasks', more: true, run: () => {} });
     return items;

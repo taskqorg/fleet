@@ -14,7 +14,7 @@
 - [`invalidation.ts`](invalidation.ts) supplies the personal-preference and mounted-project definition predicates over authoritative change metadata, retaining conservative unknown/legacy fallbacks.
 - [`lists.ts`](lists.ts), [`threads.ts`](threads.ts), [`selection.ts`](selection.ts), and [`url.ts`](url.ts) hold pure list/thread/selection logic and URL hooks.
 - [`list-page.tsx`](list-page.tsx) exports `useListPage` and `ListPagePanel`, the list-view pattern Tasks, Conversations and Delivery share: saved views and system presets, pins read by id, grouping with collapse remembered per person (`listGroups`), selection mode with bulk actions, and the row menu. A page that reads its whole list itself (Delivery) passes `local` in place of a server list kind.
-- [`offline.ts`](offline.ts) owns the IndexedDB read cache; [`prefs.ts`](prefs.ts) reads and patches per-person settings and turns the focus and ignored projects into the project filter of lists that name no project (`focusIds`, `withFocus`; `knownProjects` is the project list the shell's focus chip reads, `scopeReady` holds focus-dependent loads until both are known).
+- [`offline.ts`](offline.ts) owns the IndexedDB read cache; [`prefs.ts`](prefs.ts) reads and patches per-person settings and turns the focus and ignored projects into the scope of lists that name no project (`scopeIds`, `focusIds`, `withFocus`): the focus as the project filter, otherwise the ignored projects as the server-side exclusion; focus-dependent loads wait for `prefsRead`.
 - [`views`](views/README.md) exports the routed screen components.
 
 ## Invariants
