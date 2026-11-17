@@ -7,7 +7,7 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import tokens from '../../../packages/ui/tokens.json';
 import { op } from '../api.ts';
-import { withFocus, prefsRead } from '../prefs.ts';
+import { withFocus, scopeReady } from '../prefs.ts';
 import { subscribe } from '../feed.ts';
 import { useDoc } from '../store.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
@@ -42,12 +42,11 @@ export function Results({ id }: { id?: string }) {
       setRows(x => before && x ? [...x, ...(r.artifacts as Row[]).filter(a => !x.some(y => y.id === a.id))] : r.artifacts as Row[]); setNext(r.nextBefore ?? null); setError(null); }
     catch (e: any) { setError(e.message); } finally { setBusy(false); }
   };
-  const ready = prefsRead.value; // the filter carries the focus
+  const ready = scopeReady.value; // the filter carries the focus and ignore
   useEffect(() => { if (!ready) { gen.current++; setRows(null); return; } load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey, ready]);
   const chips: Chip[] = Object.entries(view.extra ?? {}).filter(([k]) => !(k in typed.terms)).filter((e): e is [string, string] => ['media', 'since', 'task', 'execution'].includes(e[0]) && e[1] !== undefined).map(([field, value]) => ({ field, value }));
   const now = Date.now();
   const list = <>
-    <header class="page-h"><h1>Results</h1></header>
     {error && <ErrorBanner text={`Results did not load: ${error}`} onRetry={() => load()} />}
     <section class="panel">
       <ListFrame pending={busy} bar={<FilterBar query={query} placeholder="Search results, media:image since:7d" onQuery={setQuery} chips={chips}

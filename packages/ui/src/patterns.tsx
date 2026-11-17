@@ -147,10 +147,11 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting,
 
 /* ---------- App shell (patterns/app-shell.md) ---------- */
 
-export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus, privateReady = true, privateGeneration = 0 }: {
+export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, search = [], user, widths: stored, onWidth, collapsed, onCollapsed, ready = true, focus, title, privateReady = true, privateGeneration = 0 }: {
   nav: NavItem[]; current: string; onGo: (id: string) => void; waiting: number; children: ComponentChildren;
   /** Spotlight providers after the built-in sections one (OR-32): codes, tasks, projects, hosts in the app. */ search?: SpotlightProvider[];
-  /** The project focus control (OR-34); it gets the collapsed state. */ focus?: (mini: boolean) => ComponentChildren;
+  /** The project focus chip (OR-34), on the right of the shell header (OR-43). */ focus?: ComponentChildren;
+  /** The section title in the shell header; default: the current section's label. */ title?: string;
   /** The person's pinned sections (person settings); without them the shell keeps its own demo pins. */ pins?: string[]; onPins?: (ids: string[]) => void;
   /** The signed-in person, shown at the bottom of the navigation with a Logout menu, and the installed version. */ user?: { name: string; onLogout: () => void; version?: VersionInfo };
   /** Column widths in px by key (`nav`, `control`) and the collapsed navigation: person settings (OR-41, OR-42). onWidth(key, 0) resets.
@@ -182,14 +183,23 @@ export function AppShell({ nav, current, onGo, waiting, children, pins, onPins, 
   return (
     <Widths.Provider value={setWidth}><div class={`shell${ready ? '' : ' pending'}`} data-ui="app-shell" onClick={openRow} style={vars}>
       <a class="skip" href="#main" onClick={e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
-      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned} onSearch={() => setSpot(privateGeneration)} tools={focus?.(mini)}
+      <NavRail items={nav} pinned={pinned} current={current} onGo={onGo} mini={mini} onPins={setPinned}
         head={<><span class="brand-mark" role="img" aria-label="Fleet" /><b class="brand">Fleet</b><span class="grow" />
           {waiting > 0 && current !== 'overview' && <a class="nav-count t-attention waiting" href="#/overview" onClick={e => { e.preventDefault(); onGo('overview'); }}>{waiting} need you</a>}</>}
         foot={user && <UserBlock {...user} />} />
       <div class="shell-col">
         {!mini && <Divider name="rail" />}
-        {/* OR-42: the toggle sits at the top of the column right after the navigation. */}
-        <span class="nav-toggle"><Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></span>
+        {/* OR-43: one header over the control column and the work area, whatever page is below: the collapse toggle (OR-42)
+            and the section title on the left; the focus chip and search on the right. A right-panel toggle goes last, after
+            search, once a right panel exists (app-shell.md); until then nothing is rendered for it. */}
+        <header class="shell-h" data-ui="shell-header">
+          <span class="nav-toggle"><Button label={mini ? 'Expand navigation' : 'Collapse navigation'} icon="panel-left-close" iconOnly pressed={mini} onClick={toggle} /></span>
+          <h1 class="shell-title">{title ?? nav.find(n => n.id === current)?.label ?? ''}</h1>
+          <span class="grow" />
+          {focus}
+          <button type="button" class="btn quiet icon-only shell-search" aria-label="Search" aria-keyshortcuts="Meta+K Control+K" data-tip="Search ⌘K" aria-disabled={!privateReady || undefined}
+            onClick={() => { if (privateReady) setSpot(privateGeneration); }}><Icon name={actions.search} /></button>
+        </header>
         <main class="shell-main" id="main" tabIndex={-1}>{children}</main>
       </div>
       {spot === privateGeneration && privateReady && <Spotlight key={privateGeneration} providers={[sectionProvider(nav, onGo), ...search]} onClose={() => setSpot(null)} />}

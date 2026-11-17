@@ -59,7 +59,7 @@ export function Conversations({ id }: { id?: string }) {
   useEffect(()=>{const u=new URL(location.href);if(u.searchParams.has('new')){u.searchParams.delete('new');history.replaceState(history.state,'',u.pathname+u.search);}},[]);
   const create=()=>setNewConversation(true);
   const pane = <>
-    <header class="page-h"><h1>Conversations</h1><OfflineMarker state={page.list.state} now={now} /><span class="grow" />
+    <header class="page-h"><OfflineMarker state={page.list.state} now={now} /><span class="grow" />
       <Button label="New conversation" icon="plus" kind="primary" disabledReason={online.value ? undefined : 'offline'} onClick={create} /></header>
     {newConversation&&<NewConversation onDone={sessionId=>{setNewConversation(false);set({focus:sessionId});}}/>}
     <ListPagePanel page={page} noun="Conversations" placeholder="Search conversations" family="session" groups={GROUPS} sorts={SORTS} focused={id}

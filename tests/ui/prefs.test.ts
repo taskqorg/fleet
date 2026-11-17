@@ -1,5 +1,5 @@
 // Person preferences (owner-rules OR-33, OR-34, OR-41; fleet-people-access.md section 8 "Preferences"): stored on the server
-// through person_settings_set, never in the browser; focus filters lists that name no project.
+// through person_settings_set, never in the browser; focus and ignored projects filter lists that name no project.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerAccessValidator, registerAccessBaseline, ensureAccessGeneration } from '../../app/src/access.ts';
@@ -7,7 +7,7 @@ registerAccessValidator(async () => ({ identityKey: 'unit@fixture.test', grantsV
 registerAccessBaseline(async () => ({ cursor: 0, activate() {}, dispose() {} }));
 await ensureAccessGeneration();
 import { readFileSync } from 'node:fs';
-import { prefs, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
+import { prefs, prefsRead, savePrefs, withFocus, useViews, setWidth, usePins, saveFocusPreset, removeFocusPreset, focusIds, setFocus, setIgnored, knownProjects, scopeReady, outsideScope, listGroups, setListGroups, saveListGroups, saveOnLeave, noteView } from '../../app/src/prefs.ts';
 
 const sent: [string, any][] = [], kept: any[] = [];
 const pendingReplies = new Set<Promise<void>>();
@@ -47,6 +47,33 @@ test('OR-34 focus is the project filter of a view that names no project; an expl
   assert.deepEqual(withFocus({ view: 'tasks', project: ['other'] }).project, ['other']);
   prefs.value = { ...prefs.value, focus: [] };
   assert.equal(withFocus({ view: 'tasks' }).project, undefined);
+});
+
+// Risk: an ignored project still shows under "All projects", stays in a focus, or hides a project the view names itself.
+test('OR-34 ignored projects leave every list that names no project, also with every project in focus; an explicit project wins', async () => {
+  knownProjects.value = ['fleet', 'muted', 'other'];
+  prefs.value = { ...prefs.value, focus: [], ignored: ['muted'] };
+  assert.deepEqual(focusIds(), ['fleet', 'other', '-']);
+  assert.deepEqual(withFocus({ view: 'tasks' }).project, ['fleet', 'other', null]);
+  assert.deepEqual(withFocus({ view: 'tasks', project: ['muted'] }).project, ['muted']);
+  assert.equal(outsideScope('muted'), true); assert.equal(outsideScope(null), false);
+  prefs.value = { ...prefs.value, ignored: ['muted', '-'] };
+  assert.deepEqual(focusIds(), ['fleet', 'other']); assert.equal(outsideScope(null), true);
+  prefs.value = { ...prefs.value, ignored: ['fleet', 'muted', 'other', '-'] };
+  assert.deepEqual(withFocus({ view: 'tasks' }).project?.length, 1, 'everything ignored shows nothing, never everything');
+  // The project list not read yet: lists wait; failed: nothing is left out rather than nothing shown.
+  const wasRead = prefsRead.value; prefsRead.value = true;
+  knownProjects.value = null; assert.equal(scopeReady.value, false);
+  knownProjects.value = 'failed'; assert.equal(focusIds(), undefined); assert.equal(scopeReady.value, true); prefsRead.value = wasRead;
+  knownProjects.value = ['fleet', 'muted'];
+  prefs.value = { ...prefs.value, focus: ['fleet', 'muted'], ignored: [] };
+  sent.length = 0; setIgnored('muted', true);
+  assert.deepEqual([prefs.value.ignored, prefs.value.focus], [['muted'], ['fleet']], 'an ignored project leaves the focus at once');
+  setFocus(['fleet', 'muted']); assert.deepEqual(prefs.value.focus, ['fleet'], 'an ignored project is never focused');
+  setIgnored('muted', false);
+  await settle();
+  assert.deepEqual(sent.map(x => x[1]), [{ ignore: { project: 'muted', ignored: true } }, { focus: ['fleet'] }, { ignore: { project: 'muted', ignored: false } }]);
+  prefs.value = { ...prefs.value, focus: [], ignored: [] }; knownProjects.value = null;
 });
 
 test('OR-33 system presets come first and cannot be overwritten; personal views are written to the server', async () => {

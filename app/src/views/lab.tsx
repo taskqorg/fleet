@@ -24,11 +24,11 @@ export function Lab({ id }: { id?: string }) {
   }, touches);
   const now = Date.now();
   if (id === 'new') return <LabCreate />;
-  if (!data) return <><header class="page-h"><h1>Lab</h1></header><Empty text="Loading…" /></>;
+  if (!data) return <Empty text="Loading…" />;
   const approvals = data.ratings.filter((r: any) => r.exampleArtifactId), open = data.ratings.filter((r: any) => r.experimentId);
   // Control column: what waits for the owner, then the experiments catalogue (its one scroller, OR-25).
   const list = <>
-    <header class="page-h"><h1>Lab</h1><span class="grow" /><Button label="New experiment" icon="plus" iconOnly onClick={() => go('/lab/new')} /><OfflineMarker state={state} now={now} /></header>
+    <header class="page-h"><span class="grow" /><Button label="New experiment" icon="plus" iconOnly onClick={() => go('/lab/new')} /><OfflineMarker state={state} now={now} /></header>
     {(approvals.length > 0 || open.length > 0) && <section class="panel"><header class="panel-h"><Icon name="bell" /><h2>Waiting for you</h2></header>
       {open.length > 0 && <div class="vl-row static"><span>{open.length} open ratings</span></div>}
       {approvals.map((r: any) => <Rating key={r.id} r={r} now={now} />)}

@@ -391,6 +391,13 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Choice (owner):** group by project and sort by most recently changed first by default; a system preset sets only the state filter and keeps the person's grouping, sort, projects and search. Personal views still restore everything they saved; views saved before this kept no group and open grouped by priority as when they were saved.
 * **Reason:** the owner works across projects and switches presets often; a preset that reset the grouping undid the person's choice each time.
 
+## 2026-11-17: One shell header; focus chip with ignore and the outside-focus count
+
+* **Question (owner):** search and the project focus are key controls but sat in the navigation, small and easy to miss; a set focus looked like any other row, and projects the person never wants to see could only be left out by focusing all others.
+* **Choice (owner):** one shell header over the area right of the navigation: the collapse toggle (moved from the column corner) and the section title (moved from the list column) on the left; the focus chip and a search icon on the right; a slot for a right-panel toggle. The Search item and the focus leave the rail (OR-31, OR-34, OR-42, new OR-43; OR-24 loses "no top bar").
+* **Choice (owner):** the focus chip names the projects and is toned while set; its panel floats under it. A third project state, ignored: hidden everywhere for the person, also with All projects, including search; restored from "Ignored (n)" in the panel. Items that need the person outside the focus show as "N need you outside focus".
+* **Decided here:** the outside count opens `/overview?all` (the Overview with every project, no focus or ignore); ignoring a project removes it from the focus; a query that names a project (`project:x`) or is a code jump finds an ignored project, as a view whose URL names it shows it; an agent's search sees every project; the set chip is filled with the accent, which reads in dark and light alike.
+
 ## 2026-11-17: Delivery pace by calendar day; red past the stage's P90; Queue failed
 
 * **Question:** the Pace charts misled: one slow day squashed the scale, a stack of P50s per stage summed medians, days without install times looked like data, the two charts used different axes (a rolling 24 h), and Moving now bars were all full width. The list was mostly installed rows, and "needs me" had no stage for a pull request the merge queue removed.

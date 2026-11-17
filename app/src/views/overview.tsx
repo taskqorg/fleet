@@ -1,13 +1,13 @@
 // Overview (docs/design-system/pages/overview.md): what needs the operator, operational counts, workers per host, projects.
-import { useLocation } from 'wouter-preact';
+import { useLocation, useSearch } from 'wouter-preact';
 import { OpsSummary, NeedsYou, Latest, StatStrip, DecisionBlock, ProblemRow, StateBadge, HarnessCounts, Num, StateCounters, Empty, OfflineMarker, Icon, ErrorBanner, Skeleton, keyConnection, actor } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
-import { focusIds, prefsRead } from '../prefs.ts';
+import { focusIds, scopeReady } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
-// The focus (OR-34) narrows every part: questions, problems, counts and project rows.
+// The focus and ignored projects (OR-34) narrow every part: questions, problems, counts and project rows.
 async function fetchOverview(projectIds?: string[]): Promise<Overview> {
   const [q, p, page] = await Promise.all([op('questions_list', { state: 'open', projectIds }), op('executions_list', { needsYou: true, projectIds }),
     op('task_page', { group: 'project', groupCounts: true, limit: 1, filter: projectIds ? { projectId: projectIds.map(x => x === '-' ? null : x) } : {} })]);
@@ -17,21 +17,23 @@ async function fetchOverview(projectIds?: string[]): Promise<Overview> {
 }
 
 export function Overview() {
-  const focus = focusIds();
+  // ?all: every project, focus and ignore not applied; the header's "need you outside focus" opens it (app-shell.md).
+  const all = new URLSearchParams(useSearch()).has('all');
+  const focus = all ? undefined : focusIds();
   const alive = useAlive();
   const [, go] = useLocation();
-  const { data, state, error } = useDoc<Overview>(prefsRead.value ? 'overview:' + (focus ?? []).join(',') : null, () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
+  const { data, state, error } = useDoc<Overview>(scopeReady.value ? 'overview:' + (all ? '*' : (focus ?? []).join(',')) : null, () => fetchOverview(focus), c => ['task', 'question', 'execution'].includes(c.kind));
   const hostsRec = useDoc<any>('overview-hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
   const now = Date.now();
   const hosts = hostsRec.data, hostNow = hosts ? hosts.serverNow + (now - hosts.fetchedAt) : now;
-  if (!data) return <><header class="page-h"><h1>Overview</h1></header>{error ? <ErrorBanner text={`Overview did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
+  if (!data) return <>{error ? <ErrorBanner text={`Overview did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
   const ops = ([
         { label: 'failed', icon: 'octagon-x', value: { value: data.counts.failed ?? 0, basis: 'measured' }, tone: data.counts.failed ? 'danger' : undefined, href: '/tasks?state=failed' },
         { label: 'running', icon: 'activity', value: { value: data.counts.in_progress ?? 0, basis: 'measured' }, href: '/tasks?state=in_progress' },
         { label: 'queued', icon: 'list-ordered', value: { value: data.counts.queued ?? 0, basis: 'measured' }, href: '/tasks?state=queued' },
   ] as const).filter(x => x.value.value > 0);
   return <>
-    <header class="page-h"><h1>Overview</h1><span class="grow" /><OfflineMarker state={state} now={now} /></header>
+    <header class="page-h">{all && <span class="muted">Every project, focus not applied</span>}<span class="grow" /><OfflineMarker state={state} now={now} /></header>
     <OpsSummary>
       {ops.length > 0 && <StatStrip label="Operations" stats={ops} />}
       <div class="cols">

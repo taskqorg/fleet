@@ -31,6 +31,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [text-field](text-field.md) | Unsaved form values with accessible labels and errors |
 | [setting-field](setting-field.md) | Settings with applied or apply error |
 | [nav-rail](nav-rail.md) | Many sections; pinned per person; the installed version and the update |
+| [focus-control](focus-control.md) | The projects the person watches, ignored projects, what needs them outside the focus |
 | [split-button](split-button.md) | Default action with alternatives |
 | [state-counters](state-counters.md) | Counts per state, quick state filter |
 | [stat-strip](stat-strip.md) | Operational counts |

@@ -897,43 +897,62 @@ export const SelectToggle = ({ on, onClick }: { on: boolean; onClick: () => void
  *  only while the page loads, so a dialog or menu opened later kept focus on its opener. One stable function, so it runs once. */
 export const focusOnMount = (el: HTMLElement | null) => el?.focus();
 
-/* ---------- Focus: one project multi-select for the whole app, with presets (OR-34) ---------- */
+/* ---------- Focus: one project multi-select for the whole app, with presets and ignore (OR-34, controls/focus-control.md) ---------- */
 
 export type FocusProject = { id: string; name: string };
 /**
- * The focus sits at the top of the navigation and opens inline below its button (a working tool never floats, OR-14).
- * One click picks a preset or toggles a project; an empty selection is every project. "All projects" is the system preset.
+ * The focus chip in the shell header (OR-43): the focused project names (two, then +N), toned when a focus is set, and a
+ * panel anchored under it (an overlay that moves nothing, an OR-14 exception like Spotlight). The panel holds the presets
+ * (system "All projects" and saved ones), the project list with an ignore action per row, and a folded "Ignored (n)"
+ * section to restore them. Ignored projects are never offered for the focus. `outside` is the count of items that need the
+ * person in projects outside the focus (ignored ones too); it shows only when above 0.
  */
-export function FocusControl({ projects, value, presets, onChange, onSavePreset, onRemovePreset, mini }: {
-  projects: FocusProject[]; value: string[]; presets: { name: string; projects: string[] }[];
-  onChange: (ids: string[]) => void; onSavePreset: (name: string) => void; onRemovePreset: (name: string) => void; mini?: boolean;
+export function FocusControl({ projects, value, presets, ignored = [], outside, onChange, onSavePreset, onRemovePreset, onIgnore }: {
+  projects: FocusProject[]; value: string[]; presets: { name: string; projects: string[] }[]; ignored?: string[];
+  outside?: { n: number; onOpen: () => void };
+  onChange: (ids: string[]) => void; onSavePreset: (name: string) => void; onRemovePreset: (name: string) => void; onIgnore?: (id: string, ignored: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false), [q, setQ] = useState(''), [naming, setNaming] = useState<string | null>(null);
+  const [open, setOpen] = useState(false), [q, setQ] = useState(''), [naming, setNaming] = useState<string | null>(null), [showIgnored, setShowIgnored] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(open, ref, () => { setOpen(false); setNaming(null); }, '.focus-btn');
   // '-' is work outside projects; it is listed when the focus or a preset holds it.
   const name = (id: string) => id === '-' ? 'No project' : projects.find(p => p.id === id)?.name ?? id;
   if (value.includes('-') || presets.some(p => p.projects.includes('-'))) projects = [{ id: '-', name: 'No project' }, ...projects.filter(p => p.id !== '-')];
-  const summary = value.length === 0 ? 'All projects' : value.length === 1 ? name(value[0]) : `${value.length} projects`;
-  const same = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x));
-  const shown = projects.filter(p => `${p.name} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
+  const offered = projects.filter(p => !ignored.includes(p.id)), hidden = ignored.map(id => ({ id, name: name(id) }));
+  const names = value.slice(0, 2).map(name), more = value.length - names.length;
+  const summary = value.length ? names.join(', ') + (more > 0 ? ` and ${more} more` : '') : 'All projects';
+  const same = (a: string[], b: string[]) => { const x = a.filter(p => !ignored.includes(p)); return x.length === b.length && x.every(p => b.includes(p)); };
+  const shown = offered.filter(p => `${p.name} ${p.id}`.toLowerCase().includes(q.toLowerCase()));
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter(x => x !== id) : [...value, id]);
-  return <div class={`focus-ctl${open ? ' open' : ''}${value.length ? ' set' : ''}`} data-ui="focus-control">
-    <button type="button" class="focus-btn" aria-expanded={mini ? undefined : open} aria-label={`Focus: ${summary}`} data-tip={mini ? `Focus: ${summary}; expand the navigation to change it` : undefined} data-tip-narrow onClick={() => { if (!mini) setOpen(!open); }}>
-      <Icon name="focus" /><span class="nm">{summary}</span></button>
-    {open && !mini && <div class="focus-panel" role="group" aria-label="Focus projects">
+  const save = () => { if (naming?.trim()) onSavePreset(naming.trim()); setNaming(null); };
+  return <div class={`focus-ctl${open ? ' open' : ''}${value.length ? ' set' : ''}`} data-ui="focus-control" ref={ref}>
+    {outside && outside.n > 0 && <button type="button" class="focus-outside t-attention" aria-label={`${outside.n} need you outside focus: show every project`} data-tip="Show every project" onClick={outside.onOpen}>
+      <Icon name="bell" /><span class="num">{outside.n}</span><span class="nm">need you outside focus</span></button>}
+    <button type="button" class="focus-btn" aria-expanded={open} aria-label={`Focus: ${summary}`} onClick={() => setOpen(!open)}>
+      <span class="focus-ic" data-tip={`Focus: ${summary}`} data-tip-narrow><Icon name="focus" /></span>
+      <span class="nm">{value.length ? names.join(', ') : 'All projects'}</span>{more > 0 && <span class="more">+{more}</span>}<Icon name="chevron-down" /></button>
+    {open && <div class="focus-panel" role="group" aria-label="Focus projects">
       <div class="presets">
         <span class={`preset${value.length === 0 ? ' on' : ''}`}><button type="button" aria-pressed={value.length === 0} onClick={() => onChange([])}>All projects</button></span>
-        {presets.map(p => <span key={p.name} class={`preset${same(p.projects, value) && value.length ? ' on' : ''}`}>
-          <button type="button" aria-pressed={same(p.projects, value)} onClick={() => onChange(p.projects)}>{p.name}</button>
+        {presets.map(p => <span key={p.name} class={`preset${value.length && same(p.projects, value) ? ' on' : ''}`}>
+          <button type="button" aria-pressed={!!value.length && same(p.projects, value)} onClick={() => onChange(p.projects.filter(x => !ignored.includes(x)))}>{p.name}</button>
           <button type="button" class="x" aria-label={`Remove focus preset ${p.name}`} data-tip="Remove" onClick={() => onRemovePreset(p.name)}><Icon name="x" /></button></span>)}
         {value.length > 0 && (naming === null
           ? <Button label="Save focus preset" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
           : <span class="naming"><input value={naming} placeholder="Preset name" aria-label="Preset name" ref={focusOnMount} onInput={e => setNaming((e.target as HTMLInputElement).value)}
-              onKeyDown={e => { if (e.key === 'Enter' && naming.trim()) { onSavePreset(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
-              <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSavePreset(naming.trim()); setNaming(null); }} /></span>)}
+              onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setNaming(null); }} />
+              <Button label="Save" kind="primary" onClick={save} /></span>)}
       </div>
-      {projects.length > 8 && <SearchBox label="Find project" value={q} onInput={setQ} always />}
-      <ul class="focus-list">{shown.map(p => <li key={p.id}><label><input type="checkbox" class="row-check" checked={value.includes(p.id)} onChange={() => toggle(p.id)} />
-        <span class="nm">{p.name}</span></label></li>)}</ul>
+      {offered.length > 8 && <SearchBox label="Find project" value={q} onInput={setQ} always />}
+      <ul class="focus-list" aria-label="Projects">{shown.map(p => <li key={p.id}><label><input type="checkbox" class="row-check" checked={value.includes(p.id)} onChange={() => toggle(p.id)} />
+        <span class="nm">{p.name}</span></label>
+        {onIgnore && p.id !== '-' && <button type="button" class="focus-act" aria-label={`Ignore ${p.name}`} data-tip="Ignore: hide everywhere" onClick={() => onIgnore(p.id, true)}><Icon name="circle-slash" /></button>}</li>)}</ul>
+      {hidden.length > 0 && <div class="focus-ignored">
+        <button type="button" class="group-h" aria-expanded={showIgnored} onClick={() => setShowIgnored(!showIgnored)}>
+          <span class={showIgnored ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span><Icon name="circle-slash" /><b>Ignored</b><span class="num">{hidden.length}</span></button>
+        {showIgnored && <ul class="focus-list" aria-label="Ignored projects">{hidden.map(p => <li key={p.id}><span class="nm muted">{p.name}</span>
+          {onIgnore && <button type="button" class="focus-act" aria-label={`Restore ${p.name}`} data-tip="Restore" onClick={() => onIgnore(p.id, false)}><Icon name="undo-2" /></button>}</li>)}</ul>}
+      </div>}
     </div>}
   </div>;
 }
@@ -941,12 +960,10 @@ export function FocusControl({ projects, value, presets, onChange, onSavePreset,
 /* ---------- Navigation rail with pinned sections (nav-rail.md) ---------- */
 
 export type NavItem = { id: string; label: string; icon: IconName; group: string; count?: { n: number; tone: Tone; label: string } };
-export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, onSearch, foot, tools }: {
+export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, head, foot }: {
   items: NavItem[]; current: string; onGo: (id: string) => void;
   /** The person's pinned ids in their order; onPins gets the whole new list (pin, unpin, reorder). */ pinned: string[]; onPins: (ids: string[]) => void;
   /** Collapsed to icons. */ mini?: boolean; /** Product name and need-you chip (app shell). */ head?: ComponentChildren; /** The current user block, at the bottom. */ foot?: ComponentChildren;
-  /** Opens the Spotlight palette (OR-31, OR-32); the rail has no search field of its own. */ onSearch?: () => void;
-  /** Global tools under the head: the project focus (OR-34). */ tools?: ComponentChildren;
 }) {
   // Ids of sections that no longer exist are dropped here, so they never take a position and leave on the next save.
   const pinned = stored.filter(id => items.some(i => i.id === id));
@@ -1007,10 +1024,7 @@ export function NavRail({ items, pinned: stored, current, onPins, onGo, mini, he
   return (
     <nav class={`rail${mini ? ' mini' : ''}`} data-ui="nav-rail" aria-label="Sections" ref={navRef}>
       {head && <div class="rail-head">{head}</div>}
-      {tools}
       {pins.length > 0 && <ul class="rail-g pinned" aria-label="Pinned">{pins.map(i => item(i, true))}</ul>}
-      {onSearch && <ul class="rail-g"><li class="nav-i"><a href="#search" aria-keyshortcuts="Meta+K Control+K" onClick={e => { e.preventDefault(); onSearch(); }}>
-        <span data-tip="Search  ⌘K" data-tip-narrow class="nav-ic"><Icon name={actions.search} /></span><span class="nm">Search</span></a></li></ul>}
       {groups.map(g => <ul key={g} class="rail-g" aria-label={g}><li class="rail-h">{g}</li>{items.filter(i => i.group === g).map(i => item(i, false))}</ul>)}
       {foot && <div class="rail-foot">{foot}</div>}
     </nav>

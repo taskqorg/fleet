@@ -15,7 +15,7 @@ import { useDoc } from '../store.ts';
 import { useListPage, ListPagePanel, type LocalList } from '../list-page.tsx';
 import { useUrlView } from '../url.ts';
 import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, DELIVERY_STAGES, type View } from '../../../packages/view-url/view-url.ts';
-import { focusIds, prefsRead, type SavedView } from '../prefs.ts';
+import { focusIds, prefsRead, scopeReady, type SavedView } from '../prefs.ts';
 import type { Change } from '../../../contracts/generated/ops.ts';
 
 type Stage = StateOf<'delivery'>;
@@ -89,7 +89,7 @@ export function bucketsOf(range: string, now: number, first?: number): Bucket[] 
 export function Delivery({ id }: { id?: string }) {
   const focus = focusIds() ?? [];
   const now = Date.now();
-  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
+  const status = useDoc<Status>(scopeReady.value ? 'delivery:' + focus.join(',') : null, () => op('delivery_status', { projectIds: focusIds() }), touchesStatus, 300000);
   // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
   const baseDoc = useDoc<Baseline | typeof NONE>(prefsRead.value ? 'delivery-baseline:14' : null, () => no404(op('delivery_baseline', { days: 14 })), touchesHistory, 600000);
   const base = baseDoc.data === NONE ? null : baseDoc.data;
@@ -164,7 +164,7 @@ export function Delivery({ id }: { id?: string }) {
   const p = keep.at ? picked : null;
 
   const list = <>
-    <header class="page-h"><h1>Delivery</h1><span class="grow" />
+    <header class="page-h"><span class="grow" />
       {data?.source === 'public' && <span class="chip-age t-attention" data-tip="No github key in API keys: unauthenticated reads of the fleet repository every 6 minutes">public GitHub</span>}
       {data?.refreshedAt && <AgeChip t={ms(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}</header>
     {data?.error && <ErrorBanner text={`GitHub: ${data.error}`} />}

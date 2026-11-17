@@ -44,7 +44,7 @@ export function Tasks({ id }: { id?: string }) {
   const now = Date.now();
   const { filtered } = page, focused = !view.project?.length && !!withFocus(view).project?.length;
   const listPane = <>
-    <header class="page-h"><h1>Tasks</h1><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
+    <header class="page-h"><OfflineMarker state={list.state} since={list.at || undefined} now={now} /></header>
     <ListPagePanel page={page} noun="Tasks" placeholder="Search tasks, agent:claude host:mac" family="task" groups={GROUPS} sorts={SORTS} focused={id}
       actions={() => [
         { label: 'Pause', icon: 'pause', onClick: () => bulk('pause', chosen.filter(canPause)), disabledReason: off ?? (chosen.some(canPause) ? undefined : 'None can pause') },

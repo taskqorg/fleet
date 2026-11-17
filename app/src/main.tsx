@@ -11,7 +11,7 @@ import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalid
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS } from '../../packages/view-url/view-url.ts';
 import { preferencesTouched } from './invalidation.ts';
-import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave } from './prefs.ts';
+import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, knownProjects, focusIds, outsideScope } from './prefs.ts';
 import { useDoc } from './store.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
@@ -167,10 +167,9 @@ function App() {
     document.addEventListener('visibilitychange', flush); addEventListener('pagehide', leave);
     return () => { document.removeEventListener('visibilitychange', flush); removeEventListener('pagehide', leave); };
   }, []);
-  // The project focus (OR-34) is a person setting; lists apply it where their view names no projects.
-  const focus = prefs.value.focus, presets = prefs.value.focusPresets;
-  const focusCtl = (mini: boolean) => <Focus mini={mini} value={focus} presets={presets} />;
-  return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={NAV} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown} focus={access.value.state === 'open' ? focusCtl : undefined}
+  // The project focus and ignored projects (OR-34) are person settings; lists apply them where their view names no projects.
+  return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={NAV} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
+    focus={access.value.state === 'open' ? <Focus go={go} /> : undefined}
     widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
     // Logout clears this person's stored data first (at most 2 s: a blocked IndexedDB delete must not keep the person signed in), then ends the Cloudflare Access session.
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
@@ -187,11 +186,32 @@ function PrivateRoutes({ go }: { go: (to: string) => void }) {
     </Switch>;
 }
 
-/** The focus control with its own project list, so a definition change re-renders only the control. */
-function Focus({ mini, value, presets }: { mini: boolean; value: string[]; presets: { name: string; projects: string[] }[] }) {
+/**
+ * The focus chip with its own project list, so a definition change re-renders only the chip. The list is also the set
+ * "every project" means while a project is ignored (prefs.ts knownProjects).
+ */
+function Focus({ go }: { go: (to: string) => void }) {
   const projects = useDoc<any>('projects', () => op('project_list', {}), c => c.kind === 'definition');
-  return <FocusControl mini={mini} projects={(projects.data?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.id }))}
-    value={value} presets={presets} onChange={setFocus} onSavePreset={n => saveFocusPreset(n)} onRemovePreset={removeFocusPreset} />;
+  const list: { id: string; name: string }[] = (projects.data?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.id }));
+  const ids = list.map(p => p.id).join('\n');
+  useEffect(() => { knownProjects.value = projects.data ? ids ? ids.split('\n') : [] : projects.error ? 'failed' : null; }, [ids, !!projects.data, !!projects.error]);
+  const { focus, focusPresets, ignored } = prefs.value;
+  const outside = useOutside();
+  return <FocusControl projects={list} value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} outside={{ n: outside, onOpen: () => go('/overview?all') }}
+    onChange={setFocus} onSavePreset={n => saveFocusPreset(n)} onRemovePreset={removeFocusPreset} onIgnore={setIgnored} />;
+}
+
+/**
+ * How many items need the person (open questions and Needs-you problems, the Overview's set) in projects outside the
+ * focus, ignored ones too; 0 while lists show every project. Read only while the scope is narrowed.
+ */
+function useOutside() {
+  const scope = focusIds();
+  const all = useDoc<{ projects: (string | null)[] }>(scope ? 'needs-you-all' : null, async () => {
+    const [q, e] = await Promise.all([op('questions_list', { state: 'open' }), op('executions_list', { needsYou: true })]);
+    return { projects: [...q.questions, ...e.executions].map((x: any) => x.projectId ?? null) };
+  }, c => ['task', 'question', 'execution'].includes(c.kind));
+  return scope ? (all.data?.projects ?? []).filter(p => outsideScope(p, scope)).length : 0;
 }
 
 render(<Router><App /></Router>, document.getElementById('app')!);

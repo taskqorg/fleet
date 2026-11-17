@@ -97,7 +97,7 @@ function PrList({ sel, onSel, picked, onUnpick }: { sel?: number; onSel: (n: num
   </div>;
   const keys = group === 'stage' ? ORDER : group === 'project' ? [...new Set(shown.map(p => p.repo ?? 'taskqorg/fleet'))] : [];
   return <>
-    <header class="page-h"><h1>Delivery</h1><span class="grow" /><Stale at={NOW - 2 * min} now={NOW} /></header>
+    <header class="page-h"><span class="grow" /><Stale at={NOW - 2 * min} now={NOW} /></header>
     <section class="panel">
       <ListFrame bar={<FilterBar query="" onQuery={() => {}} placeholder="Search pull requests, state:mq_wait project:fleet" shown={shown.length} total={source.length}
         chips={picked ? [{ field: 'Merged', value: picked.label }] : []} onRemove={onUnpick}

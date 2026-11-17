@@ -278,15 +278,17 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .avatar{flex:none;display:inline-grid;place-items:center;width:var(--size-icon);height:var(--size-icon);border-radius:50%;background:var(--selected);color:var(--fg);font-size:var(--font-size-xs);font-weight:var(--font-weight-bold)}
 .rail.mini .rail-user-b{padding:0 var(--space-2)}
 .rail-menu.up{position:fixed;top:auto;right:auto}
-/* OR-41 dividers and OR-42 toggle */
-.shell-col{position:relative;display:flex;min-width:0;min-height:0}
+/* OR-41 dividers; OR-43 the shell header with the OR-42 toggle */
+.shell-col{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
 .shell-col>.shell-main{flex:1}
-.nav-toggle{position:absolute;top:var(--space-2);left:var(--space-2);z-index:3}
+/* One header over the control column and the work area: the collapse toggle and the section title on the left, the focus
+   chip and search on the right. It never scrolls sideways: the title gives way first, then the chip's names. */
+.shell-h{flex:none;display:flex;align-items:center;gap:var(--space-2);min-width:0;height:calc(var(--size-control) + 2 * var(--space-2));padding:0 var(--space-3) 0 var(--space-2);border-bottom:1px solid var(--line);background:var(--bg)}
+.shell-title{flex:0 1 auto;min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-size-lg);font-weight:var(--font-weight-bold);letter-spacing:-.01em}
+.shell-h>.grow{flex:1 0 0}
+.nav-toggle,.shell-search{flex:none}
 .nav-toggle .btn{border-color:transparent;background:none}
-/* The toggle's corner: a left gutter on a page without a control column, the head's indent in a control column, and banners above one. */
-.shell-main:not(:has(>.split-view)){padding-left:calc(var(--size-control) + var(--space-3))}
-.shell-main:has(>.split-view)>:not(.split-view){margin-left:calc(var(--size-control) + var(--space-3))}
-.split-list>.page-h:first-child{padding-left:calc(var(--size-control) + var(--space-4))}
+.shell-search:hover{background:var(--hover);color:var(--fg)}
 .split-view{position:relative}
 .divider{position:absolute;top:0;bottom:0;z-index:4;width:var(--space-3);margin-left:calc(var(--space-1) - var(--space-3));cursor:col-resize;touch-action:none;outline:none}
 /* The hit zone is wider than the line it shows: 8 px with a pointer, 44 px on touch (owner-rules exception). It lies over the
@@ -303,7 +305,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
   .divider,.divider-ctl{width:var(--size-hit-phone);margin-left:calc(-1 * var(--size-hit-phone) / 2)}
   .divider::after,.divider-ctl::after{left:calc(50% - var(--space-2) / 2);right:auto}
   .rail :is(a,button),.split-list :is(a,button,input,label):not(.pill){position:relative;z-index:5}
-  .vl-row,.nav-toggle{z-index:5}
+  .vl-row{z-index:5}
   .split-list .vl{position:relative;z-index:5}
 }
 /* Until the person's settings are first read (at most 1.5 s) the shell is laid out but not shown, so a stored width or collapsed rail never jumps in (OR-23). */
@@ -393,7 +395,7 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 .split-view{display:grid;grid-template-columns:min(var(--size-ctl),50%) minmax(0,1fr)}
 .split-list{display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;border-right:1px solid var(--line);background:var(--bg)}
 .split-list>*{flex:none}
-.split-list>.page-h{padding:var(--space-4) var(--space-4) var(--space-2)}
+.split-list>.page-h{padding:var(--space-3) var(--space-4) var(--space-2)}
 .split-list>.panel{border:0;border-radius:0;background:none}
 .split-list>.stats{padding:0 var(--space-4) var(--space-2)}
 .split-list>.panel:has(.vl),.split-list .list-view,.split-list .vl-wrap{display:flex;flex-direction:column;flex:1;min-height:0}
@@ -412,13 +414,11 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 @media (max-width:1100px){
   .cols,.split-view{grid-template-columns:minmax(0,1fr)}
   .split-view.has-detail>.split-list,.split-view:not(.has-detail)>.work-idle,.divider-ctl{display:none}
-  .split-view.has-detail>:not(.split-list){padding-left:calc(var(--size-control) + var(--space-4))}
 }
 @media (max-width:760px){
   .rail{width:auto;padding:var(--space-2) var(--space-1)}
-  .shell-main:has(>.split-view)>:not(.split-view){margin-left:0}
   .nav-toggle,.divider{display:none}
-  .split-list>.page-h:first-child{padding-left:var(--space-4)}
+  .shell-h{padding-left:var(--space-3)}
   .rail .nm,.rail .rail-h,.rail .nav-pin,.rail .rail-menu:not(.up),.rail .rail-g:not(.pinned) .nav-i.pinned,.rail .brand,.rail .waiting,.rail-head{display:none}
   .rail .rail-ver,.rail .rail-upd{display:none}.rail:not(.mini) .menu-ver{display:flex}
   .rail .nav-i a{padding:0 var(--space-2);position:relative}
@@ -711,18 +711,37 @@ kbd{font-size:var(--font-size-xs);opacity:.75;border:1px solid currentColor;bord
 /* The select toggle's icon sits in the checkbox column it opens (rows and the select-all box start at the same x). */
 .sel-toggle{display:inline-flex;margin-left:calc((var(--size-icon) - var(--size-control)) / 2)}
 .counter.sigma .num{font-weight:var(--font-weight-bold)}
-/* Focus (OR-34): a nav-row button; its panel opens inline below it. */
-.focus-ctl{padding:0 var(--space-2) var(--space-2)}
-.focus-btn{display:flex;align-items:center;gap:var(--space-2);width:100%;height:var(--size-control);padding:0 var(--space-2);border:1px solid var(--line);border-radius:var(--radius-md);background:none;color:var(--fg-muted);font:inherit;text-align:left;cursor:pointer}
-.focus-btn .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.focus-ctl.set .focus-btn{color:var(--fg);border-color:var(--accent)}
-.focus-btn:hover{background:var(--hover)}
-.focus-panel{display:flex;flex-direction:column;gap:var(--space-2);padding-top:var(--space-2)}
+/* Focus chip (OR-34, controls/focus-control.md) in the shell header; its panel floats under it and moves nothing. */
+.focus-ctl{position:relative;display:flex;align-items:center;gap:var(--space-2);min-width:0}
+.focus-btn{display:flex;align-items:center;gap:var(--space-2);min-width:0;max-width:min(22rem,40vw);height:var(--size-control);padding:0 var(--space-2) 0 var(--space-3);border:1px solid var(--line);border-radius:var(--radius-md);background:none;color:var(--fg-muted);font:inherit;font-size:var(--font-size-sm);cursor:pointer}
+.focus-btn .focus-ic{display:inline-flex}
+.focus-btn .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.focus-btn .more{flex:none;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.focus-btn>.icon:last-child{flex:none;opacity:.6}
+.focus-btn:hover,.focus-ctl.open .focus-btn{background:var(--hover)}
+/* A set focus is toned: filled with the accent, so watching some projects never reads as All projects, at any width. */
+.focus-ctl.set .focus-btn{border-color:var(--accent);background:var(--accent);color:var(--on-accent);font-weight:var(--font-weight-medium)}
+.focus-ctl.set .focus-btn:hover,.focus-ctl.set.open .focus-btn{background:color-mix(in srgb,var(--accent) 82%,var(--bg))}
+.focus-outside{flex:none;display:flex;align-items:center;gap:var(--space-1);height:var(--size-control);padding:0 var(--space-2);border:0;border-radius:var(--radius-md);background:var(--tone-bg);color:var(--tone-fg);font:inherit;font-size:var(--font-size-sm);font-weight:var(--font-weight-medium);white-space:nowrap;cursor:pointer}
+.focus-outside .num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.focus-panel{position:absolute;top:calc(100% + var(--space-1));right:0;z-index:30;display:flex;flex-direction:column;gap:var(--space-2);width:min(24rem,calc(100vw - 2 * var(--space-4)));max-height:32rem;overflow-y:auto;padding:var(--space-3);background:var(--float);border:1px solid var(--line);border-radius:var(--radius-md);box-shadow:var(--elevation-popover);font-weight:var(--font-weight-regular)}
 .focus-list{list-style:none;margin:0;padding:0}
-.focus-list label{display:flex;align-items:center;gap:var(--space-2);height:var(--size-control);padding:0 var(--space-2);border-radius:var(--radius-md);cursor:pointer}
+.focus-list li{display:flex;align-items:center;gap:var(--space-1);min-height:var(--size-control)}
+.focus-list label{flex:1;display:flex;align-items:center;gap:var(--space-2);min-width:0;height:var(--size-control);padding:0 var(--space-2);border-radius:var(--radius-md);cursor:pointer}
 .focus-list label:hover{background:var(--hover)}
 .focus-list .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.focus-list .row-check{flex:none}
-.rail.mini .focus-btn{justify-content:center;padding:0}.rail.mini .focus-btn .nm{display:none}
+.focus-list li>.nm{flex:1;padding:0 var(--space-2)}
+.focus-act{flex:none;display:inline-grid;place-items:center;width:var(--size-control);height:var(--size-control);border:0;border-radius:var(--radius-md);background:none;color:var(--fg-muted);cursor:pointer}
+.focus-act:hover,.focus-act:focus-visible{background:var(--hover);color:var(--fg)}
+.focus-ignored{padding-top:var(--space-2);border-top:1px solid var(--line)}
+.focus-ignored>.group-h{height:var(--size-control);padding:0 var(--space-2);color:var(--fg-muted)}
+/* Phone: icons only (the chip's names, the outside words); the panel spans the window under the header. */
+@media (max-width:760px){
+  .focus-btn .nm,.focus-btn .more,.focus-btn>.icon:last-child,.focus-outside .nm{display:none}
+  .focus-btn{padding:0 var(--space-2)}
+  .focus-panel{position:fixed;top:calc(var(--size-control) + 3 * var(--space-2));left:var(--space-3);right:var(--space-3);width:auto;max-height:calc(100% - var(--size-control) - 6 * var(--space-2))}
+}
+@media (pointer:coarse){.focus-btn,.focus-outside,.focus-act,.shell-search{min-height:var(--size-hit-phone);min-width:var(--size-hit-phone)}}
 
 /* ---------- Day chart, share bar, norm bar (controls/day-chart.md, share-bar.md, norm-bar.md) ---------- */
 .dc,.sb{--gap:var(--surface);--stripes:repeating-linear-gradient(45deg,transparent 0 3px,var(--gap) 3px 5px)}

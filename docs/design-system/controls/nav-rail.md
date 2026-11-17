@@ -5,11 +5,10 @@
 **Purpose.** Moves between sections. There can be many sections, so each person pins the ones they follow ([D9](../decisions.md)).
 
 **Anatomy.** A left column of width `size-rail`, from top to bottom:
-0. The head: the Fleet mark and name ([D23](../decisions.md#2026-11-11-d23-name-and-mark)) and the "N need you" chip. The collapse button is not here: it sits at the top of the next column (OR-42, [app shell](../patterns/app-shell.md)).
+0. The head: the Fleet mark and name ([D23](../decisions.md#2026-11-11-d23-name-and-mark)) and the "N need you" chip. The collapse button, the search icon and the focus chip are not here: they sit in the shell header beside the rail (OR-42, OR-43, [app shell](../patterns/app-shell.md)).
 1. The pinned group, in the order the person set.
-2. The Search item: opens the [Spotlight palette](spotlight.md) (OR-31, OR-32). The rail has no search field of its own.
-3. All other sections, grouped (Operator, Architect) under small group headings.
-4. At the bottom, the current user block: avatar and name. A click (or right-click) opens a short menu with Logout, the Cloudflare Access logout (OR-42). After the name, the version (**Version** below).
+2. All other sections, grouped (Operator, Architect) under small group headings.
+3. At the bottom, the current user block: avatar and name. A click (or right-click) opens a short menu with Logout, the Cloudflare Access logout (OR-42). After the name, the version (**Version** below).
 
 Each item has a registry icon (OR-3), a name, an optional counter chip in a tone (for example `3` in attention for "need you"), and a pin button.
 
@@ -21,7 +20,7 @@ Each item has a registry icon (OR-3), a name, an optional counter chip in a tone
 * A section opens with its list as the person left it: sort, grouping, filters and search (`lastViews`, a person setting kept per section as its list path; the open item and checked rows are not kept, so a deleted item never traps the section). It is saved when the person leaves the section or the tab hides. Clicking the current section from an open item returns to that list. Spotlight's section jumps do the same.
 * Counters show only when they are not zero and link to the filtered list. A counter's tone follows the [state badge](state-badge.md) mapping.
 * The current section has the `selected` background.
-* Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Group headings and the search row keep their height (the search hides and its filter clears), the user block keeps its avatar.
+* Collapsed and expanded map 1:1 (OR-42): the same rows with the same icons and heights; only names, pin buttons and the brand name go. Group headings keep their height, the user block keeps its avatar.
 * The divider on the rail's right edge resizes it (OR-41): drag, or focus it and press Left and Right; a double-click resets the width. Collapsed, the rail has no divider.
 * The collapse button shrinks the rail to icons, and below 760 px it is always collapsed: pins first and counters on the icons. Names appear in tooltips, shown only while names are hidden (OR-20). This is interim; open question (d) holds the variants ([D10](../decisions.md)). The rail never disappears.
 

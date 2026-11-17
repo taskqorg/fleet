@@ -23,12 +23,12 @@ export function Hosts({ id }: { id?: string }) {
   // Spans change without change rows: summary and findings are re-read every 30 s.
   const tele = useDoc<any>('telemetry-summary', async () => await op('telemetry_summary', { window: '1h' }), () => false, 30000);
   const found = useDoc<any>('telemetry-findings', async () => await op('telemetry_findings', {}), () => false, 30000);
-  if (!data) return <><header class="page-h"><h1>Hosts</h1></header><Empty text="Loading…" /></>;
+  if (!data) return <Empty text="Loading…" />;
   const fresh = (h: any) => !!h.lastSeenAt && now - h.lastSeenAt < data.staleAfterMs;
   const reading = (hid: string) => (tele.data?.hosts ?? []).find((r: any) => r.hostId === hid);
   const sel = data.hosts.find((h: any) => h.id === id);
   const list = <>
-    <header class="page-h"><h1>Hosts</h1><span class="grow" /><OfflineMarker state={state} now={now} />
+    <header class="page-h"><span class="grow" /><OfflineMarker state={state} now={now} />
       <a class="btn quiet" href="/hosts/limits" onClick={e => { e.preventDefault(); go('/hosts/limits'); }}><Icon name="gauge" />Limits</a></header>
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
