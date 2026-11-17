@@ -2106,7 +2106,7 @@ func (v PurgeKind) Valid() bool {
 	return false
 }
 
-// PurgeReason: reason: the first live row that keeps the object ("<table>.<column> <referencing kind> <id>"), a pending command a live host has not finished ("pending <kind> command <id> on host <host>"), or "deferred: time budget" when this call stopped before checking it (run system_purge again).
+// PurgeReason: reason: the first live row that keeps the object ("<table>.<column> by <document kind or table> <row id>"), a pending command a live host has not finished ("pending <kind> command <id> on host <host>"), for a host what history still names it, or "deferred: time budget; run system_purge again" (prefix deferred) when this call stopped before reaching it.
 type PurgeReason struct {
 	Id     string `json:"id"`
 	Reason string `json:"reason"`

@@ -266,6 +266,7 @@ INSERT INTO document(kind,id,data) VALUES ('command','c-ghost','{"id":"c-ghost",
 	}
 	// A call past its time budget checks nothing more and says so.
 	prev := purgeBudget
+	t.Cleanup(func() { purgeBudget = prev })
 	purgeBudget = 0
 	if c, p := call("system_purge", doc{"preview": true, "kinds": []string{"project"}}, owner); c != 200 || p["more"] != true || !strings.HasPrefix(astr(mapOf(anys(mapOf(anys(p["kept"])[0])["reasons"])[0])["reason"]), "deferred") {
 		t.Fatalf("budget = %d %v", c, p)

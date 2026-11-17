@@ -336,7 +336,7 @@ func (c *cascade) blockedBy(q *Request) (string, error) {
 			if t == "document" {
 				by = astr(row["rkind"])
 			}
-			return fmt.Sprintf("%s.%s by %s %s", t, r.sql(), by, astr(row["rid"])), nil
+			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, r.sql(), by, astr(row["rid"]))), nil
 		}
 	}
 	return "", nil
@@ -532,12 +532,6 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		if last == nil {
 			continue
 		}
-		// A removed host never fetches it (its worktrees went with the host); it would only keep the purge waiting.
-		if live, err := knownHost(q, astr(last["hostId"])); err != nil {
-			return err
-		} else if !live {
-			continue
-		}
 		// Queued after the stop: the executor keeps a worktree with uncommitted or unpushed work (cleanup.keepWhen).
 		if t, err := teardownCommand(q, s, last, false); err != nil {
 			return err
@@ -669,18 +663,14 @@ func purgeCascade(q *Request, c *cascade) error {
 	return nil
 }
 
-// pendingCommands: the unfinished commands of executions ($1) and whether their host is gone (removed or purged).
-const pendingCommands = `SELECT c.id, c.data->>'kind' AS kind, c.data->>'hostId' AS host, (h.id IS NULL OR h.data->>'state'='removed') AS dead
+// pendingCommands: the unfinished commands of executions ($1) and whether their host is gone: removed, or unknown
+// (neither the default host $2 nor a host record nor an observation), as knownHost decides.
+const pendingCommands = `SELECT c.id, c.data->>'kind' AS kind, c.data->>'hostId' AS host,
+ (h.data->>'state' IS NOT DISTINCT FROM 'removed' AND h.id IS NOT NULL
+  OR (h.id IS NULL AND c.data->>'hostId' IS DISTINCT FROM $2
+   AND NOT EXISTS (SELECT 1 FROM document o WHERE o.kind='host-observation' AND o.id=c.data->>'hostId'))) AS dead
  FROM document c LEFT JOIN document h ON h.kind='host' AND h.id='host:'||(c.data->>'hostId')
  WHERE c.kind='command' AND c.data->>'status'='pending' AND c.data->>'executionId'=ANY($1) ORDER BY c.seq`
-
-func idsOf(rs []doc) []string {
-	out := make([]string, len(rs))
-	for i, r := range rs {
-		out[i] = astr(r["id"])
-	}
-	return out
-}
 
 // purgeRootTx: one tombstoned root in its own transaction: blocked (a live row keeps it) or purged.
 func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (rows []contract.KindCount, bytes int64, blocked string, err error) {
@@ -699,8 +689,8 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 			return err
 		}
 		// A stop or teardown a live host has not finished keeps the object: purging it would leave the agent running and
-		// the worktree in place. One for a removed (or purged) host is never fetched: it is settled, as hosts_remove does.
-		pending, err := queryRows(q, pendingCommands, c.sets["execution"])
+		// the worktree in place. One for a removed (or purged) host is never fetched: it goes with the object.
+		pending, err := queryRows(q, pendingCommands, c.sets["execution"], defaultHost())
 		if err != nil {
 			return err
 		}
@@ -708,11 +698,6 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 			if p["dead"] != true {
 				blocked = fmt.Sprintf("pending %s command %s on host %s", astr(p["kind"]), astr(p["id"]), astr(p["host"]))
 				return nil
-			}
-		}
-		if !preview && len(pending) > 0 {
-			if err := exec(q, `UPDATE document SET data=data||'{"status":"stopped","stopDetail":"host-removed"}', updated_at=now() WHERE kind='command' AND id=ANY($1)`, idsOf(pending)); err != nil {
-				return err
 			}
 		}
 		if rows, bytes, err = c.counts(q); err != nil || preview {
@@ -738,8 +723,9 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	over := func() bool {
 		if time.Since(start) > purgeBudget {
 			more = true
+			return true
 		}
-		return more
+		return false
 	}
 	kinds := contract.PurgeKindValues
 	if len(b.Kinds) > 0 {
@@ -788,7 +774,8 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		if !b.Preview {
 			free := []string{}
 			for _, id := range r.roots {
-				if over() {
+				if time.Since(start) > purgeBudget/2 { // the checks leave the deletes half the budget
+					more = true
 					r.kept = append(r.kept, contract.PurgeReason{Id: id, Reason: deferred})
 					continue
 				}
@@ -848,7 +835,7 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 	}
 	var left int64
 	var err error
-	if !b.Preview && !over() {
+	if !b.Preview && !more && !over() {
 		left, err = runPurgeTasks(q.ctx(), q.app, start.Add(purgeBudget))
 	} else {
 		err = runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
