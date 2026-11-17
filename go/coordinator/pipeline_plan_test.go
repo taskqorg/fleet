@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -326,6 +327,102 @@ func TestPipelineNativeHandoffAndCancellation(t *testing.T) {
 		}
 		if stored["status"] != "stopped" {
 			return errors.New("prepared command remains deliverable after cancel")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Requirement: a host's poll survives pipeline runs from before plans and control
+// commands of pipeline executions. Risk (2026-11-17): teardowns of archived legacy
+// pipeline sessions answered every poll of three hosts with 409, so no work and no
+// update target reached them for hours.
+func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	env.registerHost(t, "plan-host")
+	ids := map[string]string{}
+	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
+		for _, id := range []string{"legacy", "removed", "ended", "current"} {
+			run := planFixture(t, id)
+			if err := putRun(q, run); err != nil {
+				return err
+			}
+			if err := selectPipelineStep(q, run, 0); err != nil {
+				return err
+			}
+			nativeID, err := startScript(q, run, stepRow(run, 0), "fixture-not-executed", nil, "plan-host", []any{})
+			if err != nil {
+				return err
+			}
+			step := mapOf(anys(run["steps"])[0])
+			step["state"], step["executionId"] = "running", nativeID
+			dispatch := mapOf(pipelinePlanEntry(run, 0)["dispatch"])
+			commands, err := all(q, "command", doc{"executionId": nativeID, "kind": "script"})
+			if err != nil || len(commands) != 1 {
+				return fmt.Errorf("script command: %v %d", err, len(commands))
+			}
+			dispatch["phase"], dispatch["nativeExecutionId"], dispatch["commandId"], dispatch["hostId"] = "prepared", nativeID, commands[0]["id"], "plan-host"
+			if err := putRun(q, run); err != nil {
+				return err
+			}
+			teardown := doc{"id": newID(), "executionId": nativeID, "hostId": "plan-host", "kind": "teardown", "payload": doc{}, "status": "pending"}
+			if err := put(q, "command", teardown); err != nil {
+				return err
+			}
+			ids[id+":script"], ids[id+":teardown"], ids[id+":native"] = astr(commands[0]["id"]), astr(teardown["id"]), nativeID
+			for _, kind := range []string{"steer", "input"} {
+				c := doc{"id": newID(), "executionId": nativeID, "hostId": "plan-host", "kind": kind, "payload": doc{}, "status": "pending"}
+				if err := put(q, "command", c); err != nil {
+					return err
+				}
+				ids[id+":"+kind] = astr(c["id"])
+			}
+		}
+		if err := exec(q, "UPDATE execution SET state='succeeded',ended_at=now() WHERE id='ended'"); err != nil {
+			return err
+		}
+		if err := exec(q, "DELETE FROM execution WHERE id='removed'"); err != nil {
+			return err
+		}
+		// As on PDS18: the legacy run and its native execution ended long ago; only commands are pending.
+		if err := exec(q, "UPDATE execution SET state='succeeded',ended_at=now() WHERE id=$1", ids["legacy:native"]); err != nil {
+			return err
+		}
+		return exec(q, "UPDATE execution SET data=data-'planVersion' WHERE id='legacy'")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := env.app.pollReadyCommands(env.ctx, "plan-host", nil)
+	if err != nil {
+		t.Fatal("poll failed on a legacy pipeline run:", err)
+	}
+	got := map[string]bool{}
+	for _, c := range out {
+		got[astr(c["id"])] = true
+	}
+	for _, id := range []string{"legacy", "removed", "ended", "current"} {
+		for _, kind := range []string{"teardown", "input"} {
+			if !got[ids[id+":"+kind]] {
+				t.Fatal("not delivered:", id, kind, out)
+			}
+		}
+	}
+	if !got[ids["current:script"]] || !got[ids["current:steer"]] {
+		t.Fatal("current run's script or steer was not delivered", out)
+	}
+	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
+		for _, id := range []string{"legacy", "removed", "ended"} {
+			if got[ids[id+":script"]] {
+				return fmt.Errorf("%s run's script was delivered", id)
+			}
+			c, err := get(q, ids[id+":script"], "command")
+			if err != nil {
+				return err
+			}
+			if c["status"] != "stopped" || c["stopDetail"] == nil {
+				return fmt.Errorf("%s script command is %v (%v), want stopped with a reason", id, c["status"], c["stopDetail"])
+			}
 		}
 		return nil
 	}); err != nil {
