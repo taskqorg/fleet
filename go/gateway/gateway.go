@@ -14,6 +14,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -205,6 +206,13 @@ func parseSnapshot(data []byte) (*snapshot, error) {
 		}
 		if _, ok := s.Providers[c.Provider]; !ok {
 			return nil, fmt.Errorf("connection %s names an unknown provider", name)
+		}
+		if l := c.Limits; l != nil {
+			for _, v := range []*int64{l.FileBytes, l.ReplyBytes, l.StallMs, l.AnswerMs} {
+				if v != nil && *v < 1 {
+					return nil, fmt.Errorf("connection %s limits must be positive", name)
+				}
+			}
 		}
 		if c.Intake == "" {
 			c.Intake = "all"
@@ -512,7 +520,7 @@ type body struct {
 var errStalled, errUnsent = errors.New("provider stalled"), errors.New("provider read nothing")
 
 // progress resets the stall timer on each read of a file body, and switches it to the answer wait at its end. Once
-// the provider answered (end), a late read by the transport no longer touches the timer.
+// the provider's first response byte arrived (end), neither a late read by the transport nor the timer acts again.
 type progress struct {
 	io.Reader
 	timer         *time.Timer
@@ -545,26 +553,43 @@ func (p *progress) end() bool {
 	return p.read
 }
 
+// live: the timer may still act (no response byte yet).
+func (p *progress) live() bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return !p.ended
+}
+
 // send makes one provider request; the timeout covers the answer and, separately, reading its body.
 // Cancelling caller ends the request too; it does not undo what the provider already did.
 func (g *gateway) send(caller context.Context, method, url, keyHeader, value string, b body, headers map[string]string) (*http.Response, []byte, error) {
 	ctx, cancel := context.WithCancel(caller)
 	defer cancel()
 	var timedOut atomic.Bool
-	wait := g.config.requestTimeout
-	if b.open != nil {
-		wait = b.stall
-	}
-	timer := time.AfterFunc(wait, func() { timedOut.Store(true); cancel() })
-	defer timer.Stop()
 	var reader io.Reader
 	var file *progress
+	wait, expire := g.config.requestTimeout, func() { timedOut.Store(true); cancel() }
 	switch {
 	case b.open != nil:
-		file = &progress{Reader: b.open(), timer: timer, stall: b.stall, answer: b.answer}
-		reader = file
+		file = &progress{Reader: b.open(), stall: b.stall, answer: b.answer}
+		reader, wait = file, b.stall
+		expire = func() {
+			if file.live() {
+				timedOut.Store(true)
+				cancel()
+			}
+		}
+		// The provider began to answer: from here its reply has requestTimeout, as a JSON reply.
+		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotFirstResponseByte: func() { file.end() }})
 	case b.data != nil:
 		reader = bytes.NewReader(b.data)
+	}
+	timer := time.AfterFunc(wait, expire)
+	defer timer.Stop()
+	if file != nil {
+		file.lock.Lock()
+		file.timer = timer
+		file.lock.Unlock()
 	}
 	request, err := http.NewRequestWithContext(ctx, method, url, reader)
 	if err != nil {
@@ -576,12 +601,13 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 		request.Header.Set("Authorization", "Bearer "+value)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	if b.open != nil {
-		request.ContentLength = b.length
-		request.Header.Set("Content-Type", b.contentType)
-	}
 	for k, v := range headers {
 		request.Header.Set(k, v)
+	}
+	if file != nil {
+		// After the tool's headers: the multipart boundary is never replaced.
+		request.ContentLength = b.length
+		request.Header.Set("Content-Type", b.contentType)
 	}
 	response, err := g.client.Do(request)
 	if file != nil {
@@ -592,7 +618,6 @@ func (g *gateway) send(caller context.Context, method, url, keyHeader, value str
 		case err != nil && timedOut.Load():
 			return nil, nil, errStalled
 		case err == nil:
-			// The reply body gets a timer of its own, out of reach of the file body's progress resets.
 			timer = time.AfterFunc(g.config.requestTimeout, func() { timedOut.Store(true); cancel() })
 			defer timer.Stop()
 		}
@@ -925,49 +950,48 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NewResponseController(w).SetReadDeadline(time.Now().Add(patience))
 	raw, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	http.NewResponseController(w).SetReadDeadline(time.Time{})
-	t := q.t
 	a := admit(q)
-	for a == nil {
-		var args map[string]json.RawMessage
-		if readErr != nil || json.Unmarshal(raw, &args) != nil || args == nil {
-			a = refusal(400, "error", "bad-request", "the body must be a JSON object of at most 1 MiB")
-			break
+	if a == nil {
+		if a = g.serveJSON(w, r, q, raw, readErr); a == nil {
+			return // a download streamed, with its started and completed spool lines
 		}
-		if t.UsageOnce != nil {
-			var v string
-			json.Unmarshal(args[*t.UsageOnce], &v)
-			q.usageKey = connectionName + ":" + v
-		}
-		path, ok := fillPath(t, args)
-		if !ok {
-			a = refusal(400, "error", "bad-request", "a path field is missing or not an id")
-			break
-		}
-		if c.Provider == "anthropic" {
-			path, ok = anthropicPath(t.Path, args)
-			if !ok {
-				a = refusal(400, "error", "bad-request", "Anthropic input is invalid or unsupported; only nonstreaming Messages and model pages are supported")
-				break
-			}
-		}
-		var sent []byte
-		if t.Method != "GET" {
-			sent, _ = json.Marshal(args)
-		}
-		if t.File != nil && *t.File == contract.GatewayFileModeDownload {
-			// An old client would read the file bytes as an invalid JSON reply.
-			if !strings.Contains(r.Header.Get("Accept"), "application/octet-stream") {
-				a = refusal(400, "error", "file-expected", "a download tool answers file bytes; send Accept: application/octet-stream")
-				break
-			}
-			if a = g.serveDownload(w, r, q, path, sent); a == nil {
-				return // streamed, with its started and completed spool lines
-			}
-			break
-		}
-		a = g.call(r.Context(), connectionName, c, q.p, t, path, body{data: sent})
 	}
 	g.finish(w, q, a, nil)
+}
+
+// serveJSON answers an admitted call with a JSON body: a JSON tool's provider call, or a download (nil: streamed).
+func (g *gateway) serveJSON(w http.ResponseWriter, r *http.Request, q *request, raw []byte, readErr error) *answer {
+	t := q.t
+	var args map[string]json.RawMessage
+	if readErr != nil || json.Unmarshal(raw, &args) != nil || args == nil {
+		return refusal(400, "error", "bad-request", "the body must be a JSON object of at most 1 MiB")
+	}
+	if t.UsageOnce != nil {
+		var v string
+		json.Unmarshal(args[*t.UsageOnce], &v)
+		q.usageKey = q.connection + ":" + v
+	}
+	path, ok := fillPath(t, args)
+	if !ok {
+		return refusal(400, "error", "bad-request", "a path field is missing or not an id")
+	}
+	if q.c.Provider == "anthropic" {
+		if path, ok = anthropicPath(t.Path, args); !ok {
+			return refusal(400, "error", "bad-request", "Anthropic input is invalid or unsupported; only nonstreaming Messages and model pages are supported")
+		}
+	}
+	var sent []byte
+	if t.Method != "GET" {
+		sent, _ = json.Marshal(args)
+	}
+	if t.File != nil && *t.File == contract.GatewayFileModeDownload {
+		// An old client would read the file bytes as an invalid JSON reply.
+		if !strings.Contains(r.Header.Get("Accept"), "application/octet-stream") {
+			return refusal(400, "error", "file-expected", "a download tool answers file bytes; send Accept: application/octet-stream")
+		}
+		return g.serveDownload(w, r, q, path, sent)
+	}
+	return g.call(r.Context(), q.connection, q.c, q.p, t, path, body{data: sent})
 }
 
 // line is the spool record of an answered call.
@@ -1065,14 +1089,19 @@ func (s *scanner) write(chunk []byte) bool {
 	if s.found || len(s.patterns) == 0 {
 		return s.found
 	}
-	s.buf = append(append(s.buf[:0], s.tail...), chunk...)
+	// A value split across the join lies within the tail and the chunk's first keep bytes; the rest is in the chunk.
+	s.buf = append(append(s.buf[:0], s.tail...), chunk[:min(len(chunk), s.keep)]...)
 	for _, p := range s.patterns {
-		if bytes.Contains(s.buf, p) {
+		if bytes.Contains(chunk, p) || bytes.Contains(s.buf, p) {
 			s.found = true
 			return true
 		}
 	}
-	s.tail = append(s.tail[:0], s.buf[max(len(s.buf)-s.keep, 0):]...)
+	if len(chunk) >= s.keep {
+		s.tail = append(s.tail[:0], chunk[len(chunk)-s.keep:]...)
+	} else if s.tail = append(s.tail, chunk...); len(s.tail) > s.keep {
+		s.tail = append(s.tail[:0], s.tail[len(s.tail)-s.keep:]...)
+	}
 	return false
 }
 
@@ -1326,7 +1355,8 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 	hash, buf := sha256.New(), make([]byte, copyBytes)
 	var delivered int64
 	code := ""
-	for code == "" && delivered < size {
+	// At least one read, so an empty file is also checked for a provider body that is not empty.
+	for first := true; code == "" && (delivered < size || first); first = false {
 		timer.Reset(stall)
 		// One byte past the file's end shows a longer body; the last bytes leave only once the provider body ends with
 		// them, since a caller that has Content-Length bytes takes the file as whole.
@@ -1361,9 +1391,9 @@ func (g *gateway) serveDownload(w http.ResponseWriter, r *http.Request, q *reque
 		}
 		switch {
 		case code != "" || err == nil:
+		case err == io.EOF && delivered == size: // whole, even if the stall timer fired just after the last read
 		case stalled.Load():
 			code = "provider-stalled"
-		case err == io.EOF && delivered == size:
 		default:
 			code = "download-cut" // a short provider body, or the caller left
 		}

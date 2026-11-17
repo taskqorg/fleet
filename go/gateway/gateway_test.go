@@ -994,13 +994,13 @@ func TestUploadStallRemovesTempFile(t *testing.T) {
 // Requirement: §9 stall is a progress timeout, not a total deadline. Risk: a slow but steady upload over a poor link
 // is cut although bytes keep arriving.
 func TestUploadSlowSteadySucceeds(t *testing.T) {
-	gw, p := newFileFixture(t, map[string]any{"stallMs": 300})
-	data := bytes.Repeat([]byte("z"), 60)
+	gw, p := newFileFixture(t, map[string]any{"stallMs": 1000})
+	data := bytes.Repeat([]byte("z"), 300)
 	reader, writer := io.Pipe()
 	go func() {
 		for i := 0; i < len(data); i += 10 {
 			writer.Write(data[i : i+10])
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 		writer.Close()
 	}()
@@ -1355,4 +1355,26 @@ func TestDrainLetsPostFinish(t *testing.T) {
 	<-stopped
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 1, "provider requests")
+}
+
+// Requirement: §9 key scan finds a value wherever the reads split it, also over several short reads.
+// Risk: a value cut by a read boundary, or spread over reads shorter than itself, passes the scan.
+func TestScannerFindsValueAcrossAnySplit(t *testing.T) {
+	value := []byte("invented-key-value")
+	data := append(append(bytes.Repeat([]byte("."), 40), value...), bytes.Repeat([]byte("."), 40)...)
+	for size := 1; size <= len(data); size++ {
+		for offset := 0; offset < size; offset++ {
+			s := newScanner([][]byte{[]byte("other-pattern-longer-than-the-value"), value})
+			found := s.write(data[:offset])
+			for i := offset; i < len(data) && !found; i += size {
+				found = s.write(data[i:min(i+size, len(data))])
+			}
+			if !found {
+				t.Fatalf("missed with reads of %d after %d", size, offset)
+			}
+		}
+	}
+	if s := newScanner([][]byte{value}); s.write(data[:57]) || s.write(data[58:]) {
+		t.Fatal("found a value with a byte missing")
+	}
 }
