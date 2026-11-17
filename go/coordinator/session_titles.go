@@ -277,7 +277,7 @@ func sessionTitlePass(ctx context.Context, a *App) error {
 			prompt := "First message:\n" + headTail(astr(r["first_message"]), 3000) + "\n\nFirst reply:\n" + clip(strings.Join(reply, "\n\n"), 1500)
 			raw, callID, err = sessionTitleCall(ctx, a, astr(r["project_id"]), prompt)
 		}
-		if err != nil && ctx.Err() != nil && !errors.Is(err, errTitleUnknown) {
+		if err != nil && ctx.Err() != nil && attempt == "" {
 			return failed
 		}
 
@@ -330,7 +330,9 @@ func claimTitleAttempt(ctx context.Context, a *App, id, attempt string, project 
 	err := runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {
 		tag, err := q.tx.Exec(q.ctx(), `UPDATE document SET data=data||jsonb_build_object('titleUnknownCall',$2::text)
 		 WHERE id=$1 AND kind='session' AND NOT data ? 'title' AND NOT data ? 'titleUnknownCall'
-		 AND NOT data ? 'archivedAt' AND project_id IS NOT DISTINCT FROM $3`, id, attempt, project)
+		 AND NOT data ? 'archivedAt' AND project_id IS NOT DISTINCT FROM $3
+		 AND coalesce((data->>'titleAttemptAt')::bigint,0) < $4
+		 AND coalesce((data->>'titleAttempts')::int,0) < $5`, id, attempt, project, nowMs()-titleRetry.Milliseconds(), titleTries)
 		claimed = err == nil && tag.RowsAffected() == 1
 		return err
 	})
