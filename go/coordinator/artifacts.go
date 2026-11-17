@@ -606,15 +606,15 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		return nil, err
 	}
 	at := target
-	if same == nil && size == 0 && hash != emptySHA256 {
+	if size == 0 && hash != emptySHA256 {
 		return nil, fail(400, "Empty file with a non-empty hash")
 	}
 	gone := false
 	if same != nil || size == 0 {
 		err := txCtx(ctx, a, func(tx pgx.Tx) error {
 			// An empty file has nothing to upload (stores refuse an empty multipart part): the coordinator writes it
-			// itself, under the object lock (writeObject).
-			if same == nil {
+			// itself, under the object lock (writeObject: a Head, and a Put only when the object is missing).
+			if size == 0 {
 				w, _, err := writeObject(context.WithValue(ctx, txKey{}, tx), a, e.ProjectID, scope, nil, media)
 				if err != nil {
 					return err
@@ -626,7 +626,7 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 			if err := objectLock(ctx, tx, at.ID, keyOf(&Artifact{ProjectID: e.ProjectID, Scope: scope, ContentHash: hash})); err != nil {
 				return err
 			}
-			if same != nil {
+			if same != nil && size > 0 {
 				if err := tx.QueryRow(ctx, "SELECT NOT EXISTS(SELECT 1 FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.project_id IS NOT DISTINCT FROM $1 AND a.scope=$2 AND a.content_hash=$3 AND c.store_id=$4 AND c.state='verified')", e.ProjectID, scope, hash, target.ID).Scan(&gone); err != nil || gone {
 					return err
 				}
@@ -1484,22 +1484,53 @@ func writeObject(ctx context.Context, a *App, projectID *string, scope string, d
 	return target, hash, nil
 }
 
+// ensureObject: under the object lock, the content is on store s (written again when a purge removed it).
+func ensureObject(ctx context.Context, tx pgx.Tx, s *StoreRow, projectID *string, scope string, data []byte, media string) (string, error) {
+	hash := sha256hex(data)
+	key := keyOf(&Artifact{ProjectID: projectID, Scope: scope, ContentHash: hash})
+	if err := objectLock(ctx, tx, s.ID, key); err != nil {
+		return "", err
+	}
+	t, err := tunnel(s)
+	if err != nil {
+		return "", err
+	}
+	if n, err := t.Head(s.Bucket, key); err != nil || n < 0 {
+		if data == nil {
+			data = []byte{}
+		}
+		if err := t.Put(s.Bucket, key, data, media); err != nil {
+			return "", err
+		}
+	}
+	return hash, nil
+}
+
 // saveObject: an output the coordinator writes for an execution (pipeline step output.json, example inputs), stored and
 // verified at once.
 func saveObject(ctx context.Context, a *App, projectID *string, scope, executionID, name string, data []byte, media string) (string, string, error) {
-	// The bytes go up outside the write lock; inside it writeObject only checks them again under the object lock.
-	if _, inTx := ctx.Value(txKey{}).(pgx.Tx); !inTx {
-		if _, _, err := writeObject(ctx, a, projectID, scope, data, media); err != nil {
+	// Outside a caller's transaction the bytes go up first, without any lock; inside the row transaction the same store
+	// is checked again under the object lock (a purge may have deleted the object in between) and written if missing.
+	var target *StoreRow
+	_, inTx := ctx.Value(txKey{}).(pgx.Tx)
+	if !inTx {
+		var err error
+		if target, _, err = writeObject(ctx, a, projectID, scope, data, media); err != nil {
 			return "", "", err
 		}
 	}
 	id, hash := "", ""
 	write := func(tx pgx.Tx) error {
-		target, h, err := writeObject(context.WithValue(ctx, txKey{}, tx), a, projectID, scope, data, media)
+		var err error
+		if target == nil {
+			target, hash, err = writeObject(context.WithValue(ctx, txKey{}, tx), a, projectID, scope, data, media)
+		} else {
+			hash, err = ensureObject(ctx, tx, target, projectID, scope, data, media)
+		}
 		if err != nil {
 			return err
 		}
-		id, hash = newID(), h
+		id = newID()
 		if _, err := tx.Exec(ctx, "INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'stored')", id, projectID, scope, hash, len(data), media, name, executionID); err != nil {
 			return err
 		}

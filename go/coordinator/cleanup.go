@@ -862,9 +862,10 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 	return left, nil
 }
 
-// objectLock: the transaction lock of one store object (content-addressed key): purge's check-and-delete and
-// artifact_reserve's copy inserts of the same content serialize on it, outside the canonical lock order (a leaf lock,
-// held until the transaction ends, never followed by another wait).
+// objectLock: the transaction lock of one store object (content-addressed key): purge's check-and-delete and every
+// copy insert of the same content serialize on it, outside the canonical lock order (a leaf lock, held until the
+// transaction ends; its holder waits on no other lock). ponytail: purge holds it across the store DELETE, so a
+// reserve of that same content, holding GLOBAL, waits for one store round trip; a pending-delete marker if that shows.
 func objectLock(ctx context.Context, tx pgx.Tx, storeID, key string) error {
 	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "object:"+storeID+":"+key)
 	return err
