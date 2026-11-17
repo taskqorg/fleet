@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "effort": null,
   "harness": "antigravity",
   "id": "antigravity-worker",

@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "effort": "low",
   "id": "codex-example-drafter",
   "instructions": "Draft Lab examples exactly in the requested format. Write only the requested files in output/. Do not use subagents.",

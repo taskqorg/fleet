@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "delegationProfiles": [
     "claude-reviewer"
   ],

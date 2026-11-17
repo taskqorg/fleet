@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "effort": "low",
   "fleetOperations": true,
   "id": "pm",

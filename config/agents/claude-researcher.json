@@ -1,6 +1,7 @@
 {
   "connections": [
-    "tavily"
+    "tavily",
+    "youtrack"
   ],
   "effort": null,
   "harness": "claude",

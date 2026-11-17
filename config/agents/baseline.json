@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "effort": "low",
   "id": "baseline",
   "instructions": "Create the requested files in output/. Do not use subagents.",

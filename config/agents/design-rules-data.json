@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "heading": "Quiet systems, clear decisions",
   "layout": "A narrow left introduction column beside three vertically stacked feature cards.",
   "palette": {
