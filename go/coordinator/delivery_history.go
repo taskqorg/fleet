@@ -246,7 +246,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			return fail(err)
 		}
 		rels = append(rels, rs...)
-		// After the backfill one page: GitHub's list is not by date, but a new ui-* release sorts right after the day's native
+		// After the backfill one page: GitHub's list is not by date, but a new ui-* release sorts right after its day's native
 		// ones (ui-1.261117.26-v1.261117.27 was 33rd), well inside 100.
 		if len(rs) < 100 || !backfill {
 			break
