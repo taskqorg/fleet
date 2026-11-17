@@ -1029,8 +1029,9 @@ export function Spotlight({ providers, onClose }: { providers: SpotlightProvider
   const [q, setQ] = useState('');
   const [found, setFound] = useState<{ p: SpotlightProvider; items: SpotlightItem[] }[]>([]);
   const [at, setAt] = useState(0);
-  // waiting: providers not answered yet; failed: one of them failed, so "nothing found" would be a guess.
-  const [waiting, setWaiting] = useState(0), [failed, setFailed] = useState(false);
+  // waiting: providers not answered yet; failed: one of them failed, so "nothing found" would be a guess;
+  // answered: the query every provider has answered, so its results are complete.
+  const [waiting, setWaiting] = useState(0), [failed, setFailed] = useState(false), [answered, setAnswered] = useState<string | null>('');
   // Focus returns to where it was only when the palette closes without opening an item.
   const back = useRef<Element | null>(document.activeElement), opened = useRef(false);
   useEffect(() => () => { if (!opened.current) (back.current as HTMLElement | null)?.focus?.(); }, []);
@@ -1038,28 +1039,34 @@ export function Spotlight({ providers, onClose }: { providers: SpotlightProvider
     // Each provider's results show as they arrive, in provider order; local ones are not held back by the server.
     const c = new AbortController(), text = q.trim(), got: (SpotlightItem[] | undefined)[] = providers.map(() => undefined);
     const show = () => { if (!c.signal.aborted) setFound(providers.map((p, i) => ({ p, items: got[i] ?? [] })).filter(g => g.items.length)); };
-    setFailed(false); setAt(0); setEnter(false);
-    if (!text) { setFound([]); setWaiting(0); return; }
+    setFailed(false); setAt(0); setEnter(e => e === q ? e : null);
+    if (!text) { setFound([]); setWaiting(0); setAnswered(q); return; }
     let left = 0;
     providers.forEach((p, i) => {
       const r = p.find(text, c.signal);
       if (Array.isArray(r)) { got[i] = r; return; }
       left++;
-      r.then(x => { got[i] = x; }, () => { if (!c.signal.aborted) setFailed(true); }).then(() => { if (!c.signal.aborted) { setWaiting(--left); show(); } });
+      r.then(x => { got[i] = x; }, () => { if (!c.signal.aborted) setFailed(true); }).then(() => { if (!c.signal.aborted) { setWaiting(--left); show(); if (!left) setAnswered(q); } });
     });
-    setWaiting(left); show();
+    setWaiting(left); show(); setAnswered(left ? null : q);
     return () => c.abort();
   }, [q]);
   const flat = found.flatMap(g => g.items);
   const open = (i: SpotlightItem | undefined) => { if (i) { opened.current = true; onClose(); i.run(); } };
   // Enter before every provider answered opens the first result once they have, not a section that happened to answer first.
-  const [enter, setEnter] = useState(false);
-  useEffect(() => { if (enter && !waiting) { setEnter(false); open(flat[at]); } }, [enter, waiting]);
+  // enter: the field's text when Enter was pressed. A key typed just before Enter may not have rendered yet, so the press
+  // waits for that text's results; typing on after Enter cancels it.
+  const [enter, setEnter] = useState<string | null>(null);
+  useEffect(() => { if (enter !== null && enter === q && answered === q) { setEnter(null); open(flat[at]); } }, [enter, answered, q]);
   const key = (e: KeyboardEvent) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
     else if (e.key === 'Tab') e.preventDefault(); // aria-modal: focus stays on the field
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (flat.length) setAt((at + (e.key === 'ArrowDown' ? 1 : -1) + flat.length) % flat.length); }
-    else if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (waiting) setEnter(true); else open(flat[at]); }
+    else if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      const typed = e.target instanceof HTMLInputElement ? e.target.value : q;
+      if (typed === q && answered === q) open(flat[at]); else setEnter(typed);
+    }
   };
   const list = useId();
   let n = -1;
