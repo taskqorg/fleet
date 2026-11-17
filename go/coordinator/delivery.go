@@ -65,6 +65,9 @@ func init() {
 }
 
 func deliveryStatus(q *Request, r *contract.DeliveryStatusRequest) (contract.DeliveryStatusReply, error) {
+	if err := excludeCheck(r.ExcludeProjectIds); err != nil {
+		return contract.DeliveryStatusReply{}, err
+	}
 	deliveryMu.Lock()
 	last := deliveryLast
 	deliveryMu.Unlock()

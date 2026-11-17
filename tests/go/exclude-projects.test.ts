@@ -28,6 +28,7 @@ test('excludeProjectId(s) leave out only the named projects in task_page, sessio
   assert.deepEqual(sorted(tasks.tasks, 't-'), of('t-', 'keep', 'stray', 'free'), 'work outside projects and an undefined project stay');
   assert.equal(tasks.total, 3); assert.ok(!tasks.groups.some((g: any) => g.label === 'muted'), 'no group of the ignored project');
   assert.deepEqual(sorted((await op('task_page', {filter: {excludeProjectId: ['muted', null]}})).tasks, 't-'), of('t-', 'keep', 'stray'), 'null leaves out work outside projects');
+  assert.deepEqual(sorted((await op('task_page', {filter: {excludeProjectId: ['muted', '-']}})).tasks, 't-'), of('t-', 'keep', 'stray'), "'-' too, as in excludeProjectIds");
   assert.deepEqual(sorted((await op('task_page', {filter: {excludeProjectId: []}})).tasks, 't-'), of('t-', 'keep', 'muted', 'stray', 'free'), 'an empty exclusion leaves nothing out');
   assert.deepEqual(sorted((await op('task_page', {filter: {projectId: ['keep', 'muted'], excludeProjectId: ['muted']}})).tasks, 't-'), ['t-keep'], 'the exclusion applies after projectId');
   assert.deepEqual(sorted((await op('task_page', {})).tasks, 't-'), of('t-', 'keep', 'muted', 'stray', 'free'), 'without the filter (agents) every project shows');
@@ -47,10 +48,12 @@ test('excludeProjectId(s) leave out only the named projects in task_page, sessio
     assert.deepEqual(sorted((await op(name, {excludeProjectIds: ['muted', '-']}))[key], prefix), of(prefix, 'keep', 'stray'), name + ' with -');
     assert.deepEqual(sorted((await op(name, {projectIds: ['keep', 'muted'], excludeProjectIds: ['muted']}))[key], prefix), [prefix + 'keep'], name + ' after projectIds');
     assert.deepEqual(sorted((await op(name, {}))[key], prefix), of(prefix, 'keep', 'muted', 'stray', 'free'), name + ' unfiltered');
+    assert.equal((await call(name, {excludeProjectIds: ['muted', null]})).status, 400, name + ': a null id is refused, never skipped');
   }
   const page = await op('executions_list', {excludeProjectIds: ['muted'], limit: 1});
   const rest = await op('executions_list', {excludeProjectIds: ['muted'], limit: 1000, after: page.nextAfter});
   assert.ok(![...page.executions, ...rest.executions].some((e: any) => e.id === 'e-muted'), 'paging keeps the exclusion');
+  assert.equal((await call('delivery_status', {excludeProjectIds: [null]})).status, 400, 'delivery_status: a null id is refused');
   assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted']})).artifacts, 'a-'), of('a-', 'keep', 'stray', 'free'));
   assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted', '-']})).artifacts, 'a-'), of('a-', 'keep', 'stray'), "'-' is no project, as in the other operations");
   assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted', null]})).artifacts, 'a-'), of('a-', 'keep', 'stray'), 'null is no project, as in its projectIds');

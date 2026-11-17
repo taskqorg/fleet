@@ -407,7 +407,7 @@ func searchCodes(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 	if err != nil {
 		return nil, err
 	}
-	hits := append(append(taskHits(ts), questionHits(qs)...), sessionHits(cs, "")...)
+	hits := append(append(taskHits(ts), questionHits(qs)...), sessionHits(cs, s.text)...)
 	byID := map[string]contract.Found{}
 	for _, h := range hits {
 		byID[string(h.Kind)+":"+h.Id] = h

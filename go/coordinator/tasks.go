@@ -493,6 +493,15 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 const questionCols = `id,code,kind,project_id AS "projectId",task_id AS "taskId",execution_id AS "executionId",session_id AS "sessionId",text,options,asked_by AS "askedBy",asked_at AS "askedAt",
  answer,answered_by AS "answeredBy",answered_at AS "answeredAt",state,data->'artifactIds' AS "artifactIds",data->'cause' AS cause`
 
+// excludeCheck: an excludeProjectIds list holds no empty id (a JSON null decodes to one), so an exclusion is never skipped
+// silently; '-' is no project.
+func excludeCheck(ids []string) error {
+	if slices.Contains(ids, "") {
+		return fail(400, "excludeProjectIds: an empty id; '-' is work outside projects")
+	}
+	return nil
+}
+
 // questionsList: projects keeps those projects only, exclude leaves those out ('-' is no project in both; OR-34).
 func questionsList(q *Request, taskID, state, kind string, projects, exclude []string) ([]doc, error) {
 	c, p := projectIn(nil, nil, projects)
@@ -660,6 +669,9 @@ func executionsPage(q *Request, f contract.ExecutionsListRequest) (contract.Exec
 	}
 	if f.After != nil && (f.Limit == nil || *f.After == "") {
 		return empty, fail(400, "after requires limit and a nonempty cursor")
+	}
+	if err := excludeCheck(f.ExcludeProjectIds); err != nil {
+		return empty, err
 	}
 	c, p := []string{}, []any{}
 	for _, x := range []struct {
@@ -927,7 +939,10 @@ func projectWhere(f doc, p *[]any, col string, c []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		c = notInProjects(c, p, col, ids, null)
+		if null {
+			ids = append(ids, "-")
+		}
+		c = projectNotIn(c, p, col, ids) // '-' is no project too, as in the excludeProjectIds of the other operations
 	}
 	return c, nil
 }
@@ -1283,6 +1298,9 @@ func init() {
 		return taskDetail(q, id)
 	}))
 	gatedObjOp("questions_list", true, typedOp(func(q *Request, r *contract.QuestionsListRequest) (contract.QuestionsListReply, error) {
+		if err := excludeCheck(r.ExcludeProjectIds); err != nil {
+			return contract.QuestionsListReply{}, err
+		}
 		qs, err := questionsList(q, deref(r.TaskId), deref(r.State), deref(r.Kind), r.ProjectIds, r.ExcludeProjectIds)
 		if err != nil {
 			return contract.QuestionsListReply{}, err
