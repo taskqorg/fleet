@@ -85,8 +85,8 @@ var referenceMap = []objectRef{
 	// data->>'executionId' and data->>'sessionId' as indexed columns (migration 70): a JSON path cannot be an index
 	// condition under row-level security (not leakproof), so every check of it read and detoasted every document.
 	{table: "document", column: "execution_ref", kind: "execution", mode: refOwn, guard: "kind NOT IN ('message','queued-message','session-transition','handoff')"},
-	{table: "document", column: "session_ref", kind: "session", mode: refOwn},                                                     // messages, transitions, queued messages
-	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'", guard: "kind='session'"}, // the sessions of a run's steps
+	{table: "document", column: "session_ref", kind: "session", mode: refOwn},                                                                      // messages, transitions, queued messages
+	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'", guard: "kind IN ('session','run-token')"}, // the sessions and tokens of a run's steps
 	// A session working for a task outlives it (session and task lifecycles are separate): the reference goes stale.
 	{table: "document", column: "data", kind: "task", mode: refNone, expr: "data->>'taskId'"},
 	{table: "document", column: "data", kind: "host", mode: refKeep, expr: "data->>'hostId'"},
@@ -535,7 +535,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 			return err
 		}
 	}
-	if tag, err := q.tx.Exec(q.ctx(), "UPDATE document SET data=data||jsonb_build_object('revokedAt',$2::bigint) WHERE kind='run-token' AND data->>'executionId'=ANY($1) AND NOT data ? 'revokedAt'", ids, nowMs()); err != nil {
+	if tag, err := q.tx.Exec(q.ctx(), "UPDATE document SET data=data||jsonb_build_object('revokedAt',$2::bigint) WHERE kind='run-token' AND execution_ref=ANY($1) AND NOT data ? 'revokedAt'", ids, nowMs()); err != nil {
 		return err
 	} else if tag.RowsAffected() > 0 {
 		publish(q)
@@ -547,7 +547,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		return err
 	}
 	// Messages still waiting for a turn never start one (host receipts see deleted rows and promote queued messages).
-	if err := exec(q, `UPDATE document SET data=data||'{"state":"deleted"}', updated_at=now() WHERE kind='queued-message' AND data->>'sessionId'=ANY($1) AND data->>'state' IN ('queued','steering')`, c.sets["session"]); err != nil {
+	if err := exec(q, `UPDATE document SET data=data||'{"state":"deleted"}', updated_at=now() WHERE kind='queued-message' AND session_ref=ANY($1) AND data->>'state' IN ('queued','steering')`, c.sets["session"]); err != nil {
 		return err
 	}
 	teardowns := int64(0)
@@ -947,40 +947,51 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 	left := int64(0)
 	// Spans of every task go in batched statements (one lightweight DELETE took ~125 ms on prod, one per purged root).
 	var spanTasks []doc
-	spanIDs := []string{}
 	others := []doc{}
 	for _, t := range tasks {
 		if ids := strs(t["executionIds"]); len(ids) > 0 && t["storeId"] == nil {
-			spanTasks, spanIDs = append(spanTasks, t), append(spanIDs, ids...)
+			spanTasks = append(spanTasks, t)
 		} else {
 			others = append(others, t)
 		}
 	}
-	if len(spanTasks) > 0 {
-		done := spanStore == nil // no span store configured: no spans to delete
-		if !done && !time.Now().After(deadline) {
-			done = true
-			for i := 0; i < len(spanIDs); i += 1000 {
-				if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(spanIDs[i:min(i+1000, len(spanIDs))])}); err != nil {
-					slog.Warn("purge: spans", "err", err)
-					done = false
-					break
-				}
-			}
+	// In batches of whole tasks (about 1,000 ids each), the deadline checked before each: a failed batch keeps only
+	// its own tasks and the ones after it.
+	if spanStore == nil { // no span store configured: no spans to delete
+		ids := []string{}
+		for _, t := range spanTasks {
+			ids = append(ids, astr(t["id"]))
 		}
-		if done {
-			ids := []string{}
-			for _, t := range spanTasks {
-				ids = append(ids, astr(t["id"]))
-			}
+		if len(ids) > 0 {
 			if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 				return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=ANY($1)", ids)
 			}); err != nil {
 				return left, err
 			}
-		} else {
-			left += int64(len(spanTasks)) // all stay for the next purge: a repeated span DELETE is harmless
 		}
+		spanTasks = nil
+	}
+	for len(spanTasks) > 0 {
+		batch, ids, taskIDs := 0, []string{}, []string{}
+		for batch < len(spanTasks) && (len(ids) == 0 || len(ids)+len(strs(spanTasks[batch]["executionIds"])) <= 1000) {
+			ids, taskIDs = append(ids, strs(spanTasks[batch]["executionIds"])...), append(taskIDs, astr(spanTasks[batch]["id"]))
+			batch++
+		}
+		if time.Now().After(deadline) {
+			left += int64(len(spanTasks))
+			break
+		}
+		if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(ids)}); err != nil {
+			slog.Warn("purge: spans", "err", err)
+			left += int64(len(spanTasks))
+			break
+		}
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=ANY($1)", taskIDs)
+		}); err != nil {
+			return left, err
+		}
+		spanTasks = spanTasks[batch:]
 	}
 	for _, t := range others {
 		if time.Now().After(deadline) { // the rest waits for the next purge
