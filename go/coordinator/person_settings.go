@@ -198,8 +198,8 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 	next.Focus = slices.DeleteFunc(slices.Clone(next.Focus), func(x string) bool { return slices.Contains(next.Ignored, x) })
 	// An empty focus is every project: ignoring the last focused projects would widen the person's lists, not narrow them.
 	// Only a change that clears the focus itself (focus: []) may do it.
-	if focused && len(next.Focus) == 0 && (r.Focus == nil || len(r.Focus) > 0) {
-		return contract.PersonSettings{}, fail(400, "ignore: it would empty the focus, which is every project; focus another project first")
+	if focused && len(next.Focus) == 0 {
+		return contract.PersonSettings{}, fail(400, "focus: every project in it is ignored, and an empty focus is every project; focus another project first")
 	}
 	if r.FocusPresets != nil {
 		next.FocusPresets = r.FocusPresets

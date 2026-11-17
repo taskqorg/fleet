@@ -104,12 +104,12 @@ export function Delivery({ id }: { id?: string }) {
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
   const urlRange = deliveryExtra(useUrlView('delivery').view.extra).range ?? '7d';
   // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
-  const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
+  const histDoc = useDoc<{ h: History } | typeof NONE>(scopeReady.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
     () => no404(op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }).then(h => ({ h }))), touchesHistory, 600000);
   const hist = histDoc.data === NONE ? null : histDoc.data;
-  const regDoc = useDoc<Regressions | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
+  const regDoc = useDoc<Regressions | typeof NONE>(scopeReady.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
   const regressions = regDoc.data === NONE ? [] : regDoc.data?.regressions ?? [];
-  const histLoading = !prefsRead.value || fleetShown && histDoc.data === null && !histDoc.error;
+  const histLoading = !scopeReady.value || fleetShown && histDoc.data === null && !histDoc.error;
   const paceOf = (v: View) => {
     const ex = deliveryExtra(v.extra), range = ex.range ?? '7d', buckets = bucketsOf(range, now, hist?.h.backfilledFrom ? ms(hist.h.backfilledFrom) : undefined);
     return { ex, range, buckets, picked: ex.at ? buckets.find(b => b.key === ex.at) ?? null : null };

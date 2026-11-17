@@ -104,6 +104,7 @@ const NO_PROJECT = '(none)';
  * unless '-' is ignored. ponytail: a project with tasks but no definition the person sees is left out while anything is
  * ignored; a server-side exclusion filter if that matters. The project list not read: nothing is left out, never nothing shown.
  */
+// withFocus false: every project but the ignored ones (the Overview's ?all, which the outside-focus count opens).
 export function focusIds(withFocus = true): string[] | undefined {
   const { focus, ignored } = prefs.value, f = withFocus ? focus.filter(p => !ignored.includes(p)) : [];
   if (f.length) return f;
@@ -112,7 +113,6 @@ export function focusIds(withFocus = true): string[] | undefined {
   const ids = [...known.filter(p => !ignored.includes(p)), ...(ignored.includes('-') ? [] : ['-'])];
   return ids.length ? ids : [NO_PROJECT];
 }
-/** withFocus false: every project but the ignored ones (the Overview's ?all, which the outside-focus count opens). */
 /** The scope is known: preferences are read and, while a project is ignored with no focus, the project list too (or it failed). */
 export const scopeReady = computed(() => { const { focus, ignored } = prefs.value;
   return prefsRead.value && (!ignored.length || focus.some(p => !ignored.includes(p)) || knownProjects.value !== null); });
