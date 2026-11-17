@@ -1,6 +1,7 @@
 {
   "connections": [
-    "tavily"
+    "tavily",
+    "youtrack"
   ],
   "effort": "low",
   "id": "codex-researcher",

@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "delegationProfiles": [
     "website-reviewer"
   ],

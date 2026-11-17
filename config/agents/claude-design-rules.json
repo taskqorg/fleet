@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "effort": null,
   "harness": "claude",
   "id": "claude-design-rules",

@@ -1,4 +1,7 @@
 {
+  "connections": [
+    "youtrack"
+  ],
   "effort": "medium",
   "gitNetwork": true,
   "id": "coding-worker",
