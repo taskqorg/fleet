@@ -1818,9 +1818,9 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 	if scopeRows > float64(queueScopes+len(ids)) {
 		t.Fatalf("selected hints revisited unrelated queue scopes: %.0f > %d", scopeRows, queueScopes+len(ids))
 	}
-	// Same canonical union as the scalar hint: NULL/empty source, deleted/missing
-	// source, old contribution and retained cross-project work all remain distinct.
-	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('hint-null','agent_run','succeeded',NULL),('hint-empty','agent_run','succeeded',''),('hint-moving','agent_run','succeeded','HINT_A'),('hint-pending-multi','agent_run','succeeded','HINT_A'),('hint-deleted','agent_run','succeeded','HINT_A'),('hint-from-null','agent_run','succeeded',NULL)`)
+	// Same canonical union as the scalar hint: NULL source (an empty project id is rejected, migration 68),
+	// deleted/missing source, old contribution and retained cross-project work all remain distinct.
+	sql(`INSERT INTO execution(id,kind,state,project_id) VALUES('hint-null','agent_run','succeeded',NULL),('hint-moving','agent_run','succeeded','HINT_A'),('hint-pending-multi','agent_run','succeeded','HINT_A'),('hint-deleted','agent_run','succeeded','HINT_A'),('hint-from-null','agent_run','succeeded',NULL)`)
 	for _, id := range []string{"hint-moving", "hint-deleted", "hint-from-null"} {
 		if e := resourceReplace(ctx, a, id); e != nil {
 			t.Fatal(e)
@@ -1829,7 +1829,7 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 	sql(`UPDATE execution SET project_id='HINT_B' WHERE id IN ('hint-moving','hint-pending-multi');
  UPDATE execution SET project_id='HINT_A' WHERE id IN ('hint-pending-multi','hint-from-null');
  DELETE FROM execution WHERE id='hint-deleted'`)
-	edge := []string{"hint-null", "hint-empty", "hint-moving", "hint-pending-multi", "hint-deleted", "hint-from-null", "hint-missing", "hint-0000", "hint-0000"}
+	edge := []string{"hint-null", "hint-moving", "hint-pending-multi", "hint-deleted", "hint-from-null", "hint-missing", "hint-0000", "hint-0000"}
 	hints, e := resourceBatchHints(ctx, a, edge)
 	if e != nil {
 		t.Fatal(e)
