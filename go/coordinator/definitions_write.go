@@ -473,26 +473,50 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 	if out.UsedBy, err = usedByDefinitions(q, string(r.Kind), r.Id); err != nil {
 		return out, err
 	}
-	col := "pipeline_id"
-	if r.Kind == contract.DefinitionKindAgent {
-		col = "profile_id"
-	}
-	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE "+col+"=$1 AND state IN ('preparing','running','waiting')", r.Id).Scan(&out.Running); err != nil {
+	// Every pin, not only the first one of its kind (execution.pipeline_id and profile_id keep the first).
+	if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FROM execution WHERE definitions @> jsonb_build_array(jsonb_build_object('kind',$1::text,'id',$2::text))
+	  AND state IN ('preparing','running','waiting')`, r.Kind, r.Id).Scan(&out.Running); err != nil {
 		return out, err
 	}
-	if r.Kind == contract.DefinitionKindPipeline {
-		rs, err := queryRows(q, "SELECT id FROM experiment WHERE pipeline_id=$1 AND state IN ('draft','running','paused') ORDER BY id", r.Id)
+	// A live experiment names it as its pipeline, or anywhere in its variants (a method's pipelineId, a profile
+	// override) or evaluators: a JSON string equal to the id.
+	rs, err := queryRows(q, `SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND (pipeline_id=$1
+	  OR jsonb_path_exists(variants, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text))
+	  OR jsonb_path_exists(evaluators, '$.** ? (@ == $id)', jsonb_build_object('id',$1::text))) ORDER BY id`, r.Id)
+	if err != nil {
+		return out, err
+	}
+	for _, x := range rs {
+		out.Experiments = append(out.Experiments, astr(x["id"]))
+	}
+	// A project's roles and execution profiles name agents.
+	roles := []string{}
+	if r.Kind == contract.DefinitionKindAgent {
+		ids, err := projectIDs(q)
 		if err != nil {
 			return out, err
 		}
-		for _, x := range rs {
-			out.Experiments = append(out.Experiments, astr(x["id"]))
+		for _, pid := range ids {
+			s := projectSettingsOf(q, pid)
+			for role, v := range mapOf(s["roles"]) {
+				if astr(v) == r.Id || astr(mapOf(v)["profile"]) == r.Id {
+					roles = append(roles, pid+":"+role)
+				}
+			}
+			for _, v := range anys(mapOf(s["execution"])["profiles"]) {
+				if astr(v) == r.Id || astr(mapOf(v)["id"]) == r.Id || astr(mapOf(v)["profile"]) == r.Id {
+					roles = append(roles, pid+":execution.profiles")
+				}
+			}
 		}
+		sort.Strings(roles)
 	}
 	refused := ""
 	switch {
 	case out.State != contract.DefinitionStateStoreOnly && out.State != contract.DefinitionStateRepositoryDeleted:
 		refused = "shipped by the repository (" + head.Path + "): the next release would bring it back; delete the file instead"
+	case len(roles) > 0:
+		refused = "project roles use it: " + strings.Join(roles, ", ")
 	case len(out.UsedBy) > 0:
 		names := []string{}
 		for _, k := range out.UsedBy {

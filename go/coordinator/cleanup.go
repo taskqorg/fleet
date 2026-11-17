@@ -75,7 +75,9 @@ var referenceMap = []objectRef{
 	{table: "execution", column: "step_id", mode: refNone},
 	{table: "document", column: "id", kind: "session", mode: refOwn},
 	{table: "document", column: "project_id", kind: "project", mode: refOwn},
-	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'executionId'"},   // events, commands, run tokens, conflicts
+	// Events, commands, run tokens, conflicts. A session's transcript (messages, queued messages, transitions, handoffs)
+	// belongs to the session: a task's runs in a live session leave its turns in place.
+	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "(CASE WHEN kind NOT IN ('message','queued-message','session-transition','handoff') THEN data->>'executionId' END)"},
 	{table: "document", column: "data", kind: "session", mode: refOwn, expr: "data->>'sessionId'"},       // messages, transitions, queued messages
 	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'"}, // the sessions of a run's steps
 	// A session working for a task outlives it (session and task lifecycles are separate): the reference goes stale.
@@ -309,15 +311,25 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 // blockedBy: the first live row outside the cascade that keeps one of its objects, "" when none:
 // "<table>.<column> by <document kind or table> <row id>". One scan per table: its refKeep columns are ORed.
 func (c *cascade) blockedBy(q *Request) (string, error) {
-	// A session's executions that ran for a live task are that task's history: delete the task first.
-	if c.kind == "session" && len(c.sets["execution"]) > 0 {
-		row, err := first(q, `SELECT t.id FROM execution e JOIN task t ON t.id=e.task_id WHERE e.id=ANY($1) AND t.tombstoned_at IS NULL
-		  AND NOT t.id=ANY($2::text[]) AND (t.project_id IS NULL OR NOT t.project_id=ANY(fleet_deleted_projects())) LIMIT 1`, c.sets["execution"], nonNilStrs(c.sets["task"]))
+	// A task's or session's executions that belong to live work outside it stay with that work: runs of a live task
+	// (delete the task first), trials of a live experiment, children of a live parent run that waits for them.
+	if (c.kind == "session" || c.kind == "task") && len(c.sets["execution"]) > 0 {
+		row, err := first(q, `SELECT CASE
+		  WHEN t.id IS NOT NULL THEN 'execution.task_id by task '||t.id
+		  WHEN x.id IS NOT NULL THEN 'execution.experiment_id by experiment '||x.id
+		  ELSE 'execution.parent_execution_id by execution '||p.id END AS reason
+		 FROM execution e
+		 LEFT JOIN task t ON t.id=e.task_id AND t.tombstoned_at IS NULL AND NOT t.id=ANY($2::text[])
+		  AND (t.project_id IS NULL OR NOT t.project_id=ANY(fleet_deleted_projects()))
+		 LEFT JOIN experiment x ON x.id=e.experiment_id AND x.tombstoned_at IS NULL AND NOT x.project_id=ANY(fleet_deleted_projects())
+		 LEFT JOIN execution p ON p.id=e.parent_execution_id AND p.tombstoned_at IS NULL AND NOT p.id=ANY($1)
+		  AND (p.project_id IS NULL OR NOT p.project_id=ANY(fleet_deleted_projects()))
+		 WHERE e.id=ANY($1) AND (t.id IS NOT NULL OR x.id IS NOT NULL OR p.id IS NOT NULL) LIMIT 1`, c.sets["execution"], nonNilStrs(c.sets["task"]))
 		if err != nil {
 			return "", err
 		}
 		if row != nil {
-			return "execution.task_id by task " + astr(row["id"]), nil
+			return astr(row["reason"]), nil
 		}
 	}
 	tables, refs := []string{}, map[string][]objectRef{}

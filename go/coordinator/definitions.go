@@ -350,7 +350,7 @@ func definitionList(q *Request, r *contract.DefinitionListRequest) (contract.Def
 	}
 	where := "d.kind=$1 AND d.retired_at IS NULL"
 	if r.IncludeRetired != nil && *r.IncludeRetired {
-		where = "d.kind=$1"
+		where = "d.kind=$1 AND d.deleted_at IS NULL" // a deleted definition is gone, retired or not
 	}
 	xs, err := definitionRows(q, where, 0, string(r.Kind))
 	if err != nil {
