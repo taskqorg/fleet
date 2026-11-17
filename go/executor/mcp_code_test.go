@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -157,6 +158,42 @@ func TestCodeModeDetachAndPoll(t *testing.T) {
 	if r, bad := c.call("poll", M{"jobId": id, "waitSeconds": 5}); bad || r["status"] != "done" || r["value"] != "late" {
 		t.Fatalf("poll: %v %v", bad, r)
 	}
+	// A final result is returned once; the server keeps nothing of it.
+	if r, bad := c.call("poll", M{"jobId": id}); !bad || !strings.HasPrefix(jStr(r, "error"), "unknown jobId") {
+		t.Fatalf("second poll: %v", r)
+	}
+	if r, _ := c.call("poll", M{}); len(jArr(r, "jobs")) != 0 {
+		t.Fatalf("delivered job listed: %v", r)
+	}
+}
+
+// Risk: a job that never yields wedges code mode for the rest of the execution (fleet-code-mode.md, poll reset).
+func TestCodeModeReset(t *testing.T) {
+	c := newCodeClient(t, M{"dir": t.TempDir()})
+	c.code(`state.kept = 1`)
+	r, _ := c.call("code", M{"source": `while (true) {}`, "detachAfterSeconds": 0.3})
+	id := jStr(r, "jobId")
+	if r["status"] != "running" {
+		t.Fatalf("spin: %v", r)
+	}
+	if r, bad := c.call("poll", M{"reset": true}); bad || r["reset"] != true {
+		t.Fatalf("reset: %v", r)
+	}
+	if r, bad := c.call("poll", M{"jobId": id, "waitSeconds": 5}); !bad || !strings.HasPrefix(jStr(r, "error", "message"), "runtime-exited") {
+		t.Fatalf("spun job: %v", r)
+	}
+	if r, bad := c.code(`return state.kept ?? "gone"`); bad || r["value"] != "gone" || r["restarted"] != true {
+		t.Fatalf("after reset: %v", r)
+	}
+}
+
+// Risk: printing or returning a bridge object sends real tool calls (fleet-code-mode.md, bridge functions).
+func TestCodeModeProbesSendNoCalls(t *testing.T) {
+	c := newCodeClient(t, M{"dir": t.TempDir()})
+	r, bad := c.code(`print(fleet); return [JSON.stringify({f: fleet, c: conn.web}), String(typeof fleet.then)]`)
+	if bad || len(jArr(r, "calls")) != 0 || strings.Contains(jStr(r, "output"), "Unhandled") || enc(r["value"]) != `["{\"f\":{},\"c\":{}}","undefined"]` {
+		t.Fatalf("probes: %v %v", bad, r)
+	}
 }
 
 // Risk: code writes, runs commands or opens the network outside the harness sandbox, so code mode adds authority
@@ -259,11 +296,16 @@ func TestCodeModeLaunchServers(t *testing.T) {
 		if journal != "" {
 			fleet = &codeFleet{journal, M{"commandId": "c"}}
 		}
-		err := addCodeServer(servers, mode, harness, profile, fleet, granted, map[string]bool{"web": true}, "/run.env", []string{"/work", "/input"})
+		file := filepath.Join(t.TempDir(), "runs", "x.code.json")
+		err := addCodeServer(servers, mode, harness, profile, fleet, granted, map[string]bool{"web": true}, "/run.env", file, []string{"/work", "/input"})
 		if err != nil {
 			return servers, nil, err
 		}
-		spec, _ := dec(jStr(jArr(servers, "code", "args")[2]))
+		if jStr(jArr(servers, "code", "args")[2]) != file {
+			t.Fatalf("args: %v", jAt(servers, "code", "args"))
+		}
+		b, _ := os.ReadFile(file)
+		spec, _ := dec(string(b))
 		return servers, spec.(M), nil
 	}
 	servers, spec, err := launch("add", "codex", M{}, "/journal")

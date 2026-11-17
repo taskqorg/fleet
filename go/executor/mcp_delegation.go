@@ -166,7 +166,7 @@ func wait(db *sql.DB, table, key string, seconds int, artifact bool) (any, error
 		if err == nil && raw.String != "" {
 			v, err := dec(raw.String)
 			if err != nil {
-				return nil, err
+				return nil, dbe(err) // a stored reply that does not decode is a journal failure: the outcome stays unknown
 			}
 			if table != "transfers" || state == "failed" || (artifact && has(v, "artifactId")) || (!artifact && state == "done") {
 				return v, nil
@@ -493,11 +493,15 @@ func mcpRun(args []string) error {
 			return err
 		}
 	case "code":
-		s, err := arg(1, "spec")
+		path, err := arg(1, "spec file")
 		if err != nil {
 			return err
 		}
-		spec, err := dec(s)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		spec, err := dec(string(b))
 		if err != nil {
 			return err
 		}

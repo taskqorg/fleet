@@ -28,9 +28,10 @@ function call(server, tool, args) {
   });
 }
 
-// `then` stays undefined so `await fleet` or `await conn.x` is not taken for a promise. `$tools` lists the tools; no
-// granted tool name starts with `$`.
-const tools = (server) => new Proxy({}, { get: (_, tool) => (typeof tool === 'string' && tool !== 'then' ? (args) => call(server, tool, args) : undefined) });
+// Names that built-ins probe (`await`, JSON.stringify, String(), util.inspect) stay undefined, so probing sends no call;
+// tool names are snake_case. `$tools` lists the tools; no granted tool name starts with `$`.
+const probed = new Set(['then', 'toJSON', 'toString', 'valueOf', 'constructor', 'inspect', 'asymmetricMatch', 'nodeType']);
+const tools = (server) => new Proxy({}, { get: (_, tool) => (typeof tool === 'string' && !probed.has(tool) ? (args) => call(server, tool, args) : undefined) });
 const print = (...xs) => send({ type: 'print', job: job.getStore() ?? null, text: util.format(...xs) + '\n' });
 
 globalThis.fleet = tools('fleet');

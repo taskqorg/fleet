@@ -26,7 +26,9 @@ An agent profile selects code mode with `codeMode` ([profile schema](../../contr
 | `add` | The code server is added. The `fleet` server and the connection servers stay, so the agent can call each tool directly or through code. |
 | `only` | The code server replaces the `fleet` server and the connection servers. Fleet tools and connections are reachable only through `code`. Native harness tools (read, edit, shell) stay. |
 
-The setting needs at least one bridged source: Fleet tools (`fleetTools` or `fleetOperations`) or a granted connection. Without one, the launch fails with `codeMode needs Fleet tools or a connection`. A named MCP grant cannot use the id `code`.
+The setting needs at least one bridged source: Fleet tools (`fleetTools` or `fleetOperations`) or a granted connection. Without one, the launch fails with `codeMode needs Fleet tools or a connection`. A named MCP grant and a connection cannot use the name `code`.
+
+The executor passes the code server's spec in a 0600 file beside the run file (`runs/<execution>.code.json`), not in argv, because Fleet operations and connection schemas can outgrow one argument. The file is removed with the run file.
 
 Native harness tools stay native. Fleet does not replace the file, edit and shell tools inside Codex, Claude or Antigravity.
 
@@ -43,15 +45,17 @@ Input: `{source: string, detachAfterSeconds?: number}`.
 - A thrown error returns `isError: true`, `status: "failed"` and `error: {message, stack}`, with the output printed before it.
 - The runtime does not cut `output` or `value`. The agent controls their size in its code.
 
-`detachAfterSeconds` defaults to 50. When the code is still running at that time, `code` replies with `status: "running"` and the output so far. The code keeps running. The default stays below Codex's default MCP tool timeout of 60 seconds, so long work survives in every harness. The value is a reply time, not a limit on how long the code runs.
+`detachAfterSeconds` defaults to 25. When the code is still running at that time, `code` replies with `status: "running"` and the output so far. The code keeps running. The executor's MCP filter forwards one request at a time, so a second call waits for the first reply; with the 25 s default, two calls in a row still answer within Codex's default MCP tool timeout of 60 seconds. The value is a reply time, not a limit on how long the code runs.
 
 ### `poll`
 
 Input: `{jobId: string, waitSeconds?: number}`.
 
 - Replies with the job's final result, in the `code` reply shape, once the job ends.
-- Replies `status: "running"` with the text printed so far when `waitSeconds` (default 50) pass first.
-- `poll` without `jobId` lists the jobs of this runtime with their status.
+- Replies `status: "running"` with the text printed so far when `waitSeconds` (default 25) pass first.
+- A final result is returned once. The code server then drops the job, so it keeps no delivered output or value, and a later `poll` of that `jobId` answers `unknown jobId`.
+- `poll` without `jobId` lists the unfinished and undelivered jobs with their status.
+- `poll {reset: true}` stops the runtime, for code that never yields (`while (true) {}`). Every running job fails with `runtime-exited`, and `state` is lost.
 
 ## Bridge functions
 
@@ -60,7 +64,7 @@ Input: `{jobId: string, waitSeconds?: number}`.
 - `fleet.$tools()` and `conn["<connection>"].$tools()` return the names, descriptions and input schemas. The agent looks up a tool there instead of loading every schema into its context.
 - A bridge function returns the tool's result, parsed from JSON when the result is JSON. A tool error rejects the promise with `FleetCallError {tool, outcome, code, output}`.
 - Calls may run in parallel. The code server serves each bridge call on its own goroutine.
-- The code server also serves MCP requests concurrently: a long `code` call never delays a ping, a `poll` or a second `code` call.
+- Built-ins that probe objects (`await`, `JSON.stringify`, `String()`) send no bridge call: `then`, `toJSON`, `toString`, `valueOf`, `constructor` and `inspect` are not tool names.
 
 ## Authority
 
@@ -69,9 +73,11 @@ Code mode adds no authority. The code server bridges only the tools that the exe
 - The runtime runs with Node's permission model: `node --permission`. It reads the worktree and the execution input directory. It writes nothing, starts no child process, and loads no native addon or worker. Writes and commands go through the native harness tools under their own sandbox.
 - A Claude profile whose `tools` list has none of `Read`, `Grep`, `Glob` or `Bash` gets no file reads in the runtime.
 - The runtime environment has no run token, gateway URL or Access file. The code server keeps them, as the connection servers do ([per-run tokens](fleet-connections.md#4-per-run-tokens)).
-- The runtime has no network. Bridged calls go through the code server, so the runtime needs none, and a harness without network (Codex without `gitNetwork`) gets none through code. Node 22's permission model has no network rule, so the runtime runs inside an OS sandbox: `sandbox-exec` with `(deny network*)` on macOS, `bwrap --unshare-net` on Linux. Its stdin and stdout pipes to the code server still work.
+- The runtime has no network. Bridged calls go through the code server, so the runtime needs none, and a harness without network (Codex without `gitNetwork`) gets none through code. Node 22's permission model has no network rule, so the runtime runs inside an OS sandbox. Its stdin and stdout pipes to the code server still work.
+  - macOS: `sandbox-exec` with `(deny network*)`, which also refuses Unix sockets.
+  - Linux: `bwrap --unshare-net --unshare-ipc`. The sandbox sees only the system directories, Node's own install directory and the read roots, all read-only, with its own `/tmp`, `/proc` and `/dev`, so host Unix sockets outside the read roots are unreachable.
 - File reads follow symlinks inside the read roots. That adds no authority: the same files are readable through the harness's own read tools, and the run file is readable by the same OS user anyway ([threat model](fleet-connections.md#4-per-run-tokens)).
-- The host needs Node 22.13 or later (for `--permission`) and the sandbox tool. Without them, the launch fails with `code-mode-unready: <reason>`. Hosts without such a sandbox, such as Windows, cannot use code mode.
+- The host needs Node 22.13 or later (for `--permission`) and a sandbox that starts. The launch runs the sandbox once to check it. Without them, the launch fails with `code-mode-unready: <reason>`, for example on Linux without user namespaces. Hosts without such a sandbox, such as Windows, cannot use code mode.
 - Not built: Node on PDS18, which has none today; `bwrap --unshare-net` works there for the `fleet-agent` user.
 
 ## Unknown outcomes
@@ -80,7 +86,7 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 
 - A Fleet mutation without an answer returns `{status: "pending", requestKey}`, as it does outside code. The code reads it later with `fleet.agent_tool_result({requestKey})`. The bridge never retries it.
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
-- A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent.
+- A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent. A stored reply that does not decode is such a failure.
 - When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. The next `code` call starts a new runtime, and its reply says so: `restarted: true`.
 
 ## Observability
@@ -88,7 +94,7 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 - Each `code` and `poll` call is a harness tool call. It appears in the transcript blocks and tool metrics like any MCP tool ([harness blocks](../../go/executor/harness_blocks.go)).
 - Each bridged Fleet call is a journal request, and each connection call is a gateway `CallLine` and a `tool_run` row, the same as a direct call.
 - The `code` and `poll` replies carry `calls: [{tool, ms, outcome}]` for the job's bridged calls. A connection call shows as `<connection>.<tool>`.
-- The launch's observed harness record carries `codeMode`, and its MCP tool list shows the `code` server and no removed server.
+- The launch's observed harness record carries `codeMode` and `codeTools`. With `only`, its MCP list has no removed server: Codex's `fleetMcpTools` is empty.
 - Not built: one span per `code` call with child spans per bridged call.
 
 ## Coordination through code
@@ -129,4 +135,4 @@ Run from `go/`:
 go test ./executor -run CodeMode
 ```
 
-The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes, commands and network (`fetch` and the internal `_http_client` reach no server), a 70 MB value, a ping answered during a running `code` call, a restarted runtime, a journal error as `unknown`, and the launch servers for `add` and `only`. The runtime tests skip when the host has no Node 22.13 or later or no sandbox tool.
+The tests start a real code server with a real Node runtime, a fake gateway and an empty journal. They check persistent `state`, parallel bridged calls, ungranted calls, detach and `poll`, a tool error as `FleetCallError`, blocked writes, commands and network (`fetch` and the internal `_http_client` reach no server), a 70 MB value, `poll` reset of a spinning job, a result returned once, probes that send no call, a restarted runtime, a journal error as `unknown`, and the launch servers for `add` and `only`. The runtime tests skip when the host has no Node 22.13 or later or no sandbox tool.

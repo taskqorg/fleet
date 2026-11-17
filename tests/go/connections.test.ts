@@ -165,6 +165,8 @@ test('C-Anthropic catalogue, two separate keys and native specs (requirement: do
 test('C1 key value stays in the secret file (requirement: docs/designs/fleet-connections.md; risk: a key value in a row, a reply or the gateway snapshot)', async () => {
   const c = name('tavily');
   ok(await op('connections_create', {name: c, provider: 'tavily'}));
+  // An executor MCP server name would collide with the launch's own server (docs/designs/fleet-code-mode.md).
+  assert.equal((await op('connections_create', {name: 'code', provider: 'tavily'})).status, 400);
   const value = 'tvly-' + randomUUID();
   const k = ok(await op('connections_key_add', {connection: c, value}));
   assert.equal(k.fingerprint, sha(value).slice(0, 12));

@@ -12,8 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -25,10 +27,10 @@ import (
 var codeRuntimeJS string
 
 var codeTools = []any{
-	M{"name": "code", "description": "Run JavaScript: the body of an async function (await, return, Promise.all). Fleet tools are fleet.<tool>(args); granted connections are conn[\"<name>\"].<tool>(args); fleet.$tools() and conn[\"<name>\"].$tools() list names and input schemas. A failed call throws FleetCallError {tool, outcome, code, output}; outcome unknown means it may have happened: inspect, never repeat. `state` keeps values between calls; let/const/var do not. print() or console.log add to output. Only the returned value and printed text reach you, so filter in code. Files under the working directory are readable with require('node:fs'); writes, commands and network use your own tools. Still running after detachAfterSeconds (default 50): replies with a jobId for poll.",
+	M{"name": "code", "description": "Run JavaScript: the body of an async function (await, return, Promise.all). Fleet tools are fleet.<tool>(args); granted connections are conn[\"<name>\"].<tool>(args); fleet.$tools() and conn[\"<name>\"].$tools() list names and input schemas. A failed call throws FleetCallError {tool, outcome, code, output}; outcome unknown means it may have happened: inspect, never repeat. `state` keeps values between calls; let/const/var do not. print() or console.log add to output. Only the returned value and printed text reach you, so filter in code. Files under the working directory are readable with require('node:fs'); writes, commands and network use your own tools. Still running after detachAfterSeconds (default 25): replies with a jobId for poll.",
 		"inputSchema": M{"type": "object", "properties": M{"source": M{"type": "string"}, "detachAfterSeconds": M{"type": "number"}}, "required": []any{"source"}, "additionalProperties": false}},
-	M{"name": "poll", "description": "Wait for a detached code job: its final output and value, or its output so far after waitSeconds (default 50). Without jobId: list this runtime's jobs.",
-		"inputSchema": M{"type": "object", "properties": M{"jobId": M{"type": "string"}, "waitSeconds": M{"type": "number"}}, "additionalProperties": false}},
+	M{"name": "poll", "description": "Wait for a detached code job: its final output and value (returned once), or its output so far after waitSeconds (default 25). Without jobId: list the unfinished and undelivered jobs. reset: true stops the runtime (for a job that never yields): every running job fails and state is lost.",
+		"inputSchema": M{"type": "object", "properties": M{"jobId": M{"type": "string"}, "waitSeconds": M{"type": "number"}, "reset": M{"type": "boolean"}}, "additionalProperties": false}},
 }
 
 type codeJob struct {
@@ -53,6 +55,7 @@ type codeServer struct {
 	order  []string
 	rt     *codeRuntime
 	starts int
+	seq    int
 }
 
 type codeRuntime struct {
@@ -84,12 +87,13 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 			return err
 		}
 	}
-	defer s.stop()
 	// Requests are served concurrently, so a long `code` call never delays a ping, a poll or a second call; only the
 	// writes are serialized.
 	var wmu sync.Mutex
 	var wg sync.WaitGroup
+	// On stdin end the runtime stops first, so waiting requests return with runtime-exited instead of their full wait.
 	defer wg.Wait()
+	defer s.stop()
 	out := bufio.NewWriter(w)
 	write := func(m M) {
 		wmu.Lock()
@@ -137,7 +141,12 @@ func (s *codeServer) serve(m any) M {
 		case "code":
 			reply["result"] = s.code(jStr(args, "source"), seconds(jAt(args, "detachAfterSeconds")))
 		case "poll":
-			reply["result"] = s.poll(jStr(args, "jobId"), seconds(jAt(args, "waitSeconds")))
+			if jAt(args, "reset") == true {
+				s.stop()
+				reply["result"] = codeResult(M{"reset": true}, false)
+			} else {
+				reply["result"] = s.poll(jStr(args, "jobId"), seconds(jAt(args, "waitSeconds")))
+			}
 		default:
 			reply["error"] = M{"code": -32602, "message": "unknown tool"}
 		}
@@ -147,12 +156,16 @@ func (s *codeServer) serve(m any) M {
 	return reply
 }
 
-// seconds is a reply wait in seconds; absent or not positive means the 50 s default, under Codex's 60 s MCP tool timeout.
+// seconds is a reply wait in seconds; absent or not positive means the 25 s default. The executor's MCP filter forwards
+// one request at a time, so two calls in a row still answer within Codex's 60 s MCP tool timeout.
 func seconds(v any) time.Duration {
 	if f, ok := num(v); ok && f > 0 {
+		if f >= math.MaxInt64/float64(time.Second) {
+			return math.MaxInt64
+		}
 		return time.Duration(f * float64(time.Second))
 	}
-	return 50 * time.Second
+	return 25 * time.Second
 }
 
 func codeResult(v M, isError bool) M {
@@ -169,7 +182,8 @@ func (s *codeServer) code(source string, detach time.Duration) M {
 		s.mu.Unlock()
 		return codeResult(M{"error": "runtime did not start: " + err.Error()}, true)
 	}
-	j := &codeJob{id: fmt.Sprintf("job-%d", len(s.order)+1), rt: rt, done: make(chan struct{})}
+	s.seq++
+	j := &codeJob{id: fmt.Sprintf("job-%d", s.seq), rt: rt, done: make(chan struct{})}
 	s.jobs[j.id] = j
 	s.order = append(s.order, j.id)
 	s.mu.Unlock()
@@ -196,7 +210,7 @@ func (s *codeServer) poll(id string, wait time.Duration) M {
 	j := s.jobs[id]
 	s.mu.Unlock()
 	if j == nil {
-		return codeResult(M{"error": "unknown jobId"}, true)
+		return codeResult(M{"error": "unknown jobId: never started or already returned"}, true)
 	}
 	r := s.wait(j, wait)
 	return codeResult(r, has(r, "error"))
@@ -222,11 +236,17 @@ func (s *codeServer) wait(j *codeJob, d time.Duration) M {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String(), "calls": append([]any{}, j.calls...)}
+	if r["status"] == "running" {
+		return r
+	}
 	if r["status"] == "done" {
 		r["value"] = j.value
-	} else if r["status"] == "failed" {
+	} else {
 		r["error"] = j.err
 	}
+	// A final result is returned once; the server keeps no delivered output or value.
+	delete(s.jobs, j.id)
+	s.order = slices.DeleteFunc(s.order, func(k string) bool { return k == j.id })
 	return r
 }
 
@@ -257,7 +277,9 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 		return nil, false, err
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = jStr(s.spec, "dir")
+	if len(jArr(s.spec, "read")) > 0 {
+		cmd.Dir = jStr(s.spec, "dir")
+	}
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "NODE_NO_WARNINGS=1"}
 	cmd.Stderr = os.Stderr
 	in, err := cmd.StdinPipe()
@@ -292,12 +314,31 @@ func codeArgv(spec any) ([]string, error) {
 		}
 	}
 	args = append(args, "-e", codeRuntimeJS)
-	sandbox := jStr(spec, "sandbox")
+	return sandboxArgv(jStr(spec, "sandbox"), node, jArr(spec, "read"), args)
+}
+
+// sandboxArgv wraps a command in the OS sandbox: no network, including Unix sockets. On Linux the sandbox sees only the
+// system directories, Node's own install and the read roots, read-only, with its own /tmp, /proc and /dev.
+func sandboxArgv(sandbox, node string, read []any, args []string) ([]string, error) {
 	switch runtime.GOOS {
 	case "darwin":
 		return append([]string{sandbox, "-p", "(version 1)(allow default)(deny network*)"}, args...), nil
 	case "linux":
-		return append([]string{sandbox, "--unshare-net", "--die-with-parent", "--dev-bind", "/", "/"}, args...), nil
+		argv := []string{sandbox, "--unshare-net", "--unshare-ipc", "--die-with-parent", "--new-session"}
+		for _, d := range []string{"/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc"} {
+			argv = append(argv, "--ro-bind-try", d, d)
+		}
+		if real, err := filepath.EvalSymlinks(node); err == nil {
+			prefix := filepath.Dir(filepath.Dir(real)) // <prefix>/bin/node
+			argv = append(argv, "--ro-bind", prefix, prefix)
+		}
+		argv = append(argv, "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp") // before the roots: a root may be under /tmp
+		for _, r := range read {
+			if p, ok := str(r); ok && p != "" {
+				argv = append(argv, "--ro-bind", p, p)
+			}
+		}
+		return append(argv, args...), nil
 	}
 	return nil, errors.New("no network sandbox on " + runtime.GOOS)
 }
@@ -502,7 +543,20 @@ var codeHost = func() (node, sandbox string, err error) {
 	if sandbox, err = exec.LookPath(tool); err != nil {
 		return "", "", errors.New("code-mode-unready: " + tool + " is not installed")
 	}
+	// The sandbox must start here: a host without network namespaces (Linux user-namespace limits) fails the launch.
+	argv, err := sandboxArgv(sandbox, node, nil, []string{node, "--permission", "-e", ""})
+	if err == nil {
+		err = exec.Command(argv[0], argv[1:]...).Run()
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("code-mode-unready: %s does not start: %v", tool, err)
+	}
 	return node, sandbox, nil
+}
+
+// codeSpecFile is the code server's spec for one execution, beside its run file and removed with it.
+func codeSpecFile(root, execution string) string {
+	return filepath.Join(root, "runs", execution+".code.json")
 }
 
 // codeFleet is the fleet server's journal and context for the code server; nil without Fleet tools.
@@ -513,7 +567,8 @@ type codeFleet struct {
 
 // addCodeServer adds the `code` server to a launch's servers; mode `only` removes the fleet and connection servers it
 // bridges. A Claude profile without Read, Grep, Glob or Bash gets no file reads in the runtime.
-func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFleet, granted []any, gatewayConns map[string]bool, runFile string, read []string) error {
+// The spec goes to specFile (0600), not argv: fleet operations and connection schemas can exceed one argv string.
+func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFleet, granted []any, gatewayConns map[string]bool, runFile, specFile string, read []string) error {
 	conns := []any{}
 	for _, c := range granted {
 		if gatewayConns[jStr(c, "name")] {
@@ -548,6 +603,12 @@ func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFlee
 			delete(servers, c)
 		}
 	}
-	servers["code"] = M{"command": exe(), "args": []any{"mcp", "code", enc(spec)}, "tools": []any{"code", "poll"}, "env": []any{"HOME", "PATH"}}
+	if err := os.MkdirAll(filepath.Dir(specFile), 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(specFile, []byte(enc(spec)), 0o600); err != nil {
+		return err
+	}
+	servers["code"] = M{"command": exe(), "args": []any{"mcp", "code", specFile}, "tools": []any{"code", "poll"}, "env": []any{"HOME", "PATH"}}
 	return nil
 }
