@@ -245,7 +245,9 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	if k.accounts, err = all(q, "managed-account", nil); err != nil {
 		return nil, err
 	}
-	k.readings, err = latestReadings(q.ctx(), q.app)
+	// The dispatch transaction's own connection: a second pool connection, taken while this transaction holds the
+	// global lock, waits forever once every other pool connection waits for that lock.
+	k.readings, err = latestReadings(withTx(q), q.app)
 	return k, err
 }
 

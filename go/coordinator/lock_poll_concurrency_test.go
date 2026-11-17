@@ -982,3 +982,34 @@ func TestDispatchWaitIgnoresLaterRequests(t *testing.T) {
 		t.Fatalf("captured generation already completed despite later requests: %v", err)
 	}
 }
+
+// Risk: the dispatch pass, inside its transaction that holds the global lock, takes a second pool connection. Under load
+// every other pool connection waits for that lock, so the pass waits forever and the coordinator stops (seen on pds18,
+// 2026-11-17: 15 sessions on pg_advisory_xact_lock behind one idle-in-transaction session for 18 minutes).
+func TestDispatchContextUsesItsTransactionConnection(t *testing.T) {
+	env := openTestCoordinator(t, false)
+	pool := env.appStore.pool
+	var held []interface{ Release() }
+	for range int(pool.Config().MaxConns) - 1 {
+		c, err := pool.Acquire(env.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, c)
+	}
+	defer func() {
+		for _, c := range held {
+			c.Release()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(env.ctx, 10*time.Second)
+	defer cancel()
+	// As dispatchPass: a writing transaction under the global lock, on the write pool's last free connection.
+	err := runTx(ctx, env.app, nil, true, GLOBAL, func(q *Request) error {
+		_, err := loadDispatchContext(q)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("dispatch context with one free pool connection: %v", err)
+	}
+}
