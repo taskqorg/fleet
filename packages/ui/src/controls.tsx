@@ -508,9 +508,14 @@ type Shown = { ref: EntityRef; anchor: HTMLElement; keyboard: boolean };
 let shown: Shown | null = null;
 const watchers = new Set<() => void>();
 const showCard = (s: Shown | null) => { shown = s; for (const w of watchers) w(); };
-function useShownCard() {
+/** The open card; with `mine`, re-renders only when that element's own card opens or closes (not on every other code's). */
+function useShownCard(mine?: { current: HTMLElement | null }) {
   const [, set] = useState(0);
-  useEffect(() => { const w = () => set(n => n + 1); watchers.add(w); return () => { watchers.delete(w); }; }, []);
+  useEffect(() => {
+    let was = !!mine && shown?.anchor === mine.current;
+    const w = () => { const is = !!mine && shown?.anchor === mine.current; if (!mine || is !== was) { was = is; set(n => n + 1); } };
+    watchers.add(w); return () => { watchers.delete(w); };
+  }, []);
   return shown;
 }
 const CARD_ID = 'entity-card';
@@ -520,7 +525,7 @@ const CARD_ID = 'entity-card';
  *  EntityCard and never the row (OR-26); the same again closes it. The UUID is never shown: the card copies it. */
 export function EntityCode({ code, id, kind, cls }: { code?: string | null; id?: string | null; kind?: EntityKind; cls?: string }) {
   const el = useRef<HTMLButtonElement>(null);
-  const cur = useShownCard();
+  const cur = useShownCard(el);
   const k = kind ?? (code ? codeKind[code[0]] : undefined);
   if (!k || !id && !code) return null;
   const open = !!cur && !!el.current && cur.anchor === el.current;
@@ -571,16 +576,23 @@ export function EntityCardLayer() {
     return () => { document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', down, true); document.removeEventListener('scroll', scroll, true);
       document.removeEventListener('focusout', out, true); removeEventListener('resize', gone); clearInterval(watch); };
   }, [cur]);
-  // Placed after every render (the skeleton and the loaded card can differ): below, else above, else the roomier side.
+  // Placed when it opens and whenever its size changes (the loaded card is taller than the skeleton): below, else above,
+  // else the roomier side; inside the window.
   useLayoutEffect(() => {
     const el = box.current; if (!cur || !el) return;
-    const a = cur.anchor.getBoundingClientRect(), r = el.getBoundingClientRect(), gap = 4, edge = 8;
-    const below = a.bottom + gap + r.height <= innerHeight - edge || a.top - gap - r.height < edge && innerHeight - a.bottom > a.top;
-    el.style.top = `${Math.max(edge, below ? a.bottom + gap : a.top - gap - r.height)}px`;
-    el.style.left = `${Math.max(edge, Math.min(a.left, innerWidth - edge - r.width))}px`;
-    el.dataset.side = below ? 'below' : 'above';
-  });
-  useEffect(() => { if (cur?.keyboard) box.current?.querySelector<HTMLElement>('a[href],button')?.focus({ preventScroll: true }); }, [cur]);
+    const place = () => {
+      const a = cur.anchor.getBoundingClientRect(), r = el.getBoundingClientRect(), gap = 4, edge = 8;
+      const below = a.bottom + gap + r.height <= innerHeight - edge || a.top - gap - r.height < edge && innerHeight - a.bottom > a.top;
+      el.style.top = `${Math.max(edge, below ? a.bottom + gap : a.top - gap - r.height)}px`;
+      el.style.left = `${Math.max(edge, Math.min(a.left, innerWidth - edge - r.width))}px`;
+      el.dataset.side = below ? 'below' : 'above';
+    };
+    place();
+    const watch = new ResizeObserver(place); watch.observe(el);
+    return () => watch.disconnect();
+  }, [cur]);
+  // Opened by a key: focus goes to Open, which stays the same element while the card loads.
+  useEffect(() => { if (cur?.keyboard) box.current?.querySelector<HTMLElement>('.ec-open')?.focus({ preventScroll: true }); }, [cur]);
   if (!cur) return null;
   const k = entityKinds[cur.ref.kind];
   // The card takes its code's theme where a region sets one (the book's light and dark frames).
@@ -609,7 +621,8 @@ function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
     ...(c.hash ? [['Copy SHA-256', c.hash] as [string, string]] : [])] : code ? [['Copy code', code]] : [];
   const at = c?.at ? Date.parse(c.at) : NaN;
   const go = (e: MouseEvent) => {
-    if (!c?.path || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    if (!c?.path) { e.preventDefault(); return; }
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
     e.preventDefault(); onOpen();
     if (source?.open) source.open(c.path); else location.assign(c.path);
   };
@@ -626,8 +639,9 @@ function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
     </> : read.error ? <div class="ec-err" role="alert"><Icon name="circle-alert" /><span>{read.error}</span>{read.retry && <Button label="Retry" icon={actions.retry} iconOnly kind="quiet" onClick={read.retry} />}</div>
       : <div class="ec-sk" aria-busy="true" aria-label="Loading"><i /><i /><i /></div>}
     <div class="ec-a">
-      {c?.path ? <a class="btn primary" data-ui="button" href={c.path} onClick={go}><Icon name="arrow-right" /><span>Open</span></a>
-        : <Button label="Open" icon="arrow-right" kind="primary" disabledReason={read.error ? 'Not available' : 'Loading'} />}
+      {/* One element whether or not the path is known yet, so focus on it survives the load. */}
+      <a class="btn primary ec-open" data-ui="button" href={c?.path ?? undefined} tabIndex={0} role={c?.path ? undefined : 'link'} aria-disabled={c?.path ? undefined : true}
+        data-tip={c?.path ? undefined : read.error ? 'Not available' : 'Loading'} onClick={go}><Icon name="arrow-right" /><span>Open</span></a>
       {/* Feedback swaps the icon only (OR-23: the row keeps its width) and is announced in the status below. */}
       {copies.map(([label, value]) => <Button key={label} label={label} icon={copied?.label !== label ? actions.copy : copied.ok ? 'check' : 'circle-x'} kind="quiet" onClick={() => copy(label, value)} />)}
       {c?.url && <a class="btn quiet icon-only" data-ui="button" href={c.url} target="_blank" rel="noopener noreferrer" aria-label="Open on GitHub" data-tip="Open on GitHub"><Icon name="github" /></a>}

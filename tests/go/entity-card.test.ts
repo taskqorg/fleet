@@ -75,6 +75,13 @@ test('entity_card: every kind by code or kind and id, within the caller\'s grant
   for (const b of [{}, {kind: 'task'}, {code: task.code, kind: 'task', id: task.id}, {code: 'nope'}, {code: 'S-FLT-D3'}, {kind: 'pull_request', id: 'x'}, {kind: 'release', id: 'latest'}]) assert.equal(await status(b), 400, JSON.stringify(b));
   assert.equal(await status({kind: 'task', id: 'missing'}), 404);
   assert.equal(await status({kind: 'pull_request', id: 'taskqorg/fleet#1'}), 404, 'a pull request the delivery pass has not read');
+  for (const b of [{code: ''}, {code: '  '}]) assert.equal(await status(b), 400, 'an empty code is a 400, not a crash');
+  // A merged pull request only the delivery history holds (a picked day on Delivery), by a zero-padded number too.
+  c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES('delivery-pr','delivery-pr:612','fleet','{"number":612,"title":"Older change","url":"https://github.com/taskqorg/fleet/pull/612","author":"alex","opened":"2026-11-10T10:00:00Z","merged":"2026-11-10T12:00:00Z","release":"v1.2.0","installed":{"coordinator":"2026-11-10T13:00:00Z"}}')`);
+  const old = await card({kind: 'pull_request', id: 'taskqorg/fleet#0612'});
+  assert.equal(old.id, 'taskqorg/fleet#612'); assert.equal(old.code, '#612'); assert.equal(old.state, 'installed'); assert.equal(old.path, '/delivery/taskqorg~fleet~612');
+  assert.ok(old.facts.some((f: any) => f.label === 'Author' && f.value === 'alex'));
+  assert.equal(await status({kind: 'pull_request', id: 'taskqorg/fleet#612'}, MEMBER), 404, 'history is the fleet project\'s');
 
   // Grants: an outsider sees none of them; a member sees its own project's task, not another's; definitions and Lab
   // stay the architect's.

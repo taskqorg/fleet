@@ -40,7 +40,7 @@ func init() {
 			return contract.EntityCardReply{}, fail(400, "Expected a code, or a kind with its id")
 		case r.Code != nil:
 			code := strings.ToUpper(strings.TrimSpace(*r.Code))
-			if m := codePattern.FindString(code); m != code || codeKinds[code[:1]] == "" {
+			if m := codePattern.FindString(code); code == "" || m != code || codeKinds[code[:1]] == "" {
 				return contract.EntityCardReply{}, fail(400, "Expected a code such as T-FLT-42")
 			}
 			found, err := resolveCodes(q, []string{code})
@@ -83,6 +83,9 @@ func facts(fs ...contract.EntityFact) []contract.EntityFact {
 	return fs[:min(4, len(fs))]
 }
 
+// count: an integer fact value (a float64 count would print 1e+06).
+func count(v any) string { return strconv.FormatInt(int64(num(v)), 10) }
+
 func itemPath(section, id string) *string { return ptr("/" + section + "/" + url.PathEscape(id)) }
 
 // cardRow: one row of sql, nil when the caller sees none.
@@ -105,8 +108,8 @@ func cardTask(q *Request, id string) (*contract.EntityCardReply, error) {
 	}
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Code: optStr(astr(r["code"])), Title: astr(r["title"]), State: optStr(astr(r["state"])), ProjectId: optStr(astr(r["project_id"])),
 		Harness: optStr(astr(r["agent"])), At: optStr(astr(r["updated_at"])), AtLabel: ptr("changed"), Path: itemPath("tasks", id),
-		Facts: facts(fact("Waiting for", contract.EntityFactTypeText, wait), fact("Runs", contract.EntityFactTypeCount, fmt.Sprint(num(r["runs"]))),
-			fact("Open questions", contract.EntityFactTypeCount, fmt.Sprint(num(r["open_questions"]))), fact("Host", contract.EntityFactTypeCode, astr(r["host"])),
+		Facts: facts(fact("Waiting for", contract.EntityFactTypeText, wait), fact("Runs", contract.EntityFactTypeCount, count(r["runs"])),
+			fact("Open questions", contract.EntityFactTypeCount, count(r["open_questions"])), fact("Host", contract.EntityFactTypeCode, astr(r["host"])),
 			fact("Priority", contract.EntityFactTypeText, priority))}, nil
 }
 
@@ -147,7 +150,7 @@ func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) 
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Code: optStr(astr(r["code"])), Title: string(title[:min(200, len(title))]), State: optStr(astr(r["state"])),
 		ProjectId: optStr(astr(r["project_id"])), Harness: optStr(astr(r["harness"])), At: optStr(astr(r["activity_at"])), AtLabel: ptr("active"), Path: itemPath("conversations", id),
 		Facts: facts(fact("Profile", contract.EntityFactTypeCode, astr(r["profile"])), fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])),
-			fact("Runs", contract.EntityFactTypeCount, fmt.Sprint(num(r["runs"]))), fact("Open questions", contract.EntityFactTypeCount, fmt.Sprint(num(r["open_questions"]))))}, nil
+			fact("Runs", contract.EntityFactTypeCount, count(r["runs"])), fact("Open questions", contract.EntityFactTypeCount, count(r["open_questions"])))}, nil
 }
 
 var executionKindLabel = map[string]string{"agent_run": "Agent run", "pipeline_run": "Pipeline run", "pipeline_step": "Pipeline step", "child_agent": "Child agent", "tool_run": "Tool run"}
@@ -188,6 +191,11 @@ func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
 func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 	r, err := cardRow(q, `SELECT a.id,a.name,a.state,a.project_id,a.media_type,a.size,a.content_hash,a.created_at,t.code AS task_code
 	 FROM artifact a LEFT JOIN task t ON t.id=coalesce(a.task_id,(SELECT e.task_id FROM execution e WHERE e.id=a.execution_id)) WHERE a.id=$1 OR a.legacy_id=$1`, id)
+	if r == nil && err == nil { // a legacy result kept as a document (task_view's latest_result reads both)
+		r, err = cardRow(q, `SELECT d.id,coalesce(d.data->>'path',d.data->>'name') AS name,'stored' AS state,coalesce(d.project_id,d.data->>'projectId') AS project_id,
+		 d.data->>'mediaType' AS media_type,d.data->>'size' AS size,d.data->>'sha256' AS content_hash,d.updated_at AS created_at,t.code AS task_code
+		 FROM document d LEFT JOIN execution e ON e.id=d.data->>'executionId' LEFT JOIN task t ON t.id=e.task_id WHERE d.kind='artifact' AND d.id=$1`, id)
+	}
 	if r == nil || err != nil {
 		return nil, err
 	}
@@ -195,7 +203,7 @@ func cardResult(q *Request, id string) (*contract.EntityCardReply, error) {
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Hash: optStr(astr(r["content_hash"])), Title: firstString(astr(r["name"]), "Result"), State: optStr(astr(r["state"])),
 		ProjectId: optStr(astr(r["project_id"])), At: optStr(astr(r["created_at"])), AtLabel: ptr("stored"), Path: itemPath("results", id),
 		Facts: facts(fact("Task", contract.EntityFactTypeCode, astr(r["task_code"])), fact("Type", contract.EntityFactTypeCode, astr(r["media_type"])),
-			fact("Size", contract.EntityFactTypeBytes, fmt.Sprint(int64(num(r["size"])))))}, nil
+			fact("Size", contract.EntityFactTypeBytes, count(r["size"])))}, nil
 }
 
 // architect: definitions and Lab are the architect's to read (people.go architectOps); an agent without a person passes.
@@ -219,8 +227,8 @@ func cardExperiment(q *Request, id string) (*contract.EntityCardReply, error) {
 	}
 	return &contract.EntityCardReply{Id: id, Uuid: ptr(id), Title: firstString(astr(r["goal"]), astr(r["pipeline_id"])), State: optStr(astr(r["state"])),
 		ProjectId: optStr(astr(r["project_id"])), At: optStr(astr(r["at"])), AtLabel: ptr(label), Path: itemPath("lab", id),
-		Facts: facts(fact("Pipeline", contract.EntityFactTypeCode, astr(r["pipeline_id"])), fact("Trials", contract.EntityFactTypeCount, fmt.Sprint(num(r["trials"]))),
-			fact("Variants", contract.EntityFactTypeCount, fmt.Sprint(num(r["variants"]))), fact("Decision", contract.EntityFactTypeText, astr(r["decision"])))}, nil
+		Facts: facts(fact("Pipeline", contract.EntityFactTypeCode, astr(r["pipeline_id"])), fact("Trials", contract.EntityFactTypeCount, count(r["trials"])),
+			fact("Variants", contract.EntityFactTypeCount, count(r["variants"])), fact("Decision", contract.EntityFactTypeText, astr(r["decision"])))}, nil
 }
 
 func cardProject(q *Request, id string) (*contract.EntityCardReply, error) {
@@ -242,8 +250,8 @@ func cardProject(q *Request, id string) (*contract.EntityCardReply, error) {
 	}
 	return &contract.EntityCardReply{Id: id, Code: optStr(astr(r["code"])), Title: firstString(astr(mapOf(b["settings"])["name"]), id),
 		At: ptr(xs[0].At.UTC().Format(time.RFC3339Nano)), AtLabel: ptr("changed"), Path: itemPath("projects", id),
-		Facts: facts(fact("Open tasks", contract.EntityFactTypeCount, fmt.Sprint(num(r["open"]))), fact("Running", contract.EntityFactTypeCount, fmt.Sprint(num(r["running"]))),
-			fact("Open questions", contract.EntityFactTypeCount, fmt.Sprint(num(r["questions"]))))}, nil
+		Facts: facts(fact("Open tasks", contract.EntityFactTypeCount, count(r["open"])), fact("Running", contract.EntityFactTypeCount, count(r["running"])),
+			fact("Open questions", contract.EntityFactTypeCount, count(r["questions"])))}, nil
 }
 
 // cardHost: one host as hosts_list shows it: online while it polled within hostStaleMs, failing while its polls fail.
@@ -269,8 +277,8 @@ func cardHost(q *Request, id string) (*contract.EntityCardReply, error) {
 			at = ptr(time.UnixMilli(seen).UTC().Format(time.RFC3339Nano))
 		}
 		return &contract.EntityCardReply{Id: id, Title: id, State: ptr(state), At: at, AtLabel: ptr("seen"), Path: itemPath("hosts", id),
-			Facts: facts(fact("Version", contract.EntityFactTypeCode, astr(h["version"])), fact("Running", contract.EntityFactTypeCount, fmt.Sprint(int(num(h["running"])))),
-				fact("Queued", contract.EntityFactTypeCount, fmt.Sprint(int(num(h["queued"])))), fact("Platform", contract.EntityFactTypeText, astr(h["platform"])))}, nil
+			Facts: facts(fact("Version", contract.EntityFactTypeCode, astr(h["version"])), fact("Running", contract.EntityFactTypeCount, count(h["running"])),
+				fact("Queued", contract.EntityFactTypeCount, count(h["queued"])), fact("Platform", contract.EntityFactTypeText, astr(h["platform"])))}, nil
 	}
 	return nil, nil
 }
@@ -322,6 +330,7 @@ func cardPullRequest(q *Request, id string) (*contract.EntityCardReply, error) {
 	if err != nil || strings.Count(repo, "/") != 1 {
 		return nil, fail(400, "Expected a pull request as owner/repo#number")
 	}
+	n = strconv.FormatInt(number, 10)
 	for _, it := range deliveryVisible(q).Items {
 		if !strings.EqualFold(it.Repo, repo) || it.Number != number {
 			continue
@@ -331,7 +340,31 @@ func cardPullRequest(q *Request, id string) (*contract.EntityCardReply, error) {
 			Facts: facts(fact("Repository", contract.EntityFactTypeCode, it.Repo), fact("Release", contract.EntityFactTypeCode, deref(it.Release)),
 				fact("Opened", contract.EntityFactTypeTime, deref(it.Opened)), fact("Merged", contract.EntityFactTypeTime, deref(it.Merged)))}, nil
 	}
-	return nil, nil
+	return cardPullRequestHistory(q, repo, number)
+}
+
+// cardPullRequestHistory: a merged pull request of the fleet repository the current pass no longer holds, from the
+// delivery history (delivery_history.go, the Delivery list's picked days), under delivery_history's own gate.
+func cardPullRequestHistory(q *Request, repo string, number int64) (*contract.EntityCardReply, error) {
+	if !strings.EqualFold(repo, ciOwner+"/"+ciRepo) || deliveryMay(q) != nil {
+		return nil, nil
+	}
+	d, err := cardRow(q, "SELECT data FROM document WHERE kind='delivery-pr' AND data->>'number'=$1", strconv.FormatInt(number, 10))
+	if d == nil || err != nil {
+		return nil, err
+	}
+	var x contract.DeliveryPr
+	if err := json.Unmarshal(jsonBytes(d["data"]), &x); err != nil {
+		return nil, err
+	}
+	n, stage, at := strconv.FormatInt(number, 10), "merged", x.Merged
+	if x.Release != nil && x.Installed["coordinator"] != "" {
+		stage, at = "installed", x.Installed["coordinator"]
+	}
+	return &contract.EntityCardReply{Id: ciOwner + "/" + ciRepo + "#" + n, Code: ptr("#" + n), Title: x.Title, State: ptr(stage), ProjectId: ptr(ciProject),
+		At: optStr(at), AtLabel: ptr("since"), Url: optStr(x.Url), Path: itemPath("delivery", ciOwner+"~"+ciRepo+"~"+n),
+		Facts: facts(fact("Author", contract.EntityFactTypeText, deref(x.Author)), fact("Release", contract.EntityFactTypeCode, deref(x.Release)),
+			fact("Opened", contract.EntityFactTypeTime, x.Opened), fact("Merged", contract.EntityFactTypeTime, x.Merged))}, nil
 }
 
 var releaseTag = regexp.MustCompile(`^(v\d+(\.\d+)*|ui-\d+(\.\d+)*-v\d+(\.\d+)*)$`)

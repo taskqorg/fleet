@@ -11,14 +11,16 @@ import { useDoc } from './store.ts';
 export function cardTouched(kind: EntityRef['kind'], id: string | undefined, c: Change): boolean {
   if (!id) return false;
   switch (kind) {
-    case 'task': return c.id === id || c.taskId === id;
+    case 'task': return (c.id === id || c.taskId === id) && c.kind !== 'event';
     case 'question': return c.kind === 'question' && c.id === id;
-    case 'conversation': return c.sessionId === id;
+    // Not every streamed event: a turn shows as its execution and messages' session changes.
+    case 'conversation': return c.sessionId === id && c.kind !== 'event';
     case 'execution': return c.kind === 'execution' && c.id === id;
     case 'result': return c.kind === 'artifact' && c.id === id;
     case 'experiment': return c.kind === 'experiment' && c.id === id;
     case 'host': return c.kind === 'host' && (c.id === id || c.hostId === id);
-    case 'project': return c.kind === 'definition' && c.id === 'project/' + id || c.kind === 'task' || c.kind === 'question';
+    // A change names no project, so counts are read again when the card opens (holdDoc), not on every task change.
+    case 'project': return c.kind === 'definition' && c.id === 'project/' + id;
     case 'agent': case 'pipeline': return c.kind === 'definition' && c.id === `${kind}/${id}`;
     case 'pull_request': return c.kind === 'delivery';
     case 'release': return c.kind === 'delivery' || c.kind === 'host';

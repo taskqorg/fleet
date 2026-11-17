@@ -36,7 +36,7 @@ func TestCardPullRequest(t *testing.T) {
 	if c, err := cardPullRequest(&Request{person: &member}, "taskqorg/fleet#643"); err != nil || c != nil {
 		t.Fatalf("a person without the project sees %+v %v", c, err)
 	}
-	if c, err := cardPullRequest(&Request{}, "taskqorg/fleet#644"); err != nil || c != nil {
+	if c, err := cardPullRequest(&Request{}, "taskqorg/other#643"); err != nil || c != nil { // not in the pass; history covers only the fleet repository (tests/go/entity-card.test.ts)
 		t.Fatalf("unknown number: %+v %v", c, err)
 	}
 	for _, bad := range []string{"643", "fleet#643", "a/b/c#1", "taskqorg/fleet#x"} {

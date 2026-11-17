@@ -19,8 +19,7 @@ import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
 import type { Change } from './feed.ts';
 
 /** A server list row: its id, code and the server sort key whose first part is the group key. */
-/** `card`: the entity the row's code names when it is not the row's own id (Delivery: owner/repo#n). */
-export type ListRow = { id: string; code?: string | null; sortKey: (string | number)[]; card?: { kind: EntityKind; id: string } };
+export type ListRow = { id: string; code?: string | null; sortKey: (string | number)[] };
 /**
  * A list the page reads whole and filters, groups and sorts itself (Delivery: delivery_status holds every pull request), in
  * place of a server list kind. `rows` are in group order, each row's sortKey[0] its group key; `all` is unfiltered (pins).
@@ -310,7 +309,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
                   if (e.key === 'p') { e.preventDefault(); pins.toggle(i.r.id); }
                   else if (e.key === 'x') { e.preventDefault(); g.select(i.r); }
                   // The Menu key and Shift+F10 fire contextmenu on the row: onRowMenu opens the menu.
-                }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.card?.id ?? i.r.id} kind={i.r.card?.kind ?? g.entity} /></span>
+                }}>{p.title(i.r)}</a><EntityCode code={i.r.code} id={i.r.id} kind={g.entity} /></span>
               <span class="rz">{p.facts(i.r)}</span>
             </>} />}
     </ListFrame>
