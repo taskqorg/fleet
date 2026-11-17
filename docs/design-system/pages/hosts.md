@@ -20,6 +20,7 @@ Not built in the app, shown in the mockup: slots and the store fill in the row, 
 |---|---|
 | Hosts: platform, last contact, observation state, harness versions, readiness | Catalogue row: name (the platform shows only when the name does not already say it, OR-17), [state icon](../controls/state-badge.md) (unconfirmed overlay when offline), last contact [age chip](../controls/number.md) (attention past 15m) |
 | Poll failure: the coordinator answers the host's polls with an error, so it gets no commands and no update target while its last contact still moves (`pollError` of `hosts_list`) | Catalogue row: state icon Polls failing (danger), before online and offline. Host detail, State: a failure [problem row](../controls/problem-row.md) with the reason code, the status, the first failure as an age chip and the message. After 2 minutes Needs you has the problem too (host id and reason code); both go with the next successful poll |
+| Managed CLI versions | Host detail, Agent CLIs: observed version for each managed harness, expected version on a mismatch, and unknown when observation is unavailable or stale |
 | Environments and account users per host | Host detail: stacked [detail sections](../controls/detail-section.md) (C3) |
 | Stores: capacity, used, free, tunnel state, fill per project | [Fill bar](../controls/fill-bar.md) per host with project segments, free space and warning mark |
 | Store capacity, memory and CPU bounds, free-space warning | Setting fields with applied, pending or apply error |

@@ -2423,7 +2423,7 @@ func (e *executor) poll() (*pollReply, error) {
 func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply, error) {
 	v, roots := version, reportedRoots()
 	body := contract.PollRequest{HostId: e.host, Platform: contract.Platform(platform()), Capabilities: capabilities(), Stores: e.stores(),
-		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, Update: lastUpdate(e.root), GitConnections: gitConnections(connectionsDir())}
+		Problems: edgeProblems(pollRoute), ProjectRoots: roots, Version: &v, HarnessVersions: managedVersions(), Update: lastUpdate(e.root), GitConnections: gitConnections(connectionsDir())}
 	var a answer
 	if wait > 0 {
 		a = sendPoll(ctx, e.url, e.token, pollRoute+"?wait="+wait.String(), body)

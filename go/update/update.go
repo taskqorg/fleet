@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"log"
@@ -138,6 +139,17 @@ func (u *updater) held(autoUpdate string) bool {
 
 // cycle is one run of one part (section 3.2). It returns the result to record, or nil when nothing changed.
 func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Result {
+	if p.name != "ui" {
+		unlock, ok, err := lockReleases(p.r)
+		if err != nil {
+			return u.result("", "error", err.Error())
+		}
+		if !ok {
+			return nil
+		}
+		defer unlock()
+		pruneReleases(p.r)
+	}
 	running := rootVersion(p.r, "current")
 	// A release without a healthy marker is still being checked (pending, an interrupted run, a first install).
 	var resumed *Result
@@ -173,6 +185,9 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	}
 	log.Printf("%s: %s -> %s", p.name, running, cand)
 	dir, err := u.fetch(p, cand)
+	if err == nil && p.name == "executor" {
+		err = u.prepareHarnesses(p, dir)
+	}
 	var ref refusal
 	if errors.As(err, &ref) {
 		return u.refuse(p, cand, string(ref), err.Error())
@@ -196,7 +211,11 @@ func (u *updater) cycle(p *part, autoUpdate string, candidate func() string) *Re
 	if p.app != "" {
 		u.uploadSourcemaps(filepath.Join(p.root, cand, p.app), cand)
 	}
-	return u.settle(p, cand, true)
+	result := u.settle(p, cand, true)
+	if p.name == "executor" && result.State == "ok" {
+		u.pruneHarnesses(p)
+	}
+	return result
 }
 
 func (u *updater) refuse(p *part, ver, reason, msg string) *Result {
@@ -315,6 +334,10 @@ func okStatus(method, url string, resp *http.Response) error {
 
 // download streams url to file and returns its hex SHA-256.
 func (u *updater) download(url, file string) (string, error) {
+	return u.downloadDigest(url, file, sha256.New())
+}
+
+func (u *updater) downloadDigest(url, file string, h hash.Hash) (string, error) {
 	resp, err := u.client.Get(url)
 	if err != nil {
 		return "", err
@@ -328,7 +351,6 @@ func (u *updater) download(url, file string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(f, h), resp.Body); err != nil {
 		return "", err
 	}
@@ -785,11 +807,24 @@ func writeJSON(path string, v any, mode fs.FileMode) error {
 	return nil
 }
 
+// Lock the releases directory itself so the PDS18 service user and the root updater share a lock without sharing a writable file.
+func lockReleases(root *os.Root) (unlock func(), ok bool, err error) {
+	f, err := root.Open(".")
+	if err != nil {
+		return nil, false, err
+	}
+	return flock(f)
+}
+
 func lock(path string) (unlock func(), ok bool, err error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, false, err
 	}
+	return flock(f)
+}
+
+func flock(f *os.File) (unlock func(), ok bool, err error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		log.Print("another fleet-update run holds the lock")

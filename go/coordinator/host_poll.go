@@ -608,6 +608,9 @@ func (a *App) pollOnce(q *Request) (any, error) {
 	if b.Capabilities != nil {
 		obs["capabilities"] = b.Capabilities
 	}
+	if b.HarnessVersions != nil {
+		obs["harnessVersions"] = b.HarnessVersions
+	}
 	if b.GitConnections != nil {
 		obs["gitConnections"] = b.GitConnections
 	}

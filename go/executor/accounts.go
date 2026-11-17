@@ -22,11 +22,12 @@ import (
 
 // registryEntry is one named host account of FLEET_NATIVE_ACCOUNTS.
 type registryEntry struct {
-	Harness    string `json:"harness"`
-	Home       string `json:"home"`
-	NativeHome string `json:"nativeHome"`
-	Executable string `json:"executable"`
-	Readiness  string `json:"readiness"`
+	ReleaseManaged bool   `json:"-"`
+	Harness        string `json:"harness"`
+	Home           string `json:"home"`
+	NativeHome     string `json:"nativeHome"`
+	Executable     string `json:"executable"`
+	Readiness      string `json:"readiness"`
 	// CredentialAuthority native-current: the login lives in CredentialHome (HOME for Claude), as the start path uses it.
 	CredentialAuthority string `json:"credentialAuthority"`
 	CredentialHome      string `json:"credentialHome"`
@@ -57,10 +58,14 @@ func readRegistry() (map[string]registryEntry, error) {
 // runnable: the same gate as the start path (commandRegistry) before anything is launched under an entry: reviewed
 // ready, absolute executable, private home directories, no shared native-current login, Claude placement.
 func runnable(x registryEntry) error {
+	executable, managed, err := managedExecutable(x.Harness, x.Executable, "")
+	if err != nil {
+		return err
+	}
 	switch {
 	case x.Readiness != "ready":
 		return errors.New("named host account is unprovisioned; operator login and readiness review required")
-	case !filepath.IsAbs(x.Executable):
+	case !filepath.IsAbs(executable):
 		return errors.New("host executable must be absolute")
 	case x.CredentialAuthority != "" && x.CredentialAuthority != "native-current":
 		return errors.New("unsupported credential authority")
@@ -70,6 +75,9 @@ func runnable(x registryEntry) error {
 		if err != nil || !filepath.IsAbs(x.CredentialHome) || !st.IsDir() || owner(st) != os.Geteuid() || st.Mode().Perm()&0o022 != 0 {
 			return errors.New("native-current credential home must be owner-controlled")
 		}
+	}
+	if managed && !isFile(executable) {
+		return errors.New("release-managed executable missing")
 	}
 	for _, d := range []string{x.Home, x.NativeHome} {
 		if err := private(d); err != nil {
@@ -200,8 +208,13 @@ func (e *executor) readLimits(c M, p contract.AccountInspectPayload, reg map[str
 	if err := runnable(x); err != nil {
 		return fail(err.Error())
 	}
+	executable, managed, err := managedExecutable(x.Harness, x.Executable, "")
+	if err != nil {
+		return fail(err.Error())
+	}
+	x.Executable = executable
+	x.ReleaseManaged = managed
 	var reading M
-	var err error
 	switch p.Harness {
 	case "codex":
 		reading, err = codexReadLimits(x)
@@ -272,6 +285,9 @@ func decAny(s string) any { v, _ := dec(s); return v }
 
 func probeCmd(x registryEntry, args ...string) *exec.Cmd {
 	c := newCmd(x.Executable, x.Home)
+	if x.ReleaseManaged && x.Harness == "claude" {
+		setEnv(c, "DISABLE_AUTOUPDATER", "1")
+	}
 	passEnv(c, "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
 	setEnv(c, "HOME", x.Home)
 	env := nativeEnv(x)

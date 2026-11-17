@@ -1,0 +1,46 @@
+name: Managed agent CLI releases
+on:
+  schedule:
+    - cron: '43 3 * * *'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: harness-pins
+  cancel-in-progress: false
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Propose verified release metadata updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch=automation/harness-pins
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')" ]; then
+            exit 0
+          fi
+          node deploy/refresh-harness-pins.mjs
+          git diff --quiet -- config/harness-pins.json && exit 0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add config/harness-pins.json
+          git commit -m 'chore(deploy): update managed agent CLI pins'
+          previous=$(git ls-remote --heads origin "refs/heads/$branch" | cut -f1)
+          git push --force-with-lease="refs/heads/$branch:$previous" -u origin "$branch"
+          gh pr create --head "$branch" --base main --title 'Update managed agent CLI pins' --body-file - <<'BODY'
+          Update pinned native executables from vendor release metadata. Fleet verifies the pinned payloads before switching releases.
+
+          Let GitHub run CI. Approve the workflow run from the Checks tab if GitHub requests approval for this bot PR.
+          Review the vendor release changes and qualify the configured models before enqueueing.
+          BODY

@@ -13,6 +13,7 @@ This module builds Fleet's coordinator, executor, connection gateway, updater, s
 - [gen](gen/README.md): contract-schema-to-Go generator.
 - [errtrack](errtrack/README.md): unexpected errors and panics to Bugsink through sentry-go; a no-op without a DSN.
 - [obs](obs/README.md): trace spans, HTTP instrumentation, and ClickHouse sink.
+- [harnessrelease](harnessrelease/README.md): shared CLI release manifest and executable paths.
 - [update](update/README.md): verified native and UI release installer.
 
 ## Invariants

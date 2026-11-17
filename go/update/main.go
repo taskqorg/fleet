@@ -27,6 +27,8 @@ const releaseKey = "eT+0MVUmjUvvItJGhR3rUqW5PBzvE8QbD9Uq/wjAHlQ="
 
 const releasesURL = "https://github.com/taskqorg/fleet/releases"
 
+const pdsCoordinatorReleases = "/home/fleet/releases"
+
 const repoURL = "https://github.com/taskqorg/fleet.git"
 
 func main() {
@@ -38,8 +40,9 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: fleet-update pds18 | executor | selftest")
+	const usage = "usage: fleet-update pds18 | executor | selftest | install-local <verified-stage> <releases>"
+	if len(args) != 1 && (len(args) != 3 || args[0] != "install-local") {
+		return errors.New(usage)
 	}
 	key, err := publicKey()
 	if err != nil {
@@ -47,6 +50,34 @@ func run(args []string) error {
 	}
 	u := newUpdater(key)
 	switch args[0] {
+	case "install-local":
+		if len(args) != 3 {
+			return errors.New(usage)
+		}
+		root, err := openReleases(args[2])
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		unlock, ok, err := lockReleases(root)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("another Fleet installer is active")
+		}
+		defer unlock()
+		ver := releaseVersion(args[1])
+		if !verRe.MatchString(ver) {
+			return errors.New("invalid staged release version")
+		}
+		p := &part{r: root, root: args[2], stage: args[2]}
+		if filepath.Clean(args[2]) != pdsCoordinatorReleases {
+			if err := u.prepareHarnesses(p, args[1]); err != nil {
+				return err
+			}
+		}
+		return u.install(p, ver, args[1])
 	case "selftest":
 		fmt.Printf("fleet-update %s: selftest ok\n", version)
 		return nil
@@ -55,7 +86,7 @@ func run(args []string) error {
 	case "executor":
 		return u.runExecutor()
 	}
-	return errors.New("usage: fleet-update pds18 | executor | selftest")
+	return errors.New(usage)
 }
 
 func publicKey() (ed25519.PublicKey, error) {
@@ -106,7 +137,6 @@ func (u *updater) runExecutor() error {
 	defer r.Close()
 	p := &part{r: r, name: "executor", root: root, stage: root, bins: []string{"fleet-executor", "fleet-update"},
 		activity: u.executorActivity(signal), restart: command(restart...), health: u.executorHealth(signal), st: st}
-	pruneReleases(r)
 	var in signalFile
 	if !readJSON(signal, &in) {
 		log.Print("no update.json yet: the executor has not polled")
@@ -120,7 +150,7 @@ func (u *updater) runExecutor() error {
 }
 
 func (u *updater) runPDS18() error {
-	const s, coordRoot, execRoot = "/var/lib/fleet-update", "/home/fleet/releases", "/opt/fleet-agent/releases"
+	const s, coordRoot, execRoot = "/var/lib/fleet-update", pdsCoordinatorReleases, "/opt/fleet-agent/releases"
 	if err := os.MkdirAll(s, 0o755); err != nil {
 		return err
 	}
@@ -155,8 +185,6 @@ func (u *updater) runPDS18() error {
 		return err
 	}
 	defer execR.Close()
-	pruneReleases(coordR)
-	pruneReleases(execR)
 	pruneDumps("/backup/fleet/pre-deploy", coordR, st.Coordinator)
 	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true, app: "dist/app",
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},

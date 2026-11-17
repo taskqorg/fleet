@@ -652,6 +652,17 @@ func (v FleetEventType) Valid() bool {
 	return false
 }
 
+type HarnessVersion struct {
+	Expected string  `json:"expected"`
+	Harness  string  `json:"harness"`
+	Observed *string `json:"observed"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HarnessVersion) Validate() error {
+	return nil
+}
+
 // HostArtifactGetRequest: executionId (the reader's execution) or commandId (its open tool command) names why this host may read
 type HostArtifactGetRequest struct {
 	ArtifactId  string  `json:"artifactId"`
@@ -908,15 +919,16 @@ func (v *PollReply) Validate() error {
 }
 
 type PollRequest struct {
-	Capabilities   []string      `json:"capabilities"`
-	GitConnections []string      `json:"gitConnections"`
-	HostId         string        `json:"hostId"`
-	Platform       Platform      `json:"platform"`
-	Problems       []EdgeProblem `json:"problems"`
-	ProjectRoots   []string      `json:"projectRoots"`
-	Stores         []StoreReport `json:"stores"`
-	Update         *UpdateResult `json:"update,omitempty"`
-	Version        *string       `json:"version,omitempty"`
+	Capabilities    []string         `json:"capabilities"`
+	GitConnections  []string         `json:"gitConnections"`
+	HarnessVersions []HarnessVersion `json:"harnessVersions,omitempty"`
+	HostId          string           `json:"hostId"`
+	Platform        Platform         `json:"platform"`
+	Problems        []EdgeProblem    `json:"problems"`
+	ProjectRoots    []string         `json:"projectRoots"`
+	Stores          []StoreReport    `json:"stores"`
+	Update          *UpdateResult    `json:"update,omitempty"`
+	Version         *string          `json:"version,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -926,6 +938,11 @@ func (v *PollRequest) Validate() error {
 	}
 	if v.GitConnections == nil {
 		return Missing("gitConnections")
+	}
+	for i := range v.HarnessVersions {
+		if err := Check(&v.HarnessVersions[i], "harnessVersions"); err != nil {
+			return err
+		}
 	}
 	if err := Check(&v.Platform, "platform"); err != nil {
 		return err

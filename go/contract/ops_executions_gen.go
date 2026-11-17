@@ -999,6 +999,17 @@ func (v *GatewayVersion) Validate() error {
 	return nil
 }
 
+type HostHarnessVersion struct {
+	Expected string  `json:"expected"`
+	Harness  string  `json:"harness"`
+	Observed *string `json:"observed"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *HostHarnessVersion) Validate() error {
+	return nil
+}
+
 // HostPollError: The last failed poll of a host as the coordinator answered it (go/coordinator/host_poll_health.go); cleared by the next successful poll.
 type HostPollError struct {
 	At      *float64 `json:"at,omitempty"`
@@ -1037,23 +1048,24 @@ func (v *HostRecord) Validate() error {
 
 // HostRow: One host as the Hosts screen shows it: configured, observed, or both; problems only while it polls; pollError only while its polls fail.
 type HostRow struct {
-	AutoUpdate       json.RawMessage  `json:"autoUpdate"`
-	Capabilities     json.RawMessage  `json:"capabilities"`
-	Configured       bool             `json:"configured"`
-	Id               string           `json:"id"`
-	LastSeenAt       *float64         `json:"lastSeenAt"`
-	Platform         *string          `json:"platform"`
-	PollError        *HostPollError   `json:"pollError,omitempty"`
-	Problems         json.RawMessage  `json:"problems"`
-	Queued           int64            `json:"queued"`
-	RemovedAt        *float64         `json:"removedAt,omitempty"`
-	Running          int64            `json:"running"`
-	RunningByHarness map[string]int64 `json:"runningByHarness"`
-	Slots            json.RawMessage  `json:"slots"`
-	Stores           string           `json:"stores"`
-	StoresReason     *string          `json:"storesReason,omitempty"`
-	Update           json.RawMessage  `json:"update"`
-	Version          *string          `json:"version"`
+	AutoUpdate       json.RawMessage      `json:"autoUpdate"`
+	Capabilities     json.RawMessage      `json:"capabilities"`
+	Configured       bool                 `json:"configured"`
+	HarnessVersions  []HostHarnessVersion `json:"harnessVersions,omitempty"`
+	Id               string               `json:"id"`
+	LastSeenAt       *float64             `json:"lastSeenAt"`
+	Platform         *string              `json:"platform"`
+	PollError        *HostPollError       `json:"pollError,omitempty"`
+	Problems         json.RawMessage      `json:"problems"`
+	Queued           int64                `json:"queued"`
+	RemovedAt        *float64             `json:"removedAt,omitempty"`
+	Running          int64                `json:"running"`
+	RunningByHarness map[string]int64     `json:"runningByHarness"`
+	Slots            json.RawMessage      `json:"slots"`
+	Stores           string               `json:"stores"`
+	StoresReason     *string              `json:"storesReason,omitempty"`
+	Update           json.RawMessage      `json:"update"`
+	Version          *string              `json:"version"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1063,6 +1075,11 @@ func (v *HostRow) Validate() error {
 	}
 	if v.Capabilities == nil {
 		return Missing("capabilities")
+	}
+	for i := range v.HarnessVersions {
+		if err := Check(&v.HarnessVersions[i], "harnessVersions"); err != nil {
+			return err
+		}
 	}
 	if v.PollError != nil {
 		if err := Check(v.PollError, "pollError"); err != nil {
