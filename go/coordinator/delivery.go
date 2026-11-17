@@ -111,6 +111,9 @@ func deliveryReply(last deliveryState, may func(project string) bool) contract.D
 	}
 	for _, s := range last.samples {
 		if r := last.repos[strings.ToLower(deref(s.Repo))]; r != nil && visible(r.projects...) || s.Repo == nil && visible(s.ProjectId) {
+			if !may(s.ProjectId) { // a repository's sample, as its items: a project the caller sees
+				s.ProjectId = r.projects[slices.IndexFunc(r.projects, may)]
+			}
 			out.Samples = append(out.Samples, s)
 		}
 	}

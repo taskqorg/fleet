@@ -53,5 +53,6 @@ test('excludeProjectId(s) leave out only the named projects in task_page, sessio
   assert.ok(![...page.executions, ...rest.executions].some((e: any) => e.id === 'e-muted'), 'paging keeps the exclusion');
   assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted']})).artifacts, 'a-'), of('a-', 'keep', 'stray', 'free'));
   assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted', '-']})).artifacts, 'a-'), of('a-', 'keep', 'stray'), "'-' is no project, as in the other operations");
+  assert.deepEqual(sorted((await op('artifact_list', {excludeProjectIds: ['muted', null]})).artifacts, 'a-'), of('a-', 'keep', 'stray'), 'null is no project, as in its projectIds');
   assert.deepEqual(sorted((await op('artifact_list', {projectIds: ['keep', 'muted'], excludeProjectIds: ['muted'], limit: 10})).artifacts, 'a-'), ['a-keep']);
 });

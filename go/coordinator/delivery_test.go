@@ -157,7 +157,7 @@ func TestDeliveryStatusExclude(t *testing.T) {
 	deliveryLast = deliveryState{source: contract.DeliverySourceKey, repos: map[string]*deliveryRepo{
 		"o/a": {projects: []string{"p1"}, items: []contract.DeliveryItem{{ProjectId: "p1", Repo: "o/a", Number: 1}}},
 		"o/b": {projects: []string{"p2", "p3"}, items: []contract.DeliveryItem{{ProjectId: "p2", Repo: "o/b", Number: 2}}},
-	}}
+	}, samples: []contract.DeliverySample{{ProjectId: "p2", Repo: ptr("o/b")}}}
 	deliveryMu.Unlock()
 	t.Cleanup(func() { deliveryMu.Lock(); deliveryLast = saved; deliveryMu.Unlock() })
 	numbers := func(r contract.DeliveryStatusRequest) []int64 {
@@ -191,6 +191,11 @@ func TestDeliveryStatusExclude(t *testing.T) {
 	for _, it := range out.Items {
 		if it.ProjectId == "p2" {
 			t.Fatalf("an item names the excluded project: %+v", it)
+		}
+	}
+	for _, s := range out.Samples {
+		if s.ProjectId == "p2" {
+			t.Fatalf("a sample names the excluded project: %+v", s)
 		}
 	}
 }

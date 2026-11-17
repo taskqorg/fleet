@@ -295,7 +295,7 @@ func matchSnippet(text, words string) string {
 	}
 	t := []rune(c)
 	from := at - snippetLead
-	if i := slices.Index(t[from:at], ' '); i >= 0 {
+	if i := slices.Index(t[from:at], ' '); t[from-1] != ' ' && i >= 0 { // start at a word; a long token is cut
 		from += i + 1
 	}
 	to := min(len(t), from+snippetLen)
