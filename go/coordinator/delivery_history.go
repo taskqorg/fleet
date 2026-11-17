@@ -18,6 +18,7 @@ import (
 	"maps"
 	"math"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -496,7 +497,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 	deliveryDerive(prs, runList, releases)
 	newest, newestAt := "", ""
 	for _, r := range releases {
-		if (strings.HasPrefix(r.Tag, "v") || uiOnlyRelease(r.Tag)) && r.Published > newestAt {
+		if deliveryReleaseTag(r.Tag) && r.Published > newestAt {
 			newest, newestAt = r.Tag, r.Published
 		}
 	}
@@ -626,7 +627,7 @@ func deliveryHostVersions(obs []doc, now time.Time) map[string]hostVersion {
 // deliveryObservation distinguishes exact installation from availability of a change.
 // An older observation cannot establish availability before publication.
 func deliveryObservation(tag, published string, hv hostVersion, now time.Time) (at string, exact bool) {
-	if uiOnlyRelease(tag) || hv.version == "" || versionLess(hv.version, releaseVersionOf(tag)) {
+	if strings.HasPrefix(tag, "ui-") || hv.version == "" || versionLess(hv.version, releaseVersionOf(tag)) {
 		return "", false
 	}
 	at = hv.at
@@ -681,7 +682,7 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 
 // deliveryUpdateObservations retains actual version-specific updater results, including refusals.
 func deliveryUpdateObservations(r *contract.DeliveryRelease, obs []doc) {
-	if uiOnlyRelease(r.Tag) {
+	if strings.HasPrefix(r.Tag, "ui-") {
 		return
 	}
 	for _, o := range obs {
@@ -701,15 +702,22 @@ func deliveryUpdateObservations(r *contract.DeliveryRelease, obs []doc) {
 
 // releaseVersionOf: v1.2.5 is 1.2.5; ui-1.2.3-v1.2.5 (ui-<backend>-v<UI version>, release.yml) is its UI version 1.2.5.
 func releaseVersionOf(tag string) string {
-	if i := strings.LastIndex(tag, "-v"); uiOnlyRelease(tag) && i >= 0 {
-		return tag[i+2:]
+	if m := uiReleaseTag.FindStringSubmatch(tag); m != nil {
+		return m[1]
 	}
 	return strings.TrimPrefix(tag, "v")
 }
 
+// uiReleaseTag: ui-<backend>-v<UI version> as release.yml names a UI-only release; the UI version is the match.
+var uiReleaseTag = regexp.MustCompile(`^ui-\d+(?:\.\d+)*-v(\d+(?:\.\d+)*)$`)
+
 // uiOnlyRelease: a ui-<backend>-v<UI version> tag, a release of the web app alone that no host installs. It is delivered
 // when the site serves its UI or a newer one (watch-landing.sh's ui_ready), so its pull requests have no install stage.
-func uiOnlyRelease(tag string) bool { return strings.HasPrefix(tag, "ui-") }
+func uiOnlyRelease(tag string) bool { return uiReleaseTag.MatchString(tag) }
+
+// deliveryReleaseTag: a tag that delivers the merges it covers, a native v<version> or a UI-only release; both share one
+// version sequence (release.yml). Any other tag is no Fleet release.
+func deliveryReleaseTag(tag string) bool { return strings.HasPrefix(tag, "v") || uiOnlyRelease(tag) }
 
 // deliveryDerive fills each pull request's queue fields, release, installs and durations from the runs and releases.
 func deliveryDerive(prs []contract.DeliveryPr, runs []contract.DeliveryRun, releases []contract.DeliveryRelease) {
@@ -725,7 +733,7 @@ func deliveryDerive(prs []contract.DeliveryPr, runs []contract.DeliveryRun, rele
 	for _, r := range releases {
 		// A ui-* release is the release of the merges it covers too: release.yml cuts one instead of a v* release when
 		// only the web app changed since the last release.
-		if c := mergedAt[r.Target]; (strings.HasPrefix(r.Tag, "v") || uiOnlyRelease(r.Tag)) && c != "" {
+		if c := mergedAt[r.Target]; deliveryReleaseTag(r.Tag) && c != "" {
 			vs = append(vs, rel{r, c})
 		}
 	}

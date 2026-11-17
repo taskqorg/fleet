@@ -42,9 +42,11 @@ const normKey = (it: Pick<Item, 'stage' | 'release'>) => it.stage === 'installin
 /** The norms are the fleet repository's history: other repositories' pull requests have none. */
 type Norms = { stage: (it: Pick<Item, 'stage' | 'repo' | 'release'>) => [number, number] | null; total: [number, number] | null };
 /** A UI-only release, ui-<backend>-v<UI version> (release.yml): the web app alone, delivered when the site serves it. */
-export const uiOnly = (tag?: string | null) => !!tag?.startsWith('ui-');
+// The shape go/coordinator/delivery_history.go uiReleaseTag matches; the server sends the tag only.
+const UI_TAG = /^ui-\d+(?:\.\d+)*-v(\d+(?:\.\d+)*)$/;
+export const uiOnly = (tag?: string | null) => !!tag && UI_TAG.test(tag);
 /** A release as people name it: v1.2.3 is 1.2.3; ui-1.2.2-v1.2.3 is "UI 1.2.3" (its UI version; the backend stays 1.2.2). */
-export const releaseLabel = (tag: string) => uiOnly(tag) ? `UI ${tag.slice(tag.lastIndexOf('-v') + 2)}` : tag.replace(/^v/, '');
+export const releaseLabel = (tag: string) => { const m = UI_TAG.exec(tag); return m ? `UI ${m[1]}` : tag.replace(/^v/, ''); };
 const GROUPS = [['stage', 'Stage'], ['project', 'Project'], ['none', 'None']] as const;
 const SORTS = [['since', 'In stage since'], ['opened', 'Opened']] as const;
 // System presets (OR-33) set the stage filter only; grouping, sort and search stay.

@@ -105,7 +105,14 @@ func TestDeliveryStages(t *testing.T) {
 			{Tag: "ui-1.2.11-v1.2.13", Target: "m21", Published: "2026-11-12T11:35:00Z"},
 		},
 	}
-	items, landing := deliveryStages("fleet", "o/r", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
+	// Another repository's ui-* tags are no Fleet UI releases: its merges wait for a v* release.
+	other, _ := deliveryStages("p", "o/r", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
+	for _, it := range other {
+		if it.Number >= 20 && (it.Stage != "releasing" || it.Release != nil) {
+			t.Errorf("o/r #%d: %s %v", it.Number, it.Stage, deref(it.Release))
+		}
+	}
+	items, landing := deliveryStages("fleet", "taskqorg/fleet", g, []string{"1.2.9", "1.2.10"}, "1.2.12", now)
 	want := map[int64]contract.DeliveryStage{1: "pr_open", 2: "pr_ci", 3: "mq_wait", 4: "mq_ci", 5: "mq_wait", 6: "pr_failed", 7: "pr_open", 8: "mq_failed", 9: "pr_open",
 		14: "mq_wait", 15: "pr_open", 16: "pr_open", 17: "mq_failed", 18: "mq_failed", 19: "pr_open", 10: "installed", 11: "installing", 12: "installing",
 		20: "installed", 21: "installing", 22: "releasing"}

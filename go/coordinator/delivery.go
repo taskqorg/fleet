@@ -1,10 +1,11 @@
 // Delivery status (docs/design-system/pages/delivery.md): every connected GitHub repository's pull requests by delivery
 // stage, read server side every few minutes and cached here, so browsers never call GitHub. The stages follow
 // scripts/delivery-latency.sh and scripts/watch-landings.sh: PR CI (pull_request runs), merge queue (merge_group runs on
-// gh-readonly-queue/<base>/pr-<n>-<sha>), merged, release (the first v* release whose target commit contains the merge;
-// main is linear behind the merge queue, so "contains" is "merged no later than the release's target"), installed on
-// hosts (every host seen in the last hour runs that version or newer). A UI-only release (ui-<backend>-v<UI version>,
-// release.yml) ships the web app alone: hosts install nothing, so it is installed when the site serves that UI or newer.
+// gh-readonly-queue/<base>/pr-<n>-<sha>), merged, release (the first v* or, in the fleet repository, UI-only release
+// whose target commit contains the merge; main is linear behind the merge queue, so "contains" is "merged no later than
+// the release's target"), installed on hosts (every host seen in the last hour runs that version or newer). A UI-only
+// release (ui-<backend>-v<UI version>, release.yml) ships the web app alone: hosts install nothing, so it is installed
+// when the site serves that UI or newer.
 // Reads go through the gateway's github connection when it exists (the owner adds a read-only key: scripts/key-add.sh github); without it
 // the coordinator reads the fleet repository unauthenticated (60 requests an hour per address), which the reply says.
 // Each read also stores the per-stage counts, so the chart is the recorded history of the last 24 hours.
@@ -222,6 +223,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 		return err
 	}
 	now := time.Now().UTC()
+	ui := uiServed() // once per pass, like the host versions
 	deliveryMu.Lock()
 	prev := deliveryLast
 	// Keyless reads share GitHub's 60 an hour per address: a keyless repository is read at most every 6 minutes even
@@ -289,7 +291,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 			}
 		}
 		g.runs, g.finished, g.queueDone = append(active.Runs, queued.Runs...), finished.Runs, queueDone.Runs
-		its, l := deliveryStages(t.projects[0], name, g, versions, uiServed(), now)
+		its, l := deliveryStages(t.projects[0], name, g, versions, ui, now)
 		repos[key] = &deliveryRepo{projects: t.projects, items: its, landing: l}
 		c := map[string]int64{}
 		for _, s := range contract.DeliveryStageValues {
@@ -462,9 +464,11 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 			out = append(out, item(p, contract.DeliveryStagePrOpen, p.CreatedAt))
 		}
 	}
-	// Releases: v<version> and ui-<backend>-v<UI version> tags (release.yml cuts a UI-only release instead of a v* one when
-	// only the web app changed since the last release; both share one version sequence), oldest first, each with the merge
-	// time of its target commit; a release whose target is not among the merged pull requests read is left out.
+	// Releases: v<version> and, in the fleet repository whose site serves the UI, ui-<backend>-v<UI version> tags
+	// (release.yml cuts a UI-only release instead of a v* one when only the web app changed since the last release; both
+	// share one version sequence), oldest first, each with the merge time of its target commit; a release whose target is
+	// not among the merged pull requests read is left out.
+	fleetRepo := strings.EqualFold(repo, githubPublicRepo)
 	mergedAt := map[string]string{}
 	for _, p := range g.closed {
 		if p.MergedAt != nil {
@@ -477,7 +481,7 @@ func deliveryStages(project, repo string, g ghRepo, versions []string, ui string
 	}
 	var rels []rel
 	for _, r := range g.releases {
-		if r.Draft || !strings.HasPrefix(r.Tag, "v") && !uiOnlyRelease(r.Tag) || r.Published == "" {
+		if r.Draft || !strings.HasPrefix(r.Tag, "v") && !(fleetRepo && uiOnlyRelease(r.Tag)) || r.Published == "" {
 			continue
 		}
 		c := mergedAt[r.Target]

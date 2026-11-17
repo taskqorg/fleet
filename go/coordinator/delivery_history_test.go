@@ -213,4 +213,9 @@ func TestDeliveryUIOnlyRelease(t *testing.T) {
 	if len(regs) != 2 || regs[0].Key != "ui_wait" {
 		t.Fatalf("a stalled UI release regresses against the ui stage: %+v", regs)
 	}
+	for tag, want := range map[string]bool{"ui-1.261117.26-v1.261117.27": true, "ui-kit-1.0": false, "ui-v2.0.0": false, "v1.2.3": false} {
+		if uiOnlyRelease(tag) != want || deliveryReleaseTag(tag) != (want || tag[0] == 'v') {
+			t.Errorf("%s: uiOnly %v", tag, uiOnlyRelease(tag))
+		}
+	}
 }
