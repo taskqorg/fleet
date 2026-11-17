@@ -344,6 +344,15 @@ func TestClientTripwire(t *testing.T) {
 	if l := connectionCall("youtrack", tool, M{"issue": "TGT-1", "path": "clean.txt"}); l.Outcome != contract.CallOutcomeOk || gw.requests.Load() != 1 {
 		t.Fatalf("clean file: %s", enc(l))
 	}
+
+	// Refuse before the upload copy or request. The local cap comes from the minted spec.
+	connectionLimits["youtrack"] = M{"fileBytes": json.Number("2")}
+	t.Cleanup(func() { delete(connectionLimits, "youtrack") })
+	before := gw.requests.Load()
+	result := connectionCall("youtrack", tool, M{"issue": "TGT-1", "path": "clean.txt"})
+	if result.ErrorCode == nil || *result.ErrorCode != "file-too-large" || gw.requests.Load() != before {
+		t.Fatalf("limited upload: %s", enc(result))
+	}
 }
 
 // Requirement: §9 `connection call` CLI replaces connection_call.py call: JSON arguments on stdin, one CallLine on stdout;

@@ -123,6 +123,9 @@ func connectionUpload(t contract.GatewayTarget, connection, tool string, propert
 		return refusedLine(connection, tool, "path-refused", err.Error())
 	}
 	defer f.Close()
+	if limit, _ := num(jAt(connectionLimits[connection], "fileBytes")); limit > 0 && info.Size() > int64(limit) {
+		return refusedLine(connection, tool, "file-too-large", fmt.Sprintf("the file exceeds the connection's limit of %d bytes", int64(limit)))
+	}
 	// The tripwire: this caller's own bearer and Access secret never leave in a file.
 	patterns := [][]byte{[]byte(t.Token)}
 	secret := t.Header["CF-Access-Client-Secret"]
