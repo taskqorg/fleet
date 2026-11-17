@@ -65,7 +65,7 @@ var referenceMap = []objectRef{
 	{table: "execution", column: "task_id", kind: "task", mode: refOwn},
 	{table: "execution", column: "experiment_id", kind: "experiment", mode: refOwn},
 	{table: "execution", column: "parent_execution_id", kind: "execution", mode: refOwn}, // child runs, pipeline steps, delegations
-	{table: "execution", column: "session_id", kind: "session", mode: refOwn}, // a session takes its executions
+	{table: "execution", column: "session_id", kind: "session", mode: refOwn},            // a session takes its executions
 	{table: "execution", column: "host_id", kind: "host", mode: refKeep},
 	{table: "execution", column: "account_id", mode: refNone},
 	{table: "execution", column: "environment_id", mode: refNone},
