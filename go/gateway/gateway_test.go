@@ -657,7 +657,7 @@ func TestYouTrackCatalogue(t *testing.T) {
 			t.Fatalf("%s %s: %d", tool, body, status)
 		}
 	}
-	// An action the account may not do (Agents cannot set Done) answers 403; that refuses the call, not the shared key.
+	// An action the account may not do answers 403; that refuses the call, not the shared key.
 	if status, _, _ := gw.raw("POST", "/v1/call/youtrack/command", "Bearer "+testToken, `{"query":"State Done","issues":[{"idReadable":"TGT-12"}]}`); status != 403 {
 		t.Fatalf("forbidden command: %d", status)
 	}
