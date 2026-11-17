@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/jackc/pgx/v5"
 	"sync"
 	"testing"
@@ -163,5 +164,94 @@ func TestSharedFeedHeldWaitAndPruning(t *testing.T) {
 	result := b.readBatch(ctx, e.app, p, seq)
 	if result.err != nil || !result.resync {
 		t.Fatalf("expired cursor did not resync: %+v", result)
+	}
+}
+
+// Requirement: the change stream waits only for transactions of its own database (stream.go visible). A transaction left
+// idle with an xid in another database on the same server does not hold back a committed change; an uncommitted change row
+// of a Fleet writer with a lower xid still holds back every later one, and both arrive in xid order once it commits.
+// Risk: pg_dump, another service or another test file's database stalls every live view; or the narrower horizon skips a
+// slow Fleet writer's change.
+func TestStreamHorizonIgnoresOtherDatabases(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	ctx := e.ctx
+	other, err := pgx.Connect(ctx, fmt.Sprintf("postgresql://postgres@/postgres?host=%s&port=%d", e.sockDir, e.pgPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close(context.Background())
+	if _, err := other.Exec(ctx, "BEGIN"); err != nil {
+		t.Fatal(err)
+	}
+	var otherXID string
+	if err := other.QueryRow(ctx, "SELECT pg_current_xact_id()::text").Scan(&otherXID); err != nil {
+		t.Fatal(err)
+	}
+	read := func(cursor int64) (out []change, held bool) {
+		t.Helper()
+		if err := e.appStore.Tx(ctx, nil, false, "", func(tx pgx.Tx) (err error) {
+			out, _, _, held, err = since(ctx, tx, cursor, 1000)
+			return
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	commit := func(id string) (seq int64) {
+		t.Helper()
+		if err := e.appStore.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, "INSERT INTO change(kind,id,op) VALUES('task',$1,'I') RETURNING seq", id).Scan(&seq)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	var cursor int64
+	if err := e.appStore.Tx(ctx, nil, false, "", func(tx pgx.Tx) (err error) {
+		// The setup is the failure it guards: the server-wide horizon is held by the other database's transaction.
+		var serverWide bool
+		if err = tx.QueryRow(ctx, "SELECT pg_snapshot_xmin(pg_current_snapshot()) <= $1::xid8", otherXID).Scan(&serverWide); err == nil && !serverWide {
+			err = fmt.Errorf("the other database's xid %s does not hold the server-wide horizon", otherXID)
+		}
+		if err == nil {
+			cursor, err = head(ctx, tx)
+		}
+		return
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first := commit("horizon-other-db")
+	if out, held := read(cursor); held || len(out) != 1 || out[0].Seq != first {
+		t.Fatalf("other database's transaction held the change back: held=%v rows=%+v", held, out)
+	}
+	cursor = first
+
+	// A Fleet writer (the owner role, as a migration or a psql session) with an uncommitted change row and the lower xid.
+	slow, err := e.ownerStore.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Rollback(context.Background())
+	if _, err := slow.Exec(ctx, "SELECT set_config('fleet.project_ids','*',true)"); err != nil {
+		t.Fatal(err)
+	}
+	var slowSeq int64
+	if err := slow.QueryRow(ctx, "INSERT INTO change(kind,id,op) VALUES('task','horizon-slow','I') RETURNING seq").Scan(&slowSeq); err != nil {
+		t.Fatal(err)
+	}
+	later := commit("horizon-later")
+	if out, held := read(cursor); !held || len(out) != 0 {
+		t.Fatalf("a later commit crossed an open Fleet writer: held=%v rows=%+v", held, out)
+	}
+	if err := slow.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out, held := read(cursor)
+	if held || len(out) != 2 || out[0].Seq != slowSeq || out[1].Seq != later {
+		t.Fatalf("want the slow writer's change %d then %d, got held=%v rows=%+v", slowSeq, later, held, out)
+	}
+	if _, err := other.Exec(ctx, "ROLLBACK"); err != nil {
+		t.Fatal(err)
 	}
 }

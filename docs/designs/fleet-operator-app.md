@@ -205,17 +205,24 @@ Browser windows (one origin)                          Coordinator (Go)
 | `definition` | `definition` | `kind/id` | `project_id` | Definition editor subscribers |
 | Other `document` kinds | — | — | — | No change row. A kind is added to this map when a view needs it, which keeps the log small. |
 
-**Visibility watermark.** This replaces any fixed overlap window. Execution-scope ingest commits in parallel with GLOBAL writers, so `seq` order is not commit order. Every read of the log therefore returns only rows whose transaction is older than the oldest transaction still running:
+**Visibility watermark.** This replaces any fixed overlap window. Execution-scope ingest commits in parallel with GLOBAL writers, so `seq` order is not commit order. Every read of the log therefore returns only rows whose transaction is older than the oldest transaction of Fleet's database still running (`horizon` in `go/coordinator/stream.go`):
 
 ```
 SELECT ... FROM change WHERE (xid, seq) > ($cursor_xid, $cursor_seq)
-  AND xid < pg_snapshot_xmin(pg_current_snapshot()) ORDER BY xid, seq
+  AND xid < (SELECT coalesce(min(x), pg_snapshot_xmax(pg_current_snapshot()))
+             FROM pg_snapshot_xip(pg_current_snapshot()) x
+             WHERE NOT EXISTS (SELECT FROM pg_stat_activity a
+                               WHERE a.backend_xid = xid(x) AND a.datname IS DISTINCT FROM current_database()))
+  ORDER BY xid, seq
 ```
 
+* Transaction ids are server-wide, so `pg_snapshot_xmin` alone counts transactions of every database on the server. A transaction left open in another database (`pg_dump`, another service's session, another test file's database) then held every Fleet stream back; no second `NOTIFY` arrives when it ends. Such a transaction can never write Fleet's `change` table, because a backend never changes database. The horizon therefore leaves out each running xid whose backend `pg_stat_activity` shows in another database.
+* Only that proof leaves an xid out. An xid that ended after the snapshot, a prepared transaction and a backend not listed still count; the next look, at most `heldWait` (250 ms) later, passes them. Every role connected to Fleet's database counts too: the `PUBLIC`-executable `SECURITY DEFINER` functions let any of them write change rows.
+* The horizon is uncorrelated, so it runs once per statement as an InitPlan and bounds the `change_order` index. `pg_stat_activity` is copied once per transaction, from shared memory; `backend_xid` and `datid` are shown to every role.
 Kinds are always the client kinds above, never legacy kinds (design-system D15). Rows are read in `(xid, seq)` order, so a transaction's rows stay together.
 
 * The cursor is the `seq` of the last row returned in `(xid, seq)` order; the next read looks up its xid. It is not the numeric maximum `seq`. No row is skipped, because a row from a transaction that is still open blocks the cursor until it commits or rolls back. A rolled-back transaction leaves no rows.
-* The cost: one long write transaction delays the feed by its own duration. Feed delay is shown in the check report.
+* The cost: one long write transaction in Fleet's database delays the feed by its own duration, whether or not it writes change rows. Feed delay is shown in the check report.
 
 **Stream.**
 * `GET /api/stream?cursor=N` is excluded from the GET read-snapshot wrapper (`longRoute`, `go/coordinator/registry.go`).
@@ -341,6 +348,15 @@ A rebuilt action uses the canonical core operation under the same grants as an a
 ### Postgres logical decoding (wal2json or pgoutput) (rejected, D5)
 * **For it:** it captures every write with no triggers.
 * **Against it:** a replication slot holds WAL while a consumer is down. It also needs replication privileges and gives no RLS on the stream.
+
+### Commit-ordered change numbers (rejected, D5)
+* **How it works:** a deferred trigger takes one advisory lock at commit and numbers the transaction from a sequence; the lock is released only after the commit is visible, so numbers follow commit order and the feed needs no horizon.
+* **For it:** no running transaction holds the feed back, a long Fleet one included.
+* **Against it:** every change-writing commit waits for that lock, WAL flush included, so commits that now run in parallel become serial. Leaving out other databases' transactions (§4) removes the stalls Fleet does not cause, at no cost to writers.
+
+### Role-filtered horizon (rejected, D5)
+* **How it works:** leave out running transactions of roles without write access to `change`, as well as those of other databases.
+* **Against it:** trigger functions run as the invoker, but `PUBLIC`-executable `SECURITY DEFINER` functions such as `fleet_task_derived` write change rows as the owner. A role filter could pass a transaction that still commits change rows, so a change would be skipped. Only `fleet`, `fleet_app` and superusers connect to Fleet's database.
 
 ### New app beside the old one at `/app/*` (rejected, D2)
 * **Rejected:** two entry points for a long time, and the old pages stay in use.
