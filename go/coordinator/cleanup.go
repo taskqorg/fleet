@@ -311,9 +311,9 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 // blockedBy: the first live row outside the cascade that keeps one of its objects, "" when none:
 // "<table>.<column> by <document kind or table> <row id>". One scan per table: its refKeep columns are ORed.
 func (c *cascade) blockedBy(q *Request) (string, error) {
-	// A task's or session's executions that belong to live work outside it stay with that work: runs of a live task
-	// (delete the task first), trials of a live experiment, children of a live parent run that waits for them.
-	if (c.kind == "session" || c.kind == "task") && len(c.sets["execution"]) > 0 {
+	// Executions of the cascade that belong to live work outside it stay with that work: runs of a live task (delete
+	// the task first), trials of a live experiment, children of an unfinished parent run that waits for them.
+	if len(c.sets["execution"]) > 0 {
 		row, err := first(q, `SELECT CASE
 		  WHEN t.id IS NOT NULL THEN 'execution.task_id by task '||t.id
 		  WHEN x.id IS NOT NULL THEN 'execution.experiment_id by experiment '||x.id
@@ -321,10 +321,11 @@ func (c *cascade) blockedBy(q *Request) (string, error) {
 		 FROM execution e
 		 LEFT JOIN task t ON t.id=e.task_id AND t.tombstoned_at IS NULL AND NOT t.id=ANY($2::text[])
 		  AND (t.project_id IS NULL OR NOT t.project_id=ANY(fleet_deleted_projects()))
-		 LEFT JOIN experiment x ON x.id=e.experiment_id AND x.tombstoned_at IS NULL AND NOT x.project_id=ANY(fleet_deleted_projects())
+		 LEFT JOIN experiment x ON x.id=e.experiment_id AND x.tombstoned_at IS NULL AND NOT x.id=ANY($3::text[])
+		  AND NOT x.project_id=ANY(fleet_deleted_projects())
 		 LEFT JOIN execution p ON p.id=e.parent_execution_id AND p.tombstoned_at IS NULL AND NOT p.id=ANY($1)
-		  AND (p.project_id IS NULL OR NOT p.project_id=ANY(fleet_deleted_projects()))
-		 WHERE e.id=ANY($1) AND (t.id IS NOT NULL OR x.id IS NOT NULL OR p.id IS NOT NULL) LIMIT 1`, c.sets["execution"], nonNilStrs(c.sets["task"]))
+		  AND p.state IN ('preparing','running','waiting') AND (p.project_id IS NULL OR NOT p.project_id=ANY(fleet_deleted_projects()))
+		 WHERE e.id=ANY($1) AND (t.id IS NOT NULL OR x.id IS NOT NULL OR p.id IS NOT NULL) LIMIT 1`, c.sets["execution"], nonNilStrs(c.sets["task"]), nonNilStrs(c.sets["experiment"]))
 		if err != nil {
 			return "", err
 		}

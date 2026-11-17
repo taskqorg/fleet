@@ -492,23 +492,11 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 	// A project's roles and execution profiles name agents.
 	roles := []string{}
 	if r.Kind == contract.DefinitionKindAgent {
-		ids, err := projectIDs(q)
+		byProfile, err := projectRoleProfiles(q, true)
 		if err != nil {
 			return out, err
 		}
-		for _, pid := range ids {
-			s := projectSettingsOf(q, pid)
-			for role, v := range mapOf(s["roles"]) {
-				if astr(v) == r.Id || astr(mapOf(v)["profile"]) == r.Id {
-					roles = append(roles, pid+":"+role)
-				}
-			}
-			for _, v := range anys(mapOf(s["execution"])["profiles"]) {
-				if astr(v) == r.Id || astr(mapOf(v)["id"]) == r.Id || astr(mapOf(v)["profile"]) == r.Id {
-					roles = append(roles, pid+":execution.profiles")
-				}
-			}
-		}
+		roles = byProfile[r.Id]
 		sort.Strings(roles)
 	}
 	refused := ""
