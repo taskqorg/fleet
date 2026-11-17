@@ -122,7 +122,7 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 	t.Setenv("FLEET_GATEWAY_URL", gw.URL)
 	t.Setenv("FLEET_RUN_TOKEN", "tok")
 	web := M{"name": "web", "instructions": "Use short queries.", "tools": []any{M{"name": "search", "description": "find"}, M{"name": "broken"}}}
-	c := newCodeClient(t, M{"dir": t.TempDir(), "connections": []any{web}})
+	c := newCodeClient(t, M{"dir": t.TempDir(), "connections": []any{web}, "instructions": []any{web}})
 	c.id++
 	io.WriteString(c.in, enc(M{"jsonrpc": "2.0", "id": c.id, "method": "initialize", "params": M{}})+"\n")
 	c.out.Scan()
@@ -149,20 +149,20 @@ func TestCodeModeConnectionBridge(t *testing.T) {
 		t.Fatalf("tool error: %v", r["value"])
 	}
 
+	// Only granted names exist in the runtime; the server refuses the rest too.
 	before := calls.Load()
-	r, _ = c.code(`const out = []
-		for (const f of [() => conn.web.delete({}), () => conn.other.search({}), () => fleet.ask({})])
-			try { await f() } catch (e) { out.push(e.code) }
-		return out`)
-	if enc(r["value"]) != enc([]any{"tool-not-granted", "connection-not-granted", "no-fleet-tools"}) || calls.Load() != before {
-		t.Fatalf("ungranted calls: %v, gateway calls %d", r["value"], calls.Load()-before)
+	r, _ = c.code(`return [typeof conn.web.delete, typeof conn.other, typeof fleet.ask, Object.keys(conn)]`)
+	if enc(r["value"]) != `["undefined","undefined","undefined",["web"]]` || calls.Load() != before {
+		t.Fatalf("ungranted names: %v, gateway calls %d", r["value"], calls.Load()-before)
+	}
+	srv := &codeServer{conns: map[string]any{"web": web}, fleet: map[string]bool{}}
+	for _, x := range [][3]string{{"conn:web", "delete", "tool-not-granted"}, {"conn:other", "search", "connection-not-granted"}, {"fleet", "ask", "no-fleet-tools"}} {
+		if _, fail := srv.bridge(x[0], x[1], M{}); jStr(fail, "code") != x[2] {
+			t.Errorf("bridge %s.%s: %v", x[0], x[1], fail)
+		}
 	}
 	if r, _ := c.code(`return (await conn.web.$tools()).map(t => t.name)`); enc(r["value"]) != `["search","broken"]` {
 		t.Fatalf("tools: %v", r["value"])
-	}
-	// $get and $call reach names that built-ins probe; here they reach ordinary ones the same way.
-	if r, bad := c.code(`return (await conn.$get("web").$call("search", {q: 1})).results.length`); bad || enc(r["value"]) != "2" {
-		t.Fatalf("$get/$call: %v %v", bad, r)
 	}
 
 	// A call started just before the return is part of the job: the final reply carries its outcome.
@@ -242,8 +242,8 @@ func TestCodeModeReset(t *testing.T) {
 // Risk: printing or returning a bridge object sends real tool calls (fleet-code-mode.md, bridge functions).
 func TestCodeModeProbesSendNoCalls(t *testing.T) {
 	c := newCodeClient(t, M{"dir": t.TempDir()})
-	r, bad := c.code(`print(fleet); return [JSON.stringify({f: fleet, c: conn.web, n: conn}), String(typeof fleet.then), typeof conn.toString]`)
-	if bad || len(jArr(r, "calls")) != 0 || strings.Contains(jStr(r, "output"), "Unhandled") || enc(r["value"]) != `["{\"f\":{},\"c\":{},\"n\":{}}","undefined","undefined"]` {
+	r, bad := c.code(`print(fleet, conn); return [JSON.stringify({f: fleet, n: conn}), typeof fleet.then, typeof fleet.sesion_start, String(conn)]`)
+	if bad || len(jArr(r, "calls")) != 0 || strings.Contains(jStr(r, "output"), "Unhandled") || enc(r["value"]) != `["{\"f\":{},\"n\":{}}","undefined","undefined","[object Object]"]` {
 		t.Fatalf("probes: %v %v", bad, r)
 	}
 }
@@ -355,9 +355,8 @@ func TestCodeModeFleetResults(t *testing.T) {
 	c := newCodeClient(t, M{"dir": t.TempDir(), "journal": filepath.Join(t.TempDir(), "journal.sqlite"),
 		"context": M{"commandId": "cmd", "executionId": "ex", "hostId": "h"}})
 	r, bad := c.code(`const names = (await fleet.$tools()).map(t => t.name)
-		let code; try { await fleet.task_create({}) } catch (e) { code = e.code }
-		return {start: names.includes("session_start"), project: names.includes("task_create"), code}`)
-	if bad || enc(r["value"]) != `{"code":"tool-not-granted","project":false,"start":true}` {
+		return {start: names.includes("session_start"), project: names.includes("task_create"), fn: typeof fleet.session_start, none: typeof fleet.task_create}`)
+	if bad || enc(r["value"]) != `{"fn":"function","none":"undefined","project":false,"start":true}` {
 		t.Fatalf("fleet tools: %v %v", bad, r)
 	}
 }

@@ -48,19 +48,18 @@ type codeJob struct {
 }
 
 type codeServer struct {
-	spec     any
-	ctx      any     // the fleet server context, nil without Fleet tools
-	db       *sql.DB // the executor journal, nil without Fleet tools
-	fleet    map[string]bool
-	conns    map[string]any // connection name -> spec
-	mu       sync.Mutex
-	jobs     map[string]*codeJob
-	order    []string
-	rt       *codeRuntime
-	starts   int
-	seq      int
-	closed   bool           // the server is shutting down: no new runtime
-	inflight sync.WaitGroup // bridged calls in flight
+	spec   any
+	ctx    any     // the fleet server context, nil without Fleet tools
+	db     *sql.DB // the executor journal, nil without Fleet tools
+	fleet  map[string]bool
+	conns  map[string]any // connection name -> spec
+	mu     sync.Mutex
+	jobs   map[string]*codeJob
+	order  []string
+	rt     *codeRuntime
+	starts int
+	seq    int
+	closed bool // the server is shutting down: no new runtime
 }
 
 type codeRuntime struct {
@@ -92,9 +91,9 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 			return err
 		}
 	}
-	// Shutdown order (defers run in reverse): mark closed and stop the runtime, wait for the requests, then for the bridged
-	// calls in flight, and only then close the journal they use.
-	defer s.inflight.Wait()
+	// On shutdown the runtime stops and the requests return; bridged calls still in flight end with the process. A journal
+	// write is one SQLite transaction, so it is either recorded or not, and its outcome stays unknown to the agent as for
+	// any lost reply.
 	// Requests are served concurrently, so a long `code` call never delays a ping, a poll or a second call; only the
 	// writes are serialized.
 	var wmu sync.Mutex
@@ -147,9 +146,9 @@ func (s *codeServer) serve(m any) M {
 		if has(params, "protocolVersion") {
 			pv = jAt(params, "protocolVersion")
 		}
-		// The direct connection servers' instructions (query syntax, limits) reach the agent here too.
+		// With `only`, the direct connection servers are gone: their instructions (query syntax, limits) come from here.
 		var instr []string
-		for _, c := range jArr(s.spec, "connections") {
+		for _, c := range jArr(s.spec, "instructions") {
 			if i := jStr(c, "instructions"); i != "" {
 				instr = append(instr, "conn[\""+jStr(c, "name")+"\"]: "+i)
 			}
@@ -348,6 +347,18 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	s.rt = rt
 	s.starts++
 	go s.read(rt, stdout)
+	// The granted names become real properties of `fleet` and `conn`: a typo or a probe (`then`, `toJSON`) is undefined
+	// in the runtime, not a call.
+	names := M{}
+	for n, spec := range s.conns {
+		names[n] = mcpToolNames(spec)
+	}
+	fleetNames := []string{}
+	for n := range s.fleet {
+		fleetNames = append(fleetNames, n)
+	}
+	slices.Sort(fleetNames)
+	rt.send(M{"type": "tools", "fleet": anyStrings(fleetNames), "conns": names}) // before any run line
 	return rt, s.starts > 1, nil
 }
 
@@ -369,17 +380,21 @@ func codeArgv(spec any) ([]string, error) {
 }
 
 // codeProfile is the macOS sandbox for the runtime: no network (Unix sockets included), no file writes except /dev/null,
-// and signals only to itself.
-const codeProfile = noNetworkProfile + `(deny file-write*)(allow file-write-data (literal "/dev/null"))(deny signal)(allow signal (target self))`
+// signals only to itself, and no process but Node itself (no fork, no other exec). Mach services stay reachable.
+func codeProfile(node string) string {
+	quoted := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(node)
+	return noNetworkProfile + `(deny file-write*)(allow file-write-data (literal "/dev/null"))(deny signal)(allow signal (target self))` +
+		`(deny process-exec)(allow process-exec (literal "` + quoted + `"))(deny process-fork)`
+}
 
-// sandboxArgv wraps a command in the OS sandbox: no network (Unix sockets included), no writes, no signals to other
-// processes. On Linux the sandbox has its own PID namespace and sees only the system directories, Node's own install and
+// sandboxArgv wraps a command in the OS sandbox: no network, no writes, no signals to other processes. On macOS Unix
+// sockets are refused too; on Linux a socket file inside a read root stays reachable, as it is for the harness's tools. On Linux the sandbox has its own PID namespace and sees only the system directories, Node's own install and
 // the read roots, read-only, with its own /tmp, /proc and /dev.
 // args[0] is Node's resolved path: on Linux only that file of its install is mounted.
 func sandboxArgv(sandbox string, read []any, args []string) ([]string, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		return append([]string{sandbox, "-p", codeProfile}, args...), nil
+		return append([]string{sandbox, "-p", codeProfile(args[0])}, args...), nil
 	case "linux":
 		argv := []string{sandbox, "--unshare-net", "--unshare-ipc", "--unshare-pid", "--die-with-parent", "--new-session"}
 		for _, d := range []string{"/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc"} {
@@ -503,11 +518,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 			go rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": fail})
 			return
 		}
-		s.inflight.Add(1)
-		go func() {
-			defer s.inflight.Done()
-			s.call(rt, j, m)
-		}()
+		go s.call(rt, j, m)
 	}
 }
 
@@ -582,7 +593,8 @@ func (s *codeServer) bridge(server, tool string, args any) (any, M) {
 	}
 	r, err := delegation(M{"method": "tools/call", "params": M{"name": tool, "arguments": args}}, s.ctx, s.db)
 	var de dbError
-	if errors.As(err, &de) {
+	var ur unreadReply
+	if errors.As(err, &de) || errors.As(err, &ur) {
 		// The request may already be journaled and forwarded: its effect is unknown, never a failure to retry.
 		return nil, callError("unknown", "journal-error", err.Error())
 	}
@@ -628,36 +640,23 @@ func mcpValue(r any) (any, M) {
 	return v, nil
 }
 
-// codeHost finds the host's Node (with --permission) and sandbox for the runtime.
-var codeHost = func() (string, string, error) {
-	r := codeHostProbe()
-	if r.err != nil {
-		return "", "", r.err
-	}
-	return r.node, r.sandbox, nil
-}
-
-type codeHostResult struct {
-	node, sandbox string
-	err           error
-}
-
-// codeHostProbe keeps a ready result while its files exist, and a failure for one minute: a host made ready later (or
-// a transient failure) needs no executor restart, and a hanging sandbox costs one 30 s probe a minute, not one per launch.
+// codeHost finds the host's Node (with --permission) and sandbox for the runtime. It keeps a ready result while its
+// files exist and a failure for one minute: a host made ready later (or a transient failure) needs no executor restart,
+// and a hanging sandbox costs one 30 s probe a minute, not one per launch. Tests replace it.
 // ponytail: one minute; a readiness event from the host settings if hosts change often.
-var codeHostProbe = func() func() codeHostResult {
+var codeHost = func() func() (string, string, error) {
 	var mu sync.Mutex
-	var last *codeHostResult
-	var failedAt time.Time
-	return func() codeHostResult {
+	var node, sandbox string
+	var err error
+	var at time.Time
+	return func() (string, string, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if last != nil && (last.err == nil && isFile(last.node) && isFile(last.sandbox) || last.err != nil && time.Since(failedAt) < time.Minute) {
-			return *last
+		if at.IsZero() || err == nil && !(isFile(node) && isFile(sandbox)) || err != nil && time.Since(at) >= time.Minute {
+			node, sandbox, err = probeCodeHost()
+			at = time.Now()
 		}
-		node, sandbox, err := probeCodeHost()
-		last, failedAt = &codeHostResult{node, sandbox, err}, time.Now()
-		return *last
+		return node, sandbox, err
 	}
 }()
 
@@ -726,7 +725,10 @@ func addCodeServer(servers M, mode, harness string, profile any, fleet *codeFlee
 	if err != nil {
 		return err
 	}
-	spec := M{"dir": read[0], "read": []any{}, "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox}
+	spec := M{"dir": read[0], "read": []any{}, "runFile": runFile, "connections": conns, "node": node, "sandbox": sandbox, "instructions": []any{}}
+	if mode == "only" {
+		spec["instructions"] = conns
+	}
 	if fleet != nil {
 		spec["journal"], spec["context"] = fleet.journal, fleet.context
 	}

@@ -35,26 +35,19 @@ function call(server, tool, args) {
   });
 }
 
-// Names that built-ins probe (`await`, JSON.stringify, String(), util.inspect) stay undefined, so probing sends no call.
-// `$tools` lists the tools and `$call(tool, args)` reaches a tool with one of those names; no granted name starts with
-// `$`. `conn.$get(name)` reaches a connection with one of them.
-const probed = new Set(['then', 'toJSON', 'toString', 'valueOf', 'constructor', 'inspect', 'asymmetricMatch', 'nodeType']);
-const tools = (server) => new Proxy({}, {
-  get: (_, tool) => {
-    if (tool === '$call') return (name, args) => call(server, name, args);
-    return typeof tool === 'string' && !probed.has(tool) ? (args) => call(server, tool, args) : undefined;
-  },
-});
+// `fleet` and `conn` hold one function per granted name (the code server's first `tools` line), so a typo or a probe
+// such as `then` or `toJSON` is undefined, not a call. `$tools()` lists names and schemas; no granted name starts with
+// `$`.
+const tools = (server, names) => {
+  const o = { $tools: () => call(server, '$tools', {}) };
+  for (const n of names) o[n] = (args) => call(server, n, args);
+  return o;
+};
 const emit = (text) => send({ type: 'print', job: job.getStore() ?? null, text });
 const print = (...xs) => emit(util.format(...xs) + '\n');
 
-globalThis.fleet = tools('fleet');
-globalThis.conn = new Proxy({}, {
-  get: (_, name) => {
-    if (name === '$get') return (n) => tools('conn:' + n);
-    return typeof name === 'string' && !probed.has(name) ? tools('conn:' + name) : undefined;
-  },
-});
+globalThis.fleet = tools('fleet', []);
+globalThis.conn = {};
 globalThis.state = {};
 globalThis.print = print;
 globalThis.require = require;
@@ -84,6 +77,11 @@ function plain(v) {
 const AsyncFunction = (async () => {}).constructor;
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const m = JSON.parse(line);
+  if (m.type === 'tools') {
+    globalThis.fleet = tools('fleet', m.fleet);
+    globalThis.conn = Object.fromEntries(Object.entries(m.conns).map(([name, names]) => [name, tools('conn:' + name, names)]));
+    return;
+  }
   if (m.type === 'reply') {
     const p = pending.get(m.id);
     pending.delete(m.id);

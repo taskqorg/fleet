@@ -1098,9 +1098,11 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 				connectionTools = append(connectionTools, "mcp__"+conn+"__"+n)
 			}
 		}
-		b := jObj(jClone(spec))
-		b["tools"] = specs
-		bridged = append(bridged, b)
+		if jStr(p, "agentConfig", "codeMode") != "" {
+			b := jObj(jClone(spec))
+			b["tools"] = specs
+			bridged = append(bridged, b)
+		}
 		if has(servers, conn) {
 			return fail(1, "MCP server name collides with a granted connection")
 		}

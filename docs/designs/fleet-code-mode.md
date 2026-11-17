@@ -62,11 +62,11 @@ Input: `{jobId: string, waitSeconds?: number}`.
 
 - `fleet.<tool>(args)` calls each tool of the `fleet` server for this execution: `session_start`, `session_fork`, `message_send`, `ask`, `execution_status`, `artifact_save`, the project operations, the director's operations and the others ([tool list](../../go/executor/mcp-tools.json)). The code server runs the same handler as the `fleet` server, with the same context and journal.
 - `conn["<connection>"].<tool>(args)` calls a granted connection's tool through the gateway with this run's token ([call methods](fleet-connections.md#5-call-methods)). The bridge offers the same tools as the direct connection server: names of letters, digits and `_`.
-- The code server's MCP `instructions` carry each granted connection's instructions, as the direct connection servers do.
+- With `only`, the code server's MCP `instructions` carry each granted connection's instructions, which the removed connection servers gave. With `add` the direct servers still give them, so they are not repeated.
 - `fleet.$tools()` and `conn["<connection>"].$tools()` return the names, descriptions and input schemas. The agent looks up a tool there instead of loading every schema into its context.
 - A bridge function returns the tool's result, parsed from JSON when the result is JSON. A tool error rejects the promise with `FleetCallError {tool, outcome, code, output}`.
 - Calls may run in parallel. The code server serves each bridge call on its own goroutine.
-- Built-ins that probe objects (`await`, `JSON.stringify`, `String()`) send no bridge call: `then`, `toJSON`, `toString`, `valueOf`, `constructor` and `inspect` read as undefined. A tool or connection with such a name is reached with `fleet.$call("<tool>", args)`, `conn.$get("<connection>")` and `conn.$get("<connection>").$call("<tool>", args)`.
+- `fleet` and `conn` hold one function per granted name, sent by the code server when the runtime starts. A name that is not granted, a typo or a probe by a built-in (`await` reads `then`, `JSON.stringify` reads `toJSON`) is `undefined` and sends no call. The code server refuses ungranted names as well.
 
 ## Authority
 
@@ -76,8 +76,8 @@ Code mode adds no authority. The code server bridges only the tools that the exe
 - A Claude profile whose `tools` list has none of `Read`, `Grep`, `Glob` or `Bash` gets no file reads in the runtime, and the `code` tool description says so.
 - The runtime environment has no run token, gateway URL or Access file. The code server keeps them, as the connection servers do ([per-run tokens](fleet-connections.md#4-per-run-tokens)).
 - The runtime has no network. Bridged calls go through the code server, so the runtime needs none, and a harness without network (Codex without `gitNetwork`) gets none through code. Node 22's permission model has no network rule, so the runtime runs inside an OS sandbox. Its stdin and stdout pipes to the code server still work.
-  - macOS: `sandbox-exec` with `(deny network*)`, which also refuses Unix sockets, plus `(deny file-write*)` except `/dev/null` and `(deny signal)` except to itself.
-  - Linux: `bwrap --unshare-net --unshare-ipc --unshare-pid`. The sandbox sees only the system directories, the Node binary itself and the read roots, all read-only, with its own `/tmp`, `/proc` and `/dev`. A Node installed under the home directory therefore exposes no other file of it. Host Unix sockets outside the read roots are unreachable, and other processes are invisible to signals.
+  - macOS: `sandbox-exec` with `(deny network*)`, which also refuses Unix sockets, plus `(deny file-write*)` except `/dev/null`, `(deny signal)` except to itself, and `(deny process-exec)` except Node itself and `(deny process-fork)`. Mach services stay reachable.
+  - Linux: `bwrap --unshare-net --unshare-ipc --unshare-pid`. The sandbox sees only the system directories, the Node binary itself and the read roots, all read-only, with its own `/tmp`, `/proc` and `/dev`. A Node installed under the home directory therefore exposes no other file of it. Host Unix sockets outside the read roots are unreachable; a socket file inside a read root stays reachable, as it is for the harness's own tools there. Other processes are invisible to signals.
 - The OS sandbox, not only Node's permission model, refuses writes and signals: Node documents its model as a seat belt against mistakes, not a boundary against hostile code.
 - File reads follow symlinks inside the read roots. That adds no authority: the same files are readable through the harness's own read tools, and the run file is readable by the same OS user anyway ([threat model](fleet-connections.md#4-per-run-tokens)).
 - The host needs a Node with `--permission` (22.13 or later in 22, 23.5 or later in 23, any later major) and a sandbox that starts. The executor runs the sandbox to check it, with a 30 s bound. It keeps a ready result while its files exist and a failure for one minute, so a host made ready later, or a Node moved, needs no executor restart. Without them, the launch fails with `code-mode-unready: <reason>`, for example on Linux without user namespaces. Hosts without such a sandbox, such as Windows, cannot use code mode.
@@ -94,7 +94,8 @@ Bridge calls follow the existing rule: an uncertain effect stays unknown and is 
 - A connection call with outcome `unknown` rejects with `FleetCallError` with `outcome: "unknown"`.
 - A journal failure on a Fleet call rejects with `outcome: "unknown"` and `code: "journal-error"`: the request may already be journaled and sent. A stored reply that does not decode is such a failure.
 - An unawaited rejection or a throw inside a timer is printed, not fatal: the runtime, its other jobs and `state` survive.
-- When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. A job with bridged calls still in flight ends when they do, with their outcomes in `calls`, so no effect goes unreported. The next `code` call starts a new runtime, and its reply says so: `restarted: true`.
+- When the runtime process dies, every running job ends with `runtime-exited`, and `state` is lost. A job with bridged calls still in flight ends when they do, with their outcomes in `calls`, so no effect goes unreported.
+- When the harness closes the code server, the runtime stops and calls still in flight end with the process. A journal write is one SQLite transaction, so it is recorded or not, and the agent sees no reply, as for any lost reply. The next `code` call starts a new runtime, and its reply says so: `restarted: true`.
 
 ## Observability
 
