@@ -3,7 +3,7 @@
 // choice), a preset of what we are doing now (session_presets), the composer, and the facts the start will use.
 // Starting calls session_start with the preset, the access and the branch shown, the same call agents make. Files added to
 // the composer (picker, paste, drop over the page) upload into the chosen project and go with the first message.
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   Composer, DropZone, DetailSection, ErrorBanner, ProjectPick, PresetPicker, Skeleton, agentLabel, harnesses,
   type Harness, type IconName, type PickProject, type PresetOption, type StartFact, type ComposerChip } from '../../../packages/ui/src/index.ts';
@@ -52,7 +52,8 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
 
   // Without ?in= the page starts on the first focused or recent project, once the projects are known.
   const [touched, setTouched] = useState(initialProject !== null);
-  useEffect(() => { if (!touched && projects.data && recent.data && ordered.length && (focus.length || seen.length)) { setProject(ordered[0].id); setTouched(true); } }, [touched, projects.data, recent.data]);
+  // Files added meanwhile belong to the shown project: then the page stays on it.
+  useEffect(() => { if (!touched && !files.items.length && projects.data && recent.data && ordered.length && (focus.length || seen.length)) { setProject(ordered[0].id); setTouched(true); } }, [touched, projects.data, recent.data]);
   const list: Preset[] = presets.data?.presets ?? [];
   // The picked preset while it can start; else the first one for the asked role (?role=pm), else the first that can start.
   const chosen = list.find(p => p.id === picked[key] && !p.unavailable) ?? list.find(p => !p.unavailable && !!initialRole && p.role === initialRole) ?? list.find(p => !p.unavailable);
@@ -73,13 +74,22 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
   // preset (api.ts), so a retry never sends an earlier target's body.
   const page = { kind: 'project' as const, id: 'new', roleId: 'new' }, target = { kind: 'project' as const, id: key, roleId: chosen?.id ?? '' };
   const reason = !online.value ? 'offline' : !chosen ? (presets.error ? 'Presets did not load' : presets.data ? 'No preset can start here' : 'Loading presets') : undefined;
+  // The settings a start would use now (read after an await, so a change during the upload wait is seen).
+  const now = { project, chosen: chosen?.id, access, branch };
+  const live = useRef(now); live.current = now;
+  const settings = () => JSON.stringify(live.current);
   const send = async (text: string) => {
-    const scope = authorizedDraftScope(target);
+    const scope = authorizedDraftScope(target), shown = settings(), wanted = files.items.length;
     // Files still uploading finish first; a failed one fails the start and stays on its chip.
     let attachments: string[];
     try { attachments = await files.ready(); } catch (e: any) { setError(`Attachment not uploaded: ${e?.message ?? e}`); throw e; }
+    // The start uses what the page shows: settings changed (or files dropped by a project change) while the files uploaded
+    // are not started with the old ones.
+    if (settings() !== shown || attachments.length < wanted) {
+      const e = Error('The settings or files changed while the files uploaded; check them and send again.'); setError(e.message); throw e;
+    }
     const body = { ...(project ? { projectId: project, branch } : {}), preset: chosen!.id, access, text, ...(attachments.length ? { attachments } : {}) };
-    const key = submissionKey(body);
+    const sendKey = submissionKey(body);
     try {
       setError('');
       const request = await prepareSending(scope, 'session_start', body);
@@ -88,12 +98,12 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
         throw Object.assign(Error('This text was sent with other settings and its outcome is unknown; change the text to start anew.'), { keep: true });
       }
       const r = await writeOnce('session_start', request, () => setError('unknown, retrying'), { signal: alive });
-      sendingId(scope, null, key);
+      sendingId(scope, null, sendKey);
       files.clear(attachments);
       onStarted(r.sessionId);
     } catch (e: any) {
       // A kept unknown send stays fenced: its identity is cleared only by a definite answer.
-      if (!e?.keep && !(e instanceof AccessChanged) && !unknownOutcome(e) && !(e instanceof OpError && e.message === 'aborted')) sendingId(scope, null, key);
+      if (!e?.keep && !(e instanceof AccessChanged) && !unknownOutcome(e) && !(e instanceof OpError && e.message === 'aborted')) sendingId(scope, null, sendKey);
       setError(e.message); throw e;
     }
   };
@@ -106,6 +116,6 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
     </DetailSection>
     {error && <ErrorBanner text={error} />}
     <Composer draftPersistence={createDraftPersistence(authorizedDraftScope(page))} placeholder={project ? `Describe the work in ${name}` : 'Describe the work'} disabledReason={reason} onSend={send}
-      onAttach={files.add} attachments={files.items} onRemoveAttachment={files.remove} chips={facts.map(chipOf)} />
+      onAttach={files.add} attachments={files.items} onRemoveAttachment={files.remove} chips={facts.map(chipOf)} chipsLabel="Start settings" />
   </DropZone></article>;
 }
