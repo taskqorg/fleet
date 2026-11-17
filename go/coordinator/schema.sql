@@ -2364,22 +2364,26 @@ ALTER TABLE experiment ADD COLUMN tombstoned_at timestamptz NULL;
 ALTER TABLE question ADD COLUMN tombstoned_at timestamptz NULL;
 ALTER TABLE artifact ADD COLUMN tombstoned_at timestamptz NULL;
 ALTER TABLE document ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE score ADD COLUMN tombstoned_at timestamptz NULL;
+ALTER TABLE experiment_note ADD COLUMN tombstoned_at timestamptz NULL;
 CREATE FUNCTION fleet_show_deleted() RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT coalesce(current_setting('fleet.deleted', true), '') = 'on' $$;
 CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql STABLE AS
  $$ SELECT coalesce(array_agg(id), '{}') FROM definition WHERE kind = 'project' AND deleted_at IS NOT NULL $$;
 DO $$ DECLARE t text; BEGIN
- FOREACH t IN ARRAY ARRAY['execution','task','experiment','question','artifact','document'] LOOP
+ FOREACH t IN ARRAY ARRAY['execution','task','experiment','question','artifact','document','score','experiment_note'] LOOP
   EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted() OR (tombstoned_at IS NULL'
    ' AND (project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))))', t);
  END LOOP;
- FOREACH t IN ARRAY ARRAY['artifact_copy','artifact_rule_confirmation','entity_code','execution_totals','experiment_note',
-  'purged_hash','route_decision','score','task_dependency','task_derived'] LOOP
+ FOREACH t IN ARRAY ARRAY['artifact_copy','artifact_rule_confirmation','entity_code','execution_totals','purged_hash',
+  'route_decision','task_dependency','task_derived'] LOOP
   EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted()'
    ' OR project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))', t);
  END LOOP;
 END $$;
--- Notes stay append-only for every writer but system_purge, which removes a deleted experiment with its notes.
+-- Notes stay append-only for every writer but delete, which tombstones a deleted experiment's notes, and system_purge,
+-- which removes them.
 CREATE OR REPLACE FUNCTION fleet_note_append_only() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
  IF TG_OP = 'DELETE' AND coalesce(current_setting('fleet.purge', true), '') = 'on' THEN RETURN OLD; END IF;
+ IF TG_OP = 'UPDATE' AND to_jsonb(NEW) - 'tombstoned_at' = to_jsonb(OLD) - 'tombstoned_at' THEN RETURN NEW; END IF;
  RAISE EXCEPTION 'experiment notes are append-only';
 END $$;

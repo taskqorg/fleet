@@ -1,8 +1,13 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"fleet/contract"
@@ -195,13 +200,26 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 		t.Fatalf("a second delete: %d", c)
 	}
 
+	// Another experiment's score cites a trial of x1: the delete is refused while it does (design: delete checks scores).
+	if c, body := call("object_delete", doc{"kind": "experiment", "id": "x1", "preview": true}, owner); c != 409 || !strings.Contains(astr(body["message"]), "score.trial_ids") {
+		t.Fatalf("delete of a cited experiment = %d %v", c, body)
+	}
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", "DELETE FROM score WHERE id='sc2'")
 	c, xd := call("object_delete", doc{"kind": "experiment", "id": "x1", "preview": false}, owner)
 	if wantX := map[string]float64{"experiment": 1, "execution": 2, "question": 1}; c != 200 || !mapsEqual(kindCounts(xd["affected"]), wantX) {
 		t.Fatalf("experiment delete = %d %v", c, xd)
 	}
-	if n := appCount(t, e, false, "SELECT count(*) FROM experiment WHERE id='x1'"); n != 0 {
-		t.Fatalf("deleted experiment still read")
+	for _, sql := range []string{"SELECT count(*) FROM experiment WHERE id='x1'", "SELECT count(*) FROM score WHERE experiment_id='x1'",
+		"SELECT count(*) FROM experiment_note WHERE experiment_id='x1'", "SELECT count(*) FROM question WHERE id='qr'"} {
+		if n := appCount(t, e, false, sql); n != 0 {
+			t.Errorf("deleted experiment rows still read: %s = %d", sql, n)
+		}
 	}
+	if c, _ := call("object_delete", doc{"kind": "experiment", "id": "x1", "preview": true}, owner); c != 409 {
+		t.Fatalf("a second experiment delete: %d", c)
+	}
+	// A row written later that names a tombstoned trial keeps it at purge (design test 4).
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", "INSERT INTO score(id,experiment_id,project_id,trial_ids,evaluator,evaluator_version,form,value) VALUES ('sc3','x2','keep','{r1}','j','1','typed','{}')")
 
 	c, p := call("system_purge", doc{"preview": true}, owner)
 	removed, kept := map[string][]string{}, map[string][]string{}
@@ -232,7 +250,7 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 	if n := psqlLines(t, e, "SELECT count(*) FROM execution WHERE id IN ('r1','r1s')"); n[0] != "2" {
 		t.Fatalf("a trial another experiment's score cites was purged")
 	}
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", "DELETE FROM score WHERE id='sc2'")
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", "DELETE FROM score WHERE id='sc3'")
 	c, again := call("system_purge", doc{"preview": false, "kinds": []string{"experiment"}}, owner)
 	if c != 200 || !slices.Equal(strs(mapOf(anys(again["removed"])[0])["ids"]), []string{"x1"}) {
 		t.Fatalf("purge after the citing score went = %d %v", c, again)
@@ -261,4 +279,47 @@ func mapsEqual(a, b map[string]float64) bool {
 		}
 	}
 	return true
+}
+
+// Requirement: fleet-system-management.md, purge ("then their store objects through the artifact purge path ... a store
+// object that fails to delete stays as a purge task"). Risk: an object is content-addressed (project/scope/hash), so
+// deleting it after another artifact deduplicated onto it, between the purge and the object deletion, loses that
+// artifact's bytes.
+func TestPurgeTaskSkipsObjectsInUseAgain(t *testing.T) {
+	e := openTestCoordinator(t, false)
+	var mu sync.Mutex
+	deleted := []string{}
+	s3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			mu.Lock()
+			deleted = append(deleted, r.URL.Path)
+			mu.Unlock()
+		}
+		w.WriteHeader(204)
+	}))
+	defer s3.Close()
+	prev := storeSecretsDir
+	storeSecretsDir = t.TempDir()
+	defer func() { storeSecretsDir = prev }()
+	if err := os.WriteFile(filepath.Join(storeSecretsDir, "st1.key"), []byte(`{"accessKeyId":"AKIAINVENTED","secretAccessKey":"invented"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
+INSERT INTO store(id,host_id,bucket,endpoint,state) VALUES ('st1','h-x','b','`+s3.URL+`','reachable');
+INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,state) VALUES ('a3','keep','prod','h3',1,'text/plain','n','stored');
+INSERT INTO artifact_copy(artifact_id,store_id,project_id,state) VALUES ('a3','st1','keep','verified');
+INSERT INTO document(kind,id,data) VALUES ('purge-task','pt1','{"id":"pt1","storeId":"st1","objects":[
+ {"key":"keep/prod/h3","projectId":"keep","scope":"prod","hash":"h3"},{"key":"gone/prod/h4","projectId":"gone","scope":"prod","hash":"h4"},{"key":"gone/prod/.pending/a4.st1"}]}');`)
+	left, err := runPurgeTasks(e.ctx, e.app)
+	if err != nil || left != 0 {
+		t.Fatalf("runPurgeTasks = %d, %v", left, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Contains(deleted, "/b/gone/prod/h4") || !slices.Contains(deleted, "/b/gone/prod/.pending/a4.st1") || slices.ContainsFunc(deleted, func(p string) bool { return strings.Contains(p, "h3") }) {
+		t.Fatalf("deleted %v: want the unused object and the staging key, never keep/prod/h3", deleted)
+	}
+	if n := psqlLines(t, e, "SELECT count(*) FROM document WHERE kind='purge-task'"); n[0] != "0" {
+		t.Fatalf("a finished purge task stays: %v", n)
+	}
 }

@@ -616,8 +616,16 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		}
 		at = w
 	}
+	gone := false
 	if same != nil || size == 0 {
 		err := txCtx(ctx, a, func(tx pgx.Tx) error {
+			// Checked again under the write lock: system_purge deletes an object nobody maps to under the same lock
+			// (cleanup.go runPurgeTasks), so a copy found before it may be gone now; then this upload stores its own.
+			if same != nil && size > 0 {
+				if err := tx.QueryRow(ctx, "SELECT NOT EXISTS(SELECT 1 FROM artifact a JOIN artifact_copy c ON c.artifact_id=a.id WHERE a.project_id IS NOT DISTINCT FROM $1 AND a.scope=$2 AND a.content_hash=$3 AND c.store_id=$4 AND c.state='verified')", e.ProjectID, scope, hash, target.ID).Scan(&gone); err != nil || gone {
+					return err
+				}
+			}
 			if err := insert(tx, "stored"); err != nil {
 				return err
 			}
@@ -627,10 +635,12 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 		if err != nil {
 			return nil, err
 		}
-		if err := settleWaiting(ctx, a, e.ID); err != nil {
-			return nil, err
+		if !gone {
+			if err := settleWaiting(ctx, a, e.ID); err != nil {
+				return nil, err
+			}
+			return contract.ArtifactReserveReply{ArtifactId: id, State: "stored", StoreId: &at.ID}, nil
 		}
-		return contract.ArtifactReserveReply{ArtifactId: id, State: "stored", StoreId: &at.ID}, nil
 	}
 	staging := stagingOf(&Artifact{ID: id, ProjectID: e.ProjectID, Scope: scope, ContentHash: hash}, target.ID)
 	c, err := tunnel(target)

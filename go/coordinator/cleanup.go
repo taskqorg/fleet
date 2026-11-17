@@ -192,6 +192,9 @@ var objectTables = []struct{ kind, table, filter string }{
 	{"session", "document", "kind='session'"}, {"question", "question", ""}, {"artifact", "artifact", ""},
 }
 
+// tombstoned: the tables with a tombstoned_at column (migration 67).
+var tombstoned = []string{"execution", "task", "experiment", "question", "artifact", "document", "score", "experiment_note"}
+
 // keptRows: rows that neither go with an object nor keep one: audit records outlive what they describe (the journal of M0).
 var keptRows = map[string]string{"document": "kind NOT IN ('setting-change','transport-audit','purge-task')"}
 
@@ -321,13 +324,24 @@ func showDeleted(q *Request) error {
 	return exec(q, "SELECT set_config('fleet.deleted','on',true)")
 }
 
+func hideDeleted(q *Request) error {
+	return exec(q, "SELECT set_config('fleet.deleted','',true)")
+}
+
 // deleteRoot: the root row as the caller sees it; 404 when unknown, 409 when already deleted.
 func deleteRoot(q *Request, kind contract.DeleteKind, id string) error {
 	live, gone := "SELECT 1 FROM experiment WHERE id=$1", "SELECT 1 FROM experiment WHERE id=$1 AND tombstoned_at IS NOT NULL"
 	if kind == contract.DeleteKindProject {
 		live, gone = "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND deleted_at IS NULL", "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND deleted_at IS NOT NULL"
 	}
-	if ok, err := has(q, gone, id); err != nil || ok {
+	if err := showDeleted(q); err != nil {
+		return err
+	}
+	ok, err := has(q, gone, id)
+	if err == nil {
+		err = hideDeleted(q)
+	}
+	if err != nil || ok {
 		if err == nil {
 			err = fail(409, "Already deleted")
 		}
@@ -342,6 +356,10 @@ func deleteRoot(q *Request, kind contract.DeleteKind, id string) error {
 	return nil
 }
 
+// liveRuns: the executions the confirm stops (agent runs and host jobs) or cancels (running pipeline runs); their
+// native children (child_agent, tool_run) end with them.
+const liveRuns = "(" + execKinds + " AND state IN ('preparing','running','waiting')) OR (kind='pipeline_run' AND state='running')"
+
 // deletePreview: the reply both the preview and the confirm compute (NFR: preview equals effect).
 func deletePreview(q *Request, b *contract.ObjectDeleteRequest) (*cascade, contract.ObjectDeleteReply, error) {
 	r := contract.ObjectDeleteReply{Kind: b.Kind, Id: b.Id, Affected: []contract.KindCount{}}
@@ -352,10 +370,18 @@ func deletePreview(q *Request, b *contract.ObjectDeleteRequest) (*cascade, contr
 	if err != nil {
 		return nil, r, err
 	}
+	// Lab: a live row outside the object that keeps one of its objects (another experiment's score citing a trial)
+	// refuses the delete, so nothing live ever points at a hidden row.
+	if by, err := c.blockedBy(q); err != nil || by != "" {
+		if err == nil {
+			err = fail(409, "Kept by "+by)
+		}
+		return nil, r, err
+	}
 	if r.Affected, _, err = c.counts(q); err != nil {
 		return nil, r, err
 	}
-	err = q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE id=ANY($1) AND kind<>'pipeline_step' AND state IN ('preparing','running','waiting')", c.sets["execution"]).Scan(&r.Running)
+	err = q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE id=ANY($1) AND ("+liveRuns+")", c.sets["execution"]).Scan(&r.Running)
 	return c, r, err
 }
 
@@ -426,10 +452,10 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 			return err
 		}
 	}
-	for _, id := range ids {
-		if err := revokeTokens(q, id); err != nil {
-			return err
-		}
+	if tag, err := q.tx.Exec(q.ctx(), "UPDATE document SET data=data||jsonb_build_object('revokedAt',$2::bigint) WHERE kind='run-token' AND data->>'executionId'=ANY($1) AND NOT data ? 'revokedAt'", ids, nowMs()); err != nil {
+		return err
+	} else if tag.RowsAffected() > 0 {
+		publish(q)
 	}
 	if err := exec(q, "UPDATE experiment SET state='stopped',stop_reason='deleted' WHERE id=ANY($1) AND state IN ('running','paused')", c.sets["experiment"]); err != nil {
 		return err
@@ -477,6 +503,8 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		}
 	}
 	out.Teardowns = teardowns
+	// The objects get their tombstone; an experiment's own rows (scores, notes, the events and messages of its trials)
+	// too, since only a deleted project's rows are hidden by project.
 	for _, o := range objectTables {
 		if len(c.sets[o.kind]) == 0 {
 			continue
@@ -484,6 +512,20 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		if err := exec(q, "UPDATE "+o.table+" SET tombstoned_at=now() WHERE "+andFilter(o.filter, "id=ANY($1) AND tombstoned_at IS NULL"), c.sets[o.kind]); err != nil {
 			return err
 		}
+	}
+	if c.kind != "project" {
+		for _, t := range tombstoned {
+			a := &args{c: c}
+			if where := c.goesWith(t, a); where != "false" {
+				if err := exec(q, "UPDATE "+t+" SET tombstoned_at=now() WHERE "+andFilter(keptRows[t], where+" AND tombstoned_at IS NULL"), a.vals...); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// Budgets are settings of the object: they go now, with its secrets.
+	if err := exec(q, "DELETE FROM budget WHERE scope=$1 AND scope_id=$2", c.kind, c.id); err != nil {
+		return err
 	}
 	if c.kind == "project" {
 		var raw []byte
@@ -550,24 +592,21 @@ func purgeCascade(q *Request, c *cascade) error {
 			return fmt.Errorf("purge %s: %w", t, err)
 		}
 	}
-	keys := map[string][]string{}
+	// An object is content-addressed (project/scope/hash) and may be shared: runPurgeTasks decides under the write lock.
+	keys := map[string][]any{}
 	for _, o := range objects {
 		store := astr(o["store_id"])
 		if k := astr(o["staging_key"]); k != "" {
-			keys[store] = append(keys[store], k)
+			keys[store] = append(keys[store], doc{"key": k})
 		}
-		pid := strp(o, "project_id")
-		shared, err := has(q, `SELECT 1 FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.store_id=$1 AND c.state<>'deleted'
-		  AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4`, store, pid, o["scope"], o["content_hash"])
-		if err != nil {
-			return err
-		}
-		if k := keyOf(&Artifact{ProjectID: pid, Scope: astr(o["scope"]), ContentHash: astr(o["content_hash"])}); !shared && !slices.Contains(keys[store], k) {
-			keys[store] = append(keys[store], k)
+		x := doc{"key": keyOf(&Artifact{ProjectID: strp(o, "project_id"), Scope: astr(o["scope"]), ContentHash: astr(o["content_hash"])}),
+			"projectId": o["project_id"], "scope": o["scope"], "hash": o["content_hash"]}
+		if !slices.ContainsFunc(keys[store], func(y any) bool { return mapOf(y)["key"] == x["key"] }) {
+			keys[store] = append(keys[store], x)
 		}
 	}
 	for _, store := range slices.Sorted(maps.Keys(keys)) {
-		if err := addPurgeTask(q, doc{"storeId": store, "keys": keys[store]}); err != nil {
+		if err := addPurgeTask(q, doc{"storeId": store, "objects": keys[store]}); err != nil {
 			return err
 		}
 	}
@@ -702,7 +741,9 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 }
 
 // runPurgeTasks: delete the store objects and spans of earlier purges; a task that fails stays for the next purge.
-// Returns the tasks left.
+// Returns the tasks left. A store object is deleted inside a write transaction (the GLOBAL lock artifact_reserve's
+// inserts take too) after checking that no copy on that store maps to it again: an upload that deduplicated onto it,
+// or started a new copy of the same content, since the purge keeps it.
 func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 	var tasks []doc
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
@@ -714,51 +755,61 @@ func runPurgeTasks(ctx context.Context, a *App) (int64, error) {
 	}
 	left := int64(0)
 	for _, t := range tasks {
-		rest := []string{}
-		if store := astr(t["storeId"]); store != "" {
-			keys := strs(t["keys"])
-			s, err := storeGet(ctx, a, store)
-			var s3 *S3
-			if err == nil && s.State != "unreachable" {
-				s3, err = tunnel(s)
-			}
-			for _, k := range keys {
-				if s3 == nil || s3.Delete(s.Bucket, k) != nil {
-					rest = append(rest, k)
-				}
-			}
-			if err != nil && !isNotFound(err) {
-				slog.Warn("purge: store", "store", store, "err", err)
-			}
-			if isNotFound(err) { // the store went with its host: nothing to delete
-				rest = nil
-			}
-		} else if ids := strs(t["executionIds"]); len(ids) > 0 && spanStore != nil {
-			for i := 0; i < len(ids); i += 200 {
-				part := ids[i:min(i+200, len(ids))]
-				if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
-					slog.Warn("purge: spans", "err", err)
-					rest = append(rest, ids[i:]...)
-					break
-				}
-			}
-		}
 		err := runTx(ctx, a, nil, true, "", func(q *Request) error {
+			if err := showDeleted(q); err != nil {
+				return err
+			}
+			rest := []any{}
+			if store := astr(t["storeId"]); store != "" {
+				s, err := storeGet(ctx, a, store)
+				if isNotFound(err) { // the store went with its host: nothing to delete
+					return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
+				}
+				var s3 *S3
+				if err == nil && s.State != "unreachable" {
+					s3, err = tunnel(s)
+				}
+				if err != nil {
+					slog.Warn("purge: store", "store", store, "err", err)
+				}
+				for _, x := range anys(t["objects"]) {
+					o := mapOf(x)
+					if o["hash"] != nil {
+						used, err := has(q, `SELECT 1 FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.store_id=$1 AND c.state<>'deleted'
+						  AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4`, store, o["projectId"], o["scope"], o["hash"])
+						if err != nil {
+							return err
+						}
+						if used {
+							continue
+						}
+					}
+					if s3 == nil || s3.Delete(s.Bucket, astr(o["key"])) != nil {
+						rest = append(rest, o)
+					}
+				}
+				t["objects"] = rest
+			} else if ids := strs(t["executionIds"]); len(ids) > 0 && spanStore != nil {
+				for i := 0; i < len(ids); i += 200 {
+					part := ids[i:min(i+200, len(ids))]
+					if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
+						slog.Warn("purge: spans", "err", err)
+						for _, id := range ids[i:] {
+							rest = append(rest, id)
+						}
+						break
+					}
+				}
+				t["executionIds"] = rest
+			}
 			if len(rest) == 0 {
 				return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
 			}
-			if t["storeId"] != nil {
-				t["keys"] = rest
-			} else {
-				t["executionIds"] = rest
-			}
+			left++
 			return put(q, "purge-task", t)
 		})
 		if err != nil {
 			return left, err
-		}
-		if len(rest) > 0 {
-			left++
 		}
 	}
 	return left, nil
