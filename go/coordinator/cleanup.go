@@ -908,7 +908,7 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 				if isNotFound(err) {
 					break
 				}
-				if s3 == nil {
+				if s3 == nil || time.Now().After(deadline) { // the rest waits for the next purge
 					rest = append(rest, o)
 					continue
 				}
@@ -938,6 +938,12 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 		} else if ids := strs(t["executionIds"]); len(ids) > 0 && spanStore != nil {
 			for i := 0; i < len(ids); i += 200 {
 				part := ids[i:min(i+200, len(ids))]
+				if time.Now().After(deadline) {
+					for _, id := range ids[i:] {
+						rest = append(rest, id)
+					}
+					break
+				}
 				if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
 					slog.Warn("purge: spans", "err", err)
 					for _, id := range ids[i:] {
