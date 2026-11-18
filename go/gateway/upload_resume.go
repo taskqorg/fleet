@@ -27,6 +27,13 @@ type uploadState struct {
 	CallID    string
 	StartedAt int64
 	Committed bool
+	Discard   *uploadDiscard
+}
+
+type uploadDiscard struct {
+	Status   int
+	Code     string
+	Recorded bool
 }
 
 func uploadCreation(id string) (time.Time, bool) {
@@ -93,7 +100,7 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 	data, statePath := base+".data", base+".state"
 	state := uploadState{Binding: binding}
 	if saved, err := os.ReadFile(statePath); err == nil {
-		if json.Unmarshal(saved, &state) != nil || state.Binding == "" || state.Offset < 0 || state.Committed && state.CallID == "" {
+		if json.Unmarshal(saved, &state) != nil || state.Binding == "" || state.Offset < 0 || state.Committed && state.CallID == "" || state.Discard != nil && (state.Offset != 0 || state.Committed) {
 			refuse(507, "staging-failed", "the upload record is invalid")
 			return
 		}
@@ -103,6 +110,23 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 	}
 	if state.Binding != binding {
 		refuse(409, "upload-binding", "the upload metadata changed")
+		return
+	}
+	if state.Discard != nil {
+		a := refusal(state.Discard.Status, "error", state.Discard.Code, "the staged upload was discarded before sending")
+		if err := g.finishUploadDiscard(q, data, statePath, &state, a, nil, false); err != nil {
+			refuse(507, "staging-failed", "the discard could not be recorded")
+			return
+		}
+		if mode == "abort" {
+			w.Header().Set(contract.UploadOffsetHeader, "0")
+			w.WriteHeader(http.StatusNoContent)
+		} else {
+			if state.CallID != "" {
+				q.id = state.CallID
+			}
+			replyCall(w, q, a)
+		}
 		return
 	}
 	if state.Committed {
@@ -137,7 +161,7 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 	cap, _, stall, _ := limits(q.c)
 	if mode != "abort" && cap > 0 && total > cap {
 		a := refusal(413, "error", "file-too-large", "the whole file exceeds the connection's limit")
-		if err := g.abandonUpload(q, data, statePath, state, a); err != nil {
+		if err := g.finishUploadDiscard(q, data, statePath, &state, a, nil, false); err != nil {
 			refuse(507, "staging-failed", "the stage could not be removed")
 			return
 		}
@@ -205,7 +229,7 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		g.commitUpload(w, r, q, meta, data, statePath, state)
 	case "abort":
 		a := refusal(409, "error", "upload-aborted", "the staged upload was removed without a provider POST")
-		if err := g.abandonUpload(q, data, statePath, state, a); err != nil {
+		if err := g.finishUploadDiscard(q, data, statePath, &state, a, nil, false); err != nil {
 			refuse(507, "staging-failed", "the stage could not be removed")
 			return
 		}
@@ -272,30 +296,27 @@ func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *reques
 	if state.CallID != "" {
 		q.id, q.startedMs = state.CallID, state.StartedAt
 		q.begun = time.UnixMilli(q.startedMs)
-		q.phase = ptr(contract.CallPhaseCompleted)
+	}
+	reject := func(w http.ResponseWriter, call *request, a *answer, transfer *contract.CallTransfer) {
+		if err := g.finishUploadDiscard(call, data, statePath, &state, a, transfer, true); err != nil {
+			replyCall(w, call, refusal(507, "error", "staging-failed", "the discard could not be recorded"))
+			return
+		}
+		replyCall(w, call, a)
 	}
 	total := state.Offset
 	file, err := os.Open(data)
 	if err != nil {
-		discardUpload(data, statePath, state)
-		g.finish(w, q, refusal(507, "error", "staging-failed", "cannot read staged upload"), nil)
+		reject(w, q, refusal(507, "error", "staging-failed", "cannot read staged upload"), nil)
 		return
 	}
 	defer file.Close()
-	// Keep the stage if drain starts before commit.
-	discard := true
-	defer func() {
-		if discard {
-			discardUpload(data, statePath, state)
-		}
-	}()
 	patterns := g.uploadSecrets(q)
 	hash, scan := sha256.New(), newScanner(patterns)
 	buf := make([]byte, copyBytes)
 	reader := io.NewSectionReader(file, 0, total)
 	for {
 		if g.draining.Load() || r.Context().Err() != nil {
-			discard = false
 			replyCall(w, q, refusal(503, "error", "draining", "the file was not sent"))
 			return
 		}
@@ -308,20 +329,20 @@ func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *reques
 			break
 		}
 		if err != nil {
-			g.finish(w, q, refusal(507, "error", "staging-failed", "cannot read staged upload"), nil)
+			reject(w, q, refusal(507, "error", "staging-failed", "cannot read staged upload"), nil)
 			return
 		}
 	}
 	if scan.found || g.uploadHasSecret(q, meta, file, patterns) {
-		g.finish(w, q, refusal(422, "error", "secret-found", "the file, its name or media type contains a key value or the caller's token"), nil)
+		reject(w, q, refusal(422, "error", "secret-found", "the file, its name or media type contains a key value or the caller's token"), nil)
 		return
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != meta.sha {
-		g.finish(w, q, refusal(400, "error", "sha-mismatch", "the staged bytes do not match X-Fleet-Sha256"), nil)
+		reject(w, q, refusal(400, "error", "sha-mismatch", "the staged bytes do not match X-Fleet-Sha256"), nil)
 		return
 	}
 	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: total, MediaType: meta.mediaType, Name: meta.name, Sha256: &meta.sha}
-	discard = !g.postUpload(w, r, q, meta, file, transfer, func(admitted *request) (func() error, *answer) {
+	ready := func(admitted *request) (func() error, *answer) {
 		// Persist the call ID before spooling intent. Replaying a pending intent reuses the same accounting row.
 		if state.CallID == "" {
 			state.CallID, state.StartedAt = admitted.id, admitted.startedMs
@@ -349,7 +370,11 @@ func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *reques
 			state = pending
 			return nil
 		}, nil
-	})
+	}
+	g.postUpload(w, r, q, meta, file, transfer, &uploadCommitHooks{ready: ready, reject: reject})
+	if state.Committed {
+		removeUploadData(data)
+	}
 }
 
 // The data is synced before this record advances. A process crash can leave a tail in the data file or a .next
@@ -377,35 +402,44 @@ func writeUploadState(path string, state uploadState) error {
 	return syncDir(filepath.Dir(path))
 }
 
-func (g *gateway) abandonUpload(q *request, data, statePath string, state uploadState, a *answer) error {
-	if state.CallID != "" {
-		// Remove the data durably before publishing a terminal outcome. Retain the intent until it is recorded.
-		if err := removeUploadData(data); err != nil {
+// Taking a stage out of service and recording its outcome can span a restart. Save the refusal with offset zero
+// before deleting data or publishing completion, so no retry can send a discarded file or acknowledge its bytes.
+func (g *gateway) finishUploadDiscard(q *request, data, statePath string, state *uploadState, a *answer, transfer *contract.CallTransfer, record bool) error {
+	if state.Discard == nil {
+		if state.Offset == 0 && state.CallID == "" && !record {
+			return removeUploadData(data)
+		}
+		next := *state
+		next.Offset, next.Committed = 0, false
+		next.Discard = &uploadDiscard{Status: a.status, Code: a.err}
+		if record && next.CallID == "" {
+			next.CallID, next.StartedAt = q.id, q.startedMs
+		}
+		if err := writeUploadState(statePath, next); err != nil {
 			return err
 		}
+		*state = next
+	} else if !state.Discard.Recorded {
 		if err := syncDir(g.uploadDir()); err != nil {
 			return err
 		}
-		original := *q
-		original.id, original.startedMs = state.CallID, state.StartedAt
-		original.begun = time.UnixMilli(original.startedMs)
-		line := g.line(&original, a)
-		line.Phase = ptr(contract.CallPhaseCompleted)
-		if !g.spool.append(line) {
-			return errors.New("cannot record discarded upload")
-		}
 	}
-	return discardUpload(data, statePath, state)
-}
-
-func discardUpload(data, statePath string, state uploadState) error {
-	if state.Offset != 0 && !state.Committed {
-		state.Offset, state.CallID, state.StartedAt = 0, "", 0
-		if err := writeUploadState(statePath, state); err != nil {
-			return err
-		}
+	if err := removeUploadData(data); err != nil {
+		return err
 	}
-	return removeUploadData(data)
+	if state.CallID == "" || state.Discard.Recorded {
+		return nil
+	}
+	original := *q
+	original.id, original.startedMs = state.CallID, state.StartedAt
+	original.begun = time.UnixMilli(original.startedMs)
+	line := g.line(&original, a)
+	line.Phase, line.Transfer = ptr(contract.CallPhaseCompleted), transfer
+	if !g.spool.append(line) {
+		return errors.New("cannot record discarded upload")
+	}
+	state.Discard.Recorded = true
+	return writeUploadState(statePath, *state)
 }
 
 func removeUploadData(data string) error {

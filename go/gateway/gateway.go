@@ -1414,26 +1414,35 @@ func (g *gateway) admitUpload(q *request, meta uploadMetadata, size int64) (stri
 	return path, nil
 }
 
-func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, beforePost func(*request) (func() error, *answer)) (keepStage bool) {
+type uploadCommitHooks struct {
+	ready  func(*request) (undo func() error, refusal *answer)
+	reject func(http.ResponseWriter, *request, *answer, *contract.CallTransfer)
+}
+
+func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, commit *uploadCommitHooks) (keepStage bool) {
+	reject := g.finish
+	if commit != nil && commit.reject != nil {
+		reject = commit.reject
+	}
 	again := *q
 	path, a := g.admitUpload(&again, meta, transfer.Bytes)
 	if a != nil {
-		g.finish(w, q, a, transfer)
+		reject(w, q, a, transfer)
 		return false
 	}
 	draining := refusal(503, "error", "draining", "the file was not sent")
 	if g.draining.Load() || r.Context().Err() != nil {
-		if beforePost == nil {
+		if commit == nil {
 			g.finish(w, q, draining, transfer)
 		} else {
 			replyCall(w, q, draining)
 		}
 		return true
 	}
-	if beforePost != nil {
-		undo, a := beforePost(&again)
+	if commit != nil {
+		undo, a := commit.ready(&again)
 		if a != nil {
-			g.finish(w, &again, a, transfer)
+			reject(w, &again, a, transfer)
 			return false
 		}
 		if g.draining.Load() || r.Context().Err() != nil {
@@ -1446,11 +1455,11 @@ func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request,
 		}
 	}
 	// Durable commit writes may have outlasted a token revocation, intake pause or size-cap change.
-	if beforePost != nil {
+	if commit != nil {
 		current := again
 		path, a = g.admitUpload(&current, meta, transfer.Bytes)
 		if a != nil {
-			g.finish(w, &again, a, transfer)
+			reject(w, &again, a, transfer)
 			return false
 		}
 		again = current

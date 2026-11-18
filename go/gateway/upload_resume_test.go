@@ -201,10 +201,10 @@ func TestResumableUploadDrainDuringCommitRecording(t *testing.T) {
 	undone := false
 	meta := uploadMetadata{pathArgs: map[string]json.RawMessage{"issue": json.RawMessage(`"TGT-12"`)}, name: "slow.mov", mediaType: "video/quicktime"}
 	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: 16, Name: meta.name, MediaType: meta.mediaType}
-	keep := g.postUpload(w, req, q, meta, nil, transfer, func(*request) (func() error, *answer) {
+	keep := g.postUpload(w, req, q, meta, nil, transfer, &uploadCommitHooks{ready: func(*request) (func() error, *answer) {
 		g.draining.Store(true)
 		return func() error { undone = true; return nil }, nil
-	})
+	}})
 	if !keep || !undone || w.Code != 503 || w.Header().Get("X-Fleet-Error") != "draining" {
 		t.Fatalf("kept=%v undone=%v status=%d headers=%v", keep, undone, w.Code, w.Header())
 	}
@@ -228,15 +228,54 @@ func TestResumableUploadRechecksAdmissionAfterCommitRecording(t *testing.T) {
 	w := httptest.NewRecorder()
 	meta := uploadMetadata{pathArgs: map[string]json.RawMessage{"issue": json.RawMessage(`"TGT-12"`)}, name: "slow.mov", mediaType: "video/quicktime"}
 	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: 16, Name: meta.name, MediaType: meta.mediaType}
-	keep := g.postUpload(w, req, q, meta, nil, transfer, func(*request) (func() error, *answer) {
+	keep := g.postUpload(w, req, q, meta, nil, transfer, &uploadCommitHooks{ready: func(*request) (func() error, *answer) {
 		snapshot := fileSnapshot(p.url, nil, "paused")
 		f.write(snapshot)
 		g.refresh(true)
 		return func() error { return nil }, nil
-	})
+	}})
 	if keep || w.Code != 403 || w.Header().Get("X-Fleet-Error") != "intake-paused" {
 		t.Fatalf("kept=%v status=%d headers=%v", keep, w.Code, w.Header())
 	}
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 0, "provider POSTs")
+}
+
+// Requirement: §9 a discarded upload stays unsendable across restart and completes its existing accounting row.
+// Risk: a restart between the discard decision and deletion acknowledges or posts bytes that were discarded.
+func TestResumableUploadRecoversInterruptedDiscard(t *testing.T) {
+	gw, p := newFileFixture(t, nil)
+	data := []byte("staged data")
+	r := newResumeRequest(gw, data)
+	r.send(t, "chunk", 0, data, 204, "")
+	gw.halt()
+	paths, err := filepath.Glob(filepath.Join(gw.dir, "state/resumable", r.id+"-*.state"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("expected one state record, got %v: %v", paths, err)
+	}
+	path := paths[0]
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var discarded uploadState
+	if err := json.Unmarshal(raw, &discarded); err != nil {
+		t.Fatal(err)
+	}
+	discarded.Offset, discarded.CallID, discarded.StartedAt = 0, "discarded-intent", nowMs()
+	discarded.Discard = &uploadDiscard{Status: 409, Code: "upload-aborted"}
+	if err := writeUploadState(path, discarded); err != nil {
+		t.Fatal(err)
+	}
+	gw.start()
+	h := r.send(t, "status", 0, nil, 409, "upload-aborted")
+	expect(t, h.Get(contract.UploadOffsetHeader), "", "discard has no offset")
+	expect(t, h.Get("X-Fleet-Call-Id"), discarded.CallID, "original intent")
+	r.send(t, "commit", 0, nil, 409, "upload-aborted")
+	r.staged(t, 0)
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider POSTs")
+	lines, _ := gw.spool()
+	expect(t, len(lines), 1, "completion recorded once")
+	expect(t, lines[0]["phase"], "completed", "completion phase")
 }
