@@ -66,7 +66,7 @@ The reply is MCP text parts, so the agent reads the value itself, not an escaped
 
 1. The printed output, when there is any.
 2. For a finished job, the value: a nonempty string as is, the empty string as `""`, any other value as compact JSON, and `null` for none.
-3. A part that starts with `[code] ` and a JSON object, only when it carries something: `status` and `jobId` while the job runs; `status: "failed"` and `error: {message, stack}` for a failed job; `newRuntime: true`; `calls` when a bridged call did not end `ok` or the job failed. A successful final reply omits a batch of all-successful calls. A running reply includes completed call outcomes so a later failure has no hidden effects. Metadata also appears as MCP `structuredContent`, which distinguishes it from arbitrary text starting with `[code] `.
+3. A part that starts with `[code] ` and a JSON object, only when it carries something: `status` and `jobId` while the job runs; `status: "failed"` and `error: {message, stack}` for a failed job; `newRuntime: true`; `calls` when a bridged call did not end `ok` or the job failed. A successful final reply omits a batch of all-successful calls. A running reply includes completed call outcomes so a later failure has no hidden effects. Running and failed job replies also carry metadata as MCP `structuredContent`. A completed job delivers its value and any metadata as text parts so a client that prefers `structuredContent` still sees its value. Programmatic clients can identify completed-job metadata under `_meta["fleet/code"]`.
 
 A failed job replies `isError: true`. Replies that are not a job's result (the `poll` listing, `reset`, an unknown `jobId`, a missing `source`) are one `[code] ` part.
 
@@ -123,7 +123,7 @@ The host functions mirror what the harness's own tools may do in this execution:
 | `claude` | With `Read`, `Grep`, `Glob` or `Bash` in `tools`. | `write` with `Write`, `edit` with `Edit`. | With `Bash`, without a sandbox, because Fleet runs Claude's own `Bash` without one (`--permission-mode dontAsk`). |
 | `antigravity`, `acp` | Read roots. | Unavailable. | Unavailable. |
 
-A read-only start (`readOnly`, [conversations](fleet-conversations.md)) narrows the grants: Codex gets only the read functions and sandboxed `sh` with no writes or network. Claude keeps `read`, `glob` and `grep` within its read roots. Antigravity and other ACP agents use the same read functions in both modes, consistent with Fleet's denial of ACP client file and terminal operations.
+A read-only start (`readOnly`, [conversations](fleet-conversations.md)) narrows the grants: Codex gets only the read functions and sandboxed `sh` with no writes or network. Claude keeps `read`, `glob` and `grep` within its read roots. Antigravity and other ACP agents use the same read functions in both modes, consistent with Fleet's denial of ACP client file and terminal operations. Antigravity may request one-time permission for the execution's injected Code Mode MCP tools during its active turn.
 
 The shell sandbox reads files as Codex's sandbox does and reaches no host Unix socket:
 

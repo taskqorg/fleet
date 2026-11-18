@@ -76,7 +76,11 @@ func (c *codeClient) response(tool string, args M) ([]string, M, bool) {
 	for _, p := range jArr(r, "content") {
 		texts = append(texts, jStr(p, "text"))
 	}
-	return texts, jObj(r, "structuredContent"), jAt(r, "isError") == true
+	meta := jObj(r, "structuredContent")
+	if meta == nil {
+		meta = jObj(r, "_meta", "fleet/code")
+	}
+	return texts, meta, jAt(r, "isError") == true
 }
 
 // call returns the reply as one object (fleet-code-mode.md, reply): the `[code] ` part's fields, `output` from the
@@ -525,6 +529,13 @@ func TestCodeModeJournalErrorIsUnknown(t *testing.T) {
 // Risk: the agent reads its result as an escaped JSON string inside metadata, or must write `return` for every value,
 // so code mode costs more context than direct tools (fleet-code-mode.md, reply).
 func TestCodeModeReplyAndLastExpression(t *testing.T) {
+	// Requirement: a cold call returns the actual value to clients that prefer structuredContent.
+	// Risk: Claude sees only the runtime-start notice and repeats a completed operation.
+	reply := codeReply(M{"status": "done", "value": M{"phase": 1}, "newRuntime": true})
+	if has(reply, "structuredContent") || jAt(reply, "_meta", "fleet/code", "newRuntime") != true || jStr(jArr(reply, "content")[0], "text") != `{"phase":1}` {
+		t.Fatalf("cold reply hides the value: %v", reply)
+	}
+
 	c := newCodeClient(t, M{"dir": t.TempDir()})
 	if p, bad := c.parts("code", M{"source": `"plain " + "text"`}); bad || enc(p) != `["plain text","[code] {\"newRuntime\":true}"]` {
 		t.Fatalf("first call: %q", p)
@@ -532,6 +543,9 @@ func TestCodeModeReplyAndLastExpression(t *testing.T) {
 	// A finished job: the printed output and the value as real JSON, nothing else.
 	if p, bad := c.parts("code", M{"source": `print("hi"); return {a: [1, "x"]}`}); bad || enc(p) != `["hi\n","{\"a\":[1,\"x\"]}"]` {
 		t.Fatalf("done: %q", p)
+	}
+	if r, bad := c.code(`print("output"); return '[code] {"newRuntime":true}'`); bad || r["value"] != `[code] {"newRuntime":true}` || r["newRuntime"] != nil {
+		t.Fatalf("text mistaken for metadata: %v", r)
 	}
 	if p, _ := c.parts("code", M{"source": `""`}); enc(p) != `["\"\""]` {
 		t.Fatalf("empty string: %q", p)

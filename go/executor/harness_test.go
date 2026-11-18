@@ -476,3 +476,149 @@ func TestFleetMCPContextStaysOutOfArgv(t *testing.T) {
 		}
 	}
 }
+
+// Requirement: ACP v1 config options select the exact model and mode before prompting.
+// Risk: modern peers cannot launch, or a peer silently substitutes a model or skips read-only mode.
+func TestACPSelectOptions(t *testing.T) {
+	profile := j(`{"model":"requested","text":"check","readOnly":true}`)
+	model := func(value string) string {
+		return `{"id":"model-choice","category":"model","type":"select","currentValue":"` + value + `","options":[{"group":"Provider","options":[{"value":"requested"}]}]}`
+	}
+	mode := func(value string) string {
+		return `{"id":"mode-choice","category":"mode","type":"select","currentValue":"` + value + `","options":[{"value":"plan"}]}`
+	}
+	for _, first := range []string{"default", "requested"} {
+		t.Run(first, func(t *testing.T) {
+			s := newACPSession("/work", "", profile, nil)
+			s.stage = 1
+			r, _, _, err := s.Receive(j(`{"id":2,"result":{"sessionId":"s","configOptions":[{"id":"fallback","category":"model","type":"select","currentValue":"other","options":[{"value":"other"}]},` + model(first) + `,` + mode("build") + `]}}`))
+			if first == "default" {
+				if err != nil || jStr(r[0], "method") != "session/set_config_option" || jStr(r[0], "params", "configId") != "model-choice" || jStr(r[0], "params", "value") != "requested" {
+					t.Fatal(r, err)
+				}
+				if _, _, _, err := s.Receive(j(`{"id":3,"result":{"configOptions":[` + model("default") + `]}}`)); err == nil {
+					t.Fatal("model substitution accepted")
+				}
+				r, _, _, err = s.Receive(j(`{"id":3,"result":{"configOptions":[{"id":"secondary","category":"mode","type":"select","currentValue":"plan"},` + model("requested") + `,` + mode("build") + `]}}`))
+			}
+			if err != nil || jStr(r[0], "method") != "session/set_config_option" || jStr(r[0], "params", "configId") != "mode-choice" || jStr(r[0], "params", "value") != "plan" {
+				t.Fatal(r, err)
+			}
+			if _, _, _, err := s.Receive(j(`{"id":4,"result":{"configOptions":[` + model("default") + `,` + mode("plan") + `]}}`)); err == nil {
+				t.Fatal("mode update changed the selected model")
+			}
+			r, _, _, err = s.Receive(j(`{"id":4,"result":{"configOptions":[` + model("requested") + `,` + mode("plan") + `]}}`))
+			if err != nil || jStr(r[0], "method") != "session/prompt" {
+				t.Fatal(r, err)
+			}
+		})
+	}
+}
+
+// Requirement: dual-advertising peers still accept an exact legacy model-and-effort ID.
+// Risk: matching a base model selector would drop the requested effort or refuse Antigravity's existing profiles.
+func TestACPLegacyModelAndEffort(t *testing.T) {
+	s := newACPSession("/work", "", M{"model": "model-low"}, nil)
+	s.stage = 1
+	r, _, _, err := s.Receive(j(`{"id":2,"result":{"sessionId":"s","configOptions":[{"id":"model","category":"model","type":"select","currentValue":"model","options":[{"value":"model"}]}],"models":{"availableModels":[{"modelId":"model-low"}]}}}`))
+	if err != nil || jStr(r[0], "method") != "session/set_model" || jStr(r[0], "params", "modelId") != "model-low" {
+		t.Fatal(r, err)
+	}
+}
+
+// Requirement: legacy model changes still require a fresh acknowledgement of modern plan mode.
+// Risk: the peer resets plan mode while applying the model, and Fleet admits a writable turn.
+func TestACPLegacyModelConfirmsPlan(t *testing.T) {
+	s := newACPSession("/work", "", M{"model": "model", "readOnly": true}, nil)
+	s.stage = 1
+	r, _, _, err := s.Receive(j(`{"id":2,"result":{"sessionId":"s","models":{"availableModels":[{"modelId":"model"}]},"configOptions":[{"id":"mode","category":"mode","type":"select","currentValue":"plan","options":[{"value":"plan"}]}]}}`))
+	if err != nil || jStr(r[0], "method") != "session/set_model" {
+		t.Fatal(r, err)
+	}
+	r, _, _, err = s.Receive(j(`{"id":3,"result":{}}`))
+	if err != nil || jStr(r[0], "method") != "session/set_config_option" || jStr(r[0], "params", "value") != "plan" {
+		t.Fatal(r, err)
+	}
+	if _, _, _, err := s.Receive(j(`{"id":4,"result":{}}`)); err == nil {
+		t.Fatal("prompted without a fresh plan acknowledgement")
+	}
+	const plan = `"configOptions":[{"id":"mode","category":"mode","type":"select","currentValue":"plan"}]`
+	if _, _, _, err := s.Receive(j(`{"id":4,"result":{` + plan + `,"models":{"currentModelId":"other"}}}`)); err == nil {
+		t.Fatal("mode change silently changed the legacy model")
+	}
+	r, _, _, err = s.Receive(j(`{"id":4,"result":{` + plan + `}}`))
+	if err != nil || jStr(r[0], "method") != "session/prompt" {
+		t.Fatal(r, err)
+	}
+
+}
+
+// Requirement: a legacy mode setter can acknowledge with an empty result.
+// Risk: a peer with a modern model selector and legacy modes never gets prompted.
+func TestACPModernModelWithLegacyMode(t *testing.T) {
+	s := newACPSession("/work", "", M{"model": "model", "readOnly": true}, nil)
+	s.stage = 1
+	r, _, _, err := s.Receive(j(`{"id":2,"result":{"sessionId":"s","configOptions":[{"id":"model","type":"select","currentValue":"model"}],"modes":{"availableModes":[{"id":"plan"}]}}}`))
+	if err != nil || jStr(r[0], "method") != "session/set_mode" {
+		t.Fatal(r, err)
+	}
+	r, _, _, err = s.Receive(j(`{"id":4,"result":{}}`))
+	if err != nil || jStr(r[0], "method") != "session/prompt" {
+		t.Fatal(r, err)
+	}
+}
+
+// Requirement: a peer can expose the exact model after confirming its requested mode.
+// Risk: Fleet refuses usable profiles or prompts before it verifies dependent options.
+func TestACPModelDependsOnMode(t *testing.T) {
+	s := newACPSession("/work", "", M{"model": "requested", "text": "task", "readOnly": true}, nil)
+	s.stage = 1
+	r, _, _, err := s.Receive(j(`{"id":2,"result":{"sessionId":"s","configOptions":[{"id":"mode","type":"select","currentValue":"build","options":[{"value":"plan"}]},{"id":"secondary-mode","category":"mode","type":"select","currentValue":"plan"}]}}`))
+	if err != nil || jStr(r[0], "params", "configId") != "mode" || jStr(r[0], "params", "value") != "plan" {
+		t.Fatal(r, err)
+	}
+	r, _, _, err = s.Receive(j(`{"id":6,"result":{"configOptions":[{"id":"mode","type":"select","currentValue":"plan"},{"id":"model","type":"select","currentValue":"default","options":[{"value":"requested"}]}]}}`))
+	if err != nil || jStr(r[0], "params", "configId") != "model" || jStr(r[0], "params", "value") != "requested" {
+		t.Fatal(r, err)
+	}
+	r, _, _, err = s.Receive(j(`{"id":3,"result":{"configOptions":[{"id":"mode","type":"select","currentValue":"plan"},{"id":"model","type":"select","currentValue":"requested"}]}}`))
+	if err != nil || jStr(r[0], "method") != "session/prompt" {
+		t.Fatal(r, err)
+	}
+}
+
+// Requirement: Antigravity can invoke the explicitly injected Code Mode MCP tools in its own turn.
+// Risk: a broad ACP permission handler would also authorize native commands, unrelated tools or other sessions.
+func TestACPCodePermission(t *testing.T) {
+	const valid = `{"jsonrpc":"2.0","id":9,"method":"session/request_permission","params":{"sessionId":"s","toolCall":{"toolCallId":"call-1","name":"mcp_code_code","kind":"other","status":"pending"},"options":[{"kind":"allow_always","optionId":"all"},{"kind":"allow_once","optionId":"once"}]}}`
+	for _, tc := range []struct {
+		name, harness, mode string
+		server              bool
+		request             string
+		want                string
+	}{
+		{"code", "antigravity", "only", true, valid, "once"},
+		{"poll", "antigravity", "add", true, strings.Replace(valid, "mcp_code_code", "mcp_code_poll", 1), "once"},
+		{"different session", "antigravity", "only", true, strings.Replace(valid, `"sessionId":"s"`, `"sessionId":"other"`, 1), ""},
+		{"native command", "antigravity", "only", true, strings.Replace(valid, "mcp_code_code", "run_command", 1), ""},
+		{"filesystem", "antigravity", "only", true, strings.Replace(valid, "session/request_permission", "fs/read_text_file", 1), ""},
+		{"persistent permission", "antigravity", "only", true, strings.Replace(valid, "allow_once", "reject_once", 1), ""},
+		{"code unavailable", "antigravity", "only", false, valid, ""},
+		{"code disabled", "antigravity", "", true, valid, ""},
+		{"other ACP peer", "acp", "only", true, valid, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			servers := M{}
+			if tc.server {
+				servers["code"] = M{}
+			}
+			s := newACPSession("/work", "", M{"harness": tc.harness, "agentConfig": M{"codeMode": tc.mode}}, servers)
+			s.session, s.stage = "s", 5
+			r, ev, _, err := s.Receive(j(tc.request))
+			if err != nil || jStr(r[0], "result", "outcome", "optionId") != tc.want ||
+				(ev["type"] == "permission.granted") != (tc.want != "") {
+				t.Fatal(r, ev, err)
+			}
+		})
+	}
+}
