@@ -173,11 +173,10 @@ function HistoryTab({ kind, id }: { kind: Kind; id: string }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { op('definition_history', { kind, id }).then(setH, e => setError(e.message)); }, [kind, id]);
   if (error) return <DetailSection title="Revisions"><div class="error" role="alert">{error}</div></DetailSection>;
-  const now = Date.now();
   return <DetailSection title="Revisions">
     {!h ? <Empty text="Loading…" /> : h.revisions.map(r => <KvRow key={r.revision} icon={r.source === 'agent' ? 'bot' : r.source === 'repo' ? 'git-merge' : 'file-plus-2'} label={`r${r.revision} · ${r.message}`}
       meta={<span class="mono">{r.actor.person?.name ?? (r.actor.executionId ? 'agent' : 'Fleet')}{r.actor.kind === 'agent' && r.actor.directedBy ? ` for ${r.actor.directedBy.name}` : ''} · {r.contentSha.slice(0, 7)}</span>}
-      value={<AgeChip t={Date.parse(r.at)} now={now} />} />)}
+      value={<AgeChip t={Date.parse(r.at)} />} />)}
   </DetailSection>;
 }
 
@@ -211,13 +210,12 @@ function CompatibilityTab({ id }: { id: string }) {
   const [c, setC] = useState<Ops['agent_compatibility']['reply'] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { op('agent_compatibility', { id }).then(setC, x => setError(x.message)); }, [id]);
-  const now = Date.now();
   return <DetailSection title="Combinations seen in 30 days">
     {error ? <div class="error" role="alert">{error}</div> : !c ? <Empty text="Loading…" /> : c.rows.map(r =>
       <KvRow key={`${r.harness}/${r.harnessVersion}/${r.model}/${r.effort}`} icon={r.state === 'checked' ? 'circle-check' : r.state === 'failed' ? 'circle-x' : 'circle-dashed'}
         label={`${r.harness}${r.harnessVersion ? ' ' + r.harnessVersion : ''} · ${r.model}${r.effort ? ' · ' + r.effort : ''}`}
         meta={<span class="mono">{r.state === 'unchecked' ? 'not checked' : r.state}{r.revision ? ` · r${r.revision}` : ''}{r.error ? ` · ${r.error}` : ''}</span>}
-        value={r.evidence ? <AgeChip t={Date.parse(r.evidence.at)} now={now} /> : undefined} />)}
+        value={r.evidence ? <AgeChip t={Date.parse(r.evidence.at)} /> : undefined} />)}
   </DetailSection>;
 }
 

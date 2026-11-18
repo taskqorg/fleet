@@ -7,10 +7,10 @@
 **Anatomy.**
 * Disclosure, then the outcome text clamped to two lines.
 * A meta line: requirements met as `1/3` (success tone when all are met) and inputs as icon chips.
-* Expanded: the full text, the requirement checklist and dependencies.
+* Detail shows the requirements and dependencies inline. Requirements without check evidence have no check state or met counter. Long outcome text still expands inline.
 
 **Behaviour.**
 * Expands inline, never as a popup (OR-14).
-* Requirements update live as checks complete.
+* Show check state when backed by recorded evidence.
 
 **Used in.** Task detail.

@@ -92,7 +92,7 @@ function PrList({ sel, onSel, picked, onUnpick }: { sel?: number; onSel: (n: num
       <span class="id">#{p.n}</span>{p.repo && <span class="id">{p.repo}</span>}{p.release && <span class="id">{p.release}</span>}</span>
     <span class="rz"><RowFacts>
       {p.removals > 0 && <Fact icon="rotate-ccw" text={String(p.removals)} tip={`${p.removals} removed from the queue`} />}
-      <Fact tip={`${states.delivery[p.stage].label} for`}><AgeChip t={p.since} now={NOW} alertAfter={NORM[p.stage] && NORM[p.stage]![1] / 1000} alertLabel="past the stage norm (P90)" /></Fact>
+      <Fact tip={`${states.delivery[p.stage].label} for`}><AgeChip t={p.since} alertAfter={NORM[p.stage] && NORM[p.stage]![1] / 1000} alertLabel="past the stage norm (P90)" /></Fact>
     </RowFacts></span>
   </div>;
   const keys = group === 'stage' ? ORDER : group === 'project' ? [...new Set(shown.map(p => p.repo ?? 'taskqorg/fleet'))] : [];
@@ -198,7 +198,7 @@ function Moving({ compact }: { compact?: boolean }) {
         <a class="mono row-link" href="#/delivery">{pr(p.n)}</a>
         {compact ? bar : <span class="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</span>}
         {!compact && bar}
-        <span class="r"><AgeChip t={p.since} now={NOW} alertAfter={nm && nm[1] / 1000} alertLabel="past the stage norm (P90)" /></span>
+        <span class="r"><AgeChip t={p.since} alertAfter={nm && nm[1] / 1000} alertLabel="past the stage norm (P90)" /></span>
         {!compact && <span class={`r mono type-sm ${over ? 't-danger' : 'muted'}`} style={over ? { color: 'var(--tone-fg)' } : undefined} data-tip={nm ? `${states.delivery[p.stage].label}: P50 ${fmt(nm[0])}, P90 ${fmt(nm[1])} over 14 days` : undefined}>
           {nm ? `P90 ${fmt(nm[1])}` : 'no norm'}</span>}
       </div>;
@@ -246,7 +246,7 @@ function PrDetail({ p, onClose }: { p: Pr; onClose: () => void }) {
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={p.title}>
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><span class="muted mono">{p.repo ?? 'taskqorg/fleet'} #{p.n}</span><span class="grow" /><Button label="Open on GitHub" icon="external-link" iconOnly /></header>
     <h2 class="detail-title">{p.title}</h2>
-    <div class="state-line"><StateBadge family="delivery" state={p.stage} /><span class="muted">by {p.author}</span><AgeChip t={p.opened} now={NOW} /></div>
+    <div class="state-line"><StateBadge family="delivery" state={p.stage} /><span class="muted">by {p.author}</span><AgeChip t={p.opened} /></div>
     <div class="stack-pad">
       <Totals items={[{ label: 'Lead so far', m: { value: (NOW - p.opened) / 1000, basis: 'measured' }, kind: 'duration' }, { label: 'Queue runs', m: { value: p.runs, basis: 'measured' }, kind: 'count' }, { label: 'Removed', m: { value: p.removals, basis: 'measured' }, kind: 'count' }]} />
       <DetailSection title="Stages">{stages.map(([s, a, b]) => <KvRow key={s} icon={states.delivery[s].icon} label={states.delivery[s].label}

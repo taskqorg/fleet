@@ -18,7 +18,8 @@ export function Hosts({ id }: { id?: string }) {
   // Liveness comes from lastSeenAt, which polls move without a change row; re-read every 5 s (D11 CUJ 5) and judge age on the
   // server's clock (serverNow) so a skewed browser clock does not mark hosts offline.
   const { data, state } = useDoc<any>('hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
-  const now = data ? data.serverNow + (Date.now() - data.fetchedAt) : Date.now();
+  const clockOffsetMs = data ? data.serverNow - data.fetchedAt : 0;
+  const now = Date.now() + clockOffsetMs;
   // Limits (people-access §8): the latest reading per subscription and limit period, with its age; none is unknown, never zero.
   // Spans change without change rows: summary and findings are re-read every 30 s.
   const tele = useDoc<any>('telemetry-summary', async () => await op('telemetry_summary', { window: '1h' }), () => false, 30000);
@@ -40,7 +41,7 @@ export function Hosts({ id }: { id?: string }) {
             <HarnessCounts counts={h.runningByHarness} label={`${h.id} workers by harness`} />
             {h.queued > 0 && <span class="hc"><Icon name="list-ordered" label="Queued commands" /><Num m={{ value: h.queued, basis: 'measured' }} kind="count" /></span>}
             {r && <span class="hc" data-tip="Daemon load (1 min) and memory available"><Icon name="activity" label="Load" /><Num m={m(r.load1)} kind="score" /> <Num m={m(r.memFree)} kind="bytes" /></span>}</span>
-          <span>{h.lastSeenAt ? <AgeChip t={h.lastSeenAt} now={now} alertAfter={15 * 60} tone="attention" alertLabel="not seen for a while" /> : <span class="muted">never</span>}</span>
+          <span>{h.lastSeenAt ? <AgeChip t={h.lastSeenAt} alertAfter={15 * 60} tone="attention" alertLabel="not seen for a while" clockOffsetMs={clockOffsetMs} /> : <span class="muted">never</span>}</span>
         </div>; })}
       </div>
     </section>
@@ -48,13 +49,13 @@ export function Hosts({ id }: { id?: string }) {
   const detail = sel && <HostDetail key={sel.id} host={sel} live={fresh(sel)} reading={reading(sel.id)}
     processes={(tele.data?.processes ?? []).filter((p: any) => p.hostId === sel.id)}
     runs={(tele.data?.runs ?? []).filter((r: any) => r.hostId === sel.id)}
-    now={now} onGone={() => go('/hosts')} onOpen={go} />;
+    clockOffsetMs={clockOffsetMs} onGone={() => go('/hosts')} onOpen={go} />;
   // Limits (people access §8 and §12, D24): its own route; the idle work area shows the system.
   const limits = id === 'limits' && <article class="detail" data-ui="detail" tabIndex={-1} aria-label="Limits"><Limits /></article>;
-  return <ListDetail list={list} detail={limits || detail || undefined} detailKey={id} idle={<SystemPanels tele={tele.data} found={found.data} now={now} />} />;
+  return <ListDetail list={list} detail={limits || detail || undefined} detailKey={id} idle={<SystemPanels tele={tele.data} found={found.data} clockOffsetMs={clockOffsetMs} />} />;
 }
 
-function HostDetail({ host: sel, live, reading: r, processes, runs, now, onGone, onOpen }: { host: any; live: boolean; reading: any; processes: any[]; runs: any[]; now: number; onGone: () => void; onOpen: (path: string) => void }) {
+function HostDetail({ host: sel, live, reading: r, processes, runs, clockOffsetMs, onGone, onOpen }: { host: any; live: boolean; reading: any; processes: any[]; runs: any[]; clockOffsetMs: number; onGone: () => void; onOpen: (path: string) => void }) {
   const [preview, setPreview] = useState<any>(null);
   const [err, setErr] = useState('');
   const remove = (confirm: boolean) => (setErr(''), op('hosts_remove', { id: sel.id, preview: !confirm }).then(x => { if (confirm) onGone(); else setPreview(x); }, e => setErr(String(e.message ?? e))));
@@ -63,12 +64,12 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, now, onGone,
     <DetailSection title="State">
       {/* The coordinator answers this host's polls with an error: no commands, no update target (host_poll_health.go). */}
       {live && sel.pollError && <ProblemRow title="Polls failing" severity="failure" actions={[]}
-        facts={<><span class="mono">{sel.pollError.reason}</span> <span class="muted">{sel.pollError.status} since</span> <AgeChip t={sel.pollError.since} now={now} /> <span class="muted">{sel.pollError.message}</span></>} />}
-      <KvRow icon="activity" label="Last seen" meta={sel.lastSeenAt ? undefined : 'never'} value={sel.lastSeenAt ? <AgeChip t={sel.lastSeenAt} now={now} /> : undefined} />
+        facts={<><span class="mono">{sel.pollError.reason}</span> <span class="muted">{sel.pollError.status} since</span> <AgeChip t={sel.pollError.since} clockOffsetMs={clockOffsetMs} /> <span class="muted">{sel.pollError.message}</span></>} />}
+      <KvRow icon="activity" label="Last seen" meta={sel.lastSeenAt ? undefined : 'never'} value={sel.lastSeenAt ? <AgeChip t={sel.lastSeenAt} clockOffsetMs={clockOffsetMs} /> : undefined} />
       <KvRow icon="panels-top-left" label="Platform" meta={sel.platform ?? 'unknown'} />
       {(r?.version ?? sel.version) && <KvRow icon="info" label="Daemon version" meta={<span class="mono">{r?.version ?? sel.version}</span>} />}</DetailSection>
     <DetailSection title="Host daemon health">{r ? <>
-      <KvRow icon="clock" label="Heartbeat" value={<AgeChip t={ms(r.at)} now={now} alertAfter={3 * 60} tone="danger" alertLabel="no heartbeat" />} />
+      <KvRow icon="clock" label="Heartbeat" value={<AgeChip t={ms(r.at)} alertAfter={3 * 60} tone="danger" alertLabel="no heartbeat" clockOffsetMs={clockOffsetMs} />} />
       <KvRow icon="activity" label="Load (1 min)" value={<><Num m={m(r.load1)} kind="score" />{r.cpus != null && <span class="muted"> of {r.cpus} cores</span>}</>} />
       <KvRow icon="activity" label="Memory available" value={<><Num m={m(r.memFree)} kind="bytes" />{r.memTotal != null && <span class="muted"> of <Num m={m(r.memTotal)} kind="bytes" /></span>}</>} />
       <KvRow icon="save" label="Disk free" value={<Num m={m(r.diskFree)} kind="bytes" />} />
@@ -80,7 +81,7 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, now, onGone,
       <KvRow icon="list-ordered" label="Queued commands" value={<Num m={{ value: sel.queued, basis: 'measured' }} kind="count" />} />
       {runs.slice(0, 10).map((run: any) => <KvRow key={run.executionId} icon="terminal" label="Execution"
         meta={run.projectId ? <a class="row-link" href={`/projects/${encodeURIComponent(run.projectId)}`} onClick={e => { e.preventDefault(); onOpen(`/projects/${encodeURIComponent(run.projectId)}`); }}>{run.projectId}</a> : undefined}
-        value={<><EntityCode id={run.executionId} kind="execution" />{run.durationMs != null && <Num m={m(run.durationMs / 1000)} kind="duration" />} <Num m={m(run.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(run.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{run.orphans > 0 && <span class="chip t-danger">{run.orphans} orphan</span>} <AgeChip t={ms(run.at)} now={now} /></>} />)}
+        value={<><EntityCode id={run.executionId} kind="execution" />{run.durationMs != null && <Num m={m(run.durationMs / 1000)} kind="duration" />} <Num m={m(run.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(run.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{run.orphans > 0 && <span class="chip t-danger">{run.orphans} orphan</span>} <AgeChip t={ms(run.at)} clockOffsetMs={clockOffsetMs} /></>} />)}
     </DetailSection>
     {live && sel.problems?.length > 0 && <DetailSection title="Problems">{sel.problems.map((p: any) => <KvRow key={p.route} icon="activity" label={`Edge answers ${p.route} with ${p.status}`} meta={p.detail || p.location || undefined} />)}</DetailSection>}
     {sel.harnessVersions?.length > 0 && <DetailSection title="Agent CLIs">{sel.harnessVersions.map((cli: { harness: string; expected: string; observed: string | null }) =>
@@ -100,7 +101,7 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, now, onGone,
   </article>;
 }
 
-function SystemPanels({ tele, found, now }: { tele: any; found: any; now: number }) {
+function SystemPanels({ tele, found, clockOffsetMs }: { tele: any; found: any; clockOffsetMs: number }) {
   const [, go] = useLocation();
   const [purge, setPurge] = useState<any>(null);
   const [purgeErr, setPurgeErr] = useState('');
@@ -114,7 +115,7 @@ function SystemPanels({ tele, found, now }: { tele: any; found: any; now: number
     <DetailSection title="Findings">
       {found?.stale && <ProblemRow title="Rules pass is stale" facts="Findings may be out of date." severity="warning" actions={[]} />}
       {(found?.findings ?? []).length ? found.findings.map((f: any) => <KvRow key={f.cause} icon={f.groupCause ? 'circle-alert' : 'triangle-alert'} label={f.text ?? f.cause}
-        meta={f.groupCause ? `part of ${f.groupCause}` : undefined} value={<AgeChip t={ms(f.since)} now={now} />} />) : <span class="muted">none</span>}
+        meta={f.groupCause ? `part of ${f.groupCause}` : undefined} value={<AgeChip t={ms(f.since)} clockOffsetMs={clockOffsetMs} />} />) : <span class="muted">none</span>}
     </DetailSection>
     <DetailSection title="Services, last hour">
       <div class="vl-wrap" style={{ '--cols': 'minmax(0,1fr) auto auto auto' }}>
@@ -130,13 +131,13 @@ function SystemPanels({ tele, found, now }: { tele: any; found: any; now: number
     <DetailSection title="Host daemon health">
       {(tele.hosts ?? []).length ? (tele.hosts as any[]).map(h => <KvRow key={h.hostId} icon="panels-top-left" label={h.hostId}
         meta={<a class="row-link" href={`/hosts/${encodeURIComponent(h.hostId)}`} onClick={e => { e.preventDefault(); go(`/hosts/${encodeURIComponent(h.hostId)}`); }}>Inspect host</a>}
-        value={<><Num m={m(h.load1)} kind="score" /> <span class="muted">load</span> <Num m={m(h.memFree)} kind="bytes" /> <span class="muted">avail</span> <Num m={m(h.diskFree)} kind="bytes" /> <span class="muted">disk</span> <AgeChip t={ms(h.at)} now={now} /></>} />) : <span class="muted">no host heartbeats</span>}
+        value={<><Num m={m(h.load1)} kind="score" /> <span class="muted">load</span> <Num m={m(h.memFree)} kind="bytes" /> <span class="muted">avail</span> <Num m={m(h.diskFree)} kind="bytes" /> <span class="muted">disk</span> <AgeChip t={ms(h.at)} clockOffsetMs={clockOffsetMs} /></>} />) : <span class="muted">no host heartbeats</span>}
     </DetailSection>
     <DetailSection title="Active & recent executions">
       <div class="res-bar"><a class="row-link" href="/runners" onClick={e => { e.preventDefault(); go('/runners'); }}>Open Runners</a></div>
       {tele.runs.length ? tele.runs.slice(0, 20).map((r: any) => <KvRow key={r.executionId} icon="activity" label="Execution"
         meta={<>{r.hostId ? <a class="row-link" href={`/hosts/${encodeURIComponent(r.hostId)}`} onClick={e => { e.preventDefault(); go(`/hosts/${encodeURIComponent(r.hostId)}`); }}>{r.hostId}</a> : null}{r.projectId ? <> · <a class="row-link" href={`/projects/${encodeURIComponent(r.projectId)}`} onClick={e => { e.preventDefault(); go(`/projects/${encodeURIComponent(r.projectId)}`); }}>{r.projectId}</a></> : null}</>}
-        value={<><EntityCode id={r.executionId} kind="execution" />{r.durationMs != null && <Num m={m(r.durationMs / 1000)} kind="duration" />} <Num m={m(r.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(r.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{r.orphans > 0 && <span class="chip t-danger">{r.orphans} orphan</span>} <AgeChip t={ms(r.at)} now={now} /></>} />) : <span class="muted">none in the last hour</span>}
+        value={<><EntityCode id={r.executionId} kind="execution" />{r.durationMs != null && <Num m={m(r.durationMs / 1000)} kind="duration" />} <Num m={m(r.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(r.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{r.orphans > 0 && <span class="chip t-danger">{r.orphans} orphan</span>} <AgeChip t={ms(r.at)} clockOffsetMs={clockOffsetMs} /></>} />) : <span class="muted">none in the last hour</span>}
     </DetailSection>
     <DetailSection title="Purge">
       {purgeErr && <ProblemRow title="Not purged" facts={purgeErr} severity="failure" actions={[]} />}

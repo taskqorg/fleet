@@ -40,7 +40,7 @@ export function Lab({ id }: { id?: string }) {
         render={(e: any) => <>
           <span class="lead"><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} compact /></span>
           <span class="tt"><a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }}>{title(e)}</a></span>
-          <AgeChip t={ms(e.createdAt)} now={now} />
+          <AgeChip t={ms(e.createdAt)} />
         </>} />
         : <Empty text="No experiments yet. Choose New experiment to create a draft." />}
     </section>

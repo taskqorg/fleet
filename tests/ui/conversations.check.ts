@@ -283,7 +283,7 @@ try {
   check(await p.evaluate(() => (window as any).x === undefined), 'the app page is untouched');
   const direct = await p.evaluate(async () => (await fetch('/api/results/page-1')).headers.get('content-security-policy'));
   check(!!direct && !/allow-scripts/.test(direct), '/api/results itself stays script-free');
-  // Resource bar & BoundaryRow resources: expandable without shrinking transcript viewport <= 500px (OR-25).
+  // Inline conversation and run resource figures keep the transcript and composer visible (OR-25).
   await p.route('**/api/ops/session_get', async route => {
     const res = await route.fetch();
     const json = await res.json();
@@ -296,7 +296,7 @@ try {
       cost: [{ value: 0.9, currency: 'USD', basis: 'measured' }, { value: 0.4, currency: 'USD', basis: 'subscription', note: 'Claude Max' }],
     };
     json.cost = mkRes.cost;
-    json.resources = { own: mkRes, delegated: { ...mkRes, executions: 0, tokens: { ...mkRes.tokens, total: 0 }, durations: { ...mkRes.durations, elapsedMs: null, executionWallMs: null }, tools: { ...mkRes.tools, totalCalls: 0, failedCalls: 0 }, cost: [] }, spawned: { ...mkRes, executions: 0, tokens: { ...mkRes.tokens, total: 0 }, durations: { ...mkRes.durations, elapsedMs: null, executionWallMs: null }, tools: { ...mkRes.tools, totalCalls: 0, failedCalls: 0 }, cost: [] }, total: mkRes, spawnedTasks: [], hidden: 1 };
+    json.resources = { own: mkRes, delegated: { ...mkRes, executions: 0, tokens: { ...mkRes.tokens, total: 0 }, durations: { ...mkRes.durations, elapsedMs: null, executionWallMs: null }, tools: { ...mkRes.tools, totalCalls: 0, failedCalls: 0 }, cost: [] }, spawned: { ...mkRes, executions: 0, tokens: { ...mkRes.tokens, total: 0 }, durations: { ...mkRes.durations, elapsedMs: null, executionWallMs: null }, tools: { ...mkRes.tools, totalCalls: 0, failedCalls: 0 }, cost: [] }, total: mkRes, spawnedTasks: Array.from({length: 100}, (_, i) => ({ taskId: `related-${i}`, title: `Related task ${i}`, state: 'completed', resources: mkRes })), hidden: 1 };
     await route.fulfill({ json });
   });
   await p.route('**/api/ops/thread_entries', async route => {
@@ -319,14 +319,27 @@ try {
   });
   await p.goto(`${origin}/conversations/${S}`);
   check(await until(async () => await p.locator('[data-ui="resource-bar"]').count() === 1), 'conversation header renders ScopedRollupBar');
-  const hWithBar = (await p.locator('.tr-body .vl').boundingBox())!.height;
-  check(hWithBar > 500, `collapsed resource bar preserves thread height (${Math.round(hWithBar)} px > 500)`);
-  await p.locator('[data-ui="resource-bar"]').getByRole('button', { name: 'Resources' }).click();
-  check(await until(async () => await p.getByRole('heading', { name: 'Scoped resources' }).count() === 1), 'ScopedRollupBar expands scoped rollup details');
+  const bar = p.locator('[data-ui="resource-bar"]');
+  check((await p.locator('.tr-body .vl').boundingBox())!.height > 500, 'inline figures preserve thread height');
+  check(await bar.getByText('Peak memory', { exact: true }).count() === 1, 'conversation shows memory without expanding');
+  check(await bar.getByText('≈ $0.40', { exact: true }).count() === 1, 'subscription cost is visible without expanding');
+  check(await bar.getByRole('button').count() === 0, 'resource figures require no disclosure');
   const compBox = await p.locator('.composer').boundingBox();
   const vp = p.viewportSize();
-  check(!!compBox && !!vp && compBox.y + compBox.height <= vp.height + 1, 'expanded ScopedRollupBar keeps Composer visible inside viewport');
-  await p.locator('[data-ui="resource-bar"]').getByRole('button', { name: 'Hide breakdown' }).click();
+  check(!!compBox && !!vp && compBox.y + compBox.height <= vp.height + 1, 'inline resource figures keep Composer visible inside viewport');
+  await p.setViewportSize({width: 390, height: 860});
+  const related = p.getByRole('button', {name: 'Related work', exact: true});
+  await related.click();
+  const relatedPane = p.getByRole('region', {name: 'Related work', exact: true});
+  await relatedPane.getByRole('link', {name: 'Related task 0', exact: true}).waitFor();
+  check(await relatedPane.getByRole('link').count() === 8, 'related work limits the initial task rows');
+  await relatedPane.getByRole('searchbox', {name: 'Find spawned tasks'}).fill('Related task 99');
+  check(await until(async () => await relatedPane.getByRole('link', {name: 'Related task 99', exact: true}).isVisible()), 'the last related task is reachable by search');
+  const phoneComposer = await p.locator('.composer').boundingBox();
+  check(!!phoneComposer && phoneComposer.y + phoneComposer.height <= 861, 'the related task list leaves Composer visible at 390 px');
+  await related.click();
+  check(await p.locator('.tr-body .vl').isVisible() && await relatedPane.count() === 0, 'closing Related work restores the transcript');
+  await p.setViewportSize({width: 1440, height: 900});
   await p.goto(`${origin}/conversations/task-a`);
   check(await until(async () => await p.locator('.th-boundary').filter({ hasText: '≈ $0.40' }).count() >= 1), 'BoundaryRow shows subscription cost figure');
   await p.unroute('**/api/ops/session_get');

@@ -100,3 +100,12 @@ The operator can work without the mouse.
 * Light and dark are equal citizens. The default follows the system setting; the person can override it, and the choice is remembered.
 * Desktop first: layouts are designed for 1280 to 1920 px wide, as three columns ([OR-24](owner-rules.md)); catalogue and work area sit side by side above 1100 px.
 * Phone usable: at 390 px the catalogue and the opened item are separate screens, and every action stays reachable. No page scroll in either direction ([OR-25](owner-rules.md)); wide tables scroll inside their own frame.
+
+### Narrow work areas
+
+* Fit the available work-area width first. For detail panes up to 500 CSS px, use one 8 px outer gutter per side. Align the heading, transcript and composer to it. Keep panel padding where it separates a border from content.
+* Size controls by input mode. Compact pointer controls keep their desktop dimensions when the window narrows. Icon-only controls are square. On touch, keep the full 44 × 44 px target inside its row and give the shell header enough height. Keep the standard icon and text sizes.
+* Wrap related controls together when they need room. Keep search-result stepping controls with active search on narrow conversation headers.
+* Follow [OR-20](owner-rules.md) for hints. At a viewport edge, move the hint as a unit. Under zoom, size it to the visible viewport, wrap the message at that width and keep its anchor intact. Make essential explanations available through a visible label or a tappable control on touch.
+
+Review at 390 CSS px with a mouse and with touch, at 320 px on touch, and in a narrow detail pane beside a catalogue. Check the heading, buttons, longest practical label and hint, code, scrolling and composer.

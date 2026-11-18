@@ -46,7 +46,6 @@ export function Results({ id }: { id?: string }) {
   const ready = prefsRead.value; // the filter carries the focus and ignore
   useEffect(() => { if (!ready) { gen.current++; setRows(null); return; } load(); return subscribe({ resync: () => load(), changes: cs => { if (cs.some(c => c.kind === 'artifact' || c.kind === 'task') && pages.current <= 1) load(); } }); }, [fkey, ready]);
   const chips: Chip[] = Object.entries(view.extra ?? {}).filter(([k]) => !(k in typed.terms)).filter((e): e is [string, string] => ['media', 'since', 'task', 'execution'].includes(e[0]) && e[1] !== undefined).map(([field, value]) => ({ field, value }));
-  const now = Date.now();
   const list = <>
     {error && <ErrorBanner text={`Results did not load: ${error}`} onRetry={() => load()} />}
     <section class="panel">
@@ -62,7 +61,7 @@ export function Results({ id }: { id?: string }) {
             render={r => <>
               <span class="lead"><StateBadge family="artifact" state={r.state} compact /></span>
               <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.name}</a>{r.taskId && r.taskCode && <EntityCode code={r.taskCode} id={r.taskId} kind="task" />}{r.projectId && <span class="id">{r.projectId}</span>}</span>
-              <span class="r svc">{bytes(r.size).text}</span><span class="r"><AgeChip t={r.createdAt} now={now} /></span>
+              <span class="r svc">{bytes(r.size).text}</span><span class="r"><AgeChip t={r.createdAt} /></span>
             </>} />}
       </ListFrame>
     </section>

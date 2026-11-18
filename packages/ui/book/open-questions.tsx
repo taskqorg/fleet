@@ -32,13 +32,13 @@ function A1() {
   const cols = 'minmax(0,1fr) 2rem 4.5rem 1.25rem 2.75rem';
   const rows = [...T].sort((a, b) => PRI(a) - PRI(b));
   return <div class="pane"><Head cols={cols}><span>Task</span><span>Pri</span><span>ID</span><span /><span class="r">Age</span></Head>
-    {rows.map(t => <Row key={t.id} cols={cols}><span class="title">{t.title}</span><PriChip p={PRI(t)} /><EntityCode cls="svc" code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} /><StateBadge family="task" state={t.state} compact /><span class="r"><AgeChip t={t.started} now={NOW} /></span></Row>)}</div>;
+    {rows.map(t => <Row key={t.id} cols={cols}><span class="title">{t.title}</span><PriChip p={PRI(t)} /><EntityCode cls="svc" code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} /><StateBadge family="task" state={t.state} compact /><span class="r"><AgeChip t={t.started} /></span></Row>)}</div>;
 }
 function A2() {
   const cols = 'minmax(0,1fr) 4.5rem 1.25rem 2.75rem';
   return <div class="pane">{[0, 1, 2].map(p => { const g = T.filter(t => PRI(t) === p); return <div key={p}>
     <Row cols="1fr" cls="grp"><GroupHeader icon={p === 0 ? 'triangle-alert' : 'list-ordered'} tone={p === 0 ? 'danger' : 'neutral'} label={`Priority ${p}`} count={g.length} open onToggle={() => {}} /></Row>
-    {g.map(t => <Row key={t.id} cols={cols} cls={p === 0 ? 'p0' : ''}><span class="title">{t.title}</span><EntityCode cls="svc" code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} /><StateBadge family="task" state={t.state} compact /><span class="r"><AgeChip t={t.started} now={NOW} /></span></Row>)}</div>; })}</div>;
+    {g.map(t => <Row key={t.id} cols={cols} cls={p === 0 ? 'p0' : ''}><span class="title">{t.title}</span><EntityCode cls="svc" code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} /><StateBadge family="task" state={t.state} compact /><span class="r"><AgeChip t={t.started} /></span></Row>)}</div>; })}</div>;
 }
 function A3() {
   const [order, setOrder] = useState(T.slice(0, 6));
@@ -58,7 +58,7 @@ function Detail({ children, tabs, tab, setTab }: { children: ComponentChildren; 
   return <article class="detail mini">
     <div class="detail-h"><span class="muted mono">fleet · T-9989</span><span class="grow" /><SplitButton main={{ label: 'Pause', icon: 'pause' }} alternatives={[{ label: 'Cancel task', icon: 'circle-slash' }]} /></div>
     <h2 class="detail-title">Write release notes 95</h2>
-    <div class="state-line"><StateBadge family="task" state="waiting" reason="acceptance by you" /><AgeChip t={NOW - 9 * hr} now={NOW} /></div>
+    <div class="state-line"><StateBadge family="task" state="waiting" reason="acceptance by you" /><AgeChip t={NOW - 9 * hr} /></div>
     {children}
     <div class="tabs detail-tabs" role="tablist">{tabs.map(x => <button type="button" role="tab" key={x} aria-selected={tab === x} onClick={() => setTab(x)}>{x}</button>)}</div>
   </article>;
@@ -118,7 +118,7 @@ function C3() {
 function PhoneFrame({ children, bottom }: { children: ComponentChildren; bottom?: ComponentChildren }) {
   return <div class="phone-frame"><header class="topbar"><b class="brand">Fleet</b><span class="grow" /><span class="nav-count t-attention">3</span></header>{children}{bottom}</div>;
 }
-const PhoneList = () => <div class="phone-list">{T.slice(0, 7).map(t => <div key={t.id} class="phone-row"><span class="title">{t.title}</span><span class="row"><EntityCode code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} /><StateBadge family="task" state={t.state} compact /><AgeChip t={t.started} now={NOW} /></span></div>)}</div>;
+const PhoneList = () => <div class="phone-list">{T.slice(0, 7).map(t => <div key={t.id} class="phone-row"><span class="title">{t.title}</span><span class="row"><EntityCode code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} /><StateBadge family="task" state={t.state} compact /><AgeChip t={t.started} /></span></div>)}</div>;
 function D1() {
   const [pinned, setPinned] = useState(['tasks', 'hosts']);
   return <PhoneFrame><div class="phone-body force-narrow"><NavRail items={NAV} pinned={pinned} current="tasks" onGo={() => {}} onPins={setPinned} /><PhoneList /></div></PhoneFrame>;

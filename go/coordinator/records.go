@@ -125,8 +125,8 @@ func put(q *Request, kind string, v doc) error {
 	return putDocument(q, kind, v)
 }
 
-// execJSON: an execution record as the API shows it: the typed state and observation over the open remainder in data.
-const execJSON = "data || jsonb_build_object('state',state,'observation',observation)"
+// execJSON: an execution record as the API shows it: the typed state, observation and last contact over the open remainder in data.
+const execJSON = "data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at)"
 
 var terminalTyped = map[string]bool{"succeeded": true, "failed": true, "cancelled": true}
 

@@ -2,7 +2,7 @@
 import { useState, useRef, useLayoutEffect } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
-  StatusLine, AgeChip, Button, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
+  StatusLine, AgeChip, Button, SearchBox, SearchField, VirtualList, Empty, ROW2, type VirtualListHandle, CostFigures, DetailSection, EntityCode, Icon, Num, StateBadge, Totals, CopyButton,
   msMeasured, numMeasured, splitCostFigures,
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
 } from '../../../packages/ui/src/index.ts';
@@ -130,30 +130,30 @@ function ResourceCells({ s }: { s: ResourceSummary }) {
 }
 
 /** Displays ScopedResourceRollup breakdown (own, delegated, spawned, total), spawned task links, and hidden count. */
-export function ScopedRollupDetails({
-  rollup,
-  cost,
-  title = 'Resource breakdown',
-}: {
-  rollup?: ScopedResourceRollup | null;
-  cost?: readonly CostFigure[];
-  title?: string;
-}) {
+export function ScopedRollupDetails({ rollup, foldTools }: { rollup: ScopedResourceRollup; foldTools?: boolean }) {
   const [, go] = useLocation();
-  if (!rollup) return null;
-  const total = rollup.total;
+  const [taskQuery, setTaskQuery] = useState('');
+  const term = taskQuery.trim().toLowerCase();
+  const tasks = rollup.spawnedTasks.filter(task => !term || task.title.toLowerCase().includes(term) || task.code?.toLowerCase().includes(term));
+  const shown = tasks.slice(0, 8);
   const rows: { label: string; s: ResourceSummary }[] = [
     { label: 'Own', s: rollup.own },
     ...(rollup.delegated.executions > 0 ? [{ label: 'Delegated', s: rollup.delegated }] : []),
     ...(rollup.spawned.executions > 0 || rollup.spawnedTasks.length > 0 ? [{ label: 'Spawned', s: rollup.spawned }] : []),
-    ...(rollup.delegated.executions > 0 || rollup.spawned.executions > 0 ? [{ label: 'Total', s: rollup.total }] : []),
   ];
-  const hasDetail = total.executions > 0 || total.tokens.total != null || rollup.spawnedTasks.length > 0 || rollup.hidden > 0;
-  if (!hasDetail) return null;
-  const topTools = total?.tools.byTool.slice(0, 6) ?? [];
+  const tools = rollup.total.tools;
+  const topTools = tools.byTool.slice(0, 6);
+  const toolBreakdown = topTools.length > 0 && <div class="res-bar">
+    {topTools.map(tool => <span key={tool.name} class="chip" data-tip={tool.connection ? `connection: ${tool.connection}` : undefined}>
+      <Icon name="terminal" label="Tool" />
+      <span class="mono">{tool.name}</span> · {tool.calls}{tool.errors > 0 ? ` (${tool.errors} err)` : ''}
+    </span>)}
+    {(tools.other ?? 0) > 0 && <span class="muted">+{tools.other} other calls</span>}
+  </div>;
+  if (rows.length === 1 && rollup.hidden === 0 && !toolBreakdown) return null;
   return (
-    <DetailSection title={title}>
-      {rows.length > 0 && (
+    <DetailSection title="Resource breakdown">
+      {rows.length > 1 && (
         <div class="table-frame">
           <table class="limit-table">
             <thead>
@@ -180,21 +180,15 @@ export function ScopedRollupDetails({
           </table>
         </div>
       )}
-      {topTools.length > 0 && (
-        <div class="res-bar">
-          <span>Top tools:</span>
-          {topTools.map(t => (
-            <span key={t.name} class="chip" data-tip={t.connection ? `connection: ${t.connection}` : undefined}>
-              <Icon name="terminal" label="Tool" />
-              <span class="mono">{t.name}</span> · {t.calls}{t.errors > 0 ? ` (${t.errors} err)` : ''}
-            </span>
-          ))}
-          {(total?.tools.other ?? 0) > 0 && <span class="muted">+{total!.tools.other} other calls</span>}
-        </div>
-      )}
-      {(rollup?.spawnedTasks.length ?? 0) > 0 && (
-        <div class="stack">
-          {rollup!.spawnedTasks.map(st => (
+      {toolBreakdown && (foldTools
+        ? <details><summary>Top tools</summary>{toolBreakdown}</details>
+        : <><h4 class="sub-h">Top tools</h4>{toolBreakdown}</>)}
+      {rollup.spawnedTasks.length > 0 && (
+        <div class="stack spawned-tasks">
+          {rollup.spawnedTasks.length > 8 && <SearchBox label="Find spawned tasks" value={taskQuery} onInput={setTaskQuery} always />}
+          {shown.length < tasks.length && <span class="muted">{shown.length} of {tasks.length} tasks</span>}
+          {!shown.length && <Empty text="No spawned tasks match." />}
+          {shown.map(st => (
             <div key={st.taskId} class="kv-row">
               <StateBadge family="task" state={(st.state as StateOf<'task'>) || 'queued'} compact />
               <EntityCode code={st.code} id={st.taskId} kind="task" />
@@ -217,11 +211,11 @@ export function ScopedRollupDetails({
           ))}
         </div>
       )}
-      {(rollup?.hidden ?? 0) > 0 && (
+      {rollup.hidden > 0 && (
         <div class="res-bar">
           <span class="chip" data-tip="Spawned or delegated records omitted due to project access limits">
             <Icon name="circle-alert" label="Hidden" />
-            <Num m={{ value: rollup!.hidden, basis: 'measured' }} kind="count" /> hidden (restricted project)
+            <Num m={{ value: rollup.hidden, basis: 'measured' }} kind="count" /> hidden (restricted project)
           </span>
         </div>
       )}
@@ -229,66 +223,16 @@ export function ScopedRollupDetails({
   );
 }
 
-/** Compact one-line summary bar + expandable ScopedRollupDetails for space-constrained headers like Conversations (OR-25). */
-export function ScopedRollupBar({ rollup, cost }: { rollup?: ScopedResourceRollup | null; cost?: readonly CostFigure[] }) {
-  const [open, setOpen] = useState(false);
-  const t = rollup?.total;
-  const effCost = t?.cost?.length ? t.cost : cost ?? [];
-  const elapsedM = t ? resNum(t.durations?.elapsedMs, t.durations?.basis ?? 'unavailable', 0.001) : null;
-  const wallM = t ? resNum(t.durations?.executionWallMs, t.durations?.basis ?? 'unavailable', 0.001) : null;
-  const tokM = t ? resNum(t.tokens?.total, t.tokens?.basis ?? 'unavailable') : null;
-  const calls = t?.tools?.totalCalls ?? 0;
-  const callM = calls > 0 && t ? resNum(calls, t.tools.basis) : null;
-  const hidden = rollup?.hidden ?? 0;
-  const hasCost = effCost.some(c => (c.value !== null && c.basis !== 'unavailable') || c.basis === 'subscription');
-  const hasAny = (elapsedM && elapsedM.basis !== 'unavailable') || (wallM && wallM.basis !== 'unavailable') || (tokM && tokM.basis !== 'unavailable') || !!callM || hasCost || hidden > 0 || (rollup?.spawnedTasks.length ?? 0) > 0;
-  if (!hasAny) return null;
-  return (
-    <>
-      <div class="res-bar" data-ui="resource-bar">
-        {elapsedM && elapsedM.basis !== 'unavailable' && (
-          <span class="hc" data-tip="Elapsed span (first start to last end)">
-            <Icon name="clock" label="Elapsed" /><Num m={elapsedM} kind="duration" />
-          </span>
-        )}
-        {wallM && wallM.basis !== 'unavailable' && (elapsedM?.value == null || Math.abs((wallM.value ?? 0) - elapsedM.value) >= 1) && (
-          <span class="hc" data-tip="Active execution wall time">
-            <Icon name="activity" label="Execution wall" /><Num m={wallM} kind="duration" />
-          </span>
-        )}
-        {tokM && tokM.basis !== 'unavailable' && (
-          <span class="hc" data-tip="Total tokens">
-            <Num m={tokM} kind="count" /> tok
-          </span>
-        )}
-        {callM && (
-          <span class="hc" data-tip={`${calls} tool invocations${t!.tools.failedCalls ? `, ${t!.tools.failedCalls} failed` : ''}`}>
-            <Icon name="terminal" label="Tools" /><Num m={callM} kind="count" />
-          </span>
-        )}
-        {effCost.length > 0 && <CostFigures cost={effCost} showUnavailable={false} />}
-        {hidden > 0 && (
-          <span class="chip" data-tip="Hidden descendant resources due to project access">
-            <Icon name="circle-alert" label="Hidden" /><Num m={{ value: hidden, basis: 'measured' }} kind="count" /> hidden
-          </span>
-        )}
-        <span class="grow" />
-        <Button
-          label={open ? 'Hide breakdown' : 'Resources'}
-          icon={open ? 'arrow-up' : 'chevron-down'}
-          kind="quiet"
-          pressed={open}
-          onClick={() => setOpen(v => !v)}
-        />
-      </div>
-      {open && (
-        <div class="res-drawer">
-          <Totals items={resourceTotals(t, { extraCost: cost, hideUnavailable: false })} />
-          <ScopedRollupDetails rollup={rollup} cost={cost} title="Scoped resources" />
-        </div>
-      )}
-    </>
-  );
+export function ScopedRollupBar({ rollup, cost, inlineDetails = true }: { rollup?: ScopedResourceRollup | null; cost?: readonly CostFigure[]; inlineDetails?: boolean }) {
+  const totals = resourceTotals(rollup?.total, { extraCost: cost, hideUnavailable: true });
+  const hidden = inlineDetails ? 0 : rollup?.hidden ?? 0;
+  return <>
+    {(totals.length > 0 || hidden > 0) && <div data-ui="resource-bar" aria-label="Resources">
+      {totals.length > 0 && <Totals items={totals} compact />}
+      {hidden > 0 && <span class="res-bar"><Icon name="circle-alert" />{hidden} hidden (restricted project)</span>}
+    </div>}
+    {inlineDetails && rollup && <ScopedRollupDetails rollup={rollup} foldTools />}
+  </>;
 }
 
 /** Builds recursive TreeNode[] from ExecutionRow.parentExecutionId, grouping tool_run siblings cleanly (CA-09). */
@@ -408,8 +352,8 @@ function ResourceProgressLine({ progress, error }: { progress: ResourceProgress 
   const now = Date.now();
   return <StatusLine>{error ? 'Refresh failed: ' + error : progress ? <>
     {progress.state === 'current' ? 'Confirmed' : progress.state}{progress.errorClass ? ' · ' + progress.errorClass : ''}
-    {' · checked '}<AgeChip t={Date.parse(progress.validatedAt)} now={now} />
-    {progress.pending && <> · Pending {progress.oldestPendingAt ? <AgeChip t={Date.parse(progress.oldestPendingAt)} now={now} /> : 'age unknown'}</>}
+    {' · checked '}<AgeChip t={Date.parse(progress.validatedAt)} />
+    {progress.pending && <> · Pending {progress.oldestPendingAt ? <AgeChip t={Date.parse(progress.oldestPendingAt)} /> : 'age unknown'}</>}
   </> : 'Preparing confirmed resources…'}</StatusLine>;
 }
 export function PreparedProjectResources({ projectId, summary, category, onOpen, onClose }: { projectId: string; summary: ProjectResourceState; category?: 'tools' | 'costs'; onOpen?: (category: 'tools' | 'costs') => void; onClose?: () => void }) {
@@ -495,7 +439,7 @@ function PreparedResourceWindow({ projectId, category, group, onClose }: { proje
     <VirtualList fill handle={handle} items={rows} getKey={resourceItemKey} label={`Project ${category}`} rowHeight={ROW2} follow="top" columns="1.25rem minmax(0,1fr) auto"
       onEnd={!loadingWindow && page?.nextCursor ? () => move({ cursor: page.nextCursor! }, 'append') : undefined}
       onStart={!loadingWindow && page?.previousCursor ? () => move({ cursor: page.previousCursor! }, 'prepend') : undefined}
-      render={item => <><StateBadge family="source" state="current" compact />{item.kind === 'tool' ? <><span>{item.name}</span><span class="num">{item.calls} · {item.errors} failed</span></> : item.kind === 'cost' ? <><CostFigures cost={[{ ...item, reason: item.reason ?? undefined, note: item.note ?? undefined, usages: item.usages ?? undefined }]} showUnavailable /><Button label={`Price basis · ${item.priceCount}`} onClick={() => setPrices({ currency: item.currency, basis: item.basis })} /></> : <><span><CopyButton label="Copy price id" value={item.priceId} iconOnly /> Recorded rate</span><AgeChip t={item.observedAt} now={Date.now()} /></>}</>} />
+      render={item => <><StateBadge family="source" state="current" compact />{item.kind === 'tool' ? <><span>{item.name}</span><span class="num">{item.calls} · {item.errors} failed</span></> : item.kind === 'cost' ? <><CostFigures cost={[{ ...item, reason: item.reason ?? undefined, note: item.note ?? undefined, usages: item.usages ?? undefined }]} showUnavailable /><Button label={`Price basis · ${item.priceCount}`} onClick={() => setPrices({ currency: item.currency, basis: item.basis })} /></> : <><span><CopyButton label="Copy price id" value={item.priceId} iconOnly /> Recorded rate</span><AgeChip t={item.observedAt} /></>}</>} />
     {!rows.length && page && <Empty text="No matching confirmed items." />}
   </article>;
 }

@@ -110,6 +110,12 @@ export function useThread(key: ThreadKey | null) {
     win, error,
     older: () => page('before'), newer: () => page('after'), newest,
     /** Replace the window with entries around a key (a search hit). */
-    jump: (k: string) => { gen.current++; return load({ around: k }, p => setWin(w => fromPage(p, w?.total))); },
+    jump: (k: string, onWindow: () => void) => {
+      gen.current++;
+      return load({ around: k }, p => {
+        setWin(w => fromPage(p, w?.total));
+        onWindow();
+      });
+    },
   };
 }

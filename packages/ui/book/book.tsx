@@ -113,8 +113,8 @@ function NumbersDemo() {
     ]} />
     <div class="row">
       <span class="muted type-sm">Age chips:</span>
-      <AgeChip t={NOW - 40e3} now={NOW} /><AgeChip t={NOW - 4 * min} now={NOW} /><AgeChip t={NOW - 2 * hr} now={NOW} alertAfter={3600} />
-      <AgeChip t={NOW - 3 * 24 * hr} now={NOW} /><AgeChip t={NOW - 40 * 24 * hr} now={NOW} />
+      <AgeChip t={NOW - 40e3} /><AgeChip t={NOW - 4 * min} /><AgeChip t={NOW - 2 * hr} alertAfter={3600} />
+      <AgeChip t={NOW - 3 * 24 * hr} /><AgeChip t={NOW - 40 * 24 * hr} />
     </div>
   </>;
 }

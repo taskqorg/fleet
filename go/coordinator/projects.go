@@ -489,6 +489,14 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
+		codes, err := rowsOf(q, "SELECT project_id, code FROM project_code WHERE current")
+		if err != nil {
+			return nil, err
+		}
+		currentCode := map[string]string{}
+		for _, row := range codes {
+			currentCode[astr(row["project_id"])] = astr(row["code"])
+		}
 		for _, id := range ids {
 			if q.person != nil && !mayAccessProjectID(q.person, id) {
 				continue
@@ -496,6 +504,9 @@ func init() {
 			p, err := projectContext(q, id)
 			if err != nil {
 				return nil, err
+			}
+			if code := currentCode[id]; code != "" {
+				p["code"] = code
 			}
 			out = append(out, p)
 		}

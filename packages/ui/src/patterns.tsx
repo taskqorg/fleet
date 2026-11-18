@@ -140,7 +140,7 @@ function TaskCells({ t, now, onPin, onOpen, showPriority, two, check, selecting,
         if (e.key === 'p') { e.preventDefault(); onPin(); } else if (e.key === 'x') { e.preventDefault(); onSelect(); }
       }}>{t.title}</a><EntityCode code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} />{two && marks}</span>
     {!two && <><span>{t.state === 'in_progress' && <HarnessMark h={t.agent} />}</span><span>{t.stage && <StageChip stage={t.stage} />}</span></>}
-    <span class="r"><AgeChip t={t.started} now={now} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></span>
+    <span class="r"><AgeChip t={t.started} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></span>
     <span class="r"><Num m={t.cost === null ? { value: null, basis: 'unavailable', reason: 'no meter' } : { value: t.cost, basis: t.est ? 'estimated' : 'measured' }} kind="money" rise="bad" /></span>
   </>;
 }
@@ -328,7 +328,7 @@ function VersionPanel({ v, at, now }: { v: VersionInfo; at: { left: number; bott
     <table class="ver-table"><tbody>{v.rows.map(r => <tr key={r.key}>
       <th scope="row"><Icon name={r.icon} /><span>{r.part}</span></th>
       <td class="mono">{r.version ?? '—'}</td>
-      <td><span class={`ver-state t-${r.tone}`}>{r.state}</span>{r.times?.map(x => <span class="muted" key={x.label}> {x.label} <Ago t={x.at} now={x.now ?? now} /></span>)}{r.note && <span class="muted"> {r.note}</span>}</td>
+      <td><span class={`ver-state t-${r.tone}`}>{r.state}</span>{r.times?.map(x => <span class="muted" key={x.label}> {x.label} <Ago t={x.at} clockOffsetMs={x.now !== undefined ? x.now - now : 0} /></span>)}{r.note && <span class="muted"> {r.note}</span>}</td>
     </tr>)}</tbody></table>
   </div>;
 }

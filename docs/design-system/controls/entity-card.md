@@ -7,6 +7,7 @@
 **Anatomy.**
 
 * The reference: the human code in mono (`T-FLT-42`, a pull request's `#643`, a release tag, a profile id) right after the name (OR-22), or, for a kind without a code (run, result, experiment), its kind icon. It is a button with the tooltip "Show details".
+* A coded reference reserves a slot immediately to its right. Hover, keyboard focus or touch reveals Copy. Clicking Copy writes the displayed code and briefly replaces the icon with a check on success. The slot keeps its size.
 * The card: kind icon and code, the state badge on the right (registry family of the kind); the title in bold, up to three lines; one muted line with the project, the harness mark and the compact time with what it is (`changed 4m`, OR-2); one to four facts as label and value; the actions.
 * Actions, left to right: **Open** (primary, first), then Copy code (a pull request: Copy reference, `owner/repo#n`), Copy UUID (only kinds that have one), Copy id (a kind with neither, a host), Copy SHA-256 (a result), and Open on GitHub (a pull request). Each copy is a `CopyButton`: its icon turns into a check (a cross on failure) and the result is announced; the row keeps its width (OR-23).
 

@@ -1,6 +1,6 @@
 // Conversations (docs/design-system/pages/conversations.md): sessions list and one conversation with its live transcript.
 // Actions use the same operations agents use: session_start (conversation-new.tsx), message_send, execution_stop, session_fork.
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   EntityCode, ListDetail, RowFacts, Fact, AgeChip, ProblemRow, actions,
@@ -19,7 +19,7 @@ import { useListPage, ListPagePanel } from '../list-page.tsx';
 import { SYSTEM_VIEWS } from '../system-views.ts';
 import { useThread, type ThreadKey } from '../threads.ts';
 import { click, all, inside, range, type Selection } from '../selection.ts';
-import { ScopedRollupBar } from './resources.tsx';
+import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
 
 const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['none', 'None']] as const;
 const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
@@ -83,7 +83,7 @@ export function Conversations({ id }: { id?: string }) {
           : archived ? <Button label="Show active" onClick={toggleArchived} /> : <Button label="New conversation" onClick={create} />} />}
       listLabel={archived ? 'Archived conversations' : 'Conversations'} title={titleOf} groupIcon={g => g === 'state' ? 'activity' : g === 'agent' ? 'bot' : 'folder-open'}
       state={s => <StateBadge family="session" state={s.state} compact />}
-      facts={s => <SessionFacts s={s} now={now} />} />
+      facts={s => <SessionFacts s={s} />} />
   </>;
   const detail = isNew ? <NewConversation key="new" initialProject={initial.get('in')} initialRole={initial.get('role')} onStarted={sessionId => set({ focus: sessionId, extra: { ...view.extra, in: undefined, role: undefined } })} />
     : id ? <Conversation key={id} id={id} onClose={() => set({ focus: undefined })} /> : undefined;
@@ -91,12 +91,12 @@ export function Conversations({ id }: { id?: string }) {
 }
 
 /** Row facts of a conversation (OR-37): time since the last activity, open questions, executions, agent. */
-function SessionFacts({ s, now }: { s: SessionRow; now: number }) {
+function SessionFacts({ s }: { s: SessionRow }) {
   const at = s.activityAt ? Date.parse(s.activityAt) : NaN, n = s.executions ?? 0, q = s.openQuestions ?? 0;
   return <RowFacts>
     {q > 0 && <span class="chip-age t-attention alert" aria-label={q === 1 ? '1 open question' : `${q} open questions`}>{q}</span>}
     {n > 0 && <Fact icon={actions.runs} text={String(n)} tip={n === 1 ? '1 execution' : `${n} executions`} />}
-    {!isNaN(at) && <Fact tip="Last activity"><AgeChip t={at} now={now} /></Fact>}
+    {!isNaN(at) && <Fact tip="Last activity"><AgeChip t={at} /></Fact>}
     {isHarness(s.harness) && <HarnessMark h={s.harness} />}
   </RowFacts>;
 }
@@ -111,6 +111,14 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
   const [verifiedTarget, setVerifiedTarget] = useState<string | null>(null);
   const { data: s, error, state, restored, reload: reloadSession } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }).then(reply => { setVerifiedTarget(id); return reply; }), c => c.sessionId === id && c.kind !== 'event');
+  const projects = useDoc<any>(s?.projectId ? 'projects' : null, () => op('project_list', {}), c => c.kind === 'definition');
+  const previousCode = useRef(s?.code);
+  useEffect(() => {
+    // Renaming a project reissues its conversation codes in the same transaction.
+    if (previousCode.current && s?.code && previousCode.current !== s.code) projects.reload();
+    previousCode.current = s?.code;
+  }, [s?.code]);
+  const project = projects.data?.projects.find((p: { id: string }) => p.id === s?.projectId);
   // A session that got a task shows the task's thread (design "Thread scope"): the first page resolves it and returns the key.
   const thread = useThread({ session: id });
   const key: ThreadKey = thread.win?.key ?? { session: id };
@@ -140,6 +148,13 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     addEventListener('keydown', on); return () => removeEventListener('keydown', on);
   }, []);
   const [answers, setAnswers] = useState<Record<string, Ops['questions_answer']['reply']>>({});
+  const threadBlocks = thread.win?.blocks;
+  const blocks = useMemo(() => threadBlocks?.map(block => {
+    const answer = block.kind === 'question' ? answers[block.questionId] : undefined;
+    if (!answer || block.kind !== 'question') return block;
+    return { ...block, state: answer.state, answer: answer.answer, answeredBy: answer.answeredBy ?? undefined,
+      answeredAt: answer.answeredAt ? Date.parse(answer.answeredAt) : null };
+  }) ?? [], [threadBlocks, answers]);
   async function answerQuestion(questionId: string, answer: string) {
     const row = await writeOnce('questions_answer', { questionId, answer }, unknown, { signal: alive.current.signal });
     setAnswers(current => ({ ...current, [row.id]: row }));
@@ -152,6 +167,21 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [panel, setPanel] = useState<'switch' | 'handoff' | 'rename' | null>(null);
   const [q, setQ] = useState(''), [hits, setHits] = useState<{ key: string; snippet: string }[] | null>(null), [hit, setHit] = useState(0), [marked, setMarked] = useState<string | null>(null);
   const handle = useRef<VirtualListHandle | null>(null);
+  const [showRelated, setShowRelated] = useState(false);
+  const related = s?.resources;
+  const hasRelated = !!related && (related.delegated.executions > 0 || related.spawned.executions > 0 || related.spawnedTasks.length > 0 || related.hidden > 0 || related.total.tools.byTool.length > 0);
+  const inRelated = showRelated && hasRelated;
+  const reading = useRef<ReturnType<VirtualListHandle['getAnchor']>>(null);
+  const toggleRelated = () => {
+    if (!inRelated) reading.current = handle.current?.getAnchor() ?? null;
+    setShowRelated(!inRelated);
+  };
+  useLayoutEffect(() => {
+    const anchor = reading.current;
+    if (inRelated || !anchor || !handle.current) return;
+    reading.current = null;
+    handle.current.restoreAnchor(anchor.key, anchor.offsetPx);
+  }, [inRelated]);
   // Files for the next message: uploaded as they are added (picker, paste, drop over the conversation).
   const files = useAttachments({ sessionId: id });
   // The hit is scrolled to once the replaced window is on screen.
@@ -161,13 +191,29 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e: any) { setFailure({ text: e.message, retry: () => run(fn) }); } };
   const copyFail = (e: unknown, retry?: () => void) => setFailure({ text: `Copy failed: ${(e as any)?.message ?? e}`, retry });
   // A jump replaces the window with entries around the hit, then puts the hit row in view and marks it.
-  const open = async (list: { key: string }[], i: number) => { if (!list[i]) return; setHit(i); setMarked(list[i].key); await thread.jump(list[i].key); setJumpTo(list[i].key); };
+  const open = async (list: { key: string }[], i: number) => {
+    const key = list[i]?.key;
+    if (!key) return;
+    setShowRelated(false);
+    reading.current = null;
+    setHit(i);
+    setMarked(key);
+    // Land on the new window before its old scroll position can trigger another edge load.
+    await thread.jump(key, () => {
+      if (handle.current) handle.current.scrollToKey(key, 'center');
+      else setJumpTo(key);
+    });
+  };
   const search = () => run(async () => { if (!q.trim()) { setHits(null); setMarked(null); return; } const r = await op('thread_search', { key, q, limit: 100 }); setHits(r.hits); await open(r.hits, 0); });
   if (error && !s) return <article class="detail" data-ui="detail" tabIndex={-1}><ErrorBanner text={`Conversation did not load: ${error}`} /></article>;
   if (!s) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
   const running = (e: any) => !['succeeded', 'failed', 'cancelled'].includes(e.state) && e.observation !== 'unconfirmed';
   // Composer target: the newest running execution; with none, a new message starts one (design "Controls").
   const active = (s.executions ?? []).filter(running).at(-1);
+  const latest = s.executions?.at(-1);
+  const sessionState: StateOf<'session'> = latest?.state ?? 'idle';
+  const unconfirmed = latest?.observation === 'unconfirmed';
+  const lastSeen = unconfirmed ? (typeof latest.lastSeenAt === 'number' ? latest.lastSeenAt : Date.parse(latest.lastSeenAt)) : NaN;
   const openQs = (s.questions ?? []).filter((q: any) => (answers[q.id] ?? q).state === 'open');
   const w = thread.win;
   const last = (s.messages ?? []).at(-1), lastMessage: string | undefined = last?.text;
@@ -182,9 +228,11 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       <h2 class="detail-title conv-title" data-tip={title}>{title}</h2>
       <EntityCode code={s.code} id={id} kind="conversation" />{s.agentConfig?.id && <span class="muted mono conv-profile">{s.agentConfig.id}</span>}<span class="grow" />
       <SearchField label="Search thread" value={q} onInput={setQ} onSearch={search} />
-      <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
-      <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />
-      <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={!hits || hit >= hits.length - 1 ? 'no later hit' : undefined} onClick={() => hits && open(hits, hit + 1)} />
+      <div class="conv-search-results" data-active={!!hits} data-partial={!!w && w.blocks.length < w.total}>
+        <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
+        <Button label="Previous hit" icon="arrow-up" iconOnly disabledReason={!hits || hit <= 0 ? 'no earlier hit' : undefined} onClick={() => hits && open(hits, hit - 1)} />
+        <Button label="Next hit" icon="arrow-down" iconOnly disabledReason={!hits || hit >= hits.length - 1 ? 'no later hit' : undefined} onClick={() => hits && open(hits, hit + 1)} />
+      </div>
       <OfflineMarker state={state} now={now} />
       <Button label="Copy thread as markdown" icon="file-text" iconOnly disabledReason={off ? 'offline' : undefined} onClick={() => copySel(all()!)} />
       {/* Menu actions (design "Controls"): each calls the existing operation; the result shows as a new boundary in this thread. */}
@@ -198,13 +246,21 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
     </header>
     {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => setPanel(null)} onSaved={() => { setFailure(null); reloadSession(); }} run={run} onUnknown={() => { setFailure({ text: 'Rename outcome unknown. Check the current title.' }); reloadSession(); }} />}
     {panel && panel !== 'rename' && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
-    <ScopedRollupBar rollup={s.resources} cost={s.cost} />
+    <div class="state-line">
+      {sessionState in states_.session && <StateBadge family="session" state={sessionState}
+        unconfirmed={unconfirmed} lastSeen={Number.isFinite(lastSeen) ? lastSeen : undefined} />}
+      {s.projectId && <>{project?.name && <span class="muted">{project.name}</span>}
+        <EntityCode code={project?.code} id={s.projectId} kind="project" /></>}
+      {hasRelated && <Button label="Related work" icon="folder-open" kind="quiet" pressed={inRelated} onClick={toggleRelated} />}
+    </div>
+    <ScopedRollupBar rollup={s.resources} cost={s.cost} inlineDetails={false} />
     <div class="status-line" role="status">{failure ? <ErrorBanner text={failure.text} onRetry={failure.retry} /> : thread.error ? <ErrorBanner text={`Thread did not load: ${thread.error}`} onRetry={thread.newest} /> : null}</div>
-    <div class="pane"><DropZone onFiles={files.add} disabledReason={off ? 'offline' : undefined}>
-      {!w ? <Skeleton rows={6} /> : <Thread blocks={w.blocks.map(b => b.kind === 'question' && answers[b.questionId] ? { ...b, state: answers[b.questionId].state, answer: answers[b.questionId].answer, answeredBy: answers[b.questionId].answeredBy ?? undefined, answeredAt: answers[b.questionId].answeredAt ? new Date(answers[b.questionId].answeredAt!).getTime() : null } : b)} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} resultSrc={r => '/api/results/' + encodeURIComponent(r)} handle={handle} onStart={thread.older} onEnd={thread.newer}
+    <div class="pane" data-related-work={inRelated}><DropZone onFiles={files.add} disabledReason={off ? 'offline' : undefined}>
+      {!w ? <Skeleton rows={6} /> : <Thread blocks={blocks} label="Transcript" now={now} marked={marked} selected={k => inside(sel, k)} onRowClick={(k, shift) => { if (!shift) { pickFrom.current = k; setSel(null); return; } setSel(click(click(null, pickFrom.current ?? sel?.start.key ?? k, false), k, true)); pickFrom.current ??= k; }} showSession={!!key && 'task' in key} onOpenResult={r => go('/results/' + encodeURIComponent(r))} resultSrc={r => '/api/results/' + encodeURIComponent(r)} handle={handle} onStart={inRelated ? undefined : thread.older} onEnd={inRelated ? undefined : thread.newer}
         stopReason={off ? 'offline' : undefined} onStop={x => run(() => op('execution_stop', { executionId: x }))}
         onAnswer={(questionId, answer) => run(() => answerQuestion(questionId, answer))} onCopyFail={copyFail} onSecret={(q: string, c: string, v: string) => addRequestedKey(q, c, v, alive.current.signal)}
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}
+      {inRelated && <section class="related-work" aria-label="Related work" tabIndex={0}><ScopedRollupDetails rollup={related} /></section>}
       {/* D3: steer goes to the execution and does not answer; the open question stays in sight above the composer. */}
       {openQs.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}
         options={(Array.isArray(q.options) ? q.options : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}

@@ -38,7 +38,8 @@ export function Runners() {
   const [, go] = useLocation();
   const { data, state, error } = useDoc<any>('runners', async () => ({ ...(await op('executions_runners', {})), fetchedAt: Date.now() }), () => false, 15000); // timer only: gateway calls change executions many times a second
   if (!data) return <>{error ? <ErrorBanner text={`Runners did not load: ${error}`} /> : <Skeleton rows={6} />}</>;
-  const now = data.serverNow + (Date.now() - data.fetchedAt), from = now - DAY;
+  const clockOffsetMs = data.serverNow - data.fetchedAt;
+  const now = Date.now() + clockOffsetMs, from = now - DAY;
   const hosts = [...new Set<string | null>([...data.runs.map((r: any) => r.hostId), ...data.spend.map((s: any) => s.hostId)])]
     .sort((a, b) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)));
   const cell = (s: any | undefined, k: Kind, v: (s: any) => number | null) => <td class="num">{s ? <Num m={v === runsOf ? m(v(s)) : sum(s, v(s))} kind={k} /> : <span class="muted">—</span>}</td>;
@@ -89,14 +90,14 @@ export function Runners() {
                 {r.peakMemoryBytes != null && <span class="hc" data-tip="Peak memory"><Num m={m(r.peakMemoryBytes)} kind="bytes" /></span>}
                 {r.cost?.length > 0 && <CostFigures cost={r.cost} />}</span>
               <TimeStrip from={from} to={now} start={start} end={end} now={now} state={r.state} label={`${r.state}, started ${age(start, now).long}`} />
-              <span data-tip={active ? 'Running for' : 'Duration'}>{!active ? <Num m={m(secs)} kind="duration" /> : <AgeChip t={start} now={now} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}</span>
+              <span data-tip={active ? 'Running for' : 'Duration'}>{!active ? <Num m={m(secs)} kind="duration" /> : <AgeChip t={start} clockOffsetMs={clockOffsetMs} alertAfter={2 * 3600} tone="attention" alertLabel="running long" />}</span>
             </div>;
           })}
         </div>
       </section>;
     })}
     {!data.runs.length && <Empty text="Nothing ran in the last 24 hours." />}
-    <Ci now={now} />
+    <Ci now={now} clockOffsetMs={clockOffsetMs} />
   </section>;
 }
 
@@ -104,7 +105,7 @@ const JOB_STATE: Record<string, 'running' | 'preparing' | 'waiting'> = { in_prog
 
 /** GitHub Actions for taskqorg/fleet (executions_ci, cached on the coordinator): minutes today per runner type, the
  * self-hosted runners, and jobs in flight or queued on a 24-hour strip. */
-function Ci({ now }: { now: number }) {
+function Ci({ now, clockOffsetMs }: { now: number; clockOffsetMs: number }) {
   const { data, error } = useDoc<any>('runners-ci', async () => await op('executions_ci', {}), () => false, 60000);
   const from = now - DAY;
   if (!data) return <section class="panel" aria-label="CI"><header class="panel-h"><h2>CI</h2></header>{error ? <ErrorBanner text={`CI did not load: ${error}`} /> : <Skeleton rows={3} />}</section>;
@@ -131,7 +132,7 @@ function Ci({ now }: { now: number }) {
           <span class="lead"><StateBadge family="execution" state={st} compact /></span>
           <span class="tt"><a class="title row-link" href={j.url} target="_blank" rel="noopener">{j.name}</a><span class="id">{j.workflow}</span><span class="muted">{j.status === 'in_progress' ? j.runner : `not started · ${j.runner}`}</span></span>
           <TimeStrip from={from} to={now} start={start} end={null} now={now} state={st} label={`${j.status}, since ${age(start, now).long}`} />
-          <span data-tip={j.status === 'queued' ? 'Queued for' : 'Running for'}><AgeChip t={start} now={now} alertAfter={3600} tone="attention" alertLabel="long" /></span>
+          <span data-tip={j.status === 'queued' ? 'Queued for' : 'Running for'}><AgeChip t={start} clockOffsetMs={clockOffsetMs} alertAfter={3600} tone="attention" alertLabel="long" /></span>
         </div>; })}
     </div>
     {!data.jobs.length && !data.minutesToday.length && <Empty text="No CI jobs today." />}

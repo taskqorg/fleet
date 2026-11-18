@@ -6,11 +6,27 @@ import type {Browser} from 'playwright';
 export async function checkTaskStory(browser: Browser, origin: string) {
   const context = await browser.newContext(), page = await context.newPage();
   // Shared error contract: read-only errors retain alert text without an inert action; supplied retries invoke the caller.
-  const fixture = await build({stdin: {contents: `import {render} from 'preact'; import {ErrorBanner} from './packages/ui/src/index.ts';
-    render(<><ErrorBanner text="Read-only problem"/><ErrorBanner text="Retriable problem" onRetry={()=>document.querySelector('output').textContent='retried'}/><output/></>,document.body);`, resolveDir: process.cwd(), loader: 'tsx'}, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact'});
+  const fixture = await build({stdin: {contents: `import {render} from 'preact'; import {AgeChip, ErrorBanner} from './packages/ui/src/index.ts';
+    render(<><AgeChip t={Date.now() - 58000}/><AgeChip t={Date.now()} clockOffsetMs={60000}/><ErrorBanner text="Read-only problem"/><ErrorBanner text="Retriable problem" onRetry={()=>document.querySelector('output').textContent='retried'}/><output/></>,document.body);`, resolveDir: process.cwd(), loader: 'tsx'}, bundle: true, write: false, format: 'iife', jsx: 'automatic', jsxImportSource: 'preact'});
   await page.goto('about:blank');
   await page.setContent('<body></body>');
+  const clock = new Date('2026-11-18T12:00:00Z');
+  await page.clock.install({ time: clock });
+  await page.clock.pauseAt(clock.getTime() + 1000);
   await page.addScriptTag({content: fixture.outputFiles[0].text});
+  await page.clock.runFor(150); // Flush the render's passive effect and subscribe the clock.
+  const ages = page.locator('time.chip-age');
+  const age = ages.first();
+  assert.equal(await ages.last().textContent(), '1m', 'age uses the source clock offset');
+  assert.equal(await age.textContent(), '58s');
+  const tooltip = await age.getAttribute('data-tip');
+  await page.clock.runFor(1000);
+  assert.equal(await age.textContent(), '59s');
+  await page.clock.runFor(1000);
+  assert.equal(await age.textContent(), '1m');
+  assert.equal(await age.getAttribute('aria-label'), '1 minute ago');
+  assert.equal(await age.getAttribute('data-tip'), tooltip);
+  await page.clock.resume();
   const alerts = page.getByRole('alert');
   assert.equal(await alerts.count(), 2);
   assert.equal(await alerts.filter({hasText: 'Read-only problem'}).getByRole('button').count(), 0);
@@ -24,7 +40,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
   ];
   try {
     for (const [i, fixture] of cases.entries()) {
-      await page.route('**/api/ops/task_get', route => route.fulfill({json: {id: 'story', title: 'Install Android app', expectedOutcome: 'Full original request. '.repeat(100), latestResult: {id: 'patch', name: 'implementation.patch', mediaType: 'text/plain'}, ...fixture}}));
+      await page.route('**/api/ops/task_get', route => route.fulfill({json: {id: 'story', title: 'Install Android app', expectedOutcome: 'Full original request. '.repeat(100), completionRequirements: { device: 'Verify on Android' }, latestResult: {id: 'patch', name: 'implementation.patch', mediaType: 'text/plain'}, ...fixture}}));
       await page.goto(origin + '/tasks/story');
       const detail = page.locator('[data-ui=detail]');
       await detail.getByRole('heading', {name: 'Install Android app'}).waitFor();
@@ -42,6 +58,8 @@ export async function checkTaskStory(browser: Browser, origin: string) {
         assert.equal(await detail.getByRole('button', {name: /accepted|rejected/}).count(), 0);
         assert.equal(await detail.locator('[role=alert]').getByRole('button', {name: 'Retry'}).count(), 0);
       }
+      await detail.getByText('device: Verify on Android', { exact: true }).waitFor();
+      assert.equal(await detail.locator('.outcome-meta').count(), 0, 'unverified requirements have no completion counter');
       await detail.getByRole('button', {name: 'Expand outcome'}).click();
       assert.equal(await detail.getByRole('button', {name: 'Collapse outcome'}).count(), 1);
       await page.unroute('**/api/ops/task_get');

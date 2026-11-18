@@ -7,7 +7,7 @@
 import { useCallback, useEffect } from 'preact/hooks';
 import {
   EntityCode,
-  ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
+  ListDetail, StateBadge, AgeChip, Ago, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
   Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
   type StateOf, type DayCol, type DayMark, type SharePart, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, type Ops } from '../api.ts';
@@ -177,7 +177,7 @@ export function Delivery({ id }: { id?: string }) {
   const list = <>
     <ShellStatus>
       {data?.source === 'public' && <span class="chip-age t-attention" data-tip="No github key in API keys: unauthenticated reads of the fleet repository every 6 minutes">public GitHub</span>}
-      {data?.refreshedAt && <AgeChip t={ms(data.refreshedAt)} now={now} alertAfter={900} alertLabel="GitHub read is stale" />}</ShellStatus>
+      {data?.refreshedAt && <AgeChip t={ms(data.refreshedAt)} alertAfter={900} alertLabel="GitHub read is stale" />}</ShellStatus>
     {data?.error && <ErrorBanner text={`GitHub: ${data.error}`} />}
     {incomplete && <p class="muted type-sm stack-pad">Some GitHub data is unavailable: current totals are unknown; the rows are the last ones read.</p>}
     <ListPagePanel page={page} noun="Pull requests" placeholder="Search pull requests, state:mq_wait project:fleet" family="delivery" groups={GROUPS} sorts={SORTS} focused={id} countersLabel="Pull requests by stage"
@@ -190,7 +190,7 @@ export function Delivery({ id }: { id?: string }) {
       facts={r => <RowFacts>
         {r.it.repo !== FLEET && <Fact text={r.it.repo} tip="Repository" />}
         {r.it.release && <EntityCode code={releaseLabel(r.it.release)} id={r.it.release} kind="release" />}
-        <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} now={now} alertAfter={alertOf(norms, r.it)} alertLabel="past the stage's P90" /></Fact>
+        <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} alertAfter={alertOf(norms, r.it)} alertLabel="past the stage's P90" /></Fact>
       </RowFacts>} />
   </>;
   return <ListDetail list={list} detailKey={id}
@@ -232,7 +232,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
   const look = [
     ...regressions.map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
       facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />),
-    ...failed.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={`${it.title} · ${fmt(Math.max(0, now - ms(it.since)))} ago`}
+    ...failed.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={<>{it.title} · <Ago t={ms(it.since)} /></>}
       actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
     ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${it.stage === 'installing' && uiOnly(it.release) ? 'waiting for the UI on site' : states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it)![1])}`}
       facts={it.title} actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
@@ -248,7 +248,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
             <a class="mono row-link" href={href(it)} onClick={e => { e.preventDefault(); onOpen(it); }}>#{it.number}</a>
             <span class="muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</span>
             <NormBar elapsed={el} p50={n?.[0]} p90={n?.[1]} label={`${states.delivery[it.stage].label} #${it.number}`} value={fmt} />
-            <span class="r"><AgeChip t={ms(it.since)} now={now} alertAfter={alertOf(norms, it)} alertLabel="past the stage's P90" /></span>
+            <span class="r"><AgeChip t={ms(it.since)} alertAfter={alertOf(norms, it)} alertLabel="past the stage's P90" /></span>
             <span class={`r mono type-sm${red ? ' t-danger' : ' muted'}`} style={red ? { color: 'var(--tone-fg)' } : undefined}
               data-tip={n ? `${states.delivery[it.stage].label}: P50 ${fmt(n[0])}, P90 ${fmt(n[1])} over 14 days` : undefined}>{n ? `P90 ${fmt(n[1])}` : 'no norm'}</span>
           </div>;
@@ -352,7 +352,7 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
     <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><span class="muted mono">{owner}/{repo} #{number}</span><span class="grow" />
       {url && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(url, '_blank', 'noopener')} />}</header>
     <h2 class="detail-title">{title}</h2>
-    <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} now={now} />}
+    <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} />}
       {rel && <EntityCode code={releaseLabel(rel)} id={rel} kind="release" />}</div>
     <div class="stack-pad">
       {h.error && !h.data && <ErrorBanner text={`History did not load: ${h.error}`} />}
@@ -369,16 +369,16 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
           icon={r.conclusion === 'success' ? 'circle-check' : r.conclusion === 'cancelled' ? 'circle-slash' : 'octagon-x'} label={`Run ${r.attempt > 1 ? `${r.id} · attempt ${r.attempt}` : r.id}`}
           meta={r.conclusion === 'success' ? 'all checks passed' : `${r.conclusion}: ${r.jobs.filter(j => j.conclusion !== 'success').map(j => j.name).join(', ') || 'no failed job recorded'}`}
           value={<Num m={sec(r.wallMs ?? null)} kind="duration" />} />)}</DetailSection>
-        <DetailSection title="Installed">{uiOnly(x.release) ? x.uiOnSite ? <KvRow icon="panels-top-left" label="Site" meta="serves this UI or a newer one" value={<AgeChip t={ms(x.uiOnSite)} now={now} />} />
+        <DetailSection title="Installed">{uiOnly(x.release) ? x.uiOnSite ? <KvRow icon="panels-top-left" label="Site" meta="serves this UI or a newer one" value={<AgeChip t={ms(x.uiOnSite)} />} />
             : <Empty text={`UI-only release: hosts install nothing; ${unrecorded(x, h.data?.installsFrom ? ms(h.data.installsFrom) : null) ? `its UI on site was not recorded (recorded from ${day(ms(h.data!.installsFrom!), now)})` : 'the site does not serve it yet'}.`} />
           : Object.keys(x.installed ?? {}).length === 0 ? <Empty text={x.released ? 'Not installed on any host yet.' : 'Not released yet.'} />
-          : Object.entries(x.installed).map(([host, t]) => <KvRow key={host} icon="terminal" label={host} meta={x.installedVersions?.[host]} value={<AgeChip t={ms(t)} now={now} />} />)}</DetailSection>
+          : Object.entries(x.installed).map(([host, t]) => <KvRow key={host} icon="terminal" label={host} meta={x.installedVersions?.[host]} value={<AgeChip t={ms(t)} />} />)}</DetailSection>
       </> : item ? <>
         <DetailSection title="Now">
           <KvRow icon={states.delivery[item.stage].icon} label={states.delivery[item.stage].label}
             meta={item.stage === 'pr_failed' ? 'the last checks on its head failed' : item.stage === 'mq_failed' ? 'its last merge-queue run failed; it left the queue' : undefined}
-            value={<AgeChip t={ms(item.since)} now={now} alertAfter={alertOf(norms, item)} alertLabel="past the stage's P90" />} />
-          {item.opened && <KvRow icon="git-pull-request" label="Opened" value={<AgeChip t={ms(item.opened)} now={now} />} />}
+            value={<AgeChip t={ms(item.since)} alertAfter={alertOf(norms, item)} alertLabel="past the stage's P90" />} />
+          {item.opened && <KvRow icon="git-pull-request" label="Opened" value={<AgeChip t={ms(item.opened)} />} />}
         </DetailSection>
         <p class="muted type-sm">{fleet ? 'The stage history is recorded once the pull request merges.' : 'Stage history is recorded for the fleet repository only.'}</p>
       </> : h.loading ? <Skeleton rows={4} /> : <Empty text="This pull request is not in flight and has no recorded history." />}
