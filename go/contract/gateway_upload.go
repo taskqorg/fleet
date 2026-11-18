@@ -45,7 +45,7 @@ func resumableUpload(ctx context.Context, t GatewayTarget, connection, tool stri
 		target := t
 		target.Idempotent = mode != "commit"
 		open := func() io.Reader { return io.NewSectionReader(u.File, offset, length) }
-		return send(ctx, target, connection, tool, open, length, mode == "chunk", headers, wait)
+		return send(ctx, target, connection, tool, open, length, false, headers, wait)
 	}
 
 	stage := func(mode string, offset, length int64) (int64, CallLine) {

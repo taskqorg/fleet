@@ -1248,6 +1248,11 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		return
 	}
 
+	if !g.reserveUploadSpace(r.ContentLength) {
+		refuse(refusal(507, "error", "staging-failed", "insufficient space for this upload"), nil)
+		return
+	}
+	defer g.releaseUploadSpace(r.ContentLength)
 	part := filepath.Join(g.config.StateDir, "files", q.id+".part")
 	file, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
@@ -1375,23 +1380,30 @@ func (g *gateway) uploadHasSecret(q *request, meta uploadMetadata, file *os.File
 	return newScanner(current).write([]byte(meta.name+"\n"+meta.mediaType)) || g.newKeyIn(file, scanned, current)
 }
 
+// admitUpload reads the current snapshot and validates a staged file against its current limits and tool.
+func (g *gateway) admitUpload(q *request, meta uploadMetadata, size int64) (string, *answer) {
+	g.resolve(q)
+	q.offered = q.offered && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload
+	if a := admit(q); a != nil {
+		return "", a
+	}
+	fileBytes, _, _, _ := limits(q.c)
+	if fileBytes > 0 && size > fileBytes {
+		return "", refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes))
+	}
+	args := maps.Clone(meta.pathArgs)
+	path, ok := fillPath(q.t, args)
+	if !ok || len(args) > 0 {
+		return "", refusal(400, "error", "bad-request", "the tool's path changed while the file arrived")
+	}
+	return path, nil
+}
+
 func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, beforePost func(*request) (func() error, *answer)) (keepStage bool) {
-	// Staging can take minutes: the call is admitted again on the current snapshot before the key is attached.
 	again := *q
-	g.resolve(&again)
-	again.offered = again.offered && again.t.File != nil && *again.t.File == contract.GatewayFileModeUpload
-	if a := admit(&again); a != nil {
+	path, a := g.admitUpload(&again, meta, transfer.Bytes)
+	if a != nil {
 		g.finish(w, q, a, transfer)
-		return false
-	}
-	fileBytes, _, stall, answerWait := limits(again.c)
-	if fileBytes > 0 && transfer.Bytes > fileBytes {
-		g.finish(w, q, refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), transfer)
-		return false
-	}
-	path, ok := fillPath(again.t, meta.pathArgs)
-	if !ok || len(meta.pathArgs) > 0 {
-		g.finish(w, q, refusal(400, "error", "bad-request", "the tool's path changed while the file arrived"), transfer)
 		return false
 	}
 	draining := refusal(503, "error", "draining", "the file was not sent")
@@ -1418,11 +1430,22 @@ func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request,
 			return true
 		}
 	}
+	// Durable commit writes may have outlasted a token revocation, intake pause or size-cap change.
+	if beforePost != nil {
+		current := again
+		path, a = g.admitUpload(&current, meta, transfer.Bytes)
+		if a != nil {
+			g.finish(w, &again, a, transfer)
+			return false
+		}
+		again = current
+	}
+	_, _, stall, answerWait := limits(again.c)
 	// One file part with the caller's name; the name rules keep it inside the quotes (RFC 7578 allows UTF-8).
 	boundary := randomHex(16)
 	head := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + meta.name + "\"\r\nContent-Type: " + meta.mediaType + "\r\n\r\n"
 	tail := "\r\n--" + boundary + "--\r\n"
-	a := g.call(r.Context(), q.connection, again.c, again.p, again.t, path, body{
+	a = g.call(r.Context(), q.connection, again.c, again.p, again.t, path, body{
 		open: func() io.Reader {
 			return io.MultiReader(strings.NewReader(head), io.NewSectionReader(file, 0, transfer.Bytes), strings.NewReader(tail))
 		},

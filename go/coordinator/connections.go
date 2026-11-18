@@ -1301,7 +1301,7 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 		return err
 	}
 	if d := l.Disabled; d != nil && d.Key != "" {
-		if err := connDisable(q, d.Key, d.Status); err != nil {
+		if err := connDisable(q, d.Key, d.Status, l.StartedAt); err != nil {
 			return err
 		}
 	}
@@ -1318,6 +1318,9 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 			at := l.StartedAt
 			if at == 0 {
 				at = nowMs()
+			}
+			if enabled, ok := numOK(k["enabledAt"]); ok && int64(enabled) >= at {
+				return nil
 			}
 			k["problem"] = doc{"status": p.Status, "message": msg, "at": at}
 			if err := put(q, "connection-key", k); err != nil {
@@ -1378,10 +1381,13 @@ func connComplete(q *Request, l contract.CallLine) error {
 	return err
 }
 
-func connDisable(q *Request, fp string, status int64) error {
+func connDisable(q *Request, fp string, status, startedAt int64) error {
 	k, err := maybe(q, "key:"+fp, "connection-key")
 	if err != nil || k == nil || k["state"] == "retired" || k["state"] == "disabled" {
 		return err
+	}
+	if enabled, ok := numOK(k["enabledAt"]); ok && startedAt > 0 && int64(enabled) >= startedAt {
+		return nil
 	}
 	st := fmt.Sprint(status)
 	k["state"], k["disabledReason"], k["disabledAt"] = "disabled", "provider answered HTTP "+st, nowMs()

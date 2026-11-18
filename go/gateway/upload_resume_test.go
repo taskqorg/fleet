@@ -115,6 +115,8 @@ func TestResumableUploadSurvivesRestart(t *testing.T) {
 	expect(t, call, pending.CallID, "recovered call ID")
 	gw.halt()
 	gw.start()
+	gw.write(fileSnapshot(p.url, nil, "paused"))
+	gw.adoptWritten()
 	replay := r.send(t, "commit", 0, nil, 409, "upload-committed")
 	expect(t, replay.Get("X-Fleet-Call-Id"), call, "original call")
 	expect(t, replay.Get("X-Fleet-Outcome"), "unknown", "repeat outcome")
@@ -205,6 +207,35 @@ func TestResumableUploadDrainDuringCommitRecording(t *testing.T) {
 	})
 	if !keep || !undone || w.Code != 503 || w.Header().Get("X-Fleet-Error") != "draining" {
 		t.Fatalf("kept=%v undone=%v status=%d headers=%v", keep, undone, w.Code, w.Header())
+	}
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider POSTs")
+}
+
+// Requirement: §9 current admission at handoff, including after commit state is synced.
+// Risk: an intake pause while syncing the intent fails to stop a staged file from reaching the provider.
+func TestResumableUploadRechecksAdmissionAfterCommitRecording(t *testing.T) {
+	f, p := newFileFixture(t, nil)
+	g, err := newGateway(f.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := &request{connection: "tavily", tool: "attach", id: "intent", begun: time.Now(), bearer: testToken, run: g.authenticate(testToken)}
+	req, err := http.NewRequest("POST", "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	meta := uploadMetadata{pathArgs: map[string]json.RawMessage{"issue": json.RawMessage(`"TGT-12"`)}, name: "slow.mov", mediaType: "video/quicktime"}
+	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: 16, Name: meta.name, MediaType: meta.mediaType}
+	keep := g.postUpload(w, req, q, meta, nil, transfer, func(*request) (func() error, *answer) {
+		snapshot := fileSnapshot(p.url, nil, "paused")
+		f.write(snapshot)
+		g.refresh(true)
+		return func() error { return nil }, nil
+	})
+	if keep || w.Code != 403 || w.Header().Get("X-Fleet-Error") != "intake-paused" {
+		t.Fatalf("kept=%v status=%d headers=%v", keep, w.Code, w.Header())
 	}
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 0, "provider POSTs")

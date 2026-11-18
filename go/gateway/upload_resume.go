@@ -60,12 +60,9 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		writeJSON(w, a.status, a.body)
 	}
 	mode := r.Header.Get(contract.UploadModeHeader)
-	if a := admit(q); a != nil && (mode != "abort" || q.run == nil) {
-		refuse(a.status, a.err, "the upload is not admitted")
-		return
-	}
-	if g.draining.Load() && mode != "abort" {
-		refuse(503, "draining", "the gateway is stopping")
+	admission := admit(q)
+	if q.run == nil || (mode != "abort" && admission != nil && admission.err == "not-granted") {
+		refuse(admission.status, admission.err, "the upload is not admitted")
 		return
 	}
 	id := r.Header.Get(contract.UploadIDHeader)
@@ -80,13 +77,8 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		refuse(400, "bad-request", "the upload needs a positive whole-file size and only chunks carry a body")
 		return
 	}
-	meta, a := parseUploadMetadata(r, q.t)
-	if a != nil {
-		refuse(a.status, a.err, "invalid upload metadata")
-		return
-	}
 	// The token and ID select one state record regardless of the request's metadata.
-	binding := sha(strings.Join([]string{q.connection, q.tool, r.Header.Get("X-Fleet-Args"), meta.sha, strconv.FormatInt(total, 10)}, "\x00"))
+	binding := sha(strings.Join([]string{q.connection, q.tool, r.Header.Get("X-Fleet-Args"), r.Header.Get("X-Fleet-Sha256"), strconv.FormatInt(total, 10)}, "\x00"))
 	key := id + "-" + sha(q.run.Sha256)
 	if _, busy := g.uploadLocks.LoadOrStore(key, struct{}{}); busy {
 		refuse(409, "upload-busy", "another request is using this upload")
@@ -123,10 +115,33 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		return
 	}
 
+	if mode != "abort" {
+		if admission != nil {
+			refuse(admission.status, admission.err, "the upload is not admitted")
+			return
+		}
+		if g.draining.Load() {
+			refuse(503, "draining", "the gateway is stopping")
+			return
+		}
+	}
+	var meta uploadMetadata
+	if mode != "abort" {
+		var a *answer
+		meta, a = parseUploadMetadata(r, q.t)
+		if a != nil {
+			refuse(a.status, a.err, "invalid upload metadata")
+			return
+		}
+	}
 	cap, _, stall, _ := limits(q.c)
 	if mode != "abort" && cap > 0 && total > cap {
-		discardUpload(data, statePath, state)
-		refuse(413, "file-too-large", "the whole file exceeds the connection's limit")
+		a := refusal(413, "error", "file-too-large", "the whole file exceeds the connection's limit")
+		if err := g.abandonUpload(q, data, statePath, state, a); err != nil {
+			refuse(507, "staging-failed", "the stage could not be removed")
+			return
+		}
+		refuse(a.status, a.err, "the whole file exceeds the connection's limit")
 		return
 	}
 	offset := state.Offset
@@ -136,6 +151,10 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 	}
 	switch mode {
 	case "status":
+		if offset != 0 && syncDir(g.uploadDir()) != nil {
+			refuse(507, "staging-failed", "the confirmed offset could not be synced")
+			return
+		}
 		ack()
 	case "chunk":
 		start, err := strconv.ParseInt(r.Header.Get(contract.UploadOffsetHeader), 10, 64)
@@ -147,6 +166,10 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		}
 		if start < offset {
 			w.Header().Set("Connection", "close")
+			if syncDir(g.uploadDir()) != nil {
+				refuse(507, "staging-failed", "the confirmed offset could not be synced")
+				return
+			}
 			ack()
 			return
 		}
@@ -156,11 +179,11 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		}
 		g.transfers.Add(1)
 		defer g.transfers.Add(-1)
-		if !g.reserveChunk(r.ContentLength) {
+		if !g.reserveUploadSpace(r.ContentLength) {
 			refuse(507, "staging-failed", "insufficient space for this upload chunk")
 			return
 		}
-		defer g.releaseChunk(r.ContentLength)
+		defer g.releaseUploadSpace(r.ContentLength)
 		if a := g.stageChunk(w, r, q, data, offset, stall); a != nil {
 			refuse(a.status, a.err, "the chunk was not acknowledged")
 			return
@@ -181,7 +204,8 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		defer g.transfers.Add(-1)
 		g.commitUpload(w, r, q, meta, data, statePath, state)
 	case "abort":
-		if err := discardUpload(data, statePath, state); err != nil {
+		a := refusal(409, "error", "upload-aborted", "the staged upload was removed without a provider POST")
+		if err := g.abandonUpload(q, data, statePath, state, a); err != nil {
 			refuse(507, "staging-failed", "the stage could not be removed")
 			return
 		}
@@ -353,6 +377,20 @@ func writeUploadState(path string, state uploadState) error {
 	return syncDir(filepath.Dir(path))
 }
 
+func (g *gateway) abandonUpload(q *request, data, statePath string, state uploadState, a *answer) error {
+	if state.CallID != "" {
+		original := *q
+		original.id, original.startedMs = state.CallID, state.StartedAt
+		original.begun = time.UnixMilli(original.startedMs)
+		line := g.line(&original, a)
+		line.Phase = ptr(contract.CallPhaseCompleted)
+		if !g.spool.append(line) {
+			return errors.New("cannot record discarded upload")
+		}
+	}
+	return discardUpload(data, statePath, state)
+}
+
 func discardUpload(data, statePath string, state uploadState) error {
 	if state.Offset != 0 && !state.Committed {
 		state.Offset, state.CallID, state.StartedAt = 0, "", 0
@@ -366,9 +404,9 @@ func discardUpload(data, statePath string, state uploadState) error {
 	return nil
 }
 
-// Staged and abandoned bytes already count against statfs. Also reserve space for concurrent writes that have
-// not hit disk yet, leaving filesystem headroom for the spool and other services.
-func (g *gateway) reserveChunk(bytes int64) bool {
+// Staged and abandoned bytes already count against statfs. Also reserve space for concurrent raw uploads and
+// chunks that have not hit disk yet, leaving filesystem headroom for the spool and other services.
+func (g *gateway) reserveUploadSpace(bytes int64) bool {
 	g.uploadSpaceLock.Lock()
 	defer g.uploadSpaceLock.Unlock()
 	var disk unix.Statfs_t
@@ -385,7 +423,7 @@ func (g *gateway) reserveChunk(bytes int64) bool {
 	return true
 }
 
-func (g *gateway) releaseChunk(bytes int64) {
+func (g *gateway) releaseUploadSpace(bytes int64) {
 	g.uploadSpaceLock.Lock()
 	g.uploadReserved -= uint64(bytes)
 	g.uploadSpaceLock.Unlock()
