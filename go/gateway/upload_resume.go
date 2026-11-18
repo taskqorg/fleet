@@ -514,14 +514,10 @@ func (g *gateway) maintainUploads(now time.Time) {
 		}
 		path := filepath.Join(g.uploadDir(), name)
 		if suffix == ".state" {
-			var state uploadState
-			saved, err := os.ReadFile(path)
-			if err == nil && json.Unmarshal(saved, &state) == nil && state.Discard != nil {
-				data := filepath.Join(g.uploadDir(), key+".data")
-				if err := g.completeUploadDiscard(data, path, &state); err != nil {
-					logf("recover upload discard: %v", err)
-					expired = false // retry the retained accounting record at the next maintenance pass
-				}
+			data := filepath.Join(g.uploadDir(), key+".data")
+			if err := g.recoverUploadDiscard(data, path); err != nil {
+				logf("recover upload discard: %v", err)
+				expired = false // retry the retained accounting record at the next maintenance pass
 			}
 		}
 		if expired {
@@ -531,4 +527,22 @@ func (g *gateway) maintainUploads(now time.Time) {
 		}
 		g.uploadLocks.Delete(key)
 	}
+}
+
+func (g *gateway) recoverUploadDiscard(data, path string) error {
+	saved, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var state uploadState
+	if err := json.Unmarshal(saved, &state); err != nil {
+		return err
+	}
+	if state.Discard == nil {
+		return nil
+	}
+	return g.completeUploadDiscard(data, path, &state)
 }
