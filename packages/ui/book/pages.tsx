@@ -12,6 +12,7 @@ import {
 import { NAV } from './nav.ts';
 import { Delivery } from './delivery.tsx';
 import { FocusDemo } from './focus-demo.tsx';
+import { CardsProvider } from './entity-cards.tsx';
 import { NOW, min, hr, tasks, TREE, transcript, hosts, PROJECTS } from './fixtures.ts';
 import tokens from '../tokens.json';
 
@@ -543,7 +544,7 @@ function Catalogue() {
 function App() {
   const [loc, go] = useLocation();
   const cur = loc.split('/')[1] || 'overview';
-  return <AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} focus={<FocusDemo />} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
+  return <CardsProvider><AppShell nav={NAV} current={cur} onGo={id => go(`/${id}`)} waiting={3} focus={<FocusDemo />} user={{ name: 'Alex Kirs', onLogout: () => go('/overview'), version: BOOK_VERSION }}>
     <Switch>
       <Route path="/tasks/:id">{(p: { id: string }) => <Tasks id={p.id} />}</Route>
       <Route path="/tasks"><Tasks /></Route>
@@ -560,7 +561,7 @@ function App() {
       <Route path="/overview"><Overview /></Route>
       <Route><Empty text="This section is not mocked up in stage 3." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
     </Switch>
-  </AppShell>;
+  </AppShell></CardsProvider>;
 }
 
 render(<Router hook={useHashLocation}><App /></Router>, document.getElementById('app')!);

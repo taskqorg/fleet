@@ -6,6 +6,7 @@
 // delivery), so nothing here waits for a poll. Red everywhere means past the stage's P90 over the last 14 days.
 import { useCallback, useEffect } from 'preact/hooks';
 import {
+  EntityCode,
   ListDetail, StateBadge, AgeChip, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
   Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
   type StateOf, type DayCol, type DayMark, type SharePart, ShellStatus } from '../../../packages/ui/src/index.ts';
@@ -63,12 +64,13 @@ const no404 = <T,>(p: Promise<T>) => p.catch(e => { if (/404/.test(String(e?.mes
 const q = quantile;
 const sec = (v: number | null | undefined) => ({ value: v == null ? null : v / 1000, basis: v == null ? 'unavailable' as const : 'measured' as const, reason: v == null ? 'no pull requests' : undefined });
 
-type DeliveryExtra = { range?: string; at?: string };
+type DeliveryExtra = { range?: string; at?: string; release?: string };
 /** The pace keys of a link: valid values other than the defaults. A link may carry anything (an old one has the text "undefined"). */
 export function deliveryExtra(x: Record<string, string | undefined> | undefined): DeliveryExtra {
   const out: DeliveryExtra = {};
   if (x?.range && x.range !== '7d' && RANGES.some(r => r.id === x.range)) out.range = x.range;
   if (x?.at && /^\d{4}-\d{2}-\d{2}(T\d{2})?$/.test(x.at)) out.at = x.at;
+  if (x?.release && (UI_TAG.test(x.release) || /^v[0-9]+(?:\.[0-9]+)*$/.test(x.release))) out.release = x.release;
   return out;
 }
 
@@ -105,7 +107,14 @@ export function Delivery({ id }: { id?: string }) {
   // A stage this app does not know yet (a newer coordinator) is left out rather than breaking the page.
   const data = status.data, items = (data?.items ?? []).filter(it => it.stage in states.delivery), incomplete = !!data?.error;
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
-  const urlRange = deliveryExtra(useUrlView('delivery').view.extra).range ?? '7d';
+  const url = deliveryExtra(useUrlView('delivery').view.extra);
+  const urlRange = url.range ?? '7d';
+  const releaseDoc = useDoc<History | typeof NONE>(prefsRead.value && fleetShown && url.release ? 'delivery-release:' + url.release : null,
+    () => no404(op('delivery_history', { release: url.release! })), touchesHistory, 600000);
+  const releaseHistory = releaseDoc.data === NONE ? null : releaseDoc.data;
+  const releaseRows = fleetShown && releaseHistory ? releaseHistory.prs.map(pr => fromHistory(pr, releaseHistory.installsFrom)) : [];
+  const releaseItems = url.release ? items.filter(it => it.release === url.release) : [];
+  const releaseRowIds = new Set(releaseItems.map(idOf));
   // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
   const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
     () => no404(op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }).then(h => ({ h }))), touchesHistory, 600000);
@@ -121,10 +130,10 @@ export function Delivery({ id }: { id?: string }) {
     const { picked } = paceOf(v);
     // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows; none
     // while the history loads.
-    const source = !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(x => fromHistory(x, hist.h.installsFrom)) : [];
+    const source = url.release ? [...releaseItems, ...releaseRows.filter(row => !releaseRowIds.has(idOf(row)))] : !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(x => fromHistory(x, hist.h.installsFrom)) : [];
     const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
     const rowsOf = source.map(row);
-    const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo}`, { state: r.it.stage, project: r.it.projectId }));
+    const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo} ${r.it.release ?? ''} release=${r.it.release ?? ''}.`, { state: r.it.stage, project: r.it.projectId }));
     const counts: Record<string, number> = Object.fromEntries(ORDER.map(s => [s, 0]));
     for (const r of searched) counts[r.it.stage]++;
     const st = v.state ?? [], group = v.group ?? DEFAULT_DELIVERY_GROUP, sort = v.sort ?? DEFAULT_DELIVERY_SORT;
@@ -143,15 +152,15 @@ export function Delivery({ id }: { id?: string }) {
     const current = items.map(row), ids = new Set(current.map(r => r.id));
     const all = [...current, ...rowsOf.filter(r => !ids.has(r.id))].map(keyed);
     // The rows come from the history while a day is picked: its failure is the list's, never "none merged then".
-    const error = picked ? (hist ? null : histDoc.error && `history: ${histDoc.error}`) : status.error && !data ? status.error : null;
-    return { rows, all, counts, groups, total: rowsOf.length, pending: !picked && !data && !status.error || !!picked && histLoading, error, reload: picked ? histDoc.reload : status.reload };
+    const error = url.release ? releaseDoc.error ?? (!data ? status.error : null) : picked ? (hist ? null : histDoc.error && `history: ${histDoc.error}`) : status.error && !data ? status.error : null;
+    return { rows, all, counts, groups, total: rowsOf.length, pending: url.release ? !prefsRead.value || (fleetShown && releaseDoc.data === null && !releaseDoc.error) || (!data && !status.error) : !picked && !data && !status.error || !!picked && histLoading, error, reload: url.release ? () => { if (fleetShown) releaseDoc.reload(); status.reload(); } : picked ? histDoc.reload : status.reload };
   };
   const page = useListPage<Row>({
-    view: 'delivery', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: { stage: ['installed'] },
+    view: 'delivery', entity: 'pull_request', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: { stage: ['installed'] },
     // Installed starts collapsed only while it is one group among the rows in flight: a picked day (merged pull requests,
     // most installed) or a filter to installed rows is its own context, where it starts open.
     // The day in the URL, not the bucket found in the history: the context does not change when the history arrives.
-    groupsContext: v => deliveryExtra(v.extra).at || doneOnly(v) ? 'merged' : undefined,
+    groupsContext: v => deliveryExtra(v.extra).at || deliveryExtra(v.extra).release || doneOnly(v) ? 'merged' : undefined,
     defaultGroup: DEFAULT_DELIVERY_GROUP, defaultSort: DEFAULT_DELIVERY_SORT, system: SYSTEM_VIEWS.delivery, groupLabel: (_g, l) => l ?? '',
   });
   const { view, set } = page;
@@ -162,7 +171,7 @@ export function Delivery({ id }: { id?: string }) {
   useEffect(() => { const x = view.extra ?? {}; if (Object.keys(x).some(k => (x as Record<string, string | undefined>)[k] !== (keep as Record<string, string | undefined>)[k])) set({ extra: deliveryExtra(keep) }, 'type'); }, [JSON.stringify(view.extra), !!hist, histLoading]);
   const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
-  const open = !id ? undefined : items.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, hist.h.installsFrom))[0] : undefined);
+  const open = !id ? undefined : items.find(it => idOf(it) === id) ?? releaseRows.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, hist.h.installsFrom))[0] : undefined);
   const p = keep.at ? picked : null;
 
   const list = <>
@@ -172,7 +181,7 @@ export function Delivery({ id }: { id?: string }) {
     {data?.error && <ErrorBanner text={`GitHub: ${data.error}`} />}
     {incomplete && <p class="muted type-sm stack-pad">Some GitHub data is unavailable: current totals are unknown; the rows are the last ones read.</p>}
     <ListPagePanel page={page} noun="Pull requests" placeholder="Search pull requests, state:mq_wait project:fleet" family="delivery" groups={GROUPS} sorts={SORTS} focused={id} countersLabel="Pull requests by stage"
-      countsUnknown={incomplete && !p} chips={p ? [{ field: 'Merged', value: p.tip ?? p.label }] : []} onRemoveChip={() => setPace({ at: undefined })}
+      countsUnknown={incomplete && !p} chips={url.release ? [{ field: 'Release', value: releaseLabel(url.release) }] : p ? [{ field: 'Merged', value: p.tip ?? p.label }] : []} onRemoveChip={() => setPace(url.release ? { release: undefined } : { at: undefined })}
       listLabel="Pull requests" title={r => r.it.title || `#${r.it.number}`}
       groupIcon={(g, k) => g === 'stage' && k in states.delivery ? states.delivery[k as Stage].icon : 'folder-open'} groupTone={(g, k) => g === 'stage' && k in states.delivery ? states.delivery[k as Stage].tone : 'neutral'}
       state={r => <StateBadge family="delivery" state={r.it.stage} compact />} actions={() => []}
@@ -180,7 +189,7 @@ export function Delivery({ id }: { id?: string }) {
       empty={<Empty text={p ? 'No pull requests merged then.' : page.filtered ? 'No pull requests match.' : incomplete ? 'Unavailable. GitHub data is incomplete.' : 'No pull requests in flight.'} />}
       facts={r => <RowFacts>
         {r.it.repo !== FLEET && <Fact text={r.it.repo} tip="Repository" />}
-        {r.it.release && <Fact text={releaseLabel(r.it.release)} tip={uiOnly(r.it.release) ? `UI-only release ${r.it.release}: hosts install nothing` : 'Release'} />}
+        {r.it.release && <EntityCode code={releaseLabel(r.it.release)} id={r.it.release} kind="release" />}
         <Fact tip={`${states.delivery[r.it.stage].label} for`}><AgeChip t={ms(r.it.since)} now={now} alertAfter={alertOf(norms, r.it)} alertLabel="past the stage's P90" /></Fact>
       </RowFacts>} />
   </>;
@@ -344,7 +353,7 @@ function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; 
       {url && <Button label="Open on GitHub" icon="external-link" iconOnly onClick={() => window.open(url, '_blank', 'noopener')} />}</header>
     <h2 class="detail-title">{title}</h2>
     <div class="state-line">{item && <StateBadge family="delivery" state={item.stage} />}{x?.author && <span class="muted">by {x.author}</span>}{t0 > 0 && <AgeChip t={t0} now={now} />}
-      {rel && <span class="id" data-tip={uiOnly(rel) ? `UI-only release ${rel}: hosts install nothing` : undefined}>{releaseLabel(rel)}</span>}</div>
+      {rel && <EntityCode code={releaseLabel(rel)} id={rel} kind="release" />}</div>
     <div class="stack-pad">
       {h.error && !h.data && <ErrorBanner text={`History did not load: ${h.error}`} />}
       {x ? <>

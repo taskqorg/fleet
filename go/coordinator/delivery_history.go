@@ -1221,18 +1221,22 @@ func deliveryHistory(q *Request, r *contract.DeliveryHistoryRequest) (contract.D
 	if err != nil {
 		return out, err
 	}
+	tag := deref(r.Release)
+	releasePRs := map[int64]bool{}
 	for _, p := range prs {
-		if r.Number != nil && p.Number == *r.Number || r.Number == nil && p.Merged >= from && p.Merged < until {
+		byDate := tag == "" && r.Number == nil && p.Merged >= from && p.Merged < until
+		if r.Number != nil && p.Number == *r.Number || tag != "" && deref(p.Release) == tag || byDate {
+			releasePRs[p.Number] = true
 			out.Prs = append(out.Prs, p)
 		}
 	}
 	for _, x := range runs {
-		if r.Number != nil && x.Pr != nil && *x.Pr == *r.Number || r.Number == nil && x.Created >= from && x.Created < until {
+		if r.Number != nil && x.Pr != nil && *x.Pr == *r.Number || tag != "" && x.Pr != nil && releasePRs[*x.Pr] || tag == "" && r.Number == nil && x.Created >= from && x.Created < until {
 			out.Runs = append(out.Runs, x)
 		}
 	}
 	for _, x := range rels {
-		if r.Number == nil && x.Published >= from && x.Published < until || r.Number != nil && slices.ContainsFunc(out.Prs, func(p contract.DeliveryPr) bool { return deref(p.Release) == x.Tag }) {
+		if tag != "" && x.Tag == tag || tag == "" && r.Number == nil && x.Published >= from && x.Published < until || r.Number != nil && slices.ContainsFunc(out.Prs, func(p contract.DeliveryPr) bool { return deref(p.Release) == x.Tag }) {
 			out.Releases = append(out.Releases, x)
 		}
 	}

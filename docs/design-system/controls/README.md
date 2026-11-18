@@ -12,6 +12,7 @@ One file per control. Each file has: purpose, anatomy, states, behaviour, keyboa
 | [filter-bar](filter-bar.md) | Filters and grouping, saved and shared |
 | [search](search.md) | Fast search |
 | [spotlight](spotlight.md) | Cmd+K palette: find and open anything |
+| [entity-card](entity-card.md) | What a referenced object is, and going to it |
 | [state-badge](state-badge.md) | States with reason and release condition |
 | [number](number.md) | Measurement basis, `CostFigures`, and `Totals` |
 | [fill-bar](fill-bar.md) | Store fill per project, quota use |

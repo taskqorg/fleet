@@ -3,9 +3,9 @@
 import { captureRender, configureErrors } from './errors.ts';
 import { Projects } from './views/projects.tsx';
 import { render, Component, type ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Router, Route, Switch, Redirect, useLocation, useSearch } from 'wouter-preact';
-import { AppShell, Empty, Button, ListDetail, workspaces, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
+import { AppShell, EntityCards, Empty, Button, ListDetail, workspaces, FocusControl, FocusPresets, type NavItem, type AppScreen, type SpotlightProvider, type SpotlightItem, type IconName, type Family } from '../../packages/ui/src/index.ts';
 import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
@@ -14,6 +14,7 @@ import { preferencesTouched } from './invalidation.ts';
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
 import { useDoc } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
+import { entityCards } from './entity-cards.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
 import { startStore } from './store.ts';
 import { clearAll } from './offline.ts';
@@ -199,7 +200,9 @@ function App() {
   // Each section's counter (nav-rail.md, Counters); Needs you is the head chip, not a counter.
   const counts = useNavCounts(access.value.state === 'open');
   const nav = NAV.map(n => counts[n.id] ? { ...n, count: counts[n.id] } : n);
-  return <AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={nav} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
+  // Entity cards (EntityCode) read entity_card through the store; their Open goes to the in-app path.
+  const cards = useMemo(() => entityCards(go), [go]);
+  return <EntityCards.Provider value={cards}><AppShell privateReady={access.value.state === 'open'} privateGeneration={access.value.generation} nav={nav} current={current} waiting={0} onGo={id => go(sectionPath(id))} pins={access.value.state === 'open' ? pins : []} onPins={savePins} search={access.value.state === 'open' ? search : []} ready={shown}
     searchIdle={<FocusPresets icon value={focus.filter(p => !ignored.includes(p))} presets={focusPresets} ignored={ignored} onChange={setFocus} />}
     focus={access.value.state === 'open' ? <Focus go={go} /> : undefined}
     widths={geometry.current.widths} onWidth={setWidth} collapsed={geometry.current.navCollapsed} onCollapsed={on => savePrefs(() => ({ navCollapsed: on }), { navCollapsed: on })}
@@ -207,7 +210,7 @@ function App() {
     user={access.value.state === 'open' && user ? { name: user, onLogout: () => { Promise.race([clearAll(true), new Promise(r => setTimeout(r, 2000))]).finally(() => location.assign('/cdn-cgi/access/logout')); }, version: versionInfo() } : undefined}>
     {signedOut.value && <div class="problem failure" role="alert"><b>Session expired</b><span class="facts">Sign in again to continue; stored data was cleared.</span><span class="acts"><Button label="Sign in again" kind="primary" onClick={() => location.reload()} /></span></div>}
     {access.value.state === 'open' ? <RenderBoundary at={access.value.generation + ':' + loc + '?' + query}><PrivateRoutes key={access.value.generation} go={go} /></RenderBoundary> : current === 'overview' ? <Empty text="Validating access…" /> : <ListDetail list={<Empty text="Validating access…" />} detail={<Empty text="Waiting for authorized data." />} detailKey="access" />}
-  </AppShell>;
+  </AppShell></EntityCards.Provider>;
 }
 
 function PrivateRoutes({ go }: { go: (to: string) => void }) {

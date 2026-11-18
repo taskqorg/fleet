@@ -6,6 +6,57 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+// EntityCardReply: A card summary of one entity for an entity reference: the same read for people (the card) and agents (MCP tool).
+type EntityCardReply struct {
+	At        *string      `json:"at,omitempty"`
+	AtLabel   *string      `json:"atLabel,omitempty"`
+	Code      *string      `json:"code,omitempty"`
+	Facts     []EntityFact `json:"facts"`
+	Harness   *string      `json:"harness,omitempty"`
+	Hash      *string      `json:"hash,omitempty"`
+	Id        string       `json:"id"`
+	Kind      EntityKind   `json:"kind"`
+	Path      *string      `json:"path,omitempty"`
+	ProjectId *string      `json:"projectId,omitempty"`
+	State     *string      `json:"state,omitempty"`
+	Title     string       `json:"title"`
+	Url       *string      `json:"url,omitempty"`
+	Uuid      *string      `json:"uuid,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityCardReply) Validate() error {
+	if v.Facts == nil {
+		return Missing("facts")
+	}
+	for i := range v.Facts {
+		if err := Check(&v.Facts[i], "facts"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// EntityCardRequest: A code, or a kind with its id. Unknown and forbidden both answer 404.
+type EntityCardRequest struct {
+	Code *string     `json:"code,omitempty"`
+	Id   *string     `json:"id,omitempty"`
+	Kind *EntityKind `json:"kind,omitempty"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityCardRequest) Validate() error {
+	if v.Kind != nil {
+		if err := Check(v.Kind, "kind"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // EntityCode: A human code (D17) and the entity it names; superseded: an alias of currentCode (a moved entity or a renamed project).
 type EntityCode struct {
 	Code        string `json:"code"`
@@ -18,6 +69,76 @@ type EntityCode struct {
 // Validate: the schema's required fields and enums (see Check).
 func (v *EntityCode) Validate() error {
 	return nil
+}
+
+type EntityFact struct {
+	Label string         `json:"label"`
+	Type  EntityFactType `json:"type"`
+	Value string         `json:"value"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *EntityFact) Validate() error {
+	if err := Check(&v.Type, "type"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// EntityFactType: How a fact's value is formatted (formats.md): time is RFC 3339, count and bytes are integers, duration is seconds.
+type EntityFactType string
+
+const (
+	EntityFactTypeText     EntityFactType = "text"
+	EntityFactTypeCode     EntityFactType = "code"
+	EntityFactTypeTime     EntityFactType = "time"
+	EntityFactTypeCount    EntityFactType = "count"
+	EntityFactTypeBytes    EntityFactType = "bytes"
+	EntityFactTypeDuration EntityFactType = "duration"
+)
+
+// EntityFactTypeValues lists every EntityFactType in schema order.
+var EntityFactTypeValues = []EntityFactType{EntityFactTypeText, EntityFactTypeCode, EntityFactTypeTime, EntityFactTypeCount, EntityFactTypeBytes, EntityFactTypeDuration}
+
+// Valid: v is one of the schema's values.
+func (v EntityFactType) Valid() bool {
+	for _, x := range EntityFactTypeValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// EntityKind: What an entity reference names (docs/design-system/controls/entity-card.md).
+type EntityKind string
+
+const (
+	EntityKindTask         EntityKind = "task"
+	EntityKindQuestion     EntityKind = "question"
+	EntityKindConversation EntityKind = "conversation"
+	EntityKindExecution    EntityKind = "execution"
+	EntityKindResult       EntityKind = "result"
+	EntityKindExperiment   EntityKind = "experiment"
+	EntityKindProject      EntityKind = "project"
+	EntityKindHost         EntityKind = "host"
+	EntityKindAgent        EntityKind = "agent"
+	EntityKindPipeline     EntityKind = "pipeline"
+	EntityKindPullRequest  EntityKind = "pull_request"
+	EntityKindRelease      EntityKind = "release"
+)
+
+// EntityKindValues lists every EntityKind in schema order.
+var EntityKindValues = []EntityKind{EntityKindTask, EntityKindQuestion, EntityKindConversation, EntityKindExecution, EntityKindResult, EntityKindExperiment, EntityKindProject, EntityKindHost, EntityKindAgent, EntityKindPipeline, EntityKindPullRequest, EntityKindRelease}
+
+// Valid: v is one of the schema's values.
+func (v EntityKind) Valid() bool {
+	for _, x := range EntityKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // EntityResolveManyReply: Every known code in the text, in order of first appearance; unknown and forbidden codes are left out.
@@ -1558,6 +1679,7 @@ func (v *TaskUpdateRequest) Validate() error {
 
 func init() {
 	for n, o := range map[string]Operation{
+		"entity_card":             {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"$comment\":\"A code, or a kind with its id. Unknown and forbidden both answer 404.\",\"additionalProperties\":false,\"properties\":{\"code\":{\"$comment\":\"A D17 code (T-, Q-, C-; old codes too), case-insensitive.\",\"type\":\"string\"},\"id\":{\"$comment\":\"The entity id: a UUID, a host, project, agent or pipeline id, owner/repo#number for a pull request, a release tag (v1.2.3, ui-1.2.2-v1.2.3).\",\"type\":\"string\"},\"kind\":{\"$comment\":\"What an entity reference names (docs/design-system/controls/entity-card.md).\",\"enum\":[\"task\",\"question\",\"conversation\",\"execution\",\"result\",\"experiment\",\"project\",\"host\",\"agent\",\"pipeline\",\"pull_request\",\"release\"],\"type\":\"string\"}},\"type\":\"object\"}")},
 		"entity_resolve":          {Read: true, Long: false, Errors: []int{400, 404}, InputSchema: json.RawMessage("{\"$comment\":\"Case-insensitive; unknown and forbidden codes both answer 404.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}")},
 		"entity_resolve_many":     {Read: true, Long: false, Errors: []int{}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}")},
 		"project_code_set":        {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, InputSchema: json.RawMessage("{\"$comment\":\"2 to 5 characters, a letter first, not hex-only, no I or O, never used before. The project's tasks, questions and conversations get new codes; old codes stay aliases.\",\"additionalProperties\":true,\"properties\":{\"code\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"code\"],\"type\":\"object\"}")},

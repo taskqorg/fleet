@@ -29,7 +29,7 @@ const savedView = (v: View): View => v.group ? v : { ...v, group: 'priority' };
 export function Tasks({ id }: { id?: string }) {
   // Pinned tasks are read by id with an empty filter and live through task changes.
   const page = useListPage<TaskRow>({
-    view: 'tasks', kind: 'tasks', defaultGroup: DEFAULT_TASK_GROUP, defaultSort: DEFAULT_TASK_SORT, system: SYSTEM_VIEWS.tasks, groupLabel,
+    view: 'tasks', entity: 'task', kind: 'tasks', defaultGroup: DEFAULT_TASK_GROUP, defaultSort: DEFAULT_TASK_SORT, system: SYSTEM_VIEWS.tasks, groupLabel,
     pinDoc: 'task-pins', pinRead: () => ({ key: [], filter: {} }), pinTouches: (c, has) => c.kind === 'task' && has(c.id) || !!c.taskId && has(c.taskId),
     savedView, saveGroup: DEFAULT_TASK_GROUP,
     // Completed (7) and cancelled (8) start collapsed under state grouping (the state group keys of task_page, attention
@@ -92,10 +92,11 @@ function groupLabel(group: string, label: string | null) {
   return label ?? 'None';
 }
 
-/** Dependencies by code (OR-38); ones the viewer cannot see are only counted. */
-function dependsOn(ds: { code?: string | null }[]) {
-  const codes = ds.flatMap(d => d.code ? [d.code] : []), hidden = ds.length - codes.length;
-  return `Depends on ${[...codes, ...(hidden ? [`${hidden} other task${hidden > 1 ? 's' : ''}`] : [])].join(', ')}`;
+/** Dependencies as task references with their cards (OR-38); ones the viewer cannot see are only counted. */
+function dependsOn(ds: { id: string; code?: string | null }[]) {
+  const shown = ds.filter(d => d.code), hidden = ds.length - shown.length;
+  return <span class="deps">Depends on {shown.map(d => <EntityCode key={d.id} code={d.code} id={d.id} kind="task" cls="inline" />)}
+    {hidden > 0 && <span>{hidden} other task{hidden > 1 ? 's' : ''}</span>}</span>;
 }
 
 function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
@@ -134,11 +135,11 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     {confirming && <div class="problem warning" role="group" aria-label="Confirm cancel"><b>Cancel this task?</b><span class="facts">Running work is asked to stop; finished external effects stay.</span>
       <span class="acts"><Button label="Yes, cancel" kind="danger" busy={busy === 'cancel'} disabledReason={off ? 'offline' : undefined} onClick={() => act('cancel')} /><Button label="Keep" onClick={() => setConfirming(false)} /></span></div>}
     {failure && <ErrorBanner text={failure} />}
-    <h2 class="detail-title">{t.title}<EntityCode code={t.code} id={t.id} /></h2>
+    <h2 class="detail-title">{t.title}<EntityCode code={t.code} id={t.id} kind="task" /></h2>
     <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted">by {actor(t.createdBy)}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} now={now} />}</div>
     {t.latestResult?.id && <p class="state-line"><Icon name={viewOf(t.latestResult.mediaType ?? '') === 'download' ? 'archive' : 'file-text'} label={t.latestResult.mediaType ?? 'Result'} />
       <a class="row-link" href={`/results/${encodeURIComponent(t.latestResult.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(t.latestResult.id)}`); }}>{fileLabel(t.latestResult.path ?? t.latestResult.name ?? '') || 'Result'}</a>
-      <EntityCode id={t.latestResult.sha256 ?? t.latestResult.id} what={t.latestResult.sha256 ? 'sha256' : 'Result'} /></p>}
+      <EntityCode id={t.latestResult.artifactId ?? t.latestResult.id} kind="result" /></p>}
     {open.map((q: any) => <DecisionBlock key={q.id} question={q.text} askedBy={actor(q.askedBy) || q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
       options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
       onAnswer={a => { if (!off) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}

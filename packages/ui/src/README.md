@@ -6,7 +6,7 @@
 
 ## Interface
 
-- `controls.tsx` exports controls for navigation, lists, details, threads, forms, artifacts, metrics, and charts.
+- `controls.tsx` exports controls for navigation, lists, details, threads, forms, artifacts, metrics, and charts. `EntityCode` is every reference to another object; its card (`EntityCardLayer`, mounted once by `AppShell`) reads through the `EntityCards` context the app or the book provides; `Markdown` turns D17 codes in text into references (`linkCodes`); `CopyButton` copies a value with icon feedback.
 - `charts.tsx` exports the day charts for pace pages: `DayChart`, `ShareBar`, `NormBar` and the scale helper `capOf`.
 - `patterns.tsx` exports assembled layouts including `AppShell` (navigation rail plus the shell header: collapse toggle, section title, focus chip slot, search icon), `ListDetail`, `ListFrame`, `TaskListView`, and `DefinitionEditor`. `controls.tsx:FocusControl` is the header's focus chip with presets, ignore and the outside-focus count.
 - `virtual-list.tsx:VirtualList` exports keyed virtual rendering and `VirtualListHandle`.

@@ -118,7 +118,7 @@ function Experiment({ id, onClose }: { id: string; onClose: () => void }) {
   const note = (unit: string) => { const b = budgetOf(unit); return b ? `of ${b.limit} · ${b.action}${b.firedAt ? ' · reached' : ''}` : undefined; };
   const cols = `minmax(8rem,14rem) ${e.variants.map(() => 'minmax(12rem,1fr)').join(' ')}`;
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={title(e)}>
-    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} /><EntityCode id={e.id} what="Experiment" /><span class="grow" />
+    <header class="detail-h"><Button label="Close" icon="x" iconOnly onClick={onClose} /><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} /><EntityCode id={e.id} kind="experiment" /><span class="grow" />
       {e.state === 'draft' && <Button label="Launch" icon="play" kind="primary" disabledReason={savingRecord ? 'Saving experiment record' : Object.values(recordErrors).some(Boolean) || Object.entries(recordDraft).some(([field, value]) => value !== String(savedRecord[field] ?? e[field] ?? '')) ? 'Save the experiment record successfully before launch' : !String(savedRecord.goal ?? e.goal ?? '').trim() || !String(savedRecord.hypothesis ?? e.hypothesis ?? '').trim() ? 'Save a goal and hypothesis before launch' : undefined} onClick={() => act('lab_experiment_action', { experimentId: id, action: 'launch' })} />}
       {e.state === 'paused' && <Button label="Resume" icon="play" kind="primary" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'resume' })} />}
       {(e.state === 'running' || e.state === 'paused') && <Button label="Stop" icon="square" kind="danger" onClick={() => act('lab_experiment_action', { experimentId: id, action: 'stop' })} />}
@@ -219,7 +219,7 @@ function TrialPlan({ id, projectId, assessments, onClose }: { id: string; projec
         time: msMeasured(execution.durationMs), cost: { value: null, basis: 'unavailable' as const }, error: execution.error ? JSON.stringify(execution.error) : undefined } : undefined };
   });
   return <DetailSection title="Trial plan">
-    <KvRow icon="network" label="Trial" value={<><EntityCode id={id} what="Trial" /><Button label="Close trial plan" icon="x" iconOnly onClick={onClose} /></>} />
+    <KvRow icon="network" label="Trial" value={<><EntityCode id={id} kind="execution" /><Button label="Close trial plan" icon="x" iconOnly onClick={onClose} /></>} />
     <OfflineMarker state={state} now={Date.now()} />
     {error && <ProblemRow title="Trial plan unavailable" facts={error} severity="failure" actions={[]} />}
     {run && <KvRow icon="rows-3" label="Plan entries" meta={`${run.planSummary.planned} planned · ${run.planSummary.freshExecutions} fresh · ${run.planSummary.reusedExecutions} reused · ${run.planSummary.notSelected} not selected · ${run.planSummary.pending} pending · ${run.planSummary.blocked} blocked`} />}
