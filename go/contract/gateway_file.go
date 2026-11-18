@@ -29,8 +29,8 @@ type Upload struct {
 	Sha256          string
 }
 
-// GatewayUpload sends one file to an upload tool: the body is the raw bytes with an exact Content-Length, X-Fleet-Args
-// the path fields with the file's name and media type, X-Fleet-Sha256 the first-pass hash. A file changed since that
+// GatewayUpload sends one file to an upload tool, using chunks over HTTPS for files larger than UploadChunkBytes.
+// X-Fleet-Args carries the path fields, name and media type. X-Fleet-Sha256 carries the first-pass hash. A file changed since that
 // pass reaches the gateway with another hash and is refused there (sha-mismatch). The output on ok is
 // {reply, name, mediaType, bytes, sha256, callId}: the provider's reply and what was sent.
 func GatewayUpload(ctx context.Context, t GatewayTarget, connection, tool string, args map[string]any, u Upload) CallLine {
@@ -40,23 +40,34 @@ func GatewayUpload(ctx context.Context, t GatewayTarget, connection, tool string
 	}
 	fields["name"], fields["mediaType"] = u.Name, u.MediaType
 	encoded, _ := json.Marshal(fields)
-	_, answer := t.waits()
-	x := send(ctx, t, connection, tool, func() io.Reader { return io.NewSectionReader(u.File, 0, u.Size) }, u.Size, true, map[string]string{
+	headers := map[string]string{
 		"Content-Type":   "application/octet-stream",
 		"X-Fleet-Args":   base64.RawURLEncoding.EncodeToString(encoded),
 		"X-Fleet-Sha256": u.Sha256,
-		"Expect":         "100-continue",
-	}, answer)
-	defer x.close()
+	}
+	var line CallLine
+	legacy := true
+	if u.Size > UploadChunkBytes && strings.HasPrefix(t.URL, "https://") {
+		line, legacy = resumableUpload(ctx, t, connection, tool, headers, u)
+	}
+	if legacy {
+		// The resumable probe may have used these headers against an older gateway.
+		delete(headers, UploadModeHeader)
+		delete(headers, UploadIDHeader)
+		delete(headers, UploadSizeHeader)
+		delete(headers, UploadOffsetHeader)
+		headers["Content-Type"] = "application/octet-stream"
+		headers["Expect"] = "100-continue"
+		_, answer := t.waits()
+		x := send(ctx, t, connection, tool, func() io.Reader { return io.NewSectionReader(u.File, 0, u.Size) }, u.Size, true, headers, answer)
+		defer x.close()
+		line = x.line
+		if !x.failed {
+			line = x.answerJSON()
+		}
+	}
 	sum := u.Sha256
 	transfer := &CallTransfer{Direction: CallTransferDirectionUpload, Bytes: u.Size, MediaType: u.MediaType, Name: u.Name, Sha256: &sum}
-	if x.failed {
-		if x.line.Outcome == CallOutcomeUnknown {
-			x.line.Transfer = transfer // what may have been stored: the agent compares it with the issue's attachments
-		}
-		return x.line
-	}
-	line := x.answerJSON()
 	if line.Outcome != CallOutcomeError {
 		line.Transfer = transfer // sent, or may have been stored; a refusal sent nothing on
 	}

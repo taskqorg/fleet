@@ -383,6 +383,7 @@ type gateway struct {
 	handling    atomic.Int64 // /v1/call requests in their handler
 	stagingLock sync.Mutex
 	staging     map[string]func()
+	uploadLocks sync.Map
 }
 
 func newGateway(c *config) (*gateway, error) {
@@ -403,6 +404,13 @@ func newGateway(c *config) (*gateway, error) {
 	g := &gateway{config: c, disabled: map[string]disabledKey{}, current: map[string]int{}, started: time.Now(), staging: map[string]func(){},
 		// Redirects are never followed: a 307/308 resends the method and body, which could charge a call twice.
 		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 64}}}
+	if err := os.MkdirAll(g.uploadDir(), 0o700); err != nil {
+		return nil, fmt.Errorf("resumable directory: %w", err)
+	}
+	if err := syncDir(c.StateDir); err != nil {
+		return nil, err
+	}
+	g.expireUploads(time.Now())
 	if text, err := os.ReadFile(filepath.Join(c.StateDir, "disabled-keys")); err == nil {
 		for _, line := range strings.Split(string(text), "\n") {
 			var id string
@@ -995,7 +1003,11 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	q.fileClient = r.Header.Get("X-Fleet-File-Client") == "1"
 	g.resolve(q)
 	if q.offered && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload {
-		g.serveUpload(w, r, q)
+		if r.Header.Get(contract.UploadModeHeader) != "" {
+			g.serveResumableUpload(w, r, q)
+		} else {
+			g.serveUpload(w, r, q)
+		}
 		return
 	}
 	// Read the body before any refusal: closing on unread bytes resets the connection and loses the caller's reason.
@@ -1209,7 +1221,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	}
 	g.transfers.Add(1)
 	defer g.transfers.Add(-1)
-	fileBytes, _, stall, answerWait := limits(q.c)
+	fileBytes, _, stall, _ := limits(q.c)
 	contentType, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
 	if strings.TrimSpace(strings.ToLower(contentType)) != "application/octet-stream" {
 		refuse(refusal(400, "error", "file-expected", "an upload tool takes the file bytes as application/octet-stream with X-Fleet-Args"), nil)
@@ -1223,34 +1235,9 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		refuse(refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), nil)
 		return
 	}
-	var args map[string]json.RawMessage
-	encoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(r.Header.Get("X-Fleet-Args"), "="))
-	if err != nil || json.Unmarshal(encoded, &args) != nil || args == nil {
-		refuse(refusal(400, "error", "bad-request", "X-Fleet-Args must be base64url JSON"), nil)
-		return
-	}
-	var name, mediaType string
-	nameErr := json.Unmarshal(args["name"], &name)
-	if len(args["mediaType"]) > 0 && json.Unmarshal(args["mediaType"], &mediaType) != nil {
-		mediaType = "\n" // not a string: refused below
-	}
-	delete(args, "name")
-	delete(args, "mediaType")
-	pathArgs := maps.Clone(args)
-	path, ok := fillPath(q.t, args)
-	// fillPath took the path fields; any other argument has no place in a file call.
-	ok = ok && len(args) == 0
-	mediaType = strings.ToLower(mediaType)
-	if mediaType == "" {
-		mediaType = "application/octet-stream"
-	}
-	want := r.Header.Get("X-Fleet-Sha256")
-	switch {
-	case !ok || !mediaTypeText.MatchString(mediaType) || !isHex(want, 64) || want != strings.ToLower(want):
-		refuse(refusal(400, "error", "bad-request", "X-Fleet-Args takes the path fields, name and mediaType; X-Fleet-Sha256 is the file's lowercase hex SHA-256"), nil)
-		return
-	case nameErr != nil || !fileName(name):
-		refuse(refusal(400, "error", "bad-file-name", "the file name must be 1 to 255 bytes of UTF-8 without control characters, \", \\ or /"), nil)
+	meta, a := parseUploadMetadata(r, q.t)
+	if a != nil {
+		refuse(a, nil)
 		return
 	}
 
@@ -1278,12 +1265,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		return drained.Load() || g.draining.Load()
 	}
 	draining := refusal(503, "error", "draining", "the gateway is stopping; the file was not sent, try again")
-	held := func() [][]byte {
-		patterns := [][]byte{[]byte(q.bearer)}
-		g.values.Range(func(_, v any) bool { patterns = append(patterns, []byte(v.(string))); return true })
-		return patterns
-	}
-	patterns := held()
+	patterns := g.uploadSecrets(q)
 	scan, hash := newScanner(patterns), sha256.New()
 	buf := make([]byte, copyBytes)
 	var staged int64
@@ -1315,7 +1297,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		return
 	}
 	sum := hex.EncodeToString(hash.Sum(nil))
-	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: staged, MediaType: mediaType, Name: name, Sha256: &sum}
+	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: staged, MediaType: meta.mediaType, Name: meta.name, Sha256: &sum}
 	switch {
 	case writeErr != nil:
 		logf("staging %s: %v", q.id, writeErr)
@@ -1327,41 +1309,106 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	case readErr != nil || staged != r.ContentLength:
 		refuse(refusal(400, "error", "bad-request", "the file ended before Content-Length; nothing was sent"), nil)
 		return
-	case scan.found || newScanner(held()).write([]byte(name+"\n"+mediaType)) || g.newKeyIn(file, patterns, held()):
+	case scan.found || g.uploadHasSecret(q, meta, file, patterns):
 		// No transfer record: its name may be the secret.
 		refuse(refusal(422, "error", "secret-found", "the file, its name or media type contains a key value or the caller's token; nothing was sent"), nil)
 		return
-	case sum != want:
+	case sum != meta.sha:
 		refuse(refusal(400, "error", "sha-mismatch", "the received bytes do not match X-Fleet-Sha256; nothing was sent"), transfer)
 		return
 	}
+	g.postUpload(w, r, q, meta, file, transfer, nil)
+}
+
+type uploadMetadata struct {
+	pathArgs             map[string]json.RawMessage
+	name, mediaType, sha string
+}
+
+func parseUploadMetadata(r *http.Request, t tool) (uploadMetadata, *answer) {
+	var args map[string]json.RawMessage
+	encoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(r.Header.Get("X-Fleet-Args"), "="))
+	if err != nil || json.Unmarshal(encoded, &args) != nil || args == nil {
+		return uploadMetadata{}, refusal(400, "error", "bad-request", "X-Fleet-Args must be base64url JSON")
+	}
+	var name, mediaType string
+	nameErr := json.Unmarshal(args["name"], &name)
+	if len(args["mediaType"]) > 0 && json.Unmarshal(args["mediaType"], &mediaType) != nil {
+		mediaType = "\n" // not a string: refused below
+	}
+	delete(args, "name")
+	delete(args, "mediaType")
+	pathArgs := maps.Clone(args)
+	_, ok := fillPath(t, args)
+	// fillPath took the path fields; any other argument has no place in a file call.
+	ok = ok && len(args) == 0
+	mediaType = strings.ToLower(mediaType)
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	want := r.Header.Get("X-Fleet-Sha256")
+	switch {
+	case !ok || !mediaTypeText.MatchString(mediaType) || !isHex(want, 64) || want != strings.ToLower(want):
+		return uploadMetadata{}, refusal(400, "error", "bad-request", "X-Fleet-Args takes the path fields, name and mediaType; X-Fleet-Sha256 is the file's lowercase hex SHA-256")
+	case nameErr != nil || !fileName(name):
+		return uploadMetadata{}, refusal(400, "error", "bad-file-name", "the file name must be 1 to 255 bytes of UTF-8 without control characters, \", \\ or /")
+	}
+
+	return uploadMetadata{pathArgs, name, mediaType, want}, nil
+}
+
+func (g *gateway) uploadSecrets(q *request) [][]byte {
+	patterns := [][]byte{[]byte(q.bearer)}
+	g.values.Range(func(_, v any) bool { patterns = append(patterns, []byte(v.(string))); return true })
+	return patterns
+}
+
+func (g *gateway) uploadHasSecret(q *request, meta uploadMetadata, file *os.File, scanned [][]byte) bool {
+	current := g.uploadSecrets(q)
+	return newScanner(current).write([]byte(meta.name+"\n"+meta.mediaType)) || g.newKeyIn(file, scanned, current)
+}
+
+func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, beforePost func() error) (keepStage bool) {
 	// Staging can take minutes: the call is admitted again on the current snapshot before the key is attached.
 	again := *q
 	g.resolve(&again)
 	again.offered = again.offered && again.t.File != nil && *again.t.File == contract.GatewayFileModeUpload
 	if a := admit(&again); a != nil {
-		refuse(a, transfer)
-		return
+		g.finish(w, q, a, transfer)
+		return false
 	}
-	if fileBytes, _, stall, answerWait = limits(again.c); fileBytes > 0 && staged > fileBytes {
-		refuse(refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), transfer)
-		return
+	fileBytes, _, stall, answerWait := limits(again.c)
+	if fileBytes > 0 && transfer.Bytes > fileBytes {
+		g.finish(w, q, refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), transfer)
+		return false
 	}
-	if path, ok = fillPath(again.t, pathArgs); !ok || len(pathArgs) > 0 {
-		refuse(refusal(400, "error", "bad-request", "the tool's path changed while the file arrived"), transfer)
-		return
+	path, ok := fillPath(again.t, meta.pathArgs)
+	if !ok || len(meta.pathArgs) > 0 {
+		g.finish(w, q, refusal(400, "error", "bad-request", "the tool's path changed while the file arrived"), transfer)
+		return false
+	}
+	if g.draining.Load() || r.Context().Err() != nil {
+		g.finish(w, q, refusal(503, "error", "draining", "the file was not sent"), transfer)
+		return true
+	}
+	if beforePost != nil {
+		if err := beforePost(); err != nil {
+			g.finish(w, q, refusal(507, "error", "staging-failed", "the commit could not be recorded"), nil)
+			return false
+		}
 	}
 	// One file part with the caller's name; the name rules keep it inside the quotes (RFC 7578 allows UTF-8).
 	boundary := randomHex(16)
-	head := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + name + "\"\r\nContent-Type: " + mediaType + "\r\n\r\n"
+	head := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + meta.name + "\"\r\nContent-Type: " + meta.mediaType + "\r\n\r\n"
 	tail := "\r\n--" + boundary + "--\r\n"
 	a := g.call(r.Context(), q.connection, again.c, again.p, again.t, path, body{
 		open: func() io.Reader {
-			return io.MultiReader(strings.NewReader(head), io.NewSectionReader(file, 0, staged), strings.NewReader(tail))
+			return io.MultiReader(strings.NewReader(head), io.NewSectionReader(file, 0, transfer.Bytes), strings.NewReader(tail))
 		},
-		length: int64(len(head)) + staged + int64(len(tail)), contentType: "multipart/form-data; boundary=" + boundary,
+		length: int64(len(head)) + transfer.Bytes + int64(len(tail)), contentType: "multipart/form-data; boundary=" + boundary,
 		stall: stall, answer: answerWait})
 	g.finish(w, &again, a, transfer)
+	return false
 }
 
 // newKeyIn: a key value loaded while the file was staging is in the staged file.
@@ -1784,11 +1831,15 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 	defer close(done)
 	go func() {
 		tick := time.NewTicker(c.refreshEvery)
+		expire := time.NewTicker(time.Hour)
 		defer tick.Stop()
+		defer expire.Stop()
 		for {
 			select {
 			case <-tick.C:
 				g.refresh(false)
+			case now := <-expire.C:
+				g.expireUploads(now)
 			case <-done:
 				return
 			}
