@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -176,7 +177,7 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 	if err := expireLeases(ctx, a); err != nil {
 		return queued, deleted, err
 	}
-	return queued, deleted, expireWaiting(ctx, a)
+	return queued, deleted, nil
 }
 
 func placeOne(ctx context.Context, a *App, x *Artifact, stores []StoreRow, byID, byHost map[string]*StoreRow, hosts map[string]bool) (queued, deleted int, err error) {
@@ -372,18 +373,37 @@ func reconcilePurges(ctx context.Context, a *App) error {
 	return nil
 }
 
-// expireWaiting: executions waiting for their artifacts longer than the retry window fail (P3-D2).
-func expireWaiting(ctx context.Context, a *App) error {
-	rs, err := rowsCtx(ctx, conn(ctx, a), "SELECT id FROM execution WHERE "+execKinds+" AND state='waiting' AND data->>'waitReason'='artifacts' AND coalesce((data->>'waitingSince')::bigint,0) < $1", nowMs()-int64(retryWindowMS))
+// reconcileArtifactWaits recovers missed storage callbacks and enforces the retry window.
+func reconcileArtifactWaits(ctx context.Context, a *App) error {
+	rs, err := rowsCtx(ctx, conn(ctx, a), `SELECT id,data->'declaredArtifacts' AS declared,
+		       coalesce((data->>'waitingSince')::bigint,0) < $1 AS expired
+		FROM execution WHERE `+execKinds+` AND state='waiting' AND data->>'waitReason'='artifacts'
+		ORDER BY seq`, nowMs()-int64(retryWindowMS))
 	if err != nil {
 		return err
 	}
+	var failures error
 	for _, r := range rs {
-		if err := settleWaitingAs(ctx, a, astr(r["id"]), "artifact retry window passed"); err != nil {
-			return err
+		id := astr(r["id"])
+		expired := ""
+		if r["expired"] == true {
+			expired = "artifact retry window passed"
+		} else {
+			// Keep ordinary pending checks off the global write lock. Settlement rechecks the gate under the lock.
+			requirement, err := artifactRequirement(ctx, a, id, declaredNames(strs(r["declared"])))
+			if err != nil {
+				failures = errors.Join(failures, fmt.Errorf("%s: %w", id, err))
+				continue
+			}
+			if requirement.stillUploading() {
+				continue
+			}
+		}
+		if err := settleWaitingAs(ctx, a, id, expired); err != nil {
+			failures = errors.Join(failures, fmt.Errorf("%s: %w", id, err))
 		}
 	}
-	return nil
+	return failures
 }
 
 func ruleArg(projectID *string, rule json.RawMessage) (*string, artifactRule, error) {

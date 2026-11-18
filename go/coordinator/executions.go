@@ -348,23 +348,24 @@ func settleWaiting(ctx context.Context, a *App, id string) error {
 	return settleWaitingAs(ctx, a, id, "")
 }
 
-// settleWaitingAs: expired (placement's retry window passed) fails the execution even while artifacts are pending.
+// settleWaitingAs: after the retry window, a still-pending artifact fails the execution.
 func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 	ended := ""
 	err := a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
+		ended = ""
 		q := &Request{app: a, tx: tx, r: (&http.Request{}).WithContext(ctx)}
 		e, err := maybe(q, id, "execution")
 		if err != nil || e == nil || e["state"] != "waiting" || e["waitReason"] != "artifacts" {
 			return err
 		}
-		r, err := artifactRequirement(ctx, a, id, declaredNames(strs(e["declaredArtifacts"])))
+		r, err := artifactRequirement(withTx(q), a, id, declaredNames(strs(e["declaredArtifacts"])))
 		if err != nil {
 			return err
 		}
-		if expired == "" && len(r.Pending) > 0 && len(r.Failed) == 0 && len(r.Missing) == 0 {
+		if expired == "" && r.stillUploading() {
 			return nil
 		}
-		failed := expired != "" || len(r.Failed) > 0 || len(r.Missing) > 0 || len(r.Pending) > 0
+		failed := len(r.Failed) > 0 || len(r.Missing) > 0 || len(r.Pending) > 0
 		for _, k := range []string{"waitReason", "waitingSince", "pendingArtifacts", "declaredArtifacts"} {
 			delete(e, k)
 		}
@@ -373,7 +374,7 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 		if failed {
 			e["state"], status = "failed", "failed"
 			msg := "Required artifacts missing or failed"
-			if expired != "" {
+			if expired != "" && len(r.Pending) > 0 {
 				msg = expired
 			}
 			e["error"] = doc{"code": "artifact-required", "message": msg, "missing": r.Missing, "failed": r.Failed, "pending": r.Pending}

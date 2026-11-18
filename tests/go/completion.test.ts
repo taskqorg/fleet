@@ -3,7 +3,11 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {startCoordinator} from '../harness.ts';
+import {fakeS3} from '../s3-fake.ts';
 
 test('G1 every declared artifact reaches the completion gate, also past 10,000 (requirement: a completed run waits for every declared output while it uploads, and task completion requirements for every matching one; risk: a silent cap drops a late required output and the execution finishes without it)', {timeout: 60_000}, async () => {
   const c = await startCoordinator({name: 'completion'});
@@ -300,4 +304,93 @@ test('self-delivery queued continuation retains the canonical task and suppresse
     await call('/api/hosts/receipts',{commandId:promoted.id,executionId:next.id,status:'completed'},secret,null);
     assert.equal(acceptance(),'1','acceptance only after the final continuation');
   } finally {await c.stop();}
+});
+
+
+// The fixture commits storage state directly, reproducing a lost callback
+// between verification and execution settlement without timing races.
+test('coordinator restart recovers artifact waits (requirement: the artifact completion gate; risk: a linked pipeline stays running after its output is stored)', {timeout: 90_000}, async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'fleet-completion-recovery-'));
+  t.after(() => rmSync(dir, {recursive: true, force: true}));
+  const store = await fakeS3();
+  t.after(() => { store.close(); });
+  const c = await startCoordinator({name: 'completion-recovery', env: {
+    FLEET_PIPELINE_TICK_MS: '0',
+    FLEET_STORE_SECRETS: join(dir, 'stores'),
+    FLEET_STORE_ENDPOINT_HOSTS: '127.0.0.1',
+    FLEET_DEFAULT_ARTIFACT_LOCATIONS: 'trial-host',
+  }});
+  const call = async (path: string, body: unknown, hostSecret?: string) => {
+    const r = await fetch(c.base + path, {method: 'POST', headers: {
+      authorization: 'Bearer ' + (hostSecret ?? c.secret),
+      ...(hostSecret ? {} : {'x-fleet-person': 'owner@trial.test'}),
+      'content-type': 'application/json',
+    }, body: JSON.stringify(body)});
+    const text = await r.text();
+    assert.equal(r.status, 200, `${path}: ${text}`);
+    return JSON.parse(text);
+  };
+  const until = async <T>(read: () => T | undefined | Promise<T | undefined>): Promise<T> => {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const result = await read();
+      if (result !== undefined) return result;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error('Fixture did not settle');
+  };
+  try {
+    const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
+    const poll = () => call('/api/hosts/poll', {
+      platform: 'darwin', capabilities: [], stores: [{id: 'fixture-store', reachable: true}], problems: [],
+    }, secret);
+    await poll();
+    await call('/api/hosts/stores', {store: {id: 'fixture-store', bucket: 'fleet',
+      endpoint: `http://127.0.0.1:${store.port}`, accessKeyId: 'fixture-key', secretAccessKey: 'fixture-secret',
+    }}, secret);
+    const pipelineId = 'completion-recovery';
+    await call('/api/ops/definition_create', {kind: 'pipeline', id: pipelineId, message: 'Completion recovery fixture', content: {pipeline: {
+      id: pipelineId, version: 2, steps: [{id: 'work', kind: 'agent', profile: 'baseline', prompt: 'Fixture only'}],
+    }}});
+    const {runId} = await call('/api/ops/pipeline_run_create', {pipelineId, requestId: randomUUID(), projectId: 'hello-world'});
+    const executionId = await until(() => c.sql(`SELECT id FROM execution WHERE kind='agent_run' AND data->>'pipelineRunId'='${runId}'`).trim() || undefined);
+    const command = await until(async () => (await poll()).commands.find((x: any) => x.executionId === executionId));
+    const receipt = (status: string, artifacts?: string[]) => call('/api/hosts/receipts', {commandId: command.id, executionId, status, artifacts}, secret);
+    await receipt('started');
+    await receipt('completed', ['output.json']);
+    const state = (id: string) => c.sql(`SELECT state::text FROM execution WHERE id='${id}'`).trim();
+    assert.equal(state(executionId), 'waiting');
+    assert.equal(state(runId), 'running');
+    c.sql(`
+      INSERT INTO execution(id, kind, state, ended_at, data) VALUES
+        ('elapsed-stored','agent_run','waiting',now(),'{"waitReason":"artifacts","waitingSince":1,"declaredArtifacts":["output.json"],"pendingArtifacts":["output.json"]}'),
+        ('elapsed-pending','agent_run','waiting',now(),'{"waitReason":"artifacts","waitingSince":1,"declaredArtifacts":["output.json"],"pendingArtifacts":["output.json"]}'),
+        ('still-uploading','agent_run','waiting',now(),jsonb_build_object('waitReason','artifacts','waitingSince',${Date.now()},'declaredArtifacts',jsonb_build_array('output.json'),'pendingArtifacts',jsonb_build_array('output.json'))),
+        ('failed-required','agent_run','waiting',now(),jsonb_build_object('waitReason','artifacts','waitingSince',${Date.now()},'declaredArtifacts',jsonb_build_array('output.json','proof.txt'),'pendingArtifacts',jsonb_build_array('output.json','proof.txt'))),
+        ('shared-name','agent_run','waiting',now(),jsonb_build_object('waitReason','artifacts','waitingSince',${Date.now()},'pendingArtifacts',jsonb_build_array('proof.txt')));
+      UPDATE execution SET data=data || jsonb_build_object('id',id,'executionId',id,'finishedAt',${Date.now()})
+        WHERE id IN ('elapsed-stored','elapsed-pending','still-uploading','failed-required','shared-name');
+      INSERT INTO artifact(id, scope, content_hash, size, media_type, name, execution_id, state, required) VALUES
+        ('${randomUUID()}','lab','proof',2,'application/json','output.json','${executionId}','stored',false),
+        ('${randomUUID()}','lab','proof',2,'application/json','output.json','elapsed-stored','stored',false),
+        ('${randomUUID()}','lab','proof',2,'application/json','output.json','elapsed-pending','pending',false),
+        ('${randomUUID()}','lab','proof',2,'application/json','output.json','still-uploading','pending',false),
+        ('${randomUUID()}','lab','proof',2,'application/json','output.json','failed-required','pending',false),
+        ('${randomUUID()}','lab','proof',2,'text/plain','proof.txt','failed-required','failed',true),
+        ('${randomUUID()}','lab','proof',2,'text/plain','proof.txt','shared-name','stored',true),
+        ('${randomUUID()}','lab','proof',2,'text/plain','proof.txt','shared-name','pending',false);
+    `);
+    await c.restart();
+    await until(() => state(runId) === 'running' ? undefined : true);
+    assert.equal(state(runId), 'succeeded');
+    assert.equal(state(executionId), 'succeeded');
+    const expected = {
+      'elapsed-stored': 'succeeded', 'elapsed-pending': 'failed',
+      'still-uploading': 'waiting', 'failed-required': 'failed', 'shared-name': 'succeeded',
+    };
+    const states = () => JSON.parse(c.sql(`SELECT json_object_agg(id, state::text) FROM execution
+      WHERE id IN ('elapsed-stored','elapsed-pending','still-uploading','failed-required','shared-name')`));
+    await until(() => states()['shared-name'] === 'waiting' ? undefined : true);
+    assert.deepEqual(states(), expected);
+  } finally { await c.stop(); }
 });

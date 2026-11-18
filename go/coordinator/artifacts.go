@@ -1375,6 +1375,10 @@ type ArtifactRequirement struct {
 	Missing []string `json:"missing"`
 }
 
+func (r *ArtifactRequirement) stillUploading() bool {
+	return len(r.Pending) > 0 && len(r.Failed) == 0 && len(r.Missing) == 0
+}
+
 func artifactRequirement(ctx context.Context, a *App, executionID string, declared []string) (*ArtifactRequirement, error) {
 	e, err := execGet(ctx, a, executionID)
 	if err != nil {
