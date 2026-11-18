@@ -57,7 +57,7 @@
       "experimentId": {"type": "string"},
       "fileDownloads": {"$comment": "Connections whose minted tool spec includes a file download tool.", "type": "array", "items": {"type": "string"}}}},
     "CallOutcome": {"type": "string", "enum": ["ok", "error", "unknown"]},
-    "CallLine": {"$comment": "One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output. A file tool's line carries transfer. A download writes two lines with one callId: phase started (outcome unknown, download-unfinished) before the bytes stream and phase completed after it; ingest updates the started row from the completed line. A line without phase is a one-line call.", "type": "object", "required": ["callId", "connection", "tool", "status", "outcome", "startedAt", "ms"], "properties": {
+    "CallLine": {"$comment": "One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output. A file tool's line carries transfer. A download writes two lines with one callId: phase started (outcome unknown, download-unfinished) before the bytes stream and phase completed after it; ingest updates the started row from the completed line. A resumable upload also writes a started intent and a completed outcome with one callId. A line without phase is a one-line call.", "type": "object", "required": ["callId", "connection", "tool", "status", "outcome", "startedAt", "ms"], "properties": {
       "callId": {"type": "string"},
       "executionId": {"type": "string"},
       "tokenSha256": {"type": "string"},
@@ -71,6 +71,7 @@
       "usage": {"$ref": "#/$defs/CallUsage"},
       "disabled": {"$ref": "#/$defs/CallKeyDisabled"},
       "keyProblem": {"$ref": "#/$defs/CallKeyProblem"},
+      "providerAttemptAt": {"$comment": "The start of the provider request that produced a key effect, in Unix milliseconds.", "type": "integer"},
       "startedAt": {"type": "integer"},
       "ms": {"type": "integer"},
       "output": {"$comment": "In-process call only: the provider's reply body."},

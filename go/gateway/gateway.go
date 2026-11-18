@@ -336,14 +336,15 @@ func (s *spool) appendDurably(data []byte) error {
 
 // answer is the outcome of one call, ready for the caller and for the spool.
 type answer struct {
-	status     int
-	body       []byte
-	retryAfter string
-	outcome    string
-	err        string
-	key        string
-	usage      *int64
-	disabled   int // HTTP status that disabled `key`, or 0
+	status      int
+	body        []byte
+	retryAfter  string
+	outcome     string
+	err         string
+	key         string
+	usage       *int64
+	disabled    int // HTTP status that disabled `key`, or 0
+	attemptedAt int64
 	// A provider 403 on this key: the provider's message. Recorded, never disabling (one bad body must not take out keys).
 	problem *string
 }
@@ -379,10 +380,13 @@ type gateway struct {
 	calls        atomic.Uint64
 	// File calls in flight (/healthz transfers), and the cancel of each upload still staging, by call id: a stop
 	// refuses those with draining, since nothing reached the provider yet.
-	transfers   atomic.Int64
-	handling    atomic.Int64 // /v1/call requests in their handler
-	stagingLock sync.Mutex
-	staging     map[string]func()
+	transfers       atomic.Int64
+	handling        atomic.Int64 // /v1/call requests in their handler
+	stagingLock     sync.Mutex
+	staging         map[string]func()
+	uploadLocks     sync.Map
+	uploadSpaceLock sync.Mutex
+	uploadReserved  uint64
 }
 
 func newGateway(c *config) (*gateway, error) {
@@ -403,6 +407,12 @@ func newGateway(c *config) (*gateway, error) {
 	g := &gateway{config: c, disabled: map[string]disabledKey{}, current: map[string]int{}, started: time.Now(), staging: map[string]func(){},
 		// Redirects are never followed: a 307/308 resends the method and body, which could charge a call twice.
 		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 64}}}
+	if err := os.MkdirAll(g.uploadDir(), 0o700); err != nil {
+		return nil, fmt.Errorf("resumable directory: %w", err)
+	}
+	if err := syncDir(c.StateDir); err != nil {
+		return nil, err
+	}
 	if text, err := os.ReadFile(filepath.Join(c.StateDir, "disabled-keys")); err == nil {
 		for _, line := range strings.Split(string(text), "\n") {
 			var id string
@@ -432,6 +442,7 @@ func newGateway(c *config) (*gateway, error) {
 	if g.spool, err = openSpool(c.StateDir); err != nil {
 		return nil, err
 	}
+	g.maintainUploads(time.Now())
 	g.loadValues(s)
 	g.snapshot.Store(s)
 	return g, nil
@@ -693,6 +704,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			lastFailure = "key " + id + " has no value file"
 			continue
 		}
+		attemptedAt := nowMs()
 		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, deref(p.KeyHeader), value, b, t.Headers)
 		var cut errBody
 		switch {
@@ -753,7 +765,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		}
 		if status == 401 || status == 402 {
 			a := refusal(502, "error", fmt.Sprintf("key-disabled-%d", status), fmt.Sprintf("the provider refused key %s with HTTP %d; the key is disabled", id, status))
-			a.key, a.disabled = id, status
+			a.key, a.disabled, a.attemptedAt = id, status, attemptedAt
 			return a
 		}
 		// Success and every other provider reply, quota and 429 included, reach the caller unchanged, except that a key
@@ -763,7 +775,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		if t.TextReply != nil && *t.TextReply && status >= 200 && status <= 299 && !json.Valid(data) {
 			data, _ = json.Marshal(map[string]string{"text": strings.ToValidUTF8(string(data), "�")})
 		}
-		a := &answer{status: status, body: data, retryAfter: response.Header.Get("Retry-After"), outcome: "ok", key: id}
+		a := &answer{status: status, body: data, retryAfter: response.Header.Get("Retry-After"), outcome: "ok", key: id, attemptedAt: attemptedAt}
 		field := "usage." + t.Unit
 		if t.UsageField != nil {
 			field = *t.UsageField
@@ -842,14 +854,17 @@ func (g *gateway) usageReport(ctx context.Context) map[string]any {
 	return map[string]any{"at": nowMs(), "keys": rows}
 }
 
-func (g *gateway) onDisabled(id string, status int) {
+func (g *gateway) onDisabled(id string, status int, attemptedAt int64) {
 	g.disabledLock.Lock()
-	g.disabled[id] = disabledKey{status, nowMs()}
+	defer g.disabledLock.Unlock()
+	if g.disabled[id].at > attemptedAt {
+		return
+	}
+	g.disabled[id] = disabledKey{status, attemptedAt}
 	var text strings.Builder
 	for k, d := range g.disabled {
 		fmt.Fprintf(&text, "%s %d %d\n", k, d.status, d.at)
 	}
-	g.disabledLock.Unlock()
 	if err := writeAtomic(filepath.Join(g.config.StateDir, "disabled-keys"), []byte(text.String())); err != nil {
 		logf("disabled key %s not persisted: %v", id, err)
 	}
@@ -922,6 +937,7 @@ type request struct {
 	offered              bool
 	fileClient           bool
 	usageKey             string
+	phase                *contract.CallPhase
 	startedMs            int64
 	begun                time.Time
 }
@@ -995,7 +1011,11 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	q.fileClient = r.Header.Get("X-Fleet-File-Client") == "1"
 	g.resolve(q)
 	if q.offered && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload {
-		g.serveUpload(w, r, q)
+		if r.Header.Get(contract.UploadModeHeader) != "" {
+			g.serveResumableUpload(w, r, q)
+		} else {
+			g.serveUpload(w, r, q)
+		}
 		return
 	}
 	// Read the body before any refusal: closing on unread bytes resets the connection and loses the caller's reason.
@@ -1076,6 +1096,9 @@ func (g *gateway) line(q *request, a *answer) contract.CallLine {
 			line.UsageKey = &q.usageKey
 		}
 	}
+	if (a.disabled != 0 || a.problem != nil) && a.attemptedAt != 0 {
+		line.ProviderAttemptAt = &a.attemptedAt
+	}
 	if a.disabled != 0 {
 		line.Disabled = &contract.CallKeyDisabled{Key: a.key, Status: int64(a.disabled)}
 	}
@@ -1088,11 +1111,15 @@ func (g *gateway) line(q *request, a *answer) contract.CallLine {
 // finish spools the call's line, then answers it: a call answered to its caller is already durable.
 func (g *gateway) finish(w http.ResponseWriter, q *request, a *answer, transfer *contract.CallTransfer) {
 	if a.disabled != 0 {
-		g.onDisabled(a.key, a.disabled)
+		g.onDisabled(a.key, a.disabled, a.attemptedAt)
 	}
 	line := g.line(q, a)
-	line.Transfer = transfer
+	line.Phase, line.Transfer = q.phase, transfer
 	g.spool.append(line)
+	replyCall(w, q, a)
+}
+
+func replyCall(w http.ResponseWriter, q *request, a *answer) {
 	w.Header().Set("X-Fleet-Call-Id", q.id)
 	w.Header().Set("X-Fleet-Outcome", a.outcome)
 	if a.err != "" {
@@ -1209,7 +1236,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	}
 	g.transfers.Add(1)
 	defer g.transfers.Add(-1)
-	fileBytes, _, stall, answerWait := limits(q.c)
+	fileBytes, _, stall, _ := limits(q.c)
 	contentType, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
 	if strings.TrimSpace(strings.ToLower(contentType)) != "application/octet-stream" {
 		refuse(refusal(400, "error", "file-expected", "an upload tool takes the file bytes as application/octet-stream with X-Fleet-Args"), nil)
@@ -1223,37 +1250,22 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		refuse(refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), nil)
 		return
 	}
-	var args map[string]json.RawMessage
-	encoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(r.Header.Get("X-Fleet-Args"), "="))
-	if err != nil || json.Unmarshal(encoded, &args) != nil || args == nil {
-		refuse(refusal(400, "error", "bad-request", "X-Fleet-Args must be base64url JSON"), nil)
-		return
-	}
-	var name, mediaType string
-	nameErr := json.Unmarshal(args["name"], &name)
-	if len(args["mediaType"]) > 0 && json.Unmarshal(args["mediaType"], &mediaType) != nil {
-		mediaType = "\n" // not a string: refused below
-	}
-	delete(args, "name")
-	delete(args, "mediaType")
-	pathArgs := maps.Clone(args)
-	path, ok := fillPath(q.t, args)
-	// fillPath took the path fields; any other argument has no place in a file call.
-	ok = ok && len(args) == 0
-	mediaType = strings.ToLower(mediaType)
-	if mediaType == "" {
-		mediaType = "application/octet-stream"
-	}
-	want := r.Header.Get("X-Fleet-Sha256")
-	switch {
-	case !ok || !mediaTypeText.MatchString(mediaType) || !isHex(want, 64) || want != strings.ToLower(want):
-		refuse(refusal(400, "error", "bad-request", "X-Fleet-Args takes the path fields, name and mediaType; X-Fleet-Sha256 is the file's lowercase hex SHA-256"), nil)
-		return
-	case nameErr != nil || !fileName(name):
-		refuse(refusal(400, "error", "bad-file-name", "the file name must be 1 to 255 bytes of UTF-8 without control characters, \", \\ or /"), nil)
+	meta, a := parseUploadMetadata(r, q.t)
+	if a != nil {
+		refuse(a, nil)
 		return
 	}
 
+	if !g.reserveUploadSpace(r.ContentLength) {
+		refuse(refusal(507, "error", "staging-failed", "insufficient space for this upload"), nil)
+		return
+	}
+	reservation := r.ContentLength
+	defer func() {
+		if reservation > 0 {
+			g.releaseUploadSpace(reservation)
+		}
+	}()
 	part := filepath.Join(g.config.StateDir, "files", q.id+".part")
 	file, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
@@ -1278,12 +1290,7 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		return drained.Load() || g.draining.Load()
 	}
 	draining := refusal(503, "error", "draining", "the gateway is stopping; the file was not sent, try again")
-	held := func() [][]byte {
-		patterns := [][]byte{[]byte(q.bearer)}
-		g.values.Range(func(_, v any) bool { patterns = append(patterns, []byte(v.(string))); return true })
-		return patterns
-	}
-	patterns := held()
+	patterns := g.uploadSecrets(q)
 	scan, hash := newScanner(patterns), sha256.New()
 	buf := make([]byte, copyBytes)
 	var staged int64
@@ -1310,12 +1317,14 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		}
 	}
 	control.SetReadDeadline(time.Time{})
+	g.releaseUploadSpace(reservation)
+	reservation = 0
 	if unstage() {
 		refuse(draining, nil)
 		return
 	}
 	sum := hex.EncodeToString(hash.Sum(nil))
-	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: staged, MediaType: mediaType, Name: name, Sha256: &sum}
+	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: staged, MediaType: meta.mediaType, Name: meta.name, Sha256: &sum}
 	switch {
 	case writeErr != nil:
 		logf("staging %s: %v", q.id, writeErr)
@@ -1327,41 +1336,147 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 	case readErr != nil || staged != r.ContentLength:
 		refuse(refusal(400, "error", "bad-request", "the file ended before Content-Length; nothing was sent"), nil)
 		return
-	case scan.found || newScanner(held()).write([]byte(name+"\n"+mediaType)) || g.newKeyIn(file, patterns, held()):
+	case scan.found || g.uploadHasSecret(q, meta, file, patterns):
 		// No transfer record: its name may be the secret.
 		refuse(refusal(422, "error", "secret-found", "the file, its name or media type contains a key value or the caller's token; nothing was sent"), nil)
 		return
-	case sum != want:
+	case sum != meta.sha:
 		refuse(refusal(400, "error", "sha-mismatch", "the received bytes do not match X-Fleet-Sha256; nothing was sent"), transfer)
 		return
 	}
-	// Staging can take minutes: the call is admitted again on the current snapshot before the key is attached.
+	g.postUpload(w, r, q, meta, file, transfer, nil)
+}
+
+type uploadMetadata struct {
+	pathArgs             map[string]json.RawMessage
+	name, mediaType, sha string
+}
+
+func parseUploadMetadata(r *http.Request, t tool) (uploadMetadata, *answer) {
+	var args map[string]json.RawMessage
+	encoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(r.Header.Get("X-Fleet-Args"), "="))
+	if err != nil || json.Unmarshal(encoded, &args) != nil || args == nil {
+		return uploadMetadata{}, refusal(400, "error", "bad-request", "X-Fleet-Args must be base64url JSON")
+	}
+	var name, mediaType string
+	nameErr := json.Unmarshal(args["name"], &name)
+	if len(args["mediaType"]) > 0 && json.Unmarshal(args["mediaType"], &mediaType) != nil {
+		mediaType = "\n" // not a string: refused below
+	}
+	delete(args, "name")
+	delete(args, "mediaType")
+	pathArgs := maps.Clone(args)
+	_, ok := fillPath(t, args)
+	// fillPath took the path fields; any other argument has no place in a file call.
+	ok = ok && len(args) == 0
+	mediaType = strings.ToLower(mediaType)
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	want := r.Header.Get("X-Fleet-Sha256")
+	switch {
+	case !ok || !mediaTypeText.MatchString(mediaType) || !isHex(want, 64) || want != strings.ToLower(want):
+		return uploadMetadata{}, refusal(400, "error", "bad-request", "X-Fleet-Args takes the path fields, name and mediaType; X-Fleet-Sha256 is the file's lowercase hex SHA-256")
+	case nameErr != nil || !fileName(name):
+		return uploadMetadata{}, refusal(400, "error", "bad-file-name", "the file name must be 1 to 255 bytes of UTF-8 without control characters, \", \\ or /")
+	}
+
+	return uploadMetadata{pathArgs, name, mediaType, want}, nil
+}
+
+func (g *gateway) uploadSecrets(q *request) [][]byte {
+	patterns := [][]byte{[]byte(q.bearer)}
+	g.values.Range(func(_, v any) bool { patterns = append(patterns, []byte(v.(string))); return true })
+	return patterns
+}
+
+func (g *gateway) uploadHasSecret(q *request, meta uploadMetadata, file *os.File, scanned [][]byte) bool {
+	current := g.uploadSecrets(q)
+	return newScanner(current).write([]byte(meta.name+"\n"+meta.mediaType)) || g.newKeyIn(file, scanned, current)
+}
+
+// admitUpload reads the current snapshot and validates a staged file against its current limits and tool.
+func (g *gateway) admitUpload(q *request, meta uploadMetadata, size int64) (string, *answer) {
+	g.resolve(q)
+	q.offered = q.offered && q.t.File != nil && *q.t.File == contract.GatewayFileModeUpload
+	if a := admit(q); a != nil {
+		return "", a
+	}
+	fileBytes, _, _, _ := limits(q.c)
+	if fileBytes > 0 && size > fileBytes {
+		return "", refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes))
+	}
+	args := maps.Clone(meta.pathArgs)
+	path, ok := fillPath(q.t, args)
+	if !ok || len(args) > 0 {
+		return "", refusal(400, "error", "bad-request", "the tool's path changed while the file arrived")
+	}
+	return path, nil
+}
+
+type uploadCommitHooks struct {
+	ready  func(*request) (undo func() error, refusal *answer)
+	reject func(http.ResponseWriter, *request, *answer, *contract.CallTransfer)
+}
+
+func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, commit *uploadCommitHooks) (keepStage bool) {
+	reject := g.finish
+	if commit != nil && commit.reject != nil {
+		reject = commit.reject
+	}
 	again := *q
-	g.resolve(&again)
-	again.offered = again.offered && again.t.File != nil && *again.t.File == contract.GatewayFileModeUpload
-	if a := admit(&again); a != nil {
-		refuse(a, transfer)
-		return
+	path, a := g.admitUpload(&again, meta, transfer.Bytes)
+	if a != nil {
+		reject(w, q, a, transfer)
+		return false
 	}
-	if fileBytes, _, stall, answerWait = limits(again.c); fileBytes > 0 && staged > fileBytes {
-		refuse(refusal(413, "error", "file-too-large", fmt.Sprintf("the file is larger than the connection's limit of %d bytes", fileBytes)), transfer)
-		return
+	draining := refusal(503, "error", "draining", "the file was not sent")
+	if g.draining.Load() || r.Context().Err() != nil {
+		if commit == nil {
+			g.finish(w, q, draining, transfer)
+		} else {
+			replyCall(w, q, draining)
+		}
+		return true
 	}
-	if path, ok = fillPath(again.t, pathArgs); !ok || len(pathArgs) > 0 {
-		refuse(refusal(400, "error", "bad-request", "the tool's path changed while the file arrived"), transfer)
-		return
+	if commit != nil {
+		undo, a := commit.ready(&again)
+		if a != nil {
+			reject(w, &again, a, transfer)
+			return false
+		}
+		if g.draining.Load() || r.Context().Err() != nil {
+			if err := undo(); err != nil {
+				replyCall(w, &again, refusal(507, "unknown", "staging-failed", "the commit record could not be restored"))
+				return false
+			}
+			replyCall(w, &again, draining)
+			return true
+		}
 	}
+	// Durable commit writes may have outlasted a token revocation, intake pause or size-cap change.
+	if commit != nil {
+		current := again
+		path, a = g.admitUpload(&current, meta, transfer.Bytes)
+		if a != nil {
+			reject(w, &again, a, transfer)
+			return false
+		}
+		again = current
+	}
+	_, _, stall, answerWait := limits(again.c)
 	// One file part with the caller's name; the name rules keep it inside the quotes (RFC 7578 allows UTF-8).
 	boundary := randomHex(16)
-	head := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + name + "\"\r\nContent-Type: " + mediaType + "\r\n\r\n"
+	head := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + meta.name + "\"\r\nContent-Type: " + meta.mediaType + "\r\n\r\n"
 	tail := "\r\n--" + boundary + "--\r\n"
-	a := g.call(r.Context(), q.connection, again.c, again.p, again.t, path, body{
+	a = g.call(r.Context(), q.connection, again.c, again.p, again.t, path, body{
 		open: func() io.Reader {
-			return io.MultiReader(strings.NewReader(head), io.NewSectionReader(file, 0, staged), strings.NewReader(tail))
+			return io.MultiReader(strings.NewReader(head), io.NewSectionReader(file, 0, transfer.Bytes), strings.NewReader(tail))
 		},
-		length: int64(len(head)) + staged + int64(len(tail)), contentType: "multipart/form-data; boundary=" + boundary,
+		length: int64(len(head)) + transfer.Bytes + int64(len(tail)), contentType: "multipart/form-data; boundary=" + boundary,
 		stall: stall, answer: answerWait})
 	g.finish(w, &again, a, transfer)
+	return false
 }
 
 // newKeyIn: a key value loaded while the file was staging is in the staged file.
@@ -1784,11 +1899,15 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 	defer close(done)
 	go func() {
 		tick := time.NewTicker(c.refreshEvery)
+		expire := time.NewTicker(time.Hour)
 		defer tick.Stop()
+		defer expire.Stop()
 		for {
 			select {
 			case <-tick.C:
 				g.refresh(false)
+			case now := <-expire.C:
+				g.maintainUploads(now)
 			case <-done:
 				return
 			}

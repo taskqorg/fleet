@@ -1122,11 +1122,13 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 				callIDs = append(callIDs, "call:"+l.CallId)
 			}
 		}
-		// Rows already recorded, with their download phase ("" for a one-line call).
+		// Rows already recorded, with their transfer phase ("" for a one-line call).
 		existing := map[string]string{}
 		if len(callIDs) > 0 {
 			if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-				rs, err := queryRows(q, "SELECT id, coalesce(data->>'phase','') AS phase FROM execution WHERE id = ANY($1)", callIDs)
+				rs, err := queryRows(q, `SELECT id, CASE WHEN data->>'phase'='completed' AND data->'transfer'->>'direction'='upload'
+					AND NOT data ? 'uploadAccounted' THEN 'upload-unaccounted' ELSE coalesce(data->>'phase','') END AS phase
+					FROM execution WHERE id = ANY($1)`, callIDs)
 				if err != nil {
 					return err
 				}
@@ -1144,7 +1146,7 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 			}
 			phase, recorded := existing["call:"+l.CallId]
 			if l.Phase != nil && *l.Phase == contract.CallPhaseCompleted {
-				// A download's completion line updates its started row, also one this pass just inserted from the same file.
+				// A transfer's completion line updates its started row, also one this pass just inserted from the same file.
 				if phase == string(contract.CallPhaseCompleted) {
 					continue
 				}
@@ -1207,6 +1209,9 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	}
 	if l.Phase != nil {
 		data["phase"] = *l.Phase
+		if *l.Phase == contract.CallPhaseCompleted && isUpload(l) {
+			data["uploadAccounted"] = true
+		}
 	}
 	if t["personal"] != nil {
 		data["tokenName"] = t["personal"]
@@ -1262,6 +1267,14 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 			return false, err
 		}
 	}
+	if err := connAccount(q, id, l, t["step"] == true); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// connAccount applies provider usage and key consequences after a call or upload completion is recorded.
+func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 	var cost any
 	if u := l.Usage; u != nil {
 		amount := u.Amount
@@ -1270,54 +1283,63 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 			// pipeline step's job is counted by recordJob instead.
 			// Concurrent ingests of two polls of one job serialize on the key.
 			if err := acquireTxLock(q, "usageKey:"+*l.UsageKey); err != nil {
-				return false, err
+				return err
 			}
 			var n int
 			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE kind='tool_run' AND data->>'usageKey'=$1 AND id<>$2", *l.UsageKey, id).Scan(&n); err != nil {
-				return false, err
+				return err
 			}
-			if n > 0 || t["step"] == true {
+			if n > 0 || step {
 				amount = 0
 			} else if err := exec(q, "UPDATE execution SET data=jsonb_set(data,'{usageKey}',to_jsonb($2::text)) WHERE id=$1", id, *l.UsageKey); err != nil {
-				return false, err
+				return err
 			}
 		}
 		cost = doc{"unit": u.Unit, u.Unit: amount, "amount": amount, "connection": l.Connection}
 	}
 	if err := writeConnectionCost(q, id, cost); err != nil {
-		return false, err
+		return err
+	}
+	at := l.StartedAt
+	if l.ProviderAttemptAt != nil {
+		at = *l.ProviderAttemptAt
 	}
 	if d := l.Disabled; d != nil && d.Key != "" {
-		if err := connDisable(q, d.Key, d.Status); err != nil {
-			return false, err
+		if err := connDisable(q, d.Key, d.Status, at); err != nil {
+			return err
 		}
 	}
 	if p := l.KeyProblem; p != nil && p.Key != "" {
 		k, err := maybe(q, "key:"+p.Key, "connection-key")
 		if err != nil {
-			return false, err
+			return err
 		}
 		if k != nil {
 			msg := p.Message
 			if len(msg) > 500 {
 				msg = msg[:500]
 			}
-			at := l.StartedAt
 			if at == 0 {
 				at = nowMs()
 			}
+			if enabled, ok := numOK(k["enabledAt"]); ok && int64(enabled) >= at {
+				return nil
+			}
 			k["problem"] = doc{"status": p.Status, "message": msg, "at": at}
 			if err := put(q, "connection-key", k); err != nil {
-				return false, err
+				return err
 			}
 		}
 	}
-	return true, nil
+	return nil
 }
 
-// connComplete applies a download's completed line (§9) to its started row: state, end, problem and the transfer of the
-// finished stream. A row already completed stays as it is (each pass reads the whole day file again). Without a row (the
-// started line was lost and counted in the gateway's lost spool lines) the completed line is recorded alone.
+func isUpload(l contract.CallLine) bool {
+	return l.Transfer != nil && l.Transfer.Direction == contract.CallTransferDirectionUpload
+}
+
+// connComplete applies a file transfer's completed line (§9) to its started row. A repeated pass leaves the
+// completed row unchanged. If the started line was lost, the completed line is recorded alone.
 func connComplete(q *Request, l contract.CallLine) error {
 	id := "call:" + l.CallId
 	state, problem := "failed", any(problemOf(string(l.Outcome), deref(l.ErrorCode)))
@@ -1325,13 +1347,28 @@ func connComplete(q *Request, l contract.CallLine) error {
 		state, problem = "succeeded", nil
 	}
 	ms := max(l.Ms, 0)
-	patch := doc{"outcome": l.Outcome, "status": l.Status, "errorCode": l.ErrorCode, "ms": ms, "transfer": l.Transfer, "phase": contract.CallPhaseCompleted}
+	patch := doc{"outcome": l.Outcome, "status": l.Status, "errorCode": l.ErrorCode, "ms": ms, "phase": contract.CallPhaseCompleted}
+	if l.Transfer != nil {
+		patch["transfer"] = l.Transfer
+	}
+	upload := isUpload(l)
+	if upload {
+		patch["keyFingerprint"], patch["usage"], patch["uploadAccounted"] = l.KeyFingerprint, l.Usage, true
+	}
 	tag, err := q.tx.Exec(q.ctx(), `UPDATE execution SET state=$2, problem=$4, data=data||$5::jsonb,
-	 ended_at=started_at+make_interval(secs => $3::bigint/1000.0) WHERE id=$1 AND data->>'phase'='started'`, id, state, ms, problem, jsonBytes(patch))
+	 ended_at=started_at+make_interval(secs => $3::bigint/1000.0) WHERE id=$1 AND
+	 (data->>'phase'='started' OR ($6 AND data->>'phase'='completed' AND NOT data ? 'uploadAccounted'))`,
+		id, state, ms, problem, jsonBytes(patch), upload)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 1 {
+		if upload {
+			// A file upload has no usageOnce. Its usage and key effects are known only after the POST.
+			if err := connAccount(q, id, l, false); err != nil {
+				return err
+			}
+		}
 		if err := exec(q, `UPDATE execution_totals SET wall_ms=$2,wall_ms_basis='measured',active_ms=$2,active_ms_basis='measured',computed_at=now()
 		 WHERE execution_id=$1 AND EXISTS (SELECT 1 FROM execution e WHERE e.id=$1 AND e.started_at IS NOT NULL)`, id, ms); err != nil {
 			return err
@@ -1350,10 +1387,13 @@ func connComplete(q *Request, l contract.CallLine) error {
 	return err
 }
 
-func connDisable(q *Request, fp string, status int64) error {
+func connDisable(q *Request, fp string, status, attemptedAt int64) error {
 	k, err := maybe(q, "key:"+fp, "connection-key")
 	if err != nil || k == nil || k["state"] == "retired" || k["state"] == "disabled" {
 		return err
+	}
+	if enabled, ok := numOK(k["enabledAt"]); ok && attemptedAt > 0 && int64(enabled) > attemptedAt {
+		return nil
 	}
 	st := fmt.Sprint(status)
 	k["state"], k["disabledReason"], k["disabledAt"] = "disabled", "provider answered HTTP "+st, nowMs()
