@@ -379,11 +379,13 @@ type gateway struct {
 	calls        atomic.Uint64
 	// File calls in flight (/healthz transfers), and the cancel of each upload still staging, by call id: a stop
 	// refuses those with draining, since nothing reached the provider yet.
-	transfers   atomic.Int64
-	handling    atomic.Int64 // /v1/call requests in their handler
-	stagingLock sync.Mutex
-	staging     map[string]func()
-	uploadLocks sync.Map
+	transfers       atomic.Int64
+	handling        atomic.Int64 // /v1/call requests in their handler
+	stagingLock     sync.Mutex
+	staging         map[string]func()
+	uploadLocks     sync.Map
+	uploadSpaceLock sync.Mutex
+	uploadReserved  uint64
 }
 
 func newGateway(c *config) (*gateway, error) {
@@ -930,6 +932,7 @@ type request struct {
 	offered              bool
 	fileClient           bool
 	usageKey             string
+	phase                *contract.CallPhase
 	startedMs            int64
 	begun                time.Time
 }
@@ -1103,7 +1106,7 @@ func (g *gateway) finish(w http.ResponseWriter, q *request, a *answer, transfer 
 		g.onDisabled(a.key, a.disabled)
 	}
 	line := g.line(q, a)
-	line.Transfer = transfer
+	line.Phase, line.Transfer = q.phase, transfer
 	g.spool.append(line)
 	w.Header().Set("X-Fleet-Call-Id", q.id)
 	w.Header().Set("X-Fleet-Outcome", a.outcome)
@@ -1368,7 +1371,7 @@ func (g *gateway) uploadHasSecret(q *request, meta uploadMetadata, file *os.File
 	return newScanner(current).write([]byte(meta.name+"\n"+meta.mediaType)) || g.newKeyIn(file, scanned, current)
 }
 
-func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, beforePost func() error) (keepStage bool) {
+func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, beforePost func(*request) *answer) (keepStage bool) {
 	// Staging can take minutes: the call is admitted again on the current snapshot before the key is attached.
 	again := *q
 	g.resolve(&again)
@@ -1392,8 +1395,8 @@ func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request,
 		return true
 	}
 	if beforePost != nil {
-		if err := beforePost(); err != nil {
-			g.finish(w, q, refusal(507, "error", "staging-failed", "the commit could not be recorded"), nil)
+		if a := beforePost(&again); a != nil {
+			g.finish(w, &again, a, transfer)
 			return false
 		}
 	}

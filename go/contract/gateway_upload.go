@@ -28,6 +28,7 @@ func resumableUpload(ctx context.Context, t GatewayTarget, connection, tool stri
 	headers[UploadIDHeader] = strconv.FormatInt(time.Now().Unix(), 10) + "-" + hex.EncodeToString(nonce[:])
 	headers[UploadSizeHeader] = strconv.FormatInt(u.Size, 10)
 	stall, answer := t.waits()
+	started := time.Now()
 
 	request := func(mode string, offset, length int64) *exchange {
 		headers[UploadModeHeader] = mode
@@ -39,7 +40,7 @@ func resumableUpload(ctx context.Context, t GatewayTarget, connection, tool stri
 			headers["Content-Type"] = "application/octet-stream"
 			headers["Expect"] = "100-continue"
 		} else if mode == "commit" {
-			wait = answer
+			wait = answer + time.Since(started)
 		}
 		target := t
 		target.Idempotent = mode != "commit"
@@ -48,7 +49,7 @@ func resumableUpload(ctx context.Context, t GatewayTarget, connection, tool stri
 	}
 
 	stage := func(mode string, offset, length int64) (int64, CallLine) {
-		deadline := time.Now().Add(stall)
+		var deadline time.Time
 		for {
 			x := request(mode, offset, length)
 			if !x.failed && x.res.StatusCode == http.StatusNoContent {
@@ -76,7 +77,7 @@ func resumableUpload(ctx context.Context, t GatewayTarget, connection, tool stri
 				!(x.line.Status >= 500 && x.line.CallId == "") {
 				return offset, x.line
 			}
-			if !retryUpload(ctx, deadline) {
+			if !retryUpload(ctx, &deadline, stall) {
 				x.line.Outcome = CallOutcomeError // the provider is unreachable until the commit
 				return offset, x.line
 			}
@@ -102,7 +103,7 @@ func resumableUpload(ctx context.Context, t GatewayTarget, connection, tool stri
 			return line, false
 		}
 	}
-	deadline := time.Now().Add(stall)
+	var deadline time.Time
 	for {
 		x := request("commit", 0, 0)
 		line := x.line
@@ -111,22 +112,25 @@ func resumableUpload(ctx context.Context, t GatewayTarget, connection, tool stri
 		}
 		x.close()
 		if line.Outcome != CallOutcomeError || line.ErrorCode == nil ||
-			(*line.ErrorCode != "draining" && *line.ErrorCode != "upload-busy") || !retryUpload(ctx, deadline) {
+			(*line.ErrorCode != "draining" && *line.ErrorCode != "upload-busy") || !retryUpload(ctx, &deadline, stall) {
 			return line, false
 		}
 	}
 }
 
-func retryUpload(ctx context.Context, deadline time.Time) bool {
-	if ctx.Err() != nil || !time.Now().Before(deadline) {
+func retryUpload(ctx context.Context, deadline *time.Time, stall time.Duration) bool {
+	if deadline.IsZero() {
+		*deadline = time.Now().Add(stall)
+	}
+	if ctx.Err() != nil || !time.Now().Before(*deadline) {
 		return false
 	}
-	timer := time.NewTimer(min(time.Second, time.Until(deadline)))
+	timer := time.NewTimer(min(time.Second, stall/4, time.Until(*deadline)))
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return false
 	case <-timer.C:
-		return time.Now().Before(deadline)
+		return time.Now().Before(*deadline)
 	}
 }

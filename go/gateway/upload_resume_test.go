@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,13 +15,15 @@ import (
 )
 
 type resumeRequest struct {
-	gw      *fixture
-	id, sum string
-	total   int
+	gw    *fixture
+	id    string
+	sum   string
+	name  string
+	total int
 }
 
 func newResumeRequest(gw *fixture, payload []byte) resumeRequest {
-	return resumeRequest{gw, strconv.FormatInt(time.Now().Unix(), 10) + "-" + randomHex(16), shaHex(payload), len(payload)}
+	return resumeRequest{gw, strconv.FormatInt(time.Now().Unix(), 10) + "-" + randomHex(16), shaHex(payload), "slow.mov", len(payload)}
 }
 
 func (r resumeRequest) send(t *testing.T, mode string, offset int, payload []byte, status int, code string) http.Header {
@@ -37,7 +40,7 @@ func (r resumeRequest) send(t *testing.T, mode string, offset int, payload []byt
 	} else {
 		headers["Content-Type"] = "application/json"
 	}
-	got, h, _, err := r.gw.upload(body, int64(len(payload)), r.sum, map[string]any{"issue": "TGT-12", "name": "slow.mov"}, headers)
+	got, h, _, err := r.gw.upload(body, int64(len(payload)), r.sum, map[string]any{"issue": "TGT-12", "name": r.name}, headers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +74,22 @@ func TestResumableUploadSurvivesRestart(t *testing.T) {
 	offset(r.send(t, "chunk", 0, first, 204, ""), len(first))
 	r.send(t, "commit", 0, nil, 409, "upload-incomplete")
 	gw.halt()
+	// Simulate a writer that stopped after writing bytes but before recording their offset.
+	files, err := filepath.Glob(filepath.Join(gw.dir, "state/resumable", r.id+"-*.data"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("expected one staged file, got %v: %v", files, err)
+	}
+	f, err := os.OpenFile(files[0], os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("unconfirmed"); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	gw.start()
 	offset(r.send(t, "status", 0, nil, 204, ""), len(first))
 	offset(r.send(t, "chunk", len(first), data[len(first):], 204, ""), len(data))
@@ -83,13 +102,21 @@ func TestResumableUploadSurvivesRestart(t *testing.T) {
 	replay := r.send(t, "commit", 0, nil, 409, "upload-committed")
 	expect(t, replay.Get("X-Fleet-Call-Id"), call, "original call")
 	expect(t, replay.Get("X-Fleet-Outcome"), "unknown", "repeat outcome")
+	changed := r
+	changed.name = "renamed.mov"
+	changed.send(t, "chunk", 0, first, 409, "upload-binding")
+	changed.send(t, "commit", 0, nil, 409, "upload-binding")
 	r.staged(t, 0)
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 1, "provider POSTs")
 	expect(t, uploads[0].sha, shaHex(data), "provider hash")
 	lines, _ := gw.spool()
-	expect(t, len(lines), 1, "recorded calls")
-	expect(t, lines[0]["callId"], call, "spool call ID")
+	expect(t, len(lines), 2, "recorded phases")
+	expect(t, lines[0]["callId"], call, "started call ID")
+	expect(t, lines[0]["phase"], "started", "intent phase")
+	expect(t, lines[0]["errorCode"], "upload-unfinished", "intent problem")
+	expect(t, lines[1]["callId"], call, "completed call ID")
+	expect(t, lines[1]["phase"], "completed", "final phase")
 }
 
 // Requirement: TGT-3 retains authorization and verifies the whole file before the provider gets a commit.

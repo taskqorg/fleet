@@ -1,5 +1,5 @@
-// Outside tests of file tool accounting (docs/designs/fleet-connections.md §9): gateway spool lines with transfer and
-// a download's two lines become one tool_run. A coordinator of its own, so the rows can be read back with SQL; the spool
+// Outside tests of file tool accounting (docs/designs/fleet-connections.md §9): gateway spool lines for one file
+// transfer become one tool_run. A coordinator of its own, so the rows can be read back with SQL; the spool
 // files are the seam the gateway shares with it.
 //   FLEET_TRIAL_TESTS=tests/go/connection-transfer.test.ts node tests/trial/run.ts
 import {after, before, test} from 'node:test';
@@ -87,4 +87,20 @@ test('C12 download completion line updates its row (requirement: docs/designs/fl
   write(today(), started(cut, at), completed(cut, at, {outcome: 'error', errorCode: 'download-cut', transfer: {...transfer, bytes: 300}}));
   r = await until(() => { const x = row(cut); return x?.data.phase === 'completed' ? x : undefined; }, 'cut row');
   assert.deepEqual([r.state, r.problem, r.data.errorCode, r.data.transfer], ['failed', 'step:download-cut', 'download-cut', {...transfer, bytes: 300}]);
+});
+
+test('TGT-3 commit intent and completion account for one upload (requirement: §9 resumable upload accounting; risk: an interrupted commit leaves no history or a completed commit charges twice)', async () => {
+  const callId = randomUUID(), startedAt = Date.now() - 900;
+  const up = {direction: 'upload', bytes: 61_932_522, mediaType: 'video/quicktime', name: 'slow.mov', sha256: sha};
+  const base = {callId, tokenSha256: tokenSha, executionId: 'token:files', connection: 'youtrack', tool: 'attachment_add', startedAt, transfer: up};
+  write(today(), {...base, phase: 'started', outcome: 'unknown', errorCode: 'upload-unfinished', ms: 80});
+  let r = await until(() => row(callId), 'commit intent');
+  assert.deepEqual([r.state, r.problem, r.data.phase, r.connection_cost], ['failed', 'unknown:upload-unfinished', 'started', null]);
+  const done = {...base, phase: 'completed', status: 200, outcome: 'ok', ms: 800, keyFingerprint: 'fp-files-key', usage: {unit: 'calls', amount: 1}};
+  write(today(), done, done);
+  r = await until(() => { const x = row(callId); return x?.state === 'succeeded' ? x : undefined; }, 'completed upload');
+  assert.deepEqual([r.state, r.problem, r.data.phase, r.data.transfer, r.data.keyFingerprint], ['succeeded', null, 'completed', up, 'fp-files-key']);
+  assert.deepEqual(r.connection_cost, {unit: 'calls', calls: 1, amount: 1, connection: 'youtrack'});
+  await new Promise(res => setTimeout(res, 400));
+  assert.deepEqual(row(callId), r);
 });

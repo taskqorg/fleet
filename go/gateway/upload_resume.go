@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -14,9 +15,17 @@ import (
 	"time"
 
 	"fleet/contract"
+
+	"golang.org/x/sys/unix"
 )
 
 const uploadLifetime = 24 * time.Hour
+
+type uploadState struct {
+	Binding string
+	Offset  int64
+	CallID  string
+}
 
 func uploadCreation(id string) (time.Time, bool) {
 	stamp, nonce, ok := strings.Cut(id, "-")
@@ -74,9 +83,9 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		refuse(a.status, a.err, "invalid upload metadata")
 		return
 	}
-	// Bind the stage and commit tombstone to the exact token, destination and file description.
-	binding := sha(strings.Join([]string{q.run.Sha256, q.connection, q.tool, r.Header.Get("X-Fleet-Args"), meta.sha, strconv.FormatInt(total, 10)}, "\x00"))
-	key := id + "-" + binding
+	// The token and ID select one state record regardless of the request's metadata.
+	binding := sha(strings.Join([]string{q.connection, q.tool, r.Header.Get("X-Fleet-Args"), meta.sha, strconv.FormatInt(total, 10)}, "\x00"))
+	key := id + "-" + sha(q.run.Sha256)
 	if _, busy := g.uploadLocks.LoadOrStore(key, struct{}{}); busy {
 		refuse(409, "upload-busy", "another request is using this upload")
 		return
@@ -87,32 +96,38 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		return
 	}
 	base := filepath.Join(g.uploadDir(), key)
-	data, marker := base+".data", base+".commit"
-	if call, err := os.ReadFile(marker); err == nil {
-		// A crash may leave only the marker. Never replay the external side effect.
-		w.Header().Set("X-Fleet-Call-Id", string(call))
+	data, statePath := base+".data", base+".state"
+	state := uploadState{Binding: binding}
+	if saved, err := os.ReadFile(statePath); err == nil {
+		if json.Unmarshal(saved, &state) != nil || state.Binding == "" || state.Offset < 0 {
+			refuse(507, "staging-failed", "the upload record is invalid")
+			return
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		refuse(507, "staging-failed", "the upload record could not be read")
+		return
+	}
+	if state.Binding != binding {
+		refuse(409, "upload-binding", "the upload metadata changed")
+		return
+	}
+	if state.CallID != "" {
+		// A crash may leave staged bytes behind the commit record.
+		os.Remove(data)
+		w.Header().Set("X-Fleet-Call-Id", state.CallID)
 		w.Header().Set("X-Fleet-Outcome", "unknown")
 		w.Header().Set("X-Fleet-Error", "upload-committed")
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "upload-committed", "reason": "read back the attachment before another upload"})
-		return
-	} else if !errors.Is(err, os.ErrNotExist) {
-		refuse(507, "staging-failed", "the commit record could not be read")
 		return
 	}
 
 	cap, _, stall, _ := limits(q.c)
 	if cap > 0 && total > cap {
-		os.Remove(data)
+		discardUpload(data, statePath, state)
 		refuse(413, "file-too-large", "the whole file exceeds the connection's limit")
 		return
 	}
-	var offset int64
-	if info, err := os.Stat(data); err == nil {
-		offset = info.Size()
-	} else if !errors.Is(err, os.ErrNotExist) {
-		refuse(507, "staging-failed", "the staged size could not be read")
-		return
-	}
+	offset := state.Offset
 	ack := func() {
 		w.Header().Set(contract.UploadOffsetHeader, strconv.FormatInt(offset, 10))
 		w.WriteHeader(http.StatusNoContent)
@@ -125,7 +140,6 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		if err != nil || start < 0 || start > total || r.ContentLength <= 0 ||
 			r.ContentLength > contract.UploadChunkBytes || r.ContentLength > total-start ||
 			r.Header.Get("Content-Type") != "application/octet-stream" {
-			os.Remove(data)
 			refuse(400, "bad-request", "invalid upload chunk")
 			return
 		}
@@ -140,11 +154,21 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		}
 		g.transfers.Add(1)
 		defer g.transfers.Add(-1)
+		if !g.reserveChunk(r.ContentLength) {
+			refuse(507, "staging-failed", "insufficient space for this upload chunk")
+			return
+		}
+		defer g.releaseChunk(r.ContentLength)
 		if a := g.stageChunk(w, r, q, data, offset, stall); a != nil {
 			refuse(a.status, a.err, "the chunk was not acknowledged")
 			return
 		}
 		offset += r.ContentLength
+		state.Offset = offset
+		if err := writeUploadState(statePath, state); err != nil {
+			refuse(507, "staging-failed", "the confirmed offset could not be recorded")
+			return
+		}
 		ack()
 	case "commit":
 		if offset != total {
@@ -153,9 +177,9 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		}
 		g.transfers.Add(1)
 		defer g.transfers.Add(-1)
-		g.commitUpload(w, r, q, meta, data, marker, total)
+		g.commitUpload(w, r, q, meta, data, statePath, state)
 	case "abort":
-		if err := os.Remove(data); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := discardUpload(data, statePath, state); err != nil {
 			refuse(507, "staging-failed", "the stage could not be removed")
 			return
 		}
@@ -187,6 +211,10 @@ func (g *gateway) stageChunk(w http.ResponseWriter, r *http.Request, q *request,
 		return refusal(507, "error", "staging-failed", "cannot open upload stage")
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Size() < offset || (info.Size() > offset && file.Truncate(offset) != nil) {
+		return refusal(507, "error", "staging-failed", "cannot restore the confirmed offset")
+	}
 	var drained atomic.Bool
 	control := http.NewResponseController(w)
 	g.stagingLock.Lock()
@@ -198,7 +226,10 @@ func (g *gateway) stageChunk(w http.ResponseWriter, r *http.Request, q *request,
 	delete(g.staging, q.id)
 	g.stagingLock.Unlock()
 	control.SetReadDeadline(time.Time{})
-	if err == nil && n == r.ContentLength && file.Sync() == nil && syncDir(g.uploadDir()) == nil {
+	if err == nil && n == r.ContentLength {
+		if err := file.Sync(); err != nil {
+			return refusal(507, "error", "staging-failed", "the chunk could not be synced")
+		}
 		return nil
 	}
 	if err := file.Truncate(offset); err != nil {
@@ -211,18 +242,20 @@ func (g *gateway) stageChunk(w http.ResponseWriter, r *http.Request, q *request,
 	return refusal(408, "error", "upload-interrupted", "retry the interrupted chunk")
 }
 
-func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, data, marker string, total int64) {
+func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, data, statePath string, state uploadState) {
+	total := state.Offset
 	file, err := os.Open(data)
 	if err != nil {
+		discardUpload(data, statePath, state)
 		g.finish(w, q, refusal(507, "error", "staging-failed", "cannot read staged upload"), nil)
 		return
 	}
 	defer file.Close()
-	// Keep the stage if drain starts before the commit marker is written.
+	// Keep the stage if drain starts before commit.
 	discard := true
 	defer func() {
 		if discard {
-			os.Remove(data)
+			discardUpload(data, statePath, state)
 		}
 	}()
 	patterns := g.uploadSecrets(q)
@@ -257,24 +290,84 @@ func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *reques
 		return
 	}
 	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: total, MediaType: meta.mediaType, Name: meta.name, Sha256: &meta.sha}
-	discard = !g.postUpload(w, r, q, meta, file, transfer, func() error {
-		return recordUploadCommit(marker, q.id)
+	discard = !g.postUpload(w, r, q, meta, file, transfer, func(admitted *request) *answer {
+		started := g.line(admitted, &answer{outcome: "unknown", err: "upload-unfinished"})
+		started.Phase, started.Transfer = ptr(contract.CallPhaseStarted), transfer
+		if !g.spool.append(started) {
+			return refusal(503, "error", "spool-failed", "the call could not be recorded; the file was not sent")
+		}
+		admitted.phase = ptr(contract.CallPhaseCompleted)
+		committed := state
+		committed.CallID = q.id
+		if err := writeUploadState(statePath, committed); err != nil {
+			return refusal(507, "error", "staging-failed", "the commit could not be recorded")
+		}
+		state = committed
+		return nil
 	})
 }
 
-func recordUploadCommit(path, callID string) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+// The data is synced before this record advances. A process crash can leave a tail in the data file or a .next
+// file. Neither advances the offset. A commit's call ID is published with the same atomic replacement.
+func writeUploadState(path string, state uploadState) error {
+	next := path + ".next"
+	f, err := os.OpenFile(next, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	if _, err := f.WriteString(callID); err != nil {
+	defer os.Remove(next)
+	err = json.NewEncoder(f).Encode(state)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
 		return err
 	}
-	if err := f.Sync(); err != nil {
+	if err := os.Rename(next, path); err != nil {
 		return err
 	}
 	return syncDir(filepath.Dir(path))
+}
+
+func discardUpload(data, statePath string, state uploadState) error {
+	if state.Offset != 0 && state.CallID == "" {
+		state.Offset = 0
+		if err := writeUploadState(statePath, state); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(data); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Staged and abandoned bytes already count against statfs. Also reserve space for concurrent writes that have
+// not hit disk yet, leaving filesystem headroom for the spool and other services.
+func (g *gateway) reserveChunk(bytes int64) bool {
+	g.uploadSpaceLock.Lock()
+	defer g.uploadSpaceLock.Unlock()
+	var disk unix.Statfs_t
+	if err := unix.Statfs(g.uploadDir(), &disk); err != nil {
+		return false
+	}
+	blockSize := uint64(disk.Bsize)
+	free := uint64(disk.Bavail) * blockSize
+	const reserve = 64 << 20
+	if free < reserve || free-reserve < g.uploadReserved || free-reserve-g.uploadReserved < uint64(bytes) {
+		return false
+	}
+	g.uploadReserved += uint64(bytes)
+	return true
+}
+
+func (g *gateway) releaseChunk(bytes int64) {
+	g.uploadSpaceLock.Lock()
+	g.uploadReserved -= uint64(bytes)
+	g.uploadSpaceLock.Unlock()
 }
 
 func (g *gateway) expireUploads(now time.Time) {
@@ -287,13 +380,17 @@ func (g *gateway) expireUploads(now time.Time) {
 		if e.IsDir() {
 			continue
 		}
-		ext := filepath.Ext(e.Name())
-		if ext != ".data" && ext != ".commit" {
+		const idLength = 10 + 1 + 32
+		const keyLength = idLength + 1 + 64
+		name := e.Name()
+		if len(name) <= keyLength {
 			continue
 		}
-		key := strings.TrimSuffix(e.Name(), ext)
-		const idLength = 10 + 1 + 32
-		if len(key) != idLength+1+64 || key[idLength] != '-' || !isHex(key[idLength+1:], 64) {
+		key, suffix := name[:keyLength], name[keyLength:]
+		if suffix != ".data" && suffix != ".state" && suffix != ".state.next" {
+			continue
+		}
+		if key[idLength] != '-' || !isHex(key[idLength+1:], 64) {
 			continue
 		}
 		created, valid := uploadCreation(key[:idLength])
