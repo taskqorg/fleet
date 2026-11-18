@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -93,10 +95,24 @@ func TestResumableUploadSurvivesRestart(t *testing.T) {
 	gw.start()
 	offset(r.send(t, "status", 0, nil, 204, ""), len(first))
 	offset(r.send(t, "chunk", len(first), data[len(first):], 204, ""), len(data))
-	call := r.send(t, "commit", 0, nil, 200, "").Get("X-Fleet-Call-Id")
-	if call == "" {
-		t.Fatal("commit returned no call ID")
+	gw.halt()
+	// Recover the same call after the intent ID was saved but the provider POST was not armed.
+	statePath := strings.TrimSuffix(files[0], ".data") + ".state"
+	saved, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
 	}
+	var pending uploadState
+	if err := json.Unmarshal(saved, &pending); err != nil {
+		t.Fatal(err)
+	}
+	pending.CallID, pending.StartedAt = "pending-intent", nowMs()
+	if err := writeUploadState(statePath, pending); err != nil {
+		t.Fatal(err)
+	}
+	gw.start()
+	call := r.send(t, "commit", 0, nil, 200, "").Get("X-Fleet-Call-Id")
+	expect(t, call, pending.CallID, "recovered call ID")
 	gw.halt()
 	gw.start()
 	replay := r.send(t, "commit", 0, nil, 409, "upload-committed")
@@ -131,6 +147,17 @@ func TestResumableUploadRefusals(t *testing.T) {
 		r.send(t, "abort", 0, nil, 204, "")
 		r.staged(t, 0)
 	})
+	t.Run("paused intake still permits cleanup", func(t *testing.T) {
+		r := newResumeRequest(gw, []byte("whole"))
+		r.send(t, "chunk", 0, []byte("part"), 204, "")
+		gw.write(fileSnapshot(p.url, nil, "paused"))
+		gw.adoptWritten()
+		r.send(t, "chunk", 4, []byte("e"), 403, "intake-paused")
+		r.send(t, "abort", 0, nil, 204, "")
+		r.staged(t, 0)
+		gw.write(fileSnapshot(p.url, map[string]any{"fileBytes": 1024}, "all"))
+		gw.adoptWritten()
+	})
 	t.Run("oversized", func(t *testing.T) {
 		r := newResumeRequest(gw, bytes.Repeat([]byte("x"), 1025))
 		r.send(t, "chunk", 0, []byte("x"), 413, "file-too-large")
@@ -151,6 +178,34 @@ func TestResumableUploadRefusals(t *testing.T) {
 		r.send(t, "commit", 0, nil, 422, "secret-found")
 		r.staged(t, 0)
 	})
+	uploads, _, _ := p.seen()
+	expect(t, len(uploads), 0, "provider POSTs")
+}
+
+// Requirement: §9 drain before the provider handoff leaves a resumable stage.
+// Risk: shutdown begins while syncing the commit, then a new provider POST starts in the drain window.
+func TestResumableUploadDrainDuringCommitRecording(t *testing.T) {
+	f, p := newFileFixture(t, nil)
+	g, err := newGateway(f.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := &request{connection: "tavily", tool: "attach", id: "intent", begun: time.Now(), bearer: testToken, run: g.authenticate(testToken)}
+	req, err := http.NewRequest("POST", "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	undone := false
+	meta := uploadMetadata{pathArgs: map[string]json.RawMessage{"issue": json.RawMessage(`"TGT-12"`)}, name: "slow.mov", mediaType: "video/quicktime"}
+	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: 16, Name: meta.name, MediaType: meta.mediaType}
+	keep := g.postUpload(w, req, q, meta, nil, transfer, func(*request) (func() error, *answer) {
+		g.draining.Store(true)
+		return func() error { undone = true; return nil }, nil
+	})
+	if !keep || !undone || w.Code != 503 || w.Header().Get("X-Fleet-Error") != "draining" {
+		t.Fatalf("kept=%v undone=%v status=%d headers=%v", keep, undone, w.Code, w.Header())
+	}
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 0, "provider POSTs")
 }

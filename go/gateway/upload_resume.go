@@ -22,9 +22,11 @@ import (
 const uploadLifetime = 24 * time.Hour
 
 type uploadState struct {
-	Binding string
-	Offset  int64
-	CallID  string
+	Binding   string
+	Offset    int64
+	CallID    string
+	StartedAt int64
+	Committed bool
 }
 
 func uploadCreation(id string) (time.Time, bool) {
@@ -57,15 +59,15 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		w.Header().Set("X-Fleet-Call-Id", q.id)
 		writeJSON(w, a.status, a.body)
 	}
-	if a := admit(q); a != nil {
+	mode := r.Header.Get(contract.UploadModeHeader)
+	if a := admit(q); a != nil && (mode != "abort" || q.run == nil) {
 		refuse(a.status, a.err, "the upload is not admitted")
 		return
 	}
-	if g.draining.Load() {
+	if g.draining.Load() && mode != "abort" {
 		refuse(503, "draining", "the gateway is stopping")
 		return
 	}
-	mode := r.Header.Get(contract.UploadModeHeader)
 	id := r.Header.Get(contract.UploadIDHeader)
 	total, sizeErr := strconv.ParseInt(r.Header.Get(contract.UploadSizeHeader), 10, 64)
 	born, ok := uploadCreation(id)
@@ -99,7 +101,7 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 	data, statePath := base+".data", base+".state"
 	state := uploadState{Binding: binding}
 	if saved, err := os.ReadFile(statePath); err == nil {
-		if json.Unmarshal(saved, &state) != nil || state.Binding == "" || state.Offset < 0 {
+		if json.Unmarshal(saved, &state) != nil || state.Binding == "" || state.Offset < 0 || state.Committed && state.CallID == "" {
 			refuse(507, "staging-failed", "the upload record is invalid")
 			return
 		}
@@ -111,7 +113,7 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 		refuse(409, "upload-binding", "the upload metadata changed")
 		return
 	}
-	if state.CallID != "" {
+	if state.Committed {
 		// A crash may leave staged bytes behind the commit record.
 		os.Remove(data)
 		w.Header().Set("X-Fleet-Call-Id", state.CallID)
@@ -122,7 +124,7 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 	}
 
 	cap, _, stall, _ := limits(q.c)
-	if cap > 0 && total > cap {
+	if mode != "abort" && cap > 0 && total > cap {
 		discardUpload(data, statePath, state)
 		refuse(413, "file-too-large", "the whole file exceeds the connection's limit")
 		return
@@ -243,6 +245,11 @@ func (g *gateway) stageChunk(w http.ResponseWriter, r *http.Request, q *request,
 }
 
 func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, data, statePath string, state uploadState) {
+	if state.CallID != "" {
+		q.id, q.startedMs = state.CallID, state.StartedAt
+		q.begun = time.UnixMilli(q.startedMs)
+		q.phase = ptr(contract.CallPhaseCompleted)
+	}
 	total := state.Offset
 	file, err := os.Open(data)
 	if err != nil {
@@ -265,7 +272,7 @@ func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *reques
 	for {
 		if g.draining.Load() || r.Context().Err() != nil {
 			discard = false
-			g.finish(w, q, refusal(503, "error", "draining", "the file was not sent"), nil)
+			replyCall(w, q, refusal(503, "error", "draining", "the file was not sent"))
 			return
 		}
 		n, err := reader.Read(buf)
@@ -290,20 +297,34 @@ func (g *gateway) commitUpload(w http.ResponseWriter, r *http.Request, q *reques
 		return
 	}
 	transfer := &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: total, MediaType: meta.mediaType, Name: meta.name, Sha256: &meta.sha}
-	discard = !g.postUpload(w, r, q, meta, file, transfer, func(admitted *request) *answer {
+	discard = !g.postUpload(w, r, q, meta, file, transfer, func(admitted *request) (func() error, *answer) {
+		// Persist the call ID before spooling intent. Replaying a pending intent reuses the same accounting row.
+		if state.CallID == "" {
+			state.CallID, state.StartedAt = admitted.id, admitted.startedMs
+			if err := writeUploadState(statePath, state); err != nil {
+				return nil, refusal(507, "error", "staging-failed", "the intent could not be recorded")
+			}
+		}
 		started := g.line(admitted, &answer{outcome: "unknown", err: "upload-unfinished"})
 		started.Phase, started.Transfer = ptr(contract.CallPhaseStarted), transfer
-		if !g.spool.append(started) {
-			return refusal(503, "error", "spool-failed", "the call could not be recorded; the file was not sent")
-		}
 		admitted.phase = ptr(contract.CallPhaseCompleted)
-		committed := state
-		committed.CallID = q.id
-		if err := writeUploadState(statePath, committed); err != nil {
-			return refusal(507, "error", "staging-failed", "the commit could not be recorded")
+		if !g.spool.append(started) {
+			return nil, refusal(503, "error", "spool-failed", "the call could not be recorded; the file was not sent")
 		}
+		committed := state
+		committed.Committed = true
+		if err := writeUploadState(statePath, committed); err != nil {
+			return nil, refusal(507, "error", "staging-failed", "the commit could not be recorded")
+		}
+		pending := state
 		state = committed
-		return nil
+		return func() error {
+			if err := writeUploadState(statePath, pending); err != nil {
+				return err
+			}
+			state = pending
+			return nil
+		}, nil
 	})
 }
 
@@ -333,8 +354,8 @@ func writeUploadState(path string, state uploadState) error {
 }
 
 func discardUpload(data, statePath string, state uploadState) error {
-	if state.Offset != 0 && state.CallID == "" {
-		state.Offset = 0
+	if state.Offset != 0 && !state.Committed {
+		state.Offset, state.CallID, state.StartedAt = 0, "", 0
 		if err := writeUploadState(statePath, state); err != nil {
 			return err
 		}

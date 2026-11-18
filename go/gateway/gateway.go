@@ -1108,6 +1108,10 @@ func (g *gateway) finish(w http.ResponseWriter, q *request, a *answer, transfer 
 	line := g.line(q, a)
 	line.Phase, line.Transfer = q.phase, transfer
 	g.spool.append(line)
+	replyCall(w, q, a)
+}
+
+func replyCall(w http.ResponseWriter, q *request, a *answer) {
 	w.Header().Set("X-Fleet-Call-Id", q.id)
 	w.Header().Set("X-Fleet-Outcome", a.outcome)
 	if a.err != "" {
@@ -1371,7 +1375,7 @@ func (g *gateway) uploadHasSecret(q *request, meta uploadMetadata, file *os.File
 	return newScanner(current).write([]byte(meta.name+"\n"+meta.mediaType)) || g.newKeyIn(file, scanned, current)
 }
 
-func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, beforePost func(*request) *answer) (keepStage bool) {
+func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request, meta uploadMetadata, file *os.File, transfer *contract.CallTransfer, beforePost func(*request) (func() error, *answer)) (keepStage bool) {
 	// Staging can take minutes: the call is admitted again on the current snapshot before the key is attached.
 	again := *q
 	g.resolve(&again)
@@ -1390,14 +1394,28 @@ func (g *gateway) postUpload(w http.ResponseWriter, r *http.Request, q *request,
 		g.finish(w, q, refusal(400, "error", "bad-request", "the tool's path changed while the file arrived"), transfer)
 		return false
 	}
+	draining := refusal(503, "error", "draining", "the file was not sent")
 	if g.draining.Load() || r.Context().Err() != nil {
-		g.finish(w, q, refusal(503, "error", "draining", "the file was not sent"), transfer)
+		if beforePost == nil {
+			g.finish(w, q, draining, transfer)
+		} else {
+			replyCall(w, q, draining)
+		}
 		return true
 	}
 	if beforePost != nil {
-		if a := beforePost(&again); a != nil {
+		undo, a := beforePost(&again)
+		if a != nil {
 			g.finish(w, &again, a, transfer)
 			return false
+		}
+		if g.draining.Load() || r.Context().Err() != nil {
+			if err := undo(); err != nil {
+				replyCall(w, &again, refusal(507, "unknown", "staging-failed", "the commit record could not be restored"))
+				return false
+			}
+			replyCall(w, &again, draining)
+			return true
 		}
 	}
 	// One file part with the caller's name; the name rules keep it inside the quotes (RFC 7578 allows UTF-8).

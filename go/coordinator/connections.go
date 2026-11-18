@@ -1126,7 +1126,9 @@ func connIngestPass(ctx context.Context, a *App) (int, error) {
 		existing := map[string]string{}
 		if len(callIDs) > 0 {
 			if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-				rs, err := queryRows(q, "SELECT id, coalesce(data->>'phase','') AS phase FROM execution WHERE id = ANY($1)", callIDs)
+				rs, err := queryRows(q, `SELECT id, CASE WHEN data->>'phase'='completed' AND data->'transfer'->>'direction'='upload'
+					AND NOT data ? 'uploadAccounted' THEN 'upload-unaccounted' ELSE coalesce(data->>'phase','') END AS phase
+					FROM execution WHERE id = ANY($1)`, callIDs)
 				if err != nil {
 					return err
 				}
@@ -1207,6 +1209,9 @@ func connRecord(q *Request, l contract.CallLine) (bool, error) {
 	}
 	if l.Phase != nil {
 		data["phase"] = *l.Phase
+		if *l.Phase == contract.CallPhaseCompleted && isUpload(l) {
+			data["uploadAccounted"] = true
+		}
 	}
 	if t["personal"] != nil {
 		data["tokenName"] = t["personal"]
@@ -1323,6 +1328,10 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 	return nil
 }
 
+func isUpload(l contract.CallLine) bool {
+	return l.Transfer != nil && l.Transfer.Direction == contract.CallTransferDirectionUpload
+}
+
 // connComplete applies a file transfer's completed line (§9) to its started row. A repeated pass leaves the
 // completed row unchanged. If the started line was lost, the completed line is recorded alone.
 func connComplete(q *Request, l contract.CallLine) error {
@@ -1333,12 +1342,14 @@ func connComplete(q *Request, l contract.CallLine) error {
 	}
 	ms := max(l.Ms, 0)
 	patch := doc{"outcome": l.Outcome, "status": l.Status, "errorCode": l.ErrorCode, "ms": ms, "transfer": l.Transfer, "phase": contract.CallPhaseCompleted}
-	upload := l.Transfer != nil && l.Transfer.Direction == contract.CallTransferDirectionUpload
+	upload := isUpload(l)
 	if upload {
-		patch["keyFingerprint"], patch["usage"] = l.KeyFingerprint, l.Usage
+		patch["keyFingerprint"], patch["usage"], patch["uploadAccounted"] = l.KeyFingerprint, l.Usage, true
 	}
 	tag, err := q.tx.Exec(q.ctx(), `UPDATE execution SET state=$2, problem=$4, data=data||$5::jsonb,
-	 ended_at=started_at+make_interval(secs => $3::bigint/1000.0) WHERE id=$1 AND data->>'phase'='started'`, id, state, ms, problem, jsonBytes(patch))
+	 ended_at=started_at+make_interval(secs => $3::bigint/1000.0) WHERE id=$1 AND
+	 (data->>'phase'='started' OR ($6 AND data->>'phase'='completed' AND NOT data ? 'uploadAccounted'))`,
+		id, state, ms, problem, jsonBytes(patch), upload)
 	if err != nil {
 		return err
 	}

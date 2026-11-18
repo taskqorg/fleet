@@ -101,6 +101,11 @@ test('TGT-3 commit intent and completion account for one upload (requirement: §
   r = await until(() => { const x = row(callId); return x?.state === 'succeeded' ? x : undefined; }, 'completed upload');
   assert.deepEqual([r.state, r.problem, r.data.phase, r.data.transfer, r.data.keyFingerprint], ['succeeded', null, 'completed', up, 'fp-files-key']);
   assert.deepEqual(r.connection_cost, {unit: 'calls', calls: 1, amount: 1, connection: 'youtrack'});
+  // An older coordinator can complete the row without applying the upload's usage.
+  c.sql(`UPDATE execution SET data=(data-'uploadAccounted')||'{"keyFingerprint":null,"usage":null}'::jsonb WHERE id='call:${callId}';
+    UPDATE execution_totals SET connection_cost=NULL, connection_cost_basis='unavailable' WHERE execution_id='call:${callId}';`);
+  r = await until(() => { const x = row(callId); return x?.data.uploadAccounted ? x : undefined; }, 'repair rollback accounting');
+  assert.deepEqual(r.connection_cost, {unit: 'calls', calls: 1, amount: 1, connection: 'youtrack'});
   await new Promise(res => setTimeout(res, 400));
   assert.deepEqual(row(callId), r);
 });
