@@ -50,7 +50,7 @@ export function Keys({ id }: { id?: string }) {
     </DetailSection>
     <DetailSection title="Keys">
       {sel.keys.map((k: any) => <KvRow key={k.id} icon="shield" label={k.fingerprint} meta={k.disabledReason ?? (k.problem ? `HTTP ${k.problem.status}: ${k.problem.message}` : undefined)}
-        value={<><StateBadge family="key" state={k.state} compact /><AgeChip t={k.addedAt} now={now} />
+        value={<><StateBadge family="key" state={k.state} compact /><AgeChip t={k.addedAt} />
           {k.reconcile && <span class={k.reconcile.difference > 0 ? 'attention' : 'muted'} data-tip="Provider usage since the first check, minus credits recorded through Fleet">{k.reconcile.unknown ? 'usage unknown' : k.reconcile.difference > 0 ? `+${k.reconcile.difference} elsewhere` : 'matches'}</span>}
           {k.state === 'active' && <Button label="Drain" icon="pause" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'draining' })} />}
           {(k.state === 'draining' || k.state === 'disabled') && <Button label="Activate" icon="play" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'active' })} />}

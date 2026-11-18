@@ -103,7 +103,7 @@ export function Limits() {
               {p.resetsAt && <time data-tip={exact(p.resetsAt)} aria-label={`resets ${countdown(p.resetsAt, now).long}`}>{countdown(p.resetsAt, now).text}</time>}
               {p.pace !== 'unknown' && <span class={`chip${p.pace === 'ahead' ? ' t-attention' : ''}`} data-tip="pace against the period's elapsed share">{p.pace}</span>}
               {p.low && <span class="chip t-danger"><Icon name="triangle-alert" />Low</span>}
-              {p.readingAt && <AgeChip t={p.readingAt} now={now} />}
+              {p.readingAt && <AgeChip t={p.readingAt} />}
               <span class="muted">{p.source}</span>
             </span></td>;
           })}

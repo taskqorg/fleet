@@ -2,7 +2,7 @@
 import { Fragment, createContext, type ComponentChildren, type TargetedMouseEvent } from 'preact';
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { type IconName, type Family, type StateOf, type StateDef, type Tone, type Harness, type Stage, iconSvg, states, actions, harnesses, stages, stepKinds, type StepKind, entityKinds, codeKind, ENTITY_CODE, type EntityKind } from './registry.ts';
-import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, bytes, exact, stamp, percent, duration, count, agentLabel, actor } from './format.ts';
+import { type Measured, type Kind, type CostFigureLike, costMeasured, splitCostFigures, measured, age, bytes, exact, stamp, percent, duration, count, agentLabel, actor, fileLabel } from './format.ts';
 import type { Block as ThreadBlock, ResourceSummary, EntityCardReply } from '../../../contracts/generated/ops.ts';
 import { matchSearch, searchFields } from './search.ts';
 import { VirtualList, type VirtualListHandle } from './virtual-list.tsx';
@@ -42,28 +42,51 @@ export function Button(p: ButtonProps) {
 /** One small tooltip for the whole app, for elements with data-tip. Shows after a delay on hover or focus,
  *  about that element only, never over a field being typed in, hidden on any key press or scroll. Mount once. */
 export function TooltipLayer({ delay = 600 }: { delay?: number }) {
-  const [tip, setTip] = useState<{ text: string; x: number; y: number; below: boolean } | null>(null);
+  const [tip, setTip] = useState<{ text: string; anchor: HTMLElement } | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!tip || !el) return;
+    const anchor = tip.anchor.getBoundingClientRect();
+    const gap = parseInt(tokens.space[2]);
+    const viewport = window.visualViewport;
+    const viewWidth = viewport?.width ?? innerWidth;
+    const viewHeight = viewport?.height ?? innerHeight;
+    const x = viewport?.offsetLeft ?? 0;
+    const y = viewport?.offsetTop ?? 0;
+    el.style.maxWidth = `min(var(--size-tip), ${Math.max(0, viewWidth - 2 * gap)}px)`;
+    const { width, height } = el.getBoundingClientRect();
+    const left = Math.max(x + gap, Math.min(anchor.left + (anchor.width - width) / 2, x + viewWidth - gap - width));
+    const above = anchor.top - height - gap;
+    const top = above >= y + gap ? above : Math.max(y + gap, Math.min(anchor.bottom + gap, y + viewHeight - gap - height));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [tip]);
   useEffect(() => {
     let timer = 0;
     const hide = () => { clearTimeout(timer); setTip(null); };
     const show = (e: Event) => {
+      if (e instanceof PointerEvent && e.pointerType === 'touch') return;
       const el = (e.target as HTMLElement).closest?.('[data-tip]') as HTMLElement | null;
       hide();
       if (!el || document.activeElement?.matches('input,textarea,[contenteditable]')) return;
       // data-tip-narrow: only when the visible label next to it is hidden (icon-only rail).
       if (el.hasAttribute('data-tip-narrow') && el.nextElementSibling?.getClientRects().length) return;
-      timer = window.setTimeout(() => {
-        const r = el.getBoundingClientRect(), below = r.top < 48;
-        setTip({ text: el.dataset.tip!, x: r.left + r.width / 2, y: below ? r.bottom : r.top, below });
-      }, delay);
+      timer = window.setTimeout(() => { if (el.isConnected && el.dataset.tip) setTip({ text: el.dataset.tip, anchor: el }); }, delay);
     };
     const opts = { capture: true, passive: true };
     document.addEventListener('pointerover', show, opts); document.addEventListener('focusin', show, opts);
+    window.addEventListener('resize', hide);
+    window.visualViewport?.addEventListener('resize', hide);
+    window.visualViewport?.addEventListener('scroll', hide);
     for (const ev of ['pointerout', 'focusout', 'keydown', 'scroll', 'input', 'pointerdown']) document.addEventListener(ev, hide, opts);
     return () => { hide(); document.removeEventListener('pointerover', show, opts); document.removeEventListener('focusin', show, opts);
+      window.removeEventListener('resize', hide);
+      window.visualViewport?.removeEventListener('resize', hide);
+      window.visualViewport?.removeEventListener('scroll', hide);
       for (const ev of ['pointerout', 'focusout', 'keydown', 'scroll', 'input', 'pointerdown']) document.removeEventListener(ev, hide, opts); };
   }, [delay]);
-  return tip && <div class={`tooltip${tip.below ? ' below' : ''}`} role="tooltip" style={{ left: `${tip.x}px`, top: `${tip.y}px` }}>{tip.text}</div>;
+  return tip && <div ref={box} class="tooltip" role="tooltip">{tip.text}</div>;
 }
 
 /* ---------- State badge (OR-1, D7) ---------- */
@@ -71,21 +94,21 @@ export function TooltipLayer({ delay = 600 }: { delay?: number }) {
 type BadgeProps<F extends Family> = {
   family: F; state: StateOf<F>; reason?: string;
   /** Last contact time when the observation is unconfirmed. */
-  lastSeen?: number; now?: number;
+  lastSeen?: number; unconfirmed?: boolean; now?: number;
   /** Icon only, word in tooltip: for dense columns. */
   compact?: boolean;
 };
 export function StateBadge<F extends Family>(p: BadgeProps<F>) {
   const d = states[p.family][p.state] as StateDef;
-  const unconf = p.lastSeen !== undefined;
-  const seen = unconf ? age(p.lastSeen!, p.now ?? Date.now()) : null;
-  const name = [d.label, unconf && `unconfirmed, last seen ${seen!.long}`, p.reason].filter(Boolean).join(', ');
+  const unconf = p.unconfirmed || p.lastSeen !== undefined;
+  const seen = p.lastSeen !== undefined ? exact(p.lastSeen) : null;
+  const name = [d.label, unconf && 'unconfirmed', seen && `last seen ${seen}`, p.reason].filter(Boolean).join(', ');
   return (
     <span class="state" data-ui="state-badge">
       <span class={`badge t-${d.tone}${unconf ? ' unconf' : ''}${p.compact ? ' compact' : ''}`} role="img" aria-label={name} data-tip={p.compact || unconf ? name : undefined}>
         <Icon name={d.icon} />{!p.compact && <span>{d.label}</span>}
       </span>
-      {(unconf || p.reason) && !p.compact && <span class={`reason${unconf ? ' unconf' : ''}`} aria-hidden="true">{unconf ? `seen ${seen!.text}` : ''}{unconf && p.reason ? ' · ' : ''}{p.reason}</span>}
+      {(unconf || p.reason) && !p.compact && <span class={`reason${unconf ? ' unconf' : ''}`} aria-hidden="true">{unconf && <>Unconfirmed{p.lastSeen !== undefined && <> · seen <Ago t={p.lastSeen} /></>}</>}{unconf && p.reason ? ' · ' : ''}{p.reason}</span>}
     </span>
   );
 }
@@ -118,9 +141,9 @@ export type TotalItem =
   | { label: string; m: Measured; kind: Kind; note?: string; cost?: never }
   | { label: string; cost: readonly CostFigureLike[]; note?: string; showUnavailable?: boolean; m?: never; kind?: never };
 
-export function Totals({ items }: { items: TotalItem[] }) {
+export function Totals({ items, compact }: { items: TotalItem[]; compact?: boolean }) {
   return (
-    <dl class="totals" data-ui="number">
+    <dl class={compact ? "totals compact" : "totals"} data-ui="number">
       {items.map(i => (
         <div key={i.label}>
           <dt>{i.label}</dt>
@@ -153,19 +176,56 @@ export function useTick(ms: number, active = true) {
   useEffect(() => { if (!active) return; const t = setInterval(() => set(n => n + 1), ms); return () => clearInterval(t); }, [ms, active]);
 }
 
-/** A past moment in compact form (OR-2): "4m", "2h", "12 Nov"; the exact time on hover, the long form as its name. */
-export function Ago({ t, now }: { t: number; now?: number }) {
-  const a = age(t, now ?? Date.now());
-  return <time class="when" dateTime={new Date(t).toISOString()} data-tip={exact(t)} aria-label={a.long}>{a.text}</time>;
+const ageListeners = new Set<(now: number) => void>();
+let ageTimer: ReturnType<typeof setInterval> | undefined;
+
+function useAgeClock(t: number, alertAfter: number | undefined, offset: number) {
+  const [, refresh] = useState(0);
+  const now = Date.now() + offset;
+  useEffect(() => {
+    if (!Number.isFinite(t)) return;
+    const updateKey = (now: number) => `${age(t, now).text}:${alertAfter !== undefined && now - t >= alertAfter * 1000}`;
+    let previous = updateKey(now);
+    const update = (clock: number) => {
+      const next = updateKey(clock + offset);
+      if (next === previous) return;
+      previous = next;
+      refresh(n => n + 1);
+    };
+    update(Date.now());
+    ageListeners.add(update);
+    ageTimer ??= setInterval(() => {
+      const clock = Date.now();
+      ageListeners.forEach(listener => listener(clock));
+    }, 1000);
+    return () => {
+      ageListeners.delete(update);
+      if (!ageListeners.size) {
+        clearInterval(ageTimer);
+        ageTimer = undefined;
+      }
+    };
+  }, [t, alertAfter, offset]);
+  return now;
 }
 
-/** Age chip with visual salience (OR-2, OR-18): turns to the given tone past the caller's threshold. */
-export function AgeChip({ t, now, alertAfter, tone = 'danger', alertLabel = 'needs a look' }: { t: number; now: number; alertAfter?: number; tone?: Tone; alertLabel?: string }) {
+type AgeProps = { t: number; clockOffsetMs?: number; alertAfter?: number; tone?: Tone; alertLabel?: string };
+
+/** Compact live age with the original timestamp available on hover. */
+export function Ago({ t, chip, clockOffsetMs = 0, alertAfter, tone = 'danger', alertLabel = 'needs a look' }: AgeProps & { chip?: boolean }) {
+  const now = useAgeClock(t, alertAfter, clockOffsetMs);
+  const cls = chip ? 'chip-age' : 'when';
+  if (!Number.isFinite(t)) return <span class={cls} aria-label="Time unavailable">—</span>;
   const a = age(t, now);
   const alert = alertAfter !== undefined && now - t >= alertAfter * 1000;
-  // D14/M3: the alert is never colour only: icon + meaning in the name and tooltip.
-  return <span data-ui="number" class={`chip-age${alert ? ` t-${tone} alert` : ''}`} aria-label={alert ? `${a.long}, ${alertLabel}` : a.long} data-tip={alert ? alertLabel : undefined}>
-    {alert && <Icon name="triangle-alert" />}{a.text}</span>;
+  return <time class={cls + (alert ? ` t-${tone} alert` : '')} data-ui={chip ? 'number' : undefined}
+    dateTime={new Date(t).toISOString()} data-tip={alert ? `${alertLabel} · ${exact(t)}` : exact(t)}
+    aria-label={alert ? `${a.long}, ${alertLabel}` : a.long}>
+    {alert && <Icon name="triangle-alert" />}{a.text}</time>;
+}
+
+export function AgeChip(props: AgeProps) {
+  return <Ago {...props} chip />;
 }
 
 /* ---------- Fill bar (W9–W11) ---------- */
@@ -180,14 +240,13 @@ export function FillBar(p: FillProps) {
   const legend = p.segments.map(s => `${s.label} ${Math.round(s.bytes / p.total! * 100)}%`).join(' · ');
   const amount = (n: number) => p.unit === 'percent' ? percent(n, p.total!).text : bytes(n).text;
   const freeText = free <= 0 ? 'full' : `${amount(free)} ${p.unit === 'percent' ? 'left' : 'free'}${state ? `, warning at ${amount(p.warnAt!)}` : ''}`;
-  const staleText = p.stale !== undefined ? ` · ${age(p.stale, p.now ?? Date.now()).text} old` : '';
   return (
     <span class="fill-wrap" data-ui="fill-bar">
-      <span class={`fill ${state}${p.stale !== undefined ? ' stale' : ''}`} role="img" aria-label={`${legend}; ${freeText}${staleText}`}>
+      <span class={`fill ${state}${p.stale !== undefined ? ' stale' : ''}`} role="img" aria-label={`${legend}; ${freeText}`}>
         {p.segments.map((s, i) => <i key={s.label} class={`d${i % 4 + 1}`} style={{ width: `${s.bytes / p.total! * 100}%` }} data-tip={`${s.label} ${p.unit === 'percent' ? percent(s.bytes, p.total!).text : bytes(s.bytes).text}`} />)}
         {p.warnAt !== undefined && <b class="mark" style={{ left: `${(1 - p.warnAt / p.total) * 100}%` }} />}
       </span>
-      <span class={`legend${state ? ` t-${state === 'full' ? 'danger' : 'attention'}` : ''}`} data-important={state ? '' : undefined}>{state ? `${freeText} · ${legend}` : `${legend} · ${freeText}`}{staleText}</span>
+      <span class={`legend${state ? ` t-${state === 'full' ? 'danger' : 'attention'}` : ''}`} data-important={state ? '' : undefined}>{state ? `${freeText} · ${legend}` : `${legend} · ${freeText}`}{p.stale !== undefined && <> · <Ago t={p.stale} /> old</>}</span>
     </span>
   );
 }
@@ -280,7 +339,7 @@ export function ExecTree({ nodes, now, label, selectedId, onSelect }: { nodes: T
 
 type DecisionProps = {
   question: string; askedBy: string; addressedTo: string; since: number; now: number; waits?: ComponentChildren;
-  context?: ComponentChildren; options: { label: string; kbd?: string; primary?: boolean }[];
+  context?: ComponentChildren; timeInRow?: boolean; technicalAnswer?: boolean; options: { label: string; kbd?: string; primary?: boolean }[];
   answered?: { by: string; answer: string; at: number; delivered: boolean };
   onAnswer?: (answer: string) => void;
   /** A key request: a write-only password field replaces the typed answer; the value goes to onSecret only, never to onAnswer. */
@@ -291,8 +350,12 @@ export function DecisionBlock(p: DecisionProps) {
   const [failed, setFailed] = useState<string | null>(null);
   if (p.answered) {
     const a = p.answered;
+    if (p.timeInRow) return <div class="decision answered thread-answer" data-ui="decision-block" role="status">
+      <div class="dq"><Icon name="message-circle-question" label="Question" /><span>{p.question}</span></div>
+      <div class="decision-reply"><span class="muted">Answer</span> {p.technicalAnswer ? <CodeBlock text={a.answer} /> : <b>{a.answer}</b>}{!a.delivered && ' · delivery pending'}</div>
+    </div>;
     return <div class="decision answered" data-ui="decision-block" role="status"><Icon name={a.delivered ? 'check-check' : 'history'} />
-      <span>{p.question} <b>{a.answer}</b> · {a.by} · {age(a.at, p.now).text}{a.delivered ? '' : ' · delivery pending'}</span></div>;
+      <span>{p.question} <b>{a.answer}</b> · {a.by} · <Ago t={a.at} />{a.delivered ? '' : ' · delivery pending'}</span></div>;
   }
   const send = (s: string) => s.trim() && p.onAnswer?.(s.trim());
   // The field clears once the key is stored; a refusal shows its reason, never the value.
@@ -301,7 +364,7 @@ export function DecisionBlock(p: DecisionProps) {
     <div class="decision" data-ui="decision-block" role="group" aria-label={p.question}
       onKeyDown={e => { if ((e.target as HTMLElement).tagName === 'INPUT') return; const o = p.options.find(o => o.kbd === e.key); if (o) send(o.label); }}>
       <div class="dq"><Icon name="bell" /><b>{p.question}</b></div>
-      <div class="meta">{p.askedBy}{p.addressedTo === 'you' ? '' : ` · for ${p.addressedTo}`} · <AgeChip t={p.since} now={p.now} />{p.waits && <> · {p.waits}</>}</div>
+      <div class="meta">{p.askedBy}{p.addressedTo === 'you' ? '' : ` · for ${p.addressedTo}`}{!p.timeInRow && <> · <AgeChip t={p.since} /></>}{p.waits && <> · {p.waits}</>}</div>
       {p.context && <div class="ctx">{p.context}</div>}
       <div class="answers">
         {p.options.map(o => <Button key={o.label} label={o.label} kbd={o.kbd} kind={o.primary ? 'primary' : 'default'} onClick={() => send(o.label)} />)}
@@ -450,9 +513,9 @@ export function SettingField(p: SettingProps) {
           : <><input id={id} value={edit} type={(p.secret ? 'password' : 'text') as 'text'} autocomplete={p.secret ? 'off' : undefined} onInput={e => setEdit((e.target as HTMLInputElement).value)}
               onKeyDown={e => { if (e.key === 'Enter') { p.onSave?.(edit); setEdit(null); } if (e.key === 'Escape') setEdit(null); }} />
             <Button label="Save" kind="primary" onClick={() => { p.onSave?.(edit); setEdit(null); }} /><Button label="Cancel" kind="quiet" onClick={() => setEdit(null)} /></>}
-        <StateBadge family="setting" state={s.kind} compact reason={s.kind === 'applied' ? age(s.at, p.now).text : s.kind === 'apply_error' ? s.error : undefined} />
+        <StateBadge family="setting" state={s.kind} compact reason={s.kind === 'applied' ? exact(s.at) : s.kind === 'apply_error' ? s.error : undefined} />
         {s.kind === 'apply_error' && <Button label="Retry" icon={actions.retry} iconOnly />}
-        {p.changed && <span class="muted">{p.changed.by} · {age(p.changed.at, p.now).text}</span>}
+        {p.changed && <span class="muted">{p.changed.by} · <Ago t={p.changed.at} /></span>}
       </div>
       <div class="help">{p.help}</div>
     </div>
@@ -483,8 +546,8 @@ export const Empty = ({ text, action }: { text: string; action?: ComponentChildr
 export const ErrorBanner = ({ text, onRetry }: { text: string; onRetry?: () => void }) => (
   <div class="err-banner" data-ui="status-states" role="alert"><Icon name="circle-alert" /><span>{text}</span><span class="grow" />{onRetry && <Button label="Retry" icon={actions.retry} onClick={onRetry} />}</div>
 );
-export const Stale = ({ at, now, onRefresh }: { at: number; now: number; onRefresh?: () => void }) => (
-  <span class="stale" data-ui="status-states">updated {age(at, now).text} <Button label="Refresh" icon={actions.retry} iconOnly onClick={onRefresh} /></span>
+export const Stale = ({ at, onRefresh }: { at: number; now: number; onRefresh?: () => void }) => (
+  <span class="stale" data-ui="status-states">updated <Ago t={at} /> <Button label="Refresh" icon={actions.retry} iconOnly onClick={onRefresh} /></span>
 );
 
 /* ---------- Thread rows (transcript-viewer.md; docs/designs/fleet-conversations.md) ---------- */
@@ -523,7 +586,7 @@ const CARD_ID = 'entity-card';
 /** The one formatter of an entity reference (D17, OR-38). A human code (`T-FLT-42`, a pull request's number, `v1.2.3`) in mono after the
  *  name; a kind without a code (run, result, experiment) as its kind icon. A click, tap, Enter or Space opens its
  *  EntityCard and never the row (OR-26); the same again closes it. The UUID is never shown: the card copies it. */
-export function EntityCode({ code, id, kind, cls }: { code?: string | null; id?: string | null; kind?: EntityKind; cls?: string }) {
+export function EntityCode({ code, id, kind, cls, label }: { code?: string | null; id?: string | null; kind?: EntityKind; cls?: string; label?: boolean }) {
   const el = useRef<HTMLButtonElement>(null);
   const cur = useShownCard(el);
   // A code that leaves the page (its row recycled by a virtual list, the view changed) takes its card with it.
@@ -540,9 +603,13 @@ export function EntityCode({ code, id, kind, cls }: { code?: string | null; id?:
     showCard(shown?.anchor === e.currentTarget ? null : { ref: id ? { kind: k, id, ...(code ? { code } : {}) } : { kind: k, code: code! }, anchor: e.currentTarget, keyboard: e.detail === 0 });
   };
   const what = entityKinds[k].label;
-  return <button ref={el} type="button" class={`${code ? 'id ec-code' : 'btn quiet icon-only ec-code'}${cls ? ' ' + cls : ''}`} data-ui="entity-code" aria-haspopup="dialog" aria-expanded={open}
+  const trigger = <button ref={el} type="button" class={`${code ? 'id ec-code' : label ? 'btn quiet ec-code ec-label' : 'btn quiet icon-only ec-code'}${cls ? ' ' + cls : ''}`} data-ui="entity-code" aria-haspopup="dialog" aria-expanded={open}
     aria-controls={open ? CARD_ID : undefined} aria-label={`${what}${code ? ' ' + code : ''}: show details`} data-tip={open ? undefined : 'Show details'} onClick={toggle}>
-    {code ?? <Icon name={entityKinds[k].icon} />}</button>;
+    {code ?? <><Icon name={entityKinds[k].icon} />{label && what}</>}</button>;
+  if (!code) return trigger;
+  return <span class={cls === 'inline' ? 'ec-reference inline' : 'ec-reference'}>{trigger}<span class="ec-copy" onClick={e => e.stopPropagation()}>
+    <CopyButton label={`Copy ${code}`} value={code} iconOnly />
+  </span></span>;
 }
 
 /** D17 codes in a text as references (agent messages, OR-38): every other part stays text. */
@@ -649,8 +716,8 @@ function CardBody({ r, onOpen }: { r: EntityRef; onOpen: () => void }) {
       <p class="ec-t">{c.title}</p>
       {(c.projectId || c.harness || Number.isFinite(at)) && <p class="ec-m">{c.projectId && <span class="mono">{c.projectId}</span>}
         {c.harness && c.harness in harnesses && <HarnessMark h={c.harness as Harness} />}
-        {Number.isFinite(at) && <span>{c.atLabel ? c.atLabel + ' ' : ''}<Ago t={at} now={now} /></span>}</p>}
-      {c.facts.length > 0 && <dl class="ec-f">{c.facts.map(f => <div key={f.label}><dt>{f.label}</dt><dd class={f.type === 'text' || f.type === 'time' ? undefined : 'mono'}>{factText(f, now)}</dd></div>)}</dl>}
+        {Number.isFinite(at) && <span>{c.atLabel ? c.atLabel + ' ' : ''}<Ago t={at} /></span>}</p>}
+      {c.facts.length > 0 && <dl class="ec-f">{c.facts.map(f => <div key={f.label}><dt>{f.label}</dt><dd class={f.type === 'text' || f.type === 'time' ? undefined : 'mono'}>{factText(f)}</dd></div>)}</dl>}
     </> : read.error ? <div class="ec-err" role="alert"><Icon name="circle-alert" /><span>{read.error}</span>{read.retry && <Button label="Retry" icon={actions.retry} iconOnly kind="quiet" onClick={read.retry} />}</div>
       : <div class="ec-sk" aria-busy="true" aria-label="Loading"><i /><i /><i /></div>}
     <div class="ec-a">
@@ -674,10 +741,10 @@ export function CopyButton({ label, value, iconOnly }: { label: string; value: s
     <span class="sr-only" role="status">{done === null ? '' : done ? `${label.replace(/^Copy /, '')} copied` : 'Copy failed'}</span></>;
 }
 
-function factText(f: EntityCardData['facts'][number], now: number): ComponentChildren {
+function factText(f: EntityCardData['facts'][number]): ComponentChildren {
   const n = Number(f.value);
   switch (f.type) {
-    case 'time': { const t = Date.parse(f.value); return Number.isFinite(t) ? <Ago t={t} now={now} /> : f.value; }
+    case 'time': { const t = Date.parse(f.value); return Number.isFinite(t) ? <Ago t={t} /> : f.value; }
     case 'count': return Number.isFinite(n) ? count(n).text : f.value;
     case 'bytes': return Number.isFinite(n) ? bytes(n).text : f.value;
     case 'duration': return Number.isFinite(n) ? duration(n).text : f.value;
@@ -697,7 +764,17 @@ export function AgentMark({ harness, model, effort }: Mark) {
   return <span class="agent-mark">{harness && harness in harnesses && <HarnessMark h={harness as Harness} />}<span class="lbl" data-tip={model ?? undefined}>{agentLabel(model, effort) || harness /* no model recorded: the harness still names the author */}</span></span>;
 }
 
-/** An operator or agent message: a head line with who wrote it and when (OR-2), then the content; copy on the right (OR-21).
+function ThreadService({ at, timing, action, meta, reveal }: {
+  at?: number | null; timing?: ComponentChildren; action?: ComponentChildren; meta?: ComponentChildren; reveal?: boolean;
+}) {
+  return <div class="th-service">
+    <span class={reveal ? 'th-action th-copy' : 'th-action'}>{action}</span>
+    <span class="th-time">{at != null && <Ago t={at} />}{timing}</span>
+    {meta && <span class="th-meta">{meta}</span>}
+  </div>;
+}
+
+/** An operator or agent message: a head line with who wrote it and when (OR-2), with a left-aligned metadata row below the content (OR-21).
  *  Copy writes the head line and the body as plain markdown and as chat-safe HTML (clip.ts, formats.md "Copy"). */
 export function TextRow({ who, markdown, mark, by, at, now, onCopyFail, attachments, onOpen, src }: { who: 'operator' | 'agent'; markdown: string; mark?: Mark; by?: string | null; at?: number | null; now?: number; onCopyFail?: (e: unknown) => void;
   /** The files the message carried; images show a thumbnail from src, every one opens in the result viewer. */
@@ -705,21 +782,36 @@ export function TextRow({ who, markdown, mark, by, at, now, onCopyFail, attachme
   const t = now ?? Date.now(), name = author({ role: who, by, ...mark });
   return <div class={`th-row th-text ${who}`} data-ui="thread-row">
     <div class="th-main">
-      <div class="th-who">{who === 'operator' ? <span class="who" data-tip={by ?? undefined}>{name}</span> : <AgentMark {...(mark ?? {})} />}
-        {at ? <Ago t={at} now={t} /> : null}</div>
       {markdown && <Markdown text={markdown} onCopyFail={onCopyFail} />}
-      {attachments?.length ? <MessageFiles files={attachments} onOpen={onOpen} src={src} /> : null}</div>
-    <span class="th-svc th-copy"><Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, [markdown, ...(attachments ?? []).map(a => `Attachment: ${a.name}`)].filter(Boolean).join('\n\n'))).catch(e => onCopyFail?.(e))} /></span>
+      {attachments?.length ? <MessageFiles files={attachments} onOpen={onOpen} src={src} /> : null}
+    </div>
+    <ThreadService at={at} reveal
+      meta={who === 'operator' ? <span class="who" data-tip={by ?? undefined}>{name}</span> : <AgentMark {...(mark ?? {})} />}
+      action={<Button label="Copy message" icon={actions.copy} iconOnly kind="quiet" onClick={() => writeClip(clipMessage(name, at, t, [markdown, ...(attachments ?? []).map(a => `Attachment: ${a.name}`)].filter(Boolean).join('\n\n'))).catch(e => onCopyFail?.(e))} />} />
   </div>;
+}
+
+function namedFiles(files: ArtifactMeta[], fallback: string) {
+  const names = files.map(file => fileLabel(file.name) || fallback);
+  const totals = new Map<string, number>();
+  const positions = new Map<string, number>();
+  for (const name of names) totals.set(name, (totals.get(name) ?? 0) + 1);
+  return files.map((file, index) => {
+    const name = names[index];
+    const position = (positions.get(name) ?? 0) + 1;
+    positions.set(name, position);
+    return { file, name, position, total: totals.get(name)! };
+  });
 }
 
 /** A message's files: an image as a fixed-size thumbnail, any other file as a chip with its name and size (controls/composer.md). */
 export function MessageFiles({ files, onOpen, src }: { files: ArtifactMeta[]; onOpen?: (id: string) => void; src?: (id: string) => string }) {
-  return <div class="msg-files" aria-label="Attachments">{files.map(a => {
+  return <div class="msg-files" aria-label="Attachments">{namedFiles(files, 'Attachment').map(({file: a, name, position, total}) => {
     const image = viewOf(a.mediaType) === 'image' && src;
     return <a key={a.id} class={`att${image ? ' img' : ''}`} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.name} · ${bytes(a.size).text}`}
       onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>
-      {image ? <img class="att-thumb" src={src!(a.id)} alt={a.name} loading="lazy" /> : <><span class="att-thumb"><Icon name="file-text" /></span><span class="att-name">{a.name}</span><span class="att-size">{bytes(a.size).text}</span></>}
+      {image ? <img class="att-thumb" src={src!(a.id)} alt={a.name} loading="lazy" /> : <><span class="att-thumb"><Icon name="file-text" /></span><span class="att-name">{name}</span><span class="att-size">{bytes(a.size).text}</span></>}
+      {total > 1 && <span class="th-file-index muted" aria-label={`File ${position} of ${total}`}>{position}</span>}
     </a>;
   })}</div>;
 }
@@ -731,56 +823,78 @@ function CodeBlock({ text, onCopyFail }: { text: string; onCopyFail?: (e: unknow
   return <div class="md"><div class="code"><pre><code>{text}</code></pre><span class="code-copy"><Button label="Copy code" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(text).catch(e => onCopyFail?.(e))} /></span></div></div>;
 }
 /** A collapsed one-line row that opens downward on click; the clicked header stays where it is (OR-23). */
-function Fold({ icon, head, body, open, onToggle, copy, onCopyFail }: { icon: IconName; head: ComponentChildren; body: ComponentChildren; open: boolean; onToggle: () => void; copy: string; onCopyFail?: (e: unknown) => void }) {
+function Fold({ icon, head, body, at, timing, open, onToggle, copy, onCopyFail }: { at?: number | null; timing?: ComponentChildren; icon: IconName; head: ComponentChildren; body: ComponentChildren; open: boolean; onToggle: () => void; copy: string; onCopyFail?: (e: unknown) => void }) {
   return <div class={`th-row th-fold${open ? ' open' : ''}`} data-ui="thread-row">
-    <button type="button" class="th-head" aria-expanded={open} onClick={onToggle}><span class={`chev${open ? ' open' : ''}`}><Icon name="chevron-down" /></span><Icon name={icon} />{head}</button>
-    <span class="th-svc th-copy"><Button label="Copy" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(copy).catch(e => onCopyFail?.(e))} /></span>
+    <ThreadService at={timing ? undefined : at} timing={timing} reveal
+      meta={<button type="button" class="th-head" aria-expanded={open} onClick={onToggle}><span class={`chev${open ? ' open' : ''}`}><Icon name="chevron-down" /></span><Icon name={icon} />{head}</button>}
+      action={<Button label="Copy" icon={actions.copy} iconOnly kind="quiet" onClick={() => copyText(copy).catch(e => onCopyFail?.(e))} />} />
     {open && <div class="th-body">{body}</div>}
   </div>;
 }
 export function ToolRow({ name, input, output, state, startedAt, endedAt, open, onToggle, onCopyFail }: { name: string; input: unknown; output: unknown; state: string; startedAt?: number | null; endedAt?: number | null; open: boolean; onToggle: () => void; onCopyFail?: (e: unknown) => void }) {
-  const secs = startedAt != null && endedAt != null ? duration((endedAt - startedAt) / 1000).text : null;
+  const secs = startedAt != null && endedAt != null ? duration((endedAt - startedAt) / 1000) : null;
   const copy = [`Tool ${name} (${state})`, input != null ? fenced(input) : '', output != null ? fenced(output) : ''].filter(Boolean).join('\n\n');
-  return <Fold icon="terminal" open={open} onToggle={onToggle} copy={copy} onCopyFail={onCopyFail}
-    head={<span class="th-line"><span class="mono">{String(name)}</span><span class={`svc${['failed', 'unfinished'].includes(state) ? ' t-danger' : ''}`}>{state}</span>{secs && <span class="svc">{secs}</span>}</span>}
+  return <Fold icon="terminal" at={startedAt} timing={secs && <span data-tip={`Duration: ${secs.long} · Started ${exact(startedAt!)}`}>Ran {secs.text}</span>} open={open} onToggle={onToggle} copy={copy} onCopyFail={onCopyFail}
+    head={<span class="th-line"><span class="mono ell" data-tip={name}>{name}</span><span class={`svc${['failed', 'unfinished'].includes(state) ? ' t-danger' : ''}`}>{state}</span></span>}
     body={<>{input != null && <CodeBlock text={raw(input)} onCopyFail={onCopyFail} />}{output != null && <CodeBlock text={raw(output)} onCopyFail={onCopyFail} />}</>} />;
 }
-export function ReasoningRow({ markdown, open, onToggle, onCopyFail }: { markdown: string; open: boolean; onToggle: () => void; onCopyFail?: (e: unknown) => void }) {
-  return <Fold icon="bot" open={open} onToggle={onToggle} copy={markdown} onCopyFail={onCopyFail}
+export function ReasoningRow({ markdown, at, open, onToggle, onCopyFail }: { markdown: string; at?: number | null; open: boolean; onToggle: () => void; onCopyFail?: (e: unknown) => void }) {
+  return <Fold icon="bot" at={at} open={open} onToggle={onToggle} copy={markdown} onCopyFail={onCopyFail}
     head={<span class="th-line"><span>Reasoning</span><span class="svc ell">{markdown.split('\n')[0]}</span></span>} body={<Markdown text={markdown} onCopyFail={onCopyFail} />} />;
 }
 /** A question in the thread (DecisionBlock); answered, it collapses to one line with the answer and who gave it. */
-export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer, onSecret }: { text: string; options: unknown[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void; onSecret?: (value: string) => Promise<unknown> }) {
-  return <div class="th-row th-q" data-ui="thread-row"><DecisionBlock question={text} askedBy="agent" addressedTo="you" since={askedAt ?? now} now={now}
-    options={options.map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
-    answered={state === 'answered' && answer !== undefined ? { by: actor(answeredBy) || 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} onSecret={onSecret} /></div>;
+export function QuestionRow({ text, options, state, answer, answeredBy, askedAt, answeredAt, now, onAnswer, onSecret, technicalAnswer }: { text: string; options: unknown[]; state: string; answer?: string; answeredBy?: string; askedAt?: number | null; answeredAt?: number | null; now: number; onAnswer?: (a: string) => void; onSecret?: (value: string) => Promise<unknown>; technicalAnswer?: boolean }) {
+  const answered = state === 'answered' && answer !== undefined;
+  return <div class="th-row th-q" data-ui="thread-row">
+    <div class="th-question"><DecisionBlock question={text} askedBy="agent" addressedTo="you" since={askedAt ?? now} now={now} timeInRow technicalAnswer={technicalAnswer}
+      options={options.map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
+      answered={answered ? { by: actor(answeredBy) || 'operator', answer, at: answeredAt ?? now, delivered: true } : undefined} onAnswer={onAnswer} onSecret={onSecret} /></div>
+    <ThreadService at={answered ? answeredAt : askedAt} meta={answered && (actor(answeredBy) || "Operator")} />
+  </div>;
 }
 /** The connection a key request (a secret question) asks a key for: its options are {connection}. */
 export const keyConnection = (options: unknown): string | undefined => {
   const c = options && !Array.isArray(options) && typeof options === 'object' ? (options as { connection?: unknown }).connection : undefined;
   return typeof c === 'string' ? c : undefined;
 };
-/** Results of an execution end: artifact names linking to their Results page entry. Names wrap to new lines and a long
- *  one ends in an ellipsis inside the column; the tooltip has the full name, type and size. */
+/** Results are listed one per line. Disambiguate matching short names without exposing full paths. */
 export function ResultRow({ artifacts, onOpen }: { artifacts: ArtifactMeta[]; onOpen?: (id: string) => void }) {
-  return <div class="th-row th-result" data-ui="thread-row"><Icon name="file-text" /><span class="th-line th-links">{artifacts.map(a =>
-    <a key={a.id} href={`/results/${encodeURIComponent(a.id)}`} data-tip={`${a.name} · ${a.mediaType} · ${bytes(a.size).text}`} onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(a.id); } }}>{a.name}</a>)}</span></div>;
+  return <div class="th-row th-result" data-ui="thread-row"><ul class="th-links" aria-label="Results">{namedFiles(artifacts, 'Result').map(({file: artifact, name, position, total}) => {
+    return <li class="th-file" key={artifact.id}>
+      <EntityCode id={artifact.id} kind="result" />
+      <a href={`/results/${encodeURIComponent(artifact.id)}`} data-tip={`${artifact.name} · ${artifact.mediaType} · ${bytes(artifact.size).text}`}
+        onClick={e => { if (onOpen && !e.metaKey && !e.ctrlKey) { e.preventDefault(); onOpen(artifact.id); } }}>{name}</a>
+      {total > 1 && <span class="th-file-index muted" aria-label={`File ${position} of ${total}`}>{position}</span>}
+    </li>;
+  })}</ul></div>;
 }
 /** An execution start: state, agent mark, duration chip, resource stats, and Stop while it runs (CUJ 5). */
-export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, now, resources, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; resources?: ResourceSummary; onStop?: () => void; stopReason?: string }) {
-  const secs = resources?.durations?.executionWallMs != null ? resources.durations.executionWallMs / 1000 : startedAt != null ? ((endedAt ?? now) - startedAt) / 1000 : null;
+export function BoundaryRow({ session, executionId, state, mark, startedAt, endedAt, resources, onStop, stopReason }: { session?: string; executionId: string; state: StateOf<'execution'>; mark: Mark; startedAt?: number | null; endedAt?: number | null; now: number; resources?: ResourceSummary; onStop?: () => void; stopReason?: string }) {
+  const active = ['preparing', 'running', 'waiting'].includes(state);
+  const secs = active ? null : resources?.durations?.executionWallMs != null ? resources.durations.executionWallMs / 1000 : startedAt != null && endedAt != null ? (endedAt - startedAt) / 1000 : null;
   const elapsedSecs = resources?.durations?.elapsedMs != null ? resources.durations.elapsedMs / 1000 : null;
-  const durTip = elapsedSecs != null && secs != null && Math.abs(elapsedSecs - secs) >= 1 ? `Active wall ${duration(secs).long}; elapsed ${duration(elapsedSecs).long}` : undefined;
-  return <div class="th-row th-boundary" data-ui="thread-row"><StateBadge family="execution" state={state} compact />{session && <EntityCode id={session} kind="conversation" />}<EntityCode id={executionId} kind="execution" /><span class="grow" />
-    <span class="th-svc">
-      <AgentMark {...mark} />
-      {secs !== null && <span class="chip-age" data-tip={durTip}>{duration(secs).text}</span>}
-      {resources?.tokens?.total != null && (resources.tokens.basis !== 'unavailable' || resources.tokens.total > 0) && <span class="hc" data-tip="Tokens"><Num m={{ value: resources.tokens.total, basis: resources.tokens.basis === 'unavailable' ? 'measured' : resources.tokens.basis, partial: resources.tokens.basis === 'unavailable' ? 'incomplete telemetry' : undefined }} kind="count" /></span>}
-      {resources && resources.tools.totalCalls > 0 && <span class="hc" data-tip={`${resources.tools.totalCalls} tool invocations${resources.tools.failedCalls ? `, ${resources.tools.failedCalls} failed` : ''}`}><Icon name="terminal" label="Tools" /><Num m={{ value: resources.tools.totalCalls, basis: resources.tools.basis === 'unavailable' ? 'measured' : resources.tools.basis, partial: resources.tools.basis === 'unavailable' ? 'incomplete telemetry' : undefined }} kind="count" /></span>}
-      {resources && resources.tools.failedCalls > 0 && <span class="chip t-danger" data-tip={`${resources.tools.failedCalls} failed tool calls`}><Icon name="octagon-x" label="Failed tools" />{resources.tools.failedCalls}</span>}
-      {resources?.cost?.length ? <CostFigures cost={resources.cost} /> : null}
-      {onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}
-    </span></div>;
+  const durTip = secs === null ? undefined : [
+    `Duration: ${duration(secs).long}`,
+    elapsedSecs != null && Math.abs(elapsedSecs - secs) >= 1 ? `Elapsed: ${duration(elapsedSecs).long}` : '',
+    startedAt != null ? `Started: ${exact(startedAt)}` : '',
+  ].filter(Boolean).join(' · ');
+  return <div class="th-row th-boundary" data-ui="thread-row">
+    <ThreadService at={active ? startedAt : undefined}
+      timing={secs !== null && <span data-tip={durTip}>Ran {duration(secs).text}</span>}
+      meta={<span class="th-boundary-info">
+        <StateBadge family="execution" state={state} compact />
+        <EntityCode id={executionId} kind="execution" label />{session && <EntityCode id={session} kind="conversation" />}
+        <AgentMark {...mark} />
+        <span class="th-svc">
+          {resources?.tokens?.total != null && (resources.tokens.basis !== 'unavailable' || resources.tokens.total > 0) && <span class="hc" data-tip="Tokens"><Num m={{ value: resources.tokens.total, basis: resources.tokens.basis === 'unavailable' ? 'measured' : resources.tokens.basis, partial: resources.tokens.basis === 'unavailable' ? 'incomplete telemetry' : undefined }} kind="count" /></span>}
+          {resources && resources.tools.totalCalls > 0 && <span class="hc" data-tip={`${resources.tools.totalCalls} tool invocations${resources.tools.failedCalls ? `, ${resources.tools.failedCalls} failed` : ''}`}><Icon name="terminal" label="Tools" /><Num m={{ value: resources.tools.totalCalls, basis: resources.tools.basis === 'unavailable' ? 'measured' : resources.tools.basis, partial: resources.tools.basis === 'unavailable' ? 'incomplete telemetry' : undefined }} kind="count" /></span>}
+          {resources && resources.tools.failedCalls > 0 && <span class="chip t-danger" data-tip={`${resources.tools.failedCalls} failed tool calls`}><Icon name="octagon-x" label="Failed tools" />{resources.tools.failedCalls}</span>}
+          {resources?.cost?.length ? <CostFigures cost={resources.cost} /> : null}
+        </span>
+      </span>}
+      action={onStop && <Button label="Stop" icon="pause" iconOnly disabledReason={stopReason} onClick={onStop} />}
+    />
+  </div>;
 }
 
 /** A search field for one scope (a thread): Enter searches; an icon until used (OR-31). */
@@ -807,8 +921,8 @@ export function Thread({ blocks, label, now, marked, selected, onRowClick, showS
     switch (b.kind) {
       case 'text': return <TextRow who={b.role === 'operator' ? 'operator' : 'agent'} markdown={b.markdown ?? ''} mark={markOf(b)} by={b.by} at={b.at} now={now} onCopyFail={onCopyFail} attachments={b.attachments} onOpen={onOpenResult} src={resultSrc} />;
       case 'tool': return <ToolRow name={b.name} input={b.input} output={b.output} state={b.state} startedAt={b.startedAt} endedAt={b.endedAt} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
-      case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
-      case 'question': { const conn = keyConnection(b.options); return <QuestionRow text={b.text} options={Array.isArray(b.options) ? b.options : conn ? ['decline'] : []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} onSecret={conn && onSecret ? v => onSecret(b.questionId, conn, v) : undefined} />; }
+      case 'reasoning': return <ReasoningRow markdown={b.markdown ?? ''} at={b.at} open={open.has(b.key)} onToggle={() => toggle(b.key)} onCopyFail={onCopyFail} />;
+      case 'question': { const conn = keyConnection(b.options); return <QuestionRow text={b.text} options={Array.isArray(b.options) ? b.options : conn ? ['decline'] : []} state={b.state} answer={b.answer === undefined || typeof b.answer === 'string' ? b.answer : JSON.stringify(b.answer)} answeredBy={b.answeredBy} askedAt={b.askedAt} answeredAt={b.answeredAt} now={now} technicalAnswer={!!conn || typeof b.answer === 'object'} onAnswer={onAnswer && (a => onAnswer(b.questionId, a))} onSecret={conn && onSecret ? v => onSecret(b.questionId, conn, v) : undefined} />; }
       case 'result': return <ResultRow artifacts={b.artifacts} onOpen={onOpenResult} />;
       case 'boundary': return <BoundaryRow session={showSession ? b.sessionId ?? undefined : undefined} executionId={b.executionId} state={b.state} mark={markOf(b)} startedAt={b.startedAt} endedAt={b.endedAt} now={now} resources={b.resources} stopReason={stopReason}
         onStop={onStop && ['preparing', 'running', 'waiting'].includes(b.state) ? () => onStop(b.executionId) : undefined} />;
@@ -1406,7 +1520,7 @@ export function Spotlight({ providers, onClose, memory, idle, terms = searchFiel
       onPointerMove={() => k !== cur && move(k)} onClick={() => open(i)}>
       {st ? <StateBadge family={st.family} state={st.state as never} compact /> : <Icon name={i.icon} />}
       {i.snippet ? <span class="txt"><span class="title">{i.label}</span><span class="snippet">{i.snippet}</span></span> : <span class="title">{i.label}</span>}{i.code && <span class="id">{i.code}</span>}<span class="grow" />{i.sub && <span class="sub">{i.sub}</span>}
-      {i.at !== undefined && <Ago t={i.at} now={now} />}
+      {i.at !== undefined && <Ago t={i.at} />}
       {i.action && <button type="button" class="btn quiet icon-only" tabIndex={-1} aria-pressed={i.action.pressed} aria-label={i.action.label} data-tip={`${i.action.label}  ⌥⏎`}
         onPointerDown={e => e.preventDefault()} onClick={e => { e.stopPropagation(); act(i); }}><Icon name={i.action.icon} /></button>}
       {i.more && <Icon name="arrow-right" />}
@@ -1472,18 +1586,21 @@ export function StageChip({ stage }: { stage: Stage }) {
 /* ---------- Outcome block (D11, B2) ---------- */
 
 export function OutcomeBlock({ outcome, requirements, inputs, depends }: {
-  outcome: string; requirements: { text: string; met: boolean }[]; inputs: { icon: IconName; label: string }[]; depends?: ComponentChildren;
+  outcome: string; requirements: { text: string; met?: boolean }[]; inputs: { icon: IconName; label: string }[]; depends?: ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
+  const hasChecks = requirements.length > 0 && requirements.every(r => r.met !== undefined);
   const met = requirements.filter(r => r.met).length;
   return <div class="outcome" data-ui="outcome-block">
-    <button type="button" class="tw" aria-expanded={open} aria-label={open ? 'Collapse outcome' : 'Expand outcome'} onClick={() => setOpen(!open)}><span class={open ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span></button>
+    {outcome && <button type="button" class="tw" aria-expanded={open} aria-label={open ? 'Collapse outcome' : 'Expand outcome'} onClick={() => setOpen(!open)}><span class={open ? 'chev open' : 'chev'}><Icon name="chevron-down" /></span></button>}
     <div class="outcome-b">
-      <p class={open ? '' : 'clamp'}>{outcome}</p>
-      {(requirements.length > 0 || inputs.length > 0) && <div class="outcome-meta">{requirements.length > 0 && <span class={`chip-age${met < requirements.length ? '' : ' t-success alert'}`} aria-label={`${met} of ${requirements.length} requirements met`}>{met}/{requirements.length}</span>}
+      {outcome && <p class={open ? '' : 'clamp'}>{outcome}</p>}
+      {(hasChecks || inputs.length > 0) && <div class="outcome-meta">{hasChecks && <span class={`chip-age${met < requirements.length ? '' : ' t-success alert'}`} aria-label={`${met} of ${requirements.length} requirements met`}>{met}/{requirements.length}</span>}
         {inputs.map(i => <span key={i.label} class="chip in"><Icon name={i.icon} />{i.label}</span>)}</div>}
-      {open && <ul class="reqs">{requirements.map(r => <li key={r.text}><Icon name={r.met ? 'circle-check' : 'square'} />{r.text}</li>)}</ul>}
-      {open && depends && <p class="muted">{depends}</p>}
+      {requirements.length > 0 && <ul class="reqs">{requirements.map(r => <li key={r.text}>
+        {r.met !== undefined && <Icon name={r.met ? 'circle-check' : 'square'} />}{r.text}
+      </li>)}</ul>}
+      {depends && <div class="muted">{depends}</div>}
     </div>
   </div>;
 }
@@ -1615,13 +1732,13 @@ export const DiffText = ({ text, label }: { text: string; label: string }) =>
 /* ---------- Offline marker (controls/offline-marker.md) ---------- */
 
 /** Says whether shown data is current: offline, updating (stale but online) or signed out; hidden when current. */
-export function OfflineMarker({ state, since, now }: { state: 'current' | 'offline' | 'updating' | 'signed-out'; since?: number; now: number }) {
+export function OfflineMarker({ state, since }: { state: 'current' | 'offline' | 'updating' | 'signed-out'; since?: number; now: number }) {
   if (state === 'current') return null;
-  const a = since ? age(since, now) : null;
+  const lastUpdate = since ? exact(since) : null;
   const word = state === 'offline' ? 'offline' : state === 'updating' ? 'updating' : 'signed out';
-  const long = state === 'signed-out' ? 'Session expired. Sign in again.' : `${word}${a ? `, last updated ${a.long}` : ''}`;
+  const long = state === 'signed-out' ? 'Session expired. Sign in again.' : `${word}${lastUpdate ? `, last updated ${lastUpdate}` : ''}`;
   return <span class={`offline-marker t-${state === 'signed-out' ? 'danger' : state === 'offline' ? 'attention' : 'neutral'}`} data-ui="offline-marker" role="status" aria-label={long}>
-    <Icon name={state === 'updating' ? 'rotate-cw' : state === 'offline' ? 'circle-slash' : 'circle-alert'} />{word}{a && state !== 'signed-out' ? ` · ${a.text}` : ''}
+    <Icon name={state === 'updating' ? 'rotate-cw' : state === 'offline' ? 'circle-slash' : 'circle-alert'} />{word}{since && state !== 'signed-out' ? <> · <Ago t={since} /></> : ''}
     {state === 'signed-out' && <a href={location.pathname}>Sign in again</a>}
   </span>;
 }

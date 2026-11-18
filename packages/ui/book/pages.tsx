@@ -124,7 +124,7 @@ function TaskDetail({ t, onClose }: { t: TaskRow; onClose: () => void }) {
       <Button label="Share" icon="paperclip" iconOnly />
     </header>
     <h2 class="detail-title">{t.title}</h2>
-    <div class="state-line"><StateBadge family="task" state={t.state} reason={t.reason} /><AgeChip t={t.started} now={NOW} /></div>
+    <div class="state-line"><StateBadge family="task" state={t.state} reason={t.reason} /><AgeChip t={t.started} /></div>
     <OutcomeBlock outcome="Release notes for 0.4 in releases/0.4.md, reviewed, linked from the changelog."
       requirements={[{ text: 'Covers every merged PR since 0.3', met: true }, { text: 'Reviewed by the reviewer role', met: false }, { text: 'Linked from CHANGELOG.md', met: false }]}
       inputs={[{ icon: 'file-text', label: 'template.md' }, { icon: 'git-pull-request', label: '14 merged PRs' }, { icon: 'messages-square', label: 'PM session' }]}
@@ -178,7 +178,7 @@ function Results() {
             <span class="tt"><a class="title row-link" href={`#/results/${r.id}`} onClick={e => { e.preventDefault(); setSel(r); }}>{r.name}</a><EntityCode code={`T-FLT-${r.task}`} id={`00000000-0000-4000-8000-${String(r.task).padStart(12, '0')}`} /></span>
             <span class="svc">{r.project}</span>
             <span class="r"><Num m={{ value: r.size, basis: 'measured' }} kind="bytes" /></span>
-            <span class="r"><AgeChip t={r.at} now={NOW} /></span>
+            <span class="r"><AgeChip t={r.at} /></span>
           </>} />
       </ListFrame></Panel>
     </>}
@@ -213,7 +213,7 @@ function LimitsMock() {
         ['alex-pro', 'codex', '', [[62, '3h', 'ahead', 4, 'execution', ''], [55, '2d', 'on', 40, 'probe', ''], null]],
         ['team-max', 'claude', '×2.5', [[91, '1h', 'Low', 2, 'execution', 't-danger'], [30, '5d', 'under', 2, 'execution', ''], [70, '5d', 'ahead', 2, 'execution', '']]],
       ] as const).map(([sub, har, mul, cells]) => <tr key={sub}><th scope="row"><span class="title">{sub}</span> <span class="id">{har}</span>{mul && <span class="num muted"> {mul}</span>}</th>
-        {cells.map((c, i) => c ? <td key={i}><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: c[0] }]} warnAt={20} unit="percent" /><time>{c[1]}</time><span class={`chip ${c[5] || (c[2] === 'ahead' ? 't-attention' : '')}`}>{c[5] && <Icon name="triangle-alert" />}{c[2]}</span><AgeChip t={NOW - c[3] * min} now={NOW} /><span class="muted">{c[4]}</span></span></td> : <td key={i} class="muted">—</td>)}
+        {cells.map((c, i) => c ? <td key={i}><span class="limit-cell"><FillBar total={100} segments={[{ label: 'used', bytes: c[0] }]} warnAt={20} unit="percent" /><time>{c[1]}</time><span class={`chip ${c[5] || (c[2] === 'ahead' ? 't-attention' : '')}`}>{c[5] && <Icon name="triangle-alert" />}{c[2]}</span><AgeChip t={NOW - c[3] * min} /><span class="muted">{c[4]}</span></span></td> : <td key={i} class="muted">—</td>)}
         <td><Button label={`Refresh ${sub}`} icon="rotate-cw" iconOnly /></td></tr>)}</tbody>
     </table></div></Panel>
   </section>;
@@ -237,7 +237,7 @@ function Hosts({ limits }: { limits?: boolean }) {
             <HarnessCounts counts={x.byHarness} label={`${x.id} workers by harness`} />
             {x.queued > 0 && <span class="hc"><Icon name="list-ordered" label="Queued commands" /><Num m={{ value: x.queued, basis: 'measured' }} kind="count" /></span>}
             <FillBar total={x.store.total} segments={x.store.segments} warnAt={x.store.warnAt} stale={x.store.stale} now={NOW} /></span>
-          <span><AgeChip t={x.lastSeen} now={NOW} alertAfter={15 * 60} tone="attention" /></span>
+          <span><AgeChip t={x.lastSeen} alertAfter={15 * 60} tone="attention" /></span>
         </div>)}
       </div>
     </Panel>
@@ -258,7 +258,7 @@ function Hosts({ limits }: { limits?: boolean }) {
           ['antigravity', 'agy', <span class="mono">0.9.2</span>, <span class="muted">unchecked</span>],
         ])}</DetailSection>
         <DetailSection title="Store and tunnel">
-          <KvRow icon="shield" label="Tunnel" meta="connected" value={<AgeChip t={NOW - 12 * min} now={NOW} />} />
+          <KvRow icon="shield" label="Tunnel" meta="connected" value={<AgeChip t={NOW - 12 * min} />} />
           {([
             ['Store capacity', h.capacity.value, 'Garage layout capacity.', h.capacity.status, { by: 'Alex', at: NOW - 20 * min }],
             ['Free-space warning', '25 GB', 'Below this, the store shows a problem.', { kind: 'applied', at: NOW - 2 * hr }],

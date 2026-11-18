@@ -35,7 +35,17 @@ export async function checkEntityCard(browser: Browser, origin: string, seed: Re
     await code.waitFor();
     const card = p.getByRole('dialog', { name: `Task ${task.code}` });
     // Hover shows no card (the owner's click model); the code is a button with a popup.
-    await code.hover(); await p.waitForTimeout(900);
+    const codeBox = await code.boundingBox();
+    await code.hover();
+    const directCopy = p.getByRole('button', { name: `Copy ${task.code}`, exact: true });
+    assert.equal(await directCopy.evaluate(el => getComputedStyle(el.parentElement!).opacity), '1');
+    assert.deepEqual(await code.boundingBox(), codeBox, 'revealing the copy action preserves the code position');
+    await directCopy.click();
+    await p.getByRole('status').filter({ hasText: `${task.code} copied` }).waitFor();
+    assert.equal(await p.evaluate(() => navigator.clipboard.readText()), task.code);
+    assert.equal(await directCopy.locator('svg.lucide-check').count(), 1, 'copy shows a check after success');
+    assert.ok(!new URL(p.url()).pathname.startsWith('/tasks/'), 'direct copy does not open a task');
+    await p.waitForTimeout(900);
     assert.equal(await card.count(), 0, 'hover opens no card');
     assert.equal(await code.getAttribute('aria-haspopup'), 'dialog');
     // A click opens the card, not the row; the card shows state, title and actions; no UUID is visible.

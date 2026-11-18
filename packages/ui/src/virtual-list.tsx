@@ -150,8 +150,11 @@ export function VirtualList<T>(props: VirtualListProps<T>) {
     const i = p.items.findIndex(item => p.getKey(item) === r.key);
     if (i < 0) { if (!p.items.length) { v.scrollToOffset(0); anchor.current = null; } return; }
     const start = v.getOffsetForIndex(i, 'start')?.[0];
-    const offset = r.align ? v.getOffsetForIndex(i, r.align)?.[0] : start === undefined ? undefined : start - (r.offsetPx ?? 0);
-    if (offset !== undefined && start !== undefined) { v.scrollToOffset(Math.max(0, offset)); anchor.current = { key: r.key, delta: start - el.scrollTop }; prev.current.atEdge = false; }
+    if (start === undefined) return;
+    if (r.align) v.scrollToIndex(i, { align: r.align });
+    else v.scrollToOffset(Math.max(0, start - (r.offsetPx ?? 0)));
+    anchor.current = { key: r.key, delta: start - el.scrollTop };
+    prev.current.atEdge = false;
   });
 
   // Asked once per window edge (length and edge row), so a replaced window of the same length asks again.

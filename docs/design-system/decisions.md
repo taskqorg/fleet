@@ -441,3 +441,16 @@ Coordinator-approved bounded plan: New experiment opens a work-area form over th
 * **Question (owner):** the rail had a counter slot that nothing filled; which number does each section show, and how does it read with a project focus?
 * **Choice (owner):** each section counts a counter view, a person setting chosen from the section's system or saved views; defaults Tasks and Conversations Running, Delivery In flight, Results the last 24 hours, Hosts offline hosts (attention). Needs you stays the head chip, not a counter. With a focus the in-focus count is bright, then a separator and the outside remainder dim (`12·30`); ignored projects are never counted; collapsed shows only the bright number as a badge, with no icon moving. One server read (`nav_counts`, also an agent tool) computes every counter with the lists' own filters; the app rereads it on changes, debounced.
 * **Decided here:** zero in focus with some outside reads `·30` on no fill, so a bare number always means in focus, and collapsed shows no badge for it; other sections get no counter; the choice is a menu item on a view chip ("Count in navigation", "Stop counting in navigation"); a removed saved view takes its counter choice with it and the default counts again; a saved view naming its projects counts all of it as in focus, as its list ignores the focus; Results and Hosts counters can only be turned off.
+
+## 2026-11-18: Direct detail facts, aligned transcript controls and live ages
+
+* **Choice (owner):** show resource figures and task requirements directly. Keep technical names and full paths behind the relevant object or its metadata.
+* **Choice (owner):** group transcript time, model and actions at the left edge below the block. Distinguish operator and agent message content by alignment. Keep tooltips at their readable width near viewport edges.
+* **Choice (owner):** use the shared compact time control for relative timestamps and update them live. Give entity codes a copy icon on hover and focus, in a reserved slot. Show a check after copy succeeds. Keep the code itself as the card trigger.
+
+* **Refinement (owner):** label the run and its duration, size code to its content, list results vertically, and distinguish questions and answers on a neutral transcript surface.
+
+## 2026-11-18: Narrow layouts and touch targets
+
+* **Choice (owner):** use the available width, share one edge gutter, retain consistent button geometry and keep popups readable as the window narrows.
+* **Application:** follow [Narrow work areas](principles.md#narrow-work-areas). Apply the compact spacing by work-area width and the larger hit targets by input mode.
