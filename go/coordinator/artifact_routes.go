@@ -157,8 +157,16 @@ func init() {
 	appRoutes()
 
 	// Stores a host has not reported for 2 minutes are unreachable; expired upload leases fail. Single flight per tick.
-	// Then one placement pass (copies, purges, rules, lease expiry, the artifact retry window).
+	// Reconcile artifact waits independently of the copy, purge, retention and lease work.
 	onStart(func(ctx context.Context, a *App) {
+		go func() {
+			if err := reconcileArtifactWaits(ctx, a); err != nil {
+				log.Printf("recover artifact waits: %v", err)
+			}
+		}()
+		every(ctx, "artifact-waits", placementTick, func(ctx context.Context) error {
+			return reconcileArtifactWaits(ctx, a)
+		})
 		every(ctx, "placement", placementTick, func(ctx context.Context) error {
 			sweep := execCtx(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS))
 			if sweep != nil {
