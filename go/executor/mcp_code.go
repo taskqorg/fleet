@@ -151,7 +151,12 @@ func codeReply(r M) M {
 	}
 	reply := M{"content": parts, "isError": status == "failed"}
 	if len(meta) > 0 {
-		reply["structuredContent"] = meta
+		if status == "done" {
+			// Claude Code prefers structuredContent and would drop the completed value.
+			reply["_meta"] = M{"fleet/code": meta}
+		} else {
+			reply["structuredContent"] = meta
+		}
 	}
 	return reply
 }
