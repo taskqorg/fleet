@@ -413,7 +413,6 @@ func newGateway(c *config) (*gateway, error) {
 	if err := syncDir(c.StateDir); err != nil {
 		return nil, err
 	}
-	g.expireUploads(time.Now())
 	if text, err := os.ReadFile(filepath.Join(c.StateDir, "disabled-keys")); err == nil {
 		for _, line := range strings.Split(string(text), "\n") {
 			var id string
@@ -443,6 +442,7 @@ func newGateway(c *config) (*gateway, error) {
 	if g.spool, err = openSpool(c.StateDir); err != nil {
 		return nil, err
 	}
+	g.maintainUploads(time.Now())
 	g.loadValues(s)
 	g.snapshot.Store(s)
 	return g, nil
@@ -1907,7 +1907,7 @@ func serve(c *config, listener net.Listener, stop <-chan struct{}) error {
 			case <-tick.C:
 				g.refresh(false)
 			case now := <-expire.C:
-				g.expireUploads(now)
+				g.maintainUploads(now)
 			case <-done:
 				return
 			}

@@ -31,9 +31,9 @@ type uploadState struct {
 }
 
 type uploadDiscard struct {
-	Status   int
-	Code     string
-	Recorded bool
+	Status int
+	Code   string
+	Line   *contract.CallLine
 }
 
 func uploadCreation(id string) (time.Time, bool) {
@@ -114,7 +114,7 @@ func (g *gateway) serveResumableUpload(w http.ResponseWriter, r *http.Request, q
 	}
 	if state.Discard != nil {
 		a := refusal(state.Discard.Status, "error", state.Discard.Code, "the staged upload was discarded before sending")
-		if err := g.finishUploadDiscard(q, data, statePath, &state, a, nil, false); err != nil {
+		if err := g.completeUploadDiscard(data, statePath, &state); err != nil {
 			refuse(507, "staging-failed", "the discard could not be recorded")
 			return
 		}
@@ -405,21 +405,32 @@ func writeUploadState(path string, state uploadState) error {
 // Taking a stage out of service and recording its outcome can span a restart. Save the refusal with offset zero
 // before deleting data or publishing completion, so no retry can send a discarded file or acknowledge its bytes.
 func (g *gateway) finishUploadDiscard(q *request, data, statePath string, state *uploadState, a *answer, transfer *contract.CallTransfer, record bool) error {
-	if state.Discard == nil {
-		if state.Offset == 0 && state.CallID == "" && !record {
-			return removeUploadData(data)
-		}
-		next := *state
-		next.Offset, next.Committed = 0, false
-		next.Discard = &uploadDiscard{Status: a.status, Code: a.err}
-		if record && next.CallID == "" {
-			next.CallID, next.StartedAt = q.id, q.startedMs
-		}
-		if err := writeUploadState(statePath, next); err != nil {
-			return err
-		}
-		*state = next
-	} else if !state.Discard.Recorded {
+	if state.Offset == 0 && state.CallID == "" && !record {
+		return removeUploadData(data)
+	}
+	next := *state
+	next.Offset, next.Committed = 0, false
+	next.Discard = &uploadDiscard{Status: a.status, Code: a.err}
+	if record && next.CallID == "" {
+		next.CallID, next.StartedAt = q.id, q.startedMs
+	}
+	if next.CallID != "" {
+		original := *q
+		original.id, original.startedMs = next.CallID, next.StartedAt
+		original.begun = time.UnixMilli(original.startedMs)
+		line := g.line(&original, a)
+		line.Phase, line.Transfer = ptr(contract.CallPhaseCompleted), transfer
+		next.Discard.Line = &line
+	}
+	if err := writeUploadState(statePath, next); err != nil {
+		return err
+	}
+	*state = next
+	return g.completeUploadDiscard(data, statePath, state)
+}
+
+func (g *gateway) completeUploadDiscard(data, statePath string, state *uploadState) error {
+	if state.Discard.Line != nil {
 		if err := syncDir(g.uploadDir()); err != nil {
 			return err
 		}
@@ -427,18 +438,13 @@ func (g *gateway) finishUploadDiscard(q *request, data, statePath string, state 
 	if err := removeUploadData(data); err != nil {
 		return err
 	}
-	if state.CallID == "" || state.Discard.Recorded {
+	if state.Discard.Line == nil {
 		return nil
 	}
-	original := *q
-	original.id, original.startedMs = state.CallID, state.StartedAt
-	original.begun = time.UnixMilli(original.startedMs)
-	line := g.line(&original, a)
-	line.Phase, line.Transfer = ptr(contract.CallPhaseCompleted), transfer
-	if !g.spool.append(line) {
+	if !g.spool.append(*state.Discard.Line) {
 		return errors.New("cannot record discarded upload")
 	}
-	state.Discard.Recorded = true
+	state.Discard.Line = nil
 	return writeUploadState(statePath, *state)
 }
 
@@ -475,7 +481,7 @@ func (g *gateway) releaseUploadSpace(bytes int64) {
 	g.uploadSpaceLock.Unlock()
 }
 
-func (g *gateway) expireUploads(now time.Time) {
+func (g *gateway) maintainUploads(now time.Time) {
 	entries, err := os.ReadDir(g.uploadDir())
 	if err != nil {
 		logf("read resumable uploads: %v", err)
@@ -499,14 +505,30 @@ func (g *gateway) expireUploads(now time.Time) {
 			continue
 		}
 		created, valid := uploadCreation(key[:idLength])
-		if !valid || created.Add(uploadLifetime).After(now) {
+		expired := !created.Add(uploadLifetime).After(now)
+		if !valid || (!expired && suffix != ".state") {
 			continue
 		}
-		if _, busy := g.uploadLocks.LoadOrStore(key, struct{}{}); !busy {
-			if err := os.Remove(filepath.Join(g.uploadDir(), e.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if _, busy := g.uploadLocks.LoadOrStore(key, struct{}{}); busy {
+			continue
+		}
+		path := filepath.Join(g.uploadDir(), name)
+		if suffix == ".state" {
+			var state uploadState
+			saved, err := os.ReadFile(path)
+			if err == nil && json.Unmarshal(saved, &state) == nil && state.Discard != nil {
+				data := filepath.Join(g.uploadDir(), key+".data")
+				if err := g.completeUploadDiscard(data, path, &state); err != nil {
+					logf("recover upload discard: %v", err)
+					expired = false // retry the retained accounting record at the next maintenance pass
+				}
+			}
+		}
+		if expired {
+			if err := removeUploadData(path); err != nil {
 				logf("expire resumable upload: %v", err)
 			}
-			g.uploadLocks.Delete(key)
 		}
+		g.uploadLocks.Delete(key)
 	}
 }

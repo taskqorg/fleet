@@ -263,11 +263,21 @@ func TestResumableUploadRecoversInterruptedDiscard(t *testing.T) {
 		t.Fatal(err)
 	}
 	discarded.Offset, discarded.CallID, discarded.StartedAt = 0, "discarded-intent", nowMs()
-	discarded.Discard = &uploadDiscard{Status: 409, Code: "upload-aborted"}
+	sum := shaHex(data)
+	discarded.Discard = &uploadDiscard{Status: 409, Code: "upload-aborted", Line: &contract.CallLine{
+		CallId: discarded.CallID, TokenSha256: ptr(sha(testToken)), ExecutionId: ptr("old execution"),
+		Connection: "tavily", Tool: "attach", Outcome: contract.CallOutcomeError, Status: 409,
+		ErrorCode: ptr("upload-aborted"), Phase: ptr(contract.CallPhaseCompleted), StartedAt: discarded.StartedAt,
+		Transfer: &contract.CallTransfer{Direction: contract.CallTransferDirectionUpload, Bytes: int64(len(data)), Name: r.name, Sha256: &sum},
+	}}
 	if err := writeUploadState(path, discarded); err != nil {
 		t.Fatal(err)
 	}
 	gw.start()
+	lines, _ := gw.spool()
+	expect(t, len(lines), 1, "completion recovered without a request")
+	expect(t, lines[0]["phase"], "completed", "completion phase")
+	expect(t, field(lines[0], "transfer", "sha256"), sum, "recovered checksum")
 	h := r.send(t, "status", 0, nil, 409, "upload-aborted")
 	expect(t, h.Get(contract.UploadOffsetHeader), "", "discard has no offset")
 	expect(t, h.Get("X-Fleet-Call-Id"), discarded.CallID, "original intent")
@@ -275,7 +285,6 @@ func TestResumableUploadRecoversInterruptedDiscard(t *testing.T) {
 	r.staged(t, 0)
 	uploads, _, _ := p.seen()
 	expect(t, len(uploads), 0, "provider POSTs")
-	lines, _ := gw.spool()
+	lines, _ = gw.spool()
 	expect(t, len(lines), 1, "completion recorded once")
-	expect(t, lines[0]["phase"], "completed", "completion phase")
 }
