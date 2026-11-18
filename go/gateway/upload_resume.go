@@ -379,6 +379,13 @@ func writeUploadState(path string, state uploadState) error {
 
 func (g *gateway) abandonUpload(q *request, data, statePath string, state uploadState, a *answer) error {
 	if state.CallID != "" {
+		// Remove the data durably before publishing a terminal outcome. Retain the intent until it is recorded.
+		if err := removeUploadData(data); err != nil {
+			return err
+		}
+		if err := syncDir(g.uploadDir()); err != nil {
+			return err
+		}
 		original := *q
 		original.id, original.startedMs = state.CallID, state.StartedAt
 		original.begun = time.UnixMilli(original.startedMs)
@@ -398,10 +405,15 @@ func discardUpload(data, statePath string, state uploadState) error {
 			return err
 		}
 	}
-	if err := os.Remove(data); !errors.Is(err, os.ErrNotExist) {
-		return err
+	return removeUploadData(data)
+}
+
+func removeUploadData(data string) error {
+	err := os.Remove(data)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // Staged and abandoned bytes already count against statfs. Also reserve space for concurrent raw uploads and

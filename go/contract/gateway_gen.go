@@ -27,26 +27,27 @@ func (v *CallKeyProblem) Validate() error {
 	return nil
 }
 
-// CallLine: One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output. A file tool's line carries transfer. A download writes two lines with one callId: phase started (outcome unknown, download-unfinished) before the bytes stream and phase completed after it; ingest updates the started row from the completed line. A line without phase is a one-line call.
+// CallLine: One provider call: a spool line written by the gateway, and the result of contract.GatewayCall (coordinator api steps, executor connection MCP server), which adds output and leaves the spool-only fields (usage, key fields, startedAt, ms) empty; provider usage stays inside output. A file tool's line carries transfer. A download writes two lines with one callId: phase started (outcome unknown, download-unfinished) before the bytes stream and phase completed after it; ingest updates the started row from the completed line. A resumable upload also writes a started intent and a completed outcome with one callId. A line without phase is a one-line call.
 type CallLine struct {
-	CallId         string           `json:"callId"`
-	Connection     string           `json:"connection"`
-	Disabled       *CallKeyDisabled `json:"disabled,omitempty"`
-	ErrorCode      *string          `json:"errorCode,omitempty"`
-	ExecutionId    *string          `json:"executionId,omitempty"`
-	KeyFingerprint *string          `json:"keyFingerprint,omitempty"`
-	KeyProblem     *CallKeyProblem  `json:"keyProblem,omitempty"`
-	Ms             int64            `json:"ms"`
-	Outcome        CallOutcome      `json:"outcome"`
-	Output         json.RawMessage  `json:"output,omitempty"`
-	Phase          *CallPhase       `json:"phase,omitempty"`
-	StartedAt      int64            `json:"startedAt"`
-	Status         int64            `json:"status"`
-	TokenSha256    *string          `json:"tokenSha256,omitempty"`
-	Tool           string           `json:"tool"`
-	Transfer       *CallTransfer    `json:"transfer,omitempty"`
-	Usage          *CallUsage       `json:"usage,omitempty"`
-	UsageKey       *string          `json:"usageKey,omitempty"`
+	CallId            string           `json:"callId"`
+	Connection        string           `json:"connection"`
+	Disabled          *CallKeyDisabled `json:"disabled,omitempty"`
+	ErrorCode         *string          `json:"errorCode,omitempty"`
+	ExecutionId       *string          `json:"executionId,omitempty"`
+	KeyFingerprint    *string          `json:"keyFingerprint,omitempty"`
+	KeyProblem        *CallKeyProblem  `json:"keyProblem,omitempty"`
+	Ms                int64            `json:"ms"`
+	Outcome           CallOutcome      `json:"outcome"`
+	Output            json.RawMessage  `json:"output,omitempty"`
+	Phase             *CallPhase       `json:"phase,omitempty"`
+	ProviderAttemptAt *int64           `json:"providerAttemptAt,omitempty"`
+	StartedAt         int64            `json:"startedAt"`
+	Status            int64            `json:"status"`
+	TokenSha256       *string          `json:"tokenSha256,omitempty"`
+	Tool              string           `json:"tool"`
+	Transfer          *CallTransfer    `json:"transfer,omitempty"`
+	Usage             *CallUsage       `json:"usage,omitempty"`
+	UsageKey          *string          `json:"usageKey,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

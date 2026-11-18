@@ -1300,8 +1300,12 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 	if err := writeConnectionCost(q, id, cost); err != nil {
 		return err
 	}
+	at := l.StartedAt
+	if l.ProviderAttemptAt != nil {
+		at = *l.ProviderAttemptAt
+	}
 	if d := l.Disabled; d != nil && d.Key != "" {
-		if err := connDisable(q, d.Key, d.Status, l.StartedAt); err != nil {
+		if err := connDisable(q, d.Key, d.Status, at); err != nil {
 			return err
 		}
 	}
@@ -1315,7 +1319,6 @@ func connAccount(q *Request, id string, l contract.CallLine, step bool) error {
 			if len(msg) > 500 {
 				msg = msg[:500]
 			}
-			at := l.StartedAt
 			if at == 0 {
 				at = nowMs()
 			}
@@ -1344,7 +1347,10 @@ func connComplete(q *Request, l contract.CallLine) error {
 		state, problem = "succeeded", nil
 	}
 	ms := max(l.Ms, 0)
-	patch := doc{"outcome": l.Outcome, "status": l.Status, "errorCode": l.ErrorCode, "ms": ms, "transfer": l.Transfer, "phase": contract.CallPhaseCompleted}
+	patch := doc{"outcome": l.Outcome, "status": l.Status, "errorCode": l.ErrorCode, "ms": ms, "phase": contract.CallPhaseCompleted}
+	if l.Transfer != nil {
+		patch["transfer"] = l.Transfer
+	}
 	upload := isUpload(l)
 	if upload {
 		patch["keyFingerprint"], patch["usage"], patch["uploadAccounted"] = l.KeyFingerprint, l.Usage, true
@@ -1381,12 +1387,12 @@ func connComplete(q *Request, l contract.CallLine) error {
 	return err
 }
 
-func connDisable(q *Request, fp string, status, startedAt int64) error {
+func connDisable(q *Request, fp string, status, attemptedAt int64) error {
 	k, err := maybe(q, "key:"+fp, "connection-key")
 	if err != nil || k == nil || k["state"] == "retired" || k["state"] == "disabled" {
 		return err
 	}
-	if enabled, ok := numOK(k["enabledAt"]); ok && startedAt > 0 && int64(enabled) >= startedAt {
+	if enabled, ok := numOK(k["enabledAt"]); ok && attemptedAt > 0 && int64(enabled) > attemptedAt {
 		return nil
 	}
 	st := fmt.Sprint(status)

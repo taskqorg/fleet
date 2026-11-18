@@ -336,14 +336,15 @@ func (s *spool) appendDurably(data []byte) error {
 
 // answer is the outcome of one call, ready for the caller and for the spool.
 type answer struct {
-	status     int
-	body       []byte
-	retryAfter string
-	outcome    string
-	err        string
-	key        string
-	usage      *int64
-	disabled   int // HTTP status that disabled `key`, or 0
+	status      int
+	body        []byte
+	retryAfter  string
+	outcome     string
+	err         string
+	key         string
+	usage       *int64
+	disabled    int // HTTP status that disabled `key`, or 0
+	attemptedAt int64
 	// A provider 403 on this key: the provider's message. Recorded, never disabling (one bad body must not take out keys).
 	problem *string
 }
@@ -703,6 +704,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 			lastFailure = "key " + id + " has no value file"
 			continue
 		}
+		attemptedAt := nowMs()
 		response, data, err := g.send(ctx, t.Method, p.BaseUrl+path, deref(p.KeyHeader), value, b, t.Headers)
 		var cut errBody
 		switch {
@@ -763,7 +765,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		}
 		if status == 401 || status == 402 {
 			a := refusal(502, "error", fmt.Sprintf("key-disabled-%d", status), fmt.Sprintf("the provider refused key %s with HTTP %d; the key is disabled", id, status))
-			a.key, a.disabled = id, status
+			a.key, a.disabled, a.attemptedAt = id, status, attemptedAt
 			return a
 		}
 		// Success and every other provider reply, quota and 429 included, reach the caller unchanged, except that a key
@@ -773,7 +775,7 @@ func (g *gateway) call(ctx context.Context, name string, c connection, p provide
 		if t.TextReply != nil && *t.TextReply && status >= 200 && status <= 299 && !json.Valid(data) {
 			data, _ = json.Marshal(map[string]string{"text": strings.ToValidUTF8(string(data), "�")})
 		}
-		a := &answer{status: status, body: data, retryAfter: response.Header.Get("Retry-After"), outcome: "ok", key: id}
+		a := &answer{status: status, body: data, retryAfter: response.Header.Get("Retry-After"), outcome: "ok", key: id, attemptedAt: attemptedAt}
 		field := "usage." + t.Unit
 		if t.UsageField != nil {
 			field = *t.UsageField
@@ -852,14 +854,17 @@ func (g *gateway) usageReport(ctx context.Context) map[string]any {
 	return map[string]any{"at": nowMs(), "keys": rows}
 }
 
-func (g *gateway) onDisabled(id string, status int) {
+func (g *gateway) onDisabled(id string, status int, attemptedAt int64) {
 	g.disabledLock.Lock()
-	g.disabled[id] = disabledKey{status, nowMs()}
+	defer g.disabledLock.Unlock()
+	if g.disabled[id].at > attemptedAt {
+		return
+	}
+	g.disabled[id] = disabledKey{status, attemptedAt}
 	var text strings.Builder
 	for k, d := range g.disabled {
 		fmt.Fprintf(&text, "%s %d %d\n", k, d.status, d.at)
 	}
-	g.disabledLock.Unlock()
 	if err := writeAtomic(filepath.Join(g.config.StateDir, "disabled-keys"), []byte(text.String())); err != nil {
 		logf("disabled key %s not persisted: %v", id, err)
 	}
@@ -1091,6 +1096,9 @@ func (g *gateway) line(q *request, a *answer) contract.CallLine {
 			line.UsageKey = &q.usageKey
 		}
 	}
+	if (a.disabled != 0 || a.problem != nil) && a.attemptedAt != 0 {
+		line.ProviderAttemptAt = &a.attemptedAt
+	}
 	if a.disabled != 0 {
 		line.Disabled = &contract.CallKeyDisabled{Key: a.key, Status: int64(a.disabled)}
 	}
@@ -1103,7 +1111,7 @@ func (g *gateway) line(q *request, a *answer) contract.CallLine {
 // finish spools the call's line, then answers it: a call answered to its caller is already durable.
 func (g *gateway) finish(w http.ResponseWriter, q *request, a *answer, transfer *contract.CallTransfer) {
 	if a.disabled != 0 {
-		g.onDisabled(a.key, a.disabled)
+		g.onDisabled(a.key, a.disabled, a.attemptedAt)
 	}
 	line := g.line(q, a)
 	line.Phase, line.Transfer = q.phase, transfer
@@ -1252,7 +1260,12 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		refuse(refusal(507, "error", "staging-failed", "insufficient space for this upload"), nil)
 		return
 	}
-	defer g.releaseUploadSpace(r.ContentLength)
+	reservation := r.ContentLength
+	defer func() {
+		if reservation > 0 {
+			g.releaseUploadSpace(reservation)
+		}
+	}()
 	part := filepath.Join(g.config.StateDir, "files", q.id+".part")
 	file, err := os.OpenFile(part, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
 	if err != nil {
@@ -1304,6 +1317,8 @@ func (g *gateway) serveUpload(w http.ResponseWriter, r *http.Request, q *request
 		}
 	}
 	control.SetReadDeadline(time.Time{})
+	g.releaseUploadSpace(reservation)
+	reservation = 0
 	if unstage() {
 		refuse(draining, nil)
 		return

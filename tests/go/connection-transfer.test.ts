@@ -109,3 +109,14 @@ test('TGT-3 commit intent and completion account for one upload (requirement: §
   await new Promise(res => setTimeout(res, 400));
   assert.deepEqual(row(callId), r);
 });
+
+test('TGT-3 discarded pending commit retains the verified file metadata (requirement: §9 transfer accounting; risk: a cleanup completion clears the recorded checksum and size)', async () => {
+  const callId = randomUUID(), startedAt = Date.now() - 900;
+  const up = {direction: 'upload', bytes: 61_932_522, mediaType: 'video/quicktime', name: 'slow.mov', sha256: sha};
+  const base = {callId, tokenSha256: tokenSha, executionId: 'token:files', connection: 'youtrack', tool: 'attachment_add', startedAt};
+  write(today(), {...base, phase: 'started', outcome: 'unknown', errorCode: 'upload-unfinished', ms: 80, transfer: up});
+  await until(() => row(callId), 'commit intent');
+  write(today(), {...base, phase: 'completed', outcome: 'error', errorCode: 'upload-aborted', status: 409, ms: 160});
+  const r = await until(() => { const x = row(callId); return x?.data.phase === 'completed' ? x : undefined; }, 'discarded upload');
+  assert.deepEqual([r.state, r.problem, r.data.transfer], ['failed', 'step:upload-aborted', up]);
+});
