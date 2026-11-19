@@ -1,0 +1,7 @@
+{
+ "ID": "M1",
+ "Defect": "experiment 1's planted defect: a failed cohort deletes its first execution's due work before its halves run",
+ "File": "resource_projection.go",
+ "Find": "\t\t\tfunc(part []string) error { return resourceReplaceBatch(ctx, a, part) },",
+ "Replace": "\t\t\tfunc(part []string) error {\n\t\t\t\te := resourceReplaceBatch(ctx, a, part)\n\t\t\t\tif e != nil {\n\t\t\t\t\t_ = runTxLocksOnce(ctx, a, nil, true, nil, func(q *Request) error {\n\t\t\t\t\t\treturn exec(q, `DELETE FROM resource_work WHERE execution_id=$1 AND next_attempt_at<=statement_timestamp()`, part[0])\n\t\t\t\t\t})\n\t\t\t\t}\n\t\t\t\treturn e\n\t\t\t},"
+}

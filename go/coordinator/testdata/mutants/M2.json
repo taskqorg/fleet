@@ -1,0 +1,7 @@
+{
+ "ID": "M2",
+ "Defect": "the failure path resets attempts to 0, so a failing item retries at the base pause forever",
+ "File": "resource_projection.go",
+ "Find": "append([]any{item, attempts + 1, resourceRetryDelay(attempts).Microseconds()}, extra...)",
+ "Replace": "append([]any{item, 0, resourceRetryDelay(0).Microseconds()}, extra...)"
+}
