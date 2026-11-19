@@ -12,6 +12,9 @@
   "instructions": "Follow the explicit task scope. Retain outputs in output/. Do not spawn subagents.",
   "mcpServers": [],
   "model": "sonnet",
+  "skills": [
+    "modern-web-guidance"
+  ],
   "tools": [
     "Read",
     "Edit",

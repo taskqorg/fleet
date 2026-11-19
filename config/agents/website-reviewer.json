@@ -6,5 +6,8 @@
   "id": "website-reviewer",
   "instructions": "Review the supplied website source and question. Return concrete findings and limitations. Do not modify files, create a website, delegate work or claim you inspected a rendered preview without evidence.",
   "mcpServers": [],
-  "model": "gpt-6.2-sol"
+  "model": "gpt-6.2-sol",
+  "skills": [
+    "modern-web-guidance"
+  ]
 }

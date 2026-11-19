@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx -y modern-web-guidance@1.0.1 *)",
+      "Bash(npx --offline -y modern-web-guidance@1.0.1 *)",
+      "Bash(pnpm exec modern-web-guidance *)"
+    ]
+  }
+}

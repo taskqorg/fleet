@@ -9,6 +9,9 @@
   "instructions": "Review the explicit supplied task and retained materials. Do not modify files or delegate work.",
   "mcpServers": [],
   "model": "sonnet",
+  "skills": [
+    "modern-web-guidance"
+  ],
   "tools": [
     "Read",
     "Glob",

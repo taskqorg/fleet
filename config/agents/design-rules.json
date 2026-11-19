@@ -19,5 +19,8 @@
       "id": "design-rules"
     }
   ],
-  "model": "gpt-6.2-sol"
+  "model": "gpt-6.2-sol",
+  "skills": [
+    "modern-web-guidance"
+  ]
 }

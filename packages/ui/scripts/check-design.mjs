@@ -80,6 +80,15 @@ let breaks;
 try { breaks = execFileSync('node', ['tests/ui/layout-break.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim(); } catch (e) { breaks = (e.stdout?.toString().trim() || `not run (${String(e.message).split('\n')[0]})`); }
 let trace;
 try { trace = execFileSync('node', ['tests/ui/trace.check.mjs'], { cwd: root, stdio: 'pipe' }).toString().trim().replace(/\n/g, '\n    '); } catch (e) { trace = `not run (${String(e.message).split('\n')[0]})`; }
+// Legacy web platform patterns (modern-web-guidance legacy-scan, pinned in package.json; AGENTS.md, Web UI work). The scan
+// covers the guides with deterministic rules only; each finding still needs its keepWhen/dropWhen check before a change.
+let legacy;
+try {
+  const bin = join(root, 'node_modules/.bin/modern-web-guidance');
+  const scans = ['app/src', 'packages/ui/src'].map(dir => ({ dir, r: JSON.parse(execFileSync(bin, ['legacy-scan', dir, '--json'], { cwd: root, stdio: 'pipe', timeout: 120000 }).toString()) }));
+  const lines = scans.flatMap(({ dir, r }) => (r.guides ?? []).flatMap(g => (g.rules ?? []).map(x => `${dir}: ${x.ruleId} ×${x.count} (${(x.findings ?? []).slice(0, 2).map(f => `${f.file}:${f.line}`).join(', ')}${x.count > 2 ? ', …' : ''})`)));
+  legacy = lines.length ? `${lines.length} rules with findings (check each against the guide's keepWhen/dropWhen):\n    ${lines.join('\n    ')}` : 'none';
+} catch (e) { legacy = `not run (${String(e.message).split('\n')[0]})`; }
 console.log(`Design report for ${targets.join(', ')}: ${files.length} files`);
 console.log(`- packages/ui JavaScript: ${kb.toFixed(0)} KB minified (target ≤ 200 KB)${kb > 200 ? '  OVER TARGET' : ''}`);
 console.log(`- formatter tests: ${tests}`);
@@ -88,5 +97,6 @@ console.log(`- page specs against mockups:\n    ${trace}`);
 console.log(ux);
 console.log(`- layout checks against injected breaches (OR-24 to OR-27, OR-41 to OR-43): ${breaks}`);
 console.log(`- operator app (dist/app, coordinator on PGlite):\n${appCheck}`);
+console.log(`- legacy web patterns (modern-web-guidance legacy-scan): ${legacy}`);
 console.log(warn.length ? `- ${warn.length} source warnings:\n  ${warn.join('\n  ')}` : '- source checks: no warnings');
 console.log('Rules: docs/design-system/owner-rules.md. This report never fails the build.');

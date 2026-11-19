@@ -22,6 +22,9 @@
     }
   ],
   "model": "sonnet",
+  "skills": [
+    "modern-web-guidance"
+  ],
   "tools": [
     "Read",
     "Edit",
