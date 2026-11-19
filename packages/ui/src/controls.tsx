@@ -10,11 +10,9 @@ import { parse, renderBlocks } from './markdown.tsx';
 import { author, clipMessage, writeClip } from './clip.ts';
 import tokens from '../tokens.json';
 
-const ROW = parseInt(tokens.size.row);
+import { isSubmitEnter } from './keys.ts';
 
-/** Enter that submits a text field: not the Enter that confirms an IME composition (CJK input, the emoji picker), which
- * keydown reports with isComposing (keyCode 229 in Safari). modern-web-guidance: ime-safe-enter-submit. */
-export const isSubmitEnter = (e: KeyboardEvent) => e.key === 'Enter' && !e.isComposing && e.keyCode !== 229;
+const ROW = parseInt(tokens.size.row);
 
 /* ---------- Icon and button ---------- */
 
