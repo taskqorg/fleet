@@ -2,13 +2,11 @@
 
 **Mockup routes:** `#/agents` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md). Not in the app yet ([D20](../decisions.md)).
 
-**Purpose.** Configure and qualify the agents operators may use ([UC5](../../use-cases.md#uc5)).
+**Purpose.** Configure and qualify the agents operators may use ([UC5](../../use-cases.md#uc5)), and keep them as a library ([requirements](../../designs/fleet-definition-editors.md#library)): what agents we have, which are active, what each is chosen for, which wait for a repository version.
 
 **Layout.** [App shell](../patterns/app-shell.md), [list and detail](../patterns/list-detail.md), with the [definition editor](../patterns/definition-editor.md) in the work area. The work area uses the [draft bar](../controls/draft-bar.md), [setting fields](../controls/setting-field.md), [choices](../controls/choice.md) and [detail sections](../controls/detail-section.md).
 
-**Purpose.** Also the library ([requirements](../../designs/fleet-definition-editors.md#library)): what agents we have, which are active, what each is chosen for, which wait for a repository version.
-
-**Catalogue row.** One line: the agent's mark (icon and monogram), id, a count of folded Lab variants, purpose; on the right an "update" mark when the repository has a newer version, 30-day runs and list price (a draft shows by its state icon, not a word, [formats](../formats.md#rows-and-columns)). Groups: one per category, active first. Facets: active, unused, update waiting, store only, Lab. Filter words: `role:`, `harness:`, `skill:`, `project:`.
+**Catalogue row.** One line: the agent's mark (icon and monogram), id, a count of folded Lab variants, purpose; on the right an "update" mark when the repository has a newer version, 30-day runs and list price (a draft shows by its state icon, not a word, [formats](../formats.md#rows-and-columns)). Groups: one per category, active first. Facets: active, unused, update waiting, store only, Lab. Filter words: `category:`, `harness:`, `skill:`, `project:`.
 
 **Tabs.** Agents, Skills and Pipelines are three tabs of one library section; each keeps its own list and work area.
 

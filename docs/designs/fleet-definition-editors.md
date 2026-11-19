@@ -518,7 +518,7 @@ Requirements for the library of agents, skills and pipelines (the Agents and Pip
 
 **Bulk actions.** Every action is one operation over a list of definitions, previewed first, with one message:
 
-* *Take the repository version* (`definition_take_repository {keys[], message, preview}`, proposed): for each `repository-changed` key, one save with the shipped content and `repoSha`, as CUJ 3's "take repository". A key whose head moved since the preview is refused with 409 and the rest go on.
+* *Take the repository version* (`definition_take_repository {keys[], message, preview}`, proposed): for each `repository-changed` key, one save with the shipped content and `repoSha`, as CUJ 3's "take repository". A key in another state, or whose head moved since the preview, is refused with 409 and the rest go on.
 * *Save to the repository*: `definition_export` over the keys; opening the pull request is a worker's task (the coordinator writes no git, Non-Goals).
 * *Add a skill to agents* (`definition_add_skill {skill, agents[] | category, message, preview}`, proposed): one revision per agent that lacks it and can run it.
 * *Retire Lab variants*: `definition_delete` for the variants of a decided experiment that nothing else names.
