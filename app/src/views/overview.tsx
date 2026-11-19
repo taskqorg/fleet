@@ -11,6 +11,7 @@ import { op, online, addRequestedKey, writeOnce, useAlive } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { scopeIds, noProject, prefsRead, prefs } from '../prefs.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
+import { idOf, touchesStatus } from './delivery.tsx';
 
 type Overview = { questions: any[]; problems: any[]; counts: Record<string, number>; hosts: null; projects: { id: string; project: string | null; counts: Record<string, number> }[] };
 // The focus and ignored projects (OR-34) narrow every part: questions, problems, counts and project rows.
@@ -143,20 +144,21 @@ export function Overview({ id }: { id?: string }) {
               onAll={() => go(formatView({ view: 'tasks', state: Object.keys(counts), project: [p.project] }))} onToggle={s => go(formatView({ view: 'tasks', state: [s], project: [p.project] }))} /> : undefined} />; })}
       </DetailSection>
     </div>
-    <InFlight onOpen={go} />
+    <InFlight scope={scope} onOpen={go} />
     </OpsSummary>
   </article>;
 
   return <ListDetail list={list} detail={detail || undefined} detailKey={id} idle={idle} />;
 }
 
-/** Pull requests in flight, from the Delivery page's own read. */
-function InFlight({ onOpen }: { onOpen: (path: string) => void }) {
-  const { data } = useDoc<any>('overview-delivery', () => op('delivery_status', {}).catch(() => null), c => c.kind === 'delivery' && c.id.startsWith('delivery-state:'), 300000);
+/** Pull requests in flight: the Delivery page's own read (the same doc, so one fetch serves both), under the focus (OR-34). */
+function InFlight({ scope, onOpen }: { scope: ReturnType<typeof scopeIds>; onOpen: (path: string) => void }) {
+  const { data, error } = useDoc<any>(prefsRead.value ? 'delivery:' + JSON.stringify(scope) : null, () => op('delivery_status', scope), touchesStatus, 300000);
   const moving = (data?.items ?? []).filter((it: any) => it.stage !== 'installed' && it.stage !== 'merged');
+  if (error && !data) return <DetailSection title="Delivery in flight"><ErrorBanner text={`Delivery did not load: ${error}`} /></DetailSection>;
   if (!moving.length) return null;
   return <DetailSection title="Delivery in flight">
-    {moving.map((it: any) => { const path = `/delivery/${it.repo.replace('/', '~')}~${it.number}`; return <KvRow key={it.repo + it.number} icon="git-pull-request" label={it.title}
+    {moving.map((it: any) => { const path = `/delivery/${idOf(it)}`; return <KvRow key={it.repo + it.number} icon="git-pull-request" label={it.title}
       meta={<a class="row-link mono" href={path} onClick={e => { e.preventDefault(); onOpen(path); }}>#{it.number}</a>}
       value={<><StageChip stage={it.stage} /><AgeChip t={Date.parse(it.since)} /></>} />; })}
   </DetailSection>;

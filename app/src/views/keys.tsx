@@ -33,7 +33,7 @@ export function Keys({ id }: { id?: string }) {
   // holder; the provider shows only where it differs from the connection's name.
   const holders = new Map<string, number>(); for (const c of conns) holders.set(c.holder, (holders.get(c.holder) ?? 0) + 1);
   const mainHolder = [...holders].sort((a, b) => b[1] - a[1])[0]?.[0];
-  const scope = (c: any) => c.access.projects.includes('*') ? (c.access.experiments.length ? 'all + Lab' : 'all') : c.access.projects.join(', ') || 'none';
+  const scope = (c: any) => `${c.access.projects.includes('*') ? 'all' : c.access.projects.join(', ') || 'none'}${c.access.experiments.length ? ' + Lab' : ''}`;
   const list = <>
     {mainHolder && <header class="page-h"><span class="muted">Held by {person(mainHolder)}{holders.size > 1 ? ', unless a row says otherwise' : ''}</span></header>}
     <section class="panel">

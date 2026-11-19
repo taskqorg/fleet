@@ -455,6 +455,7 @@ button.start-fact:hover{background:var(--hover);color:var(--fg)}
 [data-ui=needs-you] .vl{flex:1;height:auto;min-height:0}
 [data-ui=needs-you]{display:flex;flex-direction:column;min-height:0;flex:1}
 [data-ui=needs-you]>.stack{flex:1;min-height:0;padding:0}
+[data-ui=needs-you]>.stack>.empty{padding:var(--space-4)}
 .ny-group{display:flex;flex-direction:column}
 .ny-h{display:flex;align-items:center;gap:var(--space-2);height:var(--size-row);padding:0 var(--space-4);border-bottom:1px solid var(--line-soft);color:var(--fg-muted);font-size:var(--font-size-sm)}
 .ny-h .mono:first-child{text-transform:uppercase;letter-spacing:.04em;color:var(--fg)}
@@ -661,7 +662,7 @@ button.composer-chip:hover{background:var(--hover);color:var(--fg)}
    no column heads (D19). The title keeps the space; the code never wraps. */
 .split-list .vl{flex:1;height:auto}
 .split-list .vl-head{display:none}
-.split-list .vl-row .tt{flex-wrap:nowrap;align-items:baseline}
+.split-list .vl-row .tt{flex-wrap:nowrap;align-items:baseline;overflow:hidden}
 .split-list .vl-row .tt .title{flex:0 1 auto;min-width:min(40%,12ch)}
 .split-list .vl-row .tt .id{flex:none;white-space:nowrap}
 .split-list .vl-row .tt .sub{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}

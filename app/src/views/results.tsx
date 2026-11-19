@@ -11,7 +11,6 @@ import { subscribe } from '../feed.ts';
 import { useDoc } from '../store.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 
-const ROW = catalogueRow(); // one-line catalogue row, 44 px on touch
 const PAGE = 100;
 type Row = { id: string; name: string; mediaType: string; size: number; state: StateOf<'artifact'>; taskId: string | null; taskCode?: string | null; executionId: string | null; projectId: string | null; createdAt: number; seq: number; scope?: string | null };
 // Filters beyond state are typed in search (OR-36: media:image since:7d) or come in a link's extra keys.
@@ -54,7 +53,7 @@ export function Results({ id }: { id?: string }) {
         counters={<StateCounters family="artifact" label="Results by state" counts={{ stored: null, pending: null, failed: null, deleted: null }} active={states}
           onAll={() => set({ state: [] })} onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>
         {!rows ? <Skeleton rows={8} /> : !rows.length ? <Empty text="No results match." />
-          : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" onEnd={() => next !== null && !busy && load(next)}
+          : <VirtualList items={rows} getKey={r => r.id} rowHeight={catalogueRow()} follow="top" label="Results" onEnd={() => next !== null && !busy && load(next)}
             columns="1.25rem minmax(0,1fr) 4rem 3rem" rowClass={r => r.id === id ? 'sel' : ''}
             header={<><span /><span>Result</span><span class="r">Size</span><span class="r">Age</span></>}
             render={r => <>

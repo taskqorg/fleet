@@ -29,7 +29,6 @@ export type LocalList<R> = { rows: R[]; all: R[]; counts: Record<string, number>
 export type ListItem<R> = { kind: 'group'; key: string; label: string; count: number; icon?: 'pin' } | { kind: 'row'; r: R; pinned?: boolean };
 type MenuItems = Parameters<typeof ContextMenu>[0]['items'];
 type BarActions = Parameters<typeof SelectBar>[0]['actions'];
-const ROW = catalogueRow(); // one-line catalogue row, 44 px on touch
 const PINNED = '\u0000pinned'; // group key of the pinned rows; never a server group key
 
 export type ListPageOptions = {
@@ -288,7 +287,7 @@ export function ListPagePanel<R extends ListRow, F extends Family, G extends str
       {pinnedDoc.error && <ErrorBanner text={`Pinned ${p.noun.toLowerCase()} did not load: ${pinnedDoc.error}`} onRetry={pinnedDoc.reload} />}
       {!displayed.length && (list.shownKey === null || list.pending || (!g.isLocal && pins.ids.length > 0 && pinnedDoc.data === null && !pinnedDoc.error)) ? <Skeleton rows={8} />
         : !displayed.length ? (list.error || pinnedDoc.error ? null : p.empty)
-        : <VirtualList items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={ROW} follow="top" label={p.listLabel} onEnd={list.more} endKey={g.endKey}
+        : <VirtualList items={g.items} getKey={i => i.kind === 'group' ? 'g:' + i.key : i.r.id} rowHeight={catalogueRow()} follow="top" label={p.listLabel} onEnd={list.more} endKey={g.endKey}
           columns={`${selecting ? '1.25rem ' : ''}1.25rem minmax(0,1fr) auto`} rowClass={i => i.kind === 'group' ? 'grp' : `${i.r.id === p.focused ? 'sel' : ''}${sel.includes(i.r.id) ? ' checked' : ''}${i.pinned ? ' pin-row' : ''}`}
           onRowMenu={(i, at) => { if (i.kind === 'row') g.setMenu({ r: i.r, at }); }}
           render={i => i.kind === 'group'

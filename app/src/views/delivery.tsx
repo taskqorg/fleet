@@ -55,9 +55,9 @@ const RANGES = [{ id: '24h', label: '24 h' }, { id: '7d', label: '7 days' }, { i
 const ms = (s?: string | null) => s ? Date.parse(s) : NaN;
 const fmt = (v: number) => duration(v / 1000).text;
 /** The focus segment of a pull request: owner~repo~number (stable, readable, no slash). */
-const idOf = (it: { repo: string; number: number }) => `${it.repo.replace('/', '~')}~${it.number}`;
+export const idOf = (it: { repo: string; number: number }) => `${it.repo.replace('/', '~')}~${it.number}`;
 // Current rows change with delivery-state:<project>; the recorded history (records and the regression check) with the rest.
-const touchesStatus = (c: Change) => c.kind === 'delivery' && c.id.startsWith('delivery-state:');
+export const touchesStatus = (c: Change) => c.kind === 'delivery' && c.id.startsWith('delivery-state:');
 const touchesHistory = (c: Change) => c.kind === 'delivery' && !c.id.startsWith('delivery-state:');
 const NONE = 'none' as const; // no history kept (404): known, unlike still loading
 const no404 = <T,>(p: Promise<T>) => p.catch(e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; });
