@@ -10,6 +10,10 @@ Every agent attempt: read [fleet.md](fleet.md) first, then every shared-core fil
 
 Design or UI work: read `docs/design-system/owner-rules.md` first, then `docs/design-system/README.md`. Build screens only from `packages/ui`; run `pnpm run check:design` and read its warnings.
 
+Web UI, CSS or client-side JS work: before writing it, follow the `modern-web-guidance` skill (`config/skills/modern-web-guidance/SKILL.md`; Fleet profiles that build or review UI carry it): search and retrieve the guides for each feature, apply them within the owner rules and `packages/ui`, which win on conflict, and name the guides you applied in the pull request.
+
+**Browser support:** the current stable Chromium only. Features Chromium ships need no fallback or polyfill for other engines.
+
 EGM artifact directory: .egm
 
 Docs work: before editing `docs/`, read the open `docs-order` issue (label `docs`) and fix its findings in the files you touch. Working papers (briefs, review reports, handoffs, screenshots) are never committed; their substance goes into the pull request description ([docs governance](docs/designs/fleet-docs-governance.md)).

@@ -30,6 +30,9 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
+      modern-web-guidance:
+        specifier: 1.0.1
+        version: 1.0.1
       playwright:
         specifier: 1.56.1
         version: 1.56.1
@@ -367,6 +370,11 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  modern-web-guidance@1.0.1:
+    resolution: {integrity: sha512-5ztUh5F1p2PewnSkA6EhsGUXqomaZY9qe6iWJCU4JbIQxHTky7s5lMJcPE4EbD1uhbQZIhl0HROH0+s6fIiGzg==}
+    engines: {node: '>=22.0.0', vscode: ^1.90.0}
+    hasBin: true
+
   playwright-core@1.56.1:
     resolution: {integrity: sha512-hutraynyn31F+Bifme+Ps9Vq59hKuUCz7H1kDOcBs+2oGguKkWTU50bBWrtz34OUWmIwpBTWDxaRPXrIXkgvmQ==}
     engines: {node: '>=18'}
@@ -624,6 +632,8 @@ snapshots:
 
   fsevents@2.3.2:
     optional: true
+
+  modern-web-guidance@1.0.1: {}
 
   playwright-core@1.56.1: {}
 

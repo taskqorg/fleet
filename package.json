@@ -27,6 +27,7 @@
   "devDependencies": {
     "@types/node": "22.18.0",
     "esbuild": "0.28.2",
+    "modern-web-guidance": "1.0.1",
     "playwright": "1.56.1",
     "typescript": "7.0.2"
   },
