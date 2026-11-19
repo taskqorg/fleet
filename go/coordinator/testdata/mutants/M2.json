@@ -1,7 +1,7 @@
 {
  "ID": "M2",
  "Defect": "the failure path resets attempts to 0, so a failing item retries at the base pause forever",
- "File": "resource_projection.go",
- "Find": "append([]any{item, attempts + 1, resourceRetryDelay(attempts).Microseconds()}, extra...)",
- "Replace": "append([]any{item, 0, resourceRetryDelay(0).Microseconds()}, extra...)"
+ "File": "work_kit.go",
+ "Find": "\tnext := now.Add(k.backoff(c.Attempts))\n\targs := append([]any{c.Key, c.Attempts + 1, next, rt.Class(cause)}, c.Guard...)",
+ "Replace": "\tnext := now.Add(k.backoff(0))\n\targs := append([]any{c.Key, 0, next, rt.Class(cause)}, c.Guard...)"
 }

@@ -129,7 +129,7 @@ func lawClone(t *testing.T) string {
 		t.Fatal(err)
 	}
 	defer admin.Close(ctx)
-	for _, s := range []string{`CREATE DATABASE ` + name + ` TEMPLATE ` + tmpl + ` OWNER fleet`, `REVOKE ALL ON DATABASE ` + name + ` FROM PUBLIC`, `GRANT CONNECT ON DATABASE ` + name + ` TO fleet_app`} {
+	for _, s := range []string{`CREATE DATABASE ` + name + ` TEMPLATE ` + tmpl + ` OWNER fleet STRATEGY FILE_COPY`, `REVOKE ALL ON DATABASE ` + name + ` FROM PUBLIC`, `GRANT CONNECT ON DATABASE ` + name + ` TO fleet_app`} {
 		if _, err := admin.Exec(ctx, s); err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +164,6 @@ type lawEnv struct {
 	values   map[string]string    // L7: execution -> frozen method_sha
 	versions map[string][2]string // L4: project -> last ready (epoch, revision)
 	rebuilt  map[string]bool      // L4: projects rebuilt since their epoch was last seen
-	kit      any                  // the adapter's engine state, if it keeps any
 }
 
 func newLawEnv(t *testing.T, ctx context.Context, seed int64) *lawEnv {
@@ -205,7 +204,8 @@ func (e *lawEnv) open() {
 		e.t.Fatal(err)
 	}
 	e.lost = &App{store: &Store{pool: e.lostPool, readPool: st.readPool}}
-	e.kit = nil
+	lawAttach(e, e.a)
+	lawAttach(e, e.lost)
 }
 
 func (e *lawEnv) close() {
@@ -353,10 +353,10 @@ const lawFailingSQL = `SELECT (EXISTS(SELECT 1 FROM resource_work WHERE last_err
  OR EXISTS(SELECT 1 FROM resource_build WHERE NOT ready AND attempts>=$1)
  OR EXISTS(SELECT 1 FROM resource_metadata_repair WHERE attempts>=$1))::text`
 
-// L5 (during the run): resource-failing is reported iff some item's attempts reached resourceFailingAttempts().
+// L5 (during the run): resource-failing is reported iff some item's attempts reached kitFailingAttempts().
 func (e *lawEnv) checkProblems() {
 	e.t.Helper()
-	want := e.scalar(lawFailingSQL, resourceFailingAttempts()) == "true" || lawMemoryFailing() > 0
+	want := e.scalar(lawFailingSQL, kitFailingAttempts()) == "true" || lawMemoryFailing() > 0
 	fs, _, err := stateRules(e.ctx, e.a)
 	if err != nil {
 		e.violate("L5", "stateRules: %v", err)
@@ -366,7 +366,7 @@ func (e *lawEnv) checkProblems() {
 		got = got || f.Rule == "resource-failing"
 	}
 	if got != want {
-		e.violate("L5", "resource-failing reported=%v, an item at %d attempts exists=%v", got, resourceFailingAttempts(), want)
+		e.violate("L5", "resource-failing reported=%v, an item at %d attempts exists=%v", got, kitFailingAttempts(), want)
 	}
 }
 
@@ -566,8 +566,8 @@ func (e *lawEnv) derived() string {
 // opProbe (L3): one execution's step fails late (or loses its COMMIT response); unless the commit is known to have
 // happened, its work rows remain and every derived row is byte-equal to before.
 func (e *lawEnv) opProbe() {
-	ids := e.strings(`SELECT DISTINCT execution_id FROM resource_work w WHERE next_attempt_at<=clock_timestamp()
-	 AND NOT EXISTS(SELECT 1 FROM resource_work p WHERE p.execution_id=w.execution_id AND p.next_attempt_at>clock_timestamp()) ORDER BY 1`)
+	ids := e.strings(`SELECT DISTINCT execution_id FROM resource_work w WHERE next_attempt_at<=$1
+	 AND NOT EXISTS(SELECT 1 FROM resource_work p WHERE p.execution_id=w.execution_id AND p.next_attempt_at>$1) ORDER BY 1`, lawNow(e))
 	if len(ids) == 0 {
 		return
 	}
@@ -860,25 +860,30 @@ func lawSeeds() []int64 {
 func TestLaw(t *testing.T) {
 	defer lawConfigure(lawBase, lawMax)()
 	start := time.Now()
-	for _, seed := range lawSeeds() {
-		t.Run(fmt.Sprintf("seed%d", seed), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			e := newLawEnv(t, ctx, seed)
-			e.run(150)
-			e.quiesce()
-			e.final()
-			e.summary()
-		})
-	}
-	t.Run("L6", func(t *testing.T) {
+	// Seeds run in parallel: each has its own database, kit and clock.
+	t.Run("seeds", func(t *testing.T) {
+		for _, seed := range lawSeeds() {
+			t.Run(fmt.Sprintf("seed%d", seed), func(t *testing.T) {
+				t.Parallel()
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				e := newLawEnv(t, ctx, seed)
+				e.run(150)
+				e.quiesce()
+				e.final()
+				e.summary()
+			})
+		}
 		for _, failWrite := range []bool{false, true} {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			e := newLawEnv(t, ctx, 6)
-			lawBoundedRetry(e, failWrite)
-			e.quiesce()
-			e.final()
-			cancel()
+			t.Run(fmt.Sprintf("L6/failWrite=%v", failWrite), func(t *testing.T) {
+				t.Parallel()
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				e := newLawEnv(t, ctx, 6)
+				lawBoundedRetry(e, failWrite)
+				e.quiesce()
+				e.final()
+			})
 		}
 	})
 	t.Logf("laws took %s", time.Since(start).Round(time.Millisecond))
@@ -898,9 +903,10 @@ func lawBoundedRetry(e *lawEnv, failWrite bool) {
 		n, _ := strconv.Atoi(e.scalar(`SELECT CASE WHEN is_called THEN last_value ELSE 0 END::text FROM law_hit_1`))
 		return n
 	}
-	const T = 20 * lawMax
+	// T is the processor clock's own elapsed time, so a slow machine (real time also moves that clock) cannot widen the bound.
+	start := lawNow(e)
 	steps := 0
-	for elapsed := time.Duration(0); elapsed < T; elapsed += lawBase {
+	for elapsed := time.Duration(0); elapsed < 20*lawMax; elapsed += lawBase {
 		e.advance(lawBase)
 		e.pass()
 		if h := hits(); h > steps {
@@ -910,7 +916,7 @@ func lawBoundedRetry(e *lawEnv, failWrite bool) {
 			}
 			var attempts int
 			var left float64
-			if err := e.ownerDB.QueryRow(e.ctx, `SELECT max(attempts),extract(epoch FROM max(next_attempt_at)-clock_timestamp())::float8 FROM resource_work WHERE execution_id='poison'`).Scan(&attempts, &left); err != nil {
+			if err := e.ownerDB.QueryRow(e.ctx, `SELECT max(attempts),extract(epoch FROM max(next_attempt_at)-$1)::float8 FROM resource_work WHERE execution_id='poison'`, lawNow(e)).Scan(&attempts, &left); err != nil {
 				e.t.Fatal(err)
 			}
 			if attempts < 1 {
@@ -926,6 +932,7 @@ func lawBoundedRetry(e *lawEnv, failWrite bool) {
 			}
 		}
 	}
+	T := lawNow(e).Sub(start)
 	bound := math.Log2(float64(lawMax)/float64(lawBase)) + float64(T)/(0.75*float64(lawMax)) + 1
 	e.log("L6 failWrite=%v: %d steps in %s, bound %.1f", failWrite, steps, T, bound)
 	e.t.Logf("L6 failWrite=%v: %d steps in %s of fake time, bound %.1f", failWrite, steps, T, bound)

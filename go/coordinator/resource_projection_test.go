@@ -28,56 +28,43 @@ import (
 // Requirement: one poison leaf in a full cohort must not send every healthy leaf to a single transaction;
 // risk: a large failed cohort replays as one transaction per leaf, the overhead batching removes.
 func TestResourceBisectCohort(t *testing.T) {
-	ids := make([]string, resourceCohortSize)
-	for i := range ids {
-		ids[i] = fmt.Sprintf("leaf-%03d", i)
+	cs := make([]*kitClaim, resourceCohortSize)
+	for i := range cs {
+		cs[i] = &kitClaim{Key: fmt.Sprintf("leaf-%03d", i), Group: "P"}
 	}
 	var batches, singles int
 	committed := map[string]bool{}
-	poison := map[string]bool{ids[37]: true}
-	err := resourceBisectCohort(ids, func(part []string) error {
+	poison := map[string]bool{cs[37].Key: true}
+	kitBisect(cs, func(part []*kitClaim) error {
 		batches++
-		for _, id := range part {
-			if poison[id] {
+		for _, c := range part {
+			if poison[c.Key] {
 				return errors.New("poison")
 			}
 		}
-		for _, id := range part {
-			committed[id] = true
+		for _, c := range part {
+			committed[c.Key] = true
 		}
 		return nil
-	}, func(id string) error {
+	}, func(c *kitClaim) {
 		singles++
-		if poison[id] {
-			return errors.New("poison")
+		if !poison[c.Key] {
+			committed[c.Key] = true
 		}
-		committed[id] = true
-		return nil
 	})
-	if err == nil || singles != 1 || len(committed) != len(ids)-1 || committed[ids[37]] {
-		t.Fatalf("err=%v singles=%d committed=%d", err, singles, len(committed))
+	if singles != 1 || len(committed) != len(cs)-1 || committed[cs[37].Key] {
+		t.Fatalf("singles=%d committed=%d", singles, len(committed))
 	}
 	if batches > 2*7 {
-		t.Fatalf("one poison leaf in %d took %d cohort transactions", len(ids), batches)
+		t.Fatalf("one poison leaf in %d took %d cohort transactions", len(cs), batches)
 	}
 	batches, singles = 0, 0
-	err = resourceBisectCohort(ids, func([]string) error { batches++; return errResourceClearing }, func(string) error { singles++; return nil })
-	if err != nil || batches != 1 || singles != len(ids) {
-		t.Fatalf("a failure of every leaf must not bisect: err=%v batches=%d singles=%d", err, batches, singles)
+	kitBisect(cs, func([]*kitClaim) error { batches++; return errResourceClearing }, func(*kitClaim) { singles++ })
+	if batches != 1 || singles != 0 {
+		t.Fatalf("a skipped cohort must wait whole: batches=%d singles=%d", batches, singles)
 	}
-	batches, singles = 0, 0
-	err = resourceBisectCohort(ids[:4], func(part []string) error {
-		batches++
-		if len(part) == 4 {
-			return errors.New("split cohort")
-		}
-		return errResourceStall
-	}, func(string) error { singles++; return nil })
-	if !errors.Is(err, errResourceStall) || batches != 2 || singles != 0 {
-		t.Fatalf("the shared stall did not stop the split: err=%v batches=%d singles=%d", err, batches, singles)
-	}
-	if !strings.Contains(resourceCandidatesSQL, "LIMIT "+strconv.Itoa(resourceCohortSize)+") candidates") {
-		t.Fatal("cohort size must equal the pass bound in resourceCandidatesSQL")
+	if q := kitOf(&App{}).queue("work"); q.Limit != resourceCohortSize {
+		t.Fatal("cohort size must equal the work queue's selection bound")
 	}
 }
 
@@ -114,7 +101,18 @@ func TestResourceCandidateCohorts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := slices.Clone(tc.ids)
-			got := resourceCandidateCohorts(tc.ids, tc.hints)
+			claims := []*kitClaim{}
+			for _, id := range tc.ids {
+				claims = append(claims, &kitClaim{Key: id, Group: tc.hints[id]})
+			}
+			var got [][]string
+			for _, cohort := range kitCohorts(claims, resourceCohortSize) {
+				ids := []string{}
+				for _, c := range cohort {
+					ids = append(ids, c.Key)
+				}
+				got = append(got, ids)
+			}
 			if !reflect.DeepEqual(got, tc.want) || !slices.Equal(tc.ids, before) {
 				t.Fatalf("cohorts=%v want=%v; input=%v before=%v", got, tc.want, tc.ids, before)
 			}
@@ -1556,7 +1554,7 @@ func TestResourceCohortPostgres(t *testing.T) {
  INSERT INTO execution(id,kind,state,project_id) VALUES('cohort-healthy-other','tool_run','succeeded','COHORT_OTHER')`)
 	var candidates []string
 	if e = runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-		rows, e := q.tx.Query(ctx, resourceCandidatesSQL, []string{})
+		rows, e := q.tx.Query(ctx, resourceCandidatesSQL, time.Now(), resourceCohortSize)
 		if e != nil {
 			return e
 		}
@@ -1606,7 +1604,7 @@ func TestResourceCohortPostgres(t *testing.T) {
 			t.Helper()
 			var ids []string
 			if e := runTx(ctx, a, nil, false, NOLOCK, func(q *Request) error {
-				rows, e := q.tx.Query(q.ctx(), resourceCandidatesSQL, []string{})
+				rows, e := q.tx.Query(q.ctx(), resourceCandidatesSQL, time.Now(), resourceCohortSize)
 				if e != nil {
 					return e
 				}
@@ -1897,6 +1895,21 @@ func TestResourceBatchHintsPostgres(t *testing.T) {
 		t.Fatal("empty hints used database or invented rows", empty, e)
 	}
 	t.Logf("selected100/16 scopes equivalent; actual work-scope rows examined %.0f of %d, retained empty-page statistics; NULL/missing/moving/multi/duplicate exclusion, authoritative rejection, fallback and FORCE RLS passed", scopeRows, queueScopes)
+}
+
+// resourceBatchHints: the work queue's cohort hints for ids, in their own read transaction.
+func resourceBatchHints(ctx context.Context, a *App, ids []string) (out map[string]string, err error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	err = runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error { out, err = resourceBatchHintsQ(q, ids); return err })
+	return out, err
+}
+
+// resourceScopeHint: every known scope of one execution, in its own read transaction.
+func resourceScopeHint(ctx context.Context, a *App, id string) (out []string, err error) {
+	err = runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error { out, err = resourceScopes(q, id); return err })
+	return out, err
 }
 
 // resourceApply applies or subtracts one contribution's support on its own (replacements use resourceDelta).
