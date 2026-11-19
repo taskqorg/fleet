@@ -15,7 +15,8 @@ export const root = new URL('../', import.meta.url).pathname;
 export const pgdata = process.env.FLEET_TRIAL_PGDATA || join(homedir(), '.cache/fleet-trial/pg');
 export const pgport = process.env.FLEET_TRIAL_PGPORT || '54329';
 const pgArgs = ['-h', pgdata, '-p', pgport, '-U', 'postgres'];
-const sh = (cmd: string, args: string[], input?: string) => execFileSync(cmd, args, {input, encoding: 'utf8', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe']});
+// The PostgreSQL programs get a UTF-8 locale: initdb refuses a missing one ("invalid locale settings"), the macOS default without LANG.
+const sh = (cmd: string, args: string[], input?: string) => execFileSync(cmd, args, {input, encoding: 'utf8', stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: {...process.env, LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8'}});
 const ready = () => { try { sh('pg_isready', pgArgs); return true; } catch { return false; } };
 export const freePort = () => new Promise<number>(r => { const s = createServer().listen(0, '127.0.0.1', () => { const p = (s.address() as any).port; s.close(() => r(p)); }); });
 

@@ -83,7 +83,7 @@ The three independent fixed-header reads use one ordered batch under the same pr
 
 ## Verification
 
-- Run: `cd go && go test ./coordinator`
+- Run: `cd go && go test ./coordinator`. Its PostgreSQL tests never pass by skipping unnoticed ([`pg_fixture_test.go`](pg_fixture_test.go)): the local ones start their own server (initdb with a UTF-8 locale, so no `LANG` is needed), and the fixture halves of outside tests (`TestResourcePostgres` and the like, which read a database URL from `tests/go/*.test.ts`) run their owner file through `tests/go/run-files.ts` when started directly (about 40 s, needs `node`). A test that cannot run here skips with its reason; `FLEET_REQUIRE_PG=1` makes it fail, `FLEET_PG_FIXTURES=outside` skips the fixture halves where the outside tests run anyway (CI's unit part, the merge gate below).
 - Build the executable: `cd go && CGO_ENABLED=0 go build -o bin/fleet-coordinator ./coordinator`
 - For the repository-selected full gate, use the command in [`../../fleet.md`](../../fleet.md#verification); it requires the project test environment and is not a coordinator-only check.
 

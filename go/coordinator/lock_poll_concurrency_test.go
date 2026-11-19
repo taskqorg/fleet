@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	if testPGDir != "" && testPGBin != "" {
 		cmd := osexec.Command(filepath.Join(testPGBin, "pg_ctl"), "-D", testPGDir, "-m", "immediate", "-w", "stop")
+		cmd.Env = pgChildEnv()
 		_ = cmd.Run()
 		_ = os.RemoveAll(testPGDir)
 	}
@@ -79,7 +80,7 @@ func findPostgresBinDir() (string, error) {
 func ensureTestPostgres(t *testing.T) (sockDir string, port int, binDir string) {
 	t.Helper()
 	if os.Geteuid() == 0 {
-		t.Skip("postgres initdb cannot run as root")
+		pgUnavailable(t, "postgres unavailable: initdb cannot run as root")
 	}
 	testPGOnce.Do(func() {
 		bin, err := findPostgresBinDir()
@@ -100,6 +101,7 @@ func ensureTestPostgres(t *testing.T) (sockDir string, port int, binDir string) 
 			return
 		}
 		initCmd := osexec.Command(filepath.Join(bin, "initdb"), "-D", dir, "-U", "postgres", "-A", "trust", "-E", "UTF8", "--no-instructions", "--no-sync")
+		initCmd.Env = pgChildEnv()
 		if out, err := initCmd.CombinedOutput(); err != nil {
 			_ = os.RemoveAll(dir)
 			testPGErr = fmt.Errorf("initdb: %v: %s", err, out)
@@ -107,6 +109,7 @@ func ensureTestPostgres(t *testing.T) (sockDir string, port int, binDir string) 
 		}
 		pgOpts := fmt.Sprintf("-k %s -p %d -c listen_addresses= -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=200", dir, p)
 		startCmd := osexec.Command(filepath.Join(bin, "pg_ctl"), "-D", dir, "-l", filepath.Join(dir, "server.log"), "-w", "-o", pgOpts, "start")
+		startCmd.Env = pgChildEnv()
 		if out, err := startCmd.CombinedOutput(); err != nil {
 			_ = os.RemoveAll(dir)
 			testPGErr = fmt.Errorf("pg_ctl start: %v: %s", err, out)
@@ -117,7 +120,7 @@ func ensureTestPostgres(t *testing.T) (sockDir string, port int, binDir string) 
 		testPGPort = p
 	})
 	if testPGErr != nil {
-		t.Skipf("postgres unavailable: %v", testPGErr)
+		pgUnavailable(t, "postgres unavailable: %v", testPGErr)
 	}
 	return testPGDir, testPGPort, testPGBin
 }
@@ -126,6 +129,7 @@ func runTestPSQL(t *testing.T, binDir, sockDir string, port int, db, user, sqlIn
 	t.Helper()
 	args := []string{"-h", sockDir, "-p", fmt.Sprintf("%d", port), "-U", user, "-d", db, "-v", "ON_ERROR_STOP=1", "-At"}
 	cmd := osexec.Command(filepath.Join(binDir, "psql"), args...)
+	cmd.Env = pgChildEnv()
 	cmd.Stdin = strings.NewReader(sqlInput)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
