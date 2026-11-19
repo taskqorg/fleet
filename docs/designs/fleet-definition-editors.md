@@ -34,11 +34,14 @@ This design adds those operations. Saved definitions live in the coordinator's d
 10. History says who or what made each revision: a person, an agent (with its execution), Lab (with its experiment) or the release seed.
 7. Every execution records the kind, id, revision and content hash of each definition it resolved (for a pipeline run: the pipeline and the profile of every agent step).
 8. A draft can run (pipeline) or open a test session (agent) without being saved; the run records the draft content and its diff from the base.
+11. The [library](#library) answers, for agents, skills and pipelines: what we have, what each is for, which are active, what each is chosen for, and which wait for a change to be taken. Every answer is an operation first (agents read it through MCP), a screen second.
+12. A change shipped in the repository reaches the active definitions in one action over many definitions, and a definition made in Fleet reaches the repository in one action, so a skill added once is used by every agent that should carry it.
+13. Lab variants do not crowd the library: each names the definition it varies and the experiment it serves.
 
 ## Non-Goals
 
 * Files in `config/agents/` that are not profiles (today `design-rules-data.json`, profile data read by `design-rules`). They stay shipped files.
-* The skills editor (D20: not designed). The `kind` enum leaves room; no operation handles skills now. A skill is a directory, not one JSON file, so when it becomes a definition its revision holds rows of `(revision, path, content)` (one per file, text stored as text, not as a JSON blob), and the diff is per file in its own format. The `definition_revision` row then carries no `content` for skills; a `definition_file` table carries the files.
+* Editing a skill's files in Fleet. Skills are read, used and rolled out through the [library](#library); their text changes in the repository. The `kind` enum leaves room. A skill is a directory, not one JSON file, so when it becomes a definition its revision holds rows of `(revision, path, content)` (one per file, text stored as text, not as a JSON blob), and the diff is per file in its own format. The `definition_revision` row then carries no `content` for skills; a `definition_file` table carries the files.
 * Opening a pull request on the code repository. The mirror repository carries history and review; export to the code repository stays a patch.
 * The mirror in stage 1. It is stage 2, optional.
 * Reading anything back from the mirror repository. A commit made there by hand is never applied (one direction only; see "Mirror to the config repository").
@@ -85,6 +88,18 @@ This design adds those operations. Saved definitions live in the coordinator's d
 *   **Given**: three saves happened today; the private config repository has one commit for each, authored by the people who saved. The three definitions are ahead of the code repository's `config/`.
 *   **When**: a developer wants them in the code repository's seed, and the owner presses Export.
 *   **Then**: `definition_export` returns one unified diff against the shipped files and the list of definitions it covers; the owner downloads or copies it and runs `git apply -3` (the patch carries blob `index` lines, so a three-way apply works after main has moved). After the next release ships those files, reconcile marks each definition `synced` without a new revision.
+
+### CUJ 7: Take a shipped skill into every agent that carries it
+
+*   **Given**: a release adds the skill `modern-web-guidance` to nine agent files; the store keeps each agent's earlier revision, so all nine are `repository-changed` and new tasks still start without the skill.
+*   **When**: the owner (or the PM agent) opens the library, sees "9 agents have a newer version in the repository" with the cause, previews the nine diffs and takes them in one action with one message.
+*   **Then**: each agent has a new revision whose `repoSha` is the shipped file; tasks that start after it carry the skill, running tasks keep theirs; the skill's row shows 9 of 9 active.
+
+### CUJ 8: Save what was made in Fleet to the repository
+
+*   **Given**: 23 agents and 7 pipelines exist only in the store, among them the two pipelines that ran most this month.
+*   **When**: the owner presses "Save to the repository" on the library or the Changes screen.
+*   **Then**: `definition_export` returns one patch for them; a worker task applies it on a branch and opens the pull request; after the release ships the files, each definition is `synced`.
 
 ## Technical Plan (Architecture)
 
@@ -478,6 +493,36 @@ Operations:
 * **Comparison presentation.** Existing `comparison` statistics compare against the first persisted variant. Richer `baseline`/`vsBaseline` metrics below remain outside this implementation. The Lab draft exposes user-entered goal/hypothesis through existing durable amendments before explicit Launch; creating a comparison never starts provider work.
 * **Promote.** In one `writeTxAs`, `expPromote` calls the save function for the catalogue (source `lab`, actor the person, message `Promote <variant> from <experiment>`), adding the method or updating the one with the same config ref (`pipeline` written as `<pipeline id>.json`), then sets the recommendation by a direct call; `catalogue()` reads the new head inside that transaction, so `recommendation_set`'s "Method unavailable" check passes. The reply returns the method and the catalogue revision instead of `cataloguePatch`. A matching catalogue identity is reused only with runnable-equivalent pipeline/overrides. Bands remain a Lab scoring setting: Promote removes them with a note and retains the source link; incompatible banded source scores are not substituted as runnable-method quality. Repeated Promote finds the runnable-equivalent method even when an older explicit-reference collision exists.
 
+### Library
+
+Requirements for the library of agents, skills and pipelines (the Agents and Pipelines screens, [agents](../design-system/pages/agents.md), [pipelines](../design-system/pages/pipelines.md)). Storage and entities are decided when the operations are built; the [open questions](#open-questions) list what is not decided.
+
+**What a definition says about itself.** Each agent and pipeline carries, in its content (so a change is a revision, diffs and exports like any field):
+
+* `purpose`: one line in plain words, what the definition is for ("Codes in a project worktree and delivers a reviewed pull request").
+* `category`: the kind of work, one of a short list the owner edits (today: coordination, worker, reviewer, researcher, design and websites, Lab helper for agents; Lab runner, judge and examples, research, 3D and images, language checks, checks for pipelines). It is not a project role: a project's `roles` map a role name to one profile ([configuration](../configuration.md)).
+* `tags`: free words for filters (`skill:` and `harness:` filters come from the content, not from tags).
+* `icon` and `monogram` (agents): one icon from the `packages/ui` set and one or two letters, drawn as the agent's mark wherever it is named. Unset, the monogram comes from the id and the icon from the category.
+* `variantOf` and `experiment`: a Lab variant names the definition it varies and the experiment that made it.
+
+**Agents.**
+
+* The list groups by category, active first. An agent is *active* when it ran in the last 30 days or something names it (below); otherwise *unused*. Facets: active, unused, update waiting (`repository-changed`), store only, Lab. Each row: mark, id, purpose, a count of folded variants, an "update" mark when the repository has a newer version, 30-day runs and list price.
+* Variants (`variantOf` set) leave the main list: the base row counts them and the agent's detail lists them; the experiment lists its own in Lab. A variant made before `variantOf` existed is matched by its experiment's variants and its id prefix once, when the field is added.
+* *Chosen for* lists every place that names the agent: project roles, conversation presets (project and system), pipeline steps, catalogue methods. It extends `definition_usage` `usedBy`.
+* With nothing open, the work area summarises the library ([list and detail](../design-system/patterns/list-detail.md)): agents waiting for a repository version with the change that caused it, where the month's spend went, agents nothing names, and the Lab variants folded away.
+
+**Skills.** A skill appears in the library as a definition of kind `skill`: its description, its files, the agents whose content names it (active revision and repository version apart), and its state. A skill added in the repository shows how far it has reached: merged, then *k of n* agents active. Adding a skill "to agents by name or by category" makes one new revision per agent in one action. A skill states what it needs from the agent (for example a shell); an agent without it is left out with the reason (`claude-reviewer` has no Bash for `modern-web-guidance`). A skill no agent names is *unused*.
+
+**Pipelines.** The list groups by category. Each row: id, where it lives (store only or repository), its steps as one chain (`agent codex-judge`, `api web_search`, `script`), 30-day runs and list price. With nothing open, the work area shows the pipelines that ran but live only in the store, the methods per capability with their assessment state, and which agents the steps use.
+
+**Bulk actions.** Every action is one operation over a list of definitions, previewed first, with one message:
+
+* *Take the repository version* (`definition_take_repository {keys[], message, preview}`, proposed): for each `repository-changed` key, one save with the shipped content and `repoSha`, as CUJ 3's "take repository". A key whose head moved since the preview is refused with 409 and the rest go on.
+* *Save to the repository*: `definition_export` over the keys; opening the pull request is a worker's task (the coordinator writes no git, Non-Goals).
+* *Add a skill to agents* (`definition_add_skill {skill, agents[] | category, message, preview}`, proposed): one revision per agent that lacks it and can run it.
+* *Retire Lab variants*: `definition_delete` for the variants of a decided experiment that nothing else names.
+
 ### Live updates
 
 The SSE `Change` type (lane F) gains kind `definition` with `{kind, id, revision, state}`, from a `definition_change` trigger on the `definition` table using the existing `fleet_change()` function, as `experiment` and `score` do. Draft changes are not broadcast; the editor that wrote the draft has the reply. The screens refetch `definition_list` rows by key, as other screens do.
@@ -644,6 +689,7 @@ All operations above are in the `ops` contract with generated Go and TypeScript 
 
 * **Catalogue file shape with more than one capability.** The catalogue is one definition for one file. When a second capability is added, the file shape changes (an array, or one file per capability), and so does `CatalogueDefinition`. Decide then.
 * **When to build the mirror (stage 2).** After stage 1 has run for a while; the owner decides.
+* **Library fields and skill rows.** Whether `purpose`, `category`, `tags`, `icon`, `monogram`, `variantOf` and `experiment` stay in the definition content or move to `definition` columns; where the owner's category list lives; whether skills get the `definition_file` rows planned under Non-Goals or a read-only view over the shipped `config/skills/` first. Decide when the library operations are built.
 
 ## Project management
 

@@ -284,6 +284,19 @@ Promote saves the variant as a catalogue method (pipeline, overrides, `config_re
 
 Catalogue method comparisons use `lab_compare_methods {projectId, capability, methods, baseline?, useCase?}`. The architect selects an approved use case explicitly where no structured mapping exists. Its registry checks supply explicit evaluator forms via `metric`; unsupported, missing or empty checks are refused before creating an experiment. Creation stores an unlaunched ordinary experiment, with baseline first and actual pipeline/overrides per variant. Legacy variants use the experiment pipeline. Catalogue linkage is separate from actual execution digests and pinned definition refs; local-suffix recovery never treats catalogue identity as runtime proof.
 
+**Questions view.** The experiments list reads as the questions Lab answers. A row is one series (`lab_group`; an experiment without one is its own series), titled by the newest experiment's `goal`, written as a question ("Does a Gemini reviewer next to Codex catch regressions Codex alone misses?"), with the series name, its number of experiments and its answer: the newest `decision`, or how many wait for one. Rows group by answer state: waiting for a decision, answered, stopped; facets give the counts. The row opens the newest experiment and lists the others.
+
+The opened experiment reads top to bottom as question, design, runs, scores, answer:
+
+* **Question:** goal and hypothesis as written at launch, with amendments marked.
+* **Steps:** one line each for question (goal and hypothesis set), design (variants × examples × repeats), runs (k of n trials succeeded), scores (per evaluator) and decision, each with its state.
+* **Answer:** the `decision` in words ("inconclusive; no change to the review method"), `decision_reason`, who decided and when; while pending, the proposal and the confirm or override action (`lab_experiment_decide`).
+* **Comparison:** one column per variant and one row per fact that differs or was scored: model, each example's outcome, each evaluator, median time, cost with basis (`not priced` when unpriced).
+* **Confounders:** a warning when trials of the compared variants ran on different hosts, harness versions or models, naming which.
+* **Variants as agents:** the agent and pipeline variants the experiment made ([library](fleet-definition-editors.md#library) `variantOf`); after a decision, an action retires those nothing else names.
+
+The detail matrix and spend stay as described above, under the answer. The questions view is read through `lab_experiments_list` and `lab_experiment_get`; the same fields are what an agent reads.
+
 The draft screen saves the person's goal and hypothesis through existing experiment amendments, then exposes explicit Launch after durable saves. No hypothesis is generated. Catalogue assessments show compatible observed partial means with eligible/expected population and exclusions, without pooling projects/configurations/evaluator versions. A banded source stripped by Promote remains a visible provenance link with a configuration-difference reason rather than incompatible headline quality.
 
 ## Claude on WSL (R3.8)

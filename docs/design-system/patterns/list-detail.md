@@ -6,7 +6,7 @@
 
 **Composition.**
 * **Control column,** `size-ctl` wide: the section title, then search, filters, counters and grouping ([list view](list-view.md)), then the list. A virtual list fills the rest of the column and is its only scroller; a short hand-built catalogue (Hosts, API keys) scrolls with the column.
-* **Work area,** the remaining width: the opened item (OR-27). With nothing opened it shows one quiet line, or the section's reference page (Lab shows the use-case registry), never a second copy of the list.
+* **Work area,** the remaining width: the opened item (OR-27). With nothing opened it shows the section's summary: what needs a look there, then its reference page (Lab shows the use-case registry), never a placeholder such as "Pick a row" and never a second copy of the list.
 
 **Catalogue row.** One line, `size-row` high, `size-row-phone` on touch (a hand-built row takes that as its least height and grows when its facts wrap): the title, then its ID, which is never cut or wrapped (OR-38); a longer secondary text after the title (`.sub`) is cut before the title is; other facts sit in the service zone. The state icon stays leftmost and the service zone stays on the right (OR-21, OR-22). The list has no column heads. The whole row opens the item (OR-26).
 
