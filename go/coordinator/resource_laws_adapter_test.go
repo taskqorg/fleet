@@ -30,7 +30,9 @@ func lawAttach(e *lawEnv, a *App) {
 func lawPass(ctx context.Context, e *lawEnv, a *App) error { return kitOf(a).pass(ctx) }
 
 // lawStep runs the replacement of one execution on its own.
-func lawStep(ctx context.Context, e *lawEnv, a *App, id string) error { return resourceReplace(ctx, a, id) }
+func lawStep(ctx context.Context, e *lawEnv, a *App, id string) error {
+	return resourceReplace(ctx, a, id)
+}
 
 // lawAdvance moves the processor's clock forward by d (the harness adds d to e.now).
 func lawAdvance(e *lawEnv, d time.Duration) {}

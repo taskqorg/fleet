@@ -1176,7 +1176,7 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 		for _, v := range []struct {
 			m string
 			v *int64
-		}{{"start", c.StartedMs}, {"end", c.EndedMs}, {"peakMemory", resourceInt(json.Number(deref(c.Metrics["peakMemoryBytes"].Value)))}} {
+		}{{"start", c.StartedMs}, {"end", c.EndedMs}, {"peakMemory", resourceInteger((*json.Number)(c.Metrics["peakMemoryBytes"].Value))}} {
 			if v.v != nil {
 				key := [2]string{v.m, fmt.Sprint(*v.v)}
 				if extremes[key] += sign; extremes[key] == 0 {

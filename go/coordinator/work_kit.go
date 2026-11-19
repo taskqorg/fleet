@@ -191,6 +191,11 @@ func (k *workKit) queue(name string) *kitQueue {
 	panic("no resource queue " + name)
 }
 
+// read runs fn in one read-only transaction.
+func (k *workKit) read(ctx context.Context, fn func(q *Request) error) error {
+	return runTxLocksOnce(ctx, k.a, nil, false, nil, fn)
+}
+
 // tx runs fn in one write transaction attempt.
 func (k *workKit) tx(ctx context.Context, fn func(q *Request) error) error {
 	return runTxLocksOnce(ctx, k.a, nil, true, nil, fn)
@@ -209,7 +214,7 @@ func (k *workKit) pass(ctx context.Context) error {
 			continue
 		}
 		var claims []*kitClaim
-		err := runTxLocksOnce(ctx, k.a, nil, false, nil, func(r *Request) error {
+		err := k.read(ctx, func(r *Request) error {
 			var err error
 			claims, err = q.Due(r, now, q.Limit)
 			return err
@@ -327,6 +332,11 @@ func (k *workKit) step(ctx context.Context, q *kitQueue, now time.Time, c *kitCl
 // selection) keeps its pause.
 func kitReset(q *Request, rt kitRetry, key string, now time.Time) error {
 	return exec(q, `UPDATE `+rt.Table+` SET attempts=0,`+rt.Error+`=NULL WHERE `+rt.Key+`=$1 AND next_attempt_at<=$2 AND (attempts<>0 OR `+rt.Error+` IS NOT NULL)`, key, now)
+}
+
+// kitRestart: an item started afresh by its owner (a rebuilt project) is due at now with no attempts.
+func kitRestart(q *Request, rt kitRetry, key string, now time.Time) error {
+	return exec(q, `UPDATE `+rt.Table+` SET attempts=0,next_attempt_at=$2,`+rt.Error+`=NULL WHERE `+rt.Key+`=$1`, key, now)
 }
 
 // fail writes one failure of c: one guarded statement in its own transaction, so it records nothing once the guard

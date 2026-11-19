@@ -93,37 +93,142 @@ func resourceSHA(v any) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
-func resourceNum(v any) *string {
-	if n, ok := v.(json.Number); ok {
-		s := string(n)
-		return &s
+
+// resourceLeaf: one source leaf as resourceSourceSQL reads it (analyticsBaseLeavesSelect with exact numerics, plus the
+// totals fields it adds). A number stays its exact decimal text; a missing value is nil.
+type resourceLeaf struct {
+	ProjectID           *string            `json:"project_id"`
+	Kind                string             `json:"kind"`
+	State               string             `json:"state"`
+	HasTotals           bool               `json:"has_totals"`
+	SystemActor         *string            `json:"system_actor"`
+	StartedMs           *json.Number       `json:"started_ms"`
+	EndedMs             *json.Number       `json:"ended_ms"`
+	Model               *string            `json:"model"`
+	Provider            *string            `json:"provider"`
+	Connection          *string            `json:"connection"`
+	ToolName            *string            `json:"tool_name"`
+	IsSub               bool               `json:"is_sub"`
+	TokensInput         *json.Number       `json:"tokens_input"`
+	TokensInputBasis    string             `json:"tokens_input_basis"`
+	TokensOutput        *json.Number       `json:"tokens_output"`
+	TokensOutputBasis   string             `json:"tokens_output_basis"`
+	TokensCacheRead     *json.Number       `json:"tokens_cache_read"`
+	TokensCacheRBasis   string             `json:"tokens_cache_read_basis"`
+	TokensCacheWrite    *json.Number       `json:"tokens_cache_write"`
+	TokensCacheWBasis   string             `json:"tokens_cache_write_basis"`
+	TokensReasoning     *json.Number       `json:"tokens_reasoning"`
+	TokensReasonBasis   string             `json:"tokens_reasoning_basis"`
+	WallMs              *json.Number       `json:"wall_ms"`
+	WallMsBasis         string             `json:"wall_ms_basis"`
+	ActiveMs            *json.Number       `json:"active_ms"`
+	ActiveMsBasis       string             `json:"active_ms_basis"`
+	ApiMs               *json.Number       `json:"api_ms"`
+	ApiMsBasis          string             `json:"api_ms_basis"`
+	CpuMs               *json.Number       `json:"cpu_ms"`
+	CpuMsBasis          string             `json:"cpu_ms_basis"`
+	CpuMissingReason    *string            `json:"cpu_missing_reason"`
+	PeakMemory          *json.Number       `json:"peak_memory_bytes"`
+	PeakMemoryBasis     string             `json:"peak_memory_bytes_basis"`
+	MemoryMissingReason *string            `json:"memory_missing_reason"`
+	TurnCount           *json.Number       `json:"turn_count"`
+	TurnCountBasis      string             `json:"turn_count_basis"`
+	Credits             *json.Number       `json:"credits"`
+	ConnectionCost      *json.RawMessage   `json:"connection_cost"`
+	ConnectionCostBasis string             `json:"connection_cost_basis"`
+	HistoryIncomplete   resourceCount      `json:"history_incomplete"`
+	ToolCalls           *resourceToolCalls `json:"tool_calls"`
+	ToolCallsBasis      string             `json:"tool_calls_basis"`
+	DirectCurrency      *string            `json:"direct_currency"`
+	DirectAmount        *json.Number       `json:"direct_amount"`
+	ConnSubject         string             `json:"conn_subject"`
+	ConnUnit            *string            `json:"conn_unit"`
+	ConnAmount          *json.Number       `json:"conn_amount"`
+}
+
+// resourceToolCalls: execution_totals.tool_calls. Its shape is not enforced at write time, so any part that is not the
+// expected object or integer reads as empty or 0.
+type resourceToolCalls struct {
+	ByTool resourceByTool    `json:"byTool"`
+	Other  resourceCallCount `json:"other"`
+}
+
+type resourceByTool map[string]resourceCallCount
+
+type resourceCallCount struct {
+	Calls  resourceCount `json:"calls"`
+	Errors resourceCount `json:"errors"`
+}
+
+// resourceCount: a JSON integer, or 0 for anything else.
+type resourceCount int64
+
+func (n *resourceCount) UnmarshalJSON(b []byte) error {
+	v, err := strconv.ParseInt(string(b), 10, 64)
+	if err != nil {
+		v = 0
+	}
+	*n = resourceCount(v)
+	return nil
+}
+
+func (t *resourceToolCalls) UnmarshalJSON(b []byte) error {
+	type plain resourceToolCalls
+	var p plain
+	if json.Unmarshal(b, &p) != nil {
+		p = plain{}
+	}
+	*t = resourceToolCalls(p)
+	return nil
+}
+
+func (m *resourceByTool) UnmarshalJSON(b []byte) error {
+	var v map[string]json.RawMessage
+	*m = resourceByTool{}
+	if json.Unmarshal(b, &v) != nil {
+		return nil
+	}
+	for name, raw := range v {
+		var c resourceCallCount
+		_ = json.Unmarshal(raw, &c)
+		(*m)[name] = c
 	}
 	return nil
 }
-func resourceText(v any) *string {
-	if s, ok := v.(string); ok {
-		return &s
+
+func (c *resourceCallCount) UnmarshalJSON(b []byte) error {
+	type plain resourceCallCount
+	var p plain
+	if json.Unmarshal(b, &p) != nil {
+		p = plain{}
 	}
+	*c = resourceCallCount(p)
 	return nil
 }
-func resourceInt(v any) *int64 {
-	if n := resourceNum(v); n != nil {
-		i, e := strconv.ParseInt(*n, 10, 64)
-		if e == nil {
-			return &i
-		}
-	}
-	return nil
-}
-func resourceCount(v any) int64 {
-	n := resourceInt(v)
+
+// resourceDecimal: the exact decimal text of n, or nil.
+func resourceDecimal(n *json.Number) *string {
 	if n == nil {
-		return 0
+		return nil
 	}
-	return *n
+	s := string(*n)
+	return &s
 }
-func resourceBasis(v any) contract.ResourceBasis {
-	b := contract.ResourceBasis(astr(v))
+
+// resourceInteger: n as an integer, or nil when it is missing or not one.
+func resourceInteger(n *json.Number) *int64 {
+	if n == nil {
+		return nil
+	}
+	i, err := strconv.ParseInt(string(*n), 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &i
+}
+
+func resourceBasis(s string) contract.ResourceBasis {
+	b := contract.ResourceBasis(s)
 	if !b.Valid() {
 		return contract.ResourceBasisUnavailable
 	}
@@ -177,54 +282,51 @@ func decimalArithmetic(a, b string, multiply bool) (string, error) {
 
 func resourceContribution(id string, s resourceSnapshot) (contract.ResourceContributionV1, contract.ResourceMethodV1, error) {
 	c := contract.ResourceContributionV1{SchemaVersion: 1, ExecutionId: id, Metrics: map[string]contract.ResourceMetricV1{}, Tools: []contract.ResourceToolV1{}, Costs: []contract.ResourceCostV1{}}
-	var l map[string]any
-	dec := json.NewDecoder(bytes.NewReader(s.Leaf))
-	dec.UseNumber()
-	if err := dec.Decode(&l); err != nil {
+	var l *resourceLeaf
+	if err := json.Unmarshal(s.Leaf, &l); err != nil {
 		return c, contract.ResourceMethodV1{}, err
 	}
 	if l == nil {
 		return c, contract.ResourceMethodV1{}, nil
 	}
-	c.ProjectId = resourceText(l["project_id"])
-	c.Kind = astr(l["kind"])
-	c.State = astr(l["state"])
-	c.HasTotals, _ = l["has_totals"].(bool)
+	c.ProjectId = l.ProjectID
+	c.Kind = l.Kind
+	c.State = l.State
+	c.HasTotals = l.HasTotals
 	// Fleet's own background calls (system_actor) are not the project's work (docs/designs/fleet-analytics.md, System activity).
-	c.Included = c.ProjectId != nil && c.Kind != "pipeline_run" && c.Kind != "pipeline_step" && (c.Kind != "child_agent" || c.HasTotals) && l["system_actor"] == nil
-	c.StartedMs = resourceInt(l["started_ms"])
-	c.EndedMs = resourceInt(l["ended_ms"])
-	c.TokenActor = c.Kind == "agent_run" || c.Kind == "child_agent"
-	for _, k := range []string{"tokens_input", "tokens_output", "tokens_cache_read", "tokens_cache_write", "tokens_reasoning"} {
-		c.TokenActor = c.TokenActor || l[k] != nil
-	}
+	c.Included = c.ProjectId != nil && c.Kind != "pipeline_run" && c.Kind != "pipeline_step" && (c.Kind != "child_agent" || c.HasTotals) && l.SystemActor == nil
+	c.StartedMs = resourceInteger(l.StartedMs)
+	c.EndedMs = resourceInteger(l.EndedMs)
+	c.TokenActor = c.Kind == "agent_run" || c.Kind == "child_agent" || l.TokensInput != nil || l.TokensOutput != nil || l.TokensCacheRead != nil || l.TokensCacheWrite != nil || l.TokensReasoning != nil
 	c.ProcessActor = c.Kind != "tool_run"
 	c.ToolActor = c.Kind == "agent_run" || c.Kind == "child_agent" || c.Kind == "tool_run"
-	c.HistoryIncomplete = resourceCount(l["history_incomplete"]) != 0
+	c.HistoryIncomplete = l.HistoryIncomplete != 0
 	for _, m := range []struct {
-		name, col, reason string
-		expected          bool
+		name     string
+		value    *json.Number
+		basis    string
+		reason   *string
+		expected bool
 	}{
-		{"input", "tokens_input", "", c.TokenActor}, {"output", "tokens_output", "", c.TokenActor}, {"cacheRead", "tokens_cache_read", "", c.TokenActor}, {"cacheWrite", "tokens_cache_write", "", c.TokenActor}, {"reasoning", "tokens_reasoning", "", c.TokenActor},
-		{"wallMs", "wall_ms", "", true}, {"activeMs", "active_ms", "", true}, {"apiMs", "api_ms", "", true},
-		{"cpuMs", "cpu_ms", "cpu_missing_reason", c.ProcessActor}, {"peakMemoryBytes", "peak_memory_bytes", "memory_missing_reason", c.ProcessActor},
-		{"turns", "turn_count", "", true}, {"credits", "credits", "", false},
+		{"input", l.TokensInput, l.TokensInputBasis, nil, c.TokenActor}, {"output", l.TokensOutput, l.TokensOutputBasis, nil, c.TokenActor},
+		{"cacheRead", l.TokensCacheRead, l.TokensCacheRBasis, nil, c.TokenActor}, {"cacheWrite", l.TokensCacheWrite, l.TokensCacheWBasis, nil, c.TokenActor},
+		{"reasoning", l.TokensReasoning, l.TokensReasonBasis, nil, c.TokenActor},
+		{"wallMs", l.WallMs, l.WallMsBasis, nil, true}, {"activeMs", l.ActiveMs, l.ActiveMsBasis, nil, true}, {"apiMs", l.ApiMs, l.ApiMsBasis, nil, true},
+		{"cpuMs", l.CpuMs, l.CpuMsBasis, l.CpuMissingReason, c.ProcessActor}, {"peakMemoryBytes", l.PeakMemory, l.PeakMemoryBasis, l.MemoryMissingReason, c.ProcessActor},
+		{"turns", l.TurnCount, l.TurnCountBasis, nil, true}, {"credits", l.Credits, l.ConnectionCostBasis, nil, false},
 	} {
-		v := resourceNum(l[m.col])
+		v := resourceDecimal(m.value)
 		if !m.expected && m.name != "credits" {
 			v = nil
 		}
-		b := resourceBasis(l[m.col+"_basis"])
-		if m.name == "credits" {
-			b = resourceBasis(l["connection_cost_basis"])
-		}
+		b := resourceBasis(m.basis)
 		if v == nil {
 			b = contract.ResourceBasisUnavailable
 		}
-		c.Metrics[m.name] = contract.ResourceMetricV1{Value: v, Basis: b, Expected: m.expected, Reason: resourceText(l[m.reason])}
+		c.Metrics[m.name] = contract.ResourceMetricV1{Value: v, Basis: b, Expected: m.expected, Reason: m.reason}
 	}
 	if c.Kind == "tool_run" {
-		name := astr(l["tool_name"])
+		name := deref(l.ToolName)
 		if name == "" {
 			name = "tool_run"
 		}
@@ -232,17 +334,13 @@ func resourceContribution(id string, s resourceSnapshot) (contract.ResourceContr
 		if c.State == "failed" || c.State == "cancelled" {
 			e = 1
 		}
-		c.Tools = append(c.Tools, contract.ResourceToolV1{Connection: astr(l["connection"]), Name: name, Calls: 1, Errors: e})
-	} else if c.ToolActor && l["tool_calls"] != nil {
-		tc, _ := l["tool_calls"].(map[string]any)
-		bt, _ := tc["byTool"].(map[string]any)
-		for name, raw := range bt {
-			v, _ := raw.(map[string]any)
-			c.Tools = append(c.Tools, contract.ResourceToolV1{Name: name, Calls: resourceCount(v["calls"]), Errors: resourceCount(v["errors"])})
+		c.Tools = append(c.Tools, contract.ResourceToolV1{Connection: deref(l.Connection), Name: name, Calls: 1, Errors: e})
+	} else if c.ToolActor && l.ToolCalls != nil {
+		for name, v := range l.ToolCalls.ByTool {
+			c.Tools = append(c.Tools, contract.ResourceToolV1{Name: name, Calls: int64(v.Calls), Errors: int64(v.Errors)})
 		}
-		other, _ := tc["other"].(map[string]any)
-		c.OtherCalls = resourceCount(other["calls"])
-		c.OtherErrors = resourceCount(other["errors"])
+		c.OtherCalls = int64(l.ToolCalls.Other.Calls)
+		c.OtherErrors = int64(l.ToolCalls.Other.Errors)
 	}
 	sort.Slice(c.Tools, func(i, j int) bool {
 		if c.Tools[i].Name != c.Tools[j].Name {
@@ -255,8 +353,8 @@ func resourceContribution(id string, s resourceSnapshot) (contract.ResourceContr
 		calls.Add(calls, big.NewInt(t.Calls))
 		errs.Add(errs, big.NewInt(t.Errors))
 	}
-	tb := resourceBasis(l["tool_calls_basis"])
-	present := c.ToolActor && (c.Kind == "tool_run" || l["tool_calls"] != nil)
+	tb := resourceBasis(l.ToolCallsBasis)
+	present := c.ToolActor && (c.Kind == "tool_run" || l.ToolCalls != nil)
 	if c.Kind == "tool_run" && tb == contract.ResourceBasisUnavailable {
 		tb = contract.ResourceBasisMeasured
 	}
@@ -276,7 +374,7 @@ func resourceContribution(id string, s resourceSnapshot) (contract.ResourceContr
 		}
 		c.Metrics[k] = contract.ResourceMetricV1{Value: &n, Basis: contract.ResourceBasisMeasured, Expected: true}
 	}
-	method := contract.ResourceMethodV1{SchemaVersion: 1, Model: resourceText(l["model"]), Connection: resourceText(l["connection"]), Provider: resourceText(l["provider"]), Components: s.Candidates}
+	method := contract.ResourceMethodV1{SchemaVersion: 1, Model: l.Model, Connection: l.Connection, Provider: l.Provider, Components: s.Candidates}
 	if method.Components == nil {
 		method.Components = []contract.ResourceMethodComponentV1{}
 	}
@@ -289,8 +387,8 @@ func resourceContribution(id string, s resourceSnapshot) (contract.ResourceContr
 	return c, method, nil
 }
 
-func resourceValueCosts(c *contract.ResourceContributionV1, l map[string]any, m contract.ResourceMethodV1) error {
-	sub, _ := l["is_sub"].(bool)
+func resourceValueCosts(c *contract.ResourceContributionV1, l *resourceLeaf, m contract.ResourceMethodV1) error {
+	sub := l.IsSub
 	add := func(currency *string, basis contract.ResourceBasis, amount *string, ref *contract.ResourcePriceRefV1, unpriced int64) error {
 		if amount == nil {
 			basis = contract.ResourceBasisUnavailable
@@ -343,22 +441,25 @@ func resourceValueCosts(c *contract.ResourceContributionV1, l map[string]any, m 
 		}
 		return add(nil, contract.ResourceBasisUnavailable, nil, nil, 1)
 	}
-	if c.Kind == "tool_run" || l["connection_cost"] != nil {
-		if currency := resourceText(l["direct_currency"]); currency != nil {
+	if c.Kind == "tool_run" || l.ConnectionCost != nil {
+		if currency := l.DirectCurrency; currency != nil {
 			b := contract.ResourceBasisMeasured
 			if sub {
 				b = contract.ResourceBasisSubscription
 			}
-			if err := add(currency, b, resourceNum(l["direct_amount"]), nil, 0); err != nil {
+			if err := add(currency, b, resourceDecimal(l.DirectAmount), nil, 0); err != nil {
 				return err
 			}
-		} else if err := price(astr(l["conn_subject"]), astr(l["conn_unit"]), resourceNum(l["conn_amount"])); err != nil {
+		} else if err := price(l.ConnSubject, deref(l.ConnUnit), resourceDecimal(l.ConnAmount)); err != nil {
 			return err
 		}
 	} else {
 		observed := false
-		for _, p := range []struct{ col, unit string }{{"tokens_input", "input_tokens"}, {"tokens_output", "output_tokens"}, {"tokens_cache_read", "cache_read_tokens"}, {"tokens_cache_write", "cache_write_tokens"}} {
-			n := resourceNum(l[p.col])
+		for _, p := range []struct {
+			value *json.Number
+			unit  string
+		}{{l.TokensInput, "input_tokens"}, {l.TokensOutput, "output_tokens"}, {l.TokensCacheRead, "cache_read_tokens"}, {l.TokensCacheWrite, "cache_write_tokens"}} {
+			n := resourceDecimal(p.value)
 			if n != nil {
 				observed = true
 				r, ok := new(big.Rat).SetString(*n)
@@ -366,7 +467,7 @@ func resourceValueCosts(c *contract.ResourceContributionV1, l map[string]any, m 
 					return errors.New("invalid token decimal")
 				}
 				if r.Sign() > 0 {
-					if err := price(astr(l["model"]), p.unit, n); err != nil {
+					if err := price(deref(l.Model), p.unit, n); err != nil {
 						return err
 					}
 				}
@@ -715,7 +816,7 @@ func resourceWorkClaimsQ(q *Request, ids []string) ([]*kitClaim, error) {
 }
 
 func resourceWorkClaims(ctx context.Context, a *App, ids []string) (cs []*kitClaim, err error) {
-	err = runTxLocksOnce(ctx, a, nil, false, nil, func(q *Request) error { cs, err = resourceWorkClaimsQ(q, ids); return err })
+	err = kitOf(a).read(ctx, func(q *Request) error { cs, err = resourceWorkClaimsQ(q, ids); return err })
 	return cs, err
 }
 
@@ -1030,79 +1131,12 @@ const resourceProgressSQL = `SELECT EXISTS(SELECT 1 FROM resource_work_scope WHE
  OR EXISTS(SELECT 1 FROM resource_repair_scope WHERE project_id=$1)
  OR EXISTS(SELECT 1 FROM resource_metadata_repair WHERE NOT done)`
 
-// resourceBuildStep (build queue): one atomic page or checkpoint of a project's build, at most 100 source IDs.
+// resourceBuildStep (build queue): one transition of a project's build (buildTransition) under its project lock.
 func resourceBuildStep(q *Request, now time.Time, c *kitClaim) error {
-	p := c.Key
-	if err := kitLock(q, "project:"+p); err != nil {
+	if err := kitLock(q, "project:"+c.Key); err != nil {
 		return err
 	}
-	{
-		if err := resourceEnsureProject(q, p); err != nil {
-			return err
-		}
-		var generation, phase string
-		var after *string
-		var scanDone, ready bool
-		if err := q.tx.QueryRow(q.ctx(), `SELECT generation::text,phase,after_execution_id,scan_done,ready FROM resource_build WHERE project_id=$1 FOR UPDATE`, p).Scan(&generation, &phase, &after, &scanDone, &ready); err != nil {
-			return err
-		}
-		if phase == "ready" {
-			return nil
-		}
-		if phase == "clearing" {
-			// Delete disposable projection state in bounded key pages. Source work and valuation survive.
-			var removed int64
-			for _, table := range []struct{ name, order string }{{"resource_contribution", `execution_id COLLATE "C"`}, {"resource_metric", "metric,basis"}, {"resource_extreme", "metric,value"}, {"resource_tool", `name COLLATE "C",connection COLLATE "C"`}, {"resource_cost", "currency,basis"}, {"resource_price_ref", `currency,basis,price_id COLLATE "C",observed_at`}} {
-				ct, err := q.tx.Exec(q.ctx(), `DELETE FROM `+table.name+` WHERE ctid IN (SELECT ctid FROM `+table.name+` WHERE project_id=$1 ORDER BY `+table.order+` LIMIT 100)`, p)
-				if err != nil {
-					return err
-				}
-				removed += ct.RowsAffected()
-			}
-			if removed == 0 {
-				if err := exec(q, `UPDATE resource_project_summary SET executions=0,history_incomplete=0,other_calls=0,other_errors=0,tool_count=0,cost_count=0,price_count=0,header='{}',revision=0,published_at=NULL WHERE project_id=$1`, p); err != nil {
-					return err
-				}
-				return exec(q, `UPDATE resource_build SET phase='scanning',after_execution_id=NULL,scan_done=false,updated_at=clock_timestamp() WHERE project_id=$1`, p)
-			}
-			return exec(q, `UPDATE resource_build SET updated_at=clock_timestamp() WHERE project_id=$1`, p)
-		}
-		if !scanDone {
-			op, start := ">=", ""
-			if after != nil {
-				op, start = ">", *after
-			}
-			rs, err := q.tx.Query(q.ctx(), `SELECT id FROM execution WHERE project_id=$1 AND id COLLATE "C" `+op+` $2 COLLATE "C" ORDER BY id COLLATE "C" LIMIT 100`, p, start)
-			if err != nil {
-				return err
-			}
-			ids, err := pgx.CollectRows(rs, pgx.RowTo[string])
-			if err != nil {
-				return err
-			}
-			if err = resourceSeedWork(q, ids, "build", &generation, nil); err != nil {
-				return err
-			}
-			if len(ids) > 0 {
-				after = &ids[len(ids)-1]
-			}
-			return exec(q, `UPDATE resource_build SET after_execution_id=$2,scan_done=$3,phase=CASE WHEN $3 THEN 'draining' ELSE 'scanning' END,updated_at=clock_timestamp() WHERE project_id=$1`, p, after, len(ids) == 0)
-		}
-		var pending bool
-		if err := q.tx.QueryRow(q.ctx(), resourceProgressSQL, p).Scan(&pending); err != nil {
-			return err
-		}
-		if pending {
-			return exec(q, `UPDATE resource_build SET updated_at=clock_timestamp() WHERE project_id=$1`, p)
-		}
-		if err := exec(q, `UPDATE resource_build SET phase='ready',ready=true,updated_at=clock_timestamp() WHERE project_id=$1`, p); err != nil {
-			return err
-		}
-		if err := exec(q, `UPDATE resource_project_summary SET ready=true WHERE project_id=$1`, p); err != nil {
-			return err
-		}
-		return resourcePublish(q, p)
-	}
+	return buildTransition(q, c.Key, buildPage)
 }
 
 // resourceBuildPage runs one build step as a pass does, without writing a failure, waiting for its lock.
@@ -1111,19 +1145,16 @@ func resourceBuildPage(ctx context.Context, a *App, p string) error {
 	return k.step(ctx, k.queue("build"), k.now(), &kitClaim{Key: p})
 }
 
-// resourceRebuild is internal maintenance, never called by a reader. The new epoch stays
-// preparing until clearing, scan and drain complete. No frozen valuation or source work is erased.
+// resourceRebuild is internal maintenance, never called by a reader: a new generation and epoch start clearing; no
+// frozen valuation or source work is erased.
 func resourceRebuild(ctx context.Context, a *App, p string) error {
-	err := runTxLocks(ctx, a, nil, true, []string{"project:" + p}, func(q *Request) error {
-		if err := resourceEnsureProject(q, p); err != nil {
+	k := kitOf(a)
+	return runTxLocks(ctx, a, nil, true, []string{"project:" + p}, func(q *Request) error {
+		if err := buildTransition(q, p, buildRebuild); err != nil {
 			return err
 		}
-		if err := exec(q, `UPDATE resource_build SET generation=gen_random_uuid(),attempts=0,next_attempt_at=clock_timestamp(),phase='clearing',ready=false,scan_done=false,after_execution_id=NULL,last_error=NULL,updated_at=clock_timestamp() WHERE project_id=$1`, p); err != nil {
-			return err
-		}
-		return exec(q, `UPDATE resource_project_summary SET epoch=gen_random_uuid(),ready=false,build_generation=(SELECT generation FROM resource_build WHERE project_id=$1) WHERE project_id=$1`, p)
+		return kitRestart(q, k.queue("build").Retry, p, k.now())
 	})
-	return err
 }
 
 func resourceSeedWork(q *Request, ids []string, origin string, generation, repair *string) error {
@@ -1137,77 +1168,9 @@ func resourceSeedWork(q *Request, ids []string, origin string, generation, repai
  WHERE v.project_id IS NOT NULL ON CONFLICT DO NOTHING`, ids, origin, generation, repair)
 }
 
-// resourceRepairStep (repair queue): one atomic union page of a metadata repair over normalized old/new connection names
-// and full account IDs; a repair keeps its scopes until enumeration and all its seeded work drain.
+// resourceRepairStep (repair queue): one transition of a metadata repair (repairTransition).
 func resourceRepairStep(q *Request, now time.Time, c *kitClaim) error {
-	repair := c.Key
-	{
-		var old, new []byte
-		var after *string
-		var done bool
-		err := q.tx.QueryRow(q.ctx(), `SELECT old_class,new_class,after_execution_id,done FROM resource_metadata_repair WHERE repair_id=$1::uuid FOR UPDATE SKIP LOCKED`, repair).Scan(&old, &new, &after, &done)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if done {
-			// A repair scope remains pending until every seeded work UUID has drained.
-			return exec(q, `DELETE FROM resource_metadata_repair r WHERE repair_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM resource_work w WHERE w.repair_id=r.repair_id)`, repair)
-		}
-		accounts, connections := []string{}, []string{}
-		for _, raw := range [][]byte{old, new} {
-			var c struct {
-				AccountID      *string `json:"accountId"`
-				ConnectionName *string `json:"connectionName"`
-			}
-			if err = json.Unmarshal(raw, &c); err != nil {
-				return err
-			}
-			if c.AccountID != nil {
-				accounts = append(accounts, *c.AccountID)
-			}
-			if c.ConnectionName != nil {
-				connections = append(connections, *c.ConnectionName)
-			}
-		}
-		op, start := ">=", ""
-		if after != nil {
-			op, start = ">", *after
-		}
-		rs, err := q.tx.Query(q.ctx(), `SELECT id,project_id FROM execution WHERE id IN (
-   SELECT id FROM (
-    SELECT x.id FROM unnest($1::text[]) a(account) CROSS JOIN LATERAL (SELECT id FROM execution WHERE account_id=a.account AND id COLLATE "C" `+op+` $3 COLLATE "C" ORDER BY id COLLATE "C" LIMIT 100) x
-    UNION SELECT x.id FROM unnest($2::text[]) c(connection) CROSS JOIN LATERAL (SELECT id FROM execution WHERE data->>'connection'=c.connection AND id COLLATE "C" `+op+` $3 COLLATE "C" ORDER BY id COLLATE "C" LIMIT 100) x
-   ) ids ORDER BY id COLLATE "C" LIMIT 100) ORDER BY id COLLATE "C"`, accounts, connections, start)
-		if err != nil {
-			return err
-		}
-		type member struct {
-			id      string
-			project *string
-		}
-		members, err := pgx.CollectRows(rs, func(r pgx.CollectableRow) (member, error) { var m member; e := r.Scan(&m.id, &m.project); return m, e })
-		if err != nil {
-			return err
-		}
-		ids := []string{}
-		for _, m := range members {
-			ids = append(ids, m.id)
-		}
-		if err = resourceSeedWork(q, ids, "metadata", nil, &repair); err != nil {
-			return err
-		}
-		// Include accounted old scopes from the seeded work too; a concurrent move cannot release coverage.
-		if err = exec(q, `INSERT INTO resource_repair_scope(repair_id,project_id) SELECT DISTINCT w.repair_id,s.project_id FROM resource_work w JOIN resource_work_scope s USING(work_id) WHERE w.repair_id=$1::uuid ON CONFLICT DO NOTHING`, repair); err != nil {
-			return err
-		}
-		if len(ids) > 0 {
-			after = &ids[len(ids)-1]
-		}
-		return exec(q, `UPDATE resource_metadata_repair SET after_execution_id=$2,done=$3 WHERE repair_id=$1::uuid`, repair, after, len(ids) == 0)
-	}
+	return repairTransition(q, c.Key)
 }
 
 // resourceMetadataPage runs one repair step as a pass does, without writing a failure.

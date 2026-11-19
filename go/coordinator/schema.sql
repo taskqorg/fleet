@@ -2737,3 +2737,8 @@ BEGIN
   RAISE EXCEPTION 'migration 75: a policy still copies the project scope expression';
  END IF;
 END $$;
+
+-- migration 76: one owner per state (go/coordinator/DESIGN_RULES.md, R1). A build's ready was stored beside its phase and
+-- written by every transition; it is now derived from the phase, which buildTransition (resource_states.go) alone writes.
+ALTER TABLE resource_build DROP COLUMN ready;
+ALTER TABLE resource_build ADD COLUMN ready boolean GENERATED ALWAYS AS (phase = 'ready') STORED;
