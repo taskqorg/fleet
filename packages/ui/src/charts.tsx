@@ -32,7 +32,7 @@ export function capOf(values: (number | null | undefined)[], { q = 0.95, floor =
 /** The `f` quantile of xs (nearest rank: P50 of 4 values is the second); null for none. */
 export function quantile(xs: number[], f: number): number | null {
   if (!xs.length) return null;
-  const s = [...xs].sort((a, b) => a - b);
+  const s = xs.toSorted((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.max(0, Math.ceil(f * s.length) - 1))];
 }
 

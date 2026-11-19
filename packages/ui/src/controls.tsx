@@ -12,6 +12,10 @@ import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
 
+/** Enter that submits a text field: not the Enter that confirms an IME composition (CJK input, the emoji picker), which
+ * keydown reports with isComposing (keyCode 229 in Safari). modern-web-guidance: ime-safe-enter-submit. */
+export const isSubmitEnter = (e: KeyboardEvent) => e.key === 'Enter' && !e.isComposing && e.keyCode !== 229;
+
 /* ---------- Icon and button ---------- */
 
 /** Registry icon. With `label` it is meaningful (tooltip + accessible name); without, decorative. */
@@ -302,7 +306,7 @@ export function SearchBox({ label, value, onInput, onEnter, always }: { label: s
   return <label class="search" data-ui="search"><Icon name={actions.search} /><input type="search" value={value} placeholder={label} aria-label={label}
     ref={e => { if (grab.current && e) { grab.current = false; e.focus(); } }}
     onFocus={() => { clearTimeout(closing.current); setOpen(true); }} onBlur={() => { closing.current = setTimeout(() => setOpen(false), 250); }}
-    onKeyDown={e => { if (e.key === 'Enter') onEnter?.(); if (e.key === 'Escape') { onInput(''); (e.target as HTMLInputElement).blur(); } }}
+    onKeyDown={e => { if (isSubmitEnter(e)) onEnter?.(); if (e.key === 'Escape') { onInput(''); (e.target as HTMLInputElement).blur(); } }}
     onInput={e => onInput((e.target as HTMLInputElement).value)} /></label>;
 }
 
@@ -373,7 +377,7 @@ export function DecisionBlock(p: DecisionProps) {
             onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={e => { if (e.key === 'Enter') secret(); }} />
           <Button label="Add key" icon="shield" kind="primary" disabledReason={text.trim() ? undefined : 'paste the key first'} onClick={secret} />
         </> : <input value={text} placeholder="Answer" aria-label="Typed answer" onInput={e => setText((e.target as HTMLInputElement).value)}
-          onKeyDown={e => { if (e.key === 'Enter') send(text); }} />}
+          onKeyDown={e => { if (isSubmitEnter(e)) send(text); }} />}
       </div>
       {failed && <div class="error" role="alert">{failed}</div>}
     </div>
@@ -511,7 +515,7 @@ export function SettingField(p: SettingProps) {
         {edit === null
           ? <button type="button" id={id} class="value" onClick={() => setEdit(p.value)}>{p.value || (p.secret ? 'Paste' : '—')}</button>
           : <><input id={id} value={edit} type={(p.secret ? 'password' : 'text') as 'text'} autocomplete={p.secret ? 'off' : undefined} onInput={e => setEdit((e.target as HTMLInputElement).value)}
-              onKeyDown={e => { if (e.key === 'Enter') { p.onSave?.(edit); setEdit(null); } if (e.key === 'Escape') setEdit(null); }} />
+              onKeyDown={e => { if (isSubmitEnter(e)) { p.onSave?.(edit); setEdit(null); } if (e.key === 'Escape') setEdit(null); }} />
             <Button label="Save" kind="primary" onClick={() => { p.onSave?.(edit); setEdit(null); }} /><Button label="Cancel" kind="quiet" onClick={() => setEdit(null)} /></>}
         <StateBadge family="setting" state={s.kind} compact reason={s.kind === 'applied' ? exact(s.at) : s.kind === 'apply_error' ? s.error : undefined} />
         {s.kind === 'apply_error' && <Button label="Retry" icon={actions.retry} iconOnly />}
@@ -1061,7 +1065,7 @@ export function Presets({ system = [], presets, active, onPick, onSave, onUnpin,
       {naming === null
         ? <Button label="Save view" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
         : <span class="naming"><input value={naming} placeholder="View name" aria-label="View name" ref={e => e?.focus()} onInput={e => setNaming((e.target as HTMLInputElement).value)}
-            onKeyDown={e => { if (e.key === 'Enter' && naming.trim()) { onSave(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
+            onKeyDown={e => { if (isSubmitEnter(e) && naming.trim()) { onSave(naming.trim()); setNaming(null); } if (e.key === 'Escape') setNaming(null); }} />
           <Button label="Save" kind="primary" onClick={() => { if (naming.trim()) onSave(naming.trim()); setNaming(null); }} />
           <Button label="Cancel" icon={actions.clear} iconOnly kind="quiet" onClick={() => setNaming(null)} /></span>}
       {menu && onCount && <ContextMenu at={menu.at} label={menu.name} onClose={closeMenu}
@@ -1286,7 +1290,7 @@ export function FocusControl({ projects, value, presets, ignored = [], outside, 
         {value.length > 0 && (naming === null
           ? <Button label="Save focus preset" icon="save" iconOnly kind="quiet" onClick={() => setNaming('')} />
           : <span class="naming"><input value={naming} placeholder="Preset name" aria-label="Preset name" ref={focusOnMount} onInput={e => setNaming((e.target as HTMLInputElement).value)}
-              onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setNaming(null); }} />
+              onKeyDown={e => { if (isSubmitEnter(e)) save(); if (e.key === 'Escape') setNaming(null); }} />
               <Button label="Save" kind="primary" onClick={save} /></span>)}
       </div>
       {offered.length > 8 && <SearchBox label="Find project" value={q} onInput={setQ} always />}
@@ -1674,7 +1678,7 @@ function ScopedComposer({ onSend, disabledReason, placeholder = 'Message', draft
       </span>)}</div>}
     <textarea value={text} placeholder={placeholder} aria-label={placeholder} rows={2} disabled={!!disabledReason}
       onInput={e => keep((e.target as HTMLTextAreaElement).value)} onPaste={paste}
-      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void send(); } }} />
+      onKeyDown={e => { if (isSubmitEnter(e) && !e.shiftKey) { e.preventDefault(); void send(); } }} />
     <div class="composer-row">
       {onAttach && <><Button label="Attach files" icon="plus" iconOnly kind="quiet" disabledReason={disabledReason} onClick={() => picker.current?.click()} />
         <input ref={picker} type="file" multiple hidden aria-hidden="true" tabIndex={-1} onChange={e => { const t = e.target as HTMLInputElement; if (t.files?.length) onAttach([...t.files]); t.value = ''; }} /></>}
