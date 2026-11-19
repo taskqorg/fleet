@@ -140,8 +140,8 @@ export function viewProblem(v: unknown): string | null {
     if (k === 'extra') { if (!x || typeof x !== 'object' || Object.values(x).some(i => typeof i !== 'string')) return 'extra must map keys to strings'; continue; }
     if (!Object.hasOwn(table, k)) return `${k} is not a key of the ${name} view`;
     if (k === 'state') { if (!strs(x) || !(x as string[]).every(i => states.includes(i))) return 'state must be a list of: ' + states.join(', '); }
-    else if (k === 'group') { const gs = ORDER[name]!.groups; if (!gs.includes(x as string)) return 'group must be one of ' + [...gs].sort().join(', '); }
-    else if (k === 'sort') { const ss = ORDER[name]!.sorts; if (!ss.includes(x as string)) return 'sort must be one of ' + [...ss].sort().join(', '); }
+    else if (k === 'group') { const gs = ORDER[name]!.groups; if (!gs.includes(x as string)) return 'group must be one of ' + gs.toSorted().join(', '); }
+    else if (k === 'sort') { const ss = ORDER[name]!.sorts; if (!ss.includes(x as string)) return 'sort must be one of ' + ss.toSorted().join(', '); }
     else if (k === 'project') { if (!Array.isArray(x) || !x.every(i => i === null || (typeof i === 'string' && i !== ''))) return 'project must be a list of project ids or null'; }
     else if (k === 'sel') { if (!strs(x)) return 'sel must be a list of ids'; }
     else if (k === 'q' || k === 'preset') { if (typeof x !== 'string') return k + ' must be a string'; }

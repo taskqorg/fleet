@@ -30,7 +30,7 @@ const Head = ({ cols, children }: { cols: string; children: ComponentChildren })
 const PriChip = ({ p }: { p: number }) => <span class={`chip-age${p === 0 ? ' t-danger alert' : ''}`} aria-label={`priority ${p}`}>p{p}</span>;
 function A1() {
   const cols = 'minmax(0,1fr) 2rem 4.5rem 1.25rem 2.75rem';
-  const rows = [...T].sort((a, b) => PRI(a) - PRI(b));
+  const rows = T.toSorted((a, b) => PRI(a) - PRI(b));
   return <div class="pane"><Head cols={cols}><span>Task</span><span>Pri</span><span>ID</span><span /><span class="r">Age</span></Head>
     {rows.map(t => <Row key={t.id} cols={cols}><span class="title">{t.title}</span><PriChip p={PRI(t)} /><EntityCode cls="svc" code={`T-FLT-${t.id}`} id={`00000000-0000-4000-8000-${String(t.id).padStart(12, '0')}`} /><StateBadge family="task" state={t.state} compact /><span class="r"><AgeChip t={t.started} /></span></Row>)}</div>;
 }

@@ -52,8 +52,8 @@ export async function pruneKeys(keep: (key: string) => boolean) {
 export function clearAll(stopSaving = false): Promise<void> {
   if (stopSaving) cleared = true;
   if (clearPromise) return clearPromise;
-  let finish!: () => void;
-  clearPromise = new Promise<void>(resolve => { finish = resolve; });
+  const { promise, resolve: finish } = Promise.withResolvers<void>();
+  clearPromise = promise;
   const result = clearPromise;
   storageEpoch++; deleting = true;
   for (const t of timers.values()) clearTimeout(t); timers.clear();

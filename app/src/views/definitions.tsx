@@ -26,7 +26,7 @@ export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
         {data && items.length === 0 && <Empty text={`No ${title.toLowerCase()} yet`} />}
         {!data && <Empty text="Loading…" />}
-        {[...items].sort((a, b) => Number(!!b.draft) - Number(!!a.draft)).map(x =>
+        {items.toSorted((a, b) => Number(!!b.draft) - Number(!!a.draft)).map(x =>
           <div key={x.id} role="row" class={`vl-row static${x.id === id ? ' sel' : ''}`} onClick={() => go(`${route}/${x.id}`)}>
             <span class="lead"><StateBadge family="definition" state={x.draft ? 'draft' : 'ready'} compact /></span>
             <span class="tt"><a class="title row-link" href={`${route}/${x.id}`} onClick={e => { e.preventDefault(); go(`${route}/${x.id}`); }}>{x.name}</a>

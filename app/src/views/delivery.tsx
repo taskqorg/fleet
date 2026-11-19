@@ -236,7 +236,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
     const pr = hist?.h.prs.find(x => x.number === n), t = pr?.durations.total;
     return `#${n}${pr ? ` ${pr.title}` : ''}${typeof t === 'number' ? `: ${fmt(t)} from open to installed` : ''}${pr?.queueRemovals ? `, ${pr.queueRemovals} queue removals` : ''} (${k} ${k === 1 ? 'metric' : 'metrics'})`;
   });
-  const worst = [...regressions].sort((a, b) => b.currentMs / (b.baselineMs || 1) - a.currentMs / (a.baselineMs || 1));
+  const worst = regressions.toSorted((a, b) => b.currentMs / (b.baselineMs || 1) - a.currentMs / (a.baselineMs || 1));
   const look = [
     ...(regressions.length > 1 ? [<div key="slower" class="stack">
       <ProblemRow severity="warning" title={`Delivery got slower: ${regressions.length} metrics over their 14-day baseline`}

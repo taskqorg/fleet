@@ -15,7 +15,7 @@ function recordedPool(pool: any, subs: any[]): ChartPoint[] {
   const hist = members.map(s => ({ w: s.planWeight, h: (s.periods.find((p: any) => p.period === pool.period)?.history ?? []) as Point[] })).filter(m => m.h.length > 0);
   const times = [...new Set(hist.flatMap(m => m.h.map(p => p.at)))].sort((a, b) => a - b);
   // Before a member's first reading in range its first value stands in (an older reading held), never 0.
-  return times.map(t => ({ at: t, v: hist.reduce((sum, m) => { const last = [...m.h].reverse().find(p => p.at <= t) ?? m.h[0]; return sum + m.w * last.left; }, 0) }));
+  return times.map(t => ({ at: t, v: hist.reduce((sum, m) => { const last = m.h.findLast(p => p.at <= t) ?? m.h[0]; return sum + m.w * last.left; }, 0) }));
 }
 
 /** Burn per hour between consecutive points (drops only; a reset adds nothing), as a step line. */

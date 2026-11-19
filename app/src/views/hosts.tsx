@@ -116,7 +116,7 @@ function SystemPanels({ tele, found, clockOffsetMs }: { tele: any; found: any; c
   // Only what needs a look is listed (2026-11-20 decision): errors, refusals, or a P95 over a second; the healthy rest folds
   // into one line that opens the whole table.
   const why = (o: any) => [o.errors ? `${o.errors} ${o.errors === 1 ? 'error' : 'errors'}` : '', o.refused ? `${o.refused} refused` : '', o.p95Ms > 1000 ? 'slow' : ''].filter(Boolean).join(' · ');
-  const sorted = [...tele.operations].sort((a: any, b: any) => b.errors - a.errors || (b.refused ?? 0) - (a.refused ?? 0) || b.p95Ms - a.p95Ms);
+  const sorted = (tele.operations as any[]).toSorted((a: any, b: any) => b.errors - a.errors || (b.refused ?? 0) - (a.refused ?? 0) || b.p95Ms - a.p95Ms);
   const notable = sorted.filter((o: any) => why(o)), ops = allOps ? sorted : notable, healthy = sorted.length - notable.length;
   return <article class="detail" aria-label="System">
     <header class="detail-h"><h2 class="detail-title">System</h2></header>
