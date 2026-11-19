@@ -1,7 +1,7 @@
 // Runners (docs/design-system/pages/runners.md): everything that executes work, grouped by host, each run on a 24-hour
 // time strip with its time and resources; spend today and this month per host and kind. Data: executions_runners.
 import { useLocation } from 'wouter-preact';
-import { StateBadge, HarnessMark, Num, CostFigures, Totals, EntityCode, AgeChip, TimeStrip, age, Empty, ErrorBanner, Skeleton, OfflineMarker, Icon, harnesses, type Harness, type Measured, type Kind, type TotalItem, ShellStatus } from '../../../packages/ui/src/index.ts';
+import { StateBadge, HarnessMark, Num, CostFigures, Totals, EntityCode, AgeChip, TimeStrip, age, duration, ProblemRow, Empty, ErrorBanner, Skeleton, OfflineMarker, Icon, harnesses, type Harness, type Measured, type Kind, type TotalItem, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { mergeCosts } from './resources.tsx';
@@ -72,7 +72,9 @@ export function Runners() {
           {live > 0 && <span class="hc" data-tip="Running"><Icon name="activity" label="Running" /><Num m={m(live)} kind="count" /></span>}<span class="grow" /><span class="muted">24h</span></header>
         <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) minmax(6rem,14rem) auto' }}>
           {runs.map((r: any) => {
-            const href = open(r), start = r.startedAt ?? r.endedAt ?? now, title = r.taskTitle ?? KINDS[r.kind] ?? r.kind;
+            // Gateway calls are one run per connection (`calls:/conn:<name>`): the connection names the row, not the kind (OR-17).
+            const conn = r.kind === 'tool_run' && typeof r.id === 'string' ? /^calls:\/conn:(.+)$/.exec(r.id)?.[1] : undefined;
+            const href = open(r), start = r.startedAt ?? r.endedAt ?? now, title = r.taskTitle ?? (conn ? `${conn} calls` : KINDS[r.kind] ?? r.kind);
             // A finished run with no recorded end (a gateway call) ends at start plus its wall time, else at its start.
             const active = isActive(r), end = active ? null : r.endedAt ?? start + (r.wallMs ?? 0);
             // An abandoned run ended when given up: its length is unknown (the core leaves its wall time unavailable).
@@ -110,7 +112,13 @@ function Ci({ now, clockOffsetMs }: { now: number; clockOffsetMs: number }) {
   const from = now - DAY;
   if (!data) return <section class="panel" aria-label="CI"><header class="panel-h"><h2>CI</h2></header>{error ? <ErrorBanner text={`CI did not load: ${error}`} /> : <Skeleton rows={3} />}</section>;
   const partial = data.runsUncounted > 0 ? `${data.runsUncounted} runs not read yet` : undefined;
+  // The finding first (2026-11-20 decision): GitHub-hosted minutes on a day the self-hosted runners stood free.
+  const hosted = data.minutesToday.filter((x: any) => x.hosted), self = data.minutesToday.filter((x: any) => !x.hosted);
+  const hostedJobs = hosted.reduce((n: number, x: any) => n + x.jobs, 0), hostedMin = hosted.reduce((n: number, x: any) => n + x.minutes, 0);
+  const selfJobs = self.reduce((n: number, x: any) => n + x.jobs, 0), idleSelf = (data.runners ?? []).filter((r: any) => r.status === 'online' && !r.busy).length;
   return <section class="panel" aria-label="CI">
+    {hostedJobs > 0 && idleSelf > 0 && <ProblemRow severity="warning" title="CI ran on GitHub-hosted machines today"
+      facts={`${hostedJobs} of ${hostedJobs + selfJobs} jobs took ${duration(hostedMin * 60).text} on ${hosted.map((x: any) => x.runner).join(', ')}; ${idleSelf} self-hosted ${idleSelf === 1 ? 'runner is' : 'runners are'} online and free`} actions={[]} />}
     <header class="panel-h"><h2>CI</h2><Icon name="github" label="GitHub Actions" /><span class="id">taskqorg/fleet</span>
       {!data.keyed && <span class="chip" data-tip="No GitHub key: public reads, refreshed every 5 minutes; self-hosted runner state unknown">public</span>}
       {data.problems.length > 0 && <span class="chip t-danger" data-tip={data.problems.join('; ')}><Icon name="triangle-alert" label="GitHub problems" /></span>}

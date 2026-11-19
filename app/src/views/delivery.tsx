@@ -55,9 +55,9 @@ const RANGES = [{ id: '24h', label: '24 h' }, { id: '7d', label: '7 days' }, { i
 const ms = (s?: string | null) => s ? Date.parse(s) : NaN;
 const fmt = (v: number) => duration(v / 1000).text;
 /** The focus segment of a pull request: owner~repo~number (stable, readable, no slash). */
-const idOf = (it: { repo: string; number: number }) => `${it.repo.replace('/', '~')}~${it.number}`;
+export const idOf = (it: { repo: string; number: number }) => `${it.repo.replace('/', '~')}~${it.number}`;
 // Current rows change with delivery-state:<project>; the recorded history (records and the regression check) with the rest.
-const touchesStatus = (c: Change) => c.kind === 'delivery' && c.id.startsWith('delivery-state:');
+export const touchesStatus = (c: Change) => c.kind === 'delivery' && c.id.startsWith('delivery-state:');
 const touchesHistory = (c: Change) => c.kind === 'delivery' && !c.id.startsWith('delivery-state:');
 const NONE = 'none' as const; // no history kept (404): known, unlike still loading
 const no404 = <T,>(p: Promise<T>) => p.catch(e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; });
@@ -229,9 +229,24 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
   const moving = ORDER.filter(s => !DONE.includes(s)).flatMap(s => items.filter(it => it.stage === s));
   const over = (it: Item) => { const n = norms.stage(it); return !!n && now - ms(it.since) > n[1]; };
   const failed = items.filter(it => FAILED.includes(it.stage)), stuck = moving.filter(over);
+  // One slowdown, one block (2026-11-20 decision): several metrics over their baseline are one cause to look at, named by the
+  // pull requests they first went over with and what those took; one metric keeps its own row.
+  const byPr = new Map<number, number>(); for (const g of regressions) if (g.firstPr) byPr.set(g.firstPr, (byPr.get(g.firstPr) ?? 0) + 1);
+  const cause = [...byPr].sort((a, b) => b[1] - a[1]).map(([n, k]) => {
+    const pr = hist?.h.prs.find(x => x.number === n), t = pr?.durations.total;
+    return `#${n}${pr ? ` ${pr.title}` : ''}${typeof t === 'number' ? `: ${fmt(t)} from open to installed` : ''}${pr?.queueRemovals ? `, ${pr.queueRemovals} queue removals` : ''} (${k} ${k === 1 ? 'metric' : 'metrics'})`;
+  });
+  const worst = [...regressions].sort((a, b) => b.currentMs / (b.baselineMs || 1) - a.currentMs / (a.baselineMs || 1));
   const look = [
-    ...regressions.map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
-      facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />),
+    ...(regressions.length > 1 ? [<div key="slower" class="stack">
+      <ProblemRow severity="warning" title={`Delivery got slower: ${regressions.length} metrics over their 14-day baseline`}
+        facts={`worst ${keyLabel(worst[0].key)} ${worst[0].metric.toUpperCase()} ${fmt(worst[0].currentMs)} against ${fmt(worst[0].baselineMs)}`}
+        actions={[...(worst[0]?.compareUrl ? [{ label: 'Compare', onClick: () => window.open(worst[0].compareUrl!, '_blank', 'noopener') }] : [])]} />
+      <p class="muted small-note">{worst.map(g => `${keyLabel(g.key)} ${g.metric.toUpperCase()} ${fmt(g.currentMs)} / ${fmt(g.baselineMs)}`).join(' · ')}</p>
+      {cause.length > 0 && <p class="small-note">First over with {cause.join('; ')}.</p>}
+    </div>]
+    : regressions.map(g => <ProblemRow key={'r' + g.key + g.metric} severity="warning" title={`${keyLabel(g.key)} ${g.metric.toUpperCase()} is ${fmt(g.currentMs)}, baseline ${fmt(g.baselineMs)}`}
+      facts={`${g.firstPr ? `Since #${g.firstPr} · ` : ''}${g.n} pull requests in the last 24 h`} actions={[...(g.compareUrl ? [{ label: 'Compare', onClick: () => window.open(g.compareUrl!, '_blank', 'noopener') }] : [])]} />)),
     ...failed.map(it => <ProblemRow key={'f' + idOf(it)} severity="failure" title={`#${it.number} ${it.stage === 'mq_failed' ? 'removed from the merge queue' : 'checks failed'}`} facts={<>{it.title} · <Ago t={ms(it.since)} /></>}
       actions={[{ label: `Open #${it.number}`, primary: true, onClick: () => onOpen(it) }]} />),
     ...stuck.map(it => <ProblemRow key={'s' + idOf(it)} severity="warning" title={`#${it.number} ${it.stage === 'installing' && uiOnly(it.release) ? 'waiting for the UI on site' : states.delivery[it.stage].label.toLowerCase()} for ${fmt(now - ms(it.since))}, P90 ${fmt(norms.stage(it)![1])}`}

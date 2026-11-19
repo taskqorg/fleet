@@ -43,31 +43,32 @@ const kvs = (rows: readonly [any, string, ComponentChildren?, ComponentChildren?
 
 /* ---------- Overview ---------- */
 
-function Overview() {
+function Overview({ id }: { id?: string }) {
   const [, go] = useLocation();
-  const [answered, setAnswered] = useState<Record<string, string>>({});
   const byProject = PROJECTS.map(p => { const ts = ALL.filter(t => t.project === p); const c: Record<string, number> = {}; for (const t of ts) c[t.state] = (c[t.state] ?? 0) + 1; return { p, c }; });
-  return <>
-    <PageHead title="Overview"><Stale at={NOW - 20e3} now={NOW} /></PageHead>
+  // Overview B (2026-11-20 decision): the Needs-you inbox is the control column; with nothing picked the work area shows the fleet.
+  const inbox = [
+    { cause: 'Acceptance', rows: [{ id: 'q1', icon: 'circle-check', title: 'Accept this result?', code: 'Q-FLT-201', at: NOW - 12 * min }] },
+    { cause: 'Decisions', rows: [{ id: 'q2', icon: 'bell', title: 'Use the Windows store for the game bundle?', code: 'Q-FLT-198', at: NOW - 40 * min }] },
+    { cause: 'Accounts', rows: [{ id: 'p1', icon: 'triangle-alert', title: 'Claude quota exhausted', code: 'T-9937', at: NOW - 2 * hr }] },
+    { cause: 'Stores', rows: [{ id: 'p2', icon: 'triangle-alert', title: 'Low space on windows store', code: 'windows', at: NOW - 3 * hr }] },
+  ] as const;
+  const list = <NeedsYou>{inbox.map(g => <div key={g.cause} class="ny-group" role="group" aria-label={g.cause}>
+    <div class="ny-h"><span class="mono">{g.cause}</span><span class="grow" /><span class="mono">{g.rows.length}</span></div>
+    {g.rows.map(r => <a key={r.id} class={`ny-row${r.id === id ? ' sel' : ''}`} href={`#/overview/${r.id}`}><Icon name={r.icon} label={r.icon === 'triangle-alert' ? 'Problem' : 'Question'} />
+      <span class="ny-t"><span class="title">{r.title}</span><span class="id">{r.code}</span></span><AgeChip t={r.at} /></a>)}
+  </div>)}</NeedsYou>;
+  const idle = <article class="detail" aria-label="Fleet now">
+    <PageHead title="Fleet now"><Stale at={NOW - 20e3} now={NOW} /></PageHead>
     <OpsSummary>
     <StatStrip label="Operations" stats={[
+      { label: 'need you', icon: 'bell', value: m(4), tone: 'attention' },
       { label: 'failed today', icon: 'octagon-x', value: m(2), tone: 'danger', href: '#/tasks' },
       { label: 'running', icon: 'activity', value: m(10), of: 13, href: '#/hosts' },
       { label: 'queued', icon: 'list-ordered', value: m(7) },
       { label: 'spent today', icon: 'chart-no-axes-column', value: m(41.2, 'estimated', 'tokens'), kind: 'money' },
     ]} />
     <div class="cols">
-      <NeedsYou>
-          {[{ id: 'q1', q: 'Accept this result?', by: 'reviewer (claude)', since: NOW - 12 * min, waits: 'T-9989 Write release notes 95', opts: [{ label: 'Accept', kbd: 'a', primary: true }, { label: 'Request rework', kbd: 'r' }] },
-            { id: 'q2', q: 'Use the Windows store for the game bundle?', by: 'worker (codex)', since: NOW - 40 * min, waits: 'T-9976 Render prop batch 82', opts: [{ label: 'Yes', kbd: '1' }, { label: 'No, use mac', kbd: '2' }] }].map(d =>
-            <DecisionBlock key={d.id} question={d.q} askedBy={d.by} addressedTo="you" since={d.since} now={NOW} waits={d.waits} options={d.opts}
-              answered={answered[d.id] ? { by: 'you', answer: answered[d.id], at: NOW, delivered: true } : undefined} onAnswer={a => setAnswered({ ...answered, [d.id]: a })} />)}
-          <ProblemRow severity="failure" title="Claude quota exhausted" facts={<>resets in <span class="mono">2h</span> · T-9937 interrupted</>}
-            actions={[{ label: 'Continue on codex', primary: true }, { label: 'Wait for reset' }]} />
-          <ProblemRow severity="warning" title="Low space on windows store" facts="18 GB free, warning at 25 GB"
-            actions={[{ label: 'Open host' }]} />
-      </NeedsYou>
-      <div class="stack">
         <Panel title="Workers per host" actions={<Button label="Hosts" icon="external-link" iconOnly onClick={() => go('/hosts')} />}>
           <ul class="kv">{hosts.map(h => <li key={h.id}>
             <StateBadge family="host" state={h.online ? 'online' : 'offline'} compact />
@@ -89,10 +90,17 @@ function Overview() {
           <ul class="kv">{byProject.map(({ p, c }) => <li key={p}><Icon name="folder-open" /><span class="k">{p}</span>
             <StateCounters family="task" label={`${p} by state`} counts={{ waiting: c.waiting ?? 0, failed: c.failed ?? 0, in_progress: c.in_progress ?? 0, queued: c.queued ?? 0 }} active={[]} onToggle={() => go('/tasks')} /></li>)}</ul>
         </Panel>
-      </div>
     </div>
     </OpsSummary>
-  </>;
+  </article>;
+  const picked = inbox.flatMap(g => g.rows.map(r => ({ ...r, cause: g.cause }))).find(r => r.id === id);
+  const detail = picked && <article class="detail" data-ui="detail" aria-label={picked.title}>
+    <h2 class="detail-title">{picked.title}</h2>
+    {picked.icon === 'triangle-alert'
+      ? <ProblemRow severity="failure" title={picked.title} facts={<>resets in <span class="mono">2h</span> · T-9937 interrupted</>} actions={[{ label: 'Continue on codex', primary: true }, { label: 'Wait for reset' }]} />
+      : <DecisionBlock question={picked.title} askedBy="reviewer (claude)" addressedTo="you" since={picked.at} now={NOW} waits="T-9989 Write release notes 95" options={[{ label: 'Accept', kbd: 'a', primary: true }, { label: 'Request rework', kbd: 'r' }]} />}
+  </article>;
+  return <ListDetail list={list} detail={detail || undefined} detailKey={id} idle={idle} />;
 }
 
 /* ---------- Tasks: list and detail ---------- */
@@ -559,6 +567,7 @@ function App() {
       <Route path="/delivery"><Delivery /></Route>
       <Route path="/"><Overview /></Route>
       <Route path="/overview"><Overview /></Route>
+      <Route path="/overview/:id">{(p: { id: string }) => <Overview id={p.id} />}</Route>
       <Route><Empty text="This section is not mocked up in stage 3." action={<Button label="Overview" icon="house" onClick={() => go('/overview')} />} /></Route>
     </Switch>
   </AppShell></CardsProvider>;

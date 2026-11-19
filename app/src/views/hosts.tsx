@@ -40,7 +40,11 @@ export function Hosts({ id }: { id?: string }) {
             {h.platform && !h.id.includes(h.platform.slice(0, 3)) && <span class="id">{h.platform}</span>}
             <HarnessCounts counts={h.runningByHarness} label={`${h.id} workers by harness`} />
             {h.queued > 0 && <span class="hc"><Icon name="list-ordered" label="Queued commands" /><Num m={{ value: h.queued, basis: 'measured' }} kind="count" /></span>}
-            {r && <span class="hc" data-tip="Daemon load (1 min) and memory available"><Icon name="activity" label="Load" /><Num m={m(r.load1)} kind="score" /> <Num m={m(r.memFree)} kind="bytes" /></span>}</span>
+            {/* Load and free memory are two labelled figures, never one run of numbers ("3.52 9 GB"); a stale reading is not shown as current (D3). */}
+            {r && fresh(h) && <span class="hc" data-tip={r.cpus != null ? `Load (1 min) of ${r.cpus} cores` : 'Load (1 min)'} style={r.cpus && r.load1 >= 0.9 * r.cpus ? { color: 'var(--danger-fg)' } : undefined}>
+              <Icon name="activity" label="Load" /><Num m={m(r.load1)} kind="score" />{r.cpus != null && <span class="muted">/{r.cpus}</span>}</span>}
+            {r && fresh(h) && r.memFree != null && <span class="hc" data-tip={r.memTotal != null ? 'Memory available of the total' : 'Memory available'}>
+              <Num m={m(r.memFree)} kind="bytes" />{r.memTotal != null && <span class="muted"> of <Num m={m(r.memTotal)} kind="bytes" /></span>}<span class="muted"> free</span></span>}</span>
           <span>{h.lastSeenAt ? <AgeChip t={h.lastSeenAt} alertAfter={15 * 60} tone="attention" alertLabel="not seen for a while" clockOffsetMs={clockOffsetMs} /> : <span class="muted">never</span>}</span>
         </div>; })}
       </div>
@@ -105,10 +109,15 @@ function SystemPanels({ tele, found, clockOffsetMs }: { tele: any; found: any; c
   const [, go] = useLocation();
   const [purge, setPurge] = useState<any>(null);
   const [purgeErr, setPurgeErr] = useState('');
+  const [allOps, setAllOps] = useState(false);
   const runPurge = (preview: boolean) => { setPurgeErr(''); op('system_purge', { preview, kinds: ['host'] }).then(setPurge, e => setPurgeErr(String(e.message ?? e))); };
   if (!tele) return <Empty text="Loading…" />;
   if (!tele.enabled) return <Empty text="Telemetry is off: no span store is configured." />;
-  const ops = [...tele.operations].sort((a: any, b: any) => b.errors - a.errors || b.count - a.count);
+  // Only what needs a look is listed (2026-11-20 decision): errors, refusals, or a P95 over a second; the healthy rest folds
+  // into one line that opens the whole table.
+  const why = (o: any) => [o.errors ? `${o.errors} ${o.errors === 1 ? 'error' : 'errors'}` : '', o.refused ? `${o.refused} refused` : '', o.p95Ms > 1000 ? 'slow' : ''].filter(Boolean).join(' · ');
+  const sorted = [...tele.operations].sort((a: any, b: any) => b.errors - a.errors || (b.refused ?? 0) - (a.refused ?? 0) || b.p95Ms - a.p95Ms);
+  const notable = sorted.filter((o: any) => why(o)), ops = allOps ? sorted : notable, healthy = sorted.length - notable.length;
   return <article class="detail" aria-label="System">
     <header class="detail-h"><h2 class="detail-title">System</h2></header>
     {tele.error && <ProblemRow title="Span store" facts={tele.error} severity="failure" actions={[]} />}
@@ -118,14 +127,17 @@ function SystemPanels({ tele, found, clockOffsetMs }: { tele: any; found: any; c
         meta={f.groupCause ? `part of ${f.groupCause}` : undefined} value={<AgeChip t={ms(f.since)} clockOffsetMs={clockOffsetMs} />} />) : <span class="muted">none</span>}
     </DetailSection>
     <DetailSection title="Services, last hour">
-      <div class="vl-wrap" style={{ '--cols': 'minmax(0,1fr) auto auto auto' }}>
+      <div class="vl-wrap" style={{ '--cols': 'minmax(0,1fr) auto auto auto auto' }}>
         {ops.map((o: any) => <div key={o.service + o.name} role="row" class="vl-row static">
           <span class="tt"><span class="title">{o.name}</span><span class="id">{o.service}</span></span>
+          <span class={o.errors ? 'danger' : 'muted'}>{why(o)}</span>
           <span data-tip="Calls"><Num m={{ value: o.count, basis: 'measured' }} kind="count" /></span>
           <span data-tip="Errors" class={o.errors ? 'danger' : 'muted'}><Num m={{ value: o.errors, basis: 'measured' }} kind="count" /></span>
           <span data-tip="p95"><Num m={{ value: o.p95Ms / 1000, basis: 'measured' }} kind="duration" /></span>
         </div>)}
       </div>
+      {healthy > 0 && <div class="res-bar"><span class="muted">{allOps ? `${sorted.length} operations` : `${healthy} more are healthy: no errors, none refused, P95 under 1 s.`}</span>
+        <Button label={allOps ? 'Show only what needs a look' : `Show all ${sorted.length}`} kind="quiet" onClick={() => setAllOps(!allOps)} /></div>}
       <KvRow icon="circle-alert" label="Spans dropped" value={<Num m={{ value: tele.droppedSpans, basis: 'measured' }} kind="count" />} />
     </DetailSection>
     <DetailSection title="Host daemon health">

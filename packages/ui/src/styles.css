@@ -449,6 +449,26 @@ button.start-fact:hover{background:var(--hover);color:var(--fg)}
 .panel-h h2{margin:0;font-size:var(--font-size-md);font-weight:var(--font-weight-bold)}
 .panel>.setting{padding-left:var(--space-4);padding-right:var(--space-4)}
 .cols{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:var(--space-4);align-items:start}
+.detail .cols{grid-template-columns:repeat(auto-fit,minmax(min(100%,var(--size-ctl)),1fr))}
+/* Needs-you inbox in the control column (Overview B): groups by cause, one-line rows, the title then its code (OR-21, OR-22) */
+.vl-row .ny-ic{color:var(--attention-fg)}
+[data-ui=needs-you] .vl{flex:1;height:auto;min-height:0}
+[data-ui=needs-you]{display:flex;flex-direction:column;min-height:0;flex:1}
+[data-ui=needs-you]>.stack{flex:1;min-height:0;padding:0}
+[data-ui=needs-you]>.stack>.empty{padding:var(--space-4)}
+.ny-group{display:flex;flex-direction:column}
+.ny-h{display:flex;align-items:center;gap:var(--space-2);height:var(--size-row);padding:0 var(--space-4);border-bottom:1px solid var(--line-soft);color:var(--fg-muted);font-size:var(--font-size-sm)}
+.ny-h .mono:first-child{text-transform:uppercase;letter-spacing:.04em;color:var(--fg)}
+.ny-row{display:grid;grid-template-columns:var(--size-icon) minmax(0,1fr) auto;align-items:center;column-gap:var(--space-3);min-height:var(--size-row);padding:0 var(--space-4);border-bottom:1px solid var(--line-soft);color:var(--fg);text-decoration:none}
+.ny-row:hover{background:var(--hover)}
+.ny-row.sel{background:var(--selected);box-shadow:inset 3px 0 var(--accent)}
+.ny-row>.icon,.vl-row .undecided{color:var(--attention-fg)}
+.ny-t{display:flex;align-items:baseline;gap:var(--space-2);min-width:0}
+.ny-t .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:var(--font-weight-medium)}
+.ny-t .id{flex:none}
+@media (pointer:coarse){.ny-row{min-height:var(--size-row-phone)}}
+/* A question's links and long tokens wrap inside the block instead of running past the column */
+.decision .dq{overflow-wrap:anywhere}
 .stack{display:flex;flex-direction:column;gap:var(--space-3)}
 .panel>.stack{padding:var(--space-3)}
 .kv{list-style:none;margin:0;padding:var(--space-2) var(--space-4)}
@@ -638,12 +658,17 @@ button.composer-chip:hover{background:var(--hover);color:var(--fg)}
 .av-table th{font-weight:var(--font-weight-medium);background:var(--surface)}
 .av-text pre{margin:0;font-family:var(--font-mono);font-size:var(--font-size-sm);white-space:pre-wrap;overflow-wrap:anywhere}
 
-/* Catalogue rows in the control column: two lines, title then ID and secondary facts; no column heads (D19) */
+/* Catalogue rows in the control column: one line, the title then its code, service facts on the right (OR-21, OR-22);
+   no column heads (D19). The title keeps the space; the code never wraps. */
 .split-list .vl{flex:1;height:auto}
 .split-list .vl-head{display:none}
-.split-list .vl-row .tt{flex-wrap:wrap;align-content:center;align-items:center;row-gap:0}
-.split-list .vl-row .tt .title{order:-1;flex:0 0 100%}
-.split-list .vl-row.static{height:auto;min-height:var(--size-row-2)}
+.split-list .vl-row .tt{flex-wrap:nowrap;align-items:baseline;overflow:hidden}
+.split-list .vl-row .tt .title{flex:0 1 auto;min-width:min(40%,12ch)}
+.split-list .vl-row .tt .id{flex:none;white-space:nowrap}
+.split-list .vl-row .tt .sub{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.split-list .vl-row .hc{white-space:nowrap}
+.split-list .vl-row.static .tt{flex-wrap:wrap}
+.split-list .vl-row.static{height:auto;min-height:var(--size-row)}
 /* Direction B (D19): small labels in mono capitals */
 .rail-h,.dsec h3,.totals dt,.sub-h,.seg-label,.group-h,.vl-head{font-family:var(--font-mono);font-size:var(--font-size-xs);text-transform:uppercase;letter-spacing:.06em}
 .page-h h1{letter-spacing:-.01em}
@@ -676,8 +701,8 @@ button.composer-chip:hover{background:var(--hover);color:var(--fg)}
 .work-empty{font-family:var(--font-mono);font-size:var(--font-size-sm)}
 .tr-body .vl{background:none}
 .outcome{border-left:3px solid var(--line);border-radius:0 var(--radius-md) var(--radius-md) 0}
-/* Catalogue rows built by hand (hosts, keys, limits): same two lines; second-line facts may wrap */
-.split-list .vl-row.static{padding-top:var(--space-2);padding-bottom:var(--space-2);align-items:start}
+/* Catalogue rows built by hand (hosts, keys, limits): the name and its facts; facts may wrap under it */
+.split-list .vl-row.static{padding-top:var(--space-1);padding-bottom:var(--space-1);align-items:center}
 .split-list .vl-row .fill-wrap{flex:0 0 100%;flex-wrap:wrap;row-gap:0}
 .split-list .vl-row .fill-wrap .legend{flex-basis:100%}
 .split-list .vl-row.static .tt{white-space:normal;column-gap:var(--space-3);row-gap:var(--space-1)}
@@ -963,3 +988,4 @@ a.btn[aria-disabled=true]{opacity:.5;cursor:not-allowed}
 .ec-sk i:first-child{width:85%}.ec-sk i:nth-child(2){width:55%}.ec-sk i:nth-child(3){width:70%}
 @media (pointer:coarse){.ec-code.id{display:inline-flex;align-items:center;min-height:var(--size-hit-phone)}}
 .deps{display:inline-flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
+.small-note{margin:0;font-size:var(--font-size-sm);max-width:80ch}

@@ -14,7 +14,7 @@ const out = { push: (l: string) => console.log('    ' + l) };
 const { c, origin, seed, close } = await checkServer();
 
 // Fixtures: a few hundred tasks across projects, states and priorities; sessions with a transcript; hosts; open questions.
-let waiting = '', running = '';
+let waiting = '', running = '', slot = '';
 seed.bulk(() => {
   for (let i = 0; i < 240; i++) {
     const p = ['cs', 'game', 'fleet'][i % 3];
@@ -22,7 +22,7 @@ seed.bulk(() => {
     if (i % 7 === 0) { seed.execution({ id: 'run-' + i, kind: 'agent_run', taskId: id, projectId: p, hostId: ['pds18', 'mac', 'windows'][i % 3], harness: ['codex', 'claude', 'antigravity'][i % 3], state: 'running' }); if (!running) running = id; }
     if (i === 3) { waiting = id; seed.question({ kind: 'acceptance', taskId: id, text: 'Accept this result?', options: ['accepted', 'rejected'] }); }
   }
-  for (let i = 0; i < 4; i++) seed.question({ kind: 'operator_decision', text: 'Pick a release slot ' + i, options: ['today', 'tomorrow'] });
+  for (let i = 0; i < 4; i++) { const q = seed.question({ kind: 'operator_decision', text: 'Pick a release slot ' + i, options: ['today', 'tomorrow'] }); if (!slot) slot = q; }
   for (const [id, platform, ago] of [['pds18', 'linux', 2000], ['mac', 'darwin', 120000], ['windows', 'win32', 5000]] as const) seed.put('host-observation', { id, platform, lastSeenAt: Date.now() - ago, capabilities: ['codex'] });
   seed.put('session', { id: 'sess-1', createdAt: Date.now() - 600000, agentConfig: { id: 'baseline', harness: 'codex' } });
   seed.execution({ id: 'sx-1', kind: 'agent_run', sessionId: 'sess-1', hostId: 'pds18', harness: 'codex', state: 'succeeded' });
@@ -37,7 +37,10 @@ try {
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !(expectedCatalogueFailure && m.text().includes('503'))) errors.push(m.text()); });
   const ROUTES: [string, string[]][] = [
-    ['/overview', ['app-shell', 'nav-rail', 'ops-summary', 'stat-strip', 'needs-you', 'decision-block', 'harness-counts', 'state-counters']],
+    // Overview B (decisions.md 2026-11-20): the Needs-you inbox in the control column, the fleet in the idle work area,
+    // a picked question answered in the work area.
+    ['/overview', ['app-shell', 'nav-rail', 'list-detail', 'needs-you', 'data-list', 'ops-summary', 'stat-strip', 'state-counters']],
+    [`/overview/${slot}`, ['list-detail', 'needs-you', 'detail', 'decision-block']],
     ['/tasks', ['app-shell', 'nav-rail', 'list-view', 'filter-bar', 'state-counters', 'data-list', 'state-badge']],
     [`/tasks/${waiting}`, ['list-detail', 'detail', 'outcome-block', 'decision-block', 'number']],
     [`/tasks/${running}`, ['detail', 'execution-tree']],
@@ -69,16 +72,18 @@ try {
     await page.emulateMedia({ colorScheme: 'light' });
     for (const f of await layoutFindings(page)) out.push(`  ${f}`);
   }
-  // OR-29, OR-30, OR-40: Overview counters show no zero chip and start with the bold total; Needs you shows 3 and +K.
-  await page.goto(origin + '/overview'); await page.waitForSelector('[data-ui=needs-you] [data-ui=decision-block]');
+  // OR-29, OR-40: Overview counters show no zero chip and start with the bold total; Needs you lists every item, one row
+  // each, grouped by cause, urgency first (an operator decision before an acceptance).
+  await page.goto(origin + '/overview'); await page.waitForSelector('[data-ui=needs-you] .vl-row .row-link');
   const ov = await page.evaluate(() => {
     const blocks = [...document.querySelectorAll('[data-ui=ops-summary] [data-ui=state-counters]')];
-    const shown = document.querySelectorAll('[data-ui=needs-you] [data-ui=decision-block], [data-ui=needs-you] [data-ui=problem-row]').length;
+    const shown = document.querySelectorAll('[data-ui=needs-you] .vl-row .row-link').length;
+    const causes = [...document.querySelectorAll('[data-ui=needs-you] .vl-row.grp .group-h b')].map(x => x.textContent);
     return { zero: blocks.some(b => [...b.querySelectorAll('.counter')].some(n => /: 0$/.test(n.getAttribute('aria-label') ?? ''))), sigma: blocks.length > 0 && blocks.every(b => b.firstElementChild?.classList.contains('sigma')),
-      shown, more: [...document.querySelectorAll('[data-ui=needs-you] button')].some(x => /^\+\d+$/.test(x.textContent ?? '')), host0: [...document.querySelectorAll('[data-ui=ops-summary] .kv .num')].some(n => /^≥/.test(n.textContent ?? '')) };
+      shown, causes, host0: [...document.querySelectorAll('[data-ui=ops-summary] .kv .num')].some(n => /^≥/.test(n.textContent ?? '')) };
   });
   out.push(`overview counters (OR-29): ${ov.zero ? 'ZERO CHIP SHOWN' : 'no zero chip'}, ${ov.sigma ? 'total first' : 'TOTAL NOT FIRST'}, ${ov.host0 ? 'HOST LOWER BOUND SHOWN' : 'no host lower bound'}`);
-  out.push(`needs you (OR-30, OR-40): ${ov.shown} shown${ov.shown > 3 ? '  OVER 3' : ''}, ${ov.more ? '+K expander' : 'NO +K EXPANDER'}`);
+  out.push(`needs you (OR-40): ${ov.shown} rows${ov.shown < 5 ? '  MISSING ROWS' : ''}, groups ${ov.causes.join(', ')}${ov.causes[0] === 'Decisions' ? '' : '  WRONG ORDER'}`);
   // OR-39: the task detail shows no total that is unknown (no empty tokens or cost fields).
   await page.goto(origin + `/tasks/${running}`); await page.waitForSelector('[data-ui=detail] .detail-title');
   const empty = await page.$$eval('[data-ui=detail] .totals .b-unavailable', els => els.length);

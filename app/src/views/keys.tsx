@@ -2,10 +2,12 @@
 // only), access and intake. Key values go in, never come out: the add field is write-only and the answer is a fingerprint.
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, StateBadge, DetailSection, KvRow, Empty, Button, SettingField, AgeChip, bytes, duration } from '../../../packages/ui/src/index.ts';
+import { ListDetail, StateBadge, DetailSection, KvRow, Empty, Button, SettingField, AgeChip, ProblemRow, bytes, duration } from '../../../packages/ui/src/index.ts';
 import { op, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 
+/** A person by name: the email's local part (formats.md, Person). */
+const person = (h: string) => h.split('@')[0];
 const ids = (v: string) => v.split(',').map(x => x.trim()).filter(Boolean);
 
 // A connection's file limits with the gateway defaults filled in (fleet-connections.md §9): no size caps, 60 s stall, 120 s answer.
@@ -27,13 +29,20 @@ export function Keys({ id }: { id?: string }) {
   // The reply omits empty lists (keys, tools, access lists): a connection without keys yet must still render.
   const conns = data.connections.map((c: any) => ({ ...c, keys: c.keys ?? [], tools: c.tools ?? [], access: { people: [], projects: [], experiments: [], ...c.access } }));
   const sel = conns.find((c: any) => c.name === id);
+  // A word once per region (OR-17): the holder most connections share is named once above the list, a row names only another
+  // holder; the provider shows only where it differs from the connection's name.
+  const holders = new Map<string, number>(); for (const c of conns) holders.set(c.holder, (holders.get(c.holder) ?? 0) + 1);
+  const mainHolder = [...holders].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const scope = (c: any) => `${c.access.projects.includes('*') ? 'all' : c.access.projects.join(', ') || 'none'}${c.access.experiments.length ? ' + Lab' : ''}`;
   const list = <>
+    {mainHolder && <header class="page-h"><span class="muted">Held by {person(mainHolder)}{holders.size > 1 ? ', unless a row says otherwise' : ''}</span></header>}
     <section class="panel">
-      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
+      <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto auto' }}>
         {conns.length === 0 && <Empty text="No API keys yet" />}
         {conns.map((c: any) => <div key={c.name} role="row" class={`vl-row static${c.name === id ? ' sel' : ''}`}>
           <span class="lead"><StateBadge family="intake" state={c.intake} compact /></span>
-          <span class="tt"><a class="title row-link" href={`/keys/${c.name}`} onClick={e => { e.preventDefault(); go(`/keys/${c.name}`); }}>{c.name}</a><span class="id">{c.provider}</span><span class="muted">{c.holder}</span></span>
+          <span class="tt"><a class="title row-link" href={`/keys/${c.name}`} onClick={e => { e.preventDefault(); go(`/keys/${c.name}`); }}>{c.name}</a>{c.provider !== c.name && <span class="id">{c.provider}</span>}{c.holder !== mainHolder && <span class="muted">{person(c.holder)}</span>}</span>
+          <span class="mono muted" data-tip="Projects this connection serves">{scope(c)}</span>
           <span class="r mono" data-tip="Active keys of all keys in use">{c.keys.filter((k: any) => k.state === 'active').length}/{c.keys.filter((k: any) => k.state !== 'retired').length}</span>
         </div>)}
       </div>
@@ -72,5 +81,17 @@ export function Keys({ id }: { id?: string }) {
       </span>} />
     </DetailSection>
   </article>;
-  return <ListDetail list={list} detail={detail || undefined} detailKey={id} />;
+  // Idle work area: what needs a look across connections (2026-11-20 decision): provider usage Fleet did not record, and retired keys.
+  const unrecorded = conns.map((c: any) => ({ c, keys: c.keys.filter((k: any) => k.reconcile && !k.reconcile.unknown && k.reconcile.difference > 0) })).filter((x: any) => x.keys.length);
+  const retired = conns.map((c: any) => ({ c, n: c.keys.filter((k: any) => k.state === 'retired').length })).filter((x: any) => x.n);
+  const limited = conns.filter((c: any) => !c.access.projects.includes('*'));
+  const idle = <article class="detail" aria-label="API keys">
+    {unrecorded.map(({ c, keys }: any) => <ProblemRow key={c.name} severity="warning" title={`${c.name} counts ${keys.reduce((n: number, k: any) => n + k.reconcile.difference, 0)} calls Fleet did not record`}
+      facts={`${keys.length} of its ${c.keys.length} keys: ${keys.map((k: any) => `${k.reconcile.providerDelta} at the provider against ${k.reconcile.recorded} recorded`).join(', ')}`}
+      actions={[{ label: `Open ${c.name}`, primary: true, onClick: () => go(`/keys/${c.name}`) }]} />)}
+    {limited.length > 0 && <DetailSection title="Limited to some projects">{limited.map((c: any) => <KvRow key={c.name} icon="shield" label={c.name} meta={`${c.provider} · ${c.keys.filter((k: any) => k.state === 'active').length} active`} value={scope(c)} />)}</DetailSection>}
+    {retired.length > 0 && <DetailSection title="Retired keys">{retired.map(({ c, n }: any) => <KvRow key={c.name} icon="circle-slash" label={c.name} value={`${n} retired`} />)}</DetailSection>}
+    {!unrecorded.length && !limited.length && !retired.length && <Empty text="Every connection serves every project; no key needs a look." />}
+  </article>;
+  return <ListDetail list={list} detail={detail || undefined} detailKey={id} idle={idle} />;
 }

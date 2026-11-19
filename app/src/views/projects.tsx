@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import {
   AreaChart, StatusLine, Button, Choice, CodeEditor, CostFigures, DetailSection, Empty, ErrorBanner, Icon,
-  KvRow, ListDetail, Num, SearchField, TextField, Totals, VirtualList, matchSearch,
+  KvRow, ListDetail, Num, SearchField, TextField, Totals, VirtualList, matchSearch, catalogueRow,
   msMeasured, numMeasured, type ChartBucket, type ChartSeries, type Measured, type TotalItem,
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
@@ -95,19 +95,22 @@ export function Projects({ id }: { id?: string }) {
         <VirtualList
           items={rows}
           getKey={(p: any) => p.id}
-          rowHeight={52}
+          rowHeight={catalogueRow()}
           follow="top"
           label="Projects"
+          columns="1.25rem minmax(0,1fr)"
           render={(p: any) => (
             <>
-              <Icon name="folder-open" />
-              <a
-                class="title row-link"
-                href={'/projects/' + encodeURIComponent(p.id)}
-                onClick={e => { e.preventDefault(); setCreating(false); setMobileAnalytics(false); go('/projects/' + encodeURIComponent(p.id)); }}
-              >
-                {p.name}<span class="id">{p.id}</span>
-              </a>
+              {/* One line: the icon, the name, then its id apart from it (it used to run into the name: "cyprus.bzcs"). */}
+              <span class="lead"><Icon name="folder-open" /></span>
+              <span class="tt">
+                <a
+                  class="title row-link"
+                  href={'/projects/' + encodeURIComponent(p.id)}
+                  onClick={e => { e.preventDefault(); setCreating(false); setMobileAnalytics(false); go('/projects/' + encodeURIComponent(p.id)); }}
+                >{p.name ?? p.id}</a>
+                {p.name && p.name.toLowerCase() !== p.id.toLowerCase() && <span class="id">{p.id}</span>}
+              </span>
             </>
           )}
         />

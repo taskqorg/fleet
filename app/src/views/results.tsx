@@ -3,18 +3,16 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   EntityCode, ListDetail, ListFrame, FilterBar, StateCounters, VirtualList, StateBadge, Button, ResultViewer, ArtifactView, Empty, ErrorBanner, Skeleton,
-  AgeChip, bytes, splitTerms, type StateOf, type Chip,
+  AgeChip, bytes, fileLabel, splitTerms, catalogueRow, type StateOf, type Chip,
 } from '../../../packages/ui/src/index.ts';
-import tokens from '../../../packages/ui/tokens.json';
 import { op } from '../api.ts';
 import { withFocus, prefsRead } from '../prefs.ts';
 import { subscribe } from '../feed.ts';
 import { useDoc } from '../store.ts';
 import { useUrlView, useSearchBox } from '../url.ts';
 
-const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
 const PAGE = 100;
-type Row = { id: string; name: string; mediaType: string; size: number; state: StateOf<'artifact'>; taskId: string | null; taskCode?: string | null; executionId: string | null; projectId: string | null; createdAt: number; seq: number };
+type Row = { id: string; name: string; mediaType: string; size: number; state: StateOf<'artifact'>; taskId: string | null; taskCode?: string | null; executionId: string | null; projectId: string | null; createdAt: number; seq: number; scope?: string | null };
 // Filters beyond state are typed in search (OR-36: media:image since:7d) or come in a link's extra keys.
 const MEDIA: Record<string, string> = { image: 'image/', images: 'image/', video: 'video/', text: 'text/', json: 'application/json' };
 const SINCE: Record<string, number> = { '1d': 864e5, '7d': 7 * 864e5, '30d': 30 * 864e5 };
@@ -55,12 +53,12 @@ export function Results({ id }: { id?: string }) {
         counters={<StateCounters family="artifact" label="Results by state" counts={{ stored: null, pending: null, failed: null, deleted: null }} active={states}
           onAll={() => set({ state: [] })} onToggle={s => set({ state: states.includes(s) ? states.filter(x => x !== s) : [...states, s] })} />} />}>
         {!rows ? <Skeleton rows={8} /> : !rows.length ? <Empty text="No results match." />
-          : <VirtualList items={rows} getKey={r => r.id} rowHeight={ROW} follow="top" label="Results" onEnd={() => next !== null && !busy && load(next)}
+          : <VirtualList items={rows} getKey={r => r.id} rowHeight={catalogueRow()} follow="top" label="Results" onEnd={() => next !== null && !busy && load(next)}
             columns="1.25rem minmax(0,1fr) 4rem 3rem" rowClass={r => r.id === id ? 'sel' : ''}
             header={<><span /><span>Result</span><span class="r">Size</span><span class="r">Age</span></>}
             render={r => <>
               <span class="lead"><StateBadge family="artifact" state={r.state} compact /></span>
-              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{r.name}</a>{r.taskId && r.taskCode && <EntityCode code={r.taskCode} id={r.taskId} kind="task" />}{r.projectId && <span class="id">{r.projectId}</span>}</span>
+              <span class="tt"><a class="title row-link" href={href({ focus: r.id })} onClick={e => { e.preventDefault(); set({ focus: r.id }); }}>{fileLabel(r.name) || r.name}</a>{r.taskId && r.taskCode && <EntityCode code={r.taskCode} id={r.taskId} kind="task" />}{(r.projectId || r.scope === 'lab') && <span class="id">{[r.scope === 'lab' && !r.taskCode ? 'Lab' : null, r.projectId].filter(Boolean).join(' · ')}</span>}</span>
               <span class="r svc">{bytes(r.size).text}</span><span class="r"><AgeChip t={r.createdAt} /></span>
             </>} />}
       </ListFrame>

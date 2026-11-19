@@ -66,16 +66,16 @@ export function Tasks({ id }: { id?: string }) {
 }
 
 const TERMINAL = ['completed', 'failed', 'cancelled'];
-/** Row facts of a task (OR-37): time since taken into work, executions, time in the current state, agent, host. */
+/** Row facts of a task (OR-37): time since taken into work, executions from two, time in the current state, agent. */
 function TaskFacts({ t }: { t: TaskRow }) {
   const taken = ms(t.startedAt), since = ms(t.stateAt), agent = t.lastAgent ?? t.agent, n = t.executions ?? 0;
   const label = states_.task[t.pauseReason === 'held' ? 'held' : t.state].label;
   return <RowFacts>
     {taken !== null && !TERMINAL.includes(t.state) && <Fact icon="clock" tip="Since taken into work"><AgeChip t={taken} alertAfter={t.state === 'in_progress' ? 2 * 3600 : undefined} alertLabel="running too long" /></Fact>}
-    {n > 0 && <Fact icon={actions.runs} text={String(n)} tip={n === 1 ? '1 execution' : `${n} executions`} />}
+    {/* One run is the usual case and says nothing (OR-17): the count shows from two; the host is in the detail. */}
+    {n > 1 && <Fact icon={actions.runs} text={String(n)} tip={`${n} executions`} />}
     {since !== null && <Fact tip={`${label} for`}><AgeChip t={since} /></Fact>}
     {isHarness(agent) && <HarnessMark h={agent} />}
-    {t.host && <Fact icon="panels-top-left" tip={`Host ${t.host}`} />}
   </RowFacts>;
 }
 
