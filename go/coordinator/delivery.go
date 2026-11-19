@@ -246,7 +246,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	prev := deliveryLast
 	// Keyless reads share GitHub's 60 an hour per address: a keyless repository is read at most every 6 minutes even
 	// while keyed ones are read every minute; between its reads it keeps its last items.
-	readKeyless := now.Sub(deliveryKeylessAt) >= time.Duration(envMs("FLEET_DELIVERY_KEYLESS_MS", 6*60*1000))*time.Millisecond
+	readKeyless := deliveryKeylessDue(now, deliveryKeylessAt)
 	if readKeyless {
 		deliveryKeylessAt = now
 	}
@@ -634,4 +634,10 @@ func deliverySamples(ctx context.Context, a *App, counts map[string]map[string]i
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].At < out[j].At })
 	return out, err
+}
+
+// deliveryKeylessDue reports whether keyless repositories are read again: FLEET_DELIVERY_KEYLESS_MS (6 minutes by
+// default) since their last read. envMs already returns a duration.
+func deliveryKeylessDue(now, last time.Time) bool {
+	return now.Sub(last) >= envMs("FLEET_DELIVERY_KEYLESS_MS", 6*60*1000)
 }
