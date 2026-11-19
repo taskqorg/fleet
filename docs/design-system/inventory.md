@@ -95,6 +95,19 @@ These apply to every workspace and are the main input for the controls:
 | Agent configurations: harness, model, instructions, skills, tools, environment requirements | View, Setting | `config/agents/*` |
 | Diff between revisions; where a configuration is used | View | git, executions |
 | Harness facts and limitations per version, recorded rather than blocking | View | compatibility facts |
+| Purpose, category, tags and mark (icon and monogram) of each agent | View, Setting | definition content ([library](../designs/fleet-definition-editors.md#library)) |
+| Active or unused; what each agent is chosen for: project roles, presets, pipeline steps, methods | View | `definition_list`, `definition_usage` |
+| Lab variants folded under the agent they vary | View | `variantOf`, experiments |
+| Agents waiting for a repository version, with the change that caused it; take it for many at once | Signal, Action | `definition_take_repository` (proposed) |
+| Definitions made in Fleet and not in the repository; save them there | Signal, Action | `definition_export` |
+
+### Skills
+
+| Item | Kind | Source |
+|---|---|---|
+| Skills with description, files and the agents that carry each (active and repository apart) | View | `config/skills/*`, agent content |
+| How far a skill change has reached: merged, k of n agents active | View, Signal | definition states |
+| Add a skill to agents by name or category; agents that cannot run it, with the reason | Action | `definition_add_skill` (proposed) |
 
 ### Capabilities, methods, tools and pipelines
 
@@ -102,6 +115,7 @@ These apply to every workspace and are the main input for the controls:
 |---|---|---|
 | Catalogue entries with purpose, inputs, results and recommendations | View, Setting | catalogue |
 | Pipeline definitions with steps and transitions, combined with run state | View | pipelines, runs |
+| Pipelines by category, steps as a chain, where each lives, 30-day runs and list price | View | `definition_list` |
 
 ### Laboratory
 
@@ -109,8 +123,10 @@ These apply to every workspace and are the main input for the controls:
 |---|---|---|
 | Create an experiment draft; variants, configuration differences, evaluators, task set | Setting, Action | `lab_experiment_create`, experiments |
 | Trials per variant with scores (objective and judge), tokens, time and cost, each with its basis | View | executions linked to the experiment |
-| Comparison of variants, with drill-down to individual runs | View | `usage.summary`, scores |
+| Comparison of variants, with drill-down to individual runs | View | `analytics_query`, scores |
 | Assessments (comments, limitations, suitability) and recommendations per kind of work | Decision, Action | assessments, recommendations |
+| Experiments as questions by series, with their answer: decision, reason, who and when | View, Decision | `lab_experiments_list`, `lab_experiment_decide` |
+| Confounders between compared variants: host, harness version, model | Signal | trials |
 
 ### Hosts, environments and stores
 
@@ -121,6 +137,7 @@ These apply to every workspace and are the main input for the controls:
 | Stores: capacity, used and free bytes, tunnel state, fill per project | View, Signal | `hosts.list`, `host_metric` |
 | Store capacity, service memory and CPU bounds, free-space warning | Setting | `hosts.set_setting` (applied_at or apply_error) |
 | Low space: raise capacity, change a project's locations, or add a retention rule | Signal, Action | problems |
+| Where each change has reached: definition changes, release and harness pins per host | View, Signal | [changes](../designs/fleet-system-management.md#changes-screen) |
 
 ### Connections and access
 
@@ -135,6 +152,7 @@ These apply to every workspace and are the main input for the controls:
 
 | Item | Kind | Source |
 |---|---|---|
-| Time, cost, tokens, CPU and waits by project, task, kind, agent, account, host and configuration | View | `usage.summary` |
+| Time, cost, tokens, CPU and waits by project, task, kind, agent, account, host and configuration | View | `analytics_query` |
+| Spend by purpose; what it bought (tasks done, cost per completed task against the median); by model and host | View | [spend view](../designs/fleet-analytics.md#spend-view), `spend_summary` (proposed) |
 | Drill-down from a total to executions, spans and transcripts | View | `executions.get`, `transcript.read` |
 | Discuss findings with an agent; start an experiment from selected work | Action | sessions, experiments |

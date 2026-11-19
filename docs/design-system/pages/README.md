@@ -15,5 +15,7 @@ Page specs map [inventory](../inventory.md) items to patterns and controls. The 
 | Agents | Architect | [agents.md](agents.md) (mockup only) |
 | Pipelines | Architect | [pipelines.md](pipelines.md) (mockup only) |
 | Catalogue | Architect | [catalogue.md](catalogue.md) (mockup only) |
+| Changes | Architect | [changes.md](changes.md) (design canvas only) |
+| Spend | Architect | [spend.md](spend.md) (design canvas only) |
 
 The operator app (`app/`, [design](../../designs/fleet-operator-app.md)) builds the Overview, Tasks, Conversations and Hosts pages for real. `pnpm run check:design` runs `tests/ui/app.check.ts` on it.

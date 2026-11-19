@@ -6,7 +6,9 @@
 
 **Layout.** [App shell](../patterns/app-shell.md), [list and detail](../patterns/list-detail.md), with the [definition editor](../patterns/definition-editor.md) in the work area. The work area uses the [draft bar](../controls/draft-bar.md), the [step list](../controls/step-list.md), [choices](../controls/choice.md), [detail sections](../controls/detail-section.md) and, for a failed run, the [problem row](../controls/problem-row.md).
 
-**Catalogue row.** State of the last run, name; on the second line the number of steps and agents and the scope; on the right the age of the last run. Groups: changed, shared, then one per project.
+**Catalogue row.** Id and where it lives (store only marked), then its steps as one chain in mono (`api web_search › agent codex-researcher › script`); on the right 30-day runs and list price. A pipeline that did not run in 30 days is dimmed. Groups: one per category ([library](../../designs/fleet-definition-editors.md#library)). Facets: all, ran in 30 days, store only, Lab.
+
+**With nothing open.** Pipelines that ran but live only in the store, with "Save to the repository"; methods per capability with their assessment state; the agents the steps use.
 
 **Definition tab, from top to bottom.**
 1. **Starts when:** triggers and run settings as chips.

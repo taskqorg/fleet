@@ -6,6 +6,8 @@
 
 **Columns (D19).** [List and detail](../patterns/list-detail.md): the control column holds "Waiting for you" and the experiments catalogue; the work area holds the opened experiment, or the use-case registry while none is open. The lists below keep their content and move to these places. Not built: the `#/lab` mockup still has the earlier one-page layout, and at 1100 px and below the registry cannot be reached while no experiment is open.
 
+**Questions view** ([requirements](../../designs/fleet-lab.md#lab-screen)). The experiments catalogue lists series as questions: the newest goal as the title, the series name and its count of experiments, the answer or how many wait for one; groups waiting for a decision, answered, stopped. The opened experiment reads question, steps (question, design, runs, scores, decision), answer card (decision, reason, who and when, or confirm and override), a comparison table with one column per variant, a confounders warning, then the matrix and spend below.
+
 **Layout of `/lab`.**
 * Withdrawn ratings stay visible as history with their reason and no answer controls; they never count as pending or as owner scores.
 * "Waiting for you": open ratings count; drafted examples awaiting approval as [decision blocks](../controls/decision-block.md) (pass or fail).

@@ -40,9 +40,20 @@ One operation under the [data foundation §6](fleet-data-foundation.md#6-operati
 - Lab descendants inherit `experiment_id` and the trial’s `variant` through their same-project execution parent; `profile_id` remains a separate executor choice. Retained descendants with the old profile-name label are repaired from their typed trial ancestry.
 - Native reasoning tokens follow the existing per-call versus final-report token scope. API duration is read only from an explicit final native `duration_api_ms` report, never inferred from wall or active time. Missing observations remain unavailable with a reason; a reported zero remains measured. Retained reports are projected into totals when the schema is upgraded.
 - Sources: `calls`, `connection`, `credits`, and money `measured` spend from `tool_run` / `execution_totals.connection_cost`; tokens, durations (`wall_ms`, `active_ms`, `api_ms`, `cpu_ms`), `peak_memory_bytes`, and gateway/harness metrics from `execution_totals`.
-- `usage_summary` is not an implemented operation; cost totals come from `analytics_query` and shared `CostFigure[]` rollups.
+- `usage_summary` is not an implemented operation; cost totals come from `analytics_query` and shared `CostFigure[]` rollups. The proposed [`spend_summary`](#spend-view) takes its place.
 
 **Lab use.** The Lab comparison reads trials through the same contract with `experiment` and `variant` as dimensions; the statistics on top are Lab's ([statistics](fleet-lab.md#statistics)).
+
+## Spend view
+
+Requirements for one answer to "where did the agents' money go and what did it buy", for the owner on a Spend screen ([spend](../design-system/pages/spend.md)) and for agents through MCP. Figures come from `analytics_query`; nothing new is stored.
+
+* **Purpose** is a new `analytics_query` dimension, derived per leaf execution in this order: `lab` (it has an `experiment_id`), `task` (it is attributed to a task), `conversation` (a session with no task), `system` (`system_actor` set), else `other`. The screen names them Lab, project work, conversations, Fleet itself and other; research and review agents are told apart by the agent's [library](fleet-definition-editors.md#library) `category`, a second new dimension.
+* **Share by purpose:** list price over the window, one bar part per purpose with the agents in it on its tooltip. Subscription list-price figures and metered money stay apart, per the cost rules above; the count of unpriced runs is shown beside the total, never folded in as zero.
+* **What it bought:** per project, tasks completed in the window, the agent spend attributed to those tasks, and cost per completed task. Lab and conversations buy answers, not tasks, and are named as such instead of a per-task figure.
+* **By model** (harness and model, runs, cost, unpriced runs) and **by host** (runs, execution wall time, cost).
+* **Cost per completed task** against the same project and agent's 30-day median, so an expensive task stands out on Overview and in the task's detail.
+* **`spend_summary {window, by: purpose | project | category | profile | model | host, projectId?}`** (proposed): the same figures in one reply for agents, a fixed preset over `analytics_query` with the same row-level security and the same `hidden` and `unknown` counts. It replaces the never-built `usage_summary`.
 
 ## System activity
 
