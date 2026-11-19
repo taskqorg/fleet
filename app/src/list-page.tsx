@@ -5,9 +5,8 @@ import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import {
   ListFrame, FilterBar, Presets, StateCounters, GroupHeader, GroupControl, SortControl, VirtualList, ContextMenu, SelectBar, SelectToggle, RowPin, RowCheck, copyText, actions,
-  EntityCode, ErrorBanner, type EntityKind, Skeleton, type IconName, type Family, type StateOf, type Chip, type Tone, type SortField,
+  EntityCode, ErrorBanner, type EntityKind, Skeleton, catalogueRow, type IconName, type Family, type StateOf, type Chip, type Tone, type SortField,
 } from '../../packages/ui/src/index.ts';
-import tokens from '../../packages/ui/tokens.json';
 import { op, online } from './api.ts';
 import { useList, useDoc, type Kind } from './store.ts';
 import { chunks, compareKeys, closedGroups, flipGroup } from './lists.ts';
@@ -30,7 +29,7 @@ export type LocalList<R> = { rows: R[]; all: R[]; counts: Record<string, number>
 export type ListItem<R> = { kind: 'group'; key: string; label: string; count: number; icon?: 'pin' } | { kind: 'row'; r: R; pinned?: boolean };
 type MenuItems = Parameters<typeof ContextMenu>[0]['items'];
 type BarActions = Parameters<typeof SelectBar>[0]['actions'];
-const ROW = parseInt(tokens.size['row-2']); // two-line catalogue row
+const ROW = catalogueRow(); // one-line catalogue row, 44 px on touch
 const PINNED = '\u0000pinned'; // group key of the pinned rows; never a server group key
 
 export type ListPageOptions = {

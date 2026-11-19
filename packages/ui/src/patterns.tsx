@@ -9,6 +9,8 @@ import tokens from '../tokens.json';
 
 const ROW = parseInt(tokens.size.row);
 export const ROW2 = parseInt(tokens.size['row-2']);
+/** A catalogue row in the control column: one line, the title then its code (2026-11-20 decision); 44 px on touch (principles: narrow work areas). */
+export const catalogueRow = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? parseInt(tokens.size['row-phone']) : ROW;
 
 /* ---------- Task list view (patterns/list-view.md) ---------- */
 

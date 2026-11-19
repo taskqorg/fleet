@@ -47,7 +47,7 @@ class RenderBoundary extends Component<{ at: string; children: ComponentChildren
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
 const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => any }> = {
   projects: { focus: true, view: p => <Projects id={p.id} /> },
-  overview: { focus: false, view: () => <Overview /> },
+  overview: { focus: true, view: p => <Overview id={p.id} /> },
   tasks: { focus: true, view: p => <Tasks id={p.id} /> },
   conversations: { focus: true, view: p => <Conversations id={p.id} /> },
   results: { focus: true, view: p => <Results id={p.id} /> },

@@ -14,7 +14,7 @@ Every list follows the same order: state first, then name with ID, then the serv
 
 **Grouping.** Lists can group rows. Each group header row shows the group's icon, name and count. Groups collapse; completed and cancelled start collapsed, and the person's own collapses are remembered ([list view](../patterns/list-view.md)). `endKey` tells the list that rows were loaded behind its end without new items (into a collapsed group), so `onEnd` fires again while the end is in view. Anchor keeping works across groups.
 
-**Sizes.** Row `size-row` (32 px), compact `size-row-compact` per person. A catalogue in the control column uses two-line rows, `size-row-2` ([list and detail](../patterns/list-detail.md)), as does the phone (`size-row-phone`).
+**Sizes.** Row `size-row` (32 px), compact `size-row-compact` per person. A catalogue in the control column uses the same one-line rows ([list and detail](../patterns/list-detail.md)); touch uses `size-row-phone` (`catalogueRow()`).
 
 **Opening.** A row that opens an item has one `row-link` on its title; a click anywhere else on the row follows that link (OR-26). Buttons, checkboxes and other links in the row keep their own action.
 

@@ -3,8 +3,9 @@
 // budgets, judge-to-owner agreement, rating queue and Promote on /lab/<experiment id>. Ratings and budget questions are
 // answered through questions_answer like every question; rating outputs show blind (A, B, …) in the seeded order.
 import { useEffect, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import { useLocation } from 'wouter-preact';
-import { StateBadge, Button, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, ShellStatus } from '../../../packages/ui/src/index.ts';
+import { StateBadge, Button, EntityCode, Num, Totals, DetailSection, KvRow, DecisionBlock, ProblemRow, RowCheck, AgeChip, VirtualList, Empty, OfflineMarker, Icon, ListDetail, catalogueRow, ROW2, percent, SettingField, StepList, msMeasured, type StepItem, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, writeOnce, useAlive, type OpName, type Ops } from '../api.ts';
 import { useDoc } from '../store.ts';
 import { LabCreate } from './lab-create.tsx';
@@ -35,25 +36,44 @@ export function Lab({ id }: { id?: string }) {
       {approvals.map((r: any) => <Rating key={r.id} r={r} now={now} />)}
     </section>}
     <section class="panel">
-      {data.experiments.length ? <VirtualList items={data.experiments} getKey={(e: any) => e.id} rowHeight={ROW2} follow="top" label="Experiments" columns="1.25rem minmax(0,1fr) auto"
+      {data.experiments.length ? <VirtualList items={data.experiments} getKey={(e: any) => e.id} rowHeight={catalogueRow()} follow="top" label="Experiments" columns="1.25rem minmax(0,1fr) auto auto"
         rowClass={(e: any) => e.id === id ? 'sel' : ''}
         render={(e: any) => <>
           <span class="lead"><StateBadge family="experiment" state={e.state} reason={e.stopReason ?? undefined} compact /></span>
-          <span class="tt"><a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }}>{title(e)}</a></span>
+          {/* One line: the series names the row, the pipeline, kind and variants follow as its secondary text (the full name was cut). */}
+          <span class="tt"><a class="title row-link" href={`/lab/${e.id}`} onClick={ev => { ev.preventDefault(); go(`/lab/${e.id}`); }} data-tip={title(e)}>{e.labGroup || e.pipelineId}</a><span class="id sub">{subtitle(e)}</span></span>
+          <span class="undecided" data-tip={undecided(e) ? 'Finished, waiting for a decision' : undefined}>{undecided(e) && <Icon name="bell" label="Undecided" />}</span>
           <AgeChip t={ms(e.createdAt)} />
         </>} />
         : <Empty text="No experiments yet. Choose New experiment to create a draft." />}
     </section>
   </>;
   return <ListDetail list={list} detail={id ? <Experiment key={id} id={id} onClose={() => go('/lab')} /> : undefined} detailKey={id}
-    idle={<Registry useCases={data.useCases} />} />;
+    idle={<Registry useCases={data.useCases} head={<Undecided experiments={data.experiments} onOpen={x => go(`/lab/${x}`)} />} />} />;
 }
 
 const title = (e: any) => `${e.pipelineId} · ${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.map((v: any) => v.label).join(' vs ')}`;
+const subtitle = (e: any) => `${e.kind === 'ab' ? 'A/B' : e.kind} · ${e.variants.length > 2 ? `${e.variants.length} variants` : e.variants.map((v: any) => v.label).join(' vs ')}`;
+/** A finished experiment nobody has decided yet (decision pending). */
+const undecided = (e: any) => e.state === 'done' && e.decision === 'pending';
+
+// What the Lab waits for, above the registry while no experiment is open (2026-11-20 decision): finished experiments
+// without a decision, newest first.
+function Undecided({ experiments, onOpen }: { experiments: any[]; onOpen: (id: string) => void }) {
+  const waiting = experiments.filter(undecided).sort((a, b) => ms(b.launchedAt ?? b.createdAt) - ms(a.launchedAt ?? a.createdAt));
+  if (!waiting.length) return null;
+  const series = new Set(waiting.map(e => e.labGroup || e.pipelineId)).size;
+  return <>
+    <ProblemRow severity="warning" title={`${waiting.length} finished ${waiting.length === 1 ? 'experiment waits' : 'experiments wait'} for a decision`}
+      facts={`in ${series} series`} actions={[{ label: 'Open the newest', primary: true, onClick: () => onOpen(waiting[0].id) }]} />
+    <DetailSection title="Newest undecided">{waiting.slice(0, 5).map(e => <KvRow key={e.id} icon="chart-no-axes-column" label={e.goal ?? title(e)}
+      meta={`${e.labGroup || e.pipelineId} · ${subtitle(e)}`} value={<Button label="Open" kind="quiet" onClick={() => onOpen(e.id)} />} />)}</DetailSection>
+  </>;
+}
 
 // The use-case registry fills the work area while no experiment is open. It scrolls with the work area, so its rows are plain.
 // ponytail: static rows, fine for tens of use cases; make it its own catalogue with a virtual list if the registry grows past a few hundred.
-function Registry({ useCases }: { useCases: any[] }) {
+function Registry({ useCases, head }: { useCases: any[]; head?: ComponentChildren }) {
   // Obsolete and duplicate entries collapse under their source; maps_to names what covers them.
   const replaced = (u: any) => u.status === 'obsolete' || u.status === 'duplicate';
   const live = useCases.filter(u => !replaced(u)), gone = useCases.filter(replaced);
@@ -64,6 +84,7 @@ function Registry({ useCases }: { useCases: any[] }) {
     <span class="muted">{u.status ?? 'current'}</span><span class="muted">{u.lab_fit}</span><span class="muted">{u.maturity}</span>
   </div>;
   return <article class="detail" aria-label="Use-case registry">
+    {head}
     <h2 class="detail-title">Use-case registry</h2>
     <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) 6rem 5rem 9rem' }}>
       <div class="vl-head" role="row"><span /><span>Use case</span><span>Status</span><span>Fit</span><span>Maturity</span></div>

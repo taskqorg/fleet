@@ -1,12 +1,13 @@
 # Overview (operator)
 
-**Mockup routes:** `#/overview` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
+**Mockup routes:** `#/overview`, `#/overview/q1`, `#/overview/p1` in [mockups.html](mockups.html). Every page renders [app-shell](../patterns/app-shell.md) with the [nav rail](../controls/nav-rail.md).
 
 **Purpose.** Answers "what needs me and is the fleet healthy?" in the first screen.
 
-**Layout.** [App shell](../patterns/app-shell.md). The page head shows "updated 20s". Then:
-* the [ops summary](../patterns/ops-summary.md) [stat strip](../controls/stat-strip.md);
-* two columns: [needs you](../patterns/needs-you.md) on the left (wider), and workers per host, accounts and projects on the right.
+**Layout.** [List and detail](../patterns/list-detail.md) (2026-11-20 decision, Overview B):
+* the control column is the [needs you](../patterns/needs-you.md) inbox: one line per open question or problem, grouped by cause (Delivery got slower, Hosts, Coordinator, Errors, Runs, Acceptance, Decisions), in the OR-40 order. A row is its headline (the first sentence, links left out, the group's name not repeated), then its code and age;
+* a picked row opens in the work area (`/overview/<id>`): the headline, the [decision block](../controls/decision-block.md) with the full text, and the other items of the same cause;
+* with nothing picked the work area shows the fleet: the [stat strip](../controls/stat-strip.md) (need you, hosts online, failed, running, queued), hosts, projects with their open counts, and delivery in flight.
 
 The focus and ignored projects (OR-34) narrow every part. `/overview?all` drops the focus (ignored projects stay hidden), and its head says so; the header's "N need you outside focus" opens it ([app shell](../patterns/app-shell.md)).
 

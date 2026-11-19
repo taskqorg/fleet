@@ -60,7 +60,7 @@ Spacing scale `space-1..7` = 2, 4, 8, 12, 16, 24, 32 px. Use the scale; no in-be
 | `size-badge`, `size-chip` | 20, 24 px | Badge height (and compact badge width); chip height. |
 | `size-fill`, `size-search`, `size-list`, `size-total`, `size-clock`, `size-label`, `size-input` | 160, 220, 320, 120, 64, 160, 120 px | Component widths and default list height. |
 | `size-thumb` | 72 px | A message image thumbnail (square, fixed so a loading image moves nothing). |
-| `size-ctl`, `size-row-2` | 420, 44 px | Control column width and its two-line catalogue row ([list and detail](patterns/list-detail.md)). |
+| `size-ctl`, `size-row-2` | 520, 44 px | Control column width ([list and detail](patterns/list-detail.md)); `size-row-2` stays for two-line rows outside the control column. |
 
 ## Radius and elevation
 
