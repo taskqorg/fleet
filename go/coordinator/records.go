@@ -1,5 +1,7 @@
-// Record access (all/get/put with the typed execution and task adapters, docs/designs/fleet-data-foundation.md §7):
-// documents by kind, and the legacy kinds execution, question and delegation served from their typed tables.
+// Record access (all/get/put, docs/designs/fleet-data-foundation.md §7): the legacy record layer the files on the
+// design rules' allowlist still read and write through, every kind from its table (the conversation, host and account
+// kinds through convTables, execution, question and delegation through their typed queries), and the generic row
+// helpers those files call (exec, first, has, rows).
 package main
 
 import (

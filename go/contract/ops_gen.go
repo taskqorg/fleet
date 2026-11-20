@@ -67,7 +67,7 @@ func (v *CatalogueMethodView) Validate() error {
 	return nil
 }
 
-// ChangeKind: The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema.sql); a go test checks the triggers against this list.
+// ChangeKind: The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema/functions.sql); a go test checks the triggers against this list.
 type ChangeKind string
 
 const (

@@ -639,14 +639,14 @@ var designRulesOwned = map[string]map[string]string{
 		"R-GO": "S6: HTTP/stream plumbing: the LISTEN fleet_change connection (reconnected after a second), the feed loop that reads behind it, and the ping ticker of each open /api/stream",
 	},
 	"telemetry.go": {
-		"R-SQL": "S2 covers PostgreSQL: these are the ClickHouse span-store queries (telemetry_summary, telemetry_trace), which sqlc cannot generate",
+		"R-SQL": "S2 covers PostgreSQL: these are the ClickHouse span-store queries (telemetry_summary, telemetry_trace, the purge's span deletes), which sqlc cannot generate",
 	},
 	"work_kit.go": {
 		"R-GO":  "S6: the kit's loop and its fleet_work listener are the scheduling the rule keeps out of the queues",
 		"R-SQL": "S6: the kit alone writes attempts, next_attempt_at and last_error of any queue's table, named by the queue; sqlc cannot name a table per call",
 	},
 	"sql_builder.go": {
-		"R-SQL": "S2: the one place SQL is assembled at run time (resource item pages, analytics_query grouping and filters), from allowlisted identifiers with bind parameters; sqlc cannot vary a statement's table, comparison, grouping or conditions",
+		"R-SQL": "S2: the one place SQL is assembled at run time (resource item pages, analytics_query grouping and filters, list pages and their counts, delete and purge cascades), from allowlisted identifiers with bind parameters; sqlc cannot vary a statement's table, comparison, grouping or conditions",
 	},
 }
 
