@@ -1039,26 +1039,41 @@ const resourceLeafRowSelect = `
   l.credits,
   (l.connection_cost IS NOT NULL) AS has_conn_cost,
   coalesce(lc.costs, '[]'::jsonb) AS leaf_costs
- FROM scoped_leaves s
- JOIN leaves l ON l.id = s.leaf_id
- LEFT JOIN LATERAL (
-  SELECT jsonb_agg(jsonb_build_object('currency', currency, 'basis', cost_basis, 'value', value, 'prices', prices, 'unpriced', unpriced)) AS costs
+ FROM leaves l
+ CROSS JOIN LATERAL jsonb_array_elements((SELECT m FROM leaf_scope_map) -> l.id) sc
+ CROSS JOIN LATERAL (SELECT sc->>0 AS scope, sc->>1 AS scope_key) s
+ LEFT JOIN LATERAL (SELECT (SELECT m FROM leaf_cost_map) -> l.id AS costs) lc ON true`
+
+// resourceLeafMapCTEs: each leaf's scopes and costs as one jsonb object keyed by leaf id, read by key in
+// resourceLeafRowSelect. The CTEs carry no row estimates, so a join of two of them can plan as a nested loop over
+// every pair (leaves x scoped_leaves, leaves x cost items: seconds at a few thousand leaves); a key lookup cannot.
+const resourceLeafMapCTEs = `
+leaf_scope_map AS (
+ SELECT coalesce(jsonb_object_agg(leaf_id, scopes), '{}'::jsonb) AS m
+ FROM (SELECT leaf_id, jsonb_agg(jsonb_build_array(scope, scope_key)) AS scopes FROM scoped_leaves GROUP BY leaf_id) x
+),
+leaf_cost_map AS (
+ SELECT coalesce(jsonb_object_agg(id, costs), '{}'::jsonb) AS m
+ FROM (
+  SELECT id, jsonb_agg(jsonb_build_object('currency', currency, 'basis', cost_basis, 'value', value, 'prices', prices, 'unpriced', unpriced)) AS costs
   FROM (
-   SELECT ci.currency, ci.cost_basis, sum(ci.amount)::float8 AS value, sum(ci.unpriced)::bigint AS unpriced,
+   SELECT ci.id, ci.currency, ci.cost_basis, sum(ci.amount)::float8 AS value, sum(ci.unpriced)::bigint AS unpriced,
     coalesce(jsonb_agg(DISTINCT jsonb_build_object('id', ci.price_id, 'observedAt', ci.obs_ms)) FILTER (WHERE ci.price_id IS NOT NULL), '[]'::jsonb) AS prices
    FROM leaf_cost_items ci
-   WHERE ci.id = l.id
-   GROUP BY ci.currency, ci.cost_basis
+   GROUP BY ci.id, ci.currency, ci.cost_basis
   ) cg
- ) lc ON true`
+  GROUP BY id
+ ) x
+)`
 
 // queryResourceSummariesSQL executes a query returning (scope, scope_key, ResourceSummary) rows cleanly
 // without double-counting cost items across scopes, assuming the caller CTE defines `scoped_leaves(scope, scope_key, leaf_id)`.
 func summarizeResourceQuery(q *Request, ctesSQL string, args ...any) (map[string]contract.ResourceSummary, error) {
 	fullSQL := fmt.Sprintf(`%s,
 leaves AS MATERIALIZED (%s WHERE %s AND e.id IN (SELECT leaf_id FROM scoped_leaves)),
+%s,
 %s
-%s`, ctesSQL, analyticsBaseLeavesSelect, analyticsLeafFilter, analyticsLeafCostCTEs, resourceLeafRowSelect)
+%s`, ctesSQL, analyticsBaseLeavesSelect, analyticsLeafFilter, analyticsLeafCostCTEs, resourceLeafMapCTEs, resourceLeafRowSelect)
 
 	rows, err := q.tx.Query(q.ctx(), fullSQL, args...)
 	if err != nil {
@@ -1861,14 +1876,18 @@ func definitionUsageResources(q *Request, kind, id string, days int64) (map[stri
     AND coalesce(d->>'revision', '') ~ '^[0-9]+$'
     AND coalesce(e.started_at, e.updated_at) >= now() - make_interval(days => $4::int)
  ),
+ -- A session's parent execution read by key: a join to session planned from an estimate of one execution row scans
+ -- every session for each execution (seconds at 20k executions before the tables are analyzed).
+ session_parents AS (
+  SELECT coalesce(jsonb_object_agg(id, parent_execution_id), '{}'::jsonb) AS m FROM session WHERE parent_execution_id IS NOT NULL
+ ),
  edges AS MATERIALIZED (
   SELECT DISTINCT c.id AS child_id, p.parent_id
   FROM execution c
-  LEFT JOIN session s ON s.id = c.session_id
   CROSS JOIN LATERAL (VALUES
    (c.parent_execution_id),
    (CASE WHEN c.delegation IS NOT NULL THEN c.delegation->>'parentExecutionId' END),
-   (s.parent_execution_id),
+   ((SELECT m FROM session_parents) ->> c.session_id),
    (CASE WHEN c.kind = 'tool_run' THEN c.data->>'pipelineRunId' END)
   ) p(parent_id)
   WHERE p.parent_id IS NOT NULL
