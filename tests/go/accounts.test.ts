@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {startCoordinator, lit} from '../harness.ts';
+import {hostCommand, startCoordinator, lit} from '../harness.ts';
 
 test('Account inspections retain legacy host work without widening actor/project access (requirement: fleet-people-access subscriptions and data-foundation typed execution history; risk: account reads 404 on retained tool_run or disclose a foreign execution)', {timeout: 30000}, async () => {
   const c = await startCoordinator({name:'account-read'});
@@ -65,8 +65,7 @@ test('Selected execution hosts inspect their own account through authenticated c
    const poll={platform,capabilities:['codex'],stores:[],problems:[]};
    ok(await call('/api/hosts/poll',poll,secret));
    const inspection=ok(await op('account_connect',{accountId:a.id,hostId:id,binding:'fixture-codex'}));
-   const commands=ok(await call('/api/hosts/poll',poll,secret)).commands;
-   const cmd=commands.find((x:any)=>x.executionId===inspection.executionId);
+   const cmd=await hostCommand(async q => ok(await call('/api/hosts/poll' + q, poll,secret)), (x:any)=>x.executionId===inspection.executionId);
    assert.equal(cmd.kind,'account-inspect');assert.equal(cmd.payload.nativeHostId,id);
    const receipt={hostId:id,executionId:inspection.executionId,commandId:cmd.id,accountObservation:{accountId:a.id,binding:'fixture-codex',platform,readiness:'ready',reason:'ready',nativeLoginObserved:true,quota:'unknown'}};
    assert.equal((await call('/api/hosts/accounts/report',receipt)).status,401,'browser cannot forge host receipt');
@@ -77,12 +76,12 @@ test('Selected execution hosts inspect their own account through authenticated c
     const session=ok(await call('/api/ops/session_create',{}));
     const send=()=>call('/api/ops/message_send', {sessionId: session.sessionId, requestId:randomUUID(),text:'continue'});
     const first=ok(await send());
-    const start=ok(await call('/api/hosts/poll',poll,secret)).commands.find((x:any)=>x.executionId===first.id);
+    const start=await hostCommand(async q => ok(await call('/api/hosts/poll' + q, poll,secret)), (x:any)=>x.executionId===first.id);
     assert.equal(start.payload.account,'fixture-codex');
     ok(await call('/api/hosts/receipts',{executionId:first.id,commandId:start.id,status:'started',nativeSessionId:'invented-native'},secret));
     ok(await call('/api/hosts/receipts',{executionId:first.id,commandId:start.id,status:'completed',nativeSessionId:'invented-native'},secret));
     const next=ok(await send());
-    const resumed=ok(await call('/api/hosts/poll',poll,secret)).commands.find((x:any)=>x.executionId===next.id);
+    const resumed=await hostCommand(async q => ok(await call('/api/hosts/poll' + q, poll,secret)), (x:any)=>x.executionId===next.id);
     assert.equal(resumed.payload.nativeSessionId,'invented-native');
     assert.equal(resumed.payload.account,'fixture-codex');
    }

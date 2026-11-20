@@ -4,7 +4,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {startCoordinator} from '../harness.ts';
+import {hostCommand, startCoordinator} from '../harness.ts';
 import {fakeS3} from '../s3-fake.ts';
 
 // Requirement: fleet-people-access §5 Lab creator inheritance; risk: background runs escalate to owner authority.
@@ -39,7 +39,7 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const row=await until(async()=>agentRows(e.id)[0]);assert.equal(row.directedBy,creator);
    const session=await op('session_get',{sessionId:row.sessionId});assert.equal(session.directedBy,creator);
    const run=await op('pipeline_get',{runId:row.pipelineRunId});assert.equal(run.requestedBy.email,creator);
-   const commands=(await hostCall('/api/hosts/poll',poll)).commands;const command=commands.find((x:any)=>x.executionId===row.id);assert.ok(command,'fixture host claims native command without executing it');
+   const command=await hostCommand(q=>hostCall('/api/hosts/poll'+q,poll),(x:any)=>x.executionId===row.id);assert.ok(command,'fixture host claims native command without executing it');
    const lineage=JSON.parse(c.sql(`SELECT json_agg(json_build_object('kind',kind,'experiment',experiment_id,'variant',variant)) FROM execution WHERE id IN ('${row.pipelineRunId}','${row.pipelineStepId}','${row.id}')`));
    assert.equal(lineage.length,3);
    for(const item of lineage) assert.deepEqual([item.experiment,item.variant],[e.id,'fixture'],'trial identity survives native enqueue and host assignment');

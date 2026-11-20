@@ -6,7 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {startCoordinator} from '../harness.ts';
+import {hostCommand, startCoordinator} from '../harness.ts';
 import {fakeS3} from '../s3-fake.ts';
 
 test('G1 every declared artifact reaches the completion gate, also past 10,000 (requirement: a completed run waits for every declared output while it uploads, and task completion requirements for every matching one; risk: a silent cap drops a late required output and the execution finishes without it)', {timeout: 60_000}, async () => {
@@ -23,8 +23,7 @@ test('G1 every declared artifact reaches the completion gate, also past 10,000 (
     const {sessionId} = await call('/api/ops/session_create', {});
     const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
     c.sql(`UPDATE execution SET task_id='${task.id ?? task.taskId}' WHERE id='${e.id}'`);
-    const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
-    const command = commands.find((x: any) => x.executionId === e.id);
+    const command = await hostCommand(q => call('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null), (x: any) => x.executionId === e.id);
     const artifacts = [...Array.from({length: 10000}, (_, i) => `out/${i}.bin`), 'late.txt'];
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed', artifacts}, secret, null);
@@ -48,8 +47,7 @@ test('G2 a completed run whose declared outputs are not stored yet waits, unrese
     const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
     const {sessionId} = await call('/api/ops/session_create', {});
     const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
-    const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
-    const command = commands.find((x: any) => x.executionId === e.id);
+    const command = await hostCommand(q => call('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null), (x: any) => x.executionId === e.id);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed', artifacts: ['output.json']}, secret, null);
     const state = () => c.sql(`SELECT state::text FROM execution WHERE id='${e.id}'`).trim();
@@ -76,8 +74,7 @@ test('G3 a task whose last execution succeeds asks for acceptance (requirement: 
     const {sessionId} = await call('/api/ops/session_create', {});
     const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
     c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'; UPDATE task SET state='in_progress' WHERE id='${taskId}'`);
-    const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
-    const command = commands.find((x: any) => x.executionId === e.id);
+    const command = await hostCommand(q => call('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null), (x: any) => x.executionId === e.id);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
@@ -111,8 +108,7 @@ test('G4 a task whose run fails asks the operator, a new run withdraws it, fail 
       const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
       c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'`);
       await call('/api/ops/task_get', {taskId});
-      const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
-      const command = commands.find((x: any) => x.executionId === e.id);
+      const command = await hostCommand(q => call('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null), (x: any) => x.executionId === e.id);
       await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
       await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status}, secret, null);
     };
@@ -256,8 +252,7 @@ test('Late failed work report reconciles the canonical task bound through its se
     const e=await call('/api/ops/message_send', {sessionId: sessionId, requestId:randomUUID(),text:'finish process without required deliverable'});
     assert.equal(c.sql(`SELECT task_id FROM execution WHERE id='${e.id}'`).trim(),taskId);
     assert.equal(c.sql(`SELECT data ? 'taskId' FROM execution WHERE id='${e.id}'`).trim(),'f','the canonical session binding does not require a JSON taskId alias');
-    const {commands}=await call('/api/hosts/poll',{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
-    const command=commands.find((x:any)=>x.executionId===e.id);
+    const command = await hostCommand(q => call('/api/hosts/poll' + q, {platform:'darwin',capabilities:[],stores:[],problems:[]}, secret, null), (x:any)=>x.executionId===e.id);
     await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'started'},secret,null);
     await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'completed'},secret,null);
     const before=await call('/api/ops/task_get',{taskId});
@@ -286,8 +281,8 @@ test('self-delivery queued continuation retains the canonical task and suppresse
     await call('/api/ops/session_task_attach',{sessionId,taskId:tid});
     const e=await call('/api/ops/message_send', {sessionId: sessionId, requestId:randomUUID(),text:'deliver'});
     c.sql(`UPDATE task SET state='in_progress' WHERE id='${tid}'`);
-    const poll=()=>call('/api/hosts/poll',{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
-    const command=(await poll()).commands.find((x:any)=>x.executionId===e.id);
+    const poll=(q='')=>call('/api/hosts/poll'+q,{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
+    const command=await hostCommand(poll,(x:any)=>x.executionId===e.id);
     await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'started'},secret,null);
     const request={requestId:randomUUID(),text:'Checkpoint stored; verify landing after executor replacement'};
     const queue=await call('/api/ops/message_send',{sessionId:sessionId,...request});
@@ -300,7 +295,7 @@ test('self-delivery queued continuation retains the canonical task and suppresse
     assert.equal(acceptance(),'0','no intermediate acceptance before or after promotion');
     const next=JSON.parse(c.sql(`SELECT json_build_object('id',id,'task',task_id,'state',state) FROM execution WHERE session_id='${sessionId}' AND id<>'${e.id}' ORDER BY seq DESC LIMIT 1`));
     assert.equal(next.task,tid);assert.equal(next.state,'preparing');
-    const promoted=(await poll()).commands.find((x:any)=>x.executionId===next.id);assert.ok(promoted,'queued continuation eventually dispatched');
+    const promoted=await hostCommand(poll,(x:any)=>x.executionId===next.id);assert.ok(promoted,'queued continuation eventually dispatched');
     await call('/api/hosts/receipts',{commandId:promoted.id,executionId:next.id,status:'completed'},secret,null);
     assert.equal(acceptance(),'1','acceptance only after the final continuation');
   } finally {await c.stop();}

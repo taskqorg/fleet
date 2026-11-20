@@ -6,7 +6,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {startCoordinator} from '../harness.ts';
+import {hostCommand, startCoordinator} from '../harness.ts';
 import {SYSTEM_VIEWS} from '../../app/src/system-views.ts';
 
 // R2, R7, OR-33, OR-34; risk: a navigation counter disagrees with its list, counts an ignored project, keeps a stale view or is closed to agents.
@@ -116,10 +116,10 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   // An agent reads its director's counters through the same operation, which agents get as a tool.
   await op('person_settings_set', {navCounters: {tasks: ''}});
   const host = await op('hosts_register', {id: 'h-nav', holder: 'owner@trial.test'});
-  const poll = async () => (await (await fetch(c.base + '/api/hosts/poll', {method: 'POST', headers: {authorization: 'Bearer ' + host.secret, 'content-type': 'application/json'}, body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []})})).json()) as any;
+  const poll = async (q = '') => (await (await fetch(c.base + '/api/hosts/poll' + q, {method: 'POST', headers: {authorization: 'Bearer ' + host.secret, 'content-type': 'application/json'}, body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []})})).json()) as any;
   await poll();
   const sess = await op('session_start', {projectId: 'alpha', role: 'pm', requestId: randomUUID(), text: 'Count for me'});
-  const cmd = (await poll()).commands.find((x: any) => x.sessionId === sess.sessionId && x.kind === 'start');
+  const cmd = await hostCommand(poll, (x: any) => x.sessionId === sess.sessionId && x.kind === 'start');
   assert.ok(cmd, 'start command issued');
   const a = await fetch(c.base + '/api/hosts/agent-tools', {method: 'POST', headers: {authorization: 'Bearer ' + host.secret, 'content-type': 'application/json'}, body: JSON.stringify({hostId: 'h-nav', commandId: cmd.id, executionId: cmd.executionId, agentToolKey: cmd.payload.agentToolKey,
     request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'nav_counts', arguments: {}}}})});

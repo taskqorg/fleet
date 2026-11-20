@@ -3,6 +3,7 @@
 // Each test names its requirement and the risk it guards.
 import {test as nodeTest} from 'node:test';
 import assert from 'node:assert/strict';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test', MEMBER = 'member@trial.test';
@@ -28,8 +29,7 @@ test('L1 subscription_limits_refresh sends account-inspect mode limits to an onl
   assert.equal(r.sent.length, 1, JSON.stringify(r));
   assert.equal(r.sent[0].hostId, 'trial-host');
   assert.equal(ok(await op('subscription_limits_refresh', {subscriptionId: a.id})).sent[0].executionId, r.sent[0].executionId, 'a repeated refresh reuses the read on its way');
-  const {commands} = ok(await h('/api/hosts/poll', poll));
-  const c = commands.find((x: any) => x.executionId === r.sent[0].executionId);
+  const c = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, poll)), (x: any) => x.executionId === r.sent[0].executionId);
   assert.equal(c?.kind, 'account-inspect');
   assert.equal(c?.payload?.mode, 'limits');
   assert.equal(c?.payload?.binding, 'limits-bind');

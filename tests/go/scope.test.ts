@@ -8,6 +8,7 @@ import {after, test as nodeTest} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash, randomUUID} from 'node:crypto';
 import {fakeS3} from '../s3-fake.ts';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test', MEMBER = 'member@trial.test', OUTSIDER = 'outsider@trial.test', ARCHITECT = 'architect@trial.test';
@@ -55,8 +56,7 @@ test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule
   ok(await op('account_update', {accountId: a.id, take: {projects: [MINE]}}));
   const s = ok(await start(MEMBER, MINE, {hostId: 'trial-host'}));
   assert.equal(s.account, null, 'automatic account is selected at eligible placement');
-  const {commands} = ok(await h('/api/hosts/poll', poll));
-  const claimed = commands.find((c: any) => c.executionId === s.executionId && c.kind === 'start');
+  const claimed = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, poll)), (c: any) => c.executionId === s.executionId && c.kind === 'start');
   assert.ok(claimed, 'the host claims the member\'s start');
   assert.equal(claimed.payload.account, 'scope-bind', 'the eligible take-rule account reaches the native start');
   // Readiness runs on the project's configured hosts (owner-mac in config/projects/desiign).
@@ -70,8 +70,7 @@ test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule
 test('S2b questions_withdraw, executions_abandon and executions_dismiss: owner only for every caller kind; a member (granted another project), an outsider and an agent acting for a member get 403 and change nothing (requirement: owner-only bulk clean-up ops; risk: a non-owner or its agent withdraws questions or ends runs)', async () => {
   const h = await host();
   const s = ok(await start(MEMBER, MINE, {hostId: 'trial-host'}));
-  const {commands} = ok(await h('/api/hosts/poll', poll));
-  const command = commands.find((c: any) => c.executionId === s.executionId && c.kind === 'start');
+  const command = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, poll)), (c: any) => c.executionId === s.executionId && c.kind === 'start');
   assert.ok(command, 'the host claims the member run');
   // Taken work: the run takes the owner's subscription, so dispatch makes the owner its director (takenFrom: the member).
   const taken = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
@@ -181,8 +180,7 @@ test('S9 a director with grant * takes the owner\'s subscription without a take 
   const a = ok(await op('account_create', {name: 'star-sub', harness: 'codex'}));
   ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'star-bind', platform: 'darwin', readiness: 'ready', nativeLoginObserved: null, quota: 'unknown', reason: 'ready'}));
   const s = ok(await op('session_start', {requestId: randomUUID(), text: 'star turn', projectId: OTHER, profileId: 'pm', hostId: 'trial-host', account: 'star-sub'}, AGENTS));
-  const {commands} = ok(await h('/api/hosts/poll', poll));
-  assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'the owner-held subscription runs work directed by grant *');
+  assert.ok(await hostCommand(async q => ok(await h('/api/hosts/poll' + q, poll)), (c: any) => c.executionId === s.executionId && c.kind === 'start'), 'the owner-held subscription runs work directed by grant *');
   const e = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
   assert.equal(e.takenFrom, AGENTS, 'the real director stays on the execution');
 });
@@ -193,8 +191,7 @@ test('S10 a director with grant * and no subscription or host of its own is plac
   const a = ok(await op('account_create', {name: 'star-any', harness: 'codex'}));
   ok(await h('/api/hosts/accounts', {accountId: a.id, hostId: 'trial-host', binding: 'star-any-bind', platform: 'darwin', readiness: 'ready', nativeLoginObserved: null, quota: 'unknown', reason: 'ready'}));
   const s = ok(await op('session_start', {requestId: randomUUID(), text: 'star turn', projectId: OTHER, profileId: 'pm'}, AGENTS));
-  const {commands} = ok(await h('/api/hosts/poll', poll));
-  assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'placement takes an owner subscription for grant *');
+  assert.ok(await hostCommand(async q => ok(await h('/api/hosts/poll' + q, poll)), (c: any) => c.executionId === s.executionId && c.kind === 'start'), 'placement takes an owner subscription for grant *');
   const e = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
   assert.equal(e.takenFrom, AGENTS);
 });

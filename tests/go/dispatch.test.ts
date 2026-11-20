@@ -6,6 +6,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test';
@@ -24,6 +25,8 @@ async function host(id: string) {
   return (path: string, body: object) => call('POST', path, body, {authorization: 'Bearer ' + secrets.get(id)});
 }
 const poll = {platform: 'darwin', capabilities: [], stores: [], problems: []};
+// polled: the command pick accepts, polled by host h with body until it comes (harness.ts hostCommand).
+const polled = (h: (path: string, body: object) => Promise<Reply>, body: object, pick: (c: any) => unknown) => hostCommand(async q => ok(await h('/api/hosts/poll' + q, body)), pick);
 async function queued() {
   const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}, owner));
   const e = ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'}, owner));
@@ -43,8 +46,7 @@ test('A1 a paused host takes no work: the execution waits with the skip reason a
   ok(await h('/api/hosts/poll', poll));
   assert.equal((await waiting()).length, 1, 'not asked again');
   ok(await op('hosts_update', {id: 'trial-host', intake: 'all'}));
-  const {commands} = ok(await h('/api/hosts/poll', poll));
-  assert.ok(commands.some((c: any) => c.executionId === executionId && c.kind === 'start'), 'claimed once open');
+  assert.ok(await polled(h, poll, (c: any) => c.executionId === executionId && c.kind === 'start'), 'claimed once open');
   assert.equal((await waiting()).length, 0, 'the question is withdrawn with its cause');
   const {decisions} = ok(await op('route_decisions', {executionId}));
   assert.ok(decisions.at(-1).winner?.host === 'trial-host');
@@ -64,7 +66,7 @@ test('A2 a reached stop budget stops queued work of its director at the next pol
 test('A3 a start receipt binds the native session; another native id for it is 409; a terminal receipt sets finishedAt once (requirement: docs/execution-contract.md native session; risk: a resumed run attaches to the wrong conversation)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   const {sessionId, executionId} = await queued();
-  const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+  const command = await polled(h, poll, (c: any) => c.executionId === executionId);
   const receipt = (status: string, extra = {}) => h('/api/hosts/receipts', {commandId: command.id, executionId, status, ...extra});
   ok(await receipt('started', {nativeSessionId: 'native-1'}));
   assert.equal(ok(await call('POST', '/api/ops/session_get', {sessionId: sessionId}, owner)).nativeSessionId, 'native-1');
@@ -148,7 +150,7 @@ test('task cancellation stops active work and fences later start commands (requi
   const taskId = await createTask();
   const requestId = randomUUID();
   const active = ok(await start(taskId, requestId));
-  const startCmd = (await commands()).find((c: any) => c.kind === 'start' && c.executionId === active.executionId);
+  const startCmd = await polled(h, poll, (c: any) => c.kind === 'start' && c.executionId === active.executionId);
   assert.ok(startCmd);
   const receipt = (command: any, status: string) =>
     h('/api/hosts/receipts', {commandId: command.id, executionId: command.executionId, status});
@@ -156,15 +158,14 @@ test('task cancellation stops active work and fences later start commands (requi
   const queued = ok(await op('message_send', {sessionId: active.sessionId, requestId: randomUUID(), text: 'queued next turn'}));
   assert.equal(queued.queued, true);
   const pending = ok(await start(taskId));
-  const pendingStart = (await commands()).find((c: any) => c.kind === 'start' && c.executionId === pending.executionId);
+  const pendingStart = await polled(h, poll, (c: any) => c.kind === 'start' && c.executionId === pending.executionId);
   assert.ok(pendingStart);
   assert.equal(ok(await op('task_cancel', {taskId})).state, 'cancelled');
-  const after = await commands();
-  const activeStop = after.find((c: any) => c.kind === 'stop' && c.executionId === active.executionId);
-  const pendingStop = after.find((c: any) => c.kind === 'stop' && c.executionId === pending.executionId);
+  const activeStop = await polled(h, poll, (c: any) => c.kind === 'stop' && c.executionId === active.executionId);
+  const pendingStop = await polled(h, poll, (c: any) => c.kind === 'stop' && c.executionId === pending.executionId);
   assert.ok(activeStop, 'cancelling the task requests stop for its running execution');
   assert.ok(pendingStop, 'a previously handed out command could still be running');
-  assert.ok(!after.some((c: any) => c.kind === 'start' && c.executionId === pending.executionId));
+  assert.ok(!(await commands()).some((c: any) => c.kind === 'start' && c.executionId === pending.executionId));
   assert.equal((await execution(active.sessionId, active.executionId)).state, 'running', 'a stop request is not process proof');
   assert.equal((await start(taskId)).status, 409, 'fresh task-bound start is refused');
   assert.equal(ok(await start(taskId, requestId)).sessionId, active.sessionId, 'idempotent start returns its original session');
@@ -175,20 +176,19 @@ test('task cancellation stops active work and fences later start commands (requi
   const activeSession = ok(await op('session_get', {sessionId: active.sessionId}));
   assert.equal(activeSession.executions.length, 1, 'the queued turn never becomes a second execution');
   ok(await receipt(pendingStart, 'started'));
-  const late = await commands();
-  assert.ok(late.some((c: any) => c.id === pendingStop.id), 'a late start receipt leaves the stop outstanding');
+  assert.ok(await polled(h, poll, (c: any) => c.id === pendingStop.id), 'a late start receipt leaves the stop outstanding');
   ok(await receipt(pendingStop, 'stopped'));
   ok(await receipt(pendingStart, 'completed'));
   assert.equal((await execution(pending.sessionId, pending.executionId)).state, 'cancelled', 'late completion preserves the terminal result');
   const attachedTask = await createTask();
   const attached = ok(await start());
-  const attachedStart = (await commands()).find((c: any) => c.kind === 'start' && c.executionId === attached.executionId);
+  const attachedStart = await polled(h, poll, (c: any) => c.kind === 'start' && c.executionId === attached.executionId);
   assert.ok(attachedStart);
   ok(await receipt(attachedStart, 'started'));
   const attachedQueue = ok(await op('message_send', {sessionId: attached.sessionId, requestId: randomUUID(), text: 'before attachment'}));
   ok(await op('session_task_attach', {sessionId: attached.sessionId, taskId: attachedTask}));
   ok(await op('task_cancel', {taskId: attachedTask}));
-  const attachedStop = (await commands()).find((c: any) => c.kind === 'stop' && c.executionId === attached.executionId);
+  const attachedStop = await polled(h, poll, (c: any) => c.kind === 'stop' && c.executionId === attached.executionId);
   assert.ok(attachedStop, 'cancellation reaches active work created before attachment');
   ok(await receipt(attachedStop, 'stopped'));
   assert.equal(ok(await op('queue_list', {sessionId: attached.sessionId})).queued.find((m: any) => m.id === attachedQueue.id)?.state, 'cancelled');
@@ -206,12 +206,12 @@ test('task cancellation stops active work and fences later start commands (requi
 
   const receiptRaceTask = await createTask();
   const receiptRace = ok(await start(receiptRaceTask));
-  const racingStart = (await commands()).find((c: any) => c.kind === 'start' && c.executionId === receiptRace.executionId);
+  const racingStart = await polled(h, poll, (c: any) => c.kind === 'start' && c.executionId === receiptRace.executionId);
   assert.ok(racingStart);
   const [started, cancelled] = await Promise.all([receipt(racingStart, 'started'), op('task_cancel', {taskId: receiptRaceTask})]);
   ok(started);
   assert.equal(ok(cancelled).state, 'cancelled');
-  const racingStop = (await commands()).find((c: any) => c.kind === 'stop' && c.executionId === receiptRace.executionId);
+  const racingStop = await polled(h, poll, (c: any) => c.kind === 'stop' && c.executionId === receiptRace.executionId);
   assert.ok(racingStop, 'first receipt and cancellation retain one stop');
   ok(await receipt(racingStop, 'stopped'));
 
@@ -233,14 +233,13 @@ test('task cancellation stays scoped to its project (requirement: Fleet task can
     ok(await op('task_create', {projectId, title: 'scoped cancel ' + randomUUID(), held: false})).id;
   const start = async (projectId: string, taskId?: string) =>
     ok(await op('session_start', {projectId, profileId: 'pm', taskId, requestId: randomUUID(), text: 'work', hostId: 'trial-host'}));
-  const commands = async () => ok(await h('/api/hosts/poll', poll)).commands;
   const receipt = (c: any, status: string) =>
     h('/api/hosts/receipts', {commandId: c.id, executionId: c.executionId, status});
   const cancelAsMember = (taskId: string) => call('POST', '/api/ops/task_update', {taskId, action: 'cancel'}, member);
 
   const taskId = await createTask('desiign');
   const active = await start('desiign', taskId);
-  const c = (await commands()).find((x: any) => x.kind === 'start' && x.executionId === active.executionId);
+  const c = await polled(h, poll, (x: any) => x.kind === 'start' && x.executionId === active.executionId);
   assert.ok(c);
   ok(await receipt(c, 'started'));
   const watch = {sessionId: active.sessionId, kinds: ['task'], timerMs: 60_000};
@@ -250,12 +249,12 @@ test('task cancellation stays scoped to its project (requirement: Fleet task can
   assert.equal(ok(await cancelAsMember(taskId)).state, 'cancelled');
   assert.equal(ok(await op('watch_get', {sessionId: active.sessionId})).watch ?? null, null);
   assert.equal((await op('watch_set', watch)).status, 409);
-  const stop = (await commands()).find((x: any) => x.kind === 'stop' && x.executionId === active.executionId);
+  const stop = await polled(h, poll, (x: any) => x.kind === 'stop' && x.executionId === active.executionId);
   assert.ok(stop);
   ok(await receipt(stop, 'stopped'));
 
   const detached = await start('desiign');
-  const pending = (await commands()).find((x: any) => x.kind === 'start' && x.executionId === detached.executionId);
+  const pending = await polled(h, poll, (x: any) => x.kind === 'start' && x.executionId === detached.executionId);
   assert.ok(pending);
   ok(await receipt(pending, 'started'));
   const attach = () => op('session_task_attach', {sessionId: detached.sessionId, taskId});
@@ -275,7 +274,7 @@ test('task cancellation fences delegated work after the parent ended (requiremen
   const commands = async () => ok(await h('/api/hosts/poll', poll)).commands;
   const delegate = async (taskId?: string) => {
     const parent = ok(await op('session_start', {projectId, profileId, taskId, requestId: randomUUID(), text: 'work', hostId: 'trial-host'}));
-    const cmd = (await commands()).find((c: any) => c.kind === 'start' && c.executionId === parent.executionId);
+    const cmd = await polled(h, poll, (c: any) => c.kind === 'start' && c.executionId === parent.executionId);
     assert.ok(cmd);
     const receipt = (status: string) => h('/api/hosts/receipts', {commandId: cmd.id, executionId: cmd.executionId, status});
     ok(await receipt('started'));
@@ -308,7 +307,7 @@ test('task cancellation fences an agent-owned pipeline (requirement: Fleet task 
   const {id: taskId} = ok(await op('task_create', {projectId, title: 'pipeline cancellation', held: false}));
   const active = ok(await op('session_start', {projectId, profileId: 'pm', taskId, requestId: randomUUID(), text: 'work', hostId: 'trial-host'}));
   const commands = async () => ok(await h('/api/hosts/poll', {...poll, capabilities: ['script']})).commands;
-  const parent = (await commands()).find((c: any) => c.kind === 'start' && c.executionId === active.executionId);
+  const parent = await polled(h, {...poll, capabilities: ['script']}, (c: any) => c.kind === 'start' && c.executionId === active.executionId);
   assert.ok(parent);
   const receipt = (c: any, status: string) =>
     h('/api/hosts/receipts', {commandId: c.id, executionId: c.executionId, status});
@@ -332,14 +331,13 @@ test('task cancellation fences an agent-owned pipeline (requirement: Fleet task 
   const cancelled = ok(await op('pipeline_get', {runId}));
   assert.equal(cancelled.state, 'cancelled');
   assert.equal(cancelled.plan.entries[1].activation, 'blocked');
-  const after = await commands();
-  const stop = after.find((c: any) => c.kind === 'stop' && c.executionId === script.executionId);
+  const stop = await polled(h, {...poll, capabilities: ['script']}, (c: any) => c.kind === 'stop' && c.executionId === script.executionId);
   assert.ok(stop, 'the handed-off script receives a stop');
   ok(await receipt(stop, 'stopped'));
   ok(await receipt(script, 'completed'));
   assert.equal(ok(await op('pipeline_get', {runId})).state, 'cancelled');
   assert.ok(!(await commands()).some((c: any) => c.kind === 'script'), 'no later step was handed out');
-  const parentStop = after.find((c: any) => c.kind === 'stop' && c.executionId === active.executionId);
+  const parentStop = await polled(h, {...poll, capabilities: ['script']}, (c: any) => c.kind === 'stop' && c.executionId === active.executionId);
   assert.ok(parentStop);
   ok(await receipt(parentStop, 'stopped'));
 });
@@ -362,7 +360,7 @@ test('A9 an execution record has one state vocabulary and its real kind and harn
   assert.deepEqual([row.kind, row.harness, row.state], ['agent_run', 'claude', 'preparing']);
   const h = await host('trial-host');
   const {sessionId, executionId} = await queued();
-  const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+  const command = await polled(h, poll, (c: any) => c.executionId === executionId);
   ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'started'}));
   ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'unknown'}));
   const e = await execution(sessionId, executionId);
@@ -373,7 +371,7 @@ test('A9b a run no host will finish ends: executions_abandon fails it with one a
   const h = await host('trial-host');
   const lost = async () => {
     const {sessionId, executionId} = await queued();
-    const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+    const command = await polled(h, poll, (c: any) => c.executionId === executionId);
     ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'started'}));
     ok(await h('/api/hosts/receipts', {commandId: command.id, executionId, status: 'unknown'}));
     return {sessionId, executionId};
@@ -426,7 +424,7 @@ test('A12 receipts have one route per envelope: a project operation on /api/host
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', poll));
   const {sessionId} = ok(await op('session_start', {requestId: randomUUID(), text: 'hi', projectId: 'hello-world', profileId: 'pm'}));
-  const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.sessionId === sessionId && c.kind === 'start');
+  const command = await polled(h, poll, (c: any) => c.sessionId === sessionId && c.kind === 'start');
   const body = (requestId: unknown) => ({commandId: command.id, executionId: command.executionId, delegation: {operation: 'project_context', projectId: 'hello-world', arguments: {}, requestId}});
   assert.equal(ok(await h('/api/hosts/project-operations', body('r1'))).id, 'hello-world');
   assert.equal((await h('/api/hosts/project-operations', body(5))).status, 400, 'requestId must be a string');
@@ -442,7 +440,7 @@ test('A11 the start command payload is the StartPayload contract: named fields o
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', poll));
   const {executionId} = await queued();
-  const c = ok(await h('/api/hosts/poll', poll)).commands.find((x: any) => x.executionId === executionId);
+  const c = await polled(h, poll, (x: any) => x.executionId === executionId);
   const schema = JSON.parse(readFileSync(new URL('../../contracts/host-protocol.schema.json', import.meta.url), 'utf8'));
   const allowed = Object.keys(schema.$defs.StartPayload.properties);
   assert.deepEqual(Object.keys(c.payload).filter(k => !allowed.includes(k)), []);
@@ -455,8 +453,7 @@ test('A9 a host without the project repository\'s git connection takes no run of
   const s = ok(await op('session_start', {requestId: randomUUID(), text: 'hi', projectId: 'cs', profileId: 'pm', hostId: 'owner-mac'}));
   assert.ok(!ok(await h('/api/hosts/poll', {...poll, gitConnections: []})).commands.some((c: any) => c.executionId === s.executionId), 'no start without the connection');
   assert.equal((await execution(s.sessionId, s.executionId)).waitDetail, 'owner-mac has no git connection cs-gitlab');
-  const {commands} = ok(await h('/api/hosts/poll', {...poll, gitConnections: ['cs-gitlab']}));
-  assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'starts once the host holds the connection');
+  assert.ok(await polled(h, {...poll, gitConnections: ['cs-gitlab']}, (c: any) => c.executionId === s.executionId && c.kind === 'start'), 'starts once the host holds the connection');
 });
 
 
@@ -465,7 +462,7 @@ test('A14 control acknowledgement does not confirm an uncertain execution; only 
   const foreign = await host('foreign-stop-host');
   for (const initiallyUnknown of [true, false]) {
     const {sessionId, executionId} = await queued();
-    const start = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+    const start = await polled(h, poll, (c: any) => c.executionId === executionId);
     const receipt = (commandId: string, status: string, id = executionId) => h('/api/hosts/receipts', {commandId, executionId: id, status});
     ok(await receipt(start.id, 'started'));
     if (initiallyUnknown) ok(await receipt(start.id, 'unknown'));
@@ -500,12 +497,12 @@ test('A15 control receipts preserve completed execution history and do not confi
   const h = await host('trial-host');
   ok(await h('/api/hosts/poll', {...poll, capabilities: ['steer']}));
   const {sessionId, executionId} = await queued();
-  const start = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
+  const start = await polled(h, poll, (c: any) => c.executionId === executionId);
   const receipt = (id: string, status: string) => h('/api/hosts/receipts', {commandId: id, executionId, status});
   ok(await receipt(start.id, 'started'));
   ok(await h('/api/hosts/poll', {...poll, capabilities: ['steer']}));
   ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'steer without proof of process health', delivery: 'steer'}, owner));
-  const steer = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId && c.kind === 'steer');
+  const steer = await polled(h, poll, (c: any) => c.executionId === executionId && c.kind === 'steer');
   assert.ok(steer);
   ok(await receipt(start.id, 'unknown'));
   for (const status of ['accepted', 'unknown', 'completed']) {

@@ -5,6 +5,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 type Reply = {status: number, body: any};
@@ -38,14 +39,15 @@ test('P1 a project without roles gets the system presets on system profiles, and
 
 test('P2 session_start with a preset starts its profile with its access, branch and starter, on a project without roles; explicit fields override it (requirement: fleet-conversations.md start a conversation; risk: a Discuss conversation can write, or a preset cannot start in cs)', {timeout: 30_000}, async () => {
   const secret = ok(await op('hosts_register', {id: 'owner-mac'})).secret;
-  const host = (body: object) => call('/api/hosts/poll', body, {authorization: 'Bearer ' + secret});
+  const host = (body: object, q = '') => call('/api/hosts/poll' + q, body, {authorization: 'Bearer ' + secret});
   ok(await host(poll));
   const discuss = ok(await op('session_start', {projectId: 'cs', preset: 'discuss', requestId: randomUUID(), text: 'What does the hero say?', hostId: 'owner-mac'}));
   assert.deepEqual([discuss.profileId, discuss.preset, discuss.access, discuss.branch, discuss.role ?? null], ['pm', 'discuss', 'read', false, null]);
   const design = ok(await op('session_start', {projectId: 'cs', preset: 'design', requestId: randomUUID(), text: 'Redesign the hero', hostId: 'owner-mac'}));
   assert.deepEqual([design.profileId, design.access, design.branch], ['coding-worker', 'write', true]);
-  const {commands} = ok(await host(poll));
-  const start = (sessionId: string) => commands.find((c: any) => c.sessionId === sessionId && c.kind === 'start')?.payload;
+  const startOf = async (sessionId: string) => (await hostCommand(async q => ok(await host(poll, q)), (c: any) => c.sessionId === sessionId && c.kind === 'start'))?.payload;
+  const starts: Record<string, any> = {[discuss.sessionId]: await startOf(discuss.sessionId), [design.sessionId]: await startOf(design.sessionId)};
+  const start = (sessionId: string) => starts[sessionId];
   assert.deepEqual([start(discuss.sessionId).readOnly, start(discuss.sessionId).branch], [true, false], 'a read-only preset without a branch reaches the host');
   assert.deepEqual([start(design.sessionId).readOnly ?? null, start(design.sessionId).branch ?? null], [null, null], 'write with a branch is the default payload');
   assert.match(start(design.sessionId).instructions, /Design: Design work\. .*packages\/ui/s, 'the starter instruction is in the turn');
@@ -91,7 +93,7 @@ test('P4 an agent starts only profiles its project maps, also through a preset, 
   ok(await host('/api/hosts/poll', {...poll, capabilities: []}));
   const agent = async (start: object) => {
     const s = ok(await op('session_start', {projectId: 'preset-agent', hostId: 'trial-host', requestId: randomUUID(), text: 'turn', ...start}));
-    const c = ok(await host('/api/hosts/poll', poll)).commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
+    const c = await hostCommand(async q => ok(await host('/api/hosts/poll' + q, poll)), (x: any) => x.executionId === s.executionId && x.kind === 'start');
     assert.ok(c, 'the host claims the start command');
     const tool = async (name: string, args: object): Promise<Reply> => {
       const r = await host('/api/hosts/agent-tools', {hostId: 'trial-host', executionId: s.executionId, commandId: c.id, request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name, arguments: args}}});

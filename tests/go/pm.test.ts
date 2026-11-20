@@ -6,6 +6,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test', MEMBER = 'member@trial.test';
@@ -42,11 +43,7 @@ async function agent(person: string, start: object) {
     ok(await call('POST', '/api/ops/session_profile', {sessionId: sessionId, profileId: 'pm'}, as(person)));
     s = {sessionId, executionId: ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'pm turn'}, as(person))).id};
   }
-  // As an executor does, the host polls again until the start comes: one poll may hand it out a round later (a busy
-  // execution row is withheld until the next poll, host_poll.go pollReadyCommand).
-  let c: any;
-  for (let path = '/api/hosts/poll', end = Date.now() + 10_000; !c && Date.now() < end; path = '/api/hosts/poll?wait=1s')
-    c = ok(await hostCall(person, path, poll)).commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
+  const c = await hostCommand(async q => ok(await hostCall(person, '/api/hosts/poll' + q, poll)), (x: any) => x.executionId === s.executionId && x.kind === 'start');
   assert.ok(c, 'the host claims the start command');
   const rpc = (request: object) => hostCall(person, '/api/hosts/agent-tools', {hostId, executionId: s.executionId, commandId: c.id, request: {jsonrpc: '2.0', id: 1, ...request}});
   const tool = async (name: string, args: object = {}): Promise<Reply> => {
@@ -186,8 +183,7 @@ test('PM7 watch: foreign changes in focus wake the PM with one message, its own 
 test('PM8 profile: a PM session carries its skills and sees the task tools (requirement: docs/designs/fleet-pm-agent.md; risk: the PM profile loses its instructions outside pipelines)', {timeout: 30_000}, async () => {
   await hostOf(OWNER);
   const s = ok(await op('session_start', {requestId: randomUUID(), text: 'pm turn', projectId: PROJECT, role: 'pm'}));
-  const {commands} = ok(await hostCall(OWNER, '/api/hosts/poll', poll));
-  const c = commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
+  const c = await hostCommand(async q => ok(await hostCall(OWNER, '/api/hosts/poll' + q, poll)), (x: any) => x.executionId === s.executionId && x.kind === 'start');
   assert.deepEqual(JSON.stringify(c).match(/"id":"pm-(tasks|watch|fleet)"/g)?.length, 3, 'three skills in the start command');
   const offered = (c.payload.fleetOperations ?? []).map((x: any) => x.name);
   for (const n of ['task_create', 'task_release', 'people_set', 'focus_set', 'watch_set']) assert.ok(offered.includes(n), 'the start command offers ' + n);
@@ -377,9 +373,9 @@ test('PM project transition applies after the active turn with checkout rules an
 
  const legacyPoll=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
  assert.ok(!legacyPoll.commands.some((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId),'older executor must not claim keyed checkout');
- const {commands}=ok(await hostCall(OWNER,'/api/hosts/poll',poll));
- const next=commands.find((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId&&c.executionId!==pm.executionId);
- assert.ok(next,JSON.stringify(commands));
+ const ownerPoll=async(q:string)=>ok(await hostCall(OWNER,'/api/hosts/poll'+q,poll));
+ const next=await hostCommand(ownerPoll,(c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId&&c.executionId!==pm.executionId);
+ assert.ok(next,'the next start of the session');
  assert.equal(next.payload.projectId,PROJECT);
  assert.ok(next.payload.project);
  assert.ok(!next.payload.nativeSessionId);
@@ -394,14 +390,13 @@ test('PM project transition applies after the active turn with checkout rules an
   ok(await call('POST','/api/ops/message_send', {sessionId: pm.sessionId, requestId:randomUUID(),text:'continue'},as(OWNER)));
   const oldHost=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
   assert.ok(!oldHost.commands.some((c:any)=>c.payload?.workspaceKey),'old hosts cannot claim keyed cleanup or start');
-  const polled=ok(await hostCall(OWNER,'/api/hosts/poll',poll)).commands;
-  const cleanup=polled.find((c:any)=>c.kind==='teardown'&&c.executionId===current.executionId);
-  assert.ok(cleanup,JSON.stringify(polled));
+  const cleanup=await hostCommand(ownerPoll,(c:any)=>c.kind==='teardown'&&c.executionId===current.executionId);
+  assert.ok(cleanup,'the teardown of the previous checkout');
   assert.equal(cleanup.payload.projectId,current.payload.projectId);
   assert.equal(cleanup.payload.workspaceKey,current.payload.workspaceKey);
   assert.deepEqual(cleanup.payload.project,current.payload.project);
-  const started=polled.find((c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId);
-  assert.ok(started,JSON.stringify(polled));
+  const started=await hostCommand(ownerPoll,(c:any)=>c.kind==='start'&&c.sessionId===pm.sessionId&&c.executionId!==current.executionId);
+  assert.ok(started,'the start in the new project');
   assert.equal(started.payload.projectId,projectId);
   assert.notEqual(started.payload.workspaceKey,current.payload.workspaceKey);
   assert.ok(!started.payload.nativeSessionId);

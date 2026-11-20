@@ -3,6 +3,7 @@
 import {test as nodeTest} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const test = (name: string, fn: () => Promise<void>) => nodeTest(name, {timeout: 30_000}, fn);
@@ -135,10 +136,10 @@ test('P6 ignored projects are a person setting: ignored and restored one at a ti
   s = await op('person_settings_set', {ignored: []}); assert.deepEqual(s.ignored, []);
   // An agent writes its director's ignore through the same operation, which agents get as a tool.
   const host = await op('hosts_register', {id: 'h-prefs', holder: 'owner@trial.test'});
-  const poll = async () => (await (await fetch(BASE + '/api/hosts/poll', {method: 'POST', headers: {authorization: 'Bearer ' + host.secret, 'content-type': 'application/json'}, body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []})})).json()) as any;
+  const poll = async (q = '') => (await (await fetch(BASE + '/api/hosts/poll' + q, {method: 'POST', headers: {authorization: 'Bearer ' + host.secret, 'content-type': 'application/json'}, body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []})})).json()) as any;
   await poll();
   const sess = await op('session_start', {projectId: 'ign-a', role: 'pm', requestId: randomUUID(), text: 'Hide ign-b for me'});
-  const cmd = (await poll()).commands.find((x: any) => x.sessionId === sess.sessionId && x.kind === 'start');
+  const cmd = await hostCommand(poll, (x: any) => x.sessionId === sess.sessionId && x.kind === 'start');
   assert.ok(cmd, 'start command issued');
   const r = await fetch(BASE + '/api/hosts/agent-tools', {method: 'POST', headers: {authorization: 'Bearer ' + host.secret, 'content-type': 'application/json'}, body: JSON.stringify({hostId: 'h-prefs', commandId: cmd.id, executionId: cmd.executionId, agentToolKey: cmd.payload.agentToolKey,
     request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'person_settings_set', arguments: {ignore: {project: 'ign-b', ignored: true}}}}})});

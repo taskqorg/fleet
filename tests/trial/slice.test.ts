@@ -5,6 +5,7 @@
 import {after, test as nodeTest} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 if (!BASE || !SECRET) throw Error('FLEET_TRIAL_URL and FLEET_TRIAL_BROWSER_SECRET are required (node tests/trial/run.ts sets them)');
@@ -40,8 +41,7 @@ async function started() {
   const started = ok(await browser('POST', '/api/ops/session_start', {requestId: randomUUID(), text: 'hello', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host'}));
   const sessionId = started.sessionId;
   const execution = {id: started.executionId};
-  const {commands} = ok(await h('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}));
-  const command = commands.find((c: any) => c.executionId === execution.id);
+  const command = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []})), (c: any) => c.executionId === execution.id);
   assert.ok(command, 'the poll delivers the start command');
   return {h, sessionId, executionId: execution.id as string, commandId: command.id as string};
 }
@@ -108,7 +108,7 @@ test('SL5 a poll of the default host claims a queued execution and delivers its 
   const {commands} = ok(await other('/api/hosts/poll', {platform: 'linux', capabilities: [], stores: [], problems: []}));
   assert.ok(!commands.some((c: any) => c.id === commandId || c.executionId === executionId), 'another host never gets this command');
   const h = await host('trial-host');
-  const again = ok(await h('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []})).commands.find((c: any) => c.id === commandId);
+  const again = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []})), (c: any) => c.id === commandId);
   assert.equal(again?.kind, 'start'); assert.equal(again?.payload?.text, 'hello'); assert.equal(again?.status, 'pending'); assert.equal(again?.hostId, 'trial-host');
 });
 

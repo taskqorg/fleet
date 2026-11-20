@@ -4,6 +4,7 @@
 import {test as nodeTest} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 const OWNER = 'owner@trial.test';
@@ -41,12 +42,12 @@ test('C1 concurrent host polls, non-terminal receipts, and session message appen
   const e1 = ok(await call('POST', '/api/ops/message_send', {sessionId: s1, requestId: randomUUID(), text: 'first'}, owner));
   const e2 = ok(await call('POST', '/api/ops/message_send', {sessionId: s2, requestId: randomUUID(), text: 'second'}, owner));
 
-  // An immediate poll waits for the dispatch generation requested by both message commits.
-  // A long poll can return the first unacknowledged command repeatedly before dispatch claims the second.
-  const cmds = ok(await cmdHost('/api/hosts/poll', pollBody())).commands as any[];
-  const c1 = cmds.find(c => c.executionId === e1.id);
-  const c2 = cmds.find(c => c.executionId === e2.id);
-  assert.ok(c1 && c2, `expected start commands for both executions, got ${JSON.stringify(cmds)}`);
+  // An immediate poll waits for the dispatch generation requested by both message commits; hostCommand polls again for a
+  // command that poll withheld.
+  const cmdPoll = async (q: string) => ok(await cmdHost('/api/hosts/poll' + q, pollBody()));
+  const c1 = await hostCommand(cmdPoll, (c: any) => c.executionId === e1.id);
+  const c2 = await hostCommand(cmdPoll, (c: any) => c.executionId === e2.id);
+  assert.ok(c1 && c2, `expected start commands for both executions, got ${JSON.stringify([c1, c2])}`);
 
   const pollHosts = await Promise.all(Array.from({length: 30}, (_, i) => registerHost(`c1-h-${i}`)));
   const msgSessions = await Promise.all(Array.from({length: 5}, async () => ok(await call('POST', '/api/ops/session_create', {}, owner)).sessionId as string));
@@ -141,8 +142,7 @@ test('C4 concurrent started/completed receipts retain terminal state (requiremen
   ok(await h('/api/hosts/poll', pollBody()));
   for (let i = 0; i < 8; i++) {
     const s = ok(await op('session_start', {requestId: randomUUID(), text: 'receipt race', projectId: 'hello-world', profileId: 'pm', hostId: 'c4-receipt-host'}));
-    const commands = ok(await h('/api/hosts/poll', pollBody())).commands;
-    const c = commands.find((c: any) => c.executionId === s.executionId);
+    const c = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, pollBody())), (c: any) => c.executionId === s.executionId);
     assert.ok(c, 'start command queued');
     const receipt = (status: string) => h('/api/hosts/receipts', {commandId: c.id, executionId: s.executionId, status});
     const results = await Promise.all([receipt('started'), receipt('completed')]);

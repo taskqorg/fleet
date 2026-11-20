@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {startCoordinator} from '../harness.ts';
+import {hostCommand, startCoordinator} from '../harness.ts';
 
 test('Explicit task asks bind projectless PM questions with grants, stable identity and audited idle replacement (requirement: fleet.md shared task questions; risk: real blockers stay invisible or cross authority)', async () => {
  const c=await startCoordinator({name:'task-question-binding'});
@@ -49,8 +49,8 @@ test('Registration refresh preserves runtime causes before a failed terminal rec
   const e=await call('/api/ops/message_send', {sessionId: sessionId, requestId:randomUUID(),text:'fixture'});
   // Exercise a genuine registration refresh: unchanged heartbeats intentionally skip reconciliation.
   let refresh=false;
-  const poll=()=>call('/api/hosts/poll',{platform:'darwin',capabilities:(refresh=!refresh)?['script']:[],stores:[],problems:[]},secret,null);
-  const cmd=(await poll()).commands.find((x:any)=>x.executionId===e.id);
+  const poll=(q='')=>call('/api/hosts/poll'+q,{platform:'darwin',capabilities:(refresh=!refresh)?['script']:[],stores:[],problems:[]},secret,null);
+  const cmd=await hostCommand(poll,(x:any)=>x.executionId===e.id);
   await call('/api/hosts/receipts',{executionId:e.id,commandId:cmd.id,status:'started'},secret,null);
   await call('/api/hosts/events',{executionId:e.id,events:[{id:randomUUID(),seq:1,type:'preparation.failed',timestamp:Date.now(),data:{reason:'coding-tool-unready: browser'}}]},secret,null);
   await poll();assert.equal(c.sql(`SELECT problem FROM execution WHERE id='${e.id}'`).trim(),'preparation failed: coding-tool-unready: browser');

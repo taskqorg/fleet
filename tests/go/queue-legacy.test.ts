@@ -3,7 +3,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {startCoordinator, lit} from '../harness.ts';
+import {hostCommand, startCoordinator, lit} from '../harness.ts';
 
 test('Q1 a project execution queued before project snapshots starts with the project as it is now, and the poll stays 200 (requirement: host poll serves every host, 2026-11-12 PDS18 outage; risk: one legacy queued execution fails every poll of the host it ranks first)', {timeout: 30_000}, async () => {
   const c = await startCoordinator({name: 'queue-legacy'});
@@ -15,7 +15,7 @@ test('Q1 a project execution queued before project snapshots starts with the pro
   const ok = (r: {status: number, body: any}) => { assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
   try {
     const secret = ok(await post('/api/ops/hosts_register', {id: 'trial-host'}, owner)).secret;
-    const poll = () => post('/api/hosts/poll', {platform: 'linux', capabilities: [], stores: [], problems: []}, {authorization: 'Bearer ' + secret, 'content-type': 'application/json'});
+    const poll = (q = '') => post('/api/hosts/poll' + q, {platform: 'linux', capabilities: [], stores: [], problems: []}, {authorization: 'Bearer ' + secret, 'content-type': 'application/json'});
     ok(await poll());
     // Seed legacy data before INSERT commits, so the background dispatcher cannot race the fixture.
     c.sql(`CREATE TABLE legacy_fixture(bad boolean); INSERT INTO legacy_fixture VALUES(false);
@@ -27,7 +27,7 @@ test('Q1 a project execution queued before project snapshots starts with the pro
       CREATE TRIGGER legacy_fixture_seed BEFORE INSERT ON execution FOR EACH ROW EXECUTE FUNCTION legacy_fixture_seed();`);
     const s = ok(await post('/api/ops/session_start', {requestId: randomUUID(), text: 'hi', projectId: 'hello-world', profileId: 'pm', hostId: 'trial-host'}, owner));
 
-    const start = ok(await poll()).commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
+    const start = await hostCommand(async q => ok(await poll(q)), (x: any) => x.executionId === s.executionId && x.kind === 'start');
     assert.ok(start, 'the legacy execution starts');
     assert.equal(start.payload.projectId, 'hello-world');
 

@@ -84,3 +84,17 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
   // Seeds run as the owner role, after the coordinator applied the schema.
   return {base, secret, get pid() { return server.pid!; }, sql: text => psql(['-d', db, '-U', 'fleet', '-At'], "SET fleet.project_ids = '*';\n" + text), exited: () => exited, stop, restart};
 }
+
+// hostCommand: the first polled command pick accepts, polled as an executor does: one plain poll, then short held polls
+// for up to 10 s in all. One poll does not prove a command is ready or not: it may come a round later (host_poll.go
+// pollReadyCommand withholds a command whose execution row is busy at that moment). A pending command is handed out
+// again on every poll until its receipt, so polling again is safe. poll sends the host poll with query ('' or
+// '?wait=1s') appended to its path and answers the reply; undefined when no such command came, for the caller's own
+// assertion.
+export async function hostCommand(poll: (query: string) => Promise<{commands: any[]}>, pick: (c: any) => unknown): Promise<any> {
+  for (let query = '', end = Date.now() + 10_000; ; query = '?wait=1s') {
+    const c = (await poll(query)).commands.find(pick);
+    if (c || Date.now() >= end) return c;
+    await new Promise(r => setTimeout(r, 200)); // a held poll answers at once while another command is pending
+  }
+}
