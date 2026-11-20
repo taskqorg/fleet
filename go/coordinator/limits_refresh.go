@@ -5,7 +5,7 @@ package main
 import "fleet/contract"
 
 func init() {
-	operation("subscription_limits_refresh", false, typedOp(subscriptionLimitsRefresh))
+	op("subscription_limits_refresh", subscriptionLimitsRefresh)
 }
 
 // subscriptionLimitsRefresh (section 8 "Read without a run"): an account-inspect command in mode limits to one host

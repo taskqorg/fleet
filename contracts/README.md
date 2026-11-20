@@ -29,12 +29,16 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   | `ops-telemetry` | `telemetry` |
 
   A new first word joins the closest row here. A new domain file also needs its `go:generate` line in `go/contract/contract.go`.
-  `operations` lists every operation (`read`, `long`, `errors`: the statuses its handler returns besides 401, 403 and 500);
+  `operations` lists every operation (`read`, `long`, `errors`: the statuses its handler returns besides 401, 403 and 500;
+  `auth`: who may call it, `person`, `project:<path>` (a grant of the project id at that request path; not visible is 404),
+  `holder:<kind>` (the holder of the named object, or the owner), `architect`, `owner` or `system`; `agent`: how a host agent
+  calls it, `no`, `tool`, or `bound:<binder>` when the coordinator binds its arguments to the calling `session`, `project` or
+  `focus`; `description`: the tool description every MCP server publishes). The generator refuses an entry without them;
   each name `<name>` has `$defs` `<Name>Request` and `<Name>Reply`, and a failed call answers `OpError`. `planned` lists operations specified contract first and not built yet
   (their `$defs` exist; building one moves its name to `operations`). TypeScript gets
   `Ops` (name to request and reply, used by `op()` in `app/src/api.ts`; `generated/ops.ts` re-exports every domain file and joins their `Ops<Domain>`); Go gets `contract.Operations`, filled by the `init` of each domain's generated file, which
-  `go/coordinator/ops_contract_test.go` compares with the registry. A handler registered through `typedOp` (`go/coordinator/registry.go`)
-  decodes the body into `<Name>Request` and returns `<Name>Reply`; operations move to it domain by domain.
+  `go/coordinator/ops_contract_test.go` compares with the registry. A handler registered with `op("<name>", handler)` (`go/coordinator/registry.go`)
+  decodes the body into `<Name>Request` and returns `<Name>Reply`; `runOp` applies its declared `auth`. Operations move to it domain by domain.
 * `ops-tasks.schema.json` also owns the internal `ResourceContributionV1`, `ResourceMethodV1` and `PreparedHeaderV1` prepared-resource shapes. The same domain registers `project_detail`, `project_resources` and `project_resource_items` (read, not long; 400/404/409/503), with named ready/unchanged/preparing replies, typed progress, group/item/sort-key/page shapes and decimal-string versions. Large tool tuples use the optional tool-item `position` (`ResourcePackedToolKey`, `tool-position`) for captured around/resolved anchors, and `r2.` zlib+base64url cursors; small cursor schema1 and ordinary tuples remain compatible. Exact encoding/decompression/body bounds live in [prepared project resources](../docs/designs/fleet-analytics.md#prepared-read-operations). These reads are unadvertised and return 503 while the startup reads flag is off. `ops.schema.json` adds `resource_summary` to ChangeKind for committed project-scoped publication. Metric keys use `ResourceMetricNameV1`; nullable decimal strings preserve exact money/credit values and measured zero. The coordinator validates its fixed metric key set and stores all normalized tool/cost/price support; legacy wire summaries keep their existing numeric fields.
 * `profile.schema.json`: the agent profile (`config/agents/*.json`, the start command's `agentConfig`). Its validator
   `contract.ParseProfile` (`go/contract/profile.go`) is the one the coordinator and the executor run; a Go test checks every shipped profile.

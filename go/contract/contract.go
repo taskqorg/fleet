@@ -22,11 +22,15 @@ import "encoding/json"
 //go:generate go run ../gen ../../contracts/profile.schema.json contract profile_gen.go
 
 // Operation is one entry of an "operations" list in contracts/ops-<domain>.schema.json: a read snapshot or a write, long (no surrounding
-// transaction), and the status codes its handler returns besides 401, 403 and 500.
+// transaction), the status codes its handler returns besides 401, 403 and 500, who may call it (Auth: person, project:<path>
+// of the project id in the request, holder:<kind> of the named object, architect, owner or system), how a host agent calls
+// it (Agent: no, tool, or bound:<binder> when the coordinator binds its arguments to the calling session, project or focus)
+// and the tool description agents read.
 type Operation struct {
-	Read, Long  bool
-	Errors      []int
-	InputSchema json.RawMessage
+	Read, Long               bool
+	Errors                   []int
+	Auth, Agent, Description string
+	InputSchema              json.RawMessage
 }
 
 // Operations: every coordinator operation; each name has <Name>Request and <Name>Reply. The generated init of each

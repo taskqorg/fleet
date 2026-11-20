@@ -150,7 +150,7 @@ func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.Ses
 		return out, err
 	}
 	for _, p := range ps {
-		role, profileID, profile, unavailable := resolvePreset(q, p, settings) // ponytail: one profile read per preset (five); cache by id if presets grow
+		role, profileID, profile, unavailable := resolvePreset(q, p, settings)          // ponytail: one profile read per preset (five); cache by id if presets grow
 		if unavailable == "" && q.agent != "" && !profileInRoles(settings, profileID) { // what session_start refuses an agent
 			unavailable = "Your project maps no role to profile " + profileID
 		}
@@ -175,6 +175,5 @@ func firstOf(xs []any) any {
 }
 
 func init() {
-	agentTypedOp("session_presets", true, sessionPresets)
-	agentDescriptions["session_presets"] = "Presets for starting a session in a project (projectId; a person may omit it for outside projects, an agent reads its own project): id, name, what it does, the role or profile it resolves to (a system profile when the project does not map the role; an agent starts only profiles its project maps), access read|write, branch, starter instruction; unavailable says why one cannot start. Start with session_start preset=<id>"
+	op("session_presets", sessionPresets)
 }

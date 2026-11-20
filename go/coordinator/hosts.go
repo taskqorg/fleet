@@ -25,23 +25,23 @@ var (
 )
 
 func init() {
-	operation("hosts_register", false, ownerFirst("Only the owner manages hosts", typedOp(func(q *Request, b *contract.HostsRegisterRequest) (contract.HostWriteReply, error) {
+	op("hosts_register", func(q *Request, b *contract.HostsRegisterRequest) (contract.HostWriteReply, error) {
 		out, err := hostsRegister(q, docOf(b))
 		return replyAs[contract.HostWriteReply](out, err)
-	})))
-	operation("hosts_update", false, typedOp(func(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpdateReply, error) {
+	})
+	op("hosts_update", func(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpdateReply, error) {
 		out, err := hostsUpdate(q, docOf(b))
 		return replyAs[contract.HostsUpdateReply](out, err)
-	}))
-	operation("hosts_rotate_secret", false, ownerFirst("Only the owner manages hosts", typedOp(func(q *Request, b *contract.HostsRotateSecretRequest) (contract.HostWriteReply, error) {
+	})
+	op("hosts_rotate_secret", func(q *Request, b *contract.HostsRotateSecretRequest) (contract.HostWriteReply, error) {
 		out, err := hostsRotateSecret(q, docOf(b))
 		return replyAs[contract.HostWriteReply](out, err)
-	})))
-	operation("hosts_list", true, typedOp(func(q *Request, r *contract.HostsListRequest) (contract.HostsListReply, error) {
+	})
+	op("hosts_list", func(q *Request, r *contract.HostsListRequest) (contract.HostsListReply, error) {
 		out, err := hostsList(q, r.IncludeRemoved != nil && *r.IncludeRemoved)
 		return replyAs[contract.HostsListReply](out, err)
-	}))
-	operation("route_decisions", true, typedOp(routeDecisions))
+	})
+	op("route_decisions", routeDecisions)
 }
 
 // hostList: every host with its bare id; removed hosts (tombstones, host_remove.go) are left out.

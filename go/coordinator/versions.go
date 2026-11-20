@@ -17,10 +17,10 @@ import (
 // system_versions: the installed version of every Fleet part in one read, for the navigation's version mark and its
 // overview (docs/design-system/controls/nav-rail.md, Version) and for agents.
 func init() {
-	operation("system_versions", true, typedOp(func(q *Request, _ *contract.SystemVersionsRequest) (contract.SystemVersionsReply, error) {
+	op("system_versions", func(q *Request, _ *contract.SystemVersionsRequest) (contract.SystemVersionsReply, error) {
 		out, err := systemVersions(q)
 		return replyAs[contract.SystemVersionsReply](out, err)
-	}))
+	})
 }
 
 func systemVersions(q *Request) (any, error) {

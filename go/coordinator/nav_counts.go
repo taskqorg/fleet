@@ -19,7 +19,7 @@ import (
 )
 
 func init() {
-	gatedObjOp("nav_counts", true, typedOp(navCounts)) // the current grants, as search and the lists it counts
+	op("nav_counts", navCounts) // the current grants, as search and the lists it counts
 }
 
 // navView: a view a counter can count; label says what is counted, in words for the accessible name.

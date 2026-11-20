@@ -46,7 +46,7 @@ func init() {
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "rules", envMs("FLEET_RULES_TICK_MS", int(rulesEvery/time.Millisecond)), func(ctx context.Context) error { return rulesPass(ctx, a) })
 	})
-	longOp("telemetry_findings", typedOp(telemetryFindings))
+	op("telemetry_findings", telemetryFindings)
 }
 
 // rulesPass runs every rule, groups the findings and syncs them as questions. With no span store the span rules are

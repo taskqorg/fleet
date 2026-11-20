@@ -22,10 +22,10 @@ import (
 func init() {
 	longRoute("POST /api/hosts/events", func(q *Request) (any, error) { return q.app.ingest(q) })
 	route("GET /api/executions/{id}/events", executionEvents)
-	operation("execution_events", true, typedOp(func(q *Request, r *contract.ExecutionEventsRequest) (contract.ExecutionEventsReply, error) {
+	op("execution_events", func(q *Request, r *contract.ExecutionEventsRequest) (contract.ExecutionEventsReply, error) {
 		es, err := executionEventsOf(q, r.ExecutionId)
 		return contract.ExecutionEventsReply{Events: recsOf(es)}, err
-	}))
+	})
 	// ponytail: the transport requests stay maps: transport_authorize signs its exact body (frameHash).
 	operation("transport_inspect", true, func(q *Request) (any, error) { return transportInspect(q, q.obj()) })
 	operation("transport_authorize", false, func(q *Request) (any, error) { return transportAuthorize(q, q.obj()) })

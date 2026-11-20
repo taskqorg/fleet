@@ -200,9 +200,9 @@ func previousState(q *Request, id any) (string, error) {
 // a completed start, and settling an execution that waits for its artifacts.
 
 func init() {
-	operation("execution_stop", false, typedOp(func(q *Request, r *contract.ExecutionStopRequest) (contract.ExecutionStopReply, error) {
+	op("execution_stop", func(q *Request, r *contract.ExecutionStopRequest) (contract.ExecutionStopReply, error) {
 		return executionStop(q, r.ExecutionId)
-	}))
+	})
 	route("POST /api/executions/{id}/stop", func(q *Request) (any, error) { return executionStop(q, q.r.PathValue("id")) })
 }
 
@@ -514,9 +514,9 @@ func executionDifferences(q *Request, id, previousID string) (contract.Execution
 }
 
 func init() {
-	gatedObjOp("execution_differences", true, typedOp(func(q *Request, r *contract.ExecutionDifferencesRequest) (contract.ExecutionDifferencesReply, error) {
+	op("execution_differences", func(q *Request, r *contract.ExecutionDifferencesRequest) (contract.ExecutionDifferencesReply, error) {
 		return executionDifferences(q, r.ExecutionId, r.Previous)
-	}))
+	})
 	gatedRoute("GET /api/executions/{id}/differences", func(q *Request) (any, error) {
 		return executionDifferences(q, q.r.PathValue("id"), q.r.URL.Query().Get("previous"))
 	})
@@ -537,7 +537,7 @@ func init() {
 var lostAfter = envMs("FLEET_LOST_AFTER_MS", int(time.Hour/time.Millisecond))
 
 func init() {
-	gatedObjOp("executions_abandon", false, typedOp(func(q *Request, r *contract.ExecutionsAbandonRequest) (contract.ExecutionsAbandonReply, error) {
+	op("executions_abandon", func(q *Request, r *contract.ExecutionsAbandonRequest) (contract.ExecutionsAbandonReply, error) {
 		out := contract.ExecutionsAbandonReply{Abandoned: []string{}, Skipped: []contract.ExecutionSkipped{}}
 		if err := ownerOnly(q, "Only the owner abandons executions"); err != nil {
 			return out, err
@@ -579,8 +579,8 @@ func init() {
 		}
 		publish(q)
 		return out, agentPromote(q)
-	}))
-	gatedObjOp("executions_dismiss", false, typedOp(func(q *Request, r *contract.ExecutionsDismissRequest) (contract.ExecutionsDismissReply, error) {
+	})
+	op("executions_dismiss", func(q *Request, r *contract.ExecutionsDismissRequest) (contract.ExecutionsDismissReply, error) {
 		out := contract.ExecutionsDismissReply{Dismissed: []string{}, Skipped: []contract.ExecutionSkipped{}}
 		if err := ownerOnly(q, "Only the owner dismisses execution problems"); err != nil {
 			return out, err
@@ -625,7 +625,7 @@ func init() {
 		}
 		publish(q)
 		return out, nil
-	}))
+	})
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "lost", lostAfter/12, func(ctx context.Context) error {
 			return runTx(ctx, a, nil, true, NOLOCK, func(q *Request) error {

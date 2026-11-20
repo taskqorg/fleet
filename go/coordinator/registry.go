@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"fleet/contract"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -42,8 +44,9 @@ type registeredRoute struct {
 }
 
 type registeredOp struct {
-	read bool
-	h    handler
+	read     bool
+	h        handler
+	declared bool // registered with op: runOp applies its contract auth rule
 }
 
 var (
@@ -71,7 +74,26 @@ func publicRoute(pattern string, h http.HandlerFunc) {
 func rawRoute(pattern string, h func(*App, http.ResponseWriter, *http.Request)) {
 	routeTable = append(routeTable, registeredRoute{pattern: pattern, tx: txNone, raw: h})
 }
-func operation(name string, read bool, h handler) { operations[name] = registeredOp{read, h} }
+func operation(name string, read bool, h handler) { operations[name] = registeredOp{read: read, h: h} }
+
+// op registers an operation on its generated request and reply types with one line: read, long, auth and agent come from
+// its declaration in contracts/ops-*.schema.json. runOp refreshes the caller's access and applies the person gate and the
+// declared auth rule; the handler then gets the body decoded strictly (typedOp: exact keys, JSON types, Validate).
+func op[Req, Rep any](name string, h func(q *Request, r *Req) (Rep, error)) {
+	c, ok := contract.Operations[name]
+	if !ok {
+		panic("op " + name + ": not declared in contracts/ops-*.schema.json")
+	}
+	if _, dup := operations[name]; dup {
+		panic("op " + name + ": registered twice")
+	}
+	t := typedOp(h)
+	if c.Long {
+		longOperations[name] = t
+		t = func(*Request) (any, error) { return nil, fail(500, "long operation "+name+" ran inside a transaction") }
+	}
+	operations[name] = registeredOp{read: c.Read && !c.Long, h: t, declared: true}
+}
 
 // typedOp: an operation on its generated request and reply types (contracts/ops*.schema.json). The body decodes into Req:
 // fields the request type does not name are ignored, a named field of the wrong JSON type is 400.
@@ -170,8 +192,6 @@ func checkFirst(check func(*Request) error, h handler) handler {
 		return h(q)
 	}
 }
-
-func operatorFirst(h handler) handler { return checkFirst(operatorOnly, h) }
 
 func ownerFirst(msg string, h handler) handler {
 	return checkFirst(func(q *Request) error { return ownerOnly(q, msg) }, h)
@@ -275,17 +295,10 @@ func (a *App) registered() *http.ServeMux {
 		mux.HandleFunc(rt.pattern, func(w http.ResponseWriter, hr *http.Request) { a.serve(w, hr, rt.tx, rt.h) })
 	}
 	if len(operations) > 0 {
+		// Every operation, long or not, through the one dispatcher (runOp opens its transaction).
 		mux.HandleFunc("POST /api/ops/{name}", func(w http.ResponseWriter, hr *http.Request) {
-			op, ok := operations[hr.PathValue("name")]
-			if !ok {
-				a.serve(w, hr, txNone, func(*Request) (any, error) { return nil, fail(404, "Unknown operation") })
-				return
-			}
-			kind := txWrite
-			if op.read {
-				kind = txRead
-			}
-			a.serve(w, hr, kind, op.h)
+			name := hr.PathValue("name")
+			a.serve(w, hr, txNone, func(q *Request) (any, error) { return a.runOp(q, name, q.body, nil) })
 		})
 	}
 	return mux

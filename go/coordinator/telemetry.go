@@ -104,8 +104,8 @@ func init() {
 	// Spans from executors and gateways (fleet-telemetry.md §4). Under /api/hosts/ for host-secret auth; rows naming
 	// another host, or an execution not on this host, are refused (counted in skipped).
 	longRoute("POST /api/hosts/spans", hostSpans)
-	longOp("telemetry_summary", typedOp(telemetrySummary))
-	longOp("telemetry_trace", typedOp(telemetryTrace))
+	op("telemetry_summary", telemetrySummary)
+	op("telemetry_trace", telemetryTrace)
 }
 
 // telemetryProblem opens or closes problem:telemetry:clickhouse (3 failed flushes in a row; closed on the next good flush).

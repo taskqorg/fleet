@@ -61,7 +61,7 @@ var defaultAnalyticsMeasures = []contract.AnalyticsMeasure{
 }
 
 func init() {
-	gatedObjOp("analytics_query", true, typedOp(analyticsQuery))
+	op("analytics_query", analyticsQuery)
 }
 
 // systemFilter: the condition that keeps project work (exclude, the default), adds Fleet's own background calls

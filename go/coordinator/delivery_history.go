@@ -70,10 +70,10 @@ func init() {
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "delivery-history", envMs("FLEET_DELIVERY_HISTORY_TICK_MS", 10*60*1000), func(ctx context.Context) error { return deliveryHistoryPass(ctx, a) })
 	})
-	operation("delivery_history", true, typedOp(deliveryHistory))
-	operation("delivery_baseline", true, typedOp(deliveryBaseline))
-	operation("delivery_baseline_set", false, typedOp(deliveryBaselineSet))
-	operation("delivery_regressions", true, typedOp(deliveryRegressionsOp))
+	op("delivery_history", deliveryHistory)
+	op("delivery_baseline", deliveryBaseline)
+	op("delivery_baseline_set", deliveryBaselineSet)
+	op("delivery_regressions", deliveryRegressionsOp)
 }
 
 // ---- storage ----

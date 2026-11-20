@@ -149,17 +149,23 @@ var (
 
 func hasRole(p *Person, r string) bool { return slices.Contains(p.Roles, r) }
 
+// projectDefinitionRead: a definition read that a project grant allows for kind project, without the architect role
+// (guardOp checks the grant; declaredAuth lets it past the declared architect rule).
+func projectDefinitionRead(name string) bool {
+	switch name {
+	case "definition_list", "definition_get", "definition_history", "definition_diff", "definition_usage":
+		return true
+	}
+	return false
+}
+
 // guardOp: the architect gate on operation names (a holder's own subscription passes) and the project grant of a named project.
 func (a *App) guardOp(q *Request, name string, body json.RawMessage) error {
 	p := q.person
 	var request doc
 	_ = json.Unmarshal(body, &request)
-	if request["kind"] == "project" && strings.HasPrefix(name, "definition_") {
-		switch name {
-		case "definition_list", "definition_get", "definition_history", "definition_diff", "definition_usage":
-		default:
-			return fail(403, "Use project_create or project_update")
-		}
+	if request["kind"] == "project" && strings.HasPrefix(name, "definition_") && !projectDefinitionRead(name) {
+		return fail(403, "Use project_create or project_update")
 	}
 	if p == nil || fullAccess(p) {
 		return nil
@@ -171,12 +177,10 @@ func (a *App) guardOp(q *Request, name string, body json.RawMessage) error {
 			if name != "definition_list" && !mayAccessProjectID(p, astr(b["id"])) {
 				return fail(404, "Unknown project")
 			}
-			switch name {
-			case "definition_list", "definition_get", "definition_history", "definition_diff", "definition_usage":
+			if projectDefinitionRead(name) {
 				return nil
-			default:
-				return fail(403, "Use project_create or project_update")
 			}
+			return fail(403, "Use project_create or project_update")
 		}
 		if name == "definition_export" {
 			for _, k := range anys(b["keys"]) {
@@ -238,6 +242,13 @@ func (a *App) guardRoute(q *Request) error {
 	return nil
 }
 
+// ownAccount: the declared holder:account rule (declaredAuth), the same test as the architect gate's own subscription.
+func (a *App) ownAccount(q *Request, name string, body json.RawMessage) bool {
+	var b map[string]any
+	json.Unmarshal(body, &b)
+	return a.ownSubscription(q, name, b)
+}
+
 func (a *App) ownSubscription(q *Request, name string, b map[string]any) bool {
 	if !strings.HasPrefix(name, "account_") {
 		return false
@@ -256,7 +267,7 @@ func (a *App) ownSubscription(q *Request, name string, b map[string]any) bool {
 }
 
 func init() {
-	gatedObjOp("me", true, typedOp(func(q *Request, _ *contract.MeRequest) (contract.MeReply, error) {
+	op("me", func(q *Request, _ *contract.MeRequest) (contract.MeReply, error) {
 		p := q.person
 		if p == nil {
 			return contract.MeReply{Roles: []string{}, ChangeLogRetentionDays: 7}, nil
@@ -267,7 +278,7 @@ func init() {
 		}
 		g := grantsVersion(p)
 		return contract.MeReply{Email: &p.Email, Name: &p.Name, Roles: roles, Owner: p.Owner, GrantsVersion: &g, ChangeLogRetentionDays: 7}, nil
-	}))
+	})
 }
 
 // people_list and people_set: people.json as operations (docs/designs/fleet-pm-agent.md §8). A non-owner sees only

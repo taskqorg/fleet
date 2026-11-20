@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fleet/contract"
+	"fleet/mcpserve"
 	"fmt"
 	"os"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -1674,46 +1676,11 @@ func sessionStart(q *Request, b doc) (doc, error) {
 	return out, nil
 }
 
-var agentDescriptions = map[string]string{
-	"pipeline_run_create": "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get.",
-
-	"executions_list":        "Read executions with optional project/task/session/parent/problem/needsYou filters; projectIds keeps those projects, excludeProjectIds leaves those out ('-' is no project). Fleet's own background calls (systemActor set) are left out unless system is include or only, or parentExecutionId names their parent. For bounded enumeration set limit (1..1000); reply has executions and hasMore, plus nextAfter when more rows exist. Repeat identical filters with after=nextAfter until hasMore=false. Order is seq,id; pages use fresh snapshots. Without limit returns the complete legacy executions wrapper, without paging metadata. after requires limit; inaccessible, unknown or filter-mismatched cursors return 400.",
-	"nav_counts":             "Your director's navigation counters in one call: per section (tasks, conversations, delivery, results, hosts) the view counted (person setting navCounters, set with person_settings_set; defaults Running, Running, In flight, Last 24 h, Offline), inFocus (in the director's project focus; everything without one) and outside (other projects that are not ignored); ignored projects are never counted",
-	"search":                 "Find tasks, questions, conversations, results, projects, hosts, agents and pipelines by text, id or code (T-FLT-42, old codes too); field:value terms agent, host, state, project (e.g. `agent:claude host:mac flaky`). projectIds (a focus) puts hits in those projects first and counts only them. Hits list ids with state and last change; a conversation found by words deep in its first message carries a snippet of them; a person's ignored projects are left out unless the query names the project; counts give each list's total for the query",
-	"session_transition":     "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff",
-	"session_fork":           "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown",
-	"session_resume":         "Native resume/fork argv and captured native sessions for a session",
-	"session_handoffs":       "Context handoffs of a session with delivery state",
-	"session_start":          "Start a new session in a project: projectId, requestId, preset (an id from session_presets: its role or profile, access, branch and starter) or role (project roles map) or profileId, optional access read|write and branch true|false (override the preset; default write with a branch), account/hostId, taskId (the session works for that task of the project), text, attachments (artifact ids, as message_send), setup run|skip. The creator is woken when it finishes",
-	"session_task_attach":    "Attach a taskless session to a task (sessionId, taskId): it joins the task thread; earlier turns join without copying",
-	"project_detail":         "Read a project definition and revision independently of resource statistics; requires projectId",
-	"project_resources":      "Read prepared project resource figures/version and current progress; requires projectId",
-	"project_resource_items": "Read a bounded prepared tools/costs/prices window with an epoch-bound cursor or surviving anchor; requires projectId",
-	"project_readiness":      "Check a project per environment host: remote reachable, checkout, setup script, bound account login; read results with execution_status",
-	"message_send":           "Send a message; starts a turn, or queues/steers it while the session is busy. attachments: artifact ids of the session's project (artifact_save output or an operator upload); the receiving agent gets them as files under FLEET_INPUT_DIR/attachments, listed in its turn. A message with attachments is queued, never steered",
-	"queue_list":             "Queued messages",
-	"ask":                    "Ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume",
-	"reply":                  "Answer a question; delivered to the asker as its next message",
-	"questions":              "List questions",
-	"questions_withdraw":     "Owner or full access: withdraw open questions that no longer need anyone (ids up to 1000, reason); one audit row each; skipped lists ids not open",
-	"executions_abandon":     "Owner or full access: end unfinished agent runs or host jobs no host will finish (ids, reason): failed, problem unknown:abandoned, parent woken, one audit row each",
-	"object_delete":          "Owner only: delete a test project, a Lab experiment, a task or a session with everything that goes with it (kind project|experiment|task|session, id, preview); a task or session a live one depends on is refused with Kept by <reason>. Call preview: true first and read affected (counts per kind, artifact bytes) and running; preview: false stops its running work (stopDetail deleted), revokes run tokens, withdraws open questions, sends worktree teardowns and tombstones it: it leaves every list, detail, search, queue, dispatch and analytics read. One audit row; system_purge removes the rows later",
-	"definition_delete":      "Owner only: delete an agent or pipeline definition nothing uses (kind, id, preview). Preview first: refused says why not (shipped by the repository, used by a definition, unfinished executions, live Lab experiments); the id stays reserved and a revision an execution pinned stays readable (definition_get with revision); a deleted one whose file the repository ships again comes back",
-	"system_purge":           "Owner only: remove tombstoned objects nothing live references (preview, kinds host|project|experiment|task|session, default all): rows, then store objects and spans. Call preview: true first; removed and kept list ids per kind, rows the counts that go with them, retryLater the store/span deletions still pending. A purged project keeps its id reserved",
-	"hosts_remove":           "Owner, or the holder of the host: remove a host (id, preview). Preview first: running executions, open sessions, artifacts with no other copy; confirm cancels its running work and drops its secret and settings; the record stays for history until system_purge",
-	"executions_dismiss":     "Owner or full access: take problems of finished executions off Needs you (ids, reason); the problem stays on the record; one audit row each",
-	"worker_done":            "Report the current execution done (checked against the current execution; captures native session)",
-	"execution_status":       "Execution state (preparing, running, waiting, succeeded, failed, cancelled; observation unconfirmed when the host lost track), stop outcome proven|unknown, suggested next action and resume info",
-	"focus_set":              "Set a session's focus: projectIds (list in your grants) or \"*\"; with one project it is the default projectId of task_create and session_start, and task_page lists only the focus. Focus does not bind a repository checkout; use session_transition with projectId for that. Configure focus for the user’s intended granted project before project context reads",
-	"reconcile":              "Settle coordinator-owned queue/handoff state and report unproven executions",
-}
-
-// agentOps: the agent tool table, also served as /api/ops and /api/tools.
-var agentOps = map[string]registeredOp{}
-
-// agentTypedOp: an agent tool on its generated request and reply types.
-func agentTypedOp[Req, Rep any](name string, read bool, h func(*Request, *Req) (Rep, error)) {
-	agentTool(name, read, typedOp(h))
+// agentTable: an operation the coordinator binds to the calling session for a host agent (agent: bound:session in
+// contracts/ops-*.schema.json; boundArguments). The same operations serve /api/ops and /api/tools unbound.
+func agentTable(name string) bool {
+	_, ok := operations[name]
+	return ok && contract.Operations[name].Agent == "bound:session"
 }
 
 // agentShapedOp: an agent tool whose handler still reads a map, checked against its contract types (shaped).
@@ -1721,10 +1688,7 @@ func agentShapedOp[Req, Rep any](name string, read bool, h func(*Request, doc) (
 	agentTool(name, read, shaped[Req, Rep](func(q *Request) (any, error) { return h(q, body(q)) }))
 }
 
-func agentTool(name string, read bool, f handler) {
-	agentOps[name] = registeredOp{read, f}
-	gatedObjOp(name, read, f)
-}
+func agentTool(name string, read bool, f handler) { gatedObjOp(name, read, f) }
 
 func init() {
 	agentShapedOp[contract.SessionStartRequest, contract.SessionStartReply]("session_start", false, sessionStart)
@@ -1733,7 +1697,7 @@ func init() {
 	agentShapedOp[contract.SessionTransitionRequest, contract.SessionTransitionReply]("session_transition", false, sessionTransition)
 	agentShapedOp[contract.SessionForkRequest, contract.SessionForkReply]("session_fork", false, sessionFork)
 	agentShapedOp[contract.SessionResumeRequest, contract.SessionResumeReply]("session_resume", false, sessionResume)
-	agentTypedOp("session_handoffs", true, func(q *Request, b *contract.SessionHandoffsRequest) (contract.SessionHandoffsReply, error) {
+	op("session_handoffs", func(q *Request, b *contract.SessionHandoffsRequest) (contract.SessionHandoffsReply, error) {
 		if b.SessionId == "" {
 			return contract.SessionHandoffsReply{}, fail(400, "Expected sessionId")
 		}
@@ -1741,7 +1705,7 @@ func init() {
 		return contract.SessionHandoffsReply{Handoffs: recsOf(hs)}, err
 	})
 	agentShapedOp[contract.MessageSendRequest, contract.MessageSendReply]("message_send", false, submit)
-	agentTypedOp("queue_list", true, func(q *Request, b *contract.QueueListRequest) (contract.QueueListReply, error) {
+	op("queue_list", func(q *Request, b *contract.QueueListRequest) (contract.QueueListReply, error) {
 		ms, err := all(q, "queued-message", doc{"sessionId": nilIf(deref(b.SessionId))})
 		out := []doc{}
 		for _, m := range ms {
@@ -1755,13 +1719,13 @@ func init() {
 	})
 	agentShapedOp[contract.AskRequest, contract.AskReply]("ask", false, agentAsk)
 	agentShapedOp[contract.ReplyRequest, contract.ReplyReply]("reply", false, agentReply)
-	agentTypedOp("questions", true, func(q *Request, b *contract.QuestionsRequest) (contract.QuestionsReply, error) {
+	op("questions", func(q *Request, b *contract.QuestionsRequest) (contract.QuestionsReply, error) {
 		qs, err := all(q, "question", doc{"sessionId": nilIf(deref(b.SessionId)), "state": nilIf(deref(b.State))})
 		return contract.QuestionsReply{Questions: recsOf(qs)}, err
 	})
-	agentTypedOp("worker_done", false, workerDone)
-	agentTypedOp("execution_status", true, executionStatus)
-	agentTypedOp("focus_set", false, func(q *Request, b *contract.FocusSetRequest) (contract.FocusSetReply, error) {
+	op("worker_done", workerDone)
+	op("execution_status", executionStatus)
+	op("focus_set", func(q *Request, b *contract.FocusSetRequest) (contract.FocusSetReply, error) {
 		out, err := focusSet(q, docOf(b))
 		if err != nil {
 			return contract.FocusSetReply{}, err
@@ -1770,7 +1734,8 @@ func init() {
 	})
 	agentShapedOp[contract.ReconcileRequest, contract.ReconcileReply]("reconcile", false, func(q *Request, _ doc) (doc, error) { return agentReconcile(q) })
 
-	// /api/hosts/agent-tools: an executor's agent calls a tool; every call is bound to the calling execution's session.
+	// /api/hosts/agent-tools: an executor's agent calls a tool (mcpserve); every call is bound to the calling execution's
+	// session and runs through runOp, under the director's person gate.
 	longRoute("POST /api/hosts/agent-tools", func(q *Request) (any, error) {
 		var b contract.AgentToolsRequest
 		if q.host == nil {
@@ -1783,15 +1748,7 @@ func init() {
 		if b.ExecutionId != nil {
 			executionID = *b.ExecutionId
 		}
-		var rpc struct {
-			Method string `json:"method"`
-			Params struct {
-				Name      string          `json:"name"`
-				Arguments json.RawMessage `json:"arguments"`
-			} `json:"params"`
-		}
-		json.Unmarshal(b.Request, &rpc)
-		name := rpc.Params.Name
+		rpc := mcpserve.Parse(b.Request)
 		// The director's rights, the execution as actor (docs/designs/fleet-pm-agent.md §1).
 		q.agent = "execution:" + executionID
 		q.r = q.r.WithContext(context.WithValue(q.ctx(), actorKey{}, q.agent))
@@ -1844,36 +1801,57 @@ func init() {
 			}
 			return nil
 		}
-		wrap := func(r any) doc {
-			var id struct {
-				ID any `json:"id"`
-			}
-			json.Unmarshal(b.Request, &id)
-			return doc{"jsonrpc": "2.0", "id": id.ID, "result": doc{"content": []doc{{"type": "text", "text": js(r)}}}}
-		}
-		agentTool, isAgent := agentOps[name]
-		if rpc.Method == "tools/call" && !isAgent {
-			if agentDenied[name] {
+		if name := rpc.Params.Name; rpc.Method == "tools/call" && !agentTable(name) {
+			if agentDenied(name) {
 				return nil, fail(403, "Only a person may do this")
 			}
 			if executionID == "" {
 				return nil, fail(403, "Execution rejected")
 			}
-			if err := q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error { q.tx = tx; return prove() }); err != nil {
+		}
+		// The proof and the director's access, in one read; each call then runs in its own transaction (runOp).
+		if err := q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error {
+			q.tx = tx
+			defer func() { q.tx = nil }()
+			if err := prove(); err != nil {
+				return err
+			}
+			return refreshRequestAccess(q)
+		}); err != nil {
+			return nil, err
+		}
+		receipt := func(payload any) *toolReceipt {
+			return &toolReceipt{key: b.AgentToolKey, execution: executionID, payload: payload}
+		}
+		// tableCall: an agent-table tool, its arguments bound to the caller's own session (boundArguments).
+		tableCall := func(name string, raw json.RawMessage) (any, error) {
+			var args doc
+			json.Unmarshal(raw, &args)
+			err := q.app.store.Tx(q.ctx(), nil, false, "", func(tx pgx.Tx) error {
+				q.tx = tx
+				defer func() { q.tx = nil }()
+				if err := refreshRequestAccess(q); err != nil {
+					return err
+				}
+				var err error
+				args, err = boundArguments(q, name, args, executionID)
+				return err
+			})
+			if err != nil {
 				return nil, err
 			}
-			q.tx = nil
+			return q.app.runOp(q, name, json.RawMessage(js(args)), receipt(args))
+		}
+		// operationCall: any other operation the director may call, with the focus defaults of an agent (§2).
+		operationCall := func(name string, raw json.RawMessage) (any, error) {
 			if isResourceRead(name) && !resourceReadsEnabled {
 				return nil, fail(503, "Prepared project reads disabled")
 			}
 			if !agentMay(q.person, name) {
 				return nil, fail(400, "Unknown agent tool")
 			}
-			if err := refreshRequestAccess(q); err != nil {
-				return nil, err
-			}
 			var a doc
-			json.Unmarshal(rpc.Params.Arguments, &a)
+			json.Unmarshal(raw, &a)
 			if a == nil {
 				a = doc{}
 			}
@@ -1946,47 +1924,17 @@ func init() {
 					return nil, err
 				}
 			}
-			args := json.RawMessage(js(a))
-			r, err := q.app.runAgentOp(q, name, args, b.AgentToolKey, executionID)
-			if err != nil {
-				return nil, err
-			}
-			return wrap(r), nil
+			return q.app.runOp(q, name, json.RawMessage(js(a)), receipt(nil))
 		}
-		var out any
-		err := q.app.store.Tx(q.ctx(), nil, !agentTool.read, "", func(tx pgx.Tx) error {
-			q.tx = tx
-			if err := prove(); err != nil {
-				return err
+		out, err := mcpserve.Server{Name: "fleet-agent", Tools: agentTools(q.person), Call: func(name string, raw json.RawMessage) (any, error) {
+			if agentTable(name) {
+				return tableCall(name, raw)
 			}
-			if err := refreshRequestAccess(q); err != nil {
-				return err
-			}
-			if rpc.Method != "tools/call" {
-				q.body = b.Request
-				var err error
-				out, err = q.app.mcp(q, "fleet-agent", agentTools(q.person), agentDescriptions)
-				return err
-			}
-			var args doc
-			json.Unmarshal(rpc.Params.Arguments, &args)
-			args, err := boundArguments(q, name, args, executionID)
-			if err != nil {
-				return err
-			}
-			q.body = json.RawMessage(js(args))
-			var r any
-			if agentTool.read {
-				r, err = agentTool.h(q)
-			} else {
-				r, err = agentReceipt(q, b.AgentToolKey, executionID, name, args, func() (any, error) { return agentTool.h(q) })
-			}
-			if err != nil {
-				return err
-			}
-			out = wrap(r)
-			return nil
-		})
+			return operationCall(name, raw)
+		}}.Handle(b.Request)
+		if errors.Is(err, mcpserve.ErrUnknownMethod) {
+			return nil, fail(400, "Unknown tool")
+		}
 		return out, err
 	})
 }
@@ -2083,18 +2031,16 @@ func focusSet(q *Request, b doc) (doc, error) {
 	return doc{"sessionId": sid, "focus": s["focus"]}, nil
 }
 
-// agentDenied: operations only a person may call (take, host secrets); docs/designs/fleet-pm-agent.md §1.
-// Secrets never enter a model's context: the host secret and gateway token operations return one.
-var agentDenied = map[string]bool{"task_take": true, "hosts_register": true, "hosts_rotate_secret": true, "connections_token_create": true,
-	// a key value comes only from the owner's field (connections_key_request asks for one).
-	"connections_key_add": true, "connections_delete": true}
+// agentDenied: operations only a person may call (agent: no; take, host secrets, key values); docs/designs/fleet-pm-agent.md
+// §1. Secrets never enter a model's context: the host secret and gateway token operations return one.
+func agentDenied(name string) bool { return contract.Operations[name].Agent == "no" }
 
 // agentMay: an operation outside the agent table that the director's role may call (the architect gate of guardOp).
 func agentMay(p *Person, name string) bool {
 	if !resourceOperationAdvertised(name) {
 		return false
 	}
-	if agentDenied[name] {
+	if agentDenied(name) {
 		return false
 	}
 	_, op := operations[name]
@@ -2104,21 +2050,14 @@ func agentMay(p *Person, name string) bool {
 }
 
 // agentTools: the agent table plus every operation the director may call, as published by tools/list.
-func agentTools(p *Person) map[string]registeredOp {
-	out := map[string]registeredOp{}
-	for n, o := range operations {
-		if agentMay(p, n) {
-			out[n] = o
+func agentTools(p *Person) []string {
+	out := []string{}
+	for n := range operations {
+		if agentTable(n) || agentMay(p, n) {
+			out = append(out, n)
 		}
 	}
-	for n := range longOperations {
-		if agentMay(p, n) {
-			out[n] = registeredOp{}
-		}
-	}
-	for n, o := range agentOps {
-		out[n] = o
-	}
+	sort.Strings(out)
 	return out
 }
 
@@ -2281,10 +2220,9 @@ var _ = errors.New
 // executor's tool list of a profile with fleetOperations (its MCP server forwards them to /api/hosts/agent-tools).
 func fleetOperations(p *Person) []doc {
 	out := []doc{}
-	for n := range agentTools(p) { // the agent table too: the executor's own list predates focus_set and watch_*
-		out = append(out, doc{"name": n, "inputSchema": contract.Operations[n].InputSchema, "description": firstString(agentDescriptions[n], "Fleet operation "+n+" (POST /api/ops/"+n+" body as arguments)")})
+	for _, t := range mcpserve.List(agentTools(p)) { // the agent table too: the executor's own list predates focus_set and watch_*
+		out = append(out, doc{"name": t.Name, "inputSchema": t.InputSchema, "description": t.Description})
 	}
-	slices.SortFunc(out, func(a, b doc) int { return strings.Compare(astr(a["name"]), astr(b["name"])) })
 	return out
 }
 

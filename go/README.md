@@ -11,6 +11,7 @@ This module builds Fleet's coordinator, executor, connection gateway, updater, s
 - [executor](executor/README.md): host-side command runner, native harness adapter, and local journal.
 - [gateway](gateway/README.md): loopback-only provider-key gateway and Cloudflare Access guard.
 - [gen](gen/README.md): contract-schema-to-Go generator.
+- [mcpserve](mcpserve/README.md): the one MCP tools server over contract operations.
 - [errtrack](errtrack/README.md): unexpected errors and panics to Bugsink through sentry-go; a no-op without a DSN.
 - [obs](obs/README.md): trace spans, HTTP instrumentation, and ClickHouse sink.
 - [harnessrelease](harnessrelease/README.md): shared CLI release manifest and executable paths.

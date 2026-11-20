@@ -32,7 +32,7 @@ func resolveCodes(q *Request, codes []string) (map[string]contract.EntityCode, e
 }
 
 func init() {
-	gatedObjOp("entity_resolve", true, typedOp(func(q *Request, r *contract.EntityResolveRequest) (contract.EntityCode, error) {
+	op("entity_resolve", func(q *Request, r *contract.EntityResolveRequest) (contract.EntityCode, error) {
 		if !codePattern.MatchString(r.Code) || len(codePattern.FindString(r.Code)) != len(strings.TrimSpace(r.Code)) {
 			return contract.EntityCode{}, fail(400, "Expected a code such as T-FLT-42")
 		}
@@ -42,8 +42,8 @@ func init() {
 			return c, err
 		}
 		return contract.EntityCode{}, errNotFound
-	}))
-	gatedObjOp("entity_resolve_many", true, typedOp(func(q *Request, r *contract.EntityResolveManyRequest) (contract.EntityResolveManyReply, error) {
+	})
+	op("entity_resolve_many", func(q *Request, r *contract.EntityResolveManyRequest) (contract.EntityResolveManyReply, error) {
 		codes := []string{}
 		for _, m := range codePattern.FindAllString(r.Text, 1000) { // ponytail: first 1000 codes of a text; raise if a real text holds more
 			if m = strings.ToUpper(m); !slices.Contains(codes, m) {
@@ -58,8 +58,8 @@ func init() {
 			}
 		}
 		return contract.EntityResolveManyReply{Codes: out}, err
-	}))
-	gatedObjOp("project_code_set", false, typedOp(func(q *Request, r *contract.ProjectCodeSetRequest) (contract.ProjectCodeSetReply, error) {
+	})
+	op("project_code_set", func(q *Request, r *contract.ProjectCodeSetRequest) (contract.ProjectCodeSetReply, error) {
 		if q.person == nil || (!fullAccess(q.person) && !hasRole(q.person, "operator")) { // projectWrite's gate
 			return contract.ProjectCodeSetReply{}, fail(403, "Authenticated operator required")
 		}
@@ -89,5 +89,5 @@ func init() {
 			return contract.ProjectCodeSetReply{}, err
 		}
 		return contract.ProjectCodeSetReply{ProjectId: r.ProjectId, Code: code}, nil
-	}))
+	})
 }

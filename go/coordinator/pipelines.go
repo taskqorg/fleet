@@ -1626,7 +1626,7 @@ func init() {
 	})
 	// pipeline_rerun: a finished run again on the current definition (or the caller's draft); mode failed reuses the steps
 	// that succeeded and would run the same way.
-	longOp("pipeline_rerun", typedOp(func(q *Request, r *contract.PipelineRerunRequest) (contract.PipelineRerunReply, error) {
+	op("pipeline_rerun", func(q *Request, r *contract.PipelineRerunRequest) (contract.PipelineRerunReply, error) {
 		out := contract.PipelineRerunReply{Reused: []string{}, Definitions: []contract.DefinitionRef{}}
 		var run doc
 		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
@@ -1650,9 +1650,9 @@ func init() {
 			out.Definitions = d
 		}
 		return out, nil
-	}))
+	})
 	// pipeline_run_create: the route as an operation, plus draft (the caller's draft; architect only).
-	longOp("pipeline_run_create", typedOp(func(q *Request, r *contract.PipelineRunCreateRequest) (contract.PipelineRunCreateReply, error) {
+	op("pipeline_run_create", func(q *Request, r *contract.PipelineRunCreateRequest) (contract.PipelineRunCreateReply, error) {
 		var out contract.PipelineRunCreateReply
 		var run doc
 		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
@@ -1702,7 +1702,7 @@ func init() {
 			out.Definitions = []contract.DefinitionRef{}
 		}
 		return out, err
-	}))
+	})
 	onStart(func(ctx context.Context, a *App) {
 		// On start, running v2 runs move on (an interrupted sync call becomes unknown, never replayed).
 		pipelineTick(ctx, a)
@@ -1829,8 +1829,7 @@ func gatedOp(name string, read bool, h handler) {
 	})
 }
 
-// longOp: a long operation: POST /api/ops/<name> without a surrounding transaction, listed among the tools, and run by
-// runOp without one.
+// longOp: a long operation: run by runOp (POST /api/ops/<name> and the tools) without a surrounding transaction.
 func longOp(name string, h handler) {
 	gated := func(q *Request) (any, error) {
 		if err := q.app.guardOp(q, name, q.body); err != nil {
@@ -1838,7 +1837,6 @@ func longOp(name string, h handler) {
 		}
 		return h(q)
 	}
-	longRoute("POST /api/ops/"+name, gated)
 	longOperations[name] = gated
 	operation(name, false, func(q *Request) (any, error) {
 		return nil, fail(500, "long operation "+name+" ran inside a transaction")
@@ -1938,7 +1936,7 @@ func init() {
 			h = shaped[contract.DirectSearchRequest, contract.DirectSearchReply](h)
 		}
 		longOp(name, h)
-		projectOps[name] = registeredOp{false, h}
+		projectOps[name] = registeredOp{h: h}
 	}
 	gatedLongRoute("POST /api/pipeline-runs", func(q *Request) (any, error) { return runPipeline(q, "pipeline") })
 

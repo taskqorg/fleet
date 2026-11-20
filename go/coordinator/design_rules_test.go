@@ -13,10 +13,13 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+
+	"fleet/contract"
 )
 
 var designSQLStarts = []string{"select", "insert", "update", "delete", "with"}
@@ -90,6 +93,18 @@ func designRuleHits(f *ast.File) map[string][]token.Pos {
 	return hits
 }
 
+// S4: every contract operation declares who may call it (auth), how a host agent calls it (agent) and its tool
+// description; op, runOp and the MCP servers read them from contract.Operations.
+func TestDesignOperationsDeclared(t *testing.T) {
+	auth := regexp.MustCompile(`^(person|architect|owner|system|project:[A-Za-z][A-Za-z0-9.]*|holder:[a-z]+)$`)
+	agent := regexp.MustCompile(`^(no|tool|bound:[a-z]+)$`)
+	for n, o := range contract.Operations {
+		if !auth.MatchString(o.Auth) || !agent.MatchString(o.Agent) || strings.TrimSpace(o.Description) == "" {
+			t.Errorf("%s: declare auth, agent and description in contracts/ops-*.schema.json (auth %q, agent %q)", n, o.Auth, o.Agent)
+		}
+	}
+}
+
 func TestDesignRules(t *testing.T) {
 	paths, err := filepath.Glob("*.go")
 	if err != nil {
@@ -159,8 +174,8 @@ var designRulesLegacy = map[string]map[string]bool{
 	"accounts.go":            {"R-MAP": true, "R-OP": true, "R-SQL": true},
 	"agent.go":               {"R-MAP": true, "R-OP": true, "R-SQL": true},
 	"agent_receipts.go":      {"R-SQL": true},
-	"agents.go":              {"R-MAP": true, "R-OP": true, "R-SQL": true},
-	"analytics.go":           {"R-OP": true, "R-SQL": true},
+	"agents.go":              {"R-MAP": true, "R-SQL": true},
+	"analytics.go":           {"R-SQL": true},
 	"artifact_routes.go":     {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
 	"artifacts.go":           {"R-MAP": true, "R-SQL": true},
 	"attachments.go":         {"R-MAP": true, "R-SQL": true},
@@ -170,26 +185,26 @@ var designRulesLegacy = map[string]map[string]bool{
 	"catalogue_evidence.go":  {"R-MAP": true, "R-SQL": true},
 	"cleanup.go":             {"R-MAP": true, "R-SQL": true},
 	"connections.go":         {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
-	"definitions.go":         {"R-MAP": true, "R-OP": true, "R-SQL": true},
-	"definitions_usage.go":   {"R-MAP": true, "R-OP": true, "R-SQL": true},
-	"definitions_write.go":   {"R-MAP": true, "R-OP": true, "R-SQL": true},
+	"definitions.go":         {"R-MAP": true, "R-SQL": true},
+	"definitions_usage.go":   {"R-MAP": true, "R-SQL": true},
+	"definitions_write.go":   {"R-MAP": true, "R-SQL": true},
 	"delegation.go":          {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"delivery.go":            {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
-	"delivery_history.go":    {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
+	"delivery.go":            {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"delivery_history.go":    {"R-GO": true, "R-MAP": true, "R-SQL": true},
 	"dispatch.go":            {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"entity_card.go":         {"R-MAP": true, "R-OP": true, "R-SQL": true},
-	"entity_codes.go":        {"R-MAP": true, "R-OP": true, "R-SQL": true},
+	"entity_card.go":         {"R-MAP": true, "R-SQL": true},
+	"entity_codes.go":        {"R-MAP": true, "R-SQL": true},
 	"event_batch.go":         {"R-MAP": true, "R-SQL": true},
 	"execution_trace.go":     {"R-MAP": true, "R-SQL": true},
-	"executions.go":          {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
+	"executions.go":          {"R-GO": true, "R-MAP": true, "R-SQL": true},
 	"github.go":              {"R-GO": true, "R-MAP": true},
 	"health.go":              {"R-MAP": true},
 	"host_events.go":         {"R-MAP": true, "R-OP": true, "R-SQL": true},
 	"host_poll.go":           {"R-MAP": true, "R-SQL": true},
 	"host_poll_health.go":    {"R-MAP": true, "R-SQL": true},
 	"host_receipts.go":       {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"host_remove.go":         {"R-MAP": true, "R-OP": true, "R-SQL": true},
-	"hosts.go":               {"R-MAP": true, "R-OP": true, "R-SQL": true},
+	"host_remove.go":         {"R-MAP": true, "R-SQL": true},
+	"hosts.go":               {"R-MAP": true, "R-SQL": true},
 	"json.go":                {"R-MAP": true},
 	"lab.go":                 {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
 	"lab_assessment.go":      {"R-MAP": true, "R-SQL": true},
@@ -199,16 +214,16 @@ var designRulesLegacy = map[string]map[string]bool{
 	"lab_retry.go":           {"R-MAP": true, "R-SQL": true},
 	"lab_variant.go":         {"R-MAP": true},
 	"limits.go":              {"R-MAP": true, "R-SQL": true},
-	"limits_refresh.go":      {"R-MAP": true, "R-OP": true, "R-SQL": true},
+	"limits_refresh.go":      {"R-MAP": true, "R-SQL": true},
 	"main.go":                {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"nav_counts.go":          {"R-MAP": true, "R-OP": true, "R-SQL": true},
+	"nav_counts.go":          {"R-MAP": true, "R-SQL": true},
 	"ops.go":                 {"R-OP": true},
 	"people.go":              {"R-MAP": true, "R-OP": true, "R-SQL": true},
-	"person_settings.go":     {"R-MAP": true, "R-OP": true},
+	"person_settings.go":     {"R-MAP": true},
 	"pipeline_condition.go":  {"R-MAP": true},
 	"pipeline_plan.go":       {"R-MAP": true, "R-SQL": true},
 	"pipelines.go":           {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
-	"placement.go":           {"R-MAP": true, "R-OP": true, "R-SQL": true},
+	"placement.go":           {"R-MAP": true, "R-SQL": true},
 	"presets.go":             {"R-MAP": true},
 	"prices.go":              {"R-MAP": true, "R-OP": true, "R-SQL": true},
 	"problems.go":            {"R-MAP": true, "R-SQL": true},
@@ -223,10 +238,10 @@ var designRulesLegacy = map[string]map[string]bool{
 	"resource_apply.go":      {"R-SQL": true},
 	"resource_projection.go": {"R-GO": true, "R-MAP": true, "R-SQL": true},
 	"rules.go":               {"R-MAP": true, "R-SQL": true},
-	"runners.go":             {"R-MAP": true, "R-OP": true, "R-SQL": true},
-	"runners_ci.go":          {"R-GO": true, "R-MAP": true, "R-OP": true},
+	"runners.go":             {"R-MAP": true, "R-SQL": true},
+	"runners_ci.go":          {"R-GO": true, "R-MAP": true},
 	"s3.go":                  {"R-GO": true},
-	"search.go":              {"R-MAP": true, "R-OP": true, "R-SQL": true},
+	"search.go":              {"R-MAP": true, "R-SQL": true},
 	"session_titles.go":      {"R-MAP": true, "R-SQL": true},
 	"sessions.go":            {"R-MAP": true, "R-OP": true, "R-SQL": true},
 	"store.go":               {"R-MAP": true, "R-SQL": true},
@@ -236,8 +251,8 @@ var designRulesLegacy = map[string]map[string]bool{
 	"tasks.go":               {"R-MAP": true, "R-OP": true, "R-SQL": true},
 	"telemetry.go":           {"R-GO": true, "R-MAP": true, "R-SQL": true},
 	"threads.go":             {"R-MAP": true, "R-OP": true, "R-SQL": true},
-	"uploads.go":             {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
-	"versions.go":            {"R-GO": true, "R-MAP": true, "R-OP": true},
+	"uploads.go":             {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"versions.go":            {"R-GO": true, "R-MAP": true},
 	"view_link.go":           {"R-MAP": true},
 	"wake_outbox.go":         {"R-GO": true, "R-SQL": true},
 	"watch.go":               {"R-MAP": true, "R-SQL": true},

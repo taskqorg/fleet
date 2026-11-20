@@ -21,8 +21,8 @@ import (
 )
 
 func init() {
-	longOp("object_delete", ownerFirst("Only the owner deletes", typedOp(objectDelete)))
-	longOp("system_purge", ownerFirst("Only the owner purges", typedOp(systemPurge)))
+	op("object_delete", objectDelete)
+	op("system_purge", systemPurge)
 }
 
 // refMode: what a row does with the object its column names.

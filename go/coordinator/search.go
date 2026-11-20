@@ -473,7 +473,7 @@ func searchHosts(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 }
 
 func init() {
-	gatedObjOp("search", true, typedOp(func(q *Request, r *contract.SearchRequest) (contract.SearchReply, error) {
+	op("search", func(q *Request, r *contract.SearchRequest) (contract.SearchReply, error) {
 		limit := 8
 		if r.Limit != nil {
 			if *r.Limit < 1 {
@@ -551,5 +551,5 @@ func init() {
 			counts[string(kind)] = n
 		}
 		return contract.SearchReply{Hits: hits, Counts: counts}, nil
-	}))
+	})
 }

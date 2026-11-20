@@ -377,8 +377,7 @@ func sessionRename(q *Request, b *contract.SessionRenameRequest) (contract.Sessi
 }
 
 func init() {
-	agentDescriptions["session_rename"] = "Name a conversation (sessionId, default your own; title up to 200 characters, no UUID). An explicit title is kept: the generated title never replaces it"
-	agentTypedOp("session_rename", false, sessionRename)
+	op("session_rename", sessionRename)
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "session-titles", envMs("FLEET_SESSION_TITLE_TICK_MS", 30_000), func(ctx context.Context) error { return sessionTitlePass(ctx, a) })
 	})

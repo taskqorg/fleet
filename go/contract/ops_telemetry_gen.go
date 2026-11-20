@@ -335,9 +335,9 @@ func (v TelemetryWindow) Valid() bool {
 
 func init() {
 	for n, o := range map[string]Operation{
-		"telemetry_findings": {Read: false, Long: true, Errors: []int{}, InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}, InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
-		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409}, InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_findings": {Read: false, Long: true, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Telemetry findings, optionally of one project", InputSchema: json.RawMessage("{\"properties\":{\"projectId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_summary":  {Read: false, Long: true, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "window defaults to 1h.", InputSchema: json.RawMessage("{\"$comment\":\"window defaults to 1h.\",\"properties\":{\"projectId\":{\"type\":\"string\"},\"service\":{\"type\":\"string\"},\"window\":{\"enum\":[\"5m\",\"1h\",\"24h\",\"7d\"],\"type\":\"string\"}},\"type\":\"object\"}")},
+		"telemetry_trace":    {Read: false, Long: true, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.", InputSchema: json.RawMessage("{\"$comment\":\"Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409.\",\"properties\":{\"executionId\":{\"type\":\"string\"},\"traceId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

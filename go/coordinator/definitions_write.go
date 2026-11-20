@@ -634,13 +634,13 @@ func definitionExport(q *Request, r *contract.DefinitionExportRequest) (contract
 }
 
 func init() {
-	gatedObjOp("definition_draft_put", false, typedOp(definitionDraftPut))
-	gatedObjOp("definition_draft_get", true, typedOp(definitionDraftGet))
-	gatedObjOp("definition_draft_discard", false, typedOp(definitionDraftDiscard))
-	gatedObjOp("definition_diff", true, typedOp(definitionDiff))
-	gatedObjOp("definition_save", false, typedOp(definitionSave))
-	gatedObjOp("definition_create", false, typedOp(definitionCreate))
-	operation("definition_delete", false, ownerFirst("Only the owner deletes", typedOp(definitionDelete)))
-	gatedObjOp("definition_history", true, typedOp(definitionHistory))
-	gatedObjOp("definition_export", true, typedOp(definitionExport))
+	op("definition_draft_put", definitionDraftPut)
+	op("definition_draft_get", definitionDraftGet)
+	op("definition_draft_discard", definitionDraftDiscard)
+	op("definition_diff", definitionDiff)
+	op("definition_save", definitionSave)
+	op("definition_create", definitionCreate)
+	op("definition_delete", definitionDelete)
+	op("definition_history", definitionHistory)
+	op("definition_export", definitionExport)
 }

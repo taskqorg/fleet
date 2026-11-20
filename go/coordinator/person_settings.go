@@ -17,8 +17,8 @@ import (
 )
 
 func init() {
-	operation("person_settings_get", true, typedOp(personSettingsGet))
-	operation("person_settings_set", false, typedOp(personSettingsSet))
+	op("person_settings_get", personSettingsGet)
+	op("person_settings_set", personSettingsSet)
 }
 
 // settingsEmail: the caller, or another person for the owner only.

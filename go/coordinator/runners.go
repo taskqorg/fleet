@@ -216,5 +216,5 @@ func executionsRunners(q *Request, _ *contract.ExecutionsRunnersRequest) (contra
 }
 
 func init() {
-	operation("executions_runners", true, typedOp(executionsRunners))
+	op("executions_runners", executionsRunners)
 }
