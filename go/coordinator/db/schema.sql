@@ -882,6 +882,11 @@ CREATE TABLE run_token (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE schema_file (
+  "name" text NOT NULL,
+  "sha256" text NOT NULL,
+  "applied_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE schema_migration (
   "version" integer NOT NULL,
   "applied_at" timestamp with time zone NOT NULL

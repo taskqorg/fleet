@@ -1335,6 +1335,12 @@ type RunToken struct {
 	TombstonedAt            *time.Time
 }
 
+type SchemaFile struct {
+	Name      string
+	Sha256    string
+	AppliedAt time.Time
+}
+
 type SchemaMigration struct {
 	Version   int32
 	AppliedAt time.Time

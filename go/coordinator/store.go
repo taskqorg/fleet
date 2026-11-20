@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	_ "embed"
+	"crypto/sha256"
+	"embed"
 	"errors"
 	"fmt"
 	"math"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -426,12 +429,28 @@ func onEnd(tx pgx.Tx, fn func(committed bool)) {
 var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)
 
 // migrate applies schema.sql as the owner role: each "-- migration N" section once, in order, in one transaction that takes
-// the migration lock before it checks schema_migration, so concurrent starts never run a section twice.
+// the migration lock before it checks schema_migration, so concurrent starts never run a section twice. Then
+// applySchemaFiles brings every function, trigger and policy to its one current definition in schema/*.sql.
 // Migration 6's JavaScript document move is a no-op on an empty database and is not ported.
 func migrate(ctx context.Context, url string) error {
-	return migrateSQL(ctx, url, schemaSQL)
+	if err := migrateSQL(ctx, url, schemaSQL); err != nil {
+		return err
+	}
+	return applySchemaFiles(ctx, url)
 }
 
+// migrateLocked runs fn in one transaction holding the migration lock (GLOBAL), so concurrent starts apply each step once.
+func migrateLocked(ctx context.Context, conn *pgx.Conn, fn func(q *db.Queries, tx pgx.Tx) error) error {
+	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		if err := q.MigrationLock(ctx, GLOBAL); err != nil {
+			return err
+		}
+		return fn(q, tx)
+	})
+}
+
+// migrateSQL applies the numbered sections of sqlText that schema_migration does not list yet.
 func migrateSQL(ctx context.Context, url, sqlText string) error {
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
@@ -450,24 +469,59 @@ func migrateSQL(ctx context.Context, url, sqlText string) error {
 			end = idx[i+1][0]
 		}
 		body := string(text[m[0]:end])
-		err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", GLOBAL); err != nil {
-				return err
-			}
+		err := migrateLocked(ctx, conn, func(q *db.Queries, tx pgx.Tx) error {
 			// Decided under the lock: another coordinator may have applied this version while this one waited for it.
-			var applied bool
-			if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=$1)", version).Scan(&applied); err != nil || applied {
+			if applied, err := q.MigrationApplied(ctx, int32(version)); err != nil || applied {
 				return err
 			}
 			// Simple protocol: the whole section runs as one multi-statement query inside the transaction.
 			if _, err := tx.Exec(ctx, body, pgx.QueryExecModeSimpleProtocol); err != nil {
 				return err
 			}
-			_, err := tx.Exec(ctx, "INSERT INTO schema_migration(version) VALUES($1)", version)
-			return err
+			return q.MigrationRecord(ctx, int32(version))
 		})
 		if err != nil {
 			return errors.New("migration " + strconv.Itoa(version) + ": " + err.Error())
+		}
+	}
+	return nil
+}
+
+// The current definitions of functions, triggers and policies (S1): functions first, which the triggers and policies call.
+//
+//go:embed schema/*.sql
+var schemaFS embed.FS
+
+var schemaFileOrder = []string{"functions.sql", "triggers.sql", "policies.sql"}
+
+// applySchemaFiles runs each schema/*.sql file whose content schema_file does not record yet, in one transaction under
+// the migration lock, and records its hash: an unchanged file is not run again, so a start takes no table lock.
+func applySchemaFiles(ctx context.Context, url string) error {
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS schema_file(name text PRIMARY KEY,sha256 text NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
+		return err
+	}
+	for _, name := range schemaFileOrder {
+		body, err := schemaFS.ReadFile("schema/" + name)
+		if err != nil {
+			return err
+		}
+		sum := fmt.Sprintf("%x", sha256.Sum256(body))
+		err = migrateLocked(ctx, conn, func(q *db.Queries, tx pgx.Tx) error {
+			if have, err := q.SchemaFileHash(ctx, name); err == nil && have == sum || err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if _, err := tx.Exec(ctx, string(body), pgx.QueryExecModeSimpleProtocol); err != nil {
+				return err
+			}
+			return q.SchemaFileRecord(ctx, db.SchemaFileRecordParams{Name: name, Sha256: sum})
+		})
+		if err != nil {
+			return errors.New("schema/" + name + ": " + err.Error())
 		}
 	}
 	return nil
