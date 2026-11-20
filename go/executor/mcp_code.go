@@ -38,18 +38,121 @@ var codeTools = []any{
 		"inputSchema": M{"type": "object", "properties": M{"jobId": M{"type": "string"}, "waitSeconds": M{"type": "number"}, "reset": M{"type": "boolean"}}, "additionalProperties": false}},
 }
 
+// codeSpec is the code server's spec file: addCodeServer writes it, `executor mcp code` reads it. A field of another
+// JSON type reads as its zero value.
+type codeSpec struct {
+	Dir          string             `json:"dir"`
+	Read         []string           `json:"read"` // the runtime's read roots
+	Write        bool               `json:"write"`
+	Edit         bool               `json:"edit"`
+	RunFile      string             `json:"runFile"`
+	Connections  []json.RawMessage  `json:"connections"` // the bridged connection servers' specs
+	Node         string             `json:"node"`
+	Sandbox      string             `json:"sandbox"`
+	Instructions []codeInstructions `json:"instructions"` // with codeMode only: the connections' own instructions
+	Shell        *codeShell         `json:"shell"`        // nil: no sh
+	Env          map[string]string  `json:"env"`          // FLEET_INPUT_DIR and FLEET_OUTPUT_DIR for sh
+	GitEnv       *[]string          `json:"gitEnv"`
+	Journal      string             `json:"journal"` // the executor journal, "" without Fleet tools
+	Context      json.RawMessage    `json:"context"` // the fleet server context
+}
+
+type codeInstructions struct {
+	Name         string `json:"name"`
+	Instructions string `json:"instructions"`
+}
+
+// codeShell is the sh policy (codeAuthority.shell): unsandboxed, or an OS sandbox with these roots.
+type codeShell struct {
+	Sandbox  bool     `json:"sandbox"`
+	Network  bool     `json:"network"`
+	ReadOnly bool     `json:"readOnly"`
+	Pinned   bool     `json:"pinned"` // the roots are canonical already: a changed one fails
+	Hide     []string `json:"hide"`
+	Read     []string `json:"read"`
+	Write    []string `json:"write"`
+}
+
+// codeConn is one bridged connection: its server spec (as connectionCall and modelTool take it) and its tools.
+type codeConn struct {
+	name, instructions string
+	limits             any
+	spec               any
+	tools              []codeConnTool
+}
+
+type codeConnTool struct {
+	name string
+	spec any
+}
+
+func codeConnOf(spec any) codeConn {
+	var head struct {
+		Name         string            `json:"name"`
+		Instructions string            `json:"instructions"`
+		Limits       json.RawMessage   `json:"limits"`
+		Tools        []json.RawMessage `json:"tools"`
+	}
+	retype(spec, &head)
+	c := codeConn{name: head.Name, instructions: head.Instructions, limits: decRaw(head.Limits), spec: spec}
+	for _, raw := range head.Tools {
+		var t struct {
+			Name string `json:"name"`
+		}
+		json.Unmarshal(raw, &t)
+		c.tools = append(c.tools, codeConnTool{t.Name, decRaw(raw)})
+	}
+	return c
+}
+
+// toolNames are the connection's tool names, as mcpToolNames lists them.
+func (c codeConn) toolNames() []any {
+	out := []any{}
+	for _, t := range c.tools {
+		out = append(out, t.name)
+	}
+	return out
+}
+
+// codeArgs are the arguments of the code and poll tools (codeTools).
+type codeArgs struct {
+	Source             string          `json:"source"`
+	DetachAfterSeconds json.RawMessage `json:"detachAfterSeconds"`
+	JobID              string          `json:"jobId"`
+	WaitSeconds        json.RawMessage `json:"waitSeconds"`
+	Reset              bool            `json:"reset"`
+}
+
+// codeLine is one protocol line of the runtime (code_runtime.js): print, call, done or settled.
+type codeLine struct {
+	Type   string          `json:"type"`
+	Job    string          `json:"job"`
+	Text   string          `json:"text"`
+	ID     json.RawMessage `json:"id"`
+	OK     bool            `json:"ok"`
+	Value  json.RawMessage `json:"value"`
+	Error  json.RawMessage `json:"error"`
+	Server string          `json:"server"`
+	Tool   string          `json:"tool"`
+	Args   json.RawMessage `json:"args"`
+}
+
+// key is the call id as the awaiting map holds it.
+func (l codeLine) key() string { return enc(decRaw(l.ID)) }
+
 // codeHostNames are the host functions this execution has (fleet-code-mode.md, host functions).
-func codeHostNames(spec any) []string {
+func codeHostNames(spec codeSpec) []string {
 	var names []string
-	if len(jArr(spec, "read")) > 0 {
+	if len(spec.Read) > 0 {
 		names = append(names, "read", "glob", "grep")
 	}
-	for _, n := range []string{"write", "edit"} {
-		if jAt(spec, n) == true {
-			names = append(names, n)
-		}
+	if spec.Write {
+		names = append(names, "write")
 	}
-	if jAt(spec, "shell") != nil {
+	if spec.Edit {
+		names = append(names, "edit")
+	}
+	if spec.Shell != nil {
 		names = append(names, "sh")
 	}
 	return names
@@ -57,7 +160,7 @@ func codeHostNames(spec any) []string {
 
 // codeDescription is the code tool's description for this execution: Claude Code's REPL rules, the functions it has, and
 // an example built from them.
-func codeDescription(spec any) string {
+func codeDescription(spec codeSpec) string {
 	host := codeHostNames(spec)
 	can := func(n string) bool { return slices.Contains(host, n) }
 	var b strings.Builder
@@ -76,13 +179,13 @@ func codeDescription(spec any) string {
 	}
 	if can("sh") {
 		b.WriteString("- sh`cmd` or sh(cmd, {cwd, timeoutMs, args}) -> {code, stdout, stderr} with .text(), .json(), .lines(). For dynamic values pass args and reference them in the command as \"$1\", \"$2\", etc. A non-zero code does not throw.")
-		if shell := jAt(spec, "shell"); jAt(shell, "sandbox") == true {
-			if jAt(shell, "readOnly") == true {
+		if shell := spec.Shell; shell.Sandbox {
+			if shell.ReadOnly {
 				b.WriteString(" Commands write nothing")
 			} else {
 				b.WriteString(" Commands write only under the working directory and temporary directories")
 			}
-			if jAt(shell, "network") != true {
+			if !shell.Network {
 				b.WriteString(" and have no network")
 			}
 			b.WriteString(".")
@@ -102,10 +205,10 @@ func codeDescription(spec any) string {
 		lines = append(lines, "const log = await sh`git log --oneline -3`")
 		fields = append(fields, "log: log.lines()")
 	}
-	if len(jArr(spec, "connections")) > 0 {
+	if len(spec.Connections) > 0 {
 		lines = append(lines, `const bugs = await conn["tracker"].search({query: "open bugs"})`)
 		fields = append(fields, "bugs: bugs.map(b => b.id)")
-	} else if jStr(spec, "journal") != "" { // Fleet tools
+	} else if spec.Journal != "" { // Fleet tools
 		lines = append(lines, `const me = await fleet.execution_status({})`)
 		fields = append(fields, "status: me.status")
 	}
@@ -116,39 +219,43 @@ func codeDescription(spec any) string {
 // codeReply renders a job reply (fleet-code-mode.md, reply): the printed output, a finished job's value as itself (a
 // string as is, other values as JSON), and a `[code] ` part only when it carries something. A reply that is no job's
 // result is one `[code] ` part.
-func codeReply(r M) M {
-	status := jStr(r, "status")
+func codeReply(r codeResult) M {
+	status := r.Status
 	if status == "" {
-		return codeNote(r, has(r, "error"))
+		note := M{"jobId": r.JobID, "error": r.Error}
+		if r.NewRuntime {
+			note["newRuntime"] = true
+		}
+		return codeNote(note, true)
 	}
 	var parts []any
 	add := func(t string) { parts = append(parts, M{"type": "text", "text": t}) }
-	if out := jStr(r, "output"); out != "" {
-		add(out)
+	if r.Output != "" {
+		add(r.Output)
 	}
 	meta := M{}
 	if status == "done" {
-		if v, ok := r["value"].(string); ok && v != "" {
+		if v, ok := r.Value.(string); ok && v != "" {
 			add(v)
 		} else if ok {
 			add(`""`) // an empty text part is refused by the Claude API
 		} else {
-			add(enc(r["value"]))
+			add(enc(r.Value))
 		}
 	} else {
 		meta["status"] = status
 		if status == "running" {
-			meta["jobId"] = r["jobId"]
+			meta["jobId"] = r.JobID
 		}
-		if has(r, "error") {
-			meta["error"] = r["error"]
+		if status == "failed" {
+			meta["error"] = r.Error
 		}
 	}
-	if r["newRuntime"] == true {
+	if r.NewRuntime {
 		meta["newRuntime"] = true
 	}
-	calls := jArr(r, "calls")
-	if status != "done" && len(calls) > 0 || slices.ContainsFunc(calls, func(c any) bool { return jStr(c, "outcome") != "ok" }) {
+	calls := r.Calls
+	if status != "done" && len(calls) > 0 || slices.ContainsFunc(calls, func(c codeCall) bool { return c.Outcome != "ok" }) {
 		meta["calls"] = calls
 	}
 	if len(meta) > 0 || len(parts) == 0 {
@@ -170,11 +277,26 @@ func codeNote(v M, isError bool) M {
 	return M{"content": []any{M{"type": "text", "text": "[code] " + enc(v)}}, "structuredContent": v, "isError": isError}
 }
 
+// codeResult is one reply of a job (codeServer.wait); Status "" is no job's result: an unknown jobId.
+type codeResult struct {
+	JobID, Status, Output string
+	Calls                 []codeCall // the calls since the job's previous reply
+	Value, Error          any        // a done job's value, a failed job's error, or the unknown jobId error
+	NewRuntime            bool
+}
+
+// codeCall is one bridged call in a reply's calls; the fields are in the order of their JSON keys.
+type codeCall struct {
+	Ms      int64  `json:"ms"`
+	Outcome string `json:"outcome"`
+	Tool    string `json:"tool"`
+}
+
 type codeJob struct {
 	id     string
 	rt     *codeRuntime
 	output strings.Builder // output not yet replied
-	calls  []any           // calls not yet replied
+	calls  []codeCall      // calls not yet replied
 	busy   int             // bridged calls in flight
 	ended  *[3]any         // the runtime's done line (ok, value, error) while calls are in flight
 	done   chan struct{}
@@ -184,11 +306,11 @@ type codeJob struct {
 }
 
 type codeServer struct {
-	spec   any
-	ctx    any     // the fleet server context, nil without Fleet tools
+	spec   codeSpec
+	ctx    any     // open JSON: the fleet server context, read by the delegation server's handlers
 	db     *sql.DB // the executor journal, nil without Fleet tools
 	fleet  map[string]bool
-	conns  map[string]any // connection name -> spec
+	conns  map[string]codeConn // connection name -> spec
 	mu     sync.Mutex
 	jobs   map[string]*codeJob
 	order  []string
@@ -210,30 +332,30 @@ type codeRuntime struct {
 	dead     chan struct{}
 }
 
-func codeMCP(spec any, in io.Reader, w io.Writer) error {
-	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]any{}, procs: map[*supervise.Proc]bool{}}
+func codeMCP(file any, in io.Reader, w io.Writer) error {
+	var spec codeSpec
+	retype(file, &spec)
+	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]codeConn{}, procs: map[*supervise.Proc]bool{}}
 	// A bridged upload reads only what the sandbox may read; without read roots it reads nothing.
-	roots := []string{}
-	for _, root := range jArr(spec, "read") {
-		roots = append(roots, jStr(root))
-	}
-	uploadRoots = pinUploadRoots(roots)
-	if journal := jStr(spec, "journal"); journal != "" {
-		db, err := openJournal(journal)
+	uploadRoots = pinUploadRoots(append([]string{}, spec.Read...))
+	if spec.Journal != "" {
+		db, err := openJournal(spec.Journal)
 		if err != nil {
 			return err
 		}
 		defer db.Close()
-		s.db, s.ctx = db, jAt(spec, "context")
-		for _, t := range jArr(mcpTools(s.ctx), "tools") {
-			s.fleet[jStr(t, "name")] = true
+		s.db, s.ctx = db, decRaw(spec.Context)
+		for _, n := range mcpToolNames(mcpTools(s.ctx)) {
+			name, _ := str(n)
+			s.fleet[name] = true
 		}
 	}
-	for _, c := range jArr(spec, "connections") {
-		s.conns[jStr(c, "name")] = c
-		connectionLimits[jStr(c, "name")] = jAt(c, "limits")
+	for _, raw := range spec.Connections {
+		c := codeConnOf(decRaw(raw))
+		s.conns[c.name] = c
+		connectionLimits[c.name] = c.limits
 	}
-	if f := jStr(spec, "runFile"); f != "" {
+	if f := spec.RunFile; f != "" {
 		if err := loadRunFile(f); err != nil {
 			return err
 		}
@@ -269,9 +391,9 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 	}
 	// With `only`, the direct connection servers are gone: their instructions (query syntax, limits) come from here.
 	var instr []string
-	for _, c := range jArr(s.spec, "instructions") {
-		if i := jStr(c, "instructions"); i != "" {
-			instr = append(instr, "conn[\""+jStr(c, "name")+"\"]: "+i)
+	for _, c := range s.spec.Instructions {
+		if c.Instructions != "" {
+			instr = append(instr, "conn[\""+c.Name+"\"]: "+c.Instructions)
 		}
 	}
 	return mcpserve.Stdio{Name: "fleet-code", Version: "1", Instructions: strings.Join(instr, "\n\n"), Concurrent: true, Closed: closed,
@@ -281,16 +403,17 @@ func codeMCP(spec any, in io.Reader, w io.Writer) error {
 			return tools
 		},
 		Call: func(name string, arguments json.RawMessage) (any, error) {
-			args := decRaw(arguments)
+			var args codeArgs
+			json.Unmarshal(arguments, &args)
 			switch name {
 			case "code":
-				return s.code(jStr(args, "source"), seconds(jAt(args, "detachAfterSeconds"))), nil
+				return s.code(args.Source, seconds(decRaw(args.DetachAfterSeconds))), nil
 			case "poll":
-				if jAt(args, "reset") == true {
+				if args.Reset {
 					s.stop()
 					return codeNote(M{"reset": true}, false), nil
 				}
-				return s.poll(jStr(args, "jobId"), seconds(jAt(args, "waitSeconds"))), nil
+				return s.poll(args.JobID, seconds(decRaw(args.WaitSeconds))), nil
 			}
 			return nil, errors.New("unknown tool")
 		}}.Serve(in, w)
@@ -330,7 +453,7 @@ func (s *codeServer) code(source string, detach time.Duration) M {
 	})
 	r := s.wait(j, detach)
 	if started {
-		r["newRuntime"] = true
+		r.NewRuntime = true
 	}
 	return codeReply(r)
 }
@@ -398,7 +521,7 @@ func callLabel(server, tool string) string {
 }
 
 // wait replies with the job's end, or with its output so far when the wait passes first; the job keeps running.
-func (s *codeServer) wait(j *codeJob, d time.Duration) M {
+func (s *codeServer) wait(j *codeJob, d time.Duration) codeResult {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
@@ -408,23 +531,19 @@ func (s *codeServer) wait(j *codeJob, d time.Duration) M {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.jobs[j.id] != j {
-		return M{"jobId": j.id, "error": "unknown jobId: never started or already returned"} // another wait returned it
+		return codeResult{JobID: j.id, Error: "unknown jobId: never started or already returned"} // another wait returned it
 	}
 	// Each reply carries only the output and calls since the job's previous reply; the server keeps nothing replied.
-	calls := j.calls
-	if calls == nil {
-		calls = []any{}
-	}
-	r := M{"jobId": j.id, "status": jobStatus(j), "output": j.output.String(), "calls": calls}
+	r := codeResult{JobID: j.id, Status: jobStatus(j), Output: j.output.String(), Calls: j.calls}
 	j.output.Reset()
 	j.calls = nil
-	if r["status"] == "running" {
+	if r.Status == "running" {
 		return r
 	}
-	if r["status"] == "done" {
-		r["value"] = j.value
+	if r.Status == "done" {
+		r.Value = j.value
 	} else {
-		r["error"] = j.err
+		r.Error = j.err
 	}
 	// A final result is returned once; the server keeps no delivered output or value.
 	delete(s.jobs, j.id)
@@ -462,8 +581,8 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 		return nil, false, err
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
-	if len(jArr(s.spec, "read")) > 0 {
-		cmd.Dir = jStr(s.spec, "dir")
+	if len(s.spec.Read) > 0 {
+		cmd.Dir = s.spec.Dir
 	}
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "NODE_NO_WARNINGS=1"}
 	// The protocol has its own pipe (fd 3): a raw write to fd 1 (fs.writeSync(1, ...)) cannot corrupt a protocol line; it
@@ -494,12 +613,12 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 	// The granted names become real properties of `fleet` and `conn`: a typo or a probe (`then`, `toJSON`) is undefined
 	// in the runtime, not a call.
 	names := M{}
-	for n, spec := range s.conns {
-		names[n] = mcpToolNames(spec)
+	for n, c := range s.conns {
+		names[n] = c.toolNames()
 	}
 	// The tools line goes first: rt.mu is taken here and released after the write, so every later send (run lines,
 	// replies) waits for it, and s.mu is not held while a slow runtime starts reading.
-	tools := enc(M{"type": "tools", "fleet": anyStrings(sortedKeysOf(s.fleet)), "conns": names, "host": anyStrings(codeHostNames(s.spec)), "dir": jStr(s.spec, "dir")}) + "\n"
+	tools := enc(M{"type": "tools", "fleet": anyStrings(sortedKeysOf(s.fleet)), "conns": names, "host": anyStrings(codeHostNames(s.spec)), "dir": s.spec.Dir}) + "\n"
 	rt.mu.Lock()
 	errtrack.Go("code.tools", func() {
 		defer rt.mu.Unlock()
@@ -510,19 +629,19 @@ func (s *codeServer) runtime() (*codeRuntime, bool, error) {
 
 // codeArgv is the runtime command: Node with its permission model (no writes, child processes, workers or addons; reads
 // only the declared roots) inside an OS sandbox without network.
-func codeArgv(spec any) ([]string, error) {
-	node := jStr(spec, "node")
+func codeArgv(spec codeSpec) ([]string, error) {
+	node := spec.Node
 	if node == "" {
 		return nil, errors.New("node missing from the code server spec")
 	}
 	args := []string{node, "--permission"}
-	for _, r := range jArr(spec, "read") {
-		if p, ok := str(r); ok && p != "" {
+	for _, p := range spec.Read {
+		if p != "" {
 			args = append(args, "--allow-fs-read="+p)
 		}
 	}
 	args = append(args, "-e", codeRuntimeJS)
-	return sandboxArgv(jStr(spec, "sandbox"), jArr(spec, "read"), args)
+	return sandboxArgv(spec.Sandbox, spec.Read, args)
 }
 
 // codeProfile is the macOS sandbox for the runtime: no network (Unix sockets included), no file writes except /dev/null,
@@ -537,7 +656,7 @@ func codeProfile(node string) string {
 // sockets are refused too; on Linux a socket file inside a read root stays reachable, as it is for the harness's tools. On Linux the sandbox has its own PID namespace and sees only the system directories, Node's own install and
 // the read roots, read-only, with its own /tmp, /proc and /dev.
 // args[0] is Node's resolved path: on Linux only that file of its install is mounted.
-func sandboxArgv(sandbox string, read []any, args []string) ([]string, error) {
+func sandboxArgv(sandbox string, read []string, args []string) ([]string, error) {
 	switch runtime.GOOS {
 	case "darwin":
 		return append([]string{sandbox, "-p", codeProfile(args[0])}, args...), nil
@@ -548,8 +667,8 @@ func sandboxArgv(sandbox string, read []any, args []string) ([]string, error) {
 		}
 		argv = append(argv, "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp") // before the binds: one may be under /tmp
 		argv = append(argv, "--ro-bind", args[0], args[0])
-		for _, r := range read {
-			if p, ok := str(r); ok && p != "" {
+		for _, p := range read {
+			if p != "" {
 				argv = append(argv, "--ro-bind", p, p)
 			}
 		}
@@ -638,8 +757,8 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.ReadCloser) {
 }
 
 func (s *codeServer) line(rt *codeRuntime, line []byte) {
-	m, err := dec(string(line))
-	if err != nil {
+	var m codeLine
+	if !json.Valid(line) {
 		// Only user code writing to fd 3 breaks a line; every running job of this runtime says so, since its own done or
 		// call line may be the one lost.
 		s.mu.Lock()
@@ -651,23 +770,24 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		s.mu.Unlock()
 		return
 	}
-	if jStr(m, "type") == "print" {
+	json.Unmarshal(line, &m) // a field of another type reads as its zero value
+	if m.Type == "print" {
 		s.mu.Lock() // one lock for lookup and write: a concurrent final reply cannot orphan the text
-		if j := s.jobs[jStr(m, "job")]; j != nil {
-			j.output.WriteString(jStr(m, "text"))
+		if j := s.jobs[m.Job]; j != nil {
+			j.output.WriteString(m.Text)
 			s.mu.Unlock()
 			return
 		}
 		s.mu.Unlock()
-		fmt.Fprint(os.Stderr, jStr(m, "text"))
+		fmt.Fprint(os.Stderr, m.Text)
 		return
 	}
 	s.mu.Lock()
-	j := s.jobs[jStr(m, "job")]
+	j := s.jobs[m.Job]
 	s.mu.Unlock()
-	switch jStr(m, "type") {
+	switch m.Type {
 	case "settled":
-		key := enc(jAt(m, "id"))
+		key := m.key()
 		s.mu.Lock()
 		sj, ok := rt.awaiting[key]
 		delete(rt.awaiting, key)
@@ -680,7 +800,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 			// A call started before the return (unawaited) is still part of the job: the final reply waits for it, so
 			// its outcome is in `calls`.
 			s.mu.Lock()
-			end := [3]any{jAt(m, "ok") == true, jAt(m, "value"), jAt(m, "error")}
+			end := [3]any{m.OK, decRaw(m.Value), decRaw(m.Error)}
 			wait := j.busy > 0
 			if wait {
 				j.ended = &end
@@ -702,8 +822,8 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		if ended {
 			// A call made after its job ended (a timer) would have an effect nobody sees.
 			fail := callError("error", "job-ended", nil)
-			fail["tool"] = callLabel(jStr(m, "server"), jStr(m, "tool"))
-			errtrack.Go("code.reply", func() { rt.send(M{"type": "reply", "id": jAt(m, "id"), "ok": false, "error": fail}) })
+			fail["tool"] = callLabel(m.Server, m.Tool)
+			errtrack.Go("code.reply", func() { rt.send(M{"type": "reply", "id": decRaw(m.ID), "ok": false, "error": fail}) })
 			return
 		}
 		errtrack.Go("code.call", func() { s.call(rt, j, m) })
@@ -711,25 +831,25 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 }
 
 // call serves one bridge call with the same handler as the direct server and answers the runtime.
-func (s *codeServer) call(rt *codeRuntime, j *codeJob, m any) {
+func (s *codeServer) call(rt *codeRuntime, j *codeJob, m codeLine) {
 	start := time.Now()
-	server, tool, args := jStr(m, "server"), jStr(m, "tool"), jAt(m, "args")
+	server, tool, args := m.Server, m.Tool, decRaw(m.Args)
 	value, fail := s.bridge(rt, server, tool, args)
 	label := callLabel(server, tool)
 	outcome := "ok"
 	if fail != nil {
 		outcome = jStr(fail, "outcome")
 	}
-	reply := M{"type": "reply", "id": jAt(m, "id"), "ok": fail == nil, "value": value}
+	reply := M{"type": "reply", "id": decRaw(m.ID), "ok": fail == nil, "value": value}
 	if fail != nil {
 		fail["tool"] = label
 		reply["error"] = fail
 	}
 	// The call counts as busy until the runtime settles it: its `settled` line comes after the reply's promise callbacks
 	// ran, so a call chained off this reply (fleet.a().then(fleet.b)) arrives while this one still counts.
-	key := enc(jAt(m, "id"))
+	key := m.key()
 	s.mu.Lock()
-	j.calls = append(j.calls, M{"tool": label, "ms": time.Since(start).Milliseconds(), "outcome": outcome}) // done at the provider: listed now
+	j.calls = append(j.calls, codeCall{Tool: label, Ms: time.Since(start).Milliseconds(), Outcome: outcome}) // done at the provider: listed now
 	gone := rt.gone
 	if !gone {
 		rt.awaiting[key] = j
@@ -771,27 +891,27 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 		case "sh":
 			return s.sh(rt, args)
 		case "write", "edit":
-			return codeFile(jStr(s.spec, "dir"), tool, args)
+			return codeFile(s.spec.Dir, tool, args)
 		}
 		return nil, callError("error", "tool-not-granted", nil) // read, glob and grep run in the runtime
 	}
 	if name, ok := strings.CutPrefix(server, "conn:"); ok {
-		spec, granted := s.conns[name]
+		conn, granted := s.conns[name]
 		if !granted {
 			return nil, callError("error", "connection-not-granted", nil)
 		}
 		if tool == "$tools" {
 			listed := []any{}
-			for _, t := range jArr(spec, "tools") {
-				listed = append(listed, modelTool(t))
+			for _, t := range conn.tools {
+				listed = append(listed, modelTool(t.spec))
 			}
 			return listed, nil
 		}
-		i := slices.IndexFunc(jArr(spec, "tools"), func(t any) bool { return jStr(t, "name") == tool })
+		i := slices.IndexFunc(conn.tools, func(t codeConnTool) bool { return t.name == tool })
 		if i < 0 {
 			return nil, callError("error", "tool-not-granted", nil)
 		}
-		line := connectionCall(name, jArr(spec, "tools")[i], args)
+		line := connectionCall(name, conn.tools[i].spec, args)
 		var output any
 		if raw := callErrorOutput(line); len(raw) > 0 {
 			output, _ = dec(string(raw))
@@ -809,7 +929,7 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 		return nil, callError("error", "no-fleet-tools", nil)
 	}
 	if tool == "$tools" {
-		return jArr(mcpTools(s.ctx), "tools"), nil
+		return mcpTools(s.ctx)["tools"], nil
 	}
 	if !s.fleet[tool] {
 		return nil, callError("error", "tool-not-granted", nil)
@@ -830,31 +950,51 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 // mcpValue unwraps an MCP tool result: a text result parsed as JSON when it is JSON; a result with non-text parts as its
 // parts; isError becomes a call error.
 func mcpValue(r any) (any, M) {
-	content := jArr(r, "content")
-	if content == nil {
+	var result struct {
+		Content looseList `json:"content"`
+		IsError bool      `json:"isError"`
+	}
+	retype(r, &result)
+	if !result.Content.IsArray {
 		return r, nil
 	}
-	var v any = content
-	if !slices.ContainsFunc(content, func(c any) bool { return jStr(c, "type") != "text" }) {
-		var parts []string
-		for _, c := range content {
-			parts = append(parts, jStr(c, "text"))
+	type part struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	parts := make([]part, len(result.Content.Items))
+	for i, c := range result.Content.Items {
+		json.Unmarshal(c, &parts[i])
+	}
+	var v any
+	if slices.ContainsFunc(parts, func(p part) bool { return p.Type != "text" }) {
+		v = decRaw(json.RawMessage(enc(result.Content.Items)))
+	} else {
+		var texts []string
+		for _, p := range parts {
+			texts = append(texts, p.Text)
 		}
-		text := strings.Join(parts, "\n")
+		text := strings.Join(texts, "\n")
 		var err error
 		if v, err = dec(text); err != nil {
 			v = text
 		}
 	}
-	if jStr(v, "status") == "pending-or-rejected" {
-		if jAt(v, "response") == nil {
+	// open JSON: v is the tool's own reply; only its status and response are read.
+	var reply struct {
+		Status   string          `json:"status"`
+		Response json.RawMessage `json:"response"`
+	}
+	retype(v, &reply)
+	if reply.Status == "pending-or-rejected" {
+		if decRaw(reply.Response) == nil {
 			// request_child without a host answer: unknown; a retry with the same requestId is the same request.
 			return nil, callError("unknown", "pending", v)
 		}
 		return nil, callError("error", "tool-error", v) // the host answered and refused it
 	}
-	if jAt(r, "isError") == true {
-		if jStr(v, "status") == "pending" {
+	if result.IsError {
+		if reply.Status == "pending" {
 			// An unconfirmed mutation: unknown, read later with fleet.agent_tool_result({requestKey}), never repeated.
 			return nil, callError("unknown", "pending", v)
 		}
@@ -1048,7 +1188,8 @@ func addCodeServer(servers M, mode string, fleet *codeFleet, conns []any, runFil
 	if mode == "only" {
 		instr := []any{}
 		for _, c := range conns {
-			instr = append(instr, M{"name": jAt(c, "name"), "instructions": jAt(c, "instructions")})
+			conn := codeConnOf(c)
+			instr = append(instr, M{"name": conn.name, "instructions": conn.instructions})
 		}
 		spec["instructions"] = instr
 	}
@@ -1058,7 +1199,7 @@ func addCodeServer(servers M, mode string, fleet *codeFleet, conns []any, runFil
 	if mode == "only" {
 		delete(servers, "fleet")
 		for _, c := range conns {
-			delete(servers, jStr(c, "name"))
+			delete(servers, codeConnOf(c).name)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(specFile), 0o700); err != nil {

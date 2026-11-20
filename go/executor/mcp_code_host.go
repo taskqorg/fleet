@@ -5,9 +5,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -29,13 +31,21 @@ import (
 // server's environment without FLEET_* (no run token, gateway URL or Access file). It returns the whole stdout and
 // stderr; a non-zero exit is a result, not a failure. rt is the runtime that sent the call: once a reset stopped it, no
 // new command starts for it.
-func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
-	command := jStr(args, "command")
+func (s *codeServer) sh(rt *codeRuntime, arguments any) (any, M) {
+	// sh(cmd, {cwd, timeoutMs, args}); a field of another type reads as its zero value.
+	var args struct {
+		Command   string            `json:"command"`
+		Cwd       string            `json:"cwd"`
+		Args      []json.RawMessage `json:"args"`
+		TimeoutMs json.RawMessage   `json:"timeoutMs"`
+	}
+	retype(arguments, &args)
+	command := args.Command
 	if strings.TrimSpace(command) == "" {
 		return nil, callError("error", "bad-arguments", "command required")
 	}
-	dir := jStr(s.spec, "dir")
-	cwd := jStr(args, "cwd")
+	dir := s.spec.Dir
+	cwd := args.Cwd
 	if cwd == "" {
 		cwd = dir
 	} else if !filepath.IsAbs(cwd) {
@@ -51,16 +61,17 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	if err != nil {
 		return nil, callError("error", "sandbox", err.Error())
 	}
-	policy := jAt(s.spec, "shell")
+	policy := s.spec.Shell
 	var argsList []string
-	for _, arg := range jArr(args, "args") {
-		value, ok := str(arg)
-		if !ok {
+	for _, raw := range args.Args {
+		var value looseStr
+		json.Unmarshal(raw, &value)
+		if !value.Set {
 			return nil, callError("error", "bad-arguments", "args must contain strings")
 		}
-		argsList = append(argsList, value)
+		argsList = append(argsList, value.S)
 	}
-	argv, err := shellArgv(policy, jStr(s.spec, "sandbox"), cwd, tmp, command, argsList)
+	argv, err := shellArgv(policy, s.spec.Sandbox, cwd, tmp, command, argsList)
 	if err != nil {
 		return nil, callError("error", "sandbox", err.Error())
 	}
@@ -72,7 +83,7 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	defer release.Close()
 	filterArg := "none"
 	files := []*os.File{lease}
-	if jAt(policy, "sandbox") == true {
+	if policy != nil && policy.Sandbox {
 		filter, err := shellSocketFilter()
 		if err != nil {
 			return nil, callError("error", "sandbox", err.Error())
@@ -87,13 +98,9 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	cmd := exec.Command(exe(), append([]string{"code-shell", filterArg}, argv...)...)
 	cmd.ExtraFiles = files
 	cmd.Dir = cwd
-	cmd.Env = shellEnv(jAt(s.spec, "env"), jAt(s.spec, "shell"))
-	if has(s.spec, "gitEnv") {
-		var gitEnv []string
-		for _, kv := range jArr(s.spec, "gitEnv") {
-			gitEnv = append(gitEnv, jStr(kv))
-		}
-		gitApply(cmd, gitEnv)
+	cmd.Env = shellEnv(s.spec.Env, policy)
+	if s.spec.GitEnv != nil {
+		gitApply(cmd, *s.spec.GitEnv)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -101,7 +108,7 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	// output open; then the output is closed and the call returns.
 	cmd.WaitDelay = time.Second
 	var deadline time.Duration
-	if ms, ok := num(jAt(args, "timeoutMs")); ok && ms > 0 && ms < 1e12 { // beyond 30 years: no timeout, not an overflow
+	if ms, ok := num(decRaw(args.TimeoutMs)); ok && ms > 0 && ms < 1e12 { // beyond 30 years: no timeout, not an overflow
 		deadline = time.Duration(ms * float64(time.Millisecond))
 	}
 	s.mu.Lock()
@@ -178,8 +185,8 @@ func codeShellGuardian(args []string) error {
 // (FLEET_RUN_TOKEN, FLEET_GATEWAY_URL, FLEET_CF_ACCESS_FILE, FLEET_MCP_*), plus the execution's own variables (extra:
 // FLEET_INPUT_DIR, FLEET_OUTPUT_DIR), USER and LOGNAME as the harness has them, and TMPDIR=/tmp in a Linux sandbox,
 // whose /tmp is private.
-func shellEnv(extra, policy any) []string {
-	linuxSandbox := runtime.GOOS == "linux" && jAt(policy, "sandbox") == true
+func shellEnv(extra map[string]string, policy *codeShell) []string {
+	linuxSandbox := runtime.GOOS == "linux" && policy != nil && policy.Sandbox
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
 		return k == "FLEET_RUN_TOKEN" || k == "FLEET_GATEWAY_URL" || k == "FLEET_CF_ACCESS_FILE" || strings.HasPrefix(k, "FLEET_MCP_") ||
@@ -195,8 +202,8 @@ func shellEnv(extra, policy any) []string {
 			}
 		}
 	}
-	for _, k := range sortedKeys(jObj(extra)) {
-		if v := jStr(extra, k); strings.HasPrefix(k, "FLEET_") && v != "" {
+	for _, k := range slices.Sorted(maps.Keys(extra)) {
+		if v := extra[k]; strings.HasPrefix(k, "FLEET_") && v != "" {
 			env = append(env, k+"="+v)
 		}
 	}
@@ -206,7 +213,7 @@ func shellEnv(extra, policy any) []string {
 // shellTmp is the code server's private /tmp for Linux sh commands, made on first use and kept for the execution, so
 // one command's /tmp files reach the next; nil elsewhere. The caller holds s.mu.
 func (s *codeServer) shellTmp() (string, error) {
-	if runtime.GOOS != "linux" || jAt(s.spec, "shell", "sandbox") != true || jAt(s.spec, "shell", "readOnly") == true {
+	if runtime.GOOS != "linux" || s.spec.Shell == nil || !s.spec.Shell.Sandbox || s.spec.Shell.ReadOnly {
 		return "", nil
 	}
 	if s.tmp == "" {
@@ -268,21 +275,21 @@ func darwinShellProfile(roots, protected, hidden, visible []string, network bool
 // sandbox that reads files, writes only the policy's write roots and the temporary directories (nothing for a read-only
 // start), signals only inside itself, reaches no host Unix socket, and has network only when the policy says so. A write
 // root's .git stays read-only unless another write root lies inside it, as in Codex. tmp is the private /tmp on Linux.
-func shellArgv(policy any, sandbox, cwd, tmp, command string, args []string) ([]string, error) {
+func shellArgv(policy *codeShell, sandbox, cwd, tmp, command string, args []string) ([]string, error) {
 	bash := "/bin/bash"
 	if !isFile(bash) {
 		bash = "/bin/sh"
 	}
 	run := append([]string{bash, "-c", command, "fleet-code"}, args...)
-	if jAt(policy, "sandbox") != true {
+	if policy == nil || !policy.Sandbox {
 		return run, nil
 	}
-	network, readOnly := jAt(policy, "network") == true, jAt(policy, "readOnly") == true
-	pinned := jAt(policy, "pinned") == true
-	paths := func(list []any, fixed bool) ([]string, error) {
+	network, readOnly := policy.Network, policy.ReadOnly
+	pinned := policy.Pinned
+	paths := func(list []string, fixed bool) ([]string, error) {
 		var out []string
-		for _, r := range list {
-			if p, ok := str(r); ok && p != "" {
+		for _, p := range list {
+			if p != "" {
 				c, err := canon(p)
 				if fixed && (err != nil || c != p) {
 					return nil, errors.New("shell sandbox grant path changed")
@@ -296,11 +303,11 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string, args []string) ([]
 	}
 	// hide: the executor's data directory (run files with run tokens, MCP sockets), unreadable but for the read roots, the
 	// write roots and a HOME inside it (a harness home: its Git configuration).
-	hide, err := paths(jArr(policy, "hide"), pinned)
+	hide, err := paths(policy.Hide, pinned)
 	if err != nil {
 		return nil, err
 	}
-	read, err := paths(jArr(policy, "read"), pinned)
+	read, err := paths(policy.Read, pinned)
 	if err != nil {
 		return nil, err
 	}
@@ -310,12 +317,12 @@ func shellArgv(policy any, sandbox, cwd, tmp, command string, args []string) ([]
 	}
 	var roots []string // none for a read-only start, not even the temporary directories
 	if !readOnly {
-		roots, err = paths(jArr(policy, "write"), pinned)
+		roots, err = paths(policy.Write, pinned)
 		if err != nil {
 			return nil, err
 		}
 		if runtime.GOOS == "darwin" { // on Linux /tmp is private and TMPDIR points there
-			temps, _ := paths([]any{os.Getenv("TMPDIR"), "/private/tmp"}, false)
+			temps, _ := paths([]string{os.Getenv("TMPDIR"), "/private/tmp"}, false)
 			for _, r := range temps {
 				if !slices.Contains(roots, r) {
 					roots = append(roots, r)
@@ -431,21 +438,30 @@ func resolveIn(real, rel string) (string, error) {
 // walks it by directory handle (os.Root), checking that no component became a symlink meanwhile and comparing each
 // directory, and the file, with the worktree's .git by file identity: no symlink, other spelling (macOS ignores case)
 // or concurrent rename reaches .git. The file itself is opened without following a symlink.
-func codeFile(dir, tool string, args any) (any, M) {
+func codeFile(dir, tool string, arguments any) (any, M) {
+	// write(path, text) and edit(path, old, new, {all}); a field of another type reads as its zero value.
+	var args struct {
+		Path string `json:"path"`
+		Text string `json:"text"`
+		Old  string `json:"old"`
+		New  string `json:"new"`
+		All  bool   `json:"all"`
+	}
+	retype(arguments, &args)
 	codeFileMu.Lock()
 	defer codeFileMu.Unlock()
 	real, err := canon(dir)
 	if err != nil {
 		return nil, callError("error", "io", err.Error())
 	}
-	rel, err := worktreePath(dir, jStr(args, "path"))
+	rel, err := worktreePath(dir, args.Path)
 	if err == nil {
 		rel, err = resolveIn(real, rel)
 	}
 	if err != nil {
 		return nil, callError("error", "outside-worktree", err.Error())
 	}
-	old := jStr(args, "old")
+	old := args.Old
 	if tool == "edit" && old == "" {
 		return nil, callError("error", "bad-arguments", "old required")
 	}
@@ -520,17 +536,17 @@ func codeFile(dir, tool string, args any) (any, M) {
 	} else if tool == "edit" || !errors.Is(err, os.ErrNotExist) {
 		return fail(err)
 	}
-	data := []byte(jStr(args, "text"))
+	data := []byte(args.Text)
 	replaced := 0
 	if tool == "edit" {
 		replaced = strings.Count(string(b), old)
 		switch {
 		case replaced == 0:
 			return nil, callError("error", "not-found", "old does not occur in "+rel)
-		case replaced > 1 && jAt(args, "all") != true:
+		case replaced > 1 && !args.All:
 			return nil, callError("error", "not-unique", fmt.Sprintf("old occurs %d times in %s: pass {all: true} or a longer old", replaced, rel))
 		}
-		data = []byte(strings.ReplaceAll(string(b), old, jStr(args, "new")))
+		data = []byte(strings.ReplaceAll(string(b), old, args.New))
 	}
 	tmp := fmt.Sprintf(".fleet-%d.tmp", time.Now().UnixNano()) // short: any legal name stays legal beside it
 	f, err := cur.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, mode)
