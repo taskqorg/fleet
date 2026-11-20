@@ -25,6 +25,18 @@ var executionTransitions = map[string][]string{
 	"cancelled": nil,
 }
 
+// pipelineStepTransitions: a pipeline step row is the logical step of its run, not one attempt: its native executions
+// are their own rows. It moves as an execution, and an ended step reopens when its run takes it up again (the observed
+// end is cleared, go/coordinator/README.md).
+var pipelineStepTransitions = map[string][]string{
+	"preparing": executionTransitions["preparing"],
+	"waiting":   executionTransitions["waiting"],
+	"running":   executionTransitions["running"],
+	"succeeded": {"preparing", "waiting", "running"},
+	"failed":    {"preparing", "waiting", "running"},
+	"cancelled": {"preparing", "waiting", "running"},
+}
+
 func executionEnds(state string) bool {
 	_, ok := executionTransitions[state]
 	return ok && executionTransitions[state] == nil
@@ -77,7 +89,11 @@ func executionTransition(q *Request, id string, ev executionEvent) (bool, error)
 		return false, nil
 	}
 	correction := ev.Correct && cur.Kind == db.ExecutionKindToolRun && executionEnds(from) && executionEnds(ev.To)
-	if !slices.Contains(executionTransitions[from], ev.To) && !correction {
+	table := executionTransitions
+	if cur.Kind == db.ExecutionKindPipelineStep {
+		table = pipelineStepTransitions
+	}
+	if !slices.Contains(table[from], ev.To) && !correction {
 		return false, fail(409, fmt.Sprintf("Execution %s cannot become %s", from, ev.To))
 	}
 	var obs *db.Observation
