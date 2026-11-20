@@ -279,12 +279,15 @@ func putExecution(q *Request, e doc) error {
 		}
 	}
 	directed := nilIf(firstString(e["directedBy"], sess["directedBy"]))
-	inserted, err := executionInsert(q, executionRow(doc{"id": id, "kind": kind, "state": state, "observation": observation, "projectId": nilIf(project), "taskId": nilIf(task),
+	inserted := false
+	if prev == "" {
+		inserted, err = executionInsert(q, executionRow(doc{"id": id, "kind": kind, "state": state, "observation": observation, "projectId": nilIf(project), "taskId": nilIf(task),
 		"experimentId": experiment, "variant": variant, "parentExecutionId": nilIf(parent), "sessionId": e["sessionId"], "accountId": nilIf(account), "hostId": e["hostId"],
 		"harness": harness, "model": e["model"], "configRef": json.RawMessage(cfg), "startedAt": e["startedAt"], "endedAt": e["finishedAt"], "data": data,
-		"directedBy": directed, "profileId": profileID, "profileRevision": profileRev, "pipelineId": pipelineID, "pipelineRevision": pipelineRev, "stepId": stepID}))
-	if err != nil {
-		return err
+			"directedBy": directed, "profileId": profileID, "profileRevision": profileRev, "pipelineId": pipelineID, "pipelineRevision": pipelineRev, "stepId": stepID}))
+		if err != nil {
+			return err
+		}
 	}
 	if !inserted {
 		if err := exec(q, `UPDATE execution SET observation=$2,project_id=$3,task_id=coalesce(task_id,$4),experiment_id=$5,variant=$6,parent_execution_id=$7,session_id=$8,
@@ -519,7 +522,7 @@ func putQuestion(q *Request, v doc) error {
 		}
 		if answered {
 			by := firstString(v["answeredBy"], "operator")
-			_, err := questionTransition(q, id, questionEvent{To: "answered", Answer: astr(v["answer"]), AnsweredBy: &by, AnsweredAt: nullTime(v["answeredAt"])})
+			_, err := questionTransition(q, id, questionEvent{To: "answered", Answer: strp(v, "answer"), AnsweredBy: &by, AnsweredAt: nullTime(v["answeredAt"])})
 			return err
 		}
 		return nil

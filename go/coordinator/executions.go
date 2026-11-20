@@ -667,10 +667,11 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 		if executionEnds(astr(row["state"])) {
 			return astr(row["state"]), nil
 		}
-		if _, err := executionTransition(q, id, executionEvent{To: "failed"}); err != nil {
+		abandoned := "unknown:abandoned"
+		if _, err := executionTransition(q, id, executionEvent{To: "failed", Problem: &abandoned, Observation: "unconfirmed"}); err != nil {
 			return "", err
 		}
-		if err := exec(q, `UPDATE execution SET problem='unknown:abandoned',observation='unconfirmed',data=data||jsonb_build_object('stopDetail','abandoned','error','abandoned: '||$2::text) WHERE id=$1`, id, reason); err != nil {
+		if err := exec(q, `UPDATE execution SET data=data||jsonb_build_object('stopDetail','abandoned','error','abandoned: '||$2::text) WHERE id=$1`, id, reason); err != nil {
 			return "", err
 		}
 		return "", put(q, "setting-change", doc{"id": newID(), "target": "execution:" + id, "projectId": row["project_id"], "field": "state", "previous": row["state"], "value": "failed", "reason": reason, "actor": by, "at": nowMs()})

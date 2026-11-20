@@ -14,8 +14,7 @@ import (
 )
 
 // executionTransitions: the states (schema.sql, execution_state) an execution may move each state to. The open states
-// move among each other (a host's receipt may re-accept a running execution; a pipeline step re-prepares after a
-// restart); an end is final.
+// move among each other (a host's receipt may re-accept a running execution); an end is final.
 var executionTransitions = map[string][]string{
 	"preparing": {"preparing", "waiting", "running", "succeeded", "failed", "cancelled"},
 	"waiting":   {"waiting", "preparing", "running", "succeeded", "failed", "cancelled"},
@@ -103,7 +102,7 @@ func executionTransition(q *Request, id string, ev executionEvent) (bool, error)
 	}
 	ends := executionEnds(ev.To)
 	if err := q.db().ExecutionMove(q.ctx(), db.ExecutionMoveParams{ID: id, State: db.ExecutionState(ev.To), Observation: obs,
-		SetProblem: ev.Problem != nil, Problem: ev.Problem, Ends: ends && !ev.KeepEnd}); err != nil {
+		SetProblem: ev.Problem != nil, Problem: ev.Problem, Ends: ends && !ev.KeepEnd, Reopens: executionEnds(from) && !ends}); err != nil {
 		return false, err
 	}
 	if ends {

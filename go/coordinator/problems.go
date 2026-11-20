@@ -124,7 +124,7 @@ func problemsLetGo(q *Request, ids []string) error {
 // problemsSet: the full current set of the causes matching pattern (a regular expression), one pass of a source that
 // sees all of them at once (dispatch): a held cause no longer present closes at once, a new one is asked.
 func problemsSet(q *Request, source, pattern string, current []Problem) error {
-	held, err := queryRows(q, "SELECT id,state::text AS state,cause FROM question WHERE state IN ('open','answered') AND cause ~ $1 ORDER BY id FOR UPDATE", pattern)
+	held, err := queryRows(q, "SELECT id,state::text AS state,cause FROM question WHERE state IN ('open','answered') AND cause ~ $1 ORDER BY id", pattern)
 	if err != nil {
 		return err
 	}

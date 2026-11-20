@@ -524,7 +524,7 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	if err := runAnswerChecks(q, qu, answer); err != nil { // Lab and budget answers
 		return nil, err
 	}
-	moved, err := questionTransition(q, id, questionEvent{To: "answered", Answer: answer, AnsweredBy: &by, AnsweredNow: true})
+	moved, err := questionTransition(q, id, questionEvent{To: "answered", Answer: &answer, AnsweredBy: &by, AnsweredNow: true})
 	if err != nil {
 		return nil, err
 	}

@@ -338,7 +338,7 @@ func putRun(q *Request, run doc) error {
 			}
 		}
 		var ended any
-		if st == "succeeded" || st == "failed" || st == "cancelled" {
+		if executionEnds(st) {
 			ended = msTime(s["finishedAt"])
 		}
 		row := stepRow(run, i)

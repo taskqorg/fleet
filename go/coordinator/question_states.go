@@ -23,7 +23,7 @@ var questionTransitions = map[string][]string{
 // (To withdrawn, with its Withdrawal record when given).
 type questionEvent struct {
 	To          string
-	Answer      string
+	Answer      *string
 	AnsweredBy  *string
 	AnsweredAt  *time.Time
 	AnsweredNow bool
@@ -46,7 +46,7 @@ func questionTransition(q *Request, id string, ev questionEvent) (bool, error) {
 	}
 	switch ev.To {
 	case "answered":
-		err = q.db().QuestionAnswer(q.ctx(), db.QuestionAnswerParams{ID: id, Answer: strPtr(ev.Answer), AnsweredBy: ev.AnsweredBy, AnsweredAt: ev.AnsweredAt, AnsweredNow: ev.AnsweredNow})
+		err = q.db().QuestionAnswer(q.ctx(), db.QuestionAnswerParams{ID: id, Answer: ev.Answer, AnsweredBy: ev.AnsweredBy, AnsweredAt: ev.AnsweredAt, AnsweredNow: ev.AnsweredNow})
 	case "withdrawn":
 		if err = q.db().QuestionWithdraw(q.ctx(), db.QuestionWithdrawParams{ID: id, Withdrawal: ev.Withdrawal}); err == nil {
 			err = problemsLetGo(q, []string{id})

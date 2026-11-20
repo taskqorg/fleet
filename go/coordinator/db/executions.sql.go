@@ -110,8 +110,8 @@ const executionMove = `-- name: ExecutionMove :exec
 UPDATE execution SET state=$1,
  observation=coalesce($2::observation,observation),
  problem=CASE WHEN $1::execution_state='succeeded' THEN NULL WHEN $3::boolean THEN $4::text ELSE problem END,
- ended_at=CASE WHEN $5::boolean THEN coalesce(ended_at,now()) ELSE ended_at END
-WHERE id=$6
+ ended_at=CASE WHEN $5::boolean THEN coalesce(ended_at,now()) WHEN $6::boolean THEN NULL ELSE ended_at END
+WHERE id=$7
 `
 
 type ExecutionMoveParams struct {
@@ -120,10 +120,11 @@ type ExecutionMoveParams struct {
 	SetProblem  bool
 	Problem     *string
 	Ends        bool
+	Reopens     bool
 	ID          string
 }
 
-// One move: a success clears the problem; an end keeps a known end time, else now.
+// One move: a success clears the problem; an end keeps a known end time, else now; a reopened step loses its end.
 func (q *Queries) ExecutionMove(ctx context.Context, arg ExecutionMoveParams) error {
 	_, err := q.db.Exec(ctx, executionMove,
 		arg.State,
@@ -131,6 +132,7 @@ func (q *Queries) ExecutionMove(ctx context.Context, arg ExecutionMoveParams) er
 		arg.SetProblem,
 		arg.Problem,
 		arg.Ends,
+		arg.Reopens,
 		arg.ID,
 	)
 	return err

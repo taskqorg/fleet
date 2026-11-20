@@ -16,9 +16,9 @@ ON CONFLICT DO NOTHING RETURNING id;
 SELECT kind,state FROM execution WHERE id=$1 FOR UPDATE;
 
 -- name: ExecutionMove :exec
--- One move: a success clears the problem; an end keeps a known end time, else now.
+-- One move: a success clears the problem; an end keeps a known end time, else now; a reopened step loses its end.
 UPDATE execution SET state=sqlc.arg(state),
  observation=coalesce(sqlc.narg(observation)::observation,observation),
  problem=CASE WHEN sqlc.arg(state)::execution_state='succeeded' THEN NULL WHEN sqlc.arg(set_problem)::boolean THEN sqlc.narg(problem)::text ELSE problem END,
- ended_at=CASE WHEN sqlc.arg(ends)::boolean THEN coalesce(ended_at,now()) ELSE ended_at END
+ ended_at=CASE WHEN sqlc.arg(ends)::boolean THEN coalesce(ended_at,now()) WHEN sqlc.arg(reopens)::boolean THEN NULL ELSE ended_at END
 WHERE id=sqlc.arg(id);
