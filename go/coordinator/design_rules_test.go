@@ -326,7 +326,41 @@ func TestDesignStateWrites(t *testing.T) {
 	if len(kitQueues) == 0 {
 		t.Fatal("no work kit queue is registered")
 	}
+	// Typed queries (queries/*.sql) that write an owned column may be called only from its owner file.
+	owned := map[string]designOwner{} // query name -> owner
+	sqlFiles, err := filepath.Glob("queries/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range sqlFiles {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, part := range strings.Split(string(raw), "-- name: ")[1:] {
+			name, body, _ := strings.Cut(part, "\n")
+			name = strings.Fields(name)[0]
+			for _, o := range designStateOwners() {
+				for _, c := range designWrites(body, o.table) {
+					if slices.Contains(o.columns, c) {
+						owned[name] = o
+					}
+				}
+			}
+		}
+	}
+	if len(owned) == 0 {
+		t.Fatal("the query scanner found no owned write in queries/*.sql")
+	}
 	for _, f := range designSources(t, false) {
+		ast.Inspect(f.ast, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if o, ok := owned[sel.Sel.Name]; ok && f.name != o.owner {
+					t.Errorf("%s uses query %s, which writes %s state only %s may write (DESIGN_RULES.md S5)", f.name, sel.Sel.Name, o.table, o.owner)
+				}
+			}
+			return true
+		})
 		for _, sql := range designLiterals(f.ast) {
 			for _, o := range designStateOwners() {
 				if f.name == o.owner {

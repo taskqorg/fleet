@@ -2747,6 +2747,7 @@ ALTER TABLE resource_build ADD COLUMN ready boolean GENERATED ALWAYS AS (phase =
 -- work (work_kit.go). Pending intents of the old channel move over.
 ALTER TABLE resource_work RENAME COLUMN last_error_class TO last_error;
 ALTER TABLE wake_outbox DROP CONSTRAINT wake_outbox_channel_check;
+SELECT set_config('fleet.project_ids', '*', true);
 UPDATE wake_outbox SET channel = 'fleet_work', payload = 'resource-work' WHERE channel = 'fleet_resource_work';
 ALTER TABLE wake_outbox ADD CONSTRAINT wake_outbox_channel_check CHECK (channel IN ('fleet_change','fleet_work','fleet_resource_summary'));
 CREATE OR REPLACE FUNCTION fleet_enqueue_wake(ch text, body text) RETURNS void

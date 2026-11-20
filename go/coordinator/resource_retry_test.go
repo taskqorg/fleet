@@ -60,7 +60,7 @@ func TestResourceRetryDelay(t *testing.T) {
 
 // Requirement: a resource item that fails, before or after its claim, pauses on its own while the healthy items keep
 // flowing, surfaces once as the resource-failing problem and resets on success; a queue whose own bookkeeping fails
-// backs off as a whole and surfaces as resource-stalled; risk: the 2026-11-17 hot loop (a failure before the claim
+// backs off as a whole and surfaces as work-stalled; risk: the 2026-11-17 hot loop (a failure before the claim
 // recorded nothing, so every 100 ms pass failed it again for hours).
 func TestResourceRetryPausePostgres(t *testing.T) {
 	env := openTestCoordinator(t, false)
