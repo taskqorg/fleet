@@ -8,6 +8,8 @@
 
 Every agent attempt: read [fleet.md](fleet.md) first, then every shared-core file named in [specq rule delivery](https://github.com/taskqorg/specq/blob/1fc3716cc0971f8ca11f313d383db09751ffc132/engineering/rule-delivery.md#attempt-context). Shared rules are binding at specq commit `1fc3716cc0971f8ca11f313d383db09751ffc132`; use that revision for the core and load linked area rules when needed. The project contract takes precedence on conflicts.
 
+Architecture standard: docs/designs/fleet-standard.md; rules checked by go/coordinator/design_rules_test.go.
+
 Design or UI work: read `docs/design-system/owner-rules.md` first, then `docs/design-system/README.md`. Build screens only from `packages/ui`; run `pnpm run check:design` and read its warnings.
 
 Web UI, CSS or client-side JS work: before writing it, follow the `modern-web-guidance` skill (`config/skills/modern-web-guidance/SKILL.md`; Fleet profiles that build or review UI carry it): search and retrieve the guides for each feature, apply them within the owner rules and `packages/ui`, which win on conflict, and name the guides you applied in the pull request.

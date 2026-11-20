@@ -6,6 +6,8 @@
 
 The component groups its implementation by domain: projects, tasks, sessions and executions; versioned definitions and pipelines; hosts, accounts, connections and limits; artifacts and S3 storage; Lab evaluation; delivery, telemetry and watch passes. Typed public contracts live in the sibling [`../contract`](../contract) package.
 
+Architecture standard: [docs/designs/fleet-standard.md](../../docs/designs/fleet-standard.md); rules checked by [design_rules_test.go](design_rules_test.go) ([DESIGN_RULES.md](DESIGN_RULES.md)).
+
 ## Interface
 
 - [`bugsink.go`](bugsink.go) owns Fleet's part of error tracking ([error tracking](../../docs/designs/fleet-error-tracking.md)): `POST /api/errors` (a `rawRoute`: the app's credential check, at most 1 MiB, only an envelope for `FLEET_BUGSINK_WEB_DSN` host and project, each event's user replaced by the actor, forwarded to `FLEET_BUGSINK_INGEST`); `POST /api/bugsink/alert/{secret}` (Bugsink's webhook, secret from `FLEET_BUGSINK_ALERT_SECRET_FILE`: a new, regressed or unmuted issue opens the owner problem `problem:bugsink:<issue>` with fixed text, in the project whose `errors.bugsink` names the Bugsink project); and the `bugsink-resolved` pass, which closes a problem once the `bugsink` connection's `issue_get` reports the issue resolved or gone. Each is off while its setting is unset. Unexpected 500s and pass failures and panics go to Bugsink through [`errtrack`](../errtrack/README.md) with `FLEET_BUGSINK_DSN`.
