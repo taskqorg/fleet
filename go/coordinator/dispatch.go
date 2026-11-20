@@ -200,7 +200,7 @@ type candidate struct {
 }
 
 type dispatchContext struct {
-	hosts    []doc
+	hostIDs  []string // the ids of byID in host order
 	byID     map[string]doc
 	views    map[string]dispatchHost // the fields dispatch reads of each host in byID
 	seen     map[string]float64
@@ -252,7 +252,7 @@ func loadDispatchContext(q *Request) (*dispatchContext, error) {
 	for _, h := range hs {
 		v, _ := asT[dispatchHost](h) // a field of another type reads as absent
 		if len(v.Roles) == 0 {
-			k.hosts = append(k.hosts, h)
+			k.hostIDs = append(k.hostIDs, v.ID)
 			k.byID[v.ID], k.views[v.ID] = h, v
 		}
 	}
@@ -374,14 +374,6 @@ func strPtr(v any) *string {
 	return nil
 }
 
-// optional: an optional string as a JSON-shaped value (nil when absent).
-func optional(s *string) any {
-	if s == nil {
-		return nil
-	}
-	return *s
-}
-
 // rawMap and rawList: Fleet-built JSON values as the contract's open fields. nil and empty stay absent (omitempty);
 // a profile (agentConfig) is never empty, and the executor reads an absent list as empty.
 func rawMap(v any) map[string]json.RawMessage {
@@ -475,22 +467,15 @@ func queuedOf(e doc) queuedRun {
 func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidate, error) {
 	run := queuedOf(e)
 	x := run.Dispatch
-	director := optional(run.DirectedBy)
+	director := optAny(run.DirectedBy)
 	dir := deref(run.DirectedBy)
-	projectID := optional(x.ProjectID)
+	projectID := optAny(x.ProjectID)
 	harness := x.Harness
 	order := []string{}
 	if x.Host != "" {
 		order = []string{x.Host}
 	} else {
-		for _, id := range append([]string{x.Last, a.hostID}, func() []string {
-			ids := []string{}
-			for _, h := range k.hosts {
-				v, _ := asT[dispatchHost](h)
-				ids = append(ids, v.ID)
-			}
-			return ids
-		}()...) {
+		for _, id := range append([]string{x.Last, a.hostID}, k.hostIDs...) {
 			if _, ok := k.byID[id]; ok && !inList(order, id) {
 				order = append(order, id)
 			}
@@ -1080,7 +1065,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 	sv, _ := asT[startSession](liveSession)
 	bv, _ := asT[startBinding](binding)
 	s := docOf(liveSession) // a copy: the start reads the dispatch's project and checkout
-	s["projectId"], s["workingDirectory"], s["workspaceKey"] = optional(d.ProjectID), optional(d.WorkingDirectory), optional(d.WorkspaceKey)
+	s["projectId"], s["workingDirectory"], s["workspaceKey"] = optAny(d.ProjectID), optAny(d.WorkingDirectory), optAny(d.WorkspaceKey)
 	e["hostId"] = host
 	if s["account"] != nil || binding != nil {
 		e["requestedAccount"] = s["account"]
@@ -1174,7 +1159,7 @@ func (a *App) startCommand(q *Request, e doc, host string, binding doc) (doc, er
 				Revision         json.RawMessage `json:"revision"`
 				ContentSha       json.RawMessage `json:"contentSha"`
 				WorkingDirectory any             `json:"workingDirectory"`
-			}{e["id"], optional(d.ProjectID), optional(d.WorkspaceKey), snapshot.Settings, nullRaw(snapshot.Revision), nullRaw(snapshot.ContentSha), s["workingDirectory"]})
+			}{e["id"], optAny(d.ProjectID), optAny(d.WorkspaceKey), snapshot.Settings, nullRaw(snapshot.Revision), nullRaw(snapshot.ContentSha), s["workingDirectory"]})
 			liveSession["workspaceSnapshots"] = workspaces
 			if err := put(q, "session", liveSession); err != nil {
 				return nil, err

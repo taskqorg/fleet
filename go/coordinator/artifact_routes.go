@@ -237,7 +237,7 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 			return nil, fail(403, "Artifact not readable by this host")
 		}
 	}
-	d := artDB(ctx, a)
+	d := connDB(ctx, a)
 	names := func(id any) bool { return id == x.ID || x.LegacyID != nil && id == *x.LegacyID }
 	if deref(b.CommandId) != "" {
 		if c, err := d.ArtCommandOf(ctx, deref(b.CommandId)); err == nil && c.HostID == hostID && (c.Status == "pending" || c.Status == "accepted" || c.Status == "started") {
@@ -499,7 +499,7 @@ func resultPreview(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	found, err := artDB(withTx(q), a).ArtOfExecution(withTx(q), db.ArtOfExecutionParams{ExecutionID: x.ExecutionID, StoredOnly: true})
+	found, err := connDB(withTx(q), a).ArtOfExecution(withTx(q), db.ArtOfExecutionParams{ExecutionID: x.ExecutionID, StoredOnly: true})
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +569,7 @@ type Reading struct {
 
 // latestReadings: the latest limit_reading per (subscription, period); one whose resetsAt has passed is unknown.
 func latestReadings(ctx context.Context, a *App) (map[string][]Reading, error) {
-	rs, err := artDB(ctx, a).ArtLimitReadings(ctx)
+	rs, err := connDB(ctx, a).ArtLimitReadings(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -543,8 +543,8 @@ WHERE tombstoned_at IS NULL
  AND NOT $15::boolean
  AND (NOT $16::boolean OR role<>'example')
  AND ($17::bigint IS NULL OR seq<$17::bigint)
-ORDER BY CASE WHEN $18::boolean THEN seq END DESC, seq
-LIMIT $19::bigint
+ORDER BY seq DESC
+LIMIT $18::bigint
 `
 
 type ArtListParams struct {
@@ -565,11 +565,11 @@ type ArtListParams struct {
 	Never          bool
 	NoExamples     bool
 	Before         *int64
-	NewestFirst    bool
 	RowLimit       *int64
 }
 
-// artifact_list: every filter optional; newest first with a row limit when paged.
+// artifact_list: every filter optional; newest first (the seq index serves a page's limit), the caller reverses an
+// unpaged list.
 func (q *Queries) ArtList(ctx context.Context, arg ArtListParams) ([]Artifact, error) {
 	rows, err := q.db.Query(ctx, artList,
 		arg.ExecutionID,
@@ -589,7 +589,6 @@ func (q *Queries) ArtList(ctx context.Context, arg ArtListParams) ([]Artifact, e
 		arg.Never,
 		arg.NoExamples,
 		arg.Before,
-		arg.NewestFirst,
 		arg.RowLimit,
 	)
 	if err != nil {

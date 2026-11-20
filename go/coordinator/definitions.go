@@ -258,16 +258,9 @@ type definitionFilter struct {
 	live, current bool
 }
 
-func defText(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
 // definitionsOf: definitions with one revision each (the head, or f.revision), ordered by kind and id.
 func definitionsOf(ctx context.Context, d *db.Queries, f definitionFilter) ([]definitionRow, error) {
-	rs, err := d.DefRows(ctx, db.DefRowsParams{Revision: int32(f.revision), Kind: defText(f.kind), ID: defText(f.id), Live: f.live, Current: f.current})
+	rs, err := d.DefRows(ctx, db.DefRowsParams{Revision: int32(f.revision), Kind: optStr(f.kind), ID: optStr(f.id), Live: f.live, Current: f.current})
 	out := make([]definitionRow, 0, len(rs))
 	for _, r := range rs {
 		out = append(out, definitionRowOf(r))
@@ -605,7 +598,7 @@ func headTexts(q *Request, kind string) ([]headRow, error) {
 func headTextsOf(q *Request, kind, id string) ([]headRow, error) {
 	var out []headRow
 	read := func(d *db.Queries) error {
-		rs, err := d.DefHeadTexts(q.ctx(), db.DefHeadTextsParams{Kind: kind, ID: defText(id)})
+		rs, err := d.DefHeadTexts(q.ctx(), db.DefHeadTextsParams{Kind: kind, ID: optStr(id)})
 		for _, r := range rs {
 			out = append(out, headRow{id: r.ID, text: []byte(r.Content)})
 		}

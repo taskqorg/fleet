@@ -54,7 +54,7 @@ func auditDefinition(q *Request, c definitionChange) error {
 	if q.agent != "" && q.person != nil {
 		c.Actor, c.OnBehalfOf = q.agent, q.person.Email
 	}
-	return q.db().DefSettingChange(q.ctx(), db.DefSettingChangeParams{ID: c.ID, Data: jsonBytes(c), ProjectID: defText(c.ProjectID)})
+	return q.db().DefSettingChange(q.ctx(), db.DefSettingChangeParams{ID: c.ID, Data: jsonBytes(c), ProjectID: optStr(c.ProjectID)})
 }
 
 // contentText: the request's content of the definition's kind as canonical text, from the bytes sent (the typed struct
@@ -316,7 +316,7 @@ func definitionDraftGet(q *Request, r *contract.DefinitionDraftGetRequest) (cont
 }
 
 func definitionDraftDiscard(q *Request, r *contract.DefinitionDraftDiscardRequest) (contract.DefinitionDraftDiscardReply, error) {
-	n, err := q.db().DefDraftDelete(q.ctx(), db.DefDraftDeleteParams{Kind: string(r.Kind), ID: r.Id, Person: defText(draftOwner(q))})
+	n, err := q.db().DefDraftDelete(q.ctx(), db.DefDraftDeleteParams{Kind: string(r.Kind), ID: r.Id, Person: optStr(draftOwner(q))})
 	if err != nil {
 		return contract.DefinitionDraftDiscardReply{}, err
 	}
@@ -433,7 +433,7 @@ func appendRevision(q *Request, kind, id string, head int64, text, repoBase *str
 		return contract.Revision{}, err
 	}
 	if source == "lab" { // a Lab promote is not the saver's draft: leave their draft as it is
-	} else if _, err := q.db().DefDraftDelete(q.ctx(), db.DefDraftDeleteParams{Kind: kind, ID: id, Person: defText(draftOwner(q))}); err != nil {
+	} else if _, err := q.db().DefDraftDelete(q.ctx(), db.DefDraftDeleteParams{Kind: kind, ID: id, Person: optStr(draftOwner(q))}); err != nil {
 		return contract.Revision{}, err
 	}
 	change := definitionChange{Target: "definition:" + kind + "/" + id, Field: "revision", Previous: head, Value: n}

@@ -125,7 +125,8 @@ SELECT c.store_id FROM artifact_copy c WHERE c.artifact_id=$1 AND c.state='verif
 SELECT store_id,state FROM artifact_copy WHERE artifact_id=$1 ORDER BY store_id;
 
 -- name: ArtList :many
--- artifact_list: every filter optional; newest first with a row limit when paged.
+-- artifact_list: every filter optional; newest first (the seq index serves a page's limit), the caller reverses an
+-- unpaged list.
 SELECT * FROM artifact
 WHERE tombstoned_at IS NULL
  AND (sqlc.narg(execution_id)::text IS NULL OR execution_id=sqlc.narg(execution_id)::text)
@@ -144,7 +145,7 @@ WHERE tombstoned_at IS NULL
  AND NOT sqlc.arg(never)::boolean
  AND (NOT sqlc.arg(no_examples)::boolean OR role<>'example')
  AND (sqlc.narg(before)::bigint IS NULL OR seq<sqlc.narg(before)::bigint)
-ORDER BY CASE WHEN sqlc.arg(newest_first)::boolean THEN seq END DESC, seq
+ORDER BY seq DESC
 LIMIT sqlc.narg(row_limit)::bigint;
 
 -- name: ArtTaskCodes :many

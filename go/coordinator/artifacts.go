@@ -124,14 +124,6 @@ func execCtx(ctx context.Context, a *App, sql string, args ...any) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error { _, err := tx.Exec(ctx, sql, args...); return err })
 }
 
-// artDB: the typed queries on the context's transaction, else on the pool.
-func artDB(ctx context.Context, a *App) *db.Queries {
-	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
-		return db.New(tx)
-	}
-	return db.New(a.store.pool)
-}
-
 // artWrite: typed writes in the context's transaction, else in a short one of their own.
 func artWrite(ctx context.Context, a *App, fn func(*db.Queries) error) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error { return fn(db.New(tx)) })
@@ -162,7 +154,7 @@ type StoreRow struct {
 }
 
 func storeList(ctx context.Context, a *App) ([]StoreRow, error) {
-	rs, err := artDB(ctx, a).ArtStores(ctx)
+	rs, err := connDB(ctx, a).ArtStores(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +168,7 @@ func storeList(ctx context.Context, a *App) ([]StoreRow, error) {
 
 // storeHost: the host of a store, "" when there is none.
 func storeHost(ctx context.Context, a *App, id string) (string, error) {
-	h, err := artDB(ctx, a).ArtStoreHost(ctx, id)
+	h, err := connDB(ctx, a).ArtStoreHost(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -440,13 +432,13 @@ func artRows(rs []db.Artifact) []Artifact {
 
 // storedArtifactRows: every stored artifact, for placement.go.
 func storedArtifactRows(ctx context.Context, a *App) ([]Artifact, error) {
-	rs, err := artDB(ctx, a).ArtStoredAll(ctx)
+	rs, err := connDB(ctx, a).ArtStoredAll(ctx)
 	return artRows(rs), err
 }
 
 func artifactRow(ctx context.Context, a *App, id string) (*Artifact, error) {
 	// A deleted artifact is unknown, whoever asks (RLS hides it too; a host route that sees deleted rows does not read it).
-	r, err := artDB(ctx, a).ArtByID(ctx, id)
+	r, err := connDB(ctx, a).ArtByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fail(404, "Unknown artifact")
 	}
@@ -505,7 +497,7 @@ type execInfo struct {
 }
 
 func execGet(ctx context.Context, a *App, id string) (*execInfo, error) {
-	r, err := artDB(ctx, a).ArtExecution(ctx, id)
+	r, err := connDB(ctx, a).ArtExecution(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fail(404, "Unknown execution "+id)
 	}
@@ -588,7 +580,7 @@ func artifactReserve(q *Request, b *contract.ArtifactReserveRequest) (any, error
 	if !artifactIDPattern.MatchString(id) {
 		id = newID()
 	}
-	d := artDB(ctx, a)
+	d := connDB(ctx, a)
 	if old, err := d.ArtReservation(ctx, id); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	} else if err == nil {
@@ -751,7 +743,7 @@ type copyRow struct {
 
 // copyOf: the artifact's copy on the store, else (no store) the one in progress; nil when there is none.
 func copyOf(ctx context.Context, a *App, artifactID, storeID string) (*copyRow, error) {
-	r, err := artDB(ctx, a).ArtCopyWorking(ctx, db.ArtCopyWorkingParams{ArtifactID: artifactID, StoreID: optStr(storeID)})
+	r, err := connDB(ctx, a).ArtCopyWorking(ctx, db.ArtCopyWorkingParams{ArtifactID: artifactID, StoreID: optStr(storeID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -885,7 +877,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	if b.HostId == s.HostID {
 		return contract.ArtifactStateReply{State: "verifying", Verify: &verify}, nil
 	}
-	open, err := artDB(ctx, a).ArtVerifyQueued(ctx, db.ArtVerifyQueuedParams{HostID: &s.HostID, ArtifactID: x.ID, StoreID: s.ID})
+	open, err := connDB(ctx, a).ArtVerifyQueued(ctx, db.ArtVerifyQueuedParams{HostID: &s.HostID, ArtifactID: x.ID, StoreID: s.ID})
 	if err != nil {
 		return nil, err
 	}
@@ -1003,7 +995,7 @@ func artifactRefused(q *Request, b *contract.ArtifactFailedRequest) (any, error)
 		why = "upload refused: " + truncate(b.Error, 500)
 	}
 	all, _ := storeList(ctx, a)
-	cs, err := artDB(ctx, a).ArtCopiesInProgress(ctx, x.ID)
+	cs, err := connDB(ctx, a).ArtCopiesInProgress(ctx, x.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1122,7 +1114,7 @@ func artifactDeclare(q *Request, b *contract.ArtifactDeclareRequest) (any, error
 
 // source: a verified copy to read from, the reader host's own store first; a store with a purge pending serves nothing.
 func source(ctx context.Context, a *App, x *Artifact, hostID string) (*StoreRow, error) {
-	rs, err := artDB(ctx, a).ArtReadableStores(ctx, x.ID)
+	rs, err := connDB(ctx, a).ArtReadableStores(ctx, x.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -1218,7 +1210,7 @@ func artifactView(ctx context.Context, a *App, id, hostID string) (contract.Arti
 	if err != nil {
 		return contract.ArtifactView{}, err
 	}
-	cs, err := artDB(ctx, a).ArtCopyStates(ctx, x.ID)
+	cs, err := connDB(ctx, a).ArtCopyStates(ctx, x.ID)
 	if err != nil {
 		return contract.ArtifactView{}, err
 	}
@@ -1287,6 +1279,7 @@ func splitNull(xs []*string) ([]string, bool) {
 // than the page, so the caller knows another follows).
 func artifactList(ctx context.Context, a *App, f listFilter) ([]contract.ArtifactRow, error) {
 	p := db.ArtListParams{ExecutionID: f.ExecutionID, TaskID: f.TaskID, ProjectID: f.ProjectID, NoExamples: f.NoExamples}
+	paged := false
 	if f.MediaType != nil {
 		if strings.HasSuffix(*f.MediaType, "/") {
 			like := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
@@ -1329,11 +1322,14 @@ func artifactList(ctx context.Context, a *App, f listFilter) ([]contract.Artifac
 		}
 	}
 	if f.Limit != nil && *f.Limit > 0 {
-		p.NewestFirst, p.RowLimit, p.Before = true, ptr(*f.Limit+1), f.Before
+		paged, p.RowLimit, p.Before = true, ptr(*f.Limit+1), f.Before
 	}
-	rows, err := artDB(ctx, a).ArtList(ctx, p)
+	rows, err := connDB(ctx, a).ArtList(ctx, p)
 	if err != nil {
 		return nil, err
+	}
+	if !paged { // oldest first
+		slices.Reverse(rows)
 	}
 	out := make([]contract.ArtifactRow, 0, len(rows))
 	for _, r := range rows {
@@ -1353,7 +1349,7 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 		return none, fail(400, "Expected reason")
 	}
 	reason = truncate(reason, 500)
-	d := artDB(ctx, a)
+	d := connDB(ctx, a)
 	found, err := d.ArtOfContent(ctx, db.ArtOfContentParams{ContentHash: hash, ProjectID: projectID, Scope: scope})
 	if err != nil {
 		return none, err
@@ -1412,7 +1408,7 @@ func artifactPurge(ctx context.Context, a *App, hash string, projectID, scope *s
 
 // expireLeases: reservations whose lease ran out are aborted and fail.
 func expireLeases(ctx context.Context, a *App) error {
-	stale, err := artDB(ctx, a).ArtLeasesExpired(ctx)
+	stale, err := connDB(ctx, a).ArtLeasesExpired(ctx)
 	if err != nil {
 		return err
 	}
@@ -1479,7 +1475,7 @@ func artifactRequirement(ctx context.Context, a *App, executionID string, declar
 	}
 	named := declaredRequired(e)
 	patterns := []string{}
-	d := artDB(ctx, a)
+	d := connDB(ctx, a)
 	if e.TaskID != nil {
 		raw, _ := d.ArtTaskArtifactRules(ctx, *e.TaskID)
 		patterns = jsonStrings(raw)
@@ -1661,7 +1657,7 @@ type executionArtifact struct {
 
 func executionArtifacts(q *Request, executionID string) ([]doc, error) {
 	ctx := withTx(q)
-	rows, err := artDB(ctx, q.app).ArtOfExecution(ctx, db.ArtOfExecutionParams{ExecutionID: &executionID, StoredOnly: true})
+	rows, err := connDB(ctx, q.app).ArtOfExecution(ctx, db.ArtOfExecutionParams{ExecutionID: &executionID, StoredOnly: true})
 	if err != nil {
 		return nil, err
 	}
