@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fleet/contract"
 	"slices"
 	"strings"
@@ -29,29 +30,55 @@ var systemPresets = []preset{
 
 var presetKeys = []string{"id", "name", "description", "role", "profile", "access", "branch", "starter"}
 
+// presetSettings: the project settings a preset reads (a typed view of the open settings object).
+type presetSettings struct {
+	Presets  []json.RawMessage `json:"presets"`
+	Roles    map[string]string `json:"roles"`
+	Worktree struct {
+		BaseRef         string `json:"baseRef"`
+		StartFromOrigin *bool  `json:"startFromOrigin"`
+		BranchPrefix    string `json:"branchPrefix"`
+	} `json:"worktree"`
+	Repos []struct {
+		DefaultBranch string `json:"defaultBranch"`
+	} `json:"repos"`
+}
+
+func presetSettingsOf(settings doc) presetSettings {
+	var s presetSettings
+	jsonRoundTrip(settings, &s)
+	return s
+}
+
 // parsePresets validates settings.presets: a list of {id, name, description?, role?, profile?, access?, branch?, starter?}.
 // access defaults to write, branch to access == write. A preset names a role, a profile or both.
 func parsePresets(v any) ([]preset, error) {
-	xs, ok := v.([]any)
-	if !ok {
+	var xs []json.RawMessage
+	if b := jsonBytes(v); len(b) == 0 || b[0] != '[' || json.Unmarshal(b, &xs) != nil {
 		return nil, fail(400, "Invalid project setting presets")
 	}
 	out, seen := []preset{}, map[string]bool{}
 	for i, x := range xs {
-		o, ok := x.(map[string]any)
+		var o map[string]json.RawMessage
 		bad := func(k string) error { return fail(400, "Invalid project setting presets["+itoa(i)+"]"+k) }
-		if !ok {
+		if len(x) == 0 || x[0] != '{' || json.Unmarshal(x, &o) != nil {
 			return nil, bad("")
 		}
+		str := map[string]string{}
 		for k, y := range o {
 			if !slices.Contains(presetKeys, k) {
 				return nil, bad("." + k)
 			}
-			if _, s := y.(string); k != "branch" && !s {
+			if k == "branch" {
+				continue
+			}
+			var s string
+			if len(y) == 0 || y[0] != '"' || json.Unmarshal(y, &s) != nil {
 				return nil, bad("." + k)
 			}
+			str[k] = s
 		}
-		p := preset{ID: astr(o["id"]), Name: strings.TrimSpace(astr(o["name"])), Description: astr(o["description"]), Role: astr(o["role"]), Profile: astr(o["profile"]), Access: firstString(o["access"], "write"), Starter: astr(o["starter"])}
+		p := preset{ID: str["id"], Name: strings.TrimSpace(str["name"]), Description: str["description"], Role: str["role"], Profile: str["profile"], Access: firstString(str["access"], "write"), Starter: str["starter"]}
 		if !idPattern.MatchString(p.ID) || seen[p.ID] {
 			return nil, bad(".id")
 		}
@@ -67,9 +94,10 @@ func parsePresets(v any) ([]preset, error) {
 		}
 		p.Branch = p.Access == "write"
 		if b, given := o["branch"]; given {
-			if p.Branch, ok = b.(bool); !ok {
+			if string(b) != "true" && string(b) != "false" {
 				return nil, bad(".branch")
 			}
+			p.Branch = string(b) == "true"
 			if p.Access == "write" && !p.Branch {
 				return nil, bad(".branch: write access needs a branch")
 			}
@@ -81,7 +109,7 @@ func parsePresets(v any) ([]preset, error) {
 
 // presetsOf: the project's presets, or the system presets when it defines none (settings nil: outside projects).
 func presetsOf(settings doc) ([]preset, contract.SessionPresetSource, error) {
-	if v, ok := settings["presets"]; ok && len(anys(v)) > 0 {
+	if v, ok := settings["presets"]; ok && len(presetSettingsOf(settings).Presets) > 0 {
 		ps, err := parsePresets(v)
 		return ps, contract.SessionPresetSourceProject, err
 	}
@@ -91,7 +119,7 @@ func presetsOf(settings doc) ([]preset, contract.SessionPresetSource, error) {
 // resolvePreset: the profile a preset starts with in this project. Its role when the project maps it, else its own
 // profile; role is "" when it fell back. unavailable says why it cannot start.
 func resolvePreset(q *Request, p preset, settings doc) (role, profileID string, profile doc, unavailable string) {
-	if id := astr(mapOf(settings["roles"])[p.Role]); p.Role != "" && id != "" {
+	if id := presetSettingsOf(settings).Roles[p.Role]; p.Role != "" && id != "" {
 		role, profileID = p.Role, id
 	} else {
 		profileID = p.Profile
@@ -115,13 +143,17 @@ func callerReadOnly(q *Request) bool {
 	if e == nil {
 		return false
 	}
-	s, _ := maybe(q, astr(e["sessionId"]), "session")
+	var ex struct {
+		SessionId string `json:"sessionId"`
+	}
+	jsonRoundTrip(e, &ex)
+	s, _ := maybe(q, ex.SessionId, "session")
 	return s != nil && s["access"] == "read"
 }
 
 // profileInRoles: the project maps some role to this profile; an agent starts only such profiles.
 func profileInRoles(settings doc, profileID string) bool {
-	for _, v := range mapOf(settings["roles"]) {
+	for _, v := range presetSettingsOf(settings).Roles {
 		if v == profileID && profileID != "" {
 			return true
 		}
@@ -136,14 +168,19 @@ func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.Ses
 		if settings = projectSettingsOf(q, pid); settings == nil || (q.person != nil && !mayAccessProjectID(q.person, pid)) {
 			return out, fail(404, "Unknown project")
 		}
-		wt := mapOf(settings["worktree"])
+		ps := presetSettingsOf(settings)
+		wt := ps.Worktree
 		base := "HEAD"
-		if b := astr(wt["baseRef"]); b != "" {
-			base = b
-		} else if wt["startFromOrigin"] != false {
-			base = "origin/" + firstString(mapOf(firstOf(anys(settings["repos"])))["defaultBranch"], "main")
+		if wt.BaseRef != "" {
+			base = wt.BaseRef
+		} else if wt.StartFromOrigin == nil || *wt.StartFromOrigin {
+			branch := ""
+			if len(ps.Repos) > 0 {
+				branch = ps.Repos[0].DefaultBranch
+			}
+			base = "origin/" + firstString(branch, "main")
 		}
-		out.BranchPrefix, out.Base = ptr(firstString(wt["branchPrefix"], "fleet")), &base
+		out.BranchPrefix, out.Base = ptr(firstString(wt.BranchPrefix, "fleet")), &base
 	}
 	ps, source, err := presetsOf(settings)
 	if err != nil {
@@ -160,18 +197,17 @@ func sessionPresets(q *Request, r *contract.SessionPresetsRequest) (contract.Ses
 		x := contract.SessionPreset{Id: p.ID, Name: p.Name, Description: p.Description, Access: contract.SessionAccess(p.Access), Branch: p.Branch, Source: source,
 			Role: optStr(role), ProfileId: optStr(profileID), Starter: optStr(p.Starter), Unavailable: optStr(unavailable)}
 		if profile != nil {
-			x.Harness, x.Model, x.Effort = ptr(firstString(profile["harness"], "codex")), optStr(astr(profile["model"])), optStr(astr(profile["effort"]))
+			var pr struct {
+				Harness string `json:"harness"`
+				Model   string `json:"model"`
+				Effort  string `json:"effort"`
+			}
+			jsonRoundTrip(profile, &pr)
+			x.Harness, x.Model, x.Effort = ptr(firstString(pr.Harness, "codex")), optStr(pr.Model), optStr(pr.Effort)
 		}
 		out.Presets = append(out.Presets, x)
 	}
 	return out, nil
-}
-
-func firstOf(xs []any) any {
-	if len(xs) == 0 {
-		return nil
-	}
-	return xs[0]
 }
 
 func init() {

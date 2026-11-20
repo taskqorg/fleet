@@ -1,7 +1,7 @@
 // System activity (docs/designs/fleet-analytics.md, System activity): the earlier rows of the coordinator's own reads,
 // marked legacySystemRead by migration 69, are deleted once no gateway spool line names them. Ingest takes a spool line
 // whose row is missing as new and would replay it, key side effects included (a refused key disabled again), so a row
-// whose line is still in the spool stays, marked, until a later start finds the line gone.
+// whose line is still in the spool stays, marked, until a later pass (hourly) finds the line gone.
 package main
 
 import (
@@ -15,13 +15,15 @@ import (
 
 func init() {
 	onStart(func(ctx context.Context, a *App) {
-		go func() {
-			if n, err := systemReadsCleanup(ctx, a); err != nil {
+		every(ctx, "system-reads-cleanup", envMs("FLEET_SYSTEM_READS_CLEANUP_MS", 3_600_000), func(ctx context.Context) error {
+			n, err := systemReadsCleanup(ctx, a)
+			if err != nil {
 				log.Printf("system reads cleanup: %v", err)
 			} else if n > 0 {
 				log.Printf("system reads cleanup: %d legacy rows deleted", n)
 			}
-		}()
+			return err
+		})
 	})
 }
 
@@ -71,7 +73,7 @@ func systemReadsCleanup(ctx context.Context, a *App) (int, error) {
 			return err
 		}
 		var err error
-		left, err = has(q, `SELECT 1 FROM execution WHERE system_actor IS NOT NULL AND data @> '{"legacySystemRead": true}'`)
+		left, err = q.db().SystemReadsLegacyLeft(q.ctx())
 		return err
 	}); err != nil || !left {
 		return 0, err
@@ -87,22 +89,17 @@ func systemReadsCleanup(ctx context.Context, a *App) (int, error) {
 			if err := showDeleted(q); err != nil {
 				return err
 			}
-			ids, err := rows(q, `SELECT jsonb_build_object('id', id) AS data FROM execution
-			 WHERE system_actor IS NOT NULL AND data @> '{"legacySystemRead": true}' AND NOT id = ANY($1) LIMIT 1000`, keep)
+			gone, err := q.db().SystemReadsLegacyBatch(q.ctx(), keep)
 			if err != nil {
 				return err
-			}
-			gone := make([]string, len(ids))
-			for i, r := range ids {
-				gone[i] = astr(r["id"])
 			}
 			if n = len(gone); n == 0 {
 				return nil
 			}
-			if err := exec(q, "DELETE FROM execution_totals WHERE execution_id = ANY($1)", gone); err != nil {
+			if err := q.db().SystemReadsTotalsDelete(q.ctx(), gone); err != nil {
 				return err
 			}
-			return exec(q, "DELETE FROM execution WHERE id = ANY($1)", gone)
+			return q.db().SystemReadsDelete(q.ctx(), gone)
 		}); err != nil {
 			return deleted, err
 		}
