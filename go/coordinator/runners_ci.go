@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"sync"
@@ -165,12 +164,9 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 		}
 		return r.Runs
 	}
-	var keyedMu sync.Mutex
 	jobsOf := func(id int64) ([]ciJob, error) {
 		b, k, err := githubRead(ctx, a, ciProject, "run_jobs", args("run_id", strconv.FormatInt(id, 10)))
-		keyedMu.Lock()
 		keyed = keyed || k
-		keyedMu.Unlock()
 		var r struct {
 			Jobs []ciJob `json:"jobs"`
 		}
@@ -179,25 +175,18 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 		}
 		return r.Jobs, err
 	}
-	// prefetch: the jobs of several runs read at once (githubRead locks per path), so a busy queue costs one round
-	// trip, not one per run.
+	// prefetch: the jobs of several runs, read one after another in this background pass (at most the active runs and
+	// 20 completed ones a pass).
 	type jobsReply struct {
 		jobs []ciJob
 		err  error
 	}
 	prefetch := func(ids []int64) map[int64]jobsReply {
-		out, mu, wg := map[int64]jobsReply{}, sync.Mutex{}, sync.WaitGroup{}
+		out := map[int64]jobsReply{}
 		for _, id := range ids {
-			wg.Add(1)
-			go func(id int64) {
-				defer wg.Done()
-				js, err := jobsOf(id)
-				mu.Lock()
-				out[id] = jobsReply{js, err}
-				mu.Unlock()
-			}(id)
+			js, err := jobsOf(id)
+			out[id] = jobsReply{js, err}
 		}
-		wg.Wait()
 		return out
 	}
 	now := time.Now().UTC()
@@ -384,18 +373,19 @@ func ciRead(ctx context.Context, a *App) (contract.ExecutionsCiReply, error) {
 func init() {
 	onStart(func(ctx context.Context, a *App) {
 		d := envMs("FLEET_RUNNERS_CI_TICK_MS", 60*1000)
-		if d > 0 {
-			go func() { // the first read at start, so a deploy does not leave the panel empty for a tick
-				if err := ciPass(ctx, a, true); err != nil {
-					log.Printf("runners-ci: %v", err)
-				}
-			}()
-		} else {
+		if d <= 0 {
 			ciLastMu.Lock()
 			ciOff = true
 			ciLastMu.Unlock()
 		}
-		every(ctx, "runners-ci", d, func(ctx context.Context) error { return ciPass(ctx, a, false) })
+		// runNow: the first read at start, made even while nobody looks, so a deploy does not leave the panel empty
+		// for a tick.
+		first := true
+		everyWake(ctx, "runners-ci", d, nil, true, func(ctx context.Context, _ bool) error {
+			f := first
+			first = false
+			return ciPass(ctx, a, f)
+		})
 	})
 	op("executions_ci", executionsCI)
 }

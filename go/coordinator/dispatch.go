@@ -15,7 +15,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -83,48 +82,31 @@ func (a *App) waitDispatchCaughtUp(ctx context.Context, target uint64) error {
 	}
 }
 
+// startDispatchLoop runs the dispatch pass on every wake (triggerDispatch), at start, and as a fallback every
+// FLEET_DISPATCH_FALLBACK_MS. A woken pass sweeps; a fallback pass sweeps only when sessions or stalls wait. Each pass
+// completes the request generation it read at its start, which waitDispatchCaughtUp waits on; a request during the
+// pass leaves a wake, so the next pass runs at once.
 func startDispatchLoop(ctx context.Context, a *App) {
 	a.ensureRuntime()
 	a.dispatchLoopStarted.Store(true)
-	interval := envMs("FLEET_DISPATCH_FALLBACK_MS", 5000)
-	go func() {
-		var tickCh <-chan time.Time
-		if interval > 0 {
-			t := time.NewTicker(interval)
-			defer t.Stop()
-			tickCh = t.C
+	everyWake(ctx, "dispatch", envMs("FLEET_DISPATCH_FALLBACK_MS", 5000), a.dispatchCh, true, func(ctx context.Context, woken bool) error {
+		a.dispatchMu.Lock()
+		target := a.dispatchReqGen
+		explicit := woken || target > a.dispatchDoneGen
+		a.dispatchMu.Unlock()
+		err := a.dispatchPass(ctx, explicit)
+		if err != nil && ctx.Err() == nil {
+			log.Printf("dispatch pass: %v", err)
 		}
-		// Run an initial sweep so work present at startup dispatches promptly.
-		explicit := true
-		for {
-			a.dispatchMu.Lock()
-			target := a.dispatchReqGen
-			a.dispatchMu.Unlock()
-			if err := a.dispatchPass(ctx, explicit); err != nil && ctx.Err() == nil {
-				log.Printf("dispatch pass: %v", err)
-			}
-			a.dispatchMu.Lock()
-			if target > a.dispatchDoneGen {
-				a.dispatchDoneGen = target
-			}
-			close(a.dispatchDoneCh)
-			a.dispatchDoneCh = make(chan struct{})
-			more := a.dispatchReqGen > target
-			a.dispatchMu.Unlock()
-			if more {
-				explicit = true
-				continue
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-a.dispatchCh:
-				explicit = true
-			case <-tickCh:
-				explicit = false
-			}
+		a.dispatchMu.Lock()
+		if target > a.dispatchDoneGen {
+			a.dispatchDoneGen = target
 		}
-	}()
+		close(a.dispatchDoneCh)
+		a.dispatchDoneCh = make(chan struct{})
+		a.dispatchMu.Unlock()
+		return err
+	})
 }
 
 func (a *App) dispatchPass(ctx context.Context, explicit bool) error {

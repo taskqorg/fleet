@@ -90,6 +90,7 @@ func rulesPass(ctx context.Context, a *App) error {
 	rulesSince = since
 	rulesMu.Unlock()
 	var ps []Problem
+	var execs []*string // the finding's execution of each problem in ps
 	for _, f := range fs {
 		if f.GroupCause != nil {
 			continue
@@ -98,26 +99,19 @@ func rulesPass(ctx context.Context, a *App) error {
 		if f.Text != nil {
 			txt = *f.Text
 		}
-		p := Problem{Cause: f.Cause, Text: txt, Rule: f.Rule, RefreshText: f.Rule == "resource-failing", Data: doc{"exemplars": f.Exemplars, "value": f.Value}}
-		if f.HostId != nil {
-			p.Data["hostId"] = *f.HostId
-		}
-		if f.StoreId != nil {
-			p.Data["storeId"] = *f.StoreId
-		}
+		data := ruleProblemData{Exemplars: f.Exemplars, Value: f.Value, HostID: f.HostId, StoreID: f.StoreId, ExecutionID: f.ExecutionId}
+		p := Problem{Cause: f.Cause, Text: txt, Rule: f.Rule, RefreshText: f.Rule == "resource-failing", Data: docOf(data)}
 		if f.ProjectId != nil {
 			p.ProjectID = *f.ProjectId
 		}
-		if f.ExecutionId != nil {
-			p.Data["executionId"] = *f.ExecutionId
-		}
 		ps = append(ps, p)
+		execs = append(execs, f.ExecutionId)
 	}
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		for i := range ps {
-			if id, ok := ps[i].Data["executionId"].(string); ok && ps[i].ProjectID != "" {
+			if execs[i] != nil && ps[i].ProjectID != "" {
 				// A project cause goes to the project's director: the execution's directedBy.
-				by, err := q.db().RulesExecutionDirector(q.ctx(), id)
+				by, err := q.db().RulesExecutionDirector(q.ctx(), *execs[i])
 				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 					return err
 				}
@@ -132,6 +126,15 @@ func rulesPass(ctx context.Context, a *App) error {
 	rulesLast, rulesFindings = time.Now(), fs
 	rulesMu.Unlock()
 	return spanErr
+}
+
+// ruleProblemData: the data of a rule finding's problem (Problem.Data, problems.go, is still a map).
+type ruleProblemData struct {
+	Exemplars   []string `json:"exemplars"`
+	Value       float64  `json:"value"`
+	HostID      *string  `json:"hostId,omitempty"`
+	StoreID     *string  `json:"storeId,omitempty"`
+	ExecutionID *string  `json:"executionId,omitempty"`
 }
 
 func text(f *contract.Finding, s string) { f.Text = &s }
