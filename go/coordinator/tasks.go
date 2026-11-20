@@ -1650,3 +1650,10 @@ func findQuestion(q *Request, taskID, id string) (any, error) {
 	}
 	return rs[0], nil
 }
+
+// Task columns of the search syntax for task_page (tasks.go taskWhere); agent and host are subqueries, so every task
+// query can use them without a join. agent: the harness of the task's latest execution (task_derived.last_agent;
+// task_derived.agent is set only while one runs). The search queries (queries/entities.sql) mirror them.
+var taskSearchText = []string{"t.title", "t.id", "t.code"}
+var taskSearchFields = map[string]string{"agent": "(SELECT last_agent FROM task_derived WHERE task_id=t.id)", "host": "(SELECT host FROM task_derived WHERE task_id=t.id)",
+	"project": "t.project_id", "state": stateSQL}

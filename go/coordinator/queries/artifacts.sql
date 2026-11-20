@@ -202,3 +202,7 @@ FROM event d JOIN execution x ON x.id=d.execution_id
  CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) AS r(value)
 WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL
 ORDER BY x.account_id, r.value->>'period', d.seq DESC;
+
+-- name: ArtStoredAll :many
+-- Every stored artifact, for the placement pass (placement.go).
+SELECT * FROM artifact WHERE state='stored' ORDER BY seq;

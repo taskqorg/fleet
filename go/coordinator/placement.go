@@ -190,7 +190,7 @@ func runPlacement(ctx context.Context, a *App) (queued, deleted int, err error) 
 	for i := range stores {
 		byID[stores[i].ID], byHost[stores[i].HostID], hosts[stores[i].HostID] = &stores[i], &stores[i], true
 	}
-	all, err := artifacts(ctx, a, "WHERE state='stored' ORDER BY seq")
+	all, err := storedArtifactRows(ctx, a)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -471,20 +471,6 @@ type copyPayload struct {
 type copySource struct {
 	StoreID string `json:"storeId"`
 	URL     string `json:"url"`
-}
-
-// jsonStrings: the strings of a JSON array; other elements are skipped, anything else is no strings.
-func jsonStrings(b []byte) []string {
-	var xs []json.RawMessage
-	json.Unmarshal(b, &xs)
-	out := []string{}
-	for _, x := range xs {
-		var s string
-		if json.Unmarshal(x, &s) == nil {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 func init() {

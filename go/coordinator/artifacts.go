@@ -424,15 +424,6 @@ type Artifact struct {
 	Created                                                                    time.Time
 }
 
-const artifactCols = "id,project_id,scope,content_hash,size,media_type,name,execution_id,task_id,required,role,derived_from_artifact_id,previous_artifact_id,state,last_error,legacy_id,seq,created_at"
-
-func scanArtifact(r pgx.CollectableRow) (Artifact, error) {
-	var x Artifact
-	err := r.Scan(&x.ID, &x.ProjectID, &x.Scope, &x.ContentHash, &x.Size, &x.MediaType, &x.Name, &x.ExecutionID, &x.TaskID, &x.Required, &x.Role, &x.DerivedFrom, &x.Previous, &x.State, &x.LastError, &x.LegacyID, &x.Seq, &x.Created)
-	return x, err
-}
-
-// artifactOf: a typed artifact row as the coordinator's Artifact.
 func artifactOf(r db.Artifact) Artifact {
 	return Artifact{ID: r.ID, Scope: r.Scope, ContentHash: r.ContentHash, MediaType: r.MediaType, Name: r.Name, Role: r.Role, State: r.State,
 		ProjectID: r.ProjectID, ExecutionID: r.ExecutionID, TaskID: r.TaskID, LegacyID: r.LegacyID, DerivedFrom: r.DerivedFromArtifactID,
@@ -447,13 +438,10 @@ func artRows(rs []db.Artifact) []Artifact {
 	return out
 }
 
-// artifacts: the rows of a caller's own condition, for placement.go; this file reads through the typed queries.
-func artifacts(ctx context.Context, a *App, where string, args ...any) ([]Artifact, error) {
-	rs, err := conn(ctx, a).Query(ctx, "SELECT "+artifactCols+" FROM artifact "+where, args...)
-	if err != nil {
-		return nil, err
-	}
-	return pgx.CollectRows(rs, scanArtifact)
+// storedArtifactRows: every stored artifact, for placement.go.
+func storedArtifactRows(ctx context.Context, a *App) ([]Artifact, error) {
+	rs, err := artDB(ctx, a).ArtStoredAll(ctx)
+	return artRows(rs), err
 }
 
 func artifactRow(ctx context.Context, a *App, id string) (*Artifact, error) {

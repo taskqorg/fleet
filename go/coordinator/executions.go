@@ -255,8 +255,8 @@ type settingChange struct {
 	At        int64   `json:"at"`
 }
 
-// artifactFailure: the error of an execution its artifact gate fails.
-type artifactFailure struct {
+// executionArtifactError: the error of an execution its artifact gate fails.
+type executionArtifactError struct {
 	Code    string    `json:"code"`
 	Message string    `json:"message"`
 	Missing any       `json:"missing"`
@@ -378,9 +378,9 @@ func artifactGate(q *Request, e doc, declared []string) (doc, error) {
 	}
 	if len(r.Missing) > 0 || len(r.Failed) > 0 {
 		return docOf(struct {
-			State string          `json:"state"`
-			Error artifactFailure `json:"error"`
-		}{"failed", artifactFailure{Code: "artifact-required", Message: "Required artifacts missing or failed", Missing: r.Missing, Failed: r.Failed}}), nil
+			State string                 `json:"state"`
+			Error executionArtifactError `json:"error"`
+		}{"failed", executionArtifactError{Code: "artifact-required", Message: "Required artifacts missing or failed", Missing: r.Missing, Failed: r.Failed}}), nil
 	}
 	if len(r.Pending) > 0 {
 		return docOf(struct {
@@ -426,7 +426,7 @@ func settleWaitingAs(ctx context.Context, a *App, id, expired string) error {
 			if expired != "" && len(r.Pending) > 0 {
 				msg = expired
 			}
-			e["error"] = docOf(artifactFailure{Code: "artifact-required", Message: msg, Missing: r.Missing, Failed: r.Failed, Pending: &r.Pending})
+			e["error"] = docOf(executionArtifactError{Code: "artifact-required", Message: msg, Missing: r.Missing, Failed: r.Failed, Pending: &r.Pending})
 		}
 		if err := put(q, "execution", e); err != nil {
 			return err

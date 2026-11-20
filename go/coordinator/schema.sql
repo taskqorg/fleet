@@ -3804,3 +3804,6 @@ SELECT set_config('fleet.project_ids', '*', true);
 INSERT INTO pipeline_work(run_id) SELECT id FROM execution WHERE kind='pipeline_run' AND data ? 'pipelineId'
  AND (state='running' OR state='succeeded' AND data->>'pipelineId'='draft-examples'); -- a start imported finished drafts again
 INSERT INTO lab_work(experiment_id) SELECT id FROM experiment WHERE state IN ('running','paused','stopped');
+-- migration 80: the task's data mirror goes (docs/designs/fleet-standard.md S1, stage 3b). Every task field has its own
+-- column; data was written as '{}' and read by nothing.
+ALTER TABLE task DROP COLUMN data;

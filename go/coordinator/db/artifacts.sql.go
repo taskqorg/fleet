@@ -1006,6 +1006,56 @@ func (q *Queries) ArtStoreUpsert(ctx context.Context, arg ArtStoreUpsertParams) 
 	return err
 }
 
+const artStoredAll = `-- name: ArtStoredAll :many
+SELECT id, project_id, scope, content_hash, size, media_type, name, execution_id, task_id, required, previous_artifact_id, derived_from_artifact_id, role, state, last_error, deleted_at, deleted_by, legacy_id, created_at, updated_at, seq, approved_at, tombstoned_at, session_id FROM artifact WHERE state='stored' ORDER BY seq
+`
+
+// Every stored artifact, for the placement pass (placement.go).
+func (q *Queries) ArtStoredAll(ctx context.Context) ([]Artifact, error) {
+	rows, err := q.db.Query(ctx, artStoredAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Artifact
+	for rows.Next() {
+		var i Artifact
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Scope,
+			&i.ContentHash,
+			&i.Size,
+			&i.MediaType,
+			&i.Name,
+			&i.ExecutionID,
+			&i.TaskID,
+			&i.Required,
+			&i.PreviousArtifactID,
+			&i.DerivedFromArtifactID,
+			&i.Role,
+			&i.State,
+			&i.LastError,
+			&i.DeletedAt,
+			&i.DeletedBy,
+			&i.LegacyID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Seq,
+			&i.ApprovedAt,
+			&i.TombstonedAt,
+			&i.SessionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const artStoredNow = `-- name: ArtStoredNow :exec
 UPDATE artifact SET state='stored',last_error=NULL WHERE id=$1 AND state='pending'
 `

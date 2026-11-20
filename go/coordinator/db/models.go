@@ -1241,7 +1241,6 @@ type Task struct {
 	CreatedBy              *string
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
-	Data                   []byte
 	Seq                    int64
 	DirectedBy             *string
 	RequestedBy            *string
