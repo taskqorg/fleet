@@ -644,10 +644,12 @@ func init() {
 		if err != nil {
 			return contract.PipelineGetReply{}, err
 		}
-		if p := deref(r.ProjectId); p != "" && astr(run["projectId"]) != p {
-			return contract.PipelineGetReply{}, fail(403, "Pipeline belongs to another project")
+		if p := deref(r.ProjectId); p != "" {
+			if own, _ := jsonString(run["projectId"]); own != p {
+				return contract.PipelineGetReply{}, fail(403, "Pipeline belongs to another project")
+			}
 		}
-		return replyAs[contract.PipelineGetReply](run, nil)
+		return asT[contract.PipelineGetReply](run)
 	})
 	op("pipeline_history", func(q *Request, r *contract.PipelineHistoryRequest) (contract.PipelineHistoryReply, error) {
 		if _, err := projectContext(q, r.ProjectId); err != nil {
@@ -657,15 +659,19 @@ func init() {
 		if err != nil {
 			return contract.PipelineHistoryReply{}, err
 		}
-		runs := []doc{}
+		out := contract.PipelineHistoryReply{Runs: []contract.PipelineGetReply{}}
 		for _, id := range ids {
 			run, err := pipelineRun(q, id)
 			if err != nil {
 				return contract.PipelineHistoryReply{}, err
 			}
-			runs = append(runs, run)
+			v, err := asT[contract.PipelineGetReply](run)
+			if err != nil {
+				return contract.PipelineHistoryReply{}, err
+			}
+			out.Runs = append(out.Runs, v)
 		}
-		return replyAs[contract.PipelineHistoryReply](doc{"runs": runs}, nil)
+		return out, nil
 	})
 	addProjectOps("project_detail", "project_resources", "project_resource_items", "project_list", "project_context", "catalogue",
 		"recommendation_set", "question_ask", "question_answer", "question_history", "pipeline_get", "pipeline_history",
@@ -673,16 +679,16 @@ func init() {
 	longRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps) })
 }
 
-// pipelineRun: a pipeline-run record with its steps.
-func pipelineRun(q *Request, id string) (doc, error) {
-	run, err := getRun(q, id)
+// pipelineRun: a pipeline run as its readers get it (planRead).
+func pipelineRun(q *Request, id string) (recordRest, error) {
+	run, err := loadRun(q, id)
 	if err != nil {
 		return nil, err
 	}
 	if run == nil {
 		return nil, fail(404, "Unknown pipeline run")
 	}
-	return pipelinePlanRead(q, run)
+	return run.planRead(q)
 }
 
 // mcp: an MCP tools server (mcpserve) over an operation table: tools/list publishes its advertised operations, tools/call

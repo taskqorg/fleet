@@ -544,25 +544,30 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	if err := stopPipelineCommand(wq, c, reason); err != nil {
 		return err
 	}
-	if !pipelineDispatchKind(c["kind"]) {
+	cmd := agentView[agentCommand](c)
+	if !pipelineDispatchKind(cmd.Kind) {
 		return nil
 	}
-	e, err := maybe(wq, c["executionId"], "execution")
-	if err != nil || e == nil || e["pipelineRunId"] == nil || terminal(e) || e["state"] == "running" {
+	e, err := maybe(wq, cmd.ExecutionID, "execution")
+	if err != nil || e == nil {
 		return err
 	}
-	run, err := getRun(wq, astr(e["pipelineRunId"]))
+	native := agentView[pipelineRefused](e)
+	if native.PipelineRunID == "" || executionEnds(native.State) || native.State == "running" {
+		return nil
+	}
+	run, err := loadRun(wq, native.PipelineRunID)
 	if pipelineFormatUnsupported(err) || err == nil && run == nil {
 		return nil // no run to read: nothing proves the command never went out
 	}
 	if err != nil {
 		return err
 	}
-	index := pipelineStepIndex(run, astr(e["pipelineStepId"]))
+	index := pipelineStepIndex(run, native.PipelineStepID)
 	if index < 0 {
 		return nil
 	}
-	if d := mapOf(pipelinePlanEntry(run, index)["dispatch"]); d["phase"] != "prepared" || d["commandId"] != c["id"] {
+	if d := run.entry(index).Dispatch; d == nil || d.Phase != contract.PipelineDispatchPhasePrepared || deref(d.CommandId) != cmd.ID {
 		return nil
 	}
 	now := nowMs()
@@ -578,7 +583,15 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 			a.wakeDispatch()
 		}
 	})
-	return wq.db().HostPollClearWaitReason(wq.ctx(), astr(e["id"]))
+	return wq.db().HostPollClearWaitReason(wq.ctx(), native.ID)
+}
+
+// pipelineRefused: the fields of a refused command's execution refusePollCommand reads.
+type pipelineRefused struct {
+	ID             string `json:"id"`
+	State          string `json:"state"`
+	PipelineRunID  string `json:"pipelineRunId"`
+	PipelineStepID string `json:"pipelineStepId"`
 }
 
 // pollObserved runs one host poll, its body's decoding included, and records its health: a failure the host cannot
