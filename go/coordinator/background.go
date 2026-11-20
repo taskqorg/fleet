@@ -37,15 +37,19 @@ func every(ctx context.Context, name string, d time.Duration, fn func(context.Co
 	}()
 }
 
-// coalesced returns a trigger that runs fn soon in the background, once for every burst of triggers: a trigger while a
-// run is queued joins it; one during a run queues the next. Callers trigger after their commit (afterCommit), so the
-// run reads what they wrote. A failure is logged as name.
-func coalesced(name string, fn func(context.Context) error) func() {
+// coalesced returns a trigger that runs fn soon in the background, once for every burst of triggers, with the
+// argument of the burst's last trigger: a trigger while a run is queued joins it; one during a run queues the next.
+// Callers trigger after their commit (afterCommit), so the run reads what they wrote; what the run needs from the
+// caller's state is its argument, read by the caller, never a global read in the background. A failure is logged as
+// name.
+func coalesced[T any](name string, fn func(context.Context, T) error) func(T) {
 	var mu sync.Mutex
 	queued := false
-	return func() {
+	var arg T
+	return func(v T) {
 		mu.Lock()
 		defer mu.Unlock()
+		arg = v
 		if queued {
 			return
 		}
@@ -53,8 +57,9 @@ func coalesced(name string, fn func(context.Context) error) func() {
 		go func() {
 			mu.Lock()
 			queued = false
+			v := arg
 			mu.Unlock()
-			if err := fn(context.Background()); err != nil {
+			if err := fn(context.Background(), v); err != nil {
 				log.Printf("%s: %v", name, err)
 			}
 		}()

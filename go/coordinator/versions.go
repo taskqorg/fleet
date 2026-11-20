@@ -111,7 +111,7 @@ var gatewayProbe struct {
 	last *contract.GatewayVersion
 }
 
-var gatewayProbeNow = coalesced("gateway probe", func(ctx context.Context) error {
+var gatewayProbeNow = coalesced("gateway probe", func(ctx context.Context, _ struct{}) error {
 	d := probeGateway(ctx)
 	d.ObservedAt = ptr(float64(time.Now().UnixMilli()))
 	gatewayProbe.Lock()
@@ -128,7 +128,7 @@ func gatewayVersion() *contract.GatewayVersion {
 	defer gatewayProbe.Unlock()
 	if time.Since(gatewayProbe.at) > time.Minute {
 		gatewayProbe.at = time.Now()
-		gatewayProbeNow()
+		gatewayProbeNow(struct{}{})
 	}
 	if gatewayProbe.last == nil {
 		return &contract.GatewayVersion{State: contract.GatewayStatePending}

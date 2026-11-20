@@ -187,13 +187,15 @@ func publish(q *Request) {
 	afterCommit(q, schedulePublish)
 }
 
-// schedulePublish rewrites the snapshot once per burst of calls (background.go).
-var schedulePublish = coalesced("snapshot", func(ctx context.Context) error {
-	if runningApp == nil {
-		return nil
+// schedulePublish rewrites the snapshot once per burst of calls (background.go); before the app runs there is none to
+// write.
+func schedulePublish() {
+	if a := runningApp; a != nil {
+		publishSnapshot(a)
 	}
-	return writeSnapshot(ctx, runningApp)
-})
+}
+
+var publishSnapshot = coalesced("snapshot", writeSnapshot)
 
 // connSync: key files without a row are registered; a directory without a connection becomes one (owner-held, every project).
 func connSync(q *Request) error {
