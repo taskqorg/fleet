@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -166,40 +165,6 @@ func optStr(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-// searchWhere: the list search syntax (parseSearchQuery) as SQL conditions, one syntax for Spotlight and every list
-// (OR-36): each word must be in one of the text columns; each field term in its column (state exact, the others contain).
-// A field the list has no column for matches nothing, never everything.
-func searchWhere(raw string, p *[]any, text []string, fields map[string]string, withState bool) []string {
-	s, c := parseSearchQuery(raw), []string{}
-	for _, w := range strings.Fields(s.text) {
-		*p = append(*p, likePattern(w))
-		o := []string{}
-		for _, col := range text {
-			o = append(o, fmt.Sprintf("lower(coalesce(%s,'')) LIKE $%d", col, len(*p)))
-		}
-		c = append(c, "("+strings.Join(o, " OR ")+")")
-	}
-	for _, k := range searchFields {
-		v, ok := s.fields[k]
-		if !ok {
-			continue
-		}
-		col, has := fields[k]
-		switch {
-		case !has:
-			c = append(c, "false")
-		case k == "state" && !withState: // per-state counts: every state, like the state filter
-		case k == "state":
-			*p = append(*p, strings.ToLower(v))
-			c = append(c, fmt.Sprintf("%s=$%d", col, len(*p)))
-		default:
-			*p = append(*p, likePattern(v))
-			c = append(c, fmt.Sprintf("lower(coalesce(%s,'')) LIKE $%d", col, len(*p)))
-		}
-	}
-	return c
 }
 
 // noLimit: the limit of a code jump's reads, which name their hits (at most the search limit of codes).

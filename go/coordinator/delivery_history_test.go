@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // Requirement: each merged pull request gets its stage times, release and queue removals from the recorded runs and
@@ -131,11 +132,11 @@ func TestDeliveryEvidenceIntegration(t *testing.T) {
 // Risk: old samples silently compare or a missed release is reported as failed.
 func TestDeliveryCompatibilityAndRefusal(t *testing.T) {
 	r := contract.DeliveryRelease{Tag: "v1.2.3"}
-	deliveryUpdateObservations(&r, []doc{{"id": "h", "update": doc{"version": "1.2.3", "state": "refused", "at": "2026-11-14T11:00:00Z", "error": "synthetic refusal"}}})
+	deliveryUpdateObservations(&r, []db.DeliveryHostsSeenRow{{ID: "h", Update: jsonBytes(doc{"version": "1.2.3", "state": "refused", "at": "2026-11-14T11:00:00Z", "error": "synthetic refusal"})}})
 	if r.UpdateObservations["h"].Version != "1.2.3" || deref(r.UpdateObservations["h"].Error) != "synthetic refusal" {
 		t.Fatal(r)
 	}
-	deliveryUpdateObservations(&r, []doc{{"id": "h", "update": doc{"version": "1.2.4", "state": "ok", "at": "2026-11-14T12:00:00Z"}}})
+	deliveryUpdateObservations(&r, []db.DeliveryHostsSeenRow{{ID: "h", Update: jsonBytes(doc{"version": "1.2.4", "state": "ok", "at": "2026-11-14T12:00:00Z"})}})
 	if r.UpdateObservations["h"].State != "refused" {
 		t.Fatal("refusal overwritten by unrelated version")
 	}

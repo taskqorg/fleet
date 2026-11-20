@@ -120,46 +120,36 @@ type navSaved struct {
 
 // navList: a saved view's filter as the list operation takes it (task_page, sessions_list): its states, its search and
 // the projects it names; ignored projects are left out whatever it names. v is nil for a system view.
-func navList(v *navSaved, states []string, s navScope) doc {
-	f := doc{}
-	if len(states) > 0 {
-		st := []any{}
-		for _, x := range states {
-			st = append(st, x)
-		}
-		f["state"] = st
-	}
+func navList(v *navSaved, states []string, s navScope) rowFilter {
+	f := rowFilter{States: states}
 	if v != nil && strings.TrimSpace(v.Q) != "" {
-		f["search"] = v.Q
+		f.Search = ptr(v.Q)
 	}
 	if v != nil && len(v.Project) > 0 {
-		ps := []any{}
+		f.HasProjects = true
 		for _, p := range v.Project {
 			if p == nil {
-				ps = append(ps, nil)
+				f.ProjectsNull = true
 			} else {
-				ps = append(ps, *p)
+				f.Projects = append(f.Projects, *p)
 			}
 		}
-		f["projectId"] = ps
 	}
 	if len(s.ignored) > 0 {
-		f["excludeProjectId"] = nullProjects(s.ignored)
+		f.HasExclude, f.Exclude = true, s.ignored
 	}
 	if v != nil && v.Archived {
-		f["archived"] = true
+		f.Archived = true
 	}
 	return f
 }
 
-// navSessionBase: the sessions as sessionBase gives them to sessionWhere without a search (id, code, project, archive,
-// actor and the state of the latest execution).
-var navSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.archived_at, d.actor, ` + sessionState + ` AS state
- FROM session d)`
-
-func splitCount(q *Request, sql string, p []any) (int64, int64, error) {
+func splitCount(q *Request, sql string, p []any, err error) (int64, int64, error) {
+	if err != nil {
+		return 0, 0, err
+	}
 	var in, all int64
-	err := q.tx.QueryRow(q.ctx(), sql, p...).Scan(&in, &all)
+	err = q.tx.QueryRow(q.ctx(), sql, p...).Scan(&in, &all)
 	return in, all - in, err
 }
 
@@ -225,25 +215,17 @@ func navCounts(q *Request, _ *contract.NavCountsRequest) (contract.NavCountsRepl
 func navCount(q *Request, section string, v navView, saved *navSaved, s navScope) (int64, int64, error) {
 	switch section {
 	case "tasks":
-		p := []any{}
-		c, err := taskWhere(navList(saved, v.states, s), &p, true)
-		if err != nil {
-			return 0, 0, err
+		f := navList(saved, v.states, s)
+		if f.Archived { // a task list has no archive: the saved view no longer reads (navCounts counts the default)
+			return 0, 0, fail(400, "Unknown filter field archived")
 		}
-		return splitCount(q, "SELECT count(*) FILTER (WHERE "+s.split(&p, "t.project_id")+"),count(*) FROM task t"+where(c), p)
+		sql, p, err := sqlTaskCount(f, s.split)
+		return splitCount(q, sql, p, err)
 	case "conversations":
-		p, f := []any{}, navList(saved, v.states, s)
-		c, err := sessionWhere(f, &p, true)
-		if err != nil {
-			return 0, 0, err
-		}
-		// Without a search the count needs only each session's state: not sessionBase's message and activity scans,
-		// which this read, repeated on execution changes, would run every few seconds.
-		base := sessionBase
-		if f["search"] == nil {
-			base = navSessionBase
-		}
-		return splitCount(q, base+" SELECT count(*) FILTER (WHERE "+s.split(&p, "x.project_id")+"),count(*) FROM x"+where(c), p)
+		// Without a search the count needs only each session's state: not the message and activity scans, which this
+		// read, repeated on execution changes, would run every few seconds.
+		sql, p, err := sqlSessionCount(navList(saved, v.states, s), s.split)
+		return splitCount(q, sql, p, err)
 	case "delivery":
 		return navDelivery(q, v, saved, s)
 	case "results":

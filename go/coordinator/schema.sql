@@ -4286,3 +4286,18 @@ DO $$ DECLARE t text; BEGIN
   EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION fleet_change()', t || '_change', t);
  END LOOP;
 END $$;
+
+-- migration 83: the document table goes (docs/designs/fleet-standard.md S1, stage 8d): no kind is read or written
+-- since the previous migration. Its sequence orders rows across tables (every newer table's seq default draws from it):
+-- it is detached and renamed fleet_seq, and the defaults that found it through pg_get_serial_sequence('document', 'seq')
+-- name it. From here on a migration changes only tables: functions, triggers and policies are schema/*.sql
+-- (applySchemaFiles in store.go).
+ALTER SEQUENCE document_seq_seq OWNED BY NONE;
+ALTER SEQUENCE document_seq_seq RENAME TO fleet_seq;
+DO $$ DECLARE t text; BEGIN
+ FOR t IN SELECT c.table_name FROM information_schema.columns c
+  WHERE c.table_schema = 'public' AND c.column_name = 'seq' AND c.column_default LIKE '%pg_get_serial_sequence(''document''%' LOOP
+  EXECUTE format('ALTER TABLE %I ALTER COLUMN seq SET DEFAULT nextval(''fleet_seq'')', t);
+ END LOOP;
+END $$;
+DROP TABLE document;

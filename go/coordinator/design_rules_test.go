@@ -629,18 +629,24 @@ var designRulesOwned = map[string]map[string]string{
 	"background.go": {
 		"R-GO": "S6: every() is the one periodic-pass loop, coalesced() the one runner of a coalesced after-commit effect (the gateway snapshot) and untilDone() the one retried start-up step (the span schema)",
 	},
+	"main.go": {
+		"R-GO": "S6: HTTP plumbing: the signal handler that stops the long polls and the stream and drains the server",
+	},
+	"wake_outbox.go": {
+		"R-GO": "S6: the wake dispatcher, the one sender of wake_outbox's NOTIFYs: it claims the next batch at once while a full one was claimed, so it cannot be an every() pass",
+	},
 	"stream.go": {
 		"R-GO": "S6: HTTP/stream plumbing: the LISTEN fleet_change connection (reconnected after a second), the feed loop that reads behind it, and the ping ticker of each open /api/stream",
 	},
 	"telemetry.go": {
-		"R-SQL": "S2 covers PostgreSQL: these are the ClickHouse span-store queries (telemetry_summary, telemetry_trace), which sqlc cannot generate",
+		"R-SQL": "S2 covers PostgreSQL: these are the ClickHouse span-store queries (telemetry_summary, telemetry_trace, the purge's span deletes), which sqlc cannot generate",
 	},
 	"work_kit.go": {
 		"R-GO":  "S6: the kit's loop and its fleet_work listener are the scheduling the rule keeps out of the queues",
 		"R-SQL": "S6: the kit alone writes attempts, next_attempt_at and last_error of any queue's table, named by the queue; sqlc cannot name a table per call",
 	},
 	"sql_builder.go": {
-		"R-SQL": "S2: the one place SQL is assembled at run time (resource item pages, analytics_query grouping and filters), from allowlisted identifiers with bind parameters; sqlc cannot vary a statement's table, comparison, grouping or conditions",
+		"R-SQL": "S2: the one place SQL is assembled at run time (resource item pages, analytics_query grouping and filters, list pages and their counts, delete and purge cascades), from allowlisted identifiers with bind parameters; sqlc cannot vary a statement's table, comparison, grouping or conditions",
 	},
 }
 
@@ -650,32 +656,25 @@ var designRulesLegacy = map[string]map[string]bool{
 	"accounts.go":           {"R-MAP": true},
 	"agent.go":              {"R-MAP": true},
 	"catalogue_evidence.go": {"R-MAP": true},
-	"cleanup.go":            {"R-MAP": true, "R-SQL": true},
 	"connections.go":        {"R-MAP": true},
 	"delegation.go":         {"R-MAP": true},
-	"delivery.go":           {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"delivery_history.go":   {"R-GO": true, "R-MAP": true, "R-SQL": true},
+	"delivery_history.go":   {"R-GO": true},
 	"dispatch.go":           {"R-GO": true},
 	"host_poll.go":          {"R-MAP": true},
 	"host_receipts.go":      {"R-MAP": true},
 	"json.go":               {"R-MAP": true},
 	"lab.go":                {"R-MAP": true},
 	"lab_retry.go":          {"R-MAP": true},
-	"main.go":               {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"nav_counts.go":         {"R-MAP": true, "R-SQL": true},
+	"main.go":               {"R-MAP": true},
 	"pipeline_plan.go":      {"R-MAP": true},
 	"pipelines.go":          {"R-MAP": true},
 	"projects.go":           {"R-MAP": true},
 	"providers.go":          {"R-MAP": true},
 	"records.go":            {"R-MAP": true, "R-SQL": true},
 	"registry.go":           {"R-MAP": true},
-	"release.go":            {"R-MAP": true, "R-SQL": true},
 	"rules.go":              {"R-MAP": true, "R-SQL": true},
 	"runners_ci.go":         {"R-GO": true},
 	"s3.go":                 {"R-GO": true},
 	"sessions.go":           {"R-MAP": true, "R-SQL": true},
-	"store.go":              {"R-MAP": true, "R-SQL": true},
-	"tasks.go":              {"R-MAP": true, "R-SQL": true},
-	"uploads.go":            {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"wake_outbox.go":        {"R-GO": true, "R-SQL": true},
+	"uploads.go":            {"R-GO": true},
 }

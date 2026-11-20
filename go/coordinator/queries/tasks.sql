@@ -318,3 +318,8 @@ FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job');
 
 -- name: TaskTraceOf :one
 SELECT coalesce(data->>'traceparent','')::text AS traceparent FROM execution WHERE id=$1;
+
+-- name: TaskDerivedDrift :one
+-- The tasks whose stored derived row differs from the one their executions and questions give (task_derived_check).
+SELECT coalesce(jsonb_agg(jsonb_build_object('taskId', d.task_id, 'stored', d.stored, 'expected', d.expected)), '[]')::jsonb AS drifted
+FROM task_derived_drift() d;

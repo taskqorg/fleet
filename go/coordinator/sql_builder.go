@@ -1,13 +1,18 @@
 // The one place this package assembles SQL at run time (docs/designs/fleet-standard.md S2, DESIGN_RULES.md). Every
 // fixed statement is a typed query (queries/*.sql); sqlc cannot express a statement whose shape follows the request:
 // a keyset page of the resource item table a category names, in the requested direction from an exclusive or
-// inclusive position, and an analytics_query grouped by the requested dimensions under the requested filters.
+// inclusive position, an analytics_query grouped by the requested dimensions under the requested filters, and a list
+// page (tasks, sessions), its counts and groups under the list's filter, group and sort.
 // Identifiers and expressions come only from the allowlists in this file, chosen by typed inputs (a contract enum or a
 // typed constant); every request value is a bind parameter.
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -685,3 +690,630 @@ const spawnedExecsCTEs = `,
   FROM spawned_runs sr
   JOIN execution e ON e.kind = 'tool_run' AND e.parent_execution_id = sr.id
  )`
+
+// Lists (task_page, sessions_list, list_membership, nav_counts): a list's filter is read once into a rowFilter; its
+// conditions, group and sort keys come from the allowlists below, every filter value is a bind parameter, and the rows
+// scan into the typed rows of tasks.go (taskListDBRow) and sessions.go (sessionListDBRow).
+
+// rowFilter: a list filter as sent. HasProjects: projectId was sent (Projects, and ProjectsNull for null, work
+// outside projects); HasExclude: excludeProjectId was sent ("-" in Exclude is null: no project, as the other
+// operations name it); States: the state filter (an element that is not a string reads ""); Search: the list search
+// syntax (search.go parseSearchQuery); Archived: archived sessions instead of the others.
+type rowFilter struct {
+	HasProjects  bool
+	Projects     []string
+	ProjectsNull bool
+	HasExclude   bool
+	Exclude      []string
+	States       []string
+	Search       *string
+	Archived     bool
+}
+
+// rowFilterOf reads a filter as sent (a null projectId item is work outside projects, which a typed list of strings
+// cannot hold). A field the list does not implement, or one of the wrong type, is a 400, never a silent "all rows".
+func rowFilterOf(raw json.RawMessage, known ...string) (rowFilter, error) {
+	var f rowFilter
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return f, nil
+	}
+	names := make([]string, 0, len(fields))
+	for k := range fields {
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	jsonKind := func(v json.RawMessage) byte {
+		v = bytes.TrimSpace(v)
+		if len(v) == 0 {
+			return 0
+		}
+		return v[0]
+	}
+	for _, k := range names {
+		if !slices.Contains(known, k) {
+			return f, fail(400, "Unknown filter field "+k)
+		}
+		v, ok := fields[k], false
+		switch k {
+		case "state", "excludeProjectId":
+			ok = jsonKind(v) == '['
+		case "projectId":
+			var l []json.RawMessage
+			ok = jsonKind(v) == '[' && json.Unmarshal(v, &l) == nil && len(l) > 0
+		case "search":
+			ok = jsonKind(v) == '"'
+		case "archived":
+			ok = jsonKind(v) == 't' || jsonKind(v) == 'f'
+		}
+		if !ok {
+			return f, fail(400, "Invalid filter field "+k)
+		}
+	}
+	// ids: the strings of a project list and whether it holds null; any other element is a 400.
+	ids := func(field string) ([]string, bool, error) {
+		var l []*string
+		if err := json.Unmarshal(fields[field], &l); err != nil {
+			return nil, false, fail(400, "Invalid "+field)
+		}
+		out, null := []string{}, false
+		for _, x := range l {
+			if x == nil {
+				null = true
+			} else {
+				out = append(out, *x)
+			}
+		}
+		return out, null, nil
+	}
+	var err error
+	if _, f.HasProjects = fields["projectId"]; f.HasProjects {
+		if f.Projects, f.ProjectsNull, err = ids("projectId"); err != nil {
+			return f, err
+		}
+	}
+	if _, f.HasExclude = fields["excludeProjectId"]; f.HasExclude {
+		var null bool
+		if f.Exclude, null, err = ids("excludeProjectId"); err != nil {
+			return f, err
+		}
+		if null {
+			f.Exclude = append(f.Exclude, "-")
+		}
+	}
+	if v, ok := fields["state"]; ok {
+		var l []json.RawMessage
+		json.Unmarshal(v, &l)
+		for _, x := range l {
+			var s string
+			json.Unmarshal(x, &s)
+			f.States = append(f.States, s)
+		}
+	}
+	if v, ok := fields["search"]; ok {
+		var s string
+		json.Unmarshal(v, &s)
+		f.Search = &s
+	}
+	if v, ok := fields["archived"]; ok {
+		json.Unmarshal(v, &f.Archived)
+	}
+	return f, nil
+}
+
+// projectConds: the projectId filter and the excludeProjectId exclusion (the person's ignored projects, OR-34; a
+// project in both is left out) as conditions on col.
+func (f rowFilter) projectConds(p *[]any, col string, c []string) []string {
+	if f.HasProjects {
+		o := []string{}
+		if len(f.Projects) > 0 {
+			*p = append(*p, f.Projects)
+			o = append(o, fmt.Sprintf("%s=ANY($%d)", col, len(*p)))
+		}
+		if f.ProjectsNull {
+			o = append(o, col+" IS NULL")
+		}
+		if len(o) > 0 {
+			c = append(c, "("+strings.Join(o, " OR ")+")")
+		}
+	}
+	if f.HasExclude {
+		c = projectNotIn(c, p, col, f.Exclude)
+	}
+	return c
+}
+
+// stateConds: the state filter as a condition on expr; a state the list does not have is a 400.
+func (f rowFilter) stateConds(p *[]any, expr string, states []string, c []string) ([]string, error) {
+	if len(f.States) == 0 {
+		return c, nil
+	}
+	for _, s := range f.States {
+		if !slices.Contains(states, s) {
+			return nil, fail(400, "Invalid state")
+		}
+	}
+	*p = append(*p, f.States)
+	return append(c, fmt.Sprintf("%s=ANY($%d)", expr, len(*p))), nil
+}
+
+// projectNotIn: the condition "col is not one of ids" ('-' is no project) appended to c; none when ids is empty. A row
+// without a project stays unless '-' is among ids.
+func projectNotIn(c []string, p *[]any, col string, ids []string) []string {
+	named := slices.DeleteFunc(slices.Clone(ids), func(x string) bool { return x == "-" })
+	return notInProjects(c, p, col, named, len(named) < len(ids))
+}
+
+// notInProjects: the conditions "col is none of named" and, with null, "col is set" appended to c.
+func notInProjects(c []string, p *[]any, col string, named []string, null bool) []string {
+	if len(named) > 0 {
+		*p = append(*p, named)
+		c = append(c, fmt.Sprintf("NOT coalesce(%s=ANY($%d),false)", col, len(*p)))
+	}
+	if null {
+		c = append(c, col+" IS NOT NULL")
+	}
+	return c
+}
+
+func where(c []string) string {
+	if len(c) == 0 {
+		return ""
+	}
+	return " WHERE " + strings.Join(c, " AND ")
+}
+
+// searchWhere: the list search syntax (parseSearchQuery) as SQL conditions, one syntax for Spotlight and every list
+// (OR-36): each word must be in one of the text columns; each field term in its column (state exact, the others contain).
+// A field the list has no column for matches nothing, never everything.
+func searchWhere(raw string, p *[]any, text []string, fields map[string]string, withState bool) []string {
+	s, c := parseSearchQuery(raw), []string{}
+	for _, w := range strings.Fields(s.text) {
+		*p = append(*p, likePattern(w))
+		o := []string{}
+		for _, col := range text {
+			o = append(o, fmt.Sprintf("lower(coalesce(%s,'')) LIKE $%d", col, len(*p)))
+		}
+		c = append(c, "("+strings.Join(o, " OR ")+")")
+	}
+	for _, k := range searchFields {
+		v, ok := s.fields[k]
+		if !ok {
+			continue
+		}
+		col, has := fields[k]
+		switch {
+		case !has:
+			c = append(c, "false")
+		case k == "state" && !withState: // per-state counts: every state, like the state filter
+		case k == "state":
+			*p = append(*p, strings.ToLower(v))
+			c = append(c, fmt.Sprintf("%s=$%d", col, len(*p)))
+		default:
+			*p = append(*p, likePattern(v))
+			c = append(c, fmt.Sprintf("lower(coalesce(%s,'')) LIKE $%d", col, len(*p)))
+		}
+	}
+	return c
+}
+
+// sqlJSONTime: a timestamp as its JSON text (to_jsonb), the form the list rows answer with.
+func sqlJSONTime(col string) string { return "(to_jsonb(" + col + ")#>>'{}')" }
+
+// Tasks (tasks.go task_page, taskMembership, taskSummary; nav_counts.go).
+
+// sqlTaskState: a task's list state; "held" is a paused task with pause_reason 'held' (fleet-pm-agent.md §4).
+const sqlTaskState = "(CASE WHEN t.state='paused' AND t.pause_reason='held' THEN 'held' ELSE t.state::text END)"
+
+type taskGroup struct {
+	sql     string
+	derived bool
+}
+
+var taskGroups = map[string]taskGroup{
+	"none":     {"left(t.id,0)", false},
+	"priority": {"(CASE t.priority WHEN 'urgent' THEN '1' WHEN 'normal' THEN '2' ELSE '3' END)", false},
+	"project":  {"coalesce(t.project_id,'~')", false},
+	"agent":    {"coalesce(d.agent,'~')", true},
+	"host":     {"coalesce(d.host,'~')", true},
+	"state":    {"(CASE " + sqlTaskState + " WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'in_progress' THEN '3' WHEN 'queued' THEN '4' WHEN 'held' THEN '5' WHEN 'paused' THEN '6' WHEN 'completed' THEN '7' ELSE '8' END)", false},
+}
+
+// taskSorts: the second sort key inside a group (owner review P7), ascending numbers; "-" before a name is descending.
+// The default is recently changed first. Migrations 47 and 61 index each sort for the priority and project groupings and for no grouping;
+// ponytail: the other groupings sort the filtered tasks, add their indexes when those lists outgrow a scan.
+var taskSorts = map[string]string{"changed": "(extract(epoch FROM t.updated_at AT TIME ZONE 'UTC')*1000)::float8", "created": "(t.seq::float8)"}
+
+const defaultTaskSort = "-changed"
+
+// defaultTaskGroup is the grouping a view without one uses (view-url.ts DEFAULT_TASK_GROUP).
+const defaultTaskGroup = "project"
+
+func taskSortOf(v *string) (string, error) {
+	s := defaultTaskSort
+	if v != nil && *v != "" {
+		s = *v
+	}
+	expr, ok := taskSorts[strings.TrimPrefix(s, "-")]
+	if !ok {
+		return "", fail(400, "sort must be changed, created, -changed or -created")
+	}
+	if strings.HasPrefix(s, "-") {
+		return "(-" + expr + ")", nil
+	}
+	return expr, nil
+}
+
+var taskLabels = map[string]string{"priority": "t.priority", "state": sqlTaskState, "project": "t.project_id", "agent": "d.agent", "host": "d.host"}
+
+func groupOf(g *string) (string, taskGroup, error) {
+	if g == nil {
+		return "none", taskGroups["none"], nil
+	}
+	G, found := taskGroups[*g]
+	if !found {
+		return "", G, fail(400, "Invalid group")
+	}
+	return *g, G, nil
+}
+
+// Task columns of the search syntax for task_page (taskWhere); agent and host are subqueries, so every task query can
+// use them without a join. agent: the harness of the task's latest execution (task_derived.last_agent;
+// task_derived.agent is set only while one runs). The search queries (queries/entities.sql) mirror them.
+var taskSearchText = []string{"t.title", "t.id", "t.code"}
+var taskSearchFields = map[string]string{"agent": "(SELECT last_agent FROM task_derived WHERE task_id=t.id)", "host": "(SELECT host FROM task_derived WHERE task_id=t.id)",
+	"project": "t.project_id", "state": sqlTaskState}
+
+func taskWhere(f rowFilter, p *[]any, withState bool) ([]string, error) {
+	c := f.projectConds(p, "t.project_id", []string{})
+	if withState {
+		var err error
+		if c, err = f.stateConds(p, sqlTaskState, listStates, c); err != nil {
+			return nil, err
+		}
+	}
+	if f.Search != nil {
+		c = append(c, searchWhere(*f.Search, p, taskSearchText, taskSearchFields, withState)...)
+	}
+	return c, nil
+}
+
+// sqlTaskListCols: the columns of taskListDBRow (tasks.go), then its group key g and sort key sk.
+var sqlTaskListCols = "t.id,t.code,t.project_id,t.title,t.state::text AS state,t.pause_reason,t.wait_reason,t.priority," +
+	sqlJSONTime("t.created_at") + " AS created_at," + sqlJSONTime("t.updated_at") + " AS updated_at,d.agent,d.host," +
+	sqlJSONTime("d.started_at") + " AS started_at,coalesce(d.open_questions,0)::bigint AS open_questions," + sqlJSONTime("t.state_at") +
+	" AS state_at,coalesce(d.executions,0)::bigint AS executions,d.last_agent"
+
+// sqlTaskPage: one task_page page of at most limit rows after the sort key after (nil: the first page).
+func sqlTaskPage(f rowFilter, G taskGroup, S string, after []any, limit int) (string, []any, error) {
+	p := []any{}
+	c, err := taskWhere(f, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	// No grouping orders by the sort key alone, so the sort's own index serves it (a constant group key would not).
+	none := G.sql == taskGroups["none"].sql
+	if after != nil {
+		if none {
+			p = append(p, num(after[1]), fmt.Sprint(after[2]))
+			c = append(c, fmt.Sprintf("(%s,t.id) > ($%d::float8,$%d)", S, len(p)-1, len(p)))
+		} else {
+			p = append(p, fmt.Sprint(after[0]), num(after[1]), fmt.Sprint(after[2]))
+			c = append(c, fmt.Sprintf("(%s,%s,t.id) > ($%d,$%d::float8,$%d)", G.sql, S, len(p)-2, len(p)-1, len(p)))
+		}
+	}
+	g, lim := G.sql, strconv.Itoa(limit)
+	order, outer := g+",", "t.g,"
+	if none {
+		order, outer = "", ""
+	}
+	if G.derived {
+		return "SELECT " + sqlTaskListCols + "," + g + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c) +
+			" ORDER BY " + order + S + ",t.id LIMIT " + lim, p, nil
+	}
+	return "SELECT " + sqlTaskListCols + ",t.g," + S + " AS sk FROM (SELECT t.*," + g + " AS g FROM task t" + where(c) + " ORDER BY " + order + S +
+		",t.id LIMIT " + lim + ") t LEFT JOIN task_derived d ON d.task_id=t.id ORDER BY " + outer + S + ",t.id", p, nil
+}
+
+// sqlTaskRows: the rows of ids that the filtered list holds (list_membership), with their group and sort keys.
+func sqlTaskRows(f rowFilter, G taskGroup, S string, ids []string) (string, []any, error) {
+	p := []any{}
+	c, err := taskWhere(f, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	p = append(p, ids)
+	c = append(c, fmt.Sprintf("t.id=ANY($%d)", len(p)))
+	return "SELECT " + sqlTaskListCols + "," + G.sql + " AS g," + S + " AS sk FROM task t LEFT JOIN task_derived d ON d.task_id=t.id" + where(c), p, nil
+}
+
+// sqlTaskStateCounts: the filtered tasks per state, without the state filter (listCount rows, g empty); by group too
+// with G.
+func sqlTaskStateCounts(f rowFilter, G *taskGroup) (string, []any, error) {
+	p := []any{}
+	c, err := taskWhere(f, &p, false)
+	if err != nil {
+		return "", nil, err
+	}
+	if G == nil {
+		return "SELECT ''::text AS g," + sqlTaskState + " AS state,count(*) AS n,NULL::text AS label FROM task t" + where(c) + " GROUP BY 2", p, nil
+	}
+	return "SELECT " + G.sql + " AS g," + sqlTaskState + " AS state,count(*) AS n,NULL::text AS label " + taskFrom(*G) + where(c) + " GROUP BY 1,2", p, nil
+}
+
+// sqlTaskGroups: the groups of the filtered list (with the state filter) in key order, with their labels.
+func sqlTaskGroups(f rowFilter, name string, G taskGroup) (string, []any) {
+	p := []any{}
+	c, _ := taskWhere(f, &p, true)
+	return "SELECT " + G.sql + " AS g,''::text AS state,count(*) AS n,min(" + taskLabels[name] + ")::text AS label " + taskFrom(G) + where(c) + " GROUP BY 1 ORDER BY 1", p
+}
+
+func taskFrom(G taskGroup) string {
+	if G.derived {
+		return "FROM task t LEFT JOIN task_derived d ON d.task_id=t.id"
+	}
+	return "FROM task t"
+}
+
+// sqlTaskCount: the counter of the nav: the filtered tasks in the focus (focus: the condition on t.project_id, which
+// adds its parameters to p) and in all.
+func sqlTaskCount(f rowFilter, focus func(p *[]any, col string) string) (string, []any, error) {
+	p := []any{}
+	c, err := taskWhere(f, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	return "SELECT count(*) FILTER (WHERE " + focus(&p, "t.project_id") + "),count(*) FROM task t" + where(c), p, nil
+}
+
+// Sessions (sessions.go sessions_list, list_membership; nav_counts.go).
+
+var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
+
+// sqlSessionState: a session's state, its latest execution's (idle without one).
+const sqlSessionState = `coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle')`
+
+// sqlSessionBase: every session as a list row. The first message and the activity are read per session by its indexed
+// session_id (migration 77): activity_at is the latest change of the session, its messages and events, or the start or
+// end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
+// which is not conversation activity. created_at and archived_at are the session record's (its columns, else its
+// payload, as convTables serves the kind session).
+var sqlSessionBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.seq, nullif(d.title,'') AS title,
+ d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness, d.payload->'agentConfig'->>'id' AS profile_id,
+ CASE WHEN d.created_at IS NOT NULL THEN (extract(epoch FROM d.created_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'createdAt')='number' THEN (d.payload->>'createdAt')::float8 END AS created_ms,
+ CASE WHEN d.archived_at IS NOT NULL THEN (extract(epoch FROM d.archived_at)*1000)::bigint::float8 WHEN jsonb_typeof(d.payload->'archivedAt')='number' THEN (d.payload->>'archivedAt')::float8 END AS archived_ms,
+ ` + sqlSessionState + ` AS state,
+ (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
+ (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message,
+ greatest(d.updated_at,ex.last_at,(SELECT max(m.updated_at) FROM message m WHERE m.session_id=d.id),(SELECT max(v.updated_at) FROM event v WHERE v.session_id=d.id AND NOT v.delta)) AS activity_at,
+ coalesce(ex.n,0) AS executions,
+ (SELECT count(*) FROM question q WHERE q.session_id=d.id AND q.state='open') AS open_questions
+ FROM session d
+ LEFT JOIN LATERAL (SELECT count(*) AS n,max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true)`
+
+// sqlSessionCountBase: the sessions as sqlSessionBase gives them to sessionWhere without a search (id, code, project,
+// archive, actor and state): a counter repeated on execution changes skips the message and activity scans.
+var sqlSessionCountBase = `WITH x AS (SELECT d.id, d.code, d.project_id, d.archived_at, d.actor, ` + sqlSessionState + ` AS state
+ FROM session d)`
+
+// sqlSessionListCols: the columns of sessionListDBRow (sessions.go) over x.
+var sqlSessionListCols = "x.id,x.code,x.title,x.first_message,x.state,x.harness,x.agent_harness,x.profile_id,x.project_id,x.created_ms,x.archived_ms," +
+	sqlJSONTime("x.activity_at") + " AS activity_at,x.executions,x.open_questions"
+
+// sessionAgent: the harness of the last execution, else the configured one (the row's harness mark and the agent group).
+const sessionAgent = "coalesce(x.harness,x.agent_harness)"
+
+// sessionGroups: the first sort key (sessions_list group). Byte order (COLLATE "C") so the client's key comparison
+// (app/src/lists.ts compareKeys) places a live row where the server would. State groups follow attention order.
+var sessionGroups = map[string]string{
+	"none":    `left(x.id,0)`,
+	"project": `(coalesce(x.project_id,'~') COLLATE "C")`,
+	"agent":   `(coalesce(` + sessionAgent + `,'~') COLLATE "C")`,
+	"state":   `(CASE x.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'running' THEN '3' WHEN 'preparing' THEN '4' WHEN 'idle' THEN '5' WHEN 'succeeded' THEN '6' ELSE '7' END)`,
+}
+var sessionGroupLabels = map[string]string{"project": "x.project_id", "agent": sessionAgent, "state": "x.state"}
+
+// sessionSorts: the second sort key inside a group, ascending numbers; "-" before a name is descending.
+var sessionSorts = map[string]string{"activity": "(extract(epoch FROM x.activity_at)*1000)::float8", "created": "(x.seq::float8)"}
+
+const defaultSessionGroup, defaultSessionSort = "project", "-activity"
+
+// sessionOrder: a sessions list's group and sort (name and expressions); an unknown one is a 400, never a silent default.
+type sessionOrder struct{ name, g, s string }
+
+func sessionOrderOf(group, sort *string) (sessionOrder, error) {
+	g := defaultSessionGroup
+	if group != nil {
+		g = *group
+	}
+	G, found := sessionGroups[g]
+	if !found {
+		return sessionOrder{}, fail(400, "group must be project, state, agent or none")
+	}
+	s := defaultSessionSort
+	if sort != nil {
+		s = *sort
+	}
+	S, found := sessionSorts[strings.TrimPrefix(s, "-")]
+	if !found {
+		return sessionOrder{}, fail(400, "sort must be activity, created, -activity or -created")
+	}
+	if strings.HasPrefix(s, "-") {
+		S = "(-" + S + ")"
+	}
+	return sessionOrder{g, G, S}, nil
+}
+
+// cols: the group and sort keys of each row; by: the row order (ids in byte order too, like the client).
+func (o sessionOrder) cols() string { return o.g + " AS g," + o.s + " AS sk" }
+func (o sessionOrder) by() string   { return o.g + "," + o.s + `,x.id COLLATE "C"` }
+
+func sessionWhere(f rowFilter, p *[]any, withState bool) ([]string, error) {
+	// Host command sessions (program-worker: pipeline script steps, readiness checks, host tools) hold one host job and
+	// no conversation; Runners and executions list them, the Conversations list does not.
+	c := []string{"x.archived_at IS NULL", "coalesce(x.actor,'')<>'program-worker'"}
+	if f.Archived {
+		c[0] = "x.archived_at IS NOT NULL"
+	}
+	c = f.projectConds(p, "x.project_id", c)
+	if withState {
+		var err error
+		if c, err = f.stateConds(p, "x.state", sessionStates, c); err != nil {
+			return nil, err
+		}
+	}
+	if f.Search != nil { // the list search syntax (searchWhere)
+		c = append(c, searchWhere(*f.Search, p, []string{"x.title", "x.first_message", "x.id", "x.code"}, map[string]string{"agent": sessionAgent, "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.host_id)", "project": "x.project_id", "state": "x.state"}, withState)...)
+	}
+	return c, nil
+}
+
+// sqlSessionPage: one sessions_list page of at most limit rows after the sort key after (nil: the first page).
+func sqlSessionPage(f rowFilter, o sessionOrder, after []any, limit int) (string, []any, error) {
+	p := []any{}
+	c, err := sessionWhere(f, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	if after != nil {
+		p = append(p, fmt.Sprint(after[0]), num(after[1]), fmt.Sprint(after[2]))
+		c = append(c, fmt.Sprintf(`(%s,%s,x.id COLLATE "C") > ($%d,$%d::float8,$%d)`, o.g, o.s, len(p)-2, len(p)-1, len(p)))
+	}
+	return fmt.Sprintf("%s SELECT %s,%s FROM x WHERE %s ORDER BY %s LIMIT %d", sqlSessionBase, sqlSessionListCols, o.cols(), strings.Join(c, " AND "), o.by(), limit), p, nil
+}
+
+// sqlSessionRows: the rows of ids that the filtered list holds (list_membership), in list order.
+func sqlSessionRows(f rowFilter, o sessionOrder, ids []string) (string, []any, error) {
+	p := []any{}
+	c, err := sessionWhere(f, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	p = append(p, ids)
+	c = append(c, fmt.Sprintf("x.id=ANY($%d)", len(p)))
+	return sqlSessionBase + " SELECT " + sqlSessionListCols + "," + o.cols() + " FROM x WHERE " + strings.Join(c, " AND ") + " ORDER BY " + o.by(), p, nil
+}
+
+// sqlSessionSummary: per state and group key the rows matching the filter without states (n) and those that also match
+// the states (ng), in group key order, with the group's label.
+func sqlSessionSummary(f rowFilter, o sessionOrder) (string, []any, error) {
+	p := []any{}
+	cc, err := sessionWhere(f, &p, false)
+	if err != nil {
+		return "", nil, err
+	}
+	gc, err := sessionWhere(f, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	label := "NULL::text"
+	if l, ok := sessionGroupLabels[o.name]; ok {
+		label = l
+	}
+	return sqlSessionBase + " SELECT x.state," + o.g + " AS g,min(" + label + ") AS label,count(*) AS n,count(*) FILTER (WHERE " +
+		strings.Join(gc, " AND ") + ") AS ng FROM x WHERE " + strings.Join(cc, " AND ") + " GROUP BY 1,2 ORDER BY 2", p, nil
+}
+
+// sqlSessionCount: the counter of the nav: the filtered sessions in the focus (focus: the condition on x.project_id)
+// and in all. Without a search the count needs only each session's state (sqlSessionCountBase).
+func sqlSessionCount(f rowFilter, focus func(p *[]any, col string) string) (string, []any, error) {
+	p := []any{}
+	c, err := sessionWhere(f, &p, true)
+	if err != nil {
+		return "", nil, err
+	}
+	base := sqlSessionBase
+	if f.Search == nil {
+		base = sqlSessionCountBase
+	}
+	return base + " SELECT count(*) FILTER (WHERE " + focus(&p, "x.project_id") + "),count(*) FROM x" + where(c), p, nil
+}
+
+// Delete and purge (cleanup.go): a cascade's statements over the tables and columns of referenceMap, objectTables,
+// tombstoned and purgeOrder (and the foreign keys referenceKeys reads from the schema); the ids are bind parameters,
+// one text[] per kind (args).
+
+// sql: the reference over the row: its column, or its expression.
+func (r objectRef) sql() string {
+	if r.expr != "" {
+		return r.expr
+	}
+	return r.column
+}
+
+// match: the reference names one of the ids param holds.
+func (r objectRef) match(param string) string {
+	m := r.sql() + " = ANY(" + param + ")"
+	if r.array {
+		m = r.sql() + " && " + param
+	}
+	return m
+}
+
+// args builds one SQL predicate's parameters: one text[] per kind.
+type args struct {
+	c    *cascade
+	vals []any
+	at   map[string]int
+}
+
+func (a *args) of(kind string) string {
+	if a.at == nil {
+		a.at = map[string]int{}
+	}
+	n, ok := a.at[kind]
+	if !ok {
+		a.vals = append(a.vals, a.c.sets[kind])
+		n = len(a.vals)
+		a.at[kind] = n
+	}
+	return fmt.Sprintf("$%d::text[]", n)
+}
+
+// goesWith: the predicate of rows of table that belong to the cascade, "false" when none can.
+func (c *cascade) goesWith(table string, a *args) string {
+	conds := []string{}
+	for _, r := range c.refs {
+		if r.table == table && (r.mode == refOwn || (r.mode == refWithProject && c.kind == "project")) && len(c.sets[r.kind]) > 0 {
+			conds = append(conds, r.match(a.of(r.kind)))
+		}
+	}
+	if len(conds) == 0 {
+		return "false"
+	}
+	return "(" + strings.Join(conds, " OR ") + ")"
+}
+
+func andFilter(filter, where string) string {
+	if filter == "" {
+		return where
+	}
+	return filter + " AND " + where
+}
+
+// sqlCascadeIDs: the ids of table's rows that go with the cascade (where: goesWith).
+func sqlCascadeIDs(table, filter, where string) string {
+	return "SELECT id FROM " + table + " WHERE " + andFilter(filter, where) + " ORDER BY id"
+}
+
+// sqlKeptBy: the first row of table that keeps an object of the cascade (where), with the index of its reference
+// (label: CASE WHEN <match> THEN <i> ...) and its id.
+func sqlKeptBy(table, label, where, kept string) string {
+	return "SELECT (" + label + " END)::int AS ref, coalesce(to_jsonb(x)->>'id', to_jsonb(x)->>'task_id', '') AS rid FROM " + table +
+		" x WHERE " + andFilter(kept, where) + " LIMIT 1"
+}
+
+// sqlTombstoneObjects: the objects of table whose ids are $1 get their tombstone.
+func sqlTombstoneObjects(table, filter string) string {
+	return "UPDATE " + table + " SET tombstoned_at=now() WHERE " + andFilter(filter, "id=ANY($1) AND tombstoned_at IS NULL")
+}
+
+// sqlTombstoneRows: the rows of table that go with the cascade (where) get their tombstone.
+func sqlTombstoneRows(table, where, kept string) string {
+	return "UPDATE " + table + " SET tombstoned_at=now() WHERE " + andFilter(kept, where+" AND tombstoned_at IS NULL")
+}
+
+// sqlPurgeRows: the rows of table that go with the cascade (where) are deleted.
+func sqlPurgeRows(table, where, kept string) string {
+	return "DELETE FROM " + table + " WHERE " + andFilter(kept, where)
+}

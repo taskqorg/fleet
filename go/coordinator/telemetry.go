@@ -197,6 +197,24 @@ func hostSpans(q *Request, b *contract.SpanBatchRequest) (any, error) {
 	return contract.SpanBatchReply{Accepted: int64(accepted), Skipped: int64(skipped)}, nil
 }
 
+// clickhouseStrings: an Array(String) parameter value (ClickHouse literal syntax).
+func clickhouseStrings(ids []string) string {
+	q := make([]string, len(ids))
+	for i, s := range ids {
+		q[i] = "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
+	}
+	return "[" + strings.Join(q, ",") + "]"
+}
+
+// spanDeleteExecutions: the spans of purged executions go (system_purge, cleanup.go runPurgeTasks); without a span
+// store there are none.
+func spanDeleteExecutions(ctx context.Context, ids []string) error {
+	if spanStore == nil {
+		return nil
+	}
+	return spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(ids)})
+}
+
 // spanScope: the SQL filter and parameters of the caller's spans: none with full access, else only rows of granted
 // projects (system spans have no project and never match).
 func spanScope(p *Person, params map[string]string) string {

@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	_ "embed"
+	"crypto/sha256"
+	"embed"
 	"errors"
 	"fmt"
 	"math"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -149,9 +152,7 @@ func (e advisoryBusyError) Error() string { return fmt.Sprintf("%s: %q", errAdvi
 func (e advisoryBusyError) Unwrap() error { return errAdvisoryBusy }
 
 func tryAdvisoryLock(ctx context.Context, tx pgx.Tx, key string) (bool, error) {
-	var held bool
-	err := tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))", key).Scan(&held)
-	return held, err
+	return db.New(tx).TryAdvisoryXactLock(ctx, key)
 }
 
 func acquireTxLocksMode(ctx context.Context, tx pgx.Tx, noWait bool, keys ...string) error {
@@ -194,7 +195,7 @@ func acquireTxLocksMode(ctx context.Context, tx pgx.Tx, noWait bool, keys ...str
 			if !held {
 				return advisoryBusyError(k)
 			}
-		} else if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", k); err != nil {
+		} else if err := db.New(tx).AdvisoryXactLock(ctx, k); err != nil {
 			return err
 		}
 		r, _ := lockRank(k)
@@ -246,14 +247,6 @@ func canAcquireTxLock(tx pgx.Tx, key string) bool {
 		return true
 	}
 	return !st.hasMax || r > st.maxRank || (r == st.maxRank && key > st.maxKey)
-}
-
-type HTTPError struct {
-	Code  int
-	Msg   string
-	Extra map[string]any // more fields of the error body (a 409's DefinitionConflict)
-	// Refused marks a refusal by design (a removed host): its span outcome is refused, not error.
-	Refused bool
 }
 
 func (e *HTTPError) Error() string    { return e.Msg }
@@ -379,18 +372,19 @@ func (s *Store) once(ctx context.Context, sc *Scope, write bool, sortedLocks []s
 	err := pgx.BeginTxFunc(ctx, pool, opts, func(tx pgx.Tx) error {
 		t = tx
 		txLockStates.Store(tx, &txLockState{write: write, held: map[string]bool{}})
+		q := db.New(tx)
 		if a, _ := ctx.Value(actorKey{}).(string); a != "" {
-			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.actor',$1,true)", a); err != nil {
+			if err := q.TxSetActor(ctx, a); err != nil {
 				return err
 			}
 		}
 		if sc != nil {
-			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)", sc.ProjectIDs, sc.Person); err != nil {
+			if err := q.TxSetScope(ctx, db.TxSetScopeParams{ProjectIds: sc.ProjectIDs, Person: sc.Person}); err != nil {
 				return err
 			}
 		}
 		if show, _ := ctx.Value(showDeletedKey{}).(bool); show {
-			if _, err := tx.Exec(ctx, "SELECT set_config('fleet.deleted','on',true)"); err != nil {
+			if err := q.TxShowDeleted(ctx, "on"); err != nil {
 				return err
 			}
 		}
@@ -426,12 +420,28 @@ func onEnd(tx pgx.Tx, fn func(committed bool)) {
 var migrationSplit = regexp.MustCompile(`(?m)^-- migration (\d+)`)
 
 // migrate applies schema.sql as the owner role: each "-- migration N" section once, in order, in one transaction that takes
-// the migration lock before it checks schema_migration, so concurrent starts never run a section twice.
+// the migration lock before it checks schema_migration, so concurrent starts never run a section twice. Then
+// applySchemaFiles brings every function, trigger and policy to its one current definition in schema/*.sql.
 // Migration 6's JavaScript document move is a no-op on an empty database and is not ported.
 func migrate(ctx context.Context, url string) error {
-	return migrateSQL(ctx, url, schemaSQL)
+	if err := migrateSQL(ctx, url, schemaSQL); err != nil {
+		return err
+	}
+	return applySchemaFiles(ctx, url)
 }
 
+// migrateLocked runs fn in one transaction holding the migration lock (GLOBAL), so concurrent starts apply each step once.
+func migrateLocked(ctx context.Context, conn *pgx.Conn, fn func(q *db.Queries, tx pgx.Tx) error) error {
+	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		if err := q.AdvisoryXactLock(ctx, GLOBAL); err != nil {
+			return err
+		}
+		return fn(q, tx)
+	})
+}
+
+// migrateSQL applies the numbered sections of sqlText that schema_migration does not list yet.
 func migrateSQL(ctx context.Context, url, sqlText string) error {
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
@@ -450,24 +460,64 @@ func migrateSQL(ctx context.Context, url, sqlText string) error {
 			end = idx[i+1][0]
 		}
 		body := string(text[m[0]:end])
-		err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", GLOBAL); err != nil {
-				return err
-			}
+		err := migrateLocked(ctx, conn, func(q *db.Queries, tx pgx.Tx) error {
 			// Decided under the lock: another coordinator may have applied this version while this one waited for it.
-			var applied bool
-			if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migration WHERE version=$1)", version).Scan(&applied); err != nil || applied {
+			if applied, err := q.MigrationApplied(ctx, int32(version)); err != nil || applied {
 				return err
 			}
 			// Simple protocol: the whole section runs as one multi-statement query inside the transaction.
 			if _, err := tx.Exec(ctx, body, pgx.QueryExecModeSimpleProtocol); err != nil {
 				return err
 			}
-			_, err := tx.Exec(ctx, "INSERT INTO schema_migration(version) VALUES($1)", version)
-			return err
+			return q.MigrationRecord(ctx, int32(version))
 		})
 		if err != nil {
 			return errors.New("migration " + strconv.Itoa(version) + ": " + err.Error())
+		}
+	}
+	return nil
+}
+
+// The current definitions of functions, triggers and policies (S1): functions first, which the triggers and policies call.
+//
+//go:embed schema/*.sql
+var schemaFS embed.FS
+
+var schemaFileOrder = []string{"functions.sql", "triggers.sql", "policies.sql"}
+
+// applySchemaFiles runs each schema/*.sql file whose content schema_file does not record yet, in one transaction under
+// the migration lock, and records its hash: an unchanged file is not run again, so a start takes no table lock.
+func applySchemaFiles(ctx context.Context, url string) error {
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS schema_file(name text PRIMARY KEY,sha256 text NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())"); err != nil {
+		return err
+	}
+	for _, name := range schemaFileOrder {
+		body, err := schemaFS.ReadFile("schema/" + name)
+		if err != nil {
+			return err
+		}
+		sum := fmt.Sprintf("%x", sha256.Sum256(body))
+		err = migrateLocked(ctx, conn, func(q *db.Queries, tx pgx.Tx) error {
+			if have, err := q.SchemaFileHash(ctx, name); err == nil && have == sum || err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			// A policy is replaced under its table's exclusive lock: a start waits for no long reader past this; it fails
+			// and the next start applies the file.
+			if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = '30s'"); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, string(body), pgx.QueryExecModeSimpleProtocol); err != nil {
+				return err
+			}
+			return q.SchemaFileRecord(ctx, db.SchemaFileRecordParams{Name: name, Sha256: sum})
+		})
+		if err != nil {
+			return errors.New("schema/" + name + ": " + err.Error())
 		}
 	}
 	return nil
@@ -481,15 +531,15 @@ func unscoped[T any](q *Request, fn func() (T, error)) (T, error) {
 	if q.tx == nil || q.person == nil || fullAccess(q.person) {
 		return fn()
 	}
-	var ids, person string
-	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(current_setting('fleet.project_ids',true),''),coalesce(current_setting('fleet.person',true),'')").Scan(&ids, &person); err != nil {
+	was, err := q.db().TxScope(q.ctx())
+	if err != nil {
 		return zero, err
 	}
-	if _, err := q.tx.Exec(q.ctx(), "SELECT set_config('fleet.project_ids','*',true),set_config('fleet.person','',true)"); err != nil {
+	if err := q.db().TxSetScope(q.ctx(), db.TxSetScopeParams{ProjectIds: "*", Person: ""}); err != nil {
 		return zero, err
 	}
 	out, err := fn()
-	if _, rerr := q.tx.Exec(q.ctx(), "SELECT set_config('fleet.project_ids',$1,true),set_config('fleet.person',$2,true)", ids, person); rerr != nil && err == nil {
+	if rerr := q.db().TxSetScope(q.ctx(), db.TxSetScopeParams{ProjectIds: was.ProjectIds, Person: was.Person}); rerr != nil && err == nil {
 		err = rerr
 	}
 	return out, err
@@ -571,19 +621,6 @@ func keysOnly(b doc, allowed ...string) bool {
 	return true
 }
 
-// queryRows: rows as maps (column name -> value); jsonb decodes to JSON values, timestamps to time.Time.
-func queryRows(q *Request, sql string, args ...any) ([]doc, error) {
-	rs, err := q.tx.Query(q.ctx(), sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	out, err := pgx.CollectRows(rs, pgx.RowToMap)
-	if out == nil {
-		out = []map[string]any{}
-	}
-	return out, err
-}
-
 func ownerEmailOf(a *App) string {
 	for _, p := range a.peopleSnapshot().list() {
 		if p.Owner {
@@ -646,14 +683,19 @@ func backgroundRequest(ctx context.Context, a *App, tx pgx.Tx) *Request {
 // askRow inserts one question; returns its id.
 func askRow(q *Request, kind, text string, projectID any, options any, askedBy string, data doc) (string, error) {
 	id := newID()
-	var opts any
+	var opts []byte
 	if options != nil {
 		opts = jsonBytes(options)
 	}
-	if data == nil {
-		data = doc{}
+	d := []byte("{}")
+	if data != nil {
+		d = jsonBytes(data)
 	}
-	err := exec(q, "INSERT INTO question(id,kind,project_id,text,options,asked_by,data) VALUES($1,$2,$3,$4,$5,$6,$7)", id, kind, projectID, text, opts, askedBy, jsonBytes(data))
+	var project *string
+	if p, ok := projectID.(string); ok {
+		project = &p
+	}
+	err := q.db().QuestionAsk(q.ctx(), db.QuestionAskParams{ID: id, Kind: db.QuestionKind(kind), ProjectID: project, Text: text, Options: opts, AskedBy: &askedBy, Data: d})
 	return id, err
 }
 
@@ -690,34 +732,16 @@ func writeConnectionCost(q *Request, id string, cost any) error {
 		return err
 	}
 	basis := "measured"
-	var c any
+	var c []byte
 	if cost == nil {
 		basis = "unavailable"
 	} else {
 		c = jsonBytes(cost)
 	}
-	return exec(q, `INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,connection_cost,connection_cost_basis,wall_ms,wall_ms_basis,active_ms,active_ms_basis,computed_at)
-	 SELECT e.id,e.project_id,e.directed_by,'metered',$2,$3,
-	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0,(extract(epoch FROM e.ended_at-e.started_at)*1000)::bigint) END,
-	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN 'measured' ELSE 'unavailable' END,
-	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN greatest(0,(extract(epoch FROM e.ended_at-e.started_at)*1000)::bigint) END,
-	  CASE WHEN e.started_at IS NOT NULL AND e.ended_at IS NOT NULL THEN 'measured' ELSE 'unavailable' END,
-	  now()
-	 FROM execution e WHERE e.id=$1
-	 ON CONFLICT(execution_id) DO UPDATE SET
-	  project_id=excluded.project_id,
-	  directed_by=coalesce(excluded.directed_by,execution_totals.directed_by),
-	  billing_basis='metered',
-	  connection_cost=excluded.connection_cost,
-	  connection_cost_basis=excluded.connection_cost_basis,
-	  wall_ms=coalesce(excluded.wall_ms,execution_totals.wall_ms),
-	  wall_ms_basis=CASE WHEN coalesce(excluded.wall_ms,execution_totals.wall_ms) IS NOT NULL THEN 'measured' ELSE execution_totals.wall_ms_basis END,
-	  active_ms=coalesce(excluded.active_ms,execution_totals.active_ms),
-	  active_ms_basis=CASE WHEN coalesce(excluded.active_ms,execution_totals.active_ms) IS NOT NULL THEN 'measured' ELSE execution_totals.active_ms_basis END,
-	  computed_at=now()`, id, c, basis)
+	return q.db().ConnectionCostWrite(q.ctx(), db.ConnectionCostWriteParams{Cost: c, Basis: basis, ID: id})
 }
 
-func sortedKeysOf(m map[string]any) []string {
+func sortedKeysOf[V any](m map[string]V) []string {
 	k := make([]string, 0, len(m))
 	for x := range m {
 		k = append(k, x)

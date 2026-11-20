@@ -332,17 +332,6 @@ CREATE TABLE delivery_ui_seen (
   "project_id" text NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
-CREATE TABLE document (
-  "kind" text NOT NULL,
-  "id" text NOT NULL,
-  "data" jsonb NOT NULL,
-  "project_id" text,
-  "seq" bigint NOT NULL,
-  "updated_at" timestamp with time zone NOT NULL,
-  "tombstoned_at" timestamp with time zone,
-  "execution_ref" text,
-  "session_ref" text
-);
 CREATE TABLE entity_code (
   "code" text NOT NULL,
   "entity_id" text NOT NULL,
@@ -882,6 +871,11 @@ CREATE TABLE run_token (
   "updated_at" timestamp with time zone NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
+CREATE TABLE schema_file (
+  "name" text NOT NULL,
+  "sha256" text NOT NULL,
+  "applied_at" timestamp with time zone NOT NULL
+);
 CREATE TABLE schema_migration (
   "version" integer NOT NULL,
   "applied_at" timestamp with time zone NOT NULL
@@ -1095,6 +1089,7 @@ CREATE TABLE worker_done (
 );
 CREATE FUNCTION fleet_deleted_projects() RETURNS text[] LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_enqueue_wake(ch text, body text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION fleet_exec_conn_meta(conn_name text, aid text) RETURNS TABLE(provider text, is_api_conn boolean) LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_issue_code(p_type text, p_project text, p_entity text) RETURNS text LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_own_projectless_execution(eid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION fleet_own_projectless_session(sid text) RETURNS boolean LANGUAGE sql AS $$ SELECT NULL $$;
@@ -1114,4 +1109,6 @@ CREATE FUNCTION resource_enqueue_source(eid text, old_project text, new_project 
 CREATE FUNCTION resource_execution_facts(r execution) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION resource_metadata_class(p_kind text, p_id text, p_provider jsonb) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION resource_reasons_merge(old jsonb, delta jsonb) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION task_derived_drift() RETURNS TABLE(task_id text, present boolean, stored jsonb, expected jsonb) LANGUAGE sql AS $$ SELECT NULL $$;
 CREATE FUNCTION task_derived_recompute(p_task text) RETURNS void LANGUAGE sql AS $$ SELECT NULL $$;
+CREATE FUNCTION task_derived_values(p_task text) RETURNS TABLE(project_id text, agent text, host text, started_at timestamp with time zone, open_questions integer, executions integer, last_agent text) LANGUAGE sql AS $$ SELECT NULL $$;

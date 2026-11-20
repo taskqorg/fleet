@@ -310,6 +310,19 @@ func (q *Queries) TaskDependencyAdd(ctx context.Context, arg TaskDependencyAddPa
 	return err
 }
 
+const taskDerivedDrift = `-- name: TaskDerivedDrift :one
+SELECT coalesce(jsonb_agg(jsonb_build_object('taskId', d.task_id, 'stored', d.stored, 'expected', d.expected)), '[]')::jsonb AS drifted
+FROM task_derived_drift() d
+`
+
+// The tasks whose stored derived row differs from the one their executions and questions give (task_derived_check).
+func (q *Queries) TaskDerivedDrift(ctx context.Context) ([]byte, error) {
+	row := q.db.QueryRow(ctx, taskDerivedDrift)
+	var drifted []byte
+	err := row.Scan(&drifted)
+	return drifted, err
+}
+
 const taskExecutionLink = `-- name: TaskExecutionLink :one
 SELECT task_id,project_id,session_id FROM execution WHERE id=$1
 `

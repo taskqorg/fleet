@@ -11,205 +11,154 @@ import (
 
 	"fleet/contract"
 	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
-var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
-
-// sessionState: a session's state, its latest execution's (idle without one); nav_counts.go navSessionBase shares it.
-const sessionState = `coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle')`
-
-// sessionBase: every session as a list row. The first message and the activity are read per session by its indexed
-// session_id (migration 77): activity_at is the latest change of the session, its messages and events, or the start or
-// end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
-// which is not conversation activity.
-var sessionBase = `WITH x AS (SELECT d.id, d.code, ` + convTables["session"].record() + ` AS data, d.project_id, d.seq, nullif(d.title,'') AS title,
- d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness,
- ` + sessionState + ` AS state,
- (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
- (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message,
- greatest(d.updated_at,ex.last_at,(SELECT max(m.updated_at) FROM message m WHERE m.session_id=d.id),(SELECT max(v.updated_at) FROM event v WHERE v.session_id=d.id AND NOT v.delta)) AS activity_at,
- coalesce(ex.n,0) AS executions,
- (SELECT count(*) FROM question q WHERE q.session_id=d.id AND q.state='open') AS open_questions
- FROM session d
- LEFT JOIN LATERAL (SELECT count(*) AS n,max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true)`
-
-// sessionAgent: the harness of the last execution, else the configured one (the row's harness mark and the agent group).
-const sessionAgent = "coalesce(x.harness,x.agent_harness)"
-
-// sessionGroups: the first sort key (sessions_list group). Byte order (COLLATE "C") so the client's key comparison
-// (app/src/lists.ts compareKeys) places a live row where the server would. State groups follow attention order.
-var sessionGroups = map[string]string{
-	"none":    `left(x.id,0)`,
-	"project": `(coalesce(x.project_id,'~') COLLATE "C")`,
-	"agent":   `(coalesce(` + sessionAgent + `,'~') COLLATE "C")`,
-	"state":   `(CASE x.state WHEN 'waiting' THEN '1' WHEN 'failed' THEN '2' WHEN 'running' THEN '3' WHEN 'preparing' THEN '4' WHEN 'idle' THEN '5' WHEN 'succeeded' THEN '6' ELSE '7' END)`,
-}
-var sessionGroupLabels = map[string]string{"project": "x.project_id", "agent": sessionAgent, "state": "x.state"}
-
-// sessionSorts: the second sort key inside a group, ascending numbers; "-" before a name is descending.
-var sessionSorts = map[string]string{"activity": "(extract(epoch FROM x.activity_at)*1000)::float8", "created": "(x.seq::float8)"}
-
-const defaultSessionGroup, defaultSessionSort = "project", "-activity"
-
-// sessionOrder: a sessions list's group and sort (name and expressions); an unknown one is a 400, never a silent default.
-type sessionOrder struct{ name, g, s string }
-
-func sessionOrderOf(group, sort any) (sessionOrder, error) {
-	g, ok := group.(string)
-	if group == nil {
-		g, ok = defaultSessionGroup, true
-	}
-	G, found := sessionGroups[g]
-	if !ok || !found {
-		return sessionOrder{}, fail(400, "group must be project, state, agent or none")
-	}
-	s, ok := sort.(string)
-	if sort == nil {
-		s, ok = defaultSessionSort, true
-	}
-	S, found := sessionSorts[strings.TrimPrefix(s, "-")]
-	if !ok || !found {
-		return sessionOrder{}, fail(400, "sort must be activity, created, -activity or -created")
-	}
-	if strings.HasPrefix(s, "-") {
-		S = "(-" + S + ")"
-	}
-	return sessionOrder{g, G, S}, nil
+// sessionListDBRow: a sessions_list and list_membership row (sqlSessionListCols) with its group and sort keys.
+type sessionListDBRow struct {
+	ID            string   `db:"id"`
+	Code          *string  `db:"code"`
+	Title         *string  `db:"title"`
+	FirstMessage  *string  `db:"first_message"`
+	State         string   `db:"state"`
+	Harness       *string  `db:"harness"`
+	AgentHarness  *string  `db:"agent_harness"`
+	ProfileID     *string  `db:"profile_id"`
+	ProjectID     *string  `db:"project_id"`
+	CreatedAt     *float64 `db:"created_ms"`
+	ArchivedAt    *float64 `db:"archived_ms"`
+	ActivityAt    *string  `db:"activity_at"`
+	Executions    int64    `db:"executions"`
+	OpenQuestions int64    `db:"open_questions"`
+	G             string   `db:"g"`
+	Sk            float64  `db:"sk"`
 }
 
-// cols: the group and sort keys of each row; by: the row order (ids in byte order too, like the client).
-func (o sessionOrder) cols() string { return o.g + " AS g," + o.s + " AS sk" }
-func (o sessionOrder) by() string   { return o.g + "," + o.s + `,x.id COLLATE "C"` }
+func (x sessionListDBRow) row() contract.SessionRow {
+	// The stored title (session_rename, or the generated one: session_titles.go); until it exists, the first message.
+	var title *string
+	if t := []rune(firstString(deref(x.Title), deref(x.FirstMessage))); len(t) > 0 {
+		title = ptr(string(t[:min(200, len(t))]))
+	}
+	harness := x.Harness
+	if harness == nil {
+		harness = x.AgentHarness
+	}
+	return contract.SessionRow{Id: x.ID, Code: x.Code, Title: title, State: x.State, Harness: harness, ProfileId: x.ProfileID, ProjectId: x.ProjectID,
+		CreatedAt: x.CreatedAt, ActivityAt: x.ActivityAt, Executions: x.Executions, OpenQuestions: x.OpenQuestions, ArchivedAt: x.ArchivedAt,
+		SortKey: sortKey(x.G, x.Sk, x.ID)}
+}
 
-func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
-	if err := filterFields(f, "projectId", "excludeProjectId", "state", "search", "archived"); err != nil {
-		return nil, err
-	}
-	// Host command sessions (program-worker: pipeline script steps, readiness checks, host tools) hold one host job and
-	// no conversation; Runners and executions list them, the Conversations list does not.
-	c := []string{"x.archived_at IS NULL", "coalesce(x.actor,'')<>'program-worker'"}
-	if f["archived"] == true {
-		c[0] = "x.archived_at IS NOT NULL"
-	}
-	c, err := projectWhere(f, p, "x.project_id", c)
+// sortKey: a list row's position, [group key, sort key, id].
+func sortKey(g string, sk float64, id string) []contract.SortKeyPart {
+	return []contract.SortKeyPart{jsonBytes(g), jsonBytes(sk), jsonBytes(id)}
+}
+
+// sessionFilter: a sessions list's filter as sent (rowFilterOf).
+func sessionFilter(raw json.RawMessage) (rowFilter, error) {
+	return rowFilterOf(raw, "projectId", "excludeProjectId", "state", "search", "archived")
+}
+
+// sessionListRows: the session rows of an assembled list statement.
+func sessionListRows(q *Request, sql string, p []any, err error) ([]contract.SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	if st, ok := f["state"].([]any); withState && ok && len(st) > 0 {
-		ss := []string{}
-		for _, x := range st {
-			v, _ := x.(string)
-			if !slices.Contains(sessionStates, v) {
-				return nil, fail(400, "Invalid state")
-			}
-			ss = append(ss, v)
-		}
-		*p = append(*p, ss)
-		c = append(c, fmt.Sprintf("x.state=ANY($%d)", len(*p)))
+	rs, err := typedRows[sessionListDBRow](q, sql, p)
+	out := make([]contract.SessionRow, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.row())
 	}
-	if s, ok := f["search"].(string); ok { // the list search syntax (search.go searchWhere)
-		c = append(c, searchWhere(s, p, []string{"x.title", "x.first_message", "x.id", "x.code"}, map[string]string{"agent": sessionAgent, "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.host_id)", "project": "x.project_id", "state": "x.state"}, withState)...)
-	}
-	return c, nil
-}
-
-func sessionRow(x doc) doc {
-	d := mapOf(x["data"])
-	ac := mapOf(d["agentConfig"])
-	// The stored title (session_rename, or the generated one: session_titles.go); until it exists, the first message.
-	title := any(nil)
-	if t := []rune(firstString(x["title"], x["first_message"])); len(t) > 0 {
-		title = string(t[:min(200, len(t))])
-	}
-	harness := x["harness"]
-	if harness == nil {
-		harness = ac["harness"]
-	}
-	return doc{"id": x["id"], "code": x["code"], "title": title, "state": x["state"], "harness": harness, "profileId": ac["id"], "projectId": x["project_id"], "createdAt": d["createdAt"],
-		"activityAt": x["activity_at"], "executions": x["executions"], "openQuestions": x["open_questions"], "archivedAt": d["archivedAt"], "sortKey": []any{x["g"], num(x["sk"]), x["id"]}}
+	return out, err
 }
 
 // sessionSummary: counts per state (without the state filter, for the quick filter) and the groups of the filtered list,
-// in one pass over sessionBase: rows match the filter without states, and the groups count those that also match the states.
-func sessionSummary(q *Request, f doc, o sessionOrder) (doc, []doc, error) {
-	p := []any{}
-	cc, err := sessionWhere(f, &p, false)
+// in one pass over the sessions: rows match the filter without states, and the groups count those that also match the states.
+func sessionSummary(q *Request, f rowFilter, o sessionOrder) (map[string]int64, []contract.ListGroup, error) {
+	sql, p, err := sqlSessionSummary(f, o)
 	if err != nil {
 		return nil, nil, err
 	}
-	gc, err := sessionWhere(f, &p, true)
+	type summaryRow struct {
+		State string  `db:"state"`
+		G     string  `db:"g"`
+		Label *string `db:"label"`
+		N     int64   `db:"n"`
+		Ng    int64   `db:"ng"`
+	}
+	rs, err := typedRows[summaryRow](q, sql, p)
 	if err != nil {
 		return nil, nil, err
 	}
-	label := "NULL::text"
-	if l, ok := sessionGroupLabels[o.name]; ok {
-		label = l
-	}
-	rs, err := rowsOf(q, sessionBase+" SELECT x.state,"+o.g+" AS g,min("+label+") AS label,count(*) AS n,count(*) FILTER (WHERE "+strings.Join(gc, " AND ")+") AS ng FROM x WHERE "+strings.Join(cc, " AND ")+" GROUP BY 1,2 ORDER BY 2", p...)
-	if err != nil {
-		return nil, nil, err
-	}
-	counts, groups := zeroCounts(sessionStates), []doc{}
+	counts, groups := zeroCounts(sessionStates), []contract.ListGroup{}
 	for _, r := range rs {
-		counts[astr(r["state"])] = num(counts[astr(r["state"])]) + num(r["n"])
-		if o.name == "none" || num(r["ng"]) == 0 {
+		counts[r.State] += r.N
+		if o.name == "none" || r.Ng == 0 {
 			continue
 		}
 		// Rows come ordered by group key, so a group's rows (one per state) are adjacent.
-		if n := len(groups); n > 0 && groups[n-1]["key"] == r["g"] {
-			groups[n-1]["count"] = num(groups[n-1]["count"]) + num(r["ng"])
-			if groups[n-1]["label"] == nil {
-				groups[n-1]["label"] = r["label"]
+		if n := len(groups); n > 0 && groups[n-1].Key == r.G {
+			groups[n-1].Count += r.Ng
+			if groups[n-1].Label == nil {
+				groups[n-1].Label = r.Label
 			}
 			continue
 		}
-		groups = append(groups, doc{"key": r["g"], "label": r["label"], "count": num(r["ng"])})
+		groups = append(groups, contract.ListGroup{Key: r.G, Label: r.Label, Count: r.Ng})
 	}
 	return counts, groups, nil
 }
 
-func sessionsPage(q *Request, b doc) (doc, error) {
-	f := mapOf(b["filter"])
-	if f == nil {
-		f = doc{}
+// listAfter: a page request's after, the sort key of the last row it has: [group key, sort key, id].
+func listAfter(after []json.RawMessage) ([]any, error) {
+	if after == nil {
+		return nil, nil
 	}
-	o, err := sessionOrderOf(b["group"], b["sort"])
+	var a []any
+	if json.Unmarshal(jsonBytes(after), &a) != nil || len(a) != 3 {
+		return nil, fail(400, "Invalid after")
+	}
+	return a, nil
+}
+
+func sessionsPage(q *Request, r *contract.SessionsListRequest) (contract.SessionsListReply, error) {
+	var out contract.SessionsListReply
+	// Read as sent: a null projectId item means sessions outside projects, which the typed list cannot hold.
+	var raw struct {
+		Filter json.RawMessage `json:"filter"`
+	}
+	json.Unmarshal(q.body, &raw)
+	f, err := sessionFilter(raw.Filter)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	limit := pageLimit(b["limit"], 100)
-	p := []any{}
-	c, err := sessionWhere(f, &p, true)
+	o, err := sessionOrderOf(r.Group, r.Sort)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	if b["after"] != nil {
-		a, ok := b["after"].([]any)
-		if !ok || len(a) != 3 {
-			return nil, fail(400, "Invalid after")
-		}
-		p = append(p, fmt.Sprint(a[0]), num(a[1]), fmt.Sprint(a[2]))
-		c = append(c, fmt.Sprintf(`(%s,%s,x.id COLLATE "C") > ($%d,$%d::float8,$%d)`, o.g, o.s, len(p)-2, len(p)-1, len(p)))
+	limit := 100
+	if r.Limit != nil {
+		limit = pageLimit(float64(*r.Limit), 100)
 	}
-	rs, err := rowsOf(q, fmt.Sprintf("%s SELECT *,%s FROM x WHERE %s ORDER BY %s LIMIT %d", sessionBase, o.cols(), strings.Join(c, " AND "), o.by(), limit+1), p...)
+	after, err := listAfter(r.After)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	counts, groups, err := sessionSummary(q, f, o)
+	sql, p, err := sqlSessionPage(f, o, after, limit+1)
+	rs, err := sessionListRows(q, sql, p, err)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	page := []doc{}
-	for i, r := range rs {
-		if i < limit {
-			page = append(page, sessionRow(r))
-		}
+	if out.Counts, out.Groups, err = sessionSummary(q, f, o); err != nil {
+		return out, err
 	}
-	var next any
+	out.Sessions = rs[:min(limit, len(rs))]
 	if len(rs) > limit {
-		next = page[len(page)-1]["sortKey"]
+		out.NextAfter = jsonBytes(out.Sessions[len(out.Sessions)-1].SortKey)
 	}
-	return doc{"sessions": page, "nextAfter": next, "counts": counts, "total": total(counts), "groups": groups}, nil
+	out.Total = total(out.Counts)
+	return out, nil
 }
 
 func related(q *Request, d doc) (doc, error) {
@@ -232,13 +181,17 @@ func related(q *Request, d doc) (doc, error) {
 	return out, nil
 }
 
-func delegationsWhere(q *Request, sql string, id string) ([]doc, error) {
-	ds, err := rows(q, "SELECT delegation FROM execution WHERE delegation IS NOT NULL AND ("+sql+") ORDER BY seq", id)
+// delegationsOf: the delegations read (SessionDelegations, ExecutionDelegations), each with the states of its runs.
+func delegationsOf(q *Request, ds [][]byte, err error) ([]doc, error) {
 	if err != nil {
 		return nil, err
 	}
 	out := []doc{}
-	for _, d := range ds {
+	for _, raw := range ds {
+		var d doc
+		if json.Unmarshal(raw, &d) != nil {
+			continue
+		}
 		r, err := related(q, d)
 		if err != nil {
 			return nil, err
@@ -261,12 +214,16 @@ func sessionGet(q *Request, sid string) (doc, error) {
 		s[k] = x
 	}
 	s["sessionId"] = sid
-	c, err := first(q, "SELECT code FROM session WHERE id=$1", sid)
-	if err != nil {
+	code, err := q.db().SessionCode(q.ctx(), sid)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	s["code"] = c["code"]
-	if s["delegations"], err = delegationsWhere(q, "delegation->>'parentSessionId'=$1 OR delegation->>'childSessionId'=$1", sid); err != nil {
+	s["code"] = nil
+	if code != nil {
+		s["code"] = *code
+	}
+	ds, err := q.db().SessionDelegations(q.ctx(), sid)
+	if s["delegations"], err = delegationsOf(q, ds, err); err != nil {
 		return nil, err
 	}
 	if s["messages"], err = all(q, "message", doc{"sessionId": sid}); err != nil {
@@ -373,6 +330,41 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	return teardownCommand(q, s, last, false)
 }
 
+// sessionDeleteArchive: a deleted session is archived (object_delete, cleanup.go tombstone) and its worktree torn down
+// on the host of its last execution, unless it is archived already or a teardown is on its way; torn: one was queued.
+func sessionDeleteArchive(q *Request, sid string) (bool, error) {
+	s, err := get(q, sid, "session")
+	if err != nil {
+		return false, err
+	}
+	if s["archivedAt"] != nil {
+		return false, nil
+	}
+	if pending, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(pending) > 0 {
+		return false, err
+	}
+	es, err := sessionExecutions(q, sid)
+	if err != nil {
+		return false, err
+	}
+	var last doc
+	for _, e := range es {
+		if astr(e["hostId"]) != "" {
+			last = e
+		}
+	}
+	s["archivedAt"] = nowMs()
+	if err := put(q, "session", s); err != nil {
+		return false, err
+	}
+	if last == nil {
+		return false, nil
+	}
+	// Queued after the stop: the executor keeps a worktree with uncommitted or unpushed work (cleanup.keepWhen).
+	t, err := teardownCommand(q, s, last, false)
+	return err == nil && t["kind"] == "teardown", err
+}
+
 // teardownCommand: the teardown of a session's worktree on the host of its last execution. deleteBranch: the work was
 // delivered (its task accepted), so the local branch goes even when squash-merged (git branch -D); the executor still
 // keeps the worktree for any cleanup.keepWhen reason (uncommitted, unpushed, teardown-failed).
@@ -418,12 +410,11 @@ func teardownCommand(q *Request, s, last doc, deleteBranch bool) (doc, error) {
 // deliveredTeardown: an accepted task's sessions get their worktree teardown (fleet-system-management.md, Worktree on
 // delivery). A session with a live execution, or a teardown still pending, is left alone; archiving it later sends one.
 func deliveredTeardown(q *Request, taskID string) error {
-	sids, err := queryRows(q, "SELECT DISTINCT session_id FROM execution WHERE task_id=$1 AND session_id IS NOT NULL", taskID)
+	sids, err := q.db().TaskSessionIDs(q.ctx(), &taskID)
 	if err != nil {
 		return err
 	}
-	for _, r := range sids {
-		sid := astr(r["session_id"])
+	for _, sid := range sids {
 		s, err := get(q, sid, "session")
 		if errors.Is(err, errNotFound) {
 			continue
@@ -490,7 +481,8 @@ func init() {
 		if _, err := get(q, id, "execution"); err != nil {
 			return nil, err
 		}
-		ds, err := delegationsWhere(q, "delegation->>'parentExecutionId'=$1 OR delegation->>'childExecutionId'=$1 OR delegation->>'continuationExecutionId'=$1", id)
+		raw, err := q.db().ExecutionDelegations(q.ctx(), id)
+		ds, err := delegationsOf(q, raw, err)
 		return doc{"delegations": ds}, err
 	})
 	op("session_create", func(q *Request, r *contract.SessionCreateRequest) (contract.SessionCreateReply, error) {
@@ -524,81 +516,79 @@ func init() {
 	})
 	op("session_unarchive", sessionUnarchive)
 	op("sessions_list", func(q *Request, r *contract.SessionsListRequest) (contract.SessionsListReply, error) {
-		// Read as sent: a null projectId item means sessions outside projects, which the typed list cannot hold.
-		return replyAs[contract.SessionsListReply](sessionsPage(q, body(q)))
+		return sessionsPage(q, r)
 	})
 	op("list_membership", func(q *Request, b *contract.ListMembershipRequest) (contract.ListMembershipReply, error) {
-		out, err := listMembership(q, b)
-		return replyAs[contract.ListMembershipReply](out, err)
+		return listMembership(q, b)
 	})
 	// /api/tools: the operation table as MCP tools, each call in its own transaction.
 	longRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations) })
 }
 
 // listMembership: which of ids each named list (tasks, sessions) holds, with the list's counts and groups.
-func listMembership(q *Request, b *contract.ListMembershipRequest) (doc, error) {
+func listMembership(q *Request, b *contract.ListMembershipRequest) (contract.ListMembershipReply, error) {
+	out := contract.ListMembershipReply{Lists: []contract.MembershipAnswer{}}
 	if len(b.Ids) > 1000 {
-		return nil, fail(400, "Expected at most 1000 ids")
+		return out, fail(400, "Expected at most 1000 ids")
 	}
 	if len(b.Lists) < 1 || len(b.Lists) > 2 {
-		return nil, fail(400, "Expected one or two lists")
+		return out, fail(400, "Expected one or two lists")
 	}
-	ids := b.Ids
 	// Each filter read as sent: a null projectId item means rows outside projects, which the typed list cannot hold.
 	var raw struct {
 		Lists []struct {
-			Filter doc `json:"filter"`
+			Filter json.RawMessage `json:"filter"`
 		} `json:"lists"`
 	}
 	json.Unmarshal(q.body, &raw)
-	out := []doc{}
 	for i, l := range b.Lists {
-		f := doc{}
-		if i < len(raw.Lists) && raw.Lists[i].Filter != nil {
-			f = raw.Lists[i].Filter
+		var filter json.RawMessage
+		if i < len(raw.Lists) {
+			filter = raw.Lists[i].Filter
 		}
-		group, sort := optAny(l.Group), optAny(l.Sort)
+		a := contract.MembershipAnswer{Name: l.Name, Rows: []contract.ListRow{}}
 		switch l.Name {
 		case "tasks":
-			rs, err := taskMembership(q, f, group, sort, ids)
+			f, err := taskFilter(filter)
 			if err != nil {
-				return nil, err
+				return out, err
 			}
-			counts, groups, err := taskSummary(q, f, group, false)
+			rs, err := taskMembership(q, f, l.Group, l.Sort, b.Ids)
 			if err != nil {
-				return nil, err
+				return out, err
 			}
-			out = append(out, doc{"name": "tasks", "rows": rs, "counts": counts, "groups": groups})
-		case "sessions":
-			o, err := sessionOrderOf(group, sort)
-			if err != nil {
-				return nil, err
-			}
-			p := []any{}
-			c, err := sessionWhere(f, &p, true)
-			if err != nil {
-				return nil, err
-			}
-			p = append(p, ids)
-			c = append(c, fmt.Sprintf("x.id=ANY($%d)", len(p)))
-			rs, err := rowsOf(q, sessionBase+" SELECT *,"+o.cols()+" FROM x WHERE "+strings.Join(c, " AND ")+" ORDER BY "+o.by(), p...)
-			if err != nil {
-				return nil, err
-			}
-			rows := []doc{}
 			for _, r := range rs {
-				rows = append(rows, sessionRow(r))
+				a.Rows = append(a.Rows, jsonBytes(r))
 			}
-			counts, groups, err := sessionSummary(q, f, o)
+			if a.Counts, a.Groups, err = taskSummary(q, f, l.Group, false); err != nil {
+				return out, err
+			}
+		case "sessions":
+			f, err := sessionFilter(filter)
 			if err != nil {
-				return nil, err
+				return out, err
 			}
-			out = append(out, doc{"name": "sessions", "rows": rows, "counts": counts, "groups": groups})
+			o, err := sessionOrderOf(l.Group, l.Sort)
+			if err != nil {
+				return out, err
+			}
+			sql, p, err := sqlSessionRows(f, o, b.Ids)
+			rs, err := sessionListRows(q, sql, p, err)
+			if err != nil {
+				return out, err
+			}
+			for _, r := range rs {
+				a.Rows = append(a.Rows, jsonBytes(r))
+			}
+			if a.Counts, a.Groups, err = sessionSummary(q, f, o); err != nil {
+				return out, err
+			}
 		default:
-			return nil, fail(400, "Unknown list")
+			return out, fail(400, "Unknown list")
 		}
+		out.Lists = append(out.Lists, a)
 	}
-	return doc{"lists": out}, nil
+	return out, nil
 }
 
 // sessionUnarchive: undo session_archive (owner or full access). The teardown already sent is not undone: a removed

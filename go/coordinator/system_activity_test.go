@@ -188,9 +188,10 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 func TestMigration69RemovesLegacySystemReads(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	ownerURL := fmt.Sprintf("postgresql://fleet@/%s?host=%s&port=%d", e.dbName, e.sockDir, e.pgPort)
-	// Migration 69 ran when run tokens were documents (migration 78 moved them): the documents it read are seeded as then.
+	// Migration 69 ran when run tokens were documents (migration 78 moved them, migration 83 dropped the table): the
+	// documents it read are seeded as then, in a table of the columns it reads.
 	if _, err := e.ownerStore.pool.Exec(e.ctx, `SET fleet.project_ids='*';
-	 ALTER TABLE document DROP CONSTRAINT document_moved_kind;
+	 CREATE TABLE document(kind text NOT NULL, id text PRIMARY KEY, data jsonb NOT NULL, project_id text NULL);
 	 INSERT INTO document(kind,id,data) VALUES
 	  ('run-token','run-token:open','{"id":"run-token:open","sha256":"open","executionId":"bugsink-read:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","projectId":"p1","step":true}'),
 	  ('run-token','run-token:revoked','{"id":"run-token:revoked","sha256":"revoked","executionId":"github-read:11111111-2222-3333-4444-555555555555","projectId":"p1","step":true,"revokedAt":1}'),

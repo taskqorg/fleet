@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"fleet/coordinator/db"
 	"fleet/obs"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -48,12 +50,8 @@ func wakeOutboxPass(ctx context.Context, a *App) (claimed int, err error) {
 	// This queue cannot change authorization. Use the maintenance pool transaction
 	// directly so an empty recovery check does not invalidate Store's access caches.
 	err = pgx.BeginTxFunc(ctx, a.store.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
-		rows, e := tx.Query(ctx, `SELECT wake_id::text,channel,payload FROM wake_outbox ORDER BY created_at,wake_id LIMIT $1 FOR UPDATE SKIP LOCKED`, wakeBatchSize)
-		if e != nil {
-			return e
-		}
-		type intent struct{ ID, Channel, Payload string }
-		intents, e := pgx.CollectRows(rows, pgx.RowToStructByPos[intent])
+		q := db.New(tx)
+		intents, e := q.WakeClaim(ctx, wakeBatchSize)
 		if e != nil {
 			return e
 		}
@@ -78,18 +76,19 @@ func wakeOutboxPass(ctx context.Context, a *App) (claimed int, err error) {
 				}
 				return strings.Compare(a.Payload, b.Payload)
 			})
-			batch := &pgx.Batch{}
-			for _, h := range hints {
-				batch.Queue(`SELECT pg_notify($1,$2)`, h.Channel, h.Payload)
+			channels, payloads := make([]string, len(hints)), make([]string, len(hints))
+			for i, h := range hints {
+				channels[i], payloads[i] = h.Channel, h.Payload
 			}
-			batch.Queue(`DELETE FROM wake_outbox WHERE wake_id=ANY($1::uuid[])`, ids)
-			if e = tx.SendBatch(ctx, batch).Close(); e != nil {
+			if e = q.WakeNotify(ctx, db.WakeNotifyParams{Channels: channels, Payloads: payloads}); e != nil {
+				return e
+			}
+			if e = q.WakeDelete(ctx, ids); e != nil {
 				return e
 			}
 			span.Set("fleet.wake.hints", strconv.Itoa(len(hints)))
 		}
-		var oldest time.Time
-		e = tx.QueryRow(ctx, `SELECT created_at FROM wake_outbox ORDER BY created_at,wake_id LIMIT 1`).Scan(&oldest)
+		oldest, e := q.WakeOldest(ctx)
 		if errors.Is(e, pgx.ErrNoRows) {
 			span.Set("fleet.wake.pending", "false")
 			return nil

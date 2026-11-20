@@ -35,9 +35,9 @@ export function seeder(c: Coordinator, store?: {port: number, objects: Map<strin
   const sql = (text: string) => { if (buf) { buf.push(text + ';'); return ''; } return c.sql(text); };
   const bulk = (fn: () => void) => { buf = []; try { fn(); } finally { const all = buf.join('\n'); buf = null; c.sql('BEGIN;\n' + all + '\nCOMMIT;'); } };
   const ms = (v: any) => typeof v === 'number' ? `to_timestamp(${v / 1000})` : 'NULL';
-  // A record of kind (session, message, event, host-observation, command, delivery ...): the coordinator's put(). The
+  // A record of kind (session, message, event, queued-message, command; an execution): the coordinator's put(). The
   // conversation kinds have their tables (migration 77, go/coordinator/sessions.go convTables): a field with a column goes
-  // there, the rest to payload; every other kind is a document.
+  // there, the rest to payload; any other kind has no table here.
   const put = (kind: string, d: any, seq?: number) => { if (kind === 'execution') return execution(d);
     const t = CONV[kind];
     if (t) {
@@ -58,7 +58,7 @@ export function seeder(c: Coordinator, store?: {port: number, objects: Map<strin
       sql(`INSERT INTO ${t.table}(${cols.join(',')}) VALUES(${vals.join(',')}) ON CONFLICT(id) DO UPDATE SET ${sets.join(',')}`);
       return;
     }
-    sql(`INSERT INTO document(kind,id,data,project_id${seq !== undefined ? ',seq' : ''}) VALUES(${lit(kind)},${lit(d.id)},${lit(d)}::jsonb,${lit(typeof d.projectId === 'string' ? d.projectId : null)}${seq !== undefined ? ',' + seq : ''}) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=now()`); };
+    throw new Error(`seed.put: kind ${kind} has no table here (the document table is gone, migration 83)`); };
   // An agent run as the API record (state mapped to the typed column) or typed (kind and typed state).
   const execution = (e: any) => {
     const state = e.kind ? e.state ?? 'preparing' : LEGACY[e.state] ?? 'preparing';

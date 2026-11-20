@@ -7,15 +7,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"math/rand/v2"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -36,34 +40,16 @@ const (
 )
 
 // objectRef: table.column names an object of kind. expr is the SQL over the row when it is not the column itself (a
-// JSON path, a polymorphic scope); array: the column is a text[] of ids; guard: the rows the reference exists on (a
-// document kind), so a check reads them through an index instead of every document.
+// JSON path, a polymorphic scope); array: the column is a text[] of ids.
 type objectRef struct {
 	table, column, kind string
 	mode                refMode
-	expr, guard         string
+	expr                string
 	array               bool
 }
 
-func (r objectRef) sql() string {
-	if r.expr != "" {
-		return r.expr
-	}
-	return r.column
-}
-
-func (r objectRef) match(param string) string {
-	m := r.sql() + " = ANY(" + param + ")"
-	if r.array {
-		m = r.sql() + " && " + param
-	}
-	if r.guard != "" {
-		return "(" + r.guard + " AND " + m + ")"
-	}
-	return m
-}
-
-// referenceMap: every column of schema.sql that names an object, and every *_id column (TestReferenceMapCoversSchema).
+// referenceMap: every column of schema.sql that names an object, and every *_id column (TestReferenceMapCoversSchema),
+// except the foreign keys whose reference referenceKeys derives; an entry for a key column overrides its derivation.
 var referenceMap = []objectRef{
 	{table: "execution", column: "id", kind: "execution", mode: refOwn},
 	{table: "execution", column: "project_id", kind: "project", mode: refOwn},
@@ -78,15 +64,6 @@ var referenceMap = []objectRef{
 	{table: "execution", column: "profile_id", mode: refNone},
 	{table: "execution", column: "pipeline_id", mode: refNone},
 	{table: "execution", column: "step_id", mode: refNone},
-	{table: "document", column: "id", mode: refNone},
-	{table: "document", column: "project_id", kind: "project", mode: refOwn},
-	// Run tokens, conflicts, legacy artifacts, watches. execution_ref and session_ref are data->>'executionId' and
-	// data->>'sessionId' as indexed columns (migration 70): a JSON path cannot be an index condition under row-level
-	// security (not leakproof), so every check of it read and detoasted every document.
-	{table: "document", column: "execution_ref", kind: "execution", mode: refOwn},
-	{table: "document", column: "session_ref", kind: "session", mode: refOwn},
-	{table: "document", column: "data", kind: "task", mode: refNone, expr: "data->>'taskId'"},
-	{table: "document", column: "data", kind: "host", mode: refKeep, expr: "data->>'hostId'"},
 	// Hosts, subscriptions, connections and tokens (migration 78). A run token goes with its execution and with the run
 	// whose step it was minted for; an inspection with its execution; a watch with its session.
 	{table: "host", column: "id", mode: refNone},
@@ -95,17 +72,14 @@ var referenceMap = []objectRef{
 	{table: "host_observation", column: "id", mode: refNone},
 	{table: "host_observation", column: "project_id", kind: "project", mode: refOwn},
 	{table: "watch", column: "id", mode: refNone},
-	{table: "watch", column: "session_id", kind: "session", mode: refOwn},
 	{table: "watch", column: "project_id", kind: "project", mode: refOwn},
 	{table: "managed_account", column: "id", mode: refNone},
 	{table: "managed_account", column: "project_id", kind: "project", mode: refOwn},
 	{table: "account_inspection", column: "id", mode: refNone},
-	{table: "account_inspection", column: "account_id", mode: refNone}, // a subscription (foreign key, ON DELETE CASCADE)
 	{table: "account_inspection", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "account_inspection", column: "host_id", kind: "host", mode: refKeep},
 	{table: "account_inspection", column: "project_id", kind: "project", mode: refOwn},
 	{table: "account_check", column: "id", mode: refNone},
-	{table: "account_check", column: "account_id", mode: refNone},
 	{table: "account_check", column: "host_id", kind: "host", mode: refKeep},
 	{table: "account_check", column: "project_id", kind: "project", mode: refOwn},
 	{table: "account_catalogue", column: "id", mode: refNone},
@@ -114,7 +88,6 @@ var referenceMap = []objectRef{
 	{table: "api_connection", column: "id", mode: refNone},
 	{table: "api_connection", column: "project_id", kind: "project", mode: refOwn},
 	{table: "connection_key", column: "id", mode: refNone},
-	{table: "connection_key", column: "connection_id", mode: refNone}, // its connection (foreign key, ON DELETE CASCADE)
 	{table: "connection_key", column: "project_id", kind: "project", mode: refOwn},
 	{table: "run_token", column: "id", mode: refNone},
 	{table: "run_token", column: "execution_id", kind: "execution", mode: refOwn},
@@ -135,16 +108,12 @@ var referenceMap = []objectRef{
 	{table: "session", column: "created_by_session_id", kind: "session", mode: refKeep},
 	{table: "session", column: "source_session_id", kind: "session", mode: refKeep},
 	{table: "message", column: "id", mode: refNone},
-	{table: "message", column: "session_id", kind: "session", mode: refOwn},
 	{table: "message", column: "project_id", kind: "project", mode: refOwn},
 	{table: "message", column: "execution_id", kind: "execution", mode: refNone},
 	{table: "message", column: "request_id", mode: refNone},
 	{table: "event", column: "id", mode: refNone},
-	{table: "event", column: "execution_id", kind: "execution", mode: refOwn},
-	{table: "event", column: "session_id", kind: "session", mode: refOwn},
 	{table: "event", column: "project_id", kind: "project", mode: refOwn},
 	{table: "queued_message", column: "id", mode: refNone},
-	{table: "queued_message", column: "session_id", kind: "session", mode: refOwn},
 	{table: "queued_message", column: "project_id", kind: "project", mode: refOwn},
 	{table: "queued_message", column: "task_id", kind: "task", mode: refNone},
 	{table: "queued_message", column: "execution_id", kind: "execution", mode: refNone},
@@ -152,22 +121,17 @@ var referenceMap = []objectRef{
 	{table: "queued_message", column: "request_id", mode: refNone},
 	{table: "command", column: "id", mode: refNone},
 	{table: "command", column: "execution_id", kind: "execution", mode: refOwn},
-	{table: "command", column: "session_id", kind: "session", mode: refOwn},
 	{table: "command", column: "project_id", kind: "project", mode: refOwn},
 	{table: "command", column: "host_id", kind: "host", mode: refKeep},
 	{table: "handoff", column: "id", mode: refNone},
-	{table: "handoff", column: "session_id", kind: "session", mode: refOwn},
 	{table: "handoff", column: "project_id", kind: "project", mode: refOwn},
 	{table: "session_fork", column: "id", mode: refNone},
-	{table: "session_fork", column: "session_id", kind: "session", mode: refOwn},
 	{table: "session_fork", column: "source_session_id", kind: "session", mode: refKeep},
 	{table: "session_fork", column: "project_id", kind: "project", mode: refOwn},
 	{table: "session_fork", column: "request_id", mode: refNone},
 	{table: "session_transition", column: "id", mode: refNone},
-	{table: "session_transition", column: "session_id", kind: "session", mode: refOwn},
 	{table: "session_transition", column: "project_id", kind: "project", mode: refOwn},
 	{table: "worker_done", column: "id", mode: refNone},
-	{table: "worker_done", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "worker_done", column: "project_id", kind: "project", mode: refOwn},
 	{table: "agent_tool_receipt", column: "id", mode: refNone},
 	{table: "agent_tool_receipt", column: "execution_id", kind: "execution", mode: refOwn},
@@ -181,7 +145,6 @@ var referenceMap = []objectRef{
 	{table: "artifact", column: "legacy_id", mode: refNone},
 	{table: "artifact_copy", column: "artifact_id", kind: "artifact", mode: refOwn},
 	{table: "artifact_copy", column: "project_id", kind: "project", mode: refOwn},
-	{table: "artifact_copy", column: "store_id", mode: refNone}, // a store goes with its removed host (host purge)
 	{table: "artifact_copy", column: "upload_id", mode: refNone},
 	{table: "artifact_rule_confirmation", column: "project_id", kind: "project", mode: refOwn},
 	{table: "budget", column: "id", mode: refNone},
@@ -193,12 +156,9 @@ var referenceMap = []objectRef{
 	{table: "change", column: "host_id", mode: refNone},
 	{table: "change", column: "project_id", mode: refNone},
 	{table: "closed_delta_identity", column: "id", mode: refNone},
-	{table: "closed_delta_identity", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "definition", column: "id", mode: refNone}, // a purged project keeps its definition row: its id is never reused
 	{table: "definition", column: "project_id", mode: refNone},
 	{table: "definition_draft", column: "id", mode: refNone},
-	{table: "definition_revision", column: "id", mode: refNone},
-	{table: "definition_revision", column: "kind", mode: refNone}, // with id, its definition
 	{table: "entity_code", column: "entity_id", kind: "task", mode: refOwn},
 	{table: "entity_code", column: "entity_id", kind: "question", mode: refOwn},
 	{table: "entity_code", column: "entity_id", kind: "session", mode: refOwn},
@@ -213,7 +173,6 @@ var referenceMap = []objectRef{
 	{table: "experiment_note", column: "project_id", kind: "project", mode: refOwn},
 	{table: "host_setting", column: "host_id", kind: "host", mode: refKeep},
 	{table: "person_grant", column: "object_id", mode: refNone}, // the people file's projection, reloaded from the file
-	{table: "person_grant", column: "email", mode: refNone},
 	{table: "price_entry", column: "id", mode: refNone},
 	{table: "project_code", column: "project_id", mode: refNone}, // codes are never reused
 	{table: "project_write_request", column: "request_id", mode: refNone},
@@ -240,7 +199,6 @@ var referenceMap = []objectRef{
 	{table: "resource_price_ref", column: "project_id", kind: "project", mode: refOwn},
 	{table: "resource_price_ref", column: "price_id", mode: refNone},
 	{table: "resource_project_summary", column: "project_id", kind: "project", mode: refOwn},
-	{table: "resource_repair_scope", column: "repair_id", mode: refNone},
 	{table: "resource_repair_scope", column: "project_id", kind: "project", mode: refOwn},
 	{table: "resource_tool", column: "project_id", kind: "project", mode: refOwn},
 	// An execution's removal is captured as resource work (migration 55); the processor retracts its contribution.
@@ -248,7 +206,6 @@ var referenceMap = []objectRef{
 	{table: "resource_work", column: "work_id", mode: refNone},
 	{table: "resource_work", column: "execution_id", kind: "execution", mode: refWithProject},
 	{table: "resource_work", column: "repair_id", mode: refNone},
-	{table: "resource_work_scope", column: "work_id", mode: refNone},
 	{table: "resource_work_scope", column: "project_id", kind: "project", mode: refOwn},
 	{table: "route_decision", column: "id", mode: refNone},
 	{table: "route_decision", column: "execution_id", kind: "execution", mode: refOwn},
@@ -258,9 +215,6 @@ var referenceMap = []objectRef{
 	{table: "score", column: "experiment_id", kind: "experiment", mode: refOwn},
 	{table: "score", column: "project_id", kind: "project", mode: refOwn},
 	{table: "score", column: "trial_ids", kind: "execution", mode: refKeep, array: true},
-	{table: "score", column: "source_execution_id", kind: "execution", mode: refKeep},
-	{table: "score", column: "question_id", kind: "question", mode: refKeep},
-	{table: "score", column: "replaces_score_id", mode: refNone}, // a score of the same experiment
 	{table: "store", column: "id", mode: refNone},
 	{table: "store", column: "host_id", kind: "host", mode: refKeep},
 	{table: "task", column: "id", kind: "task", mode: refOwn},
@@ -269,9 +223,7 @@ var referenceMap = []objectRef{
 	{table: "task", column: "created_by_session_id", kind: "session", mode: refKeep},
 	{table: "task", column: "created_by_execution_id", kind: "execution", mode: refKeep},
 	{table: "task_dependency", column: "task_id", kind: "task", mode: refOwn},
-	{table: "task_dependency", column: "depends_on_task_id", kind: "task", mode: refKeep},
 	{table: "task_dependency", column: "project_id", kind: "project", mode: refOwn},
-	{table: "task_derived", column: "task_id", kind: "task", mode: refOwn},
 	{table: "task_derived", column: "project_id", kind: "project", mode: refOwn},
 	{table: "wake_outbox", column: "wake_id", mode: refNone},
 	// Work kit rows (pipeline_work.go, delegation_work.go): they go with their run or experiment by foreign key; a
@@ -283,7 +235,6 @@ var referenceMap = []objectRef{
 	// (its step, the executions, command, host and claim of its dispatch, its step's native execution, output artifact
 	// and provider job) are evidence of the run, not references.
 	{table: "pipeline_run", column: "run_id", mode: refNone},
-	{table: "pipeline_step", column: "run_id", mode: refNone},
 	{table: "pipeline_step", column: "step_id", mode: refNone},
 	{table: "pipeline_step", column: "ref_execution_id", mode: refNone},
 	{table: "pipeline_step", column: "ref_source_run_id", mode: refNone},
@@ -311,13 +262,11 @@ var referenceMap = []objectRef{
 	{table: "transport_conflict", column: "host_id", kind: "host", mode: refKeep},
 	{table: "transport_conflict", column: "original_event_id", mode: refNone},
 	{table: "transport_conflict", column: "collision_event_id", mode: refNone},
-	{table: "problem_dismissal", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "problem_dismissal", column: "project_id", kind: "project", mode: refOwn},
 	{table: "project_recommendation", column: "id", mode: refNone},
 	{table: "project_recommendation", column: "project_id", kind: "project", mode: refOwn},
 	{table: "project_recommendation", column: "method_id", mode: refNone}, // a catalogue method
 	{table: "upload", column: "id", mode: refNone},
-	{table: "upload", column: "session_id", kind: "session", mode: refOwn},
 	{table: "upload", column: "project_id", kind: "project", mode: refOwn},
 	{table: "upload", column: "artifact_id", kind: "artifact", mode: refNone}, // the artifact a finished upload stored
 	{table: "delivery_state", column: "id", mode: refNone},
@@ -354,7 +303,7 @@ var objectTables = []struct{ kind, table, filter string }{
 }
 
 // tombstoned: the tables with a tombstoned_at column (migration 67).
-var tombstoned = append([]string{"execution", "task", "experiment", "question", "artifact", "document", "score", "experiment_note",
+var tombstoned = append([]string{"execution", "task", "experiment", "question", "artifact", "score", "experiment_note",
 	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
 	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
 	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict"}, deliveryTables...)
@@ -365,7 +314,7 @@ var keptRows = map[string]string{}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
 var purgeOrder = append([]string{"score", "experiment_note", "artifact_copy", "artifact", "question", "execution_totals", "route_decision",
-	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "document", "problem_dismissal",
+	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal",
 	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",
 	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "session", "execution",
@@ -377,53 +326,57 @@ var purgeOrder = append([]string{"score", "experiment_note", "artifact_copy", "a
 type cascade struct {
 	kind, id string
 	sets     map[string][]string
+	refs     []objectRef // references(): referenceMap with the derived foreign keys
 }
 
-// args builds one SQL predicate's parameters: one text[] per kind.
-type args struct {
-	c    *cascade
-	vals []any
-	at   map[string]int
+// referenceKeys: the references of the schema's foreign keys, read once. A key to an object table (objectTables) names
+// that object: its row goes with it under ON DELETE CASCADE (refOwn) and keeps it otherwise (refKeep); a key to any
+// other table names no object (refNone: the row follows its parent by the key). A referenceMap entry for the same
+// column wins.
+var referenceKeys struct {
+	mu   sync.Mutex
+	refs []objectRef
 }
 
-func (a *args) of(kind string) string {
-	if a.at == nil {
-		a.at = map[string]int{}
+// references: referenceMap and the foreign keys it does not list.
+func references(q *Request) ([]objectRef, error) {
+	referenceKeys.mu.Lock()
+	defer referenceKeys.mu.Unlock()
+	if referenceKeys.refs != nil {
+		return referenceKeys.refs, nil
 	}
-	n, ok := a.at[kind]
-	if !ok {
-		a.vals = append(a.vals, a.c.sets[kind])
-		n = len(a.vals)
-		a.at[kind] = n
+	keys, err := q.db().ReferenceKeys(q.ctx())
+	if err != nil {
+		return nil, err
 	}
-	return fmt.Sprintf("$%d::text[]", n)
-}
-
-// goesWith: the predicate of rows of table that belong to the cascade, "false" when none can.
-func (c *cascade) goesWith(table string, a *args) string {
-	conds := []string{}
-	for _, r := range referenceMap {
-		if r.table == table && (r.mode == refOwn || (r.mode == refWithProject && c.kind == "project")) && len(c.sets[r.kind]) > 0 {
-			conds = append(conds, r.match(a.of(r.kind)))
+	refs := slices.Clone(referenceMap)
+	for _, k := range keys {
+		if slices.ContainsFunc(refs, func(r objectRef) bool { return r.table == k.Child && r.column == k.Col }) {
+			continue
 		}
+		r := objectRef{table: k.Child, column: k.Col, mode: refNone}
+		for _, o := range objectTables {
+			if o.table == k.Parent {
+				r.kind, r.mode = o.kind, refKeep
+				if k.Cascades {
+					r.mode = refOwn
+				}
+			}
+		}
+		refs = append(refs, r)
 	}
-	if len(conds) == 0 {
-		return "false"
-	}
-	return "(" + strings.Join(conds, " OR ") + ")"
-}
-
-func andFilter(filter, where string) string {
-	if filter == "" {
-		return where
-	}
-	return filter + " AND " + where
+	referenceKeys.refs = refs
+	return refs, nil
 }
 
 // cascadeOf: the root and every object that goes with it, closed over the refOwn columns of objectTables. The caller's
 // transaction decides what is visible: delete reads live rows, purge reads with fleet.deleted on.
 func cascadeOf(q *Request, kind, id string) (*cascade, error) {
-	c := &cascade{kind: kind, id: id, sets: map[string][]string{kind: {id}}}
+	refs, err := references(q)
+	if err != nil {
+		return nil, err
+	}
+	c := &cascade{kind: kind, id: id, sets: map[string][]string{kind: {id}}, refs: refs}
 	for grew := true; grew; {
 		grew = false
 		for _, o := range objectTables {
@@ -432,20 +385,29 @@ func cascadeOf(q *Request, kind, id string) (*cascade, error) {
 			if where == "false" {
 				continue
 			}
-			rs, err := queryRows(q, "SELECT id FROM "+o.table+" WHERE "+andFilter(o.filter, where)+" ORDER BY id", a.vals...)
+			ids, err := cascadeIDs(q, sqlCascadeIDs(o.table, o.filter, where), a.vals)
 			if err != nil {
 				return nil, err
 			}
-			if len(rs) > len(c.sets[o.kind]) {
-				ids := make([]string, len(rs))
-				for i, r := range rs {
-					ids[i] = astr(r["id"])
-				}
+			if len(ids) > len(c.sets[o.kind]) {
 				c.sets[o.kind], grew = ids, true
 			}
 		}
 	}
 	return c, nil
+}
+
+// cascadeIDs: the ids an assembled cascade statement selects.
+func cascadeIDs(q *Request, sql string, args []any) ([]string, error) {
+	type idRow struct {
+		ID string `db:"id"`
+	}
+	rs, err := typedRows[idRow](q, sql, args)
+	ids := make([]string, len(rs))
+	for i, r := range rs {
+		ids[i] = r.ID
+	}
+	return ids, err
 }
 
 // counts: per kind what goes with the root (the root itself included), artifacts with their stored bytes.
@@ -459,7 +421,8 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 		}
 		kc := contract.KindCount{Kind: k, Count: int64(n)}
 		if k == contract.ObjectKindArtifact {
-			if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(sum(size),0)::bigint FROM artifact WHERE id=ANY($1) AND state='stored'", c.sets["artifact"]).Scan(&bytes); err != nil {
+			var err error
+			if bytes, err = q.db().CleanupStoredBytes(q.ctx(), c.sets["artifact"]); err != nil {
 				return nil, 0, err
 			}
 			kc.Bytes = &bytes
@@ -475,40 +438,28 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 func (c *cascade) blockedBy(q *Request) (string, error) {
 	// An open session working for a task depends on it (an archived one outlives it; the reference goes stale).
 	if len(c.sets["task"]) > 0 {
-		row, err := first(q, `SELECT id FROM session WHERE task_id=ANY($1) AND archived_at IS NULL
-		  AND tombstoned_at IS NULL AND NOT id=ANY($2::text[]) AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) LIMIT 1`,
-			c.sets["task"], nonNilStrs(c.sets["session"]))
-		if err != nil {
-			return "", err
+		sid, err := q.db().CleanupOpenSessionOfTasks(q.ctx(), db.CleanupOpenSessionOfTasksParams{Tasks: c.sets["task"], Sessions: nonNilStrs(c.sets["session"])})
+		if err == nil {
+			return "session.task_id by open session " + sid + " (archive it first)", nil
 		}
-		if row != nil {
-			return "session.task_id by open session " + astr(row["id"]) + " (archive it first)", nil
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
 		}
 	}
 	// Executions of the cascade that belong to live work outside it stay with that work: runs of a live task (delete
 	// the task first), trials of a live experiment, children of an unfinished parent run that waits for them.
 	if len(c.sets["execution"]) > 0 {
-		row, err := first(q, `SELECT CASE
-		  WHEN t.id IS NOT NULL THEN 'execution.task_id by task '||t.id
-		  WHEN x.id IS NOT NULL THEN 'execution.experiment_id by experiment '||x.id
-		  ELSE 'execution.parent_execution_id by execution '||p.id END AS reason
-		 FROM execution e
-		 LEFT JOIN task t ON t.id=e.task_id AND t.tombstoned_at IS NULL AND NOT t.id=ANY($2::text[])
-		  AND (t.project_id IS NULL OR NOT t.project_id=ANY(fleet_deleted_projects()))
-		 LEFT JOIN experiment x ON x.id=e.experiment_id AND x.tombstoned_at IS NULL AND NOT x.id=ANY($3::text[])
-		  AND NOT x.project_id=ANY(fleet_deleted_projects())
-		 LEFT JOIN execution p ON p.id=e.parent_execution_id AND p.tombstoned_at IS NULL AND NOT p.id=ANY($1)
-		  AND p.state IN ('preparing','running','waiting') AND (p.project_id IS NULL OR NOT p.project_id=ANY(fleet_deleted_projects()))
-		 WHERE e.id=ANY($1) AND (t.id IS NOT NULL OR x.id IS NOT NULL OR p.id IS NOT NULL) LIMIT 1`, c.sets["execution"], nonNilStrs(c.sets["task"]), nonNilStrs(c.sets["experiment"]))
-		if err != nil {
-			return "", err
+		reason, err := q.db().CleanupExecutionKept(q.ctx(), db.CleanupExecutionKeptParams{Executions: c.sets["execution"],
+			Tasks: nonNilStrs(c.sets["task"]), Experiments: nonNilStrs(c.sets["experiment"])})
+		if err == nil {
+			return reason, nil
 		}
-		if row != nil {
-			return astr(row["reason"]), nil
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
 		}
 	}
 	tables, refs := []string{}, map[string][]objectRef{}
-	for _, r := range referenceMap {
+	for _, r := range c.refs {
 		if r.mode != refKeep || len(c.sets[r.kind]) == 0 {
 			continue
 		}
@@ -526,46 +477,48 @@ func (c *cascade) blockedBy(q *Request) (string, error) {
 			label += fmt.Sprintf(" WHEN %s THEN %d", m, i)
 		}
 		where := "(" + strings.Join(conds, " OR ") + ") AND NOT coalesce(" + c.goesWith(t, a) + ", false)"
-		row, err := first(q, "SELECT "+label+" END AS ref, coalesce(to_jsonb(x)->>'id', to_jsonb(x)->>'task_id', '') AS rid"+
-			", coalesce(to_jsonb(x)->>'kind', '') AS rkind FROM "+t+" x WHERE "+andFilter(keptRows[t], where)+" LIMIT 1", a.vals...)
+		type keptRow struct {
+			Ref int32  `db:"ref"`
+			Rid string `db:"rid"`
+		}
+		rs, err := typedRows[keptRow](q, sqlKeptBy(t, label, where, keptRows[t]), a.vals)
 		if err != nil {
 			return "", err
 		}
-		if row != nil {
-			r, by := refs[t][int(num(row["ref"]))], t
-			if t == "document" {
-				by = astr(row["rkind"])
-			}
-			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, convFieldOf(t, r.sql()), by, astr(row["rid"]))), nil
+		if len(rs) > 0 {
+			r := refs[t][rs[0].Ref]
+			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, convFieldOf(t, r.sql()), t, rs[0].Rid)), nil
 		}
 	}
 	return "", nil
 }
 
 // showDeleted: this transaction sees tombstoned rows and the rows of deleted projects (migration 67).
-func showDeleted(q *Request) error {
-	return exec(q, "SELECT set_config('fleet.deleted','on',true)")
-}
+func showDeleted(q *Request) error { return q.db().TxShowDeleted(q.ctx(), "on") }
 
-func hideDeleted(q *Request) error {
-	return exec(q, "SELECT set_config('fleet.deleted','',true)")
-}
+func hideDeleted(q *Request) error { return q.db().TxShowDeleted(q.ctx(), "") }
 
 // deleteRoot: the root row as the caller sees it; 404 when unknown, 409 when already deleted.
 func deleteRoot(q *Request, kind contract.DeleteKind, id string) error {
-	live, gone := "SELECT 1 FROM experiment WHERE id=$1", "SELECT 1 FROM experiment WHERE id=$1 AND tombstoned_at IS NOT NULL"
+	exists := q.db().DeleteRootExperiment
 	switch kind {
 	case contract.DeleteKindProject:
-		live, gone = "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND deleted_at IS NULL", "SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND deleted_at IS NOT NULL"
+		exists = func(ctx context.Context, p db.DeleteRootExperimentParams) (bool, error) {
+			return q.db().DeleteRootProject(ctx, db.DeleteRootProjectParams(p))
+		}
 	case contract.DeleteKindTask:
-		live, gone = "SELECT 1 FROM task WHERE id=$1", "SELECT 1 FROM task WHERE id=$1 AND tombstoned_at IS NOT NULL"
+		exists = func(ctx context.Context, p db.DeleteRootExperimentParams) (bool, error) {
+			return q.db().DeleteRootTask(ctx, db.DeleteRootTaskParams(p))
+		}
 	case contract.DeleteKindSession:
-		live, gone = "SELECT 1 FROM session WHERE id=$1", "SELECT 1 FROM session WHERE id=$1 AND tombstoned_at IS NOT NULL"
+		exists = func(ctx context.Context, p db.DeleteRootExperimentParams) (bool, error) {
+			return q.db().DeleteRootSession(ctx, db.DeleteRootSessionParams(p))
+		}
 	}
 	if err := showDeleted(q); err != nil {
 		return err
 	}
-	ok, err := has(q, gone, id)
+	ok, err := exists(q.ctx(), db.DeleteRootExperimentParams{ID: id, Gone: true})
 	if err == nil {
 		err = hideDeleted(q)
 	}
@@ -575,7 +528,7 @@ func deleteRoot(q *Request, kind contract.DeleteKind, id string) error {
 		}
 		return err
 	}
-	if ok, err := has(q, live, id); err != nil || !ok {
+	if ok, err := exists(q.ctx(), db.DeleteRootExperimentParams{ID: id}); err != nil || !ok {
 		if err == nil {
 			err = fail(404, "Unknown "+string(kind))
 		}
@@ -583,10 +536,6 @@ func deleteRoot(q *Request, kind contract.DeleteKind, id string) error {
 	}
 	return nil
 }
-
-// liveRuns: the executions the confirm stops (agent runs and host jobs) or cancels (running pipeline runs); their
-// native children (child_agent, tool_run) end with them.
-const liveRuns = "(" + execKinds + " AND state IN ('preparing','running','waiting')) OR (kind='pipeline_run' AND state='running')"
 
 // deletePreview: the reply both the preview and the confirm compute (NFR: preview equals effect).
 func deletePreview(q *Request, b *contract.ObjectDeleteRequest) (*cascade, contract.ObjectDeleteReply, error) {
@@ -609,7 +558,9 @@ func deletePreview(q *Request, b *contract.ObjectDeleteRequest) (*cascade, contr
 	if r.Affected, _, err = c.counts(q); err != nil {
 		return nil, r, err
 	}
-	err = q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM execution WHERE id=ANY($1) AND ("+liveRuns+")", c.sets["execution"]).Scan(&r.Running)
+	// Running: what the confirm stops (agent runs and host jobs) or cancels (running pipeline runs); their native
+	// children (child_agent, tool_run) end with them.
+	r.Running, err = q.db().CleanupRunningCount(q.ctx(), c.sets["execution"])
 	return c, r, err
 }
 
@@ -640,11 +591,7 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 		if err := experimentsStop(q, c.sets["experiment"], "deleted"); err != nil {
 			return err
 		}
-		rs, err := queryRows(q, "SELECT id FROM execution WHERE id=ANY($1) AND kind='pipeline_run' AND state='running' ORDER BY seq", c.sets["execution"])
-		runs = runs[:0]
-		for _, r := range rs {
-			runs = append(runs, astr(r["id"]))
-		}
+		runs, err = q.db().CleanupRunningPipelineRuns(q.ctx(), c.sets["execution"])
 		return err
 	}); err != nil {
 		return out, err
@@ -678,21 +625,21 @@ func objectDelete(q *Request, b *contract.ObjectDeleteRequest) (contract.ObjectD
 // tombstone: stop, revoke, tear down and mark everything of the cascade; the caller's transaction shows deleted rows.
 func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 	ids := c.sets["execution"]
-	live, err := queryRows(q, "SELECT id FROM execution WHERE id=ANY($1) AND "+execKinds+" AND state IN ('preparing','running','waiting') ORDER BY seq", ids)
+	live, err := q.db().CleanupLiveRuns(q.ctx(), ids)
 	if err != nil {
 		return err
 	}
 	for _, x := range live {
-		if _, err := executionStop(q, astr(x["id"])); err != nil {
-			return fmt.Errorf("stop %v: %w", x["id"], err)
+		if _, err := executionStop(q, x); err != nil {
+			return fmt.Errorf("stop %v: %w", x, err)
 		}
-		if err := exec(q, "UPDATE execution SET data=data||'{\"stopDetail\":\"deleted\"}' WHERE id=$1", x["id"]); err != nil {
+		if err := q.db().CleanupStopDetail(q.ctx(), x); err != nil {
 			return err
 		}
 	}
-	if tag, err := q.tx.Exec(q.ctx(), "UPDATE run_token SET revoked_at=to_timestamp($2::float8/1000),updated_at=now() WHERE execution_id=ANY($1) AND revoked_at IS NULL", ids, nowMs()); err != nil {
+	if n, err := q.db().CleanupRevokeRunTokens(q.ctx(), db.CleanupRevokeRunTokensParams{Ids: ids, At: ptr(time.UnixMilli(nowMs()))}); err != nil {
 		return err
-	} else if tag.RowsAffected() > 0 {
+	} else if n > 0 {
 		publish(q)
 	}
 	if err := experimentsStop(q, c.sets["experiment"], "deleted"); err != nil {
@@ -702,45 +649,16 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		return err
 	}
 	// Messages still waiting for a turn never start one (host receipts see deleted rows and promote queued messages).
-	if err := exec(q, `UPDATE queued_message SET state='deleted', updated_at=now() WHERE session_id=ANY($1) AND state IN ('queued','steering')`, c.sets["session"]); err != nil {
+	if err := q.db().CleanupQueuedMessages(q.ctx(), c.sets["session"]); err != nil {
 		return err
 	}
 	teardowns := int64(0)
 	for _, sid := range c.sets["session"] {
-		s, err := get(q, sid, "session")
+		torn, err := sessionDeleteArchive(q, sid)
 		if err != nil {
 			return err
 		}
-		if s["archivedAt"] != nil {
-			continue
-		}
-		if pending, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(pending) > 0 {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		es, err := sessionExecutions(q, sid)
-		if err != nil {
-			return err
-		}
-		var last doc
-		for _, e := range es {
-			if astr(e["hostId"]) != "" {
-				last = e
-			}
-		}
-		s["archivedAt"] = nowMs()
-		if err := put(q, "session", s); err != nil {
-			return err
-		}
-		if last == nil {
-			continue
-		}
-		// Queued after the stop: the executor keeps a worktree with uncommitted or unpushed work (cleanup.keepWhen).
-		if t, err := teardownCommand(q, s, last, false); err != nil {
-			return err
-		} else if t["kind"] == "teardown" {
+		if torn {
 			teardowns++
 		}
 	}
@@ -751,7 +669,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		if len(c.sets[o.kind]) == 0 {
 			continue
 		}
-		if err := exec(q, "UPDATE "+o.table+" SET tombstoned_at=now() WHERE "+andFilter(o.filter, "id=ANY($1) AND tombstoned_at IS NULL"), c.sets[o.kind]); err != nil {
+		if _, err := q.tx.Exec(q.ctx(), sqlTombstoneObjects(o.table, o.filter), c.sets[o.kind]); err != nil {
 			return err
 		}
 	}
@@ -764,25 +682,24 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		if c.kind == "project" && t != "transport_conflict" { // the project's own rows are hidden by project already (a transport conflict has none)
 			where += " AND project_id IS DISTINCT FROM (" + a.of("project") + ")[1]"
 		}
-		if err := exec(q, "UPDATE "+t+" SET tombstoned_at=now() WHERE "+andFilter(keptRows[t], where+" AND tombstoned_at IS NULL"), a.vals...); err != nil {
+		if _, err := q.tx.Exec(q.ctx(), sqlTombstoneRows(t, where, keptRows[t]), a.vals...); err != nil {
 			return err
 		}
 	}
 	// Budgets are settings of the object and its experiments: they go now, with its secrets.
-	if err := exec(q, "DELETE FROM budget WHERE (scope=$1 AND scope_id=$2) OR (scope='experiment' AND scope_id=ANY($3))", c.kind, c.id, c.sets["experiment"]); err != nil {
+	if err := q.db().CleanupBudgets(q.ctx(), db.CleanupBudgetsParams{Scope: c.kind, ScopeID: c.id, Experiments: nonNilStrs(c.sets["experiment"])}); err != nil {
 		return err
 	}
 	if c.kind == "project" {
-		var raw []byte
-		if err := q.tx.QueryRow(q.ctx(), `SELECT r.content FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
-		  WHERE d.kind='project' AND d.id=$1`, c.id).Scan(&raw); err != nil {
-			return err
-		}
-		conns, err := headConnections(raw)
+		raw, err := q.db().CleanupProjectHead(q.ctx(), c.id)
 		if err != nil {
 			return err
 		}
-		if err := exec(q, "UPDATE definition SET deleted_at=now(),retired_at=coalesce(retired_at,now()) WHERE kind='project' AND id=$1", c.id); err != nil {
+		conns, err := headConnections([]byte(raw))
+		if err != nil {
+			return err
+		}
+		if err := q.db().CleanupProjectDeleted(q.ctx(), c.id); err != nil {
 			return err
 		}
 		if _, err := removeUnusedConnections(q, conns); err != nil {
@@ -800,40 +717,51 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 
 // purgeRoots: the tombstoned objects of kind, oldest first. An experiment of a deleted project goes with its project.
 func purgeRoots(q *Request, kind contract.PurgeKind) ([]string, error) {
-	sql := "SELECT id FROM definition WHERE kind='project' AND deleted_at IS NOT NULL AND purged_at IS NULL ORDER BY deleted_at,id"
+	read := q.db().PurgeRootProjects
 	switch kind {
 	case contract.PurgeKindExperiment:
-		sql = "SELECT id FROM experiment WHERE tombstoned_at IS NOT NULL AND NOT project_id=ANY(fleet_deleted_projects()) ORDER BY tombstoned_at,id"
+		read = q.db().PurgeRootExperiments
 	case contract.PurgeKindTask:
-		sql = "SELECT id FROM task WHERE tombstoned_at IS NOT NULL AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) ORDER BY tombstoned_at,id"
+		read = q.db().PurgeRootTasks
 	case contract.PurgeKindSession:
-		// A trial step's session goes with its experiment (its pipeline run is a trial), not as a root of its own.
-		sql = `SELECT id FROM session d WHERE tombstoned_at IS NOT NULL
-		  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.id=d.pipeline_run_id AND r.experiment_id IS NOT NULL)
-		  AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) ORDER BY tombstoned_at,id`
+		read = q.db().PurgeRootSessions
 	}
-	rs, err := queryRows(q, sql)
-	out := []string{}
-	for _, r := range rs {
-		out = append(out, astr(r["id"]))
-	}
-	return out, err
+	ids, err := read(q.ctx())
+	return nonNilStrs(ids), err
 }
 
-// addPurgeTask: a store object or a span deletion still to do after the rows went (a purge_task row).
-func addPurgeTask(q *Request, t doc) error {
-	t["id"] = newID()
-	return exec(q, "INSERT INTO purge_task(id, store_id, payload) VALUES($1, $2, $3::jsonb - '{id,storeId,createdAt}'::text[])", t["id"], t["storeId"], jsonBytes(t))
+// purgeTask: a store object or a span deletion still to do after the rows went (a purge_task row: its store, and the
+// rest as its payload).
+type purgeTask struct {
+	ID      string  `json:"-"`
+	StoreID *string `json:"-"`
+	purgeTaskPayload
 }
 
-// purgeTaskRecord: a purge_task row as runPurgeTasks reads it.
-const purgeTaskRecord = "(payload || jsonb_strip_nulls(jsonb_build_object('id', id, 'storeId', store_id, 'createdAt', (extract(epoch FROM created_at) * 1000)::bigint)))"
+type purgeTaskPayload struct {
+	Objects      []purgeObject `json:"objects,omitempty"`
+	ExecutionIDs []string      `json:"executionIds,omitempty"` // whose spans go
+}
+
+// purgeObject: an object on the task's store: a content object (projectId, scope, hash: it goes unless a copy maps to
+// it again) or an upload's staging object (uploadId: its multipart upload is aborted first).
+type purgeObject struct {
+	Key       string  `json:"key"`
+	UploadID  *string `json:"uploadId,omitempty"`
+	ProjectID *string `json:"projectId,omitempty"`
+	Scope     string  `json:"scope,omitempty"`
+	Hash      *string `json:"hash,omitempty"`
+}
+
+// addPurgeTask: a store object or a span deletion still to do after the rows went.
+func addPurgeTask(q *Request, t purgeTask) error {
+	return q.db().PurgeTaskAdd(q.ctx(), db.PurgeTaskAddParams{ID: newID(), StoreID: t.StoreID, Payload: jsonBytes(t.purgeTaskPayload)})
+}
 
 // purgeCascade: delete every row of a cascade, in purgeOrder; the store objects no remaining artifact shares and the
 // spans of its executions become purge tasks.
 func purgeCascade(q *Request, c *cascade) error {
-	objects, err := queryRows(q, `SELECT DISTINCT c.store_id,a.project_id,a.scope,a.content_hash,c.staging_key,c.upload_id FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id
-	  WHERE a.id=ANY($1) AND c.state<>'deleted'`, c.sets["artifact"])
+	objects, err := q.db().CleanupCascadeObjects(q.ctx(), nonNilStrs(c.sets["artifact"]))
 	if err != nil {
 		return err
 	}
@@ -843,49 +771,40 @@ func purgeCascade(q *Request, c *cascade) error {
 		if where == "false" {
 			continue
 		}
-		if err := exec(q, "DELETE FROM "+t+" WHERE "+andFilter(keptRows[t], where), a.vals...); err != nil {
+		if _, err := q.tx.Exec(q.ctx(), sqlPurgeRows(t, where, keptRows[t]), a.vals...); err != nil {
 			return fmt.Errorf("purge %s: %w", t, err)
 		}
 	}
 	// An object is content-addressed (project/scope/hash) and may be shared: runPurgeTasks decides under the write lock.
-	keys, seen := map[string][]any{}, map[string]bool{}
+	keys, seen := map[string][]purgeObject{}, map[string]bool{}
 	for _, o := range objects {
-		store := astr(o["store_id"])
-		if k := astr(o["staging_key"]); k != "" {
+		store := o.StoreID
+		if k := deref(o.StagingKey); k != "" {
 			// An upload in progress: its multipart parts are aborted, then its staging object deleted.
-			keys[store] = append(keys[store], doc{"key": k, "uploadId": o["upload_id"]})
+			keys[store] = append(keys[store], purgeObject{Key: k, UploadID: o.UploadID})
 		}
-		x := doc{"key": keyOf(&Artifact{ProjectID: strp(o, "project_id"), Scope: astr(o["scope"]), ContentHash: astr(o["content_hash"])}),
-			"projectId": o["project_id"], "scope": o["scope"], "hash": o["content_hash"]}
-		if k := store + "\x00" + astr(x["key"]); !seen[k] {
+		x := purgeObject{Key: keyOf(&Artifact{ProjectID: o.ProjectID, Scope: o.Scope, ContentHash: o.ContentHash}), ProjectID: o.ProjectID,
+			Scope: o.Scope, Hash: ptr(o.ContentHash)}
+		if k := store + "\x00" + x.Key; !seen[k] {
 			seen[k] = true
 			keys[store] = append(keys[store], x)
 		}
 	}
 	for _, store := range slices.Sorted(maps.Keys(keys)) {
-		if err := addPurgeTask(q, doc{"storeId": store, "objects": keys[store]}); err != nil {
+		if err := addPurgeTask(q, purgeTask{StoreID: ptr(store), purgeTaskPayload: purgeTaskPayload{Objects: keys[store]}}); err != nil {
 			return err
 		}
 	}
 	if len(c.sets["execution"]) > 0 {
-		if err := addPurgeTask(q, doc{"executionIds": c.sets["execution"]}); err != nil {
+		if err := addPurgeTask(q, purgeTask{purgeTaskPayload: purgeTaskPayload{ExecutionIDs: c.sets["execution"]}}); err != nil {
 			return err
 		}
 	}
 	if c.kind == "project" {
-		return exec(q, "UPDATE definition SET purged_at=now() WHERE kind='project' AND id=$1", c.id)
+		return q.db().CleanupProjectPurged(q.ctx(), c.id)
 	}
 	return nil
 }
-
-// pendingCommands: the unfinished commands of executions ($1) and whether their host is gone: removed, or unknown
-// (neither the default host $2 nor a host record nor an observation), as knownHost decides.
-const pendingCommands = `SELECT c.id, c.kind, c.host_id AS host,
- (h.state='removed' AND h.id IS NOT NULL
-  OR (h.id IS NULL AND c.host_id IS DISTINCT FROM $2
-   AND NOT EXISTS (SELECT 1 FROM host_observation o WHERE o.id=c.host_id))) AS dead
- FROM command c LEFT JOIN host h ON h.host_id=c.host_id
- WHERE c.execution_id=ANY($1) AND c.status='pending' ORDER BY c.seq`
 
 // purgeRootTx: one tombstoned root in its own transaction: blocked (a live row keeps it) or purged.
 func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (rows []contract.KindCount, bytes int64, blocked string, err error) {
@@ -893,7 +812,7 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 		if err := showDeleted(q); err != nil {
 			return err
 		}
-		if err := exec(q, "SELECT set_config('fleet.purge','on',true)"); err != nil {
+		if err := q.db().TxSetPurge(q.ctx()); err != nil {
 			return err
 		}
 		c, err := cascadeOf(q, string(kind), id)
@@ -905,13 +824,13 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 		}
 		// A stop or teardown a live host has not finished keeps the object: purging it would leave the agent running and
 		// the worktree in place. One for a removed (or purged) host is never fetched: it goes with the object.
-		pending, err := queryRows(q, pendingCommands, c.sets["execution"], defaultHost())
+		pending, err := q.db().CleanupPendingCommands(q.ctx(), db.CleanupPendingCommandsParams{Executions: nonNilStrs(c.sets["execution"]), DefaultHost: defaultHost()})
 		if err != nil {
 			return err
 		}
 		for _, p := range pending {
-			if p["dead"] != true {
-				blocked = fmt.Sprintf("pending %s command %s on host %s", astr(p["kind"]), astr(p["id"]), astr(p["host"]))
+			if !p.Dead {
+				blocked = fmt.Sprintf("pending %s command %s on host %s", p.Kind, p.ID, deref(p.Host))
 				return nil
 			}
 		}
@@ -1071,7 +990,9 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		left, err = runPurgeTasks(q.ctx(), q.app, start.Add(purgeBudget))
 	} else {
 		err = runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
-			return q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM purge_task").Scan(&left)
+			var err error
+			left, err = q.db().PurgeTaskCount(q.ctx())
+			return err
 		})
 	}
 	out.Purged = !b.Preview
@@ -1093,20 +1014,25 @@ func keptCount(kind contract.PurgeKind, kept []contract.PurgeReason) contract.Pu
 // copy on that store maps to it again: an upload or a write that deduplicated onto it since the purge keeps it. Span
 // deletes run outside any transaction.
 func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, error) {
-	var tasks []doc
+	var tasks []purgeTask
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-		var err error
-		tasks, err = rows(q, "SELECT "+purgeTaskRecord+" AS data FROM purge_task ORDER BY seq")
+		rs, err := q.db().PurgeTasks(q.ctx())
+		tasks = nil // a retried transaction starts over
+		for _, r := range rs {
+			t := purgeTask{ID: r.ID, StoreID: r.StoreID}
+			if json.Unmarshal(r.Payload, &t.purgeTaskPayload) == nil {
+				tasks = append(tasks, t)
+			}
+		}
 		return err
 	}); err != nil {
 		return 0, err
 	}
 	left := int64(0)
 	// Spans of every task go in batched statements (one lightweight DELETE took ~125 ms on prod, one per purged root).
-	var spanTasks []doc
-	others := []doc{}
+	var spanTasks, others []purgeTask
 	for _, t := range tasks {
-		if ids := strs(t["executionIds"]); len(ids) > 0 && t["storeId"] == nil {
+		if len(t.ExecutionIDs) > 0 && t.StoreID == nil {
 			spanTasks = append(spanTasks, t)
 		} else {
 			others = append(others, t)
@@ -1116,16 +1042,14 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 	// each; a failed chunk does not stop the next. A task goes once all its ids went; one partly done keeps the rest.
 	all := []string{}
 	for _, t := range spanTasks {
-		all = append(all, strs(t["executionIds"])...)
+		all = append(all, t.ExecutionIDs...)
 	}
 	gone := map[string]bool{}
 	for i := 0; i < len(all) && !time.Now().After(deadline); i += 500 {
 		part := all[i:min(i+500, len(all))]
-		if spanStore != nil { // no span store configured: no spans to delete
-			if err := spanStore.Exec(ctx, "DELETE FROM span WHERE execution_id IN {ids:Array(String)}", map[string]string{"ids": clickhouseStrings(part)}); err != nil {
-				slog.Warn("purge: spans", "err", err)
-				continue
-			}
+		if err := spanDeleteExecutions(ctx, part); err != nil {
+			slog.Warn("purge: spans", "err", err)
+			continue
 		}
 		for _, id := range part {
 			gone[id] = true
@@ -1135,7 +1059,7 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			for _, t := range spanTasks {
 				rest := []string{}
-				for _, id := range strs(t["executionIds"]) {
+				for _, id := range t.ExecutionIDs {
 					if !gone[id] {
 						rest = append(rest, id)
 					}
@@ -1143,14 +1067,11 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 				var err error
 				switch {
 				case len(rest) == 0:
-					err = exec(q, "DELETE FROM purge_task WHERE id=$1", t["id"])
-				case len(rest) < len(strs(t["executionIds"])):
-					next := doc{} // a copy: a retried transaction reads the task as stored
-					for k, v := range t {
-						next[k] = v
-					}
-					next["executionIds"] = rest
-					err = exec(q, "UPDATE purge_task SET payload=$2::jsonb - '{id,storeId,createdAt}'::text[] WHERE id=$1", t["id"], jsonBytes(next))
+					err = q.db().PurgeTaskDelete(q.ctx(), t.ID)
+				case len(rest) < len(t.ExecutionIDs):
+					next := t.purgeTaskPayload // a copy: a retried transaction reads the task as stored
+					next.ExecutionIDs = rest
+					err = q.db().PurgeTaskUpdate(q.ctx(), db.PurgeTaskUpdateParams{ID: t.ID, Payload: jsonBytes(next)})
 				}
 				if err != nil {
 					return err
@@ -1161,7 +1082,7 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 			return left, err
 		}
 		for _, t := range spanTasks {
-			for _, id := range strs(t["executionIds"]) {
+			for _, id := range t.ExecutionIDs {
 				if !gone[id] {
 					left++
 					break
@@ -1174,8 +1095,8 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 			left++
 			continue
 		}
-		rest := []any{}
-		if store := astr(t["storeId"]); store != "" {
+		rest := []purgeObject{}
+		if store := deref(t.StoreID); store != "" {
 			s, err := storeGet(ctx, a, store)
 			var s3 *S3
 			if err == nil && s.State != "unreachable" {
@@ -1184,8 +1105,7 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 			if err != nil && !isNotFound(err) { // a store gone with its host has nothing left to delete
 				slog.Warn("purge: store", "store", store, "err", err)
 			}
-			for _, x := range anys(t["objects"]) {
-				o := mapOf(x)
+			for _, o := range t.Objects {
 				if isNotFound(err) {
 					break
 				}
@@ -1197,32 +1117,32 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 					if err := showDeleted(q); err != nil {
 						return err
 					}
-					if err := objectLock(ctx, q.tx, store, astr(o["key"])); err != nil {
+					if err := objectLock(ctx, q.tx, store, o.Key); err != nil {
 						return err
 					}
-					if o["hash"] != nil {
-						if used, err := has(q, `SELECT 1 FROM artifact_copy c JOIN artifact a ON a.id=c.artifact_id WHERE c.store_id=$1 AND c.state<>'deleted'
-						  AND a.project_id IS NOT DISTINCT FROM $2 AND a.scope=$3 AND a.content_hash=$4`, store, o["projectId"], o["scope"], o["hash"]); err != nil || used {
+					if o.Hash != nil {
+						if used, err := q.db().CleanupObjectUsed(q.ctx(), db.CleanupObjectUsedParams{StoreID: store, ProjectID: o.ProjectID, Scope: o.Scope,
+							ContentHash: *o.Hash}); err != nil || used {
 							return err
 						}
 					}
-					if u := astr(o["uploadId"]); u != "" {
-						s3.AbortMultipartUpload(s.Bucket, astr(o["key"]), u) // an upload already finished or aborted answers an error
+					if u := deref(o.UploadID); u != "" {
+						s3.AbortMultipartUpload(s.Bucket, o.Key, u) // an upload already finished or aborted answers an error
 					}
-					return s3.Delete(s.Bucket, astr(o["key"]))
+					return s3.Delete(s.Bucket, o.Key)
 				}); e != nil {
-					slog.Warn("purge: object", "store", store, "key", o["key"], "err", e)
+					slog.Warn("purge: object", "store", store, "key", o.Key, "err", e)
 					rest = append(rest, o)
 				}
 			}
-			t["objects"] = rest
+			t.Objects = rest
 		}
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			if len(rest) == 0 {
-				return exec(q, "DELETE FROM purge_task WHERE id=$1", t["id"])
+				return q.db().PurgeTaskDelete(q.ctx(), t.ID)
 			}
 			// An update, never an insert: a task another purge finished meanwhile stays gone.
-			return exec(q, "UPDATE purge_task SET payload=$2::jsonb - '{id,storeId,createdAt}'::text[] WHERE id=$1", t["id"], jsonBytes(t))
+			return q.db().PurgeTaskUpdate(q.ctx(), db.PurgeTaskUpdateParams{ID: t.ID, Payload: jsonBytes(t.purgeTaskPayload)})
 		}); err != nil {
 			return left, err
 		}
@@ -1238,15 +1158,5 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 // transaction ends; its holder waits on no other lock). ponytail: purge holds it across the store DELETE, so a
 // reserve of that same content, holding GLOBAL, waits for one store round trip; a pending-delete marker if that shows.
 func objectLock(ctx context.Context, tx pgx.Tx, storeID, key string) error {
-	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "object:"+storeID+":"+key)
-	return err
-}
-
-// clickhouseStrings: an Array(String) parameter value (ClickHouse literal syntax).
-func clickhouseStrings(ids []string) string {
-	q := make([]string, len(ids))
-	for i, s := range ids {
-		q[i] = "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
-	}
-	return "[" + strings.Join(q, ",") + "]"
+	return db.New(tx).AdvisoryXactLock(ctx, "object:"+storeID+":"+key)
 }

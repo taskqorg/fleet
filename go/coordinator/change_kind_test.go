@@ -24,14 +24,19 @@ func TestChangeKindsMatchTriggers(t *testing.T) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		t.Fatal(err)
 	}
+	src, err := os.ReadFile("schema/functions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	functions := string(src)
 	var kinds []string
 	for _, fn := range []string{"fleet_change", "fleet_artifact_change", "fleet_resource_summary_change"} {
-		at := strings.LastIndex(schemaSQL, "FUNCTION "+fn+"() RETURNS")
+		at := strings.Index(functions, "FUNCTION public."+fn+"()\n")
 		if at < 0 {
-			t.Fatalf("schema.sql has no %s", fn)
+			t.Fatalf("schema/functions.sql has no %s", fn)
 		}
-		def := schemaSQL[at:]
-		def = def[:strings.Index(def, "$$;")]
+		def := functions[at:]
+		def = def[:strings.Index(def, "$function$;")]
 		before := len(kinds)
 		assigned := strings.Count(def, "k := ")
 		for _, m := range regexp.MustCompile(`k := '([a-z_-]+)'`).FindAllStringSubmatch(def, -1) {

@@ -1,5 +1,7 @@
-// Record access (all/get/put with the typed execution and task adapters, docs/designs/fleet-data-foundation.md §7):
-// documents by kind, and the legacy kinds execution, question and delegation served from their typed tables.
+// Record access (all/get/put, docs/designs/fleet-data-foundation.md §7): the legacy record layer the files on the
+// design rules' allowlist still read and write through, every kind from its table (the conversation, host and account
+// kinds through convTables, execution, question and delegation through their typed queries), and the generic row
+// helpers those files call (exec, first, has, rows).
 package main
 
 import (
@@ -563,20 +565,17 @@ func decode(raw json.RawMessage, v any) error {
 
 func hostOf(q *Request) string { return q.host["hostId"].(string) }
 
-// owned: the execution named in a host request runs on the requesting host.
-func owned(q *Request, executionID *string) error {
-	if executionID == nil || *executionID == "" {
-		return nil
+// taskRow: the task's row as a record (column names), for callers outside this file; errNotFound when absent.
+func taskRow(q *Request, id string) (doc, error) {
+	t, err := first(q, "SELECT * FROM task WHERE id=$1", id)
+	if err == nil && t == nil {
+		return nil, errNotFound
 	}
-	h, err := q.db().EntExecutionHost(q.ctx(), *executionID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if h != hostOf(q) {
-		return fail(403, "Execution rejected")
-	}
-	return nil
+	return t, err
+}
+
+// questionRecord: the question's row as a record (column names), as the answer checks and callers outside this file
+// read it; nil when absent.
+func questionRecord(q *Request, id string) (doc, error) {
+	return first(q, "SELECT * FROM question WHERE id=$1", id)
 }
