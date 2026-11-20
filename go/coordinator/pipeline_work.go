@@ -12,10 +12,10 @@ import (
 )
 
 func init() {
-	kitRegister(&kitQueue{Name: "pipeline", Period: pipelinePeriod(), Limit: 16, Workers: 8, Due: pipelineWorkDue, Step: pipelineWorkStep,
+	kitRegister(&kitQueue{Name: "pipeline", Period: pipelinePeriod(), Limit: 16, Workers: 4, Due: pipelineWorkDue, Step: pipelineWorkStep,
 		Retry: kitRetry{Table: "pipeline_work", Key: "run_id", Guard: `pipeline_work.attempts=$5::int`, Class: func(error) string { return "step_failed" }}})
-	kitRegister(&kitQueue{Name: "lab", Period: pipelinePeriod(), Limit: 8, Workers: 4, Due: labWorkDue, Step: labWorkStep,
-		Retry: kitRetry{Table: "lab_work", Key: "experiment_id", Guard: `lab_work.attempts=$5::int`, Class: func(error) string { return "look_failed" }}})
+	kitRegister(&kitQueue{Name: "lab", Period: pipelinePeriod(), Limit: 8, Workers: 2, Due: labWorkDue, Step: labWorkStep,
+		Retry: kitRetry{Table: "lab_work", Key: "experiment_id", Guard: `lab_work.attempts=$5::int`, Upsert: true, Class: func(error) string { return "look_failed" }}})
 }
 
 // pipelinePeriod: how often the pipeline and lab queues are passed besides their wakes: the waiting steps' own look

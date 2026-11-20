@@ -292,7 +292,11 @@ func (k *workKit) run(ctx context.Context, q *kitQueue, now time.Time, claims []
 			if ctx.Err() != nil {
 				break
 			}
-			slots <- struct{}{}
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				continue
+			}
 			wg.Add(1)
 			go func(c *kitClaim) {
 				defer func() { <-slots; wg.Done() }()

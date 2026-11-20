@@ -1161,7 +1161,7 @@ func pipelineLater(q *Request, runID string) error {
 // pipelineEnded: a run that ended in q's transaction: its experiment looks again and its own row runs once more for what
 // follows an end (draft examples), then goes.
 func pipelineEnded(q *Request, run doc) error {
-	if err := pipelineRevokeSteps(q, astr(run["id"])); err != nil {
+	if err := pipelineRevokeSteps(q, run); err != nil {
 		return err
 	}
 	if id := astr(run["experimentId"]); id != "" {
@@ -1172,24 +1172,29 @@ func pipelineEnded(q *Request, run doc) error {
 	return pipelineSoon(q, astr(run["id"]))
 }
 
-// pipelineRevokeSteps revokes every live call token of run id's steps (a run that ended or left the queue).
-func pipelineRevokeSteps(q *Request, runID string) error {
-	rs, err := queryRows(q, "SELECT DISTINCT data->>'executionId' AS id FROM document WHERE kind='run-token' AND starts_with(data->>'executionId',$1||':step:') AND NOT data ? 'revokedAt'", runID)
-	if err != nil {
-		return err
-	}
-	for _, r := range rs {
-		if err := revokeTokens(q, astr(r["id"])); err != nil {
+// pipelineRevokeSteps revokes every live call token of run's steps (a run that ended).
+func pipelineRevokeSteps(q *Request, run doc) error {
+	for i := range anys(run["steps"]) {
+		if err := revokeTokens(q, stepRow(run, i)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// pipelineWorkDone: run id leaves the queue; no token of its steps stays live.
-func pipelineWorkDone(q *Request, runID string) error {
-	if err := pipelineRevokeSteps(q, runID); err != nil {
-		return err
+// pipelineWorkDone: run id leaves the queue. A run that ended revoked its steps' tokens then (pipelineEnded); one
+// that is gone or cannot be read has them looked up by its step rows' prefix.
+func pipelineWorkDone(q *Request, runID string, ended bool) error {
+	if !ended {
+		rs, err := queryRows(q, "SELECT DISTINCT data->>'executionId' AS id FROM document WHERE kind='run-token' AND starts_with(data->>'executionId',$1||':step:') AND NOT data ? 'revokedAt'", runID)
+		if err != nil {
+			return err
+		}
+		for _, r := range rs {
+			if err := revokeTokens(q, astr(r["id"])); err != nil {
+				return err
+			}
+		}
 	}
 	return q.db().PipelineWorkDelete(q.ctx(), runID)
 }
@@ -1200,13 +1205,13 @@ func pipelineWorkStep(q *Request, now time.Time, c *kitClaim) error {
 		return err
 	}
 	if _, err := q.db().PipelineRunLock(q.ctx(), c.Key); errors.Is(err, pgx.ErrNoRows) {
-		return pipelineWorkDone(q, c.Key)
+		return pipelineWorkDone(q, c.Key, false)
 	} else if err != nil {
 		return err
 	}
 	run, err := getRun(q, c.Key)
 	if pipelineFormatUnsupported(err) || err == nil && run == nil {
-		return pipelineWorkDone(q, c.Key) // a historical plan never runs again
+		return pipelineWorkDone(q, c.Key, false) // a historical plan never runs again
 	}
 	if err != nil {
 		return err
@@ -1255,7 +1260,7 @@ func pipelineWorkStep(q *Request, now time.Time, c *kitClaim) error {
 		}
 		return nil
 	}
-	return pipelineWorkDone(q, c.Key)
+	return pipelineWorkDone(q, c.Key, true)
 }
 
 // pipelineNext selects the plan entries up to the first step still to run and returns its index; a run with none left
@@ -1569,7 +1574,11 @@ func pipelinePrepared(q *Request, c *kitClaim, run doc, i int, prepared *pipelin
 	}
 	delete(s, "executionId")
 	mapOf(run["plan"])["revision"] = revision
-	pipelinePlanEntry(run, i)["dispatch"] = dispatchBefore
+	if dispatchBefore == nil {
+		delete(pipelinePlanEntry(run, i), "dispatch")
+	} else {
+		pipelinePlanEntry(run, i)["dispatch"] = dispatchBefore
+	}
 	return failStep(q, run, i, problem, msg)
 }
 
@@ -1834,7 +1843,7 @@ func pipelineImportDrafts(q *Request, run doc, drafts pipelineDrafts) error {
 			return err
 		}
 	}
-	return pipelineWorkDone(q, astr(run["id"]))
+	return pipelineWorkDone(q, astr(run["id"]), true)
 }
 
 // callOutput: the provider's reply body of an in-process call, decoded; nil when there is none.
