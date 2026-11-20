@@ -80,6 +80,325 @@ func (q *Queries) LabWorkEnsure(ctx context.Context, experimentID string) (int64
 	return result.RowsAffected(), nil
 }
 
+const pipelineCaller = `-- name: PipelineCaller :one
+SELECT e.project_id,coalesce(e.task_id,s.task_id) AS task_id,e.session_id,e.directed_by
+FROM execution e LEFT JOIN session s ON s.id=e.session_id WHERE e.id=$1
+`
+
+type PipelineCallerRow struct {
+	ProjectID  *string
+	TaskID     *string
+	SessionID  *string
+	DirectedBy *string
+}
+
+// The execution a pipeline is started from, with the task of its session.
+func (q *Queries) PipelineCaller(ctx context.Context, id string) (PipelineCallerRow, error) {
+	row := q.db.QueryRow(ctx, pipelineCaller, id)
+	var i PipelineCallerRow
+	err := row.Scan(
+		&i.ProjectID,
+		&i.TaskID,
+		&i.SessionID,
+		&i.DirectedBy,
+	)
+	return i, err
+}
+
+const pipelineConnectionGrant = `-- name: PipelineConnectionGrant :one
+SELECT coalesce(holder,payload->>'holder','')::text AS holder,coalesce(payload->'access','null')::jsonb AS access,
+ coalesce(payload->'tools','null')::jsonb AS tools,coalesce(payload->>'intake','')::text AS intake FROM api_connection WHERE id=$1
+`
+
+type PipelineConnectionGrantRow struct {
+	Holder string
+	Access []byte
+	Tools  []byte
+	Intake string
+}
+
+// What a connection grants (its record's holder, access, tools and intake, as connAllowed and the stamp read them).
+func (q *Queries) PipelineConnectionGrant(ctx context.Context, id string) (PipelineConnectionGrantRow, error) {
+	row := q.db.QueryRow(ctx, pipelineConnectionGrant, id)
+	var i PipelineConnectionGrantRow
+	err := row.Scan(
+		&i.Holder,
+		&i.Access,
+		&i.Tools,
+		&i.Intake,
+	)
+	return i, err
+}
+
+const pipelineConnectionGrantShare = `-- name: PipelineConnectionGrantShare :one
+SELECT coalesce(holder,payload->>'holder','')::text AS holder,coalesce(payload->'access','null')::jsonb AS access,
+ coalesce(payload->'tools','null')::jsonb AS tools,coalesce(payload->>'intake','')::text AS intake FROM api_connection WHERE id=$1 FOR SHARE
+`
+
+type PipelineConnectionGrantShareRow struct {
+	Holder string
+	Access []byte
+	Tools  []byte
+	Intake string
+}
+
+func (q *Queries) PipelineConnectionGrantShare(ctx context.Context, id string) (PipelineConnectionGrantShareRow, error) {
+	row := q.db.QueryRow(ctx, pipelineConnectionGrantShare, id)
+	var i PipelineConnectionGrantShareRow
+	err := row.Scan(
+		&i.Holder,
+		&i.Access,
+		&i.Tools,
+		&i.Intake,
+	)
+	return i, err
+}
+
+const pipelineExecutionDefinitions = `-- name: PipelineExecutionDefinitions :one
+SELECT definitions FROM execution WHERE id=$1 AND project_id IS NOT DISTINCT FROM $2::text
+`
+
+type PipelineExecutionDefinitionsParams struct {
+	ID        string
+	ProjectID *string
+}
+
+// The definition pins of an execution in the run's project.
+func (q *Queries) PipelineExecutionDefinitions(ctx context.Context, arg PipelineExecutionDefinitionsParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, pipelineExecutionDefinitions, arg.ID, arg.ProjectID)
+	var definitions []byte
+	err := row.Scan(&definitions)
+	return definitions, err
+}
+
+const pipelineExecutionExists = `-- name: PipelineExecutionExists :one
+SELECT EXISTS(SELECT 1 FROM execution WHERE id=$1)::bool
+`
+
+func (q *Queries) PipelineExecutionExists(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, pipelineExecutionExists, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const pipelineExecutionPins = `-- name: PipelineExecutionPins :one
+SELECT definitions FROM execution WHERE id=$1
+`
+
+func (q *Queries) PipelineExecutionPins(ctx context.Context, id string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, pipelineExecutionPins, id)
+	var definitions []byte
+	err := row.Scan(&definitions)
+	return definitions, err
+}
+
+const pipelineHost = `-- name: PipelineHost :one
+SELECT coalesce(CASE WHEN state<>'active' THEN state ELSE payload->>'state' END,'')::text AS state,coalesce(holder,payload->>'holder','')::text AS holder FROM host WHERE id=$1
+`
+
+type PipelineHostRow struct {
+	State  string
+	Holder string
+}
+
+// A host's record state (its column unless active, as the record shows it) and holder.
+func (q *Queries) PipelineHost(ctx context.Context, id string) (PipelineHostRow, error) {
+	row := q.db.QueryRow(ctx, pipelineHost, id)
+	var i PipelineHostRow
+	err := row.Scan(&i.State, &i.Holder)
+	return i, err
+}
+
+const pipelineHostJob = `-- name: PipelineHostJob :one
+SELECT (data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at,'projectId',project_id))::jsonb AS record
+FROM execution WHERE id=$1 AND kind='host_job'
+`
+
+// A host job's record (as execJSON shows it) and its project.
+func (q *Queries) PipelineHostJob(ctx context.Context, id string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, pipelineHostJob, id)
+	var record []byte
+	err := row.Scan(&record)
+	return record, err
+}
+
+const pipelineHostShare = `-- name: PipelineHostShare :one
+SELECT coalesce(CASE WHEN state<>'active' THEN state ELSE payload->>'state' END,'')::text AS state,coalesce(holder,payload->>'holder','')::text AS holder FROM host WHERE id=$1 FOR SHARE
+`
+
+type PipelineHostShareRow struct {
+	State  string
+	Holder string
+}
+
+func (q *Queries) PipelineHostShare(ctx context.Context, id string) (PipelineHostShareRow, error) {
+	row := q.db.QueryRow(ctx, pipelineHostShare, id)
+	var i PipelineHostShareRow
+	err := row.Scan(&i.State, &i.Holder)
+	return i, err
+}
+
+const pipelineOpenJobs = `-- name: PipelineOpenJobs :many
+SELECT id FROM execution WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting') ORDER BY id FOR UPDATE
+`
+
+// The open jobs under a step, locked.
+func (q *Queries) PipelineOpenJobs(ctx context.Context, parentExecutionID *string) ([]string, error) {
+	rows, err := q.db.Query(ctx, pipelineOpenJobs, parentExecutionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelineOwnedJobIDs = `-- name: PipelineOwnedJobIDs :many
+SELECT coalesce(data->>'jobId','')::text AS id FROM execution WHERE data ? 'jobId'
+`
+
+// Every job id a step owns.
+func (q *Queries) PipelineOwnedJobIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, pipelineOwnedJobIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelinePendingArtifacts = `-- name: PipelinePendingArtifacts :one
+SELECT count(*)::int FROM artifact WHERE execution_id=$1 AND state='pending'
+`
+
+func (q *Queries) PipelinePendingArtifacts(ctx context.Context, executionID *string) (int32, error) {
+	row := q.db.QueryRow(ctx, pipelinePendingArtifacts, executionID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const pipelineProblemSet = `-- name: PipelineProblemSet :exec
+UPDATE execution SET problem=$1::text WHERE id=$2
+`
+
+type PipelineProblemSetParams struct {
+	Problem string
+	ID      string
+}
+
+func (q *Queries) PipelineProblemSet(ctx context.Context, arg PipelineProblemSetParams) error {
+	_, err := q.db.Exec(ctx, pipelineProblemSet, arg.Problem, arg.ID)
+	return err
+}
+
+const pipelineProfileLive = `-- name: PipelineProfileLive :one
+SELECT id FROM definition WHERE kind='agent' AND id=$1 AND retired_at IS NULL
+`
+
+func (q *Queries) PipelineProfileLive(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, pipelineProfileLive, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const pipelineProfileLiveShare = `-- name: PipelineProfileLiveShare :one
+SELECT id FROM definition WHERE kind='agent' AND id=$1 AND retired_at IS NULL FOR SHARE
+`
+
+func (q *Queries) PipelineProfileLiveShare(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, pipelineProfileLiveShare, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const pipelineProject = `-- name: PipelineProject :one
+
+SELECT head,access_version FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL
+`
+
+type PipelineProjectRow struct {
+	Head          int32
+	AccessVersion int64
+}
+
+// Pipeline authority (pipelineAuthorityStamp, pipeline_plan.go): the rows a dispatch is stamped with, read FOR SHARE
+// (the ...Share forms) inside a write transaction so they cannot change before the stamp is used.
+func (q *Queries) PipelineProject(ctx context.Context, id string) (PipelineProjectRow, error) {
+	row := q.db.QueryRow(ctx, pipelineProject, id)
+	var i PipelineProjectRow
+	err := row.Scan(&i.Head, &i.AccessVersion)
+	return i, err
+}
+
+const pipelineProjectShare = `-- name: PipelineProjectShare :one
+SELECT head,access_version FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL FOR SHARE
+`
+
+type PipelineProjectShareRow struct {
+	Head          int32
+	AccessVersion int64
+}
+
+func (q *Queries) PipelineProjectShare(ctx context.Context, id string) (PipelineProjectShareRow, error) {
+	row := q.db.QueryRow(ctx, pipelineProjectShare, id)
+	var i PipelineProjectShareRow
+	err := row.Scan(&i.Head, &i.AccessVersion)
+	return i, err
+}
+
+const pipelineQuestion = `-- name: PipelineQuestion :one
+SELECT id,kind::text AS kind,answer,answered_by,options,data FROM question WHERE id=$1
+`
+
+type PipelineQuestionRow struct {
+	ID         string
+	Kind       string
+	Answer     *string
+	AnsweredBy *string
+	Options    []byte
+	Data       []byte
+}
+
+// What an answered question's after-effects read (labAnswerAfter, budgetAnswerAfter).
+func (q *Queries) PipelineQuestion(ctx context.Context, id string) (PipelineQuestionRow, error) {
+	row := q.db.QueryRow(ctx, pipelineQuestion, id)
+	var i PipelineQuestionRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Answer,
+		&i.AnsweredBy,
+		&i.Options,
+		&i.Data,
+	)
+	return i, err
+}
+
 const pipelineRevokeRunTokens = `-- name: PipelineRevokeRunTokens :execrows
 UPDATE run_token SET revoked_at=to_timestamp($1::float8/1000), updated_at=now()
 WHERE starts_with(execution_id, $2::text || ':step:') AND revoked_at IS NULL
@@ -97,6 +416,52 @@ func (q *Queries) PipelineRevokeRunTokens(ctx context.Context, arg PipelineRevok
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const pipelineRun = `-- name: PipelineRun :one
+SELECT (data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at))::jsonb AS record
+FROM execution WHERE id=$1 AND kind='pipeline_run' AND data ? 'pipelineId'
+`
+
+// A run record (as execJSON shows it); none for a Lab trial row whose run has not started.
+func (q *Queries) PipelineRun(ctx context.Context, id string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, pipelineRun, id)
+	var record []byte
+	err := row.Scan(&record)
+	return record, err
+}
+
+const pipelineRunCancelled = `-- name: PipelineRunCancelled :one
+SELECT EXISTS(SELECT 1 FROM execution WHERE id=$1 AND state='cancelled')::bool
+`
+
+func (q *Queries) PipelineRunCancelled(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, pipelineRunCancelled, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const pipelineRunDefinitionsSet = `-- name: PipelineRunDefinitionsSet :exec
+UPDATE execution SET definitions=$1::jsonb,pipeline_id=coalesce($2,pipeline_id),pipeline_revision=coalesce($3,pipeline_revision)
+WHERE id=$4
+`
+
+type PipelineRunDefinitionsSetParams struct {
+	Definitions      []byte
+	PipelineID       *string
+	PipelineRevision *int64
+	ID               string
+}
+
+func (q *Queries) PipelineRunDefinitionsSet(ctx context.Context, arg PipelineRunDefinitionsSetParams) error {
+	_, err := q.db.Exec(ctx, pipelineRunDefinitionsSet,
+		arg.Definitions,
+		arg.PipelineID,
+		arg.PipelineRevision,
+		arg.ID,
+	)
+	return err
 }
 
 const pipelineRunLock = `-- name: PipelineRunLock :one
@@ -121,6 +486,429 @@ func (q *Queries) PipelineRunOfExecution(ctx context.Context, id string) (string
 	var run_id string
 	err := row.Scan(&run_id)
 	return run_id, err
+}
+
+const pipelineRunUpdate = `-- name: PipelineRunUpdate :exec
+
+UPDATE execution SET observation=$1::observation,project_id=$2,started_at=$3,ended_at=$4,
+ data=$5::jsonb || CASE WHEN data ? 'projectAssessments' THEN jsonb_build_object('projectAssessments',data->'projectAssessments') ELSE '{}'::jsonb END,
+ config_ref=CASE WHEN variant IS NULL THEN $6::jsonb ELSE config_ref END,experiment_id=coalesce(experiment_id,$7),variant=coalesce(variant,$8),
+ task_id=coalesce(task_id,$9),session_id=coalesce(session_id,$10),directed_by=coalesce($11,directed_by),
+ pipeline_id=coalesce($12,pipeline_id),pipeline_revision=coalesce($13,pipeline_revision),
+ parent_execution_id=coalesce(parent_execution_id,$14)
+WHERE id=$15
+`
+
+type PipelineRunUpdateParams struct {
+	Observation       Observation
+	ProjectID         *string
+	StartedAt         *time.Time
+	EndedAt           *time.Time
+	Data              []byte
+	ConfigRef         []byte
+	ExperimentID      *string
+	Variant           *string
+	TaskID            *string
+	SessionID         *string
+	DirectedBy        *string
+	PipelineID        *string
+	PipelineRevision  *int64
+	ParentExecutionID *string
+	ID                string
+}
+
+// Pipeline runs and steps (pipelines.go): a run is one execution row of kind pipeline_run (its document in data), each
+// selected step one pipeline_step row <run>:step:<i>; their state moves only through executionTransition.
+// The run row's columns and document; the Lab's projectAssessments (lab_assessment.go) survive a write of the run.
+func (q *Queries) PipelineRunUpdate(ctx context.Context, arg PipelineRunUpdateParams) error {
+	_, err := q.db.Exec(ctx, pipelineRunUpdate,
+		arg.Observation,
+		arg.ProjectID,
+		arg.StartedAt,
+		arg.EndedAt,
+		arg.Data,
+		arg.ConfigRef,
+		arg.ExperimentID,
+		arg.Variant,
+		arg.TaskID,
+		arg.SessionID,
+		arg.DirectedBy,
+		arg.PipelineID,
+		arg.PipelineRevision,
+		arg.ParentExecutionID,
+		arg.ID,
+	)
+	return err
+}
+
+const pipelineRunsByProjectRequest = `-- name: PipelineRunsByProjectRequest :many
+SELECT (data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at))::jsonb AS record
+FROM execution WHERE kind='pipeline_run' AND data ? 'pipelineId' AND data->>'projectId'=$1::text AND data->>'requestId'=$2::text ORDER BY seq
+`
+
+type PipelineRunsByProjectRequestParams struct {
+	ProjectID string
+	RequestID string
+}
+
+func (q *Queries) PipelineRunsByProjectRequest(ctx context.Context, arg PipelineRunsByProjectRequestParams) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, pipelineRunsByProjectRequest, arg.ProjectID, arg.RequestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var record []byte
+		if err := rows.Scan(&record); err != nil {
+			return nil, err
+		}
+		items = append(items, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelineRunsByRequest = `-- name: PipelineRunsByRequest :many
+SELECT (data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at))::jsonb AS record
+FROM execution WHERE kind='pipeline_run' AND data ? 'pipelineId' AND data->>'requestId'=$1::text AND data->>'pipeline'=$2::text ORDER BY seq
+`
+
+type PipelineRunsByRequestParams struct {
+	RequestID string
+	Pipeline  string
+}
+
+// The runs of one request of a pipeline file (a repeated create answers its run), in order.
+func (q *Queries) PipelineRunsByRequest(ctx context.Context, arg PipelineRunsByRequestParams) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, pipelineRunsByRequest, arg.RequestID, arg.Pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var record []byte
+		if err := rows.Scan(&record); err != nil {
+			return nil, err
+		}
+		items = append(items, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelineRunsByRerun = `-- name: PipelineRunsByRerun :many
+SELECT (data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at))::jsonb AS record
+FROM execution WHERE kind='pipeline_run' AND data ? 'pipelineId' AND data->>'requestId'=$1::text AND data->>'rerunOf'=$2::text ORDER BY seq
+`
+
+type PipelineRunsByRerunParams struct {
+	RequestID string
+	RerunOf   string
+}
+
+func (q *Queries) PipelineRunsByRerun(ctx context.Context, arg PipelineRunsByRerunParams) ([][]byte, error) {
+	rows, err := q.db.Query(ctx, pipelineRunsByRerun, arg.RequestID, arg.RerunOf)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items [][]byte
+	for rows.Next() {
+		var record []byte
+		if err := rows.Scan(&record); err != nil {
+			return nil, err
+		}
+		items = append(items, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelineScriptCommand = `-- name: PipelineScriptCommand :one
+SELECT id,coalesce(host_id,payload->>'hostId','')::text AS host_id FROM command WHERE execution_id=$1 AND kind='script' ORDER BY seq LIMIT 1
+`
+
+type PipelineScriptCommandRow struct {
+	ID     string
+	HostID string
+}
+
+// A script step's command: its id and host (the column, else the record's).
+func (q *Queries) PipelineScriptCommand(ctx context.Context, executionID *string) (PipelineScriptCommandRow, error) {
+	row := q.db.QueryRow(ctx, pipelineScriptCommand, executionID)
+	var i PipelineScriptCommandRow
+	err := row.Scan(&i.ID, &i.HostID)
+	return i, err
+}
+
+const pipelineStepCalls = `-- name: PipelineStepCalls :many
+SELECT e.parent_execution_id::text AS step,e.id,coalesce(e.data->>'tool','')::text AS tool,coalesce(e.data->>'connection','')::text AS connection,t.connection_cost AS cost,
+ coalesce(t.connection_cost_basis,'unavailable')::text AS basis
+FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id
+WHERE e.kind='tool_run' AND e.parent_execution_id=ANY($1::text[]) ORDER BY e.seq
+`
+
+type PipelineStepCallsRow struct {
+	Step       string
+	ID         string
+	Tool       string
+	Connection string
+	Cost       []byte
+	Basis      string
+}
+
+// The tool calls of steps, with their connection cost.
+func (q *Queries) PipelineStepCalls(ctx context.Context, ids []string) ([]PipelineStepCallsRow, error) {
+	rows, err := q.db.Query(ctx, pipelineStepCalls, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PipelineStepCallsRow
+	for rows.Next() {
+		var i PipelineStepCallsRow
+		if err := rows.Scan(
+			&i.Step,
+			&i.ID,
+			&i.Tool,
+			&i.Connection,
+			&i.Cost,
+			&i.Basis,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelineStepCredits = `-- name: PipelineStepCredits :one
+SELECT count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits
+FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.parent_execution_id=$1 AND e.kind='tool_run'
+`
+
+type PipelineStepCreditsRow struct {
+	Calls   int32
+	Credits float64
+}
+
+func (q *Queries) PipelineStepCredits(ctx context.Context, parentExecutionID *string) (PipelineStepCreditsRow, error) {
+	row := q.db.QueryRow(ctx, pipelineStepCredits, parentExecutionID)
+	var i PipelineStepCreditsRow
+	err := row.Scan(&i.Calls, &i.Credits)
+	return i, err
+}
+
+const pipelineStepJobSet = `-- name: PipelineStepJobSet :exec
+UPDATE execution SET data=data||jsonb_build_object('jobId',$1::text) WHERE id=$2
+`
+
+type PipelineStepJobSetParams struct {
+	JobID string
+	ID    string
+}
+
+func (q *Queries) PipelineStepJobSet(ctx context.Context, arg PipelineStepJobSetParams) error {
+	_, err := q.db.Exec(ctx, pipelineStepJobSet, arg.JobID, arg.ID)
+	return err
+}
+
+const pipelineStepLineage = `-- name: PipelineStepLineage :one
+SELECT task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id FROM execution WHERE id=$1
+`
+
+type PipelineStepLineageRow struct {
+	TaskID           *string
+	SessionID        *string
+	DirectedBy       *string
+	PipelineID       *string
+	PipelineRevision *int64
+	StepID           *string
+}
+
+// The lineage columns of a step row its job's tool_run copies.
+func (q *Queries) PipelineStepLineage(ctx context.Context, id string) (PipelineStepLineageRow, error) {
+	row := q.db.QueryRow(ctx, pipelineStepLineage, id)
+	var i PipelineStepLineageRow
+	err := row.Scan(
+		&i.TaskID,
+		&i.SessionID,
+		&i.DirectedBy,
+		&i.PipelineID,
+		&i.PipelineRevision,
+		&i.StepID,
+	)
+	return i, err
+}
+
+const pipelineStepUpdate = `-- name: PipelineStepUpdate :exec
+UPDATE execution SET observation=$1::observation,project_id=$2,started_at=$3,ended_at=$4,data=$5::jsonb,
+ task_id=coalesce(task_id,$6),session_id=coalesce(session_id,$7),directed_by=coalesce($8,directed_by),
+ experiment_id=$9,variant=$10,
+ pipeline_id=coalesce($11,pipeline_id),pipeline_revision=coalesce($12,pipeline_revision),step_id=coalesce($13,step_id)
+WHERE id=$14
+`
+
+type PipelineStepUpdateParams struct {
+	Observation      Observation
+	ProjectID        *string
+	StartedAt        *time.Time
+	EndedAt          *time.Time
+	Data             []byte
+	TaskID           *string
+	SessionID        *string
+	DirectedBy       *string
+	ExperimentID     *string
+	Variant          *string
+	PipelineID       *string
+	PipelineRevision *int64
+	StepID           *string
+	ID               string
+}
+
+func (q *Queries) PipelineStepUpdate(ctx context.Context, arg PipelineStepUpdateParams) error {
+	_, err := q.db.Exec(ctx, pipelineStepUpdate,
+		arg.Observation,
+		arg.ProjectID,
+		arg.StartedAt,
+		arg.EndedAt,
+		arg.Data,
+		arg.TaskID,
+		arg.SessionID,
+		arg.DirectedBy,
+		arg.ExperimentID,
+		arg.Variant,
+		arg.PipelineID,
+		arg.PipelineRevision,
+		arg.StepID,
+		arg.ID,
+	)
+	return err
+}
+
+const pipelineSteps = `-- name: PipelineSteps :many
+SELECT id,parent_execution_id,project_id,(data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at))::jsonb AS record
+FROM execution WHERE kind='pipeline_step' AND id=ANY($1::text[])
+`
+
+type PipelineStepsRow struct {
+	ID                string
+	ParentExecutionID *string
+	ProjectID         *string
+	Record            []byte
+}
+
+// The step rows of selected plan entries: owner run, project and record (as execJSON shows it).
+func (q *Queries) PipelineSteps(ctx context.Context, ids []string) ([]PipelineStepsRow, error) {
+	rows, err := q.db.Query(ctx, pipelineSteps, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PipelineStepsRow
+	for rows.Next() {
+		var i PipelineStepsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentExecutionID,
+			&i.ProjectID,
+			&i.Record,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelineStoredArtifacts = `-- name: PipelineStoredArtifacts :many
+SELECT id,name AS path,content_hash AS sha256 FROM artifact WHERE execution_id=$1 AND state='stored' ORDER BY seq
+`
+
+type PipelineStoredArtifactsRow struct {
+	ID     string
+	Path   string
+	Sha256 string
+}
+
+// The stored artifacts of an execution, in upload order.
+func (q *Queries) PipelineStoredArtifacts(ctx context.Context, executionID *string) ([]PipelineStoredArtifactsRow, error) {
+	rows, err := q.db.Query(ctx, pipelineStoredArtifacts, executionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PipelineStoredArtifactsRow
+	for rows.Next() {
+		var i PipelineStoredArtifactsRow
+		if err := rows.Scan(&i.ID, &i.Path, &i.Sha256); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pipelineStoredPlan = `-- name: PipelineStoredPlan :one
+SELECT (data ? 'pipelineId')::bool AS is_run,(CASE WHEN jsonb_typeof(data->'planVersion')='number' THEN data->>'planVersion' ELSE '' END)::text AS plan_version,
+ (CASE WHEN jsonb_typeof(data->'plan'->'entries')='array' THEN jsonb_array_length(data->'plan'->'entries') ELSE 0 END)::int AS entries,
+ (CASE WHEN jsonb_typeof(data->'definition'->'steps')='array' THEN jsonb_array_length(data->'definition'->'steps') ELSE 0 END)::int AS steps,
+ (CASE WHEN jsonb_typeof(data->'plan'->'revision')='number' THEN (data->'plan'->>'revision')::numeric ELSE 0 END)::bigint AS revision,
+ coalesce(data->'plan'->>'definitionSha256','')::text AS definition_sha256
+FROM execution WHERE id=$1 FOR UPDATE
+`
+
+type PipelineStoredPlanRow struct {
+	IsRun            bool
+	PlanVersion      string
+	Entries          int32
+	Steps            int32
+	Revision         int64
+	DefinitionSha256 string
+}
+
+// The stored plan of a run row, locked (guardPipelineWrite): whether it is a run record, its plan version, entry and
+// definition step counts, revision and definition hash.
+func (q *Queries) PipelineStoredPlan(ctx context.Context, id string) (PipelineStoredPlanRow, error) {
+	row := q.db.QueryRow(ctx, pipelineStoredPlan, id)
+	var i PipelineStoredPlanRow
+	err := row.Scan(
+		&i.IsRun,
+		&i.PlanVersion,
+		&i.Entries,
+		&i.Steps,
+		&i.Revision,
+		&i.DefinitionSha256,
+	)
+	return i, err
+}
+
+const pipelineTaskProject = `-- name: PipelineTaskProject :one
+SELECT project_id FROM task WHERE id=$1
+`
+
+func (q *Queries) PipelineTaskProject(ctx context.Context, id string) (*string, error) {
+	row := q.db.QueryRow(ctx, pipelineTaskProject, id)
+	var project_id *string
+	err := row.Scan(&project_id)
+	return project_id, err
 }
 
 const pipelineWorkDelete = `-- name: PipelineWorkDelete :exec

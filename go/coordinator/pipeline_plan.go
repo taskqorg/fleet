@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -9,6 +10,7 @@ import (
 	"path"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -75,9 +77,13 @@ func initPipelinePlan(run doc) error {
 func requirePipelinePlan(run doc) error {
 	version, ok := intOK(run["planVersion"])
 	if !ok || version != pipelinePlanVersion || len(pipelinePlanEntries(run)) != len(anys(mapOf(run["definition"])["steps"])) {
-		return &HTTPError{Code: 409, Msg: "Unsupported pipeline run format; a clean start is required", Extra: doc{"reason": "pipeline_format_unsupported"}}
+		return pipelineFormatError()
 	}
 	return nil
+}
+
+func pipelineFormatError() error {
+	return &HTTPError{Code: 409, Msg: "Unsupported pipeline run format; a clean start is required", Extra: doc{"reason": "pipeline_format_unsupported"}}
 }
 
 func pipelineFormatUnsupported(err error) bool {
@@ -135,30 +141,40 @@ func pipelineAuthorityStamp(q *Request, run doc, index int, connection, tool, ho
 }
 
 func pipelineAuthorityStampWithin(q *Request, run doc, index int, connection, tool, host string) (string, []string, error) {
-	share := ""
+	share := false
 	resolve := resolveAccessTx
 	if value, ok := txLockStates.Load(q.tx); ok && value.(*txLockState).write {
-		share, resolve = " FOR SHARE", resolveAccessShareTx
+		share, resolve = true, resolveAccessShareTx
 	}
+	d := q.db()
 	authority := mapOf(run["authority"])
 	projectID := astr(run["projectId"])
 	actor, err := resolve(q.ctx(), q.tx, astr(authority["actorEmail"]))
 	if err != nil || actor == nil || !mayAccessProjectID(actor, projectID) {
 		return "", nil, fail(403, "Pipeline initiating actor no longer has project access")
 	}
-	project := doc{}
+	var projectHead *int32
+	var projectVersion *int64
 	if projectID != "" {
-		project, err = first(q, "SELECT head,access_version FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL"+share, projectID)
+		var project db.PipelineProjectRow
+		if share {
+			var r db.PipelineProjectShareRow
+			r, err = d.PipelineProjectShare(q.ctx(), projectID)
+			project = db.PipelineProjectRow(r)
+		} else {
+			project, err = d.PipelineProject(q.ctx(), projectID)
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil, fail(403, "Pipeline project is no longer available")
+		}
 		if err != nil {
 			return "", nil, err
 		}
-		if project == nil {
-			return "", nil, fail(403, "Pipeline project is no longer available")
-		}
+		projectHead, projectVersion = &project.Head, &project.AccessVersion
 	}
 	// Global draft/static runs retain the existing full-access initiating-actor
 	// boundary; they do not invent a project or borrow another actor's rights.
-	stamp := doc{"actor": actor.Email, "accessVersion": actor.AccessVersion, "project": run["projectId"], "projectVersion": project["access_version"], "projectHead": project["head"]}
+	stamp := doc{"actor": actor.Email, "accessVersion": actor.AccessVersion, "project": run["projectId"], "projectVersion": projectVersion, "projectHead": projectHead}
 	connections := []string{}
 	definition := mapOf(anys(mapOf(run["definition"])["steps"])[index])
 	if connection != "" {
@@ -168,12 +184,16 @@ func pipelineAuthorityStampWithin(q *Request, run doc, index int, connection, to
 		if override := astr(mapOf(run["overrides"])["profile"]); override != "" {
 			profileID = override
 		}
-		row, err := first(q, "SELECT id FROM definition WHERE kind='agent' AND id=$1 AND retired_at IS NULL"+share, profileID)
+		if share {
+			_, err = d.PipelineProfileLiveShare(q.ctx(), profileID)
+		} else {
+			_, err = d.PipelineProfileLive(q.ctx(), profileID)
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil, fail(403, "Pipeline profile is no longer available")
+		}
 		if err != nil {
 			return "", nil, err
-		}
-		if row == nil {
-			return "", nil, fail(403, "Pipeline profile is no longer available")
 		}
 		_, profile, err := stepProfile(q, definition, mapOf(run["overrides"]))
 		if err != nil {
@@ -195,28 +215,52 @@ func pipelineAuthorityStampWithin(q *Request, run doc, index int, connection, to
 	sort.Strings(connections)
 	connectionStamps := []any{}
 	for _, name := range connections {
-		row, err := first(q, "SELECT "+convTables["api-connection"].record()+" AS data FROM api_connection WHERE id=$1"+share, "connection:"+name)
-		if err != nil {
+		var c db.PipelineConnectionGrantRow
+		if share {
+			var r db.PipelineConnectionGrantShareRow
+			r, err = d.PipelineConnectionGrantShare(q.ctx(), "connection:"+name)
+			c = db.PipelineConnectionGrantRow(r)
+		} else {
+			c, err = d.PipelineConnectionGrant(q.ctx(), "connection:"+name)
+		}
+		found := err == nil
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", nil, err
 		}
-		c := mapOf(row["data"])
+		var access, tools any
+		if found {
+			if err := json.Unmarshal(c.Access, &access); err != nil {
+				return "", nil, err
+			}
+			if err := json.Unmarshal(c.Tools, &tools); err != nil {
+				return "", nil, err
+			}
+		}
+		// connAllowed (connections.go) reads a connection record's holder and access.
+		record := doc{"holder": nilIf(c.Holder), "access": access}
 		grantee := doc{"directedBy": actor.Email, "projectId": projectID, "experimentId": run["experimentId"]}
-		if c == nil || c["intake"] != "all" || !connAllowed(c, grantee) || tool != "" && !inList(strs(c["tools"]), tool) {
+		if !found || c.Intake != "all" || !connAllowed(record, grantee) || tool != "" && !inList(strs(tools), tool) {
 			return "", nil, fail(403, "Pipeline connection or tool is no longer granted")
 		}
-		connectionStamps = append(connectionStamps, doc{"name": name, "access": c["access"], "tools": c["tools"], "intake": c["intake"]})
+		connectionStamps = append(connectionStamps, doc{"name": name, "access": access, "tools": tools, "intake": c.Intake})
 	}
 	stamp["connections"] = connectionStamps
 	if host != "" {
-		row, err := first(q, "SELECT "+convTables["host"].record()+" AS data FROM host WHERE id=$1"+share, "host:"+host)
+		var h db.PipelineHostRow
+		if share {
+			var r db.PipelineHostShareRow
+			r, err = d.PipelineHostShare(q.ctx(), "host:"+host)
+			h = db.PipelineHostRow(r)
+		} else {
+			h, err = d.PipelineHost(q.ctx(), "host:"+host)
+		}
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && h.State == "removed" {
+			return "", nil, fail(403, "Pipeline host is no longer available")
+		}
 		if err != nil {
 			return "", nil, err
 		}
-		h := mapOf(row["data"])
-		if h == nil || hostRemoved(h) {
-			return "", nil, fail(403, "Pipeline host is no longer available")
-		}
-		holder, err := resolve(q.ctx(), q.tx, astr(h["holder"]))
+		holder, err := resolve(q.ctx(), q.tx, h.Holder)
 		if err != nil || holder == nil || projectID != "" && !mayAccessProjectID(holder, projectID) {
 			return "", nil, fail(403, "Pipeline host holder no longer has project access")
 		}
@@ -241,7 +285,7 @@ var errFileTool = errors.New("file tool")
 
 // claimPipelineAPI also answers the tool's idempotent flag from the minted spec (how an edge error reads).
 func claimPipelineAPI(q *Request, runID, executionID, connection, tool string) (doc, string, bool, bool, error) {
-	if _, err := first(q, "SELECT id FROM execution WHERE id=$1 FOR UPDATE", runID); err != nil {
+	if _, err := q.db().PipelineRunLock(q.ctx(), runID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", false, false, err
 	}
 	run, err := getRun(q, runID)
@@ -413,24 +457,19 @@ func guardPipelineWrite(q *Request, run doc) error {
 	}
 	plan := mapOf(run["plan"])
 	want, _ := intOK(plan["revision"])
-	stored, err := first(q, "SELECT data FROM execution WHERE id=$1 FOR UPDATE", run["id"])
-	if err != nil {
+	stored, err := q.db().PipelineStoredPlan(q.ctx(), astr(run["id"]))
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	next := want
-	if stored != nil {
-		data := mapOf(stored["data"])
-		if data["pipelineId"] != nil {
-			if err := requirePipelinePlan(data); err != nil {
-				return err
-			}
-			old := mapOf(data["plan"])
-			revision, _ := intOK(old["revision"])
-			if revision != want || old["definitionSha256"] != plan["definitionSha256"] {
-				return fail(409, "Pipeline plan changed before this transition")
-			}
-			next++
+	if err == nil && stored.IsRun {
+		if stored.PlanVersion != strconv.Itoa(pipelinePlanVersion) || stored.Entries != stored.Steps {
+			return pipelineFormatError()
 		}
+		if stored.Revision != int64(want) || stored.DefinitionSha256 != astr(plan["definitionSha256"]) {
+			return fail(409, "Pipeline plan changed before this transition")
+		}
+		next++
 	}
 	key := pipelineWriteKey{q.tx, astr(run["id"])}
 	state := &pipelineWriteState{revision: want}
@@ -486,10 +525,13 @@ func selectPipelineStep(q *Request, run doc, index int) error {
 		return nil
 	}
 	definition := mapOf(anys(mapOf(run["definition"])["steps"])[index])
-	when := mapOf(definition["when"])
+	when, err := parsePipelineWhen(definition["when"])
+	if err != nil {
+		return err
+	}
 	decision := pipelineConditionDecision(nil, nil, nowMs())
 	if when != nil {
-		sourceID := astr(mapOf(when["source"])["step"])
+		sourceID := when.Source.Step
 		var source doc
 		sourceIndex := -1
 		for i, value := range anys(run["steps"])[:index] {
@@ -498,10 +540,10 @@ func selectPipelineStep(q *Request, run doc, index int) error {
 				break
 			}
 		}
-		reason := "source_unavailable"
+		reason := contract.PipelinePlanReasonSourceUnavailable
 		if source != nil && source["state"] == "succeeded" && source["outputArtifactId"] != nil {
 			if source["observation"] == "unconfirmed" {
-				reason = "source_unconfirmed"
+				reason = contract.PipelinePlanReasonSourceUnconfirmed
 			} else if err := pipelineOutputOwner(q, run, sourceIndex, astr(source["outputArtifactId"])); err != nil {
 				return err
 			} else {
@@ -510,24 +552,26 @@ func selectPipelineStep(q *Request, run doc, index int) error {
 					return err
 				}
 				if sha256hex(jsonBytes(source["output"])) != artifact.ContentHash {
-					reason = "source_hash_mismatch"
+					reason = contract.PipelinePlanReasonSourceHashMismatch
 				} else {
 					decision = pipelineConditionDecision(when, source["output"], nowMs())
-					decision["sourceArtifact"] = doc{"artifactId": artifact.ID, "sha256": artifact.ContentHash}
+					decision.SourceArtifact = &contract.PipelineArtifactRef{ArtifactId: artifact.ID, Sha256: artifact.ContentHash}
 					reason = ""
 				}
 			}
 		}
 		if reason != "" {
-			decision = doc{"kind": when["kind"], "outcome": "blocked", "reason": reason, "evaluatedAtMs": nowMs(), "ruleSha256": sha256hex([]byte(canonical(when))), "sourceStepId": sourceID, "path": mapOf(when["source"])["path"]}
+			decision = pipelineBlockedDecision(when, reason, nowMs())
 		}
 	}
-	entry["decision"], entry["activation"] = decision, decision["outcome"]
+	entry["activation"] = string(decision.Outcome)
 	if entry["activation"] == "blocked" {
-		entry["problem"] = doc{"code": decision["reason"], "message": "Condition evidence is unavailable or invalid"}
-		return finishRun(q, run, "failed", astr(decision["reason"]))
+		entry["decision"] = decision
+		entry["problem"] = doc{"code": string(decision.Reason), "message": "Condition evidence is unavailable or invalid"}
+		return finishRun(q, run, "failed", string(decision.Reason))
 	}
 	if entry["activation"] == "not_selected" {
+		entry["decision"] = decision
 		return putRun(q, run)
 	}
 	connection, tool := "", ""
@@ -536,16 +580,18 @@ func selectPipelineStep(q *Request, run doc, index int) error {
 	}
 	if _, _, err := pipelineAuthorityStamp(q, run, index, connection, tool, ""); err != nil {
 		entry["activation"] = "blocked"
-		decision["outcome"], decision["reason"] = "blocked", "authority_denied"
+		decision.Outcome, decision.Reason = contract.PipelineDecisionOutcomeBlocked, contract.PipelinePlanReasonAuthorityDenied
+		entry["decision"] = decision
 		entry["problem"] = doc{"code": "authority_denied", "message": "Current pipeline authority was denied"}
 		return finishRun(q, run, "failed", "authority_denied")
 	}
+	entry["decision"] = decision
 	row := stepRow(run, index)
-	existing, err := first(q, "SELECT id FROM execution WHERE id=$1", row)
+	existing, err := q.db().PipelineExecutionExists(q.ctx(), row)
 	if err != nil {
 		return err
 	}
-	if existing != nil {
+	if existing {
 		return fail(409, "Pipeline execution reservation identity conflict")
 	}
 	entry["executionRef"] = doc{"mode": "fresh", "executionId": row, "sourceRunId": run["id"], "sourceStepId": entry["id"], "sourceStepIndex": index, "sourceDefinitionSha256": run["definitionSha256"], "sourceInputSha256": sha256hex([]byte("[]"))}
@@ -661,12 +707,19 @@ func materializePipelineInputs(ctx context.Context, a *App, run doc, index int) 
 			step := mapOf(anys(run["steps"])[i])
 			if native := astr(step["executionId"]); native != "" {
 				if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-					row, err := first(q, "SELECT definitions FROM execution WHERE id=$1 AND project_id IS NOT DISTINCT FROM $2", native, run["projectId"])
+					raw, err := q.db().PipelineExecutionDefinitions(q.ctx(), db.PipelineExecutionDefinitionsParams{ID: native, ProjectID: projectIDPtr(run["projectId"])})
+					if errors.Is(err, pgx.ErrNoRows) {
+						return nil
+					}
 					if err != nil {
 						return err
 					}
-					if row != nil && row["definitions"] != nil {
-						metadata["definitionPins"] = row["definitions"]
+					var pins any
+					if err := json.Unmarshal(raw, &pins); err != nil {
+						return err
+					}
+					if pins != nil {
+						metadata["definitionPins"] = pins
 					}
 					return nil
 				}); err != nil {
@@ -922,8 +975,16 @@ func pipelineRecoveryFence(q *Request, run doc) error {
 			return fail(409, "Unconfirmed external action cannot be replayed by rerun")
 		}
 		native := astr(step["executionId"])
-		execution, err := one(q, "SELECT "+execJSON+" || jsonb_build_object('projectId',project_id) FROM execution WHERE id=$1 AND kind='host_job'", native)
+		raw, err := q.db().PipelineHostJob(q.ctx(), native)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNotFound
+		}
 		if err != nil {
+			return err
+		}
+		// suffixProof (lab_retry.go) reads the host job's record.
+		var execution doc
+		if err := json.Unmarshal(raw, &execution); err != nil {
 			return err
 		}
 		if execution == nil || execution["pipelineRunId"] != run["id"] || !same(execution["projectId"], run["projectId"]) {
@@ -996,7 +1057,7 @@ func restorePipelineValue(current, snapshot any) any {
 func runPipelineTransition(ctx context.Context, a *App, run doc, fn func(*Request) error) error {
 	snapshot := restorePipelineValue(nil, run)
 	return runTx(ctx, a, nil, true, "", func(q *Request) error {
-		cancelled, err := has(q, "SELECT 1 FROM execution WHERE id=$1 AND state='cancelled'", run["id"])
+		cancelled, err := q.db().PipelineRunCancelled(q.ctx(), astr(run["id"]))
 		if err != nil {
 			return err
 		}
