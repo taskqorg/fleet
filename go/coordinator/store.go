@@ -51,7 +51,7 @@ var deletedHostRoutes = map[string]bool{"/api/hosts/poll": true, "/api/hosts/rec
 // Canonical advisory-lock hierarchy. Within any transaction, requested locks are sorted and deduplicated by (rank, key),
 // and dynamic lock acquisition rejects any lock ordered before or equal to a lock already held in the transaction:
 //
-//	GLOBAL < DISPATCH < project:* < task:* < session:* < experiment:* < execution:* < host:* < usageKey:* < person-setting:*
+//	GLOBAL < DISPATCH < project:* < task:* < session:* < experiment:* < execution:* < host:* < usageKey:* < person-setting:* < budget:*
 const (
 	GLOBAL   = "fleet:write"
 	DISPATCH = "dispatch"
@@ -80,6 +80,8 @@ func lockRank(key string) (int, error) {
 		return 8, nil
 	case strings.HasPrefix(key, "person-setting:") && len(key) > len("person-setting:"):
 		return 9, nil
+	case strings.HasPrefix(key, "budget:") && len(key) > len("budget:"):
+		return 10, nil
 	default:
 		return -1, fmt.Errorf("unknown advisory lock scope %q", key)
 	}

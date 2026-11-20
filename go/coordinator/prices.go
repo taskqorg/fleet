@@ -4,6 +4,7 @@ package main
 // one source, on one date. Append-only. Usage times a price entry gives an estimated cost; no entry gives unavailable.
 
 import (
+	"errors"
 	"math/big"
 	"regexp"
 	"sort"
@@ -11,113 +12,107 @@ import (
 	"strings"
 	"time"
 
-	"fleet/contract"
-)
+	"github.com/jackc/pgx/v5"
 
-// priceCols reads price as text: exact for the estimate (numeric), a number in the view.
-const priceCols = "id,subject,unit,price::text AS price,currency,source,source_ref,observed_at,effective_from,created_by"
+	"fleet/contract"
+	"fleet/coordinator/db"
+)
 
 var priceUnits = []string{"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"}
 
-func priceView(r doc) doc {
-	price, _ := strconv.ParseFloat(astr(r["price"]), 64)
-	return doc{"id": r["id"], "subject": r["subject"], "unit": r["unit"], "price": price, "currency": r["currency"], "source": r["source"],
-		"sourceRef": r["source_ref"], "observedAt": msOf(r["observed_at"]), "effectiveFrom": msOf(r["effective_from"]), "createdBy": r["created_by"]}
+func priceView(r db.PriceEntry) contract.PriceEntry {
+	price, _ := strconv.ParseFloat(r.Price, 64)
+	return contract.PriceEntry{Id: r.ID, Subject: r.Subject, Unit: r.Unit, Price: price, Currency: r.Currency, Source: r.Source,
+		SourceRef: r.SourceRef, ObservedAt: r.ObservedAt.UnixMilli(), EffectiveFrom: r.EffectiveFrom.UnixMilli(), CreatedBy: r.CreatedBy}
 }
 
 // priceAdd: one entry. subject is a resolved model ID or <connection>/<tool>; unit a token unit or the tool's catalogue
 // unit; effectiveFrom defaults to observedAt, which defaults to now, and may be earlier so a price covers past work.
-func priceAdd(q *Request, b doc) (any, error) {
-	if !keysOnly(b, "subject", "unit", "price", "currency", "source", "sourceRef", "observedAt", "effectiveFrom") {
-		return nil, fail(400, "Expected subject, unit, price, currency, source, sourceRef, observedAt, effectiveFrom")
-	}
-	subject, err := strArg(b, "subject", "subject", 200)
-	if err != nil {
-		return nil, err
+func priceAdd(q *Request, b *contract.PriceAddRequest) (contract.PriceEntry, error) {
+	var none contract.PriceEntry
+	subject, unit := b.Subject, b.Unit
+	if subject == "" || len([]rune(subject)) > 200 {
+		return none, fail(400, "Expected subject")
 	}
 	if strings.HasSuffix(subject, "-latest") {
-		return nil, fail(400, "subject is a resolved model ID, never an alias")
+		return none, fail(400, "subject is a resolved model ID, never an alias")
 	}
-	unit, err := strArg(b, "unit", "unit", 80)
-	if err != nil {
-		return nil, err
+	if unit == "" || len([]rune(unit)) > 80 {
+		return none, fail(400, "Expected unit")
 	}
 	// <connection>/<tool> when the connection exists (its tool must exist and the unit is its catalogue unit); otherwise
 	// a model ID, which may itself contain a slash, priced in a token unit.
-	if conn, tool, isTool := strings.Cut(subject, "/"); isTool && connectionExists(q, conn) {
-		want := astr(mapOf(providerToolOf(q, conn, tool))["unit"])
+	conn, tool, isTool := strings.Cut(subject, "/")
+	provider, found := "", false
+	if isTool {
+		var err error
+		if provider, found, err = connectionProvider(q, conn); err != nil {
+			return none, err
+		}
+	}
+	if found {
+		want := gatewayProviders[provider].Tools[tool].Unit
 		if want == "" {
-			return nil, fail(400, "Connection "+conn+" has no tool "+tool)
+			return none, fail(400, "Connection "+conn+" has no tool "+tool)
 		}
 		if want != unit {
-			return nil, fail(400, "The unit of "+subject+" is "+want)
+			return none, fail(400, "The unit of "+subject+" is "+want)
 		}
 	} else if !inList(priceUnits, unit) {
-		return nil, fail(400, "A model's unit is one of "+strings.Join(priceUnits, ", "))
+		return none, fail(400, "A model's unit is one of "+strings.Join(priceUnits, ", "))
 	}
-	price, ok := numOK(b["price"])
-	if !ok || price < 0 {
-		return nil, fail(400, "Expected price, a number >= 0")
+	if b.Price < 0 {
+		return none, fail(400, "Expected price, a number >= 0")
 	}
-	currency := astr(b["currency"])
-	if !currencyCode.MatchString(currency) {
-		return nil, fail(400, "currency is an ISO 4217 code such as USD")
+	if !currencyCode.MatchString(b.Currency) {
+		return none, fail(400, "currency is an ISO 4217 code such as USD")
 	}
-	source := astr(b["source"])
-	if !inList([]string{"vendor", "snapshot", "owner"}, source) {
-		return nil, fail(400, "source is vendor, snapshot or owner")
+	if !inList([]string{"vendor", "snapshot", "owner"}, b.Source) {
+		return none, fail(400, "source is vendor, snapshot or owner")
 	}
-	observed, effective := time.Now(), time.Time{}
-	if b["observedAt"] != nil {
-		ms, ok := intOK(b["observedAt"])
-		if !ok {
-			return nil, fail(400, "observedAt is epoch milliseconds")
-		}
-		observed = time.UnixMilli(ms)
+	observed := time.Now()
+	if b.ObservedAt != nil {
+		observed = time.UnixMilli(*b.ObservedAt)
 	}
-	effective = observed
-	if b["effectiveFrom"] != nil {
-		ms, ok := intOK(b["effectiveFrom"])
-		if !ok {
-			return nil, fail(400, "effectiveFrom is epoch milliseconds")
-		}
-		effective = time.UnixMilli(ms)
+	effective := observed
+	if b.EffectiveFrom != nil {
+		effective = time.UnixMilli(*b.EffectiveFrom)
 	}
-	id := newID()
-	if err := exec(q, "INSERT INTO price_entry(id,subject,unit,price,currency,source,source_ref,observed_at,effective_from,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-		id, subject, unit, b["price"], currency, source, b["sourceRef"], observed, effective, actor(q, "operator")); err != nil {
-		return nil, err
-	}
-	rs, err := queryRows(q, "SELECT "+priceCols+" FROM price_entry WHERE id=$1", id)
+	by := actor(q, "operator")
+	var r db.PriceEntry
+	err := q.app.store.Write(q.ctx(), q, nil, func(q *Request) (err error) {
+		r, err = q.db().PriceInsert(q.ctx(), db.PriceInsertParams{ID: newID(), Subject: subject, Unit: unit,
+			Price: strconv.FormatFloat(b.Price, 'f', -1, 64), Currency: b.Currency, Source: b.Source, SourceRef: b.SourceRef,
+			ObservedAt: observed, EffectiveFrom: effective, CreatedBy: &by})
+		return err
+	})
 	if err != nil {
-		return nil, err
+		return none, err
 	}
-	return priceView(rs[0]), nil
+	return priceView(r), nil
 }
 
 var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
 
-func connectionExists(q *Request, name string) bool {
-	c, err := maybe(q, "connection:"+name, "api-connection")
-	return err == nil && c != nil
+// connectionProvider: the provider of the API connection name, found false when there is none.
+func connectionProvider(q *Request, name string) (string, bool, error) {
+	p, err := q.db().PriceConnectionProvider(q.ctx(), "connection:"+name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return p, err == nil, err
 }
 
-// providerToolOf: the catalogue entry of a connection's tool, nil when unknown.
-func providerToolOf(q *Request, connection, tool string) any {
-	c, err := maybe(q, "connection:"+connection, "api-connection")
-	if err != nil || c == nil {
-		return nil
-	}
-	return providerTools(astr(c["provider"]))[tool]
-}
-
-func pricesList(q *Request, b doc) (any, error) {
-	rs, err := queryRows(q, "SELECT "+priceCols+" FROM price_entry WHERE $1='' OR subject=$1 ORDER BY subject,unit,effective_from DESC,seq DESC", astr(b["subject"]))
-	out := []any{}
-	for _, r := range rs {
-		out = append(out, priceView(r))
-	}
-	return doc{"prices": out}, err
+func pricesList(q *Request, b *contract.PricesListRequest) (contract.PricesListReply, error) {
+	out := contract.PricesListReply{Prices: []contract.PriceEntry{}}
+	err := q.app.store.Read(q.ctx(), q, func(q *Request) error {
+		rs, err := q.db().PricesList(q.ctx(), deref(b.Subject))
+		for _, r := range rs {
+			out.Prices = append(out.Prices, priceView(r))
+		}
+		return err
+	})
+	return out, err
 }
 
 // usage: one measured amount of a unit, for a subject, at a time (a tool_run's connection_cost).
@@ -129,7 +124,7 @@ type usage struct {
 
 // estimateCost: the cost of a set of usages against the price entries, one figure per currency, each with basis estimated and the price entries
 // used; usages with no price give one figure {value: null, basis: unavailable} (never 0). No usage gives none.
-func estimateCost(rs []doc, us []usage) []contract.CostFigure {
+func estimateCost(rs []db.PriceEntry, us []usage) []contract.CostFigure {
 	if len(us) == 0 {
 		return []contract.CostFigure{}
 	}
@@ -143,10 +138,9 @@ func estimateCost(rs []doc, us []usage) []contract.CostFigure {
 			unpriced++ // a call whose provider reported no amount
 			continue
 		}
-		var hit doc
-		for _, r := range rs {
-			eff, _ := r["effective_from"].(time.Time)
-			if r["subject"] == u.subject && r["unit"] == u.unit && !eff.After(u.at) {
+		var hit *db.PriceEntry
+		for i := range rs {
+			if r := &rs[i]; r.Subject == u.subject && r.Unit == u.unit && !r.EffectiveFrom.After(u.at) {
 				hit = r
 				break
 			}
@@ -155,21 +149,17 @@ func estimateCost(rs []doc, us []usage) []contract.CostFigure {
 			unpriced++
 			continue
 		}
-		c := astr(hit["currency"])
+		c := hit.Currency
 		if byCurrency[c] == nil {
 			byCurrency[c] = &sum{new(big.Float), map[string]int64{}}
 		}
-		p, _ := new(big.Float).SetString(astr(hit["price"]))
+		p, _ := new(big.Float).SetString(hit.Price)
 		if p == nil {
 			unpriced++
 			continue
 		}
 		byCurrency[c].value.Add(byCurrency[c].value, new(big.Float).Mul(p, big.NewFloat(*u.amount)))
-		var obs int64
-		if ms, ok := msOf(hit["observed_at"]).(int64); ok {
-			obs = ms
-		}
-		byCurrency[c].prices[astr(hit["id"])] = obs
+		byCurrency[c].prices[hit.ID] = hit.ObservedAt.UnixMilli()
 	}
 	out := []contract.CostFigure{}
 	currencies := make([]string, 0, len(byCurrency))
@@ -212,11 +202,16 @@ func estimateCost(rs []doc, us []usage) []contract.CostFigure {
 }
 
 // priceEntries: the whole table, newest in force first, read once per estimate.
-func priceEntries(q *Request) ([]doc, error) {
-	return queryRows(q, "SELECT "+priceCols+" FROM price_entry ORDER BY effective_from DESC,seq DESC")
+func priceEntries(q *Request) ([]db.PriceEntry, error) {
+	var rs []db.PriceEntry
+	err := q.app.store.Read(q.ctx(), q, func(q *Request) (err error) {
+		rs, err = q.db().PriceEntries(q.ctx())
+		return err
+	})
+	return rs, err
 }
 
 func init() {
-	gatedObjOp("price_add", false, func(q *Request) (any, error) { return priceAdd(q, body(q)) })
-	gatedObjOp("prices_list", true, func(q *Request) (any, error) { return pricesList(q, body(q)) })
+	gatedObjOp("price_add", false, typedOp(priceAdd))
+	gatedObjOp("prices_list", true, typedOp(pricesList))
 }

@@ -8,7 +8,7 @@ Every agent attempt: read [fleet.md](fleet.md) first, then every shared-core fil
 
 Architecture standard: docs/designs/fleet-standard.md; rules checked by go/coordinator/design_rules_test.go.
 
-Design or UI work: read `docs/design-system/owner-rules.md` first, then `docs/design-system/README.md`. Build screens only from `packages/ui`; run `pnpm run check:design` and read its warnings.
+Design or UI work: read `docs/design-system/owner-rules.md` first, then `docs/design-system/README.md`. Build screens only from `packages/ui`; read the design report CI posts on the pull request, and run `pnpm run check:design` locally when the task names it.
 
 Web UI, CSS or client-side JS work: before writing it, follow the `modern-web-guidance` skill (`config/skills/modern-web-guidance/SKILL.md`; Fleet profiles that build or review UI carry it): search and retrieve the guides for each feature, apply them within the owner rules and `packages/ui`, which win on conflict, and name the guides you applied in the pull request.
 
@@ -30,10 +30,12 @@ Docs work: before editing `docs/`, read the open `docs-order` issue (label `docs
 
 Rules: [delivery pipeline, section 8](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests). One task, one branch from `origin/main`, one pull request; no stacks.
 
+Every task brief names its stop condition and its time box, the allotted time of the header. A brief without them gets both from the orchestrator before work starts. A worker that reaches the time box without the stop condition stops and reports what is done and what is not. The code review below is part of delivery, not a local check.
+
 1. Commit, `git fetch origin`, run `/code-review <level> origin/main...HEAD` on the whole branch and fix its findings, all before the first push. Then push, open the pull request and wait for CI (`gh pr checks <n> --watch`). Every later push (a CI fix, a rebase) is reviewed the same way before it is pushed.
 2. Post the status on the reviewed head: `gh api repos/taskqorg/fleet/statuses/$(gh pr view <n> --json headRefOid -q .headRefOid) -f state=success -f context=code-review -f description="<level>, <n> findings fixed"`. Any later push drops it; post it again on the new head. Never `gh pr merge --admin`.
 3. Enable auto-merge on your own pull request only: `gh pr merge <n> --auto`. If the orchestrator disabled it, do not enable it again until it says so.
-4. Without a `Landing: wait — live check: <what>` line in your task, report done now; the orchestrator watches the landing (`scripts/watch-landings.sh`) and sends failures back. With it, run `scripts/watch-landing.sh <n>` (in the background) and act on its last line:
+4. The task ends with the merged pull request. Without a `Landing: wait — live check: <what>` line in your task, report now (pull request open, CI green or its failures shown to exist on `main`, auto-merge on); the orchestrator watches the landing (`scripts/watch-landings.sh`) and sends failures back, which you fix. With it, run `scripts/watch-landing.sh <n>` (in the background) and act on its last line:
     * `not merged: ..., merge_conflict`: `git fetch origin && git rebase origin/main`, review as in step 1, `git push --force-with-lease`, step 2 again, then step 3. Never `git merge main`; CI fails a branch with a merge commit.
     * a conflict in `go/contract/*_gen.go`: take either side, `cd go && go generate ./contract`, `git add`, continue the rebase.
     * `not merged: ..., failed_checks`: read the failed test. The first time, run it once more (`gh pr merge <n> --auto` after a queue removal; for `failed_checks (head)`, a red required check before the queue, auto-merge is still on: `gh run rerun <run>` with the `/actions/runs/<run>` id from `gh pr checks <n>`, then wait until `gh pr checks <n>` shows it pending), then step 4 again; if that run is green, add the test and both run links to the open `flaky` issue (section 3). A second failure is yours to fix.

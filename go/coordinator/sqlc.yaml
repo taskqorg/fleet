@@ -1,0 +1,25 @@
+# Typed queries (docs/designs/fleet-standard.md S2): queries/<area>.sql into package db (fleet/coordinator/db).
+# sqlc cannot parse schema.sql, so it reads db/schema.sql, the migrated relations as plain tables that
+# TestMigrationSqlcSchema keeps equal to the migrations. Regenerate: pnpm run go:sqlc.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: db/schema.sql
+    queries: queries
+    gen:
+      go:
+        package: db
+        out: db
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        overrides:
+          - db_type: pg_catalog.timestamptz
+            go_type: time.Time
+          - db_type: pg_catalog.timestamptz
+            nullable: true
+            go_type: {type: time.Time, pointer: true}
+          # Prices stay exact decimal text (numeric scans into a string); budget limits are numbers in the contract.
+          - column: price_entry.price
+            go_type: string
+          - column: budget.limit
+            go_type: float64
