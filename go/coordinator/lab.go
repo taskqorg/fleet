@@ -2364,40 +2364,40 @@ func expPromote(q *Request, id, label string) (doc, error) {
 	return doc{"cataloguePatch": nil, "method": existing, "catalogue": ref, "recommendation": rec, "note": note}, nil
 }
 
-func expRate(q *Request, b doc) (doc, error) {
+func expRate(q *Request, b doc) (labRatingView, error) {
 	eid, err := expID(b["experimentId"], "experimentId")
 	if err != nil {
-		return nil, err
+		return labRatingView{}, err
 	}
 	exp, err := expRow(q, eid)
 	if err != nil {
-		return nil, err
+		return labRatingView{}, err
 	}
 	form := astr(b["form"])
 	if form != "pass_fail" && form != "pick_best" && form != "scale" {
-		return nil, fail(400, "form is pass_fail, pick_best or scale")
+		return labRatingView{}, fail(400, "form is pass_fail, pick_best or scale")
 	}
 	l, ok := b["trialIds"].([]any)
 	if !ok {
-		return nil, fail(400, "Expected trialIds")
+		return labRatingView{}, fail(400, "Expected trialIds")
 	}
 	ids := []any{}
 	for _, x := range l {
 		s, err := expID(x, "trial")
 		if err != nil {
-			return nil, err
+			return labRatingView{}, err
 		}
 		ids = append(ids, s)
 	}
 	if form == "pick_best" && len(ids) < 2 {
-		return nil, fail(400, "pick_best rates two or more trials")
+		return labRatingView{}, fail(400, "pick_best rates two or more trials")
 	}
 	if form != "pick_best" && len(ids) != 1 {
-		return nil, fail(400, form+" rates one trial")
+		return labRatingView{}, fail(400, form+" rates one trial")
 	}
 	runs, err := expRuns(q, eid)
 	if err != nil {
-		return nil, err
+		return labRatingView{}, err
 	}
 	trials := expTrials(runs)
 	for _, t := range ids {
@@ -2408,10 +2408,10 @@ func expRate(q *Request, b doc) (doc, error) {
 			}
 		}
 		if x == nil {
-			return nil, fail(400, fmt.Sprint("Unknown trial ", t))
+			return labRatingView{}, fail(400, fmt.Sprint("Unknown trial ", t))
 		}
 		if !comparable(x) {
-			return nil, fail(409, fmt.Sprint("Trial ", t, " has no comparable result"))
+			return labRatingView{}, fail(409, fmt.Sprint("Trial ", t, " has no comparable result"))
 		}
 	}
 	text := "Rate this output from 1 to 5"
@@ -2422,46 +2422,97 @@ func expRate(q *Request, b doc) (doc, error) {
 	}
 	qid, err := askRow(q, "rating", text, exp["project_id"], doc{"form": form, "experiment_id": eid, "trial_ids": ids, "seed": newID()}, "operator", doc{"experimentId": eid})
 	if err != nil {
-		return nil, err
+		return labRatingView{}, err
 	}
 	return labRating(q, qid)
 }
 
 // labRating: outputs in the seeded order, labelled A, B, ...; never the variant.
-func labRating(q *Request, qid string) (doc, error) {
+func labRating(q *Request, qid string) (labRatingView, error) {
 	row, err := q.db().LabRating(q.ctx(), qid)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fail(404, "Unknown question")
+		return labRatingView{}, fail(404, "Unknown question")
 	}
 	if err != nil {
-		return nil, err
+		return labRatingView{}, err
 	}
-	r := doc{"id": row.ID, "kind": row.Kind, "options": labJSON(row.Options), "state": row.State, "answer": labOpt(row.Answer), "text": row.Text, "data": labJSON(row.Data)}
-	o := mapOf(r["options"])
+	var o labRatingOptions
+	json.Unmarshal(row.Options, &o)
+	var d labQuestionData
+	json.Unmarshal(row.Data, &d)
 	var runs []doc
-	if eid := astr(o["experiment_id"]); eid != "" {
+	if eid := deref(o.ExperimentID); eid != "" {
 		if runs, err = expRuns(q, eid); err != nil {
-			return nil, err
+			return labRatingView{}, err
 		}
 	}
-	items := []any{}
-	for i, tid := range labShuffle(anys(o["trial_ids"]), astr(o["seed"])) {
+	items := []labRatingItem{}
+	for i, tid := range labShuffle(o.TrialIDs, o.Seed) {
 		files := []any{}
 		for _, t := range runs {
 			if t["id"] == tid {
 				fs, err := pipelineOutputs(q, t, -1)
 				if err != nil {
-					return nil, err
+					return labRatingView{}, err
 				}
 				for _, f := range fs {
 					files = append(files, f.doc())
 				}
 			}
 		}
-		items = append(items, doc{"label": string(rune('A' + i)), "trialId": tid, "files": files})
+		items = append(items, labRatingItem{Label: string(rune('A' + i)), TrialID: tid, Files: files})
 	}
-	return doc{"id": r["id"], "kind": r["kind"], "form": o["form"], "experimentId": o["experiment_id"], "exampleArtifactId": o["example_artifact_id"],
-		"state": r["state"], "answer": r["answer"], "text": r["text"], "items": items, "withdrawal": mapOf(r["data"])["withdrawal"]}, nil
+	return labRatingView{ID: row.ID, Kind: row.Kind, Form: o.Form, ExperimentID: o.ExperimentID, ExampleArtifactID: o.ExampleArtifactID, State: row.State, Answer: row.Answer,
+		Text: row.Text, Items: items, Withdrawal: d.Withdrawal}, nil
+}
+
+// labRatingOptions: a rating question's options (expRate, importDraft).
+type labRatingOptions struct {
+	ExperimentID      *string `json:"experiment_id"`
+	ExampleArtifactID *string `json:"example_artifact_id"`
+	Form              *string `json:"form"`
+	TrialIDs          []any   `json:"trial_ids"`
+	Seed              string  `json:"seed"`
+}
+
+// labQuestionData: the Lab fields of a question's data (a budget ask, a withdrawal).
+type labQuestionData struct {
+	ExperimentID *string         `json:"experimentId"`
+	Budget       json.RawMessage `json:"budget"`
+	Withdrawal   json.RawMessage `json:"withdrawal"`
+}
+
+// labQuestion: an answered or answering question as pipelines.go hands it over.
+type labQuestion struct {
+	ID      string           `json:"id"`
+	Kind    string           `json:"kind"`
+	Answer  string           `json:"answer"`
+	Options labRatingOptions `json:"options"`
+	Data    labQuestionData  `json:"data"`
+}
+
+func (q labQuestion) budget() bool {
+	return q.Data.ExperimentID != nil && rawValue(q.Data.Budget) != nil
+}
+
+// labRatingView: a rating with its outputs in the seeded order (labRating).
+type labRatingView struct {
+	ID                string          `json:"id"`
+	Kind              string          `json:"kind"`
+	Form              *string         `json:"form"`
+	ExperimentID      *string         `json:"experimentId"`
+	ExampleArtifactID *string         `json:"exampleArtifactId"`
+	State             string          `json:"state"`
+	Answer            *string         `json:"answer"`
+	Text              string          `json:"text"`
+	Items             []labRatingItem `json:"items"`
+	Withdrawal        json.RawMessage `json:"withdrawal"`
+}
+
+type labRatingItem struct {
+	Label   string `json:"label"`
+	TrialID any    `json:"trialId"`
+	Files   []any  `json:"files"`
 }
 
 func labRatings(q *Request, experimentID, state *string) (doc, error) {
@@ -2483,61 +2534,72 @@ func labRatings(q *Request, experimentID, state *string) (doc, error) {
 // labAnswerCheck and labAnswerAfter: the answer hook for questions_answer (questions_answer calls both inside its transaction:
 // check before recording the answer, after once it is recorded). question: the question row (snake_case columns).
 func labAnswerCheck(q *Request, question doc, answer string) error {
-	o := mapOf(question["options"])
-	d := mapOf(question["data"])
+	x, _ := asT[labQuestion](question)
 	// Lab ratings are the owner's (scored as human:owner; a pass on a drafted example lets the coordinator run its checks)
 	// and budget asks move the owner's spend: owner only.
-	lab := question["kind"] == "rating" && (o["example_artifact_id"] != nil || o["experiment_id"] != nil) || d["experimentId"] != nil && d["budget"] != nil
+	lab := x.Kind == "rating" && (x.Options.ExampleArtifactID != nil || x.Options.ExperimentID != nil) || x.budget()
 	if lab && q.person != nil && !fullAccess(q.person) {
 		return fail(403, "Only the owner answers Lab ratings and budget questions")
 	}
-	if question["kind"] == "rating" {
-		_, _, err := parseRating(astr(o["form"]), answer, anys(o["trial_ids"]))
+	if x.Kind == "rating" {
+		_, _, err := parseRating(deref(x.Options.Form), answer, x.Options.TrialIDs)
 		return err
 	}
-	if d["experimentId"] != nil && d["budget"] != nil && answer != "resume" && answer != "stop" {
+	if x.budget() && answer != "resume" && answer != "stop" {
 		return fail(400, "Answer resume or stop")
 	}
 	return nil
 }
 
+// labNoteText: a rating's note (parseRating), when it has one.
+func labNoteText(note any) *string {
+	if s, ok := note.(string); ok {
+		return &s
+	}
+	return nil
+}
+
 func labAnswerAfter(q *Request, question doc) error {
-	o, d := mapOf(question["options"]), mapOf(question["data"])
-	answer := astr(question["answer"])
+	x, _ := asT[labQuestion](question)
+	o := x.Options
 	eid := ""
 	switch {
-	case question["kind"] == "rating" && o["experiment_id"] != nil:
-		v, rat, err := parseRating(astr(o["form"]), answer, anys(o["trial_ids"]))
+	case x.Kind == "rating" && o.ExperimentID != nil:
+		v, rat, err := parseRating(deref(o.Form), x.Answer, o.TrialIDs)
 		if err != nil {
 			return err
 		}
-		exp, err := expRow(q, astr(o["experiment_id"]))
+		exp, err := q.db().LabExperiment(q.ctx(), *o.ExperimentID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fail(404, "Unknown experiment")
+		}
 		if err != nil {
 			return err
 		}
-		if _, err := scoreAdd(q, doc{"experimentId": exp["id"], "projectId": exp["project_id"], "trialIds": o["trial_ids"], "evaluator": "human:owner:" + astr(o["form"]),
-			"evaluatorVersion": "1", "form": o["form"], "value": v, "questionId": question["id"], "rationale": rat}); err != nil {
+		form := deref(o.Form)
+		if _, err := scoreInsert(q, labNewScore{ExperimentID: exp.ID, ProjectID: exp.ProjectID, TrialIDs: labIDStrings(o.TrialIDs), Evaluator: "human:owner:" + form,
+			EvaluatorVersion: "1", Form: form, Value: v, QuestionID: strPtr(x.ID), Rationale: labNoteText(rat)}); err != nil {
 			return err
 		}
-		eid = astr(exp["id"])
-	case question["kind"] == "rating" && o["example_artifact_id"] != nil:
-		if v, _, err := parseRating("pass_fail", answer, nil); err == nil && v == true {
-			return q.db().LabExampleApproveOpen(q.ctx(), astr(o["example_artifact_id"]))
+		eid = exp.ID
+	case x.Kind == "rating" && o.ExampleArtifactID != nil:
+		if v, _, err := parseRating("pass_fail", x.Answer, nil); err == nil && v == true {
+			return q.db().LabExampleApproveOpen(q.ctx(), *o.ExampleArtifactID)
 		}
 		return nil
-	case d["experimentId"] != nil && d["budget"] != nil:
+	case x.budget():
 		to := "stopped"
-		if answer == "resume" {
+		if x.Answer == "resume" {
 			to = "running"
 		}
 		var owner *string
 		if to == "stopped" {
 			owner = ptr("owner")
 		}
-		if _, err := experimentTransition(q, astr(d["experimentId"]), experimentEvent{To: to, From: []string{"paused"}, StopReason: owner}); err != nil && !errors.Is(err, errNotFound) {
+		if _, err := experimentTransition(q, *x.Data.ExperimentID, experimentEvent{To: to, From: []string{"paused"}, StopReason: owner}); err != nil && !errors.Is(err, errNotFound) {
 			return err
 		}
-		eid = astr(d["experimentId"])
+		eid = *x.Data.ExperimentID
 	default:
 		return nil
 	}
@@ -3191,31 +3253,31 @@ func exampleRef(id, version any) string {
 	return fmt.Sprintf("%v@%v", id, version)
 }
 
-func labRatingWithdraw(q *Request, id, reason string) (doc, error) {
+func labRatingWithdraw(q *Request, id, reason string) (labRatingView, error) {
 	if err := labIDArg(id, "questionId"); err != nil {
-		return nil, err
+		return labRatingView{}, err
 	}
 	if _, err := labStr(reason, "withdrawal reason", 4000); err != nil {
-		return nil, err
+		return labRatingView{}, err
 	}
 	if strings.TrimSpace(reason) == "" {
-		return nil, fail(400, "Withdrawal reason is empty")
+		return labRatingView{}, fail(400, "Withdrawal reason is empty")
 	}
 
 	state, err := q.db().LabRatingLockState(q.ctx(), id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fail(404, "Unknown Lab rating")
+		return labRatingView{}, fail(404, "Unknown Lab rating")
 	}
 	if err != nil {
-		return nil, err
+		return labRatingView{}, err
 	}
 	if state == "answered" {
-		return nil, fail(409, "Rating already answered")
+		return labRatingView{}, fail(409, "Rating already answered")
 	}
 	if state == "open" {
 		withdrawal := doc{"reason": reason, "actor": actor(q, "operator"), "at": nowMs()}
 		if _, err := questionTransition(q, id, questionEvent{To: "withdrawn", Withdrawal: jsonBytes(withdrawal)}); err != nil {
-			return nil, err
+			return labRatingView{}, err
 		}
 	}
 	return labRating(q, id)
