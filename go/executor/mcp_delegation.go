@@ -256,7 +256,7 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 	agent := slices.Contains(agentTools, name) || slices.ContainsFunc(operationsOf(ctx), func(o any) bool { return jStr(jAt(o, "name")) == name })
 	var key string
 	var body any
-	route := "/api/hosts/agent-tools" // one route per envelope (contracts/host-protocol.schema.json)
+	route := contract.RouteAgentTools.Path // one route per envelope (contracts/host-protocol.schema.json routes)
 	if agent {
 		cmd, err := need("commandId")
 		if err != nil {
@@ -272,7 +272,7 @@ func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
 			Request: json.RawMessage(enc(M{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": M{"name": name, "arguments": q}}))}
 	} else {
 		child := name == "request_child"
-		route = map[bool]string{true: "/api/hosts/delegations", false: "/api/hosts/project-operations"}[child]
+		route = map[bool]string{true: contract.RouteDelegations.Path, false: contract.RouteProjectOperations.Path}[child]
 		if !child && !(truth(jAt(ctx, "projectId")) && slices.Contains(projectTools, name)) {
 			return nil, errors.New("Unsupported method")
 		}

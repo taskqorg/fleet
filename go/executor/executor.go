@@ -92,24 +92,27 @@ func platform() string {
 }
 
 func capabilities() []string {
-	c := []string{"codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1", "attachments"}
+	c := []string{}
+	for _, x := range contract.CapabilityValues {
+		c = append(c, string(x))
+	}
 	if v := ffmpegVersion(); v != "" {
-		c = append(c, "ffmpeg:"+v)
+		c = append(c, contract.FfmpegCapability(v))
 	}
 	for _, tool := range []string{"node", "pnpm"} {
 		if _, err := exec.LookPath(tool); err == nil {
-			c = append(c, "tool:"+tool)
+			c = append(c, contract.ToolCapability(tool))
 		}
 	}
 	if store := os.Getenv("FLEET_FORGE_CONFIG_DIR"); filepath.IsAbs(store) && isFile(filepath.Join(store, "hosts.yml")) {
 		for _, repo := range strings.Split(os.Getenv("FLEET_FORGE_REPOSITORIES"), ",") {
 			if forgeRepo("https://github.com/"+repo) == repo && repo != "" {
-				c = append(c, "forge:"+repo)
+				c = append(c, contract.ForgeCapability(repo))
 			}
 		}
 	}
 	if isFile(os.Getenv("FLEET_PLAYWRIGHT_MODULE")) && isFile(os.Getenv("FLEET_BROWSER_EXECUTABLE")) && private(os.Getenv("FLEET_BROWSER_BINDINGS")) == nil {
-		c = append(c, "tool:browser")
+		c = append(c, contract.ToolCapability("browser"))
 	}
 	return c
 }
@@ -309,8 +312,6 @@ func (e *executor) commandDir(session string, payload any) string {
 	return dir
 }
 
-func (e *executor) queue(route string, v any) error { return queue(e.ex, route, v) }
-
 func (e *executor) receipt(c M, status string, native string) error {
 	declared := e.declared
 	e.declared = nil
@@ -329,7 +330,7 @@ func (e *executor) receipt(c M, status string, native string) error {
 	if native != "" {
 		r.NativeSessionId = &native
 	}
-	return e.queue("/api/hosts/receipts", r)
+	return queueTo(e.ex, contract.RouteReceipts, r)
 }
 
 // event queues one Fleet-originated execution event; nativeEvent one harness record under its own open type.
@@ -347,11 +348,13 @@ func (e *executor) nativeEvent(c M, seq uint64, kind string, data any) error {
 		return err
 	}
 	ev := contract.HostEvents{HostId: e.host, ExecutionId: ex, Events: []contract.HostEvent{{Id: fmt.Sprintf("%s-%d", cid, seq), Seq: int64(seq), Type: kind, Timestamp: nowMs(), Data: json.RawMessage(enc(data))}}}
-	return e.queue("/api/hosts/events", ev)
+	return queueTo(e.ex, contract.RouteEvents, ev)
 }
 
 func (e *executor) finish(c M, status, native string) error {
-	if l := e.live[jStr(c, "executionId")]; l != nil && l.mcp != nil && jStr(l.command, "id") == jStr(c, "id") {
+	id, _ := cmdID(c, "id")
+	execution, _ := cmdID(c, "executionId")
+	if l := e.live[execution]; l != nil && l.mcp != nil && l.commandID() == id {
 		if err := l.mcp.close(); err != nil {
 			return err
 		}
@@ -364,7 +367,7 @@ func (e *executor) finish(c M, status, native string) error {
 		if err != nil {
 			return err
 		}
-		if _, err = e.ex.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=? AND command=?", jStr(c, "executionId"), cid); err != nil {
+		if _, err = e.ex.Exec("UPDATE launches SET mcp_fenced=1 WHERE execution=? AND command=?", execution, cid); err != nil {
 			return err
 		}
 		_, err = e.ex.Exec("UPDATE commands SET terminal=1 WHERE id=?", cid)
@@ -693,10 +696,18 @@ func (e *executor) run(c M) error {
 	if err != nil {
 		return err
 	}
+	body := enc(c)
+	// The command as its contract type (contract.Command); a payload that does not fit is refused by its kind below.
+	var cmd contract.Command
+	typedErr := json.Unmarshal([]byte(body), &cmd)
+	kind := contract.CommandKind(cmd.Kind())
+	if typedErr != nil || cmd.Value() == nil {
+		kind = commandKind(body) // a payload that does not fit, or a kind this executor does not know (refused below)
+	}
 	signalMu.Lock()
 	draining := updatePending(lastSignal)
 	signalMu.Unlock()
-	if draining && jStr(c, "kind") != "stop" && jStr(c, "kind") != "steer" {
+	if draining && kind != contract.CommandKindStop && kind != contract.CommandKindSteer {
 		return nil
 	}
 	leased, leaseErr := e.activityLease()
@@ -709,7 +720,6 @@ func (e *executor) run(c M) error {
 	if err := e.withdrawUpdateReady(); err != nil {
 		return err
 	}
-	body := enc(c)
 	if old, ok := e.commandBody(cid, false); ok {
 		if old != body {
 			return errors.New("command identity conflict")
@@ -724,10 +734,9 @@ func (e *executor) run(c M) error {
 	}); err != nil {
 		return err
 	}
-	kind := jStr(c, "kind")
 	p := jObj(c, "payload")
 	switch kind {
-	case "stop":
+	case contract.CommandKindStop:
 		result := "unknown"
 		if l, ok := e.live[execution]; ok {
 			l.stopped = true
@@ -747,8 +756,12 @@ func (e *executor) run(c M) error {
 			return err
 		}
 		return nil
-	case "steer":
-		sp, perr := payloadOf[contract.SteerPayload](c)
+	case contract.CommandKindSteer:
+		var sp contract.SteerPayload
+		perr := typedErr
+		if perr == nil && cmd.Steer.Payload != nil {
+			sp = *cmd.Steer.Payload
+		}
 		sent := false
 		if l, ok := e.live[execution]; ok && l.wire != nil {
 			w := l.wire
@@ -770,7 +783,7 @@ func (e *executor) run(c M) error {
 			}
 		}
 		return e.finish(c, "failed", "")
-	case "readiness":
+	case contract.CommandKindReadiness:
 		data := readiness(p, e.host, os.Getenv("FLEET_NATIVE_ACCOUNTS"), e.forbidden())
 		ok := data.Ok
 		if err := e.event(c, 0, contract.FleetEventTypeReadiness, data); err != nil {
@@ -782,7 +795,7 @@ func (e *executor) run(c M) error {
 			}
 		}
 		return e.finish(c, okStatus(ok), "")
-	case "base-updated":
+	case contract.CommandKindBaseUpdated:
 		data, ok := checkoutSync(p, e.host, projectRoots(), e.forbidden())
 		k := contract.FleetEventTypeSyncFailed
 		if ok {
@@ -792,9 +805,14 @@ func (e *executor) run(c M) error {
 			return err
 		}
 		return e.finish(c, okStatus(ok), "")
-	case "teardown":
+	case contract.CommandKindTeardown:
 		// Session finish: teardown script, keep on dirty/teardown failure, safe branch delete. Lookup only: never create a
-		// worktree; the session dir must be a real dir under the executor or session roots.
+		// worktree; the session dir must be a real dir under the executor or session roots. A payload that does not fit
+		// its type deletes no branch.
+		var tp contract.ProjectPayload
+		if typedErr == nil && cmd.Teardown.Payload != nil {
+			tp = *cmd.Teardown.Payload
+		}
 		dir := e.commandDir(session, p)
 		repo, hasRepo := repoPath(p, e.host)
 		data := refusedTeardown("no-worktree")
@@ -804,7 +822,7 @@ func (e *executor) run(c M) error {
 			case err != nil:
 				data = refusedTeardown(err.Error())
 			case ok && !created:
-				data = teardown(dir, workspaceSession(session, p), top, jAt(p, "project"), jIsTrue(p, "deleteBranch"), jAt(p, "branch") == false)
+				data = teardown(dir, workspaceSession(session, p), top, jAt(p, "project"), tp.DeleteBranch != nil && *tp.DeleteBranch, tp.Branch != nil && !*tp.Branch)
 			}
 		}
 		reason := str0(data.Reason)
@@ -814,7 +832,7 @@ func (e *executor) run(c M) error {
 			return err
 		}
 		return e.finish(c, okStatus(ok), "")
-	case "artifact-copy", "artifact-verify":
+	case contract.CommandKindArtifactCopy, contract.CommandKindArtifactVerify:
 		// Long transfers run on the transfer worker, which sends the final receipt; the journal row resumes them.
 		b := jObj(jClone(p))
 		if b == nil {
@@ -823,7 +841,7 @@ func (e *executor) run(c M) error {
 		b["command"] = M{"id": c["id"], "executionId": c["executionId"]}
 		b["spool"] = filepath.Join(e.root, "spool")
 		k := "verify"
-		if kind == "artifact-copy" {
+		if kind == contract.CommandKindArtifactCopy {
 			k = "copy"
 		}
 		if err := enqueue(e.db, cid, k, b); err != nil {
@@ -831,20 +849,41 @@ func (e *executor) run(c M) error {
 		}
 		_, err := e.db.Exec("UPDATE commands SET terminal=1 WHERE id=?", cid)
 		return err
-	case "account-inspect":
+	case contract.CommandKindAccountInspect:
 		return e.accountInspect(c)
-	case "connection-remove":
-		pl, err := payloadOf[contract.ConnectionRemovePayload](c)
-		if err != nil || !removeConnection(connectionsDir(), pl.Connection) {
+	case contract.CommandKindConnectionRemove:
+		if typedErr != nil || cmd.ConnectionRemove.Payload == nil || !removeConnection(connectionsDir(), cmd.ConnectionRemove.Payload.Connection) {
 			return e.finish(c, "failed", "")
 		}
 		return e.finish(c, "completed", "")
-	case "script":
+	case contract.CommandKindScript:
 		return e.script(c, execution, session)
-	case "start", "input":
+	case contract.CommandKindStart, contract.CommandKindInput:
 		return e.start(c, cid, execution, session, p)
 	}
 	return e.finish(c, "failed", "")
+}
+
+// commandID and sessionID: the live command's identities, checked when it ran ("" for one that is not).
+func (l *live) commandID() string { s, _ := cmdID(l.command, "id"); return s }
+func (l *live) sessionID() string { s, _ := cmdID(l.command, "sessionId"); return s }
+
+// typedCommand: a journal command as its contract type; a command that does not fit is the zero value (no member set).
+func typedCommand(c M) contract.Command {
+	var cmd contract.Command
+	if json.Unmarshal([]byte(enc(c)), &cmd) != nil {
+		return contract.Command{}
+	}
+	return cmd
+}
+
+// commandKind: the kind of a command's JSON, "" when it names none.
+func commandKind(body string) contract.CommandKind {
+	var k struct {
+		Kind contract.CommandKind `json:"kind"`
+	}
+	json.Unmarshal([]byte(body), &k)
+	return k.Kind
 }
 
 // payloadOf decodes a command payload into its per-kind contract type (an absent payload is the zero value).
@@ -1558,7 +1597,8 @@ func (e *executor) script(c M, execution, session string) error {
 	if v := os.Getenv("FLEET_BLENDER"); v != "" {
 		cmd.Env = append(cmd.Env, "FLEET_BLENDER="+v)
 	}
-	if err := e.launch(execution, jStr(c, "id"), session); err != nil {
+	cid, _ := cmdID(c, "id")
+	if err := e.launch(execution, cid, session); err != nil {
 		dropTrial()
 		return err
 	}
@@ -1611,7 +1651,13 @@ func (e *executor) script(c M, execution, session string) error {
 // stageInputs: payload inputs [{artifactId, path}] are downloaded to FLEET_INPUT_DIR/<path> before the step starts.
 // Paths are relative and never leave the input folder.
 func (e *executor) stageInputs(p M, input string, execution any) error {
-	list := jArr(p, "inputs")
+	var in struct {
+		Inputs []contract.InputArtifact `json:"inputs"`
+	}
+	if json.Unmarshal([]byte(enc(p)), &in) != nil {
+		return errors.New("invalid input")
+	}
+	list := in.Inputs
 	if len(list) == 0 {
 		return nil
 	}
@@ -1621,15 +1667,13 @@ func (e *executor) stageInputs(p M, input string, execution any) error {
 	}
 	defer root.Close()
 	c := newTransferClient(e.url, e.token, e.host, accessToken(accessFile()))
+	executionID, _ := execution.(string)
 	for _, i := range list {
-		id, rel := jStr(i, "artifactId"), jStr(i, "path")
-		if !jIsStr(i, "artifactId") || !jIsStr(i, "path") {
-			return errors.New("invalid input")
-		}
+		id, rel := i.ArtifactId, i.Path
 		if strings.HasPrefix(rel, "/") || anyPart(rel, func(x string) bool { return x == "" || x == "." || x == ".." }) {
 			return fmt.Errorf("invalid input path %s", rel)
 		}
-		r, f := transferReply[contract.ArtifactGetReply](c, "/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: e.host, ExecutionId: optStr(jStr(execution)), ArtifactId: jStr(id)})
+		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: e.host, ExecutionId: optStr(executionID), ArtifactId: id})
 		if f != nil {
 			return fmt.Errorf("input %s: %s", rel, f.msg)
 		}
@@ -1753,7 +1797,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 		}
 		if err := cleanupMCPGroups(e.db, execution); err != nil {
 			l.cleanupUnknown = true
-			if _, open := e.commandBody(jStr(l.command, "id"), true); open {
+			if _, open := e.commandBody(l.commandID(), true); open {
 				l.seq++
 				if reportErr := e.nativeEvent(l.command, l.seq, "mcp.cleanup_unknown", M{"reason": err.Error(), "ownershipRetained": true}); reportErr != nil {
 					return false, reportErr
@@ -1873,7 +1917,7 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 	res := buildExecutionResourceSummary(l)
 	executionSpan(execution, l)
 	l.seq++
-	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, Resources: res, StderrTail: stderrTail(e.commandDir(jStr(l.command, "sessionId"), jAt(l.command, "payload")), execution, code)}); err != nil {
+	if err := e.event(l.command, l.seq, contract.FleetEventTypeProcessClosed, contract.ProcessClosed{ExitCode: code, StdoutClosed: l.eof, ObservedOwnedProcessesRemaining: new(bool), CleanupUnknown: l.cleanupUnknown, Resources: res, StderrTail: stderrTail(e.commandDir(l.sessionID(), jAt(l.command, "payload")), execution, code)}); err != nil {
 		return false, err
 	}
 	sid, err := cmdID(l.command, "sessionId")
@@ -2317,7 +2361,7 @@ func runExecutor() error {
 	}
 	if e.storeCfg != nil {
 		if r := storeRegistration(e.storeCfg, host); r != nil {
-			if err := queue(db, "/api/hosts/stores", r); err != nil {
+			if err := queueTo(db, contract.RouteStores, *r); err != nil {
 				return err
 			}
 		}
@@ -2411,6 +2455,8 @@ type pollReply struct {
 }
 
 func decodePoll(raw json.RawMessage) (*pollReply, error) {
+	// A command that does not fit its contract type fails the whole reply (nothing runs or is acknowledged); the
+	// coordinator stops such a command instead of sending it. A kind this executor does not know keeps its JSON (Raw).
 	var reply pollReply
 	if err := json.Unmarshal(raw, &reply.PollReply); err != nil {
 		return nil, err
@@ -2555,14 +2601,16 @@ func (e *executor) runOrFail(c M) error {
 	if err == nil {
 		return nil
 	}
-	if _, isLive := e.live[jStr(c, "executionId")]; isLive {
+	id, _ := cmdID(c, "id")
+	execution, _ := cmdID(c, "executionId")
+	if _, isLive := e.live[execution]; isLive {
 		return nil
 	}
-	b, ok := e.commandBody(jStr(c, "id"), true)
+	b, ok := e.commandBody(id, true)
 	if !ok || b != enc(c) {
 		return nil
 	}
-	if k := jStr(c, "kind"); k == "start" || k == "input" {
+	if k := commandKind(b); k == contract.CommandKindStart || k == contract.CommandKindInput {
 		// A fresh seq: the failure may follow events of this command that took the low ones.
 		if err := e.event(c, uint64(nowMs()), contract.FleetEventTypePreparationFailed, contract.PreparationFailed{Reason: "executor error before the harness started: " + err.Error()}); err != nil {
 			return err

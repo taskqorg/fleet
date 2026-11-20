@@ -1755,14 +1755,7 @@ func init() {
 
 	// /api/hosts/agent-tools: an executor's agent calls a tool (mcpserve); every call is bound to the calling execution's
 	// session and runs through runOp, under the director's person gate.
-	longRoute("POST /api/hosts/agent-tools", func(q *Request) (any, error) {
-		var b contract.AgentToolsRequest
-		if q.host == nil {
-			return nil, fail(403, "Host rejected")
-		}
-		if err := decode(q.body, &b); err != nil {
-			return nil, err
-		}
+	hostRoute(contract.RouteAgentTools, func(q *Request, b *contract.AgentToolsRequest) (any, error) {
 		executionID := ""
 		if b.ExecutionId != nil {
 			executionID = *b.ExecutionId

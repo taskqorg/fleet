@@ -1,6 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Host protocol and event payloads (fleet-stack L3 stage 1). Source for go/coordinator and app types; see contracts/README.md for the supported keyword subset.",
+  "routes": {
+    "$comment": "Every host route (POST, host-secret auth): its request and reply $defs (no reply: not described here), long (no surrounding transaction) and decode (checked: required keys and Validate, unknown keys refused when the request is closed; plain: decoded only). go/gen writes contract.Route<Name> descriptors; the coordinator registers each with hostRoute, the executor sends through them.",
+    "/api/hosts/poll": {"$comment": "older hosts omit required fields (gitConnections); the open parts (stores, update) are also read as sent", "request": "PollRequest", "reply": "PollReply", "long": true, "decode": "plain"},
+    "/api/hosts/receipts": {"request": "Receipt", "reply": "ReceiptReply", "long": true, "decode": "checked"},
+    "/api/hosts/accounts/report": {"$comment": "answers the account operation's record", "request": "AccountReceipt", "long": true, "decode": "checked"},
+    "/api/hosts/project-operations": {"$comment": "answers the project operation's record", "request": "ProjectReceipt", "long": true, "decode": "checked"},
+    "/api/hosts/delegations": {"$comment": "answers the child request's record", "request": "ChildReceipt", "long": true, "decode": "checked"},
+    "/api/hosts/events": {"$comment": "each event's identity is read from the batch as sent", "request": "HostEvents", "reply": "OkReply", "long": true, "decode": "plain"},
+    "/api/hosts/spans": {"request": "SpanBatchRequest", "reply": "SpanBatchReply", "long": true, "decode": "plain"},
+    "/api/hosts/agent-tools": {"$comment": "answers the raw JSON-RPC reply", "request": "AgentToolsRequest", "long": true, "decode": "plain"},
+    "/api/hosts/accounts": {"$comment": "answers the account record", "request": "AccountObservation", "long": false, "decode": "checked"},
+    "/api/hosts/artifacts/reserve": {"request": "ArtifactReserveRequest", "reply": "ArtifactReserveReply", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/parts": {"request": "ArtifactPartsRequest", "reply": "ArtifactPartsReply", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/commit": {"request": "ArtifactCommitRequest", "reply": "ArtifactStateReply", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/verified": {"request": "ArtifactVerifiedRequest", "reply": "ArtifactStateReply", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/renew": {"request": "ArtifactLeaseRequest", "reply": "ArtifactStateReply", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/failed": {"request": "ArtifactFailedRequest", "reply": "ArtifactStateReply", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/declare": {"request": "ArtifactDeclareRequest", "reply": "OkReply", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/get": {"request": "HostArtifactGetRequest", "reply": "ops-artifacts.schema.json#/$defs/ArtifactGetReply", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/read": {"$comment": "answers the artifact's bytes", "request": "HostArtifactGetRequest", "long": true, "decode": "checked"},
+    "/api/hosts/artifacts/list": {"$comment": "answers HostArtifactListReply with the full artifact rows", "request": "HostArtifactListRequest", "long": true, "decode": "checked"},
+    "/api/hosts/stores": {"request": "StoresRequest", "reply": "StoresReply", "long": true, "decode": "checked"}
+  },
   "$defs": {
     "ChildRequest": {
       "type": "object",
@@ -23,6 +46,7 @@
     },
     "ChildReceipt": {
       "type": "object",
+      "unevaluatedProperties": false,
       "required": [
         "hostId",
         "commandId",
@@ -90,6 +114,7 @@
     },
     "ProjectReceipt": {
       "type": "object",
+      "unevaluatedProperties": false,
       "required": [
         "hostId",
         "commandId",
@@ -240,6 +265,7 @@
     },
     "AccountReceipt": {
       "type": "object",
+      "unevaluatedProperties": false,
       "required": [
         "hostId",
         "commandId",
@@ -434,43 +460,115 @@
       }
     },
     "Command": {
-      "$comment": "Envelope. payload is decoded by kind: start and input StartPayload, steer SteerPayload, script ScriptPayload, readiness/base-updated/teardown ProjectPayload, artifact-copy/artifact-verify ArtifactTransferPayload, account-inspect AccountInspectPayload, stop none.",
+      "$comment": "One command of a poll reply, by kind (CommandKind). Every member has the same envelope (id, kind, executionId, sessionId, hostId, traceparent, run) and its kind's payload; an executor keeps a kind it does not know as unknown and fails it.",
+      "oneOf": [
+        {"$ref": "#/$defs/StartCommand"},
+        {"$ref": "#/$defs/InputCommand"},
+        {"$ref": "#/$defs/SteerCommand"},
+        {"$ref": "#/$defs/StopCommand"},
+        {"$ref": "#/$defs/ScriptCommand"},
+        {"$ref": "#/$defs/ReadinessCommand"},
+        {"$ref": "#/$defs/BaseUpdatedCommand"},
+        {"$ref": "#/$defs/TeardownCommand"},
+        {"$ref": "#/$defs/ArtifactCopyCommand"},
+        {"$ref": "#/$defs/ArtifactVerifyCommand"},
+        {"$ref": "#/$defs/AccountInspectCommand"},
+        {"$ref": "#/$defs/ConnectionRemoveCommand"}
+      ]
+    },
+    "StartCommand": {
+      "$comment": "kind start: a new turn",
       "type": "object",
       "additionalProperties": true,
-      "required": [
-        "id",
-        "kind",
-        "executionId"
-      ],
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/$defs/CommandKind"
-        },
-        "executionId": {
-          "type": "string"
-        },
-        "sessionId": {
-          "type": "string"
-        },
-        "hostId": {
-          "type": "string"
-        },
-        "payload": {},
-        "traceparent": {
-          "type": "string",
-          "$comment": "Optional validated W3C parent of this durable command; absent on older coordinators."
-        },
-        "run": {
-          "$ref": "#/$defs/CommandRun"
-        }
-      }
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "start"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/StartPayload"}}
+    },
+    "InputCommand": {
+      "$comment": "kind input: the next turn of a running session",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "input"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/StartPayload"}}
+    },
+    "SteerCommand": {
+      "$comment": "kind steer: text into the running turn",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "steer"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/SteerPayload"}}
+    },
+    "StopCommand": {
+      "$comment": "kind stop: stop the execution",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "stop"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}}
+    },
+    "ScriptCommand": {
+      "$comment": "kind script: a project script",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "script"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/ScriptPayload"}}
+    },
+    "ReadinessCommand": {
+      "$comment": "kind readiness: the project's readiness checks",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "readiness"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/ProjectPayload"}}
+    },
+    "BaseUpdatedCommand": {
+      "$comment": "kind base-updated: sync the checkout to its new base",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "base-updated"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/ProjectPayload"}}
+    },
+    "TeardownCommand": {
+      "$comment": "kind teardown: the session's worktree teardown",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "teardown"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/ProjectPayload"}}
+    },
+    "ArtifactCopyCommand": {
+      "$comment": "kind artifact-copy: copy an artifact into a store",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "artifact-copy"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/ArtifactTransferPayload"}}
+    },
+    "ArtifactVerifyCommand": {
+      "$comment": "kind artifact-verify: verify a store copy",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "artifact-verify"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/ArtifactTransferPayload"}}
+    },
+    "AccountInspectCommand": {
+      "$comment": "kind account-inspect: inspect a native account",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "account-inspect"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/AccountInspectPayload"}}
+    },
+    "ConnectionRemoveCommand": {
+      "$comment": "kind connection-remove: delete a connection's key",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "kind", "executionId"],
+      "properties": {"id": {"type": "string"}, "kind": {"const": "connection-remove"}, "executionId": {"type": "string"}, "sessionId": {"type": "string"}, "hostId": {"type": "string"}, "traceparent": {"type": "string", "$comment": "the validated W3C parent of this durable command; absent on older coordinators"}, "run": {"$ref": "#/$defs/CommandRun"}, "payload": {"$ref": "#/$defs/ConnectionRemovePayload"}}
+    },
+    "Capability": {
+      "$comment": "A capability a host reports in its poll (PollRequest.capabilities, strings so older and newer names pass). Besides these: tool:<name> (a coding tool on PATH, tool:browser), forge:<owner>/<repo> (a forge connection), ffmpeg:<version>. contract.MissingCapability is the one gate on them.",
+      "type": "string",
+      "enum": ["codex", "gpt-6.1-sol", "low", "static-output", "steer", "native-fork", "artifact-store", "script", "workspace-key-v1", "start-access-v1", "attachments"]
     },
     "Receipt": {
       "$comment": "Execution status receipt; delegation and account envelopes have their own generated types.",
       "type": "object",
+      "unevaluatedProperties": false,
       "required": [
         "hostId",
         "commandId",

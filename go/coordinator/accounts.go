@@ -39,12 +39,12 @@ func init() {
 	op("account_update", func(q *Request, _ *contract.AccountUpdateRequest) (contract.AccountUpdateReply, error) {
 		return replyAs[contract.AccountUpdateReply](accountUpdateBody(q, body(q)))
 	})
-	route("POST /api/hosts/accounts", typed(func(q *Request, b *contract.AccountObservation) (any, error) {
+	hostRoute(contract.RouteAccounts, func(q *Request, b *contract.AccountObservation) (any, error) {
 		if !q.app.hostMaySee(q.host, nil) {
 			return nil, fail(403, "Account observations need an owner-held host")
 		}
 		return accountReport(q, b, q.hostID())
-	}))
+	})
 }
 
 func defaultHostID(q *Request) string { return q.app.hostID }

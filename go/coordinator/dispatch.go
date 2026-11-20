@@ -514,13 +514,13 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip(id+" is offline", "host:"+id+":offline")
 				continue
 			}
-			if requirements["forge"] == true && (len(anys(settings["repos"])) == 0 || !inList(k.caps[id], "forge:"+strings.TrimSuffix(strings.TrimPrefix(astr(mapOf(anys(settings["repos"])[0])["remote"]), "https://github.com/"), ".git"))) {
+			if requirements["forge"] == true && (len(anys(settings["repos"])) == 0 || !contract.HasCapability(k.caps[id], contract.ForgeCapability(strings.TrimSuffix(strings.TrimPrefix(astr(mapOf(anys(settings["repos"])[0])["remote"]), "https://github.com/"), ".git")))) {
 				skip("project forge connection unavailable on "+id, "host:"+id+":forge")
 				continue
 			}
 			missingTool := ""
 			for _, tool := range strs(requirements["tools"]) {
-				if !inList(k.caps[id], "tool:"+tool) {
+				if !contract.HasCapability(k.caps[id], contract.ToolCapability(tool)) {
 					missingTool = tool
 					break
 				}
@@ -529,18 +529,18 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 				skip("coding tool unavailable: "+missingTool+" on "+id, "host:"+id+":tool:"+missingTool)
 				continue
 			}
-			// A read-only or branchless start (a preset) runs only where the executor honours it (start-access-v1).
-			if (x["access"] == "read" || x["branch"] == false && projectID != nil) && !inList(k.caps[id], "start-access-v1") {
-				skip(id+" executor lacks start-access-v1 for a read-only or branchless start; update required", "host:"+id+":start-access")
-				continue
-			}
-			if astr(x["workspaceKey"]) != "" && !inList(k.caps[id], "workspace-key-v1") {
-				skip(id+" executor lacks workspace-key-v1; update required", "host:"+id+":workspace-version")
-				continue
-			}
-			// An executor before message attachments would stage the files but never tell the agent about them.
-			if len(anys(mapOf(x["payload"])["attachments"])) > 0 && !inList(k.caps[id], "attachments") {
-				skip(id+" executor lacks attachments; update required", "host:"+id+":attachments-version")
+			// A read-only or branchless start (a preset), a workspace key or message attachments run only where the
+			// executor honours them (contract.MissingCapability, the same gate the poll applies).
+			if c, missing := contract.MissingCapability(k.caps[id], contract.StartNeeds{ReadOnly: x["access"] == "read", Branchless: x["branch"] == false && projectID != nil,
+				WorkspaceKey: astr(x["workspaceKey"]) != "", Attachments: len(anys(mapOf(x["payload"])["attachments"])) > 0}); missing {
+				switch c {
+				case contract.CapabilityStartAccessV1:
+					skip(id+" executor lacks start-access-v1 for a read-only or branchless start; update required", "host:"+id+":start-access")
+				case contract.CapabilityWorkspaceKeyV1:
+					skip(id+" executor lacks workspace-key-v1; update required", "host:"+id+":workspace-version")
+				default:
+					skip(id+" executor lacks "+string(c)+"; update required", "host:"+id+":"+string(c)+"-version")
+				}
 				continue
 			}
 			if !a.hostMayRun(h, projectID, director) {

@@ -74,6 +74,11 @@ for (const f of readdirSync(dir).filter((f) => f.endsWith('.schema.json'))) {
     for (const d of [t + 'Request', t + 'Reply']) if (!root.$defs[d]) throw Error(`${f}: operation ${n} has no $defs ${d}`);
     return `  ${JSON.stringify(n)}: { request: ${t}Request; reply: ${t}Reply };`;
   }).join('\n')}\n};`); }
+  // routes: each host route path maps to its request and reply (unknown when not described).
+  if (root.routes) {
+    const ref = (r) => { const [file, name] = r.includes('#/$defs/') ? r.split('#/$defs/') : ['', r]; if (!file && !root.$defs[name]) throw Error(`${f}: route type ${r} is not a $defs entry`); return file ? type({ $ref: r }, 'routes') : name; };
+    out.push(`export type HostRoutes = {\n${Object.entries(root.routes).filter(([p]) => p !== '$comment').map(([p, r]) => `  ${JSON.stringify(p)}: { request: ${ref(r.request)}; reply: ${r.reply ? ref(r.reply) : 'unknown'} };`).join('\n')}\n};`);
+  }
   for (const n of Object.keys(root.planned ?? {})) {
     if (root.operations?.[n]) throw Error(`${f}: operation ${n} is both planned and built`);
     const t = n.split(/[_.-]/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join('');

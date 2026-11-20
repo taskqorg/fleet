@@ -399,7 +399,7 @@ func TestPollSkipsLegacyPipelineRuns(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, c := range out {
-		got[astr(c["id"])] = true
+		got[c.Id()] = true
 	}
 	for _, id := range []string{"legacy", "removed", "ended", "current"} {
 		for _, kind := range []string{"teardown", "input"} {

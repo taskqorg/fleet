@@ -24,21 +24,23 @@ import (
 
 func init() {
 	// Long routes: each takes short transactions around its store calls.
-	longRoute("POST /api/hosts/artifacts/reserve", hostOwned(true, typed(artifactReserve)))
-	longRoute("POST /api/hosts/artifacts/parts", hostOwned(false, typed(artifactParts)))
-	longRoute("POST /api/hosts/artifacts/commit", hostOwned(false, typed(artifactCommit)))
-	longRoute("POST /api/hosts/artifacts/verified", hostOwned(false, typed(artifactVerified)))
-	longRoute("POST /api/hosts/artifacts/renew", hostOwned(false, typed(artifactRenew)))
-	longRoute("POST /api/hosts/artifacts/failed", hostOwned(false, typed(artifactRefused)))
-	longRoute("POST /api/hosts/artifacts/declare", hostOwned(true, typed(artifactDeclare)))
-	longRoute("POST /api/hosts/artifacts/get", hostOwned(false, typed(func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
+	hostRoute(contract.RouteArtifactsReserve, executionOwned(func(b *contract.ArtifactReserveRequest) string { return b.ExecutionId },
+		replyOf[contract.ArtifactReserveRequest, contract.ArtifactReserveReply](artifactReserve)))
+	hostRoute(contract.RouteArtifactsParts, replyOf[contract.ArtifactPartsRequest, contract.ArtifactPartsReply](artifactParts))
+	hostRoute(contract.RouteArtifactsCommit, replyOf[contract.ArtifactCommitRequest, contract.ArtifactStateReply](artifactCommit))
+	hostRoute(contract.RouteArtifactsVerified, replyOf[contract.ArtifactVerifiedRequest, contract.ArtifactStateReply](artifactVerified))
+	hostRoute(contract.RouteArtifactsRenew, replyOf[contract.ArtifactLeaseRequest, contract.ArtifactStateReply](artifactRenew))
+	hostRoute(contract.RouteArtifactsFailed, replyOf[contract.ArtifactFailedRequest, contract.ArtifactStateReply](artifactRefused))
+	hostRoute(contract.RouteArtifactsDeclare, executionOwned(func(b *contract.ArtifactDeclareRequest) string { return b.ExecutionId },
+		replyOf[contract.ArtifactDeclareRequest, contract.OkReply](artifactDeclare)))
+	hostRoute(contract.RouteArtifactsGet, replyOf[contract.HostArtifactGetRequest, contract.ArtifactGetReply](func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
 		x, err := hostMayRead(q, b)
 		if err != nil {
 			return nil, err
 		}
 		return artifactGetView(q.ctx(), q.app, x.ID, q.hostID())
-	})))
-	longRoute("POST /api/hosts/artifacts/read", hostOwned(false, typed(func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
+	}))
+	hostRoute(contract.RouteArtifactsRead, func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
 		x, err := hostMayRead(q, b)
 		if err != nil {
 			return nil, err
@@ -48,12 +50,12 @@ func init() {
 			return nil, err
 		}
 		return streamed(open, x.MediaType, nil), nil
-	})))
-	longRoute("POST /api/hosts/artifacts/list", hostOwned(true, typed(hostArtifactList)))
-	longRoute("POST /api/hosts/stores", hostOwned(false, typed(func(q *Request, b *contract.StoresRequest) (any, error) {
+	})
+	hostRoute(contract.RouteArtifactsList, executionOwned(func(b *contract.HostArtifactListRequest) string { return b.ExecutionId }, hostArtifactList))
+	hostRoute(contract.RouteStores, replyOf[contract.StoresRequest, contract.StoresReply](func(q *Request, b *contract.StoresRequest) (any, error) {
 		holder, _ := q.host["holder"].(string)
 		return storeRegister(q, q.hostID(), &b.Store, holder)
-	})))
+	}))
 	route("GET /api/results/{id}", resultBytes)
 	route("GET /api/results/{id}/preview", resultPreview)
 
@@ -176,22 +178,6 @@ func init() {
 	})
 }
 
-// typed: the host route's body decodes into its contract type (contracts/host-protocol.schema.json), passes
-// decodeValid, and h reads the struct only: a field of the wrong type, a missing required field or an enum value outside
-// the schema is 400. Unknown fields pass while hosts update one at a time.
-func typed[T any, P interface {
-	*T
-	Validate() error
-}](h func(q *Request, t *T) (any, error)) handler {
-	return func(q *Request) (any, error) {
-		t, err := decodeValid[T, P](q.body, false)
-		if err != nil {
-			return nil, err
-		}
-		return h(q, t)
-	}
-}
-
 // decodeValid: required keys at every depth (hostKeys), body into T, then T's generated Validate (enums, nested structs, required lists
 // not null); strict refuses unknown fields.
 func decodeValid[T any, P interface {
@@ -218,35 +204,6 @@ func decodeValid[T any, P interface {
 		return nil, fail(400, err.Error())
 	}
 	return t, nil
-}
-
-// hostOwned: the host routes' ownership check; a body hostId is the authenticated host (readBody), and with execution the
-// named execution must be that host's.
-func hostOwned(execution bool, h handler) handler {
-	return func(q *Request) (any, error) {
-		if q.host == nil {
-			return nil, fail(403, "Host rejected")
-		}
-		if execution {
-			var b struct {
-				ExecutionID string `json:"executionId"`
-			}
-			decode(q.body, &b)
-			if b.ExecutionID == "" {
-				return nil, fail(400, "Expected executionId")
-			}
-			{
-				e, err := execGet(q.ctx(), q.app, b.ExecutionID)
-				if err != nil {
-					return nil, err
-				}
-				if e.HostID != q.hostID() {
-					return nil, fail(403, "Execution rejected")
-				}
-			}
-		}
-		return h(q)
-	}
 }
 
 // mayAccessProject: the owner sees everything; anyone else a granted project, and architects the null project.
