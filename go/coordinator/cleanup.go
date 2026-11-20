@@ -361,7 +361,8 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 }
 
 // blockedBy: the first live row outside the cascade that keeps one of its objects, "" when none:
-// "<table>.<column> by <document kind or table> <row id>". One scan per table: its refKeep columns are ORed.
+// "<table>.<column> by <document kind or table> <row id>" (a conversation table names the record field its column
+// holds, convFieldOf). One scan per table: its refKeep columns are ORed.
 func (c *cascade) blockedBy(q *Request) (string, error) {
 	// An open session working for a task depends on it (an archived one outlives it; the reference goes stale).
 	if len(c.sets["task"]) > 0 {
@@ -426,7 +427,7 @@ func (c *cascade) blockedBy(q *Request) (string, error) {
 			if t == "document" {
 				by = astr(row["rkind"])
 			}
-			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, r.sql(), by, astr(row["rid"]))), nil
+			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, convFieldOf(t, r.sql()), by, astr(row["rid"]))), nil
 		}
 	}
 	return "", nil

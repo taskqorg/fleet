@@ -164,7 +164,7 @@ func (q *Queries) CommandsPendingCount(ctx context.Context, arg CommandsPendingC
 
 const commandsStopOpen = `-- name: CommandsStopOpen :many
 UPDATE command SET status='stopped', stop_detail=coalesce($1, stop_detail), updated_at=now()
-WHERE status = ANY ($2::command_status[])
+WHERE status = ANY (CAST($2::text[] AS command_status[]))
  AND ($3::text IS NULL OR execution_id=$3)
  AND ($4::text IS NULL OR host_id=$4)
  AND ($5::text IS NULL OR id=$5)
@@ -174,7 +174,7 @@ RETURNING id
 
 type CommandsStopOpenParams struct {
 	StopDetail  *string
-	Statuses    []CommandStatus
+	Statuses    []string
 	ExecutionID *string
 	HostID      *string
 	ID          *string

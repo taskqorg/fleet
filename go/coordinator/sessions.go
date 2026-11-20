@@ -692,6 +692,20 @@ var convEventAny = &convTable{table: "event", cols: convEventCols}
 var convEventCols = []convCol{{"executionId", "execution_id", "text"}, {"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"},
 	{"seq", "event_seq", "int"}, {"type", "type", "text"}, {"timestamp", "at", "ms"}}
 
+// convFieldOf: the record field a conversation table's column holds (a reason names what the record shows), else col.
+func convFieldOf(table, col string) string {
+	for _, t := range convTables {
+		if t.table == table {
+			for _, c := range t.cols {
+				if c.col == col {
+					return c.field
+				}
+			}
+		}
+	}
+	return col
+}
+
 // record: the SQL expression of a row as its record.
 func (t *convTable) record() string {
 	parts := []string{"'id',id"}

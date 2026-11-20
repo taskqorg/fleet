@@ -2899,7 +2899,8 @@ CREATE INDEX queued_message_open ON queued_message(state, seq) WHERE state IN ('
 CREATE INDEX queued_message_steer ON queued_message(steer_command_id) WHERE steer_command_id IS NOT NULL;
 CREATE TABLE command(
  id text PRIMARY KEY,
- execution_id text NULL REFERENCES execution(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ -- No foreign key to execution: a command may outlive its execution, and the poll stops it with that refusal.
+ execution_id text NULL,
  session_id text NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
  host_id text NULL,
  project_id text NULL,

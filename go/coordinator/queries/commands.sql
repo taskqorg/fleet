@@ -18,7 +18,7 @@ UPDATE command SET status = @status, stop_detail=coalesce(sqlc.narg(stop_detail)
 -- Stop the open commands of an execution, a host or one command (each filter optional; at least one is given): those
 -- in one of the given statuses, with optional kinds. Returns the stopped ids.
 UPDATE command SET status='stopped', stop_detail=coalesce(sqlc.narg(stop_detail), stop_detail), updated_at=now()
-WHERE status = ANY (@statuses::command_status[])
+WHERE status = ANY (CAST(sqlc.arg(statuses)::text[] AS command_status[]))
  AND (sqlc.narg(execution_id)::text IS NULL OR execution_id=sqlc.narg(execution_id))
  AND (sqlc.narg(host_id)::text IS NULL OR host_id=sqlc.narg(host_id))
  AND (sqlc.narg(id)::text IS NULL OR id=sqlc.narg(id))

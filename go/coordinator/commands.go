@@ -91,5 +91,9 @@ func commandStop(q *Request, f commandStopFilter) ([]string, error) {
 	if len(statuses) == 0 {
 		statuses = commandOpen
 	}
-	return q.db().CommandsStopOpen(q.ctx(), db.CommandsStopOpenParams{Statuses: statuses, StopDetail: f.detail, ExecutionID: f.executionID, HostID: f.hostID, ID: f.id, Kinds: f.kinds})
+	names := make([]string, len(statuses))
+	for i, x := range statuses {
+		names[i] = string(x)
+	}
+	return q.db().CommandsStopOpen(q.ctx(), db.CommandsStopOpenParams{Statuses: names, StopDetail: f.detail, ExecutionID: f.executionID, HostID: f.hostID, ID: f.id, Kinds: f.kinds})
 }
