@@ -2,12 +2,20 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
+
 	"fleet/obs"
 	"github.com/jackc/pgx/v5"
 )
 
-func validTraceparent(v any) bool { _, _, ok := obs.ParseTraceparent(astr(v)); return ok }
+// validTraceparent: v (a record field) is a well-formed traceparent string.
+func validTraceparent(v any) bool {
+	s, _ := v.(string)
+	_, _, ok := obs.ParseTraceparent(s)
+	return ok
+}
 
 // originTrace is persisted before asynchronous placement; retries never substitute a poll's trace.
 func originTrace(q *Request) string {
@@ -25,46 +33,60 @@ func originTrace(q *Request) string {
 	return "00-" + s.TraceID + "-" + s.SpanID + "-01"
 }
 
+// commandRun: the run attributes a command carries for its spans (the command's "run" field).
+type commandRun struct {
+	AccountID    string `json:"accountId"`
+	Actor        string `json:"actor"`
+	ExecutionID  string `json:"executionId"`
+	ExperimentID string `json:"experimentId"`
+	ProjectID    string `json:"projectId"`
+	TaskID       string `json:"taskId"`
+}
+
 // commandTrace records a durable dispatch edge only once. Its parent and identity are coordinator-owned.
 func commandTrace(q *Request, c doc) error {
 	if validTraceparent(c["traceparent"]) {
 		return nil
 	}
-	old, err := maybe(q, c["id"], "command")
-	if err != nil {
-		return err
-	}
-	if old != nil { // An old command remains explicitly unlinked; updating its receipt must not invent history.
-		if validTraceparent(old["traceparent"]) {
-			c["traceparent"], c["run"] = old["traceparent"], old["run"]
+	if id, _ := c["id"].(string); id != "" {
+		old, err := q.db().TaskTraceCommand(q.ctx(), id)
+		if err == nil { // An old command remains explicitly unlinked; updating its receipt must not invent history.
+			if old.Traceparent != nil && validTraceparent(*old.Traceparent) {
+				c["traceparent"], c["run"] = *old.Traceparent, json.RawMessage(old.Run)
+				if old.Run == nil {
+					c["run"] = nil
+				}
+			}
+			return nil
 		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
+	eid, _ := c["executionId"].(string)
+	if eid == "" {
 		return nil
 	}
-	e, err := maybe(q, c["executionId"], "execution")
+	e, err := q.db().TaskTraceExecution(q.ctx(), eid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	if e == nil {
-		return nil
-	}
-	tp := astr(e["traceparent"])
+	tp := e.Traceparent
 	if !validTraceparent(tp) {
 		tp = originTrace(q)
 	}
-	var pid, tid, aid, experiment *string
-	if err := q.tx.QueryRow(q.ctx(), "SELECT project_id,task_id,account_id,experiment_id FROM execution WHERE id=$1", c["executionId"]).Scan(&pid, &tid, &aid, &experiment); err != nil {
-		return err
+	actor := e.Actor
+	if actor == "" {
+		actor = "fleet"
 	}
-	val := func(p *string) string {
-		if p != nil {
-			return *p
-		}
-		return ""
-	}
-	run := doc{"projectId": val(pid), "taskId": val(tid), "executionId": astr(c["executionId"]), "accountId": val(aid), "experimentId": val(experiment), "actor": firstString(e["traceActor"], e["directedBy"], "fleet")}
-	ctx := obs.WithRun(obs.WithRemote(context.Background(), tp), obs.Run{ProjectID: val(pid), TaskID: val(tid), ExecutionID: astr(c["executionId"]), AccountID: val(aid), ExperimentID: val(experiment), Actor: astr(run["actor"])})
+	run := commandRun{ProjectID: deref(e.ProjectID), TaskID: deref(e.TaskID), ExecutionID: eid, AccountID: deref(e.AccountID), ExperimentID: deref(e.ExperimentID), Actor: actor}
+	ctx := obs.WithRun(obs.WithRemote(context.Background(), tp), obs.Run{ProjectID: run.ProjectID, TaskID: run.TaskID, ExecutionID: eid, AccountID: run.AccountID, ExperimentID: run.ExperimentID, Actor: actor})
 	ctx, s := obs.Start(ctx, "dispatch.command", obs.KindInternal)
-	s.Set("fleet.command.kind", astr(c["kind"]))
+	kind, _ := c["kind"].(string)
+	s.Set("fleet.command.kind", kind)
 	c["traceparent"], c["run"] = obs.Traceparent(ctx), run
 	onEnd(q.tx, func(committed bool) {
 		if committed {
@@ -82,21 +104,22 @@ func executionOrigin(q *Request, parent string) (string, error) {
 		return tp, nil
 	}
 	if parent != "" {
-		var tp *string
-		if err := q.tx.QueryRow(q.ctx(), "SELECT data->>'traceparent' FROM execution WHERE id=$1", parent).Scan(&tp); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		tp, err := q.db().TaskTraceOf(q.ctx(), parent)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", err
 		}
-		if tp != nil && validTraceparent(*tp) {
-			return *tp, nil
+		if validTraceparent(tp) {
+			return tp, nil
 		}
 	}
 	return originTrace(q), nil
 }
 
+// executionTraceData: an execution's data (a JSON object, or none) with its trace origin and actor.
 func executionTraceData(q *Request, v doc, data any) (doc, error) {
-	out := doc{}
-	for k, x := range mapOf(data) {
-		out[k] = x
+	out := make(doc)
+	if d, ok := data.(doc); ok {
+		maps.Copy(out, d)
 	}
 	tp, err := executionOrigin(q, firstString(v["parentExecutionId"], v["pipelineStepId"], v["pipelineRunId"]))
 	if err != nil {
