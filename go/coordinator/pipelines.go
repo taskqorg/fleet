@@ -95,6 +95,15 @@ func (r runRecord) MarshalJSON() ([]byte, error) {
 	return restEncode(plain(r), r.rest)
 }
 
+// restAs: the run record's fields that no runRecord field names (an area's own keys on the run, such as the Lab's
+// cell and recovery), decoded once into v.
+func (r *runRecord) restAs(v any) error {
+	if len(r.rest) == 0 {
+		return nil
+	}
+	return json.Unmarshal(jsonBytes(r.rest), v)
+}
+
 // runStep: one step of a run: its plan entry's step record (the pipeline_step execution's record and step facts) as the
 // runner projection shows it.
 type runStep struct {

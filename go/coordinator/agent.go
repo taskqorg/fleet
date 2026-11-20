@@ -22,6 +22,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -31,12 +32,15 @@ import (
 // type, so a write that leaves that field alone writes it back as it was.
 type recordRest map[string]json.RawMessage
 
-// restFields: the JSON names of a struct's exported fields and their types.
-func restFields(t reflect.Type) map[string]reflect.Type {
+// restFields: the JSON names of a struct's exported fields and their indexes, once per type.
+func restFields(t reflect.Type) map[string]int {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	out := map[string]reflect.Type{}
+	if m, ok := restFieldCache.Load(t); ok {
+		return m.(map[string]int)
+	}
+	out := map[string]int{}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
@@ -46,34 +50,42 @@ func restFields(t reflect.Type) map[string]reflect.Type {
 		if name == "" {
 			name = f.Name
 		}
-		out[name] = f.Type
+		out[name] = i
 	}
+	restFieldCache.Store(t, out)
 	return out
 }
 
-// restDecode: a stored record b into v's named fields (a field of another JSON type reads as zero) and rest.
+var restFieldCache sync.Map // reflect.Type -> map[string]int
+
+// restDecode: a stored record b into v's named fields (a field of another JSON type reads as zero) and rest: the
+// stored fields v does not name, and those it read as zero or as an empty list or object (which omitempty would drop
+// on encode), as stored.
 func restDecode(b []byte, v any, rest *recordRest) error {
 	var stored recordRest
 	if err := json.Unmarshal(b, &stored); err != nil {
 		return err
 	}
 	named := restFields(reflect.TypeOf(v))
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Pointer {
+		rv = rv.Elem()
+	}
 	*rest = recordRest{}
 	for k, raw := range stored {
-		t, ok := named[k]
+		i, ok := named[k]
 		if !ok {
 			(*rest)[k] = raw
 			continue
 		}
-		// A zero value, and an empty list or object, which omitempty would drop on encode, stay as stored.
-		x := reflect.New(t)
-		if json.Unmarshal(raw, x.Interface()) != nil || x.Elem().IsZero() || restEmpty(x.Elem()) {
-			(*rest)[k] = raw
+		f := rv.Field(i)
+		if err := json.Unmarshal(raw, f.Addr().Interface()); err != nil {
+			if te := (*json.UnmarshalTypeError)(nil); !errors.As(err, &te) {
+				return err
+			}
 		}
-	}
-	if err := json.Unmarshal(b, v); err != nil {
-		if te := (*json.UnmarshalTypeError)(nil); !errors.As(err, &te) {
-			return err
+		if f.IsZero() || restEmpty(f) {
+			(*rest)[k] = raw
 		}
 	}
 	return nil

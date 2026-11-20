@@ -1576,9 +1576,56 @@ func labRunFacts(run *runRecord) *labRun {
 	if run == nil {
 		return nil
 	}
-	r, _ := asT[labRun](docOf(run)) // values as decoded JSON writes them (object keys sorted), as the trial evidence hashes them
+	// The run's fields as the Lab reads them; its open values as decoded JSON writes them (object keys sorted, numbers
+	// as float64), as the trial evidence hashes them. The Lab's own keys on the run (cell, judge, recovery, ...) are the
+	// record's remainder, decoded once.
+	var r labRun
+	run.restAs(&r)
+	r.Problem, r.ProjectAssessments = labSortedRaw(r.Problem), labSortedRaw(r.ProjectAssessments)
+	r.ID, r.ExperimentID, r.ProjectID, r.State, r.Observation = run.ID, run.ExperimentID, run.ProjectID, run.State, run.Observation
+	r.DefinitionSha256, r.RerunOf = run.DefinitionSha256, run.RerunOf
+	if run.StartedAt != nil {
+		r.StartedAt = labSortedRaw(jsonBytes(*run.StartedAt))
+	}
+	if run.FinishedAt != nil {
+		r.FinishedAt = labSortedRaw(jsonBytes(*run.FinishedAt))
+	}
+	if run.DurationMs != nil {
+		d := float64(*run.DurationMs)
+		r.DurationMs = &d
+	}
+	if run.CanonicalResult != nil {
+		r.CanonicalResult = labSortedRaw(jsonBytes(run.CanonicalResult))
+	}
+	r.Usage, r.Overrides = labSortedRaw(jsonBytes(run.Usage)), labSortedRaw(jsonBytes(run.Overrides))
+	r.Definition = jsonBytes(run.Definition)
+	if len(run.Definitions) > 0 {
+		r.Definitions = labSortedRaw(jsonBytes(run.Definitions))
+	}
+	if len(run.Example) > 0 {
+		r.Example = labSortedRaw(run.Example)
+	}
+	if run.ExampleInputs != nil {
+		r.ExampleInputs = labSortedRaw(jsonBytes(run.ExampleInputs))
+	}
+	if len(run.ProjectSnapshot) > 0 {
+		r.ProjectSnapshot = labSortedRaw(run.ProjectSnapshot)
+	}
+	r.Steps = make([]labRunStep, 0, len(run.Steps))
+	for _, s := range run.Steps {
+		r.Steps = append(r.Steps, labRunStep{ID: s.ID, ExecutionID: s.ExecutionID, State: s.State, Observation: s.Observation,
+			Arguments: labSortedRaw(s.Arguments), Output: labSortedRaw(s.Output), OutputArtifactID: s.OutputArtifactID})
+	}
 	r.run = run
 	return &r
+}
+
+// labSortedRaw: raw as decoded JSON writes it (object keys sorted); absent stays absent.
+func labSortedRaw(raw json.RawMessage) json.RawMessage {
+	if raw == nil {
+		return nil
+	}
+	return jsonBytes(rawValue(raw))
 }
 
 // labRunRead: run id (getRun); nil when there is none.
