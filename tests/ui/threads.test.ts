@@ -45,7 +45,7 @@ test('fed blocks: replaced in place, inserted inside the window by key, appended
 });
 
 test('feed rows that can touch a session thread', () => {
-  const s = new Set(['s1']), c = (kind: Change['kind'], sessionId: string | null) => ({ seq: 1, kind, id: 'x', taskId: null, sessionId, hostId: null, op: 'I' });
+  const s = new Set(['s1']), c = (kind: Change['kind'], sessionId: string | null) => ({ seq: 1, kind, id: 'x', taskId: null, sessionId, hostId: null, op: 'I', touches: [] });
   assert.equal(touches(c('event', 's1'), s), true); assert.equal(touches(c('event', 's2'), s), false);
   assert.equal(touches(c('question', null), s), true); assert.equal(touches(c('artifact', 's1'), s), true); assert.equal(touches(c('task', null), s), true); assert.equal(touches({ ...c('execution', 's9'), taskId: 'T' }, s, 'T'), true); assert.equal(touches(c('host', 's1'), s), false);
 });

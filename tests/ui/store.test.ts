@@ -117,12 +117,12 @@ test('review #33-3: an older page answer never overwrites a newer record; change
   answer = async () => page([row('t1', 'old')]);
   peek.mount('tasks', 'L', P); await loadList('tasks', 'L', P);
   answer = async n => n === 'list_membership' ? { lists: [{ rows: [row('t1', 'new')], counts: { queued: 1 }, groups: [] }] } : page([]);
-  await applyChanges([{ seq: 10, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U' }]);
+  await applyChanges([{ seq: 10, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U', touches: [] }]);
   assert.equal(peek.record('t1')!.row.title, 'new');
   const slow = deferred(); answer = async n => n === 'list_membership' ? { lists: [{ rows: [row('t1', 'newer'), row('t2')], counts: { queued: 2 }, groups: [] }] } : slow.p;
   const loading = loadList('tasks', 'L', P);
   calls = [];
-  await applyChanges([{ seq: 11, kind: 'task', id: 't2', taskId: 't2', sessionId: null, hostId: null, op: 'I' }]);
+  await applyChanges([{ seq: 11, kind: 'task', id: 't2', taskId: 't2', sessionId: null, hostId: null, op: 'I', touches: [] }]);
   assert.equal(calls.filter(c => c.name === 'list_membership').length, 0, 'not asked while the page is loading');
   slow.ok(page([row('t1', 'old')])); await loading;
   assert.notEqual(peek.record('t1')!.row.title, 'old', 'the page answer (cursor 0) did not overwrite the record from change 10');
@@ -197,9 +197,9 @@ test('review #34-4: an older membership answer landing late does not re-add a ta
   const late = deferred();
   answer = async (n, b) => n === 'list_membership' ? (b.ids.includes('t1') && calls.filter(c => c.name === 'list_membership').length === 1 ? late.p : { lists: [{ rows: [], counts: {}, groups: [] }] }) : page([]);
   calls = [];
-  const older = applyChanges([{ seq: 15, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U' }]);
+  const older = applyChanges([{ seq: 15, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U', touches: [] }]);
   await new Promise(r => setTimeout(r, 5));
-  await applyChanges([{ seq: 20, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U' }]); // t1 left the filter
+  await applyChanges([{ seq: 20, kind: 'task', id: 't1', taskId: 't1', sessionId: null, hostId: null, op: 'U', touches: [] }]); // t1 left the filter
   assert.deepEqual(peek.list('R')!.ids, []);
   late.ok({ lists: [{ rows: [row('t1')], counts: { queued: 1 }, groups: [] }] }); await older;
   assert.deepEqual(peek.list('R')!.ids, [], 'the answer for change 15 arrived after the one for 20 and was ignored');

@@ -55,7 +55,7 @@ If an owner rule conflicts with common practice, the owner rule wins. Two except
 
 ## How each rule is checked
 
-A rule without a check is kept only by reading it, so each rule names its check. `pnpm run check:design` prints all of them as warnings.
+A rule without a check is kept only by reading it, so each rule names its check. `pnpm run check:design` prints all of them as warnings, and fails on one: a raw HTML control (`<button>`, `<input>`, `<table>` and the like) in `app/src/views` beyond that file's legacy count (OR-13: screens use packages/ui controls).
 
 | Check | Rules | Where |
 |---|---|---|

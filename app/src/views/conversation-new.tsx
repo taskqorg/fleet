@@ -8,7 +8,7 @@ import {
   Composer, DropZone, DetailSection, ErrorBanner, ProjectPick, PresetPicker, Skeleton, agentLabel, harnesses,
   type Harness, type IconName, type PickProject, type PresetOption, type StartFact, type ComposerChip } from '../../../packages/ui/src/index.ts';
 import { op, online, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
-import { useDoc } from '../store.ts';
+import { useOp } from '../store.ts';
 import { prefs } from '../prefs.ts';
 import { useAttachments } from '../uploads.ts';
 
@@ -28,12 +28,12 @@ const chipOf = (f: StartFact): ComposerChip => ({ key: f.key, icon: f.icon, harn
 
 export function NewConversation({ initialProject, initialRole, onStarted }: { initialProject: string | null; initialRole?: string | null; onStarted: (sessionId: string) => void }) {
   const alive = useAlive();
-  const projects = useDoc<any>('conversation-projects', () => op('project_list', {}), c => c.kind === 'definition');
+  const projects = useOp('project_list', {});
   // Recent: the projects of the latest conversations, newest first (sessions_list, latest activity first).
-  const recent = useDoc<Ops['sessions_list']['reply']>('conversation-recent-projects', () => op('sessions_list', { group: 'none', sort: '-activity', limit: 50 }), () => false); // an ordering hint, read once
+  const recent = useOp('sessions_list', { group: 'none', sort: '-activity', limit: 50 }); // an ordering hint: sessions_list declares no changes, so it is read once
   const [project, setProject] = useState<string | null>(initialProject);
   const key = project ?? '-';
-  const presets = useDoc<Ops['session_presets']['reply']>('session-presets:' + key, () => op('session_presets', project ? { projectId: project } : {}), c => c.kind === 'definition');
+  const presets = useOp('session_presets', project ? { projectId: project } : {});
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [override, setOverride] = useState<{ access?: 'read' | 'write'; branch?: boolean }>({});
   const [error, setError] = useState('');
@@ -45,8 +45,8 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
 
   // Order (OR-34): focused projects, then recent ones, then the rest by name; ignored projects are left out unless named.
   const { focus, ignored } = prefs.value;
-  const all: PickProject[] = (projects.data?.projects ?? []).map((p: any) => ({ id: String(p.id), name: String(p.name ?? p.id) }));
-  const seen = (recent.data?.sessions ?? []).map(s => (s as { projectId?: string | null }).projectId).filter(Boolean) as string[];
+  const all: PickProject[] = (projects.data?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) }));
+  const seen = (recent.data?.sessions ?? []).map(s => s.projectId).filter((p): p is string => !!p);
   const rank = (id: string) => focus.includes(id) ? focus.indexOf(id) : seen.includes(id) ? 1000 + seen.indexOf(id) : 100000;
   const ordered = all.filter(p => !ignored.includes(p.id) || p.id === initialProject).sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
 
@@ -86,7 +86,7 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
     const scope = authorizedDraftScope(target), shown = settings();
     // Files still uploading finish first; a failed one fails the start and stays on its chip.
     let attachments: string[];
-    try { attachments = await files.ready(); } catch (e: any) { setError(`Attachment not uploaded: ${e?.message ?? e}`); throw e; }
+    try { attachments = await files.ready(); } catch (e) { setError(`Attachment not uploaded: ${e instanceof Error ? e.message : String(e)}`); throw e; }
     // The start uses what the page shows: settings changed while the files uploaded (a project change also drops its files)
     // are not started with the old ones. A file removed meanwhile just drops out, as in a conversation.
     if (settings() !== shown) {
@@ -105,10 +105,10 @@ export function NewConversation({ initialProject, initialRole, onStarted }: { in
       sendingId(scope, null, sendKey);
       files.clear(attachments);
       onStarted(r.sessionId);
-    } catch (e: any) {
+    } catch (e) {
       // A kept unknown send stays fenced: its identity is cleared only by a definite answer.
-      if (!e?.keep && !(e instanceof AccessChanged) && !unknownOutcome(e) && !(e instanceof OpError && e.message === 'aborted')) sendingId(scope, null, sendKey);
-      setError(e.message); throw e;
+      if (!(e instanceof Error && 'keep' in e && e.keep) && !(e instanceof AccessChanged) && !unknownOutcome(e) && !(e instanceof OpError && e.message === 'aborted')) sendingId(scope, null, sendKey);
+      setError(e instanceof Error ? e.message : String(e)); throw e;
     }
   };
   return <article class="detail new-conversation" data-ui="detail" tabIndex={-1} aria-label="New conversation"><DropZone onFiles={files.add} disabledReason={reason}>

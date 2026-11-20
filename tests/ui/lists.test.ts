@@ -1,9 +1,9 @@
 // Entity-store list rules (D4): the server decides membership and order; the client merges by sort key.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyMembership, compareKeys, touched, closedGroups, flipGroup, type Row } from '../../app/src/lists.ts';
+import { applyMembership, compareKeys, touched, closedGroups, flipGroup, type Keyed } from '../../app/src/lists.ts';
 
-const row = (id: string, g: string, seq: number): Row => ({ id, sortKey: [g, -seq, id] });
+const row = (id: string, g: string, seq: number): Keyed => ({ id, sortKey: [g, -seq, id] });
 
 test('sort keys compare like the server order (group, newest first, id)', () => {
   assert.ok(compareKeys(['a', -5, 'x'], ['b', -9, 'x']) < 0);
@@ -12,8 +12,8 @@ test('sort keys compare like the server order (group, newest first, id)', () => 
 });
 
 // The store keeps ids and per-list sort keys; records are shared.
-const list = (rows: Row[]) => ({ ids: rows.map(r => r.id), keys: Object.fromEntries(rows.map(r => [r.id, r.sortKey])) });
-const merge = (rows: Row[], changed: string[], matched: Row[], complete: boolean) => { const l = list(rows); return applyMembership(l.ids, l.keys, changed, matched, complete); };
+const list = (rows: Keyed[]) => ({ ids: rows.map(r => r.id), keys: Object.fromEntries(rows.map(r => [r.id, r.sortKey])) });
+const merge = (rows: Keyed[], changed: string[], matched: Keyed[], complete: boolean) => { const l = list(rows); return applyMembership(l.ids, l.keys, changed, matched, complete); };
 
 test('membership: removes rows that stopped matching, places new and moved rows by key', () => {
   const rows = [row('t3', 'a', 3), row('t2', 'a', 2), row('t1', 'b', 1)];
@@ -37,7 +37,7 @@ test('membership keeps unchanged ids in place when a row is inserted above (anch
 test('one record, two lists: each list places it by its own sort key', () => {
   // Grouped by priority the task sits in group 1; grouped by agent in group "codex". The record is shared; keys are not.
   const byPriority = list([row('a', '1', 9), row('b', '2', 8)]), byAgent = list([row('b', 'claude', 8), row('c', 'codex', 7)]);
-  const moved = { id: 'a', sortKey: ['codex', -9, 'a'] } as Row, movedP = { id: 'a', sortKey: ['3', -9, 'a'] } as Row;
+  const moved = { id: 'a', sortKey: ['codex', -9, 'a'] } as Keyed, movedP = { id: 'a', sortKey: ['3', -9, 'a'] } as Keyed;
   assert.deepEqual(applyMembership(byAgent.ids, byAgent.keys, ['a'], [moved], true).ids, ['b', 'a', 'c']);
   assert.deepEqual(applyMembership(byPriority.ids, byPriority.keys, ['a'], [movedP], true).ids, ['b', 'a']);
 });

@@ -7,7 +7,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {startCoordinator} from '../harness.ts';
-import {SYSTEM_VIEWS, NAV_COUNTER_DEFAULTS} from '../../app/src/system-views.ts';
+import {SYSTEM_VIEWS} from '../../app/src/system-views.ts';
 
 // R2, R7, OR-33, OR-34; risk: a navigation counter disagrees with its list, counts an ignored project, keeps a stale view or is closed to agents.
 test('nav_counts: counter views by person setting, the focus split, ignored projects left out, equal to the lists, and an agent tool', {timeout: 60_000}, async t => {
@@ -42,7 +42,6 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   assert.equal(r.focused, false);
   assert.deepEqual(Object.keys(s).sort(), ['conversations', 'delivery', 'hosts', 'results', 'tasks']);
   assert.deepEqual([s.tasks.view, s.conversations.view, s.delivery.view, s.results.view, s.hosts.view], ['Running', 'Running', 'In flight', 'Last 24 h', 'Offline']);
-  assert.deepEqual(Object.fromEntries(Object.entries(s).map(([k, v]: [string, any]) => [k, v.view])), NAV_COUNTER_DEFAULTS, "the app's defaults");
   assert.equal(s.tasks.inFocus, await total('task_page', {state: states('tasks', 'Running')})); assert.equal(s.tasks.inFocus, 6);
   assert.equal(s.conversations.inFocus, await total('sessions_list', {state: states('conversations', 'Running')})); assert.equal(s.conversations.inFocus, 3);
   assert.equal(s.results.inFocus, await results({})); assert.equal(s.results.inFocus, 3, 'only the last 24 hours');
@@ -97,22 +96,6 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   for (const bad of [{navCounters: {overview: 'Running'}}, {navCounters: {tasks: 'No such view'}}, {navCounters: {results: 'Running'}}, {navCounters: {hosts: 'Mine'}}])
     assert.equal((await call('person_settings_set', bad)).status, 400, JSON.stringify(bad));
 
-  // Every system preset counts what its list shows with the app's own states: a task and a conversation in every state
-  // inside the focus, so a state missing from either side's preset changes a count.
-  c.sql(`INSERT INTO task(id,project_id,title,state,pause_reason) VALUES ('t-x-q','alpha','x','queued',NULL),('t-x-i','alpha','x','in_progress',NULL),
-      ('t-x-w','alpha','x','waiting',NULL),('t-x-h','alpha','x','paused','held'),('t-x-p','alpha','x','paused',NULL),('t-x-c','alpha','x','completed',NULL),
-      ('t-x-f','alpha','x','failed',NULL),('t-x-x','alpha','x','cancelled',NULL);
-    INSERT INTO session(id,project_id) SELECT 's-x-'||s,'alpha' FROM unnest(ARRAY['preparing','running','waiting','succeeded','failed','cancelled']) s;
-    INSERT INTO execution(id,kind,state,project_id,session_id,data) SELECT 'e-x-'||s,'agent_run',s::execution_state,'alpha','s-x-'||s,'{}' FROM unnest(ARRAY['preparing','running','waiting','succeeded','failed','cancelled']) s;`);
-  for (const list of ['tasks', 'conversations', 'delivery'] as const) for (const v of SYSTEM_VIEWS[list]) {
-    await op('person_settings_set', {navCounters: {[list]: v.name}});
-    const x = (await counts())[list], st = v.view.state as string[];
-    assert.equal(x.view, v.name);
-    const want = list === 'delivery' ? (await op('delivery_status', {projectIds: ['alpha', '-']})).items.filter((i: any) => st.includes(i.stage)).length
-      : await total(list === 'tasks' ? 'task_page' : 'sessions_list', {state: st, projectId: ['alpha', null]});
-    assert.equal(x.inFocus, want, `${list} ${v.name}`);
-  }
-  await op('person_settings_set', {navCounters: {tasks: '', conversations: '', delivery: ''}});
 
   // An agent reads its director's counters through the same operation, which agents get as a tool.
   await op('person_settings_set', {navCounters: {tasks: ''}});

@@ -2,9 +2,13 @@
 // only), access and intake. Key values go in, never come out: the add field is write-only and the answer is a fingerprint.
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
-import { ListDetail, StateBadge, DetailSection, KvRow, Empty, Button, SettingField, AgeChip, ProblemRow, bytes, duration } from '../../../packages/ui/src/index.ts';
+import { ListDetail, StateBadge, DetailSection, KvRow, Empty, Button, SettingField, AgeChip, ProblemRow, bytes, duration, type StateOf } from '../../../packages/ui/src/index.ts';
 import { op, type OpName, type Ops } from '../api.ts';
-import { useDoc } from '../store.ts';
+import { useOp } from '../store.ts';
+import type { ConnectionView, ConnectionKey } from '../../../contracts/generated/ops.ts';
+
+/** A connection as the screen shows it: the lists the reply omits when empty filled in. */
+type Conn = Omit<ConnectionView, 'keys' | 'tools' | 'access'> & { keys: ConnectionKey[]; tools: string[]; access: { people: string[]; projects: string[]; experiments: string[] } };
 
 /** A person by name: the email's local part (formats.md, Person). */
 const person = (h: string) => h.split('@')[0];
@@ -22,28 +26,28 @@ const fileTimeouts = (l?: { stallMs?: number; answerMs?: number }) =>
 export function Keys({ id }: { id?: string }) {
   const [, go] = useLocation();
   const [error, setError] = useState<string | null>(null);
-  const { data } = useDoc<any>('api-keys', () => op('connections_list', {}), c => c.kind === 'api-connection' || c.kind === 'connection-key' || c.kind === 'setting-change');
+  const { data } = useOp('connections_list', {});
   const now = Date.now();
   if (!data) return <Empty text="Loading…" />;
   const run = <K extends OpName>(name: K, body: Ops[K]['request']) => op(name, body).then(() => { setError(null); }, e => setError(String(e.message ?? e)));
   // The reply omits empty lists (keys, tools, access lists): a connection without keys yet must still render.
-  const conns = data.connections.map((c: any) => ({ ...c, keys: c.keys ?? [], tools: c.tools ?? [], access: { people: [], projects: [], experiments: [], ...c.access } }));
-  const sel = conns.find((c: any) => c.name === id);
+  const conns: Conn[] = data.connections.map(c => ({ ...c, keys: c.keys ?? [], tools: c.tools ?? [], access: { people: c.access.people ?? [], projects: c.access.projects ?? [], experiments: c.access.experiments ?? [] } }));
+  const sel = conns.find(c => c.name === id);
   // A word once per region (OR-17): the holder most connections share is named once above the list, a row names only another
   // holder; the provider shows only where it differs from the connection's name.
   const holders = new Map<string, number>(); for (const c of conns) holders.set(c.holder, (holders.get(c.holder) ?? 0) + 1);
   const mainHolder = [...holders].sort((a, b) => b[1] - a[1])[0]?.[0];
-  const scope = (c: any) => `${c.access.projects.includes('*') ? 'all' : c.access.projects.join(', ') || 'none'}${c.access.experiments.length ? ' + Lab' : ''}`;
+  const scope = (c: Conn) => `${c.access.projects.includes('*') ? 'all' : c.access.projects.join(', ') || 'none'}${c.access.experiments.length ? ' + Lab' : ''}`;
   const list = <>
     {mainHolder && <header class="page-h"><span class="muted">Held by {person(mainHolder)}{holders.size > 1 ? ', unless a row says otherwise' : ''}</span></header>}
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto auto' }}>
         {conns.length === 0 && <Empty text="No API keys yet" />}
-        {conns.map((c: any) => <div key={c.name} role="row" class={`vl-row static${c.name === id ? ' sel' : ''}`}>
-          <span class="lead"><StateBadge family="intake" state={c.intake} compact /></span>
+        {conns.map(c => <div key={c.name} role="row" class={`vl-row static${c.name === id ? ' sel' : ''}`}>
+          <span class="lead"><StateBadge family="intake" state={c.intake as StateOf<"intake">} compact /></span>
           <span class="tt"><a class="title row-link" href={`/keys/${c.name}`} onClick={e => { e.preventDefault(); go(`/keys/${c.name}`); }}>{c.name}</a>{c.provider !== c.name && <span class="id">{c.provider}</span>}{c.holder !== mainHolder && <span class="muted">{person(c.holder)}</span>}</span>
           <span class="mono muted" data-tip="Projects this connection serves">{scope(c)}</span>
-          <span class="r mono" data-tip="Active keys of all keys in use">{c.keys.filter((k: any) => k.state === 'active').length}/{c.keys.filter((k: any) => k.state !== 'retired').length}</span>
+          <span class="r mono" data-tip="Active keys of all keys in use">{c.keys.filter(k => k.state === 'active').length}/{c.keys.filter(k => k.state !== 'retired').length}</span>
         </div>)}
       </div>
     </section>
@@ -55,12 +59,12 @@ export function Keys({ id }: { id?: string }) {
       <KvRow icon="bot" label="Provider" meta={sel.provider} />
       <KvRow icon="shield" label="Holder" meta={sel.holder} />
       <KvRow icon="list" label="Tools" meta={sel.tools.join(', ')} />
-      <KvRow icon="activity" label="Spend" meta={sel.spend.basis} />
+      <KvRow icon="activity" label="Spend" meta={sel.spend?.basis ?? 'unavailable'} />
     </DetailSection>
     <DetailSection title="Keys">
-      {sel.keys.map((k: any) => <KvRow key={k.id} icon="shield" label={k.fingerprint} meta={k.disabledReason ?? (k.problem ? `HTTP ${k.problem.status}: ${k.problem.message}` : undefined)}
-        value={<><StateBadge family="key" state={k.state} compact /><AgeChip t={k.addedAt} />
-          {k.reconcile && <span class={k.reconcile.difference > 0 ? 'attention' : 'muted'} data-tip="Provider usage since the first check, minus credits recorded through Fleet">{k.reconcile.unknown ? 'usage unknown' : k.reconcile.difference > 0 ? `+${k.reconcile.difference} elsewhere` : 'matches'}</span>}
+      {sel.keys.map(k => <KvRow key={k.id} icon="shield" label={k.fingerprint} meta={k.disabledReason ?? (k.problem ? `HTTP ${k.problem.status}: ${k.problem.message}` : undefined)}
+        value={<><StateBadge family="key" state={k.state as StateOf<"key">} compact /><AgeChip t={k.addedAt} />
+          {k.reconcile && <span class={(k.reconcile.difference ?? 0) > 0 ? 'attention' : 'muted'} data-tip="Provider usage since the first check, minus credits recorded through Fleet">{k.reconcile.unknown ? 'usage unknown' : (k.reconcile.difference ?? 0) > 0 ? `+${k.reconcile.difference} elsewhere` : 'matches'}</span>}
           {k.state === 'active' && <Button label="Drain" icon="pause" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'draining' })} />}
           {(k.state === 'draining' || k.state === 'disabled') && <Button label="Activate" icon="play" iconOnly onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'active' })} />}
           {k.state !== 'retired' && <Button label="Retire" icon="trash-2" iconOnly kind="danger" onClick={() => run('connections_key_state', { keyId: k.fingerprint, state: 'retired' })} />}</>} />)}
@@ -82,15 +86,15 @@ export function Keys({ id }: { id?: string }) {
     </DetailSection>
   </article>;
   // Idle work area: what needs a look across connections (2026-11-20 decision): provider usage Fleet did not record, and retired keys.
-  const unrecorded = conns.map((c: any) => ({ c, keys: c.keys.filter((k: any) => k.reconcile && !k.reconcile.unknown && k.reconcile.difference > 0) })).filter((x: any) => x.keys.length);
-  const retired = conns.map((c: any) => ({ c, n: c.keys.filter((k: any) => k.state === 'retired').length })).filter((x: any) => x.n);
-  const limited = conns.filter((c: any) => !c.access.projects.includes('*'));
+  const unrecorded = conns.map(c => ({ c, keys: c.keys.filter(k => k.reconcile && !k.reconcile.unknown && (k.reconcile.difference ?? 0) > 0) })).filter(x => x.keys.length);
+  const retired = conns.map(c => ({ c, n: c.keys.filter(k => k.state === 'retired').length })).filter(x => x.n);
+  const limited = conns.filter(c => !c.access.projects.includes('*'));
   const idle = <article class="detail" aria-label="API keys">
-    {unrecorded.map(({ c, keys }: any) => <ProblemRow key={c.name} severity="warning" title={`${c.name} counts ${keys.reduce((n: number, k: any) => n + k.reconcile.difference, 0)} calls Fleet did not record`}
-      facts={`${keys.length} of its ${c.keys.length} keys: ${keys.map((k: any) => `${k.reconcile.providerDelta} at the provider against ${k.reconcile.recorded} recorded`).join(', ')}`}
+    {unrecorded.map(({ c, keys }) => <ProblemRow key={c.name} severity="warning" title={`${c.name} counts ${keys.reduce((n, k) => n + (k.reconcile?.difference ?? 0), 0)} calls Fleet did not record`}
+      facts={`${keys.length} of its ${c.keys.length} keys: ${keys.map(k => `${k.reconcile?.providerDelta} at the provider against ${k.reconcile?.recorded} recorded`).join(', ')}`}
       actions={[{ label: `Open ${c.name}`, primary: true, onClick: () => go(`/keys/${c.name}`) }]} />)}
-    {limited.length > 0 && <DetailSection title="Limited to some projects">{limited.map((c: any) => <KvRow key={c.name} icon="shield" label={c.name} meta={`${c.provider} · ${c.keys.filter((k: any) => k.state === 'active').length} active`} value={scope(c)} />)}</DetailSection>}
-    {retired.length > 0 && <DetailSection title="Retired keys">{retired.map(({ c, n }: any) => <KvRow key={c.name} icon="circle-slash" label={c.name} value={`${n} retired`} />)}</DetailSection>}
+    {limited.length > 0 && <DetailSection title="Limited to some projects">{limited.map(c => <KvRow key={c.name} icon="shield" label={c.name} meta={`${c.provider} · ${c.keys.filter(k => k.state === 'active').length} active`} value={scope(c)} />)}</DetailSection>}
+    {retired.length > 0 && <DetailSection title="Retired keys">{retired.map(({ c, n }) => <KvRow key={c.name} icon="circle-slash" label={c.name} value={`${n} retired`} />)}</DetailSection>}
     {!unrecorded.length && !limited.length && !retired.length && <Empty text="Every connection serves every project; no key needs a look." />}
   </article>;
   return <ListDetail list={list} detail={detail || undefined} detailKey={id} idle={idle} />;

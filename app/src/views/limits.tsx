@@ -3,16 +3,18 @@
 import { useState } from 'preact/hooks';
 import { AreaChart, type ChartPoint, Button, Choice, FillBar, AgeChip, Empty, ErrorBanner, Icon, StateBadge, countdown, exact, type ChartSeries } from '../../../packages/ui/src/index.ts';
 import { op } from '../api.ts';
-import { useDoc } from '../store.ts';
+import { useOp } from '../store.ts';
+import type { LimitPool, LimitSubscription, LimitEmpty } from '../../../contracts/generated/ops.ts';
 
 const DAY = 864e5, HOUR = 36e5;
-type Point = { at: number; left: number };
+/** A subscription's name (stored as written; the id when it has none). */
+const nameOf = (s: LimitSubscription) => typeof s.name === 'string' ? s.name : s.id;
 
 /** The recorded pool line: at each member reading, the weighted sum of every member's last known left. */
-function recordedPool(pool: any, subs: any[]): ChartPoint[] {
+function recordedPool(pool: LimitPool, subs: LimitSubscription[]): ChartPoint[] {
   const members = subs.filter(s => pool.members.includes(s.id));
   // Members with no reading in range have no recorded line; the pool line covers the members that do.
-  const hist = members.map(s => ({ w: s.planWeight, h: (s.periods.find((p: any) => p.period === pool.period)?.history ?? []) as Point[] })).filter(m => m.h.length > 0);
+  const hist = members.map(s => ({ w: s.planWeight, h: s.periods.find(p => p.period === pool.period)?.history ?? [] })).filter(m => m.h.length > 0);
   const times = [...new Set(hist.flatMap(m => m.h.map(p => p.at)))].sort((a, b) => a - b);
   // Before a member's first reading in range its first value stands in (an older reading held), never 0.
   return times.map(t => ({ at: t, v: hist.reduce((sum, m) => { const last = m.h.findLast(p => p.at <= t) ?? m.h[0]; return sum + m.w * last.left; }, 0) }));
@@ -29,7 +31,7 @@ function burnLine(points: ChartPoint[]): ChartPoint[] {
   return out;
 }
 
-const when = (e: any, now: number) => e.state === 'at' ? <time data-tip={exact(e.at)} aria-label={countdown(e.at, now).long}>{countdown(e.at, now).text}</time>
+const when = (e: LimitEmpty, now: number) => e.state === 'at' && e.at !== null ? <time data-tip={exact(e.at)} aria-label={countdown(e.at, now).long}>{countdown(e.at, now).text}</time>
   : <span class="muted">{e.state === 'not-before-end' ? 'not before the line ends' : 'unknown'}</span>;
 
 export function Limits() {
@@ -41,18 +43,17 @@ export function Limits() {
   const from = centre - 7 * DAY, to = centre + 7 * DAY;
   // Readings arrive as events, which the change feed does not tell apart: the doc reloads every 30 s and on account
   // and setting changes.
-  const { data, error } = useDoc<any>(`subscription-limits:${win}:${centre}`, async () => await op('subscription_limits', { windowHours: Number(win), from, to }),
-    c => c.kind === 'managed-account' || c.kind === 'setting-change', 30000);
+  const { data, error } = useOp('subscription_limits', { windowHours: Number(win), from, to }, { every: 30000 });
   const [note, setNote] = useState<string | null>(null);
   const refresh = async (id?: string) => {
     setBusy(id ?? '*'); setNote(null);
     try {
-      const r: any = await op('subscription_limits_refresh', id ? { subscriptionId: id } : {});
-      setNote([r.sent.length ? `${r.sent.length} sent` : '', ...r.skipped.map((x: any) => `${x.subscriptionId}: ${x.reason}`)].filter(Boolean).join(' · ') || 'nothing to refresh');
-    } catch (e: any) { setNote(`Refresh failed: ${e?.message ?? e}`); } finally { setBusy(null); }
+      const r = await op('subscription_limits_refresh', id ? { subscriptionId: id } : {});
+      setNote([r.sent.length ? `${r.sent.length} sent` : '', ...r.skipped.map(x => `${x.subscriptionId}: ${x.reason}`)].filter(Boolean).join(' · ') || 'nothing to refresh');
+    } catch (e) { setNote(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`); } finally { setBusy(null); }
   };
   const now = data?.serverNow ?? Date.now();
-  const periods: string[] = data ? [...new Set<string>(data.subscriptions.flatMap((s: any) => s.periods.map((p: any) => p.period)))].sort() : [];
+  const periods: string[] = data ? [...new Set<string>(data.subscriptions.flatMap(s => s.periods.map(p => p.period)))].sort() : [];
   const pct = (v: number) => `${Math.round(v)}%`;
   return <section class="limits" aria-label="Limits">
     <header class="page-h"><h2><Icon name="gauge" /> Limits</h2><span class="grow" />
@@ -68,8 +69,8 @@ export function Limits() {
     {!data ? <Empty text="Loading…" /> : <>
     <div class="limit-cards">
       {data.pools.length === 0 && <Empty text="No readings yet: a run or a refresh reports them." />}
-      {data.pools.map((p: any) => {
-        const recorded = recordedPool(p, data.subscriptions), projected = (p.projection as Point[]).map(q => ({ at: q.at, v: q.left }));
+      {data.pools.map(p => {
+        const recorded = recordedPool(p, data.subscriptions), projected = p.projection.map(q => ({ at: q.at, v: q.left }));
         const series: ChartSeries[] = mode === 'left'
           ? [{ label: 'recorded', points: recorded, tone: 'd1' }, { label: 'projected', points: projected, tone: 'd1', projected: true }]
           : [{ label: 'burn', points: burnLine(recorded), tone: 'd2', step: true },
@@ -93,10 +94,10 @@ export function Limits() {
     <section class="panel"><header class="panel-h"><h2>Subscriptions</h2></header>
       <div class="table-frame"><table class="limit-table">
         <thead><tr><th scope="col">Subscription</th>{periods.map(p => <th key={p} scope="col">{p}</th>)}<th scope="col"><span class="sr-only">Refresh</span></th></tr></thead>
-        <tbody>{data.subscriptions.map((s: any) => <tr key={s.id}>
-          <th scope="row"><StateBadge family="subscription" state={s.intake === 'paused' ? 'paused' : 'all'} compact /> <span class="title">{s.name}</span> <span class="id">{s.harness}</span>{s.planWeight !== 1 && <span class="num muted"> ×{s.planWeight}</span>}</th>
+        <tbody>{data.subscriptions.map(s => <tr key={s.id}>
+          <th scope="row"><StateBadge family="subscription" state={s.intake === 'paused' ? 'paused' : 'all'} compact /> <span class="title">{nameOf(s)}</span> <span class="id">{s.harness}</span>{s.planWeight !== 1 && <span class="num muted"> ×{s.planWeight}</span>}</th>
           {periods.map(name => {
-            const p = s.periods.find((x: any) => x.period === name);
+            const p = s.periods.find(x => x.period === name);
             if (!p) return <td key={name} class="muted">—</td>;
             return <td key={name}><span class="limit-cell">
               {p.left !== null ? <FillBar total={100} segments={[{ label: 'used', bytes: 100 - p.left }]} warnAt={s.lowPct ?? undefined} unit="percent" /> : <span class="muted">{p.status ?? 'unknown'}</span>}
@@ -107,7 +108,7 @@ export function Limits() {
               <span class="muted">{p.source}</span>
             </span></td>;
           })}
-          <td><Button label={`Refresh ${s.name}`} icon="rotate-cw" iconOnly busy={busy === s.id} onClick={() => refresh(s.id)} /></td>
+          <td><Button label={`Refresh ${nameOf(s)}`} icon="rotate-cw" iconOnly busy={busy === s.id} onClick={() => refresh(s.id)} /></td>
         </tr>)}</tbody>
       </table></div>
     </section>

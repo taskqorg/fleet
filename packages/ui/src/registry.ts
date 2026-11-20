@@ -2,6 +2,7 @@
 // Icons are the TaskQ set: Lucide static 1.17.0 (ISC) from taskq/src/ui-icons.json, plus the harness and
 // provider marks from taskq/src/project-blocks.js (attribution: taskq/docs/design/visual-style.md in the taskq repository).
 import icons from '../icons.json';
+import vocabulary from '../../../contracts/vocabulary.json' with { type: 'json' };
 
 export type IconName = keyof typeof icons;
 export const iconSvg = (name: IconName): string => (icons as Record<string, string>)[name] ?? '';
@@ -204,12 +205,9 @@ export const actions = {
 } as const satisfies Record<string, IconName>;
 
 /** Harnesses (agents' programs), shown as their mark (OR-1). */
-export const harnesses = {
-  codex: { label: 'Codex', icon: 'openai' },
-  claude: { label: 'Claude', icon: 'claude' },
-  antigravity: { label: 'Antigravity', icon: 'antigravity' },
-} as const satisfies Record<string, { label: string; icon: IconName }>;
-export type Harness = keyof typeof harnesses;
+// One list with the coordinator: contracts/vocabulary.json (accounts, host versions and the profiles read the same file).
+export const harnesses: Record<string, { label: string; icon: IconName }> = Object.fromEntries(vocabulary.harnesses.map(h => [h.id, { label: h.label, icon: h.icon as IconName }]));
+export type Harness = string;
 
 /** Delivery stages shown on a task alongside its state (fleet.md: review, merge and deployment as stages). */
 export const stages = {

@@ -8,14 +8,13 @@ import {
   EntityCode, ErrorBanner, type EntityKind, Skeleton, catalogueRow, type IconName, type Family, type StateOf, type Chip, type Tone, type SortField,
 } from '../../packages/ui/src/index.ts';
 import { op, online } from './api.ts';
-import { useList, useDoc, type Kind } from './store.ts';
-import { chunks, compareKeys, closedGroups, flipGroup } from './lists.ts';
+import { useList, useOp, type Kind } from './store.ts';
+import { compareKeys, closedGroups, flipGroup, type Row } from './lists.ts';
 import { listKey, formatView, parseView, type View, type ViewName } from '../../packages/view-url/view-url.ts';
 import { useUrlView, useSearchBox } from './url.ts';
 import { usePins, useViews, listGroups, setListGroups, setNavCounter, type SavedView } from './prefs.ts';
 import { navCounted } from './nav-counts.ts';
 import { NAV_COUNTER_DEFAULTS } from './system-views.ts';
-import type { Change } from './feed.ts';
 
 /** A server list row: its id, code and the server sort key whose first part is the group key. */
 export type ListRow = { id: string; code?: string | null; sortKey: (string | number)[] };
@@ -51,12 +50,8 @@ export type ListPageOptions = {
    * `merged` for a picked day or a filter to merged rows, where Installed is open by default). A default never changes
    * inside one context, so a remembered flip means the same every time. */
   groupsContext?: (v: View) => string | undefined;
-  /** Doc name prefix of the pin read (server lists; a local list finds pinned rows in its own rows). */
-  pinDoc?: string;
-  /** The pin read's filter, and the parts of the view it depends on (added to the doc name). */
-  pinRead?: (v: View) => { key: unknown[]; filter: Record<string, unknown> };
-  /** Whether a change touches a pinned row. */
-  pinTouches?: (c: Change, pinned: (id: string) => boolean) => boolean;
+  /** The pin read's filter (the request names the read). */
+  pinRead?: (v: View) => { filter: Record<string, unknown> };
   groupLabel: (group: string, label: string | null) => string;
   /** A saved personal view as it is matched and restored (e.g. a default for a key older views lack). */
   savedView?: (v: View) => View;
@@ -106,18 +101,11 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   useEffect(() => { if (firstList.current) { firstList.current = false; return; } setSelectOn(false); setConfirm(null); setBulkError(null); }, [o.listId?.(view)]);
   // Pinned rows stay in the list whatever the filter, search or grouping (OR-12): they are read by id with the page's pin
   // filter and live through row changes; the filtered page supplies the rest.
-  const pinRead = o.pinRead?.(view) ?? { key: [], filter: {} };
-  const pinnedDoc = useDoc<R[]>(pins.ids.length && !local ? JSON.stringify([o.pinDoc, pins.ids, sort, ...pinRead.key]) : null,
-    async () => {
-      const found: R[] = [];
-      // The operation accepts at most 1,000 IDs; sequential batches avoid a request burst for a large pin collection.
-      for (const ids of chunks(pins.ids, 1000)) {
-        const reply = await op('list_membership', { ids, lists: [{ name: o.kind!, filter: pinRead.filter, group: 'none', sort }] });
-        found.push(...reply.lists[0].rows as unknown as R[]);
-      }
-      return found;
-    }, c => !!o.pinTouches?.(c, pins.has));
-  const byId = new Map(((local?.all as R[] | undefined) ?? pinnedDoc.data ?? []).map(r => [r.id, r]));
+  const pinRead = o.pinRead?.(view) ?? { filter: {} };
+  // One list_membership read (the server's bound is 1,000 ids); it rereads when a change names a pinned row (touchedBy ids).
+  const pinnedDoc = useOp('list_membership', pins.ids.length && !local ? { ids: pins.ids.slice(0, 1000), lists: [{ name: o.kind!, filter: pinRead.filter, group: 'none', sort }] } : null);
+  const pinRows = pinnedDoc.data?.lists[0]?.rows as R[] | undefined;
+  const byId = new Map(((local?.all as R[] | undefined) ?? pinRows ?? []).map(r => [r.id, r]));
   // The page supplies a just-pinned row while its independent read is pending. Its grouping key is irrelevant here.
   const pinned = pins.ids.map(x => byId.get(x) ?? rows.find(r => r.id === x))
     .filter((r): r is R => !!r).sort((a, b) => compareKeys(a.sortKey.slice(1), b.sortKey.slice(1)));
@@ -131,8 +119,8 @@ export function useListPage<R extends ListRow>(o: ListPageOptions) {
   const toggleGroup = (key: string) => key === PINNED ? setListGroups(pinList, flipGroup(listGroups(pinList), 'pinned'))
     : setListGroups(groupsList, flipGroup(listGroups(groupsList), key));
   // A project group is labelled with the project's name, as the focus control names it; its key stays the project id.
-  const projects = useDoc<any>(rowsGroup === 'project' ? 'projects' : null, () => op('project_list', {}), c => c.kind === 'definition');
-  const names = new Map<string, string>((projects.data?.projects ?? []).map((p: any) => [p.id, p.name ?? p.id]));
+  const projects = useOp('project_list', rowsGroup === 'project' ? {} : null);
+  const names = new Map<string, string>((projects.data?.projects ?? []).map(p => [String(p.id), String(p.name ?? p.id)]));
   const label = (key: string, meta: string | null) => o.groupLabel(rowsGroup, rowsGroup === 'project' ? names.get(key) ?? meta : meta);
   const items: ListItem<R>[] = [];
   // Pinned rows come first, as a group of their own (OR-12); each shows its pin before the state (RowPin).

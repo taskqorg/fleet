@@ -1,6 +1,10 @@
 // Pure list logic for the entity store (D4): the server decides membership and order; the client only merges.
-export type SortKey = (string | number)[];
-export type Row = { id: string; sortKey: SortKey; [k: string]: unknown };
+import type { SortKeyPart, TaskRow, SessionRow } from '../../contracts/generated/ops.ts';
+export type SortKey = SortKeyPart[];
+/** A row of a server list: the contract's closed task and session rows. */
+export type Row = TaskRow | SessionRow;
+/** What list merging needs of a row. */
+export type Keyed = { id: string; sortKey: SortKey };
 
 export function compareKeys(a: SortKey, b: SortKey): number {
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
@@ -20,7 +24,7 @@ export function compareKeys(a: SortKey, b: SortKey): number {
  * - matching ids are placed by their new sort key;
  * - a new id beyond the loaded window (list not complete and key after the last loaded key) is left for paging.
  */
-export function applyMembership(ids: string[], keys: Record<string, SortKey>, changed: Iterable<string>, matched: Row[], complete: boolean): { ids: string[]; keys: Record<string, SortKey> } {
+export function applyMembership(ids: string[], keys: Record<string, SortKey>, changed: Iterable<string>, matched: Keyed[], complete: boolean): { ids: string[]; keys: Record<string, SortKey> } {
   const gone = new Set(changed);
   const last = ids.length ? keys[ids[ids.length - 1]] : undefined;
   const kept = ids.filter(id => !gone.has(id));

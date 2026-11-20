@@ -10,9 +10,8 @@ import { startVersionChecks, versionInfo, tabVersion } from './version.ts';
 import { access, accessGeneration, accessSignal, ensureAccessGeneration, invalidateAccess, registerAccessValidator, AccessChanged } from './access.ts';
 import { op, accessControlOp, signedOut, OpError, type Ops } from './api.ts';
 import { parseView, formatView, VIEWS, type ViewName } from '../../packages/view-url/view-url.ts';
-import { preferencesTouched } from './invalidation.ts';
 import { prefs, prefsRead, loadPrefs, savePrefs, setWidth, setFocus, setIgnored, saveFocusPreset, removeFocusPreset, noteView, sectionPath, saveOnLeave, outsideFocus, scopeIds } from './prefs.ts';
-import { useDoc } from './store.ts';
+import { useOp, touchedBy, setIdentity } from './store.ts';
 import { useNavCounts } from './nav-counts.ts';
 import { entityCards } from './entity-cards.ts';
 import { startFeed, stopFeed, subscribe } from './feed.ts';
@@ -45,7 +44,7 @@ class RenderBoundary extends Component<{ at: string; children: ComponentChildren
 
 // The view of each screen the registry marks `app: true` (the type requires every one). Nav and routes follow registry
 // order. A list screen takes an optional focus segment, so focusing a row never unmounts the list.
-const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => any }> = {
+const SCREENS: Record<AppScreen, { focus: boolean; view: (p: { id?: string }) => ComponentChildren }> = {
   projects: { focus: true, view: p => <Projects id={p.id} /> },
   overview: { focus: true, view: p => <Overview id={p.id} /> },
   tasks: { focus: true, view: p => <Tasks id={p.id} /> },
@@ -167,7 +166,8 @@ function App() {
       } finally { checking = false; if (again) { again = false; void recheck(); } }
     };
     // Preferences changed on another device or by an agent (person_settings_set writes a setting-change for this person).
-    const offPrefs = subscribe({ resync: () => { void loadPrefs(); }, changes: cs => { if (preferencesTouched(cs, access.value.identity?.identityKey)) void loadPrefs(); } });
+    setIdentity(() => access.value.identity?.identityKey);
+    const offPrefs = subscribe({ resync: () => { void loadPrefs(); }, changes: cs => { if (cs.some(c => touchedBy(c, 'person_settings_get', {}))) void loadPrefs(); } });
     validate(); addEventListener('focus', recheck); addEventListener('online', recheck);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     const stopChecks = startVersionChecks();
@@ -223,8 +223,8 @@ function PrivateRoutes({ go }: { go: (to: string) => void }) {
 
 /** The focus chip with its own project list, so a definition change re-renders only the chip. */
 function Focus({ go }: { go: (to: string) => void }) {
-  const projects = useDoc<any>('projects', () => op('project_list', {}), c => c.kind === 'definition');
-  const list: { id: string; name: string }[] = (projects.data?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.id }));
+  const projects = useOp('project_list', {});
+  const list: { id: string; name: string }[] = (projects.data?.projects ?? []).map(p => ({ id: String(p.id), name: String(p.name ?? p.id) }));
   const { focus, focusPresets, ignored } = prefs.value;
   // Not shown where it leads: the Overview without the focus.
   const [loc] = useLocation(), search = useSearch(), here = loc === '/overview' && new URLSearchParams(search).has('all'), outside = useOutside();
@@ -241,13 +241,11 @@ function useOutside() {
   const { focus, ignored } = prefs.value, focused = focus.some(p => !ignored.includes(p));
   // The server leaves ignored projects out (scopeIds without the focus); outsideFocus drops the focused ones.
   const scope = scopeIds(false);
-  const all = useDoc<{ projects: (string | null)[] }>(focused ? 'needs-you-all:' + JSON.stringify(scope) : null, async () => {
-    const [q, e] = await Promise.all([op('questions_list', { state: 'open', ...scope }), op('executions_list', { needsYou: true, ...scope })]);
-    return { projects: [...q.questions, ...e.executions].map((x: any) => x.projectId ?? null) };
-  // Questions change rarely and are read at once; executions change many times a second (gateway calls), so problems are
-  // read again once a minute instead of on each change.
-  }, c => c.kind === 'question', 60_000);
-  return focused ? (all.data?.projects ?? []).filter(outsideFocus).length : 0;
+  const q = useOp('questions_list', focused ? { state: 'open', ...scope } : null);
+  // Executions change many times a second (gateway calls): problems are read again at most once a minute.
+  const e = useOp('executions_list', focused ? { needsYou: true, ...scope } : null, { quiet: 60_000, every: 60_000 });
+  const projects = [...q.data?.questions ?? [], ...e.data?.executions ?? []].map(x => x.projectId ?? null);
+  return focused ? projects.filter(outsideFocus).length : 0;
 }
 
 render(<Router><App /></Router>, document.getElementById('app')!);
