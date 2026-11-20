@@ -1062,14 +1062,18 @@ func mintRunOf(run doc) mintRun {
 // Per-run tokens (§4): granted are the requested connections that exist, take intake and whose access names the run.
 // connAllowed takes the connection and the run as the maps its callers hold (holder and access; the run's fields).
 func connAllowed(c doc, run doc) bool {
+	conn, ok := connGrantOf(c)
+	return ok && connAllowedFor(conn, mintRunOf(run))
+}
+
+// connGrantOf: the holder and access of a connection record held as a map (connAllowed, delivery.go); false when it
+// does not decode.
+func connGrantOf(c doc) (apiConnection, bool) {
 	conn, err := asT[struct {
 		Holder string     `json:"holder"`
 		Access connAccess `json:"access"`
 	}](c)
-	if err != nil {
-		return false
-	}
-	return connAllowedFor(apiConnection{Holder: conn.Holder, Access: conn.Access}, mintRunOf(run))
+	return apiConnection{Holder: conn.Holder, Access: conn.Access}, err == nil
 }
 
 func connAllowedFor(c apiConnection, r mintRun) bool {
