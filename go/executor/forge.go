@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"net/url"
 	"os"
@@ -29,17 +28,17 @@ func forgeRepo(remote string) string {
 
 // forgeContext is the project forge server's context, built by the executor at launch (argv of `mcp project-forge`).
 type forgeContext struct {
-	Repositories   string    `json:"repositories"`
-	CredentialHome string    `json:"credentialHome"`
-	Repo           string    `json:"repo"`
-	Base           string    `json:"base"`
-	Branch         string    `json:"branch"`
-	Prefix         string    `json:"prefix"`
-	AutoMerge      looseBool `json:"autoMerge"`
-	MergeMethod    string    `json:"mergeMethod"`
-	Workdir        string    `json:"workdir"`
-	Home           string    `json:"home"`
-	Store          string    `json:"store"`
+	Repositories   string `json:"repositories"`
+	CredentialHome string `json:"credentialHome"`
+	Repo           string `json:"repo"`
+	Base           string `json:"base"`
+	Branch         string `json:"branch"`
+	Prefix         string `json:"prefix"`
+	AutoMerge      bool   `json:"autoMerge"`
+	MergeMethod    string `json:"mergeMethod"`
+	Workdir        string `json:"workdir"`
+	Home           string `json:"home"`
+	Store          string `json:"store"`
 }
 
 // forgeCommand reads only the explicitly connected host credential store; native HOME stays isolated.
@@ -66,28 +65,24 @@ type forgeArgs struct {
 
 // forgePR is what a publication answers of a GitHub pull request.
 type forgePR struct {
-	HTMLURL json.RawMessage `json:"html_url"`
-	Number  json.RawMessage `json:"number"`
+	HTMLURL jsonValue `json:"html_url"`
+	Number  jsonValue `json:"number"`
 }
 
-func forgePRReply(raw json.RawMessage, existing bool) M {
-	var pr forgePR
-	json.Unmarshal(raw, &pr)
-	return mcpText(M{"url": decRaw(pr.HTMLURL), "number": decRaw(pr.Number), "existing": existing}, &no)
+func forgePRReply(raw any, existing bool) M {
+	pr := typed[forgePR](raw)
+	return mcpText(M{"url": pr.HTMLURL.V, "number": pr.Number.V, "existing": existing}, &no)
 }
 
 // forgeCall answers one tools/call of the project forge server.
 func forgeCall(name string, arguments, context any) (any, error) {
-	var keys map[string]json.RawMessage
-	var a forgeArgs
-	in := []byte(enc(arguments))
-	json.Unmarshal(in, &keys)
-	typed := json.Unmarshal(in, &a) == nil
-	if !typed || (name == "publish_draft" && (len(keys) != 2 || a.Title == nil || a.Body == nil || strings.TrimSpace(*a.Title) == "")) || (name == "delivery" && (len(keys) != 1 || (a.Action != "status" && a.Action != "ready" && a.Action != "auto_merge"))) || (name != "publish_draft" && name != "delivery") {
+	// A member of another type reads as absent; the key counts then refuse the request, as a strict decode did.
+	keys, _ := jClone(arguments).(M)
+	a := typed[forgeArgs](keys)
+	if (name == "publish_draft" && (len(keys) != 2 || a.Title == nil || a.Body == nil || strings.TrimSpace(*a.Title) == "")) || (name == "delivery" && (len(keys) != 1 || (a.Action != "status" && a.Action != "ready" && a.Action != "auto_merge"))) || (name != "publish_draft" && name != "delivery") {
 		return nil, errors.New("invalid publication request")
 	}
-	var ctx forgeContext
-	retype(context, &ctx)
+	ctx := typed[forgeContext](context)
 	repo, branch := ctx.Repo, ctx.Branch
 	if !strings.Contains(","+ctx.Repositories+",", ","+repo+",") || repo == "" || forgeRepo("https://github.com/"+repo) != repo || ctx.Prefix == "" || !strings.HasPrefix(branch, ctx.Prefix+"/") || strings.ContainsAny(branch, " :~^?*[\\") {
 		return nil, errors.New("publication authority unavailable")
@@ -145,12 +140,11 @@ func forgeCall(name string, arguments, context any) (any, error) {
 	if err != nil {
 		return nil, errors.New("project-pr-read-failed; inspect before retry")
 	}
-	if _, err := dec(string(b)); err != nil {
+	listed, err := dec(string(b))
+	if err != nil {
 		return nil, errors.New("invalid forge response")
 	}
-	var open looseList
-	json.Unmarshal(b, &open)
-	for _, pr := range open.Items {
+	for _, pr := range typed[[]jsonValue](listed) {
 		return forgePRReply(pr, true), nil
 	}
 	c = forgeCommand(ctx, "gh", "api", "--hostname", "github.com", "--method", "POST", "repos/"+repo+"/pulls", "-f", "title="+*a.Title, "-f", "body="+*a.Body, "-f", "head="+branch, "-f", "base="+ctx.Base, "-F", "draft=true")
@@ -158,10 +152,11 @@ func forgeCall(name string, arguments, context any) (any, error) {
 	if err != nil {
 		return nil, errors.New("project-pr-create-unconfirmed; inspect existing pull request before retry")
 	}
-	if _, err := dec(string(b)); err != nil {
+	created, err := dec(string(b))
+	if err != nil {
 		return nil, errors.New("invalid forge response")
 	}
-	return forgePRReply(b, false), nil
+	return forgePRReply(created, false), nil
 }
 
 func forgeGranted(repo string) bool {
@@ -188,13 +183,13 @@ func forgeReadiness(remote string) string {
 	if err != nil {
 		return "forge-repository-auth-unready"
 	}
-	var v struct {
+	v := typedRaw[struct {
 		Permissions struct {
 			Push bool `json:"push"`
 		} `json:"permissions"`
 		FullName string `json:"full_name"`
-	}
-	if json.Unmarshal(b, &v) != nil || !v.Permissions.Push || v.FullName != repo {
+	}](b)
+	if !v.Permissions.Push || v.FullName != repo {
 		return "forge-repository-push-unready"
 	}
 	return ""

@@ -5,7 +5,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,13 +32,12 @@ import (
 // new command starts for it.
 func (s *codeServer) sh(rt *codeRuntime, arguments any) (any, M) {
 	// sh(cmd, {cwd, timeoutMs, args}); a field of another type reads as its zero value.
-	var args struct {
-		Command   string            `json:"command"`
-		Cwd       string            `json:"cwd"`
-		Args      []json.RawMessage `json:"args"`
-		TimeoutMs json.RawMessage   `json:"timeoutMs"`
-	}
-	retype(arguments, &args)
+	args := typed[struct {
+		Command   string      `json:"command"`
+		Cwd       string      `json:"cwd"`
+		Args      []jsonValue `json:"args"`
+		TimeoutMs jsonValue   `json:"timeoutMs"`
+	}](arguments)
 	command := args.Command
 	if strings.TrimSpace(command) == "" {
 		return nil, callError("error", "bad-arguments", "command required")
@@ -64,12 +62,11 @@ func (s *codeServer) sh(rt *codeRuntime, arguments any) (any, M) {
 	policy := s.spec.Shell
 	var argsList []string
 	for _, raw := range args.Args {
-		var value looseStr
-		json.Unmarshal(raw, &value)
-		if !value.Set {
+		value, ok := valStr(raw)
+		if !ok {
 			return nil, callError("error", "bad-arguments", "args must contain strings")
 		}
-		argsList = append(argsList, value.S)
+		argsList = append(argsList, value)
 	}
 	argv, err := shellArgv(policy, s.spec.Sandbox, cwd, tmp, command, argsList)
 	if err != nil {
@@ -108,7 +105,7 @@ func (s *codeServer) sh(rt *codeRuntime, arguments any) (any, M) {
 	// output open; then the output is closed and the call returns.
 	cmd.WaitDelay = time.Second
 	var deadline time.Duration
-	if ms, ok := num(decRaw(args.TimeoutMs)); ok && ms > 0 && ms < 1e12 { // beyond 30 years: no timeout, not an overflow
+	if ms, ok := num(args.TimeoutMs.V); ok && ms > 0 && ms < 1e12 { // beyond 30 years: no timeout, not an overflow
 		deadline = time.Duration(ms * float64(time.Millisecond))
 	}
 	s.mu.Lock()
@@ -440,14 +437,13 @@ func resolveIn(real, rel string) (string, error) {
 // or concurrent rename reaches .git. The file itself is opened without following a symlink.
 func codeFile(dir, tool string, arguments any) (any, M) {
 	// write(path, text) and edit(path, old, new, {all}); a field of another type reads as its zero value.
-	var args struct {
+	args := typed[struct {
 		Path string `json:"path"`
 		Text string `json:"text"`
 		Old  string `json:"old"`
 		New  string `json:"new"`
 		All  bool   `json:"all"`
-	}
-	retype(arguments, &args)
+	}](arguments)
 	codeFileMu.Lock()
 	defer codeFileMu.Unlock()
 	real, err := canon(dir)

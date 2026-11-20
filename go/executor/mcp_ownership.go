@@ -73,7 +73,7 @@ func ownerRequestOf(v any) ownerRequest {
 	if r, ok := v.(ownerRequest); ok {
 		return r
 	}
-	return typed[ownerRequest](jClone(v))
+	return typed[ownerRequest](v)
 }
 
 // decodeObject reads one JSON value from d (numbers as json.Number): an object or null, as a struct decode admits.
@@ -566,7 +566,7 @@ func (c *mcpChild) close() {
 }
 func mcpStdio(socket string, spec any, input io.Reader, output io.Writer, root, policy string, parentLease ...io.ReadCloser) (resultErr error) {
 	phase, status := "socket", safeMCPStatus(nil)
-	s := typed[mcpLaunchSpec](jClone(spec))
+	s := typed[mcpLaunchSpec](spec)
 	if prefix := s.ReceiptPath; prefix != "" {
 		f, err := openMCPReceipt(prefix)
 		if err == nil {
@@ -839,7 +839,7 @@ type guardianStatus struct {
 }
 
 func safeMCPStatus(raw M) M {
-	return safeStatus(typed[guardianStatus](jClone(raw)))
+	return safeStatus(typed[guardianStatus](raw))
 }
 
 func safeStatus(raw guardianStatus) M {

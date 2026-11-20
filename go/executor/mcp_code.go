@@ -46,7 +46,7 @@ type codeSpec struct {
 	Write        bool               `json:"write"`
 	Edit         bool               `json:"edit"`
 	RunFile      string             `json:"runFile"`
-	Connections  []json.RawMessage  `json:"connections"` // the bridged connection servers' specs
+	Connections  []jsonValue        `json:"connections"` // the bridged connection servers' specs
 	Node         string             `json:"node"`
 	Sandbox      string             `json:"sandbox"`
 	Instructions []codeInstructions `json:"instructions"` // with codeMode only: the connections' own instructions
@@ -54,7 +54,7 @@ type codeSpec struct {
 	Env          map[string]string  `json:"env"`          // FLEET_INPUT_DIR and FLEET_OUTPUT_DIR for sh
 	GitEnv       *[]string          `json:"gitEnv"`
 	Journal      string             `json:"journal"` // the executor journal, "" without Fleet tools
-	Context      json.RawMessage    `json:"context"` // the fleet server context
+	Context      jsonValue          `json:"context"` // the fleet server context
 }
 
 type codeInstructions struct {
@@ -87,20 +87,18 @@ type codeConnTool struct {
 }
 
 func codeConnOf(spec any) codeConn {
-	var head struct {
-		Name         string            `json:"name"`
-		Instructions string            `json:"instructions"`
-		Limits       json.RawMessage   `json:"limits"`
-		Tools        []json.RawMessage `json:"tools"`
-	}
-	retype(spec, &head)
-	c := codeConn{name: head.Name, instructions: head.Instructions, limits: decRaw(head.Limits), spec: spec}
+	head := typed[struct {
+		Name         string      `json:"name"`
+		Instructions string      `json:"instructions"`
+		Limits       jsonValue   `json:"limits"`
+		Tools        []jsonValue `json:"tools"`
+	}](spec)
+	c := codeConn{name: head.Name, instructions: head.Instructions, limits: head.Limits.V, spec: spec}
 	for _, raw := range head.Tools {
-		var t struct {
+		t := typed[struct {
 			Name string `json:"name"`
-		}
-		json.Unmarshal(raw, &t)
-		c.tools = append(c.tools, codeConnTool{t.Name, decRaw(raw)})
+		}](raw)
+		c.tools = append(c.tools, codeConnTool{t.Name, raw.V})
 	}
 	return c
 }
@@ -116,29 +114,29 @@ func (c codeConn) toolNames() []any {
 
 // codeArgs are the arguments of the code and poll tools (codeTools).
 type codeArgs struct {
-	Source             string          `json:"source"`
-	DetachAfterSeconds json.RawMessage `json:"detachAfterSeconds"`
-	JobID              string          `json:"jobId"`
-	WaitSeconds        json.RawMessage `json:"waitSeconds"`
-	Reset              bool            `json:"reset"`
+	Source             string    `json:"source"`
+	DetachAfterSeconds jsonValue `json:"detachAfterSeconds"`
+	JobID              string    `json:"jobId"`
+	WaitSeconds        jsonValue `json:"waitSeconds"`
+	Reset              bool      `json:"reset"`
 }
 
 // codeLine is one protocol line of the runtime (code_runtime.js): print, call, done or settled.
 type codeLine struct {
-	Type   string          `json:"type"`
-	Job    string          `json:"job"`
-	Text   string          `json:"text"`
-	ID     json.RawMessage `json:"id"`
-	OK     bool            `json:"ok"`
-	Value  json.RawMessage `json:"value"`
-	Error  json.RawMessage `json:"error"`
-	Server string          `json:"server"`
-	Tool   string          `json:"tool"`
-	Args   json.RawMessage `json:"args"`
+	Type   string    `json:"type"`
+	Job    string    `json:"job"`
+	Text   string    `json:"text"`
+	ID     jsonValue `json:"id"`
+	OK     bool      `json:"ok"`
+	Value  jsonValue `json:"value"`
+	Error  jsonValue `json:"error"`
+	Server string    `json:"server"`
+	Tool   string    `json:"tool"`
+	Args   jsonValue `json:"args"`
 }
 
 // key is the call id as the awaiting map holds it.
-func (l codeLine) key() string { return enc(decRaw(l.ID)) }
+func (l codeLine) key() string { return enc(l.ID.V) }
 
 // codeHostNames are the host functions this execution has (fleet-code-mode.md, host functions).
 func codeHostNames(spec codeSpec) []string {
@@ -333,8 +331,7 @@ type codeRuntime struct {
 }
 
 func codeMCP(file any, in io.Reader, w io.Writer) error {
-	var spec codeSpec
-	retype(file, &spec)
+	spec := typed[codeSpec](file)
 	s := &codeServer{spec: spec, jobs: map[string]*codeJob{}, fleet: map[string]bool{}, conns: map[string]codeConn{}, procs: map[*supervise.Proc]bool{}}
 	// A bridged upload reads only what the sandbox may read; without read roots it reads nothing.
 	uploadRoots = pinUploadRoots(append([]string{}, spec.Read...))
@@ -344,14 +341,14 @@ func codeMCP(file any, in io.Reader, w io.Writer) error {
 			return err
 		}
 		defer db.Close()
-		s.db, s.ctx = db, decRaw(spec.Context)
+		s.db, s.ctx = db, spec.Context.V
 		for _, n := range mcpToolNames(mcpTools(s.ctx)) {
 			name, _ := str(n)
 			s.fleet[name] = true
 		}
 	}
 	for _, raw := range spec.Connections {
-		c := codeConnOf(decRaw(raw))
+		c := codeConnOf(raw.V)
 		s.conns[c.name] = c
 		connectionLimits[c.name] = c.limits
 	}
@@ -403,17 +400,16 @@ func codeMCP(file any, in io.Reader, w io.Writer) error {
 			return tools
 		},
 		Call: func(name string, arguments json.RawMessage) (any, error) {
-			var args codeArgs
-			json.Unmarshal(arguments, &args)
+			args := typedRaw[codeArgs](arguments)
 			switch name {
 			case "code":
-				return s.code(args.Source, seconds(decRaw(args.DetachAfterSeconds))), nil
+				return s.code(args.Source, seconds(args.DetachAfterSeconds.V)), nil
 			case "poll":
 				if args.Reset {
 					s.stop()
 					return codeNote(M{"reset": true}, false), nil
 				}
-				return s.poll(args.JobID, seconds(decRaw(args.WaitSeconds))), nil
+				return s.poll(args.JobID, seconds(args.WaitSeconds.V)), nil
 			}
 			return nil, errors.New("unknown tool")
 		}}.Serve(in, w)
@@ -757,7 +753,6 @@ func (s *codeServer) read(rt *codeRuntime, stdout io.ReadCloser) {
 }
 
 func (s *codeServer) line(rt *codeRuntime, line []byte) {
-	var m codeLine
 	if !json.Valid(line) {
 		// Only user code writing to fd 3 breaks a line; every running job of this runtime says so, since its own done or
 		// call line may be the one lost.
@@ -770,7 +765,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 		s.mu.Unlock()
 		return
 	}
-	json.Unmarshal(line, &m) // a field of another type reads as its zero value
+	m := typedRaw[codeLine](line) // a field of another type reads as its zero value
 	if m.Type == "print" {
 		s.mu.Lock() // one lock for lookup and write: a concurrent final reply cannot orphan the text
 		if j := s.jobs[m.Job]; j != nil {
@@ -800,7 +795,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 			// A call started before the return (unawaited) is still part of the job: the final reply waits for it, so
 			// its outcome is in `calls`.
 			s.mu.Lock()
-			end := [3]any{m.OK, decRaw(m.Value), decRaw(m.Error)}
+			end := [3]any{m.OK, m.Value.V, m.Error.V}
 			wait := j.busy > 0
 			if wait {
 				j.ended = &end
@@ -823,7 +818,7 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 			// A call made after its job ended (a timer) would have an effect nobody sees.
 			fail := callError("error", "job-ended", nil)
 			fail["tool"] = callLabel(m.Server, m.Tool)
-			errtrack.Go("code.reply", func() { rt.send(M{"type": "reply", "id": decRaw(m.ID), "ok": false, "error": fail}) })
+			errtrack.Go("code.reply", func() { rt.send(M{"type": "reply", "id": m.ID.V, "ok": false, "error": fail}) })
 			return
 		}
 		errtrack.Go("code.call", func() { s.call(rt, j, m) })
@@ -833,14 +828,14 @@ func (s *codeServer) line(rt *codeRuntime, line []byte) {
 // call serves one bridge call with the same handler as the direct server and answers the runtime.
 func (s *codeServer) call(rt *codeRuntime, j *codeJob, m codeLine) {
 	start := time.Now()
-	server, tool, args := m.Server, m.Tool, decRaw(m.Args)
+	server, tool, args := m.Server, m.Tool, m.Args.V
 	value, fail := s.bridge(rt, server, tool, args)
 	label := callLabel(server, tool)
 	outcome := "ok"
 	if fail != nil {
 		outcome = jStr(fail, "outcome") // not JSON: the in-memory map callError built
 	}
-	reply := M{"type": "reply", "id": decRaw(m.ID), "ok": fail == nil, "value": value}
+	reply := M{"type": "reply", "id": m.ID.V, "ok": fail == nil, "value": value}
 	if fail != nil {
 		fail["tool"] = label
 		reply["error"] = fail
@@ -950,25 +945,25 @@ func (s *codeServer) bridge(rt *codeRuntime, server, tool string, args any) (any
 // mcpValue unwraps an MCP tool result: a text result parsed as JSON when it is JSON; a result with non-text parts as its
 // parts; isError becomes a call error.
 func mcpValue(r any) (any, M) {
-	var result struct {
-		Content looseList `json:"content"`
-		IsError bool      `json:"isError"`
-	}
-	retype(r, &result)
-	if !result.Content.IsArray {
+	result := typed[struct {
+		Content []jsonValue `json:"content"` // nil when absent or not an array
+		IsError bool        `json:"isError"`
+	}](r)
+	if result.Content == nil {
 		return r, nil
 	}
 	type part struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	}
-	parts := make([]part, len(result.Content.Items))
-	for i, c := range result.Content.Items {
-		json.Unmarshal(c, &parts[i])
+	parts := make([]part, len(result.Content))
+	items := make([]any, len(result.Content))
+	for i, c := range result.Content {
+		parts[i], items[i] = typed[part](c), c.V
 	}
 	var v any
 	if slices.ContainsFunc(parts, func(p part) bool { return p.Type != "text" }) {
-		v = decRaw(json.RawMessage(enc(result.Content.Items)))
+		v = items
 	} else {
 		var texts []string
 		for _, p := range parts {
@@ -981,13 +976,12 @@ func mcpValue(r any) (any, M) {
 		}
 	}
 	// open JSON: v is the tool's own reply; only its status and response are read.
-	var reply struct {
-		Status   string          `json:"status"`
-		Response json.RawMessage `json:"response"`
-	}
-	retype(v, &reply)
+	reply := typed[struct {
+		Status   string    `json:"status"`
+		Response jsonValue `json:"response"`
+	}](v)
 	if reply.Status == "pending-or-rejected" {
-		if decRaw(reply.Response) == nil {
+		if reply.Response.V == nil {
 			// request_child without a host answer: unknown; a retry with the same requestId is the same request.
 			return nil, callError("unknown", "pending", v)
 		}

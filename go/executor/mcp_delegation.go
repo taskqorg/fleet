@@ -84,7 +84,7 @@ func contextOf(ctx any) *delegationContext {
 	if c, ok := ctx.(*delegationContext); ok {
 		return c
 	}
-	c := typed[delegationContext](jClone(ctx))
+	c := typed[delegationContext](ctx)
 	return &c
 }
 
@@ -209,7 +209,7 @@ func mcpToolNames(discovery any) []any {
 		Tools []struct {
 			Name string `json:"name"`
 		} `json:"tools"`
-	}](jClone(discovery))
+	}](discovery)
 	out := []any{}
 	for _, tool := range d.Tools {
 		out = append(out, tool.Name)

@@ -109,26 +109,24 @@ func filterMCP(input io.Reader, output io.Writer, upstream io.Writer, replies io
 			}
 			var out any = reply
 			if str0(request.Method) == "initialize" {
-				if result := jsonObject(reply["result"]); result != nil {
-					result["capabilities"] = json.RawMessage(`{"tools":{}}`)
+				if result := typedRaw[M](reply["result"]); result != nil {
+					result["capabilities"] = M{"tools": M{}}
 					reply["result"] = json.RawMessage(enc(result))
 				}
 			}
 			if str0(request.Method) == "tools/list" {
-				var listed struct {
-					Tools looseList `json:"tools"`
-				}
-				json.Unmarshal(reply["result"], &listed)
-				advertised := []json.RawMessage{}
+				listed := typedRaw[struct {
+					Tools []jsonValue `json:"tools"`
+				}](reply["result"])
+				advertised := []jsonValue{}
 				var names []string
-				for _, tool := range listed.Tools.Items {
-					var t loose[struct {
-						Name looseStr `json:"name"`
-					}]
-					json.Unmarshal(tool, &t)
-					if slices.Contains(tools, any(t.V.Name.S)) {
+				for _, tool := range listed.Tools {
+					name := typed[struct {
+						Name string `json:"name"`
+					}](tool).Name
+					if slices.Contains(tools, any(name)) {
 						advertised = append(advertised, tool)
-						names = append(names, t.V.Name.S)
+						names = append(names, name)
 					}
 				}
 				missing := false
@@ -139,8 +137,8 @@ func filterMCP(input io.Reader, output io.Writer, upstream io.Writer, replies io
 						break
 					}
 				}
-				if result := jsonObject(reply["result"]); result != nil && !missing {
-					result["tools"] = json.RawMessage(enc(advertised))
+				if result := typedRaw[M](reply["result"]); result != nil && !missing {
+					result["tools"] = advertised
 					reply["result"] = json.RawMessage(enc(result))
 				}
 			}

@@ -96,7 +96,7 @@ type connectionSpec struct {
 // connectionCall is one call of a spec tool ({name, file?, idempotent}) with this process's token: a JSON call, an
 // upload or a download by the tool's file mode. Its output is what the agent reads.
 func connectionCall(connection string, spec any, arguments any) contract.CallLine {
-	tool := typed[connectionTool](jClone(spec))
+	tool := typed[connectionTool](spec)
 	name := tool.Name
 	t := gatewayTarget()
 	t.Idempotent = tool.Idempotent
@@ -105,7 +105,7 @@ func connectionCall(connection string, spec any, arguments any) contract.CallLin
 	}
 	t.Header["X-Fleet-File-Client"] = "1"
 	// The client outwaits the gateway: its stall wait at least the connection's, its answer wait a minute beyond.
-	limits := typed[contract.GatewayLimits](jClone(connectionLimits[connection]))
+	limits := typed[contract.GatewayLimits](connectionLimits[connection])
 	ms := func(n *int64) time.Duration {
 		if n == nil {
 			return 0
@@ -270,7 +270,7 @@ func callText(line contract.CallLine) (string, bool) {
 }
 
 func connectionMCP(connection string, specValue any, in io.Reader, w io.Writer) error {
-	spec := typed[connectionSpec](jClone(specValue))
+	spec := typed[connectionSpec](specValue)
 	connectionLimits[connection] = spec.Limits.V
 	byName, listed := map[string]any{}, []any{}
 	for _, raw := range spec.Tools {

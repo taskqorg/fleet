@@ -220,6 +220,9 @@ func typed[T any](v any) T {
 	if j, ok := v.(jsonValue); ok {
 		v = j.V
 	}
+	if !decoded(v) {
+		v = jClone(v) // an in-memory value ([]string, a struct, int): read it as its JSON
+	}
 	rt := reflect.TypeOf(&t).Elem()
 	d := json.NewDecoder(strings.NewReader(enc(fit(v, rt))))
 	d.UseNumber()
@@ -234,6 +237,30 @@ func contractOf[T any](v any) (T, error) {
 	var t T
 	err := json.Unmarshal([]byte(enc(v)), &t)
 	return t, err
+}
+
+// decoded: v holds only what a JSON decode into any yields (nil, bool, string, json.Number or float64, []any, M); such a
+// value is read as it is, so open values keep their form.
+func decoded(v any) bool {
+	switch x := v.(type) {
+	case nil, bool, string, json.Number, float64:
+		return true
+	case []any:
+		for _, e := range x {
+			if !decoded(e) {
+				return false
+			}
+		}
+		return true
+	case M:
+		for _, e := range x {
+			if !decoded(e) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // typedRaw decodes JSON text into T as typed does (numbers kept as json.Number); text that is not one JSON value is T's
