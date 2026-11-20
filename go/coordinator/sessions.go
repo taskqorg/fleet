@@ -686,6 +686,9 @@ var convTables = map[string]*convTable{
 	"worker-done":        {table: "worker_done", cols: []convCol{{"executionId", "execution_id", "text"}, {"projectId", "project_id", "text"}}},
 }
 
+// convEventAny: the event table with both kinds (eventsWhere).
+var convEventAny = &convTable{table: "event", cols: convEventCols}
+
 var convEventCols = []convCol{{"executionId", "execution_id", "text"}, {"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"},
 	{"seq", "event_seq", "int"}, {"type", "type", "text"}, {"timestamp", "at", "ms"}}
 
@@ -825,13 +828,16 @@ func convPut(q *Request, kind string, t *convTable, v doc) error {
 	if id == "" {
 		return fmt.Errorf("%s record without an id", kind)
 	}
-	cols, vals, args := []string{"id"}, []string{"$1::text"}, []any{id}
 	rest := doc{}
 	for k, x := range v {
 		if _, found := t.col(k); !found && k != "id" {
 			rest[k] = x
 		}
 	}
+	if t.table == "command" {
+		return commandPut(q, t, v, rest)
+	}
+	cols, vals, args := []string{"id"}, []string{"$1::text"}, []any{id}
 	for _, c := range t.cols {
 		x, given := v[c.field]
 		if !given || x == nil {
@@ -875,9 +881,6 @@ func convPut(q *Request, kind string, t *convTable, v doc) error {
 	guard := ""
 	if t.delta != nil {
 		guard = " WHERE " + t.table + ".delta=excluded.delta"
-	}
-	if t.table == "command" {
-		return commandPut(q, t, v, rest)
 	}
 	if _, err := q.tx.Exec(q.ctx(), "INSERT INTO "+t.table+"("+strings.Join(cols, ",")+") VALUES("+strings.Join(vals, ",")+") ON CONFLICT(id) DO UPDATE SET "+strings.Join(sets, ",")+guard, args...); err != nil {
 		return err
@@ -927,6 +930,10 @@ func commandPut(q *Request, t *convTable, v doc, rest doc) error {
 	}
 	if prev != "" && prev != *status {
 		if err := commandTransition(q, id, *status, text("stopDetail")); err != nil {
+			return err
+		}
+	} else if prev != "" {
+		if err := commandDetail(q, id, text("stopDetail")); err != nil {
 			return err
 		}
 	}

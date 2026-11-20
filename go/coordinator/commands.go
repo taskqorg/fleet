@@ -65,6 +65,15 @@ func commandTransition(q *Request, id, to string, detail *string) error {
 	return q.db().CommandMove(q.ctx(), db.CommandMoveParams{ID: id, Status: db.CommandStatus(to), StopDetail: detail})
 }
 
+// commandDetail records a new stop detail of a command that keeps its status.
+func commandDetail(q *Request, id string, detail *string) error {
+	from, err := commandStatus(q, id)
+	if err != nil || from == "" || detail == nil {
+		return err
+	}
+	return q.db().CommandMove(q.ctx(), db.CommandMoveParams{ID: id, Status: db.CommandStatus(from), StopDetail: detail})
+}
+
 // commandStop stops the commands in one of statuses (none: every open one) of an execution, a host or one command,
 // optionally only of kinds; it returns the stopped ids.
 type commandStopFilter struct {

@@ -2964,6 +2964,12 @@ CREATE TABLE worker_done(
 CREATE INDEX worker_done_execution ON worker_done(execution_id) WHERE execution_id IS NOT NULL;
 CREATE FUNCTION pg_temp.str(v jsonb) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'string' THEN v #>> '{}' END $$;
 CREATE FUNCTION pg_temp.ms(v jsonb) RETURNS timestamptz LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'number' THEN to_timestamp((v #>> '{}')::float8 / 1000) END $$;
+-- rest: the fields of d without a column: a field named in cols moves to its column when its JSON type is the column's
+-- ('' any type, null always), otherwise it stays.
+CREATE FUNCTION pg_temp.rest(d jsonb, cols jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+ SELECT coalesce(jsonb_object_agg(k, v), '{}') FROM jsonb_each(d) e(k, v)
+ WHERE NOT (cols ? k AND (cols->>k = '' OR jsonb_typeof(v) IN (cols->>k, 'null')))
+$$;
 CREATE FUNCTION pg_temp.num(v jsonb) RETURNS bigint LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'number' THEN round((v #>> '{}')::numeric)::bigint END $$;
 INSERT INTO session(id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id,
  created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by,
@@ -2974,24 +2980,24 @@ SELECT d.id, d.code, d.project_id, pg_temp.str(d.data->'taskId'), pg_temp.str(d.
  pg_temp.str(d.data->'pipelineRunId'), pg_temp.ms(d.data->'createdAt'), pg_temp.ms(d.data->'archivedAt'), pg_temp.str(d.data->'title'),
  pg_temp.str(d.data->'titleBy'), pg_temp.str(d.data->'titleCall'), pg_temp.ms(d.data->'titleAttemptAt'),
  greatest(coalesce(pg_temp.num(d.data->'titleAttempts'), 0), 0), pg_temp.str(d.data->'titleUnknownCall'),
- d.data - '{id,projectId,taskId,hostId,actor,directedBy,directorAccessRevokedAt,parentExecutionId,createdByExecutionId,createdBySessionId,sourceSessionId,pipelineRunId,createdAt,archivedAt,title,titleBy,titleCall,titleAttemptAt,titleAttempts,titleUnknownCall}'::text[],
+ pg_temp.rest(d.data, '{"id":"","projectId":"","taskId":"string","hostId":"string","actor":"string","directedBy":"string","directorAccessRevokedAt":"number","parentExecutionId":"string","createdByExecutionId":"string","createdBySessionId":"string","sourceSessionId":"string","pipelineRunId":"string","createdAt":"number","archivedAt":"number","title":"string","titleBy":"string","titleCall":"string","titleAttemptAt":"number","titleAttempts":"number","titleUnknownCall":"string"}'),
  d.seq, d.updated_at, d.tombstoned_at
 FROM document d WHERE d.kind = 'session';
 INSERT INTO message(id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload, seq, updated_at, tombstoned_at)
 SELECT d.id, d.session_ref, pg_temp.str(d.data->'executionId'), d.project_id, pg_temp.str(d.data->'requestId'), pg_temp.str(d.data->'text'),
  pg_temp.str(d.data->'sentBy'), pg_temp.str(d.data->'source'),
- d.data - '{id,sessionId,executionId,projectId,requestId,text,sentBy,source}'::text[], d.seq, d.updated_at, d.tombstoned_at
+ pg_temp.rest(d.data, '{"id":"","sessionId":"","executionId":"string","projectId":"","requestId":"string","text":"string","sentBy":"string","source":"string"}'), d.seq, d.updated_at, d.tombstoned_at
 FROM document d WHERE d.kind = 'message' AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.session_ref);
 INSERT INTO event(id, delta, execution_id, session_id, project_id, event_seq, type, at, payload, seq, updated_at, tombstoned_at)
 SELECT d.id, d.kind = 'event-delta', (SELECT e.id FROM execution e WHERE e.id = d.execution_ref), (SELECT s.id FROM session s WHERE s.id = d.session_ref),
  d.project_id, pg_temp.num(d.data->'seq'), pg_temp.str(d.data->'type'), pg_temp.ms(d.data->'timestamp'),
- d.data - '{id,executionId,sessionId,projectId,seq,type,timestamp}'::text[], d.seq, d.updated_at, d.tombstoned_at
+ pg_temp.rest(d.data, '{"id":"","executionId":"","sessionId":"","projectId":"","seq":"number","type":"string","timestamp":"number"}'), d.seq, d.updated_at, d.tombstoned_at
 FROM document d WHERE d.kind IN ('event', 'event-delta');
 INSERT INTO queued_message(id, session_id, project_id, task_id, request_id, text, state, execution_id, steer_command_id, sent_by, source, created_at, payload, seq, updated_at, tombstoned_at)
 SELECT d.id, d.session_ref, d.project_id, pg_temp.str(d.data->'taskId'), pg_temp.str(d.data->'requestId'), pg_temp.str(d.data->'text'),
  pg_temp.str(d.data->'state'), pg_temp.str(d.data->'executionId'), pg_temp.str(d.data->'steerCommandId'), pg_temp.str(d.data->'sentBy'),
  pg_temp.str(d.data->'source'), pg_temp.ms(d.data->'createdAt'),
- d.data - '{id,sessionId,projectId,taskId,requestId,text,state,executionId,steerCommandId,sentBy,source,createdAt}'::text[], d.seq, d.updated_at, d.tombstoned_at
+ pg_temp.rest(d.data, '{"id":"","sessionId":"","projectId":"","taskId":"string","requestId":"string","text":"string","state":"string","executionId":"string","steerCommandId":"string","sentBy":"string","source":"string","createdAt":"number"}'), d.seq, d.updated_at, d.tombstoned_at
 FROM document d WHERE d.kind = 'queued-message' AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.session_ref);
 INSERT INTO command(id, execution_id, session_id, host_id, project_id, kind, status, stop_detail, handed_out, traceparent, payload, seq, updated_at, tombstoned_at)
 SELECT d.id, (SELECT e.id FROM execution e WHERE e.id = d.execution_ref), (SELECT s.id FROM session s WHERE s.id = d.session_ref),
@@ -2999,7 +3005,7 @@ SELECT d.id, (SELECT e.id FROM execution e WHERE e.id = d.execution_ref), (SELEC
  CASE WHEN d.data->>'status' IN ('pending', 'accepted', 'started', 'completed', 'failed', 'stopped', 'unknown') THEN (d.data->>'status')::command_status ELSE 'stopped' END,
  pg_temp.str(d.data->'stopDetail'), CASE WHEN jsonb_typeof(d.data->'handedOut') = 'boolean' THEN (d.data->>'handedOut')::boolean END,
  pg_temp.str(d.data->'traceparent'),
- d.data - '{id,executionId,sessionId,hostId,projectId,kind,status,stopDetail,handedOut,traceparent}'::text[], d.seq, d.updated_at, d.tombstoned_at
+ pg_temp.rest(d.data, '{"id":"","executionId":"","sessionId":"","hostId":"string","projectId":"","kind":"string","status":"","stopDetail":"string","handedOut":"boolean","traceparent":"string"}'), d.seq, d.updated_at, d.tombstoned_at
 FROM document d WHERE d.kind = 'command';
 INSERT INTO handoff(id, session_id, project_id, state, payload, seq, updated_at, tombstoned_at)
 SELECT d.id, d.session_ref, d.project_id, pg_temp.str(d.data->'state'), d.data - '{id,sessionId,projectId,state}'::text[], d.seq, d.updated_at, d.tombstoned_at

@@ -66,7 +66,7 @@ func frameHash(v any) string {
 }
 
 func eventsWhere(q *Request, f doc) ([]doc, error) {
-	return convAll(q, &convTable{table: "event", cols: convEventCols}, f) // both kinds
+	return convAll(q, convEventAny, f)
 }
 
 func eventKind(v doc) string {
@@ -161,6 +161,11 @@ func ingestIn(q *Request, b doc) (any, error) {
 			value[k] = v
 		}
 		value["id"], value["executionId"], value["sessionId"] = key, xid, execution["sessionId"]
+		for k, v := range value { // a stored event keeps no null field (its record strips them), so a retry compares equal
+			if v == nil {
+				delete(value, k)
+			}
+		}
 		if digest, closed := closedHashes[key]; closed {
 			if digest != frameHash(value) {
 				return nil, fail(409, "Event conflict")
