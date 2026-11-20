@@ -25,6 +25,82 @@ import (
 	"fleet/errtrack"
 )
 
+// tolerant: a JSON field read the way the journal's writers may have left it: null, absent or another type is unset,
+// never a decode error (a job body is written by several executor versions and carries the command payload).
+type tolerant[T any] struct {
+	V   T
+	Set bool
+}
+
+func (t *tolerant[T]) UnmarshalJSON(b []byte) error {
+	var v T
+	if string(b) != "null" && json.Unmarshal(b, &v) == nil {
+		t.V, t.Set = v, true
+	}
+	return nil
+}
+
+// MarshalJSON writes the value (an unset field as its zero value).
+func (t tolerant[T]) MarshalJSON() ([]byte, error) { return json.Marshal(t.V) }
+
+func (t tolerant[T]) or(def T) T {
+	if t.Set {
+		return t.V
+	}
+	return def
+}
+
+// transferJob: a `transfers` row's body. Uploads (collected output, artifact_save, previews) carry the file;
+// artifact-copy and artifact-verify carry the command payload (contract.ArtifactTransferPayload and the keys the worker
+// reads) with the command and the spool folder; get and list carry the MCP call; done is the journaled per-part
+// progress of an upload or copy.
+type transferJob struct {
+	Path        tolerant[string]               `json:"path"`
+	Spool       tolerant[string]               `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
+	Name        tolerant[string]               `json:"name"`
+	MediaType   tolerant[string]               `json:"mediaType"`
+	ExecutionId tolerant[string]               `json:"executionId"`
+	DerivedFrom tolerant[string]               `json:"derivedFrom"`
+	Role        tolerant[string]               `json:"role"`
+	Required    tolerant[bool]                 `json:"required"`
+	ArtifactId  tolerant[string]               `json:"artifactId"`
+	StoreId     tolerant[string]               `json:"storeId"`
+	Url         tolerant[string]               `json:"url"`
+	Size        tolerant[uint64]               `json:"size"`
+	PartSize    tolerant[uint64]               `json:"partSize"`
+	Source      tolerant[transferSource]       `json:"source"`
+	InputDir    tolerant[string]               `json:"inputDir"`
+	Filter      tolerant[transferFilter]       `json:"filter"`
+	Done        tolerant[[]tolerant[donePart]] `json:"done"`
+	Command     json.RawMessage                `json:"command"` // present (even null): the job sends the command's final receipt
+}
+
+type transferSource struct {
+	Url tolerant[string] `json:"url"`
+}
+
+type transferFilter struct {
+	ExecutionId tolerant[string] `json:"executionId"`
+	TaskId      tolerant[string] `json:"taskId"`
+	MediaType   tolerant[string] `json:"mediaType"`
+	Cursor      tolerant[string] `json:"cursor"`
+}
+
+// donePart: one journaled part, written as {partNumber, etag}.
+type donePart struct {
+	PartNumber tolerant[uint64] `json:"partNumber"`
+	Etag       tolerant[string] `json:"etag"`
+}
+
+// readJob: a body that is not a JSON object reads as an empty job.
+func readJob(body string) transferJob {
+	var j transferJob
+	if json.Unmarshal([]byte(body), &j) != nil {
+		return transferJob{}
+	}
+	return j
+}
+
 // enqueue queues a job; id is also the artifact id of an upload, so a repeated reserve is the same reservation.
 func enqueue(db execer, id, kind string, body any) error {
 	_, err := db.Exec("INSERT OR IGNORE INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", id, kind, enc(body), nowMs())
@@ -92,7 +168,7 @@ func accessAllowed(raw string) bool {
 	}
 	h := u.Hostname()
 	hosts := storeEndpointHosts()
-	if own, err := neturl.Parse(jStr(storeConfig(), "endpoint")); err == nil && own.Hostname() != "" {
+	if own, err := neturl.Parse(storeConfig().endpoint()); err == nil && own.Hostname() != "" {
 		hosts = append(hosts, own.Hostname())
 	}
 	for _, x := range hosts {
@@ -256,8 +332,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 	count := max((size+partSize-1)/partSize, 1)
 	var bodyText string
 	db.QueryRow("SELECT body FROM transfers WHERE id=?", jobID).Scan(&bodyText)
-	body := decM(bodyText)
-	done := jArr(body, "done")
+	done := readJob(bodyText).Done.V
 	f, err := os.Open(file)
 	if err != nil {
 		return contract.ArtifactStateReply{}, ioFailure(err)
@@ -267,7 +342,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 	for n := uint64(1); n <= count; n++ {
 		have := false
 		for _, d := range done {
-			if x, _ := jU64(d, "partNumber"); x == n {
+			if d.V.PartNumber.V == n {
 				have = true
 			}
 		}
@@ -302,16 +377,14 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 			if fl != nil {
 				return contract.ArtifactStateReply{}, fl
 			}
-			done = append(done, M{"partNumber": n, "etag": etag})
-			b := jObj(jClone(body))
-			b["done"] = done
-			db.Exec("UPDATE transfers SET body=?,attempts=0 WHERE id=?", enc(b), jobID) // progress: the backoff starts over
+			done = append(done, tolerant[donePart]{donePart{tolerant[uint64]{n, true}, tolerant[string]{etag, true}}, true})
+			// progress: the backoff starts over
+			db.Exec("UPDATE transfers SET body=json_set(body,'$.done',json(?)),attempts=0 WHERE id=?", enc(done), jobID)
 		}
 	}
 	req := contract.ArtifactCommitRequest{HostId: c.host, ArtifactId: artifactID, StoreId: optStr(storeID)}
 	for _, d := range done {
-		n, _ := jU64(d, "partNumber")
-		etag := jStr(d, "etag")
+		n, etag := d.V.PartNumber.V, d.V.Etag.V
 		req.Parts = append(req.Parts, contract.ArtifactPart{PartNumber: int64(n), Etag: &etag})
 	}
 	commit, fl := transferReply(c, contract.RouteArtifactsCommit, req)
@@ -341,24 +414,17 @@ func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contrac
 	return transferReply(c, contract.RouteArtifactsVerified, contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
 }
 
-func u64Or(def uint64, v any, keys ...string) uint64 {
-	if x, ok := jU64(v, keys...); ok {
-		return x
-	}
-	return def
-}
-
-func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failure) {
+func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (any, *failure) {
 	switch kind {
 	case "upload":
-		path := jStr(body, "path")
+		path := body.Path.V
 		digest, size, err := hashFile(path)
 		if err != nil {
 			return nil, ioFailure(err)
 		}
-		required := body["required"] == true
-		req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: jStr(body, "executionId"), ArtifactId: optStr(id), Name: jStr(body, "name"), MediaType: jStr(body, "mediaType"),
-			Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(jStr(body, "derivedFrom")), Role: optStr(jStr(body, "role"))}
+		required := body.Required.V
+		req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: body.ExecutionId.V, ArtifactId: optStr(id), Name: body.Name.V, MediaType: body.MediaType.V,
+			Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(body.DerivedFrom.V), Role: optStr(body.Role.V)}
 		r, f := transferReply(c, contract.RouteArtifactsReserve, req)
 		if f != nil {
 			return nil, f
@@ -385,12 +451,12 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		}
 		return M{"artifactId": r.ArtifactId, "state": out.State}, nil
 	case "verify":
-		return verifyArtifact(c, jStr(body, "artifactId"), jStr(body, "storeId"), jStr(body, "url"))
+		return verifyArtifact(c, body.ArtifactId.V, body.StoreId.V, body.Url.V)
 	case "copy":
 		// Download the source object next to the journal, then upload it to this host's store.
-		tmp := filepath.Join(jStr(body, "spool"), id+".part")
-		if st, err := os.Stat(tmp); err != nil || uint64(st.Size()) != u64Or(^uint64(0), body, "size") {
-			src, f := c.get(jStr(body, "source", "url"))
+		tmp := filepath.Join(body.Spool.V, id+".part")
+		if st, err := os.Stat(tmp); err != nil || uint64(st.Size()) != body.Size.or(^uint64(0)) {
+			src, f := c.get(body.Source.V.Url.V)
 			if f != nil {
 				return nil, f
 			}
@@ -410,11 +476,11 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		if err != nil {
 			return nil, ioFailure(err)
 		}
-		out, f := sendParts(c, db, id, tmp, jStr(body, "artifactId"), jStr(body, "storeId"), uint64(st.Size()), u64Or(32<<20, body, "partSize"))
+		out, f := sendParts(c, db, id, tmp, body.ArtifactId.V, body.StoreId.V, uint64(st.Size()), body.PartSize.or(32<<20))
 		os.Remove(tmp)
 		return out, f
 	case "get":
-		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(jStr(body, "executionId")), ArtifactId: jStr(body, "artifactId")})
+		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId.V), ArtifactId: body.ArtifactId.V})
 		if f != nil {
 			return nil, f
 		}
@@ -438,7 +504,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		}
 		// ponytail: per byte, so a multibyte character becomes several '_' where Rust wrote one.
 		name = string(safe)
-		dir := jStr(body, "inputDir")
+		dir := body.InputDir.V
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, ioFailure(err)
 		}
@@ -480,9 +546,9 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		}
 		return M{"artifactId": r.Id, "path": target, "mediaType": r.MediaType, "size": r.Size}, nil
 	case "list":
-		req := contract.HostArtifactListRequest{HostId: c.host, ExecutionId: jStr(body, "executionId")}
-		if f, ok := body["filter"].(map[string]any); ok {
-			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(jStr(f, "executionId")), TaskId: optStr(jStr(f, "taskId")), MediaType: optStr(jStr(f, "mediaType")), Cursor: optStr(jStr(f, "cursor"))}
+		req := contract.HostArtifactListRequest{HostId: c.host, ExecutionId: body.ExecutionId.V}
+		if f := body.Filter; f.Set {
+			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(f.V.ExecutionId.V), TaskId: optStr(f.V.TaskId.V), MediaType: optStr(f.V.MediaType.V), Cursor: optStr(f.V.Cursor.V)}
 		}
 		return c.post(contract.RouteArtifactsList.Path, req)
 	}
@@ -493,13 +559,13 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 var transferRoutes = []string{contract.RouteArtifactsReserve.Path, contract.RouteArtifactsParts.Path, contract.RouteArtifactsCommit.Path, contract.RouteArtifactsVerified.Path, contract.RouteArtifactsGet.Path, contract.RouteArtifactsList.Path, contract.RouteArtifactsRenew.Path}
 
 // leased: the artifact a queued job holds a coordinator lease on, with its store when known.
-func leased(kind, id string, body M) (string, string, bool) {
+func leased(kind, id string, body transferJob) (string, string, bool) {
 	switch kind {
 	case "upload":
 		return id, "", true
 	case "verify", "copy":
-		if jIsStr(body, "artifactId") {
-			return jStr(body, "artifactId"), jStr(body, "storeId"), true
+		if body.ArtifactId.Set {
+			return body.ArtifactId.V, body.StoreId.V, true
 		}
 	}
 	return "", "", false
@@ -540,7 +606,7 @@ func spawnTransfers(journal string, c *transferClient, after afterJob) error {
 				edgeClearIdle(transferRoutes)
 			}
 			for _, j := range jobs {
-				if a, s, ok := leased(j.kind, j.id, decM(j.body)); ok {
+				if a, s, ok := leased(j.kind, j.id, readJob(j.body)); ok {
 					c.post(contract.RouteArtifactsRenew.Path, contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: a, StoreId: optStr(s)}) // best effort, not a delivery
 				}
 			}
@@ -561,7 +627,7 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 			time.Sleep(250 * time.Millisecond)
 			continue
 		}
-		body := decM(bodyText)
+		body := readJob(bodyText)
 		v, f := runJob(c, db, id, kind, body)
 		db.QueryRow("SELECT attempts FROM transfers WHERE id=?", id).Scan(&attempts) // a run that journaled parts reset it
 		// The terminal state and its outbound notices commit together. In this process a failed commit is retried as a
@@ -578,7 +644,7 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 		}
 		wake(db, id)
 		if f == nil {
-			after(c, db, body, v)
+			after(c, db, decM(bodyText), v) // the cleanup and previews read the body as written (executor.go, preview.go)
 		}
 	}
 }
@@ -586,16 +652,21 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 // settleJob records a job's outcome: done or failed with the command's final receipt (and, for an upload that can never
 // succeed, the artifact failure), or a retry with backoff.
 // transferReceipt: the final receipt of an artifact-copy or artifact-verify command.
-func transferReceipt(host string, cmd any, status contract.ReceiptStatus, failure string) contract.Receipt {
-	r := contract.Receipt{HostId: host, CommandId: jStr(cmd, "id"), ExecutionId: jStr(cmd, "executionId"), Status: status}
+func transferReceipt(host string, cmd json.RawMessage, status contract.ReceiptStatus, failure string) contract.Receipt {
+	var c struct {
+		Id          tolerant[string] `json:"id"`
+		ExecutionId tolerant[string] `json:"executionId"`
+	}
+	json.Unmarshal(cmd, &c) // a command that is not an object names no command
+	r := contract.Receipt{HostId: host, CommandId: c.Id.V, ExecutionId: c.ExecutionId.V, Status: status}
 	if failure != "" {
 		r.Error = &failure
 	}
 	return r
 }
 
-func settleJob(x execer, host, id, kind string, body M, attempts int64, v any, f *failure) error {
-	cmd, hasCmd := body["command"]
+func settleJob(x execer, host, id, kind string, body transferJob, attempts int64, v any, f *failure) error {
+	cmd, hasCmd := body.Command, body.Command != nil
 	switch {
 	case f == nil:
 		if _, err := x.Exec("UPDATE transfers SET state='done',response=? WHERE id=?", enc(v), id); err != nil {

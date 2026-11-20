@@ -778,8 +778,15 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 		lastSent.Store(nowMs())
 		k, hasKey := value["agentToolKey"].(string)
 		if !hasKey {
-			if d, ok := value["delegation"]; ok {
-				k, hasKey = jStr(value, "commandId")+":"+jStr(d, "requestId"), true
+			if _, ok := value["delegation"]; ok {
+				var d struct {
+					CommandId  tolerant[string] `json:"commandId"`
+					Delegation tolerant[struct {
+						RequestId tolerant[string] `json:"requestId"`
+					}] `json:"delegation"`
+				}
+				json.Unmarshal([]byte(r.body), &d) // a delegation row is never batched: its body is value
+				k, hasKey = d.CommandId.V+":"+d.Delegation.V.RequestId.V, true
 			}
 		}
 		if hasKey {

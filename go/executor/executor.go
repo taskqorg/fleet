@@ -263,7 +263,7 @@ type executor struct {
 	live         map[string]*live
 	sessions     string
 	harnessCache map[string]M
-	storeCfg     M
+	storeCfg     *storeFile
 	declared     []string
 	storeAt      time.Time
 	storeLast    []contract.StoreReport
@@ -834,9 +834,9 @@ func (e *executor) run(c M) error {
 		return e.finish(c, okStatus(ok), "")
 	case contract.CommandKindArtifactCopy, contract.CommandKindArtifactVerify:
 		// Long transfers run on the transfer worker, which sends the final receipt; the journal row resumes them.
-		b := jObj(jClone(p))
-		if b == nil {
-			b = M{}
+		b := M{} // the payload's keys as received; the command and the spool folder added (transferJob)
+		for k, v := range p {
+			b[k] = v
 		}
 		b["command"] = M{"id": c["id"], "executionId": c["executionId"]}
 		b["spool"] = filepath.Join(e.root, "spool")

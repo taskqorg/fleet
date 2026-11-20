@@ -5,6 +5,7 @@ package main
 // {id, zone, bucket, endpoint, localEndpoint, keyFile, capacityBytes, backingPath, requiresLogon}.
 
 import (
+	"encoding/json"
 	"math"
 	"os"
 	"strings"
@@ -15,7 +16,21 @@ import (
 	"fleet/contract"
 )
 
-func storeConfig() M {
+// storeFile: FLEET_STORE_CONFIG; a field of another type counts as absent.
+type storeFile struct {
+	Id            tolerant[string] `json:"id"`
+	Zone          tolerant[string] `json:"zone"`
+	Bucket        tolerant[string] `json:"bucket"`
+	Endpoint      tolerant[string] `json:"endpoint"`
+	LocalEndpoint tolerant[string] `json:"localEndpoint"`
+	KeyFile       tolerant[string] `json:"keyFile"`
+	CapacityBytes tolerant[uint64] `json:"capacityBytes"`
+	BackingPath   tolerant[string] `json:"backingPath"`
+	RequiresLogon tolerant[bool]   `json:"requiresLogon"`
+}
+
+// storeConfig: nil without a config file that holds a JSON object.
+func storeConfig() *storeFile {
 	p := os.Getenv("FLEET_STORE_CONFIG")
 	if p == "" {
 		return nil
@@ -24,12 +39,27 @@ func storeConfig() M {
 	if err != nil {
 		return nil
 	}
-	v, err := dec(string(b))
-	if err != nil {
+	var cfg *storeFile
+	if json.Unmarshal(b, &cfg) != nil {
 		return nil
 	}
-	m, _ := v.(M)
-	return m
+	return cfg
+}
+
+// endpoint: the store's public endpoint; "" without a config.
+func (cfg *storeFile) endpoint() string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Endpoint.V
+}
+
+func (t tolerant[T]) ptr() *T {
+	if !t.Set {
+		return nil
+	}
+	v := t.V
+	return &v
 }
 
 func unquote(v string) string { return strings.Trim(strings.Trim(strings.TrimSpace(v), "'"), `"`) }
@@ -41,9 +71,13 @@ func readKey(path string) (string, string, bool) {
 		return "", "", false
 	}
 	text := string(b)
-	if v, err := dec(text); err == nil {
-		id, s := jStr(v, "accessKeyId"), jStr(v, "secretAccessKey")
-		return id, s, jIsStr(v, "accessKeyId") && jIsStr(v, "secretAccessKey")
+	if _, err := dec(text); err == nil {
+		var k struct {
+			AccessKeyId     tolerant[string] `json:"accessKeyId"`
+			SecretAccessKey tolerant[string] `json:"secretAccessKey"`
+		}
+		json.Unmarshal(b, &k) // JSON that is not an object holds no key
+		return k.AccessKeyId.V, k.SecretAccessKey.V, k.AccessKeyId.Set && k.SecretAccessKey.Set
 	}
 	var id, secret *string
 	for _, line := range strings.Split(text, "\n") {
@@ -93,7 +127,7 @@ func freeBytes(path string) (uint64, bool) {
 }
 
 // effectiveCapacity: the configured capacity bounded by the free space behind the store; nil when neither is known.
-func effectiveCapacity(cfg M) *int64 {
+func effectiveCapacity(cfg *storeFile) *int64 {
 	c, ok := capacity(cfg)
 	if !ok {
 		return nil
@@ -102,11 +136,11 @@ func effectiveCapacity(cfg M) *int64 {
 	return &v
 }
 
-func capacity(cfg M) (uint64, bool) {
-	c, hasC := jU64(cfg, "capacityBytes")
+func capacity(cfg *storeFile) (uint64, bool) {
+	c, hasC := cfg.CapacityBytes.V, cfg.CapacityBytes.Set
 	var f uint64
 	hasF := false
-	if p := jStr(cfg, "backingPath"); p != "" {
+	if p := cfg.BackingPath.V; p != "" {
 		f, hasF = freeBytes(p)
 	}
 	switch {
@@ -121,8 +155,8 @@ func capacity(cfg M) (uint64, bool) {
 }
 
 // storeReachable: any HTTP answer from the loopback endpoint means the store process is up.
-func storeReachable(cfg M) bool {
-	u := jStr(cfg, "localEndpoint")
+func storeReachable(cfg *storeFile) bool {
+	u := cfg.LocalEndpoint.V
 	if u == "" {
 		return false
 	}
@@ -134,23 +168,17 @@ func storeReachable(cfg M) bool {
 	return true
 }
 
-func storeRegistration(cfg M, host string) *contract.StoresRequest {
-	key, secret, ok := readKey(jStr(cfg, "keyFile"))
+func storeRegistration(cfg *storeFile, host string) *contract.StoresRequest {
+	key, secret, ok := readKey(cfg.KeyFile.V)
 	if !ok {
 		return nil
 	}
-	opt := func(k string) *string {
-		if s, ok := jAt(cfg, k).(string); ok {
-			return &s
-		}
-		return nil
-	}
-	logon := jBoolOr(false, cfg, "requiresLogon")
-	return &contract.StoresRequest{HostId: host, Store: contract.StoreRegistration{Id: jStr(cfg, "id"), Zone: opt("zone"), Bucket: opt("bucket"),
-		Endpoint: opt("endpoint"), LocalEndpoint: opt("localEndpoint"), AccessKeyId: &key, SecretAccessKey: &secret,
+	logon := cfg.RequiresLogon.V
+	return &contract.StoresRequest{HostId: host, Store: contract.StoreRegistration{Id: cfg.Id.V, Zone: cfg.Zone.ptr(), Bucket: cfg.Bucket.ptr(),
+		Endpoint: cfg.Endpoint.ptr(), LocalEndpoint: cfg.LocalEndpoint.ptr(), AccessKeyId: &key, SecretAccessKey: &secret,
 		CapacityBytes: effectiveCapacity(cfg), RequiresLogon: &logon}}
 }
 
-func storeReport(cfg M) []contract.StoreReport {
-	return []contract.StoreReport{{Id: jStr(cfg, "id"), Reachable: storeReachable(cfg), CapacityBytes: effectiveCapacity(cfg)}}
+func storeReport(cfg *storeFile) []contract.StoreReport {
+	return []contract.StoreReport{{Id: cfg.Id.V, Reachable: storeReachable(cfg), CapacityBytes: effectiveCapacity(cfg)}}
 }
