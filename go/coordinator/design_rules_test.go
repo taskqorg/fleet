@@ -677,7 +677,7 @@ var designRulesLegacy = map[string]map[string]bool{
 	"resource_apply.go":      {"R-SQL": true},
 	"resource_projection.go": {"R-SQL": true},
 	"rules.go":               {"R-MAP": true, "R-SQL": true},
-	"runners_ci.go":          {"R-GO": true, "R-MAP": true},
+	"runners_ci.go":          {"R-GO": true},
 	"s3.go":                  {"R-GO": true},
 	"sessions.go":            {"R-MAP": true, "R-SQL": true},
 	"store.go":               {"R-MAP": true, "R-SQL": true},
