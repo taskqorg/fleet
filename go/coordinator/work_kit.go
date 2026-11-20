@@ -59,6 +59,9 @@ type kitQueue struct {
 	Step   func(q *Request, now time.Time, c *kitClaim) error
 	Batch  func(q *Request, now time.Time, cs []*kitClaim) error
 	Retry  kitRetry
+	// Workers (queues without Batch): how many claims of one pass run at once, so one slow Call (a provider call, a
+	// script check) does not hold the others; 0 or 1 runs them one by one.
+	Workers int
 }
 
 // kitQueues: the registered queues in registration (pass) order.
@@ -209,14 +212,7 @@ func (k *workKit) well(q *kitQueue) {
 	k.mu.Unlock()
 }
 
-func (k *workKit) queue(name string) *kitQueue {
-	for _, q := range k.queues {
-		if q.Name == name {
-			return q
-		}
-	}
-	panic("work kit: no queue " + name)
-}
+func (k *workKit) queue(name string) *kitQueue { return kitQueueNamed(name) }
 
 // read runs fn in one read-only transaction.
 func (k *workKit) read(ctx context.Context, fn func(q *Request) error) error {
@@ -282,9 +278,29 @@ func (k *workKit) passQueue(ctx context.Context, q *kitQueue) error {
 // run runs claims of q: same-group claims as cohorts (a failed cohort is retried in halves down to single steps), the
 // rest one by one. It returns the steps' errors and the errors of the kit's own failure writes.
 func (k *workKit) run(ctx context.Context, q *kitQueue, now time.Time, claims []*kitClaim) (stepErr, bookErr error) {
+	var mu sync.Mutex
 	single := func(c *kitClaim) {
 		s, b := k.one(ctx, q, now, c)
+		mu.Lock()
 		stepErr, bookErr = errors.Join(stepErr, s), errors.Join(bookErr, b)
+		mu.Unlock()
+	}
+	if q.Batch == nil && q.Workers > 1 {
+		var wg sync.WaitGroup
+		slots := make(chan struct{}, q.Workers)
+		for _, c := range claims {
+			if ctx.Err() != nil {
+				break
+			}
+			slots <- struct{}{}
+			wg.Add(1)
+			go func(c *kitClaim) {
+				defer func() { <-slots; wg.Done() }()
+				single(c)
+			}(c)
+		}
+		wg.Wait()
+		return errors.Join(stepErr, ctx.Err()), bookErr
 	}
 	batch := func(cs []*kitClaim) error {
 		return k.tx(ctx, func(r *Request) error { return q.Batch(r, now, cs) })
@@ -368,6 +384,9 @@ func (k *workKit) step(ctx context.Context, q *kitQueue, now time.Time, c *kitCl
 		err = run(ctx, func(r *Request) error {
 			if err := q.Step(r, now, c); err != nil {
 				return err
+			}
+			if c.Call != nil {
+				return nil // the item's retries reset once its record commits; a failed record keeps the selection's guard
 			}
 			return kitReset(r, q.Retry, c.Key, now)
 		})
@@ -492,38 +511,76 @@ func startWorkKit(ctx context.Context, a *App) {
 	}
 	wake := make(chan string, 64)
 	go kitListen(ctx, a.store.pool.Config().ConnConfig.ConnString(), wake)
+	// Each lane (the queue name up to its first '-': resource-build, resource-repair and resource-work are one) has its own
+	// loop, one pass at a time, so one lane's slow work (a pipeline's provider call) never holds another's.
+	lanes := map[string][]*kitQueue{}
+	var order []string
+	for _, q := range queues {
+		lane, _, _ := strings.Cut(q.Name, "-")
+		if lanes[lane] == nil {
+			order = append(order, lane)
+		}
+		lanes[lane] = append(lanes[lane], q)
+	}
+	wakes := make(map[string]chan string, len(lanes))
+	for _, lane := range order {
+		w := make(chan string, 64)
+		wakes[lane] = w
+		go kitLoop(ctx, k, lanes[lane], w)
+	}
 	go func() {
-		next := make(map[string]time.Time, len(queues))
-		timer := time.NewTimer(0)
-		defer timer.Stop()
-		for ctx.Err() == nil {
-			now := time.Now()
-			soonest := now.Add(time.Hour)
-			for _, q := range queues {
-				if !now.Before(next[q.Name]) {
-					if err := k.passQueue(ctx, q); err != nil && ctx.Err() == nil {
-						log.Printf("work kit: %v", err)
-					}
-					next[q.Name] = time.Now().Add(q.Period)
-				}
-				if next[q.Name].Before(soonest) {
-					soonest = next[q.Name]
-				}
-			}
-			timer.Reset(time.Until(soonest))
+		for {
 			select {
 			case <-ctx.Done():
 				return
 			case name := <-wake:
-				for _, q := range queues {
-					if name == "" || name == q.Name {
-						next[q.Name] = time.Time{}
+				lane, _, _ := strings.Cut(name, "-")
+				for l, w := range wakes {
+					if name == "" || l == lane {
+						select {
+						case w <- name:
+						default:
+						}
 					}
 				}
-			case <-timer.C:
 			}
 		}
 	}()
+}
+
+// kitLoop passes each queue of one lane every Period and at once on a wake naming it (an empty name names every
+// queue); one pass at a time.
+func kitLoop(ctx context.Context, k *workKit, queues []*kitQueue, wake <-chan string) {
+	next := make(map[string]time.Time, len(queues))
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	for ctx.Err() == nil {
+		now := time.Now()
+		soonest := now.Add(time.Hour)
+		for _, q := range queues {
+			if !now.Before(next[q.Name]) {
+				if err := k.passQueue(ctx, q); err != nil && ctx.Err() == nil {
+					log.Printf("work kit: %v", err)
+				}
+				next[q.Name] = time.Now().Add(q.Period)
+			}
+			if next[q.Name].Before(soonest) {
+				soonest = next[q.Name]
+			}
+		}
+		timer.Reset(time.Until(soonest))
+		select {
+		case <-ctx.Done():
+			return
+		case name := <-wake:
+			for _, q := range queues {
+				if name == "" || name == q.Name {
+					next[q.Name] = time.Time{}
+				}
+			}
+		case <-timer.C:
+		}
+	}
 }
 
 // kitListen: one fleet_work listener per kit; a failed listener only delays work to each queue's period.

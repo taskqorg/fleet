@@ -31,7 +31,10 @@ func (q *Queries) LabWorkDelete(ctx context.Context, experimentID string) error 
 }
 
 const labWorkDue = `-- name: LabWorkDue :many
-SELECT experiment_id,attempts FROM lab_work WHERE next_attempt_at<=$1::pg_catalog.timestamptz ORDER BY next_attempt_at,experiment_id LIMIT $2
+SELECT experiment_id,attempts FROM (
+ SELECT e.id AS experiment_id,0 AS attempts,NULL::timestamptz AS due FROM experiment e WHERE e.state='running' AND NOT EXISTS(SELECT 1 FROM lab_work w WHERE w.experiment_id=e.id)
+ UNION ALL SELECT experiment_id,attempts,next_attempt_at FROM lab_work WHERE next_attempt_at<=$1::pg_catalog.timestamptz) d
+ORDER BY due NULLS FIRST,experiment_id LIMIT $2
 `
 
 type LabWorkDueParams struct {
@@ -44,6 +47,7 @@ type LabWorkDueRow struct {
 	Attempts     int32
 }
 
+// The due experiments, and a running experiment without its row (one set running outside the lab queue), first.
 func (q *Queries) LabWorkDue(ctx context.Context, arg LabWorkDueParams) ([]LabWorkDueRow, error) {
 	rows, err := q.db.Query(ctx, labWorkDue, arg.Now, arg.Lim)
 	if err != nil {

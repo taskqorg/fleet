@@ -1054,9 +1054,14 @@ func pipelineClaimCall(q *Request, run doc, row, connection, tool string) (strin
 
 // pipelineGateway: one provider call through the gateway with a claimed token, outside any transaction; the gateway's
 // spool line becomes the step's tool_run (ingested here, so the row exists when the step records the call).
-func pipelineGateway(ctx context.Context, a *App, token, connection, tool string, args any, idempotent bool) contract.CallLine {
+func pipelineGateway(ctx context.Context, a *App, row, token, connection, tool string, args any, idempotent bool) contract.CallLine {
 	writeSnapshot(ctx, a) // the gateway must see the token before the call
 	line := gatewayCall(ctx, token, connection, tool, args, idempotent)
+	// Revoked at once in its own write, even when the caller left or the record fails: a live token would keep the key
+	// reachable. The recording step revokes again (idempotent), and a run's end revokes every token of its steps.
+	if err := runTx(context.WithoutCancel(ctx), a, nil, true, "", func(q *Request) error { return revokeTokens(q, row) }); err != nil {
+		log.Printf("revoke %s: %v", row, err)
+	}
 	if _, err := connIngestPass(context.WithoutCancel(ctx), a); err != nil {
 		log.Printf("ingest %s: %v", connection, err)
 	}
@@ -1142,8 +1147,10 @@ func pipelineSoon(q *Request, runID string) error {
 	return kitNotify(q, "pipeline")
 }
 
-// pipelineLater: the run waits for a wake, or its next look after pipelineEvery.
-func pipelineLater(q *Request, runID string, now time.Time) error {
+// pipelineLater: the run waits for a wake, or its next look pipelineEvery after this write (a call may have taken
+// longer than that since the pass began).
+func pipelineLater(q *Request, runID string) error {
+	now := time.Now()
 	at := now.Add(100 * 365 * 24 * time.Hour)
 	if pipelineEvery > 0 {
 		at = now.Add(pipelineEvery)
@@ -1154,6 +1161,9 @@ func pipelineLater(q *Request, runID string, now time.Time) error {
 // pipelineEnded: a run that ended in q's transaction: its experiment looks again and its own row runs once more for what
 // follows an end (draft examples), then goes.
 func pipelineEnded(q *Request, run doc) error {
+	if err := pipelineRevokeSteps(q, astr(run["id"])); err != nil {
+		return err
+	}
 	if id := astr(run["experimentId"]); id != "" {
 		if err := labEnqueue(q, id); err != nil {
 			return err
@@ -1162,19 +1172,41 @@ func pipelineEnded(q *Request, run doc) error {
 	return pipelineSoon(q, astr(run["id"]))
 }
 
+// pipelineRevokeSteps revokes every live call token of run id's steps (a run that ended or left the queue).
+func pipelineRevokeSteps(q *Request, runID string) error {
+	rs, err := queryRows(q, "SELECT DISTINCT data->>'executionId' AS id FROM document WHERE kind='run-token' AND starts_with(data->>'executionId',$1||':step:') AND NOT data ? 'revokedAt'", runID)
+	if err != nil {
+		return err
+	}
+	for _, r := range rs {
+		if err := revokeTokens(q, astr(r["id"])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pipelineWorkDone: run id leaves the queue; no token of its steps stays live.
+func pipelineWorkDone(q *Request, runID string) error {
+	if err := pipelineRevokeSteps(q, runID); err != nil {
+		return err
+	}
+	return q.db().PipelineWorkDelete(q.ctx(), runID)
+}
+
 // pipelineWorkStep: one step of run c.Key (the pipeline queue's step, in the kit's transaction).
 func pipelineWorkStep(q *Request, now time.Time, c *kitClaim) error {
 	if err := acquireTxLock(q, GLOBAL); err != nil {
 		return err
 	}
 	if _, err := q.db().PipelineRunLock(q.ctx(), c.Key); errors.Is(err, pgx.ErrNoRows) {
-		return q.db().PipelineWorkDelete(q.ctx(), c.Key)
+		return pipelineWorkDone(q, c.Key)
 	} else if err != nil {
 		return err
 	}
 	run, err := getRun(q, c.Key)
 	if pipelineFormatUnsupported(err) || err == nil && run == nil {
-		return q.db().PipelineWorkDelete(q.ctx(), c.Key) // a historical plan never runs again
+		return pipelineWorkDone(q, c.Key) // a historical plan never runs again
 	}
 	if err != nil {
 		return err
@@ -1223,7 +1255,7 @@ func pipelineWorkStep(q *Request, now time.Time, c *kitClaim) error {
 		}
 		return nil
 	}
-	return q.db().PipelineWorkDelete(q.ctx(), c.Key)
+	return pipelineWorkDone(q, c.Key)
 }
 
 // pipelineNext selects the plan entries up to the first step still to run and returns its index; a run with none left
@@ -1312,7 +1344,7 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run doc, i int) erro
 		c.Call = func(ctx context.Context) any {
 			line := refused
 			if line == nil {
-				l := pipelineGateway(ctx, a, token, connection, tool, doc{"jobId": jobID}, idempotent)
+				l := pipelineGateway(ctx, a, row, token, connection, tool, doc{"jobId": jobID}, idempotent)
 				line = &l
 			}
 			out, artifact, err := pipelinePolled(ctx, a, snapshot, i, *line)
@@ -1328,7 +1360,7 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run doc, i int) erro
 		return err
 	}
 	if e == nil || !terminal(e) {
-		return pipelineLater(q, runID, now) // an unconfirmed running state is not final: the host may still report the real outcome
+		return pipelineLater(q, runID) // an unconfirmed running state is not final: the host may still report the real outcome
 	}
 	if st := astr(e["state"]); st != "succeeded" {
 		problem := "step:cancelled"
@@ -1353,7 +1385,7 @@ func pipelineStepAt(q *Request, now time.Time, c *kitClaim, run doc, i int) erro
 		return err
 	}
 	if pending > 0 {
-		return pipelineLater(q, runID, now) // uploads can finish after the completion receipt
+		return pipelineLater(q, runID) // uploads can finish after the completion receipt
 	}
 	arts, err := artifactsOf(q, astr(s["executionId"]))
 	if err != nil {
@@ -1483,7 +1515,7 @@ func pipelinePrepared(q *Request, c *kitClaim, run doc, i int, prepared *pipelin
 		return pipelineSubmit(q, c, run, i, resolved, submitTool)
 	}
 	// The start runs under a savepoint: one that fails leaves nothing of it, and the step fails from here.
-	revision := pipelineRevision(run)
+	revision, dispatchBefore := pipelineRevision(run), clone(pipelinePlanEntry(run, i)["dispatch"])
 	if err := exec(q, "SAVEPOINT pipeline_start"); err != nil {
 		return err
 	}
@@ -1537,6 +1569,7 @@ func pipelinePrepared(q *Request, c *kitClaim, run doc, i int, prepared *pipelin
 	}
 	delete(s, "executionId")
 	mapOf(run["plan"])["revision"] = revision
+	pipelinePlanEntry(run, i)["dispatch"] = dispatchBefore
 	return failStep(q, run, i, problem, msg)
 }
 
@@ -1554,7 +1587,7 @@ func pipelineSubmit(q *Request, c *kitClaim, run doc, i int, resolved any, submi
 	}
 	snapshot, revision := run, pipelineRevision(run)
 	c.Call = func(ctx context.Context) any {
-		line := pipelineGateway(ctx, a, token, connection, tool, resolved, idempotent)
+		line := pipelineGateway(ctx, a, row, token, connection, tool, resolved, idempotent)
 		out := pipelineSyncOutput(ctx, a, snapshot, i, line)
 		return pipelineRecord{revision: revision, revoke: row, apply: func(q *Request, run doc) error {
 			return pipelineSubmitted(q, c, run, i, line, resolved, submitTool, out)
@@ -1607,7 +1640,7 @@ func pipelineSubmitted(q *Request, c *kitClaim, run doc, i int, line contract.Ca
 		c.Call = func(ctx context.Context) any {
 			recent := refused
 			if recent == nil {
-				l := pipelineGateway(ctx, a, token, connection, tool, doc{}, idempotent)
+				l := pipelineGateway(ctx, a, row, token, connection, tool, doc{}, idempotent)
 				recent = &l
 			}
 			return pipelineRecord{revision: revision, revoke: row, apply: func(q *Request, run doc) error {
@@ -1696,7 +1729,7 @@ func pipelineJobStarted(q *Request, run doc, i int, line contract.CallLine) erro
 	if err := exec(q, "UPDATE execution SET data=data||jsonb_build_object('jobId',$2::text) WHERE id=$1", stepRow(run, i), jobID); err != nil {
 		return err
 	}
-	return pipelineLater(q, astr(run["id"]), time.Now())
+	return pipelineLater(q, astr(run["id"]))
 }
 
 // pipelinePolled reads a job poll's answer outside the transaction: the job's state, its output (Meshy's task shape
@@ -1745,7 +1778,7 @@ func pipelinePollRecord(q *Request, now time.Time, run doc, i int, line contract
 	runID, row := astr(run["id"]), stepRow(run, i)
 	if line.Outcome != contract.CallOutcomeOk {
 		if line.Outcome == contract.CallOutcomeUnknown {
-			return pipelineLater(q, runID, now)
+			return pipelineLater(q, runID)
 		}
 		code := deref(line.ErrorCode)
 		return failStep(q, run, i, problemOf(string(line.Outcome), code), "Job poll failed: "+code)
@@ -1777,7 +1810,7 @@ func pipelinePollRecord(q *Request, now time.Time, run doc, i int, line contract
 	if err := putRun(q, run); err != nil {
 		return err
 	}
-	return pipelineLater(q, runID, now)
+	return pipelineLater(q, runID)
 }
 
 // pipelineImportDrafts: a finished draft-examples run's examples become unapproved examples, each with its rating
@@ -1801,7 +1834,7 @@ func pipelineImportDrafts(q *Request, run doc, drafts pipelineDrafts) error {
 			return err
 		}
 	}
-	return q.db().PipelineWorkDelete(q.ctx(), astr(run["id"]))
+	return pipelineWorkDone(q, astr(run["id"]))
 }
 
 // callOutput: the provider's reply body of an in-process call, decoded; nil when there is none.

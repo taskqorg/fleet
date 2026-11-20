@@ -1710,7 +1710,7 @@ func labWorkStep(q *Request, now time.Time, c *kitClaim) error {
 		return err
 	}
 	state, err := q.db().LabExperimentState(q.ctx(), id)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && (state != "running" || labLaterEvery <= 0) {
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && state != "running" {
 		return q.db().LabWorkDelete(q.ctx(), id)
 	}
 	if err != nil {
@@ -1719,7 +1719,11 @@ func labWorkStep(q *Request, now time.Time, c *kitClaim) error {
 	if _, err := q.db().LabWorkEnsure(q.ctx(), id); err != nil {
 		return err
 	}
-	return kitSchedule(q, "lab", id, now.Add(labLaterEvery))
+	at := now.Add(100 * 365 * 24 * time.Hour) // only on wakes
+	if labLaterEvery > 0 {
+		at = time.Now().Add(labLaterEvery)
+	}
+	return kitSchedule(q, "lab", id, at)
 }
 
 // labPendingChecks: the latest comparable trials of experiment id whose script checks have not scored them, with what

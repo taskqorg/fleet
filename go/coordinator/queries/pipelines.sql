@@ -20,7 +20,11 @@ SELECT id FROM execution WHERE id=$1 FOR UPDATE;
 SELECT coalesce(data->>'pipelineRunId','')::text AS run_id FROM execution WHERE id=$1;
 
 -- name: LabWorkDue :many
-SELECT experiment_id,attempts FROM lab_work WHERE next_attempt_at<=sqlc.arg(now)::pg_catalog.timestamptz ORDER BY next_attempt_at,experiment_id LIMIT sqlc.arg(lim);
+-- The due experiments, and a running experiment without its row (one set running outside the lab queue), first.
+SELECT experiment_id,attempts FROM (
+ SELECT e.id AS experiment_id,0 AS attempts,NULL::timestamptz AS due FROM experiment e WHERE e.state='running' AND NOT EXISTS(SELECT 1 FROM lab_work w WHERE w.experiment_id=e.id)
+ UNION ALL SELECT experiment_id,attempts,next_attempt_at FROM lab_work WHERE next_attempt_at<=sqlc.arg(now)::pg_catalog.timestamptz) d
+ORDER BY due NULLS FIRST,experiment_id LIMIT sqlc.arg(lim);
 
 -- name: LabWorkEnsure :execrows
 INSERT INTO lab_work(experiment_id) VALUES($1) ON CONFLICT DO NOTHING;
