@@ -222,7 +222,7 @@ func (a *App) notePollSuccess(ctx context.Context, host string) {
 		if stale {
 			return nil
 		}
-		if err := exec(wq, "UPDATE document SET data=data-'pollError',updated_at=now() WHERE kind='host-observation' AND id=$1 AND data ? 'pollError'", host); err != nil {
+		if err := wq.db().ClearObservationPollError(wq.ctx(), host); err != nil {
 			return err
 		}
 		return problemClose(wq, hostPollCause(host))

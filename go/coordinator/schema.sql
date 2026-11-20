@@ -3489,3 +3489,285 @@ AS $function$
  FROM n WHERE execution_id=eid
 $function$
 ;
+
+-- migration 78: hosts, accounts, connections and tokens out of the document table (docs/designs/fleet-standard.md S1,
+-- stage 5). Hosts, host observations, watches, subscriptions (managed-account) with their inspections, checks and
+-- catalogues, API connections, connection keys, run tokens and person settings become tables. A record field a query
+-- filters, joins or orders, a policy reads (holder) or a state machine owns (host.state, connection_key.state) is a
+-- column; payload holds the record's other fields; seq keeps the document sequence. The change feed keeps its kinds
+-- (host, managed-account, api-connection, connection-key); the holder rule of the document policy moves to the tables
+-- that had it. secret and account-action documents are no longer written; any left are deleted with the moved kinds.
+SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+CREATE TABLE host(
+ id text PRIMARY KEY,
+ host_id text NOT NULL UNIQUE,
+ holder text NULL,
+ state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'removed')),
+ intake text NULL,
+ secret_hash text NULL,
+ removed_secret_hash text NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE host_observation(
+ id text PRIMARY KEY,
+ holder text NULL,
+ last_seen_at timestamptz NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE watch(
+ id text PRIMARY KEY,
+ session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE managed_account(
+ id text PRIMARY KEY,
+ name text NULL,
+ holder text NULL,
+ intake text NULL,
+ harness text NULL,
+ provider text NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE account_inspection(
+ id text PRIMARY KEY,
+ account_id text NULL REFERENCES managed_account(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ execution_id text NULL,
+ host_id text NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE account_check(
+ id text PRIMARY KEY,
+ account_id text NULL REFERENCES managed_account(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ host_id text NULL,
+ binding text NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE account_catalogue(
+ id text PRIMARY KEY,
+ host_id text NULL,
+ harness text NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE api_connection(
+ id text PRIMARY KEY,
+ name text NOT NULL UNIQUE,
+ provider text NULL,
+ holder text NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE connection_key(
+ id text PRIMARY KEY,
+ connection_id text NOT NULL REFERENCES api_connection(name) ON DELETE CASCADE ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ fingerprint text NULL,
+ state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'disabled', 'retired')),
+ added_at timestamptz NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE run_token(
+ id text PRIMARY KEY,
+ sha256 text NULL,
+ execution_id text NULL,
+ pipeline_run_id text NULL,
+ personal text NULL,
+ step boolean NULL,
+ directed_by text NULL,
+ created_at timestamptz NULL,
+ revoked_at timestamptz NULL,
+ director_access_revoked_at timestamptz NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE TABLE person_setting(
+ id text PRIMARY KEY,
+ email text NULL,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX host_secret ON host(secret_hash) WHERE secret_hash IS NOT NULL;
+CREATE INDEX host_removed_secret ON host(removed_secret_hash) WHERE removed_secret_hash IS NOT NULL;
+CREATE INDEX watch_session ON watch(session_id);
+CREATE INDEX managed_account_name ON managed_account(name);
+CREATE INDEX account_inspection_account ON account_inspection(account_id, seq);
+CREATE INDEX account_inspection_execution ON account_inspection(execution_id) WHERE execution_id IS NOT NULL;
+CREATE INDEX account_check_account ON account_check(account_id, host_id, binding);
+CREATE INDEX account_catalogue_host ON account_catalogue(host_id, harness);
+CREATE INDEX connection_key_connection ON connection_key(connection_id, added_at, seq);
+CREATE INDEX run_token_execution ON run_token(execution_id) WHERE execution_id IS NOT NULL;
+CREATE INDEX run_token_pipeline_run ON run_token(pipeline_run_id) WHERE pipeline_run_id IS NOT NULL;
+CREATE INDEX run_token_open ON run_token(seq) WHERE revoked_at IS NULL;
+CREATE INDEX run_token_personal ON run_token(personal) WHERE personal IS NOT NULL;
+CREATE OR REPLACE FUNCTION pg_temp.str(v jsonb) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'string' THEN v #>> '{}' END $$;
+CREATE OR REPLACE FUNCTION pg_temp.ms(v jsonb) RETURNS timestamptz LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'number' THEN to_timestamp((v #>> '{}')::float8 / 1000) END $$;
+CREATE OR REPLACE FUNCTION pg_temp.bool(v jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'boolean' THEN (v #>> '{}')::boolean END $$;
+CREATE OR REPLACE FUNCTION pg_temp.rest(d jsonb, cols jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+ SELECT coalesce(jsonb_object_agg(k, v), '{}') FROM jsonb_each(d) e(k, v)
+ WHERE NOT (cols ? k AND (cols->>k = '' OR jsonb_typeof(v) IN (cols->>k, 'null')))
+$$;
+INSERT INTO host(id, host_id, holder, state, intake, secret_hash, removed_secret_hash, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'hostId'), pg_temp.str(d.data->'holder'), CASE WHEN d.data->>'state' = 'removed' THEN 'removed' ELSE 'active' END, pg_temp.str(d.data->'intake'), pg_temp.str(d.data->'secretHash'), pg_temp.str(d.data->'removedSecretHash'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","hostId":"string","holder":"string","state":"string","intake":"string","secretHash":"string","removedSecretHash":"string","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'host' AND jsonb_typeof(d.data->'hostId') = 'string';
+INSERT INTO host_observation(id, holder, last_seen_at, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'holder'), pg_temp.ms(d.data->'lastSeenAt'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","holder":"string","lastSeenAt":"number","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'host-observation';
+INSERT INTO watch(id, session_id, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'sessionId'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","sessionId":"string","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'watch' AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.data->>'sessionId');
+INSERT INTO managed_account(id, name, holder, intake, harness, provider, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'name'), pg_temp.str(d.data->'holder'), pg_temp.str(d.data->'intake'), pg_temp.str(d.data->'harness'), pg_temp.str(d.data->'provider'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","name":"string","holder":"string","intake":"string","harness":"string","provider":"string","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'managed-account';
+INSERT INTO account_inspection(id, account_id, execution_id, host_id, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'accountId'), pg_temp.str(d.data->'executionId'), pg_temp.str(d.data->'hostId'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","accountId":"string","executionId":"string","hostId":"string","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'account-inspection' AND (d.data->>'accountId' IS NULL OR EXISTS (SELECT 1 FROM document a WHERE a.kind = 'managed-account' AND a.id = d.data->>'accountId'));
+INSERT INTO account_check(id, account_id, host_id, binding, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'accountId'), pg_temp.str(d.data->'hostId'), pg_temp.str(d.data->'binding'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","accountId":"string","hostId":"string","binding":"string","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'account-check' AND (d.data->>'accountId' IS NULL OR EXISTS (SELECT 1 FROM document a WHERE a.kind = 'managed-account' AND a.id = d.data->>'accountId'));
+INSERT INTO account_catalogue(id, host_id, harness, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'hostId'), pg_temp.str(d.data->'harness'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","hostId":"string","harness":"string","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'account-catalogue';
+INSERT INTO api_connection(id, name, provider, holder, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'name'), pg_temp.str(d.data->'provider'), pg_temp.str(d.data->'holder'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","name":"string","provider":"string","holder":"string","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'api-connection' AND jsonb_typeof(d.data->'name') = 'string';
+INSERT INTO connection_key(id, connection_id, fingerprint, state, added_at, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'connectionId'), pg_temp.str(d.data->'fingerprint'), CASE WHEN d.data->>'state' IN ('active', 'disabled', 'retired') THEN d.data->>'state' ELSE 'disabled' END, pg_temp.ms(d.data->'addedAt'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","connectionId":"string","fingerprint":"string","state":"string","addedAt":"number","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'connection-key' AND EXISTS (SELECT 1 FROM document a WHERE a.kind = 'api-connection' AND a.data->>'name' = d.data->>'connectionId');
+INSERT INTO run_token(id, sha256, execution_id, pipeline_run_id, personal, step, directed_by, created_at, revoked_at, director_access_revoked_at, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'sha256'), pg_temp.str(d.data->'executionId'), pg_temp.str(d.data->'pipelineRunId'), pg_temp.str(d.data->'personal'), pg_temp.bool(d.data->'step'), pg_temp.str(d.data->'directedBy'), pg_temp.ms(d.data->'createdAt'), pg_temp.ms(d.data->'revokedAt'), pg_temp.ms(d.data->'directorAccessRevokedAt'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","sha256":"string","executionId":"string","pipelineRunId":"string","personal":"string","step":"boolean","directedBy":"string","createdAt":"number","revokedAt":"number","directorAccessRevokedAt":"number","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'run-token';
+INSERT INTO person_setting(id, email, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, pg_temp.str(d.data->'email'), d.project_id,
+ pg_temp.rest(d.data, '{"id":"","email":"string","projectId":""}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'person-setting';
+-- The copies' deferred foreign keys are checked now: a pending check would block the ALTER TABLEs below.
+SET CONSTRAINTS ALL IMMEDIATE;
+DROP TRIGGER resource_capture_metadata_insert ON document;
+DROP TRIGGER resource_capture_metadata_update ON document;
+DROP TRIGGER resource_capture_metadata_delete ON document;
+ALTER TABLE document DISABLE TRIGGER document_change;
+DELETE FROM document WHERE kind IN ('host', 'host-observation', 'watch', 'managed-account', 'account-inspection', 'account-check', 'account-catalogue', 'account-action', 'api-connection', 'connection-key', 'run-token', 'secret', 'person-setting');
+ALTER TABLE document ENABLE TRIGGER document_change;
+ALTER TABLE document DROP CONSTRAINT document_moved_kind;
+ALTER TABLE document ADD CONSTRAINT document_moved_kind CHECK (kind NOT IN ('session', 'message', 'event', 'event-delta', 'queued-message', 'command', 'handoff', 'session-fork', 'session-transition', 'worker-done', 'host', 'host-observation', 'watch', 'managed-account', 'account-inspection', 'account-check', 'account-catalogue', 'account-action', 'api-connection', 'connection-key', 'run-token', 'secret', 'person-setting'));
+ALTER POLICY project_scope ON document USING (fleet_visible(project_id) OR (kind = 'setting-change' AND data->>'holder' = current_setting('fleet.person', true)));
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY string_to_array('host,host_observation,watch,managed_account,account_inspection,account_check,account_catalogue,api_connection,connection_key,run_token,person_setting', ',') LOOP
+  EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+  EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+  IF t IN ('host', 'host_observation', 'managed_account', 'api_connection') THEN
+   EXECUTE format('CREATE POLICY project_scope ON %I USING (fleet_visible(project_id) OR holder = current_setting(''fleet.person'', true))', t);
+  ELSE
+   EXECUTE format('CREATE POLICY project_scope ON %I USING (fleet_visible(project_id))', t);
+  END IF;
+  EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted() OR (tombstoned_at IS NULL'
+   ' AND (project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))))', t);
+ END LOOP;
+END $$;
+-- A row a host's own call writes later for a tombstoned execution or session is born tombstoned (migration 67).
+CREATE TRIGGER run_token_tombstone BEFORE INSERT ON run_token FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+CREATE TRIGGER account_inspection_tombstone BEFORE INSERT ON account_inspection FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+CREATE TRIGGER watch_tombstone BEFORE INSERT ON watch FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+-- The change feed: the same kinds as from the document rows (a host observation as 'host', but not when only its last
+-- contact moved; a subscription and an API connection with their holder; a connection key).
+CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; st text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'setting-change' THEN st := nullif(r.data->>'target', ''); END IF; IF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSIF r.kind IN ('setting-change', 'project-recommendation') THEN k := r.kind; w := r.data->>'holder'; ELSIF r.kind IN ('delivery-state', 'delivery-pr', 'delivery-run', 'delivery-release', 'delivery-check') THEN k := 'delivery'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'host_observation' THEN IF TG_OP = 'UPDATE' AND (to_jsonb(OLD) - '{last_seen_at,updated_at}'::text[]) = (to_jsonb(NEW) - '{last_seen_at,updated_at}'::text[]) THEN RETURN NULL; END IF; k := 'host'; i := r.id; h := r.id; ELSIF TG_TABLE_NAME IN ('managed_account', 'api_connection') THEN k := replace(TG_TABLE_NAME, '_', '-'); i := r.id; w := r.holder; ELSIF TG_TABLE_NAME = 'connection_key' THEN k := 'connection-key'; i := r.id; ELSIF TG_TABLE_NAME = 'session' THEN k := 'session'; i := r.id; s := r.id; ELSIF TG_TABLE_NAME IN ('message', 'event') THEN k := 'event'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'command' THEN k := 'command'; i := r.id; h := r.host_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder, setting_target) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w, st); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $$;
+CREATE TRIGGER host_observation_change AFTER INSERT OR UPDATE OR DELETE ON host_observation FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER managed_account_change AFTER INSERT OR UPDATE OR DELETE ON managed_account FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER api_connection_change AFTER INSERT OR UPDATE OR DELETE ON api_connection FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER connection_key_change AFTER INSERT OR UPDATE OR DELETE ON connection_key FOR EACH ROW EXECUTE FUNCTION fleet_change();
+-- Resource metadata (migration 55): a subscription's or an API connection's class, captured from its own table.
+DROP FUNCTION resource_metadata_class(document);
+CREATE FUNCTION resource_metadata_class(p_kind text, p_id text, p_provider jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+ SELECT jsonb_build_object('accountId', p_id, 'connectionName', CASE WHEN p_kind = 'api-connection' THEN substr(p_id, 12) END,
+  'kind', p_kind, 'provider', p_provider)
+$$;
+CREATE OR REPLACE FUNCTION resource_capture_metadata() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE old_scope text := current_setting('fleet.project_ids',true); old_class jsonb:='{}'; new_class jsonb:='{}'; mid text;
+ k text := replace(TG_TABLE_NAME, '_', '-');
+BEGIN
+ IF TG_TABLE_NAME NOT IN ('api_connection', 'managed_account') OR TG_WHEN <> 'AFTER' THEN RAISE EXCEPTION 'invalid metadata capture context'; END IF;
+ IF TG_OP <> 'INSERT' THEN old_class:=resource_metadata_class(k, OLD.id, coalesce(to_jsonb(OLD.provider), OLD.payload->'provider')); mid:=OLD.id; END IF;
+ IF TG_OP <> 'DELETE' THEN new_class:=resource_metadata_class(k, NEW.id, coalesce(to_jsonb(NEW.provider), NEW.payload->'provider')); mid:=NEW.id; END IF;
+ IF old_class IS NOT DISTINCT FROM new_class THEN RETURN NULL; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ INSERT INTO resource_metadata_repair(metadata_id,old_class,new_class) VALUES(mid,old_class,new_class)
+ ON CONFLICT(source_xid,metadata_id) DO UPDATE SET new_class=excluded.new_class;
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true);
+ PERFORM fleet_enqueue_wake('fleet_work','resource-repair');
+ RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+ PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
+END $$;
+CREATE TRIGGER api_connection_capture_metadata AFTER INSERT OR UPDATE OR DELETE ON api_connection FOR EACH ROW EXECUTE FUNCTION resource_capture_metadata();
+CREATE TRIGGER managed_account_capture_metadata AFTER INSERT OR UPDATE OR DELETE ON managed_account FOR EACH ROW EXECUTE FUNCTION resource_capture_metadata();
+CREATE OR REPLACE FUNCTION fleet_exec_conn_meta(conn_name text, aid text) RETURNS TABLE(provider text, is_api_conn boolean)
+ LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE prev text := current_setting('fleet.project_ids', true); v_provider text; v_is_api boolean := false;
+BEGIN
+ IF coalesce(conn_name, '') = '' AND coalesce(aid, '') = '' THEN
+  provider := NULL; is_api_conn := false; RETURN NEXT; RETURN;
+ END IF;
+ PERFORM set_config('fleet.project_ids', '*', true);
+ BEGIN
+  SELECT coalesce(
+   CASE WHEN coalesce(conn_name, '') <> '' THEN (SELECT coalesce(c.provider, c.payload->>'provider') FROM api_connection c WHERE c.id = 'connection:' || conn_name) END,
+   CASE WHEN coalesce(aid, '') <> '' THEN (SELECT coalesce(c.provider, c.payload->>'provider') FROM api_connection c WHERE c.id = aid) END
+  ) INTO v_provider;
+  IF coalesce(aid, '') <> '' THEN
+   SELECT EXISTS(SELECT 1 FROM api_connection c WHERE c.id = aid) INTO v_is_api;
+  END IF;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true); RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ provider := v_provider; is_api_conn := coalesce(v_is_api, false); RETURN NEXT;
+END $function$;

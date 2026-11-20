@@ -316,6 +316,8 @@ func designStateOwners() []designOwner {
 		{"question", "question_states.go", []string{"state"}},
 		{"question", "problems.go", []string{"cause"}},
 		{"experiment", "experiment_states.go", []string{"state"}},
+		{"host", "host_states.go", []string{"state"}},
+		{"connection_key", "key_states.go", []string{"state"}},
 	}
 	for _, q := range kitQueues {
 		out = append(out, designOwner{q.Retry.Table, "work_kit.go", []string{"attempts", "next_attempt_at", "last_error"}})
@@ -532,6 +534,8 @@ func TestDesignTransitions(t *testing.T) {
 	check("pipeline step", pipelineStepTransitions, executionStates, executionEnds, "preparing")
 	check("question", questionTransitions, enum(`CREATE TYPE question_state AS ENUM \(([^)]*)\)`), nil, "open")
 	check("experiment", experimentTransitions, enum(`state text NOT NULL DEFAULT 'draft' CHECK \(state IN \(([^)]*)\)\)`), nil, "draft")
+	check("host", hostTransitions, enum(`state text NOT NULL DEFAULT 'active' CHECK \(state IN \(('active', 'removed')\)\)`), func(s string) bool { return s == "removed" }, "active")
+	check("connection key", connectionKeyTransitions, enum(`state text NOT NULL DEFAULT 'active' CHECK \(state IN \(('active', 'disabled', 'retired')\)\)`), nil, "active")
 	src, err := os.ReadFile("resource_states.go")
 	if err != nil {
 		t.Fatal(err)
@@ -630,7 +634,7 @@ var designRulesOwned = map[string]map[string]string{
 // designRulesLegacy: file -> rules it may still break, generated from the tree
 // at stage 0. Entries are only removed.
 var designRulesLegacy = map[string]map[string]bool{
-	"accounts.go":            {"R-MAP": true, "R-SQL": true},
+	"accounts.go":            {"R-MAP": true},
 	"agent.go":               {"R-MAP": true, "R-SQL": true},
 	"agent_receipts.go":      {"R-SQL": true},
 	"agents.go":              {"R-MAP": true, "R-SQL": true},
@@ -659,10 +663,10 @@ var designRulesLegacy = map[string]map[string]bool{
 	"health.go":              {"R-MAP": true},
 	"host_events.go":         {"R-MAP": true, "R-SQL": true},
 	"host_poll.go":           {"R-MAP": true, "R-SQL": true},
-	"host_poll_health.go":    {"R-MAP": true, "R-SQL": true},
+	"host_poll_health.go":    {"R-MAP": true},
 	"host_receipts.go":       {"R-GO": true, "R-MAP": true, "R-SQL": true},
-	"host_remove.go":         {"R-MAP": true, "R-SQL": true},
-	"hosts.go":               {"R-MAP": true, "R-SQL": true},
+	"host_remove.go":         {"R-MAP": true},
+	"hosts.go":               {"R-MAP": true},
 	"json.go":                {"R-MAP": true},
 	"lab.go":                 {"R-GO": true, "R-MAP": true, "R-SQL": true},
 	"lab_assessment.go":      {"R-MAP": true, "R-SQL": true},
@@ -671,8 +675,8 @@ var designRulesLegacy = map[string]map[string]bool{
 	"lab_pairwise.go":        {"R-MAP": true},
 	"lab_retry.go":           {"R-MAP": true, "R-SQL": true},
 	"lab_variant.go":         {"R-MAP": true},
-	"limits.go":              {"R-MAP": true, "R-SQL": true},
-	"limits_refresh.go":      {"R-MAP": true, "R-SQL": true},
+	"limits.go":              {"R-MAP": true},
+	"limits_refresh.go":      {"R-MAP": true},
 	"main.go":                {"R-GO": true, "R-MAP": true, "R-SQL": true},
 	"nav_counts.go":          {"R-MAP": true, "R-SQL": true},
 	"people.go":              {"R-MAP": true, "R-SQL": true},
@@ -710,5 +714,5 @@ var designRulesLegacy = map[string]map[string]bool{
 	"versions.go":            {"R-GO": true, "R-MAP": true},
 	"view_link.go":           {"R-MAP": true},
 	"wake_outbox.go":         {"R-GO": true, "R-SQL": true},
-	"watch.go":               {"R-MAP": true, "R-SQL": true},
+	"watch.go":               {"R-MAP": true},
 }

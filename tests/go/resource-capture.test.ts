@@ -33,14 +33,14 @@ test('resource capture is atomic, coalesces only its transaction and aligns move
 test('metadata repair uses normalized identities, ignores credential changes and cannot leak maintenance work', async()=>{
  const c=await startCoordinator({name:'resource-meta'});
  try {
-  c.sql(`BEGIN; INSERT INTO document(kind,id,data) VALUES('api-connection','connection:sample','{"provider":"one","key":"invented-key"}');
-   UPDATE document SET data=jsonb_set(data,'{provider}','"two"') WHERE id='connection:sample'; COMMIT;`);
+  c.sql(`BEGIN; INSERT INTO api_connection(id,name,provider,payload) VALUES('connection:sample','sample','one','{"key":"invented-key"}');
+   UPDATE api_connection SET provider='two' WHERE id='connection:sample'; COMMIT;`);
   assert.equal(c.sql("SELECT count(*) FROM resource_metadata_repair WHERE metadata_id='connection:sample'").trim(),'1');
   assert.deepEqual(JSON.parse(c.sql("SELECT new_class FROM resource_metadata_repair WHERE metadata_id='connection:sample'").trim()),{accountId:'connection:sample',connectionName:'sample',kind:'api-connection',provider:'two'});
   assert.equal(c.sql("SELECT old_class FROM resource_metadata_repair WHERE metadata_id='connection:sample'").trim(),'{}');
-  c.sql("UPDATE document SET data=jsonb_set(data,'{key}','\"rotated-invented-key\"') WHERE id='connection:sample'");
+  c.sql("UPDATE api_connection SET payload=jsonb_set(payload,'{key}','\"rotated-invented-key\"') WHERE id='connection:sample'");
   assert.equal(c.sql("SELECT count(*) FROM resource_metadata_repair WHERE metadata_id='connection:sample'").trim(),'1');
-  c.sql("UPDATE document SET data=jsonb_set(data,'{provider}','\"three\"') WHERE id='connection:sample'");
+  c.sql("UPDATE api_connection SET provider='three' WHERE id='connection:sample'");
   assert.equal(c.sql("SELECT count(*) FROM resource_metadata_repair WHERE metadata_id='connection:sample'").trim(),'2');
   assert.equal(c.sql("SET fleet.project_ids='A'; SELECT count(*) FROM resource_metadata_repair").trim(),'0');
   assert.equal(c.sql("SELECT has_function_privilege('fleet_app','resource_enqueue_source(text,text,text)','EXECUTE')").trim(),'f');

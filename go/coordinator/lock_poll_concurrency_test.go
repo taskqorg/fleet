@@ -596,7 +596,7 @@ func TestConcurrentHostPollsReceiptsMessagesNoGlobalContention(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, b := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sessIDs[i], 
+			c, b := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sessIDs[i],
 				"requestId": fmt.Sprintf("req-conc-%d", i), "text": "hello under global lock",
 			}, env.ownerHeaders())
 			if c != 200 {
@@ -722,7 +722,7 @@ func TestHeartbeatDebounceAndOnlineOverlay(t *testing.T) {
 		t.Fatal(c)
 	}
 	var updated1 time.Time
-	if err := env.ownerStore.pool.QueryRow(env.ctx, "SELECT updated_at FROM document WHERE id='h-hb' AND kind='host-observation'").Scan(&updated1); err != nil {
+	if err := env.ownerStore.pool.QueryRow(env.ctx, "SELECT updated_at FROM host_observation WHERE id='h-hb'").Scan(&updated1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -733,7 +733,7 @@ func TestHeartbeatDebounceAndOnlineOverlay(t *testing.T) {
 		t.Fatal(c)
 	}
 	var updated2 time.Time
-	if err := env.ownerStore.pool.QueryRow(env.ctx, "SELECT updated_at FROM document WHERE id='h-hb' AND kind='host-observation'").Scan(&updated2); err != nil {
+	if err := env.ownerStore.pool.QueryRow(env.ctx, "SELECT updated_at FROM host_observation WHERE id='h-hb'").Scan(&updated2); err != nil {
 		t.Fatal(err)
 	}
 	if !updated2.Equal(updated1) {
@@ -742,7 +742,7 @@ func TestHeartbeatDebounceAndOnlineOverlay(t *testing.T) {
 
 	// Simulate DB timestamp aging beyond 30s while memory heartbeat saw a recent poll: overlay must keep host online.
 	staleDBTime := nowMs() - onlineMs - 5000
-	if _, err := env.ownerStore.pool.Exec(env.ctx, "UPDATE document SET data = jsonb_set(data, '{lastSeenAt}', to_jsonb($1::bigint)) WHERE id='h-hb' AND kind='host-observation'", staleDBTime); err != nil {
+	if _, err := env.ownerStore.pool.Exec(env.ctx, "UPDATE host_observation SET last_seen_at = to_timestamp($1::bigint/1000.0) WHERE id='h-hb'", staleDBTime); err != nil {
 		t.Fatal(err)
 	}
 	var online bool
@@ -766,7 +766,7 @@ func TestHeartbeatDebounceAndOnlineOverlay(t *testing.T) {
 		t.Fatal(c)
 	}
 	var updated3 time.Time
-	if err := env.ownerStore.pool.QueryRow(env.ctx, "SELECT updated_at FROM document WHERE id='h-hb' AND kind='host-observation'").Scan(&updated3); err != nil {
+	if err := env.ownerStore.pool.QueryRow(env.ctx, "SELECT updated_at FROM host_observation WHERE id='h-hb'").Scan(&updated3); err != nil {
 		t.Fatal(err)
 	}
 	if !updated3.After(updated2) {
@@ -783,7 +783,7 @@ func TestHeartbeatDebounceAndOnlineOverlay(t *testing.T) {
 		t.Fatal(c)
 	}
 	var updated4 time.Time
-	if err := env.ownerStore.pool.QueryRow(env.ctx, "SELECT updated_at FROM document WHERE id='h-hb' AND kind='host-observation'").Scan(&updated4); err != nil {
+	if err := env.ownerStore.pool.QueryRow(env.ctx, "SELECT updated_at FROM host_observation WHERE id='h-hb'").Scan(&updated4); err != nil {
 		t.Fatal(err)
 	}
 	if !updated4.After(updated3) {

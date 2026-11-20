@@ -195,7 +195,7 @@ func pipelineAuthorityStampWithin(q *Request, run doc, index int, connection, to
 	sort.Strings(connections)
 	connectionStamps := []any{}
 	for _, name := range connections {
-		row, err := first(q, "SELECT data FROM document WHERE id=$1 AND kind='api-connection'"+share, "connection:"+name)
+		row, err := first(q, "SELECT "+convTables["api-connection"].record()+" AS data FROM api_connection WHERE id=$1"+share, "connection:"+name)
 		if err != nil {
 			return "", nil, err
 		}
@@ -208,7 +208,7 @@ func pipelineAuthorityStampWithin(q *Request, run doc, index int, connection, to
 	}
 	stamp["connections"] = connectionStamps
 	if host != "" {
-		row, err := first(q, "SELECT data FROM document WHERE id=$1 AND kind='host'"+share, "host:"+host)
+		row, err := first(q, "SELECT "+convTables["host"].record()+" AS data FROM host WHERE id=$1"+share, "host:"+host)
 		if err != nil {
 			return "", nil, err
 		}

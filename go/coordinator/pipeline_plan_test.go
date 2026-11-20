@@ -98,7 +98,7 @@ func TestPipelineAPIClaimAndCurrentAuthority(t *testing.T) {
 	}
 	if err := runTx(env.ctx, env.app, nil, false, "", func(q *Request) error {
 		var count int
-		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM document WHERE kind='run-token' AND data->>'executionId'=$1", stepRow(run, 0)).Scan(&count); err != nil {
+		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM run_token WHERE execution_id=$1", stepRow(run, 0)).Scan(&count); err != nil {
 			return err
 		}
 		if count != 1 {

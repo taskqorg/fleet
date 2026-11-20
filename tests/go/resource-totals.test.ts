@@ -239,8 +239,8 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
     const taskTokSha = createHash('sha256').update('tok-task-' + randomUUID()).digest('hex');
     const taskCallId = 'call-task-' + randomUUID().slice(0, 8);
     const taskCallStart = Date.now() - 250;
-    c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES
-      ('run-token','run-token:${taskTokSha}','desiign',jsonb_build_object('id','run-token:${taskTokSha}','tokenSha256','${taskTokSha}','executionId','leaf-agent-1','directedBy','${OWNER}','projectId','desiign'));`);
+    c.sql(`INSERT INTO run_token(id,execution_id,directed_by,project_id,payload) VALUES
+      ('run-token:${taskTokSha}','leaf-agent-1','${OWNER}','desiign',jsonb_build_object('tokenSha256','${taskTokSha}'));`);
     writeFileSync(
       spoolFile,
       JSON.stringify({
@@ -277,8 +277,8 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
     const rawToken = 'tok-member-' + randomUUID();
     const tokenSha = createHash('sha256').update(rawToken).digest('hex');
     const startedMs = Date.now() - 300;
-    c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES
-      ('run-token','run-token:${tokenSha}',NULL,jsonb_build_object('id','run-token:${tokenSha}','tokenSha256','${tokenSha}','executionId','projless-agent','directedBy','${MEMBER}','projectId',NULL));`);
+    c.sql(`INSERT INTO run_token(id,execution_id,directed_by,project_id,payload) VALUES
+      ('run-token:${tokenSha}','projless-agent','${MEMBER}',NULL,jsonb_build_object('tokenSha256','${tokenSha}'));`);
     const callId = 'call-' + randomUUID().slice(0, 8);
     appendFileSync(
       spoolFile,
@@ -315,8 +315,8 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
 
     // 3. Verify directed_totals RLS as MEMBER vs OUTSIDER, plus revocation via people_set removal & re-add (including personal run-token).
     const personalSha = createHash('sha256').update('tok-personal-' + randomUUID()).digest('hex');
-    c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES
-      ('run-token','run-token:${personalSha}',NULL,jsonb_build_object('id','run-token:${personalSha}','tokenSha256','${personalSha}','personal','cli','executionId','personal-holder','directedBy','${MEMBER}','projectId',NULL));
+    c.sql(`INSERT INTO run_token(id,personal,execution_id,directed_by,project_id,payload) VALUES
+      ('run-token:${personalSha}','cli','personal-holder','${MEMBER}',NULL,jsonb_build_object('tokenSha256','${personalSha}'));
       INSERT INTO execution(id,kind,state,project_id,session_id,directed_by) VALUES ('personal-tr','tool_run','succeeded',NULL,NULL,'${MEMBER}');
       INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,wall_ms,wall_ms_basis) VALUES ('personal-tr',NULL,'${MEMBER}','metered',50,'measured');`);
 
@@ -333,7 +333,7 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
     const people = (await op('people_list', {}, OWNER)).body.people;
     assert.equal((await op('people_set', {people: people.filter((p: any) => p.email !== MEMBER)}, OWNER)).status, 200);
     assert.equal(
-      c.sql(`SELECT ((data ? 'revokedAt') AND (data ? 'directorAccessRevokedAt'))::text FROM document WHERE id='run-token:${personalSha}'`).trim(),
+      c.sql(`SELECT (revoked_at IS NOT NULL AND director_access_revoked_at IS NOT NULL)::text FROM run_token WHERE id='run-token:${personalSha}'`).trim(),
       'true',
       'people_set removal must set revokedAt and directorAccessRevokedAt on personal run-token',
     );

@@ -522,9 +522,9 @@ func TestResourcePostgres(t *testing.T) {
 	build("A")
 	equal(`SELECT facts#>>'{costs,0,basis}' FROM resource_contribution WHERE execution_id='p-missing'`, "unavailable")
 	// Metadata union matches old/new names WITHOUT connection: prefix, and accounts by full ID.
-	sql(`INSERT INTO execution(id,kind,state,project_id,account_id,data) VALUES('p-meta','tool_run','succeeded','A','connection:old','{"connection":"old","tool":"x"}'); INSERT INTO document(id,kind,data) VALUES('connection:old','api-connection','{"provider":"old-provider"}')`)
+	sql(`INSERT INTO execution(id,kind,state,project_id,account_id,data) VALUES('p-meta','tool_run','succeeded','A','connection:old','{"connection":"old","tool":"x"}'); INSERT INTO api_connection(id,name,provider) VALUES('connection:old','old','old-provider')`)
 	replace("p-meta")
-	sql(`UPDATE document SET id='connection:new',data='{"provider":"new-provider"}' WHERE id='connection:old'`)
+	sql(`UPDATE api_connection SET id='connection:new',name='new',provider='new-provider' WHERE id='connection:old'`)
 	var repairs []string
 	tx(func(q *Request) error {
 		rs, e := q.tx.Query(ctx, `SELECT repair_id::text FROM resource_metadata_repair WHERE metadata_id IN ('connection:old','connection:new')`)
@@ -559,7 +559,7 @@ func TestResourcePostgres(t *testing.T) {
  INSERT INTO execution_totals(execution_id,project_id,connection_cost,connection_cost_basis) VALUES('p-meta-new','A','{"currency":"USD","amount":"1"}','measured')`)
 	replace("p-meta-new")
 	equal(`SELECT value::text FROM resource_cost WHERE project_id='A' AND currency='USD' AND basis='measured'`, "1")
-	sql(`DELETE FROM document WHERE id='connection:new'`)
+	sql(`DELETE FROM api_connection WHERE id='connection:new'`)
 	deletion := scalar(`SELECT repair_id::text FROM resource_metadata_repair WHERE metadata_id='connection:new'`)
 	if e = resourceMetadataPage(ctx, a, deletion); e != nil {
 		t.Fatal(e)
@@ -657,7 +657,7 @@ func TestResourcePostgres(t *testing.T) {
 		t.Fatal("checkpoint missed insert/deletion")
 	}
 	// Metadata pages obey the same atomic rollback rule and retain coverage through work drain.
-	sql(`INSERT INTO document(id,kind,data) VALUES('connection:crash','api-connection','{"provider":"fixture"}')`)
+	sql(`INSERT INTO api_connection(id,name,provider) VALUES('connection:crash','crash','fixture')`)
 	repair := scalar(`SELECT repair_id::text FROM resource_metadata_repair WHERE metadata_id='connection:crash'`)
 	if e = resourceMetadataPage(ctx, a, repair); e == nil {
 		t.Fatal("fixture must abort metadata seed")
@@ -688,7 +688,7 @@ func TestResourcePostgres(t *testing.T) {
 
 	// P2 regression: a completed metadata enumeration waiting on failed work cannot starve later jobs.
 	sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES('p-meta-blocked','tool_run','succeeded','META','{"connection":"blocked","tool":"x"}');
- INSERT INTO document(id,kind,data) VALUES('connection:blocked','api-connection','{"provider":"fixture"}')`)
+ INSERT INTO api_connection(id,name,provider) VALUES('connection:blocked','blocked','fixture')`)
 	replace("p-meta-blocked")
 	blocked := scalar(`SELECT repair_id::text FROM resource_metadata_repair WHERE metadata_id='connection:blocked'`)
 	if e = resourceMetadataPage(ctx, a, blocked); e != nil {
@@ -699,7 +699,7 @@ func TestResourcePostgres(t *testing.T) {
 	}
 	sql(`UPDATE resource_work SET next_attempt_at=clock_timestamp()+interval '1 hour',last_error='projection_failed' WHERE repair_id=$1::uuid`, blocked)
 	sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES('p-meta-later','tool_run','succeeded','META','{"connection":"later","tool":"x"}');
- INSERT INTO document(id,kind,data) VALUES('connection:later','api-connection','{"provider":"fixture"}')`)
+ INSERT INTO api_connection(id,name,provider) VALUES('connection:later','later','fixture')`)
 	later := scalar(`SELECT repair_id::text FROM resource_metadata_repair WHERE metadata_id='connection:later'`)
 	if e = resourceProcessorPass(ctx, a); e != nil {
 		t.Fatal(e)

@@ -657,6 +657,8 @@ type convTable struct {
 	keep []string
 	// delta: the table holds two kinds (event and event-delta), told apart by the delta column.
 	delta *bool
+	// state: the table's state machine column (typed_records.go): set on insert, moved only by its owner afterwards.
+	state *convState
 }
 
 var convFalse, convTrue = false, true
@@ -718,6 +720,8 @@ func (t *convTable) record() string {
 			x = "nullif(" + c.col + ",0)"
 		case "status":
 			x = c.col + "::text"
+		case "hoststate":
+			x = "nullif(" + c.col + ",'" + hostStateActive + "')"
 		}
 		parts = append(parts, "'"+c.field+"',"+x)
 	}
@@ -737,7 +741,7 @@ func (t *convTable) kindWhere() string {
 // colValue: v as the column's parameter, ok false when v does not have the column's type.
 func (c convCol) value(v any) (any, bool) {
 	switch c.typ {
-	case "text", "status":
+	case "text", "status", "hoststate":
 		s, ok := v.(string)
 		return s, ok
 	case "bool":
@@ -851,6 +855,17 @@ func convPut(q *Request, kind string, t *convTable, v doc) error {
 	if t.table == "command" {
 		return commandPut(q, t, v, rest)
 	}
+	prevState, wantState := "", ""
+	if t.state != nil {
+		var err error
+		if prevState, err = t.state.of(q, id); err != nil {
+			return err
+		}
+		wantState, _ = v[t.state.field].(string)
+		if c, _ := t.col(t.state.field); wantState == "" && c.typ == "hoststate" {
+			wantState = hostStateActive
+		}
+	}
 	cols, vals, args := []string{"id"}, []string{"$1::text"}, []any{id}
 	for _, c := range t.cols {
 		x, given := v[c.field]
@@ -858,6 +873,9 @@ func convPut(q *Request, kind string, t *convTable, v doc) error {
 			cols, vals = append(cols, c.col), append(vals, "NULL")
 			if c.typ == "count" {
 				vals[len(vals)-1] = "0"
+			}
+			if c.typ == "hoststate" {
+				vals[len(vals)-1] = "'" + hostStateActive + "'"
 			}
 			continue
 		}
@@ -882,6 +900,7 @@ func convPut(q *Request, kind string, t *convTable, v doc) error {
 	for _, c := range cols[1:] {
 		switch {
 		case c == "payload" || c == "delta":
+		case t.state != nil && c == t.state.col:
 		case slices.Contains(t.keep, c):
 			reset := "NULL"
 			if c == "title_attempts" {
@@ -899,8 +918,16 @@ func convPut(q *Request, kind string, t *convTable, v doc) error {
 	if _, err := q.tx.Exec(q.ctx(), "INSERT INTO "+t.table+"("+strings.Join(cols, ",")+") VALUES("+strings.Join(vals, ",")+") ON CONFLICT(id) DO UPDATE SET "+strings.Join(sets, ",")+guard, args...); err != nil {
 		return err
 	}
-	if kind == "queued-message" && q.app != nil {
-		afterCommit(q, func() { q.app.wakeDispatch() })
+	if prevState != "" && wantState != "" && wantState != prevState {
+		if err := t.state.move(q, id, wantState); err != nil {
+			return err
+		}
+	}
+	switch kind {
+	case "queued-message", "host", "managed-account":
+		if q.app != nil {
+			afterCommit(q, func() { q.app.wakeDispatch() })
+		}
 	}
 	return nil
 }

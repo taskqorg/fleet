@@ -69,9 +69,9 @@ func resourceBaseLeavesSQL() string {
   FROM fleet_exec_conn_meta(e.data->>'connection', e.account_id) m
   WHERE e.data ? 'connection' OR e.account_id IS NOT NULL`,
 		`SELECT coalesce(
-   (SELECT data->>'provider' FROM document WHERE kind='api-connection' AND id='connection:'||(e.data->>'connection')),
-   (SELECT data->>'provider' FROM document WHERE kind='api-connection' AND id=e.account_id)) AS provider,
-   EXISTS(SELECT 1 FROM document WHERE kind='api-connection' AND id=e.account_id) AS is_api_conn`, 1)
+   (SELECT coalesce(provider,payload->>'provider') FROM api_connection WHERE id='connection:'||(e.data->>'connection')),
+   (SELECT coalesce(provider,payload->>'provider') FROM api_connection WHERE id=e.account_id)) AS provider,
+   EXISTS(SELECT 1 FROM api_connection WHERE id=e.account_id) AS is_api_conn`, 1)
 }
 
 type resourceSnapshot struct {

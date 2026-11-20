@@ -175,7 +175,7 @@ var holders = map[string]func(q *Request) (holder string, found bool, err error)
 		// Its own read on the request transaction's connection: the account row may be outside the person's scope.
 		var holder string
 		ctx := withTx(q)
-		err := conn(ctx, q.app).QueryRow(ctx, "SELECT coalesce(data->>'holder','') FROM document WHERE kind='managed-account' AND id=$1", id).Scan(&holder)
+		err := conn(ctx, q.app).QueryRow(ctx, "SELECT coalesce(holder,'') FROM managed_account WHERE id=$1", id).Scan(&holder)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, nil
 		}

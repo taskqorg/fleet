@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fmt"
 	"log"
 	"net/http"
@@ -82,7 +84,7 @@ func init() {
 		} else if err := directs(q, s); err != nil {
 			return contract.WatchStopReply{}, err
 		}
-		return contract.WatchStopReply{SessionId: sid, Stopped: true}, exec(q, "DELETE FROM document WHERE kind='watch' AND id=$1", "watch:"+sid)
+		return contract.WatchStopReply{SessionId: sid, Stopped: true}, q.db().DeleteWatch(q.ctx(), "watch:"+sid)
 	})
 	op("watch_get", func(q *Request, b *contract.WatchGetRequest) (contract.WatchGetReply, error) {
 		if b.SessionId == "" {
@@ -105,10 +107,8 @@ func init() {
 func watchPass(ctx context.Context, a *App) {
 	var ids []string
 	if err := a.store.Tx(ctx, nil, false, "", func(tx pgx.Tx) error {
-		rs, err := tx.Query(ctx, "SELECT id FROM document WHERE kind='watch' ORDER BY seq")
-		if err == nil {
-			ids, err = pgx.CollectRows(rs, pgx.RowTo[string])
-		}
+		var err error
+		ids, err = db.New(tx).WatchIDs(ctx)
 		return err
 	}); err != nil {
 		log.Printf("watch: %v", err)
@@ -120,8 +120,7 @@ func watchPass(ctx context.Context, a *App) {
 		})
 		if err != nil {
 			a.store.Tx(ctx, nil, true, "", func(tx pgx.Tx) error {
-				_, err := tx.Exec(ctx, "UPDATE document SET data=data||jsonb_build_object('lastError',$2::text) WHERE kind='watch' AND id=$1", id, err.Error())
-				return err
+				return db.New(tx).WatchSetError(ctx, db.WatchSetErrorParams{Error: err.Error(), ID: id})
 			})
 		}
 	}
@@ -139,16 +138,16 @@ func watchOne(q *Request, wid string) error {
 	}
 	cancelled := false
 	if task := firstString(s["deliveryId"], s["taskId"]); task != "" {
-		cancelled, err = has(q, "SELECT 1 FROM task WHERE id=$1 AND state='cancelled'", task)
+		cancelled, err = q.db().TaskCancelled(q.ctx(), task)
 		if err != nil {
 			return err
 		}
 	}
 	if s == nil || cancelled {
-		return exec(q, "DELETE FROM document WHERE kind='watch' AND id=$1", wid)
+		return q.db().DeleteWatch(q.ctx(), wid)
 	}
 	// PM busy: a wake still queued covers everything; keep the cursor (step 6).
-	if busy, err := has(q, "SELECT 1 FROM queued_message WHERE session_id=$1 AND state='queued' AND (request_id LIKE 'watch:%' OR request_id LIKE 'timer:%')", id); err != nil || busy {
+	if busy, err := q.db().WatchWakeQueued(q.ctx(), id); err != nil || busy {
 		return err
 	}
 	dir := q.peopleSnapshot().person(firstString(s["directedBy"], ownerEmail(q)))
@@ -156,20 +155,20 @@ func watchOne(q *Request, wid string) error {
 		return fail(403, "Director of the watching session is not a person of this Fleet")
 	}
 	own := map[string]bool{}
-	es, err := rowsOf(q, "SELECT id FROM execution WHERE session_id=$1", id)
+	es, err := q.db().SessionExecutionIDs(q.ctx(), &id)
 	if err != nil {
 		return err
 	}
 	for _, e := range es {
-		own["execution:"+astr(e["id"])] = true
+		own["execution:"+e] = true
 	}
 	children := map[string]bool{}
-	cs, err := rowsOf(q, "SELECT id FROM session WHERE created_by_session_id=$1", id)
+	cs, err := q.db().ChildSessionIDs(q.ctx(), &id)
 	if err != nil {
 		return err
 	}
 	for _, c := range cs {
-		children[astr(c["id"])] = true
+		children[c] = true
 	}
 	kinds, focus := strList(w["kinds"]), focusIDs(s)
 	cursor := int64(num(w["cursor"]))
@@ -257,12 +256,15 @@ func watchOne(q *Request, wid string) error {
 func classify(q *Request, c change) (string, error) {
 	switch c.Kind {
 	case "task":
-		t, err := first(q, "SELECT state::text AS state,pause_reason FROM task WHERE id=$1", c.Id)
-		if err != nil || t == nil {
+		t, err := q.db().TaskWatchState(q.ctx(), c.Id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		if err != nil {
 			return "", err
 		}
-		st := astr(t["state"])
-		if astr(t["pause_reason"]) == "held" {
+		st := t.State
+		if deref(t.PauseReason) == "held" {
 			st = "held"
 		}
 		return "task " + c.Id + " now " + st, nil
@@ -270,20 +272,25 @@ func classify(q *Request, c change) (string, error) {
 		if c.Op != "I" {
 			return "", nil
 		}
-		r, err := first(q, "SELECT task_id FROM question WHERE id=$1 AND state='open'", c.Id)
-		if err != nil || r == nil {
+		task, err := q.db().OpenQuestionTask(q.ctx(), c.Id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		if err != nil {
 			return "", err
 		}
-		return "question " + c.Id + " on task " + firstString(r["task_id"], "none"), nil
+		return "question " + c.Id + " on task " + firstString(task, "none"), nil
 	case "execution":
-		r, err := first(q, "SELECT CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END AS s FROM execution WHERE id=$1 AND (state='failed' OR observation='unconfirmed')", c.Id)
-		if err != nil || r == nil {
+		s, err := q.db().ExecutionWatchState(q.ctx(), c.Id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		if err != nil {
 			return "", err
 		}
-		return "execution " + c.Id + " " + astr(r["s"]), nil
+		return "execution " + c.Id + " " + s, nil
 	case "host": // only reported problems (§5 table)
-		r, err := first(q, "SELECT 1 AS x FROM document WHERE kind='host-observation' AND id=$1 AND jsonb_array_length(coalesce(data->'problems','[]'))>0", c.Id)
-		if err != nil || r == nil {
+		if ok, err := q.db().ObservationHasProblems(q.ctx(), c.Id); err != nil || !ok {
 			return "", err
 		}
 		return "host " + c.Id + " reports problems", nil

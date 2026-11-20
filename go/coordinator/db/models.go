@@ -385,6 +385,41 @@ func (ns NullTaskState) Value() (driver.Value, error) {
 	return string(ns.TaskState), nil
 }
 
+type AccountCatalogue struct {
+	ID           string
+	HostID       *string
+	Harness      *string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type AccountCheck struct {
+	ID           string
+	AccountID    *string
+	HostID       *string
+	Binding      *string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type AccountInspection struct {
+	ID           string
+	AccountID    *string
+	ExecutionID  *string
+	HostID       *string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
 type AgentToolReceipt struct {
 	ID             string
 	ExecutionID    string
@@ -393,6 +428,18 @@ type AgentToolReceipt struct {
 	PayloadSha     string
 	Result         []byte
 	Authority      []byte
+}
+
+type ApiConnection struct {
+	ID           string
+	Name         string
+	Provider     *string
+	Holder       *string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type Artifact struct {
@@ -498,6 +545,19 @@ type Command struct {
 	StopDetail   *string
 	HandedOut    *bool
 	Traceparent  *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type ConnectionKey struct {
+	ID           string
+	ConnectionID string
+	Fingerprint  *string
+	State        string
+	AddedAt      *time.Time
+	ProjectID    *string
 	Payload      []byte
 	Seq          int64
 	UpdatedAt    time.Time
@@ -720,6 +780,32 @@ type Handoff struct {
 	TombstonedAt *time.Time
 }
 
+type Host struct {
+	ID                string
+	HostID            string
+	Holder            *string
+	State             string
+	Intake            *string
+	SecretHash        *string
+	RemovedSecretHash *string
+	ProjectID         *string
+	Payload           []byte
+	Seq               int64
+	UpdatedAt         time.Time
+	TombstonedAt      *time.Time
+}
+
+type HostObservation struct {
+	ID           string
+	Holder       *string
+	LastSeenAt   *time.Time
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
 type HostSetting struct {
 	HostID     string
 	Key        string
@@ -728,6 +814,20 @@ type HostSetting struct {
 	UpdatedAt  time.Time
 	AppliedAt  *time.Time
 	ApplyError *string
+}
+
+type ManagedAccount struct {
+	ID           string
+	Name         *string
+	Holder       *string
+	Intake       *string
+	Harness      *string
+	Provider     *string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type Message struct {
@@ -757,6 +857,16 @@ type PersonGrant struct {
 	Email      string
 	ObjectKind string
 	ObjectID   string
+}
+
+type PersonSetting struct {
+	ID           string
+	Email        *string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type PriceEntry struct {
@@ -981,6 +1091,24 @@ type RouteDecision struct {
 	Winner      []byte
 }
 
+type RunToken struct {
+	ID                      string
+	Sha256                  *string
+	ExecutionID             *string
+	PipelineRunID           *string
+	Personal                *string
+	Step                    *bool
+	DirectedBy              *string
+	CreatedAt               *time.Time
+	RevokedAt               *time.Time
+	DirectorAccessRevokedAt *time.Time
+	ProjectID               *string
+	Payload                 []byte
+	Seq                     int64
+	UpdatedAt               time.Time
+	TombstonedAt            *time.Time
+}
+
 type SchemaMigration struct {
 	Version   int32
 	AppliedAt time.Time
@@ -1140,6 +1268,16 @@ type WakeOutbox struct {
 	Channel   string
 	Payload   string
 	CreatedAt time.Time
+}
+
+type Watch struct {
+	ID           string
+	SessionID    string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type WorkerDone struct {

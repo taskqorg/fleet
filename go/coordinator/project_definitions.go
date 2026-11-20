@@ -426,7 +426,7 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	removed, err := queryRows(q, "SELECT data->>'hostId' AS id FROM document WHERE kind='host' AND data->>'state'='removed'")
+	removed, err := queryRows(q, "SELECT host_id AS id FROM host WHERE state='removed'")
 	if err != nil {
 		return nil, err
 	}

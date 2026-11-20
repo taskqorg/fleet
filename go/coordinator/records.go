@@ -140,7 +140,6 @@ func put(q *Request, kind string, v doc) error {
 // execJSON: an execution record as the API shows it: the typed state, observation and last contact over the open remainder in data.
 const execJSON = "data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at)"
 
-
 // execKinds: the execution kinds served as 'execution' records (host-dispatched agent runs and host jobs).
 const execKinds = "kind IN ('agent_run','host_job')"
 
@@ -282,8 +281,8 @@ func putExecution(q *Request, e doc) error {
 	inserted := false
 	if prev == "" {
 		inserted, err = executionInsert(q, executionRow(doc{"id": id, "kind": kind, "state": state, "observation": observation, "projectId": nilIf(project), "taskId": nilIf(task),
-		"experimentId": experiment, "variant": variant, "parentExecutionId": nilIf(parent), "sessionId": e["sessionId"], "accountId": nilIf(account), "hostId": e["hostId"],
-		"harness": harness, "model": e["model"], "configRef": json.RawMessage(cfg), "startedAt": e["startedAt"], "endedAt": e["finishedAt"], "data": data,
+			"experimentId": experiment, "variant": variant, "parentExecutionId": nilIf(parent), "sessionId": e["sessionId"], "accountId": nilIf(account), "hostId": e["hostId"],
+			"harness": harness, "model": e["model"], "configRef": json.RawMessage(cfg), "startedAt": e["startedAt"], "endedAt": e["finishedAt"], "data": data,
 			"directedBy": directed, "profileId": profileID, "profileRevision": profileRev, "pipelineId": pipelineID, "pipelineRevision": pipelineRev, "stepId": stepID}))
 		if err != nil {
 			return err

@@ -2,7 +2,15 @@ package main
 
 // subscription_limits_refresh (docs/designs/fleet-people-access.md section 8 "Read without a run").
 
-import "fleet/contract"
+import (
+	"encoding/json"
+	"errors"
+
+	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
+)
 
 func init() {
 	op("subscription_limits_refresh", subscriptionLimitsRefresh)
@@ -43,16 +51,19 @@ func subscriptionLimitsRefresh(q *Request, req *contract.SubscriptionLimitsRefre
 	for _, a := range targets {
 		id := astr(a["id"])
 		// A read already on its way is the answer to a repeated refresh.
-		inflight, err := rowsCtx(q.ctx(), q.tx, `SELECT `+convTables["command"].record()+` AS data FROM command WHERE kind=$1 AND payload->'payload'->>'mode'='limits'
-		   AND payload->'payload'->>'accountId'=$2 AND status IN ('pending','accepted','started') LIMIT 1`, string(contract.CommandKindAccountInspect), id)
-		if err != nil {
-			return reply, err
-		}
-		if len(inflight) > 0 {
-			c := mapOf(inflight[0]["data"])
-			p := mapOf(c["payload"])
-			reply.Sent = append(reply.Sent, contract.LimitRefreshSent{SubscriptionId: id, HostId: astr(c["hostId"]), Binding: astr(p["binding"]), ExecutionId: astr(c["executionId"])})
+		inflight, err := q.db().InflightLimitRead(q.ctx(), db.InflightLimitReadParams{Kind: string(contract.CommandKindAccountInspect), AccountID: id})
+		if err == nil {
+			var p struct {
+				Payload struct {
+					Binding string `json:"binding"`
+				} `json:"payload"`
+			}
+			_ = json.Unmarshal(inflight.Payload, &p)
+			reply.Sent = append(reply.Sent, contract.LimitRefreshSent{SubscriptionId: id, HostId: deref(inflight.HostID), Binding: p.Payload.Binding, ExecutionId: deref(inflight.ExecutionID)})
 			continue
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return reply, err
 		}
 		var host, binding, reason string
 		reason = "no binding on any host; connect the subscription first"

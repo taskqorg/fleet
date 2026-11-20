@@ -125,7 +125,7 @@ func (a *App) ownAutoUpdate(ctx context.Context) string {
 	if _, err := tx.Exec(ctx, "SELECT set_config('fleet.project_ids','*',true)"); err != nil {
 		return "on"
 	}
-	if err := tx.QueryRow(ctx, "SELECT data->>'autoUpdate' FROM document WHERE kind='host' AND id=$1", "host:"+host).Scan(&s); err != nil || s == nil {
+	if err := tx.QueryRow(ctx, "SELECT payload->>'autoUpdate' FROM host WHERE id=$1", "host:"+host).Scan(&s); err != nil || s == nil {
 		return "on"
 	}
 	return *s

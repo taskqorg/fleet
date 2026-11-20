@@ -304,7 +304,7 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 			out = append(out, f)
 		}
 		// Hosts the span rules may name: not removed, intake not paused.
-		hosts, err := queryRows(q, "SELECT data->>'hostId' AS id FROM document WHERE kind='host' AND coalesce(data->>'state','')<>'removed' AND coalesce(data->>'intake','all')<>'paused'")
+		hosts, err := queryRows(q, "SELECT host_id AS id FROM host WHERE state<>'removed' AND coalesce(intake,'all')<>'paused'")
 		if err != nil {
 			return err
 		}

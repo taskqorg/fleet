@@ -18,7 +18,7 @@ test('Account inspections retain legacy host work without widening actor/project
     const id=randomUUID(), executionId=randomUUID();
     const data={id:executionId,executionId,accountId:executionAccount,actor:'program-worker',state:'succeeded',error:{message:'foreign-canary-'+executionId}};
     c.sql(`INSERT INTO execution(id,kind,state,project_id,data) VALUES(${lit(executionId)},${lit(kind)},'failed',${lit(executionProject)},${lit(data)});
-      INSERT INTO document(id,kind,project_id,data) VALUES(${lit(id)},'account-inspection',${lit(project)},${lit({id,accountId,executionId,hostId:'invented-host',binding:null,createdAt:1})});`);
+      INSERT INTO account_inspection(id,account_id,execution_id,host_id,project_id,payload) VALUES(${lit(id)},${lit(accountId)},${lit(executionId)},'invented-host',${lit(project)},${lit({binding:null,createdAt:1})});`);
     return {id,executionId};
   };
   try {
@@ -45,7 +45,7 @@ test('Account inspections retain legacy host work without widening actor/project
       for(const person of [owner,architect]) for(const response of await read(person)) {
         assert.equal(response.status,404);assert.ok(!JSON.stringify(response.body).includes('foreign-canary'));
       }
-      c.sql(`DELETE FROM document WHERE id=${lit(bad.id)}`);
+      c.sql(`DELETE FROM account_inspection WHERE id=${lit(bad.id)}`);
     }
   } finally {await c.stop();}
 });

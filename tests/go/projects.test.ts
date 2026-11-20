@@ -130,7 +130,7 @@ test('Archiving the last project that names a git connection queues connection-r
  const a='project-'+randomUUID(),b='project-'+randomUUID();
  ok(await call('project_create',{id:a,requestId:randomUUID(),content:withConn(a,'k-shared')}));
  ok(await call('project_create',{id:b,requestId:randomUUID(),content:withConn(b,'k-shared')}));
- c.sql(`INSERT INTO document(kind,id,data) VALUES ('host-observation','h-keys','{"id":"h-keys","gitConnections":["k-shared","k-other"]}')`);
+ c.sql(`INSERT INTO host_observation(id,payload) VALUES ('h-keys','{"gitConnections":["k-shared","k-other"]}')`);
  assert.deepEqual(ok(await call('project_archive',{projectId:a})).connectionRemovals,[],'another live project still uses it');
  assert.deepEqual(ok(await call('project_archive',{projectId:b})).connectionRemovals,['h-keys/k-shared']);
  assert.deepEqual(ok(await call('project_archive',{projectId:b})).connectionRemovals,[],'a pending removal is not queued twice');
