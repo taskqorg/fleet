@@ -458,9 +458,20 @@ func (d *resourceDelta) flush(q *Request) (resultErr error) {
 		return err
 	}
 	span.Set("fleet.resource.apply_statements", strconv.Itoa(statements))
-	// Only a changed item count is written.
-	if toolCount != 0 || costCount != 0 || priceCount != 0 {
-		return q.db().ResourceSummaryItems(ctx, db.ResourceSummaryItemsParams{ProjectID: p, Tools: toolCount, Costs: costCount, Prices: priceCount})
+	// Only changed item counts are written: their columns may carry update triggers.
+	typed := q.db()
+	if toolCount != 0 {
+		if err := typed.ResourceSummaryTools(ctx, db.ResourceSummaryToolsParams{ProjectID: p, Delta: toolCount}); err != nil {
+			return err
+		}
+	}
+	if costCount != 0 {
+		if err := typed.ResourceSummaryCosts(ctx, db.ResourceSummaryCostsParams{ProjectID: p, Delta: costCount}); err != nil {
+			return err
+		}
+	}
+	if priceCount != 0 {
+		return typed.ResourceSummaryPrices(ctx, db.ResourceSummaryPricesParams{ProjectID: p, Delta: priceCount})
 	}
 	return nil
 }

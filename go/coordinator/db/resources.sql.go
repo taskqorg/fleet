@@ -726,25 +726,48 @@ func (q *Queries) ResourceSource(ctx context.Context, executionID string) ([]byt
 	return snapshot, err
 }
 
-const resourceSummaryItems = `-- name: ResourceSummaryItems :exec
-UPDATE resource_project_summary SET tool_count=tool_count+$1::bigint,cost_count=cost_count+$2::bigint,price_count=price_count+$3::bigint WHERE project_id=$4::text
+const resourceSummaryCosts = `-- name: ResourceSummaryCosts :exec
+UPDATE resource_project_summary SET cost_count=cost_count+$1::bigint WHERE project_id=$2::text
 `
 
-type ResourceSummaryItemsParams struct {
-	Tools     int64
-	Costs     int64
-	Prices    int64
+type ResourceSummaryCostsParams struct {
+	Delta     int64
 	ProjectID string
 }
 
-// The net change of the project's item counts, written after the batch when one changed.
-func (q *Queries) ResourceSummaryItems(ctx context.Context, arg ResourceSummaryItemsParams) error {
-	_, err := q.db.Exec(ctx, resourceSummaryItems,
-		arg.Tools,
-		arg.Costs,
-		arg.Prices,
-		arg.ProjectID,
-	)
+func (q *Queries) ResourceSummaryCosts(ctx context.Context, arg ResourceSummaryCostsParams) error {
+	_, err := q.db.Exec(ctx, resourceSummaryCosts, arg.Delta, arg.ProjectID)
+	return err
+}
+
+const resourceSummaryPrices = `-- name: ResourceSummaryPrices :exec
+UPDATE resource_project_summary SET price_count=price_count+$1::bigint WHERE project_id=$2::text
+`
+
+type ResourceSummaryPricesParams struct {
+	Delta     int64
+	ProjectID string
+}
+
+func (q *Queries) ResourceSummaryPrices(ctx context.Context, arg ResourceSummaryPricesParams) error {
+	_, err := q.db.Exec(ctx, resourceSummaryPrices, arg.Delta, arg.ProjectID)
+	return err
+}
+
+const resourceSummaryTools = `-- name: ResourceSummaryTools :exec
+
+UPDATE resource_project_summary SET tool_count=tool_count+$1::bigint WHERE project_id=$2::text
+`
+
+type ResourceSummaryToolsParams struct {
+	Delta     int64
+	ProjectID string
+}
+
+// The net change of each of the project's item counts, written after the batch only when it changed: the count
+// columns may carry update triggers.
+func (q *Queries) ResourceSummaryTools(ctx context.Context, arg ResourceSummaryToolsParams) error {
+	_, err := q.db.Exec(ctx, resourceSummaryTools, arg.Delta, arg.ProjectID)
 	return err
 }
 

@@ -503,6 +503,14 @@ UPDATE resource_price_ref r SET references_count=r.references_count+d.n
 FROM ROWS FROM(unnest(sqlc.arg(currencies)::text[]),unnest(sqlc.arg(bases)::text[]),unnest(sqlc.arg(price_ids)::text[]),unnest(sqlc.arg(observed)::bigint[]),unnest(sqlc.arg(deltas)::bigint[])) d(c,b,id,at,n)
 WHERE r.project_id=sqlc.arg(project_id)::text AND r.currency=d.c AND r.basis=d.b AND r.price_id=d.id AND r.observed_at=d.at;
 
--- name: ResourceSummaryItems :exec
--- The net change of the project's item counts, written after the batch when one changed.
-UPDATE resource_project_summary SET tool_count=tool_count+sqlc.arg(tools)::bigint,cost_count=cost_count+sqlc.arg(costs)::bigint,price_count=price_count+sqlc.arg(prices)::bigint WHERE project_id=sqlc.arg(project_id)::text;
+-- The net change of each of the project's item counts, written after the batch only when it changed: the count
+-- columns may carry update triggers.
+
+-- name: ResourceSummaryTools :exec
+UPDATE resource_project_summary SET tool_count=tool_count+sqlc.arg(delta)::bigint WHERE project_id=sqlc.arg(project_id)::text;
+
+-- name: ResourceSummaryCosts :exec
+UPDATE resource_project_summary SET cost_count=cost_count+sqlc.arg(delta)::bigint WHERE project_id=sqlc.arg(project_id)::text;
+
+-- name: ResourceSummaryPrices :exec
+UPDATE resource_project_summary SET price_count=price_count+sqlc.arg(delta)::bigint WHERE project_id=sqlc.arg(project_id)::text;
