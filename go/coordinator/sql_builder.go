@@ -1228,3 +1228,92 @@ func sqlSessionCount(f rowFilter, focus func(p *[]any, col string) string) (stri
 	}
 	return base + " SELECT count(*) FILTER (WHERE " + focus(&p, "x.project_id") + "),count(*) FROM x" + where(c), p, nil
 }
+
+// Delete and purge (cleanup.go): a cascade's statements over the tables and columns of referenceMap, objectTables,
+// tombstoned and purgeOrder (and the foreign keys referenceKeys reads from the schema); the ids are bind parameters,
+// one text[] per kind (args).
+
+// sql: the reference over the row: its column, or its expression.
+func (r objectRef) sql() string {
+	if r.expr != "" {
+		return r.expr
+	}
+	return r.column
+}
+
+// match: the reference names one of the ids param holds.
+func (r objectRef) match(param string) string {
+	m := r.sql() + " = ANY(" + param + ")"
+	if r.array {
+		m = r.sql() + " && " + param
+	}
+	return m
+}
+
+// args builds one SQL predicate's parameters: one text[] per kind.
+type args struct {
+	c    *cascade
+	vals []any
+	at   map[string]int
+}
+
+func (a *args) of(kind string) string {
+	if a.at == nil {
+		a.at = map[string]int{}
+	}
+	n, ok := a.at[kind]
+	if !ok {
+		a.vals = append(a.vals, a.c.sets[kind])
+		n = len(a.vals)
+		a.at[kind] = n
+	}
+	return fmt.Sprintf("$%d::text[]", n)
+}
+
+// goesWith: the predicate of rows of table that belong to the cascade, "false" when none can.
+func (c *cascade) goesWith(table string, a *args) string {
+	conds := []string{}
+	for _, r := range c.refs {
+		if r.table == table && (r.mode == refOwn || (r.mode == refWithProject && c.kind == "project")) && len(c.sets[r.kind]) > 0 {
+			conds = append(conds, r.match(a.of(r.kind)))
+		}
+	}
+	if len(conds) == 0 {
+		return "false"
+	}
+	return "(" + strings.Join(conds, " OR ") + ")"
+}
+
+func andFilter(filter, where string) string {
+	if filter == "" {
+		return where
+	}
+	return filter + " AND " + where
+}
+
+// sqlCascadeIDs: the ids of table's rows that go with the cascade (where: goesWith).
+func sqlCascadeIDs(table, filter, where string) string {
+	return "SELECT id FROM " + table + " WHERE " + andFilter(filter, where) + " ORDER BY id"
+}
+
+// sqlKeptBy: the first row of table that keeps an object of the cascade (where), with the index of its reference
+// (label: CASE WHEN <match> THEN <i> ...) and its id.
+func sqlKeptBy(table, label, where, kept string) string {
+	return "SELECT (" + label + " END)::int AS ref, coalesce(to_jsonb(x)->>'id', to_jsonb(x)->>'task_id', '') AS rid FROM " + table +
+		" x WHERE " + andFilter(kept, where) + " LIMIT 1"
+}
+
+// sqlTombstoneObjects: the objects of table whose ids are $1 get their tombstone.
+func sqlTombstoneObjects(table, filter string) string {
+	return "UPDATE " + table + " SET tombstoned_at=now() WHERE " + andFilter(filter, "id=ANY($1) AND tombstoned_at IS NULL")
+}
+
+// sqlTombstoneRows: the rows of table that go with the cascade (where) get their tombstone.
+func sqlTombstoneRows(table, where, kept string) string {
+	return "UPDATE " + table + " SET tombstoned_at=now() WHERE " + andFilter(kept, where+" AND tombstoned_at IS NULL")
+}
+
+// sqlPurgeRows: the rows of table that go with the cascade (where) are deleted.
+func sqlPurgeRows(table, where, kept string) string {
+	return "DELETE FROM " + table + " WHERE " + andFilter(kept, where)
+}

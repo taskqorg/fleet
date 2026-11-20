@@ -656,7 +656,6 @@ var designRulesLegacy = map[string]map[string]bool{
 	"accounts.go":           {"R-MAP": true},
 	"agent.go":              {"R-MAP": true},
 	"catalogue_evidence.go": {"R-MAP": true},
-	"cleanup.go":            {"R-MAP": true, "R-SQL": true},
 	"connections.go":        {"R-MAP": true},
 	"delegation.go":         {"R-MAP": true},
 	"delivery_history.go":   {"R-GO": true},

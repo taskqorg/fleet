@@ -320,6 +320,41 @@ func sessionArchive(q *Request, sid string) (doc, error) {
 	return teardownCommand(q, s, last, false)
 }
 
+// sessionDeleteArchive: a deleted session is archived (object_delete, cleanup.go tombstone) and its worktree torn down
+// on the host of its last execution, unless it is archived already or a teardown is on its way; torn: one was queued.
+func sessionDeleteArchive(q *Request, sid string) (bool, error) {
+	s, err := get(q, sid, "session")
+	if err != nil {
+		return false, err
+	}
+	if s["archivedAt"] != nil {
+		return false, nil
+	}
+	if pending, err := all(q, "command", doc{"sessionId": sid, "kind": "teardown", "status": "pending"}); err != nil || len(pending) > 0 {
+		return false, err
+	}
+	es, err := sessionExecutions(q, sid)
+	if err != nil {
+		return false, err
+	}
+	var last doc
+	for _, e := range es {
+		if astr(e["hostId"]) != "" {
+			last = e
+		}
+	}
+	s["archivedAt"] = nowMs()
+	if err := put(q, "session", s); err != nil {
+		return false, err
+	}
+	if last == nil {
+		return false, nil
+	}
+	// Queued after the stop: the executor keeps a worktree with uncommitted or unpushed work (cleanup.keepWhen).
+	t, err := teardownCommand(q, s, last, false)
+	return err == nil && t["kind"] == "teardown", err
+}
+
 // teardownCommand: the teardown of a session's worktree on the host of its last execution. deleteBranch: the work was
 // delivered (its task accepted), so the local branch goes even when squash-merged (git branch -D); the executor still
 // keeps the worktree for any cleanup.keepWhen reason (uncommitted, unpushed, teardown-failed).
