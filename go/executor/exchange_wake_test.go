@@ -88,6 +88,9 @@ func runScript(t *testing.T, e *executor, id string, payload M) {
 		t.Fatal(err)
 	}
 	l := e.live[id]
+	if l == nil {
+		t.Fatalf("script %s did not start: receipt %q", id, lastReceipt(e, id))
+	}
 	t.Cleanup(func() { l.cleanup(); <-l.exited })
 }
 

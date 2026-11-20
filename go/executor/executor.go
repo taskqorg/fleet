@@ -1306,7 +1306,10 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			return err
 		}
 	}
-	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	// The identity is read before the reap: a harness that exits at once is still a zombie then.
+	var ident string
+	var identErr error
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, Started: func(pid int) { ident, identErr = identity(pid) }})
 	if err != nil {
 		pw.Close()
 		closeAll()
@@ -1324,8 +1327,7 @@ func (e *executor) start(c M, cid, execution, session string, p M) error {
 			return e.finish(c, "unknown", native)
 		}
 	}
-	ident, err := identity(cmd.Process.Pid)
-	if err != nil {
+	if identErr != nil {
 		kill()
 		return e.finish(c, "unknown", native)
 	}
@@ -1563,7 +1565,10 @@ func (e *executor) script(c M, execution, session string) error {
 	if _, err = e.db.Exec("UPDATE launches SET mcp_dir=? WHERE execution=?", mcp.dir, execution); err != nil {
 		return err
 	}
-	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd})
+	// The identity is read before the reap: a script that exits at once is still a zombie then.
+	var ident string
+	var identErr error
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, Started: func(pid int) { ident, identErr = identity(pid) }})
 	if err != nil {
 		dropTrial()
 		e.release(execution)
@@ -1571,8 +1576,7 @@ func (e *executor) script(c M, execution, session string) error {
 	}
 	pid := proc.Pid
 	l := &live{mcp: mcp, cmd: cmd, proc: proc, exited: proc.Done(), command: c, seq: 2, completed: true, owned: map[int]string{}, started: time.Now(), group: pid, trial: trial}
-	ident, err := identity(pid)
-	if err != nil {
+	if identErr != nil {
 		proc.Kill()
 		proc.Wait()
 		dropTrial()
