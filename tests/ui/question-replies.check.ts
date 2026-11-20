@@ -18,7 +18,7 @@ export async function checkQuestionReplies(browser: Browser, origin: string) {
     for (const surface of [0, 1]) for (const mode of ['withheld', 'normal', 'resync', 'failed']) {
       let answered = false;
       const question = () => ({id: 'invented-q', kind: 'agent_question', state: answered ? 'answered' : 'open', text: 'Invented reply question', options: ['yes'], answer: answered ? 'yes' : null, askedAt: new Date().toISOString(), answeredAt: answered ? new Date().toISOString() : null});
-      await page.route('**/api/ops/session_get', r => r.fulfill({json: {id: 'invented-session', questions: [question()], executions: []}}));
+      await page.route('**/api/ops/session_get', r => r.fulfill({json: {id: 'invented-session', questions: [question()], executions: [], messages: []}}));
       const block = () => ({...question(), kind: 'question', key: '1:0', questionId: 'invented-q', askedAt: Date.now(), answeredAt: answered ? Date.now() : null});
       await page.route('**/api/ops/thread_entries', r => r.fulfill({json: {entries: [block()], first: '1:0', last: '1:0', total: 1, hasBefore: false, hasAfter: false, feedCursor: 0, sessionIds: ['invented-session']}}));
       await page.route('**/api/ops/thread_blocks', r => r.fulfill({json: {entries: [block()], removed: []}}));
