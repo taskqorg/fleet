@@ -408,9 +408,6 @@ func (v *CheckoutResult) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*CheckoutResult) Closed() bool { return true }
-
 type CheckoutStatus string
 
 const (
@@ -450,9 +447,6 @@ func (v *CheckoutSync) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*CheckoutSync) Closed() bool { return true }
 
 type ChildReceipt struct {
 	CommandId   string       `json:"commandId"`
@@ -577,9 +571,6 @@ func (v *ConnectionRemovePayload) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ConnectionRemovePayload) Closed() bool { return true }
-
 type EdgeProblem struct {
 	Detail   string      `json:"detail"`
 	Kind     ProblemKind `json:"kind"`
@@ -688,9 +679,6 @@ func (v *ExecutionResourceSummary) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ExecutionResourceSummary) Closed() bool { return true }
 
 // FleetEventType: Event types the executor itself originates. Native harness records keep their own open type. Readers log an unknown type as a problem, never fail (hosts may run another release during self-update).
 type FleetEventType string
@@ -849,9 +837,6 @@ func (v *InputArtifact) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*InputArtifact) Closed() bool { return true }
-
 // Item: A completed native item (codex), agentMessage renamed agent_message.
 type Item struct {
 	Command *string `json:"command,omitempty"`
@@ -961,9 +946,6 @@ type LimitWindow struct {
 func (v *LimitWindow) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*LimitWindow) Closed() bool { return true }
 
 // Normalized: harness::project and Blocks::project output; only the fields the coordinator and app read are named.
 type Normalized struct {
@@ -1120,9 +1102,6 @@ func (v *PreparationFailed) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PreparationFailed) Closed() bool { return true }
-
 type ProblemKind string
 
 const (
@@ -1162,9 +1141,6 @@ func (v *ProcessClosed) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProcessClosed) Closed() bool { return true }
-
 type ProcessReconciled struct {
 	LaunchWindowUnresolved bool  `json:"launchWindowUnresolved"`
 	OwnedProcesses         int64 `json:"ownedProcesses"`
@@ -1176,9 +1152,6 @@ type ProcessReconciled struct {
 func (v *ProcessReconciled) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProcessReconciled) Closed() bool { return true }
 
 // ProjectArguments: Native tool arguments are forwarded unchanged to the owning project operation validator.
 type ProjectArguments = map[string]json.RawMessage
@@ -1287,9 +1260,6 @@ func (v *ProjectScriptResult) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectScriptResult) Closed() bool { return true }
-
 type ProtocolFailed struct {
 	Error  string  `json:"error"`
 	Reason *string `json:"reason,omitempty"`
@@ -1338,9 +1308,6 @@ func (v *Readiness) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*Readiness) Closed() bool { return true }
-
 type ReadinessCheck struct {
 	Check  string      `json:"check"`
 	Reason *string     `json:"reason,omitempty"`
@@ -1356,9 +1323,6 @@ func (v *ReadinessCheck) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ReadinessCheck) Closed() bool { return true }
-
 // ReadinessFailed: data of a readiness.failed event
 type ReadinessFailed struct {
 	Reason string `json:"reason"`
@@ -1368,9 +1332,6 @@ type ReadinessFailed struct {
 func (v *ReadinessFailed) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ReadinessFailed) Closed() bool { return true }
 
 // Receipt: Execution status receipt; delegation and account envelopes have their own generated types.
 type Receipt struct {
@@ -1472,9 +1433,6 @@ func (v *ScriptStarted) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ScriptStarted) Closed() bool { return true }
-
 type ScriptTimeout struct {
 	TimeoutMs *int64 `json:"timeoutMs"`
 }
@@ -1483,9 +1441,6 @@ type ScriptTimeout struct {
 func (v *ScriptTimeout) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ScriptTimeout) Closed() bool { return true }
 
 type SpanBatchReply struct {
 	Accepted int64 `json:"accepted"`
@@ -1660,9 +1615,6 @@ func (v *StoreReport) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*StoreReport) Closed() bool { return true }
-
 type StoresReply struct {
 	Ok      bool   `json:"ok"`
 	StoreId string `json:"storeId"`
@@ -1705,9 +1657,6 @@ func (v *Teardown) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*Teardown) Closed() bool { return true }
-
 type ToolCallCounter struct {
 	Calls  int64 `json:"calls"`
 	Errors int64 `json:"errors"`
@@ -1717,9 +1666,6 @@ type ToolCallCounter struct {
 func (v *ToolCallCounter) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ToolCallCounter) Closed() bool { return true }
 
 // TranscriptReasoning: a reasoning block of fleetNormalized.blocks (kind reasoning)
 type TranscriptReasoning struct {
@@ -1732,9 +1678,6 @@ func (v *TranscriptReasoning) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*TranscriptReasoning) Closed() bool { return true }
-
 // TranscriptText: a text block of fleetNormalized.blocks (kind text); the app's Block (ops) adds key and the thread fields
 type TranscriptText struct {
 	Kind     string `json:"kind"`
@@ -1746,9 +1689,6 @@ type TranscriptText struct {
 func (v *TranscriptText) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*TranscriptText) Closed() bool { return true }
 
 // TranscriptTool: a tool block of fleetNormalized.blocks (kind tool); input and output are the native values
 type TranscriptTool struct {
@@ -1772,9 +1712,6 @@ func (v *TranscriptTool) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*TranscriptTool) Closed() bool { return true }
-
 type TrialRemoved struct {
 	Removed bool `json:"removed"`
 }
@@ -1783,9 +1720,6 @@ type TrialRemoved struct {
 func (v *TrialRemoved) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*TrialRemoved) Closed() bool { return true }
 
 // UpdateResult: last of the host's update-state.json, written by fleet-update
 type UpdateResult struct {

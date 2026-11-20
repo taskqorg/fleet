@@ -125,7 +125,7 @@
       "type": "object",
       "additionalProperties": true
     },
-    "ProjectBundle": {
+    "ProjectBundle": {"unevaluatedProperties": false, 
       "type": "object",
       "required": [
         "settings",
@@ -145,7 +145,7 @@
       },
       "additionalProperties": false
     },
-    "ProjectContextFile": {
+    "ProjectContextFile": {"unevaluatedProperties": false, 
       "type": "object",
       "required": [
         "path",

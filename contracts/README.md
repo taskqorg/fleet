@@ -60,7 +60,7 @@ Every `*.schema.json` file here is an input to generation; each `$defs` entry be
 ## Supported subset
 
 Both generators accept only these keywords and fail on any other, so a schema never yields a silently weaker type:
-`type` (one type, optionally with `"null"`), `properties`, `required`, `additionalProperties`, `items`, `enum` (strings),
+`type` (one type, optionally with `"null"`), `properties`, `required`, `additionalProperties`, `unevaluatedProperties` (only `false`), `items`, `enum` (strings),
 `$ref` (`#/$defs/<Name>`, or `<file>.schema.json#/$defs/<Name>` for a type of another contract file: an import in TypeScript, the same package in Go), `minimum`, `$comment`, `const` (a string: a literal type in TypeScript, `string` in Go) and
 `oneOf` (only as a `$defs` entry whose members are all `$ref`: a union in TypeScript, `json.RawMessage` in Go, where
 each member is its own struct; give each member a `const` discriminator such as `kind`).
@@ -69,8 +69,10 @@ An object without properties whose `additionalProperties` is a schema is a map (
 * An object with properties, and an enum, must be a `$defs` entry (Go needs its name).
 * `{}` is any JSON value: `unknown` in TypeScript, `json.RawMessage` in Go. Use it only for native records Fleet
   passes on without reading.
-* `"additionalProperties": true` marks an open object: Go and TypeScript name only the listed fields;
-  TypeScript names only the listed fields, so code reads a field only after the schema names it.
+* `"additionalProperties": true` marks an open object: TypeScript names only the listed fields, so code reads a
+  field only after the schema names it; Go keeps the other keys in `Rest` through decode and encode.
+* `"unevaluatedProperties": false` on an operation request object (or one nested in it) makes the coordinator's
+  strict decoder refuse a key the schema does not name (Go `Closed()`); `additionalProperties: false` alone only types.
 * A property not in `required` is optional (`?` in TypeScript, a pointer with `omitempty` in Go). A required
   property with `"null"` in its type is always written, as `null` when absent.
 

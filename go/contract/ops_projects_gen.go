@@ -20,9 +20,6 @@ func (v *ProjectArchiveReply) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectArchiveReply) Closed() bool { return true }
-
 // ProjectArchiveRequest: Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.
 type ProjectArchiveRequest struct {
 	ProjectId string `json:"projectId"`
@@ -32,9 +29,6 @@ type ProjectArchiveRequest struct {
 func (v *ProjectArchiveRequest) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectArchiveRequest) Closed() bool { return true }
 
 type ProjectBundle struct {
 	ContextFiles []ProjectContextFile       `json:"contextFiles"`
@@ -57,7 +51,7 @@ func (v *ProjectBundle) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
+// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
 func (*ProjectBundle) Closed() bool { return true }
 
 type ProjectContextFile struct {
@@ -70,7 +64,7 @@ func (v *ProjectContextFile) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
+// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
 func (*ProjectContextFile) Closed() bool { return true }
 
 type ProjectCreateReply = map[string]json.RawMessage
@@ -122,9 +116,9 @@ func (v *ProjectUpdateRequest) Validate() error {
 func init() {
 	for n, o := range map[string]Operation{
 		"project_archive":               {Read: false, Long: false, Errors: []int{403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too.\",\"additionalProperties\":false,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
-		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create a project (requestId, id, content)", InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\"},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\"},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
+		"project_create":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Create a project (requestId, id, content)", InputSchema: json.RawMessage("{\"properties\":{\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"id\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"id\",\"content\"],\"type\":\"object\"}")},
 		"project_initial_access_revoke": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Revoke a project's initial access grants (projectId, baseAccessVersion)", InputSchema: json.RawMessage("{\"properties\":{\"baseAccessVersion\":{\"type\":\"integer\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"baseAccessVersion\"],\"type\":\"object\"}")},
-		"project_update":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "bound:project", Description: "Save a new revision of a project (requestId, projectId, baseRevision, content, optional repoSha); refused when the head moved", InputSchema: json.RawMessage("{\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\"},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\"},\"projectId\":{\"type\":\"string\"},\"repoSha\":{\"type\":[\"string\",\"null\"]},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"projectId\",\"baseRevision\",\"content\"],\"type\":\"object\"}")},
+		"project_update":                {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "project:projectId", Agent: "bound:project", Description: "Save a new revision of a project (requestId, projectId, baseRevision, content, optional repoSha); refused when the head moved", InputSchema: json.RawMessage("{\"properties\":{\"baseRevision\":{\"type\":\"integer\"},\"content\":{\"additionalProperties\":false,\"properties\":{\"contextFiles\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"path\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"type\":\"array\"},\"settings\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"settings\",\"contextFiles\"],\"type\":\"object\",\"unevaluatedProperties\":false},\"projectId\":{\"type\":\"string\"},\"repoSha\":{\"type\":[\"string\",\"null\"]},\"requestId\":{\"type\":\"string\"}},\"required\":[\"requestId\",\"projectId\",\"baseRevision\",\"content\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
 	}

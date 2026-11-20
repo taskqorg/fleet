@@ -325,7 +325,7 @@ func (v *LabExperimentCreateRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
+// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
 func (*LabExperimentCreateRequest) Closed() bool { return true }
 
 // LabExperimentDecideReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
@@ -342,7 +342,7 @@ func (v *LabExperimentDecideRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
+// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
 func (*LabExperimentDecideRequest) Closed() bool { return true }
 
 // LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline. comparison: each non-baseline variant vs the first on the primary evaluator, {variant, baseline, evaluator, split, result: {n, mean, low, high, tooFew, examples}} (fleet-lab.md, Statistics). typed: per variant {variant, split, stats: [{tag, n, confident, correct, coverage, selectiveAccuracy, escalation}]}, the aggregate last with tag all.
@@ -594,7 +594,7 @@ func (v *LabExperimentNoteRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
+// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
 func (*LabExperimentNoteRequest) Closed() bool { return true }
 
 type LabExperimentPromoteReply struct {
@@ -652,9 +652,6 @@ func (v *LabLoopAllocator) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*LabLoopAllocator) Closed() bool { return true }
-
 type LabLoopAllocatorKind string
 
 const (
@@ -690,9 +687,6 @@ func (v *LabLoopGenerator) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*LabLoopGenerator) Closed() bool { return true }
-
 type LabLoopGeneratorKind string
 
 const (
@@ -723,9 +717,6 @@ func (v *LabLoopNoGain) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*LabLoopNoGain) Closed() bool { return true }
-
 // LabLoopStrategy: Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.
 type LabLoopStrategy struct {
 	Allocator     LabLoopAllocator `json:"allocator"`
@@ -749,9 +740,6 @@ func (v *LabLoopStrategy) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*LabLoopStrategy) Closed() bool { return true }
 
 type LabNoteKind string
 
@@ -928,9 +916,6 @@ func (v *LabRatingWithdrawRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*LabRatingWithdrawRequest) Closed() bool { return true }
-
 type LabRatingsListReply struct {
 	Ratings []map[string]json.RawMessage `json:"ratings"`
 }
@@ -1094,9 +1079,6 @@ func (v *LabTrialRecord) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*LabTrialRecord) Closed() bool { return true }
-
 type ProjectAssessmentRef struct {
 	ArtifactId      string `json:"artifactId"`
 	CheckId         string `json:"checkId"`
@@ -1111,9 +1093,6 @@ func (v *ProjectAssessmentRef) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectAssessmentRef) Closed() bool { return true }
-
 func init() {
 	for n, o := range map[string]Operation{
 		"lab_cell_action":       {Read: false, Long: true, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "action cancel, retry or retry_suffix. retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes. Other actions and unknown-field policy unchanged.", InputSchema: json.RawMessage("{\"$comment\":\"retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"enum\":[\"cancel\",\"retry\",\"retry_suffix\"],\"type\":\"string\"},\"cell\":{\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceRunId\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"cell\",\"action\"],\"type\":\"object\"}")},
@@ -1122,10 +1101,10 @@ func init() {
 		"lab_examples_add":      {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "Add Lab examples, optionally of a project and approved", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"approved\":{\"type\":\"boolean\"},\"examples\":{},\"projectId\":{\"type\":\"string\"}},\"required\":[\"examples\"],\"type\":\"object\"}")},
 		"lab_examples_list":     {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab examples, optionally by state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"state\":{\"enum\":[\"approved\",\"proposed\"],\"type\":\"string\"}},\"type\":\"object\"}")},
 		"lab_experiment_action": {Read: false, Long: true, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "action launch, stop or resume.", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"action\":{\"enum\":[\"launch\",\"stop\",\"resume\"],\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"action\"],\"type\":\"object\"}")},
-		"lab_experiment_create": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "See fleet-lab.md, Experiment record.", InputSchema: json.RawMessage("{\"$comment\":\"See fleet-lab.md, Experiment record.\",\"additionalProperties\":false,\"properties\":{\"budgets\":{},\"decisionRule\":{},\"evaluators\":{},\"examples\":{},\"goal\":{\"type\":\"string\"},\"hypothesis\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"labGroup\":{},\"pipelineId\":{\"type\":\"string\"},\"primaryEvaluator\":{},\"projectId\":{\"type\":\"string\"},\"repeats\":{},\"strategy\":{\"$comment\":\"Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.\",\"additionalProperties\":false,\"properties\":{\"allocator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"full\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"generator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"list\",\"grid\",\"propose\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\",\"params\"],\"type\":\"object\"},\"max_iterations\":{\"minimum\":1,\"type\":\"integer\"},\"no_gain\":{\"additionalProperties\":false,\"properties\":{\"k\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"k\"],\"type\":\"object\"}},\"required\":[\"generator\",\"allocator\"],\"type\":\"object\"},\"variants\":{}},\"type\":\"object\"}")},
-		"lab_experiment_decide": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Decide a Lab experiment (experimentId, decision, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"decision\":{\"$comment\":\"adopt \\u003cvariant\\u003e | keep baseline | inconclusive (pending is the coordinator's, never a person's)\",\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"reason\":{\"$comment\":\"Required to override a decision already made; the override is an amendment.\",\"type\":\"string\"}},\"required\":[\"experimentId\",\"decision\"],\"type\":\"object\"}")},
+		"lab_experiment_create": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "See fleet-lab.md, Experiment record.", InputSchema: json.RawMessage("{\"$comment\":\"See fleet-lab.md, Experiment record.\",\"additionalProperties\":false,\"properties\":{\"budgets\":{},\"decisionRule\":{},\"evaluators\":{},\"examples\":{},\"goal\":{\"type\":\"string\"},\"hypothesis\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"labGroup\":{},\"pipelineId\":{\"type\":\"string\"},\"primaryEvaluator\":{},\"projectId\":{\"type\":\"string\"},\"repeats\":{},\"strategy\":{\"$comment\":\"Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.\",\"additionalProperties\":false,\"properties\":{\"allocator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"full\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"generator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"list\",\"grid\",\"propose\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\",\"params\"],\"type\":\"object\"},\"max_iterations\":{\"minimum\":1,\"type\":\"integer\"},\"no_gain\":{\"additionalProperties\":false,\"properties\":{\"k\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"k\"],\"type\":\"object\"}},\"required\":[\"generator\",\"allocator\"],\"type\":\"object\"},\"variants\":{}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
+		"lab_experiment_decide": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Decide a Lab experiment (experimentId, decision, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"decision\":{\"$comment\":\"adopt \\u003cvariant\\u003e | keep baseline | inconclusive (pending is the coordinator's, never a person's)\",\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"reason\":{\"$comment\":\"Required to override a decision already made; the override is an amendment.\",\"type\":\"string\"}},\"required\":[\"experimentId\",\"decision\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiment_get":    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab experiment (experimentId) with its variants, trials and scores", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\"],\"type\":\"object\"}")},
-		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\"}")},
+		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Lab experiments", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Promote a variant of a Lab experiment (experimentId, variant) to the catalogue recommendation", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"variant\"],\"type\":\"object\"}")},
 		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask for a human rating of Lab trials (experimentId, form, trialIds)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"form\":{\"enum\":[\"pass_fail\",\"pick_best\",\"scale\"],\"type\":\"string\"},\"trialIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"experimentId\",\"form\",\"trialIds\"],\"type\":\"object\"}")},

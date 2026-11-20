@@ -6,7 +6,7 @@
 // Mapping: object -> struct (an open object names only the listed fields, as in TypeScript); an object without
 // properties whose additionalProperties is a schema -> map[string]<that type>; string enum -> named string
 // type with constants; {} -> json.RawMessage; integer -> int64; a property outside required, or with "null" in its type,
-// is a pointer with omitempty (required nullable: pointer, always written); an object with additionalProperties false
+// is a pointer with omitempty (required nullable: pointer, always written); an object with unevaluatedProperties false
 // gets Closed(), and the coordinator's strict decoder refuses keys it does not name; one with additionalProperties true
 // keeps the other keys in Rest.
 package main
@@ -25,7 +25,7 @@ import (
 
 type schema map[string]any
 
-var allowed = map[string]bool{"type": true, "properties": true, "required": true, "additionalProperties": true, "items": true,
+var allowed = map[string]bool{"type": true, "properties": true, "required": true, "additionalProperties": true, "unevaluatedProperties": true, "items": true,
 	"enum": true, "$ref": true, "minimum": true, "$comment": true, "const": true, "oneOf": true}
 
 func check(s schema, where string) {
@@ -275,9 +275,12 @@ func main() {
 				fmt.Fprintf(&b, "func (v *%s) UnmarshalJSON(b []byte) error {\n\ttype plain %s\n\tvar rest map[string]json.RawMessage\n\tif err := unmarshalRest(b, (*plain)(v), &rest); err != nil {\n\t\treturn err\n\t}\n\tv.Rest = rest\n\treturn nil\n}\n\n", name, name)
 			}
 			fmt.Fprintf(&b, "// Validate: the schema's required fields and enums (see Check).\nfunc (v *%s) Validate() error {\n%s\treturn nil\n}\n\n", name, v.String())
-			if s["additionalProperties"] == false {
-				// Closed: the strict decoders refuse a key the schema does not name (additionalProperties: false).
-				fmt.Fprintf(&b, "// Closed: additionalProperties is false; a body key outside the schema is refused.\nfunc (*%s) Closed() bool { return true }\n\n", name)
+			if u, ok := s["unevaluatedProperties"]; ok && u != false {
+				fail("%s: unevaluatedProperties must be false", n)
+			}
+			if s["unevaluatedProperties"] == false {
+				// Closed: the strict decoder refuses a key the schema does not name (unevaluatedProperties: false).
+				fmt.Fprintf(&b, "// Closed: unevaluatedProperties is false; a body key outside the schema is refused.\nfunc (*%s) Closed() bool { return true }\n\n", name)
 			}
 		case s["oneOf"] != nil:
 			// A union of $refs: each member is its own struct; the union itself stays JSON (Go has no sum type).

@@ -42,7 +42,7 @@
       "keys": {"type": "array", "items": {"$ref": "#/$defs/GatewayKey"}},
       "blocked": {"$comment": "Reached pause/stop budgets: \"connection\" (every call) or a run scope (person:, project:, experiment:).", "type": "array", "items": {"type": "string"}},
       "limits": {"$ref": "#/$defs/GatewayLimits"}}},
-    "GatewayLimits": {"$comment": "File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.", "type": "object", "properties": {
+    "GatewayLimits": {"unevaluatedProperties": false, "$comment": "File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.", "type": "object", "properties": {
       "fileBytes": {"$comment": "Largest upload in bytes.", "type": "integer", "minimum": 1},
       "replyBytes": {"$comment": "Largest download in bytes.", "type": "integer", "minimum": 1},
       "stallMs": {"$comment": "Longest time without progress in either direction.", "type": "integer", "minimum": 1},

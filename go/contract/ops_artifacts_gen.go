@@ -187,9 +187,6 @@ func (v *ArtifactRow) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ArtifactRow) Closed() bool { return true }
-
 type ArtifactRuleConfirmReply struct {
 	Confirmed bool   `json:"confirmed"`
 	RuleHash  string `json:"ruleHash"`

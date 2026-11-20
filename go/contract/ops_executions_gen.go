@@ -955,9 +955,6 @@ func (v *ExecutionsAbandonRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ExecutionsAbandonRequest) Closed() bool { return true }
-
 // ExecutionsCiReply: The Runners screen's CI half for taskqorg/fleet, the last background pass (every FLEET_RUNNERS_CI_TICK_MS, default 1 min, first at start) read through githubRead (cached; keyed through the github connection, else unauthenticated). jobs: in progress and queued. minutesToday: job wall minutes since 00:00 UTC per runner type; runsUncounted: today's runs whose jobs are not read yet (minutes are a lower bound while above 0). runners: self-hosted runners, null without a key (state unknown).
 type ExecutionsCiReply struct {
 	Jobs          []CiJob     `json:"jobs"`
@@ -1034,9 +1031,6 @@ func (v *ExecutionsDismissRequest) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ExecutionsDismissRequest) Closed() bool { return true }
 
 type ExecutionsListReply struct {
 	Executions []ExecutionRow `json:"executions"`
@@ -1611,9 +1605,6 @@ func (v *PipelineArtifactRef) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelineArtifactRef) Closed() bool { return true }
-
 type PipelineAuthority struct {
 	ActorEmail            string                  `json:"actorEmail"`
 	ProjectId             *string                 `json:"projectId"`
@@ -1632,9 +1623,6 @@ func (v *PipelineAuthority) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelineAuthority) Closed() bool { return true }
 
 type PipelineCanonicalResult struct {
 	Artifact            PipelineArtifactRef    `json:"artifact"`
@@ -1678,9 +1666,6 @@ func (v *PipelineCanonicalResult) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelineCanonicalResult) Closed() bool { return true }
-
 type PipelineCapabilityKind string
 
 const (
@@ -1714,9 +1699,6 @@ func (v *PipelineCapabilityRef) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelineCapabilityRef) Closed() bool { return true }
-
 type PipelineConditionDecision struct {
 	EvaluatedAtMs   int64                   `json:"evaluatedAtMs"`
 	Kind            PipelineDecisionKind    `json:"kind"`
@@ -1748,9 +1730,6 @@ func (v *PipelineConditionDecision) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelineConditionDecision) Closed() bool { return true }
 
 type PipelineDecisionKind string
 
@@ -1814,9 +1793,6 @@ func (v *PipelineDispatch) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelineDispatch) Closed() bool { return true }
-
 type PipelineDispatchPhase string
 
 const (
@@ -1856,9 +1832,6 @@ func (v *PipelineExecutionRef) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelineExecutionRef) Closed() bool { return true }
 
 type PipelineExecutionView struct {
 	Calls             []json.RawMessage   `json:"calls,omitempty"`
@@ -2070,9 +2043,6 @@ func (v *PipelineInputBinding) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelineInputBinding) Closed() bool { return true }
-
 type PipelineObservation string
 
 const (
@@ -2111,9 +2081,6 @@ func (v *PipelinePlan) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelinePlan) Closed() bool { return true }
 
 type PipelinePlanEntry struct {
 	Activation       PipelineActivation         `json:"activation"`
@@ -2172,9 +2139,6 @@ func (v *PipelinePlanEntry) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelinePlanEntry) Closed() bool { return true }
-
 type PipelinePlanProblem struct {
 	Code    PipelinePlanReason `json:"code"`
 	Message string             `json:"message"`
@@ -2187,9 +2151,6 @@ func (v *PipelinePlanProblem) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelinePlanProblem) Closed() bool { return true }
 
 type PipelinePlanReason string
 
@@ -2240,9 +2201,6 @@ type PipelinePlanSummary struct {
 func (v *PipelinePlanSummary) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PipelinePlanSummary) Closed() bool { return true }
 
 type PipelineRefMode string
 
@@ -2452,7 +2410,7 @@ func (v *PipelineRunRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
+// Closed: unevaluatedProperties is false; a body key outside the schema is refused.
 func (*PipelineRunRequest) Closed() bool { return true }
 
 // PurgeCount: bytes: stored artifact bytes of the objects (project and experiment). reasons (kept entries): why each id stays.
@@ -2893,7 +2851,7 @@ func init() {
 		"pipeline_get":          {Read: true, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "A pipeline run (runId) with its steps, optionally checked against projectId", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\"],\"type\":\"object\"}")},
 		"pipeline_history":      {Read: true, Long: false, Errors: []int{404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Pipeline runs of a project (projectId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\"],\"type\":\"object\"}")},
 		"pipeline_rerun":        {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Rerun a pipeline run (runId) in mode, optionally from its draft, with a requestId", InputSchema: json.RawMessage("{\"properties\":{\"draft\":{\"type\":\"boolean\"},\"mode\":{\"enum\":[\"failed\",\"all\"],\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"runId\":{\"type\":\"string\"}},\"required\":[\"runId\",\"mode\"],\"type\":\"object\"}")},
-		"pipeline_run":          {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\"}")},
+		"pipeline_run":          {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"pipeline_run_create":   {Read: false, Long: true, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "tool", Description: "Start a stored pipeline by pipelineId with projectId and a stable requestId; read its runId with pipeline_get.", InputSchema: json.RawMessage("{\"$comment\":\"Body of POST /api/pipelines/{id}/runs (pipelineRunCreate) as an operation pipeline_run_create; pipelineId was the URL segment. draft true runs the caller's draft. The request signature includes draft and the content sha.\",\"properties\":{\"draft\":{\"type\":\"boolean\"},\"example\":{\"additionalProperties\":true,\"type\":\"object\"},\"exampleArtifactId\":{\"type\":\"string\"},\"overrides\":{\"additionalProperties\":true,\"type\":\"object\"},\"pipelineId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"pipelineId\",\"requestId\"],\"type\":\"object\"}")},
 		"queue_list":            {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "bound:session", Description: "Queued messages", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"route_decisions":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "Why an execution (executionId) was routed to its host and account", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"required\":[\"executionId\"],\"type\":\"object\"}")},

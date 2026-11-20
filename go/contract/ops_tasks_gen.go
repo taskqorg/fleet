@@ -57,9 +57,6 @@ func (v *EntityCardRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*EntityCardRequest) Closed() bool { return true }
-
 // EntityCode: A human code (D17) and the entity it names; superseded: an alias of currentCode (a moved entity or a renamed project).
 type EntityCode struct {
 	Code        string `json:"code"`
@@ -247,9 +244,6 @@ func (v *PreparedHeaderV1) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PreparedHeaderV1) Closed() bool { return true }
-
 type PreparedItemCountsV1 struct {
 	Costs  int64 `json:"costs"`
 	Prices int64 `json:"prices"`
@@ -260,9 +254,6 @@ type PreparedItemCountsV1 struct {
 func (v *PreparedItemCountsV1) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PreparedItemCountsV1) Closed() bool { return true }
 
 type PreparedToolsV1 struct {
 	Basis       ResourceBasis `json:"basis"`
@@ -279,9 +270,6 @@ func (v *PreparedToolsV1) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*PreparedToolsV1) Closed() bool { return true }
 
 type ProjectCodeSetReply struct {
 	Code      string `json:"code"`
@@ -331,9 +319,6 @@ type ProjectContextEntry struct {
 func (v *ProjectContextEntry) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectContextEntry) Closed() bool { return true }
 
 // ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules, and optional resource summary.
 type ProjectContextReply struct {
@@ -467,9 +452,6 @@ func (v *ProjectDetailReply) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectDetailReply) Closed() bool { return true }
-
 type ProjectDetailRequest struct {
 	ProjectId string `json:"projectId"`
 }
@@ -478,9 +460,6 @@ type ProjectDetailRequest struct {
 func (v *ProjectDetailRequest) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectDetailRequest) Closed() bool { return true }
 
 type ProjectInitialAccess struct {
 	Member  *string `json:"member"`
@@ -492,9 +471,6 @@ type ProjectInitialAccess struct {
 func (v *ProjectInitialAccess) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectInitialAccess) Closed() bool { return true }
 
 type ProjectListReply struct {
 	Projects []map[string]json.RawMessage `json:"projects"`
@@ -606,9 +582,6 @@ func (v *ProjectResourceItemsRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectResourceItemsRequest) Closed() bool { return true }
-
 type ProjectResourcesReply = json.RawMessage
 
 type ProjectResourcesRequest struct {
@@ -620,9 +593,6 @@ type ProjectResourcesRequest struct {
 func (v *ProjectResourcesRequest) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ProjectResourcesRequest) Closed() bool { return true }
 
 // QuestionAnswerReply: A project question (ProjectQuestion), or the answered question row for any other question.
 type QuestionAnswerReply = map[string]json.RawMessage
@@ -945,9 +915,6 @@ func (v *QuestionsWithdrawRequest) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*QuestionsWithdrawRequest) Closed() bool { return true }
-
 type ResourceAnchor string
 
 const (
@@ -983,9 +950,6 @@ func (v *ResourceAround) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceAround) Closed() bool { return true }
 
 type ResourceCategory string
 
@@ -1054,9 +1018,6 @@ func (v *ResourceContributionV1) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceContributionV1) Closed() bool { return true }
-
 type ResourceCostItem struct {
 	Basis      ResourceBasis `json:"basis"`
 	Currency   *string       `json:"currency"`
@@ -1076,9 +1037,6 @@ func (v *ResourceCostItem) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceCostItem) Closed() bool { return true }
-
 type ResourceCostKey struct {
 	Basis    ResourceBasis `json:"basis"`
 	Currency *string       `json:"currency"`
@@ -1092,9 +1050,6 @@ func (v *ResourceCostKey) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceCostKey) Closed() bool { return true }
 
 type ResourceCostV1 struct {
 	Amount        *string              `json:"amount"`
@@ -1119,9 +1074,6 @@ func (v *ResourceCostV1) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceCostV1) Closed() bool { return true }
 
 type ResourceDirection string
 
@@ -1178,9 +1130,6 @@ func (v *ResourceGroup) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceGroup) Closed() bool { return true }
-
 type ResourceItem = json.RawMessage
 
 type ResourceItemsPage struct {
@@ -1221,9 +1170,6 @@ func (v *ResourceItemsPage) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceItemsPage) Closed() bool { return true }
-
 type ResourceMethodComponentV1 struct {
 	Currency   *string `json:"currency"`
 	ObservedAt *int64  `json:"observedAt"`
@@ -1237,9 +1183,6 @@ type ResourceMethodComponentV1 struct {
 func (v *ResourceMethodComponentV1) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceMethodComponentV1) Closed() bool { return true }
 
 type ResourceMethodV1 struct {
 	Components    []ResourceMethodComponentV1 `json:"components"`
@@ -1261,9 +1204,6 @@ func (v *ResourceMethodV1) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceMethodV1) Closed() bool { return true }
 
 type ResourceMetricNameV1 string
 
@@ -1315,9 +1255,6 @@ func (v *ResourceMetricV1) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceMetricV1) Closed() bool { return true }
-
 type ResourceNullKey = json.RawMessage
 
 type ResourceNullableErrorClass = json.RawMessage
@@ -1332,9 +1269,6 @@ type ResourcePackedToolKey struct {
 func (v *ResourcePackedToolKey) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourcePackedToolKey) Closed() bool { return true }
 
 type ResourcePreparingReply struct {
 	Kind      string           `json:"kind"`
@@ -1354,9 +1288,6 @@ func (v *ResourcePreparingReply) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourcePreparingReply) Closed() bool { return true }
-
 type ResourcePriceItem struct {
 	Group      ResourceGroup `json:"group"`
 	Kind       string        `json:"kind"`
@@ -1372,9 +1303,6 @@ func (v *ResourcePriceItem) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourcePriceItem) Closed() bool { return true }
-
 type ResourcePriceKey struct {
 	Kind       string `json:"kind"`
 	ObservedAt int64  `json:"observedAt"`
@@ -1386,9 +1314,6 @@ func (v *ResourcePriceKey) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourcePriceKey) Closed() bool { return true }
-
 type ResourcePriceRefV1 struct {
 	ObservedAt int64  `json:"observedAt"`
 	PriceId    string `json:"priceId"`
@@ -1398,9 +1323,6 @@ type ResourcePriceRefV1 struct {
 func (v *ResourcePriceRefV1) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourcePriceRefV1) Closed() bool { return true }
 
 type ResourceProgress struct {
 	ErrorClass      ResourceNullableErrorClass `json:"errorClass"`
@@ -1421,9 +1343,6 @@ func (v *ResourceProgress) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceProgress) Closed() bool { return true }
 
 type ResourceProgressState string
 
@@ -1466,9 +1385,6 @@ func (v *ResourceReadyReply) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceReadyReply) Closed() bool { return true }
-
 type ResourceResolvedKey = json.RawMessage
 
 type ResourceSortKey = json.RawMessage
@@ -1492,9 +1408,6 @@ func (v *ResourceToolItem) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceToolItem) Closed() bool { return true }
-
 // ResourceToolKey: Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.
 type ResourceToolKey struct {
 	Connection *string `json:"connection"`
@@ -1507,9 +1420,6 @@ func (v *ResourceToolKey) Validate() error {
 	return nil
 }
 
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceToolKey) Closed() bool { return true }
-
 type ResourceToolV1 struct {
 	Calls      int64  `json:"calls"`
 	Connection string `json:"connection"`
@@ -1521,9 +1431,6 @@ type ResourceToolV1 struct {
 func (v *ResourceToolV1) Validate() error {
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceToolV1) Closed() bool { return true }
 
 type ResourceUnchangedReply struct {
 	Kind      string           `json:"kind"`
@@ -1539,9 +1446,6 @@ func (v *ResourceUnchangedReply) Validate() error {
 	}
 	return nil
 }
-
-// Closed: additionalProperties is false; a body key outside the schema is refused.
-func (*ResourceUnchangedReply) Closed() bool { return true }
 
 type TaskCancelReply = TaskDetail
 
