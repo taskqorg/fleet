@@ -366,7 +366,9 @@ func answerValue(a answer) (json.RawMessage, error) {
 }
 
 // queueTo writes one outbox row for host route r (contracts/host-protocol.schema.json routes), its body r's request.
-func queueTo[Req, Rep any](db execer, r contract.HostRoute[Req, Rep], v Req) error { return queue(db, r.Path, v) }
+func queueTo[Req, Rep any](db execer, r contract.HostRoute[Req, Rep], v Req) error {
+	return queue(db, r.Path, v)
+}
 
 // queue: one outbox row for a route chosen at run time (the agent's delegation envelopes); queueTo when it is known.
 func queue(db execer, route string, v any) error {
@@ -751,10 +753,9 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 			_, deleg := value["delegation"]
 			_, key := value["agentToolKey"]
 			if deleg || key {
-				var problem struct {
+				problem := typedRaw[struct {
 					Message string `json:"message"`
-				}
-				_ = json.Unmarshal([]byte(a.text), &problem)
+				}]([]byte(a.text))
 				response = M{"error": "Coordinator rejected delegation", "statusCode": a.status, "message": problem.Message}
 			} else if len(batch) > 1 {
 				single = true // retry this batch row by row so only the poisoned row is set aside
@@ -779,14 +780,13 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 		k, hasKey := value["agentToolKey"].(string)
 		if !hasKey {
 			if _, ok := value["delegation"]; ok {
-				var d struct {
-					CommandId  tolerant[string] `json:"commandId"`
-					Delegation tolerant[struct {
-						RequestId tolerant[string] `json:"requestId"`
-					}] `json:"delegation"`
-				}
-				json.Unmarshal([]byte(r.body), &d) // a delegation row is never batched: its body is value
-				k, hasKey = d.CommandId.V+":"+d.Delegation.V.RequestId.V, true
+				d := typed[struct {
+					CommandId  string `json:"commandId"`
+					Delegation struct {
+						RequestId string `json:"requestId"`
+					} `json:"delegation"`
+				}](value) // a delegation row is never batched: its body is value
+				k, hasKey = d.CommandId+":"+d.Delegation.RequestId, true
 			}
 		}
 		if hasKey {
@@ -821,12 +821,11 @@ func (p *outboxPass) poisoned(r outboxRow, value M, a answer, reason string) err
 	}
 	own := false
 	// Only the event types are read: a batch that does not decode otherwise still counts by its types.
-	var batch struct {
+	batch := typed[struct {
 		Events []struct {
 			Type string `json:"type"`
 		} `json:"events"`
-	}
-	json.Unmarshal([]byte(enc(value)), &batch)
+	}](value)
 	for _, e := range batch.Events {
 		if e.Type == string(contract.FleetEventTypeOutboxFailed) {
 			own = true

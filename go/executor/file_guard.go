@@ -351,7 +351,7 @@ func uploadDenyLines(dataDir string) string {
 func executorStores() []string {
 	list := []string{connectionsDir(), os.Getenv("FLEET_CODEX_HOME"), os.Getenv("FLEET_NATIVE_ACCOUNTS"), os.Getenv("FLEET_FORGE_CONFIG_DIR"), os.Getenv("FLEET_STORE_CONFIG"), os.Getenv("FLEET_BROWSER_BINDINGS")}
 	if c := storeConfig(); c != nil {
-		list = append(list, c.KeyFile.V)
+		list = append(list, c.KeyFile)
 	}
 	if b, err := os.ReadFile(os.Getenv("FLEET_BROWSER_BINDINGS")); err == nil {
 		var bindings map[string]json.RawMessage

@@ -25,80 +25,57 @@ import (
 	"fleet/errtrack"
 )
 
-// tolerant: a JSON field read the way the journal's writers may have left it: null, absent or another type is unset,
-// never a decode error (a job body is written by several executor versions and carries the command payload).
-type tolerant[T any] struct {
-	V   T
-	Set bool
-}
-
-func (t *tolerant[T]) UnmarshalJSON(b []byte) error {
-	var v T
-	if string(b) != "null" && json.Unmarshal(b, &v) == nil {
-		t.V, t.Set = v, true
-	}
-	return nil
-}
-
-// MarshalJSON writes the value (an unset field as its zero value).
-func (t tolerant[T]) MarshalJSON() ([]byte, error) { return json.Marshal(t.V) }
-
-func (t tolerant[T]) or(def T) T {
-	if t.Set {
-		return t.V
-	}
-	return def
-}
-
 // transferJob: a `transfers` row's body. Uploads (collected output, artifact_save, previews) carry the file;
 // artifact-copy and artifact-verify carry the command payload (contract.ArtifactTransferPayload and the keys the worker
 // reads) with the command and the spool folder; get and list carry the MCP call; done is the journaled per-part
 // progress of an upload or copy.
 type transferJob struct {
-	Path        tolerant[string]               `json:"path"`
-	Spool       tolerant[string]               `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
-	Name        tolerant[string]               `json:"name"`
-	MediaType   tolerant[string]               `json:"mediaType"`
-	ExecutionId tolerant[string]               `json:"executionId"`
-	DerivedFrom tolerant[string]               `json:"derivedFrom"`
-	Role        tolerant[string]               `json:"role"`
-	Required    tolerant[bool]                 `json:"required"`
-	ArtifactId  tolerant[string]               `json:"artifactId"`
-	StoreId     tolerant[string]               `json:"storeId"`
-	Url         tolerant[string]               `json:"url"`
-	Size        tolerant[uint64]               `json:"size"`
-	PartSize    tolerant[uint64]               `json:"partSize"`
-	Source      tolerant[transferSource]       `json:"source"`
-	InputDir    tolerant[string]               `json:"inputDir"`
-	Filter      tolerant[transferFilter]       `json:"filter"`
-	Done        tolerant[[]tolerant[donePart]] `json:"done"`
-	Command     json.RawMessage                `json:"command"` // present (even null): the job sends the command's final receipt
+	Path        string          `json:"path"`
+	Spool       string          `json:"spool"` // copy: the spool folder (an upload's true is read by the cleanup)
+	Name        string          `json:"name"`
+	MediaType   string          `json:"mediaType"`
+	ExecutionId string          `json:"executionId"`
+	DerivedFrom string          `json:"derivedFrom"`
+	Role        string          `json:"role"`
+	Required    bool            `json:"required"`
+	ArtifactId  *string         `json:"artifactId"`
+	StoreId     string          `json:"storeId"`
+	Url         string          `json:"url"`
+	Size        *uint64         `json:"size"`
+	PartSize    *uint64         `json:"partSize"`
+	Source      transferSource  `json:"source"`
+	InputDir    string          `json:"inputDir"`
+	Filter      *transferFilter `json:"filter"`
+	Done        []donePart      `json:"done"`
+	Command     jsonValue       `json:"command"` // present (even null): the job sends the command's final receipt
 }
 
 type transferSource struct {
-	Url tolerant[string] `json:"url"`
+	Url string `json:"url"`
 }
 
 type transferFilter struct {
-	ExecutionId tolerant[string] `json:"executionId"`
-	TaskId      tolerant[string] `json:"taskId"`
-	MediaType   tolerant[string] `json:"mediaType"`
-	Cursor      tolerant[string] `json:"cursor"`
+	ExecutionId string `json:"executionId"`
+	TaskId      string `json:"taskId"`
+	MediaType   string `json:"mediaType"`
+	Cursor      string `json:"cursor"`
 }
 
 // donePart: one journaled part, written as {partNumber, etag}.
 type donePart struct {
-	PartNumber tolerant[uint64] `json:"partNumber"`
-	Etag       tolerant[string] `json:"etag"`
+	PartNumber uint64 `json:"partNumber"`
+	Etag       string `json:"etag"`
 }
 
 // readJob: a body that is not a JSON object reads as an empty job.
-func readJob(body string) transferJob {
-	var j transferJob
-	if json.Unmarshal([]byte(body), &j) != nil {
-		return transferJob{}
+func readJob(body string) transferJob { return typedRaw[transferJob]([]byte(body)) }
+
+// orU64: *p, or def when p is nil.
+func orU64(p *uint64, def uint64) uint64 {
+	if p == nil {
+		return def
 	}
-	return j
+	return *p
 }
 
 // enqueue queues a job; id is also the artifact id of an upload, so a repeated reserve is the same reservation.
@@ -332,7 +309,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 	count := max((size+partSize-1)/partSize, 1)
 	var bodyText string
 	db.QueryRow("SELECT body FROM transfers WHERE id=?", jobID).Scan(&bodyText)
-	done := readJob(bodyText).Done.V
+	done := readJob(bodyText).Done
 	f, err := os.Open(file)
 	if err != nil {
 		return contract.ArtifactStateReply{}, ioFailure(err)
@@ -342,7 +319,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 	for n := uint64(1); n <= count; n++ {
 		have := false
 		for _, d := range done {
-			if d.V.PartNumber.V == n {
+			if d.PartNumber == n {
 				have = true
 			}
 		}
@@ -377,14 +354,14 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 			if fl != nil {
 				return contract.ArtifactStateReply{}, fl
 			}
-			done = append(done, tolerant[donePart]{donePart{tolerant[uint64]{n, true}, tolerant[string]{etag, true}}, true})
+			done = append(done, donePart{n, etag})
 			// progress: the backoff starts over
 			db.Exec("UPDATE transfers SET body=json_set(body,'$.done',json(?)),attempts=0 WHERE id=?", enc(done), jobID)
 		}
 	}
 	req := contract.ArtifactCommitRequest{HostId: c.host, ArtifactId: artifactID, StoreId: optStr(storeID)}
 	for _, d := range done {
-		n, etag := d.V.PartNumber.V, d.V.Etag.V
+		n, etag := d.PartNumber, d.Etag
 		req.Parts = append(req.Parts, contract.ArtifactPart{PartNumber: int64(n), Etag: &etag})
 	}
 	commit, fl := transferReply(c, contract.RouteArtifactsCommit, req)
@@ -417,14 +394,14 @@ func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contrac
 func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (any, *failure) {
 	switch kind {
 	case "upload":
-		path := body.Path.V
+		path := body.Path
 		digest, size, err := hashFile(path)
 		if err != nil {
 			return nil, ioFailure(err)
 		}
-		required := body.Required.V
-		req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: body.ExecutionId.V, ArtifactId: optStr(id), Name: body.Name.V, MediaType: body.MediaType.V,
-			Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(body.DerivedFrom.V), Role: optStr(body.Role.V)}
+		required := body.Required
+		req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: body.ExecutionId, ArtifactId: optStr(id), Name: body.Name, MediaType: body.MediaType,
+			Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(body.DerivedFrom), Role: optStr(body.Role)}
 		r, f := transferReply(c, contract.RouteArtifactsReserve, req)
 		if f != nil {
 			return nil, f
@@ -451,12 +428,12 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 		}
 		return M{"artifactId": r.ArtifactId, "state": out.State}, nil
 	case "verify":
-		return verifyArtifact(c, body.ArtifactId.V, body.StoreId.V, body.Url.V)
+		return verifyArtifact(c, str0(body.ArtifactId), body.StoreId, body.Url)
 	case "copy":
 		// Download the source object next to the journal, then upload it to this host's store.
-		tmp := filepath.Join(body.Spool.V, id+".part")
-		if st, err := os.Stat(tmp); err != nil || uint64(st.Size()) != body.Size.or(^uint64(0)) {
-			src, f := c.get(body.Source.V.Url.V)
+		tmp := filepath.Join(body.Spool, id+".part")
+		if st, err := os.Stat(tmp); err != nil || uint64(st.Size()) != orU64(body.Size, ^uint64(0)) {
+			src, f := c.get(body.Source.Url)
 			if f != nil {
 				return nil, f
 			}
@@ -476,11 +453,11 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 		if err != nil {
 			return nil, ioFailure(err)
 		}
-		out, f := sendParts(c, db, id, tmp, body.ArtifactId.V, body.StoreId.V, uint64(st.Size()), body.PartSize.or(32<<20))
+		out, f := sendParts(c, db, id, tmp, str0(body.ArtifactId), body.StoreId, uint64(st.Size()), orU64(body.PartSize, 32<<20))
 		os.Remove(tmp)
 		return out, f
 	case "get":
-		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId.V), ArtifactId: body.ArtifactId.V})
+		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(body.ExecutionId), ArtifactId: str0(body.ArtifactId)})
 		if f != nil {
 			return nil, f
 		}
@@ -504,7 +481,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 		}
 		// ponytail: per byte, so a multibyte character becomes several '_' where Rust wrote one.
 		name = string(safe)
-		dir := body.InputDir.V
+		dir := body.InputDir
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, ioFailure(err)
 		}
@@ -546,9 +523,9 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body transferJob) (a
 		}
 		return M{"artifactId": r.Id, "path": target, "mediaType": r.MediaType, "size": r.Size}, nil
 	case "list":
-		req := contract.HostArtifactListRequest{HostId: c.host, ExecutionId: body.ExecutionId.V}
-		if f := body.Filter; f.Set {
-			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(f.V.ExecutionId.V), TaskId: optStr(f.V.TaskId.V), MediaType: optStr(f.V.MediaType.V), Cursor: optStr(f.V.Cursor.V)}
+		req := contract.HostArtifactListRequest{HostId: c.host, ExecutionId: body.ExecutionId}
+		if f := body.Filter; f != nil {
+			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(f.ExecutionId), TaskId: optStr(f.TaskId), MediaType: optStr(f.MediaType), Cursor: optStr(f.Cursor)}
 		}
 		return c.post(contract.RouteArtifactsList.Path, req)
 	}
@@ -564,8 +541,8 @@ func leased(kind, id string, body transferJob) (string, string, bool) {
 	case "upload":
 		return id, "", true
 	case "verify", "copy":
-		if body.ArtifactId.Set {
-			return body.ArtifactId.V, body.StoreId.V, true
+		if body.ArtifactId != nil {
+			return *body.ArtifactId, body.StoreId, true
 		}
 	}
 	return "", "", false
@@ -652,13 +629,12 @@ func transferWork(db *sql.DB, c *transferClient, lane string, after afterJob) {
 // settleJob records a job's outcome: done or failed with the command's final receipt (and, for an upload that can never
 // succeed, the artifact failure), or a retry with backoff.
 // transferReceipt: the final receipt of an artifact-copy or artifact-verify command.
-func transferReceipt(host string, cmd json.RawMessage, status contract.ReceiptStatus, failure string) contract.Receipt {
-	var c struct {
-		Id          tolerant[string] `json:"id"`
-		ExecutionId tolerant[string] `json:"executionId"`
-	}
-	json.Unmarshal(cmd, &c) // a command that is not an object names no command
-	r := contract.Receipt{HostId: host, CommandId: c.Id.V, ExecutionId: c.ExecutionId.V, Status: status}
+func transferReceipt(host string, cmd jsonValue, status contract.ReceiptStatus, failure string) contract.Receipt {
+	c := typed[struct { // a command that is not an object names no command
+		Id          string `json:"id"`
+		ExecutionId string `json:"executionId"`
+	}](cmd)
+	r := contract.Receipt{HostId: host, CommandId: c.Id, ExecutionId: c.ExecutionId, Status: status}
 	if failure != "" {
 		r.Error = &failure
 	}
@@ -666,7 +642,7 @@ func transferReceipt(host string, cmd json.RawMessage, status contract.ReceiptSt
 }
 
 func settleJob(x execer, host, id, kind string, body transferJob, attempts int64, v any, f *failure) error {
-	cmd, hasCmd := body.Command, body.Command != nil
+	cmd, hasCmd := body.Command, body.Command.Set
 	switch {
 	case f == nil:
 		if _, err := x.Exec("UPDATE transfers SET state='done',response=? WHERE id=?", enc(v), id); err != nil {
