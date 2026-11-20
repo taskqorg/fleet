@@ -7,7 +7,7 @@ import {
   type CostFigureLike, type Measured, type StateOf, type TotalItem, type TreeNode,
 } from '../../../packages/ui/src/index.ts';
 import { op, OpError } from '../api.ts';
-import { usePreparedDoc, preparedKey } from '../store.ts';
+import { usePreparedOp, preparedKey } from '../store.ts';
 import type { ResourceItem, ResourceSortKey, ResourceItemsPage, ProjectResourceItemsRequest, ResourceCategory, ResourceGroup, PreparedHeaderV1, ResourceProgress } from '../../../contracts/generated/ops.ts';
 import type { CostFigure, ExecutionRow, ResourceSummary, ScopedResourceRollup } from '../../../contracts/generated/ops.ts';
 
@@ -326,9 +326,7 @@ export function resourcePositionKey(key: ResourceSortKey): string {
 }
 export const resourceItemKey = (item: ResourceItem) => resourcePositionKey(resourcePosition(item));
 export function useProjectResources(projectId: string | undefined, enabled: boolean) {
-  return usePreparedDoc(projectId && enabled ? preparedKey('project_resources', projectId) : null,
-    ({ signal, knownVersion }) => op('project_resources', { projectId: projectId!, knownVersion }, { signal }),
-    { touches: c => c.kind === 'resource_summary' && c.id === projectId });
+  return usePreparedOp('project_resources', projectId && enabled ? { projectId } : null);
 }
 type ProjectResourceState = ReturnType<typeof useProjectResources>;
 const preparedTotals = (header: PreparedHeaderV1 | null): TotalItem[] => {
@@ -385,7 +383,7 @@ function PreparedResourceWindow({ projectId, category, group, onClose }: { proje
   const windowPages = useRef<ResourceItemsPage[]>([]);
   const retainedPosition = useRef<ResourceSortKey | null>(null);
   const requestKey = preparedKey('project_resource_items', projectId, request);
-  const result = usePreparedDoc(requestKey, async ({ signal }) => {
+  const result = usePreparedOp('project_resource_items', { projectId, ...request }, { read: async ({ signal }) => {
     const first = firstRequest.current !== requestKey;
     const context = { requestKey, movement: first ? movement.current : 'replace' as const, jump: first ? request.anchor : undefined, anchor: null as { key: string; offsetPx: number } | null };
     const anchor = handle.current?.getAnchor() ?? null; if (anchor) captured.current = anchor;
@@ -399,7 +397,7 @@ function PreparedResourceWindow({ projectId, category, group, onClose }: { proje
     try { value = await op('project_resource_items', next, { signal }); }
     catch (e) { if (!(e instanceof OpError) || e.status !== 409) throw e; next = position ? { ...base, around: { key: position, direction: 'atOrAfter' } } : { ...base, anchor: 'start' }; value = await op('project_resource_items', next, { signal }); }
     responseContext.current.set(value, context); return value;
-  }, { touches: c => c.kind === 'resource_summary' && c.id === projectId });
+  } });
   useLayoutEffect(() => {
     const value = result.data;
     if (result.state === 'preparing') {

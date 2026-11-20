@@ -40,7 +40,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
   ];
   try {
     for (const [i, fixture] of cases.entries()) {
-      await page.route('**/api/ops/task_get', route => route.fulfill({json: {id: 'story', title: 'Install Android app', expectedOutcome: 'Full original request. '.repeat(100), completionRequirements: { device: 'Verify on Android' }, latestResult: {id: 'patch', name: 'implementation.patch', mediaType: 'text/plain'}, ...fixture}}));
+      await page.route('**/api/ops/task_get', route => route.fulfill({json: {id: 'story', title: 'Install Android app', expectedOutcome: 'Full original request. '.repeat(100), completionRequirements: { device: 'Verify on Android' }, latestResult: {id: 'patch', name: 'implementation.patch', mediaType: 'text/plain'}, dependencies: [], ...fixture}}));
       await page.goto(origin + '/tasks/story');
       const detail = page.locator('[data-ui=detail]');
       await detail.getByRole('heading', {name: 'Install Android app'}).waitFor();
@@ -84,6 +84,7 @@ export async function checkTaskStory(browser: Browser, origin: string) {
         title: 'Unified resources story',
         state: 'completed',
         questions: [],
+        dependencies: [],
         cost: costs,
         resources: {
           own: resSummary(30000, 10000, [costs[0]]),

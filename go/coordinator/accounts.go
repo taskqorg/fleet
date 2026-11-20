@@ -261,12 +261,18 @@ func accountList(q *Request) (any, error) {
 	return doc{"catalogues": cats, "accounts": as}, nil
 }
 
-var loginCommands = map[string]string{"codex": "codex login --device-auth", "claude": "claude auth login --claudeai",
-	"antigravity": "agy acp --login (may replace the shared native principal; explicit review required)", "acp": "the bound agent's own login command"}
+// loginCommands: each harness's native login, as accounts tell the owner (contracts/vocabulary.json).
+var loginCommands = func() map[string]string {
+	out := map[string]string{}
+	for _, h := range contract.Vocabulary.Harnesses {
+		out[h.ID] = h.Login
+	}
+	return out
+}()
 
 func accountCreate(q *Request, r *contract.AccountCreateRequest) (any, error) {
 	harness := r.Harness
-	if !accountName.MatchString(r.Name) || !inList([]string{"codex", "claude", "antigravity", "acp"}, harness) {
+	if !accountName.MatchString(r.Name) || !inList(contract.HarnessIDs(), harness) {
 		return nil, fail(400, "Expected account name and harness")
 	}
 	same, err := rows(q, "SELECT data FROM document WHERE kind='managed-account' AND data->>'name'=$1", r.Name)
@@ -379,7 +385,22 @@ func accountInspect(q *Request, accountID, host string, wanted *string) (any, er
 	return r, put(q, "account-inspection", r)
 }
 
-var loginArgv = map[string]any{"codex": []any{"login", "--device-auth"}, "claude": []any{"auth", "login", "--claudeai"}, "antigravity": []any{"acp", "--login"}, "acp": nil}
+// loginArgv: the login arguments of each harness's binary; nil where the bound agent logs in on its own.
+var loginArgv = func() map[string]any {
+	out := map[string]any{}
+	for _, h := range contract.Vocabulary.Harnesses {
+		if h.LoginArgv == nil {
+			out[h.ID] = nil
+			continue
+		}
+		argv := []any{}
+		for _, a := range h.LoginArgv {
+			argv = append(argv, a)
+		}
+		out[h.ID] = argv
+	}
+	return out
+}()
 
 func accountLoginHandoff(q *Request, r *contract.AccountLoginHandoffRequest) (any, error) {
 	b := docOf(r)

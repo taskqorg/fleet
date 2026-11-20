@@ -9,9 +9,10 @@
 import { AccessChanged, accessGeneration, ensureAccessGeneration, isAccessCurrent, assertAccessGeneration } from './access.ts';
 import { signal, effect, type Signal } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { op, online, signedOut, OpError, type Ops } from './api.ts';
+import { op, online, signedOut, OpError, type Ops, type OpName } from './api.ts';
 import { subscribe, currentCursor, feedState, type Change } from './feed.ts';
 import { applyMembership, chunks, touched, type Row, type SortKey } from './lists.ts';
+import type { ListGroup, TaskRow, SessionRow } from '../../contracts/generated/ops.ts';
 import { save, load, onClear, pruneKeys } from './offline.ts';
 import { listKey, toPageParams, type View } from '../../packages/view-url/view-url.ts';
 import { withFocus, prefsRead } from './prefs.ts';
@@ -21,11 +22,11 @@ export const freshness = (restored: boolean): Freshness => signedOut.value ? 'si
 
 export type Kind = 'tasks' | 'sessions';
 type Params = ReturnType<typeof toPageParams>;
-type Group = { key: string; label: string | null; count: number };
+type Group = ListGroup;
 export type ListState = { ids: string[]; keys: Record<string, SortKey>; counts: Record<string, number>; total: number; groups: Group[]; nextAfter: unknown; at: number; restored: boolean; error: string | null };
 type Saved = Omit<ListState, 'restored' | 'error'> & { rows: Row[] };
 type Entry = { kind: Kind; view: View; params: Params; state: Signal<ListState | null>; busy: Signal<boolean>; seq: number; mounted: number; loading: number; touchedWhileLoading: Set<string>; touchedSeq: number; paging: boolean; cursorReset: boolean; pageError: boolean };
-type Doc = { data: unknown; restored: boolean; error: string | null };
+type Doc = { data: unknown; restored: boolean; error: string | null; status?: number | null };
 
 const records = new Map<string, { row: Row; seq: number }>();
 const lists = new Map<string, Entry>();
@@ -72,7 +73,7 @@ function putRows(rows: Row[], seq: number) {
 }
 /** Drop records no list holds any more. */
 function pruneRecords() { for (const id of records.keys()) if (!holders.get(id)?.size) { records.delete(id); holders.delete(id); } }
-const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => ('tasks' in r ? r.tasks : r.sessions) as Row[];
+const rowsOf = (r: Ops['task_page']['reply'] | Ops['sessions_list']['reply']): Row[] => 'tasks' in r ? r.tasks : r.sessions;
 const opName = (k: Kind) => k === 'tasks' ? 'task_page' : 'sessions_list';
 // The snapshot is built when the write happens (offline.save calls it at most once a second).
 // Snapshot keys carry a version: 'v2' since a view without a group means project, not priority (stored groups differ);
@@ -167,7 +168,7 @@ async function ask(kind: Kind, ids: string[], targets: [string, Entry][], seq: n
       for (const part of chunks(ids, MEMBERSHIP_IDS)) {
         const r = await op('list_membership', { ids: part, lists: pair.map(([, e]) => ({ name: kind, ...e.params })) });
         assertAccessGeneration(generation);
-        r.lists.forEach((l: any, i: number) => { answers[i].rows.push(...l.rows); answers[i].counts = l.counts; answers[i].groups = l.groups ?? null; });
+        r.lists.forEach((l, i) => { answers[i].rows.push(...l.rows as Row[]); answers[i].counts = l.counts; answers[i].groups = l.groups ?? null; });
       }
       pair.forEach(([key, e], i) => {
         const a = answers[i], cur = e.state.value;
@@ -212,7 +213,9 @@ export function startStore() {
  * yet the previous list stays on screen and `pending` is true. `shownView` is the view those rows belong to (headers use it).
  * The skeleton is only for a view that never showed anything.
  */
-export function useList(kind: Kind, urlView: View) {
+/** The row type of each list kind. */
+export type RowOf<K extends Kind> = K extends 'tasks' ? TaskRow : SessionRow;
+export function useList<K extends Kind>(kind: K, urlView: View) {
   const view = withFocus(urlView), key = listKey(view), e = entry(kind, key, view);
   const [last, setLast] = useState<string | null>(() => e.state.value ? key : null);
   const ctrl = useRef<AbortController | null>(null);
@@ -228,7 +231,7 @@ export function useList(kind: Kind, urlView: View) {
     return () => { e.mounted--; c.abort(); };
   }, [key, ready]);
   const se = shown ? lists.get(shown) : undefined, cur = se?.state.value ?? null;
-  const rows = cur ? cur.ids.map(id => records.get(id)?.row).filter((r): r is Row => !!r) : [];
+  const rows = cur ? cur.ids.map(id => records.get(id)?.row).filter((r): r is RowOf<K> => !!r) : [];
   return {
     rows, counts: cur?.counts ?? {}, total: cur?.total ?? 0, groups: cur?.groups ?? [], at: cur?.at ?? 0, error: cur?.error ?? null,
     pending: !ready || shown !== key || e.busy.value, shownKey: shown, shownView: se?.view ?? view,
@@ -264,7 +267,7 @@ async function startDoc(name: string, f: DocFlight) {
   } catch (e: any) {
     if (!newest() || read < f.failed) return; // newer data or a newer failure is already shown
     f.failed = read;
-    s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e?.message ?? String(e) };
+    s.value = { data: s.value?.data ?? null, restored: s.value?.restored ?? false, error: e?.message ?? String(e), status: e instanceof OpError ? e.status : null };
     if (s.value.data === null) restoreDoc(name, f); // offline: show what was stored
   }
 }
@@ -285,23 +288,113 @@ export function holdDoc(name: string, fetch: () => Promise<unknown>) {
 }
 function discardDocReads() { for (const f of flights.values()) { f.shown = f.failed = f.started; f.cleared++; } }
 
-/** Detail and page reads by name (task_get, session_get, overview, hosts). The last value stays visible while re-reading. */
-export function useDoc<T>(name: string | null, fetch: () => Promise<T>, touches: (c: Change) => boolean, refreshMs?: number) {
-  const fetchRef = useRef(fetch); fetchRef.current = fetch;
-  const touchRef = useRef(touches); touchRef.current = touches;
+/** JSON with object keys sorted: equal requests name one read whatever their key order. */
+export const canonical = (v: unknown) => JSON.stringify(v, (_k, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : x);
+/** The cache key of a read: the operation and its canonical request, shared by every view that asks the same. */
+export const opKey = (name: OpName, request: unknown) => name + ':' + canonical(request);
+
+// Request fields that name one entity, and what a change says of it: the entity it names (a match, or another one), null
+// when the change could name one and names none (a run of no task), undefined when its kind never names one.
+const SCOPE: { field: string; of: (c: Change) => string | null | undefined }[] = [
+  { field: 'taskId', of: c => c.taskId ?? (c.kind === 'task' ? c.id : null) },
+  { field: 'sessionId', of: c => c.sessionId ?? (c.kind === 'session' ? c.id : null) },
+  { field: 'hostId', of: c => c.hostId ?? (c.kind === 'host' ? c.id : null) },
+  { field: 'artifactId', of: c => c.kind === 'artifact' ? c.id : undefined },
+  { field: 'executionId', of: c => c.kind === 'execution' ? c.id : undefined },
+  { field: 'experimentId', of: c => c.kind === 'experiment' ? c.id : undefined },
+  { field: 'questionId', of: c => c.kind === 'question' ? c.id : undefined },
+  // A project definition is project/<id>; other definition kinds (agents, pipelines) may feed any project.
+  { field: 'projectId', of: c => c.kind === 'resource_summary' ? c.id : c.kind === 'definition' && c.id.startsWith('project/') && c.id.length > 8 ? c.id.slice(8) : undefined },
+];
+// entity_card {kind, id}: the request field its entity kind stands for; kinds with no field name their own changes.
+const CARD_FIELD: Record<string, string> = { task: 'taskId', conversation: 'sessionId', host: 'hostId', result: 'artifactId', execution: 'executionId', experiment: 'experimentId', question: 'questionId' };
+const CARD_OWN: Record<string, (c: Change, id: string) => boolean> = {
+  project: (c, id) => c.kind === 'definition' && c.id === 'project/' + id,
+  agent: (c, id) => c.kind === 'definition' && c.id === 'agent/' + id,
+  pipeline: (c, id) => c.kind === 'definition' && c.id === 'pipeline/' + id,
+  pull_request: c => c.kind === 'delivery',
+  release: c => c.kind === 'delivery' || c.kind === 'host',
+};
+let identityKey: () => string | undefined = () => undefined;
+/** main.tsx: whose personal settings a setting-change must name to touch this tab's reads. */
+export function setIdentity(read: () => string | undefined) { identityKey = read; }
+
+/**
+ * Whether a change can alter the reply of name(request): the server names the operation in the change's touches
+ * (contracts: each operation's changes), and the change names no other entity than the request does. A setting-change
+ * of another known person touches nothing here, and one of a known non-person target no personal read. This is the only invalidation rule; views write none.
+ */
+export function touchedBy(c: Change, name: OpName, request: unknown): boolean {
+  if (!c.touches?.includes(name)) return false;
+  const r = { ...(request && typeof request === 'object' ? request as Record<string, unknown> : {}) };
+  if (name === 'entity_card' && typeof r.kind === 'string') {
+    if (typeof r.id !== 'string') return false; // a card asked by code: its id is not known yet
+    if (CARD_OWN[r.kind]) return CARD_OWN[r.kind](c, r.id);
+    if (CARD_FIELD[r.kind]) r[CARD_FIELD[r.kind]] = r.id;
+  }
+  for (const { field, of } of SCOPE) { const want = r[field], got = of(c); if (typeof want === 'string' && got !== undefined && got !== want) return false; }
+  // A read of rows by id (list_membership of pinned rows): only a change naming one of them.
+  if (Array.isArray(r.ids) && ![c.taskId, c.sessionId, c.id].some(x => !!x && (r.ids as unknown[]).includes(x))) return false;
+  const me = identityKey(), t = c.settingTarget;
+  if (c.kind === 'setting-change' && me && t && t.startsWith('person:') && t !== 'person:' && t !== 'person:' + me) return false;
+  // A personal read (person_*) is touched only by this person's settings or an unknown target, never a known other one.
+  if (c.kind === 'setting-change' && name.startsWith('person_') && t && t !== 'person:' && !t.startsWith('person:')) return false;
+  return true;
+}
+
+type Mounted = { name: OpName; request: () => unknown; read: () => void };
+const mounted = new Set<Mounted>();
+let opFeed: (() => void) | null = null;
+/** One feed subscription for every mounted read: a batch rereads each read it touches once. */
+function watch(m: Mounted) {
+  mounted.add(m);
+  opFeed ??= subscribe({ resync: () => { for (const x of mounted) x.read(); }, changes: cs => { for (const x of mounted) { const r = x.request(); if (cs.some(c => touchedBy(c, x.name, r))) x.read(); } } });
+  return () => { mounted.delete(m); };
+}
+/** A reread at most once per quiet ms: the first at once, later ones at the end of the window (none is lost). */
+function throttle(read: () => void, quiet = 0) {
+  if (!quiet) return { read, stop: () => {} };
+  let last = 0, timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    read: () => { if (timer) return; const wait = last + quiet - Date.now(); if (wait <= 0) { last = Date.now(); read(); return; } timer = setTimeout(() => { timer = undefined; last = Date.now(); read(); }, wait); },
+    stop: () => clearTimeout(timer),
+  };
+}
+
+export type OpOptions = {
+  /** Also read every ms: values that move without a change row (host liveness, telemetry, runners). */
+  every?: number;
+  /** Reread on touches at most once per quiet ms (counters touched by every busy execution). */
+  quiet?: number;
+  /** Fields added to the request for touchedBy only, not the key: the entity a read concerns once its reply named it. */
+  scope?: Record<string, unknown>;
+};
+export type OpRead<T> = { data: T | null; restored: boolean; error: string | null; status: number | null; state: Freshness; reload: () => void };
+
+/**
+ * The one way a view reads an operation: useOp(name, request). The cache key is the operation and its canonical request,
+ * so two views asking the same share one read (and its IndexedDB copy); null request: nothing to read yet. It rereads when
+ * the server says a change touches the operation (touchedBy), on resync, and every `every` ms; the last value stays
+ * visible while it rereads. Lists use useListPage; prepared reads use usePreparedOp.
+ */
+export function useOp<K extends OpName>(name: K, request: Ops[K]['request'] | null, opts: OpOptions = {}): OpRead<Ops[K]['reply']> {
+  const key = request === null ? null : opKey(name, request);
+  const reqRef = useRef(request); reqRef.current = request;
+  const scopeRef = useRef(opts.scope); scopeRef.current = opts.scope;
   const reloadRef = useRef<() => void>(() => {});
-  const s = name ? docSignal(name) : null;
+  const s = key ? docSignal(key) : null;
   const gen = generation.value;
   useEffect(() => {
-    if (!name) return;
-    const release = holdDoc(name, () => fetchRef.current());
-    reloadRef.current = () => readDoc(name);
-    const off = subscribe({ resync: () => readDoc(name), changes: cs => { if (cs.some(c => touchRef.current(c))) readDoc(name); } });
-    const timer = refreshMs ? setInterval(() => readDoc(name), refreshMs) : 0;
-    return () => { reloadRef.current = () => {}; release(); off(); clearInterval(timer); };
-  }, [name, refreshMs, gen]);
+    if (!key) return;
+    const release = holdDoc(key, () => op(name, reqRef.current!));
+    reloadRef.current = () => readDoc(key);
+    const t = throttle(() => readDoc(key), opts.quiet);
+    const off = watch({ name, request: () => ({ ...reqRef.current, ...scopeRef.current }), read: t.read });
+    const timer = opts.every ? setInterval(() => readDoc(key), opts.every) : 0;
+    return () => { reloadRef.current = () => {}; release(); off(); t.stop(); clearInterval(timer); };
+  }, [key, opts.every, opts.quiet, gen]);
   const v = s?.value ?? null;
-  return { data: (v?.data ?? null) as T | null, restored: !!v?.restored, error: v?.error ?? null, state: freshness(!!v?.restored), reload: () => reloadRef.current() };
+  return { data: (v?.data ?? null) as Ops[K]['reply'] | null, restored: !!v?.restored, error: v?.error ?? null, status: v?.status ?? null, state: freshness(!!v?.restored), reload: () => reloadRef.current() };
 }
 
 /** For tests: the stored list under key and a record. */
@@ -373,18 +466,26 @@ export function acquirePrepared<T extends PreparedReply>(key: string, fetcher: P
   } };
 }
 onClear.add(() => { for (const e of prepared.values()) { e.disposed = true; e.request++; e.controller?.abort(); clearInterval(e.timer); e.value.value = { data: null, progress: null, error: null, restored: false, state: 'disposed' }; } prepared.clear(); });
-export function usePreparedDoc<T extends PreparedReply>(key: string | null, fetcher: PreparedFetcher<T>, options: { touches: (c: Change) => boolean; visible?: boolean }) {
-  const ref = useRef(fetcher); ref.current = fetcher;
-  const touches = useRef(options.touches); touches.current = options.touches;
-  const [reader, setReader] = useState<ReturnType<typeof acquirePrepared<T>> | null>(null);
+/**
+ * A prepared read (project_resources, project_resource_items): the same key (operation + canonical request) and the same
+ * server touches as useOp, plus the prepared protocol: knownVersion, unchanged and preparing replies, progress checked at
+ * most every two seconds while visible. `read` sends the request itself when it depends on the live window (anchors).
+ */
+export function usePreparedOp<K extends 'project_resources' | 'project_resource_items'>(name: K, request: Ops[K]['request'] | null,
+  opts: { visible?: boolean; read?: PreparedFetcher<Ops[K]['reply']> } = {}) {
+  const key = request === null ? null : preparedKey(name, request.projectId, name === 'project_resource_items' ? request as ProjectResourceItemsRequest : null);
+  const reqRef = useRef(request); reqRef.current = request;
+  const readRef = useRef(opts.read); readRef.current = opts.read;
+  const [reader, setReader] = useState<ReturnType<typeof acquirePrepared<Ops[K]['reply']>> | null>(null);
   useEffect(() => {
     if (!key) { setReader(null); return; }
-    const r = acquirePrepared(key, c => ref.current(c), options.visible !== false); setReader(r);
-    const off = subscribe({ resync: () => r.refresh('resync'), changes: changes => { if (changes.some(touches.current)) r.refresh('notification'); } });
+    const fetcher: PreparedFetcher<Ops[K]['reply']> = c => readRef.current ? readRef.current(c) : op(name, { ...reqRef.current!, knownVersion: c.knownVersion }, { signal: c.signal });
+    const r = acquirePrepared(key, fetcher, opts.visible !== false); setReader(r);
+    const off = watch({ name, request: () => reqRef.current, read: () => r.refresh('notification') });
     const focus = () => r.refresh('foreground');
     addEventListener('visibilitychange', focus); addEventListener('online', focus);
     return () => { off(); r.release(); removeEventListener('visibilitychange', focus); removeEventListener('online', focus); };
-  }, [key, options.visible]);
+  }, [key, opts.visible]);
   const data = (reader?.key === key ? reader.value.value : null) ?? { data: null, progress: null, error: null, restored: false, state: 'idle' as const };
   return { ...data, refresh: reader?.refresh ?? (() => {}) };
 }

@@ -1,5 +1,6 @@
 // View URL codec (docs/designs/fleet-view-urls-and-list-path.md §1): one canonical URL per operator-app view state.
-// No imports: the root build compiles it for the coordinator (view_link, state lists) and esbuild bundles it into the app.
+// Its one import is contracts/vocabulary.json, the words it shares with the coordinator (view_link reads the same file).
+import vocabulary from '../../contracts/vocabulary.json' with { type: 'json' };
 export type ViewName = 'tasks' | 'conversations' | 'hosts' | 'overview' | 'results' | 'projects' | 'delivery';
 export type View = {
   view: ViewName; focus?: string; group?: string; preset?: string; project?: (string | null)[];
@@ -9,31 +10,32 @@ export type View = {
 };
 export type PageParams = { filter: { state?: string[]; search?: string; projectId?: (string | null)[]; excludeProjectId?: (string | null)[]; archived?: boolean }; group?: string; sort?: string };
 
-// The one source of these lists: the coordinator's task_page and sessions_list import them.
-export const TASK_STATES = ['queued', 'in_progress', 'waiting', 'held', 'paused', 'completed', 'failed', 'cancelled'] as const;
-export type TaskState = typeof TASK_STATES[number];
-export const SESSION_STATES = ['idle', 'preparing', 'running', 'waiting', 'succeeded', 'failed', 'cancelled'] as const;
-export type SessionState = typeof SESSION_STATES[number];
-export const TASK_GROUPS = ['priority', 'state', 'project', 'agent', 'host', 'none'] as const;
+// The one source of these lists is contracts/vocabulary.json; the coordinator reads the same file (go/contract Vocabulary).
+const L = vocabulary.lists;
+export const TASK_STATES = L.tasks.states;
+export type TaskState = string;
+export const SESSION_STATES = L.conversations.states;
+export type SessionState = string;
+export const TASK_GROUPS = L.tasks.groups;
 /** Tasks are grouped by project unless the view says otherwise (owner, 2026-11-16). */
-export const DEFAULT_TASK_GROUP = 'project';
+export const DEFAULT_TASK_GROUP = L.tasks.group;
 /** Order inside a group (task_page sort): '-' is descending; the default is recently changed first. */
-export const TASK_SORTS = ['-changed', '-created', 'changed', 'created'] as const;
-export const DEFAULT_TASK_SORT = '-changed';
+export const TASK_SORTS = L.tasks.sorts;
+export const DEFAULT_TASK_SORT = L.tasks.sort;
 /** Conversations (sessions_list group and sort): grouped by project, latest activity first unless the view says otherwise. */
-export const SESSION_GROUPS = ['project', 'state', 'agent', 'none'] as const;
-export const SESSION_SORTS = ['-activity', '-created', 'activity', 'created'] as const;
-export const DEFAULT_SESSION_GROUP = 'project';
-export const DEFAULT_SESSION_SORT = '-activity';
-export const ARTIFACT_STATES = ['stored', 'pending', 'failed', 'deleted'] as const;
+export const SESSION_GROUPS = L.conversations.groups;
+export const SESSION_SORTS = L.conversations.sorts;
+export const DEFAULT_SESSION_GROUP = L.conversations.group;
+export const DEFAULT_SESSION_SORT = L.conversations.sort;
+export const ARTIFACT_STATES = L.results.states;
 /** Delivery stages (delivery_status DeliveryStage); the Delivery list's state filter. */
-export const DELIVERY_STAGES = ['pr_open', 'pr_ci', 'pr_failed', 'mq_wait', 'mq_ci', 'mq_failed', 'releasing', 'installing', 'installed', 'merged'] as const;
+export const DELIVERY_STAGES = L.delivery.states;
 /** Delivery list grouping and order (attention order of stages inside a group); oldest in its stage first by default. */
-export const DELIVERY_GROUPS = ['stage', 'project', 'none'] as const;
-export const DELIVERY_SORTS = ['-opened', '-since', 'opened', 'since'] as const;
-export const DEFAULT_DELIVERY_GROUP = 'stage';
-export const DEFAULT_DELIVERY_SORT = 'since';
-export const VIEWS: ViewName[] = ['tasks', 'conversations', 'hosts', 'overview', 'results', 'projects', 'delivery'];
+export const DELIVERY_GROUPS = L.delivery.groups;
+export const DELIVERY_SORTS = L.delivery.sorts;
+export const DEFAULT_DELIVERY_GROUP = L.delivery.group;
+export const DEFAULT_DELIVERY_SORT = L.delivery.sort;
+export const VIEWS = vocabulary.views as ViewName[];
 const NO_PROJECT = '-';
 
 /**

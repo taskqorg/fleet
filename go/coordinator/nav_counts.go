@@ -28,32 +28,30 @@ type navView struct {
 	states      []string
 }
 
-// navSystemViews: the system presets of each list section (OR-33), as the app shows them (app/src/system-views.ts; the
-// outside test tests/go/nav-counts.test.ts compares the two); the first named in navDefaults is the counter default.
-// Results and Hosts have no saved views: one fixed counter each, which may only be turned off.
-var navSystemViews = map[string][]navView{
-	"tasks":         {{"Needs me", "need me", []string{"failed", "waiting"}}, {"Running", "running", []string{"queued", "in_progress", "waiting", "held", "paused"}}},
-	"conversations": {{"Needs me", "need me", []string{"failed", "waiting"}}, {"Running", "running", []string{"preparing", "running", "waiting"}}},
-	"delivery":      {{"Needs me", "need me", deliveryFailed}, {"In flight", "in flight", deliveryInFlight()}, {"Installed", "installed", deliveryDone}},
-	"results":       {{"Last 24 h", "new in 24 h", nil}},
-	"hosts":         {{"Offline", "offline", nil}},
-}
-
-// Delivery stages that are done and failed; every other stage is in flight, so a new stage counts as in flight (as
-// app/src/system-views.ts derives it from DELIVERY_STAGES).
-var deliveryDone, deliveryFailed = []string{"installed", "merged"}, []string{"pr_failed", "mq_failed"}
-
-func deliveryInFlight() []string {
-	out := []string{}
-	for _, s := range contract.DeliveryStageValues {
-		if !slices.Contains(deliveryDone, string(s)) {
-			out = append(out, string(s))
+// navSystemViews: the system presets of each list section (OR-33), from contracts/vocabulary.json, the file the app's
+// system-views.ts reads; the first named in navDefaults is the counter default. A preset with notState counts every
+// state of its list except those, so a new state joins it. Results and Hosts have no saved views: one fixed counter
+// each, which may only be turned off.
+var navSystemViews = func() map[string][]navView {
+	out := map[string][]navView{}
+	for section, ps := range contract.Vocabulary.SystemViews {
+		for _, p := range ps {
+			states := p.State
+			if p.NotState != nil {
+				states = []string{}
+				for _, s := range contract.Vocabulary.Lists[section].States {
+					if !slices.Contains(p.NotState, s) {
+						states = append(states, s)
+					}
+				}
+			}
+			out[section] = append(out[section], navView{p.Name, p.Label, states})
 		}
 	}
 	return out
-}
+}()
 
-var navDefaults = map[string]string{"tasks": "Running", "conversations": "Running", "delivery": "In flight", "results": "Last 24 h", "hosts": "Offline"}
+var navDefaults = contract.Vocabulary.NavDefaults
 
 // navCounterOff: the navCounters value that turns a section's counter off; a saved view named "-" cannot be counted.
 const navCounterOff = "-"

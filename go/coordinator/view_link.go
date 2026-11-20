@@ -1,8 +1,8 @@
 package main
 
 // view_link (docs/designs/fleet-view-urls-and-list-path.md §1): the canonical operator-app link for a view, or the view
-// of a link. A Go port of parseView, formatView and viewProblem in packages/view-url/view-url.ts; the outside test
-// view.test.ts compares both on the same views, so the two codecs cannot drift apart unnoticed.
+// of a link. A Go port of parseView, formatView and viewProblem in packages/view-url/view-url.ts over the same words
+// (contracts/vocabulary.json); the outside test view.test.ts compares both codecs on the same views.
 
 import (
 	"fmt"
@@ -17,25 +17,25 @@ import (
 	"fleet/contract"
 )
 
+// The words of the view grammar come from contracts/vocabulary.json, the file packages/view-url reads.
 var (
-	viewNames     = []string{"tasks", "conversations", "hosts", "overview", "results", "projects", "delivery"}
-	deliveryStage = func() []string { // delivery_status's stages, the Delivery list's state filter
-		out := []string{}
-		for _, s := range contract.DeliveryStageValues {
-			out = append(out, string(s))
-		}
-		return out
-	}()
-	artifactState = []string{"stored", "pending", "failed", "deleted"}
+	viewNames     = contract.Vocabulary.Views
+	deliveryStage = contract.Vocabulary.Lists["delivery"].States // delivery_status's stages, the Delivery list's state filter
+	artifactState = contract.Vocabulary.Lists["results"].States
 	// viewOrder: each list view's groups and sorts (task_page, sessions_list), each sort also descending, and defaults.
 	viewOrder = map[string]listOrder{
 		"tasks":         {slices.Sorted(maps.Keys(taskGroups)), bothWays(taskSorts), defaultTaskGroup, defaultTaskSort},
 		"conversations": {slices.Sorted(maps.Keys(sessionGroups)), bothWays(sessionSorts), defaultSessionGroup, defaultSessionSort},
-		// Delivery groups and sorts its rows in the browser (delivery_status is read whole); view-url.ts DELIVERY_GROUPS.
-		"delivery": {[]string{"none", "project", "stage"}, []string{"-opened", "-since", "opened", "since"}, "stage", "since"},
+		// Delivery groups and sorts its rows in the browser (delivery_status is read whole).
+		"delivery": {slices.Sorted(slices.Values(contract.Vocabulary.Lists["delivery"].Groups)), slices.Sorted(slices.Values(contract.Vocabulary.Lists["delivery"].Sorts)), contract.Vocabulary.Lists["delivery"].Group, contract.Vocabulary.Lists["delivery"].Sort},
 	}
-	viewKeys = map[string][]string{"tasks": {"group", "preset", "project", "q", "sel", "sort", "state"},
-		"conversations": {"archived", "group", "preset", "project", "q", "sel", "sort", "state"}, "results": {"project", "q", "state"}, "delivery": {"group", "preset", "q", "sel", "sort", "state"}}
+	viewKeys = func() map[string][]string {
+		out := map[string][]string{}
+		for name, l := range contract.Vocabulary.Lists {
+			out[name] = slices.Sorted(slices.Values(l.Keys))
+		}
+		return out
+	}()
 	schemeURL = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
 )
 

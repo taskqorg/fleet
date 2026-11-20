@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { ListDetail, DefinitionEditor, DraftBar, DetailSection, KvRow, StateBadge, Empty, SettingField, CodeEditor, DiffText, StepList, AgeChip, Choice, Button, Totals, CostFigures, Num, Icon, msMeasured, matchSearch, SearchField, type CostFigureLike, type StepItem, type TotalItem } from '../../../packages/ui/src/index.ts';
-import { op, OpError, writeOnce, useAlive, type Ops } from '../api.ts';
-import { useDoc } from '../store.ts';
+import { op, writeOnce, useAlive, type Ops } from '../api.ts';
+import { useOp } from '../store.ts';
 import { resourceTotals } from './resources.tsx';
 
 type Kind = 'agent' | 'pipeline' | 'catalogue';
@@ -13,12 +13,17 @@ type Draft = { base: number; text: string; changes: number; stale: boolean; prob
 const SECTION: Record<Kind, { title: string; route: string }> = {
   agent: { title: 'Agents', route: '/agents' }, pipeline: { title: 'Pipelines', route: '/pipelines' }, catalogue: { title: 'Catalogue', route: '/catalogue' },
 };
-const contentOf = (kind: Kind, text: string) => ({ [kind]: JSON.parse(text) });
+type Content = Ops['definition_save']['request']['content'];
+/** The typed content of a definition's text: JSON.parse checks the syntax, the server the shape (draft problems). */
+const contentOf = (kind: Kind, text: string) => ({ [kind]: JSON.parse(text) }) as Content;
+const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
+/** The project ids of project_list, for the project choices. */
+const projectIds = (r: Ops['project_list']['reply'] | null) => (r?.projects ?? []).map(p => String(p.id));
 
 export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
   const [, go] = useLocation();
   const { title, route } = SECTION[kind];
-  const { data } = useDoc<Ops['definition_list']['reply']>(`definitions:${kind}`, () => op('definition_list', { kind }), c => c.kind === 'definition');
+  const { data } = useOp('definition_list', { kind });
   const items = data?.items ?? [];
   const list = <>
     <header class="page-h"><span class="muted mono" aria-label={`${items.length} ${title.toLowerCase()}`}>{items.length}</span></header>
@@ -45,32 +50,30 @@ export function Definitions({ kind, id }: { kind: Kind; id?: string }) {
 
 function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => void }) {
   const [tab, setTab] = useState(kind === 'catalogue' ? 'Methods' : 'Configuration');
-  const [def, setDef] = useState<Get | null>(null);
+  const got = useOp('definition_get', { kind, id });
+  const drafted = useOp('definition_draft_get', got.data?.draft ? { kind, id } : null);
+  const def: Get | null = got.data;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [text, setText] = useState('');
   const [message, setMessage] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const timer = useRef(0);
   const pending = useRef<(() => Promise<void>) | null>(null);
+  const seeded = useRef('');
   useEffect(() => () => clearTimeout(timer.current), []);
-  const load = async () => {
-    try {
-      const g = await op('definition_get', { kind, id });
-      setDef(g);
-      try {
-        if (!g.draft) { setDraft(null); setText(g.text); setError(null); return; }
-        const d = await op('definition_draft_get', { kind, id });
-        setDraft({ base: d.draft.baseRevision, text: d.text, changes: d.draft.changes, stale: d.draft.stale, problems: d.problems ?? [] });
-        setText(d.text); // the bytes the draft holds, not a re-encoding of its typed content
-      } catch (e) {
-        if (!(e instanceof OpError && e.status === 404)) throw e;
-        setDraft(null); setText(g.text);
-      }
-      setError(null);
-    } catch (e: any) { setError(e.message); }
-  };
-  useEffect(() => { load(); }, [kind, id]);
+  // The editor's text follows the server while nothing typed waits: the draft's bytes when it has one (not a re-encoding
+  // of its typed content), else the saved revision's; a new source (saved, discarded, a draft begun) replaces it.
+  useEffect(() => {
+    const g = got.data; if (!g || pending.current) return;
+    const d = g.draft && drafted.status !== 404 ? drafted.data : null;
+    if (g.draft && !d && drafted.status !== 404) return; // its draft is still being read
+    setDraft(d ? { base: d.draft.baseRevision, text: d.text, changes: d.draft.changes, stale: d.draft.stale, problems: d.problems ?? [] } : null);
+    const source = d ? 'draft:' + d.draft.baseRevision : 'revision:' + g.head;
+    if (seeded.current !== source) { seeded.current = source; setText(d ? d.text : g.text); }
+  }, [got.data, drafted.data, drafted.status]);
+  const load = () => { got.reload(); drafted.reload(); };
+  const error = failure ?? got.error ?? (drafted.status === 404 ? null : drafted.error);
   // Typing keeps a draft: written after a pause, so the next execution still uses the saved revision.
   const flush = async () => { clearTimeout(timer.current); const f = pending.current; pending.current = null; if (f) await f(); };
   const edit = (t: string) => {
@@ -80,24 +83,25 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
       if (!def) return;
       if (t === def.text) { await op('definition_draft_discard', { kind, id }).catch(() => {}); setDraft(null); return; }
       let content;
-      try { content = contentOf(kind, t); } catch (e: any) { setDraft(d => ({ base: d?.base ?? def.head, text: t, changes: d?.changes ?? 0, stale: false, problems: [{ path: '', message: 'JSON: ' + e.message }] })); return; }
+      try { content = contentOf(kind, t); } catch (e) { setDraft(d => ({ base: d?.base ?? def.head, text: t, changes: d?.changes ?? 0, stale: false, problems: [{ path: '', message: 'JSON: ' + errorText(e) }] })); return; }
       try {
-        const r = await op('definition_draft_put', { kind, id, baseRevision: draft?.base ?? def.head, content: content as any });
+        const r = await op('definition_draft_put', { kind, id, baseRevision: draft?.base ?? def.head, content });
+        seeded.current = 'draft:' + r.draft.baseRevision; // the text on screen is this draft
         setDraft({ base: r.draft.baseRevision, text: t, changes: r.draft.changes, stale: r.draft.stale, problems: r.problems });
-      } catch (e: any) { setError(e.message); }
+      } catch (e) { setError(errorText(e)); }
     };
     timer.current = setTimeout(flush, 700) as unknown as number;
   };
-  const run = async (f: () => Promise<unknown>) => { setBusy(true); try { await f(); setError(null); } catch (e: any) { setError(e.message); } finally { setBusy(false); } };
+  const run = async (f: () => Promise<unknown>) => { setBusy(true); try { await f(); setError(null); } catch (e) { setError(errorText(e)); } finally { setBusy(false); } };
   // Save from the draft's own base: the server refuses it (409) when someone else saved meanwhile or the repository file
   // changed, and the error says what to look at.
   const save = () => run(async () => {
     await flush();
     if (!def || !draft) return;
-    await op('definition_save', { kind, id, baseRevision: draft.base, content: contentOf(kind, text) as any, message: message.trim() || 'Edited in Fleet' });
-    setMessage(''); await load();
+    await op('definition_save', { kind, id, baseRevision: draft.base, content: contentOf(kind, text), message: message.trim() || 'Edited in Fleet' });
+    setMessage(''); load();
   });
-  const discard = () => run(async () => { clearTimeout(timer.current); pending.current = null; await op('definition_draft_discard', { kind, id }); await load(); });
+  const discard = () => run(async () => { clearTimeout(timer.current); pending.current = null; await op('definition_draft_discard', { kind, id }); load(); });
   const alive = useAlive();
   const runDraft = () => run(async () => { await flush(); const requestId = crypto.randomUUID(); await writeOnce('pipeline_run_create', { pipelineId: id, requestId, draft: true }, () => setError('unknown, retrying'), { signal: alive }); });
   if (!def) return <article class="detail" data-ui="detail" tabIndex={-1}>{error ? <div class="error" role="alert">{error}</div> : <Empty text="Loading…" />}</article>;
@@ -130,22 +134,23 @@ function Editor({ kind, id, onClose }: { kind: Kind; id: string; onClose: () => 
 }
 
 // reads: what a step's arguments or prompt reference (${example.x}, ${steps.<id>.output…}).
-const readsOf = (s: any) => {
+type StepJson = { id?: string; kind?: string; profile?: string; tool?: string; command?: string; when?: { source?: { step?: string; path?: string[] }; equals?: unknown } };
+const readsOf = (s: unknown) => {
   const refs = [...(JSON.stringify(s) ?? '').matchAll(/\$\{(example|steps\.[\w-]+)/g)].map(m => m[1].replace('steps.', ''));
   return [...new Set(refs)].join(', ') || 'nothing';
 };
 
 function Steps({ text }: { text: string }) {
-  let steps: any[] = [], resultStep: string | undefined;
-  try { const definition = JSON.parse(text); steps = definition?.steps; resultStep = definition?.resultStep; } catch { return null; }
-  if (!Array.isArray(steps)) return null;
-  steps = steps.filter(s => s && typeof s === 'object');
-  const items: StepItem[] = steps.map(s => ({ id: s.id, kind: s.kind === 'api' ? 'tool' : s.kind === 'agent' ? 'agent' : 'program', executor: s.kind === 'api' || s.kind === 'agent' || s.kind === 'script' ? s.profile ?? s.tool ?? s.command ?? '' : `${s.kind}: no longer run`, reads: readsOf(s), writes: 'output', result: s.id === resultStep, condition: s.when ? `${s.when.source?.step}.${(s.when.source?.path ?? []).join('.')} = ${JSON.stringify(s.when.equals)}` : undefined }));
+  let parsed: unknown, resultStep: string | undefined;
+  try { const definition: { steps?: unknown; resultStep?: string } | null = JSON.parse(text); parsed = definition?.steps; resultStep = definition?.resultStep; } catch { return null; }
+  if (!Array.isArray(parsed)) return null;
+  const steps = (parsed as unknown[]).filter((s): s is StepJson => !!s && typeof s === 'object');
+  const items: StepItem[] = steps.map(s => ({ id: s.id ?? '', kind: s.kind === 'api' ? 'tool' : s.kind === 'agent' ? 'agent' : 'program', executor: s.kind === 'api' || s.kind === 'agent' || s.kind === 'script' ? s.profile ?? s.tool ?? s.command ?? '' : `${s.kind}: no longer run`, reads: readsOf(s), writes: 'output', result: s.id === resultStep, condition: s.when ? `${s.when.source?.step}.${(s.when.source?.path ?? []).join('.')} = ${JSON.stringify(s.when.equals)}` : undefined }));
   return <DetailSection title="Steps"><StepList items={items} label="Steps" /></DetailSection>;
 }
 
 function AgentFacts({ text }: { text: string }) {
-  let a: any;
+  let a: { harness?: string; model?: string; effort?: string; skills?: unknown; tools?: unknown; connections?: unknown } | null;
   try { a = JSON.parse(text); } catch { return null; }
   if (!a || typeof a !== 'object') return null;
   const list = (v: unknown) => Array.isArray(v) ? v.join(', ') : '';
@@ -159,19 +164,15 @@ function AgentFacts({ text }: { text: string }) {
 }
 
 function DiffTab({ kind, id, hasDraft, head }: { kind: Kind; id: string; hasDraft: boolean; head: number }) {
-  const [d, setD] = useState<Ops['definition_diff']['reply'] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const from = hasDraft ? { revision: head } : { repository: true }, to = hasDraft ? { draft: true } : { revision: head };
-  useEffect(() => { op('definition_diff', { kind, id, from, to }).then(setD, e => setError(e.message)); }, [kind, id, hasDraft, head]);
+  const { data: d, error } = useOp('definition_diff', { kind, id, from, to });
   return <DetailSection title={hasDraft ? `Draft against r${head}` : `r${head} against the repository file`}>
     {error ? <div class="error" role="alert">{error}</div> : d ? <DiffText label="Diff" text={d.unified} /> : <Empty text="Loading…" />}
   </DetailSection>;
 }
 
 function HistoryTab({ kind, id }: { kind: Kind; id: string }) {
-  const [h, setH] = useState<Ops['definition_history']['reply'] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => { op('definition_history', { kind, id }).then(setH, e => setError(e.message)); }, [kind, id]);
+  const { data: h, error } = useOp('definition_history', { kind, id });
   if (error) return <DetailSection title="Revisions"><div class="error" role="alert">{error}</div></DetailSection>;
   return <DetailSection title="Revisions">
     {!h ? <Empty text="Loading…" /> : h.revisions.map(r => <KvRow key={r.revision} icon={r.source === 'agent' ? 'bot' : r.source === 'repo' ? 'git-merge' : 'file-plus-2'} label={`r${r.revision} · ${r.message}`}
@@ -181,17 +182,13 @@ function HistoryTab({ kind, id }: { kind: Kind; id: string }) {
 }
 
 function EffectiveTab({ id, draft, version }: { id: string; draft: boolean; version: string }) {
-  const [projects, setProjects] = useState<string[]>([]);
-  const [project, setProject] = useState('');
-  const [e, setE] = useState<Ops['agent_effective']['reply'] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => { op('project_list', {}).then(r => { const ids = (r.projects as any[]).map(p => String(p.id)); setProjects(ids); setProject(p => p || ids[0] || ''); }, x => setError(x.message)); }, []);
-  useEffect(() => {
-    if (!project) return;
-    let live = true; // a later project or draft replaces this answer
-    const t = setTimeout(() => op('agent_effective', { id, projectId: project, draft }).then(r => { if (live) { setE(r); setError(null); } }, x => { if (live) setError(x.message); }), 800);
-    return () => { live = false; clearTimeout(t); };
-  }, [id, project, draft, version]);
+  const list = useOp('project_list', {}), projects = projectIds(list.data);
+  const [chosen, setProject] = useState(''), project = chosen || projects[0] || '';
+  const effective = useOp('agent_effective', project ? { id, projectId: project, draft } : null), e = effective.data;
+  const error = list.error ?? effective.error;
+  // The draft's text changed: read the effective settings again once typing pauses.
+  const reread = useRef(effective.reload); reread.current = effective.reload;
+  useEffect(() => { if (!version) return; const t = setTimeout(() => reread.current(), 800); return () => clearTimeout(t); }, [version]);
   return <>
     {projects.length > 0 && <DetailSection title="Project"><Choice label="Project" value={project} onChange={setProject} options={projects.map(p => ({ id: p, label: p }))} /></DetailSection>}
     {error && <div class="error" role="alert">{error}</div>}
@@ -200,16 +197,14 @@ function EffectiveTab({ id, draft, version }: { id: string; draft: boolean; vers
         meta={<span class="mono">{l.source}{l.revision ? ` · ${l.revision}` : ''}{l.fields.length ? ` · ${l.fields.join(', ')}` : ''}</span>} />)}
     </DetailSection>}
     {e && <DetailSection title="Effective settings">
-      <KvRow icon="settings" label="Harness" meta={<span class="mono">{(e.result as any).harness ?? 'codex'}</span>} />
+      <KvRow icon="settings" label="Harness" meta={<span class="mono">{e.result.harness ?? 'codex'}</span>} />
       <KvRow icon="bot" label="Model" meta={<span class="mono">{e.result.model}{e.result.effort ? ` · ${e.result.effort}` : ''}</span>} />
     </DetailSection>}
   </>;
 }
 
 function CompatibilityTab({ id }: { id: string }) {
-  const [c, setC] = useState<Ops['agent_compatibility']['reply'] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => { op('agent_compatibility', { id }).then(setC, x => setError(x.message)); }, [id]);
+  const { data: c, error } = useOp('agent_compatibility', { id });
   return <DetailSection title="Combinations seen in 30 days">
     {error ? <div class="error" role="alert">{error}</div> : !c ? <Empty text="Loading…" /> : c.rows.map(r =>
       <KvRow key={`${r.harness}/${r.harnessVersion}/${r.model}/${r.effort}`} icon={r.state === 'checked' ? 'circle-check' : r.state === 'failed' ? 'circle-x' : 'circle-dashed'}
@@ -222,28 +217,33 @@ function CompatibilityTab({ id }: { id: string }) {
 
 function CatalogueMethods() {
   const [, go] = useLocation();
-  const [projects, setProjects] = useState<string[]>([]), [project, setProject] = useState('');
+  const list = useOp('project_list', {}), projects = projectIds(list.data);
+  const [chosen, setProject] = useState(''), project = chosen || projects[0] || '';
   const [search, setSearch] = useState(''), [scopeSearch, setScopeSearch] = useState(''), [useSearch, setUseSearch] = useState('');
-  const [useCases, setUseCases] = useState<{id: string; goal: string}[]>([]), [useCase, setUseCase] = useState('');
+  const registry = useOp('lab_registry', {}), useCases = registry.data?.useCases ?? [];
+  const [useCase, setUseCase] = useState('');
   const [selected, setSelected] = useState<string[]>([]), [baseline, setBaseline] = useState('');
-  const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
-  const [revision, setRevision] = useState(0);
-  const {data: candidate, error: catalogueError, restored} = useDoc(`catalogue:${project}:${revision}`, async () => { if (!project) return null; const reply = await op('catalogue', {projectId: project}); if (reply.projectId !== project) throw new Error('Catalogue response project mismatch'); return reply; }, change => ['definition', 'experiment', 'score', 'execution', 'project-recommendation'].includes(change.kind));
-  useEffect(() => { op('project_list', {}).then(r => { const ids = (r.projects as any[]).map(p => String(p.id)); setProjects(ids); setProject(ids[0] ?? ''); }, x => setError(x.message)); op('lab_registry', {}).then(r => setUseCases(r.useCases as any), x => setError(x.message)); }, []);
-  const c = candidate?.projectId === project && !catalogueError ? candidate : null;
+  const [busy, setBusy] = useState(false), [failure, setError] = useState<string | null>(null);
+  const catalogue = useOp('catalogue', project ? { projectId: project } : null), candidate = catalogue.data, catalogueError = catalogue.error, restored = catalogue.restored;
+  const error = failure ?? list.error ?? registry.error;
+  // Evidence decides a recommendation: after a project is picked only an answer read since then counts, never the copy
+  // held from an earlier visit. An answer for another project (a mismatch) is never shown as this project's evidence.
+  const picked = useRef<{ project: string | null; held: unknown }>({ project: null, held: null });
+  if (picked.current.project !== project) picked.current = { project, held: candidate };
+  const c = candidate && candidate !== picked.current.held && candidate.projectId === project && !catalogueError ? candidate : null;
   const methods = c?.methods ?? [];
   const choose = (id: string) => { if (!c || restored || busy) return; const next = selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]; setSelected(next); if (!next.includes(baseline)) setBaseline(next.includes(String(c?.recommendedMethod)) ? String(c?.recommendedMethod) : ''); };
-  const act = async (run: () => Promise<void>) => { setBusy(true); try { await run(); setError(null); } catch (x: any) {setError(x.message);} finally {setBusy(false);} };
+  const act = async (run: () => Promise<void>) => { setBusy(true); try { await run(); setError(null); } catch (x) {setError(errorText(x));} finally {setBusy(false);} };
   return <>
-    <DetailSection title="Project"><SearchField label="Find project" value={scopeSearch} onInput={setScopeSearch} onSearch={() => {}} /><Choice label="Project" value={project} options={projects.filter(p => p.includes(scopeSearch)).map(p => ({id:p,label:p}))} onChange={p => {setProject(p);setSelected([]);setBaseline('');setUseCase('');setError(null);setRevision(r=>r+1);}} /></DetailSection>
+    <DetailSection title="Project"><SearchField label="Find project" value={scopeSearch} onInput={setScopeSearch} onSearch={() => {}} /><Choice label="Project" value={project} options={projects.filter(p => p.includes(scopeSearch)).map(p => ({id:p,label:p}))} onChange={p => {setProject(p);setSelected([]);setBaseline('');setUseCase('');setError(null);}} /></DetailSection>
     {error && <div class="error" role="alert">{error}</div>}
-    {catalogueError && <div class="error" role="alert">Catalogue unavailable: {catalogueError}. No current evidence loaded for {project}.<Button label="Retry Catalogue" icon="rotate-cw" onClick={() => setRevision(r=>r+1)} /></div>}
+    {catalogueError && <div class="error" role="alert">Catalogue unavailable: {catalogueError}. No current evidence loaded for {project}.<Button label="Retry Catalogue" icon="rotate-cw" onClick={catalogue.reload} /></div>}
     {c && <p class="muted">Evidence project: {c.projectId}{restored ? ' · restored, read-only until current confirmation' : ''}</p>}
     <DetailSection title="Methods"><SearchField label="Find method" value={search} onInput={setSearch} onSearch={() => {}} />
       {methods.filter(m => matchSearch(search, `${m.name} ${m.id}`)).map(m => {
         const a = m.assessment;
         return <div key={m.id}>
-          <KvRow icon="circle-check" label={`${m.name} · ${m.id}`} meta={`${m.scope} · ${m.pipeline}`} value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} disabledReason={restored ? 'Await current scoped Catalogue read' : undefined} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});setRevision(r=>r+1);})} /></>} />
+          <KvRow icon="circle-check" label={`${m.name} · ${m.id}`} meta={`${m.scope} · ${m.pipeline}`} value={<><Choice label={`Select ${m.name}`} value={selected} options={[{id:m.id,label:selected.includes(m.id) ? 'Selected' : 'Select'}]} onChange={choose} /><Button label="Recommend for project" icon="check" iconOnly busy={busy} disabledReason={restored ? 'Await current scoped Catalogue read' : undefined} onClick={() => act(async () => {await op('recommendation_set', {projectId:project,methodId:m.id});catalogue.reload();})} /></>} />
           <KvRow icon="chart-no-axes-column" label={a.scoreForm === 'typed' ? 'Comparison score' : 'Quality'} meta={a.score == null ? 'Unavailable' : `${a.score.toFixed(3)}${a.partial ? ' · partial/incomplete' : ''}`} value={`${a.basis} · ${a.eligibleCells ?? 0}/${a.expectedCells ?? 0} cells · ${a.examples ?? 0} ${a.examples === 1 ? 'example' : 'examples'}`} />
           <KvRow icon="clock" label="Time / cost" meta={a.wallMsMedian == null ? 'Time unavailable' : `${a.wallMsMedian} ms · ${a.durationSamples == null ? 'pipeline usage window' : `${a.durationSamples} samples`}`} value={`${a.costUsd == null ? 'Cost unavailable' : `$${a.costUsd} · ${a.costBasis}`}`} />
           <KvRow icon="folder-open" label="Recommended for" meta={m.recommendedFor.join(', ') || 'None'} />
@@ -272,13 +272,7 @@ function costBasisOf(b: string | null | undefined): CostFigureLike['basis'] {
 function UsageTab({ kind, id }: { kind: 'agent' | 'pipeline'; id: string }) {
   const [, go] = useLocation();
   const [days, setDays] = useState<'7' | '30'>('30');
-  const [u, setU] = useState<Ops['definition_usage']['reply'] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    op('definition_usage', { kind, id, days: Number(days) }).then(r => { if (live) { setU(r); setError(null); } }, e => { if (live) setError(e.message); });
-    return () => { live = false; };
-  }, [kind, id, days]);
+  const { data: u, error } = useOp('definition_usage', { kind, id, days: Number(days) });
   if (error) return <DetailSection title="Usage"><div class="error" role="alert">{error}</div></DetailSection>;
   if (!u) return <DetailSection title="Usage"><Empty text="Loading…" /></DetailSection>;
   const windowCost = (w: Ops['definition_usage']['reply']['total']): readonly CostFigureLike[] =>

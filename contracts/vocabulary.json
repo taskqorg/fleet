@@ -1,0 +1,24 @@
+{
+  "$comment": "Fixed words the app and the coordinator share (docs/designs/fleet-standard.md S9): harnesses, the operator-app view grammar and the system presets of the lists with saved views (OR-33). The app imports this file (packages/view-url, app/src/system-views.ts, packages/ui registry); go/gen copies it into go/contract/vocabulary_gen.go and go/contract/vocabulary.go decodes it. One source: edit here only.",
+  "harnesses": [
+    {"id": "codex", "label": "Codex", "icon": "openai", "login": "codex login --device-auth", "loginArgv": ["login", "--device-auth"], "assets": true},
+    {"id": "claude", "label": "Claude", "icon": "claude", "login": "claude auth login --claudeai", "loginArgv": ["auth", "login", "--claudeai"], "assets": true},
+    {"id": "antigravity", "label": "Antigravity", "icon": "antigravity", "login": "agy acp --login (may replace the shared native principal; explicit review required)", "loginArgv": ["acp", "--login"], "assets": true},
+    {"id": "acp", "label": "ACP agent", "icon": "bot", "login": "the bound agent's own login command", "loginArgv": null, "assets": false}
+  ],
+  "views": ["tasks", "conversations", "hosts", "overview", "results", "projects", "delivery"],
+  "lists": {
+    "tasks": {"keys": ["group", "preset", "project", "q", "sel", "sort", "state"], "states": ["queued", "in_progress", "waiting", "held", "paused", "completed", "failed", "cancelled"], "groups": ["priority", "state", "project", "agent", "host", "none"], "sorts": ["-changed", "-created", "changed", "created"], "group": "project", "sort": "-changed"},
+    "conversations": {"keys": ["archived", "group", "preset", "project", "q", "sel", "sort", "state"], "states": ["idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"], "groups": ["project", "state", "agent", "none"], "sorts": ["-activity", "-created", "activity", "created"], "group": "project", "sort": "-activity"},
+    "results": {"keys": ["project", "q", "state"], "states": ["stored", "pending", "failed", "deleted"]},
+    "delivery": {"keys": ["group", "preset", "q", "sel", "sort", "state"], "states": ["pr_open", "pr_ci", "pr_failed", "mq_wait", "mq_ci", "mq_failed", "releasing", "installing", "installed", "merged"], "groups": ["stage", "project", "none"], "sorts": ["-opened", "-since", "opened", "since"], "group": "stage", "sort": "since"}
+  },
+  "systemViews": {
+    "tasks": [{"name": "Needs me", "label": "need me", "state": ["failed", "waiting"]}, {"name": "Running", "label": "running", "state": ["queued", "in_progress", "waiting", "held", "paused"]}],
+    "conversations": [{"name": "Needs me", "label": "need me", "state": ["failed", "waiting"]}, {"name": "Running", "label": "running", "state": ["preparing", "running", "waiting"]}],
+    "delivery": [{"name": "Needs me", "label": "need me", "state": ["pr_failed", "mq_failed"]}, {"name": "In flight", "label": "in flight", "notState": ["installed", "merged"]}, {"name": "Installed", "label": "installed", "state": ["installed", "merged"]}],
+    "results": [{"name": "Last 24 h", "label": "new in 24 h"}],
+    "hosts": [{"name": "Offline", "label": "offline"}]
+  },
+  "navDefaults": {"tasks": "Running", "conversations": "Running", "delivery": "In flight", "results": "Last 24 h", "hosts": "Offline"}
+}

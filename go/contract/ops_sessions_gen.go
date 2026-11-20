@@ -80,12 +80,16 @@ type Change struct {
 	SessionId     *string    `json:"sessionId"`
 	SettingTarget *string    `json:"settingTarget,omitempty"`
 	TaskId        *string    `json:"taskId"`
+	Touches       []string   `json:"touches"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *Change) Validate() error {
 	if err := Check(&v.Kind, "kind"); err != nil {
 		return err
+	}
+	if v.Touches == nil {
+		return Missing("touches")
 	}
 	return nil
 }
@@ -414,6 +418,39 @@ func (v *SessionCreateReply) Validate() error {
 // SessionCreateRequest: No fields: the session's director, access and linkage come from the caller.
 type SessionCreateRequest = map[string]json.RawMessage
 
+// SessionExecution: An execution record of the session as stored (agent.go sessionExecutions); lastSeenAt is ms or RFC 3339 by age.
+type SessionExecution struct {
+	Effort      *string         `json:"effort,omitempty"`
+	Harness     *string         `json:"harness,omitempty"`
+	Id          string          `json:"id"`
+	LastSeenAt  json.RawMessage `json:"lastSeenAt,omitempty"`
+	Model       *string         `json:"model,omitempty"`
+	Observation *string         `json:"observation,omitempty"`
+	State       string          `json:"state"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionExecution) MarshalJSON() ([]byte, error) {
+	type plain SessionExecution
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionExecution) UnmarshalJSON(b []byte) error {
+	type plain SessionExecution
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionExecution) Validate() error {
+	return nil
+}
+
 // SessionForkReply: sessionId: the new session.
 type SessionForkReply struct {
 	At              *float64 `json:"at,omitempty"`
@@ -477,7 +514,7 @@ type SessionGetReply struct {
 	DeliveryId              *string                      `json:"deliveryId,omitempty"`
 	DirectedBy              *string                      `json:"directedBy,omitempty"`
 	DirectorAccessRevokedAt *int64                       `json:"directorAccessRevokedAt,omitempty"`
-	Executions              []map[string]json.RawMessage `json:"executions"`
+	Executions              []SessionExecution           `json:"executions"`
 	ExperimentId            *string                      `json:"experimentId,omitempty"`
 	Focus                   json.RawMessage              `json:"focus,omitempty"`
 	ForkNativeSessionId     *string                      `json:"forkNativeSessionId,omitempty"`
@@ -486,7 +523,7 @@ type SessionGetReply struct {
 	Handoffs                []map[string]json.RawMessage `json:"handoffs"`
 	HostId                  *string                      `json:"hostId,omitempty"`
 	Id                      string                       `json:"id"`
-	Messages                []map[string]json.RawMessage `json:"messages"`
+	Messages                []SessionMessage             `json:"messages"`
 	NativeSessionId         *string                      `json:"nativeSessionId,omitempty"`
 	NativeSessions          json.RawMessage              `json:"nativeSessions,omitempty"`
 	ParentExecutionId       *string                      `json:"parentExecutionId,omitempty"`
@@ -495,7 +532,7 @@ type SessionGetReply struct {
 	PipelineRunId           *string                      `json:"pipelineRunId,omitempty"`
 	Preset                  *string                      `json:"preset,omitempty"`
 	ProjectId               *string                      `json:"projectId,omitempty"`
-	Questions               []map[string]json.RawMessage `json:"questions"`
+	Questions               []SessionQuestion            `json:"questions"`
 	Queued                  []map[string]json.RawMessage `json:"queued"`
 	ReadinessOfSessionId    *string                      `json:"readinessOfSessionId,omitempty"`
 	Resources               ScopedResourceRollup         `json:"resources"`
@@ -531,6 +568,11 @@ func (v *SessionGetReply) Validate() error {
 	if v.Executions == nil {
 		return Missing("executions")
 	}
+	for i := range v.Executions {
+		if err := Check(&v.Executions[i], "executions"); err != nil {
+			return err
+		}
+	}
 	if v.Forks == nil {
 		return Missing("forks")
 	}
@@ -540,8 +582,18 @@ func (v *SessionGetReply) Validate() error {
 	if v.Messages == nil {
 		return Missing("messages")
 	}
+	for i := range v.Messages {
+		if err := Check(&v.Messages[i], "messages"); err != nil {
+			return err
+		}
+	}
 	if v.Questions == nil {
 		return Missing("questions")
+	}
+	for i := range v.Questions {
+		if err := Check(&v.Questions[i], "questions"); err != nil {
+			return err
+		}
 	}
 	if v.Queued == nil {
 		return Missing("queued")
@@ -616,6 +668,34 @@ func (v *SessionHandoffsRequest) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionHandoffsRequest) Validate() error {
+	return nil
+}
+
+// SessionMessage: A message record of the session as stored.
+type SessionMessage struct {
+	Attachments []json.RawMessage `json:"attachments,omitempty"`
+	Text        *string           `json:"text,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionMessage) MarshalJSON() ([]byte, error) {
+	type plain SessionMessage
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionMessage) UnmarshalJSON(b []byte) error {
+	type plain SessionMessage
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionMessage) Validate() error {
 	return nil
 }
 
@@ -742,6 +822,38 @@ func (v *SessionProfileRequest) Validate() error {
 
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*SessionProfileRequest) Closed() bool { return true }
+
+// SessionQuestion: A question record of the session as stored.
+type SessionQuestion struct {
+	AskedAt  json.RawMessage `json:"askedAt,omitempty"`
+	Id       string          `json:"id"`
+	Options  json.RawMessage `json:"options,omitempty"`
+	Question *string         `json:"question,omitempty"`
+	State    *string         `json:"state,omitempty"`
+	Text     *string         `json:"text,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionQuestion) MarshalJSON() ([]byte, error) {
+	type plain SessionQuestion
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionQuestion) UnmarshalJSON(b []byte) error {
+	type plain SessionQuestion
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionQuestion) Validate() error {
+	return nil
+}
 
 type SessionRenameReply struct {
 	SessionId string `json:"sessionId"`
@@ -984,7 +1096,7 @@ type SessionsListReply struct {
 	Counts    map[string]int64 `json:"counts"`
 	Groups    []ListGroup      `json:"groups"`
 	NextAfter json.RawMessage  `json:"nextAfter"`
-	Sessions  []ListRow        `json:"sessions"`
+	Sessions  []SessionRow     `json:"sessions"`
 	Total     int64            `json:"total"`
 }
 
@@ -1501,9 +1613,9 @@ func init() {
 		"session_archive":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Archive a session (sessionId): it leaves the lists and its worktree is torn down", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_create":      {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "tool", Description: "Create a session", InputSchema: json.RawMessage("{\"$comment\":\"No fields: the session's director, access and linkage come from the caller.\",\"additionalProperties\":false,\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"session_fork":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"strategy\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\"}")},
-		"session_get":         {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A session (sessionId) with its executions and state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
+		"session_get":         {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A session (sessionId) with its executions and state", Changes: []string{"session", "execution", "question", "command", "artifact"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_handoffs":    {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:session", Description: "Context handoffs of a session with delivery state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
-		"session_presets":     {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "bound:session", Description: "Presets for starting a session in a project (projectId; a person may omit it for outside projects, an agent reads its own project): id, name, what it does, the role or profile it resolves to (a system profile when the project does not map the role; an agent starts only profiles its project maps), access read|write, branch, starter instruction; unavailable says why one cannot start. Start with session_start preset=<id>", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"$comment\":\"Absent: the system presets for a conversation outside projects.\",\"type\":\"string\"}},\"type\":\"object\"}")},
+		"session_presets":     {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "bound:session", Description: "Presets for starting a session in a project (projectId; a person may omit it for outside projects, an agent reads its own project): id, name, what it does, the role or profile it resolves to (a system profile when the project does not map the role; an agent starts only profiles its project maps), access read|write, branch, starter instruction; unavailable says why one cannot start. Start with session_start preset=<id>", Changes: []string{"definition"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"$comment\":\"Absent: the system presets for a conversation outside projects.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_profile":     {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Change a session's profile (sessionId, profileId, optional account and workingDirectory)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"workingDirectory\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"profileId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"session_rename":      {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "bound:session", Description: "Name a conversation (sessionId, default your own; title up to 200 characters, no UUID). An explicit title is kept: the generated title never replaces it", InputSchema: json.RawMessage("{\"$comment\":\"The explicit title of a conversation; a person renames one they direct (403 otherwise; the owner any). A generated title (titleBy auto) never replaces it and is never written over it.\",\"additionalProperties\":false,\"properties\":{\"sessionId\":{\"$comment\":\"Required from people; a host agent's call defaults to its own session.\",\"type\":\"string\"},\"title\":{\"$comment\":\"1 to 200 characters after whitespace is collapsed; no UUID (OR-38).\",\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}")},
 		"session_resume":      {Read: false, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:session", Description: "Native resume/fork argv and captured native sessions for a session", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},

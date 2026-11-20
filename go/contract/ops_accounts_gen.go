@@ -116,7 +116,7 @@ func (v *AccountInspection) Validate() error {
 }
 
 type AccountListReply struct {
-	Accounts   []map[string]json.RawMessage `json:"accounts"`
+	Accounts   []ManagedAccount             `json:"accounts"`
 	Catalogues []map[string]json.RawMessage `json:"catalogues"`
 }
 
@@ -124,6 +124,11 @@ type AccountListReply struct {
 func (v *AccountListReply) Validate() error {
 	if v.Accounts == nil {
 		return Missing("accounts")
+	}
+	for i := range v.Accounts {
+		if err := Check(&v.Accounts[i], "accounts"); err != nil {
+			return err
+		}
 	}
 	if v.Catalogues == nil {
 		return Missing("catalogues")
@@ -435,6 +440,138 @@ func (v *ConnectionAccess) Validate() error {
 // Closed: unevaluatedProperties is false; a request key outside the schema is refused.
 func (*ConnectionAccess) Closed() bool { return true }
 
+// ConnectionKey: A key row: fingerprint, state and times; never the value.
+type ConnectionKey struct {
+	AddedAt        float64                 `json:"addedAt"`
+	AddedBy        *string                 `json:"addedBy,omitempty"`
+	ConnectionId   *string                 `json:"connectionId,omitempty"`
+	DisabledAt     *float64                `json:"disabledAt,omitempty"`
+	DisabledReason *string                 `json:"disabledReason,omitempty"`
+	Fingerprint    string                  `json:"fingerprint"`
+	Id             string                  `json:"id"`
+	Problem        *ConnectionKeyProblem   `json:"problem,omitempty"`
+	Reconcile      *ConnectionKeyReconcile `json:"reconcile,omitempty"`
+	State          string                  `json:"state"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionKey) MarshalJSON() ([]byte, error) {
+	type plain ConnectionKey
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionKey) UnmarshalJSON(b []byte) error {
+	type plain ConnectionKey
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionKey) Validate() error {
+	if v.Problem != nil {
+		if err := Check(v.Problem, "problem"); err != nil {
+			return err
+		}
+	}
+	if v.Reconcile != nil {
+		if err := Check(v.Reconcile, "reconcile"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ConnectionKeyProblem: The provider's last refusal of this key.
+type ConnectionKeyProblem struct {
+	At      json.RawMessage `json:"at,omitempty"`
+	Message string          `json:"message"`
+	Status  float64         `json:"status"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionKeyProblem) MarshalJSON() ([]byte, error) {
+	type plain ConnectionKeyProblem
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionKeyProblem) UnmarshalJSON(b []byte) error {
+	type plain ConnectionKeyProblem
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionKeyProblem) Validate() error {
+	return nil
+}
+
+// ConnectionKeyReconcile: Provider usage since the first check against credits Fleet recorded; unknown: why the provider reported no usage.
+type ConnectionKeyReconcile struct {
+	At            json.RawMessage `json:"at,omitempty"`
+	Difference    *float64        `json:"difference,omitempty"`
+	ProviderDelta *float64        `json:"providerDelta,omitempty"`
+	Recorded      *float64        `json:"recorded,omitempty"`
+	Unknown       *string         `json:"unknown,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionKeyReconcile) MarshalJSON() ([]byte, error) {
+	type plain ConnectionKeyReconcile
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionKeyReconcile) UnmarshalJSON(b []byte) error {
+	type plain ConnectionKeyReconcile
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionKeyReconcile) Validate() error {
+	return nil
+}
+
+type ConnectionSpend struct {
+	Basis string `json:"basis"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionSpend) MarshalJSON() ([]byte, error) {
+	type plain ConnectionSpend
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionSpend) UnmarshalJSON(b []byte) error {
+	type plain ConnectionSpend
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionSpend) Validate() error {
+	return nil
+}
+
 // ConnectionView: An API connection; keys, spend and history only in connections_list.
 type ConnectionView struct {
 	Access    ConnectionAccess             `json:"access"`
@@ -444,11 +581,11 @@ type ConnectionView struct {
 	Holder    string                       `json:"holder"`
 	Id        string                       `json:"id"`
 	Intake    string                       `json:"intake"`
-	Keys      []map[string]json.RawMessage `json:"keys,omitempty"`
+	Keys      []ConnectionKey              `json:"keys,omitempty"`
 	Limits    *GatewayLimits               `json:"limits,omitempty"`
 	Name      string                       `json:"name"`
 	Provider  string                       `json:"provider"`
-	Spend     map[string]json.RawMessage   `json:"spend,omitempty"`
+	Spend     *ConnectionSpend             `json:"spend,omitempty"`
 	Tools     []string                     `json:"tools,omitempty"`
 	UpdatedAt *float64                     `json:"updatedAt,omitempty"`
 }
@@ -458,8 +595,18 @@ func (v *ConnectionView) Validate() error {
 	if err := Check(&v.Access, "access"); err != nil {
 		return err
 	}
+	for i := range v.Keys {
+		if err := Check(&v.Keys[i], "keys"); err != nil {
+			return err
+		}
+	}
 	if v.Limits != nil {
 		if err := Check(v.Limits, "limits"); err != nil {
+			return err
+		}
+	}
+	if v.Spend != nil {
+		if err := Check(v.Spend, "spend"); err != nil {
 			return err
 		}
 	}
@@ -1088,6 +1235,36 @@ func (v *LimitSubscription) Validate() error {
 	return nil
 }
 
+// ManagedAccount: A managed-account record with its inspections, checks and setting history.
+type ManagedAccount struct {
+	Harness *string `json:"harness,omitempty"`
+	Id      string  `json:"id"`
+	Intake  *string `json:"intake,omitempty"`
+	Name    string  `json:"name"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ManagedAccount) MarshalJSON() ([]byte, error) {
+	type plain ManagedAccount
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ManagedAccount) UnmarshalJSON(b []byte) error {
+	type plain ManagedAccount
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ManagedAccount) Validate() error {
+	return nil
+}
+
 type PriceAddReply = PriceEntry
 
 type PriceAddRequest struct {
@@ -1361,7 +1538,7 @@ func init() {
 		"account_create":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "tool", Description: "harness codex, claude, antigravity or acp; holder: the owner may create one for another person.", InputSchema: json.RawMessage("{\"$comment\":\"harness codex, claude, antigravity or acp; holder: the owner may create one for another person.\",\"additionalProperties\":false,\"properties\":{\"comment\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"plan\":{\"type\":\"string\"}},\"required\":[\"name\",\"harness\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"account_discover":            {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "holder:account", Agent: "tool", Description: "Reads the host's native account catalogue. hostId: default the caller's host.", InputSchema: json.RawMessage("{\"$comment\":\"Reads the host's native account catalogue. hostId: default the caller's host.\",\"additionalProperties\":false,\"properties\":{\"accountId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"account_hosts":               {Read: true, Long: false, Errors: []int{}, Auth: "holder:account", Agent: "tool", Description: "harness default codex; accountId takes the account's harness.", InputSchema: json.RawMessage("{\"$comment\":\"harness default codex; accountId takes the account's harness.\",\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"harness\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"account_list":                {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Managed subscription accounts with their inspections, checks and setting history, and each host's native account catalogue", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"account_list":                {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Managed subscription accounts with their inspections, checks and setting history, and each host's native account catalogue", Changes: []string{"host", "managed-account"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"account_login_handoff":       {Read: true, Long: false, Errors: []int{409}, Auth: "holder:account", Agent: "tool", Description: "What a person runs on a host to log a binding of an account in (accountId, hostId, binding); Fleet changes no authentication itself", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"binding\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"}},\"required\":[\"accountId\",\"hostId\"],\"type\":\"object\"}")},
 		"account_update":              {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "holder:account", Agent: "tool", Description: "Holder or owner; switchPct null clears it; take {projects}; holder: owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner; switchPct null clears it; take {projects}; holder: owner only.\",\"additionalProperties\":true,\"properties\":{\"accountId\":{\"type\":\"string\"},\"comment\":{\"type\":\"string\"},\"holder\":{\"type\":\"string\"},\"intake\":{\"$comment\":\"Whether new work may use a subscription or API key.\",\"enum\":[\"all\",\"paused\"],\"type\":\"string\"},\"lowPct\":{\"$comment\":\"warn when left falls below this percent in any period; null is off (default)\",\"type\":[\"number\",\"null\"]},\"plan\":{\"type\":\"string\"},\"planWeight\":{\"$comment\":\"plan size relative to a base plan (default 1)\",\"type\":\"number\"},\"switchPct\":{\"type\":[\"number\",\"null\"]},\"take\":{}},\"required\":[\"accountId\"],\"type\":\"object\"}")},
 		"budget_ask":                  {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Asks the owner to raise a budget above its current limit.", InputSchema: json.RawMessage("{\"$comment\":\"Asks the owner to raise a budget above its current limit.\",\"additionalProperties\":true,\"properties\":{\"budgetId\":{\"type\":\"string\"},\"limit\":{\"type\":\"number\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"budgetId\",\"limit\"],\"type\":\"object\"}")},
@@ -1373,7 +1550,7 @@ func init() {
 		"connections_key_add":         {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "no", Description: "Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only. The value goes to the secret file; the reply has its fingerprint only. questionId: the open key request (connections_key_request) this value answers with {connection, fingerprint, state}.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"questionId\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"connection\",\"value\"],\"type\":\"object\"}")},
 		"connections_key_request":     {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask the owner to add an API key: projectId, requestId, connection, reason. Never pass a key value; the owner pastes it into Fleet and the answer (question_history) is only {connection, fingerprint, state} or decline", InputSchema: json.RawMessage("{\"$comment\":\"An agent asks the owner for a key value of connection. No argument carries a value; the owner answers through connections_key_add with questionId.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"connection\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"connections_key_state":       {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "state active, draining or retired.", InputSchema: json.RawMessage("{\"$comment\":\"state active, draining or retired.\",\"additionalProperties\":true,\"properties\":{\"keyId\":{\"type\":\"string\"},\"state\":{\"$comment\":\"A key state a holder sets (disabled is Fleet's own).\",\"enum\":[\"active\",\"draining\",\"retired\"],\"type\":\"string\"}},\"required\":[\"keyId\",\"state\"],\"type\":\"object\"}")},
-		"connections_list":            {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Connections visible to the caller: provider, tools, access, intake, limits and key state, never key values", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"connections_list":            {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Connections visible to the caller: provider, tools, access, intake, limits and key state, never key values", Changes: []string{"api-connection", "connection-key", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"connections_set_access":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "access: {people, projects, experiments}, each a list of ids.", InputSchema: json.RawMessage("{\"$comment\":\"access: {people, projects, experiments}, each a list of ids.\",\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"Who besides the holder may use the API key: people (emails), projects and experiments.\",\"additionalProperties\":false,\"properties\":{\"experiments\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"people\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projects\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\",\"unevaluatedProperties\":false},\"connection\":{\"type\":\"string\"}},\"required\":[\"connection\",\"access\"],\"type\":\"object\"}")},
 		"connections_set_intake":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "intake all or paused.", InputSchema: json.RawMessage("{\"$comment\":\"intake all or paused.\",\"additionalProperties\":true,\"properties\":{\"connection\":{\"type\":\"string\"},\"intake\":{\"$comment\":\"Whether new work may use a subscription or API key.\",\"enum\":[\"all\",\"paused\"],\"type\":\"string\"}},\"required\":[\"connection\",\"intake\"],\"type\":\"object\"}")},
 		"connections_set_limits":      {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "holder:connection", Agent: "tool", Description: "Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.", InputSchema: json.RawMessage("{\"$comment\":\"Holder or owner. limits replaces the stored file tool limits as a whole; an omitted field returns to its default; each given value is a positive integer.\",\"additionalProperties\":false,\"properties\":{\"connection\":{\"type\":\"string\"},\"limits\":{\"$comment\":\"File tool limits of a connection (connections_set_limits); an absent field takes its default: fileBytes and replyBytes no cap, stallMs 60000, answerMs 120000.\",\"additionalProperties\":false,\"properties\":{\"answerMs\":{\"$comment\":\"Wait from the last byte sent to the provider's response headers (file tools).\",\"minimum\":1,\"type\":\"integer\"},\"fileBytes\":{\"$comment\":\"Largest upload in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"replyBytes\":{\"$comment\":\"Largest download in bytes.\",\"minimum\":1,\"type\":\"integer\"},\"stallMs\":{\"$comment\":\"Longest time without progress in either direction.\",\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\",\"unevaluatedProperties\":false}},\"required\":[\"connection\",\"limits\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
@@ -1383,7 +1560,7 @@ func init() {
 		"connections_token_revoke":    {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner only.", InputSchema: json.RawMessage("{\"$comment\":\"Owner only.\",\"additionalProperties\":true,\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"],\"type\":\"object\"}")},
 		"price_add":                   {Read: false, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Record a price observation for a subject and unit (price, currency, source, optional sourceRef, observedAt, effectiveFrom)", InputSchema: json.RawMessage("{\"properties\":{\"currency\":{\"type\":\"string\"},\"effectiveFrom\":{\"type\":\"integer\"},\"observedAt\":{\"type\":\"integer\"},\"price\":{\"$comment\":\"Per one unit.\",\"type\":\"number\"},\"source\":{\"$comment\":\"vendor | snapshot | owner\",\"type\":\"string\"},\"sourceRef\":{\"type\":\"string\"},\"subject\":{\"$comment\":\"A resolved model ID or \\u003cconnection\\u003e/\\u003ctool\\u003e.\",\"type\":\"string\"},\"unit\":{\"type\":\"string\"}},\"required\":[\"subject\",\"unit\",\"price\",\"currency\",\"source\"],\"type\":\"object\"}")},
 		"prices_list":                 {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Recorded prices, optionally of one subject", InputSchema: json.RawMessage("{\"properties\":{\"subject\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"subscription_limits":         {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Subscription limit windows and usage per account: windowHours or from/to, paceMargin", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"from\":{\"$comment\":\"history start, ms (default 7 days back)\",\"type\":\"integer\"},\"paceMargin\":{\"$comment\":\"pace margin in points (default 5)\",\"type\":\"number\"},\"to\":{\"$comment\":\"projection end, ms (default 7 days ahead)\",\"type\":\"integer\"},\"windowHours\":{\"$comment\":\"burn window, hours (screen: 1, 3 or 6; default 3)\",\"type\":\"number\"}},\"required\":[],\"type\":\"object\"}")},
+		"subscription_limits":         {Read: true, Long: false, Errors: []int{}, Auth: "person", Agent: "tool", Description: "Subscription limit windows and usage per account: windowHours or from/to, paceMargin", Changes: []string{"managed-account", "setting-change"}, InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"from\":{\"$comment\":\"history start, ms (default 7 days back)\",\"type\":\"integer\"},\"paceMargin\":{\"$comment\":\"pace margin in points (default 5)\",\"type\":\"number\"},\"to\":{\"$comment\":\"projection end, ms (default 7 days ahead)\",\"type\":\"integer\"},\"windowHours\":{\"$comment\":\"burn window, hours (screen: 1, 3 or 6; default 3)\",\"type\":\"number\"}},\"required\":[],\"type\":\"object\"}")},
 		"subscription_limits_refresh": {Read: false, Long: false, Errors: []int{403, 404}, Auth: "person", Agent: "tool", Description: "Read subscription limits now, without a run: one subscription (subscriptionId), or every one the caller holds (the owner: all)", InputSchema: json.RawMessage("{\"$comment\":\"fleet-people-access.md section 8 \\\"Read without a run\\\": one subscription, or every one the caller holds (the owner: all)\",\"additionalProperties\":false,\"properties\":{\"subscriptionId\":{\"type\":\"string\"}},\"required\":[],\"type\":\"object\"}")},
 		"transport_authorize":         {Read: false, Long: false, Errors: []int{400, 409}, Auth: "architect", Agent: "tool", Description: "Exactly these four keys (the request signature is their hash).", InputSchema: json.RawMessage("{\"$comment\":\"Exactly these four keys (the request signature is their hash).\",\"additionalProperties\":false,\"properties\":{\"conflictId\":{\"type\":\"string\"},\"executionId\":{\"type\":\"string\"},\"frameSha256\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"conflictId\",\"executionId\",\"frameSha256\",\"requestId\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"transport_inspect":           {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Transport state of an execution's PM conversation (executionId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},

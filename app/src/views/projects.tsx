@@ -1,4 +1,3 @@
-import { projectDefinitionTouched } from '../invalidation.ts';
 // Projects configuration & resource analytics (docs/design-system/pages/projects.md).
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
@@ -9,12 +8,18 @@ import {
 } from '../../../packages/ui/src/index.ts';
 import { formatView } from '../../../packages/view-url/view-url.ts';
 import { op, useAlive, writeOnce, preparedResourcesAvailable, createDraftPersistence, authorizedDraftScope, AccessChanged, OpError, type DraftPersistence, type Ops } from '../api.ts';
-import { useDoc } from '../store.ts';
-import { subscribe } from '../feed.ts';
+import { useOp } from '../store.ts';
 import { accessGeneration, isAccessCurrent } from '../access.ts';
 import { resourceTotals, useProjectResources, PreparedProjectResources } from './resources.tsx';
+import type { ProjectBundle, ProjectInitialAccess } from '../../../contracts/generated/ops.ts';
 
-type Bundle = { settings: Record<string, any>; contextFiles: { path: string; text: string }[] };
+type Bundle = ProjectBundle;
+type Detail = Ops['project_detail']['reply'] | Ops['project_context']['reply'];
+type Readiness = Ops['project_readiness']['reply'];
+// Project settings, list rows and readiness records are open JSON in the contract: read their fields by type here.
+const str = (v: unknown) => typeof v === 'string' ? v : '';
+const isRec = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const recs = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.filter(isRec) : [];
 type AnalyticsReply = Ops['analytics_query']['reply'];
 type AnalyticsDim = NonNullable<Ops['analytics_query']['request']['dimensions']>[number];
 type AnalyticsFilter = NonNullable<Ops['analytics_query']['request']['filters']>;
@@ -81,8 +86,8 @@ export function Projects({ id }: { id?: string }) {
   const [creating, setCreating] = useState(false);
   const [mobileAnalytics, setMobileAnalytics] = useState(false);
   const [query, setQuery] = useState('');
-  const list = useDoc<any>('projects', () => op('project_list', {}), c => c.kind === 'definition');
-  const rows = (list.data?.projects ?? []).filter((p: any) => matchSearch(query, `${p.name} ${p.id}`, { project: p.id }));
+  const list = useOp('project_list', {});
+  const rows = (list.data?.projects ?? []).map(p => ({ id: str(p.id), name: str(p.name) })).filter(p => matchSearch(query, `${p.name} ${p.id}`, { project: p.id }));
   const pane = (
     <>
       <header class="page-h">
@@ -94,12 +99,12 @@ export function Projects({ id }: { id?: string }) {
       {list.error ? <div role="alert">{list.error}</div> : !list.data ? <Empty text="Loading…" /> : (
         <VirtualList
           items={rows}
-          getKey={(p: any) => p.id}
+          getKey={p => p.id}
           rowHeight={catalogueRow()}
           follow="top"
           label="Projects"
           columns="1.25rem minmax(0,1fr)"
-          render={(p: any) => (
+          render={p => (
             <>
               {/* One line: the icon, the name, then its id apart from it (it used to run into the name: "cyprus.bzcs"). */}
               <span class="lead"><Icon name="folder-open" /></span>
@@ -108,7 +113,7 @@ export function Projects({ id }: { id?: string }) {
                   class="title row-link"
                   href={'/projects/' + encodeURIComponent(p.id)}
                   onClick={e => { e.preventDefault(); setCreating(false); setMobileAnalytics(false); go('/projects/' + encodeURIComponent(p.id)); }}
-                >{p.name ?? p.id}</a>
+                >{p.name || p.id}</a>
                 {p.name && p.name.toLowerCase() !== p.id.toLowerCase() && <span class="id">{p.id}</span>}
               </span>
             </>
@@ -154,7 +159,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
     catch (e) { if (!(e instanceof AccessChanged)) setError('Draft storage unavailable; keep this page open.'); }
   };
   const setBundle = (next: Bundle | ((old: Bundle) => Bundle)) => { const value = typeof next === 'function' ? next(latest.current) : next; latest.current = value; applyBundle(value); remember(value); };
-  const validBundle = (value: any): value is Bundle => value && value.settings && typeof value.settings === 'object' && Array.isArray(value.contextFiles) && value.contextFiles.every((file: any) => typeof file.path === 'string' && typeof file.text === 'string');
+  const validBundle = (value: unknown): value is Bundle => isRec(value) && isRec(value.settings) && Array.isArray(value.contextFiles) && value.contextFiles.every(file => isRec(file) && typeof file.path === 'string' && typeof file.text === 'string');
   const restoreEdit = () => {
     try {
       const text = draft.current?.read(); if (!text) return null;
@@ -170,14 +175,13 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
-  const [ready, setReady] = useState<any>(null);
-  const [access, setAccess] = useState<any>(null);
+  const [ready, setReady] = useState<Readiness | null>(null);
+  const [access, setAccess] = useState<ProjectInitialAccess | undefined>(undefined);
   const [resources, setResources] = useState<Ops['project_context']['reply']['resources']>(undefined);
   const [repoSha, setRepoSha] = useState<string | null>(null);
   const [sourceState, setSourceState] = useState('');
   const requestId = useRef<string>(crypto.randomUUID()), alive = useAlive();
   const [loaded, setLoaded] = useState(false);
-  const loadSequence = useRef(0);
   const reloadAfterSave = useRef(false);
   useEffect(() => {
     if (id || !isAccessCurrent(editorGeneration)) return;
@@ -187,20 +191,18 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
     if (saved) setBundle(saved.bundle);
     setLoaded(true);
   }, [id]);
-  const readDetail = async (projectId: string) => {
-    if (prepared) {
-      try { return await op('project_detail', { projectId }, { signal: alive }); }
-      catch (e) { if (!(e instanceof OpError) || e.status !== 503) throw e; setPrepared(false); }
-    }
-    return op('project_context', { projectId }, { signal: alive });
-  };
-  const load = async () => {
-    if (!id || prepared === null) return;
-    if (saving.current) { reloadAfterSave.current = true; return; }
-    const generation = accessGeneration(), sequence = ++loadSequence.current;
+  // The project's definition: project_detail where prepared reads are advertised (503: not on this server), else
+  // project_context; both reread when the server says a change touches them. A save fences them: what arrives while it
+  // runs is applied after it, and the save's readback is the first answer at or past the saved revision.
+  const detailDoc = useOp('project_detail', id && prepared === true ? { projectId: id } : null);
+  const contextDoc = useOp('project_context', id && prepared === false ? { projectId: id } : null);
+  const doc = prepared ? detailDoc : contextDoc;
+  useEffect(() => { if (detailDoc.status === 503) setPrepared(false); }, [detailDoc.status]);
+  const current: Detail | null = doc.data, currentRef = useRef(current); currentRef.current = current;
+  const readback = useRef<{ revision: number; resolve: (d: Detail) => void; reject: (e: Error) => void } | null>(null);
+  const apply = (p: Detail) => {
+    if (!id || !isAccessCurrent(editorGeneration) || alive.aborted) return;
     try {
-      const p = await readDetail(id);
-      if (!isAccessCurrent(generation) || alive.aborted || sequence !== loadSequence.current || saving.current) return;
       if (JSON.stringify(latest.current) !== baseline.current) {
         if (p.revision !== editBase.current?.revision) setConflict('Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.');
         return;
@@ -216,26 +218,40 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
       setResources('resources' in p ? p.resources : undefined);
       setRepoSha(editBase.current.repoSha); setSourceState(p.sourceState ?? '');
       setConflict(saved && saved.base.contentSha !== p.contentSha ? 'Project definition changed while you were editing. Review your edits before saving; reload cannot discard them.' : ''); setLoaded(true);
-    } catch (e: any) { if (!(e instanceof AccessChanged) && !alive.aborted && isAccessCurrent(generation) && sequence === loadSequence.current) setError(e.message); }
+    } catch (e) { if (!(e instanceof AccessChanged)) setError(e instanceof Error ? e.message : String(e)); }
   };
-  const reload = useRef(load); reload.current = load;
   useEffect(() => {
-    void reload.current();
-    return subscribe({ resync: () => { void reload.current(); }, changes: changes => { if (projectDefinitionTouched(changes, id)) void reload.current(); } });
-  }, [id, prepared]);
-  const setting = (key: string, value: any) => setBundle(b => ({ ...b, settings: { ...b.settings, [key]: value } }));
+    const w = readback.current;
+    if (w) { if (current && current.revision >= w.revision) { readback.current = null; w.resolve(current); } return; }
+    if (!current) return;
+    if (saving.current) { reloadAfterSave.current = true; return; }
+    apply(current);
+  }, [current]);
+  useEffect(() => {
+    if (!doc.error || doc.status === 503) return;
+    const w = readback.current;
+    if (w) { readback.current = null; w.reject(Error(doc.error)); } else if (!saving.current) setError(doc.error);
+  }, [doc.error]);
+  /** The first answer at or past a saved revision (the saved version, or a newer one that the check then refuses). */
+  const readDetail = (revision: number) => new Promise<Detail>((resolve, reject) => {
+    const now = currentRef.current;
+    if (now && now.revision >= revision) { resolve(now); return; }
+    readback.current = { revision, resolve, reject }; doc.reload();
+  });
+  // The latest answer, never the one of the render a save started in (its finally runs this after the save).
+  const load = () => { const now = currentRef.current; if (now && !saving.current) apply(now); doc.reload(); };
+  const setting = (key: string, value: unknown) => setBundle(b => ({ ...b, settings: { ...b.settings, [key]: value } }));
   const field = (label: string, value: string, save: (s: string) => void) => (
     <TextField help="Save project applies the complete version." label={label} value={value} onChange={save} />
   );
   const save = async () => {
     if (saving.current) return;
     saving.current = true;
-    // Ordinary reads cannot replace the optimistic base or frozen request during a save.
-    ++loadSequence.current;
+    // Ordinary reads cannot replace the optimistic base or frozen request during a save (the reads' effect checks saving).
     const generation = accessGeneration();
     const mutation: PendingSave = pendingSave.current ?? (id
       ? { name: 'project_update', body: { projectId: id, requestId: requestId.current, baseRevision: revision, content: bundle, repoSha } }
-      : { name: 'project_create', body: { id: bundle.settings.id, requestId: requestId.current, content: bundle } });
+      : { name: 'project_create', body: { id: str(bundle.settings.id), requestId: requestId.current, content: bundle } });
     const submitted = mutation.body.content;
     pendingSave.current = mutation; setPriorSave(true); remember(latest.current); setBusy(true);
     try {
@@ -245,7 +261,11 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
         : await writeOnce(mutation.name, mutation.body, unknown, { signal: alive });
       if (!isAccessCurrent(generation)) return;
       if (typeof p.projectId !== 'string' || typeof p.revision !== 'number' || !Number.isSafeInteger(p.revision) || typeof p.contentSha !== 'string') throw Error('Saved reply has no verifiable project version.');
-      const check = await readDetail(p.projectId);
+      if (!id) { // created: the editor reopens on the new project and reads and checks it there
+        pendingSave.current = null; setPriorSave(false); requestId.current = crypto.randomUUID();
+        baseline.current = JSON.stringify(submitted); remember(latest.current); setError(''); onSaved(p.projectId); return;
+      }
+      const check = await readDetail(p.revision);
       if (!isAccessCurrent(generation) || alive.aborted) return;
       if (check.revision !== p.revision || check.contentSha !== p.contentSha) throw Error('Saved version changed; reload before editing.');
       setError(''); pendingSave.current = null; setPriorSave(false); requestId.current = crypto.randomUUID();
@@ -257,25 +277,25 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
       setResources('resources' in check ? check.resources : undefined);
       setRepoSha(check.repoSha ?? null); setSourceState(check.sourceState ?? '');
       setConflict(''); onSaved(p.projectId);
-    } catch (e: any) { if (isAccessCurrent(generation) && !alive.aborted) {
+    } catch (e) { if (isAccessCurrent(generation) && !alive.aborted) {
       if (e instanceof OpError && [400, 404, 409].includes(e.status)) { pendingSave.current = null; setPriorSave(false); requestId.current = crypto.randomUUID(); remember(latest.current); }
-      setError(e.message);
+      setError(e instanceof Error ? e.message : String(e));
     } } finally {
       saving.current = false;
       if (isAccessCurrent(generation) && !alive.aborted) {
         setBusy(false);
-        if (reloadAfterSave.current) { reloadAfterSave.current = false; void reload.current(); }
+        if (reloadAfterSave.current) { reloadAfterSave.current = false; load(); }
       }
     }
   };
   const bindings = (kind: 'repos' | 'environments', title: string, keys: string[]) => {
-    const items: any[] = bundle.settings[kind] ?? [];
+    const items = recs(bundle.settings[kind]);
     const change = (i: number, k: string, v: string) => setting(kind, items.map((item, n) => n === i ? { ...item, [k]: v } : item));
     return (
       <DetailSection title={title}>
         {items.map((item, i) => (
           <div key={i}>
-            {keys.map(k => field(`${title} ${i + 1} ${{ id: 'ID', remote: 'URL', defaultBranch: 'Default branch', connection: 'Git connection', hostId: 'Host', checkoutPath: 'Checkout path', repo: 'Repository' }[k] ?? k}`, item[k] ?? '', v => change(i, k, v)))}
+            {keys.map(k => field(`${title} ${i + 1} ${{ id: 'ID', remote: 'URL', defaultBranch: 'Default branch', connection: 'Git connection', hostId: 'Host', checkoutPath: 'Checkout path', repo: 'Repository' }[k] ?? k}`, str(item[k]), v => change(i, k, v)))}
             <Button label={`Remove ${title} ${i + 1}`} icon="x" onClick={() => setting(kind, items.filter((_, n) => n !== i))} />
           </div>
         ))}
@@ -283,22 +303,22 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
       </DetailSection>
     );
   };
-  if (!loaded) return error ? <ErrorBanner text={error} onRetry={() => void load()} /> : <Empty text="Loading project…" />;
+  if (!loaded) return error ? <ErrorBanner text={error} onRetry={load} /> : <Empty text="Loading project…" />;
   if (id && prepared && breakdown) return <PreparedProjectResources projectId={id} summary={summary} category={breakdown} onClose={() => setBreakdown(null)} />;
   const ctxTotals = resources ? resourceTotals(resources, { hideUnavailable: false }) : [];
   return (
     <article class="detail" data-ui="detail">
       <header class="detail-h">
-        <h2>{id ? bundle.settings.name : 'Create project'}</h2><span class="grow" />
+        <h2>{id ? str(bundle.settings.name) : 'Create project'}</h2><span class="grow" />
         <Button label={priorSave && !busy ? "Retry original save" : "Save project"} icon="save" busy={busy} onClick={save} />
-        {id && <Button label={conflict ? "Discard edits and reload" : "Reload project"} icon="rotate-cw" onClick={() => { if (conflict) { pendingSave.current = null; setPriorSave(false); try { draft.current?.write(''); } catch (e) { if (e instanceof AccessChanged) return; /* cleared in authorized memory before optional persistence */ } baseline.current = JSON.stringify(latest.current); } void load(); }} />}
+        {id && <Button label={conflict ? "Discard edits and reload" : "Reload project"} icon="rotate-cw" onClick={() => { if (conflict) { pendingSave.current = null; setPriorSave(false); try { draft.current?.write(''); } catch (e) { if (e instanceof AccessChanged) return; /* cleared in authorized memory before optional persistence */ } baseline.current = JSON.stringify(latest.current); } load(); }} />}
       </header>
       <StatusLine>{conflict || error || (priorSave && !busy ? 'Previous save has no verified readback. Retry original save keeps its request identity and original body; newer edits remain local.' : '')}</StatusLine>
       {sourceState === 'repository-changed' && <p>Source configuration changed. Saving keeps this edited project version.</p>}
       {id && prepared && <DetailSection title="Project resources"><PreparedProjectResources projectId={id} summary={summary} onOpen={setBreakdown} /></DetailSection>}
       <DetailSection title="Context">
-        {!id && field('Project ID', bundle.settings.id, v => setting('id', v))}
-        {field('Name', bundle.settings.name, v => setting('name', v))}
+        {!id && field('Project ID', str(bundle.settings.id), v => setting('id', v))}
+        {field('Name', str(bundle.settings.name), v => setting('name', v))}
         {bundle.contextFiles.map((f, i) => (
           <div key={f.path}>
             <CodeEditor label={`Project context ${f.path}`} value={f.text} onChange={text => setBundle(b => ({ ...b, contextFiles: b.contextFiles.map((old, n) => i === n ? { ...old, text } : old) }))} />
@@ -309,14 +329,14 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
       {bindings('repos', 'Repository', ['id', 'remote', 'defaultBranch', 'connection'])}
       {bindings('environments', 'Environment', ['hostId', 'checkoutPath', 'repo'])}
       <DetailSection title="Agent roles">
-        {Object.entries(bundle.settings.roles ?? {}).map(([role, profile]) => field(role, String(profile), v => setting('roles', { ...bundle.settings.roles, [role]: v })))}
+        {Object.entries(isRec(bundle.settings.roles) ? bundle.settings.roles : {}).map(([role, profile]) => field(role, String(profile), v => setting('roles', { ...(isRec(bundle.settings.roles) ? bundle.settings.roles : {}), [role]: v })))}
       </DetailSection>
       {id && (
         <DetailSection title="Readiness">
           <Button label="Check readiness" icon="circle-check" onClick={() => op('project_readiness', { projectId: id }).then(setReady, e => setError(e.message))} />
           {ready && (
             <>
-              {(ready.hosts ?? []).length === 0 ? <Empty text="No environment is configured." /> : (ready.hosts ?? []).map((h: any) =>
+              {ready.hosts.length === 0 ? <Empty text="No environment is configured." /> : ready.hosts.map(h =>
                 h.executionId ? <ReadinessResult key={h.executionId} hostId={h.hostId} executionId={h.executionId} /> : (
                   <KvRow icon="panels-top-left" label={h.hostId ?? 'Environment'} value="Unavailable" meta={h.problem ?? 'Readiness check unavailable'} />
                 )
@@ -331,7 +351,7 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
           <KvRow icon="folder-open" label="Initial member" value={access.member ?? 'None'} />
           <KvRow icon="folder-open" label="State" value={!access.member ? 'None' : access.revoked ? 'Revoked' : 'Active'} />
           {access.member && !access.revoked && id && (
-            <Button label="Revoke initial access" icon="shield" onClick={() => op('project_initial_access_revoke', { projectId: id, baseAccessVersion: access.version }).then(() => load(), e => setError(e.message))} />
+            <Button label="Revoke initial access" icon="shield" onClick={() => op('project_initial_access_revoke', { projectId: id, baseAccessVersion: access.version }).then(load, e => setError(e.message))} />
           )}
           <p>Separate explicit grants and full administrator access remain effective.</p>
         </DetailSection>
@@ -351,12 +371,12 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
 }
 
 function ReadinessResult({ hostId, executionId }: { hostId: string; executionId: string }) {
-  const result = useDoc<any>('project-readiness:' + executionId, () => op('execution_status', { executionId }), c => c.kind === 'event' || (c.kind === 'execution' && c.id === executionId));
-  const latest = result.data?.readiness?.at(-1);
+  const result = useOp('execution_status', { executionId });
+  const last = result.data?.readiness?.at(-1), latest = isRec(last) ? last : null;
   return (
     <>
-      <KvRow icon="panels-top-left" label={hostId} value={result.error ? 'Observation unavailable' : latest ? (latest.ok ? 'Ready' : 'Not ready') : result.data?.state ?? 'Check requested'} meta={result.error ?? (latest ? undefined : 'Awaiting readiness result')} />
-      {(latest?.checks ?? []).map((check: any) => <KvRow icon="circle-check" label={check.check} value={check.status} meta={[check.target, check.reason].filter(Boolean).join(' · ')} />)}
+      <KvRow icon="panels-top-left" label={hostId} value={result.error ? 'Observation unavailable' : latest ? (latest.ok === true ? 'Ready' : 'Not ready') : result.data?.state ?? 'Check requested'} meta={result.error ?? (latest ? undefined : 'Awaiting readiness result')} />
+      {recs(latest?.checks).map(check => <KvRow icon="circle-check" label={str(check.check)} value={str(check.status)} meta={[str(check.target), str(check.reason)].filter(Boolean).join(' · ')} />)}
     </>
   );
 }
@@ -388,53 +408,22 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
     const pv = initialSearch?.get('pipeline_revision'); if (pv) out.pipeline_revision = [pv];
     return out;
   });
-  const [trend, setTrend] = useState<AnalyticsReply | null>(null);
-  const [breakdown, setBreakdown] = useState<AnalyticsReply | null>(null);
-  const [trendErr, setTrendErr] = useState<string | null>(null);
-  const [breakErr, setBreakErr] = useState<string | null>(null);
   const [costCur, setCostCur] = useState<string>('USD');
   const [rev, setRev] = useState(0);
 
   const now = useMemo(() => Date.now(), [projectId, win, grain, rev]);
   const from = now - WINDOW_MS[win];
-  const filterKey = JSON.stringify(filters);
 
   const dimsAvail = projectId ? DIMS.filter(d => d.id !== 'project') : DIMS;
   const activeDim = dimsAvail.some(d => d.id === dim) ? dim : dimsAvail[0].id;
 
-  useEffect(() => {
-    let live = true;
-    setTrendErr(null);
-    op('analytics_query', {
-      window: { from, to: now },
-      dimensions: [grain],
-      measures: ANALYTICS_MEASURES,
-      filters,
-      ...(projectId ? { projectId } : {}),
-    }).then(
-      r => { if (live) setTrend(r); },
-      e => { if (live) { setTrend(null); setTrendErr(String(e?.message ?? e)); } },
-    );
-    return () => { live = false; };
-  }, [projectId, win, grain, filterKey, now, rev]);
-
-  useEffect(() => {
-    let live = true;
-    setBreakErr(null);
-    const range = bucket ? parseBucketMs(bucket, grain) : null;
-    const bw = range ? { from: range[0], to: Math.max(range[0] + 1, Math.min(range[1], now)) } : { from, to: now };
-    op('analytics_query', {
-      window: bw,
-      dimensions: [activeDim],
-      measures: ANALYTICS_MEASURES,
-      filters,
-      ...(projectId ? { projectId } : {}),
-    }).then(
-      r => { if (live) setBreakdown(r); },
-      e => { if (live) { setBreakdown(null); setBreakErr(String(e?.message ?? e)); } },
-    );
-    return () => { live = false; };
-  }, [projectId, win, grain, activeDim, bucket, filterKey, now, rev]);
+  // Two reads of the same operation: the trend over the window by time bucket, and the breakdown of the picked bucket
+  // (or the window) by the chosen dimension. A retry moves the window to now (rev), which names new reads.
+  const scope = projectId ? { projectId } : {};
+  const trendDoc = useOp('analytics_query', { window: { from, to: now }, dimensions: [grain], measures: ANALYTICS_MEASURES, filters, ...scope });
+  const range = bucket ? parseBucketMs(bucket, grain) : null;
+  const breakDoc = useOp('analytics_query', { window: range ? { from: range[0], to: Math.max(range[0] + 1, Math.min(range[1], now)) } : { from, to: now }, dimensions: [activeDim], measures: ANALYTICS_MEASURES, filters, ...scope });
+  const trend = trendDoc.data, breakdown = breakDoc.data, trendErr = trendDoc.error, breakErr = breakDoc.error;
 
   const changeWin = (w: WindowKey) => {
     setWin(w);
@@ -622,7 +611,7 @@ function ProjectAnalytics({ projectId, onOpenProject }: { projectId?: string; on
                   const rawVal = r.dimensions[activeDim];
                   const keyVal = rawVal || '(none)';
                   const tok = sumTokens(r.measures);
-                  const curFilter = (filters as any)[activeDim] as unknown[] | undefined;
+                  const curFilter = (filters as Record<string, unknown[] | undefined>)[activeDim];
                   const active = activeDim !== 'project' && Array.isArray(curFilter) && curFilter.some(x => String(x) === rawVal);
                   return (
                     <tr key={keyVal} class={active ? 'on' : undefined}>

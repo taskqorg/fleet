@@ -8,7 +8,8 @@ import {
   type TreeNode, type Harness, type StateOf, states as states_,
   keyConnection, EntityCode, actor, fileLabel, viewOf, ShellStatus } from '../../../packages/ui/src/index.ts';
 import { op, online, addRequestedKey, writeOnce, useAlive, type Ops } from '../api.ts';
-import { useDoc } from '../store.ts';
+import { useOp } from '../store.ts';
+import type { TaskRow as ContractTaskRow } from '../../../contracts/generated/ops.ts';
 import { DEFAULT_TASK_SORT, DEFAULT_TASK_GROUP, type View } from '../../../packages/view-url/view-url.ts';
 import { usePins, prefs, setFocus } from '../prefs.ts';
 import { useListPage, ListPagePanel } from '../list-page.tsx';
@@ -17,8 +18,8 @@ import { ScopedRollupBar, buildExecTree } from './resources.tsx';
 
 const GROUPS = [['priority', 'Priority'], ['state', 'State'], ['project', 'Project'], ['agent', 'Agent'], ['host', 'Host'], ['none', 'None']] as const;
 const SORTS = [['changed', 'Changed'], ['created', 'Created']] as const;
-type TaskRow = { id: string; code?: string | null; title: string; state: StateOf<'task'>; pauseReason?: string | null; waitReason: string | null; priority: 'urgent' | 'normal' | 'background'; agent: string | null; host: string | null; startedAt: string | null; createdAt: string; projectId: string | null; openQuestions: number;
-  stateAt?: string; executions?: number; lastAgent?: string | null; sortKey: (string | number)[] };
+/** The contract's task row; its state is a list state (held included). */
+type TaskRow = ContractTaskRow & { state: StateOf<'task'> };
 const ms = (v: string | number | null | undefined) => (v === null || v === undefined ? null : typeof v === 'number' ? v : Date.parse(v));
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 
@@ -30,7 +31,7 @@ export function Tasks({ id }: { id?: string }) {
   // Pinned tasks are read by id with an empty filter and live through task changes.
   const page = useListPage<TaskRow>({
     view: 'tasks', entity: 'task', kind: 'tasks', defaultGroup: DEFAULT_TASK_GROUP, defaultSort: DEFAULT_TASK_SORT, system: SYSTEM_VIEWS.tasks, groupLabel,
-    pinDoc: 'task-pins', pinRead: () => ({ key: [], filter: {} }), pinTouches: (c, has) => c.kind === 'task' && has(c.id) || !!c.taskId && has(c.taskId),
+    pinRead: () => ({ filter: {} }),
     savedView, saveGroup: DEFAULT_TASK_GROUP,
     // Completed (7) and cancelled (8) start collapsed under state grouping (the state group keys of task_page, attention
     // order). A filter to those states alone is a context of its own, where they start open.
@@ -93,6 +94,12 @@ function groupLabel(group: string, label: string | null) {
 }
 
 /** Dependencies as task references with their cards (OR-38); ones the viewer cannot see are only counted. */
+/** task_get latestResult: an artifact record (open in the contract); its id, name, path and media type. */
+function latestResult(v: unknown): { id: string; artifactId?: string; name?: string; path?: string; mediaType?: string } | null {
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown>, s = (k: string) => typeof r[k] === 'string' ? r[k] as string : undefined;
+  const id = s('id'); return id ? { id, artifactId: s('artifactId'), name: s('name'), path: s('path'), mediaType: s('mediaType') } : null;
+}
 function dependsOn(ds: { id: string; code?: string | null }[]) {
   const shown = ds.filter(d => d.code), hidden = ds.length - shown.length;
   return <span class="deps">Depends on {shown.map(d => <EntityCode key={d.id} code={d.code} id={d.id} kind="task" cls="inline" />)}
@@ -101,28 +108,29 @@ function dependsOn(ds: { id: string; code?: string | null }[]) {
 
 function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
-  const { data: t, error, state } = useDoc<any>(`task:${id}`, () => op('task_get', { taskId: id }), c => c.taskId === id || c.id === id);
+  const { data: t, error, state } = useOp('task_get', { taskId: id });
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const alive = useAlive();
   const [confirming, setConfirming] = useState(false);
   const pins = usePins('tasks');
   const now = Date.now(), off = !online.value;
-  const act = async (action: string) => { setBusy(action); setFailure(null); try { await op('task_update', { taskId: id, action }); } catch (e: any) { setFailure(e.message); } finally { setBusy(null); setConfirming(false); } };
+  const act = async (action: string) => { setBusy(action); setFailure(null); try { await op('task_update', { taskId: id, action }); } catch (e) { setFailure(e instanceof Error ? e.message : String(e)); } finally { setBusy(null); setConfirming(false); } };
   if (error && !t) return <article class="detail" data-ui="detail" tabIndex={-1}><ErrorBanner text={`Task did not load: ${error}`} /></article>;
   if (!t) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
+  const result = latestResult(t.latestResult);
   const req = t.completionRequirements && typeof t.completionRequirements === 'object'
     ? Object.entries(t.completionRequirements).map(([key, value]) => ({
       text: `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`,
     }))
     : [];
-  const open = (t.questions ?? []).filter((q: any) => q.state === 'open');
-  const rollup = (t as Ops['task_get']['reply']).resources;
-  const nodes: TreeNode[] = buildExecTree(t.executions ?? []);
+  const open = t.questions.filter(q => q.state === 'open');
+  const rollup = t.resources;
+  const nodes: TreeNode[] = buildExecTree(t.executions);
   const disabled = off ? 'offline' : undefined;
-  const latestExecution = t.executions?.at(-1); // task_get preserves execution sequence.
-  const reported = (t.executions ?? []).filter((e: any) => e.report).sort((a: any, b: any) => b.report.at - a.report.at)[0];
-  const decided = (t.questions ?? []).filter((q: any) => q.state === 'answered').sort((a: any, b: any) => (ms(b.answeredAt) ?? 0) - (ms(a.answeredAt) ?? 0)).slice(0, 3);
+  const latestExecution = t.executions.at(-1); // task_get preserves execution sequence.
+  const reported = t.executions.flatMap(e => e.report ? [e.report] : []).sort((a, b) => b.at - a.at)[0];
+  const decided = t.questions.filter(q => q.state === 'answered').sort((a, b) => (ms(b.answeredAt) ?? 0) - (ms(a.answeredAt) ?? 0)).slice(0, 3);
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={t.title}>
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
@@ -138,26 +146,26 @@ function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
     {failure && <ErrorBanner text={failure} />}
     <h2 class="detail-title">{t.title}<EntityCode code={t.code} id={t.id} kind="task" /></h2>
     <div class="state-line"><StateBadge family="task" state={t.pauseReason === 'held' ? 'held' : t.state} reason={t.waitReason ?? undefined} />{t.createdBy && <span class="muted">by {actor(t.createdBy)}</span>}{ms(t.createdAt) && <AgeChip t={ms(t.createdAt)!} />}</div>
-    {t.latestResult?.id && <p class="state-line"><Icon name={viewOf(t.latestResult.mediaType ?? '') === 'download' ? 'archive' : 'file-text'} label={t.latestResult.mediaType ?? 'Result'} />
-      <a class="row-link" href={`/results/${encodeURIComponent(t.latestResult.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(t.latestResult.id)}`); }}>{fileLabel(t.latestResult.path ?? t.latestResult.name ?? '') || 'Result'}</a>
-      <EntityCode id={t.latestResult.artifactId ?? t.latestResult.id} kind="result" /></p>}
-    {open.map((q: any) => <DecisionBlock key={q.id} question={q.text} askedBy={actor(q.askedBy) || q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
-      options={(Array.isArray(q.options) ? q.options : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
+    {result && <p class="state-line"><Icon name={viewOf(result.mediaType ?? '') === 'download' ? 'archive' : 'file-text'} label={result.mediaType ?? 'Result'} />
+      <a class="row-link" href={`/results/${encodeURIComponent(result.id)}`} onClick={ev => { ev.preventDefault(); go(`/results/${encodeURIComponent(result.id)}`); }}>{fileLabel(result.path ?? result.name ?? '') || 'Result'}</a>
+      <EntityCode id={result.artifactId ?? result.id} kind="result" /></p>}
+    {open.map(q => <DecisionBlock key={q.id} question={q.text} askedBy={actor(q.askedBy) || q.kind} addressedTo="you" since={ms(q.askedAt) ?? now} now={now}
+      options={(Array.isArray(q.options) ? q.options as unknown[] : q.kind === 'acceptance' ? ['accepted', 'rejected'] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
       onAnswer={a => { if (!off) writeOnce('questions_answer', { questionId: q.id, answer: a }, () => setFailure('unknown, retrying'), { signal: alive }).then(() => setFailure(null), e => setFailure(e.message)); }}
       onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive) : undefined} />)}
     {latestExecution?.problem && <DetailSection title="Latest execution problem">
       <ErrorBanner text={latestExecution.problem} />
     </DetailSection>}
     {reported && <DetailSection title="Latest available worker report">
-      <AgeChip t={reported.report.at} />
-      <StateBadge family="execution" state={reported.report.outcome === 'succeeded' ? 'succeeded' : 'failed'} />
-      {reported.report.summary ? <Markdown text={reported.report.summary} /> : <p class="muted">No report summary provided.</p>}
+      <AgeChip t={reported.at} />
+      <StateBadge family="execution" state={reported.outcome === 'succeeded' ? 'succeeded' : 'failed'} />
+      {reported.summary ? <Markdown text={reported.summary} /> : <p class="muted">No report summary provided.</p>}
     </DetailSection>}
     {decided.length > 0 && <DetailSection title="Previous answers">
-    {decided.map((q: any) => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />
+    {decided.map(q => <p key={q.id} class="state-line"><Icon name={q.answer === 'accepted' ? 'circle-check' : q.answer === 'rejected' ? 'circle-x' : 'message-circle-question'} />
       <span>{q.kind === 'acceptance' ? q.answer : `${q.text}: ${q.answer}`}</span>{q.answeredBy && <span class="muted">by {actor(q.answeredBy)}</span>}{ms(q.answeredAt) && <AgeChip t={ms(q.answeredAt)!} />}</p>)}
     </DetailSection>}
-    {(t.expectedOutcome || req.length > 0 || t.dependencies?.length > 0) && <OutcomeBlock outcome={t.expectedOutcome ?? ''} requirements={req} inputs={[]} depends={t.dependencies?.length ? dependsOn(t.dependencies) : undefined} />}
+    {(t.expectedOutcome || req.length > 0 || t.dependencies.length > 0) && <OutcomeBlock outcome={t.expectedOutcome ?? ''} requirements={req} inputs={[]} depends={t.dependencies.length ? dependsOn(t.dependencies) : undefined} />}
     <ScopedRollupBar rollup={rollup} cost={t.cost} />
     <h3 class="sub-h">Executions</h3>
     {nodes.length ? <ExecTree nodes={nodes} now={now} label="Executions" /> : <Empty text="No executions yet." />}

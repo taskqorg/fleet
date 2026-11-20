@@ -40,6 +40,18 @@ function type(s, at) {
   throw Error(`${at}: unsupported type ${s.type}`);
 }
 
+// changes: the change kinds ("<kind>" or "<kind>:<id prefix>") that can alter a read's reply; the coordinator sends the
+// operations they touch with every change (Change.touches), so each must be a ChangeKind.
+const changeKinds = new Set(JSON.parse(readFileSync(new URL('ops.schema.json', dir), 'utf8')).$defs.ChangeKind.enum);
+for (const f of readdirSync(dir).filter((f) => /^ops-.*\.schema\.json$/.test(f)))
+  for (const [n, o] of Object.entries(JSON.parse(readFileSync(new URL(f, dir), 'utf8')).operations ?? {}))
+    for (const c of o.changes ?? []) if (!changeKinds.has(c.split(':')[0])) throw Error(`${f}: operation ${n} changes ${c}: not a ChangeKind`);
+
+// vocabulary.json lists the Delivery list's states; they are delivery_status's DeliveryStage values, in the same order.
+const stages = JSON.parse(readFileSync(new URL('ops-executions.schema.json', dir), 'utf8')).$defs.DeliveryStage.enum;
+const vocabStages = JSON.parse(readFileSync(new URL('vocabulary.json', dir), 'utf8')).lists.delivery.states;
+if (stages.join() !== vocabStages.join()) throw Error(`vocabulary.json lists.delivery.states must equal ops-executions DeliveryStage: ${stages.join(', ')}`);
+
 let imports = new Set();
 const domains = [];
 const seen = new Map(); // operation or planned name -> file: one name, one file across all ops files

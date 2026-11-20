@@ -2,14 +2,25 @@
 // open, the work area shows the system (Limits has its own route, /hosts/limits): services (RED from spans), findings of the rules pass, recent runs with their CPU
 // and memory, and purge (docs/designs/fleet-telemetry.md §8, fleet-system-management.md System screen).
 // Staleness is decided on the client from lastSeenAt (no write happens when a host stops polling), re-evaluated every 5 s.
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter-preact';
 import { EntityCode, ListDetail, Icon, StateBadge, HarnessCounts, AgeChip, Num, DetailSection, KvRow, Empty, OfflineMarker, Button, ProblemRow, useTick, ShellStatus } from '../../../packages/ui/src/index.ts';
-import { op } from '../api.ts';
-import { useDoc } from '../store.ts';
+import { op, type Ops } from '../api.ts';
+import { useOp } from '../store.ts';
+import type { HostRow, HostReading, ProcessReading, RunReading, OperationStats } from '../../../contracts/generated/ops.ts';
 import { Limits } from './limits.tsx';
 
 const ms = (s: string) => Date.parse(s);
+/**
+ * The server's clock minus this browser's, from serverNow of the reply and the moment it arrived (judge ages on the server's
+ * clock). A copy restored from the browser's store arrived at an unknown time: no offset, so its hosts age from then.
+ */
+export function useClockOffset(read: { data: { serverNow: number } | null; restored: boolean }): number {
+  const arrived = useRef<{ data: unknown; at: number }>({ data: null, at: 0 });
+  const data = read.restored ? null : read.data;
+  if (data && arrived.current.data !== data) arrived.current = { data, at: Date.now() };
+  return data ? data.serverNow - arrived.current.at : 0;
+}
 const m = (value: number | null | undefined) => ({ value: value ?? null, basis: value == null ? 'unavailable' : 'measured' } as const);
 
 export function Hosts({ id }: { id?: string }) {
@@ -17,31 +28,31 @@ export function Hosts({ id }: { id?: string }) {
   useTick(5000);
   // Liveness comes from lastSeenAt, which polls move without a change row; re-read every 5 s (D11 CUJ 5) and judge age on the
   // server's clock (serverNow) so a skewed browser clock does not mark hosts offline.
-  const { data, state } = useDoc<any>('hosts', async () => ({ ...(await op('hosts_list', {})), fetchedAt: Date.now() }), c => c.kind === 'host' || c.kind === 'execution' || c.kind === 'command', 5000);
-  const clockOffsetMs = data ? data.serverNow - data.fetchedAt : 0;
+  const hosts = useOp('hosts_list', {}, { every: 5000 }), { data, state } = hosts;
+  const clockOffsetMs = useClockOffset(hosts);
   const now = Date.now() + clockOffsetMs;
   // Limits (people-access §8): the latest reading per subscription and limit period, with its age; none is unknown, never zero.
   // Spans change without change rows: summary and findings are re-read every 30 s.
-  const tele = useDoc<any>('telemetry-summary', async () => await op('telemetry_summary', { window: '1h' }), () => false, 30000);
-  const found = useDoc<any>('telemetry-findings', async () => await op('telemetry_findings', {}), () => false, 30000);
+  const tele = useOp('telemetry_summary', { window: '1h' }, { every: 30000 });
+  const found = useOp('telemetry_findings', {}, { every: 30000 });
   if (!data) return <Empty text="Loading…" />;
-  const fresh = (h: any) => !!h.lastSeenAt && now - h.lastSeenAt < data.staleAfterMs;
-  const reading = (hid: string) => (tele.data?.hosts ?? []).find((r: any) => r.hostId === hid);
-  const sel = data.hosts.find((h: any) => h.id === id);
+  const fresh = (h: HostRow) => !!h.lastSeenAt && now - h.lastSeenAt < data.staleAfterMs;
+  const reading = (hid: string) => (tele.data?.hosts ?? []).find(r => r.hostId === hid);
+  const sel = data.hosts.find(h => h.id === id);
   const list = <>
     <ShellStatus><OfflineMarker state={state} now={now} /></ShellStatus>
     <header class="page-h"><span class="grow" />
       <a class="btn quiet" href="/hosts/limits" onClick={e => { e.preventDefault(); go('/hosts/limits'); }}><Icon name="gauge" />Limits</a></header>
     <section class="panel">
       <div class="vl-wrap" style={{ '--cols': '1.25rem minmax(0,1fr) auto' }}>
-        {data.hosts.map((h: any) => { const r = reading(h.id); return <div key={h.id} role="row" class={`vl-row static${h.id === id ? ' sel' : ''}`}>
+        {data.hosts.map(h => { const r = reading(h.id); return <div key={h.id} role="row" class={`vl-row static${h.id === id ? ' sel' : ''}`}>
           <span class="lead"><StateBadge family="host" state={!fresh(h) ? 'offline' : h.pollError ? 'failing' : 'online'} compact lastSeen={fresh(h) ? undefined : h.lastSeenAt ?? undefined} now={now} /></span>
           <span class="tt"><a class="title row-link" href={`/hosts/${h.id}`} onClick={e => { e.preventDefault(); go(`/hosts/${h.id}`); }}>{h.id}</a>
             {h.platform && !h.id.includes(h.platform.slice(0, 3)) && <span class="id">{h.platform}</span>}
             <HarnessCounts counts={h.runningByHarness} label={`${h.id} workers by harness`} />
             {h.queued > 0 && <span class="hc"><Icon name="list-ordered" label="Queued commands" /><Num m={{ value: h.queued, basis: 'measured' }} kind="count" /></span>}
             {/* Load and free memory are two labelled figures, never one run of numbers ("3.52 9 GB"); a stale reading is not shown as current (D3). */}
-            {r && fresh(h) && <span class="hc" data-tip={r.cpus != null ? `Load (1 min) of ${r.cpus} cores` : 'Load (1 min)'} style={r.cpus && r.load1 >= 0.9 * r.cpus ? { color: 'var(--danger-fg)' } : undefined}>
+            {r && fresh(h) && <span class="hc" data-tip={r.cpus != null ? `Load (1 min) of ${r.cpus} cores` : 'Load (1 min)'} style={r.cpus && r.load1 != null && r.load1 >= 0.9 * r.cpus ? { color: 'var(--danger-fg)' } : undefined}>
               <Icon name="activity" label="Load" /><Num m={m(r.load1)} kind="score" />{r.cpus != null && <span class="muted">/{r.cpus}</span>}</span>}
             {r && fresh(h) && r.memFree != null && <span class="hc" data-tip={r.memTotal != null ? 'Memory available of the total' : 'Memory available'}>
               <Num m={m(r.memFree)} kind="bytes" />{r.memTotal != null && <span class="muted"> of <Num m={m(r.memTotal)} kind="bytes" /></span>}<span class="muted"> free</span></span>}</span>
@@ -51,16 +62,16 @@ export function Hosts({ id }: { id?: string }) {
     </section>
   </>;
   const detail = sel && <HostDetail key={sel.id} host={sel} live={fresh(sel)} reading={reading(sel.id)}
-    processes={(tele.data?.processes ?? []).filter((p: any) => p.hostId === sel.id)}
-    runs={(tele.data?.runs ?? []).filter((r: any) => r.hostId === sel.id)}
+    processes={(tele.data?.processes ?? []).filter(p => p.hostId === sel.id)}
+    runs={(tele.data?.runs ?? []).filter(r => r.hostId === sel.id)}
     clockOffsetMs={clockOffsetMs} onGone={() => go('/hosts')} onOpen={go} />;
   // Limits (people access §8 and §12, D24): its own route; the idle work area shows the system.
   const limits = id === 'limits' && <article class="detail" data-ui="detail" tabIndex={-1} aria-label="Limits"><Limits /></article>;
   return <ListDetail list={list} detail={limits || detail || undefined} detailKey={id} idle={<SystemPanels tele={tele.data} found={found.data} clockOffsetMs={clockOffsetMs} />} />;
 }
 
-function HostDetail({ host: sel, live, reading: r, processes, runs, clockOffsetMs, onGone, onOpen }: { host: any; live: boolean; reading: any; processes: any[]; runs: any[]; clockOffsetMs: number; onGone: () => void; onOpen: (path: string) => void }) {
-  const [preview, setPreview] = useState<any>(null);
+function HostDetail({ host: sel, live, reading: r, processes, runs, clockOffsetMs, onGone, onOpen }: { host: HostRow; live: boolean; reading: HostReading | undefined; processes: ProcessReading[]; runs: RunReading[]; clockOffsetMs: number; onGone: () => void; onOpen: (path: string) => void }) {
+  const [preview, setPreview] = useState<Ops['hosts_remove']['reply'] | null>(null);
   const [err, setErr] = useState('');
   const remove = (confirm: boolean) => (setErr(''), op('hosts_remove', { id: sel.id, preview: !confirm }).then(x => { if (confirm) onGone(); else setPreview(x); }, e => setErr(String(e.message ?? e))));
   return <article class="detail" data-ui="detail" tabIndex={-1} aria-label={sel.id}>
@@ -83,15 +94,15 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, clockOffsetM
     <DetailSection title="Active & recent executions">
       <KvRow icon="activity" label="Running" value={<><HarnessCounts counts={sel.runningByHarness} label="by harness" /> <a class="row-link" href="/runners" onClick={e => { e.preventDefault(); onOpen('/runners'); }}>Runners</a></>} />
       <KvRow icon="list-ordered" label="Queued commands" value={<Num m={{ value: sel.queued, basis: 'measured' }} kind="count" />} />
-      {runs.slice(0, 10).map((run: any) => <KvRow key={run.executionId} icon="terminal" label="Execution"
-        meta={run.projectId ? <a class="row-link" href={`/projects/${encodeURIComponent(run.projectId)}`} onClick={e => { e.preventDefault(); onOpen(`/projects/${encodeURIComponent(run.projectId)}`); }}>{run.projectId}</a> : undefined}
-        value={<><EntityCode id={run.executionId} kind="execution" />{run.durationMs != null && <Num m={m(run.durationMs / 1000)} kind="duration" />} <Num m={m(run.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(run.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{run.orphans > 0 && <span class="chip t-danger">{run.orphans} orphan</span>} <AgeChip t={ms(run.at)} clockOffsetMs={clockOffsetMs} /></>} />)}
+      {runs.slice(0, 10).map(run => <KvRow key={run.executionId} icon="terminal" label="Execution"
+        meta={run.projectId ? <a class="row-link" href={`/projects/${encodeURIComponent(run.projectId ?? "")}`} onClick={e => { e.preventDefault(); onOpen(`/projects/${encodeURIComponent(run.projectId ?? "")}`); }}>{run.projectId}</a> : undefined}
+        value={<><EntityCode id={run.executionId} kind="execution" />{run.durationMs != null && <Num m={m(run.durationMs / 1000)} kind="duration" />} <Num m={m(run.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(run.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{(run.orphans ?? 0) > 0 && <span class="chip t-danger">{run.orphans} orphan</span>} <AgeChip t={ms(run.at)} clockOffsetMs={clockOffsetMs} /></>} />)}
     </DetailSection>
-    {live && sel.problems?.length > 0 && <DetailSection title="Problems">{sel.problems.map((p: any) => <KvRow key={p.route} icon="activity" label={`Edge answers ${p.route} with ${p.status}`} meta={p.detail || p.location || undefined} />)}</DetailSection>}
-    {sel.harnessVersions?.length > 0 && <DetailSection title="Agent CLIs">{sel.harnessVersions.map((cli: { harness: string; expected: string; observed: string | null }) =>
+    {live && sel.problems.length > 0 && <DetailSection title="Problems">{sel.problems.map(p => <KvRow key={p.route} icon="activity" label={`Edge answers ${p.route} with ${p.status}`} meta={p.detail || p.location || undefined} />)}</DetailSection>}
+    {sel.harnessVersions?.length ? <DetailSection title="Agent CLIs">{sel.harnessVersions.map(cli =>
       <KvRow key={cli.harness} icon="info" label={cli.harness} value={<span class="mono">{live && cli.observed || 'unknown'}</span>}
-        meta={(!live || cli.observed !== cli.expected) ? `Expected ${cli.expected}` : undefined} />)}</DetailSection>}
-    <DetailSection title="Capabilities">{sel.capabilities.length ? sel.capabilities.map((c: string) => <KvRow key={c} icon="check" label={c} />) : <span class="muted">none reported</span>}</DetailSection>
+        meta={(!live || cli.observed !== cli.expected) ? `Expected ${cli.expected}` : undefined} />)}</DetailSection> : null}
+    <DetailSection title="Capabilities">{sel.capabilities.length ? sel.capabilities.map(c => <KvRow key={c} icon="check" label={c} />) : <span class="muted">none reported</span>}</DetailSection>
     <DetailSection title="Store"><KvRow icon="save" label="Store checks" value={live ? sel.stores : 'unknown'} meta={live ? sel.storesReason : 'Host observation stale'} /></DetailSection>
     <DetailSection title="Remove">
       {err && <ProblemRow title="Not removed" facts={err} severity="failure" actions={[]} />}
@@ -105,9 +116,9 @@ function HostDetail({ host: sel, live, reading: r, processes, runs, clockOffsetM
   </article>;
 }
 
-function SystemPanels({ tele, found, clockOffsetMs }: { tele: any; found: any; clockOffsetMs: number }) {
+function SystemPanels({ tele, found, clockOffsetMs }: { tele: Ops['telemetry_summary']['reply'] | null; found: Ops['telemetry_findings']['reply'] | null; clockOffsetMs: number }) {
   const [, go] = useLocation();
-  const [purge, setPurge] = useState<any>(null);
+  const [purge, setPurge] = useState<Ops['system_purge']['reply'] | null>(null);
   const [purgeErr, setPurgeErr] = useState('');
   const [allOps, setAllOps] = useState(false);
   const runPurge = (preview: boolean) => { setPurgeErr(''); op('system_purge', { preview, kinds: ['host'] }).then(setPurge, e => setPurgeErr(String(e.message ?? e))); };
@@ -115,20 +126,20 @@ function SystemPanels({ tele, found, clockOffsetMs }: { tele: any; found: any; c
   if (!tele.enabled) return <Empty text="Telemetry is off: no span store is configured." />;
   // Only what needs a look is listed (2026-11-20 decision): errors, refusals, or a P95 over a second; the healthy rest folds
   // into one line that opens the whole table.
-  const why = (o: any) => [o.errors ? `${o.errors} ${o.errors === 1 ? 'error' : 'errors'}` : '', o.refused ? `${o.refused} refused` : '', o.p95Ms > 1000 ? 'slow' : ''].filter(Boolean).join(' · ');
-  const sorted = (tele.operations as any[]).toSorted((a: any, b: any) => b.errors - a.errors || (b.refused ?? 0) - (a.refused ?? 0) || b.p95Ms - a.p95Ms);
-  const notable = sorted.filter((o: any) => why(o)), ops = allOps ? sorted : notable, healthy = sorted.length - notable.length;
+  const why = (o: OperationStats) => [o.errors ? `${o.errors} ${o.errors === 1 ? 'error' : 'errors'}` : '', o.refused ? `${o.refused} refused` : '', o.p95Ms > 1000 ? 'slow' : ''].filter(Boolean).join(' · ');
+  const sorted = tele.operations.toSorted((a, b) => b.errors - a.errors || (b.refused ?? 0) - (a.refused ?? 0) || b.p95Ms - a.p95Ms);
+  const notable = sorted.filter(o => why(o)), ops = allOps ? sorted : notable, healthy = sorted.length - notable.length;
   return <article class="detail" aria-label="System">
     <header class="detail-h"><h2 class="detail-title">System</h2></header>
     {tele.error && <ProblemRow title="Span store" facts={tele.error} severity="failure" actions={[]} />}
     <DetailSection title="Findings">
       {found?.stale && <ProblemRow title="Rules pass is stale" facts="Findings may be out of date." severity="warning" actions={[]} />}
-      {(found?.findings ?? []).length ? found.findings.map((f: any) => <KvRow key={f.cause} icon={f.groupCause ? 'circle-alert' : 'triangle-alert'} label={f.text ?? f.cause}
+      {found?.findings.length ? found.findings.map(f => <KvRow key={f.cause} icon={f.groupCause ? 'circle-alert' : 'triangle-alert'} label={f.text ?? f.cause}
         meta={f.groupCause ? `part of ${f.groupCause}` : undefined} value={<AgeChip t={ms(f.since)} clockOffsetMs={clockOffsetMs} />} />) : <span class="muted">none</span>}
     </DetailSection>
     <DetailSection title="Services, last hour">
       <div class="vl-wrap" style={{ '--cols': 'minmax(0,1fr) auto auto auto auto' }}>
-        {ops.map((o: any) => <div key={o.service + o.name} role="row" class="vl-row static">
+        {ops.map(o => <div key={o.service + o.name} role="row" class="vl-row static">
           <span class="tt"><span class="title">{o.name}</span><span class="id">{o.service}</span></span>
           <span class={o.errors ? 'danger' : 'muted'}>{why(o)}</span>
           <span data-tip="Calls"><Num m={{ value: o.count, basis: 'measured' }} kind="count" /></span>
@@ -141,21 +152,21 @@ function SystemPanels({ tele, found, clockOffsetMs }: { tele: any; found: any; c
       <KvRow icon="circle-alert" label="Spans dropped" value={<Num m={{ value: tele.droppedSpans, basis: 'measured' }} kind="count" />} />
     </DetailSection>
     <DetailSection title="Host daemon health">
-      {(tele.hosts ?? []).length ? (tele.hosts as any[]).map(h => <KvRow key={h.hostId} icon="panels-top-left" label={h.hostId}
+      {tele.hosts.length ? tele.hosts.map(h => <KvRow key={h.hostId} icon="panels-top-left" label={h.hostId}
         meta={<a class="row-link" href={`/hosts/${encodeURIComponent(h.hostId)}`} onClick={e => { e.preventDefault(); go(`/hosts/${encodeURIComponent(h.hostId)}`); }}>Inspect host</a>}
         value={<><Num m={m(h.load1)} kind="score" /> <span class="muted">load</span> <Num m={m(h.memFree)} kind="bytes" /> <span class="muted">avail</span> <Num m={m(h.diskFree)} kind="bytes" /> <span class="muted">disk</span> <AgeChip t={ms(h.at)} clockOffsetMs={clockOffsetMs} /></>} />) : <span class="muted">no host heartbeats</span>}
     </DetailSection>
     <DetailSection title="Active & recent executions">
       <div class="res-bar"><a class="row-link" href="/runners" onClick={e => { e.preventDefault(); go('/runners'); }}>Open Runners</a></div>
-      {tele.runs.length ? tele.runs.slice(0, 20).map((r: any) => <KvRow key={r.executionId} icon="activity" label="Execution"
-        meta={<>{r.hostId ? <a class="row-link" href={`/hosts/${encodeURIComponent(r.hostId)}`} onClick={e => { e.preventDefault(); go(`/hosts/${encodeURIComponent(r.hostId)}`); }}>{r.hostId}</a> : null}{r.projectId ? <> · <a class="row-link" href={`/projects/${encodeURIComponent(r.projectId)}`} onClick={e => { e.preventDefault(); go(`/projects/${encodeURIComponent(r.projectId)}`); }}>{r.projectId}</a></> : null}</>}
-        value={<><EntityCode id={r.executionId} kind="execution" />{r.durationMs != null && <Num m={m(r.durationMs / 1000)} kind="duration" />} <Num m={m(r.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(r.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{r.orphans > 0 && <span class="chip t-danger">{r.orphans} orphan</span>} <AgeChip t={ms(r.at)} clockOffsetMs={clockOffsetMs} /></>} />) : <span class="muted">none in the last hour</span>}
+      {tele.runs.length ? tele.runs.slice(0, 20).map(r => <KvRow key={r.executionId} icon="activity" label="Execution"
+        meta={<>{r.hostId ? <a class="row-link" href={`/hosts/${encodeURIComponent(r.hostId ?? "")}`} onClick={e => { e.preventDefault(); go(`/hosts/${encodeURIComponent(r.hostId ?? "")}`); }}>{r.hostId}</a> : null}{r.projectId ? <> · <a class="row-link" href={`/projects/${encodeURIComponent(r.projectId ?? "")}`} onClick={e => { e.preventDefault(); go(`/projects/${encodeURIComponent(r.projectId ?? "")}`); }}>{r.projectId}</a></> : null}</>}
+        value={<><EntityCode id={r.executionId} kind="execution" />{r.durationMs != null && <Num m={m(r.durationMs / 1000)} kind="duration" />} <Num m={m(r.cpuSeconds)} kind="duration" /> <span class="muted">CPU</span> <Num m={m(r.peakRssBytes)} kind="bytes" /> <span class="muted">peak</span>{(r.orphans ?? 0) > 0 && <span class="chip t-danger">{r.orphans} orphan</span>} <AgeChip t={ms(r.at)} clockOffsetMs={clockOffsetMs} /></>} />) : <span class="muted">none in the last hour</span>}
     </DetailSection>
     <DetailSection title="Purge">
       {purgeErr && <ProblemRow title="Not purged" facts={purgeErr} severity="failure" actions={[]} />}
       {!purge ? <Button label="Find removed hosts to purge" icon="trash-2" onClick={() => runPurge(true)} /> : <>
         <KvRow icon="trash-2" label="Removed hosts nothing references" value={<Num m={{ value: purge.removed[0]?.count ?? 0, basis: 'measured' }} kind="count" />} />
-        <KvRow icon="save" label="Removed hosts kept by history" value={<Num m={{ value: purge.kept[0]?.count ?? 0, basis: 'measured' }} kind="count" />} />
+        <KvRow icon="save" label="Removed hosts kept by history" value={<Num m={{ value: purge.kept?.[0]?.count ?? 0, basis: 'measured' }} kind="count" />} />
         {(purge.removed[0]?.count ?? 0) > 0 && !purge.purged && <Button label="Purge" icon="trash-2" kind="danger" onClick={() => runPurge(false)} />}
       </>}
     </DetailSection>

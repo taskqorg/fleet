@@ -380,8 +380,10 @@ func hostHarnessVersions(o doc, live bool) any {
 		}
 	}
 	rows := make([]doc, 0, len(assets))
-	for _, name := range []string{"codex", "claude", "antigravity"} {
-		rows = append(rows, doc{"harness": name, "expected": assets[name].Version, "observed": observed[name]})
+	for _, h := range contract.Vocabulary.Harnesses { // the harnesses Fleet ships a binary for (contracts/vocabulary.json)
+		if h.Assets {
+			rows = append(rows, doc{"harness": h.ID, "expected": assets[h.ID].Version, "observed": observed[h.ID]})
+		}
 	}
 	return rows
 }

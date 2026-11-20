@@ -11,7 +11,8 @@ import {
 import { op, online, addRequestedKey, writeOnce, sendingId, prepareSending, submissionKey, authorizedDraftScope, createDraftPersistence, unknownOutcome, AccessChanged, OpError, useAlive, type Ops } from '../api.ts';
 import { NewConversation } from './conversation-new.tsx';
 import { useAttachments } from '../uploads.ts';
-import { useDoc } from '../store.ts';
+import { useOp } from '../store.ts';
+import type { SessionRow as ContractSessionRow, SessionGetReply, SessionExecution } from '../../../contracts/generated/ops.ts';
 import { DEFAULT_SESSION_GROUP, DEFAULT_SESSION_SORT } from '../../../packages/view-url/view-url.ts';
 import { nextUrl } from '../url.ts';
 import { prefs } from '../prefs.ts';
@@ -23,7 +24,11 @@ import { ScopedRollupBar, ScopedRollupDetails } from './resources.tsx';
 
 const GROUPS = [['project', 'Project'], ['state', 'State'], ['agent', 'Agent'], ['none', 'None']] as const;
 const SORTS = [['activity', 'Activity'], ['created', 'Created']] as const;
-type SessionRow = { id: string; code?: string | null; title: string | null; state: StateOf<'session'>; harness: string | null; openQuestions: number; activityAt?: string | null; executions?: number; projectId?: string | null; sortKey: (string | number)[] };
+/** The contract's session row. */
+type SessionRow = ContractSessionRow & { state: StateOf<'session'> };
+const errText = (e: unknown) => e instanceof Error ? e.message : String(e);
+const rec = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
+const str = (v: unknown) => typeof v === 'string' ? v : undefined;
 const isHarness = (h: string | null): h is Harness => !!h && h in harnesses;
 const reqId = () => crypto.randomUUID();
 const TERMINAL = ['succeeded', 'failed', 'cancelled'];
@@ -37,8 +42,7 @@ export function Conversations({ id }: { id?: string }) {
   // the selection (list-page.tsx).
   const page = useListPage<SessionRow>({
     view: 'conversations', entity: 'conversation', kind: 'sessions', defaultGroup: DEFAULT_SESSION_GROUP, defaultSort: DEFAULT_SESSION_SORT, system: SYSTEM_VIEWS.conversations, groupLabel,
-    pinDoc: 'session-pins', pinRead: v => ({ key: [!!v.archived], filter: { archived: !!v.archived } }),
-    pinTouches: (c, has) => (c.kind === 'session' && has(c.id)) || (!!c.sessionId && has(c.sessionId)),
+    pinRead: v => ({ filter: { archived: !!v.archived } }),
     saveExtra: v => ({ archived: v.archived }), pickExtra: sv => ({ archived: sv.archived }),
     listId: v => !!v.archived,
   });
@@ -110,15 +114,17 @@ function groupLabel(group: string, label: string | null) {
 function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [, go] = useLocation();
   const [verifiedTarget, setVerifiedTarget] = useState<string | null>(null);
-  const { data: s, error, state, restored, reload: reloadSession } = useDoc<any>(`session:${id}`, () => op('session_get', { sessionId: id }).then(reply => { setVerifiedTarget(id); return reply; }), c => c.sessionId === id && c.kind !== 'event');
-  const projects = useDoc<any>(s?.projectId ? 'projects' : null, () => op('project_list', {}), c => c.kind === 'definition');
+  const { data: s, error, state, restored, reload: reloadSession } = useOp('session_get', { sessionId: id });
+  // A fresh answer (not the stored copy) for this conversation validates the composer's target.
+  useEffect(() => { if (s && !restored) setVerifiedTarget(id); }, [s, restored, id]);
+  const projects = useOp('project_list', s?.projectId ? {} : null);
   const previousCode = useRef(s?.code);
   useEffect(() => {
     // Renaming a project reissues its conversation codes in the same transaction.
     if (previousCode.current && s?.code && previousCode.current !== s.code) projects.reload();
     previousCode.current = s?.code;
   }, [s?.code]);
-  const project = projects.data?.projects.find((p: { id: string }) => p.id === s?.projectId);
+  const project = projects.data?.projects.find(p => rec(p).id === s?.projectId);
   // A session that got a task shows the task's thread (design "Thread scope"): the first page resolves it and returns the key.
   const thread = useThread({ session: id });
   const key: ThreadKey = thread.win?.key ?? { session: id };
@@ -188,8 +194,8 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const [jumpTo, setJumpTo] = useState<string | null>(null);
   useEffect(() => { if (jumpTo && thread.win?.blocks.some(b => b.key === jumpTo)) { handle.current?.scrollToKey(jumpTo, 'center'); setJumpTo(null); } }, [thread.win, jumpTo]);
   const now = Date.now(), off = !online.value;
-  const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e: any) { setFailure({ text: e.message, retry: () => run(fn) }); } };
-  const copyFail = (e: unknown, retry?: () => void) => setFailure({ text: `Copy failed: ${(e as any)?.message ?? e}`, retry });
+  const run = async (fn: () => Promise<unknown>) => { setFailure(null); try { await fn(); } catch (e) { setFailure({ text: errText(e), retry: () => run(fn) }); } };
+  const copyFail = (e: unknown, retry?: () => void) => setFailure({ text: `Copy failed: ${errText(e)}`, retry });
   // A jump replaces the window with entries around the hit, then puts the hit row in view and marks it.
   const open = async (list: { key: string }[], i: number) => {
     const key = list[i]?.key;
@@ -207,26 +213,26 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
   const search = () => run(async () => { if (!q.trim()) { setHits(null); setMarked(null); return; } const r = await op('thread_search', { key, q, limit: 100 }); setHits(r.hits); await open(r.hits, 0); });
   if (error && !s) return <article class="detail" data-ui="detail" tabIndex={-1}><ErrorBanner text={`Conversation did not load: ${error}`} /></article>;
   if (!s) return <article class="detail" data-ui="detail" tabIndex={-1}><Skeleton rows={6} /></article>;
-  const running = (e: any) => !['succeeded', 'failed', 'cancelled'].includes(e.state) && e.observation !== 'unconfirmed';
+  const running = (e: SessionExecution) => !['succeeded', 'failed', 'cancelled'].includes(e.state) && e.observation !== 'unconfirmed';
   // Composer target: the newest running execution; with none, a new message starts one (design "Controls").
-  const active = (s.executions ?? []).filter(running).at(-1);
-  const latest = s.executions?.at(-1);
-  const sessionState: StateOf<'session'> = latest?.state ?? 'idle';
+  const active = s.executions.filter(running).at(-1);
+  const latest = s.executions.at(-1);
+  const sessionState = (latest?.state ?? 'idle') as StateOf<'session'>;
   const unconfirmed = latest?.observation === 'unconfirmed';
-  const lastSeen = unconfirmed ? (typeof latest.lastSeenAt === 'number' ? latest.lastSeenAt : Date.parse(latest.lastSeenAt)) : NaN;
-  const openQs = (s.questions ?? []).filter((q: any) => (answers[q.id] ?? q).state === 'open');
+  const lastSeen = unconfirmed ? (typeof latest.lastSeenAt === 'number' ? latest.lastSeenAt : Date.parse(String(latest.lastSeenAt))) : NaN;
+  const openQs = s.questions.filter(q => (answers[q.id] ?? q).state === 'open');
   const w = thread.win;
-  const last = (s.messages ?? []).at(-1), lastMessage: string | undefined = last?.text;
-  const lastFiles: string[] = (last?.attachments ?? []).map((a: any) => a.artifactId).filter(Boolean);
+  const last = s.messages.at(-1), lastMessage: string | undefined = last?.text;
+  const lastFiles: string[] = (last?.attachments ?? []).map(a => str(rec(a).artifactId)).filter((x): x is string => !!x);
   // The stored title (set by a person or an agent, or generated after the first reply); until then the first message,
   // as the list shows it.
-  const fallback = ((s.messages ?? [])[0]?.text ?? '').replace(new RegExp(titleUUID.source, 'gi'), '').trim();
+  const fallback = (s.messages[0]?.text ?? '').replace(new RegExp(titleUUID.source, 'gi'), '').trim();
   const title: string = s.title || [...fallback].slice(0, 200).join('') || 'New conversation';
   return <article class="detail conversation" data-ui="detail" tabIndex={-1} aria-label="Conversation">
     <header class="detail-h">
       <Button label="Close" icon="x" iconOnly onClick={onClose} />
       <h2 class="detail-title conv-title" data-tip={title}>{title}</h2>
-      <EntityCode code={s.code} id={id} kind="conversation" />{s.agentConfig?.id && <span class="muted mono conv-profile">{s.agentConfig.id}</span>}<span class="grow" />
+      <EntityCode code={s.code} id={id} kind="conversation" />{str(rec(s.agentConfig).id) && <span class="muted mono conv-profile">{str(rec(s.agentConfig).id)}</span>}<span class="grow" />
       <SearchField label="Search thread" value={q} onInput={setQ} onSearch={search} />
       <div class="conv-search-results" data-active={!!hits} data-partial={!!w && w.blocks.length < w.total}>
         <span class="count" aria-live="polite">{hits ? `${hits.length ? hit + 1 : 0} of ${hits.length}` : w ? `${w.blocks.length.toLocaleString('en')} of ${w.total.toLocaleString('en')}` : ''}</span>
@@ -245,12 +251,12 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
       ]} />
     </header>
     {panel === 'rename' && <RenamePanel sessionId={id} current={s.title ?? ''} onDone={() => setPanel(null)} onSaved={() => { setFailure(null); reloadSession(); }} run={run} onUnknown={() => { setFailure({ text: 'Rename outcome unknown. Check the current title.' }); reloadSession(); }} />}
-    {panel && panel !== 'rename' && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={s.agentConfig?.id} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
+    {panel && panel !== 'rename' && <SwitchPanel sessionId={id} handoff={panel === 'handoff'} current={str(rec(s.agentConfig).id)} onDone={note => { setPanel(null); if (note) setFailure(null); }} run={run} />}
     <div class="state-line">
       {sessionState in states_.session && <StateBadge family="session" state={sessionState}
         unconfirmed={unconfirmed} lastSeen={Number.isFinite(lastSeen) ? lastSeen : undefined} />}
       {s.projectId && <>{project?.name && <span class="muted">{project.name}</span>}
-        <EntityCode code={project?.code} id={s.projectId} kind="project" /></>}
+        <EntityCode code={str(rec(project).code)} id={s.projectId} kind="project" /></>}
       {hasRelated && <Button label="Related work" icon="folder-open" kind="quiet" pressed={inRelated} onClick={toggleRelated} />}
     </div>
     <ScopedRollupBar rollup={s.resources} cost={s.cost} inlineDetails={false} />
@@ -262,8 +268,8 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         pending={{ count: w.fresh, onJump: () => { setMarked(null); setHits(null); thread.newest(); } }} />}
       {inRelated && <section class="related-work" aria-label="Related work" tabIndex={0}><ScopedRollupDetails rollup={related} /></section>}
       {/* D3: steer goes to the execution and does not answer; the open question stays in sight above the composer. */}
-      {openQs.map((q: any) => <DecisionBlock key={q.id} question={q.question ?? q.text} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(q.askedAt) || now : now} now={now}
-        options={(Array.isArray(q.options) ? q.options : keyConnection(q.options) ? ['decline'] : []).map((o: string, i: number) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
+      {openQs.map(q => <DecisionBlock key={q.id} question={q.question ?? q.text ?? ''} askedBy="agent" addressedTo="you" since={q.askedAt ? Date.parse(String(q.askedAt)) || now : now} now={now}
+        options={(Array.isArray(q.options) ? q.options as unknown[] : keyConnection(q.options) ? ['decline'] : []).map((o, i) => ({ label: String(o), kbd: String(i + 1), primary: i === 0 }))}
         onAnswer={a => run(() => answerQuestion(q.id, a))}
         onSecret={keyConnection(q.options) ? v => addRequestedKey(q.id, keyConnection(q.options)!, v, alive.current.signal) : undefined} />)}
       <div class="composer-bar">
@@ -275,7 +281,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
         onSend={async text => {
           // Files still uploading finish first; a failed one fails the send and stays on its chip.
           let attachments: string[];
-          try { attachments = await files.ready(); } catch (e: any) { setFailure({ text: `Attachment not uploaded: ${e?.message ?? e}` }); throw e; }
+          try { attachments = await files.ready(); } catch (e) { setFailure({ text: `Attachment not uploaded: ${errText(e)}` }); throw e; }
           // One requestId per draft text and files until it is sent, kept next to the draft with the complete body: a resend
           // of the same text and files after a failure or a reload is the same write, never a second one; other files make
           // a new message (submissionKey). A definite error (nothing stored) clears it. A message with files is queued
@@ -285,7 +291,7 @@ function Conversation({ id, onClose }: { id: string; onClose: () => void }) {
           const request = await prepareSending(scope, 'message_send', body), key = submissionKey(body);
           setFailure(null);
           try { await writeOnce('message_send', request, unknown, { signal: alive.current.signal }); sendingId(scope, null, key); files.clear(attachments); setFailure(null); }
-          catch (e: any) { if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) { if (!unknownOutcome(e)) sendingId(scope, null, key); setFailure({ text: e.message }); } throw e; } }} />
+          catch (e) { if (!(e instanceof AccessChanged) && !(e instanceof OpError && e.message === 'aborted')) { if (!unknownOutcome(e)) sendingId(scope, null, key); setFailure({ text: errText(e) }); } throw e; } }} />
     </DropZone></div>
   </article>;
 }
@@ -329,14 +335,14 @@ function RenamePanel({ sessionId, current, onDone, onSaved, run, onUnknown }: { 
  * The composer's facts (controls/composer.md): the agent profile with its model and effort (a click opens Switch profile
  * or model), and the permissions the profile grants, shown only.
  */
-function composerChips(s: any, active: any, onSwitch: () => void): ComposerChip[] {
-  const cfg = s.agentConfig ?? {}, harness: string | null = cfg.harness ?? active?.harness ?? s.harness ?? null;
-  const mark = agentLabel(active?.model ?? cfg.model, active?.effort ?? cfg.effort);
-  const chips: ComposerChip[] = [{ harness, icon: 'bot', label: mark || cfg.id || 'Agent', tip: `${cfg.id ? `Profile ${cfg.id}` : 'No profile'} · switch profile or model`, onClick: onSwitch }];
-  const tools: string[] = Array.isArray(cfg.tools) ? cfg.tools : [];
-  const network = cfg.gitNetwork === true, mode = typeof cfg.settings?.mode === 'string' ? cfg.settings.mode : null;
+function composerChips(s: SessionGetReply, active: SessionExecution | undefined, onSwitch: () => void): ComposerChip[] {
+  const cfg = rec(s.agentConfig), settings = rec(cfg.settings), harness: string | null = str(cfg.harness) ?? active?.harness ?? null;
+  const mark = agentLabel(active?.model ?? str(cfg.model), active?.effort ?? str(cfg.effort));
+  const chips: ComposerChip[] = [{ harness, icon: 'bot', label: mark || str(cfg.id) || 'Agent', tip: `${cfg.id ? `Profile ${str(cfg.id)}` : 'No profile'} · switch profile or model`, onClick: onSwitch }];
+  const tools: string[] = Array.isArray(cfg.tools) ? cfg.tools.filter((t): t is string => typeof t === 'string') : [];
+  const network = cfg.gitNetwork === true, mode = str(settings.mode) ?? null;
   chips.push({ icon: 'shield', label: [mode ?? 'Workspace', network ? 'network' : null].filter(Boolean).join(' · '),
-    tip: `Permissions of the profile: ${tools.length ? `tools ${tools.join(', ')}` : 'the harness tools'}${network ? ', git network' : cfg.gitNetwork === false ? ', no git network' : ', git network as the project grants'}${cfg.settings?.sandbox === false ? ', no sandbox' : ''}` });
+    tip: `Permissions of the profile: ${tools.length ? `tools ${tools.join(', ')}` : 'the harness tools'}${network ? ', git network' : cfg.gitNetwork === false ? ', no git network' : ', git network as the project grants'}${settings.sandbox === false ? ', no sandbox' : ''}` });
   return chips;
 }
 
@@ -345,12 +351,13 @@ function composerChips(s: any, active: any, onSwitch: () => void): ComposerChip[
  * switch in the session, or a new session with a context handoff. An inline panel, never a floating form (OR-14).
  */
 function SwitchPanel({ sessionId, handoff, current, onDone, run }: { sessionId: string; handoff: boolean; current?: string; onDone: (note?: string) => void; run: (fn: () => Promise<unknown>) => Promise<void> }) {
-  const { data: profiles } = useDoc<any>('profiles', () => op('profiles_list', {}), () => false);
-  const { data: accounts } = useDoc<any>(handoff ? 'accounts' : null, () => op('account_list', {}), c => c.kind === 'host');
+  const { data: profiles } = useOp('profiles_list', {});
+  const { data: accounts } = useOp('account_list', handoff ? {} : null);
   const [profile, setProfile] = useState<string | null>(null), [account, setAccount] = useState<string | null>(null), [done, setDone] = useState<string | null>(null), [next, setNext] = useState<string | null>(null), [, nav] = useLocation();
-  const list: any[] = profiles?.profiles ?? [];
+  // Listed profiles are open records (contracts/profile.schema.json): their id, harness and model.
+  const list = (profiles?.profiles ?? []).flatMap(p => typeof p.id === 'string' ? [{ id: p.id, harness: str(p.harness), model: str(p.model) }] : []);
   const selectedProfile = list.find(p => p.id === profile);
-  const named: any[] = (accounts?.accounts ?? []).filter((a: any) => a.intake === 'all' && selectedProfile && a.harness === (selectedProfile.harness ?? 'codex'));
+  const named = (accounts?.accounts ?? []).filter(a => a.intake === 'all' && selectedProfile && a.harness === (selectedProfile.harness ?? 'codex'));
   const go = () => run(async () => { const r = await op('session_transition', { sessionId, profileId: profile ?? undefined, ...(account ? { account } : {}) }); setDone(r.transition); setNext(r.sessionId && r.sessionId !== sessionId ? r.sessionId : null); });
   return <DetailSection title={handoff ? 'Hand off to another agent' : 'Switch profile or model'}>
     <div class="answers" role="group" aria-label="Profile">{list.map(p => <Button key={p.id} label={`${p.id} · ${p.harness ?? 'codex'}${p.model ? ` ${p.model}` : ''}`} pressed={profile === p.id} kind={p.id === current ? 'quiet' : 'default'} onClick={() => { setProfile(p.id); setAccount(null); }} />)}</div>

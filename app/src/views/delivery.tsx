@@ -10,14 +10,13 @@ import {
   ListDetail, StateBadge, AgeChip, Ago, Num, Totals, TimeStrip, ProblemRow, DetailSection, KvRow, Button, Choice, Empty, ErrorBanner, Skeleton, Fact, RowFacts,
   Latest, DayChart, ShareBar, NormBar, matchSearch, states, capOf, quantile, day, dayStart, slotStart, hourLabel, dateKey, duration, actions, DELIVERY_ORDER,
   type StateOf, type DayCol, type DayMark, type SharePart, ShellStatus } from '../../../packages/ui/src/index.ts';
-import { op, type Ops } from '../api.ts';
-import { useDoc } from '../store.ts';
+import type { Ops } from '../api.ts';
+import { useOp } from '../store.ts';
 import { useListPage, ListPagePanel, type LocalList } from '../list-page.tsx';
 import { SYSTEM_VIEWS, DELIVERY_DONE, DELIVERY_FAILED } from '../system-views.ts';
 import { useUrlView } from '../url.ts';
 import { DEFAULT_DELIVERY_GROUP, DEFAULT_DELIVERY_SORT, type View } from '../../../packages/view-url/view-url.ts';
 import { scopeIds, prefs, prefsRead } from '../prefs.ts';
-import type { Change } from '../../../contracts/generated/ops.ts';
 
 type Stage = StateOf<'delivery'>;
 type Status = Ops['delivery_status']['reply'];
@@ -56,11 +55,11 @@ const ms = (s?: string | null) => s ? Date.parse(s) : NaN;
 const fmt = (v: number) => duration(v / 1000).text;
 /** The focus segment of a pull request: owner~repo~number (stable, readable, no slash). */
 export const idOf = (it: { repo: string; number: number }) => `${it.repo.replace('/', '~')}~${it.number}`;
-// Current rows change with delivery-state:<project>; the recorded history (records and the regression check) with the rest.
-export const touchesStatus = (c: Change) => c.kind === 'delivery' && c.id.startsWith('delivery-state:');
-const touchesHistory = (c: Change) => c.kind === 'delivery' && !c.id.startsWith('delivery-state:');
-const NONE = 'none' as const; // no history kept (404): known, unlike still loading
-const no404 = <T,>(p: Promise<T>) => p.catch(e => { if (/404/.test(String(e?.message ?? e))) return NONE; throw e; });
+// Current rows change with delivery-state:<project>, the recorded history with the other delivery kinds: the server's
+// touches name the operation (contracts: changes). A history read answers 404 when no history is kept: known, unlike loading.
+const kept = <T,>(d: { data: T | null; status: number | null }) => d.status === 404 ? null : d.data;
+const missing = (d: { status: number | null }) => d.status === 404;
+const failed = (d: { error: string | null; status: number | null }) => d.status === 404 ? null : d.error;
 const q = quantile;
 const sec = (v: number | null | undefined) => ({ value: v == null ? null : v / 1000, basis: v == null ? 'unavailable' as const : 'measured' as const, reason: v == null ? 'no pull requests' : undefined });
 
@@ -93,10 +92,10 @@ export function bucketsOf(range: string, now: number, first?: number): Bucket[] 
 export function Delivery({ id }: { id?: string }) {
   const scope = scopeIds(), focus = scope.projectIds ?? [];
   const now = Date.now();
-  const status = useDoc<Status>(prefsRead.value ? 'delivery:' + JSON.stringify(scope) : null, () => op('delivery_status', scope), touchesStatus, 300000);
+  const status = useOp('delivery_status', prefsRead.value ? scope : null, { every: 300000 });
   // The norms: every stage's P50 and P90 over the last 14 days (the fleet repository's history); 404 is no history kept.
-  const baseDoc = useDoc<Baseline | typeof NONE>(prefsRead.value ? 'delivery-baseline:14' : null, () => no404(op('delivery_baseline', { days: 14 })), touchesHistory, 600000);
-  const base = baseDoc.data === NONE ? null : baseDoc.data;
+  const baseDoc = useOp('delivery_baseline', prefsRead.value ? { days: 14 } : null, { every: 600000 });
+  const base: Baseline | null = kept(baseDoc);
   const stat = (k: string) => base?.rolling.stats.find(s => s.key === k);
   const norms: Norms = {
     stage: it => { const k = normKey(it), x = it.repo === FLEET && k && stat(k); return x ? [x.p50Ms, x.p90Ms] : null; },
@@ -109,28 +108,26 @@ export function Delivery({ id }: { id?: string }) {
   // The pace range and the picked bucket ride in the link's extra keys; the history is read for the range shown.
   const url = deliveryExtra(useUrlView('delivery').view.extra);
   const urlRange = url.range ?? '7d';
-  const releaseDoc = useDoc<History | typeof NONE>(prefsRead.value && fleetShown && url.release ? 'delivery-release:' + url.release : null,
-    () => no404(op('delivery_history', { release: url.release! })), touchesHistory, 600000);
-  const releaseHistory = releaseDoc.data === NONE ? null : releaseDoc.data;
+  const releaseDoc = useOp('delivery_history', prefsRead.value && fleetShown && url.release ? { release: url.release } : null, { every: 600000 });
+  const releaseHistory: History | null = kept(releaseDoc);
   const releaseRows = fleetShown && releaseHistory ? releaseHistory.prs.map(pr => fromHistory(pr, releaseHistory.installsFrom)) : [];
   const releaseItems = url.release ? items.filter(it => it.release === url.release) : [];
   const releaseRowIds = new Set(releaseItems.map(idOf));
-  // The doc name carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
-  const histDoc = useDoc<{ h: History } | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-pace:' + urlRange + ':' + bucketsOf(urlRange, now)[0].key : null,
-    () => no404(op('delivery_history', { since: new Date(bucketsOf(urlRange, Date.now())[0].start).toISOString() }).then(h => ({ h }))), touchesHistory, 600000);
-  const hist = histDoc.data === NONE ? null : histDoc.data;
-  const regDoc = useDoc<Regressions | typeof NONE>(prefsRead.value && fleetShown ? 'delivery-regressions' : null, () => no404(op('delivery_regressions', {})), touchesHistory, 600000);
-  const regressions = regDoc.data === NONE ? [] : regDoc.data?.regressions ?? [];
-  const histLoading = !prefsRead.value || fleetShown && histDoc.data === null && !histDoc.error;
+  // The request carries the first bucket, so a page open across midnight (or a two-hour slot) reads the new window.
+  const histDoc = useOp('delivery_history', prefsRead.value && fleetShown ? { since: new Date(bucketsOf(urlRange, now)[0].start).toISOString() } : null, { every: 600000 });
+  const hist: History | null = kept(histDoc);
+  const regDoc = useOp('delivery_regressions', prefsRead.value && fleetShown ? {} : null, { every: 600000 });
+  const regressions: Regressions['regressions'] = kept(regDoc)?.regressions ?? [];
+  const histLoading = !prefsRead.value || fleetShown && histDoc.data === null && !failed(histDoc);
   const paceOf = (v: View) => {
-    const ex = deliveryExtra(v.extra), range = ex.range ?? '7d', buckets = bucketsOf(range, now, hist?.h.backfilledFrom ? ms(hist.h.backfilledFrom) : undefined);
+    const ex = deliveryExtra(v.extra), range = ex.range ?? '7d', buckets = bucketsOf(range, now, hist?.backfilledFrom ? ms(hist.backfilledFrom) : undefined);
     return { ex, range, buckets, picked: ex.at ? buckets.find(b => b.key === ex.at) ?? null : null };
   };
   const local = (v: View): LocalList<Row> => {
     const { picked } = paceOf(v);
     // A picked pace bucket shows the pull requests merged in it (from the history), in place of the current rows; none
     // while the history loads.
-    const source = url.release ? [...releaseItems, ...releaseRows.filter(row => !releaseRowIds.has(idOf(row)))] : !picked ? items : hist ? hist.h.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(x => fromHistory(x, hist.h.installsFrom)) : [];
+    const source = url.release ? [...releaseItems, ...releaseRows.filter(row => !releaseRowIds.has(idOf(row)))] : !picked ? items : hist ? hist.prs.filter(x => ms(x.merged) >= picked.start && ms(x.merged) < picked.end).map(x => fromHistory(x, hist.installsFrom)) : [];
     const row = (it: Item): Row => ({ id: idOf(it), code: '#' + it.number, sortKey: [], it });
     const rowsOf = source.map(row);
     const searched = rowsOf.filter(r => matchSearch(v.q ?? '', `${r.it.title} #${r.it.number} ${r.it.repo} ${r.it.release ?? ''} release=${r.it.release ?? ''}.`, { state: r.it.stage, project: r.it.projectId }));
@@ -152,8 +149,8 @@ export function Delivery({ id }: { id?: string }) {
     const current = items.map(row), ids = new Set(current.map(r => r.id));
     const all = [...current, ...rowsOf.filter(r => !ids.has(r.id))].map(keyed);
     // The rows come from the history while a day is picked: its failure is the list's, never "none merged then".
-    const error = url.release ? releaseDoc.error ?? (!data ? status.error : null) : picked ? (hist ? null : histDoc.error && `history: ${histDoc.error}`) : status.error && !data ? status.error : null;
-    return { rows, all, counts, groups, total: rowsOf.length, pending: url.release ? !prefsRead.value || (fleetShown && releaseDoc.data === null && !releaseDoc.error) || (!data && !status.error) : !picked && !data && !status.error || !!picked && histLoading, error, reload: url.release ? () => { if (fleetShown) releaseDoc.reload(); status.reload(); } : picked ? histDoc.reload : status.reload };
+    const error = url.release ? failed(releaseDoc) ?? (!data ? status.error : null) : picked ? (hist ? null : failed(histDoc) && `history: ${failed(histDoc)}`) : status.error && !data ? status.error : null;
+    return { rows, all, counts, groups, total: rowsOf.length, pending: url.release ? !prefsRead.value || (fleetShown && releaseDoc.data === null && !failed(releaseDoc)) || (!data && !status.error) : !picked && !data && !status.error || !!picked && histLoading, error, reload: url.release ? () => { if (fleetShown) releaseDoc.reload(); status.reload(); } : picked ? histDoc.reload : status.reload };
   };
   const page = useListPage<Row>({
     view: 'delivery', entity: 'pull_request', local: local as (v: View) => LocalList<{ id: string; sortKey: (string | number)[] }>, closedGroups: { stage: ['installed'] },
@@ -167,11 +164,11 @@ export function Delivery({ id }: { id?: string }) {
   const { ex, range, buckets, picked } = paceOf(view);
   // A link saved while the "undefined" bug was live, or one with an old range, carries keys the page ignores: drop them.
   // So does a picked bucket outside the range, or one with no history to show (none kept, or focused away from fleet).
-  const keep: DeliveryExtra = { ...ex, at: ex.at && (picked && (hist || histLoading || histDoc.error)) ? ex.at : undefined };
+  const keep: DeliveryExtra = { ...ex, at: ex.at && (picked && (hist || histLoading || failed(histDoc))) ? ex.at : undefined };
   useEffect(() => { const x = view.extra ?? {}; if (Object.keys(x).some(k => (x as Record<string, string | undefined>)[k] !== (keep as Record<string, string | undefined>)[k])) set({ extra: deliveryExtra(keep) }, 'type'); }, [JSON.stringify(view.extra), !!hist, histLoading]);
   const setPace = (patch: DeliveryExtra) => set({ extra: deliveryExtra({ ...ex, ...patch }) });
   const go = useCallback((it?: Item) => set({ focus: it ? idOf(it) : undefined }), [set]);
-  const open = !id ? undefined : items.find(it => idOf(it) === id) ?? releaseRows.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.h.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, hist.h.installsFrom))[0] : undefined);
+  const open = !id ? undefined : items.find(it => idOf(it) === id) ?? releaseRows.find(it => idOf(it) === id) ?? (id.startsWith('taskqorg~fleet~') ? hist?.prs.filter(x => x.number === Number(id.split('~')[2])).map(x => fromHistory(x, hist.installsFrom))[0] : undefined);
   const p = keep.at ? picked : null;
 
   const list = <>
@@ -194,7 +191,7 @@ export function Delivery({ id }: { id?: string }) {
       </RowFacts>} />
   </>;
   return <ListDetail list={list} detailKey={id}
-    idle={<Overview now={now} items={items} incomplete={incomplete} norms={norms} hist={hist} regressions={regressions} histError={histDoc.error} fleetShown={fleetShown && histDoc.data !== NONE}
+    idle={<Overview now={now} items={items} incomplete={incomplete} norms={norms} hist={hist} regressions={regressions} histError={failed(histDoc)} fleetShown={fleetShown && !missing(histDoc)}
       range={range} buckets={buckets} picked={p} href={it => page.href({ focus: idOf(it) })} onOpen={go}
       onRange={r => setPace({ range: r, at: undefined })} onPick={k => setPace({ at: ex.at === k ? undefined : k })} />}
     detail={id ? <PrDetail key={id} id={id} item={open} now={now} norms={norms} onClose={() => go()} /> : undefined} />;
@@ -223,7 +220,7 @@ function fromHistory(x: HistoryPr, installsFrom?: string): Item {
 
 /** The work area while no pull request is open: what needs a look, what moves now, the pace. */
 function Overview({ now, items, incomplete, norms, hist, regressions, histError, fleetShown, range, buckets, picked, onRange, onPick, onOpen, href }: {
-  now: number; items: Item[]; incomplete: boolean; norms: Norms; hist: { h: History } | null; regressions: Regressions['regressions']; histError: string | null; fleetShown: boolean;
+  now: number; items: Item[]; incomplete: boolean; norms: Norms; hist: History | null; regressions: Regressions['regressions']; histError: string | null; fleetShown: boolean;
   range: string; buckets: Bucket[]; picked: Bucket | null; onRange: (r: string) => void; onPick: (k: string) => void; onOpen: (it: Item) => void; href: (it: Item) => string;
 }) {
   const moving = ORDER.filter(s => !DONE.includes(s)).flatMap(s => items.filter(it => it.stage === s));
@@ -233,7 +230,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
   // pull requests they first went over with and what those took; one metric keeps its own row.
   const byPr = new Map<number, number>(); for (const g of regressions) if (g.firstPr) byPr.set(g.firstPr, (byPr.get(g.firstPr) ?? 0) + 1);
   const cause = [...byPr].sort((a, b) => b[1] - a[1]).map(([n, k]) => {
-    const pr = hist?.h.prs.find(x => x.number === n), t = pr?.durations.total;
+    const pr = hist?.prs.find(x => x.number === n), t = pr?.durations.total;
     return `#${n}${pr ? ` ${pr.title}` : ''}${typeof t === 'number' ? `: ${fmt(t)} from open to installed` : ''}${pr?.queueRemovals ? `, ${pr.queueRemovals} queue removals` : ''} (${k} ${k === 1 ? 'metric' : 'metrics'})`;
   });
   const worst = regressions.toSorted((a, b) => b.currentMs / (b.baselineMs || 1) - a.currentMs / (a.baselineMs || 1));
@@ -270,7 +267,7 @@ function Overview({ now, items, incomplete, norms, hist, regressions, histError,
         })}</div>}
       {incomplete && moving.length > 0 && <p class="muted type-sm">The last rows read; GitHub coverage is incomplete.</p>}
     </DetailSection>
-    {fleetShown && <Pace hist={hist?.h ?? null} error={histError} now={now} norms={norms} range={range} buckets={buckets} picked={picked} onRange={onRange} onPick={onPick} />}
+    {fleetShown && <Pace hist={hist} error={histError} now={now} norms={norms} range={range} buckets={buckets} picked={picked} onRange={onRange} onPick={onPick} />}
   </div>;
 }
 const KEYS: Record<string, string> = { pr_ci: 'PR checks', enqueue: 'Enqueue', queue: 'Merge queue', merge: 'Merge', release: 'Release', install: 'Install', ui: 'UI on site', lead: 'Lead', total: 'Open to installed', availability: 'Availability', time_to_available: 'Time to available', run: 'Queue run',
@@ -346,8 +343,8 @@ function Pace({ hist, error, now, norms, range, buckets, picked, onRange, onPick
  *  has a recorded history; other repositories show what the current read knows). */
 function PrDetail({ id, item, now, norms, onClose }: { id: string; item?: Item; now: number; norms: Norms; onClose: () => void }) {
   const [owner, repo, num] = id.split('~'), number = Number(num), fleet = `${owner}/${repo}` === FLEET;
-  const hd = useDoc<History | typeof NONE>(fleet ? 'delivery-pr:' + number : null, () => no404(op('delivery_history', { number })), touchesHistory, 600000);
-  const h = { data: hd.data === NONE ? null : hd.data, error: hd.error, loading: fleet && hd.data === null && !hd.error };
+  const hd = useOp('delivery_history', fleet ? { number } : null, { every: 600000 });
+  const h = { data: kept(hd), error: failed(hd), loading: fleet && hd.data === null && !failed(hd) };
   const x = h.data?.prs.find(p => p.number === number);
   // The merge queue splits at its last successful run's start: waiting for a runner before, its checks after.
   const qStart = h.data?.runs.filter(r => r.conclusion === 'success' && r.started).map(r => r.started!).sort().at(-1);
