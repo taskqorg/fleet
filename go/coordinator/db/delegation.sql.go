@@ -12,10 +12,9 @@ import (
 
 const delegationExecutionsWithArtifacts = `-- name: DelegationExecutionsWithArtifacts :many
 SELECT DISTINCT execution_id::text AS id FROM artifact WHERE state='stored' AND execution_id=ANY($1::text[])
-UNION SELECT DISTINCT (data->>'executionId')::text FROM document WHERE kind='artifact' AND data->>'executionId'=ANY($1::text[])
 `
 
-// Of ids, the executions with a stored artifact (a typed row or a legacy artifact record).
+// Of ids, the executions with a stored artifact.
 func (q *Queries) DelegationExecutionsWithArtifacts(ctx context.Context, ids []string) ([]string, error) {
 	rows, err := q.db.Query(ctx, delegationExecutionsWithArtifacts, ids)
 	if err != nil {

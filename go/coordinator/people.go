@@ -245,7 +245,7 @@ func init() {
 			given = *r.Limit
 		}
 		limit := pageLimit(given, 100)
-		rs, err := q.db().PeopleSettingChanges(q.ctx(), db.PeopleSettingChangesParams{Target: deref(r.Target), Owner: owner, Before: r.Before, Lim: int32(limit + 1)})
+		rs, err := q.db().AuditRecords(q.ctx(), db.AuditRecordsParams{Target: deref(r.Target), Owner: owner, Before: r.Before, Lim: int32(limit + 1)})
 		out := contract.SettingChangesReply{Changes: []map[string]json.RawMessage{}}
 		for i, row := range rs {
 			if i == limit {
@@ -306,31 +306,7 @@ func peopleSet(q *Request, people json.RawMessage) (int, error) {
 	json.Unmarshal(b.People, &next)
 	err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
 		q.tx = tx
-		return recordPeopleChange(q, peopleChange{Target: "people", Field: "people", Previous: prev, Value: next})
+		return audit(q, "people", "people", prev, next, auditExtra{})
 	})
 	return q.app.peopleSnapshot().count(), err
-}
-
-// peopleChange: the setting-change record of the people list or a person setting (document kind setting-change, no
-// project); holder is the person whose setting it is.
-type peopleChange struct {
-	ID         string `json:"id"`
-	Target     string `json:"target"`
-	Holder     string `json:"holder,omitempty"`
-	Field      string `json:"field"`
-	Previous   any    `json:"previous"`
-	Value      any    `json:"value"`
-	Actor      string `json:"actor"`
-	OnBehalfOf string `json:"onBehalfOf,omitempty"`
-	At         int64  `json:"at"`
-}
-
-// recordPeopleChange writes c with a new id, the actor and now; an agent's change acts for its director
-// (fleet-pm-agent.md §1), as put does for every setting change.
-func recordPeopleChange(q *Request, c peopleChange) error {
-	c.ID, c.Actor, c.At = newID(), actor(q, "operator"), nowMs()
-	if q.agent != "" {
-		c.Actor, c.OnBehalfOf = q.agent, q.person.Email
-	}
-	return q.db().SettingChangeInsert(q.ctx(), db.SettingChangeInsertParams{ID: c.ID, Data: jsonBytes(c)})
 }

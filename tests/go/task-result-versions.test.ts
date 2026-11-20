@@ -11,7 +11,6 @@ test('Task result content versions resist replay and preserve explicit lineage a
  const artifact=(eid:string,sha:string,required=false,scope='prod',project:string|null='hello-world',previous:string|null=null,name='report.json')=>{
   const id=randomUUID();c.sql(`INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,required,previous_artifact_id,state) VALUES('${id}',${project===null?'NULL':"'"+project+"'"},'${scope}','${sha}',1,'application/json','${name}','${eid}',${required},${previous===null?'NULL':"'"+previous+"'"},'stored')`);return id;
  };
- const legacy=(eid:string,sha?:string,scope?:string)=>{const id=randomUUID();c.sql(`INSERT INTO document(id,kind,project_id,data) VALUES('${id}','artifact','hello-world','${JSON.stringify({id,executionId:eid,path:'legacy.json',sha256:sha,scope})}')`);return id;};
  const get=async(tid:string,person='owner@trial.test')=>{const r=await fetch(c.base+'/api/ops/task_get',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':person,'content-type':'application/json'},body:JSON.stringify({taskId:tid})});const x=await r.json();assert.equal(r.status,200,JSON.stringify(x));return x;};
  try {
   const t=task(),old=execution(t),final=execution(t),replay=execution(t);
@@ -65,7 +64,6 @@ test('Task result content versions resist replay and preserve explicit lineage a
   const childRun=execution(accepted),childArtifact=artifact(childRun,hash(72)),childSession=randomUUID();
   c.sql(`INSERT INTO session(id,project_id,task_id) VALUES('${childSession}','hello-world','${accepted}');UPDATE execution SET task_id=NULL,session_id='${childSession}' WHERE id='${childRun}'`);
   select([childArtifact]);assert.equal((await get(accepted)).latestResult.artifactId,childArtifact,'attached child session results retain lineage without direct execution task binding');
-  const historical=legacy(acceptedRun,hash(71),'prod');select([historical]);assert.equal((await get(accepted)).latestResult,null,'a result kept as a document (before the artifact table) is no longer read');
   const alias=randomUUID();c.sql(`UPDATE artifact SET legacy_id='${alias}' WHERE id='${chosen}'`);select([alias]);assert.equal((await get(accepted)).latestResult.artifactId,chosen,'canonical legacy alias resolves');
 
   select([chosen,later]);assert.equal((await get(accepted)).latestResult.artifactId,chosen,'selection order, not publication order');

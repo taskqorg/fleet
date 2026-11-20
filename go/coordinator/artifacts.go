@@ -920,7 +920,7 @@ type (
 // queueCommand: a tool command for a host's executor (copy, verify), in a program-worker execution of its own.
 func queueCommand(ctx context.Context, a *App, hostID, kind string, payload doc) error {
 	return txCtx(ctx, a, func(tx pgx.Tx) error {
-		q := backgroundRequest(ctx, a, tx) // carries app: putDocument wakes the host's held poll once the command commits
+		q := backgroundRequest(ctx, a, tx) // carries app: put wakes the host's held poll once the command commits
 		sid, id := newID(), newID()
 		if err := put(q, "session", docOf(jobSession{ID: sid, CreatedAt: nowMs(), Actor: "program-worker"})); err != nil {
 			return err

@@ -71,8 +71,7 @@ func connByName(q *Request, name any) (doc, error) {
 }
 
 func connChange(q *Request, c doc, field string, previous, value any) error {
-	return put(q, "setting-change", doc{"id": newID(), "target": "connection:" + astr(c["name"]), "holder": c["holder"], "field": field,
-		"previous": previous, "value": value, "actor": actor(q, "operator"), "at": nowMs()})
+	return audit(q, "connection:"+astr(c["name"]), field, previous, value, auditExtra{Holder: astr(c["holder"])})
 }
 
 func connKeys(q *Request, name string) ([]doc, error) {
@@ -362,7 +361,7 @@ func connectionsList(q *Request) (any, error) {
 		b, _ := numOK(keys[j]["addedAt"])
 		return a < b
 	})
-	hist, err := q.db().ConnHistory(q.ctx())
+	hist, err := q.db().AuditOfKind(q.ctx(), "connection")
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +579,7 @@ func connectionsDelete(q *Request, r *contract.ConnectionsDeleteRequest) (contra
 			return no, err
 		}
 	}
-	if err := put(q, "setting-change", doc{"id": newID(), "target": "deleted-connection:" + name, "field": "connection", "value": "deleted", "actor": actor(q, "operator"), "at": nowMs()}); err != nil {
+	if err := audit(q, "deleted-connection:"+name, "connection", nil, "deleted", auditExtra{}); err != nil {
 		return no, err
 	}
 	if dir, err := connDir(name); err == nil {

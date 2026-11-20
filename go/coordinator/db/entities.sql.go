@@ -530,105 +530,28 @@ func (q *Queries) EntDelegationRecords(ctx context.Context, filter []byte) ([][]
 	return items, nil
 }
 
-const entDeliveryRecord = `-- name: EntDeliveryRecord :one
-SELECT data FROM document WHERE id=$1 AND kind=$2
+const entDeliveryPr = `-- name: EntDeliveryPr :one
+SELECT payload FROM delivery_pr WHERE number=$1
 `
 
-type EntDeliveryRecordParams struct {
-	ID   string
-	Kind string
+// A delivered pull request (delivery_history.go).
+func (q *Queries) EntDeliveryPr(ctx context.Context, number int64) ([]byte, error) {
+	row := q.db.QueryRow(ctx, entDeliveryPr, number)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
 }
 
-// A delivery history record (delivery_history.go: kinds delivery-pr and delivery-release).
-func (q *Queries) EntDeliveryRecord(ctx context.Context, arg EntDeliveryRecordParams) ([]byte, error) {
-	row := q.db.QueryRow(ctx, entDeliveryRecord, arg.ID, arg.Kind)
-	var data []byte
-	err := row.Scan(&data)
-	return data, err
-}
-
-const entDocumentPut = `-- name: EntDocumentPut :exec
-INSERT INTO document(kind,id,data,project_id) VALUES($1, $2::text, $3, $4)
- ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind
+const entDeliveryRelease = `-- name: EntDeliveryRelease :one
+SELECT payload FROM delivery_release WHERE tag=$1
 `
 
-type EntDocumentPutParams struct {
-	Kind      string
-	ID        *string
-	Data      []byte
-	ProjectID *string
-}
-
-// A document record; an id of another kind is left as it is.
-func (q *Queries) EntDocumentPut(ctx context.Context, arg EntDocumentPutParams) error {
-	_, err := q.db.Exec(ctx, entDocumentPut,
-		arg.Kind,
-		arg.ID,
-		arg.Data,
-		arg.ProjectID,
-	)
-	return err
-}
-
-const entDocumentRecord = `-- name: EntDocumentRecord :one
-SELECT data FROM document WHERE id=$1 AND kind=$2
-`
-
-type EntDocumentRecordParams struct {
-	ID   string
-	Kind string
-}
-
-func (q *Queries) EntDocumentRecord(ctx context.Context, arg EntDocumentRecordParams) ([]byte, error) {
-	row := q.db.QueryRow(ctx, entDocumentRecord, arg.ID, arg.Kind)
-	var data []byte
-	err := row.Scan(&data)
-	return data, err
-}
-
-const entDocumentRecordForUpdate = `-- name: EntDocumentRecordForUpdate :one
-SELECT data FROM document WHERE id=$1 AND kind=$2 FOR UPDATE
-`
-
-type EntDocumentRecordForUpdateParams struct {
-	ID   string
-	Kind string
-}
-
-func (q *Queries) EntDocumentRecordForUpdate(ctx context.Context, arg EntDocumentRecordForUpdateParams) ([]byte, error) {
-	row := q.db.QueryRow(ctx, entDocumentRecordForUpdate, arg.ID, arg.Kind)
-	var data []byte
-	err := row.Scan(&data)
-	return data, err
-}
-
-const entDocumentRecords = `-- name: EntDocumentRecords :many
-SELECT data FROM document WHERE kind= $1 AND data @> $2::jsonb ORDER BY seq
-`
-
-type EntDocumentRecordsParams struct {
-	Kind   string
-	Filter []byte
-}
-
-func (q *Queries) EntDocumentRecords(ctx context.Context, arg EntDocumentRecordsParams) ([][]byte, error) {
-	rows, err := q.db.Query(ctx, entDocumentRecords, arg.Kind, arg.Filter)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items [][]byte
-	for rows.Next() {
-		var data []byte
-		if err := rows.Scan(&data); err != nil {
-			return nil, err
-		}
-		items = append(items, data)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+// A release of the delivery history (delivery_history.go).
+func (q *Queries) EntDeliveryRelease(ctx context.Context, tag string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, entDeliveryRelease, tag)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
 }
 
 const entExecutionDefinitions = `-- name: EntExecutionDefinitions :exec
@@ -744,7 +667,7 @@ SELECT (data || jsonb_build_object('state',state,'observation',observation,'last
 
 // Records by kind (records.go all/get/put): an execution record is execution.data with its typed state, observation
 // and last contact (records.go execJSON); an agent question record is its columns over the open rest in data
-// (agentQuestionJSON); a delegation record is execution.delegation; any other kind is a document.
+// (agentQuestionJSON); a delegation record is execution.delegation; no kind is a document any more.
 func (q *Queries) EntExecutionRecords(ctx context.Context, filter []byte) ([][]byte, error) {
 	rows, err := q.db.Query(ctx, entExecutionRecords, filter)
 	if err != nil {

@@ -318,6 +318,7 @@ func designStateOwners() []designOwner {
 		{"experiment", "experiment_states.go", []string{"state"}},
 		{"host", "host_states.go", []string{"state"}},
 		{"connection_key", "key_states.go", []string{"state"}},
+		{"audit_log", "audit.go", []string{"target"}}, // S4: the audit is written only through audit()
 	}
 	for _, q := range kitQueues {
 		out = append(out, designOwner{q.Retry.Table, "work_kit.go", []string{"attempts", "next_attempt_at", "last_error"}})

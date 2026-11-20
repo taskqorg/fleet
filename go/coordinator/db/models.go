@@ -491,6 +491,21 @@ type ArtifactRuleConfirmation struct {
 	ConfirmedAt time.Time
 }
 
+type AuditLog struct {
+	ID         string
+	Target     string
+	Field      string
+	Previous   []byte
+	Value      []byte
+	Actor      string
+	OnBehalfOf *string
+	Holder     *string
+	ProjectID  *string
+	At         time.Time
+	Payload    []byte
+	Seq        int64
+}
+
 type Budget struct {
 	ID      string
 	Scope   string
@@ -615,6 +630,114 @@ type DelegationSourceWork struct {
 	Attempts      int32
 	NextAttemptAt time.Time
 	LastError     *string
+}
+
+type DeliveryBaseline struct {
+	ID           string
+	Name         string
+	Payload      []byte
+	ProjectID    string
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type DeliveryCheck struct {
+	ID           string
+	Payload      []byte
+	ProjectID    string
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type DeliveryHistoryState struct {
+	ID             string
+	BackfilledFrom *string
+	Backfilled     bool
+	Through        *string
+	PullsUpdated   *string
+	InstallsFrom   *string
+	RefreshedAt    *string
+	Problem        *string
+	CheckedRelease *string
+	CheckedAt      *string
+	ProjectID      string
+	UpdatedAt      time.Time
+	TombstonedAt   *time.Time
+}
+
+type DeliveryPr struct {
+	ID            string
+	Number        int64
+	Payload       []byte
+	Attempts      int32
+	NextAttemptAt *time.Time
+	LastError     *string
+	ProjectID     string
+	UpdatedAt     time.Time
+	TombstonedAt  *time.Time
+}
+
+type DeliveryRelease struct {
+	ID           string
+	Tag          string
+	Payload      []byte
+	ProjectID    string
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type DeliveryRun struct {
+	ID           string
+	RunID        int64
+	Payload      []byte
+	ProjectID    string
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type DeliveryRunRead struct {
+	RunID         int64
+	Payload       []byte
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastError     *string
+	ProjectID     string
+	TombstonedAt  *time.Time
+}
+
+type DeliverySample struct {
+	Seq          int64
+	ProjectID    string
+	Repo         *string
+	At           time.Time
+	Payload      []byte
+	TombstonedAt *time.Time
+}
+
+type DeliverySetting struct {
+	ID           string
+	Ratio        float64
+	MinSamples   int64
+	MinDeltaMs   int64
+	Baseline     string
+	ProjectID    string
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type DeliveryState struct {
+	ID           string
+	ProjectID    string
+	RefreshedAt  *string
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
+type DeliveryUiSeen struct {
+	Version      string
+	SeenAt       string
+	ProjectID    string
+	TombstonedAt *time.Time
 }
 
 type Document struct {
@@ -951,11 +1074,31 @@ type PriceEntry struct {
 	Seq           int64
 }
 
+type ProblemDismissal struct {
+	ExecutionID  string
+	ProjectID    *string
+	Problem      string
+	Reason       string
+	Actor        string
+	At           time.Time
+	TombstonedAt *time.Time
+}
+
 type ProjectCode struct {
 	Code      string
 	ProjectID string
 	Current   bool
 	SetAt     time.Time
+}
+
+type ProjectRecommendation struct {
+	ID           string
+	ProjectID    string
+	MethodID     string
+	SelectedAt   time.Time
+	Actor        string
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type ProjectWriteRequest struct {
@@ -965,6 +1108,14 @@ type ProjectWriteRequest struct {
 	PayloadSha     string
 	ProjectID      string
 	Result         []byte
+}
+
+type PurgeTask struct {
+	ID        string
+	StoreID   *string
+	CreatedAt time.Time
+	Payload   []byte
+	Seq       int64
 }
 
 type PurgedHash struct {
@@ -1017,6 +1168,13 @@ type QueuedMessage struct {
 	Seq            int64
 	UpdatedAt      time.Time
 	TombstonedAt   *time.Time
+}
+
+type Reconciliation struct {
+	ID      string
+	At      time.Time
+	Payload []byte
+	Seq     int64
 }
 
 type ResourceBuild struct {
@@ -1327,6 +1485,52 @@ type TaskView struct {
 	Totals            []byte
 	LatestResult      []byte
 	OpenQuestions     []byte
+}
+
+type TransportAudit struct {
+	ID                   string
+	ExecutionID          *string
+	ConflictID           *string
+	RequestID            *string
+	Signature            *string
+	Actor                string
+	Operation            string
+	At                   *int64
+	NativeEffectReplayed bool
+	Seq                  int64
+}
+
+type TransportConflict struct {
+	ID               string
+	ExecutionID      *string
+	HostID           *string
+	OriginalEventID  *string
+	OriginalSequence *int64
+	FrameSha256      *string
+	Payload          []byte
+	CollisionEventID *string
+	Supported        bool
+	State            string
+	ObservedAt       *int64
+	ReservedSequence *float64
+	AuthorizedAt     *int64
+	DeliveredAt      *int64
+	Seq              int64
+	UpdatedAt        time.Time
+	TombstonedAt     *time.Time
+}
+
+type Upload struct {
+	ID           string
+	Person       string
+	SessionID    *string
+	ProjectID    *string
+	Received     int64
+	Multipart    *string
+	ArtifactID   *string
+	Payload      []byte
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type WakeOutbox struct {

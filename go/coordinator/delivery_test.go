@@ -242,12 +242,12 @@ func TestDeliveryStatusExclude(t *testing.T) {
 }
 
 // Requirement: a delivery pass that changes a project's pull requests reaches watchers through the change stream.
-// Risk: the Delivery page keeps showing old rows until its slow poll, because the trigger drops delivery documents.
+// Risk: the Delivery page keeps showing old rows until its slow poll, because the trigger drops delivery rows.
 func TestDeliveryStateChange(t *testing.T) {
 	env := openTestCoordinator(t, false)
 	var kind string
 	if err := runTx(env.ctx, env.app, nil, true, "", func(q *Request) error {
-		if err := exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES('delivery-state','delivery-state:fleet','fleet','{"refreshedAt":"x"}')`); err != nil {
+		if err := exec(q, `INSERT INTO delivery_state(id,project_id,refreshed_at) VALUES('delivery-state:fleet','fleet','x')`); err != nil {
 			return err
 		}
 		return q.tx.QueryRow(env.ctx, "SELECT kind FROM change WHERE id='delivery-state:fleet' ORDER BY seq DESC LIMIT 1").Scan(&kind)

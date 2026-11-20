@@ -122,36 +122,6 @@ func (q *Queries) ConnHasActiveKey(ctx context.Context, name string) (bool, erro
 	return exists, err
 }
 
-const connHistory = `-- name: ConnHistory :many
-SELECT (data->>'target')::text AS target, data FROM document WHERE kind='setting-change' AND data->>'target' LIKE 'connection:%' ORDER BY seq
-`
-
-type ConnHistoryRow struct {
-	Target string
-	Data   []byte
-}
-
-// The setting changes of every connection, oldest first.
-func (q *Queries) ConnHistory(ctx context.Context) ([]ConnHistoryRow, error) {
-	rows, err := q.db.Query(ctx, connHistory)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ConnHistoryRow
-	for rows.Next() {
-		var i ConnHistoryRow
-		if err := rows.Scan(&i.Target, &i.Data); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const connKeyRecordedSince = `-- name: ConnKeyRecordedSince :one
 SELECT coalesce(sum((t.connection_cost->>'amount')::numeric),0)::float8 FROM execution e JOIN execution_totals t ON t.execution_id=e.id
  WHERE e.kind='tool_run' AND e.data->>'keyFingerprint'= $1::text AND (e.data->>'startedAt')::bigint>= $2::bigint
@@ -382,10 +352,10 @@ func (q *Queries) ConnectionKeyStateOf(ctx context.Context, id string) (string, 
 
 const deleteAPIConnection = `-- name: DeleteAPIConnection :exec
 WITH c AS (DELETE FROM api_connection WHERE id= $1::text)
-DELETE FROM document WHERE kind='setting-change' AND data->>'target'= $1::text
+DELETE FROM audit_log WHERE target= $1::text
 `
 
-// A deleted connection with its keys (foreign key) and its history (setting-change rows); an audit row records the delete.
+// A deleted connection with its keys (foreign key) and its history (audit rows); an audit row records the delete.
 func (q *Queries) DeleteAPIConnection(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, deleteAPIConnection, id)
 	return err

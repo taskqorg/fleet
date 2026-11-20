@@ -4,8 +4,9 @@
 // by the coordinator from the time it first ran this pass. Over the records: the rolling 7-day baseline (P50/P90 per
 // stage and per job), named snapshots, and the regression check (daily and after each release) that holds one needs-you
 // question per worsened stage or job and withdraws it when the value is back (problemsSync, source delivery).
-// Stored as documents (kinds delivery-pr, delivery-run, delivery-release, delivery-baseline, delivery-settings,
-// delivery-history): a few hundred rows a week, business records rather than spans, so Postgres and not ClickHouse.
+// Stored in tables (migration 82: delivery_pr, delivery_run, delivery_release, delivery_baseline, delivery_check,
+// delivery_settings, delivery_history_state with delivery_ui_seen, delivery_run_read): a few hundred rows a week,
+// business records rather than spans, so Postgres and not ClickHouse.
 // ponytail: the fleet repository only (its releases and hosts are the Fleet ones); other repositories need their own
 // release and install mapping.
 package main
@@ -47,21 +48,23 @@ var deliveryBasisOf = map[string][]string{"install": {"exact-install-v1", delive
 
 var deliveryDefaults = contract.DeliverySettings{Ratio: 1.5, MinSamples: 5, MinDeltaMs: 60_000}
 
-// dhState: the pass's own record (document delivery-history).
+// dhState: the pass's own state: delivery_history_state and delivery_ui_seen, the runs to read again (delivery_run_read)
+// and each pull request's PR CI lookups (the retry columns of delivery_pr).
 type dhState struct {
-	BackfilledFrom string            `json:"backfilledFrom,omitempty"`
-	Backfilled     bool              `json:"backfilled,omitempty"`
-	Through        string            `json:"through,omitempty"` // the last UTC day whose runs were read
-	PullsUpdated   string            `json:"pullsUpdated,omitempty"`
-	InstallsFrom   string            `json:"installsFrom,omitempty"`
-	UISeen         map[string]string `json:"uiSeen,omitempty"` // UI version to when the site first served it
-	RefreshedAt    string            `json:"refreshedAt,omitempty"`
-	Problem        string            `json:"problem,omitempty"`
-	CheckedRelease string            `json:"checkedRelease,omitempty"`
-	CheckedAt      string            `json:"checkedAt,omitempty"` // the pass's last check; the reply is document delivery-check
-	RetryRuns      []dhRetry         `json:"retryRuns,omitempty"` // runs whose jobs read failed, read again each pass
-	CiTried        map[string]string `json:"ciTried,omitempty"`   // pull request number to its last PR CI lookup while none was found
-	CiRetry        map[string]int    `json:"ciRetry,omitempty"`   // pull request number to failed PR CI lookups, read again up to dhRetries
+	BackfilledFrom string
+	Backfilled     bool
+	Through        string // the last UTC day whose runs were read
+	PullsUpdated   string
+	InstallsFrom   string
+	UISeen         map[string]string // UI version to when the site first served it
+	RefreshedAt    string
+	Problem        string
+	CheckedRelease string
+	CheckedAt      string            // the pass's last check; the reply is delivery_check
+	RetryRuns      []dhRetry         // runs whose jobs read failed, read again each pass
+	CiTried        map[string]string // pull request number to its last PR CI lookup while none was found
+	CiRetry        map[string]int    // pull request number to failed PR CI lookups, read again up to dhRetries
+	CiError        map[string]string // pull request number to its last failed PR CI lookup
 }
 
 var coordinatorStarted = time.Now().UTC()
@@ -78,14 +81,37 @@ func init() {
 
 // ---- storage ----
 
+// dhTables: the table of each record kind and its key column (the record id is "<kind>:<key>").
+var dhTables = map[string]struct{ table, key string }{
+	"delivery-pr": {"delivery_pr", "number"}, "delivery-run": {"delivery_run", "run_id"},
+	"delivery-release": {"delivery_release", "tag"}, "delivery-baseline": {"delivery_baseline", "name"},
+	"delivery-check": {"delivery_check", ""},
+}
+
 func dhPut(q *Request, kind, id string, v any) error {
+	t, ok := dhTables[kind]
+	if !ok {
+		return fmt.Errorf("unknown delivery record kind %s", kind)
+	}
+	cols, vals, args := "id,payload,project_id", "$1,$2::jsonb,$3", []any{id, jsonBytes(v), ciProject}
+	if t.key != "" {
+		key := "$4::text"
+		if t.key == "number" || t.key == "run_id" {
+			key = "($4::text)::bigint"
+		}
+		cols, vals, args = cols+","+t.key, vals+","+key, append(args, strings.TrimPrefix(id, kind+":"))
+	}
 	// Equal data is not written again, so the change stream (kind delivery) carries only real changes.
-	return exec(q, `INSERT INTO document(kind,id,project_id,data) VALUES($1,$2,$3,$4) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data,updated_at=now() WHERE document.data IS DISTINCT FROM EXCLUDED.data`,
-		kind, id, ciProject, jsonBytes(v))
+	return exec(q, "INSERT INTO "+t.table+"("+cols+") VALUES("+vals+") ON CONFLICT (id) DO UPDATE SET payload=EXCLUDED.payload,updated_at=now() WHERE "+
+		t.table+".payload IS DISTINCT FROM EXCLUDED.payload", args...)
 }
 
 func dhLoad[T any](q *Request, kind string) ([]T, error) {
-	rs, err := rows(q, "SELECT data FROM document WHERE kind=$1", kind)
+	t, ok := dhTables[kind]
+	if !ok {
+		return nil, fmt.Errorf("unknown delivery record kind %s", kind)
+	}
+	rs, err := rows(q, "SELECT payload FROM "+t.table+" ORDER BY id")
 	out := []T{}
 	for _, r := range rs {
 		var v T
@@ -97,21 +123,131 @@ func dhLoad[T any](q *Request, kind string) ([]T, error) {
 }
 
 func dhStateOf(q *Request) (dhState, error) {
-	var st dhState
-	d, err := first(q, "SELECT data FROM document WHERE id='delivery-history'")
-	if d != nil {
-		json.Unmarshal(jsonBytes(d["data"]), &st)
+	st := dhState{UISeen: map[string]string{}, CiTried: map[string]string{}, CiRetry: map[string]int{}, CiError: map[string]string{}}
+	d, err := first(q, `SELECT coalesce(backfilled_from,'') AS backfilled_from, backfilled, coalesce(through,'') AS through, coalesce(pulls_updated,'') AS pulls_updated,
+	 coalesce(installs_from,'') AS installs_from, coalesce(refreshed_at,'') AS refreshed_at, coalesce(problem,'') AS problem, coalesce(checked_release,'') AS checked_release,
+	 coalesce(checked_at,'') AS checked_at FROM delivery_history_state`)
+	if err != nil {
+		return st, err
 	}
-	return st, err
+	if d != nil {
+		st.BackfilledFrom, st.Backfilled, st.Through, st.PullsUpdated = astr(d["backfilled_from"]), d["backfilled"] == true, astr(d["through"]), astr(d["pulls_updated"])
+		st.InstallsFrom, st.RefreshedAt, st.Problem = astr(d["installs_from"]), astr(d["refreshed_at"]), astr(d["problem"])
+		st.CheckedRelease, st.CheckedAt = astr(d["checked_release"]), astr(d["checked_at"])
+	}
+	seen, err := rowsOf(q, "SELECT version, seen_at FROM delivery_ui_seen")
+	if err != nil {
+		return st, err
+	}
+	for _, r := range seen {
+		st.UISeen[astr(r["version"])] = astr(r["seen_at"])
+	}
+	runs, err := rowsOf(q, "SELECT payload, attempts, coalesce(last_error,'') AS last_error FROM delivery_run_read ORDER BY run_id")
+	if err != nil {
+		return st, err
+	}
+	for _, r := range runs {
+		var run dhRun
+		if json.Unmarshal(jsonBytes(r["payload"]), &run) == nil {
+			st.RetryRuns = append(st.RetryRuns, dhRetry{Run: run, Tries: int(num(r["attempts"])), Error: astr(r["last_error"])})
+		}
+	}
+	prs, err := rowsOf(q, "SELECT number, attempts, next_attempt_at, coalesce(last_error,'') AS last_error FROM delivery_pr WHERE attempts>0 OR next_attempt_at IS NOT NULL OR last_error IS NOT NULL")
+	if err != nil {
+		return st, err
+	}
+	for _, r := range prs {
+		n := strconv.FormatInt(int64(num(r["number"])), 10)
+		if a := int(num(r["attempts"])); a > 0 {
+			st.CiRetry[n] = a
+		}
+		if e := astr(r["last_error"]); e != "" {
+			st.CiError[n] = e // kept when the lookups were given up
+		}
+		if t, err := time.Parse(time.RFC3339Nano, astr(r["next_attempt_at"])); err == nil {
+			st.CiTried[n] = t.Add(-time.Hour).UTC().Format(time.RFC3339) // a lookup is due an hour after the last
+		}
+	}
+	return st, nil
+}
+
+// dhSave writes the pass's state: its row, the UI first seen, the runs to read again (the others go) and the PR CI
+// lookup state on the stored pull requests (the work kit's retry columns: attempts, next_attempt_at, last_error).
+func dhSave(q *Request, st dhState) error {
+	if err := exec(q, `INSERT INTO delivery_history_state(id,backfilled_from,backfilled,through,pulls_updated,installs_from,refreshed_at,problem,checked_release,checked_at,project_id)
+	 VALUES('delivery-history',nullif($1,''),$2,nullif($3,''),nullif($4,''),nullif($5,''),nullif($6,''),nullif($7,''),nullif($8,''),nullif($9,''),$10)
+	 ON CONFLICT (id) DO UPDATE SET backfilled_from=EXCLUDED.backfilled_from,backfilled=EXCLUDED.backfilled,through=EXCLUDED.through,pulls_updated=EXCLUDED.pulls_updated,
+	  installs_from=EXCLUDED.installs_from,refreshed_at=EXCLUDED.refreshed_at,problem=EXCLUDED.problem,checked_release=EXCLUDED.checked_release,checked_at=EXCLUDED.checked_at,updated_at=now()
+	 WHERE (delivery_history_state.backfilled_from,delivery_history_state.backfilled,delivery_history_state.through,delivery_history_state.pulls_updated,
+	  delivery_history_state.installs_from,delivery_history_state.refreshed_at,delivery_history_state.problem,delivery_history_state.checked_release,delivery_history_state.checked_at)
+	  IS DISTINCT FROM (EXCLUDED.backfilled_from,EXCLUDED.backfilled,EXCLUDED.through,EXCLUDED.pulls_updated,EXCLUDED.installs_from,EXCLUDED.refreshed_at,EXCLUDED.problem,
+	  EXCLUDED.checked_release,EXCLUDED.checked_at)`,
+		st.BackfilledFrom, st.Backfilled, st.Through, st.PullsUpdated, st.InstallsFrom, st.RefreshedAt, st.Problem, st.CheckedRelease, st.CheckedAt, ciProject); err != nil {
+		return err
+	}
+	versions, ats := []string{}, []string{}
+	for v, at := range st.UISeen {
+		versions, ats = append(versions, v), append(ats, at)
+	}
+	if err := exec(q, `INSERT INTO delivery_ui_seen(version,seen_at,project_id) SELECT v,a,$3 FROM unnest($1::text[],$2::text[]) x(v,a)
+	 ON CONFLICT (version) DO UPDATE SET seen_at=EXCLUDED.seen_at WHERE delivery_ui_seen.seen_at<>EXCLUDED.seen_at`, versions, ats, ciProject); err != nil {
+		return err
+	}
+	ids, runs, tries, errs := []int64{}, []string{}, []int32{}, []string{}
+	for _, x := range st.RetryRuns {
+		ids, runs, tries, errs = append(ids, x.Run.ID), append(runs, string(jsonBytes(x.Run))), append(tries, int32(x.Tries)), append(errs, x.Error)
+	}
+	if err := exec(q, "DELETE FROM delivery_run_read WHERE NOT run_id = ANY($1::bigint[])", ids); err != nil {
+		return err
+	}
+	if err := exec(q, `INSERT INTO delivery_run_read(run_id,payload,attempts,next_attempt_at,last_error,project_id)
+	 SELECT DISTINCT ON (i) i,p::jsonb,t,now(),nullif(e,''),$5 FROM unnest($1::bigint[],$2::text[],$3::int[],$4::text[]) x(i,p,t,e) ORDER BY i
+	 ON CONFLICT (run_id) DO UPDATE SET payload=EXCLUDED.payload,attempts=EXCLUDED.attempts,next_attempt_at=EXCLUDED.next_attempt_at,last_error=EXCLUDED.last_error
+	 WHERE (delivery_run_read.payload,delivery_run_read.attempts,delivery_run_read.last_error) IS DISTINCT FROM (EXCLUDED.payload,EXCLUDED.attempts,EXCLUDED.last_error)`,
+		ids, runs, tries, errs, ciProject); err != nil {
+		return err
+	}
+	keys := map[string]bool{}
+	for n := range st.CiTried {
+		keys[n] = true
+	}
+	for n := range st.CiRetry {
+		keys[n] = true
+	}
+	for n := range st.CiError {
+		keys[n] = true
+	}
+	nums, attempts, nexts, lasts := []int64{}, []int32{}, []*time.Time{}, []string{}
+	for n := range keys {
+		pr, err := strconv.ParseInt(n, 10, 64)
+		if err != nil {
+			continue
+		}
+		var next *time.Time
+		if t, err := time.Parse(time.RFC3339, st.CiTried[n]); err == nil {
+			next = ptr(t.Add(time.Hour))
+		}
+		nums, attempts, nexts, lasts = append(nums, pr), append(attempts, int32(st.CiRetry[n])), append(nexts, next), append(lasts, st.CiError[n])
+	}
+	return exec(q, `UPDATE delivery_pr p SET attempts=coalesce(x.a,0),next_attempt_at=x.t,last_error=nullif(x.e,'')
+	 FROM delivery_pr o LEFT JOIN unnest($1::bigint[],$2::int[],$3::timestamptz[],$4::text[]) x(n,a,t,e) ON x.n=o.number
+	 WHERE p.id=o.id AND (x.n IS NOT NULL OR o.attempts<>0 OR o.next_attempt_at IS NOT NULL OR o.last_error IS NOT NULL)
+	  AND (p.attempts,p.next_attempt_at,p.last_error) IS DISTINCT FROM (coalesce(x.a,0),x.t,nullif(x.e,''))`, nums, attempts, nexts, lasts)
 }
 
 func deliverySettingsOf(q *Request) (contract.DeliverySettings, error) {
 	s := deliveryDefaults
-	d, err := first(q, "SELECT data FROM document WHERE id='delivery-settings'")
+	d, err := first(q, "SELECT ratio, min_samples, min_delta_ms, baseline FROM delivery_settings")
 	if d != nil {
-		json.Unmarshal(jsonBytes(d["data"]), &s)
+		s = contract.DeliverySettings{Ratio: num(d["ratio"]), MinSamples: int64(num(d["min_samples"])), MinDeltaMs: int64(num(d["min_delta_ms"])), Baseline: astr(d["baseline"])}
 	}
 	return s, err
+}
+
+func deliverySettingsPut(q *Request, s contract.DeliverySettings) error {
+	return exec(q, `INSERT INTO delivery_settings(id,ratio,min_samples,min_delta_ms,baseline,project_id) VALUES('delivery-settings',$1,$2,$3,$4,$5)
+	 ON CONFLICT (id) DO UPDATE SET ratio=EXCLUDED.ratio,min_samples=EXCLUDED.min_samples,min_delta_ms=EXCLUDED.min_delta_ms,baseline=EXCLUDED.baseline,updated_at=now()`,
+		s.Ratio, s.MinSamples, s.MinDeltaMs, s.Baseline, ciProject)
 }
 
 // ---- the pass ----
@@ -126,8 +262,9 @@ type dhPull struct {
 
 // dhRetry: a run whose jobs read failed, with the failures so far; it is dropped after dhRetries.
 type dhRetry struct {
-	Run   dhRun `json:"run"`
-	Tries int   `json:"tries"`
+	Run   dhRun
+	Tries int
+	Error string // the last failed read
 }
 
 const dhRetries = 5
@@ -189,7 +326,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 					return err
 				}
 			}
-			return dhPut(q, "delivery-history", "delivery-history", st)
+			return dhSave(q, st)
 		})
 	}
 	if !keyed {
@@ -317,7 +454,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 					}
 				}
 			}
-			return dhPut(q, "delivery-history", "delivery-history", st)
+			return dhSave(q, st)
 		})
 		if err == nil {
 			changedRuns = nil
@@ -373,7 +510,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 					return fail(errors.Join(err, flush())) // what this batch read before it stays stored
 				}
 				skipped = append(skipped, err.Error())
-				retryNext = append(retryNext, dhRetry{r, tries[r.ID] + 1}) // read again next pass, outside the window too
+				retryNext = append(retryNext, dhRetry{r, tries[r.ID] + 1, err.Error()}) // read again next pass, outside the window too
 				continue
 			}
 			dr := deliveryRunOf(r, got[i].Jobs)
@@ -451,8 +588,9 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 				}
 				skipped = append(skipped, err.Error())
 				if st.CiRetry == nil {
-					st.CiRetry = map[string]int{}
+					st.CiRetry, st.CiError = map[string]int{}, map[string]string{}
 				}
+				st.CiError[num] = err.Error()
 				if st.CiRetry[num]++; st.CiRetry[num] >= dhRetries {
 					delete(st.CiRetry, num) // given up: the pull request keeps no PR CI time
 					tried[num] = now.Format(time.RFC3339)
@@ -460,6 +598,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 				continue
 			}
 			delete(st.CiRetry, num)
+			delete(st.CiError, num)
 			tried[num] = now.Format(time.RFC3339)
 			for _, x := range got[k].Runs {
 				if x.Conclusion != nil && *x.Conclusion == "success" && (p.PrCiDone == nil || x.UpdatedAt < *p.PrCiDone) {
@@ -559,7 +698,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 			return err
 		}
 		st.CheckedRelease, st.CheckedAt = newest, now.Format(time.RFC3339)
-		return dhPut(q, "delivery-history", "delivery-history", st)
+		return dhSave(q, st)
 	})
 }
 
@@ -1314,7 +1453,7 @@ func deliveryBaselineSet(q *Request, r *contract.DeliveryBaselineSetRequest) (co
 	}
 	if r.Remove != nil {
 		name := strings.TrimSpace(*r.Remove)
-		if err := exec(q, "DELETE FROM document WHERE kind='delivery-baseline' AND id=$1", "delivery-baseline:"+name); err != nil {
+		if err := exec(q, "DELETE FROM delivery_baseline WHERE name=$1", name); err != nil {
 			return contract.DeliveryBaselineReply{}, err
 		}
 		// The check must not compare with a snapshot that is gone while the settings still name it.
@@ -1322,7 +1461,7 @@ func deliveryBaselineSet(q *Request, r *contract.DeliveryBaselineSetRequest) (co
 			return contract.DeliveryBaselineReply{}, err
 		} else if s.Baseline == name {
 			s.Baseline = ""
-			if err := dhPut(q, "delivery-settings", "delivery-settings", s); err != nil {
+			if err := deliverySettingsPut(q, s); err != nil {
 				return contract.DeliveryBaselineReply{}, err
 			}
 		}
@@ -1333,7 +1472,7 @@ func deliveryBaselineSet(q *Request, r *contract.DeliveryBaselineSetRequest) (co
 			return contract.DeliveryBaselineReply{}, fail(400, "settings: ratio above 1, minSamples at least 1, minDeltaMs not negative")
 		}
 		if s.Baseline != "" {
-			d, err := first(q, "SELECT 1 AS x FROM document WHERE id=$1", "delivery-baseline:"+s.Baseline)
+			d, err := first(q, "SELECT 1 AS x FROM delivery_baseline WHERE name=$1", s.Baseline)
 			if err != nil {
 				return contract.DeliveryBaselineReply{}, err
 			}
@@ -1341,7 +1480,7 @@ func deliveryBaselineSet(q *Request, r *contract.DeliveryBaselineSetRequest) (co
 				return contract.DeliveryBaselineReply{}, fail(404, "Unknown baseline snapshot "+s.Baseline)
 			}
 		}
-		if err := dhPut(q, "delivery-settings", "delivery-settings", s); err != nil {
+		if err := deliverySettingsPut(q, *s); err != nil {
 			return contract.DeliveryBaselineReply{}, err
 		}
 	}
@@ -1376,13 +1515,13 @@ func deliveryRegressionsOp(q *Request, r *contract.DeliveryRegressionsRequest) (
 		})
 		return c, err
 	}
-	d, err := first(q, "SELECT data FROM document WHERE id='delivery-check'")
+	d, err := first(q, "SELECT payload FROM delivery_check")
 	if err != nil {
 		return contract.DeliveryRegressionsReply{}, err
 	}
 	if d != nil {
 		var c contract.DeliveryRegressionsReply
-		if json.Unmarshal(jsonBytes(d["data"]), &c) == nil {
+		if json.Unmarshal(jsonBytes(d["payload"]), &c) == nil {
 			return c, nil
 		}
 	}

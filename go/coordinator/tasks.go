@@ -1319,27 +1319,6 @@ func taskMembership(q *Request, f doc, group, sort any, ids []string) ([]doc, er
 	return out, err
 }
 
-// settingChangeRecord: a setting-change audit row (the operator's take of a task, a withdrawn question).
-type settingChangeRecord struct {
-	ID        string  `json:"id"`
-	Target    string  `json:"target"`
-	ProjectID *string `json:"projectId"`
-	Field     string  `json:"field"`
-	Previous  any     `json:"previous"`
-	Value     any     `json:"value"`
-	Reason    string  `json:"reason,omitempty"`
-	Actor     string  `json:"actor"`
-	At        int64   `json:"at"`
-}
-
-func putSettingChange(q *Request, c settingChangeRecord) error {
-	rec, err := asT[doc](c)
-	if err != nil {
-		return err
-	}
-	return put(q, "setting-change", rec)
-}
-
 func init() {
 	op("task_create", func(q *Request, r *contract.TaskCreateRequest) (contract.TaskDetail, error) {
 		if r.Title == "" || len([]rune(r.Title)) > 500 {
@@ -1489,7 +1468,7 @@ func init() {
 			if err := takeTask(q, id, p.Email, ""); err != nil {
 				return none, err
 			}
-			if err := putSettingChange(q, settingChangeRecord{ID: newID(), Target: "task:" + id, ProjectID: t.ProjectID, Field: "directedBy", Previous: t.DirectedBy, Value: p.Email, Actor: p.Email, At: nowMs()}); err != nil {
+			if err := audit(q, "task:"+id, "directedBy", t.DirectedBy, p.Email, auditExtra{ProjectID: t.ProjectID}); err != nil {
 				return none, err
 			}
 		}
@@ -1537,7 +1516,7 @@ func init() {
 			if _, err := questionTransition(q, id, questionEvent{To: "withdrawn", Withdrawal: jsonBytes(w)}); err != nil {
 				return out, err
 			}
-			if err := putSettingChange(q, settingChangeRecord{ID: newID(), Target: "question:" + id, ProjectID: row.ProjectID, Field: "state", Previous: "open", Value: "withdrawn", Reason: r.Reason, Actor: by, At: nowMs()}); err != nil {
+			if err := audit(q, "question:"+id, "state", "open", "withdrawn", auditExtra{ProjectID: row.ProjectID, Reason: r.Reason}); err != nil {
 				return out, err
 			}
 			out.Withdrawn = append(out.Withdrawn, id)

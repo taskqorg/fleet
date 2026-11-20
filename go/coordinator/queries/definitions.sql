@@ -115,10 +115,6 @@ SELECT id FROM experiment WHERE state IN ('draft','running','paused') AND tombst
 -- Open sessions whose profile it is.
 SELECT count(*)::bigint FROM session WHERE payload->'agentConfig'->>'id'=sqlc.arg(id)::text AND archived_at IS NULL AND tombstoned_at IS NULL;
 
--- name: DefSettingChange :exec
--- The audit record of a definition change (kind setting-change; a project's carries its project).
-INSERT INTO document(kind,id,data,project_id) VALUES('setting-change', sqlc.arg(id), sqlc.arg(data), sqlc.narg(project_id));
-
 -- name: DefUsage :many
 -- Runs, successes, median wall time and tokens of the executions that pinned a saved revision of kind/id (id '' for every
 -- definition of the kind) in the last days, per definition (total=1) and per revision; -1 stands for no revision (a total)

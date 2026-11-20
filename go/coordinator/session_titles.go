@@ -201,7 +201,7 @@ func clip(s string, n int) string {
 // sessionTitlePass: one batch of generated titles. Each title is written only while the session still has none, so a
 // rename during the call wins. A failed call marks the attempt (the reason goes to the log and the pass span, not to the
 // session every reader sees); the session is tried again after titleRetry. A write is one conditional row update, so
-// it takes no advisory lock; putDocument keeps the title fields when another writer puts the session back.
+// it takes no advisory lock; put keeps the title fields when another writer puts the session back.
 func sessionTitlePass(ctx context.Context, a *App) error {
 	if !titleReady() {
 		return nil // nothing can be generated here; nothing is read or marked

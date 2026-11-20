@@ -8,9 +8,9 @@ SELECT state FROM connection_key WHERE id=$1 FOR UPDATE;
 UPDATE connection_key SET state= @state, updated_at=now() WHERE id= @id;
 
 -- name: DeleteAPIConnection :exec
--- A deleted connection with its keys (foreign key) and its history (setting-change rows); an audit row records the delete.
+-- A deleted connection with its keys (foreign key) and its history (audit rows); an audit row records the delete.
 WITH c AS (DELETE FROM api_connection WHERE id= @id::text)
-DELETE FROM document WHERE kind='setting-change' AND data->>'target'= @id::text;
+DELETE FROM audit_log WHERE target= @id::text;
 
 -- name: RevokeExecutionTokens :execrows
 -- The open tokens of an execution.
@@ -35,9 +35,6 @@ SELECT EXISTS (SELECT 1 FROM connection_key WHERE connection_id= @name::text AND
 SELECT EXISTS (SELECT 1 FROM api_connection c WHERE c.id='connection:' || @name::text AND c.payload->>'intake'='all'
  AND EXISTS (SELECT 1 FROM connection_key k WHERE k.connection_id= @name::text AND k.state='active'));
 
--- name: ConnHistory :many
--- The setting changes of every connection, oldest first.
-SELECT (data->>'target')::text AS target, data FROM document WHERE kind='setting-change' AND data->>'target' LIKE 'connection:%' ORDER BY seq;
 
 -- name: ConnKeyRequestByRequest :one
 -- A project's key request by its request id, as the project's questions show it (projects.go projectQuestionJSON).

@@ -353,7 +353,7 @@ func accountList(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	changes, err := all(q, "setting-change", nil)
+	changes, err := auditOfKind(q, "account")
 	if err != nil {
 		return nil, err
 	}
@@ -681,17 +681,13 @@ func accountUpdateBody(q *Request, b doc) (any, error) {
 		}
 		set("holder", h)
 	}
-	actor := "operator"
-	if p != nil {
-		actor = p.Email
-	}
 	changed := []string{}
 	for _, f := range order {
 		if js(a[f]) == js(next[f]) {
 			continue
 		}
 		changed = append(changed, f)
-		if err := put(q, "setting-change", doc{"id": newID(), "target": "account:" + astr(a["id"]), "holder": nonNil(next["holder"], a["holder"]), "field": f, "previous": a[f], "value": next[f], "actor": actor, "at": nowMs()}); err != nil {
+		if err := audit(q, "account:"+astr(a["id"]), f, a[f], next[f], auditExtra{Holder: astr(nonNil(next["holder"], a["holder"]))}); err != nil {
 			return nil, err
 		}
 	}

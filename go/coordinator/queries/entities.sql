@@ -66,9 +66,13 @@ SELECT coalesce((SELECT code FROM project_code WHERE project_id= @id::text AND c
  (SELECT count(*) FROM execution WHERE project_id= @id::text AND state IN ('preparing','running'))::bigint AS running,
  (SELECT count(*) FROM question WHERE project_id= @id::text AND state='open')::bigint AS questions;
 
--- name: EntDeliveryRecord :one
--- A delivery history record (delivery_history.go: kinds delivery-pr and delivery-release).
-SELECT data FROM document WHERE id=$1 AND kind=$2;
+-- name: EntDeliveryPr :one
+-- A delivered pull request (delivery_history.go).
+SELECT payload FROM delivery_pr WHERE number=$1;
+
+-- name: EntDeliveryRelease :one
+-- A release of the delivery history (delivery_history.go).
+SELECT payload FROM delivery_release WHERE tag=$1;
 
 -- name: EntSearchTasks :many
 -- Task hits: ids (a code jump), else the search; ignored projects left out ('-' as ignore_none: work outside projects).
@@ -335,7 +339,7 @@ SELECT (CASE WHEN jsonb_typeof(data->'hostId')='string' THEN data->>'hostId' ELS
 
 -- Records by kind (records.go all/get/put): an execution record is execution.data with its typed state, observation
 -- and last contact (records.go execJSON); an agent question record is its columns over the open rest in data
--- (agentQuestionJSON); a delegation record is execution.delegation; any other kind is a document.
+-- (agentQuestionJSON); a delegation record is execution.delegation; no kind is a document any more.
 
 -- name: EntExecutionRecords :many
 SELECT (data || jsonb_build_object('state',state,'observation',observation,'lastSeenAt',last_seen_at))::jsonb FROM execution
@@ -371,17 +375,3 @@ SELECT (data || jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execu
 SELECT (data || jsonb_strip_nulls(jsonb_build_object('id',id,'executionId',execution_id,'sessionId',session_id,'projectId',project_id,'taskId',task_id,'requestId',request_id,
  'question',text,'state',state,'answer',answer,'answeredBy',answered_by,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'createdAt',(extract(epoch FROM asked_at)*1000)::bigint)))::jsonb
  FROM question WHERE id=$1 AND kind='agent_question';
-
--- name: EntDocumentRecords :many
-SELECT data FROM document WHERE kind= @kind AND data @> @filter::jsonb ORDER BY seq;
-
--- name: EntDocumentRecord :one
-SELECT data FROM document WHERE id=$1 AND kind=$2;
-
--- name: EntDocumentRecordForUpdate :one
-SELECT data FROM document WHERE id=$1 AND kind=$2 FOR UPDATE;
-
--- name: EntDocumentPut :exec
--- A document record; an id of another kind is left as it is.
-INSERT INTO document(kind,id,data,project_id) VALUES(@kind, sqlc.narg(id)::text, @data, sqlc.narg(project_id))
- ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind;

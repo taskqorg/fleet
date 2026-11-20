@@ -94,8 +94,7 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 	if err := q.db().StoresOfHostUnreachable(q.ctx(), b.Id); err != nil {
 		return none, err
 	}
-	if err := recordHostChange(q, hostChange{Target: "host:" + b.Id, Holder: jsonBytes(h.Holder), Field: "state", Previous: jsonBytes("active"), Value: jsonBytes("removed"),
-		Actor: q.person.Email, Note: ptr(js(r))}); err != nil {
+	if err := audit(q, "host:"+b.Id, "state", "active", "removed", auditExtra{Holder: deref(h.Holder), Note: js(r)}); err != nil {
 		return none, err
 	}
 	onEnd(q.tx, func(committed bool) {
@@ -157,7 +156,7 @@ func purgeHosts(q *Request, preview bool) (removed, kept contract.PurgeCount, er
 	purged := struct {
 		Host []string `json:"host"`
 	}{gone}
-	err = recordHostChange(q, hostChange{Target: "system", Field: "purge", Value: jsonBytes(purged), Actor: actor(q, "operator")})
+	err = audit(q, "system", "purge", nil, purged, auditExtra{})
 	return removed, kept, err
 }
 

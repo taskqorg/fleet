@@ -34,52 +34,6 @@ func (q *Queries) PeopleConnectionHolder(ctx context.Context, id string) (string
 	return holder, err
 }
 
-const peopleSettingChanges = `-- name: PeopleSettingChanges :many
-SELECT seq, data FROM document WHERE kind='setting-change'
- AND ($1::text = '' OR data->>'target' = $1::text)
- AND ($2::boolean OR data->>'target' <> 'people')
- AND ($3::bigint IS NULL OR seq < $3::bigint)
- ORDER BY seq DESC LIMIT $4::int
-`
-
-type PeopleSettingChangesParams struct {
-	Target string
-	Owner  bool
-	Before *int64
-	Lim    int32
-}
-
-type PeopleSettingChangesRow struct {
-	Seq  int64
-	Data []byte
-}
-
-// setting_changes: newest first, optionally of one target; the people list's own audit only for the owner.
-func (q *Queries) PeopleSettingChanges(ctx context.Context, arg PeopleSettingChangesParams) ([]PeopleSettingChangesRow, error) {
-	rows, err := q.db.Query(ctx, peopleSettingChanges,
-		arg.Target,
-		arg.Owner,
-		arg.Before,
-		arg.Lim,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []PeopleSettingChangesRow
-	for rows.Next() {
-		var i PeopleSettingChangesRow
-		if err := rows.Scan(&i.Seq, &i.Data); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const personSettingPayload = `-- name: PersonSettingPayload :one
 SELECT payload FROM person_setting WHERE id=$1
 `

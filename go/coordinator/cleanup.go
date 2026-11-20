@@ -169,7 +169,6 @@ var referenceMap = []objectRef{
 	{table: "worker_done", column: "id", mode: refNone},
 	{table: "worker_done", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "worker_done", column: "project_id", kind: "project", mode: refOwn},
-	{table: "document", column: "data", kind: "execution", mode: refKeep, expr: "data->>'continuationExecutionId'", guard: "kind='delegation'"},
 	{table: "agent_tool_receipt", column: "id", mode: refNone},
 	{table: "agent_tool_receipt", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "artifact", column: "id", kind: "artifact", mode: refOwn},
@@ -297,7 +296,56 @@ var referenceMap = []objectRef{
 	{table: "pipeline_step", column: "native_execution_id", mode: refNone},
 	{table: "pipeline_step", column: "output_artifact_id", mode: refNone},
 	{table: "pipeline_step", column: "job_id", mode: refNone},
+	// Migration 81. The audit (audit_log, transport_audit) and purge tasks outlive what they name: no refOwn column.
+	{table: "audit_log", column: "id", mode: refNone},
+	{table: "audit_log", column: "project_id", kind: "project", mode: refNone},
+	{table: "transport_audit", column: "id", mode: refNone},
+	{table: "transport_audit", column: "execution_id", kind: "execution", mode: refNone},
+	{table: "transport_audit", column: "conflict_id", mode: refNone},
+	{table: "transport_audit", column: "request_id", mode: refNone},
+	{table: "purge_task", column: "id", mode: refNone},
+	{table: "purge_task", column: "store_id", mode: refNone},
+	{table: "reconciliation", column: "id", mode: refNone},
+	{table: "transport_conflict", column: "id", mode: refNone},
+	{table: "transport_conflict", column: "execution_id", kind: "execution", mode: refOwn},
+	{table: "transport_conflict", column: "host_id", kind: "host", mode: refKeep},
+	{table: "transport_conflict", column: "original_event_id", mode: refNone},
+	{table: "transport_conflict", column: "collision_event_id", mode: refNone},
+	{table: "problem_dismissal", column: "execution_id", kind: "execution", mode: refOwn},
+	{table: "problem_dismissal", column: "project_id", kind: "project", mode: refOwn},
+	{table: "project_recommendation", column: "id", mode: refNone},
+	{table: "project_recommendation", column: "project_id", kind: "project", mode: refOwn},
+	{table: "project_recommendation", column: "method_id", mode: refNone}, // a catalogue method
+	{table: "upload", column: "id", mode: refNone},
+	{table: "upload", column: "session_id", kind: "session", mode: refOwn},
+	{table: "upload", column: "project_id", kind: "project", mode: refOwn},
+	{table: "upload", column: "artifact_id", kind: "artifact", mode: refNone}, // the artifact a finished upload stored
+	{table: "delivery_state", column: "id", mode: refNone},
+	{table: "delivery_state", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_sample", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_pr", column: "id", mode: refNone},
+	{table: "delivery_pr", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_run", column: "id", mode: refNone},
+	{table: "delivery_run", column: "run_id", mode: refNone}, // a GitHub run
+	{table: "delivery_run", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_run_read", column: "run_id", mode: refNone},
+	{table: "delivery_run_read", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_release", column: "id", mode: refNone},
+	{table: "delivery_release", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_baseline", column: "id", mode: refNone},
+	{table: "delivery_baseline", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_check", column: "id", mode: refNone},
+	{table: "delivery_check", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_settings", column: "id", mode: refNone},
+	{table: "delivery_settings", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_history_state", column: "id", mode: refNone},
+	{table: "delivery_history_state", column: "project_id", kind: "project", mode: refOwn},
+	{table: "delivery_ui_seen", column: "project_id", kind: "project", mode: refOwn},
 }
+
+// deliveryTables: the delivery tables (migration 82), each with a project and a tombstone.
+var deliveryTables = []string{"delivery_state", "delivery_sample", "delivery_pr", "delivery_run", "delivery_run_read", "delivery_release",
+	"delivery_baseline", "delivery_check", "delivery_settings", "delivery_history_state", "delivery_ui_seen"}
 
 // objectTables: the tables whose rows are objects of a kind; the cascade of a root is closed over their refOwn columns.
 var objectTables = []struct{ kind, table, filter string }{
@@ -306,22 +354,24 @@ var objectTables = []struct{ kind, table, filter string }{
 }
 
 // tombstoned: the tables with a tombstoned_at column (migration 67).
-var tombstoned = []string{"execution", "task", "experiment", "question", "artifact", "document", "score", "experiment_note",
+var tombstoned = append([]string{"execution", "task", "experiment", "question", "artifact", "document", "score", "experiment_note",
 	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
 	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
-	"connection_key", "run_token", "person_setting"}
+	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict"}, deliveryTables...)
 
-// keptRows: rows that neither go with an object nor keep one: audit records outlive what they describe (the journal of M0).
-var keptRows = map[string]string{"document": "kind NOT IN ('setting-change','transport-audit','purge-task')"}
+// keptRows: rows of a table that neither go with an object nor keep one. None now: the audit records that outlive what
+// they describe (the journal of M0) have their own tables without a refOwn column (migration 82).
+var keptRows = map[string]string{}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
-var purgeOrder = []string{"score", "experiment_note", "artifact_copy", "artifact", "question", "execution_totals", "route_decision",
-	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "document", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
+var purgeOrder = append([]string{"score", "experiment_note", "artifact_copy", "artifact", "question", "execution_totals", "route_decision",
+	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "document", "problem_dismissal",
+	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",
 	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "session", "execution",
 	"resource_work", "resource_work_scope", "task_dependency", "task_derived", "task", "entity_code", "experiment", "budget",
 	"project_write_request", "purged_hash", "artifact_rule_confirmation", "resource_project_summary", "resource_metric",
-	"resource_extreme", "resource_tool", "resource_cost", "resource_price_ref", "resource_build", "resource_repair_scope"}
+	"resource_extreme", "resource_tool", "resource_cost", "resource_price_ref", "resource_build", "resource_repair_scope"}, deliveryTables...)
 
 // cascade: a root object (project or experiment) and the ids of every object that goes with it, by kind.
 type cascade struct {
@@ -711,7 +761,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		if where == "false" {
 			continue
 		}
-		if c.kind == "project" { // the project's own rows are hidden by project already
+		if c.kind == "project" && t != "transport_conflict" { // the project's own rows are hidden by project already (a transport conflict has none)
 			where += " AND project_id IS DISTINCT FROM (" + a.of("project") + ")[1]"
 		}
 		if err := exec(q, "UPDATE "+t+" SET tombstoned_at=now() WHERE "+andFilter(keptRows[t], where+" AND tombstoned_at IS NULL"), a.vals...); err != nil {
@@ -740,9 +790,8 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		}
 		invalidateEnvCacheOnCommit(q)
 	}
-	// Audit: a setting-change row until the journal (M0); no projectId, so it outlives the project's purge.
-	if err := put(q, "setting-change", doc{"id": newID(), "target": c.kind + ":" + c.id, "field": "deletedAt", "previous": nil, "value": nowMs(),
-		"actor": actor(q, "operator"), "at": nowMs(), "note": js(out.Affected)}); err != nil {
+	// Audit: no project, so it outlives the project's purge.
+	if err := audit(q, c.kind+":"+c.id, "deletedAt", nil, nowMs(), auditExtra{Note: js(out.Affected)}); err != nil {
 		return err
 	}
 	out.Deleted = true
@@ -771,11 +820,14 @@ func purgeRoots(q *Request, kind contract.PurgeKind) ([]string, error) {
 	return out, err
 }
 
-// addPurgeTask: a store object or a span deletion still to do after the rows went (document kind purge-task).
+// addPurgeTask: a store object or a span deletion still to do after the rows went (a purge_task row).
 func addPurgeTask(q *Request, t doc) error {
-	t["id"], t["createdAt"] = newID(), nowMs()
-	return put(q, "purge-task", t)
+	t["id"] = newID()
+	return exec(q, "INSERT INTO purge_task(id, store_id, payload) VALUES($1, $2, $3::jsonb - '{id,storeId,createdAt}'::text[])", t["id"], t["storeId"], jsonBytes(t))
 }
+
+// purgeTaskRecord: a purge_task row as runPurgeTasks reads it.
+const purgeTaskRecord = "(payload || jsonb_strip_nulls(jsonb_build_object('id', id, 'storeId', store_id, 'createdAt', (extract(epoch FROM created_at) * 1000)::bigint)))"
 
 // purgeCascade: delete every row of a cascade, in purgeOrder; the store objects no remaining artifact shares and the
 // spans of its executions become purge tasks.
@@ -869,7 +921,7 @@ func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (
 		if err := purgeCascade(q, c); err != nil {
 			return err
 		}
-		return put(q, "setting-change", doc{"id": newID(), "target": string(kind) + ":" + id, "field": "purge", "value": rows, "actor": actor(q, "operator"), "at": nowMs()})
+		return audit(q, string(kind)+":"+id, "purge", nil, rows, auditExtra{})
 	})
 	return
 }
@@ -1019,7 +1071,7 @@ func systemPurge(q *Request, b *contract.SystemPurgeRequest) (contract.SystemPur
 		left, err = runPurgeTasks(q.ctx(), q.app, start.Add(purgeBudget))
 	} else {
 		err = runTx(q.ctx(), q.app, q, false, "", func(q *Request) error {
-			return q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM document WHERE kind='purge-task'").Scan(&left)
+			return q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM purge_task").Scan(&left)
 		})
 	}
 	out.Purged = !b.Preview
@@ -1044,7 +1096,7 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 	var tasks []doc
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		var err error
-		tasks, err = rows(q, "SELECT data FROM document WHERE kind='purge-task' ORDER BY seq")
+		tasks, err = rows(q, "SELECT "+purgeTaskRecord+" AS data FROM purge_task ORDER BY seq")
 		return err
 	}); err != nil {
 		return 0, err
@@ -1091,14 +1143,14 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 				var err error
 				switch {
 				case len(rest) == 0:
-					err = exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
+					err = exec(q, "DELETE FROM purge_task WHERE id=$1", t["id"])
 				case len(rest) < len(strs(t["executionIds"])):
 					next := doc{} // a copy: a retried transaction reads the task as stored
 					for k, v := range t {
 						next[k] = v
 					}
 					next["executionIds"] = rest
-					err = exec(q, "UPDATE document SET data=$2, updated_at=now() WHERE kind='purge-task' AND id=$1", t["id"], jsonBytes(next))
+					err = exec(q, "UPDATE purge_task SET payload=$2::jsonb - '{id,storeId,createdAt}'::text[] WHERE id=$1", t["id"], jsonBytes(next))
 				}
 				if err != nil {
 					return err
@@ -1167,10 +1219,10 @@ func runPurgeTasks(ctx context.Context, a *App, deadline time.Time) (int64, erro
 		}
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			if len(rest) == 0 {
-				return exec(q, "DELETE FROM document WHERE kind='purge-task' AND id=$1", t["id"])
+				return exec(q, "DELETE FROM purge_task WHERE id=$1", t["id"])
 			}
 			// An update, never an insert: a task another purge finished meanwhile stays gone.
-			return exec(q, "UPDATE document SET data=$2, updated_at=now() WHERE kind='purge-task' AND id=$1", t["id"], jsonBytes(t))
+			return exec(q, "UPDATE purge_task SET payload=$2::jsonb - '{id,storeId,createdAt}'::text[] WHERE id=$1", t["id"], jsonBytes(t))
 		}); err != nil {
 			return left, err
 		}

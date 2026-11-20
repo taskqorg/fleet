@@ -1401,7 +1401,7 @@ func agentReconcile(q *Request) (doc, error) {
 		items = append(items, doc{"kind": "question_open", "questionId": qu["id"], "askerState": e["state"]})
 	}
 	r := doc{"id": "reconcile:" + newID(), "at": nowMs(), "items": items}
-	return r, put(q, "reconciliation", r)
+	return r, q.db().DispReconciliationPut(q.ctx(), db.DispReconciliationPutParams{ID: astr(r["id"]), Items: jsonBytes(items)})
 }
 
 func sessionView(q *Request, sid string) (doc, error) {

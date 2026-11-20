@@ -17,7 +17,7 @@ test('DH1 a stage slower over the last 24 h than its 7-day baseline opens one qu
     const merged = new Date(Date.now() - hoursAgo * 3600e3).toISOString().replace(/\.\d+Z$/, 'Z');
     const d = {number: n, title: `pr ${n}`, url: `https://github.com/taskqorg/fleet/pull/${n}`, headSha: 'h' + n, mergeSha: 'm' + n, opened: merged, merged,
       installed: {}, durations: {queue: queueMin * 60e3, lead: (queueMin + 5) * 60e3}, queueRuns: 1, queueRemovals: 0, flakes: 0};
-    c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES('delivery-pr','delivery-pr:${n}','fleet','${JSON.stringify(d)}') ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data`);
+    c.sql(`INSERT INTO delivery_pr(id,number,project_id,payload) VALUES('delivery-pr:${n}',${n},'fleet','${JSON.stringify(d)}') ON CONFLICT (id) DO UPDATE SET payload=EXCLUDED.payload`);
   };
   try {
     for (let i = 0; i < 20; i++) pr(i + 1, 30 + i * 6, 10);

@@ -167,8 +167,12 @@ type transportAudit struct {
 	NativeEffectReplayed bool   `json:"nativeEffectReplayed"`
 }
 
-func transportPut(q *Request, kind, id string, v any) error {
-	return q.db().EventsTransportPut(q.ctx(), db.EventsTransportPutParams{Kind: kind, ID: id, Data: jsonBytes(v)})
+func transportConflictPut(q *Request, c *transportConflict) error {
+	return q.db().EventsTransportConflictPut(q.ctx(), jsonBytes(c))
+}
+
+func transportAuditPut(q *Request, a transportAudit) error {
+	return q.db().EventsTransportAuditPut(q.ctx(), jsonBytes(a))
 }
 
 // transportConflictOf: the stored conflict, nil when there is none.
@@ -294,7 +298,7 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 			c = &transportConflict{ID: cid, ExecutionID: xid, HostID: hostID, OriginalEventID: eid, OriginalSequence: seq, FrameSha256: digest, Original: jsonBytes(ev),
 				CollisionEventID: collision.text("id"), Supported: previous == nil && ev.text("type") == string(contract.FleetEventTypeProcessClosed) && collision.text("type") == string(contract.FleetEventTypeResourceObservation),
 				State: "blocked", ObservedAt: nowMs()}
-			if err := transportPut(q, "transport-conflict", c.ID, c); err != nil {
+			if err := transportConflictPut(q, c); err != nil {
 				return none, err
 			}
 		}
@@ -364,11 +368,11 @@ func ingestIn(q *Request, b rawObject, batch *contract.HostEvents) (contract.OkR
 		if c := p.conflict; c != nil && c.State != "delivered" {
 			at := nowMs()
 			c.State, c.DeliveredAt = "delivered", &at
-			if err := transportPut(q, "transport-conflict", c.ID, c); err != nil {
+			if err := transportConflictPut(q, c); err != nil {
 				return none, err
 			}
 			a := transportAudit{ID: newID(), ExecutionID: xid, ConflictID: c.ID, Actor: "owning-host", Operation: "retained-transport-delivered", At: nowMs()}
-			if err := transportPut(q, "transport-audit", a.ID, a); err != nil {
+			if err := transportAuditPut(q, a); err != nil {
 				return none, err
 			}
 		}
@@ -580,13 +584,13 @@ func transportAuthorize(q *Request, r *contract.TransportAuthorizeRequest) (cont
 		}
 		reserved, at := top+1, nowMs()
 		c.ReservedSequence, c.State, c.AuthorizedAt = &reserved, "authorized", &at
-		if err := transportPut(q, "transport-conflict", c.ID, c); err != nil {
+		if err := transportConflictPut(q, c); err != nil {
 			return rep, err
 		}
 	}
 	a := transportAudit{ID: newID(), ExecutionID: c.ExecutionID, ConflictID: c.ID, RequestID: rid, Signature: signature,
 		Actor: "operator-authority", Operation: "authorize-retained-transport", At: nowMs()}
-	if err := transportPut(q, "transport-audit", a.ID, a); err != nil {
+	if err := transportAuditPut(q, a); err != nil {
 		return rep, err
 	}
 	return transportInspect(q, xid)

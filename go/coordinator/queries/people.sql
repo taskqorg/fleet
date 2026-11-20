@@ -7,14 +7,6 @@ SELECT coalesce(holder, '')::text AS holder FROM managed_account WHERE id=$1;
 -- name: PeopleConnectionHolder :one
 SELECT coalesce(holder, '')::text AS holder FROM api_connection WHERE id=$1;
 
--- name: PeopleSettingChanges :many
--- setting_changes: newest first, optionally of one target; the people list's own audit only for the owner.
-SELECT seq, data FROM document WHERE kind='setting-change'
- AND (@target::text = '' OR data->>'target' = @target::text)
- AND (@owner::boolean OR data->>'target' <> 'people')
- AND (sqlc.narg(before)::bigint IS NULL OR seq < sqlc.narg(before)::bigint)
- ORDER BY seq DESC LIMIT @lim::int;
-
 -- name: PersonSettingPayload :one
 SELECT payload FROM person_setting WHERE id=$1;
 

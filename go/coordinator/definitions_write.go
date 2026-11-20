@@ -34,27 +34,19 @@ func conflictExtra(reason contract.ConflictReason, head int64, repoSha *string) 
 	}{reason, head, repoSha})
 }
 
-// definitionChange: the setting-change audit record of a definition (a project's carries its project).
+// definitionChange: the audit of a definition (a project's carries its project).
 type definitionChange struct {
-	ID         string `json:"id"`
-	ProjectID  string `json:"projectId,omitempty"`
-	Target     string `json:"target"`
-	Field      string `json:"field"`
-	Previous   any    `json:"previous"`
-	Value      any    `json:"value"`
-	Actor      string `json:"actor"`
-	OnBehalfOf string `json:"onBehalfOf,omitempty"`
-	At         int64  `json:"at"`
-	Note       string `json:"note,omitempty"`
+	ProjectID string
+	Target    string
+	Field     string
+	Previous  any
+	Value     any
+	Note      string
 }
 
-// auditDefinition records c; an agent's change is the execution acting for its director (fleet-pm-agent.md §1).
+// auditDefinition records c.
 func auditDefinition(q *Request, c definitionChange) error {
-	c.ID, c.Actor, c.At = newID(), actor(q, "operator"), nowMs()
-	if q.agent != "" && q.person != nil {
-		c.Actor, c.OnBehalfOf = q.agent, q.person.Email
-	}
-	return q.db().DefSettingChange(q.ctx(), db.DefSettingChangeParams{ID: c.ID, Data: jsonBytes(c), ProjectID: optStr(c.ProjectID)})
+	return audit(q, c.Target, c.Field, c.Previous, c.Value, auditExtra{ProjectID: optStr(c.ProjectID), Note: c.Note})
 }
 
 // contentText: the request's content of the definition's kind as canonical text, from the bytes sent (the typed struct
