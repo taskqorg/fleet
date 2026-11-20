@@ -215,6 +215,12 @@ type harnessEvent struct {
 	Native              jsonValue        `json:"native"` // the frame a session event came from
 }
 
+// steerResult: the steer.result event a protocol session emits for a steer frame's answer.
+type steerResult struct {
+	CommandID *string `json:"commandId"`
+	Ok        *bool   `json:"ok"`
+}
+
 // kind: the event's type when it is a string, else "".
 func (e harnessEvent) kind() string { s, _ := valStr(e.Type); return s }
 

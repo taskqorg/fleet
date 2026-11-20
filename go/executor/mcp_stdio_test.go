@@ -706,8 +706,7 @@ func TestMCPFilterMissingToolAndProjectEscape(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(root, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	var request mcpRequest
-	json.Unmarshal([]byte(`{"method":"tools/call","params":{"name":"read","arguments":{"relative_path":"escape"}}}`), &request)
+	request := M{"method": "tools/call", "params": M{"name": "read", "arguments": M{"relative_path": "escape"}}}
 	if err := mcpAllowed(request, root, []any{"read"}, "project-relative"); err == nil {
 		t.Fatal("symlink escaped")
 	}

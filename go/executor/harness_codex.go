@@ -118,7 +118,7 @@ func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any
 			if tools, ok := jAt(s, "tools").([]any); ok {
 				add("enabled_tools", enc(tools))
 				for _, t := range tools {
-					add("tools."+jStr(t)+".approval_mode", `"approve"`)
+					add("tools."+jStr(t)+".approval_mode", `"approve"`) // not JSON: the executor's own server map ([]any of tool names)
 				}
 			} else if tools, ok := jAt(s, "tools").([]string); ok {
 				add("enabled_tools", enc(tools))
@@ -157,7 +157,7 @@ func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 	}
 	for name, server := range servers {
 		for _, tool := range jArr(server, "tools") {
-			allowed = append(allowed, "mcp__"+name+"__"+jStr(tool))
+			allowed = append(allowed, "mcp__"+name+"__"+jStr(tool)) // not JSON: the executor's own server map
 		}
 		if tools, ok := jAt(server, "tools").([]string); ok {
 			for _, tool := range tools {

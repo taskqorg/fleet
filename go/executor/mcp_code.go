@@ -838,7 +838,7 @@ func (s *codeServer) call(rt *codeRuntime, j *codeJob, m codeLine) {
 	label := callLabel(server, tool)
 	outcome := "ok"
 	if fail != nil {
-		outcome = jStr(fail, "outcome")
+		outcome = jStr(fail, "outcome") // not JSON: the in-memory map callError built
 	}
 	reply := M{"type": "reply", "id": decRaw(m.ID), "ok": fail == nil, "value": value}
 	if fail != nil {

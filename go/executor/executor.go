@@ -2000,8 +2000,9 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			}
 			// A harness may repeat its native identity on every event. Publish the first
 			// observation and changes so ordinary event traffic can batch in the outbox.
-			// open JSON: the projection and the event are a harness's normalized native record (harness_blocks.go).
-			if n := jStr(projection, "session"); n != "" && (!l.nativeObserved || n != l.native) {
+			if n := str0(typed[struct {
+				Session *string `json:"session"`
+			}](projection).Session); n != "" && (!l.nativeObserved || n != l.native) {
 				sid, err := idOf(l.command, "sessionId")
 				if err != nil {
 					return false, err
@@ -2015,12 +2016,14 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 				l.native, l.nativeObserved = n, true
 			}
 			kind := "unknown"
-			if jIsStr(event, "type") {
-				kind = jStr(event, "type") // open JSON: a native record's type
+			ev := typed[harnessEvent](event)
+			if k, ok := valStr(ev.Type); ok {
+				kind = k
 			}
 			if kind == "steer.result" {
-				if b, ok := e.commandBody(jStr(event, "commandId"), true); ok { // open JSON: the native steer answer
-					if err := e.finish(commandOf(b), okStatus(jIsTrue(event, "ok")), ""); err != nil {
+				steer := typed[steerResult](event)
+				if b, ok := e.commandBody(str0(steer.CommandID), true); ok {
+					if err := e.finish(commandOf(b), okStatus(steer.Ok != nil && *steer.Ok), ""); err != nil {
 						return false, err
 					}
 				}

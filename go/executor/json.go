@@ -155,3 +155,51 @@ func decRaw(raw json.RawMessage) any {
 	v, _ := dec(string(raw))
 	return v
 }
+
+// exactKeys refuses a JSON text in which one object names a key twice, or names two keys that differ only in case: a
+// typed read (encoding/json matches field names case-insensitively, last duplicate wins) and another reader of the same
+// bytes could then see different values.
+func exactKeys(raw []byte) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	type frame struct {
+		object bool
+		key    bool // the next token in an object is a key
+		seen   map[string]bool
+	}
+	var stack []*frame
+	for {
+		t, err := d.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var top *frame
+		if len(stack) > 0 {
+			top = stack[len(stack)-1]
+		}
+		if top != nil && top.object && top.key {
+			if k, ok := t.(string); ok {
+				f := strings.ToLower(k)
+				if top.seen[f] {
+					return errors.New("duplicate or case-variant key: " + k)
+				}
+				top.seen[f] = true
+				top.key = false
+				continue
+			}
+		}
+		if top != nil && top.object && !top.key {
+			top.key = true // this token is the key's value (or opens it)
+		}
+		switch t {
+		case json.Delim('{'):
+			stack = append(stack, &frame{object: true, key: true, seen: map[string]bool{}})
+		case json.Delim('['):
+			stack = append(stack, &frame{})
+		case json.Delim('}'), json.Delim(']'):
+			stack = stack[:len(stack)-1]
+		}
+	}
+}
