@@ -2,6 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {hostCommand} from '../harness.ts';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {createInterface} from 'node:readline';
@@ -17,10 +18,10 @@ async function call(path:string,body:object,person=owner){const r=await fetch(BA
 // R2, R3; risk: unauthorized scope, stale authority or inconsistent retained project/session state.
 test('Native projectless PM discovers project tools, creates/focuses project, edits and creates linked Held task', {timeout:60_000},async()=>{
  const hostId='pm-project-host';const host=await call('/api/ops/hosts_register',{id:hostId,holder:member});
- const poll=async()=>{const r=await fetch(BASE+'/api/hosts/poll',{method:'POST',headers:{authorization:'Bearer '+host.secret,'content-type':'application/json'},body:JSON.stringify({platform:'darwin',capabilities:[],stores:[],problems:[]})});assert.equal(r.status,200);return r.json() as Promise<any>;};
+ const poll=async(q='')=>{const r=await fetch(BASE+'/api/hosts/poll'+q,{method:'POST',headers:{authorization:'Bearer '+host.secret,'content-type':'application/json'},body:JSON.stringify({platform:'darwin',capabilities:[],stores:[],problems:[]})});assert.equal(r.status,200);return r.json() as Promise<any>;};
  await poll();const session=await call('/api/ops/session_create',{},member);await call('/api/ops/session_profile', {sessionId: session.sessionId, profileId:'pm'},member);
  const execution=await call('/api/ops/message_send', {sessionId: session.sessionId, requestId:randomUUID(),text:'Manage a trial project'},member);
- const commands=(await poll()).commands;const command=commands.find((c:any)=>c.executionId===execution.id&&c.kind==='start');assert.ok(command,'start command exists without launching vendor');
+ const command=await hostCommand(poll,(c:any)=>c.executionId===execution.id&&c.kind==='start');assert.ok(command,'start command exists without launching vendor');
  assert.ok(command.payload.fleetOperations.some((o:any)=>o.name==='project_create'));
  const root=mkdtempSync(join(tmpdir(),'fleet-project-mcp-'));const journal=join(root,'journal.sqlite');const db=new DatabaseSync(journal);
  db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE delegation_requests(id TEXT PRIMARY KEY,body TEXT,response TEXT);CREATE TABLE outbox(route TEXT,body TEXT);");

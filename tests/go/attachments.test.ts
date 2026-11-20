@@ -8,6 +8,7 @@ import {after, test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash, randomUUID} from 'node:crypto';
 import {fakeS3} from '../s3-fake.ts';
+import {hostCommand} from '../harness.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
 type Reply = {status: number, body: any};
@@ -128,7 +129,7 @@ test('message_send with attachments: the message and the start command carry the
   const view = ok(await op('artifact_get', {artifactId: png.id}));
   assert.equal(view.state, 'stored');
   assert.ok(!ok(await h('/api/hosts/poll', old)).commands.some((x: any) => x.executionId === e.id), 'an executor without attachments support gets no turn with files');
-  const c = ok(await h('/api/hosts/poll', poll)).commands.find((x: any) => x.executionId === e.id && x.kind === 'start');
+  const c = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, poll)), (x: any) => x.executionId === e.id && x.kind === 'start');
   assert.ok(c, 'start command issued');
   assert.deepEqual(c.payload.attachments.map((a: any) => [a.artifactId, a.path, a.mediaType, a.size]),
     [[text.id, `attachments/${e.id}/note.txt`, 'text/plain', 16], [png.id, `attachments/${e.id}/dot.png`, 'image/png', 8]]);
@@ -164,7 +165,7 @@ test('An agent attaches its own stored output through the MCP message_send tool 
   assert.ok(!sent.result.isError, JSON.stringify(sent));
   const got = ok(await op('session_get', {sessionId: other}));
   assert.deepEqual(got.messages.at(-1).attachments.map((a: any) => [a.artifactId, a.name]), [[r.artifactId, 'report.txt']], 'the name the agent and the transcript see is the cleaned base name');
-  const start = ok(await h('/api/hosts/poll', poll)).commands.find((x: any) => x.sessionId === other && x.kind === 'start');
+  const start = await hostCommand(async q => ok(await h('/api/hosts/poll' + q, poll)), (x: any) => x.sessionId === other && x.kind === 'start');
   assert.equal(start.payload.attachments[0].path.split('/').pop(), 'report.txt', 'the staged file takes the base name of the output path');
 });
 

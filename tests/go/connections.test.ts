@@ -12,6 +12,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {fakeS3} from '../s3-fake.ts';
+import {hostCommand} from '../harness.ts';
 import {examplesFromExport} from '../../scripts/lab-export.ts';
 
 const BASE = process.env.FLEET_TRIAL_URL!, SECRET = process.env.FLEET_TRIAL_BROWSER_SECRET!;
@@ -494,8 +495,8 @@ async function suffixFixture(projectId = 'cs', differentOuter = false, checks?: 
   const view = () => op('lab_experiment_get', {experimentId: exp.id}).then(ok);
   const trial = await until(async () => { const v = await view(); return v.trials[0]?.state === 'running' ? v.trials[0] : undefined; }, 'source trial');
   const run = await until(async () => { const r = ok(await op('pipeline_get', {runId: trial.id})); return r.observedSteps[1]?.executionId ? r : undefined; }, 'suffix command');
-  const poll = () => host('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}).then(ok);
-  const command = (await poll()).commands.find((c: any) => c.executionId === run.observedSteps[1].executionId);
+  const poll = (q = '') => host('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}).then(ok);
+  const command = await hostCommand(poll, (c: any) => c.executionId === run.observedSteps[1].executionId);
   assert.ok(command);
   const receipt = (cmd: any, status: string, extra = {}) => host('/api/hosts/receipts', {commandId: cmd.id, executionId: cmd.executionId, status, ...extra}).then(ok);
   await receipt(command, 'started');
@@ -621,7 +622,7 @@ test('L5 ordinary failed rerun preserves immutable API output through transitive
   const first=ok(await op('pipeline_get', {runId: firstReply.runId}));
   assert.equal(first.observedSteps[0].outputArtifactId,f.run.observedSteps[0].outputArtifactId);
   const started=await until(async()=>{const r=ok(await op('pipeline_get', {runId: first.id})); return r.observedSteps[1]?.executionId?r:undefined;},'ordinary rerun starts');
-  const cmd=(await f.poll()).commands.find((c:any)=>c.executionId===started.observedSteps[1].executionId); assert.ok(cmd);
+  const cmd=await hostCommand(f.poll,(c:any)=>c.executionId===started.observedSteps[1].executionId); assert.ok(cmd);
   await f.receipt(cmd,'started'); await f.receipt(cmd,'failed',{error:'local fixture exit'});
   await until(async()=>{const r=ok(await op('pipeline_get', {runId: first.id}));return r.state==='failed'?r:undefined;},'local suffix fails');
   const secondReply=ok(await op('pipeline_rerun',{runId:first.id,mode:'failed',requestId:randomUUID()}));
@@ -635,7 +636,7 @@ test('L5 ordinary failed rerun preserves immutable API output through transitive
   ok(await op('definition_save',{kind:'pipeline',id:f.pipelineId,baseRevision:head.head,content:expanded,message:'append local namespace fixture'}));
   const tail = ok(await op('pipeline_rerun',{runId:second.id,mode:'failed',requestId:randomUUID()}));
   const tailRun = await until(async()=>{const r=ok(await op('pipeline_get', {runId: tail.runId}));return r.observedSteps[2]?.executionId?r:undefined;},'tail command');
-  const intake = (await f.poll()).commands.find((c:any)=>c.executionId===tailRun.observedSteps[2].executionId);assert.ok(intake);
+  const intake = await hostCommand(f.poll,(c:any)=>c.executionId===tailRun.observedSteps[2].executionId);assert.ok(intake);
   const combined = intake.payload.inputs.filter((x:any)=>x.path==='combine/output.json');assert.equal(combined.length,1);assert.equal(combined[0].artifactId,late);
   assert.equal(intake.payload.inputs.find((x:any)=>x.path==='decide/output.json').artifactId,f.run.observedSteps[0].outputArtifactId);
   // The command was accepted by this poll; finish that exact command without requesting a second delivery.

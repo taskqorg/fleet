@@ -3,7 +3,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {startCoordinator} from '../harness.ts';
+import {hostCommand, startCoordinator} from '../harness.ts';
 
 test('W1 accepting a task sends one teardown with deleteBranch for its finished session, and the project default keeps unpushed worktrees (requirement: Worktree on delivery; risk: delivered worktrees pile up on hosts)', {timeout: 60_000}, async () => {
   const c = await startCoordinator({name: 'delivery'});
@@ -26,8 +26,8 @@ test('W1 accepting a task sends one teardown with deleteBranch for its finished 
     const changed = structuredClone(before.content);changed.settings.cleanup={keepWhen:[]};
     changed.contextFiles[0].text='LATER PROJECT CANARY';
     await call('/api/ops/project_update',{projectId:'hello-world',requestId:randomUUID(),baseRevision:before.revision,content:changed});
-    const poll = () => call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
-    const command = (await poll()).commands.find((x: any) => x.executionId === e.id);
+    const poll = (q = '') => call('/api/hosts/poll' + q, {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
+    const command = await hostCommand(poll, (x: any) => x.executionId === e.id);
     assert.deepEqual(command.payload.project.cleanup.keepWhen, ['uncommitted','unpushed','teardown-failed']);
     assert.ok(!command.payload.instructions.includes('LATER PROJECT CANARY'));
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
@@ -36,7 +36,9 @@ test('W1 accepting a task sends one teardown with deleteBranch for its finished 
     c.sql(`UPDATE task SET state='in_progress' WHERE id='${taskId}'`);
     const question = await call('/api/ops/task_request_acceptance', {taskId});
     await call('/api/ops/question_answer', {questionId: question.id, answer: 'accepted'});
-    const teardowns = (await poll()).commands.filter((x: any) => x.kind === 'teardown' && x.sessionId === sessionId);
+    const isTeardown = (x: any) => x.kind === 'teardown' && x.sessionId === sessionId;
+    assert.ok(await hostCommand(poll, isTeardown), 'the accepted task tears its checkout down');
+    const teardowns = (await poll()).commands.filter(isTeardown);
     assert.equal(teardowns.length, 1);
     assert.equal(teardowns[0].payload.deleteBranch, true);
     assert.equal(teardowns[0].payload.workingDirectory,'/tmp/original-workspace','cleanup path is frozen with preparation settings');

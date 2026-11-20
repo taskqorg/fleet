@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
-import {startCoordinator} from '../harness.ts';
+import {hostCommand, startCoordinator} from '../harness.ts';
 
 test('resource lineage preserves JIT settings and accounting with realistic history (requirement: fleet-analytics.md; risk: JIT blocks PM acknowledgments and settings leak)', async () => {
  const c = await startCoordinator({name:'analytics-jit'});
@@ -23,8 +23,7 @@ test('resource lineage preserves JIT settings and accounting with realistic hist
   const poll={hostId:'jit-host',platform:'darwin',capabilities:['workspace-key-v1'],stores:[],problems:[]};
   await op('poll',poll,h.secret,true);
   const start=await op('session_start',{projectId:'desiign',profileId:'pm',role:'pm',hostId:'jit-host',requestId:'jit-pm',text:'qualification'});
-  const claimed=await op('poll',poll,h.secret,true);
-  const command=claimed.commands.find((x:any)=>x.executionId===start.executionId && x.kind==='start');
+  const command=await hostCommand(q=>op('poll'+q,poll,h.secret,true),(x:any)=>x.executionId===start.executionId && x.kind==='start');
   assert.ok(command);
   const detail=await op('session_get',{sessionId:start.sessionId});
   assert.equal(detail.sessionId,start.sessionId);

@@ -4,7 +4,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {startCoordinator, lit, type Coordinator} from '../harness.ts';
+import {hostCommand, startCoordinator, lit, type Coordinator} from '../harness.ts';
 
 const owner = 'owner@trial.test';
 const member = 'member@trial.test';
@@ -189,8 +189,8 @@ test('R3 agent MCP calls to analytics_query strictly enforce session focus and r
     `);
 
     const host = await op(c, 'hosts_register', {id: 'h-analytics', holder: owner}, owner);
-    const poll = async () => {
-      const r = await fetch(`${c.base}/api/hosts/poll`, {
+    const poll = async (q = '') => {
+      const r = await fetch(`${c.base}/api/hosts/poll${q}`, {
         method: 'POST',
         headers: {authorization: `Bearer ${host.secret}`, 'content-type': 'application/json'},
         body: JSON.stringify({platform: 'darwin', capabilities: [], stores: [], problems: []}),
@@ -201,7 +201,7 @@ test('R3 agent MCP calls to analytics_query strictly enforce session focus and r
     await poll();
 
     const sess = await op(c, 'session_start', {projectId: 'desiign', role: 'pm', requestId: randomUUID(), text: 'Audit desiign metrics'}, owner);
-    const cmd = (await poll()).commands.find((x: any) => x.sessionId === sess.sessionId && x.kind === 'start');
+    const cmd = await hostCommand(poll, (x: any) => x.sessionId === sess.sessionId && x.kind === 'start');
     assert.ok(cmd, 'start command issued for agent session');
     await op(c, 'focus_set', {sessionId: sess.sessionId, projectIds: ['desiign']}, owner);
 
