@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -77,14 +78,13 @@ func exampleFileBytes(q *Request, projectID any, f doc) ([]byte, error) {
 	if f["sha256"] == nil {
 		return []byte(astr(f["text"])), nil
 	}
-	rs, err := queryRows(q, "SELECT id FROM artifact WHERE role='example-file' AND scope='lab' AND state='stored' AND content_hash=$1 AND coalesce(project_id,'') IN ('', $2) ORDER BY created_at LIMIT 1", f["sha256"], strOr(projectID))
+	id, err := q.db().LabExampleFileFind(q.ctx(), db.LabExampleFileFindParams{ContentHash: astr(f["sha256"]), Project: strOr(projectID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fail(409, "Example file "+astr(f["path"])+" is not stored; import the example again")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) == 0 {
-		return nil, fail(409, "Example file "+astr(f["path"])+" is not stored; import the example again")
-	}
-	id := astr(rs[0]["id"])
 	return artifactBytes(withTx(q), q.app, id, 64<<20)
 }
 
@@ -113,8 +113,8 @@ func storeExampleFiles(q *Request, projectID any, id string, ex orderedDoc, writ
 			if !write {
 				continue
 			}
-			var n int
-			if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM artifact WHERE role='example-file' AND scope='lab' AND state='stored' AND content_hash=$1 AND coalesce(project_id,'')=$2", sha, strOr(projectID)).Scan(&n); err != nil {
+			n, err := q.db().LabExampleFileCount(q.ctx(), db.LabExampleFileCountParams{ContentHash: sha, Project: strOr(projectID)})
+			if err != nil {
 				return err
 			}
 			if n > 0 {
@@ -125,11 +125,11 @@ func storeExampleFiles(q *Request, projectID any, id string, ex orderedDoc, writ
 				return err
 			}
 			aid := newID()
-			if err := exec(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state) VALUES($1,$2,'lab',$3,$4,$5,$6,'example-file','stored')`,
-				aid, projectID, h, len(b), media, "examples/"+id+"/"+path); err != nil {
+			if err := q.db().LabExampleFileInsert(q.ctx(), db.LabExampleFileInsertParams{ID: aid, ProjectID: strPtr(projectID), ContentHash: h, Size: int64(len(b)), MediaType: media,
+				Name: "examples/" + id + "/" + path}); err != nil {
 				return err
 			}
-			if err := exec(q, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", aid, storeID, projectID); err != nil {
+			if err := q.db().LabArtifactCopyVerified(q.ctx(), db.LabArtifactCopyVerifiedParams{ArtifactID: aid, StoreID: storeID, ProjectID: strPtr(projectID)}); err != nil {
 				return err
 			}
 		}
@@ -362,15 +362,18 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		bytes []byte
 		name  string
 		hash  string
-		old   doc
+		old   *db.LabExampleByNameRow
 		ex    orderedDoc
 	}
-	existing := func(name string) (doc, error) {
-		rs, err := queryRows(q, "SELECT id,content_hash,approved_at FROM artifact WHERE role='example' AND state<>'deleted' AND name=$1 AND coalesce(project_id,'')=$2", name, strOr(projectID))
-		if err != nil || len(rs) == 0 {
+	existing := func(name string) (*db.LabExampleByNameRow, error) {
+		r, err := q.db().LabExampleByName(q.ctx(), db.LabExampleByNameParams{Name: name, Project: strOr(projectID)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
 			return nil, err
 		}
-		return rs[0], nil
+		return &r, nil
 	}
 	planned := []plan{}
 	for _, x := range list {
@@ -386,8 +389,8 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		if pid == "" {
 			pid = "_"
 		}
-		var n int
-		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM purged_hash WHERE project_id=$1 AND scope='lab' AND content_hash=$2", pid, hash).Scan(&n); err != nil {
+		n, err := q.db().LabPurgedCount(q.ctx(), db.LabPurgedCountParams{ProjectID: pid, ContentHash: hash})
+		if err != nil {
 			return nil, err
 		}
 		if n > 0 {
@@ -397,7 +400,7 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 		if err != nil {
 			return nil, err
 		}
-		if old != nil && old["content_hash"] != hash {
+		if old != nil && old.ContentHash != hash {
 			return nil, fail(409, name+" exists with other content; raise version")
 		}
 		if err := storeExampleFiles(q, projectID, astr(meta["id"]), ex, false); err != nil {
@@ -423,17 +426,17 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 				return nil, err
 			}
 			id := newID()
-			var at any
+			var at *time.Time
 			if approved {
-				at = time.Now()
+				now := time.Now()
+				at = &now
 			}
-			rs, err := queryRows(q, `INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at) VALUES($1,$2,'lab',$3,$4,'application/json',$5,'example','stored',$6)
-			 ON CONFLICT (coalesce(project_id,''),name) WHERE role='example' AND state<>'deleted' DO NOTHING RETURNING id`, id, projectID, h, len(p.bytes), p.name, at)
+			rs, err := q.db().LabExampleInsert(q.ctx(), db.LabExampleInsertParams{ID: id, ProjectID: strPtr(projectID), ContentHash: h, Size: int64(len(p.bytes)), Name: p.name, ApprovedAt: at})
 			if err != nil {
 				return nil, err
 			}
 			if len(rs) > 0 {
-				if err := exec(q, "INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())", id, storeID, projectID); err != nil {
+				if err := q.db().LabArtifactCopyVerified(q.ctx(), db.LabArtifactCopyVerifiedParams{ArtifactID: id, StoreID: storeID, ProjectID: strPtr(projectID)}); err != nil {
 					return nil, err
 				}
 				out = append(out, doc{"artifactId": id, "id": p.meta["id"], "version": p.meta["version"], "hash": p.hash, "created": true})
@@ -442,53 +445,52 @@ func labExamplesAdd(q *Request, b doc) (doc, error) {
 			if old, err = existing(p.name); err != nil || old == nil {
 				return nil, fail(500, "Example row missing after conflict")
 			}
-			if old["content_hash"] != p.hash {
+			if old.ContentHash != p.hash {
 				return nil, fail(409, p.name+" exists with other content; raise version")
 			}
 		}
-		if approved && old["approved_at"] == nil {
-			if err := exec(q, "UPDATE artifact SET approved_at=now() WHERE id=$1", old["id"]); err != nil {
+		if approved && old.ApprovedAt == nil {
+			if err := q.db().LabExampleApprove(q.ctx(), old.ID); err != nil {
 				return nil, err
 			}
 		}
-		out = append(out, doc{"artifactId": old["id"], "id": p.meta["id"], "version": p.meta["version"], "hash": p.hash, "created": false})
+		out = append(out, doc{"artifactId": old.ID, "id": p.meta["id"], "version": p.meta["version"], "hash": p.hash, "created": false})
 	}
 	return doc{"examples": out}, nil
 }
 
 func labExamplesList(q *Request, state any) (doc, error) {
-	cond := ""
+	var approved *bool
 	switch state {
 	case nil:
-	case "approved":
-		cond = " AND approved_at IS NOT NULL"
-	case "proposed":
-		cond = " AND approved_at IS NULL"
+	case "approved", "proposed":
+		a := state == "approved"
+		approved = &a
 	default:
 		return nil, fail(400, "Invalid state")
 	}
-	rs, err := queryRows(q, "SELECT id,project_id,name,content_hash,approved_at,created_at FROM artifact WHERE role='example' AND state='stored'"+cond+" ORDER BY name")
+	rs, err := q.db().LabExamplesList(q.ctx(), approved)
 	if err != nil {
 		return nil, err
 	}
 	out := []any{}
 	for _, r := range rs {
 		st := "proposed"
-		if r["approved_at"] != nil {
+		if r.ApprovedAt != nil {
 			st = "approved"
 		}
-		out = append(out, doc{"artifactId": r["id"], "projectId": r["project_id"], "name": r["name"], "hash": r["content_hash"], "state": st, "approvedAt": r["approved_at"], "createdAt": r["created_at"]})
+		out = append(out, doc{"artifactId": r.ID, "projectId": labOpt(r.ProjectID), "name": r.Name, "hash": r.ContentHash, "state": st, "approvedAt": labOpt(r.ApprovedAt), "createdAt": r.CreatedAt})
 	}
 	return doc{"examples": out}, nil
 }
 
 func labExampleGet(q *Request, id string) (doc, error) {
-	rs, err := queryRows(q, "SELECT id,approved_at,project_id,content_hash FROM artifact WHERE id=$1 AND role='example'", id)
+	r, err := q.db().LabExample(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fail(404, "Unknown example")
+	}
 	if err != nil {
 		return nil, err
-	}
-	if len(rs) == 0 {
-		return nil, fail(404, "Unknown example")
 	}
 	b, err := artifactBytes(withTx(q), q.app, id, 8<<20)
 	if err != nil {
@@ -499,14 +501,22 @@ func labExampleGet(q *Request, id string) (doc, error) {
 		return nil, fail(500, "Invalid example artifact")
 	}
 	st := "proposed"
-	if rs[0]["approved_at"] != nil {
+	if r.ApprovedAt != nil {
 		st = "approved"
 	}
-	out := doc{"artifactId": id, "state": st, "example": ex, "hash": rs[0]["content_hash"]}
-	if rs[0]["project_id"] != nil {
-		out["projectId"] = rs[0]["project_id"]
+	out := doc{"artifactId": id, "state": st, "example": ex, "hash": r.ContentHash}
+	if r.ProjectID != nil {
+		out["projectId"] = *r.ProjectID
 	}
 	return out, nil
+}
+
+// labOpt: an optional column as a map value: nil when absent.
+func labOpt[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // ---- scores ----
@@ -631,10 +641,24 @@ func runChecks(ctx context.Context, checks []any, files []labFile) (doc, error) 
 	return doc{"passed": len(checks) - len(failed), "total": len(checks), "failed": failed, "assessments": captured}, nil
 }
 
-func scoreView(r doc) doc {
-	return doc{"id": r["id"], "experimentId": r["experiment_id"], "trialIds": r["trial_ids"], "evaluator": r["evaluator"], "evaluatorVersion": r["evaluator_version"],
-		"form": r["form"], "value": r["value"], "sourceExecutionId": r["source_execution_id"], "questionId": r["question_id"], "rationale": r["rationale"],
-		"replacesScoreId": r["replaces_score_id"], "createdAt": r["created_at"]}
+func scoreView(r db.Score) doc {
+	trials := []any{}
+	for _, t := range r.TrialIds {
+		trials = append(trials, t)
+	}
+	return doc{"id": r.ID, "experimentId": r.ExperimentID, "trialIds": trials, "evaluator": r.Evaluator, "evaluatorVersion": r.EvaluatorVersion,
+		"form": r.Form, "value": labJSON(r.Value), "sourceExecutionId": labOpt(r.SourceExecutionID), "questionId": labOpt(r.QuestionID), "rationale": labOpt(r.Rationale),
+		"replacesScoreId": labOpt(r.ReplacesScoreID), "createdAt": r.CreatedAt}
+}
+
+// labJSON: a JSON column's value decoded; SQL NULL is nil.
+func labJSON(b []byte) any {
+	if b == nil {
+		return nil
+	}
+	var v any
+	json.Unmarshal(b, &v)
+	return v
 }
 
 // scoreAdd: scoreInsert of a score given as a map (the callers not yet on labNewScore).
@@ -649,7 +673,7 @@ func scoreAdd(q *Request, s doc) (string, error) {
 }
 
 func scoresCurrent(q *Request, expID string) ([]doc, error) {
-	rs, err := queryRows(q, "SELECT * FROM score s WHERE experiment_id=$1 AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id=s.id) ORDER BY seq", expID)
+	rs, err := q.db().LabScoresCurrent(q.ctx(), expID)
 	out := []doc{}
 	for _, r := range rs {
 		out = append(out, scoreView(r))
@@ -850,14 +874,24 @@ func cellKey(ex, variant any, repeat any) string {
 }
 
 func expRow(q *Request, id string) (doc, error) {
-	rs, err := queryRows(q, "SELECT * FROM experiment WHERE id=$1", id)
+	e, err := q.db().LabExperiment(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fail(404, "Unknown experiment")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) == 0 {
-		return nil, fail(404, "Unknown experiment")
-	}
-	return rs[0], nil
+	return expDoc(e), nil
+}
+
+// expDoc: an experiment row as the map the experiment code reads: its columns, the JSON ones decoded.
+func expDoc(e db.Experiment) doc {
+	return doc{"id": e.ID, "project_id": e.ProjectID, "kind": e.Kind, "pipeline_id": e.PipelineID, "examples": labJSON(e.Examples), "variants": labJSON(e.Variants),
+		"repeats": e.Repeats, "evaluators": labJSON(e.Evaluators), "primary_evaluator": labOpt(e.PrimaryEvaluator), "strategy": labJSON(e.Strategy), "budgets": labJSON(e.Budgets),
+		"state": e.State, "stop_reason": labOpt(e.StopReason), "created_at": e.CreatedAt, "seq": e.Seq, "goal": labOpt(e.Goal), "hypothesis": labOpt(e.Hypothesis),
+		"decision_rule": labOpt(e.DecisionRule), "lab_group": labOpt(e.LabGroup), "decision": labOpt(e.Decision), "decision_reason": labOpt(e.DecisionReason),
+		"decided_by": labOpt(e.DecidedBy), "decided_at": labOpt(e.DecidedAt), "launched_at": labOpt(e.LaunchedAt), "requested_by": labOpt(e.RequestedBy),
+		"requester_removed_at": labOpt(e.RequesterRemovedAt), "tombstoned_at": labOpt(e.TombstonedAt)}
 }
 
 func expView(r doc) doc {
@@ -875,14 +909,14 @@ var recordColumns = map[string]string{"goal": "goal", "hypothesis": "hypothesis"
 
 // expLocked: the experiment row, locked for this transaction (a record change reads and writes it once).
 func expLocked(q *Request, id string) (doc, error) {
-	rs, err := queryRows(q, "SELECT * FROM experiment WHERE id=$1 FOR UPDATE", id)
+	e, err := q.db().LabExperimentForUpdate(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fail(404, "Unknown experiment")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) == 0 {
-		return nil, fail(404, "Unknown experiment")
-	}
-	return rs[0], nil
+	return expDoc(e), nil
 }
 
 // expLaunch: draft to running, refused without a goal and a hypothesis; the record is frozen from here on.
@@ -930,19 +964,19 @@ func expNote(q *Request, b doc) (doc, error) {
 			return nil, fail(400, "primaryEvaluator names none of the evaluators")
 		}
 		old, value = e[col], b["value"]
-		if err := exec(q, "UPDATE experiment SET "+col+"=$2 WHERE id=$1", e["id"], nilIf(v)); err != nil {
+		if err := q.db().LabExperimentRecordSet(q.ctx(), db.LabExperimentRecordSetParams{ID: astr(e["id"]), Field: col, Value: strPtr(v)}); err != nil {
 			return nil, err
 		}
 	default:
 		return nil, fail(400, "kind is amendment or note")
 	}
 	n := doc{"id": newID(), "experimentId": e["id"], "kind": kind, "field": nilIf(field), "old": old, "new": value, "text": text, "author": actor(q, "operator")}
-	if err := exec(q, "INSERT INTO experiment_note(id,experiment_id,project_id,kind,field,old,new,text,author) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-		n["id"], e["id"], e["project_id"], kind, n["field"], jsonBytes(old), jsonBytes(value), text, n["author"]); err != nil {
+	if err := q.db().LabNoteInsert(q.ctx(), db.LabNoteInsertParams{ID: astr(n["id"]), ExperimentID: astr(e["id"]), ProjectID: astr(e["project_id"]), Kind: kind, Field: strPtr(field),
+		Old: jsonBytes(old), New: jsonBytes(value), Text: text, Author: astr(n["author"])}); err != nil {
 		return nil, err
 	}
 	// A note changes the experiment as its readers see it: touch the row so its change reaches the feed.
-	return n, exec(q, "UPDATE experiment SET id=id WHERE id=$1", e["id"])
+	return n, q.db().LabExperimentTouch(q.ctx(), astr(e["id"]))
 }
 
 // expDecide: a person confirms or overrides the decision of a stopped or done experiment; an override needs a reason and
@@ -971,13 +1005,13 @@ func expDecide(q *Request, b doc) (doc, error) {
 		if reason == "" {
 			return nil, fail(400, "Overriding a decision needs a reason")
 		}
-		if err := exec(q, "INSERT INTO experiment_note(id,experiment_id,project_id,kind,field,old,new,text,author) VALUES($1,$2,$3,'amendment','decision',$4,$5,$6,$7)",
-			newID(), e["id"], e["project_id"], jsonBytes(prev), jsonBytes(d), reason, actor(q, "operator")); err != nil {
+		field := "decision"
+		if err := q.db().LabNoteInsert(q.ctx(), db.LabNoteInsertParams{ID: newID(), ExperimentID: astr(e["id"]), ProjectID: astr(e["project_id"]), Kind: "amendment", Field: &field,
+			Old: jsonBytes(prev), New: jsonBytes(d), Text: reason, Author: actor(q, "operator")}); err != nil {
 			return nil, err
 		}
 	}
-	if err := exec(q, "UPDATE experiment SET decision=$2,decision_reason=$3,decided_by=$4,decided_at=now() WHERE id=$1",
-		e["id"], d, nilIf(reason), actor(q, "operator")); err != nil {
+	if err := q.db().LabExperimentDecide(q.ctx(), db.LabExperimentDecideParams{ID: astr(e["id"]), Decision: &d, DecisionReason: strPtr(reason), DecidedBy: ptr(actor(q, "operator"))}); err != nil {
 		return nil, err
 	}
 	return expGet(q, astr(e["id"]))
@@ -1044,8 +1078,8 @@ func expCreate(q *Request, b doc) (doc, error) {
 		if ex["state"] != "approved" {
 			return nil, fail(409, "Example "+id+" is not approved")
 		}
-		var hash string
-		if err := q.tx.QueryRow(q.ctx(), "SELECT content_hash FROM artifact WHERE id=$1", id).Scan(&hash); err != nil {
+		hash, err := q.db().LabArtifactHash(q.ctx(), id)
+		if err != nil {
 			return nil, err
 		}
 		e := mapOf(ex["example"])
@@ -1207,27 +1241,29 @@ func expCreate(q *Request, b doc) (doc, error) {
 		}
 		budgets = append(budgets, doc{"unit": u, "limit": l, "action": act})
 	}
+	if repeats > math.MaxInt32 {
+		return nil, fail(400, "Invalid repeats")
+	}
 	id := newID()
-	if err := exec(q, "INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy,requested_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
-		id, projectID, kind, pipelineID, jsonBytes(examples), jsonBytes(variants), repeats, jsonBytes(evaluators), b["primaryEvaluator"], jsonBytes(budgets),
-		b["goal"], b["hypothesis"], b["decisionRule"], b["labGroup"], jsonBytes(strategy), q.person.Email); err != nil {
+	if err := q.db().LabExperimentInsert(q.ctx(), db.LabExperimentInsertParams{ID: id, ProjectID: projectID, Kind: kind, PipelineID: pipelineID, Examples: jsonBytes(examples),
+		Variants: jsonBytes(variants), Repeats: int32(repeats), Evaluators: jsonBytes(evaluators), PrimaryEvaluator: strp(b, "primaryEvaluator"), Budgets: jsonBytes(budgets),
+		Goal: strp(b, "goal"), Hypothesis: strp(b, "hypothesis"), DecisionRule: strp(b, "decisionRule"), LabGroup: strp(b, "labGroup"), Strategy: jsonBytes(strategy),
+		RequestedBy: &q.person.Email}); err != nil {
 		return nil, err
 	}
 	return expGet(q, id)
 }
 
 func expSpend(q *Request, id string) (doc, error) {
-	var trials, calls, unmeasured int
-	var wall, credits float64
-	if err := q.tx.QueryRow(q.ctx(), `SELECT count(*) FILTER (WHERE variant IS NOT NULL)::int,
-	 coalesce(sum(extract(epoch FROM coalesce(ended_at,now())-started_at)*1000) FILTER (WHERE started_at IS NOT NULL),0)::float8
-	 FROM execution WHERE experiment_id=$1 AND kind='pipeline_run'`, id).Scan(&trials, &wall); err != nil {
+	run, err := q.db().LabTrialSpend(q.ctx(), &id)
+	if err != nil {
 		return nil, err
 	}
-	if err := q.tx.QueryRow(q.ctx(), `SELECT count(*)::int,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8,count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int
-	 FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run'`, id).Scan(&calls, &credits, &unmeasured); err != nil {
+	tool, err := q.db().LabToolSpend(q.ctx(), &id)
+	if err != nil {
 		return nil, err
 	}
+	trials, wall, calls, credits, unmeasured := int(run.Trials), run.WallMs, int(tool.Calls), tool.Credits, int(tool.Unmeasured)
 	basis := "measured"
 	if unmeasured > 0 {
 		basis = "partial"
@@ -1237,18 +1273,18 @@ func expSpend(q *Request, id string) (doc, error) {
 }
 
 func expRuns(q *Request, id string) ([]doc, error) {
-	rs, err := queryRows(q, "SELECT id,variant,problem FROM execution WHERE experiment_id=$1 AND "+runRows+" ORDER BY seq", id)
+	rs, err := q.db().LabRunIDs(q.ctx(), &id)
 	if err != nil {
 		return nil, err
 	}
 	out := []doc{}
 	for _, r := range rs {
-		run, err := getRun(q, astr(r["id"]))
+		run, err := getRun(q, r.ID)
 		if err != nil {
 			return nil, err
 		}
 		if run != nil {
-			run["variant"], run["problem"] = r["variant"], r["problem"]
+			run["variant"], run["problem"] = labOpt(r.Variant), labOpt(r.Problem)
 			out = append(out, run)
 		}
 	}
@@ -1399,8 +1435,7 @@ func exampleOf(q *Request, pin doc) (doc, doc, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	var hash string
-	q.tx.QueryRow(q.ctx(), "SELECT content_hash FROM artifact WHERE id=$1", pin["artifact_id"]).Scan(&hash)
+	hash, _ := q.db().LabArtifactHash(q.ctx(), astr(pin["artifact_id"]))
 	if hash != pin["hash"] {
 		return nil, nil, fail(409, fmt.Sprintf("Example %v changed since it was pinned", pin["id"]))
 	}
@@ -1489,12 +1524,12 @@ func labSelectedEvidence(q *Request, trial doc) (doc, []labFile, error) {
 			item["api"] = doc{"connection": definition["connection"], "tool": definition["tool"], "arguments": step["arguments"], "mode": firstString(definition["mode"], "sync"), "output": definition["output"]}
 		}
 		if native := astr(step["executionId"]); native != "" {
-			row, err := first(q, "SELECT definitions FROM execution WHERE id=$1 AND project_id IS NOT DISTINCT FROM $2", native, trial["projectId"])
-			if err != nil {
+			pins, err := q.db().LabExecutionDefinitions(q.ctx(), db.LabExecutionDefinitionsParams{ID: native, ProjectID: strPtr(trial["projectId"])})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return nil, nil, err
 			}
-			if row != nil {
-				item["definitionPins"] = row["definitions"]
+			if err == nil {
+				item["definitionPins"] = labJSON(pins)
 			}
 		}
 		entries = append(entries, item)
@@ -1907,7 +1942,7 @@ func labRecord(q *Request, id string, checked map[string]doc) error {
 		return err
 	}
 	if strings.HasPrefix(astr(exp["stop_reason"]), "requester:") {
-		if err := exec(q, "UPDATE experiment SET stop_reason=NULL WHERE id=$1", id); err != nil {
+		if err := q.db().LabExperimentStopReasonClear(q.ctx(), id); err != nil {
 			return err
 		}
 	}
@@ -1956,7 +1991,7 @@ func labRecord(q *Request, id string, checked map[string]doc) error {
 		}
 	}
 	if changed || state != "running" {
-		if err := exec(q, "UPDATE experiment SET budgets=$2 WHERE id=$1", id, jsonBytes(budgets)); err != nil {
+		if err := q.db().LabExperimentBudgetsSet(q.ctx(), db.LabExperimentBudgetsSetParams{ID: id, Budgets: jsonBytes(budgets)}); err != nil {
 			return err
 		}
 		if _, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: strPtr(reason)}); err != nil {
@@ -2322,14 +2357,14 @@ func expRate(q *Request, b doc) (doc, error) {
 
 // labRating: outputs in the seeded order, labelled A, B, ...; never the variant.
 func labRating(q *Request, qid string) (doc, error) {
-	rs, err := queryRows(q, "SELECT * FROM question WHERE id=$1", qid)
+	row, err := q.db().LabRating(q.ctx(), qid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fail(404, "Unknown question")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) == 0 {
-		return nil, fail(404, "Unknown question")
-	}
-	r := rs[0]
+	r := doc{"id": row.ID, "kind": row.Kind, "options": labJSON(row.Options), "state": row.State, "answer": labOpt(row.Answer), "text": row.Text, "data": labJSON(row.Data)}
 	o := mapOf(r["options"])
 	var runs []doc
 	if eid := astr(o["experiment_id"]); eid != "" {
@@ -2357,14 +2392,14 @@ func labRating(q *Request, qid string) (doc, error) {
 		"state": r["state"], "answer": r["answer"], "text": r["text"], "items": items, "withdrawal": mapOf(r["data"])["withdrawal"]}, nil
 }
 
-func labRatings(q *Request, experimentID, state any) (doc, error) {
-	rs, err := queryRows(q, "SELECT id FROM question WHERE kind='rating' AND ($1::text IS NULL OR options->>'experiment_id'=$1) AND ($2::text IS NULL OR state::text=$2) ORDER BY seq", experimentID, state)
+func labRatings(q *Request, experimentID, state *string) (doc, error) {
+	rs, err := q.db().LabRatingIDs(q.ctx(), db.LabRatingIDsParams{ExperimentID: experimentID, State: state})
 	if err != nil {
 		return nil, err
 	}
 	out := []any{}
-	for _, r := range rs {
-		x, err := labRating(q, astr(r["id"]))
+	for _, id := range rs {
+		x, err := labRating(q, id)
 		if err != nil {
 			return nil, err
 		}
@@ -2415,7 +2450,7 @@ func labAnswerAfter(q *Request, question doc) error {
 		eid = astr(exp["id"])
 	case question["kind"] == "rating" && o["example_artifact_id"] != nil:
 		if v, _, err := parseRating("pass_fail", answer, nil); err == nil && v == true {
-			return exec(q, "UPDATE artifact SET approved_at=now() WHERE id=$1 AND role='example' AND approved_at IS NULL", o["example_artifact_id"])
+			return q.db().LabExampleApproveOpen(q.ctx(), astr(o["example_artifact_id"]))
 		}
 		return nil
 	case d["experimentId"] != nil && d["budget"] != nil:
@@ -2446,8 +2481,7 @@ func importDraft(q *Request, run doc, ex any) error {
 	}
 	st := mapOf(anys(res["examples"])[0])
 	aid := astr(st["artifactId"])
-	var n int
-	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE kind='rating' AND options->>'example_artifact_id'=$1", aid).Scan(&n); err != nil || n > 0 {
+	if n, err := q.db().LabExampleRatingCount(q.ctx(), aid); err != nil || n > 0 {
 		return err
 	}
 	got, err := labExampleGet(q, aid)
@@ -2481,32 +2515,27 @@ func expGet(q *Request, id string) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	stepRows, err := queryRows(q, `SELECT data->>'pipelineRunId' AS run,host_id,harness,harness_version,model FROM execution WHERE experiment_id=$1 AND data ? 'pipelineStepId' AND data ? 'agentConfig'`, id)
+	stepRows, err := q.db().LabStepAgents(q.ctx(), &id)
 	if err != nil {
 		return nil, err
 	}
-	credits, err := queryRows(q, `SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1)) AS run,count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,
-	 count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int AS unmeasured FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run' GROUP BY 1`, id)
+	credits, err := q.db().LabRunCredits(q.ctx(), &id)
 	if err != nil {
 		return nil, err
 	}
 	// Each trial's provider usage, priced per call (fleet-analytics.md: usage x the latest entry in force at the call).
-	usageRows, err := queryRows(q, `SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1)) AS run,
-	 coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool','') AS subject,t.connection_cost->>'unit' AS unit,
-	 coalesce(t.connection_cost->>'amount',t.connection_cost->>(t.connection_cost->>'unit'))::float8 AS amount,
-	 coalesce(to_timestamp((e.data->>'startedAt')::bigint/1000.0),e.started_at,now()) AS at
-	 FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run'`, id)
+	usageRows, err := q.db().LabRunUsage(q.ctx(), &id)
 	if err != nil {
 		return nil, err
 	}
 	costs := map[any][]usage{}
 	for _, u := range usageRows {
 		var amount *float64
-		if a, ok := numOK(u["amount"]); ok {
+		if u.HasAmount {
+			a := u.Amount
 			amount = &a
 		}
-		at, _ := u["at"].(time.Time)
-		costs[u["run"]] = append(costs[u["run"]], usage{astr(u["subject"]), astr(u["unit"]), amount, at})
+		costs[u.Run] = append(costs[u.Run], usage{u.Subject, u.Unit, amount, u.At.Time})
 	}
 	prices, err := priceEntries(q)
 	if err != nil {
@@ -2529,18 +2558,18 @@ func expGet(q *Request, id string) (doc, error) {
 	trialView := func(t doc) doc {
 		hosts, harnesses, models := []any{}, []any{}, []any{}
 		for _, r := range stepRows {
-			if r["run"] != t["id"] {
+			if r.Run == "" || r.Run != t["id"] {
 				continue
 			}
-			hosts, models = append(hosts, r["host_id"]), append(models, r["model"])
-			h := strings.TrimSpace(strings.Join([]string{astr(r["harness"]), astr(r["harness_version"])}, " "))
+			hosts, models = append(hosts, labOpt(r.HostID)), append(models, labOpt(r.Model))
+			h := strings.TrimSpace(strings.Join([]string{deref(r.Harness), deref(r.HarnessVersion)}, " "))
 			harnesses = append(harnesses, h)
 		}
 		spend := doc{"calls": 0, "credits": 0, "basis": "measured"}
 		for _, c := range credits {
-			if c["run"] == t["id"] {
-				spend["calls"], spend["credits"] = c["calls"], c["credits"]
-				if n, _ := numOK(c["unmeasured"]); n > 0 {
+			if c.Run != "" && c.Run == t["id"] {
+				spend["calls"], spend["credits"] = c.Calls, c.Credits
+				if c.Unmeasured > 0 {
 					spend["basis"] = "partial"
 				}
 			}
@@ -2635,9 +2664,13 @@ func expGet(q *Request, id string) (doc, error) {
 		scores = append(scores, sc)
 	}
 	out := expView(exp)
-	notes, err := queryRows(q, "SELECT id,kind,field,old,new,text,author,at FROM experiment_note WHERE experiment_id=$1 ORDER BY seq", id)
+	noteRows, err := q.db().LabNotes(q.ctx(), id)
 	if err != nil {
 		return nil, err
+	}
+	notes := []doc{}
+	for _, n := range noteRows {
+		notes = append(notes, doc{"id": n.ID, "kind": n.Kind, "field": labOpt(n.Field), "old": labJSON(n.Old), "new": labJSON(n.New), "text": n.Text, "author": n.Author, "at": n.At})
 	}
 	out["notes"] = notes
 	out["variants"], out["spend"], out["trials"], out["cells"], out["scores"], out["agreement"], out["judges"] = variants, s, tv, cells, scores, agreement(cur), judges
@@ -2691,46 +2724,37 @@ func labIDArg(s, what string) error {
 
 // scoreCorrect: a correction keeps the trials, evaluator and form; only a current score can be corrected.
 func scoreCorrect(q *Request, id string, b doc) (doc, error) {
-	rs, err := queryRows(q, "SELECT * FROM score WHERE id=$1", id)
+	old, err := q.db().LabScore(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fail(404, "Unknown score")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) == 0 {
-		return nil, fail(404, "Unknown score")
-	}
-	old := rs[0]
-	if old["form"] == "typed" {
+	if old.Form == "typed" {
 		return nil, fail(400, "A typed score follows from the trial's p, its bands and the label; correct the example or the bands instead")
 	}
-	if err := acquireTxLock(q, "experiment:"+astr(old["experiment_id"])); err != nil {
+	if err := acquireTxLock(q, "experiment:"+old.ExperimentID); err != nil {
 		return nil, err
 	}
-	var n int
-	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM score WHERE replaces_score_id=$1", id).Scan(&n); err != nil {
+	n, err := q.db().LabScoreReplacedCount(q.ctx(), &id)
+	if err != nil {
 		return nil, err
 	}
 	if n > 0 {
 		return nil, fail(409, "Score already corrected")
 	}
-	trials := []any{}
-	switch t := old["trial_ids"].(type) {
-	case []any:
-		trials = t
-	case []string:
-		for _, x := range t {
-			trials = append(trials, x)
-		}
-	}
-	nid, err := scoreAdd(q, doc{"experimentId": old["experiment_id"], "projectId": old["project_id"], "trialIds": trials, "evaluator": old["evaluator"], "evaluatorVersion": old["evaluator_version"],
-		"form": old["form"], "value": b["value"], "questionId": old["question_id"], "sourceExecutionId": old["source_execution_id"], "rationale": b["rationale"], "replaces": id})
+	nid, err := scoreInsert(q, labNewScore{ExperimentID: old.ExperimentID, ProjectID: old.ProjectID, TrialIDs: append([]string{}, old.TrialIds...), Evaluator: old.Evaluator,
+		EvaluatorVersion: old.EvaluatorVersion, Form: old.Form, Value: b["value"], QuestionID: old.QuestionID, SourceExecutionID: old.SourceExecutionID,
+		Rationale: strp(b, "rationale"), Replaces: &id})
 	if err != nil {
 		return nil, err
 	}
-	rs, err = queryRows(q, "SELECT * FROM score WHERE id=$1", nid)
+	r, err := q.db().LabScore(q.ctx(), nid)
 	if err != nil {
 		return nil, err
 	}
-	return scoreView(rs[0]), nil
+	return scoreView(r), nil
 }
 
 func init() {
@@ -2765,10 +2789,10 @@ func init() {
 		return replyAs[contract.LabExperimentDecideReply](expDecide(q, docOf(r)))
 	})
 	op("lab_experiments_list", func(q *Request, _ *contract.LabExperimentsListRequest) (contract.LabExperimentsListReply, error) {
-		rs, err := queryRows(q, "SELECT * FROM experiment ORDER BY seq DESC")
+		rs, err := q.db().LabExperiments(q.ctx())
 		out := []any{}
 		for _, r := range rs {
-			out = append(out, expView(r))
+			out = append(out, expView(expDoc(r)))
 		}
 		return replyAs[contract.LabExperimentsListReply](doc{"experiments": out}, err)
 	})
@@ -2812,7 +2836,7 @@ func init() {
 		return replyAs[contract.LabRatingWithdrawReply](labRatingWithdraw(q, r.QuestionId, r.Reason))
 	})
 	op("lab_ratings_list", func(q *Request, r *contract.LabRatingsListRequest) (contract.LabRatingsListReply, error) {
-		return replyAs[contract.LabRatingsListReply](labRatings(q, optText(r.ExperimentId), optText(r.State)))
+		return replyAs[contract.LabRatingsListReply](labRatings(q, r.ExperimentId, r.State))
 	})
 	op("lab_rating_get", func(q *Request, r *contract.LabRatingGetRequest) (contract.LabRatingGetReply, error) {
 		if err := labIDArg(r.QuestionId, "questionId"); err != nil {
@@ -3048,17 +3072,17 @@ func labRatingWithdraw(q *Request, id, reason string) (doc, error) {
 		return nil, fail(400, "Withdrawal reason is empty")
 	}
 
-	row, err := first(q, "SELECT * FROM question WHERE id=$1 AND kind='rating' FOR UPDATE", id)
+	state, err := q.db().LabRatingLockState(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fail(404, "Unknown Lab rating")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if row == nil {
-		return nil, fail(404, "Unknown Lab rating")
-	}
-	if row["state"] == "answered" {
+	if state == "answered" {
 		return nil, fail(409, "Rating already answered")
 	}
-	if row["state"] == "open" {
+	if state == "open" {
 		withdrawal := doc{"reason": reason, "actor": actor(q, "operator"), "at": nowMs()}
 		if _, err := questionTransition(q, id, questionEvent{To: "withdrawn", Withdrawal: jsonBytes(withdrawal)}); err != nil {
 			return nil, err
@@ -3070,19 +3094,18 @@ func labRatingWithdraw(q *Request, id, reason string) (doc, error) {
 // Lock the experiment row FOR SHARE before person/person_grant FOR SHARE, matching setPeople's table lock order
 // (experiment -> person) without acquiring GLOBAL after experiment:<id>.
 func labRequester(q *Request, id string) (*Person, error) {
-	rs, err := queryRows(q, "SELECT * FROM experiment WHERE id=$1 FOR SHARE", id)
+	exp, err := q.db().LabExperimentForShare(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fail(404, "Unknown experiment")
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) == 0 {
-		return nil, fail(404, "Unknown experiment")
-	}
-	exp := rs[0]
-	email := astr(exp["requested_by"])
+	email := deref(exp.RequestedBy)
 	if email == "" {
 		return nil, failCode(409, "Lab requester is unknown; retained history cannot authorize new work", "requester:unknown")
 	}
-	if exp["requester_removed_at"] != nil {
+	if exp.RequesterRemovedAt != nil {
 		return nil, failCode(409, "Lab requester was removed; this experiment cannot transfer identity", "requester:removed")
 	}
 	p, err := unscoped(q, func() (*Person, error) { return resolveAccessShareTx(q.ctx(), q.tx, email) })
@@ -3093,7 +3116,7 @@ func labRequester(q *Request, id string) (*Person, error) {
 		}
 		return nil, err
 	}
-	if (!fullAccess(p) && !hasRole(p, "architect")) || !mayAccessProjectID(p, astr(exp["project_id"])) {
+	if (!fullAccess(p) && !hasRole(p, "architect")) || !mayAccessProjectID(p, exp.ProjectID) {
 		return nil, failCode(403, "Lab requester lacks current role or project access", "requester:access-revoked")
 	}
 	return p, nil

@@ -7,6 +7,9 @@ package db
 
 import (
 	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const labApprovedExamples = `-- name: LabApprovedExamples :many
@@ -34,6 +37,566 @@ func (q *Queries) LabApprovedExamples(ctx context.Context, projectID *string) ([
 	return items, nil
 }
 
+const labArtifactCopyVerified = `-- name: LabArtifactCopyVerified :exec
+INSERT INTO artifact_copy(artifact_id,store_id,project_id,state,verified_at) VALUES($1,$2,$3,'verified',now())
+`
+
+type LabArtifactCopyVerifiedParams struct {
+	ArtifactID string
+	StoreID    string
+	ProjectID  *string
+}
+
+// The verified copy of an object a Lab artifact was just written to.
+func (q *Queries) LabArtifactCopyVerified(ctx context.Context, arg LabArtifactCopyVerifiedParams) error {
+	_, err := q.db.Exec(ctx, labArtifactCopyVerified, arg.ArtifactID, arg.StoreID, arg.ProjectID)
+	return err
+}
+
+const labArtifactHash = `-- name: LabArtifactHash :one
+SELECT content_hash FROM artifact WHERE id=$1
+`
+
+func (q *Queries) LabArtifactHash(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, labArtifactHash, id)
+	var content_hash string
+	err := row.Scan(&content_hash)
+	return content_hash, err
+}
+
+const labExample = `-- name: LabExample :one
+SELECT id,approved_at,project_id,content_hash FROM artifact WHERE id=$1 AND role='example'
+`
+
+type LabExampleRow struct {
+	ID          string
+	ApprovedAt  *time.Time
+	ProjectID   *string
+	ContentHash string
+}
+
+func (q *Queries) LabExample(ctx context.Context, id string) (LabExampleRow, error) {
+	row := q.db.QueryRow(ctx, labExample, id)
+	var i LabExampleRow
+	err := row.Scan(
+		&i.ID,
+		&i.ApprovedAt,
+		&i.ProjectID,
+		&i.ContentHash,
+	)
+	return i, err
+}
+
+const labExampleApprove = `-- name: LabExampleApprove :exec
+UPDATE artifact SET approved_at=now() WHERE id=$1
+`
+
+func (q *Queries) LabExampleApprove(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, labExampleApprove, id)
+	return err
+}
+
+const labExampleApproveOpen = `-- name: LabExampleApproveOpen :exec
+UPDATE artifact SET approved_at=now() WHERE id=$1 AND role='example' AND approved_at IS NULL
+`
+
+// An example a rating approved, unless it is approved already.
+func (q *Queries) LabExampleApproveOpen(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, labExampleApproveOpen, id)
+	return err
+}
+
+const labExampleByName = `-- name: LabExampleByName :one
+SELECT id,content_hash,approved_at FROM artifact WHERE role='example' AND state<>'deleted' AND name=$1 AND coalesce(project_id,'')=$2::text
+`
+
+type LabExampleByNameParams struct {
+	Name    string
+	Project string
+}
+
+type LabExampleByNameRow struct {
+	ID          string
+	ContentHash string
+	ApprovedAt  *time.Time
+}
+
+// A live example of the project (or of no project) by name (lab.go labExamplesAdd).
+func (q *Queries) LabExampleByName(ctx context.Context, arg LabExampleByNameParams) (LabExampleByNameRow, error) {
+	row := q.db.QueryRow(ctx, labExampleByName, arg.Name, arg.Project)
+	var i LabExampleByNameRow
+	err := row.Scan(&i.ID, &i.ContentHash, &i.ApprovedAt)
+	return i, err
+}
+
+const labExampleFileCount = `-- name: LabExampleFileCount :one
+SELECT count(*)::int FROM artifact WHERE role='example-file' AND scope='lab' AND state='stored' AND content_hash=$1
+  AND coalesce(project_id,'')=$2::text
+`
+
+type LabExampleFileCountParams struct {
+	ContentHash string
+	Project     string
+}
+
+func (q *Queries) LabExampleFileCount(ctx context.Context, arg LabExampleFileCountParams) (int32, error) {
+	row := q.db.QueryRow(ctx, labExampleFileCount, arg.ContentHash, arg.Project)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const labExampleFileFind = `-- name: LabExampleFileFind :one
+SELECT id FROM artifact WHERE role='example-file' AND scope='lab' AND state='stored' AND content_hash=$1
+  AND coalesce(project_id,'') IN ('', $2::text) ORDER BY created_at LIMIT 1
+`
+
+type LabExampleFileFindParams struct {
+	ContentHash string
+	Project     string
+}
+
+// A stored example file by content, of the project or of no project, oldest first (lab.go exampleFileBytes).
+func (q *Queries) LabExampleFileFind(ctx context.Context, arg LabExampleFileFindParams) (string, error) {
+	row := q.db.QueryRow(ctx, labExampleFileFind, arg.ContentHash, arg.Project)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const labExampleFileInsert = `-- name: LabExampleFileInsert :exec
+INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state)
+VALUES($1,$2,'lab',$3,$4,$5,$6,'example-file','stored')
+`
+
+type LabExampleFileInsertParams struct {
+	ID          string
+	ProjectID   *string
+	ContentHash string
+	Size        int64
+	MediaType   string
+	Name        string
+}
+
+func (q *Queries) LabExampleFileInsert(ctx context.Context, arg LabExampleFileInsertParams) error {
+	_, err := q.db.Exec(ctx, labExampleFileInsert,
+		arg.ID,
+		arg.ProjectID,
+		arg.ContentHash,
+		arg.Size,
+		arg.MediaType,
+		arg.Name,
+	)
+	return err
+}
+
+const labExampleInsert = `-- name: LabExampleInsert :many
+INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,role,state,approved_at)
+VALUES($1,$2,'lab',$3,$4,'application/json',$5,'example','stored',$6)
+ON CONFLICT (coalesce(project_id,''),name) WHERE role='example' AND state<>'deleted' DO NOTHING RETURNING id
+`
+
+type LabExampleInsertParams struct {
+	ID          string
+	ProjectID   *string
+	ContentHash string
+	Size        int64
+	Name        string
+	ApprovedAt  *time.Time
+}
+
+// A new example; nothing when one of that name exists meanwhile.
+func (q *Queries) LabExampleInsert(ctx context.Context, arg LabExampleInsertParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, labExampleInsert,
+		arg.ID,
+		arg.ProjectID,
+		arg.ContentHash,
+		arg.Size,
+		arg.Name,
+		arg.ApprovedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labExampleRatingCount = `-- name: LabExampleRatingCount :one
+SELECT count(*)::int FROM question WHERE kind='rating' AND options->>'example_artifact_id'=$1::text
+`
+
+func (q *Queries) LabExampleRatingCount(ctx context.Context, artifactID string) (int32, error) {
+	row := q.db.QueryRow(ctx, labExampleRatingCount, artifactID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const labExamplesList = `-- name: LabExamplesList :many
+SELECT id,project_id,name,content_hash,approved_at,created_at FROM artifact WHERE role='example' AND state='stored'
+  AND ($1::boolean IS NULL OR (approved_at IS NOT NULL)=$1::boolean) ORDER BY name
+`
+
+type LabExamplesListRow struct {
+	ID          string
+	ProjectID   *string
+	Name        string
+	ContentHash string
+	ApprovedAt  *time.Time
+	CreatedAt   time.Time
+}
+
+// The stored examples by name; approved true or false narrows them (lab.go labExamplesList).
+func (q *Queries) LabExamplesList(ctx context.Context, approved *bool) ([]LabExamplesListRow, error) {
+	rows, err := q.db.Query(ctx, labExamplesList, approved)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabExamplesListRow
+	for rows.Next() {
+		var i LabExamplesListRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.ContentHash,
+			&i.ApprovedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labExecutionDefinitions = `-- name: LabExecutionDefinitions :one
+SELECT definitions FROM execution WHERE id=$1 AND project_id IS NOT DISTINCT FROM $2
+`
+
+type LabExecutionDefinitionsParams struct {
+	ID        string
+	ProjectID *string
+}
+
+// A step execution's definition pins, in the trial's project (lab.go labSelectedEvidence).
+func (q *Queries) LabExecutionDefinitions(ctx context.Context, arg LabExecutionDefinitionsParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, labExecutionDefinitions, arg.ID, arg.ProjectID)
+	var definitions []byte
+	err := row.Scan(&definitions)
+	return definitions, err
+}
+
+const labExperiment = `-- name: LabExperiment :one
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment WHERE id=$1
+`
+
+func (q *Queries) LabExperiment(ctx context.Context, id string) (Experiment, error) {
+	row := q.db.QueryRow(ctx, labExperiment, id)
+	var i Experiment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.PipelineID,
+		&i.Examples,
+		&i.Variants,
+		&i.Repeats,
+		&i.Evaluators,
+		&i.PrimaryEvaluator,
+		&i.Strategy,
+		&i.Budgets,
+		&i.State,
+		&i.StopReason,
+		&i.CreatedAt,
+		&i.Seq,
+		&i.Goal,
+		&i.Hypothesis,
+		&i.DecisionRule,
+		&i.LabGroup,
+		&i.Decision,
+		&i.DecisionReason,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.LaunchedAt,
+		&i.RequestedBy,
+		&i.RequesterRemovedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const labExperimentBudgetsSet = `-- name: LabExperimentBudgetsSet :exec
+UPDATE experiment SET budgets=$1::jsonb WHERE id=$2
+`
+
+type LabExperimentBudgetsSetParams struct {
+	Budgets []byte
+	ID      string
+}
+
+func (q *Queries) LabExperimentBudgetsSet(ctx context.Context, arg LabExperimentBudgetsSetParams) error {
+	_, err := q.db.Exec(ctx, labExperimentBudgetsSet, arg.Budgets, arg.ID)
+	return err
+}
+
+const labExperimentDecide = `-- name: LabExperimentDecide :exec
+UPDATE experiment SET decision=$1,decision_reason=$2,decided_by=$3,decided_at=now() WHERE id=$4
+`
+
+type LabExperimentDecideParams struct {
+	Decision       *string
+	DecisionReason *string
+	DecidedBy      *string
+	ID             string
+}
+
+func (q *Queries) LabExperimentDecide(ctx context.Context, arg LabExperimentDecideParams) error {
+	_, err := q.db.Exec(ctx, labExperimentDecide,
+		arg.Decision,
+		arg.DecisionReason,
+		arg.DecidedBy,
+		arg.ID,
+	)
+	return err
+}
+
+const labExperimentForShare = `-- name: LabExperimentForShare :one
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment WHERE id=$1 FOR SHARE
+`
+
+// The experiment row, shared-locked before its requester's person rows (lab.go labRequester).
+func (q *Queries) LabExperimentForShare(ctx context.Context, id string) (Experiment, error) {
+	row := q.db.QueryRow(ctx, labExperimentForShare, id)
+	var i Experiment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.PipelineID,
+		&i.Examples,
+		&i.Variants,
+		&i.Repeats,
+		&i.Evaluators,
+		&i.PrimaryEvaluator,
+		&i.Strategy,
+		&i.Budgets,
+		&i.State,
+		&i.StopReason,
+		&i.CreatedAt,
+		&i.Seq,
+		&i.Goal,
+		&i.Hypothesis,
+		&i.DecisionRule,
+		&i.LabGroup,
+		&i.Decision,
+		&i.DecisionReason,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.LaunchedAt,
+		&i.RequestedBy,
+		&i.RequesterRemovedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const labExperimentForUpdate = `-- name: LabExperimentForUpdate :one
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment WHERE id=$1 FOR UPDATE
+`
+
+// The experiment row, locked for this transaction (a record change reads and writes it once).
+func (q *Queries) LabExperimentForUpdate(ctx context.Context, id string) (Experiment, error) {
+	row := q.db.QueryRow(ctx, labExperimentForUpdate, id)
+	var i Experiment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.PipelineID,
+		&i.Examples,
+		&i.Variants,
+		&i.Repeats,
+		&i.Evaluators,
+		&i.PrimaryEvaluator,
+		&i.Strategy,
+		&i.Budgets,
+		&i.State,
+		&i.StopReason,
+		&i.CreatedAt,
+		&i.Seq,
+		&i.Goal,
+		&i.Hypothesis,
+		&i.DecisionRule,
+		&i.LabGroup,
+		&i.Decision,
+		&i.DecisionReason,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.LaunchedAt,
+		&i.RequestedBy,
+		&i.RequesterRemovedAt,
+		&i.TombstonedAt,
+	)
+	return i, err
+}
+
+const labExperimentInsert = `-- name: LabExperimentInsert :exec
+INSERT INTO experiment(id,project_id,kind,pipeline_id,examples,variants,repeats,evaluators,primary_evaluator,budgets,goal,hypothesis,decision_rule,lab_group,strategy,requested_by)
+VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8::jsonb,
+  $9,$10::jsonb,$11,$12,$13,$14,$15::jsonb,$16)
+`
+
+type LabExperimentInsertParams struct {
+	ID               string
+	ProjectID        string
+	Kind             string
+	PipelineID       string
+	Examples         []byte
+	Variants         []byte
+	Repeats          int32
+	Evaluators       []byte
+	PrimaryEvaluator *string
+	Budgets          []byte
+	Goal             *string
+	Hypothesis       *string
+	DecisionRule     *string
+	LabGroup         *string
+	Strategy         []byte
+	RequestedBy      *string
+}
+
+func (q *Queries) LabExperimentInsert(ctx context.Context, arg LabExperimentInsertParams) error {
+	_, err := q.db.Exec(ctx, labExperimentInsert,
+		arg.ID,
+		arg.ProjectID,
+		arg.Kind,
+		arg.PipelineID,
+		arg.Examples,
+		arg.Variants,
+		arg.Repeats,
+		arg.Evaluators,
+		arg.PrimaryEvaluator,
+		arg.Budgets,
+		arg.Goal,
+		arg.Hypothesis,
+		arg.DecisionRule,
+		arg.LabGroup,
+		arg.Strategy,
+		arg.RequestedBy,
+	)
+	return err
+}
+
+const labExperimentRecordSet = `-- name: LabExperimentRecordSet :exec
+UPDATE experiment SET
+  goal=CASE WHEN $1::text='goal' THEN $2::text ELSE goal END,
+  hypothesis=CASE WHEN $1::text='hypothesis' THEN $2::text ELSE hypothesis END,
+  decision_rule=CASE WHEN $1::text='decision_rule' THEN $2::text ELSE decision_rule END,
+  lab_group=CASE WHEN $1::text='lab_group' THEN $2::text ELSE lab_group END,
+  primary_evaluator=CASE WHEN $1::text='primary_evaluator' THEN $2::text ELSE primary_evaluator END
+WHERE id=$3
+`
+
+type LabExperimentRecordSetParams struct {
+	Field string
+	Value *string
+	ID    string
+}
+
+// One record field of an experiment (an amendment; field is the column name).
+func (q *Queries) LabExperimentRecordSet(ctx context.Context, arg LabExperimentRecordSetParams) error {
+	_, err := q.db.Exec(ctx, labExperimentRecordSet, arg.Field, arg.Value, arg.ID)
+	return err
+}
+
+const labExperimentStopReasonClear = `-- name: LabExperimentStopReasonClear :exec
+UPDATE experiment SET stop_reason=NULL WHERE id=$1
+`
+
+func (q *Queries) LabExperimentStopReasonClear(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, labExperimentStopReasonClear, id)
+	return err
+}
+
+const labExperimentTouch = `-- name: LabExperimentTouch :exec
+UPDATE experiment SET id=id WHERE id=$1
+`
+
+// A note changes the experiment as its readers see it: the row's change reaches the feed.
+func (q *Queries) LabExperimentTouch(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, labExperimentTouch, id)
+	return err
+}
+
+const labExperiments = `-- name: LabExperiments :many
+SELECT id, project_id, kind, pipeline_id, examples, variants, repeats, evaluators, primary_evaluator, strategy, budgets, state, stop_reason, created_at, seq, goal, hypothesis, decision_rule, lab_group, decision, decision_reason, decided_by, decided_at, launched_at, requested_by, requester_removed_at, tombstoned_at FROM experiment ORDER BY seq DESC
+`
+
+func (q *Queries) LabExperiments(ctx context.Context) ([]Experiment, error) {
+	rows, err := q.db.Query(ctx, labExperiments)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Experiment
+	for rows.Next() {
+		var i Experiment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Kind,
+			&i.PipelineID,
+			&i.Examples,
+			&i.Variants,
+			&i.Repeats,
+			&i.Evaluators,
+			&i.PrimaryEvaluator,
+			&i.Strategy,
+			&i.Budgets,
+			&i.State,
+			&i.StopReason,
+			&i.CreatedAt,
+			&i.Seq,
+			&i.Goal,
+			&i.Hypothesis,
+			&i.DecisionRule,
+			&i.LabGroup,
+			&i.Decision,
+			&i.DecisionReason,
+			&i.DecidedBy,
+			&i.DecidedAt,
+			&i.LaunchedAt,
+			&i.RequestedBy,
+			&i.RequesterRemovedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const labHostJobInProject = `-- name: LabHostJobInProject :one
 SELECT EXISTS(SELECT 1 FROM execution WHERE id=$1 AND project_id=$2 AND kind='host_job')::boolean AS owned
 `
@@ -48,6 +611,312 @@ func (q *Queries) LabHostJobInProject(ctx context.Context, arg LabHostJobInProje
 	var owned bool
 	err := row.Scan(&owned)
 	return owned, err
+}
+
+const labNoteInsert = `-- name: LabNoteInsert :exec
+INSERT INTO experiment_note(id,experiment_id,project_id,kind,field,old,new,text,author)
+VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)
+`
+
+type LabNoteInsertParams struct {
+	ID           string
+	ExperimentID string
+	ProjectID    string
+	Kind         string
+	Field        *string
+	Old          []byte
+	New          []byte
+	Text         string
+	Author       string
+}
+
+func (q *Queries) LabNoteInsert(ctx context.Context, arg LabNoteInsertParams) error {
+	_, err := q.db.Exec(ctx, labNoteInsert,
+		arg.ID,
+		arg.ExperimentID,
+		arg.ProjectID,
+		arg.Kind,
+		arg.Field,
+		arg.Old,
+		arg.New,
+		arg.Text,
+		arg.Author,
+	)
+	return err
+}
+
+const labNotes = `-- name: LabNotes :many
+SELECT id,kind,field,old,new,text,author,at FROM experiment_note WHERE experiment_id=$1 ORDER BY seq
+`
+
+type LabNotesRow struct {
+	ID     string
+	Kind   string
+	Field  *string
+	Old    []byte
+	New    []byte
+	Text   string
+	Author string
+	At     time.Time
+}
+
+func (q *Queries) LabNotes(ctx context.Context, experimentID string) ([]LabNotesRow, error) {
+	rows, err := q.db.Query(ctx, labNotes, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabNotesRow
+	for rows.Next() {
+		var i LabNotesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Field,
+			&i.Old,
+			&i.New,
+			&i.Text,
+			&i.Author,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labPurgedCount = `-- name: LabPurgedCount :one
+SELECT count(*)::int FROM purged_hash WHERE project_id=$1 AND scope='lab' AND content_hash=$2
+`
+
+type LabPurgedCountParams struct {
+	ProjectID   string
+	ContentHash string
+}
+
+func (q *Queries) LabPurgedCount(ctx context.Context, arg LabPurgedCountParams) (int32, error) {
+	row := q.db.QueryRow(ctx, labPurgedCount, arg.ProjectID, arg.ContentHash)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const labRating = `-- name: LabRating :one
+SELECT id,kind::text AS kind,options,state::text AS state,answer,text,data FROM question WHERE id=$1
+`
+
+type LabRatingRow struct {
+	ID      string
+	Kind    string
+	Options []byte
+	State   string
+	Answer  *string
+	Text    string
+	Data    []byte
+}
+
+func (q *Queries) LabRating(ctx context.Context, id string) (LabRatingRow, error) {
+	row := q.db.QueryRow(ctx, labRating, id)
+	var i LabRatingRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Options,
+		&i.State,
+		&i.Answer,
+		&i.Text,
+		&i.Data,
+	)
+	return i, err
+}
+
+const labRatingIDs = `-- name: LabRatingIDs :many
+SELECT id FROM question WHERE kind='rating' AND ($1::text IS NULL OR options->>'experiment_id'=$1::text)
+  AND ($2::text IS NULL OR state::text=$2::text) ORDER BY seq
+`
+
+type LabRatingIDsParams struct {
+	ExperimentID *string
+	State        *string
+}
+
+func (q *Queries) LabRatingIDs(ctx context.Context, arg LabRatingIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, labRatingIDs, arg.ExperimentID, arg.State)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labRatingLockState = `-- name: LabRatingLockState :one
+SELECT state::text AS state FROM question WHERE id=$1 AND kind='rating' FOR UPDATE
+`
+
+func (q *Queries) LabRatingLockState(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, labRatingLockState, id)
+	var state string
+	err := row.Scan(&state)
+	return state, err
+}
+
+const labRunCredits = `-- name: LabRunCredits :many
+SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1),'')::text AS run,count(*)::int AS calls,
+  coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,
+  count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int AS unmeasured
+FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run' GROUP BY 1
+`
+
+type LabRunCreditsRow struct {
+	Run        string
+	Calls      int32
+	Credits    float64
+	Unmeasured int32
+}
+
+func (q *Queries) LabRunCredits(ctx context.Context, experimentID *string) ([]LabRunCreditsRow, error) {
+	rows, err := q.db.Query(ctx, labRunCredits, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabRunCreditsRow
+	for rows.Next() {
+		var i LabRunCreditsRow
+		if err := rows.Scan(
+			&i.Run,
+			&i.Calls,
+			&i.Credits,
+			&i.Unmeasured,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labRunIDs = `-- name: LabRunIDs :many
+SELECT id,variant,problem FROM execution WHERE experiment_id=$1 AND kind='pipeline_run' AND data ? 'pipelineId' ORDER BY seq
+`
+
+type LabRunIDsRow struct {
+	ID      string
+	Variant *string
+	Problem *string
+}
+
+// An experiment's pipeline runs in order (lab.go expRuns; pipelines.go runRows).
+func (q *Queries) LabRunIDs(ctx context.Context, experimentID *string) ([]LabRunIDsRow, error) {
+	rows, err := q.db.Query(ctx, labRunIDs, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabRunIDsRow
+	for rows.Next() {
+		var i LabRunIDsRow
+		if err := rows.Scan(&i.ID, &i.Variant, &i.Problem); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labRunUsage = `-- name: LabRunUsage :many
+SELECT coalesce(e.data->>'pipelineRunId',split_part(e.parent_execution_id,':step:',1),'')::text AS run,
+  (coalesce(e.data->>'connection','')||'/'||coalesce(e.data->>'tool',''))::text AS subject,coalesce(t.connection_cost->>'unit','')::text AS unit,
+  (coalesce(t.connection_cost->>'amount',t.connection_cost->>(t.connection_cost->>'unit')) IS NOT NULL)::boolean AS has_amount,
+  coalesce(coalesce(t.connection_cost->>'amount',t.connection_cost->>(t.connection_cost->>'unit'))::float8,0)::float8 AS amount,
+  coalesce(to_timestamp((e.data->>'startedAt')::bigint/1000.0),e.started_at,now())::timestamptz AS at
+FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run'
+`
+
+type LabRunUsageRow struct {
+	Run       string
+	Subject   string
+	Unit      string
+	HasAmount bool
+	Amount    float64
+	At        pgtype.Timestamptz
+}
+
+// Each tool call's provider usage, by run (fleet-analytics.md: usage x the latest price entry in force at the call); a call
+// without a run has run ”.
+func (q *Queries) LabRunUsage(ctx context.Context, experimentID *string) ([]LabRunUsageRow, error) {
+	rows, err := q.db.Query(ctx, labRunUsage, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabRunUsageRow
+	for rows.Next() {
+		var i LabRunUsageRow
+		if err := rows.Scan(
+			&i.Run,
+			&i.Subject,
+			&i.Unit,
+			&i.HasAmount,
+			&i.Amount,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labScore = `-- name: LabScore :one
+SELECT id, experiment_id, project_id, trial_ids, evaluator, evaluator_version, form, value, source_execution_id, question_id, rationale, replaces_score_id, created_at, seq, tombstoned_at FROM score WHERE id=$1
+`
+
+func (q *Queries) LabScore(ctx context.Context, id string) (Score, error) {
+	row := q.db.QueryRow(ctx, labScore, id)
+	var i Score
+	err := row.Scan(
+		&i.ID,
+		&i.ExperimentID,
+		&i.ProjectID,
+		&i.TrialIds,
+		&i.Evaluator,
+		&i.EvaluatorVersion,
+		&i.Form,
+		&i.Value,
+		&i.SourceExecutionID,
+		&i.QuestionID,
+		&i.Rationale,
+		&i.ReplacesScoreID,
+		&i.CreatedAt,
+		&i.Seq,
+		&i.TombstonedAt,
+	)
+	return i, err
 }
 
 const labScoreInsert = `-- name: LabScoreInsert :exec
@@ -90,6 +959,98 @@ func (q *Queries) LabScoreInsert(ctx context.Context, arg LabScoreInsertParams) 
 	return err
 }
 
+const labScoreReplacedCount = `-- name: LabScoreReplacedCount :one
+SELECT count(*)::int FROM score WHERE replaces_score_id=$1
+`
+
+func (q *Queries) LabScoreReplacedCount(ctx context.Context, id *string) (int32, error) {
+	row := q.db.QueryRow(ctx, labScoreReplacedCount, id)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const labScoresCurrent = `-- name: LabScoresCurrent :many
+SELECT id, experiment_id, project_id, trial_ids, evaluator, evaluator_version, form, value, source_execution_id, question_id, rationale, replaces_score_id, created_at, seq, tombstoned_at FROM score s WHERE s.experiment_id=$1 AND NOT EXISTS (SELECT 1 FROM score r WHERE r.replaces_score_id=s.id) ORDER BY seq
+`
+
+// An experiment's scores no correction replaced, in order (lab.go scoresCurrent).
+func (q *Queries) LabScoresCurrent(ctx context.Context, experimentID string) ([]Score, error) {
+	rows, err := q.db.Query(ctx, labScoresCurrent, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Score
+	for rows.Next() {
+		var i Score
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExperimentID,
+			&i.ProjectID,
+			&i.TrialIds,
+			&i.Evaluator,
+			&i.EvaluatorVersion,
+			&i.Form,
+			&i.Value,
+			&i.SourceExecutionID,
+			&i.QuestionID,
+			&i.Rationale,
+			&i.ReplacesScoreID,
+			&i.CreatedAt,
+			&i.Seq,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const labStepAgents = `-- name: LabStepAgents :many
+SELECT coalesce(data->>'pipelineRunId','')::text AS run,host_id,harness,harness_version,model FROM execution
+WHERE experiment_id=$1 AND data ? 'pipelineStepId' AND data ? 'agentConfig'
+`
+
+type LabStepAgentsRow struct {
+	Run            string
+	HostID         *string
+	Harness        *string
+	HarnessVersion *string
+	Model          *string
+}
+
+// The agent steps of an experiment's runs (lab.go expGet).
+func (q *Queries) LabStepAgents(ctx context.Context, experimentID *string) ([]LabStepAgentsRow, error) {
+	rows, err := q.db.Query(ctx, labStepAgents, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LabStepAgentsRow
+	for rows.Next() {
+		var i LabStepAgentsRow
+		if err := rows.Scan(
+			&i.Run,
+			&i.HostID,
+			&i.Harness,
+			&i.HarnessVersion,
+			&i.Model,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const labSuffixRuns = `-- name: LabSuffixRuns :many
 SELECT (data || jsonb_build_object('id',id,'experimentId',experiment_id,'kind',kind))::jsonb AS record FROM execution WHERE request_id=$1
 `
@@ -115,6 +1076,25 @@ func (q *Queries) LabSuffixRuns(ctx context.Context, requestID *string) ([][]byt
 	return items, nil
 }
 
+const labToolSpend = `-- name: LabToolSpend :one
+SELECT count(*)::int AS calls,coalesce(sum((t.connection_cost->>'credits')::numeric),0)::float8 AS credits,
+  count(*) FILTER (WHERE t.connection_cost_basis IS DISTINCT FROM 'measured')::int AS unmeasured
+FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.experiment_id=$1 AND e.kind='tool_run'
+`
+
+type LabToolSpendRow struct {
+	Calls      int32
+	Credits    float64
+	Unmeasured int32
+}
+
+func (q *Queries) LabToolSpend(ctx context.Context, experimentID *string) (LabToolSpendRow, error) {
+	row := q.db.QueryRow(ctx, labToolSpend, experimentID)
+	var i LabToolSpendRow
+	err := row.Scan(&i.Calls, &i.Credits, &i.Unmeasured)
+	return i, err
+}
+
 const labTrialAssessmentsSet = `-- name: LabTrialAssessmentsSet :exec
 
 UPDATE execution SET data=jsonb_set(data,'{projectAssessments}',$1::jsonb) WHERE id=$2
@@ -130,6 +1110,25 @@ type LabTrialAssessmentsSetParams struct {
 func (q *Queries) LabTrialAssessmentsSet(ctx context.Context, arg LabTrialAssessmentsSetParams) error {
 	_, err := q.db.Exec(ctx, labTrialAssessmentsSet, arg.Assessments, arg.ID)
 	return err
+}
+
+const labTrialSpend = `-- name: LabTrialSpend :one
+SELECT count(*) FILTER (WHERE variant IS NOT NULL)::int AS trials,
+  coalesce(sum(extract(epoch FROM coalesce(ended_at,now())-started_at)*1000) FILTER (WHERE started_at IS NOT NULL),0)::float8 AS wall_ms
+FROM execution WHERE experiment_id=$1 AND kind='pipeline_run'
+`
+
+type LabTrialSpendRow struct {
+	Trials int32
+	WallMs float64
+}
+
+// An experiment's trial runs and their wall time so far (lab.go expSpend).
+func (q *Queries) LabTrialSpend(ctx context.Context, experimentID *string) (LabTrialSpendRow, error) {
+	row := q.db.QueryRow(ctx, labTrialSpend, experimentID)
+	var i LabTrialSpendRow
+	err := row.Scan(&i.Trials, &i.WallMs)
+	return i, err
 }
 
 const labVariantsSet = `-- name: LabVariantsSet :exec
