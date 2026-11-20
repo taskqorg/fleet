@@ -138,8 +138,8 @@ func fill(rv reflect.Value, src any) {
 	}
 }
 
-// rawStr: an open field's string, and whether it is one (jIsStr).
-func rawStr(j jsonValue) (string, bool) {
+// valStr: an open field's string, and whether it is one (jIsStr).
+func valStr(j jsonValue) (string, bool) {
 	s, ok := j.V.(string)
 	return s, ok
 }
@@ -169,7 +169,7 @@ type rpcFrame struct {
 // request: a native request to Fleet (it carries both id and method).
 func (f rpcFrame) request() bool { return f.ID.Set && f.Method.Set }
 
-func (f rpcFrame) method() string { s, _ := rawStr(f.Method); return s }
+func (f rpcFrame) method() string { s, _ := valStr(f.Method); return s }
 
 func (f rpcFrame) isID(n float64) bool { x, ok := num(f.ID.V); return ok && x == n }
 
@@ -216,9 +216,9 @@ type harnessEvent struct {
 }
 
 // kind: the event's type when it is a string, else "".
-func (e harnessEvent) kind() string { s, _ := rawStr(e.Type); return s }
+func (e harnessEvent) kind() string { s, _ := valStr(e.Type); return s }
 
-func (e harnessEvent) event() string { s, _ := rawStr(e.Event); return s }
+func (e harnessEvent) event() string { s, _ := valStr(e.Event); return s }
 
 func (e harnessEvent) result() eventResult { return typed[eventResult](e.Result) }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -38,24 +39,39 @@ func unsafeRune(r rune) bool { return r < 0x20 || r >= 0x7f && r < 0xa0 || r == 
 
 // attachTurn: the turn text with the attachment list appended, and the local paths of attached images.
 func attachTurn(p M, inputDir, harness string) {
-	list := jArr(p, "attachments")
+	in, _ := decodeAs[struct {
+		Attachments []json.RawMessage `json:"attachments"`
+		Text        json.RawMessage   `json:"text"`
+		AgentConfig json.RawMessage   `json:"agentConfig"`
+	}](p)
+	var profile map[string]json.RawMessage // agentConfig; not an object reads as none
+	json.Unmarshal(in.AgentConfig, &profile)
+	list := in.Attachments
 	if len(list) == 0 {
 		return
 	}
 	var lines []string
 	images := []any{}
-	for _, a := range list {
-		rel := jStr(a, "path")
+	for _, raw := range list {
+		// An item that is not an object, or a field of another type, reads as absent (the item is then skipped).
+		var a struct {
+			Path      json.RawMessage `json:"path"`
+			MediaType json.RawMessage `json:"mediaType"`
+			Size      json.RawMessage `json:"size"`
+		}
+		json.Unmarshal(raw, &a)
+		rel, _ := rawStr(a.Path)
 		// stageInputs refuses the same paths; a control character would let a name start a line of its own in the turn.
 		if strings.HasPrefix(rel, "/") || anyPart(rel, func(x string) bool { return x == "" || x == "." || x == ".." }) || strings.IndexFunc(rel, unsafeRune) >= 0 {
 			continue
 		}
 		abs := filepath.Join(inputDir, filepath.FromSlash(rel))
-		media := jStr(a, "mediaType")
+		media, _ := rawStr(a.MediaType)
 		if strings.IndexFunc(media, unsafeRune) >= 0 {
 			media = "application/octet-stream"
 		}
-		size, _ := jAt(a, "size").(float64)
+		var size float64
+		json.Unmarshal(a.Size, &size)
 		note := ""
 		if nativeImage(media) {
 			switch harness {
@@ -65,8 +81,8 @@ func attachTurn(p M, inputDir, harness string) {
 			case "claude":
 				// The tool grant Command passes as --tools decides: without Read the agent is not told to use it.
 				grant := any(p) // the grant Command passes as --tools: the profile's tools when it names them
-				if has(jAt(p, "agentConfig"), "tools") {
-					grant = jAt(p, "agentConfig")
+				if _, named := profile["tools"]; named {
+					grant = p["agentConfig"]
 				}
 				if tools, err := claudeNativeTools(grant); err == nil && slices.Contains(tools, "Read") {
 					note = "; an image: open it with the Read tool to see it"
@@ -78,7 +94,7 @@ func attachTurn(p M, inputDir, harness string) {
 	if len(lines) == 0 {
 		return
 	}
-	text := jStr(p, "text")
+	text, _ := rawStr(in.Text)
 	if text != "" {
 		text += "\n\n"
 	}

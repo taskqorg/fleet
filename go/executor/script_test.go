@@ -267,7 +267,7 @@ func TestOutputCollectionSkipsLinks(t *testing.T) {
 // command with its reason, an unknown field is ignored (C7). Risk: a drifted coordinator field silently becomes "" and a run starts with wrong input.
 func TestPayloadOfWrongTypeRefused(t *testing.T) {
 	// Hosts update at different times: a field this executor does not know is ignored, never a refusal.
-	sp, err := payloadOf[contract.StartPayload](M{"payload": M{"instructions": "x", "fieldFromANewerCoordinator": M{"a": 1}}})
+	sp, err := payloadOf[contract.StartPayload](typedCommand(M{"payload": M{"instructions": "x", "fieldFromANewerCoordinator": M{"a": 1}}}))
 	if err != nil || str0(sp.Instructions) != "x" {
 		t.Fatal("unknown payload field refused", err)
 	}
@@ -295,7 +295,7 @@ func TestPayloadOfWrongTypeRefused(t *testing.T) {
 // script looks clean.
 func TestTeardownAndProjectScriptTyped(t *testing.T) {
 	dir := t.TempDir()
-	if r := teardown(dir, "s1", dir, M{}, false, false); r.Removed || str0(r.Reason) != "no-worktree" {
+	if r := teardown(dir, "s1", dir, proj(M{}), false, false); r.Removed || str0(r.Reason) != "no-worktree" {
 		t.Fatal(enc(r))
 	}
 	r := projectScript("setup", "echo out; exit 3", dir, dir, "s1")

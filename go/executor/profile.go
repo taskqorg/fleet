@@ -4,6 +4,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,51 +36,114 @@ func validateAntigravitySettings(settings any) error {
 
 func exe() string { p, _ := os.Executable(); return p }
 
+// profileGrants: the profile's MCP grants (a profile that does not fit names none; profileValidate refuses it first).
+func profileGrants(v any) []contract.ProfileMcpGrant {
+	p, _ := decodeAs[struct {
+		McpServers []contract.ProfileMcpGrant `json:"mcpServers"`
+	}](v)
+	return p.McpServers
+}
+
+// jsonOf: a decoded value as the journal reads JSON (numbers kept as written), so enc writes it as before.
+func jsonOf(v any) any {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return decRaw(b)
+}
+
 // profileServers maps named grants to Fleet-owned launchers; definitions never provide commands or environment.
 func profileServers(v any, root, harness, account string) (M, error) {
 	servers := M{}
-	for _, grant := range jArr(v, "mcpServers") {
-		name := jStr(grant, "id")
+	for _, grant := range profileGrants(v) {
+		name := grant.Id
 		if name == "design-rules" {
 			discovery := M{"tools": designRulesTools}
-			servers[name] = M{"command": exe(), "args": []any{"mcp", "design-rules", enc(jAt(grant, "data"))}, "tools": mcpToolNames(discovery)}
+			servers[name] = M{"command": exe(), "args": []any{"mcp", "design-rules", enc(jsonOf(grant.Data))}, "tools": mcpToolNames(discovery)}
 			continue
 		}
 		binding, err := namedMCPBinding(os.Getenv("FLEET_NATIVE_ACCOUNTS"), account, name, root)
 		if err != nil {
 			return nil, err
 		}
-		binding["tools"] = jAt(grant, "data", "tools")
+		binding["tools"] = decRaw(grant.Data["tools"])
 		servers[name] = binding
 	}
 	return servers, nil
 }
 
-// withSkills appends skill text to Codex developer instructions (skill discovery is disabled in Fleet's Codex runs).
-func withSkills(v any, skills any) M {
-	out := jObj(jClone(v))
-	if out == nil {
-		out = M{}
+// skillItem: one resolved skill snapshot of a start payload; an item that is not an object reads as empty.
+type skillItem struct {
+	Id   json.RawMessage `json:"id"`
+	Text json.RawMessage `json:"text"`
+}
+
+func skillItems(skills any) []skillItem {
+	raw, _ := decodeAs[[]json.RawMessage](skills)
+	out := make([]skillItem, len(raw))
+	for i, r := range raw {
+		json.Unmarshal(r, &out[i])
 	}
-	text := jStr(v, "instructions")
-	for _, s := range jArr(skills) {
-		if jIsStr(s, "id") && jIsStr(s, "text") {
-			text += "\n\n# Skill: " + jStr(s, "id") + "\n\n" + jStr(s, "text")
-		}
-	}
-	out["instructions"] = text
 	return out
 }
 
+// skillText appends skill text to Codex developer instructions (skill discovery is disabled in Fleet's Codex runs); a
+// skill without a string id and text is skipped.
+func skillText(instructions string, skills any) string {
+	for _, s := range skillItems(skills) {
+		id, idOK := rawStr(s.Id)
+		text, textOK := rawStr(s.Text)
+		if idOK && textOK {
+			instructions += "\n\n# Skill: " + id + "\n\n" + text
+		}
+	}
+	return instructions
+}
+
+// launchFields: the strings a harness adapter reads from its launch map (the start payload, or the agent profile in it);
+// a field that is missing or not a string reads as "".
+type launchFields struct {
+	Model, Instructions, CodeMode, Text string
+}
+
+func launchOf(v any) launchFields {
+	var raw struct {
+		Model        json.RawMessage `json:"model"`
+		Instructions json.RawMessage `json:"instructions"`
+		CodeMode     json.RawMessage `json:"codeMode"`
+		Text         json.RawMessage `json:"text"`
+	}
+	if b := jsonBytes(v); isObject(b) {
+		json.Unmarshal(b, &raw)
+	}
+	var out launchFields
+	out.Model, _ = rawStr(raw.Model)
+	out.Instructions, _ = rawStr(raw.Instructions)
+	out.CodeMode, _ = rawStr(raw.CodeMode)
+	out.Text, _ = rawStr(raw.Text)
+	return out
+}
+
+func jsonBytes(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
+
+// profileInstructions: the profile's instructions ("" when not a string).
+func profileInstructions(v any) string {
+	p, _ := decodeAs[map[string]json.RawMessage](v)
+	s, _ := rawStr(p["instructions"])
+	return s
+}
+
 // profileApply: JSON string quoting is also valid TOML basic-string quoting for these values.
-func profileApply(c *exec.Cmd, v any) {
-	c.Args = append(c.Args, "-c", "developer_instructions="+enc(jAt(v, "instructions")))
+func profileApply(c *exec.Cmd, instructions string) {
+	c.Args = append(c.Args, "-c", "developer_instructions="+enc(instructions))
 
 }
 
 func profilePrepare(v any, account string, skills any) (M, M, error) {
 	capabilityEvidence := M{}
-	if err := profileValidate(v); err != nil {
+	profile, err := contract.ParseProfile([]byte(enc(v)))
+	if err != nil {
 		return nil, nil, err
 	}
 	selected, err := profileServers(v, "", "", account)
@@ -90,28 +154,31 @@ func profilePrepare(v any, account string, skills any) (M, M, error) {
 		if name == "design-rules" {
 			continue
 		}
-		binding := jObj(value)
+		binding, _ := value.(M) // built by namedMCPBinding
 		capabilityEvidence[name] = M{"command": binding["command"], "dependencyPaths": binding["dependencies"], "selectedTools": binding["tools"], "transport": "stdio", "ownedDependencies": binding["ownedDependencies"], "bindingSha256": profileHash(binding), "nativeToolCalls": "unqualified until observed", "childHomePolicy": "fresh execution-owned MCP home; harness credential home unchanged"}
 	}
 
-	o := jObj(v)
-	if h, ok := o["harness"].(string); ok && h != "codex" {
-		return M{"capabilityReadiness": capabilityEvidence, "requested": v, "profileSha256": profileHash(v), "applied": M{"harness": o["harness"], "model": o["model"], "instructionRole": o["instructionRole"],
-			"instructions": o["instructions"], "tools": o["tools"], "mcpServers": o["mcpServers"], "delegationProfiles": o["delegationProfiles"], "settings": o["settings"],
+	// The evidence echoes the requested fields as sent, so their hashes stay those of the received profile.
+	fields, _ := decodeAs[map[string]json.RawMessage](v)
+	o := func(k string) any { return decRaw(fields[k]) }
+	if profile.Harness != nil && *profile.Harness != contract.ProfileHarnessCodex {
+		return M{"capabilityReadiness": capabilityEvidence, "requested": v, "profileSha256": profileHash(v), "applied": M{"harness": o("harness"), "model": o("model"), "instructionRole": o("instructionRole"),
+			"instructions": o("instructions"), "tools": o("tools"), "mcpServers": o("mcpServers"), "delegationProfiles": o("delegationProfiles"), "settings": o("settings"),
 			"nativeReadiness": "unknown", "nativePermissions": "dontAsk for Claude; native for Antigravity; no sandbox parity"}}, selected, nil
 	}
-	applied := withSkills(v, skills)
+	applied := skillText(profile.Instructions, skills)
 	resolvedSkills := []any{}
-	for _, skill := range jArr(skills) {
-		resolvedSkills = append(resolvedSkills, M{"id": jAt(skill, "id"), "sha256": sha([]byte(jStr(skill, "text")))})
+	for _, skill := range skillItems(skills) {
+		text, _ := rawStr(skill.Text)
+		resolvedSkills = append(resolvedSkills, M{"id": decRaw(skill.Id), "sha256": sha([]byte(text))})
 	}
 	bin, err := os.ReadFile(exe())
 	if err != nil {
 		return nil, nil, err
 	}
 	return M{"capabilityReadiness": capabilityEvidence, "instructionSources": M{"profile": "explicit developer_instructions", "personalConfig": "not loaded", "personalHome": "not forwarded", "projectInstructions": "discovery disabled", "skills": "explicit resolved snapshots; native discovery disabled", "memories": "disabled", "hooks": "disabled", "nativeObservation": "pending rollout provenance check"},
-		"requested": v, "resolvedSkills": resolvedSkills, "profileSha256": profileHash(v), "instructionsSha256": sha([]byte(jStr(applied, "instructions"))), "grantsSha256": profileHash(o["mcpServers"]),
-		"applied": M{"model": o["model"], "effort": o["effort"], "instructions": applied["instructions"], "mcpServers": o["mcpServers"],
+		"requested": v, "resolvedSkills": resolvedSkills, "profileSha256": profileHash(v), "instructionsSha256": sha([]byte(applied)), "grantsSha256": profileHash(o("mcpServers")),
+		"applied": M{"model": o("model"), "effort": o("effort"), "instructions": applied, "mcpServers": o("mcpServers"),
 			"mapping":             "developerInstructions on open; acknowledged developer-role thread/inject_items before resumed turn; native model-context application unqualified",
 			"availability":        "unknown until native call/result",
 			"resumeCompatibility": "requested overrides supplied per invocation; actual changed settings unqualified; prior conversation context persists",
@@ -121,7 +188,7 @@ func profilePrepare(v any, account string, skills any) (M, M, error) {
 // Apply the same executor-resolved text used by the native protocol and preparation receipt.
 func applyResolvedInstructions(cmd *exec.Cmd, harness, text string) {
 	if harness == "codex" {
-		profileApply(cmd, M{"instructions": text})
+		profileApply(cmd, text)
 	}
 	if harness == "claude" {
 		for i := 1; i+1 < len(cmd.Args); i++ {

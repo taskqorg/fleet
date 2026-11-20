@@ -679,7 +679,7 @@ func (m *runMetrics) observeACP(t string, e harnessEvent, atMs int64) {
 			m.recordCall(id, "", rawName)
 		}
 	case t == "TOOL_RESPONSE":
-		st, _ := rawStr(e.Status)
+		st, _ := valStr(e.Status)
 		if st == "ERROR" || st == "failed" {
 			id := toolID("call", e.ToolCallID)
 			m.recordErrorByID(id)

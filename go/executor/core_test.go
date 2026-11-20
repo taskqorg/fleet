@@ -60,8 +60,8 @@ func TestNativeSessionReceiptOnlyOnObservationChange(t *testing.T) {
 	for _, native := range []string{"known", "known", "learned", "learned"} {
 		lines <- enc(M{"type": "system", "session_id": native})
 	}
-	l := &live{command: M{"id": "c", "sessionId": "s", "executionId": "x", "kind": "start",
-		"payload": M{"harness": "claude"}}, native: "known", lines: lines}
+	l := &live{command: typedCommand(M{"id": "c", "sessionId": "s", "executionId": "x", "kind": "start",
+		"payload": M{"harness": "claude"}}), native: "known", lines: lines}
 	if _, err := e.tickOne("x", l); err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,16 +110,31 @@ func runPreview(c *exec.Cmd) error {
 }
 
 // buildPreviews builds the previews of a stored upload and queues them for upload.
+// transferFile: the fields of a stored transfer's journal body that previews and spool cleanup read.
+type transferFile struct {
+	Path      json.RawMessage `json:"path"`
+	Name      json.RawMessage `json:"name"`
+	MediaType json.RawMessage `json:"mediaType"`
+}
+
+// transferAnswer: the store's answer to a transfer (only its state and artifact id are read).
+type transferAnswer struct {
+	State      json.RawMessage `json:"state"`
+	ArtifactId json.RawMessage `json:"artifactId"`
+}
+
 func buildPreviews(db *sql.DB, body M, response any) {
-	media := jStr(body, "mediaType")
+	file, _ := decodeAs[transferFile](body)
+	answer, _ := decodeAs[transferAnswer](response)
+	media, _ := rawStr(file.MediaType)
 	format := demuxer(media)
-	if format == "" || ffmpegVersion() == "" || !jIsStr(body, "path") {
+	src, hasPath := rawStr(file.Path)
+	if format == "" || ffmpegVersion() == "" || !hasPath {
 		return
 	}
-	src := jStr(body, "path")
 	name := "artifact"
-	if jIsStr(body, "name") {
-		name = jStr(body, "name")
+	if n, ok := rawStr(file.Name); ok {
+		name = n
 	}
 	roles := []struct {
 		role   string
@@ -138,6 +154,6 @@ func buildPreviews(db *sql.DB, body M, response any) {
 			continue
 		}
 		enqueue(db, id, "upload", M{"path": out, "spool": true, "previews": false, "name": name + "." + r.role + ".jpg", "mediaType": "image/jpeg",
-			"executionId": body["executionId"], "required": false, "derivedFrom": jAt(response, "artifactId"), "role": r.role})
+			"executionId": body["executionId"], "required": false, "derivedFrom": decRaw(answer.ArtifactId), "role": r.role})
 	}
 }

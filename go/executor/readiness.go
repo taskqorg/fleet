@@ -4,12 +4,14 @@ package main
 // or secrets leave the host.
 
 import (
+	"encoding/json"
 	"errors"
 	"fleet/contract"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -79,8 +81,25 @@ func claudePlacementHere() (string, error) {
 	return claudePlacement(os.Getenv("FLEET_CLAUDE_PLACEMENT"), runtime.GOOS, string(r))
 }
 
+// accountView: the readiness fields of one FLEET_NATIVE_ACCOUNTS entry; a field of another type reads as absent and an
+// entry that is not an object has none.
+type accountView struct {
+	Harness    json.RawMessage `json:"harness"`
+	Readiness  json.RawMessage `json:"readiness"`
+	Home       json.RawMessage `json:"home"`
+	NativeHome json.RawMessage `json:"nativeHome"`
+}
+
 func readiness(payload any, host, registry string, forbidden ...[]string) contract.Readiness {
-	project := jAt(payload, "project")
+	pp, err := decodeAs[contract.ProjectPayload](payload)
+	project, perr := projectContext(pp.Project)
+	if err != nil || perr != nil {
+		reason := "invalid project payload"
+		if perr != nil {
+			reason = perr.Error()
+		}
+		return contract.Readiness{HostId: host, Ok: false, Checks: []contract.ReadinessCheck{check("project", host, reason)}}
+	}
 	checks := []contract.ReadinessCheck{}
 	var denied []string
 	if len(forbidden) > 0 {
@@ -89,25 +108,25 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 	if _, err := resolveAttemptContext(project, host, projectRoots(), denied, ""); err != nil {
 		return contract.Readiness{HostId: host, Ok: false, Checks: []contract.ReadinessCheck{check("instruction-sources", host, err.Error())}}
 	}
-	if jAt(project, "contextSources") != nil {
+	if project.ContextSources != nil {
 		checks = append(checks, check("instruction-sources", host, ""))
 	}
-	repos := jArr(project, "repos")
-	for _, env := range jArr(project, "environments") {
-		if jStr(env, "hostId") != host {
+	for _, env := range project.Environments {
+		if str0(env.HostId) != host {
 			continue
 		}
-		path := jStr(env, "checkoutPath")
+		path := str0(env.CheckoutPath)
 		f := ""
 		if !exists(filepath.Join(path, ".git")) {
 			f = "checkout-missing"
 		}
 		checks = append(checks, check("checkout", path, f))
-		for _, r := range repos {
-			if jAt(env, "repo") != nil && !jEq(jAt(env, "repo"), jAt(r, "id")) {
+		for i := range project.Repos {
+			r := &project.Repos[i]
+			if env.Repo != nil && (r.Id == nil || *r.Id != *env.Repo) {
 				continue
 			}
-			remote := jStr(r, "remote")
+			remote := str0(r.Remote)
 			access, aerr := gitEnv(project, r, connectionsDir())
 			failed := ""
 			switch {
@@ -130,14 +149,14 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 				}
 			}
 			target := remote
-			if jIsStr(r, "id") {
-				target = jStr(r, "id")
+			if r.Id != nil {
+				target = *r.Id
 			}
 			checks = append(checks, check("remote", target, failed))
 		}
-		if s := jStr(project, "scripts", "setup"); jIsStr(project, "scripts", "setup") {
+		if project.Scripts != nil && project.Scripts.Setup != nil {
 			first := ""
-			if fs := strings.Fields(s); len(fs) > 0 {
+			if fs := strings.Fields(*project.Scripts.Setup); len(fs) > 0 {
 				first = fs[0]
 			}
 			f := ""
@@ -147,87 +166,95 @@ func readiness(payload any, host, registry string, forbidden ...[]string) contra
 			checks = append(checks, check("setup", first, f))
 		}
 	}
-	var harnesses []any
-	for _, v := range jObj(project, "roles") {
+	var harnesses []string
+	for _, v := range project.Roles {
 		harnesses = append(harnesses, v)
 	}
-	var accounts M
+	var accounts map[string]accountView
 	if registry != "" {
 		if b, err := os.ReadFile(registry); err == nil {
-			if v, err := dec(string(b)); err == nil {
-				accounts, _ = v.(M)
+			var entries map[string]json.RawMessage
+			if _, err := dec(string(b)); err == nil && json.Unmarshal(b, &entries) == nil && entries != nil {
+				accounts = map[string]accountView{}
+				for name, raw := range entries {
+					var a accountView
+					json.Unmarshal(raw, &a)
+					accounts[name] = a
+				}
 			}
 		}
 	}
-	has := func(h any) bool {
-		for _, x := range harnesses {
-			if jEq(x, h) {
-				return true
-			}
-		}
-		return false
-	}
+	has := func(h string, isStr bool) bool { return isStr && slices.Contains(harnesses, h) }
 	if len(harnesses) > 0 {
 		if accounts == nil {
 			checks = append(checks, check("accounts", host, "registry-unavailable"))
 		} else {
-			for _, name := range sortedKeys(accounts) {
+			for _, name := range sortedKeysOf(accounts) {
 				a := accounts[name]
-				if !has(jAt(a, "harness")) {
+				if !has(rawStr(a.Harness)) {
 					continue
 				}
 				f := ""
-				if r, ok := jObj(a)["readiness"]; ok && r != "ready" {
+				if r, isStr := rawStr(a.Readiness); len(a.Readiness) > 0 && !(isStr && r == "ready") {
 					f = "login-absent"
 				}
 				checks = append(checks, check("account", name, f))
 			}
 		}
 	}
-	if has("claude") {
+	if has("claude", true) {
 		var homes []string
-		for _, name := range sortedKeys(accounts) {
+		for _, name := range sortedKeysOf(accounts) {
 			a := accounts[name]
-			if jStr(a, "harness") == "claude" && jIsStr(a, "nativeHome") {
-				homes = append(homes, jStr(a, "nativeHome"))
+			if h, _ := rawStr(a.Harness); h == "claude" {
+				if home, ok := rawStr(a.NativeHome); ok {
+					homes = append(homes, home)
+				}
 			}
 		}
 		pl, perr := claudePlacementHere()
 		checks = append(checks, claudeChecks(host, pl, perr, homes)...)
 	}
 	codingHarnesses := map[string]bool{}
-	for role, profile := range jObj(project, "profileIds") {
-		if projectRequirements(project, jStr(profile)) != nil {
-			codingHarnesses[jStr(project, "roles", role)] = true
+	for role, profile := range project.ProfileIds {
+		if projectRequirements(project, profile) != nil {
+			codingHarnesses[project.Roles[role]] = true
 		}
 	}
-	if len(jArr(project, "execution", "profiles")) == 0 {
+	execution := contract.ProjectExecution{}
+	if project.Execution != nil {
+		execution = *project.Execution
+	}
+	if len(execution.Profiles) == 0 {
 		for _, h := range harnesses {
-			codingHarnesses[jStr(h)] = true
+			codingHarnesses[h] = true
 		}
 	}
-	if (len(jArr(project, "execution", "profiles")) == 0 || len(codingHarnesses) > 0) && len(jArr(project, "execution", "tools")) > 0 && len(accounts) == 0 {
+	if (len(execution.Profiles) == 0 || len(codingHarnesses) > 0) && len(execution.Tools) > 0 && len(accounts) == 0 {
 		checks = append(checks, check("coding-tools", host, "managed-account-unavailable"))
 	}
-	if (len(jArr(project, "execution", "profiles")) == 0 || len(codingHarnesses) > 0) && jAt(project, "execution", "forge") == true {
-		checks = append(checks, check("forge", host, forgeReadiness(project)))
+	if (len(execution.Profiles) == 0 || len(codingHarnesses) > 0) && execution.Forge != nil && *execution.Forge {
+		checks = append(checks, check("forge", host, forgeReadiness(primaryRemote(project))))
 	}
-	for _, name := range sortedKeys(accounts) {
-		if !codingHarnesses[jStr(accounts[name], "harness")] || (jIsStr(accounts[name], "readiness") && jStr(accounts[name], "readiness") != "ready") {
+	for _, name := range sortedKeysOf(accounts) {
+		a := accounts[name]
+		harness, _ := rawStr(a.Harness)
+		if r, isStr := rawStr(a.Readiness); !codingHarnesses[harness] || (isStr && r != "ready") {
 			continue
 		}
-		for _, tool := range jArr(project, "execution", "tools") {
+		home, _ := rawStr(a.Home)
+		for _, tool := range execution.Tools {
 			failed := ""
 			var err error
-			if jStr(tool) == "browser" {
-				err = browserReady(payload, jStr(accounts[name], "home"))
+			if tool == "browser" {
+				err = browserReady(payload, home)
 			} else {
-				err = codingTool(jStr(tool), jStr(accounts[name], "home"))
+				err = codingTool(tool, home)
 			}
 			if err != nil {
 				failed = "coding-tool-unready"
 			}
-			checks = append(checks, check("tool:"+jStr(tool), name, failed))
+			checks = append(checks, check("tool:"+tool, name, failed))
 		}
 	}
 	ok := true
@@ -262,15 +289,13 @@ func claudeChecks(host, placement string, perr error, homes []string) []contract
 }
 
 // projectRequirements uses the execution's frozen project and profile.
-func projectRequirements(project any, profile string) any {
-	ids := jArr(project, "execution", "profiles")
-	for _, id := range ids {
-		if jStr(id) == profile {
-			return jAt(project, "execution")
-		}
+func projectRequirements(project contract.ProjectContext, profile string) *contract.ProjectExecution {
+	if project.Execution == nil {
+		return nil
 	}
-	if len(ids) == 0 {
-		return jAt(project, "execution")
+	ids := project.Execution.Profiles
+	if len(ids) == 0 || slices.Contains(ids, profile) {
+		return project.Execution
 	}
 	return nil
 }

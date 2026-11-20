@@ -220,7 +220,7 @@ func executionSpan(execution string, l *live) {
 		return // a later step of the finish failed and the run is finished again next tick
 	}
 	l.spanned = true
-	c := typedCommand(l.command)
+	c := l.command
 	run, tp := contract.CommandRun{}, str0(c.Traceparent())
 	if c.Run() != nil {
 		run = *c.Run()
@@ -233,7 +233,7 @@ func executionSpan(execution string, l *live) {
 	if c.Script != nil {
 		s.Set("fleet.harness", "script")
 	} else {
-		s.Set("fleet.harness", harnessName(jAt(l.command, "payload")))
+		s.Set("fleet.harness", commandHarness(l.command))
 	}
 	cpu := 0.0
 	for _, c := range l.cpu {

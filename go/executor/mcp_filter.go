@@ -49,8 +49,8 @@ func mcpAllowed(request mcpRequest, root string, tools []any, policy string) err
 	return nil
 }
 
-// jsonValue is raw as a plain JSON value (numbers as float64), as the filter compared and echoed ids.
-func jsonValue(raw json.RawMessage) any {
+// plainJSON is raw as a plain JSON value (numbers as float64), as the filter compared and echoed ids.
+func plainJSON(raw json.RawMessage) any {
 	var v any
 	json.Unmarshal(raw, &v)
 	return v
@@ -74,7 +74,7 @@ func filterMCP(input io.Reader, output io.Writer, upstream io.Writer, replies io
 			return errors.New("Invalid MCP request")
 		}
 		hasID := request.ID != nil
-		id := jsonValue(request.ID)
+		id := plainJSON(request.ID)
 		if err := mcpAllowed(request, root, tools, policy); err != nil {
 			if hasID {
 				if err := to.Encode(M{"jsonrpc": "2.0", "id": id, "error": M{"code": -32602, "message": err.Error()}}); err != nil {
@@ -99,7 +99,7 @@ func filterMCP(input io.Reader, output io.Writer, upstream io.Writer, replies io
 			if !in {
 				continue
 			} // Never forward server logs or unsolicited notifications into model/history.
-			if enc(jsonValue(replyID)) != enc(id) {
+			if enc(plainJSON(replyID)) != enc(id) {
 				return errors.New("MCP response identity mismatch")
 			}
 			var out any = reply

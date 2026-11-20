@@ -354,9 +354,16 @@ func executorStores() []string {
 		list = append(list, c.KeyFile.V)
 	}
 	if b, err := os.ReadFile(os.Getenv("FLEET_BROWSER_BINDINGS")); err == nil {
-		if v, err := dec(string(b)); err == nil {
-			for _, binding := range jObj(v) {
-				list = append(list, jStr(binding, "production", "accessFile"))
+		var bindings map[string]json.RawMessage
+		if _, err := dec(string(b)); err == nil && json.Unmarshal(b, &bindings) == nil {
+			for _, raw := range bindings {
+				var binding browserBinding
+				var grant browserProduction
+				if isObject(raw) && json.Unmarshal(raw, &binding) == nil && isObject(binding.Production) {
+					json.Unmarshal(binding.Production, &grant)
+				}
+				file, _ := rawStr(grant.AccessFile)
+				list = append(list, file)
 			}
 		}
 	}

@@ -173,12 +173,9 @@ func forgeGranted(repo string) bool {
 	return false
 }
 
-func forgeReadiness(project any) string {
-	var origin struct {
-		Remote string `json:"remote"`
-	}
-	retype(gitRepo(project, nil), &origin)
-	repo := forgeRepo(origin.Remote)
+// forgeReadiness: remote is the project's first repository's (primaryRemote).
+func forgeReadiness(remote string) string {
+	repo := forgeRepo(remote)
 	if !forgeGranted(repo) {
 		return "forge-repository-not-granted"
 	}

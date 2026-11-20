@@ -135,7 +135,7 @@ func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any
 		if has(p, "agentConfig") {
 			profile = p["agentConfig"]
 			if jIsTrue(p, "readOnly") { // the start's read-only grant narrows the profile's (claudeMCP)
-				c := jObj(jClone(profile))
+				c := decM(enc(profile)) // a copy: the profile itself stays as sent
 				c["readOnly"] = true
 				profile = c
 			}
@@ -147,7 +147,7 @@ func (h harness) WireMCP(cmd *exec.Cmd, p map[string]any, servers map[string]any
 // claudeMCP passes the servers as --mcp-config and grants their Fleet tools with --allowedTools.
 func claudeMCP(c *exec.Cmd, profile any, servers M, extra []string) {
 	allowed, _ := claudeNativeTools(profile) // Command validates the selection before MCP wiring.
-	allowed = codeVisible(allowed, jStr(profile, "codeMode"))
+	allowed = codeVisible(allowed, launchOf(profile).CodeMode)
 	allowed = append(allowed, extra...)
 	if jIsTrue(profile, "readOnly") {
 		allowed = readOnlyTools(allowed)
@@ -282,7 +282,7 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 	if f.Error.Set {
 		return nil, nil, false, fmt.Errorf("native protocol request failed: %s", f.errorCode())
 	}
-	instructions := jStr(jAt(s.config(), "instructions"))
+	instructions := launchOf(s.config()).Instructions
 	r := typed[codexResult](f.Result)
 	switch {
 	case f.isID(1) && s.stage == 0:
@@ -363,7 +363,7 @@ func (s *codexSession) Receive(v map[string]any) ([]map[string]any, map[string]a
 			r jsonValue
 		}{{"type", strs.Type}, {"text", strs.Text}, {"command", strs.Command}, {"name", strs.Name}, {"status", strs.Status}} {
 			if x.r.V != nil {
-				if _, ok := rawStr(x.r); !ok {
+				if _, ok := valStr(x.r); !ok {
 					return nil, nil, false, fmt.Errorf("codex item: %s must be a string", x.k)
 				}
 			}

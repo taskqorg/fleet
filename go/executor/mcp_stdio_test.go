@@ -729,7 +729,7 @@ func TestMCPInstructionReceiptUsesAppliedSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied := withSkills(profile, skills)
+	applied := M{"instructions": skillText("base", skills)}
 	if jStr(receipt, "instructionsSha256") != sha([]byte(jStr(applied, "instructions"))) || jStr(receipt, "applied", "instructions") != jStr(applied, "instructions") {
 		t.Fatal(receipt)
 	}
@@ -1493,7 +1493,7 @@ func TestSteerCompletionPreservesOwningStartMCP(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			o, e := testMCPOwner(t)
 			start := M{"id": "command", "executionId": "execution", "sessionId": "session", "kind": "start"}
-			e.live = map[string]*live{"execution": {command: start, mcp: o}}
+			e.live = map[string]*live{"execution": {command: typedCommand(start), mcp: o}}
 			type peer struct {
 				tool           string
 				writer, reader *os.File
@@ -1533,7 +1533,7 @@ func TestSteerCompletionPreservesOwningStartMCP(t *testing.T) {
 			if _, err := e.db.Exec("INSERT INTO commands(id,body) VALUES(?,?)", "steer", enc(steer)); err != nil {
 				t.Fatal(err)
 			}
-			if err := e.finish(steer, status, ""); err != nil {
+			if err := e.finish(typedCommand(steer), status, ""); err != nil {
 				t.Fatal(err)
 			}
 			var fence, terminal int
@@ -1555,7 +1555,7 @@ func TestSteerCompletionPreservesOwningStartMCP(t *testing.T) {
 					t.Fatal(p.tool, reply)
 				}
 			}
-			if err := e.finish(start, "completed", ""); err != nil {
+			if err := e.finish(typedCommand(start), "completed", ""); err != nil {
 				t.Fatal(err)
 			}
 			if !o.closed {

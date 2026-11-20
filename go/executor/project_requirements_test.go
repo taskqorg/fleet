@@ -7,7 +7,7 @@ func TestProjectRequirements(t *testing.T) {
 	for _, ids := range [][]any{nil, {}, {"coding-worker"}} {
 		p := M{"execution": M{"profiles": ids, "tools": []any{"pnpm"}, "forge": true}}
 		for _, profile := range []string{"pm", "coding-worker"} {
-			got := projectRequirements(p, profile)
+			got := projectRequirements(proj(p), profile)
 			want := len(ids) == 0 || profile == "coding-worker"
 			if (got != nil) != want {
 				t.Fatalf("profiles=%v profile=%s applicability=%v", ids, profile, got)

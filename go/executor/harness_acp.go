@@ -50,8 +50,8 @@ func acpRequest(id int, method string, params M) M {
 func (s *acpSession) prompt() M {
 	s.stage = 5
 	s.promptStartedAtMs = nowMs()
-	text := jStr(s.profile["text"])
-	if instructions := jStr(jAt(s.config(), "instructions")); instructions != "" {
+	text := launchOf(s.profile).Text
+	if instructions := launchOf(s.config()).Instructions; instructions != "" {
 		text = fmt.Sprintf("Explicit Fleet instructions (user role):\n%s\n\nTask:\n%s", instructions, text)
 	}
 	return acpRequest(5, "session/prompt", M{"sessionId": s.session, "prompt": []any{M{"type": "text", "text": text}}})
@@ -181,7 +181,7 @@ func (s *acpSession) selectModel(result acpResult, model string) (M, error) {
 // Antigravity requests ACP permission even for tools supplied by Fleet. This
 // permits a single call to the injected Code Mode server during its owning turn.
 func (s *acpSession) codePermission(params acpParams) string {
-	mode := jStr(s.config(), "codeMode")
+	mode := launchOf(s.config()).CodeMode
 	if pharness(s.profile) != "antigravity" || (mode != "add" && mode != "only") || !has(s.servers, "code") ||
 		s.stage != 5 || s.session == "" || params.SessionID != s.session {
 		return ""
@@ -284,7 +284,7 @@ func (s *acpSession) Receive(v map[string]any) ([]map[string]any, map[string]any
 		if !acpSelected(r, s.modeSelect, s.mode) {
 			return nil, nil, false, errors.New("ACP did not confirm the requested mode")
 		}
-		next, err := s.selectModel(r, jStr(s.profile, "model"))
+		next, err := s.selectModel(r, launchOf(s.profile).Model)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -293,7 +293,7 @@ func (s *acpSession) Receive(v map[string]any) ([]map[string]any, map[string]any
 		}
 		return []M{next}, M{"type": "configuration.applied", "native": v}, false, nil
 	case f.isID(3) && s.stage == 2:
-		if s.modelSelect != "" && !acpSelected(r, s.modelSelect, jStr(s.profile, "model")) {
+		if s.modelSelect != "" && !acpSelected(r, s.modelSelect, launchOf(s.profile).Model) {
 			return nil, nil, false, errors.New("ACP did not apply the requested model")
 		}
 		next, err := s.applyMode(r)
@@ -307,7 +307,7 @@ func (s *acpSession) Receive(v map[string]any) ([]map[string]any, map[string]any
 		}
 		// A legacy setter may acknowledge with an empty result. Check any
 		// returned state, using the earlier exact selection for omitted fields.
-		model := jStr(s.profile, "model")
+		model := launchOf(s.profile).Model
 		if observed := r.Models.CurrentModelID; observed != "" && observed != model {
 			return nil, nil, false, errors.New("ACP mode change did not retain the requested model")
 		}
