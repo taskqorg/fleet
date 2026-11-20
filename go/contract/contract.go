@@ -5,8 +5,10 @@ package contract
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 )
 
 //go:generate go run ../gen ../../contracts/host-protocol.schema.json contract host_protocol_gen.go
@@ -42,16 +44,25 @@ type Operation struct {
 	InputSchema json.RawMessage
 }
 
-// Touches: the operations whose declared Changes match a change of this kind and id, sorted.
-func Touches(kind, id string) []string {
-	out := []string{}
+// touchIndex: each change kind's declared (id prefix, operation) pairs, built once from Operations on first use (every
+// generated init has run by then).
+var touchIndex = sync.OnceValue(func() map[string][][2]string {
+	out := map[string][][2]string{}
 	for n, o := range Operations {
 		for _, c := range o.Changes {
 			k, prefix, _ := strings.Cut(c, ":")
-			if k == kind && strings.HasPrefix(id, prefix) {
-				out = append(out, n)
-				break
-			}
+			out[k] = append(out[k], [2]string{prefix, n})
+		}
+	}
+	return out
+})
+
+// Touches: the operations whose declared Changes match a change of this kind and id, sorted.
+func Touches(kind, id string) []string {
+	out := []string{}
+	for _, p := range touchIndex()[kind] {
+		if strings.HasPrefix(id, p[0]) && !slices.Contains(out, p[1]) {
+			out = append(out, p[1])
 		}
 	}
 	sort.Strings(out)

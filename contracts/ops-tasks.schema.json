@@ -14,7 +14,7 @@
     "question_history": {"read": true, "errors": [404], "auth": "project:projectId", "agent": "tool", "description": "Questions asked in a project (projectId) with their answers"},
     "questions": {"read": true, "errors": [], "auth": "person", "agent": "bound:session", "description": "List questions"},
     "questions_answer": {"read": false, "errors": [400,403,409], "auth": "person", "agent": "tool", "description": "Answer a question (questionId, answer, optional artifactIds)"},
-    "questions_list": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "changes": ["task", "question", "execution"], "description": "Questions by project, task, state or kind"},
+    "questions_list": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "changes": ["question"], "description": "Questions by project, task, state or kind"},
     "questions_withdraw": {"read": false, "errors": [400,403], "auth": "owner", "agent": "tool", "description": "Owner or full access: withdraw open questions that no longer need anyone (ids up to 1000, reason); one audit row each; skipped lists ids not open"},
     "task_cancel": {"read": false, "errors": [], "auth": "person", "agent": "tool", "description": "Cancel a task (taskId): no further work starts and running work is asked to stop"},
     "entity_resolve": {"read": true, "errors": [400,404], "auth": "person", "agent": "tool", "description": "Case-insensitive; unknown and forbidden codes both answer 404."},

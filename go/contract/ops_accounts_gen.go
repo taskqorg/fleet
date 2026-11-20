@@ -116,7 +116,7 @@ func (v *AccountInspection) Validate() error {
 }
 
 type AccountListReply struct {
-	Accounts   []map[string]json.RawMessage `json:"accounts"`
+	Accounts   []ManagedAccount             `json:"accounts"`
 	Catalogues []map[string]json.RawMessage `json:"catalogues"`
 }
 
@@ -124,6 +124,11 @@ type AccountListReply struct {
 func (v *AccountListReply) Validate() error {
 	if v.Accounts == nil {
 		return Missing("accounts")
+	}
+	for i := range v.Accounts {
+		if err := Check(&v.Accounts[i], "accounts"); err != nil {
+			return err
+		}
 	}
 	if v.Catalogues == nil {
 		return Missing("catalogues")
@@ -1227,6 +1232,36 @@ func (v *LimitSubscription) Validate() error {
 			return err
 		}
 	}
+	return nil
+}
+
+// ManagedAccount: A managed-account record with its inspections, checks and setting history.
+type ManagedAccount struct {
+	Harness *string `json:"harness,omitempty"`
+	Id      string  `json:"id"`
+	Intake  *string `json:"intake,omitempty"`
+	Name    string  `json:"name"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ManagedAccount) MarshalJSON() ([]byte, error) {
+	type plain ManagedAccount
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ManagedAccount) UnmarshalJSON(b []byte) error {
+	type plain ManagedAccount
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ManagedAccount) Validate() error {
 	return nil
 }
 
