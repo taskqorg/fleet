@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"io"
 	"log"
 	"net/http"
@@ -20,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func init() {
@@ -38,7 +41,7 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		return artifactGetView(q.ctx(), q.app, x.ID, q.hostID())
+		return artifactView(q.ctx(), q.app, x.ID, q.hostID())
 	}))
 	hostRoute(contract.RouteArtifactsRead, func(q *Request, b *contract.HostArtifactGetRequest) (any, error) {
 		x, err := hostMayRead(q, b)
@@ -61,11 +64,7 @@ func init() {
 
 	op("artifact_list", opArtifactList)
 	op("artifact_get", func(q *Request, r *contract.ArtifactGetRequest) (contract.ArtifactView, error) {
-		v, err := artifactGetView(withTx(q), q.app, truncate(r.ArtifactId, 200), "")
-		if err != nil {
-			return contract.ArtifactView{}, err
-		}
-		return asT[contract.ArtifactView](v)
+		return artifactView(withTx(q), q.app, truncate(r.ArtifactId, 200), "")
 	})
 	op("artifact_purge", func(q *Request, r *contract.ArtifactPurgeRequest) (contract.ArtifactPurgeReply, error) {
 		if err := operatorOnly(q); err != nil {
@@ -78,23 +77,22 @@ func init() {
 		if err != nil {
 			return contract.StoresListReply{}, err
 		}
-		problems := []doc{}
+		problems := []map[string]json.RawMessage{}
+		stores := make([]contract.StoreView, 0, len(all))
 		for _, s := range all {
+			stores = append(stores, contract.StoreView{Id: s.ID, HostId: s.HostID, Bucket: s.Bucket, Endpoint: s.Endpoint, LocalEndpoint: s.LocalEndpoint, State: s.State,
+				CapacityBytes: s.CapacityBytes, UsedBytes: s.UsedBytes, FreeSpaceWarningBytes: s.FreeSpaceWarningBytes, RequiresLogon: s.RequiresLogon, Zone: s.Zone, Holder: s.Holder})
 			if s.State == "full" {
-				problems = append(problems, doc{"kind": "store-full", "storeId": s.ID, "hostId": s.HostID, "capacityBytes": s.CapacityBytes, "freeSpaceWarningBytes": s.FreeSpaceWarningBytes,
-					"actions": []string{"store_set_free_space_warning", "project artifact_locations", "artifact_rule_confirm"}})
+				problems = append(problems, recOf(storeFull{Kind: "store-full", StoreID: s.ID, HostID: s.HostID, CapacityBytes: s.CapacityBytes,
+					FreeSpaceWarningBytes: s.FreeSpaceWarningBytes, Actions: []string{"store_set_free_space_warning", "project artifact_locations", "artifact_rule_confirm"}}))
 			}
 		}
 		for _, p := range lastPlacementProblems() {
 			if pid, _ := p["projectId"].(*string); q.person == nil || fullAccess(q.person) || pid != nil && mayAccessProject(q.person, pid) {
-				problems = append(problems, p)
+				problems = append(problems, recOf(p))
 			}
 		}
-		stores, err := asT[[]contract.StoreView](all) // StoreRow's JSON is the contract's StoreView
-		if stores == nil {
-			stores = []contract.StoreView{}
-		}
-		return contract.StoresListReply{Stores: stores, Problems: recsOf(problems)}, err
+		return contract.StoresListReply{Stores: stores, Problems: problems}, nil
 	})
 	op("store_set_free_space_warning", func(q *Request, b *contract.StoreSetFreeSpaceWarningRequest) (contract.StoreSetFreeSpaceWarningReply, error) {
 		var none contract.StoreSetFreeSpaceWarningReply
@@ -104,21 +102,21 @@ func init() {
 		if !storeIDPattern.MatchString(b.StoreId) {
 			return none, fail(400, "Invalid store id")
 		}
-		var v any
+		var v *int64
 		if b.Bytes != nil {
 			if *b.Bytes < 0 || *b.Bytes != float64(int64(*b.Bytes)) {
 				return none, fail(400, "Expected bytes or null")
 			}
-			v = int64(*b.Bytes)
+			v = ptr(int64(*b.Bytes))
 		}
-		r, err := oneCtx(withTx(q), q.app, "UPDATE store SET free_space_warning_bytes=$2,state=CASE WHEN state='unreachable' THEN state WHEN $2::bigint IS NOT NULL AND capacity_bytes < $2::bigint THEN 'full' ELSE 'reachable' END WHERE id=$1 RETURNING id,state", b.StoreId, v)
+		r, err := q.db().ArtStoreSetWarning(q.ctx(), db.ArtStoreSetWarningParams{ID: b.StoreId, Bytes: v})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return none, fail(404, "Unknown store "+b.StoreId)
+		}
 		if err != nil {
 			return none, err
 		}
-		if r == nil {
-			return none, fail(404, "Unknown store "+b.StoreId)
-		}
-		return contract.StoreSetFreeSpaceWarningReply{Id: astr(r["id"]), State: astr(r["state"])}, nil
+		return contract.StoreSetFreeSpaceWarningReply{Id: r.ID, State: r.State}, nil
 	})
 	op("subscription_limits", subscriptionLimits)
 	// changes_since: the stream's read for the app's catch-up and polling fallback; no cursor is the head.
@@ -154,18 +152,17 @@ func init() {
 	appRoutes()
 
 	// Stores a host has not reported for 2 minutes are unreachable; expired upload leases fail. Single flight per tick.
-	// Reconcile artifact waits independently of the copy, purge, retention and lease work.
+	// Reconcile artifact waits independently of the copy, purge, retention and lease work, and once at start (before the
+	// server takes requests), so a restart recovers a callback it missed without waiting a tick.
 	onStart(func(ctx context.Context, a *App) {
-		go func() {
-			if err := reconcileArtifactWaits(ctx, a); err != nil {
-				log.Printf("recover artifact waits: %v", err)
-			}
-		}()
+		if err := reconcileArtifactWaits(ctx, a); err != nil {
+			log.Printf("recover artifact waits: %v", err)
+		}
 		every(ctx, "artifact-waits", placementTick, func(ctx context.Context) error {
 			return reconcileArtifactWaits(ctx, a)
 		})
 		every(ctx, "placement", placementTick, func(ctx context.Context) error {
-			sweep := execCtx(ctx, a, "UPDATE store SET state='unreachable' WHERE state<>'unreachable' AND (observed_at IS NULL OR observed_at < now() - ($1::text||' milliseconds')::interval)", strconv.Itoa(storeUnseenMS))
+			sweep := artWrite(ctx, a, func(d *db.Queries) error { return d.ArtStoresSweep(ctx, storeUnseenMS) })
 			if sweep != nil {
 				log.Printf("store sweep: %v", sweep)
 			}
@@ -240,33 +237,23 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 			return nil, fail(403, "Artifact not readable by this host")
 		}
 	}
-	names := func(c map[string]any, s *Artifact) bool {
-		p, _ := c["payload"].(map[string]any)
-		ids := []any{}
-		switch c["kind"] {
-		case "delivery-step":
-			fs, _ := p["files"].([]any)
-			for _, f := range fs {
-				if m, ok := f.(map[string]any); ok {
-					ids = append(ids, m["artifactId"])
-				}
-			}
-		case "artifact-copy", "artifact-verify":
-			ids = append(ids, p["artifactId"])
-		}
-		for _, id := range ids {
-			if id == s.ID || s.LegacyID != nil && id == *s.LegacyID {
-				return true
-			}
-		}
-		return false
-	}
+	d := artDB(ctx, a)
+	names := func(id any) bool { return id == x.ID || x.LegacyID != nil && id == *x.LegacyID }
 	if deref(b.CommandId) != "" {
-		if r, err := oneCtx(ctx, a, "SELECT "+convTables["command"].record()+" AS data FROM command WHERE id=$1", deref(b.CommandId)); err == nil && r != nil {
-			c, _ := r["data"].(map[string]any)
-			st, _ := c["status"].(string)
-			if c["hostId"] == hostID && (st == "pending" || st == "accepted" || st == "started") && names(c, x) {
-				return x, nil
+		if c, err := d.ArtCommandOf(ctx, deref(b.CommandId)); err == nil && c.HostID == hostID && (c.Status == "pending" || c.Status == "accepted" || c.Status == "started") {
+			var p commandArtifacts
+			json.Unmarshal(c.Payload, &p)
+			switch c.Kind {
+			case "delivery-step":
+				for _, f := range p.Files {
+					if names(f.ArtifactID) {
+						return x, nil
+					}
+				}
+			case "artifact-copy", "artifact-verify":
+				if names(p.ArtifactID) {
+					return x, nil
+				}
 			}
 		}
 	}
@@ -281,22 +268,43 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 		if x.ExecutionID != nil && *x.ExecutionID == e.ID || e.ProjectID != nil && x.ProjectID != nil && *e.ProjectID == *x.ProjectID {
 			return x, nil
 		}
-		cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT "+convTables["command"].record()+" AS data FROM command WHERE execution_id=$1 AND host_id=$2 AND kind IN ('start','script') ORDER BY seq", e.ID, hostID)
+		ps, err := d.ArtStartPayloads(ctx, db.ArtStartPayloadsParams{ExecutionID: &e.ID, HostID: &hostID})
 		if err != nil {
 			return nil, err
 		}
-		for _, r := range cs {
-			c, _ := r["data"].(map[string]any)
-			p, _ := c["payload"].(map[string]any)
-			in, _ := p["inputs"].([]any)
-			for _, i := range in {
-				if m, ok := i.(map[string]any); ok && m["artifactId"] == x.ID {
+		for _, raw := range ps {
+			var p commandArtifacts
+			json.Unmarshal(raw, &p)
+			for _, i := range p.Inputs {
+				if i.ArtifactID == x.ID {
 					return x, nil
 				}
 			}
 		}
 	}
 	return nil, fail(403, "Artifact not readable by this host")
+}
+
+// commandArtifacts: the artifacts a command payload names (a delivery step's files, a copy or verification, a start or
+// script input); an id of another type names none.
+type commandArtifacts struct {
+	ArtifactID any `json:"artifactId"`
+	Files      []struct {
+		ArtifactID any `json:"artifactId"`
+	} `json:"files"`
+	Inputs []struct {
+		ArtifactID any `json:"artifactId"`
+	} `json:"inputs"`
+}
+
+// storeFull: the stores_list problem of a full store, with its actions.
+type storeFull struct {
+	Kind                  string   `json:"kind"`
+	StoreID               string   `json:"storeId"`
+	HostID                string   `json:"hostId"`
+	CapacityBytes         *int64   `json:"capacityBytes"`
+	FreeSpaceWarningBytes *int64   `json:"freeSpaceWarningBytes"`
+	Actions               []string `json:"actions"`
 }
 
 // hostArtifactListPage: the artifacts of one host listing; an agent pages on with nextCursor.
@@ -332,10 +340,10 @@ func hostArtifactList(q *Request, b *contract.HostArtifactListRequest) (any, err
 	if err != nil {
 		return nil, err
 	}
-	out := doc{"artifacts": l}
+	out := contract.HostArtifactListReply{Artifacts: l}
 	if int64(len(l)) > limit {
-		l = l[:limit]
-		out["artifacts"], out["nextCursor"] = l, strconv.FormatInt(l[len(l)-1]["seq"].(int64), 10)
+		out.Artifacts = l[:limit]
+		out.NextCursor = ptr(strconv.FormatInt(out.Artifacts[limit-1].Seq, 10))
 	}
 	return out, nil
 }
@@ -357,15 +365,15 @@ func opArtifactList(q *Request, r *contract.ArtifactListRequest) (contract.Artif
 	if err == nil {
 		err = withTaskCodes(q, rows)
 	}
-	if err != nil || f.Limit == nil {
-		return replyAs[contract.ArtifactListReply](doc{"artifacts": rows}, err)
+	if err != nil {
+		return contract.ArtifactListReply{}, err
 	}
-	var next any
-	if int64(len(rows)) > *f.Limit {
-		rows = rows[:*f.Limit]
-		next = rows[len(rows)-1]["seq"]
+	out := contract.ArtifactListReply{Artifacts: rows}
+	if f.Limit != nil && int64(len(rows)) > *f.Limit {
+		out.Artifacts = rows[:*f.Limit]
+		out.NextBefore = ptr(out.Artifacts[*f.Limit-1].Seq)
 	}
-	return replyAs[contract.ArtifactListReply](doc{"artifacts": rows, "nextBefore": next}, nil)
+	return out, nil
 }
 
 type readCloser = interface {
@@ -491,10 +499,11 @@ func resultPreview(q *Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	siblings, err := artifacts(withTx(q), a, "WHERE execution_id=$1 AND state='stored' AND role='original'", *x.ExecutionID)
+	found, err := artDB(withTx(q), a).ArtOfExecution(withTx(q), db.ArtOfExecutionParams{ExecutionID: x.ExecutionID, StoredOnly: true})
 	if err != nil {
 		return nil, err
 	}
+	siblings := artRows(found)
 	byPath := map[string]*Artifact{}
 	for i := range siblings {
 		byPath[siblings[i].Name] = &siblings[i]
@@ -560,48 +569,44 @@ type Reading struct {
 
 // latestReadings: the latest limit_reading per (subscription, period); one whose resetsAt has passed is unknown.
 func latestReadings(ctx context.Context, a *App) (map[string][]Reading, error) {
-	rs, err := conn(ctx, a).Query(ctx, `SELECT DISTINCT ON (x.account_id, r->>'period') x.account_id, x.host_id, r, d.updated_at
-   FROM event d JOIN execution x ON x.id = d.execution_id CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) r
-   WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL
-   ORDER BY x.account_id, r->>'period', d.seq DESC`)
+	rs, err := artDB(ctx, a).ArtLimitReadings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rs.Close()
 	out := map[string][]Reading{}
-	for rs.Next() {
-		var account string
-		var host *string
-		var v map[string]any
-		var at time.Time
-		if err := rs.Scan(&account, &host, &v, &at); err != nil {
-			return nil, err
+	for _, x := range rs {
+		var v struct {
+			Period   any `json:"period"`
+			Pct      any `json:"pct"`
+			Status   any `json:"status"`
+			ResetsAt any `json:"resetsAt"`
 		}
-		r := Reading{Period: "unknown", At: at.UnixMilli(), HostID: host, State: "known"}
-		if p, ok := v["period"].(string); ok {
+		json.Unmarshal(x.Reading, &v)
+		r := Reading{Period: "unknown", At: x.UpdatedAt.UnixMilli(), HostID: x.HostID, State: "known"}
+		if p, ok := v.Period.(string); ok {
 			r.Period = p
 		}
-		if p, ok := v["pct"].(float64); ok && p >= 0 && p <= 100 {
+		if p, ok := v.Pct.(float64); ok && p >= 0 && p <= 100 {
 			r.Pct = &p
 		}
-		if s, ok := v["status"].(string); ok {
+		if s, ok := v.Status.(string); ok {
 			r.Status = &s
 		}
-		if t, ok := v["resetsAt"].(float64); ok {
+		if t, ok := v.ResetsAt.(float64); ok {
 			r.ResetsAt = &t
 			if t <= float64(nowMs()) {
 				r.State = "unknown"
 			}
 		}
-		out[account] = append(out[account], r)
+		out[x.AccountID] = append(out[x.AccountID], r)
 	}
-	return out, rs.Err()
+	return out, nil
 }
 
 // readingOverSwitch: the dispatch skip (§6) for an account: provider rejected, or a percent at or over switchPct (100
 // without one: a full subscription cannot run anyway). Only
 // readings that know when their period ends count. Empty when none applies. For the dispatch area.
-func readingOverSwitch(account map[string]any, list []Reading) string {
+func readingOverSwitch(account doc, list []Reading) string {
 	old := func(r Reading) string { return strconv.FormatInt(max(0, (nowMs()-r.At+30000)/60000), 10) + " min old" }
 	var best *Reading
 	sw, ok := account["switchPct"].(float64)
@@ -751,31 +756,24 @@ func operatorOnly(q *Request) error {
 	return nil
 }
 
-func taskIDOf(r doc) string {
-	if p, ok := r["taskId"].(*string); ok && p != nil {
-		return *p
-	}
-	return astr(r["taskId"])
-}
-
-// withTaskCodes: each row's task code (D17) as taskCode, in one query; null when the task has none or is out of scope.
-func withTaskCodes(q *Request, rows []doc) error {
+// withTaskCodes: each row's task code (D17) as taskCode, in one query; none when the task has none or is out of scope.
+func withTaskCodes(q *Request, rows []contract.ArtifactRow) error {
 	ids := []string{}
 	for _, r := range rows {
-		if t := taskIDOf(r); t != "" {
-			ids = append(ids, t)
+		if deref(r.TaskId) != "" {
+			ids = append(ids, *r.TaskId)
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	cs, err := rowsOf(q, "SELECT id,code FROM task WHERE id=ANY($1)", ids)
-	code := map[string]any{}
+	cs, err := q.db().ArtTaskCodes(q.ctx(), ids)
+	code := map[string]*string{}
 	for _, c := range cs {
-		code[astr(c["id"])] = c["code"]
+		code[c.ID] = c.Code
 	}
-	for _, r := range rows {
-		r["taskCode"] = code[taskIDOf(r)]
+	for i := range rows {
+		rows[i].TaskCode = code[deref(rows[i].TaskId)]
 	}
 	return err
 }
