@@ -22,6 +22,9 @@ type Spec struct {
 	// KillLeftovers kills what the leader left in its group when it exits, before the reap, so the group id cannot
 	// have been reused.
 	KillLeftovers bool
+	// Started runs after the start and before the reaper begins: the child exists and is not reaped, so its identity
+	// (start time) can be read even when it exits at once.
+	Started func(pid int)
 }
 
 // Proc: a started child. Done closes after the reap; Cmd.ProcessState is set by then.
@@ -49,6 +52,9 @@ func Spawn(s Spec) (*Proc, error) {
 		return nil, err
 	}
 	p := &Proc{Cmd: c, Pid: c.Process.Pid, leaderOnly: s.SameGroup, done: make(chan struct{})}
+	if s.Started != nil {
+		s.Started(p.Pid)
+	}
 	var timer *time.Timer
 	if s.Deadline > 0 {
 		timer = time.AfterFunc(s.Deadline, func() {
