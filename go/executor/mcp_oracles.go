@@ -1,30 +1,28 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 )
 
 // mcpToolResult: an MCP tools/call result as qualification reads it.
 type mcpToolResult struct {
-	IsError lax[bool] `json:"isError"`
-	Content lax[[]lax[struct {
-		Type lax[string] `json:"type"`
-		Text lax[string] `json:"text"`
-	}]] `json:"content"`
+	IsError bool `json:"isError"`
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
 }
 
-// mcpResultText: the text content of a tools/call result (its JSON, or the decoded object).
+// mcpResultText: the text content of a decoded tools/call result.
 func mcpResultText(result any) (string, error) {
-	var r mcpToolResult
-	viewOf(result, &r)
-	if r.IsError.V {
+	r := typed[mcpToolResult](result)
+	if r.IsError {
 		return "", errors.New("MCP reported tool failure")
 	}
 	text := ""
-	for _, c := range r.Content.V {
-		if c.V.Type.V == "text" {
-			text += c.V.Text.V
+	for _, c := range r.Content {
+		if c.Type == "text" {
+			text += c.Text
 		}
 	}
 	if text == "" {
@@ -34,13 +32,13 @@ func mcpResultText(result any) (string, error) {
 }
 
 func serenaSymbolWitness(text string) error {
-	var value lax[map[string]lax[[]lax[string]]] // symbol kind -> names
-	if json.Unmarshal([]byte(text), &value) != nil {
+	v, err := dec(text)
+	if err != nil {
 		return errors.New("Serena symbol result is not structured navigation evidence (check language-server readiness)")
 	}
-	for _, names := range value.V {
-		for _, name := range names.V {
-			if name.V == "CapabilityWitness" {
+	for _, names := range typed[map[string][]string](v) { // symbol kind -> names
+		for _, name := range names {
+			if name == "CapabilityWitness" {
 				return nil
 			}
 		}

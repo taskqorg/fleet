@@ -136,26 +136,26 @@ func insideParts(workdir string, parts []string) []string {
 // artifactArgs: the arguments of artifact_save, artifact_list and artifact_get (mcp-tools.json); artifactCall admits
 // only text and booleans, and a value passed on keeps its type.
 type artifactArgs struct {
-	Path        lax[string] `json:"path"`
-	Name        lax[string] `json:"name"`
-	MediaType   lax[string] `json:"media_type"`
-	Required    lax[bool]   `json:"required"`
-	ArtifactId  lax[string] `json:"artifact_id"`
-	ExecutionId lax[string] `json:"execution_id"`
-	TaskId      lax[string] `json:"task_id"`
-	Scope       lax[string] `json:"scope"`
-	Cursor      lax[string] `json:"cursor"`
+	Path        *string   `json:"path"`
+	Name        jsonValue `json:"name"`
+	MediaType   jsonValue `json:"media_type"`
+	Required    bool      `json:"required"`
+	ArtifactId  jsonValue `json:"artifact_id"`
+	ExecutionId string    `json:"execution_id"`
+	TaskId      jsonValue `json:"task_id"`
+	Scope       string    `json:"scope"`
+	Cursor      jsonValue `json:"cursor"`
 }
 
 func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error) {
-	path := q.Path.V
-	if !q.Path.Ok {
+	if q.Path == nil {
 		return nil, refusal("path must be a file inside your working area")
 	}
-	workdir := ctx.Workdir.V
-	if !ctx.Workdir.Ok {
+	path := *q.Path
+	if ctx.Workdir == nil {
 		return nil, refusal("workdir")
 	}
+	workdir := *ctx.Workdir
 	parts := pathParts(path)
 	rooted := false // an absolute path not through the working area keeps its former meaning: below the working area
 	if strings.HasPrefix(path, "/") && parts != nil {
@@ -184,10 +184,10 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 		return nil, refusal("path must be a regular file with one link")
 	}
 	key := newID()
-	spoolDir := ctx.Spool.V
-	if !ctx.Spool.Ok {
+	if ctx.Spool == nil {
 		return nil, refusal("spool")
 	}
+	spoolDir := *ctx.Spool
 	spool := filepath.Join(spoolDir, key)
 	if err := os.MkdirAll(spoolDir, 0o755); err != nil {
 		return nil, err
@@ -204,20 +204,22 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 		return nil, err
 	}
 	name := strings.Join(parts, "/")
-	body := M{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mime(name), "executionId": ctx.ExecutionId.value(), "required": q.Required.V}
+	body := M{"path": spool, "spool": true, "previews": true, "name": name, "mediaType": mime(name), "executionId": ctx.ExecutionId.V, "required": q.Required}
 	declared := name
-	if truth(q.Name.value()) {
-		body["name"], declared = q.Name.value(), q.Name.V
+	if truth(q.Name.V) {
+		body["name"] = q.Name.V
+		declared, _ = valStr(q.Name)
 	}
-	if truth(q.MediaType.value()) {
-		body["mediaType"] = q.MediaType.value()
+	if truth(q.MediaType.V) {
+		body["mediaType"] = q.MediaType.V
 	}
 	if err := db.tx(func(x execer) error {
 		if _, err := x.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,'upload',?,?)", key, enc(body), nowMs()); err != nil {
 			return err
 		}
-		if q.Required.V {
-			decl := contract.ArtifactDeclareRequest{HostId: ctx.HostId.V, ExecutionId: ctx.ExecutionId.V, Name: declared}
+		if q.Required {
+			execution, _ := ctx.execution()
+			decl := contract.ArtifactDeclareRequest{HostId: str0(ctx.HostId), ExecutionId: execution, Name: declared}
 			return queueTo(x, contract.RouteArtifactsDeclare, decl)
 		}
 		return nil
@@ -237,28 +239,25 @@ func artifactSave(ctx *delegationContext, q artifactArgs, db dbExec) (any, error
 func artifactCall(context any, name string, q any, db dbExec) (any, error) {
 	ctx := contextOf(context)
 	spec := toolSchemas[name]
-	var keys lax[map[string]json.RawMessage]
-	viewOf(q, &keys)
+	q = jClone(q) // the arguments in JSON form
+	keys, isObject := q.(M)
 	text := map[string]bool{} // each argument key: its value is text
-	bad := !keys.Ok
-	for k, v := range keys.V {
-		var s lax[string]
-		var b lax[bool]
-		json.Unmarshal(v, &s)
-		json.Unmarshal(v, &b)
+	bad := !isObject
+	for k, v := range keys {
+		_, isText := v.(string)
+		_, isBool := v.(bool)
 		_, known := spec.Properties[k]
-		text[k] = s.Ok
-		bad = bad || !known || !(s.Ok || b.Ok)
+		text[k] = isText
+		bad = bad || !known || !(isText || isBool)
 	}
 	for _, k := range spec.Required {
-		_, in := keys.V[k]
+		_, in := keys[k]
 		bad = bad || !in
 	}
 	if bad {
 		return nil, errors.New("Invalid artifact tool arguments")
 	}
-	var args artifactArgs
-	viewOf(q, &args)
+	args := typed[artifactArgs](q)
 	var result any
 	var err error
 	if name == "artifact_save" {
@@ -266,7 +265,7 @@ func artifactCall(context any, name string, q any, db dbExec) (any, error) {
 	} else {
 		key := newID()
 		kind, seconds := "get", 600
-		body := M{"executionId": ctx.ExecutionId.value(), "artifactId": args.ArtifactId.value(), "inputDir": ctx.InputDir.value()}
+		body := M{"executionId": ctx.ExecutionId.V, "artifactId": args.ArtifactId.V, "inputDir": ctx.InputDir.V}
 		if name == "artifact_list" {
 			kind, seconds = "list", 20
 			for k, isText := range text {
@@ -275,21 +274,22 @@ func artifactCall(context any, name string, q any, db dbExec) (any, error) {
 				}
 			}
 			var scope any
-			if s := args.Scope.V; s != "" { // empty is absent, as for the filters
+			if s := args.Scope; s != "" { // empty is absent, as for the filters
 				scope = s
 			}
 			if scope != nil && scope != "execution" && scope != "project" {
 				return mcpText(M{"error": `artifact tool refused: scope must be "execution" or "project"`}, &yes), nil
 			}
-			if scope != nil && (args.ExecutionId.V != "" || args.TaskId.V != "") {
+			taskId, _ := valStr(args.TaskId)
+			if scope != nil && (args.ExecutionId != "" || taskId != "") {
 				return mcpText(M{"error": "artifact tool refused: scope goes without execution_id and task_id"}, &yes), nil
 			}
 			// Without a filter an agent lists its own execution's artifacts; the whole project only on request.
-			execution := args.ExecutionId.V // empty is absent, as the transfer drops it
-			if execution == "" && args.TaskId.V == "" && scope != "project" {
-				execution = ctx.ExecutionId.V
+			execution := args.ExecutionId // empty is absent, as the transfer drops it
+			if execution == "" && taskId == "" && scope != "project" {
+				execution, _ = ctx.execution()
 			}
-			body = M{"executionId": ctx.ExecutionId.value(), "filter": M{"executionId": optStr(execution), "taskId": args.TaskId.value(), "mediaType": args.MediaType.value(), "cursor": args.Cursor.value()}}
+			body = M{"executionId": ctx.ExecutionId.V, "filter": M{"executionId": optStr(execution), "taskId": args.TaskId.V, "mediaType": args.MediaType.V, "cursor": args.Cursor.V}}
 		}
 		if _, err := db.Exec("INSERT INTO transfers(id,kind,body,created_at) VALUES(?,?,?,?)", key, kind, enc(body), nowMs()); err != nil {
 			return nil, dbe(err)

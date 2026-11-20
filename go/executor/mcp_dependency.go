@@ -62,12 +62,11 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, raw any) (M, bool
 	if err != nil {
 		return nil, false, nil, err
 	}
-	action := request.Action.V
+	action := request.Action
 	if action == "prepare" {
 		targets := map[string]mcpTarget{}
-		for _, value := range request.OwnedDependencies.V {
-			name := value.V
-			path := request.Dependencies.V[name].V
+		for _, name := range request.OwnedDependencies {
+			path := request.Dependencies[name]
 			if name == "" || path == "" {
 				return nil, false, nil, errors.New("owned dependency missing")
 			}
@@ -91,11 +90,11 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, raw any) (M, bool
 		o.generations[generation] = &mcpGeneration{preparer: pid, preparerID: peerID, targets: targets, leases: map[*net.UnixConn]bool{}}
 		return M{"generation": generation}, false, nil, nil
 	}
-	gen := o.generations[request.Generation.V]
+	gen := o.generations[request.Generation]
 	if gen == nil {
 		return nil, false, nil, errors.New("MCP generation is stale or unknown")
 	}
-	dependency := request.Dependency.V
+	dependency := request.Dependency
 	if action == "lookup" || dependency != "" {
 		id, e := identity(gen.guardian)
 		if e != nil || id != gen.guardianID || !descendant(pid, gen.guardian) {
@@ -110,10 +109,10 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, raw any) (M, bool
 			return nil, false, nil, errors.New("MCP dependency target changed")
 		}
 		if action == "lookup" {
-			o.generations[request.Generation.V].leases[c] = true
+			o.generations[request.Generation].leases[c] = true
 			return M{"command": target.path, "targetSha256": target.hash}, true, func() { delete(gen.leases, c) }, nil
 		}
-		if request.Command.V != target.path || request.TargetSha256.V != target.hash {
+		if request.Command != target.path || request.TargetSha256 != target.hash {
 			return nil, false, nil, errors.New("MCP fixed dependency identity differs")
 		}
 	} else {
@@ -125,14 +124,14 @@ func (o *mcpOwner) generationRequest(c *net.UnixConn, pid int, raw any) (M, bool
 			return nil, false, nil, errors.New("MCP generation already has a guardian")
 		}
 	}
-	if err = o.register(pid, request.Identity.V); err != nil {
+	if err = o.register(pid, request.Identity); err != nil {
 		return nil, false, nil, err
 	}
 	if dependency != "" {
 		return M{}, true, func() {}, nil
 	}
-	gen.guardian, gen.guardianID = pid, request.Identity.V
-	generation := request.Generation.V
+	gen.guardian, gen.guardianID = pid, request.Identity
+	generation := request.Generation
 	return M{}, true, func() {
 		delete(o.generations, generation)
 		for lease := range gen.leases {
@@ -157,15 +156,13 @@ func mcpOwnerCall(socket string, request M) (M, *net.UnixConn, error) {
 	}
 	var raw json.RawMessage
 	var answer M
-	var typed ownerAnswer
 	if err = json.NewDecoder(c).Decode(&raw); err != nil || json.Unmarshal(raw, &answer) != nil {
 		c.Close()
 		return nil, nil, errors.New("MCP ownership acknowledgement unknown; no replay")
 	}
-	json.Unmarshal(raw, &typed)
-	if !typed.Registered.V {
+	if a := typed[ownerAnswer](answer); !a.Registered {
 		c.Close()
-		return nil, nil, errors.New("MCP ownership refused: " + typed.Error.V)
+		return nil, nil, errors.New("MCP ownership refused: " + a.Error)
 	}
 	c.SetDeadline(time.Time{})
 	return answer, c, nil
