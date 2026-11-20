@@ -6,8 +6,15 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   receipts, one route per other receipt envelope: `/api/hosts/project-operations` `ProjectReceipt`,
   `/api/hosts/delegations` `ChildReceipt`, `/api/hosts/accounts/report` `AccountReceipt`; `/api/hosts/events` batches; the artifact
   transfer requests `Artifact*Request` and `HostArtifact*Request` of `/api/hosts/artifacts/*`, `StoresRequest`, `AgentToolsRequest`) and
-  event payloads. Replies of the artifact routes are not described yet. It is the source of the types on all three sides
-  (docs/designs/fleet-contracts.md); `go/coordinator/schema.sql` stays the source of table rows only.
+  event payloads. It is the source of the types on all three sides
+  (docs/designs/fleet-contracts.md); `go/coordinator/schema.sql` stays the source of table rows only. Its `routes` map
+  names every host route: `request` and `reply` (`$defs` names; no reply: not described, such as an operation's record
+  or a byte stream), `long` (no surrounding transaction) and `decode` (`checked`: required keys and `Validate`, unknown
+  keys refused when the request has `unevaluatedProperties: false`; `plain`: decoded only, for bodies older hosts send
+  without required fields). Go gets one `contract.Route<Name>` (`HostRoute[Req, Rep]`) per route, registered by the
+  coordinator's `hostRoute` and sent by the executor's `queueTo` and `transferReply`; TypeScript gets `HostRoutes`.
+  `Command` is the union of one `<Kind>Command` per command kind (same envelope, the kind's payload); `Capability` lists
+  the fixed capability names a host reports, and `contract.MissingCapability` is the one gate dispatch and poll apply.
 * `lab-registry.schema.json`: Lab use-case registry entries (`config/lab/use-cases/*.json`, `UseCase`); the coordinator's
   `useCases()` validates every entry and its `maps_to` targets (docs/designs/fleet-asset-pipelines.md §3).
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
@@ -65,7 +72,9 @@ Both generators accept only these keywords and fail on any other, so a schema ne
 `type` (one type, optionally with `"null"`), `properties`, `required`, `additionalProperties`, `unevaluatedProperties` (only `false`), `items`, `enum` (strings),
 `$ref` (`#/$defs/<Name>`, or `<file>.schema.json#/$defs/<Name>` for a type of another contract file: an import in TypeScript, the same package in Go), `minimum`, `$comment`, `const` (a string: a literal type in TypeScript, `string` in Go) and
 `oneOf` (only as a `$defs` entry whose members are all `$ref`: a union in TypeScript, `json.RawMessage` in Go, where
-each member is its own struct; give each member a `const` discriminator such as `kind`).
+each member is its own struct; give each member a `const` discriminator such as `kind`. A schema generated with
+`go/gen -unions` (the host protocol) gets a Go struct with one pointer per member, `Other` for a discriminator value no
+member has, `Value`, `Validate` and a getter for every envelope property the members share).
 An object without properties whose `additionalProperties` is a schema is a map (`map[string]T` in Go, `Record<string, T>` in TypeScript).
 
 * An object with properties, and an enum, must be a `$defs` entry (Go needs its name).

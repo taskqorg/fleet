@@ -49,9 +49,9 @@ func TestDurableCommandTraceAndDiscovery(t *testing.T) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
-	tp := deref(c.Traceparent)
+	tp := deref(c.Traceparent())
 	trace, span, ok := obs.ParseTraceparent(tp)
-	if !ok || trace != parent.TraceID || span == parent.SpanID || c.Run == nil || deref(c.Run.ExecutionId) != "x-trace" {
+	if !ok || trace != parent.TraceID || span == parent.SpanID || c.Run() == nil || deref(c.Run().ExecutionId) != "x-trace" {
 		t.Fatalf("command %s", raw)
 	}
 	if len(dispatched) != 1 || dispatched[0].ParentSpanID != parent.SpanID || dispatched[0].SpanID != span {

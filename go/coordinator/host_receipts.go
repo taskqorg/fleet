@@ -13,15 +13,17 @@ import (
 )
 
 func init() {
-	longRoute("POST /api/hosts/receipts", func(q *Request) (any, error) {
-		return typedReceiptLocks(q, receiptLocks, q.app.statusReceiptIn)
+	hostRoute(contract.RouteReceipts, func(q *Request, b *contract.Receipt) (contract.ReceiptReply, error) {
+		out, err := receiptTx(q, true, receiptLocks(b), func() (any, string, error) { return q.app.statusReceiptIn(q, b) })
+		r, _ := out.(contract.ReceiptReply)
+		return r, err
 	})
-	longRoute("POST /api/hosts/accounts/report", func(q *Request) (any, error) {
-		return typedReceipt(q, noEnd(accountReceiptIn))
+	hostRoute(contract.RouteAccountsReport, func(q *Request, b *contract.AccountReceipt) (any, error) {
+		return receiptTx(q, true, []string{GLOBAL}, func() (any, string, error) { r, err := accountReceiptIn(q, b); return r, "", err })
 	})
-	longRoute("POST /api/hosts/project-operations", projectReceiptRoute)
-	longRoute("POST /api/hosts/delegations", func(q *Request) (any, error) {
-		return typedReceipt(q, noEnd(q.app.childReceiptIn))
+	hostRoute(contract.RouteProjectOperations, projectReceiptRoute)
+	hostRoute(contract.RouteDelegations, func(q *Request, b *contract.ChildReceipt) (any, error) {
+		return receiptTx(q, true, []string{GLOBAL}, func() (any, string, error) { r, err := q.app.childReceiptIn(q, b); return r, "", err })
 	})
 }
 
@@ -32,31 +34,6 @@ func receiptLocks(b *contract.Receipt) []string {
 	default:
 		return []string{"execution:" + b.ExecutionId}
 	}
-}
-
-// typedReceipt: a receipt route under GLOBAL.
-func typedReceipt[T any, P interface {
-	*T
-	Validate() error
-}](q *Request, fn func(q *Request, t *T) (any, string, error)) (any, error) {
-	return typedReceiptLocks[T, P](q, nil, fn)
-}
-
-// typedReceiptLocks: decode/validate the closed contract struct, then run fn in one transaction acquiring
-// canonical locks from locksFn (defaulting to GLOBAL); an execution fn names as ended starts its pipeline step.
-func typedReceiptLocks[T any, P interface {
-	*T
-	Validate() error
-}](q *Request, locksFn func(*T) []string, fn func(q *Request, t *T) (any, string, error)) (any, error) {
-	t, err := decodeValid[T, P](q.body, true)
-	if err != nil {
-		return nil, err
-	}
-	locks := []string{GLOBAL}
-	if locksFn != nil {
-		locks = locksFn(t)
-	}
-	return receiptTx(q, true, locks, func() (any, string, error) { return fn(q, t) })
 }
 
 // receiptTx runs fn in one transaction: a write transaction acquiring locks, or a read transaction without advisory
@@ -78,10 +55,6 @@ func receiptTx(q *Request, write bool, locks []string, fn func() (any, string, e
 		go pipelineOnExecution(q.app, ended)
 	}
 	return out, nil
-}
-
-func noEnd[T any](fn func(q *Request, t *T) (any, error)) func(q *Request, t *T) (any, string, error) {
-	return func(q *Request, t *T) (any, string, error) { r, err := fn(q, t); return r, "", err }
 }
 
 // receiptState: the execution state a command receipt status reports ('unknown' reports none).
@@ -175,11 +148,7 @@ func accountReceiptIn(q *Request, b *contract.AccountReceipt) (any, error) {
 // projectReceiptRoute: an operation registered with read=true (project_context, catalogue, ...) runs in a read
 // transaction without GLOBAL, as on the ops and agent-tool paths; a slow read must not queue every host poll and receipt
 // behind it. Every other operation keeps the GLOBAL write transaction.
-func projectReceiptRoute(q *Request) (any, error) {
-	b, err := decodeValid[contract.ProjectReceipt](q.body, true)
-	if err != nil {
-		return nil, err
-	}
+func projectReceiptRoute(q *Request, b *contract.ProjectReceipt) (any, error) {
 	op, ok := projectOperation(string(b.Delegation.Operation))
 	read := ok && op.read
 	locks := []string{GLOBAL}

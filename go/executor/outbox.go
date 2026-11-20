@@ -205,7 +205,7 @@ func backoff(attempts int64) int64 {
 	return min(2000*(int64(1)<<attempts), 300_000)
 }
 
-const pollRoute = "/api/hosts/poll"
+var pollRoute = contract.RoutePoll.Path
 
 func edgeRedirect(route string, status int, detail string) {
 	holdMu.Lock()
@@ -365,6 +365,10 @@ func answerValue(a answer) (json.RawMessage, error) {
 	return nil, fmt.Errorf("%s", a.text)
 }
 
+// queueTo writes one outbox row for host route r (contracts/host-protocol.schema.json routes), its body r's request.
+func queueTo[Req, Rep any](db execer, r contract.HostRoute[Req, Rep], v Req) error { return queue(db, r.Path, v) }
+
+// queue: one outbox row for a route chosen at run time (the agent's delegation envelopes); queueTo when it is known.
 func queue(db execer, route string, v any) error {
 	_, err := db.Exec("INSERT INTO outbox(route,body) VALUES(?,?)", route, enc(v))
 	return err
@@ -520,8 +524,8 @@ func startFlush(db *sql.DB, url, token, host string) (wait func() error, err err
 	// run already sent. Bodies are read for the claimed lanes only.
 	laneMu.Lock()
 	// A span batch (up to 1000 spans) has no execution: its body is not parsed on every scan.
-	rs, err := db.Query(`SELECT rowid,route,CASE WHEN route='/api/hosts/spans' THEN '' WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
-		THEN json_extract(body,'$.executionId') ELSE '' END ELSE '' END FROM outbox ORDER BY rowid`)
+	rs, err := db.Query(`SELECT rowid,route,CASE WHEN route=? THEN '' WHEN json_valid(body) THEN CASE WHEN json_type(body,'$.executionId')='text'
+		THEN json_extract(body,'$.executionId') ELSE '' END ELSE '' END FROM outbox ORDER BY rowid`, contract.RouteSpans.Path)
 	if err != nil {
 		laneMu.Unlock()
 		return nil, err
@@ -686,7 +690,7 @@ func (p *outboxPass) lane(rows []outboxRow) error {
 		value := decM(r.body)
 		// Consecutive event rows of the lane go in one request.
 		batch := []outboxRow{r}
-		if r.route == "/api/hosts/events" && !single {
+		if r.route == contract.RouteEvents.Path && !single {
 			for i+len(batch) < len(rows) {
 				nx := rows[i+len(batch)]
 				events, _ := value["events"].([]any)
@@ -826,7 +830,7 @@ func (p *outboxPass) poisoned(r outboxRow, value M, a answer, reason string) err
 		data := contract.OutboxFailed{Route: r.route, Status: int64(a.status), Reason: reason}
 		ev := contract.HostEvent{Id: fmt.Sprintf("outbox-failed-%d", r.n), Seq: 1_000_000_000_000 + r.n, Type: string(contract.FleetEventTypeOutboxFailed),
 			Timestamp: now, Data: json.RawMessage(enc(data))}
-		if err := queue(tx, "/api/hosts/events", contract.HostEvents{HostId: p.host, ExecutionId: r.execution, Events: []contract.HostEvent{ev}}); err != nil {
+		if err := queueTo(tx, contract.RouteEvents, contract.HostEvents{HostId: p.host, ExecutionId: r.execution, Events: []contract.HostEvent{ev}}); err != nil {
 			tx.Rollback()
 			return err
 		}

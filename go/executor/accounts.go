@@ -169,7 +169,7 @@ func (e *executor) accountInspect(c M) error {
 		}
 		r.AccountObservation = &o
 	}
-	if err := e.inTx(func() error { return e.queue("/api/hosts/accounts/report", r) }); err != nil {
+	if err := e.inTx(func() error { return queueTo(e.ex, contract.RouteAccountsReport, r) }); err != nil {
 		return err
 	}
 	return e.finish(c, "completed", "")

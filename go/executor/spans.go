@@ -96,7 +96,7 @@ func queueSpans(db *sql.DB) {
 		}
 		if (dbExec{db}).tx(func(x execer) error {
 			for _, b := range batches {
-				if err := queue(x, spansRoute, b); err != nil {
+				if err := queueTo(x, contract.RouteSpans, b); err != nil {
 					return err
 				}
 			}
@@ -108,7 +108,7 @@ func queueSpans(db *sql.DB) {
 	}
 }
 
-const spansRoute = "/api/hosts/spans"
+var spansRoute = contract.RouteSpans.Path
 
 func spanBatches(file string) ([]contract.SpanBatchRequest, error) {
 	fh, err := os.Open(file)
@@ -220,13 +220,17 @@ func executionSpan(execution string, l *live) {
 		return // a later step of the finish failed and the run is finished again next tick
 	}
 	l.spanned = true
-	run := jAt(l.command, "run")
-	ctx := obs.WithRun(obs.WithRemote(context.Background(), jStr(l.command, "traceparent")), obs.Run{ExecutionID: execution, ProjectID: jStr(run, "projectId"), TaskID: jStr(run, "taskId"), ExperimentID: jStr(run, "experimentId"), AccountID: jStr(run, "accountId"), Actor: jStr(run, "actor")})
+	c := typedCommand(l.command)
+	run, tp := contract.CommandRun{}, str0(c.Traceparent())
+	if c.Run() != nil {
+		run = *c.Run()
+	}
+	ctx := obs.WithRun(obs.WithRemote(context.Background(), tp), obs.Run{ExecutionID: execution, ProjectID: str0(run.ProjectId), TaskID: str0(run.TaskId), ExperimentID: str0(run.ExperimentId), AccountID: str0(run.AccountId), Actor: str0(run.Actor)})
 	_, s := obs.StartAt(ctx, "execution", obs.KindInternal, l.started)
-	if _, _, ok := obs.ParseTraceparent(jStr(l.command, "traceparent")); !ok {
+	if _, _, ok := obs.ParseTraceparent(tp); !ok {
 		s.Set("missing.parent", "command trace context unavailable")
 	}
-	if jStr(l.command, "kind") == "script" {
+	if c.Script != nil {
 		s.Set("fleet.harness", "script")
 	} else {
 		s.Set("fleet.harness", harnessName(jAt(l.command, "payload")))

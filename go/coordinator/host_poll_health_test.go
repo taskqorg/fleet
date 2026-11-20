@@ -63,7 +63,7 @@ func TestPollIsolatesPoisonedCommands(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for _, c := range out {
-		got[astr(c["id"])] = true
+		got[c.Id()] = true
 	}
 	if !got[ids["good"]] || got[ids["refused"]] || got[ids["orphan"]] || len(out) != 1 {
 		t.Fatalf("delivered %v, want only the good script %s", out, ids["good"])
@@ -245,7 +245,7 @@ func TestHostPollFailureRecordAndProblem(t *testing.T) {
 	// An observation flush (here a poll's own part, before its commands) keeps the record.
 	env.app.clearHostCache("sick-host")
 	body, _ := json.Marshal(good)
-	if _, err := env.app.pollOnce(&Request{app: env.app, r: httptest.NewRequestWithContext(env.ctx, "POST", "/api/hosts/poll", nil), host: doc{"hostId": "sick-host", "holder": testOwnerEmail}, body: body}); err != nil {
+	if _, err := env.app.pollOnce(&Request{app: env.app, r: httptest.NewRequestWithContext(env.ctx, "POST", "/api/hosts/poll", nil), host: doc{"hostId": "sick-host", "holder": testOwnerEmail}, body: body}, &good); err != nil {
 		t.Fatal(err)
 	}
 	if pe := pollError("hosts_list"); pe == nil || num(pe["since"]) != since {

@@ -195,8 +195,7 @@ func artifactSave(ctx, q any, db dbExec) (any, error) {
 		}
 		if body["required"] == true {
 			decl := contract.ArtifactDeclareRequest{HostId: jStr(ctx, "hostId"), ExecutionId: jStr(ctx, "executionId"), Name: jStr(body, "name")}
-			_, err := x.Exec("INSERT INTO outbox(route,body) VALUES('/api/hosts/artifacts/declare',?)", enc(decl))
-			return err
+			return queueTo(x, contract.RouteArtifactsDeclare, decl)
 		}
 		return nil
 	}); err != nil {

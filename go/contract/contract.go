@@ -11,7 +11,7 @@ import (
 	"sync"
 )
 
-//go:generate go run ../gen ../../contracts/host-protocol.schema.json contract host_protocol_gen.go
+//go:generate go run ../gen -unions ../../contracts/host-protocol.schema.json contract host_protocol_gen.go
 //go:generate go run ../gen ../../contracts/gateway.schema.json contract gateway_gen.go
 //go:generate go run ../gen ../../contracts/ops.schema.json contract ops_gen.go
 //go:generate go run ../gen ../../contracts/ops-accounts.schema.json contract ops_accounts_gen.go
@@ -152,3 +152,52 @@ func unmarshalRest(b []byte, named any, rest *map[string]json.RawMessage) error 
 	}
 	return nil
 }
+
+// HostRoute: one host route of contracts/host-protocol.schema.json (routes), typed by its request and reply. Long: no
+// surrounding transaction; Plain: the body is decoded only (older hosts omit required fields), else required keys are
+// checked and Validate runs, and a closed request refuses unknown keys.
+type HostRoute[Req, Rep any] struct {
+	Path        string
+	Long, Plain bool
+}
+
+// StartNeeds: what a start or input asks of the executor that runs it.
+type StartNeeds struct {
+	ReadOnly     bool // read access: the executor must honour it
+	Branchless   bool // a project start without a branch
+	WorkspaceKey bool // a workspace key (its own worktree)
+	Attachments  bool // message attachments
+}
+
+// MissingCapability is the one capability gate (dispatch and poll): the first capability the host lacks for n, and
+// whether one is missing. caps is the host's last poll's list.
+func MissingCapability(caps []string, n StartNeeds) (Capability, bool) {
+	for _, c := range []struct {
+		need bool
+		cap  Capability
+	}{{n.ReadOnly || n.Branchless, CapabilityStartAccessV1}, {n.WorkspaceKey, CapabilityWorkspaceKeyV1}, {n.Attachments, CapabilityAttachments}} {
+		if c.need && !HasCapability(caps, string(c.cap)) {
+			return c.cap, true
+		}
+	}
+	return "", false
+}
+
+// HasCapability: caps holds c (a Capability or a prefixed one: ToolCapability, ForgeCapability).
+func HasCapability(caps []string, c string) bool {
+	for _, x := range caps {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}
+
+// ToolCapability: the capability of a coding tool on the host's PATH (tool:<name>).
+func ToolCapability(name string) string { return "tool:" + name }
+
+// ForgeCapability: the capability of a forge connection to owner/repo (forge:<owner>/<repo>).
+func ForgeCapability(repo string) string { return "forge:" + repo }
+
+// FfmpegCapability: the host's ffmpeg version (ffmpeg:<version>).
+func FfmpegCapability(version string) string { return "ffmpeg:" + version }

@@ -66,7 +66,7 @@ func (e *hostWakeEntry) wake() {
 }
 
 func init() {
-	longRoute("POST /api/hosts/poll", func(q *Request) (any, error) { return q.app.poll(q) })
+	hostRouteObserved(contract.RoutePoll, pollObserved, func(q *Request, b *contract.PollRequest) (contract.PollReply, error) { return q.app.pollOnce(q, b) })
 }
 
 func (a *App) hostWakeEntryFor(hostID string) *hostWakeEntry {
@@ -257,7 +257,7 @@ func hostProblems(list []contract.EdgeProblem) []any {
 	return out
 }
 
-func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string) ([]doc, error) {
+func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string) ([]contract.Command, error) {
 	var pipelinePending bool
 	var hasPending bool
 	var removed bool
@@ -281,9 +281,9 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		return nil, fail(410, "host-removed")
 	}
 	if !hasPending {
-		return []doc{}, nil
+		return []contract.Command{}, nil
 	}
-	out := []doc{}
+	out := []contract.Command{}
 	var hostDoc doc
 	locks := []string{"host:" + host}
 	if pipelinePending {
@@ -305,13 +305,12 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		if err != nil {
 			return err
 		}
-		out = []doc{}
+		out = []contract.Command{}
 		for _, c := range pending {
-			if astr(mapOf(c["payload"])["workspaceKey"]) != "" && !inList(caps, "workspace-key-v1") {
-				continue
-			}
-			// A read-only or branchless start waits for an executor that honours it, also if this host went back a release.
-			if pl := mapOf(c["payload"]); (c["kind"] == "start" && pl["readOnly"] == true || pl["branch"] == false && pl["projectId"] != nil) && !inList(caps, "start-access-v1") {
+			// A command waits for an executor that honours it (contract.MissingCapability), also if this host went back a release.
+			pl := mapOf(c["payload"])
+			if _, missing := contract.MissingCapability(caps, contract.StartNeeds{ReadOnly: c["kind"] == "start" && pl["readOnly"] == true,
+				Branchless: pl["branch"] == false && pl["projectId"] != nil, WorkspaceKey: astr(pl["workspaceKey"]) != "", Attachments: len(anys(pl["attachments"])) > 0}); missing {
 				continue
 			}
 			// Each command is prepared under its own savepoint: one command that cannot be handed off is stopped with
@@ -364,7 +363,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			}
 			pollCommandWaits.forget(astr(c["id"])) // prepared: no longer waiting on an error
 			if fresh != nil {
-				out = append(out, fresh)
+				out = append(out, *fresh)
 			}
 		}
 		return nil
@@ -376,7 +375,7 @@ var stopWithheldKinds = []string{"start", "input", "script", "steer", "delivery-
 
 // pollReadyCommand: command c as the host gets it now, or nil while it is not ready. The ready filter may rewrite the
 // command (delegation inputs), so the reply is the command as stored after it.
-func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
+func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (*contract.Command, error) {
 	ok, err := agentReady(wq, c)
 	if err != nil || !ok {
 		return nil, err
@@ -429,8 +428,15 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
 		}
 	}
 	out, err := get(wq, c["id"], "command")
+	if err != nil {
+		return nil, err
+	}
 	delete(out, "handedOut") // coordinator-only delivery fence, keep executor replays byte-identical
-	return out, err
+	cmd, err := asT[contract.Command](out)
+	if err != nil {
+		return nil, fail(410, "command does not match the host protocol: "+err.Error()) // stopped with the reason
+	}
+	return &cmd, nil
 }
 
 // pollCommandRefusal: what a command's failed preparation does. The command's own lasting failure (an authorization
@@ -447,7 +453,7 @@ func pollCommandRefusal(err error) (string, pollCommandOutcome) {
 		case 403:
 			return "refused: " + he.Msg, pollStopsCommand // an authorization refusal: never handed over, never widened
 		case 404, 410:
-			return "handoff failed: " + he.Msg, pollStopsCommand // a stored row that is gone
+			return "handoff failed: " + he.Msg, pollStopsCommand // a stored row that is gone, or does not fit contract.Command
 		}
 		return "", pollRetriesCommand // a conflict, a race or a busy dependency: the next poll tries again
 	}
@@ -575,11 +581,15 @@ func (a *App) refusePollCommand(wq *Request, c doc, reason string) error {
 	return exec(wq, "UPDATE execution SET wait_reason=NULL WHERE id=$1", e["id"])
 }
 
-// poll answers one host poll and records its health: a failure the host cannot report (it gets no reply to report
-// with) is recorded here, and the next success clears it (host_poll_health.go).
-func (a *App) poll(q *Request) (any, error) {
-	out, err := a.pollOnce(q)
-	if host := hostOf(q); err != nil && q.ctx().Err() != nil {
+// pollObserved runs one host poll, its body's decoding included, and records its health: a failure the host cannot
+// report (it gets no reply to report with) is recorded here, and the next success clears it (host_poll_health.go). The
+// host is seen before its body is read: a host whose every poll fails still shows as polling (with pollError).
+func pollObserved(q *Request, run func() (any, error)) (any, error) {
+	a, host := q.app, hostOf(q)
+	a.enterHostPoll(host)
+	defer a.exitHostPoll(host)
+	out, err := run()
+	if err != nil && q.ctx().Err() != nil {
 		// The host left (a restart mid long-poll): whatever error that surfaced as, it is not a failure to record.
 	} else if err != nil {
 		a.notePollFailure(q.ctx(), host, q.host["holder"], err)
@@ -589,16 +599,8 @@ func (a *App) poll(q *Request) (any, error) {
 	return out, err
 }
 
-func (a *App) pollOnce(q *Request) (any, error) {
-	// The host is seen before its body is read: a host whose every poll fails still shows as polling (with pollError).
+func (a *App) pollOnce(q *Request, b *contract.PollRequest) (contract.PollReply, error) {
 	host := hostOf(q)
-	a.enterHostPoll(host)
-	defer a.exitHostPoll(host)
-	var b contract.PollRequest
-	if err := decode(q.body, &b); err != nil {
-		return nil, err
-	}
-
 	open := q.obj() // the open parts (stores, update) as the host's plain JSON
 	now := nowMs()
 	obs := doc{"id": host, "holder": q.host["holder"]}
@@ -690,12 +692,12 @@ func (a *App) pollOnce(q *Request) (any, error) {
 			})
 			return nil
 		}); err != nil {
-			return nil, err
+			return contract.PollReply{}, err
 		}
 	}
 
 	wait := parsePollWait(q.r)
-	out := []doc{}
+	out := []contract.Command{}
 	var err error
 	if wait == 0 {
 		target := flushGen
@@ -704,12 +706,12 @@ func (a *App) pollOnce(q *Request) (any, error) {
 		}
 		if target > 0 || !a.dispatchLoopStarted.Load() {
 			if err := a.waitDispatchCaughtUp(ctx, target); err != nil {
-				return nil, err
+				return contract.PollReply{}, err
 			}
 		}
 		out, err = a.pollReadyCommands(ctx, host, b.Capabilities)
 		if err != nil {
-			return nil, err
+			return contract.PollReply{}, err
 		}
 	} else {
 		deadline := time.NewTimer(wait)
@@ -718,21 +720,21 @@ func (a *App) pollOnce(q *Request) (any, error) {
 			wakeCh := a.hostWakeChan(host)
 			out, err = a.pollReadyCommands(ctx, host, b.Capabilities)
 			if err != nil {
-				return nil, err
+				return contract.PollReply{}, err
 			}
 			if len(out) > 0 {
 				break
 			}
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return contract.PollReply{}, ctx.Err()
 			case <-a.stoppedCh():
-				out = []doc{}
+				out = []contract.Command{}
 				goto replyNow
 			case <-deadline.C:
 				out, err = a.pollReadyCommands(ctx, host, b.Capabilities)
 				if err != nil {
-					return nil, err
+					return contract.PollReply{}, err
 				}
 				goto replyNow
 			case <-wakeCh:
@@ -740,8 +742,7 @@ func (a *App) pollOnce(q *Request) (any, error) {
 		}
 	}
 replyNow:
-	reply := contract.PollReply{Target: healthyTarget(), AutoUpdate: ptr(autoUpdateOf(q.host))}
-	return doc{"commands": out, "target": reply.Target, "autoUpdate": reply.AutoUpdate}, nil
+	return contract.PollReply{Commands: out, Target: healthyTarget(), AutoUpdate: ptr(autoUpdateOf(q.host))}, nil
 }
 
 func (a *App) invalidateEnvCache() {

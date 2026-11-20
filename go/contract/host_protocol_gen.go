@@ -52,6 +52,50 @@ func (v *AccountEnvironment) Validate() error {
 	return nil
 }
 
+// AccountInspectCommand: kind account-inspect: inspect a native account
+type AccountInspectCommand struct {
+	ExecutionId string                 `json:"executionId"`
+	HostId      *string                `json:"hostId,omitempty"`
+	Id          string                 `json:"id"`
+	Kind        string                 `json:"kind"`
+	Payload     *AccountInspectPayload `json:"payload,omitempty"`
+	Run         *CommandRun            `json:"run,omitempty"`
+	SessionId   *string                `json:"sessionId,omitempty"`
+	Traceparent *string                `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v AccountInspectCommand) MarshalJSON() ([]byte, error) {
+	type plain AccountInspectCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *AccountInspectCommand) UnmarshalJSON(b []byte) error {
+	type plain AccountInspectCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *AccountInspectCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type AccountInspectPayload struct {
 	AccountId    string  `json:"accountId"`
 	Binding      *string `json:"binding,omitempty"`
@@ -129,6 +173,9 @@ func (v *AccountReceipt) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*AccountReceipt) Closed() bool { return true }
+
 type AccountRoots struct {
 	CredentialAuthority *string `json:"credentialAuthority,omitempty"`
 	CredentialHome      *string `json:"credentialHome,omitempty"`
@@ -174,6 +221,50 @@ func (v *ArtifactCommitRequest) Validate() error {
 	}
 	for i := range v.Parts {
 		if err := Check(&v.Parts[i], "parts"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ArtifactCopyCommand: kind artifact-copy: copy an artifact into a store
+type ArtifactCopyCommand struct {
+	ExecutionId string                   `json:"executionId"`
+	HostId      *string                  `json:"hostId,omitempty"`
+	Id          string                   `json:"id"`
+	Kind        string                   `json:"kind"`
+	Payload     *ArtifactTransferPayload `json:"payload,omitempty"`
+	Run         *CommandRun              `json:"run,omitempty"`
+	SessionId   *string                  `json:"sessionId,omitempty"`
+	Traceparent *string                  `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactCopyCommand) MarshalJSON() ([]byte, error) {
+	type plain ArtifactCopyCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactCopyCommand) UnmarshalJSON(b []byte) error {
+	type plain ArtifactCopyCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactCopyCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
 			return err
 		}
 	}
@@ -373,6 +464,124 @@ func (v *ArtifactVerify) Validate() error {
 	return nil
 }
 
+// ArtifactVerifyCommand: kind artifact-verify: verify a store copy
+type ArtifactVerifyCommand struct {
+	ExecutionId string                   `json:"executionId"`
+	HostId      *string                  `json:"hostId,omitempty"`
+	Id          string                   `json:"id"`
+	Kind        string                   `json:"kind"`
+	Payload     *ArtifactTransferPayload `json:"payload,omitempty"`
+	Run         *CommandRun              `json:"run,omitempty"`
+	SessionId   *string                  `json:"sessionId,omitempty"`
+	Traceparent *string                  `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ArtifactVerifyCommand) MarshalJSON() ([]byte, error) {
+	type plain ArtifactVerifyCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ArtifactVerifyCommand) UnmarshalJSON(b []byte) error {
+	type plain ArtifactVerifyCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ArtifactVerifyCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// BaseUpdatedCommand: kind base-updated: sync the checkout to its new base
+type BaseUpdatedCommand struct {
+	ExecutionId string          `json:"executionId"`
+	HostId      *string         `json:"hostId,omitempty"`
+	Id          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	Payload     *ProjectPayload `json:"payload,omitempty"`
+	Run         *CommandRun     `json:"run,omitempty"`
+	SessionId   *string         `json:"sessionId,omitempty"`
+	Traceparent *string         `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v BaseUpdatedCommand) MarshalJSON() ([]byte, error) {
+	type plain BaseUpdatedCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *BaseUpdatedCommand) UnmarshalJSON(b []byte) error {
+	type plain BaseUpdatedCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *BaseUpdatedCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Capability: A capability a host reports in its poll (PollRequest.capabilities, strings so older and newer names pass). Besides these: tool:<name> (a coding tool on PATH, tool:browser), forge:<owner>/<repo> (a forge connection), ffmpeg:<version>. contract.MissingCapability is the one gate on them.
+type Capability string
+
+const (
+	CapabilityCodex          Capability = "codex"
+	CapabilityGpt61Sol       Capability = "gpt-6.1-sol"
+	CapabilityLow            Capability = "low"
+	CapabilityStaticOutput   Capability = "static-output"
+	CapabilitySteer          Capability = "steer"
+	CapabilityNativeFork     Capability = "native-fork"
+	CapabilityArtifactStore  Capability = "artifact-store"
+	CapabilityScript         Capability = "script"
+	CapabilityWorkspaceKeyV1 Capability = "workspace-key-v1"
+	CapabilityStartAccessV1  Capability = "start-access-v1"
+	CapabilityAttachments    Capability = "attachments"
+)
+
+// CapabilityValues lists every Capability in schema order.
+var CapabilityValues = []Capability{CapabilityCodex, CapabilityGpt61Sol, CapabilityLow, CapabilityStaticOutput, CapabilitySteer, CapabilityNativeFork, CapabilityArtifactStore, CapabilityScript, CapabilityWorkspaceKeyV1, CapabilityStartAccessV1, CapabilityAttachments}
+
+// Valid: v is one of the schema's values.
+func (v Capability) Valid() bool {
+	for _, x := range CapabilityValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 type CheckStatus string
 
 const (
@@ -463,6 +672,9 @@ func (v *ChildReceipt) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ChildReceipt) Closed() bool { return true }
+
 type ChildRequest struct {
 	Input     string `json:"input"`
 	ProfileId string `json:"profileId"`
@@ -474,46 +686,362 @@ func (v *ChildRequest) Validate() error {
 	return nil
 }
 
-// Command: Envelope. payload is decoded by kind: start and input StartPayload, steer SteerPayload, script ScriptPayload, readiness/base-updated/teardown ProjectPayload, artifact-copy/artifact-verify ArtifactTransferPayload, account-inspect AccountInspectPayload, stop none.
+// Command: One command of a poll reply, by kind (CommandKind). Every member has the same envelope (id, kind, executionId, sessionId, hostId, traceparent, run) and its kind's payload; an executor keeps a kind it does not know as unknown and fails it.
 type Command struct {
-	ExecutionId string          `json:"executionId"`
-	HostId      *string         `json:"hostId,omitempty"`
-	Id          string          `json:"id"`
-	Kind        CommandKind     `json:"kind"`
-	Payload     json.RawMessage `json:"payload,omitempty"`
-	Run         *CommandRun     `json:"run,omitempty"`
-	SessionId   *string         `json:"sessionId,omitempty"`
-	Traceparent *string         `json:"traceparent,omitempty"`
-	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
-	Rest map[string]json.RawMessage `json:"-"`
+	Start            *StartCommand
+	Input            *InputCommand
+	Steer            *SteerCommand
+	Stop             *StopCommand
+	Script           *ScriptCommand
+	Readiness        *ReadinessCommand
+	BaseUpdated      *BaseUpdatedCommand
+	Teardown         *TeardownCommand
+	ArtifactCopy     *ArtifactCopyCommand
+	ArtifactVerify   *ArtifactVerifyCommand
+	AccountInspect   *AccountInspectCommand
+	ConnectionRemove *ConnectionRemoveCommand
+	// Raw: the JSON this value was decoded from, written back unchanged (clear it after changing a member); alone when its kind is no member's.
+	Raw json.RawMessage
 }
 
 func (v Command) MarshalJSON() ([]byte, error) {
-	type plain Command
-	return marshalRest(plain(v), v.Rest)
+	switch {
+	case v.Raw != nil:
+		return v.Raw, nil
+	case v.Start != nil:
+		return json.Marshal(v.Start)
+	case v.Input != nil:
+		return json.Marshal(v.Input)
+	case v.Steer != nil:
+		return json.Marshal(v.Steer)
+	case v.Stop != nil:
+		return json.Marshal(v.Stop)
+	case v.Script != nil:
+		return json.Marshal(v.Script)
+	case v.Readiness != nil:
+		return json.Marshal(v.Readiness)
+	case v.BaseUpdated != nil:
+		return json.Marshal(v.BaseUpdated)
+	case v.Teardown != nil:
+		return json.Marshal(v.Teardown)
+	case v.ArtifactCopy != nil:
+		return json.Marshal(v.ArtifactCopy)
+	case v.ArtifactVerify != nil:
+		return json.Marshal(v.ArtifactVerify)
+	case v.AccountInspect != nil:
+		return json.Marshal(v.AccountInspect)
+	case v.ConnectionRemove != nil:
+		return json.Marshal(v.ConnectionRemove)
+	}
+	return []byte("null"), nil
 }
 
 func (v *Command) UnmarshalJSON(b []byte) error {
-	type plain Command
-	var rest map[string]json.RawMessage
-	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+	var d struct {
+		Tag string `json:"kind"`
+	}
+	if err := json.Unmarshal(b, &d); err != nil {
 		return err
 	}
-	v.Rest = rest
+	*v = Command{Raw: append(json.RawMessage(nil), b...)}
+	switch d.Tag {
+	case "account-inspect":
+		v.AccountInspect = new(AccountInspectCommand)
+		return json.Unmarshal(b, v.AccountInspect)
+	case "artifact-copy":
+		v.ArtifactCopy = new(ArtifactCopyCommand)
+		return json.Unmarshal(b, v.ArtifactCopy)
+	case "artifact-verify":
+		v.ArtifactVerify = new(ArtifactVerifyCommand)
+		return json.Unmarshal(b, v.ArtifactVerify)
+	case "base-updated":
+		v.BaseUpdated = new(BaseUpdatedCommand)
+		return json.Unmarshal(b, v.BaseUpdated)
+	case "connection-remove":
+		v.ConnectionRemove = new(ConnectionRemoveCommand)
+		return json.Unmarshal(b, v.ConnectionRemove)
+	case "input":
+		v.Input = new(InputCommand)
+		return json.Unmarshal(b, v.Input)
+	case "readiness":
+		v.Readiness = new(ReadinessCommand)
+		return json.Unmarshal(b, v.Readiness)
+	case "script":
+		v.Script = new(ScriptCommand)
+		return json.Unmarshal(b, v.Script)
+	case "start":
+		v.Start = new(StartCommand)
+		return json.Unmarshal(b, v.Start)
+	case "steer":
+		v.Steer = new(SteerCommand)
+		return json.Unmarshal(b, v.Steer)
+	case "stop":
+		v.Stop = new(StopCommand)
+		return json.Unmarshal(b, v.Stop)
+	case "teardown":
+		v.Teardown = new(TeardownCommand)
+		return json.Unmarshal(b, v.Teardown)
+	}
 	return nil
 }
 
-// Validate: the schema's required fields and enums (see Check).
-func (v *Command) Validate() error {
-	if err := Check(&v.Kind, "kind"); err != nil {
-		return err
-	}
-	if v.Run != nil {
-		if err := Check(v.Run, "run"); err != nil {
-			return err
-		}
+// Value: the member that is set, nil for a kind no member has.
+func (v *Command) Value() interface{ Validate() error } {
+	switch {
+	case v.Start != nil:
+		return v.Start
+	case v.Input != nil:
+		return v.Input
+	case v.Steer != nil:
+		return v.Steer
+	case v.Stop != nil:
+		return v.Stop
+	case v.Script != nil:
+		return v.Script
+	case v.Readiness != nil:
+		return v.Readiness
+	case v.BaseUpdated != nil:
+		return v.BaseUpdated
+	case v.Teardown != nil:
+		return v.Teardown
+	case v.ArtifactCopy != nil:
+		return v.ArtifactCopy
+	case v.ArtifactVerify != nil:
+		return v.ArtifactVerify
+	case v.AccountInspect != nil:
+		return v.AccountInspect
+	case v.ConnectionRemove != nil:
+		return v.ConnectionRemove
 	}
 	return nil
+}
+
+// Validate: the set member's Validate; a kind no member has passes (its reader refuses it), an empty value does not.
+func (v *Command) Validate() error {
+	if x := v.Value(); x != nil {
+		return x.Validate()
+	}
+	if v.Raw != nil {
+		return nil
+	}
+	return Missing("kind")
+}
+
+// ExecutionId: the set member's executionId (zero when no member is set).
+func (v Command) ExecutionId() (out string) {
+	switch {
+	case v.Start != nil:
+		return v.Start.ExecutionId
+	case v.Input != nil:
+		return v.Input.ExecutionId
+	case v.Steer != nil:
+		return v.Steer.ExecutionId
+	case v.Stop != nil:
+		return v.Stop.ExecutionId
+	case v.Script != nil:
+		return v.Script.ExecutionId
+	case v.Readiness != nil:
+		return v.Readiness.ExecutionId
+	case v.BaseUpdated != nil:
+		return v.BaseUpdated.ExecutionId
+	case v.Teardown != nil:
+		return v.Teardown.ExecutionId
+	case v.ArtifactCopy != nil:
+		return v.ArtifactCopy.ExecutionId
+	case v.ArtifactVerify != nil:
+		return v.ArtifactVerify.ExecutionId
+	case v.AccountInspect != nil:
+		return v.AccountInspect.ExecutionId
+	case v.ConnectionRemove != nil:
+		return v.ConnectionRemove.ExecutionId
+	}
+	return out
+}
+
+// HostId: the set member's hostId (zero when no member is set).
+func (v Command) HostId() (out *string) {
+	switch {
+	case v.Start != nil:
+		return v.Start.HostId
+	case v.Input != nil:
+		return v.Input.HostId
+	case v.Steer != nil:
+		return v.Steer.HostId
+	case v.Stop != nil:
+		return v.Stop.HostId
+	case v.Script != nil:
+		return v.Script.HostId
+	case v.Readiness != nil:
+		return v.Readiness.HostId
+	case v.BaseUpdated != nil:
+		return v.BaseUpdated.HostId
+	case v.Teardown != nil:
+		return v.Teardown.HostId
+	case v.ArtifactCopy != nil:
+		return v.ArtifactCopy.HostId
+	case v.ArtifactVerify != nil:
+		return v.ArtifactVerify.HostId
+	case v.AccountInspect != nil:
+		return v.AccountInspect.HostId
+	case v.ConnectionRemove != nil:
+		return v.ConnectionRemove.HostId
+	}
+	return out
+}
+
+// Id: the set member's id (zero when no member is set).
+func (v Command) Id() (out string) {
+	switch {
+	case v.Start != nil:
+		return v.Start.Id
+	case v.Input != nil:
+		return v.Input.Id
+	case v.Steer != nil:
+		return v.Steer.Id
+	case v.Stop != nil:
+		return v.Stop.Id
+	case v.Script != nil:
+		return v.Script.Id
+	case v.Readiness != nil:
+		return v.Readiness.Id
+	case v.BaseUpdated != nil:
+		return v.BaseUpdated.Id
+	case v.Teardown != nil:
+		return v.Teardown.Id
+	case v.ArtifactCopy != nil:
+		return v.ArtifactCopy.Id
+	case v.ArtifactVerify != nil:
+		return v.ArtifactVerify.Id
+	case v.AccountInspect != nil:
+		return v.AccountInspect.Id
+	case v.ConnectionRemove != nil:
+		return v.ConnectionRemove.Id
+	}
+	return out
+}
+
+// Kind: the set member's kind (zero when no member is set).
+func (v Command) Kind() (out string) {
+	switch {
+	case v.Start != nil:
+		return v.Start.Kind
+	case v.Input != nil:
+		return v.Input.Kind
+	case v.Steer != nil:
+		return v.Steer.Kind
+	case v.Stop != nil:
+		return v.Stop.Kind
+	case v.Script != nil:
+		return v.Script.Kind
+	case v.Readiness != nil:
+		return v.Readiness.Kind
+	case v.BaseUpdated != nil:
+		return v.BaseUpdated.Kind
+	case v.Teardown != nil:
+		return v.Teardown.Kind
+	case v.ArtifactCopy != nil:
+		return v.ArtifactCopy.Kind
+	case v.ArtifactVerify != nil:
+		return v.ArtifactVerify.Kind
+	case v.AccountInspect != nil:
+		return v.AccountInspect.Kind
+	case v.ConnectionRemove != nil:
+		return v.ConnectionRemove.Kind
+	}
+	return out
+}
+
+// Run: the set member's run (zero when no member is set).
+func (v Command) Run() (out *CommandRun) {
+	switch {
+	case v.Start != nil:
+		return v.Start.Run
+	case v.Input != nil:
+		return v.Input.Run
+	case v.Steer != nil:
+		return v.Steer.Run
+	case v.Stop != nil:
+		return v.Stop.Run
+	case v.Script != nil:
+		return v.Script.Run
+	case v.Readiness != nil:
+		return v.Readiness.Run
+	case v.BaseUpdated != nil:
+		return v.BaseUpdated.Run
+	case v.Teardown != nil:
+		return v.Teardown.Run
+	case v.ArtifactCopy != nil:
+		return v.ArtifactCopy.Run
+	case v.ArtifactVerify != nil:
+		return v.ArtifactVerify.Run
+	case v.AccountInspect != nil:
+		return v.AccountInspect.Run
+	case v.ConnectionRemove != nil:
+		return v.ConnectionRemove.Run
+	}
+	return out
+}
+
+// SessionId: the set member's sessionId (zero when no member is set).
+func (v Command) SessionId() (out *string) {
+	switch {
+	case v.Start != nil:
+		return v.Start.SessionId
+	case v.Input != nil:
+		return v.Input.SessionId
+	case v.Steer != nil:
+		return v.Steer.SessionId
+	case v.Stop != nil:
+		return v.Stop.SessionId
+	case v.Script != nil:
+		return v.Script.SessionId
+	case v.Readiness != nil:
+		return v.Readiness.SessionId
+	case v.BaseUpdated != nil:
+		return v.BaseUpdated.SessionId
+	case v.Teardown != nil:
+		return v.Teardown.SessionId
+	case v.ArtifactCopy != nil:
+		return v.ArtifactCopy.SessionId
+	case v.ArtifactVerify != nil:
+		return v.ArtifactVerify.SessionId
+	case v.AccountInspect != nil:
+		return v.AccountInspect.SessionId
+	case v.ConnectionRemove != nil:
+		return v.ConnectionRemove.SessionId
+	}
+	return out
+}
+
+// Traceparent: the set member's traceparent (zero when no member is set).
+func (v Command) Traceparent() (out *string) {
+	switch {
+	case v.Start != nil:
+		return v.Start.Traceparent
+	case v.Input != nil:
+		return v.Input.Traceparent
+	case v.Steer != nil:
+		return v.Steer.Traceparent
+	case v.Stop != nil:
+		return v.Stop.Traceparent
+	case v.Script != nil:
+		return v.Script.Traceparent
+	case v.Readiness != nil:
+		return v.Readiness.Traceparent
+	case v.BaseUpdated != nil:
+		return v.BaseUpdated.Traceparent
+	case v.Teardown != nil:
+		return v.Teardown.Traceparent
+	case v.ArtifactCopy != nil:
+		return v.ArtifactCopy.Traceparent
+	case v.ArtifactVerify != nil:
+		return v.ArtifactVerify.Traceparent
+	case v.AccountInspect != nil:
+		return v.AccountInspect.Traceparent
+	case v.ConnectionRemove != nil:
+		return v.ConnectionRemove.Traceparent
+	}
+	return out
 }
 
 type CommandKind string
@@ -558,6 +1086,50 @@ type CommandRun struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *CommandRun) Validate() error {
+	return nil
+}
+
+// ConnectionRemoveCommand: kind connection-remove: delete a connection's key
+type ConnectionRemoveCommand struct {
+	ExecutionId string                   `json:"executionId"`
+	HostId      *string                  `json:"hostId,omitempty"`
+	Id          string                   `json:"id"`
+	Kind        string                   `json:"kind"`
+	Payload     *ConnectionRemovePayload `json:"payload,omitempty"`
+	Run         *CommandRun              `json:"run,omitempty"`
+	SessionId   *string                  `json:"sessionId,omitempty"`
+	Traceparent *string                  `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ConnectionRemoveCommand) MarshalJSON() ([]byte, error) {
+	type plain ConnectionRemoveCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ConnectionRemoveCommand) UnmarshalJSON(b []byte) error {
+	type plain ConnectionRemoveCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ConnectionRemoveCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -834,6 +1406,50 @@ type InputArtifact struct {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *InputArtifact) Validate() error {
+	return nil
+}
+
+// InputCommand: kind input: the next turn of a running session
+type InputCommand struct {
+	ExecutionId string        `json:"executionId"`
+	HostId      *string       `json:"hostId,omitempty"`
+	Id          string        `json:"id"`
+	Kind        string        `json:"kind"`
+	Payload     *StartPayload `json:"payload,omitempty"`
+	Run         *CommandRun   `json:"run,omitempty"`
+	SessionId   *string       `json:"sessionId,omitempty"`
+	Traceparent *string       `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v InputCommand) MarshalJSON() ([]byte, error) {
+	type plain InputCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *InputCommand) UnmarshalJSON(b []byte) error {
+	type plain InputCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *InputCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1228,6 +1844,9 @@ func (v *ProjectReceipt) Validate() error {
 	return nil
 }
 
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*ProjectReceipt) Closed() bool { return true }
+
 type ProjectRequest struct {
 	Arguments ProjectArguments `json:"arguments"`
 	Operation ProjectOperation `json:"operation"`
@@ -1323,6 +1942,50 @@ func (v *ReadinessCheck) Validate() error {
 	return nil
 }
 
+// ReadinessCommand: kind readiness: the project's readiness checks
+type ReadinessCommand struct {
+	ExecutionId string          `json:"executionId"`
+	HostId      *string         `json:"hostId,omitempty"`
+	Id          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	Payload     *ProjectPayload `json:"payload,omitempty"`
+	Run         *CommandRun     `json:"run,omitempty"`
+	SessionId   *string         `json:"sessionId,omitempty"`
+	Traceparent *string         `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ReadinessCommand) MarshalJSON() ([]byte, error) {
+	type plain ReadinessCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ReadinessCommand) UnmarshalJSON(b []byte) error {
+	type plain ReadinessCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ReadinessCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ReadinessFailed: data of a readiness.failed event
 type ReadinessFailed struct {
 	Reason string `json:"reason"`
@@ -1351,6 +2014,9 @@ func (v *Receipt) Validate() error {
 	}
 	return nil
 }
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*Receipt) Closed() bool { return true }
 
 // ReceiptReply: a status receipt; the account and project routes answer their operation's record
 type ReceiptReply struct {
@@ -1384,6 +2050,50 @@ func (v ReceiptStatus) Valid() bool {
 		}
 	}
 	return false
+}
+
+// ScriptCommand: kind script: a project script
+type ScriptCommand struct {
+	ExecutionId string         `json:"executionId"`
+	HostId      *string        `json:"hostId,omitempty"`
+	Id          string         `json:"id"`
+	Kind        string         `json:"kind"`
+	Payload     *ScriptPayload `json:"payload,omitempty"`
+	Run         *CommandRun    `json:"run,omitempty"`
+	SessionId   *string        `json:"sessionId,omitempty"`
+	Traceparent *string        `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ScriptCommand) MarshalJSON() ([]byte, error) {
+	type plain ScriptCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ScriptCommand) UnmarshalJSON(b []byte) error {
+	type plain ScriptCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *ScriptCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type ScriptPayload struct {
@@ -1496,6 +2206,50 @@ func (v *StartAttachment) Validate() error {
 	return nil
 }
 
+// StartCommand: kind start: a new turn
+type StartCommand struct {
+	ExecutionId string        `json:"executionId"`
+	HostId      *string       `json:"hostId,omitempty"`
+	Id          string        `json:"id"`
+	Kind        string        `json:"kind"`
+	Payload     *StartPayload `json:"payload,omitempty"`
+	Run         *CommandRun   `json:"run,omitempty"`
+	SessionId   *string       `json:"sessionId,omitempty"`
+	Traceparent *string       `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v StartCommand) MarshalJSON() ([]byte, error) {
+	type plain StartCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *StartCommand) UnmarshalJSON(b []byte) error {
+	type plain StartCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StartCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // StartPayload: start and input. Named fields; lane A replaces the coordinator's merge of a free payload over them.
 type StartPayload struct {
 	Account          *string                    `json:"account,omitempty"`
@@ -1557,6 +2311,50 @@ func (v *StartPayload) Validate() error {
 	return nil
 }
 
+// SteerCommand: kind steer: text into the running turn
+type SteerCommand struct {
+	ExecutionId string        `json:"executionId"`
+	HostId      *string       `json:"hostId,omitempty"`
+	Id          string        `json:"id"`
+	Kind        string        `json:"kind"`
+	Payload     *SteerPayload `json:"payload,omitempty"`
+	Run         *CommandRun   `json:"run,omitempty"`
+	SessionId   *string       `json:"sessionId,omitempty"`
+	Traceparent *string       `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SteerCommand) MarshalJSON() ([]byte, error) {
+	type plain SteerCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SteerCommand) UnmarshalJSON(b []byte) error {
+	type plain SteerCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SteerCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type SteerPayload struct {
 	Text string `json:"text"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
@@ -1580,6 +2378,44 @@ func (v *SteerPayload) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SteerPayload) Validate() error {
+	return nil
+}
+
+// StopCommand: kind stop: stop the execution
+type StopCommand struct {
+	ExecutionId string      `json:"executionId"`
+	HostId      *string     `json:"hostId,omitempty"`
+	Id          string      `json:"id"`
+	Kind        string      `json:"kind"`
+	Run         *CommandRun `json:"run,omitempty"`
+	SessionId   *string     `json:"sessionId,omitempty"`
+	Traceparent *string     `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v StopCommand) MarshalJSON() ([]byte, error) {
+	type plain StopCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *StopCommand) UnmarshalJSON(b []byte) error {
+	type plain StopCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *StopCommand) Validate() error {
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1651,6 +2487,50 @@ type Teardown struct {
 func (v *Teardown) Validate() error {
 	if v.Teardown != nil {
 		if err := Check(v.Teardown, "teardown"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TeardownCommand: kind teardown: the session's worktree teardown
+type TeardownCommand struct {
+	ExecutionId string          `json:"executionId"`
+	HostId      *string         `json:"hostId,omitempty"`
+	Id          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	Payload     *ProjectPayload `json:"payload,omitempty"`
+	Run         *CommandRun     `json:"run,omitempty"`
+	SessionId   *string         `json:"sessionId,omitempty"`
+	Traceparent *string         `json:"traceparent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TeardownCommand) MarshalJSON() ([]byte, error) {
+	type plain TeardownCommand
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TeardownCommand) UnmarshalJSON(b []byte) error {
+	type plain TeardownCommand
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TeardownCommand) Validate() error {
+	if v.Payload != nil {
+		if err := Check(v.Payload, "payload"); err != nil {
+			return err
+		}
+	}
+	if v.Run != nil {
+		if err := Check(v.Run, "run"); err != nil {
 			return err
 		}
 	}
@@ -1759,4 +2639,52 @@ func (v UpdateState) Valid() bool {
 		}
 	}
 	return false
+}
+
+// Host routes (the routes map): request, reply (any: not described), long, and plain (decoded only, no required-key check).
+var (
+	RouteAccounts          = HostRoute[AccountObservation, any]{Path: "/api/hosts/accounts", Long: false, Plain: false}
+	RouteAccountsReport    = HostRoute[AccountReceipt, any]{Path: "/api/hosts/accounts/report", Long: true, Plain: false}
+	RouteAgentTools        = HostRoute[AgentToolsRequest, any]{Path: "/api/hosts/agent-tools", Long: true, Plain: true}
+	RouteArtifactsCommit   = HostRoute[ArtifactCommitRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/commit", Long: true, Plain: false}
+	RouteArtifactsDeclare  = HostRoute[ArtifactDeclareRequest, OkReply]{Path: "/api/hosts/artifacts/declare", Long: true, Plain: false}
+	RouteArtifactsFailed   = HostRoute[ArtifactFailedRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/failed", Long: true, Plain: false}
+	RouteArtifactsGet      = HostRoute[HostArtifactGetRequest, ArtifactGetReply]{Path: "/api/hosts/artifacts/get", Long: true, Plain: false}
+	RouteArtifactsList     = HostRoute[HostArtifactListRequest, any]{Path: "/api/hosts/artifacts/list", Long: true, Plain: false}
+	RouteArtifactsParts    = HostRoute[ArtifactPartsRequest, ArtifactPartsReply]{Path: "/api/hosts/artifacts/parts", Long: true, Plain: false}
+	RouteArtifactsRead     = HostRoute[HostArtifactGetRequest, any]{Path: "/api/hosts/artifacts/read", Long: true, Plain: false}
+	RouteArtifactsRenew    = HostRoute[ArtifactLeaseRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/renew", Long: true, Plain: false}
+	RouteArtifactsReserve  = HostRoute[ArtifactReserveRequest, ArtifactReserveReply]{Path: "/api/hosts/artifacts/reserve", Long: true, Plain: false}
+	RouteArtifactsVerified = HostRoute[ArtifactVerifiedRequest, ArtifactStateReply]{Path: "/api/hosts/artifacts/verified", Long: true, Plain: false}
+	RouteDelegations       = HostRoute[ChildReceipt, any]{Path: "/api/hosts/delegations", Long: true, Plain: false}
+	RouteEvents            = HostRoute[HostEvents, OkReply]{Path: "/api/hosts/events", Long: true, Plain: true}
+	RoutePoll              = HostRoute[PollRequest, PollReply]{Path: "/api/hosts/poll", Long: true, Plain: true}
+	RouteProjectOperations = HostRoute[ProjectReceipt, any]{Path: "/api/hosts/project-operations", Long: true, Plain: false}
+	RouteReceipts          = HostRoute[Receipt, ReceiptReply]{Path: "/api/hosts/receipts", Long: true, Plain: false}
+	RouteSpans             = HostRoute[SpanBatchRequest, SpanBatchReply]{Path: "/api/hosts/spans", Long: true, Plain: true}
+	RouteStores            = HostRoute[StoresRequest, StoresReply]{Path: "/api/hosts/stores", Long: true, Plain: false}
+)
+
+// HostRoutes: every host route path.
+var HostRoutes = []string{
+	"/api/hosts/accounts",
+	"/api/hosts/accounts/report",
+	"/api/hosts/agent-tools",
+	"/api/hosts/artifacts/commit",
+	"/api/hosts/artifacts/declare",
+	"/api/hosts/artifacts/failed",
+	"/api/hosts/artifacts/get",
+	"/api/hosts/artifacts/list",
+	"/api/hosts/artifacts/parts",
+	"/api/hosts/artifacts/read",
+	"/api/hosts/artifacts/renew",
+	"/api/hosts/artifacts/reserve",
+	"/api/hosts/artifacts/verified",
+	"/api/hosts/delegations",
+	"/api/hosts/events",
+	"/api/hosts/poll",
+	"/api/hosts/project-operations",
+	"/api/hosts/receipts",
+	"/api/hosts/spans",
+	"/api/hosts/stores",
 }

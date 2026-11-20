@@ -153,8 +153,9 @@ func (c *transferClient) post(route string, body any) (json.RawMessage, *failure
 }
 
 // Decode coordinator-owned fields once; opaque MCP results are still forwarded as raw JSON.
-func transferReply[T any](c *transferClient, route string, body any) (T, *failure) {
-	var value T
+func transferReply[Req, Rep any](c *transferClient, r contract.HostRoute[Req, Rep], body Req) (Rep, *failure) {
+	var value Rep
+	route := r.Path
 	raw, f := c.post(route, body)
 	if f != nil {
 		return value, f
@@ -281,7 +282,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		for _, n := range batch {
 			req.PartNumbers = append(req.PartNumbers, int64(n))
 		}
-		urls, fl := transferReply[contract.ArtifactPartsReply](c, "/api/hosts/artifacts/parts", req)
+		urls, fl := transferReply(c, contract.RouteArtifactsParts, req)
 		if fl != nil {
 			return contract.ArtifactStateReply{}, fl
 		}
@@ -313,7 +314,7 @@ func sendParts(c *transferClient, db *sql.DB, jobID, file, artifactID, storeID s
 		etag := jStr(d, "etag")
 		req.Parts = append(req.Parts, contract.ArtifactPart{PartNumber: int64(n), Etag: &etag})
 	}
-	commit, fl := transferReply[contract.ArtifactStateReply](c, "/api/hosts/artifacts/commit", req)
+	commit, fl := transferReply(c, contract.RouteArtifactsCommit, req)
 	if fl != nil {
 		return contract.ArtifactStateReply{}, fl
 	}
@@ -337,7 +338,7 @@ func verifyArtifact(c *transferClient, artifactID, storeID, url string) (contrac
 	if err != nil {
 		return contract.ArtifactStateReply{}, ioFailure(err)
 	}
-	return transferReply[contract.ArtifactStateReply](c, "/api/hosts/artifacts/verified", contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
+	return transferReply(c, contract.RouteArtifactsVerified, contract.ArtifactVerifiedRequest{HostId: c.host, ArtifactId: artifactID, StoreId: storeID, Sha256: digest})
 }
 
 func u64Or(def uint64, v any, keys ...string) uint64 {
@@ -358,7 +359,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		required := body["required"] == true
 		req := contract.ArtifactReserveRequest{HostId: c.host, ExecutionId: jStr(body, "executionId"), ArtifactId: optStr(id), Name: jStr(body, "name"), MediaType: jStr(body, "mediaType"),
 			Size: int64(size), Sha256: digest, Required: &required, DerivedFrom: optStr(jStr(body, "derivedFrom")), Role: optStr(jStr(body, "role"))}
-		r, f := transferReply[contract.ArtifactReserveReply](c, "/api/hosts/artifacts/reserve", req)
+		r, f := transferReply(c, contract.RouteArtifactsReserve, req)
 		if f != nil {
 			return nil, f
 		}
@@ -413,7 +414,7 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		os.Remove(tmp)
 		return out, f
 	case "get":
-		r, f := transferReply[contract.ArtifactGetReply](c, "/api/hosts/artifacts/get", contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(jStr(body, "executionId")), ArtifactId: jStr(body, "artifactId")})
+		r, f := transferReply(c, contract.RouteArtifactsGet, contract.HostArtifactGetRequest{HostId: c.host, ExecutionId: optStr(jStr(body, "executionId")), ArtifactId: jStr(body, "artifactId")})
 		if f != nil {
 			return nil, f
 		}
@@ -483,13 +484,13 @@ func runJob(c *transferClient, db *sql.DB, id, kind string, body M) (any, *failu
 		if f, ok := body["filter"].(map[string]any); ok {
 			req.Filter = &contract.HostArtifactListFilter{ExecutionId: optStr(jStr(f, "executionId")), TaskId: optStr(jStr(f, "taskId")), MediaType: optStr(jStr(f, "mediaType")), Cursor: optStr(jStr(f, "cursor"))}
 		}
-		return c.post("/api/hosts/artifacts/list", req)
+		return c.post(contract.RouteArtifactsList.Path, req)
 	}
 	return nil, permanentf("unknown transfer kind %s", kind)
 }
 
 // transferRoutes: coordinator routes only transfers call.
-var transferRoutes = []string{"/api/hosts/artifacts/reserve", "/api/hosts/artifacts/parts", "/api/hosts/artifacts/commit", "/api/hosts/artifacts/verified", "/api/hosts/artifacts/get", "/api/hosts/artifacts/list", "/api/hosts/artifacts/renew"}
+var transferRoutes = []string{contract.RouteArtifactsReserve.Path, contract.RouteArtifactsParts.Path, contract.RouteArtifactsCommit.Path, contract.RouteArtifactsVerified.Path, contract.RouteArtifactsGet.Path, contract.RouteArtifactsList.Path, contract.RouteArtifactsRenew.Path}
 
 // leased: the artifact a queued job holds a coordinator lease on, with its store when known.
 func leased(kind, id string, body M) (string, string, bool) {
@@ -540,7 +541,7 @@ func spawnTransfers(journal string, c *transferClient, after afterJob) error {
 			}
 			for _, j := range jobs {
 				if a, s, ok := leased(j.kind, j.id, decM(j.body)); ok {
-					c.post("/api/hosts/artifacts/renew", contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: a, StoreId: optStr(s)}) // best effort, not a delivery
+					c.post(contract.RouteArtifactsRenew.Path, contract.ArtifactLeaseRequest{HostId: c.host, ArtifactId: a, StoreId: optStr(s)}) // best effort, not a delivery
 				}
 			}
 		}
@@ -601,7 +602,7 @@ func settleJob(x execer, host, id, kind string, body M, attempts int64, v any, f
 			return err
 		}
 		if hasCmd {
-			return queue(x, "/api/hosts/receipts", transferReceipt(host, cmd, contract.ReceiptStatusCompleted, ""))
+			return queueTo(x, contract.RouteReceipts, transferReceipt(host, cmd, contract.ReceiptStatusCompleted, ""))
 		}
 	case f.retry:
 		_, err := x.Exec("UPDATE transfers SET attempts=attempts+1,next_at=?,response=? WHERE id=?", nowMs()+backoff(attempts), enc(M{"state": "retrying", "error": f.msg}), id)
@@ -611,12 +612,12 @@ func settleJob(x execer, host, id, kind string, body M, attempts int64, v any, f
 			return err
 		}
 		if hasCmd {
-			if err := queue(x, "/api/hosts/receipts", transferReceipt(host, cmd, contract.ReceiptStatusFailed, f.msg)); err != nil {
+			if err := queueTo(x, contract.RouteReceipts, transferReceipt(host, cmd, contract.ReceiptStatusFailed, f.msg)); err != nil {
 				return err
 			}
 		}
 		if kind == "upload" {
-			return queue(x, "/api/hosts/artifacts/failed", contract.ArtifactFailedRequest{HostId: host, ArtifactId: id, Error: f.msg})
+			return queueTo(x, contract.RouteArtifactsFailed, contract.ArtifactFailedRequest{HostId: host, ArtifactId: id, Error: f.msg})
 		}
 	}
 	return nil

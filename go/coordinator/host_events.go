@@ -19,7 +19,7 @@ import (
 )
 
 func init() {
-	longRoute("POST /api/hosts/events", func(q *Request) (any, error) { return q.app.ingest(q) })
+	hostRoute(contract.RouteEvents, func(q *Request, b *contract.HostEvents) (contract.OkReply, error) { return q.app.ingest(q, b) })
 	route("GET /api/executions/{id}/events", executionEvents)
 	op("execution_events", func(q *Request, r *contract.ExecutionEventsRequest) (contract.ExecutionEventsReply, error) {
 		es, err := executionEventsOf(q, r.ExecutionId)
@@ -98,11 +98,11 @@ type preparedEvent struct {
 	conflict doc
 }
 
-func (a *App) ingest(q *Request) (any, error) {
+func (a *App) ingest(q *Request, batch *contract.HostEvents) (contract.OkReply, error) {
 	b := q.obj()
 	id, ok := b["executionId"].(string)
 	if !ok {
-		return nil, fail(400, "Expected executionId")
+		return contract.OkReply{}, fail(400, "Expected executionId")
 	}
 	// A refused batch still commits the transport conflict it recorded (the batch's events are
 	// written only after the whole batch is valid).
@@ -111,7 +111,7 @@ func (a *App) ingest(q *Request) (any, error) {
 	err := a.store.Tx(q.ctx(), nil, true, "execution:"+id, func(tx pgx.Tx) error {
 		q.tx = tx
 		var err error
-		out, err = ingestIn(q, b)
+		out, err = ingestIn(q, b, batch)
 		var he *HTTPError
 		if asHTTP(err, &he) {
 			refused, err = err, nil
@@ -121,19 +121,20 @@ func (a *App) ingest(q *Request) (any, error) {
 	if err == nil {
 		err = refused
 	}
-	return out, err
+	r, _ := out.(contract.OkReply)
+	return r, err
 }
 
-func ingestIn(q *Request, b doc) (any, error) {
+func ingestIn(q *Request, b doc, batch *contract.HostEvents) (any, error) {
 	if err := hostKeys(q.body, reflect.TypeOf(contract.HostEvents{})); err != nil {
 		return nil, err
 	}
 	if err := ownedBody(q, astr(b["hostId"]), astr(b["executionId"])); err != nil {
 		return nil, err
 	}
-	var batch contract.HostEvents // a type check of the batch; each event's data stays the host's raw record
+	// batch: the type check of the batch (hostRoute decoded it); each event's data stays the host's raw record.
 	evs, isList := b["events"].([]any)
-	if !isList || decode(q.body, &batch) != nil || len(batch.Events) > 1000 || len(evs) != len(batch.Events) {
+	if !isList || len(batch.Events) > 1000 || len(evs) != len(batch.Events) {
 		return nil, fail(400, "Invalid events")
 	}
 	xid := astr(b["executionId"])
@@ -303,11 +304,11 @@ func ingestIn(q *Request, b doc) (any, error) {
 	}
 	if !ended && !hasProcessClosed {
 		if hasConfirmedUsage {
-			return doc{"ok": true}, writeConfirmedUsage(q, xid)
+			return contract.OkReply{Ok: true}, writeConfirmedUsage(q, xid)
 		}
-		return doc{"ok": true}, nil
+		return contract.OkReply{Ok: true}, nil
 	}
-	return doc{"ok": true}, writeTotals(q, xid)
+	return contract.OkReply{Ok: true}, writeTotals(q, xid)
 }
 
 // eventProblem: the cause an agent failure records on its execution: a preparation that failed, a protocol failure,

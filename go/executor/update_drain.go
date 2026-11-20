@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fleet/contract"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,7 +62,7 @@ func (e *executor) idleUpdate() (*string, error) {
 		return nil, nil
 	}
 	var n int
-	if err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches)+(SELECT count(*) FROM owned)+(SELECT count(*) FROM mcp_groups)+(SELECT count(*) FROM commands WHERE terminal=0)+(SELECT count(*) FROM outbox WHERE route<>'/api/hosts/spans')+(SELECT count(*) FROM outbox_failed WHERE status=401)+(SELECT count(*) FROM transfers WHERE state IN ('queued','running'))`).Scan(&n); err != nil {
+	if err := e.db.QueryRow(`SELECT (SELECT count(*) FROM launches)+(SELECT count(*) FROM owned)+(SELECT count(*) FROM mcp_groups)+(SELECT count(*) FROM commands WHERE terminal=0)+(SELECT count(*) FROM outbox WHERE route<>?)+(SELECT count(*) FROM outbox_failed WHERE status=401)+(SELECT count(*) FROM transfers WHERE state IN ('queued','running'))`, contract.RouteSpans.Path).Scan(&n); err != nil {
 		return nil, err
 	}
 	if len(e.live) > 0 || n > 0 {

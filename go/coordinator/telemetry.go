@@ -103,7 +103,7 @@ func startTelemetry(ctx context.Context, a *App) {
 func init() {
 	// Spans from executors and gateways (fleet-telemetry.md §4). Under /api/hosts/ for host-secret auth; rows naming
 	// another host, or an execution not on this host, are refused (counted in skipped).
-	longRoute("POST /api/hosts/spans", hostSpans)
+	hostRoute(contract.RouteSpans, replyOf[contract.SpanBatchRequest, contract.SpanBatchReply](hostSpans))
 	op("telemetry_summary", telemetrySummary)
 	op("telemetry_trace", telemetryTrace)
 }
@@ -145,11 +145,7 @@ func spanName(r *http.Request) string {
 	return r.Pattern
 }
 
-func hostSpans(q *Request) (any, error) {
-	var b contract.SpanBatchRequest
-	if err := decode(q.body, &b); err != nil {
-		return nil, err
-	}
+func hostSpans(q *Request, b *contract.SpanBatchRequest) (any, error) {
 	if b.BatchId == "" || len(b.Spans) > 5000 {
 		return nil, fail(400, "Expected batchId and at most 5000 spans")
 	}
