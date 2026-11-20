@@ -626,7 +626,7 @@ func init() {
 		return doc{"lists": out}, nil
 	})
 	// /api/tools: the operation table as MCP tools, each call in its own transaction.
-	gatedLongRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations, agentDescriptions) })
+	gatedLongRoute("POST /api/tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet", operations) })
 }
 
 // sessionUnarchive: undo session_archive (owner or full access). The teardown already sent is not undone: a removed

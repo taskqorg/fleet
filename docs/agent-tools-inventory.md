@@ -75,7 +75,7 @@ Path prefixes: Orca `O/` = `src/main/runtime/rpc/methods/orchestration/`, `W/` =
 
 ## Port results (2026-11-09)
 
-Coordinator-only port, now `go/coordinator/agent.go` (agent tool table `agentOps`, resume argv). Agent tools are exposed to agents only as `POST /api/hosts/agent-tools` (machine auth, bound to the command's execution). The operator reaches the same operations through `/api/ops/:name` and MCP `/api/tools` (operator credential); the unbound `/api/agent-operations/:name` and `/api/agent-tools` were removed (2026-11-10). Storage uses new record kinds only (`handoff`, `session-fork`, `session-transition`, `queued-message`, `question`, `worker-done`, `reconciliation`), so existing data stays as is. The executor did not change. Outside tests: `tests/go`.
+Coordinator-only port, now `go/coordinator/agent.go` (the agent table: operations declared `agent: bound:session` in `contracts/ops-*.schema.json`; resume argv). Agent tools are exposed to agents only as `POST /api/hosts/agent-tools` (machine auth, bound to the command's execution). The operator reaches the same operations through `/api/ops/:name` and MCP `/api/tools` (operator credential); the unbound `/api/agent-operations/:name` and `/api/agent-tools` were removed (2026-11-10). Storage uses new record kinds only (`handoff`, `session-fork`, `session-transition`, `queued-message`, `question`, `worker-done`, `reconciliation`), so existing data stays as is. The executor did not change. Outside tests: `tests/go`.
 
 | # | Row | Status |
 |---|---|---|

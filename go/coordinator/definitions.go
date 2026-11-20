@@ -556,8 +556,8 @@ func headTexts(q *Request, kind string) ([]headRow, error) {
 }
 
 func init() {
-	gatedObjOp("definition_list", true, typedOp(definitionList))
-	gatedObjOp("definition_get", true, typedOp(definitionGet))
+	op("definition_list", definitionList)
+	op("definition_get", definitionGet)
 	// Registered before pipelines.go and lab.go (file order), so pipeline and Lab work resume on reconciled definitions.
 	onStart(func(ctx context.Context, a *App) {
 		files, broken := shippedDefinitions()

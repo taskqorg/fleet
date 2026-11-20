@@ -2,15 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations of the artifacts domain; the rules are in ops.schema.json $comment and contracts/README.md.",
   "operations": {
-    "artifact_copy_retry": {"read": false, "errors": [400, 403, 409]},
-    "artifact_get": {"read": true, "errors": [400, 404]},
-    "artifact_list": {"read": true, "errors": [400]},
-    "artifact_purge": {"read": false, "errors": [400, 403]},
-    "artifact_rule_confirm": {"read": false, "errors": [400, 403, 404]},
-    "artifact_rule_preview": {"read": true, "errors": [400, 403]},
-    "artifact_upload_begin": {"read": false, "errors": [400, 403, 404, 409]},
-    "store_set_free_space_warning": {"read": false, "errors": [400, 403, 404]},
-    "stores_list": {"read": true, "errors": []}
+    "artifact_copy_retry": {"read": false, "errors": [400,403,409], "auth": "architect", "agent": "tool", "description": "Operator only."},
+    "artifact_get": {"read": true, "errors": [400,404], "auth": "person", "agent": "tool", "description": "One artifact by artifactId: its record, copies and download state"},
+    "artifact_list": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "description": "Artifacts by execution, task, project, media type, text, state or time, newest first, paged with before and limit"},
+    "artifact_purge": {"read": false, "errors": [400,403], "auth": "architect", "agent": "tool", "description": "Operator only."},
+    "artifact_rule_confirm": {"read": false, "errors": [400,403,404], "auth": "architect", "agent": "tool", "description": "Operator only. ruleHash: the preview's hash; a changed rule is 409."},
+    "artifact_rule_preview": {"read": true, "errors": [400,403], "auth": "architect", "agent": "tool", "description": "Operator only. rule: a retention rule of the project settings."},
+    "artifact_upload_begin": {"read": false, "errors": [400,403,404,409], "auth": "person", "agent": "tool", "description": "An operator upload (a message attachment) into the artifact store: the project of the session when sessionId is given, else projectId (absent or null: no project). Access is the project grant. No size limit beyond store capacity."},
+    "store_set_free_space_warning": {"read": false, "errors": [400,403,404], "auth": "architect", "agent": "tool", "description": "Operator only. bytes: a whole number; null clears the warning."},
+    "stores_list": {"read": true, "errors": [], "auth": "person", "agent": "tool", "description": "Artifact stores with their free space and warning thresholds"}
   },
   "$defs": {
     "ArtifactCopyRetryReply": {"type": "object", "required": ["retrying"], "properties": {"retrying": {"type": "boolean"}}},

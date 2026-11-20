@@ -169,6 +169,12 @@ func toolSchema(file string, value any) any {
 	}
 }
 
+// authRule and agentRule: the values an operation's auth and agent take (contracts/README.md, Operations).
+var (
+	authRule  = regexp.MustCompile(`^(person|architect|owner|system|project:[A-Za-z][A-Za-z0-9.]*|holder:[a-z]+)$`)
+	agentRule = regexp.MustCompile(`^(no|tool|bound:[a-z]+)$`)
+)
+
 func main() {
 	if len(os.Args) != 4 {
 		fail("usage: gen <schema.json> <package> <out.go>")
@@ -180,8 +186,9 @@ func main() {
 	var root struct {
 		Defs       map[string]schema `json:"$defs"`
 		Operations map[string]struct {
-			Read, Long bool
-			Errors     []int
+			Read, Long               bool
+			Errors                   []int
+			Auth, Agent, Description string
 		} `json:"operations"`
 		Planned map[string]any `json:"planned"`
 	}
@@ -292,6 +299,9 @@ func main() {
 					fail("operation %s has no $defs %s%s", n, exported(n), d)
 				}
 			}
+			if o := root.Operations[n]; !authRule.MatchString(o.Auth) || !agentRule.MatchString(o.Agent) || strings.TrimSpace(o.Description) == "" {
+				fail("operation %s: auth (person, project:<path>, holder:<kind>, architect, owner, system), agent (no, tool, bound:<binder>) and description are required", n)
+			}
 			ops = append(ops, n)
 		}
 		sort.Strings(ops)
@@ -303,7 +313,7 @@ func main() {
 			if err != nil {
 				fail("%v", err)
 			}
-			fmt.Fprintf(&b, "\t\t%q: {Read: %v, Long: %v, Errors: %#v, InputSchema: json.RawMessage(%q)},\n", n, o.Read, o.Long, o.Errors, string(raw))
+			fmt.Fprintf(&b, "\t\t%q: {Read: %v, Long: %v, Errors: %#v, Auth: %q, Agent: %q, Description: %q, InputSchema: json.RawMessage(%q)},\n", n, o.Read, o.Long, o.Errors, o.Auth, o.Agent, o.Description, string(raw))
 		}
 		b.WriteString("\t} {\n\t\taddOperation(n, o)\n\t}\n}\n\n")
 	}

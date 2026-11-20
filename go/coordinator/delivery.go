@@ -63,7 +63,7 @@ func init() {
 		}
 		every(ctx, "delivery", d, func(ctx context.Context) error { return deliveryPass(ctx, a) })
 	})
-	operation("delivery_status", true, typedOp(deliveryStatus))
+	op("delivery_status", deliveryStatus)
 }
 
 func deliveryStatus(q *Request, r *contract.DeliveryStatusRequest) (contract.DeliveryStatusReply, error) {

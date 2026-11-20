@@ -160,5 +160,5 @@ func definitionUsage(q *Request, r *contract.DefinitionUsageRequest) (contract.D
 }
 
 func init() {
-	gatedObjOp("definition_usage", true, typedOp(definitionUsage))
+	op("definition_usage", definitionUsage)
 }

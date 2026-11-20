@@ -58,20 +58,20 @@ func init() {
 	route("GET /api/results/{id}/preview", resultPreview)
 
 	operation("artifact_list", true, opArtifactList)
-	operation("artifact_get", true, typedOp(func(q *Request, r *contract.ArtifactGetRequest) (contract.ArtifactView, error) {
+	op("artifact_get", func(q *Request, r *contract.ArtifactGetRequest) (contract.ArtifactView, error) {
 		v, err := artifactGetView(withTx(q), q.app, truncate(r.ArtifactId, 200), "")
 		if err != nil {
 			return contract.ArtifactView{}, err
 		}
 		return asT[contract.ArtifactView](v)
-	}))
-	operation("artifact_purge", false, operatorFirst(typedOp(func(q *Request, r *contract.ArtifactPurgeRequest) (contract.ArtifactPurgeReply, error) {
+	})
+	op("artifact_purge", func(q *Request, r *contract.ArtifactPurgeRequest) (contract.ArtifactPurgeReply, error) {
 		if err := operatorOnly(q); err != nil {
 			return contract.ArtifactPurgeReply{}, err
 		}
 		return artifactPurge(withTx(q), q.app, r.ContentHash, r.ProjectId, r.Scope, r.Reason)
-	})))
-	operation("stores_list", true, typedOp(func(q *Request, _ *contract.StoresListRequest) (contract.StoresListReply, error) {
+	})
+	op("stores_list", func(q *Request, _ *contract.StoresListRequest) (contract.StoresListReply, error) {
 		all, err := storeList(withTx(q), q.app)
 		if err != nil {
 			return contract.StoresListReply{}, err
@@ -93,8 +93,8 @@ func init() {
 			stores = []contract.StoreView{}
 		}
 		return contract.StoresListReply{Stores: stores, Problems: recsOf(problems)}, err
-	}))
-	operation("store_set_free_space_warning", false, operatorFirst(typedOp(func(q *Request, b *contract.StoreSetFreeSpaceWarningRequest) (contract.StoreSetFreeSpaceWarningReply, error) {
+	})
+	op("store_set_free_space_warning", func(q *Request, b *contract.StoreSetFreeSpaceWarningRequest) (contract.StoreSetFreeSpaceWarningReply, error) {
 		var none contract.StoreSetFreeSpaceWarningReply
 		if err := operatorOnly(q); err != nil {
 			return none, err
@@ -117,8 +117,8 @@ func init() {
 			return none, fail(404, "Unknown store "+b.StoreId)
 		}
 		return contract.StoreSetFreeSpaceWarningReply{Id: astr(r["id"]), State: astr(r["state"])}, nil
-	})))
-	operation("subscription_limits", true, typedOp(subscriptionLimits))
+	})
+	op("subscription_limits", subscriptionLimits)
 	// changes_since: the stream's read for the app's catch-up and polling fallback; no cursor is the head.
 	operation("changes_since", true, func(q *Request) (any, error) {
 		var b struct {

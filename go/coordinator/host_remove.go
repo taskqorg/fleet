@@ -11,7 +11,7 @@ import (
 )
 
 func init() {
-	operation("hosts_remove", false, typedOp(hostsRemove))
+	op("hosts_remove", hostsRemove)
 }
 
 func hostRemoved(h doc) bool { return astr(h["state"]) == "removed" }

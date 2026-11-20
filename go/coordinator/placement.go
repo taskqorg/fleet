@@ -415,7 +415,7 @@ func ruleArg(projectID *string, rule json.RawMessage) (*string, artifactRule, er
 
 func init() {
 	// Retention rules: the operator previews the effect, then confirms; editing a rule changes its hash.
-	operation("artifact_rule_preview", true, operatorFirst(typedOp(func(q *Request, b *contract.ArtifactRulePreviewRequest) (contract.ArtifactRulePreviewReply, error) {
+	op("artifact_rule_preview", func(q *Request, b *contract.ArtifactRulePreviewRequest) (contract.ArtifactRulePreviewReply, error) {
 		var none contract.ArtifactRulePreviewReply
 		if err := operatorOnly(q); err != nil {
 			return none, err
@@ -433,8 +433,8 @@ func init() {
 			bytes += int64(num(x["size"]))
 		}
 		return contract.ArtifactRulePreviewReply{RuleHash: ruleHash(r), Count: int64(len(rows)), Bytes: bytes, Sample: recsOf(rows[:min(10, len(rows))])}, nil
-	})))
-	operation("artifact_rule_confirm", false, operatorFirst(typedOp(func(q *Request, b *contract.ArtifactRuleConfirmRequest) (contract.ArtifactRuleConfirmReply, error) {
+	})
+	op("artifact_rule_confirm", func(q *Request, b *contract.ArtifactRuleConfirmRequest) (contract.ArtifactRuleConfirmReply, error) {
 		var none contract.ArtifactRuleConfirmReply
 		if err := operatorOnly(q); err != nil {
 			return none, err
@@ -471,9 +471,9 @@ func init() {
 		}
 		_, err = q.tx.Exec(q.ctx(), "INSERT INTO artifact_rule_confirmation(project_id,rule_hash,confirmed_by) VALUES($1,$2,$3) ON CONFLICT(project_id,rule_hash) DO UPDATE SET confirmed_by=excluded.confirmed_by,confirmed_at=now()", projectKey(p), ruleHash(r), "operator:"+q.person.Email)
 		return contract.ArtifactRuleConfirmReply{RuleHash: ruleHash(r), Confirmed: true}, err
-	})))
+	})
 	// An operator retry of a failed copy: placement queues it on its next pass.
-	operation("artifact_copy_retry", false, operatorFirst(typedOp(func(q *Request, b *contract.ArtifactCopyRetryRequest) (contract.ArtifactCopyRetryReply, error) {
+	op("artifact_copy_retry", func(q *Request, b *contract.ArtifactCopyRetryRequest) (contract.ArtifactCopyRetryReply, error) {
 		if err := operatorOnly(q); err != nil {
 			return contract.ArtifactCopyRetryReply{}, err
 		}
@@ -486,5 +486,5 @@ func init() {
 			return contract.ArtifactCopyRetryReply{}, err
 		}
 		return contract.ArtifactCopyRetryReply{Retrying: true}, nil
-	})))
+	})
 }

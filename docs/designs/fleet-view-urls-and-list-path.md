@@ -288,7 +288,7 @@ These targets remain in the backlog; polishing them is not the critical path for
 
 Built: the codec `packages/view-url/view-url.ts` (`tests/ui/view-url.test.ts`); `task_derived` and its triggers in `go/coordinator/schema.sql`; the query in `taskPage` (`go/coordinator/tasks.go`); the entity store `app/src/store.ts` with `app/src/offline.ts` (`tests/ui/store.test.ts`, `tests/ui/lists.test.ts`); the filter check `tests/ui/filter.check.ts`.
 
-Built: `view_link` is registered by `agentTypedOp` in `go/coordinator/view_link.go`, with generated request/reply types; `tests/go/view.test.ts` checks parity and validation.
+Built: `view_link` is registered by `op` in `go/coordinator/view_link.go`, with generated request/reply types; `tests/go/view.test.ts` checks parity and validation.
 
 ### Verification
 

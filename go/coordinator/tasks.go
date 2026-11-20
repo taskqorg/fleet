@@ -1241,7 +1241,7 @@ func taskMembership(q *Request, f doc, group, sort any, ids []string) ([]doc, er
 }
 
 func init() {
-	gatedObjOp("task_create", false, typedOp(func(q *Request, r *contract.TaskCreateRequest) (contract.TaskDetail, error) {
+	op("task_create", func(q *Request, r *contract.TaskCreateRequest) (contract.TaskDetail, error) {
 		if r.Title == "" || len([]rune(r.Title)) > 500 {
 			return contract.TaskDetail{}, fail(400, "Expected title")
 		}
@@ -1259,8 +1259,8 @@ func init() {
 			return contract.TaskDetail{}, err
 		}
 		return taskDetail(q, id)
-	}))
-	gatedObjOp("task_update", false, typedOp(func(q *Request, r *contract.TaskUpdateRequest) (contract.TaskDetail, error) {
+	})
+	op("task_update", func(q *Request, r *contract.TaskUpdateRequest) (contract.TaskDetail, error) {
 		var none contract.TaskDetail
 		id := r.TaskId
 		if !idOK(id) {
@@ -1314,9 +1314,9 @@ func init() {
 			}
 		}
 		return taskDetail(q, id)
-	}))
+	})
 	for _, x := range []struct{ name, trig string }{{"task_hold", "hold"}, {"task_release", "release"}, {"task_cancel", "cancel"}} {
-		gatedObjOp(x.name, false, typedOp(func(q *Request, r *contract.TaskHoldRequest) (contract.TaskDetail, error) {
+		op(x.name, func(q *Request, r *contract.TaskHoldRequest) (contract.TaskDetail, error) {
 			if !idOK(r.TaskId) {
 				return contract.TaskDetail{}, fail(400, "Expected taskId")
 			}
@@ -1328,15 +1328,15 @@ func init() {
 				return contract.TaskDetail{}, err
 			}
 			return taskDetail(q, r.TaskId)
-		}))
+		})
 	}
-	gatedObjOp("task_get", true, typedOp(func(q *Request, r *contract.TaskGetRequest) (contract.TaskDetail, error) {
+	op("task_get", func(q *Request, r *contract.TaskGetRequest) (contract.TaskDetail, error) {
 		if !idOK(r.TaskId) {
 			return contract.TaskDetail{}, fail(400, "Expected taskId")
 		}
 		return taskDetail(q, r.TaskId)
-	}))
-	gatedObjOp("task_request_acceptance", false, typedOp(func(q *Request, r *contract.TaskRequestAcceptanceRequest) (contract.QuestionRow, error) {
+	})
+	op("task_request_acceptance", func(q *Request, r *contract.TaskRequestAcceptanceRequest) (contract.QuestionRow, error) {
 		var none contract.QuestionRow
 		id := r.TaskId
 		if !idOK(id) {
@@ -1354,8 +1354,8 @@ func init() {
 			return none, err
 		}
 		return questionRow(q, id, qid)
-	}))
-	gatedObjOp("task_list", true, typedOp(func(q *Request, r *contract.TaskListRequest) (contract.TaskListReply, error) {
+	})
+	op("task_list", func(q *Request, r *contract.TaskListRequest) (contract.TaskListReply, error) {
 		c, p := []string{}, []any{}
 		if v := deref(r.ProjectId); v != "" {
 			p = append(p, v)
@@ -1378,8 +1378,8 @@ func init() {
 		}
 		tasks, err := asT[[]contract.TaskListItem](out)
 		return contract.TaskListReply{Tasks: tasks}, err
-	}))
-	gatedObjOp("task_take", false, typedOp(func(q *Request, r *contract.TaskTakeRequest) (contract.TaskDetail, error) {
+	})
+	op("task_take", func(q *Request, r *contract.TaskTakeRequest) (contract.TaskDetail, error) {
 		var none contract.TaskDetail
 		id := r.TaskId
 		if !idOK(id) {
@@ -1402,8 +1402,8 @@ func init() {
 			}
 		}
 		return taskDetail(q, id)
-	}))
-	gatedObjOp("questions_list", true, typedOp(func(q *Request, r *contract.QuestionsListRequest) (contract.QuestionsListReply, error) {
+	})
+	op("questions_list", func(q *Request, r *contract.QuestionsListRequest) (contract.QuestionsListReply, error) {
 		if err := excludeCheck(r.ExcludeProjectIds); err != nil {
 			return contract.QuestionsListReply{}, err
 		}
@@ -1413,10 +1413,10 @@ func init() {
 		}
 		rows, err := asT[[]contract.QuestionRow](qs)
 		return contract.QuestionsListReply{Questions: rows}, err
-	}))
+	})
 	// questions_withdraw: the owner (or full access) withdraws open questions that no longer need anyone, with one
 	// setting-change audit row each. A cause is let go, so a problem still present is asked again by its source.
-	gatedObjOp("questions_withdraw", false, typedOp(func(q *Request, r *contract.QuestionsWithdrawRequest) (contract.QuestionsWithdrawReply, error) {
+	op("questions_withdraw", func(q *Request, r *contract.QuestionsWithdrawRequest) (contract.QuestionsWithdrawReply, error) {
 		out := contract.QuestionsWithdrawReply{Withdrawn: []string{}, Skipped: []contract.QuestionSkipped{}}
 		if err := ownerOnly(q, "Only the owner withdraws questions"); err != nil {
 			return out, err
@@ -1454,8 +1454,8 @@ func init() {
 		}
 		publish(q)
 		return out, nil
-	}))
-	gatedObjOp("questions_answer", false, typedOp(func(q *Request, r *contract.QuestionsAnswerRequest) (contract.QuestionRow, error) {
+	})
+	op("questions_answer", func(q *Request, r *contract.QuestionsAnswerRequest) (contract.QuestionRow, error) {
 		var none contract.QuestionRow
 		id, answer := r.QuestionId, r.Answer
 		if !idOK(id) {
@@ -1489,12 +1489,12 @@ func init() {
 			return none, err
 		}
 		return questionRow(q, "", id)
-	}))
-	gatedObjOp("executions_list", true, typedOp(func(q *Request, r *contract.ExecutionsListRequest) (contract.ExecutionsListReply, error) {
+	})
+	op("executions_list", func(q *Request, r *contract.ExecutionsListRequest) (contract.ExecutionsListReply, error) {
 		return executionsPage(q, *r)
-	}))
+	})
 	gatedObjOp("task_page", true, func(q *Request) (any, error) { return taskPage(q, body(q)) })
-	gatedObjOp("task_derived_check", true, typedOp(func(q *Request, _ *contract.TaskDerivedCheckRequest) (contract.TaskDerivedCheckReply, error) {
+	op("task_derived_check", func(q *Request, _ *contract.TaskDerivedCheckRequest) (contract.TaskDerivedCheckReply, error) {
 		var n int64
 		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*)::int FROM task").Scan(&n); err != nil {
 			return contract.TaskDerivedCheckReply{}, err
@@ -1505,7 +1505,7 @@ func init() {
 		}
 		drifted, err := asT[[]contract.TaskDerivedDrift](d)
 		return contract.TaskDerivedCheckReply{Checked: n, Drifted: drifted}, err
-	}))
+	})
 }
 
 func taskRecord(t doc) doc {

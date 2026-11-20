@@ -29,7 +29,7 @@ var cardReaders = map[contract.EntityKind]cardReader{
 var codeKinds = map[string]contract.EntityKind{"T": contract.EntityKindTask, "Q": contract.EntityKindQuestion, "C": contract.EntityKindConversation}
 
 func init() {
-	gatedObjOp("entity_card", true, typedOp(func(q *Request, r *contract.EntityCardRequest) (contract.EntityCardReply, error) {
+	op("entity_card", func(q *Request, r *contract.EntityCardRequest) (contract.EntityCardReply, error) {
 		kind, id := contract.EntityKind(""), strings.TrimSpace(deref(r.Id))
 		if r.Kind != nil {
 			kind = *r.Kind
@@ -66,8 +66,7 @@ func init() {
 			c.Facts = []contract.EntityFact{}
 		}
 		return *c, nil
-	}))
-	agentDescriptions["entity_card"] = "A short card of one entity: code (T-FLT-42, Q-…, C-…, old codes too) or kind (task, question, conversation, execution, result, experiment, project, host, agent, pipeline, pull_request as owner/repo#n, release as its tag) with id. Returns its state, title, project, harness, last time, 1-4 facts, the app path and an outside url; unknown and forbidden are both 404"
+	})
 }
 
 func fact(label string, t contract.EntityFactType, value string) contract.EntityFact {

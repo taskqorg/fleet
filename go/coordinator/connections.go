@@ -1640,5 +1640,4 @@ func keyAnswerCheck(q *Request, qn doc, answer string) error {
 }
 
 func init() {
-	agentDescriptions["connections_key_request"] = "Ask the owner to add an API key: projectId, requestId, connection, reason. Never pass a key value; the owner pastes it into Fleet and the answer (question_history) is only {connection, fingerprint, state} or decline"
 }

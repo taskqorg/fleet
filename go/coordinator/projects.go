@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,6 +18,7 @@ import (
 	"strings"
 
 	"fleet/contract"
+	"fleet/mcpserve"
 )
 
 func repoRoot() string {
@@ -467,7 +469,7 @@ func catalogueBase(q *Request, id string) (doc, error) {
 var projectOps = map[string]registeredOp{}
 
 func projectOp(name string, read bool, h handler) {
-	projectOps[name] = registeredOp{read, h}
+	projectOps[name] = registeredOp{read: read, h: h}
 	gatedObjOp(name, read, h)
 }
 
@@ -479,10 +481,10 @@ func init() {
 		ps, err := listProfiles(q)
 		return doc{"profiles": ps}, err
 	})
-	gatedObjOp("profiles_list", true, typedOp(func(q *Request, _ *contract.ProfilesListRequest) (contract.ProfilesListReply, error) {
+	op("profiles_list", func(q *Request, _ *contract.ProfilesListRequest) (contract.ProfilesListReply, error) {
 		ps, err := listProfiles(q)
 		return contract.ProfilesListReply{Profiles: recsOf(ps)}, err
-	}))
+	})
 	projectOp("project_list", true, shaped[contract.ProjectListRequest, contract.ProjectListReply](func(q *Request) (any, error) {
 		out := []doc{}
 		ids, err := projectIDs(q)
@@ -665,9 +667,9 @@ func init() {
 		if _, ok := projectOps[q.r.PathValue("name")]; !ok {
 			return nil, fail(404, "Unknown operation")
 		}
-		return q.app.runOp(q, q.r.PathValue("name"), q.body)
+		return q.app.runOp(q, q.r.PathValue("name"), q.body, nil)
 	})
-	gatedLongRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps, agentDescriptions) })
+	gatedLongRoute("POST /api/project-tools", func(q *Request) (any, error) { return q.app.mcp(q, "fleet-projects", projectOps) })
 }
 
 // pipelineRun: a pipeline-run record with its steps.
@@ -682,52 +684,28 @@ func pipelineRun(q *Request, id string) (doc, error) {
 	return pipelinePlanRead(q, run)
 }
 
-// mcp: a JSON-RPC tools server over an operation table; each call runs in its own transaction.
-func (a *App) mcp(q *Request, server string, ops map[string]registeredOp, descriptions map[string]string) (any, error) {
-	var rpc struct {
-		ID     any    `json:"id"`
-		Method string `json:"method"`
-		Params struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		} `json:"params"`
-	}
-	json.Unmarshal(q.body, &rpc)
-	switch rpc.Method {
-	case "initialize":
-		return doc{"jsonrpc": "2.0", "id": rpc.ID, "result": doc{"protocolVersion": "2025-06-18", "capabilities": doc{"tools": doc{}}, "serverInfo": doc{"name": server, "version": "1"}}}, nil
-	case "tools/list":
-		names := make([]string, 0, len(ops))
-		for n := range ops {
-			if !resourceOperationAdvertised(n) {
-				continue
-			}
+// mcp: an MCP tools server (mcpserve) over an operation table: tools/list publishes its advertised operations, tools/call
+// runs one through runOp.
+func (a *App) mcp(q *Request, server string, ops map[string]registeredOp) (any, error) {
+	names := []string{}
+	for n := range ops {
+		if resourceOperationAdvertised(n) {
 			names = append(names, n)
 		}
-		sort.Strings(names)
-		tools := []doc{}
-		for _, n := range names {
-			t := doc{"name": n, "inputSchema": contract.Operations[n].InputSchema}
-			if d, ok := descriptions[n]; ok {
-				t["description"] = d
-			} else if server == "fleet-projects" {
-				t["description"] = "Fleet shared " + n
-			}
-			tools = append(tools, t)
+	}
+	out, err := mcpserve.Server{Name: server, Tools: names, Call: func(name string, args json.RawMessage) (any, error) {
+		if isResourceRead(name) && !resourceReadsEnabled {
+			return nil, fail(503, "Prepared project reads disabled")
 		}
-		return doc{"jsonrpc": "2.0", "id": rpc.ID, "result": doc{"tools": tools}}, nil
-	}
-	if rpc.Method == "tools/call" && isResourceRead(rpc.Params.Name) && !resourceReadsEnabled {
-		return nil, fail(503, "Prepared project reads disabled")
-	}
-	if _, ok := ops[rpc.Params.Name]; rpc.Method != "tools/call" || !ok {
+		if _, ok := ops[name]; !ok {
+			return nil, fail(400, "Unknown tool")
+		}
+		return a.runOp(q, name, args, nil)
+	}}.Handle(q.body)
+	if errors.Is(err, mcpserve.ErrUnknownMethod) {
 		return nil, fail(400, "Unknown tool")
 	}
-	out, err := a.runOp(q, rpc.Params.Name, rpc.Params.Arguments)
-	if err != nil {
-		return nil, err
-	}
-	return doc{"jsonrpc": "2.0", "id": rpc.ID, "result": doc{"content": []doc{{"type": "text", "text": js(out)}}}}, nil
+	return out, err
 }
 
 // artifactLocations: a project's artifact_locations; the default list when it names none.

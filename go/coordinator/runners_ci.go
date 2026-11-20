@@ -384,5 +384,5 @@ func init() {
 		}
 		every(ctx, "runners-ci", d, func(ctx context.Context) error { return ciPass(ctx, a, false) })
 	})
-	operation("executions_ci", true, typedOp(executionsCI))
+	op("executions_ci", executionsCI)
 }

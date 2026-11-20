@@ -683,6 +683,6 @@ func init() {
 			return nil
 		})
 	})
-	operation("artifact_upload_begin", false, typedOp(uploadBegin))
+	op("artifact_upload_begin", uploadBegin)
 	rawRoute("PUT /api/uploads/{id}", (*App).uploadPart)
 }

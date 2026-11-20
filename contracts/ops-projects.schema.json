@@ -8,7 +8,10 @@
         403,
         404,
         409
-      ]
+      ],
+      "auth": "person",
+      "agent": "tool",
+      "description": "Create a project (requestId, id, content)"
     },
     "project_update": {
       "read": false,
@@ -17,7 +20,10 @@
         403,
         404,
         409
-      ]
+      ],
+      "auth": "project:projectId",
+      "agent": "bound:project",
+      "description": "Save a new revision of a project (requestId, projectId, baseRevision, content, optional repoSha); refused when the head moved"
     },
     "project_initial_access_revoke": {
       "read": false,
@@ -26,7 +32,10 @@
         403,
         404,
         409
-      ]
+      ],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "Revoke a project's initial access grants (projectId, baseAccessVersion)"
     },
     "project_archive": {
       "read": false,
@@ -34,7 +43,10 @@
         403,
         404,
         409
-      ]
+      ],
+      "auth": "owner",
+      "agent": "tool",
+      "description": "Owner or full-access person. Retires a project for good: it leaves project_list and every project view; task_create, session_start, project_update and project_create refuse its id afterwards. Refused (409) while the project has open tasks, unarchived sessions or running executions. Idempotent: archiving again repeats only the key cleanup. Each git connection that no live project names any more gets a connection-remove command on every host that reports it; the reply lists them as connectionRemovals (host/connection). A project whose config/projects file still ships comes back at the next coordinator start, so remove the file too."
     }
   },
   "$defs": {

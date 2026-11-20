@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Coordinator operations of the telemetry domain (docs/designs/fleet-telemetry.md section 5): spans in ClickHouse read through operations, never raw SQL. Project spans need the project grant; system spans (no projectId) need full access. The rules are in ops.schema.json $comment and contracts/README.md.",
   "operations": {
-    "telemetry_summary": {"read": false, "long": true, "errors": [400]},
-    "telemetry_trace": {"read": false, "long": true, "errors": [400, 409]},
-    "telemetry_findings": {"read": false, "long": true, "errors": []}
+    "telemetry_summary": {"read": false, "long": true, "errors": [400], "auth": "person", "agent": "tool", "description": "window defaults to 1h."},
+    "telemetry_trace": {"read": false, "long": true, "errors": [400,409], "auth": "person", "agent": "tool", "description": "Exactly one of traceId or executionId. Execution lookup uses project RLS before resolving its durable origin; older executions without context return 409."},
+    "telemetry_findings": {"read": false, "long": true, "errors": [], "auth": "person", "agent": "tool", "description": "Telemetry findings, optionally of one project"}
   },
   "$defs": {
     "Finding": {"type": "object", "required": ["rule", "subject", "value", "since", "exemplars", "cause"], "properties": {"rule": {"type": "string"}, "subject": {"type": "string"}, "value": {"type": "number"}, "baseline": {"type": "number"}, "since": {"type": "string"}, "exemplars": {"type": "array", "items": {"type": "string"}}, "hostId": {"type": "string"}, "storeId": {"type": "string"}, "projectId": {"type": "string"}, "executionId": {"type": "string"}, "cause": {"type": "string"}, "groupCause": {"type": "string"}, "text": {"type": "string"}}, "$comment": "One rule result of the last rules pass (fleet-telemetry.md section 6). since: when the rule first fired for this cause (RFC 3339). exemplars: trace ids. groupCause: the absence cause it folds into (no question of its own)."},

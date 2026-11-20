@@ -455,8 +455,7 @@ func viewLink(q *Request, b doc) (doc, error) {
 }
 
 func init() {
-	agentDescriptions["view_link"] = "The operator-app link for a view ({view:{view:'tasks',state:['failed'],project:['fleet']}}), or the view of a link ({url}); returns {url, path} or {view}"
-	agentTypedOp("view_link", true, func(q *Request, b *contract.ViewLinkRequest) (contract.ViewLinkReply, error) {
+	op("view_link", func(q *Request, b *contract.ViewLinkRequest) (contract.ViewLinkReply, error) {
 		out, err := viewLink(q, docOf(b))
 		if err != nil {
 			return contract.ViewLinkReply{}, err

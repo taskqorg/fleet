@@ -172,7 +172,7 @@ func harnessModels(q *Request, r *contract.HarnessModelsRequest) (contract.Harne
 }
 
 func init() {
-	gatedObjOp("agent_effective", true, typedOp(agentEffective))
-	gatedObjOp("agent_compatibility", true, typedOp(agentCompatibility))
-	gatedObjOp("harness_models", true, typedOp(harnessModels))
+	op("agent_effective", agentEffective)
+	op("agent_compatibility", agentCompatibility)
+	op("harness_models", harnessModels)
 }
