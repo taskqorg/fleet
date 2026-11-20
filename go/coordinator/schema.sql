@@ -3919,6 +3919,9 @@ INSERT INTO pipeline_step(run_id,step_index,step_id,definition_sha256,activation
   CASE WHEN jsonb_typeof(x.v->'inputs')='array' THEN x.v->'inputs' END,x.v->'problem'->>'code',x.v->'problem'->>'message'
  FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.data->'plan'->'entries') WITH ORDINALITY AS x(v,ord)
  WHERE e.kind='pipeline_run' AND jsonb_typeof(e.data->'plan'->'entries')='array';
+-- Moving keys out of execution.data is no change of an execution: its triggers (touch, change feed, resource capture)
+-- stay off for these writes.
+ALTER TABLE execution DISABLE TRIGGER USER;
 UPDATE execution SET data=data-'plan' WHERE id IN (SELECT run_id FROM pipeline_run);
 UPDATE pipeline_step p SET
  native_execution_id=CASE WHEN jsonb_typeof(e.data->'executionId')='string' THEN e.data->>'executionId' END,
@@ -3931,6 +3934,11 @@ UPDATE pipeline_step p SET
  finished_at_ms=CASE WHEN jsonb_typeof(e.data->'finishedAt')='number' AND (e.data->>'finishedAt') ~ '^-?[0-9]+$' THEN (e.data->>'finishedAt')::bigint END,
  duration_ms=CASE WHEN jsonb_typeof(e.data->'durationMs')='number' AND (e.data->>'durationMs') ~ '^-?[0-9]+$' THEN (e.data->>'durationMs')::bigint END
 FROM execution e WHERE e.kind='pipeline_step' AND p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id;
+-- A finished step row without ended_at kept its end only in data.finishedAt (task executions read it there): it gets
+-- ended_at before the key moves.
+UPDATE execution e SET ended_at=to_timestamp(p.finished_at_ms/1000.0)
+FROM pipeline_step p WHERE e.kind='pipeline_step' AND p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id
+ AND e.ended_at IS NULL AND p.finished_at_ms IS NOT NULL AND e.state IN ('succeeded','failed','cancelled');
 UPDATE execution e SET data=e.data-ARRAY['arguments','output','usage','error']
  -(CASE WHEN p.native_execution_id IS NOT NULL THEN 'executionId' ELSE '' END)
  -(CASE WHEN p.output_artifact_id IS NOT NULL THEN 'outputArtifactId' ELSE '' END)
@@ -3941,3 +3949,11 @@ UPDATE execution e SET data=e.data-ARRAY['arguments','output','usage','error']
  -(CASE WHEN p.finished_at_ms IS NOT NULL THEN 'finishedAt' ELSE '' END)
  -(CASE WHEN p.duration_ms IS NOT NULL THEN 'durationMs' ELSE '' END)
 FROM pipeline_step p WHERE e.kind='pipeline_step' AND p.run_id=e.parent_execution_id AND p.ref_mode='fresh' AND p.ref_execution_id=e.id;
+ALTER TABLE execution ENABLE TRIGGER USER;
+-- A run's plan is seen with its run: the rows follow execution's own policy.
+ALTER TABLE pipeline_run ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pipeline_run FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON pipeline_run USING (EXISTS (SELECT 1 FROM execution e WHERE e.id = run_id));
+ALTER TABLE pipeline_step ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pipeline_step FORCE ROW LEVEL SECURITY;
+CREATE POLICY project_scope ON pipeline_step USING (EXISTS (SELECT 1 FROM execution e WHERE e.id = run_id));

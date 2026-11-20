@@ -1068,7 +1068,7 @@ type PipelineStepsRow struct {
 }
 
 // The step rows of selected plan entries: owner run, project, the record's open remainder (as execJSON shows it) and
-// the step facts of its plan entry (migration 80).
+// the step facts of its plan entry (migration 81).
 func (q *Queries) PipelineSteps(ctx context.Context, ids []string) ([]PipelineStepsRow, error) {
 	rows, err := q.db.Query(ctx, pipelineSteps, ids)
 	if err != nil {
