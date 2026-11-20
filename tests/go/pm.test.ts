@@ -45,6 +45,7 @@ async function agent(person: string, start: object) {
   }
   const c = await hostCommand(async q => ok(await hostCall(person, '/api/hosts/poll' + q, poll)), (x: any) => x.executionId === s.executionId && x.kind === 'start');
   assert.ok(c, 'the host claims the start command');
+  ok(await hostCall(person, '/api/hosts/receipts', {executionId: s.executionId, commandId: c.id, status: 'started'}));
   const rpc = (request: object) => hostCall(person, '/api/hosts/agent-tools', {hostId, executionId: s.executionId, commandId: c.id, request: {jsonrpc: '2.0', id: 1, ...request}});
   const tool = async (name: string, args: object = {}): Promise<Reply> => {
     const r = await rpc({method: 'tools/call', params: {name, arguments: args}});
