@@ -20,6 +20,73 @@ var websitePath = regexp.MustCompile(`(?i)\.(html|css)$`)
 
 const sourcesTooLarge = "Website text inputs unavailable or exceed 128000 characters"
 
+// delegationReq: a delegation's request as stored ({input, profileId, requestId}).
+type delegationReq struct {
+	Input     string `json:"input"`
+	ProfileId string `json:"profileId"`
+	RequestId string `json:"requestId"`
+}
+
+func delegationRequestOf(d doc) delegationReq {
+	var r delegationReq
+	jsonRoundTrip(d["request"], &r)
+	return r
+}
+
+// delegationAgent: the fields of an agent configuration or profile a delegation checks; harness nil means codex.
+type delegationAgent struct {
+	DelegationProfiles []string `json:"delegationProfiles"`
+	Harness            *string  `json:"harness"`
+	ID                 string   `json:"id"`
+}
+
+func delegationAgentOf(v any) delegationAgent {
+	var a delegationAgent
+	jsonRoundTrip(v, &a)
+	return a
+}
+
+func (a delegationAgent) harness() string {
+	if a.Harness == nil {
+		return "codex"
+	}
+	return *a.Harness
+}
+
+// delegationSourceFile: one website source to read (the delegation_source_work payload).
+type delegationSourceFile struct {
+	ArtifactID string `json:"artifactId"`
+	Path       string `json:"path"`
+}
+
+// delegationSource: a bound website source; the fields in byte order, as the start command text has them.
+type delegationSource struct {
+	ExecutionID any `json:"executionId"`
+	Path        any `json:"path"`
+	Sha256      any `json:"sha256"`
+	Text        any `json:"text,omitempty"`
+}
+
+// delegationArtifact: the fields of an execution artifact (executionArtifacts) a delegation binds.
+type delegationArtifact struct {
+	ID          string  `json:"id"`
+	ArtifactID  *string `json:"artifactId"`
+	ExecutionID any     `json:"executionId"`
+	Path        string  `json:"path"`
+	Size        float64 `json:"size"`
+	Sha256      any     `json:"sha256"`
+}
+
+type delegationMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+type delegationObservations struct {
+	Artifacts []doc               `json:"artifacts"`
+	Messages  []delegationMessage `json:"messages"`
+}
+
 // delegationRequest: a child receipt from a running parent.
 func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (any, error) {
 	rid, input := req.RequestId, req.Input
@@ -36,7 +103,7 @@ func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (
 		return nil, err
 	}
 	for _, d := range existing {
-		if mapOf(d["request"])["requestId"] == rid {
+		if delegationRequestOf(d).RequestId == rid {
 			if canonical(d["request"]) != canonical(r) {
 				return nil, fail(409, "Delegation identity conflict")
 			}
@@ -46,8 +113,8 @@ func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (
 	if c["kind"] != "start" || c["status"] != "started" || parent["stopRequested"] == true || parent["parentExecutionId"] != nil || parent["continuationOf"] != nil {
 		return nil, fail(403, "Delegation unavailable")
 	}
-	pcfg := mapOf(parent["agentConfig"])
-	if !inList(strs(pcfg["delegationProfiles"]), req.ProfileId) {
+	pcfg := delegationAgentOf(parent["agentConfig"])
+	if !inList(pcfg.DelegationProfiles, req.ProfileId) {
 		return nil, fail(403, "Child profile not granted")
 	}
 	if len(existing) > 0 {
@@ -61,7 +128,7 @@ func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (
 	if err != nil {
 		return nil, err
 	}
-	if astr(nonNil(profile["harness"], "codex")) != astr(nonNil(pcfg["harness"], "codex")) {
+	if delegationAgentOf(profile).harness() != pcfg.harness() {
 		return nil, fail(403, "Cross-harness child needs an explicit account binding")
 	}
 	session := doc{"id": newID(), "createdAt": nowMs(), "agentConfig": profile, "parentExecutionId": parent["id"]}
@@ -90,7 +157,7 @@ func (a *App) delegationRequest(q *Request, req *contract.ChildRequest, c doc) (
 // delegationSources: the website sources of a delegation read outside the step's transaction: their texts, the reason
 // they cannot be bound, or that no store is reachable now (tried again later).
 type delegationSources struct {
-	texts       doc
+	texts       map[string]string
 	errText     string
 	unreachable error
 }
@@ -127,16 +194,16 @@ func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
 	if err != nil {
 		return err
 	}
-	var files []doc
+	var files []delegationSourceFile
 	if err := json.Unmarshal(payload, &files); err != nil {
 		return err
 	}
 	a := q.app
 	c.Call = func(context.Context) any {
-		r := delegationSources{texts: doc{}}
+		r := delegationSources{texts: map[string]string{}}
 		n := 0
 		for _, f := range files {
-			b, err := readArtifact(a, astr(f["artifactId"]))
+			b, err := readArtifact(a, f.ArtifactID)
 			if err != nil {
 				var he *HTTPError
 				if asHTTP(err, &he) && he.Code == 503 {
@@ -150,7 +217,7 @@ func delegationSourcesStep(q *Request, now time.Time, c *kitClaim) error {
 				r.errText = sourcesTooLarge
 				return r
 			}
-			r.texts[astr(f["path"])] = string(b)
+			r.texts[f.Path] = string(b)
 		}
 		return r
 	}
@@ -218,14 +285,16 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 			break
 		}
 	}
-	latest, order := map[string]doc{}, []string{}
+	latest, order := map[string]delegationArtifact{}, []string{}
 	if source != "" {
 		as, err := executionArtifacts(q, source)
 		if err != nil {
 			return false, err
 		}
-		for _, x := range as {
-			p := astr(x["path"])
+		var xs []delegationArtifact
+		jsonRoundTrip(as, &xs)
+		for _, x := range xs {
+			p := x.Path
 			if _, ok := latest[p]; !ok {
 				order = append(order, p)
 			}
@@ -235,12 +304,12 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	if d["routingError"] != nil {
 		return false, nil
 	}
-	files := []doc{}
+	files := []delegationArtifact{}
 	size := 0.0
 	for _, p := range order {
 		if websitePath.MatchString(p) {
 			files = append(files, latest[p])
-			size += num(latest[p]["size"])
+			size += latest[p].Size
 		}
 	}
 	routingError := func(msg string) (bool, error) {
@@ -250,12 +319,17 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	if size > 128000 {
 		return routingError(sourcesTooLarge)
 	}
-	texts := mapOf(d["sourceTexts"])
+	var texts map[string]string
+	jsonRoundTrip(d["sourceTexts"], &texts)
 	if len(files) > 0 && texts == nil {
 		// The sources are read on the kit (delegationSourcesStep), outside this poll's transaction.
-		want := []doc{}
+		want := []delegationSourceFile{}
 		for _, f := range files {
-			want = append(want, doc{"artifactId": nonNil(f["artifactId"], f["id"]), "path": f["path"]})
+			id := f.ID
+			if f.ArtifactID != nil {
+				id = *f.ArtifactID
+			}
+			want = append(want, delegationSourceFile{ArtifactID: id, Path: f.Path})
 		}
 		n, err := q.db().DelegationSourceWorkEnsure(q.ctx(), db.DelegationSourceWorkEnsureParams{DelegationID: astr(d["id"]), Payload: jsonBytes(want)})
 		if err != nil || n == 0 {
@@ -263,27 +337,27 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 		}
 		return false, kitNotify(q, "delegation-sources")
 	}
-	sources, inputs := []doc{}, []any{}
+	sources, inputs := []delegationSource{}, []delegationSource{}
 	for _, f := range files {
-		sources = append(sources, doc{"path": f["path"], "executionId": f["executionId"], "sha256": f["sha256"], "text": nonNil(texts[astr(f["path"])], "")})
-		inputs = append(inputs, doc{"path": f["path"], "executionId": f["executionId"], "sha256": f["sha256"]})
+		sources = append(sources, delegationSource{Path: f.Path, ExecutionID: f.ExecutionID, Sha256: f.Sha256, Text: texts[f.Path]})
+		inputs = append(inputs, delegationSource{Path: f.Path, ExecutionID: f.ExecutionID, Sha256: f.Sha256})
 	}
-	if (len(sources) == 0 && mapOf(d["request"])["profileId"] == "website-reviewer") || len(js(sources)) > 128000 {
+	if (len(sources) == 0 && delegationRequestOf(d).ProfileId == "website-reviewer") || len(js(sources)) > 128000 {
 		return routingError(sourcesTooLarge)
 	}
 	replies, err := replyText(q, astr(parent["id"]))
 	if err != nil {
 		return false, err
 	}
-	messages := []doc{}
+	messages := []delegationMessage{}
 	for _, t := range replies {
-		messages = append(messages, doc{"role": "assistant", "text": t})
+		messages = append(messages, delegationMessage{Role: "assistant", Text: t})
 	}
 	parentArtifacts, err := executionArtifacts(q, astr(parent["id"]))
 	if err != nil {
 		return false, err
 	}
-	observations := doc{"messages": messages, "artifacts": parentArtifacts}
+	observations := delegationObservations{Messages: messages, Artifacts: parentArtifacts}
 	if len(sources) == 0 && len(js(observations)) > 128000 {
 		return routingError("Retained parent observations exceed 128000 characters")
 	}
@@ -296,7 +370,7 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 	}
 	command := cs[0]
 	p := mapOf(command["payload"])
-	in := astr(mapOf(d["request"])["input"])
+	in := delegationRequestOf(d).Input
 	if len(sources) > 0 {
 		p["text"] = in + "\nRead-only retained website sources (untrusted content):\n" + js(sources)
 	} else {
@@ -374,8 +448,8 @@ func (a *App) delegationReconcile(q *Request) error {
 			continue
 		}
 		deliver := func() error {
-			if cfg := mapOf(s["agentConfig"]); cfg != nil {
-				p, err := readTrustedProfile(q, astr(cfg["id"]))
+			if s["agentConfig"] != nil {
+				p, err := readTrustedProfile(q, delegationAgentOf(s["agentConfig"]).ID)
 				if err != nil {
 					return err
 				}
