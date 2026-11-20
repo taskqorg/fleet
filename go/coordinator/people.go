@@ -13,6 +13,7 @@ import (
 	"sort"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -173,9 +174,8 @@ var holders = map[string]func(q *Request) (holder string, found bool, err error)
 			return "", false, nil
 		}
 		// Its own read on the request transaction's connection: the account row may be outside the person's scope.
-		var holder string
 		ctx := withTx(q)
-		err := conn(ctx, q.app).QueryRow(ctx, "SELECT coalesce(holder,'') FROM managed_account WHERE id=$1", id).Scan(&holder)
+		holder, err := connDB(ctx, q.app).PeopleAccountHolder(ctx, id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, nil
 		}
@@ -187,18 +187,22 @@ var holders = map[string]func(q *Request) (holder string, found bool, err error)
 			// connections_key_state names its key: the handler checks the key's connection.
 			return q.person.Email, true, nil
 		}
-		c, err := maybe(q, "connection:"+n, "api-connection")
-		if err != nil || c == nil {
-			return "", false, err
+		holder, err := q.db().PeopleConnectionHolder(q.ctx(), "connection:"+n)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
 		}
-		return astr(c["holder"]), true, nil
+		return holder, err == nil, err
 	},
 	"host": func(q *Request) (string, bool, error) {
-		h, err := hostByID(q, jsonPathString(q.body, "id"))
+		id := jsonPathString(q.body, "id")
+		if id == "" {
+			return "", false, nil
+		}
+		h, err := liveHost(q, id)
 		if err != nil || h == nil {
 			return "", false, err
 		}
-		return astr(h["holder"]), true, nil
+		return deref(h.Holder), true, nil
 	},
 }
 
@@ -241,16 +245,19 @@ func init() {
 			given = *r.Limit
 		}
 		limit := pageLimit(given, 100)
-		rs, err := rowsOf(q, "SELECT seq,data FROM document WHERE kind='setting-change' AND ($1='' OR data->>'target'=$1) AND ($2 OR data->>'target'<>'people') AND ($3::bigint IS NULL OR seq<$3) ORDER BY seq DESC LIMIT $4",
-			deref(r.Target), owner, r.Before, limit+1)
+		rs, err := q.db().PeopleSettingChanges(q.ctx(), db.PeopleSettingChangesParams{Target: deref(r.Target), Owner: owner, Before: r.Before, Lim: int32(limit + 1)})
 		out := contract.SettingChangesReply{Changes: []map[string]json.RawMessage{}}
 		for i, row := range rs {
 			if i == limit {
-				n := int64(num(rs[i-1]["seq"]))
+				n := rs[i-1].Seq
 				out.NextBefore = &n
 				break
 			}
-			out.Changes = append(out.Changes, recOf(row["data"]))
+			change := map[string]json.RawMessage{}
+			if err := json.Unmarshal(row.Data, &change); err != nil {
+				return out, err
+			}
+			out.Changes = append(out.Changes, change)
 		}
 		return out, err
 	})
@@ -299,7 +306,31 @@ func peopleSet(q *Request, people json.RawMessage) (int, error) {
 	json.Unmarshal(b.People, &next)
 	err = q.app.store.Tx(q.ctx(), nil, true, "", func(tx pgx.Tx) error {
 		q.tx = tx
-		return put(q, "setting-change", doc{"id": newID(), "target": "people", "field": "people", "previous": prev, "value": next, "actor": actor(q, "operator"), "at": nowMs()})
+		return recordPeopleChange(q, peopleChange{Target: "people", Field: "people", Previous: prev, Value: next})
 	})
 	return q.app.peopleSnapshot().count(), err
+}
+
+// peopleChange: the setting-change record of the people list or a person setting (document kind setting-change, no
+// project); holder is the person whose setting it is.
+type peopleChange struct {
+	ID         string `json:"id"`
+	Target     string `json:"target"`
+	Holder     string `json:"holder,omitempty"`
+	Field      string `json:"field"`
+	Previous   any    `json:"previous"`
+	Value      any    `json:"value"`
+	Actor      string `json:"actor"`
+	OnBehalfOf string `json:"onBehalfOf,omitempty"`
+	At         int64  `json:"at"`
+}
+
+// recordPeopleChange writes c with a new id, the actor and now; an agent's change acts for its director
+// (fleet-pm-agent.md §1), as put does for every setting change.
+func recordPeopleChange(q *Request, c peopleChange) error {
+	c.ID, c.Actor, c.At = newID(), actor(q, "operator"), nowMs()
+	if q.agent != "" {
+		c.Actor, c.OnBehalfOf = q.agent, q.person.Email
+	}
+	return q.db().SettingChangeInsert(q.ctx(), db.SettingChangeInsertParams{ID: c.ID, Data: jsonBytes(c)})
 }

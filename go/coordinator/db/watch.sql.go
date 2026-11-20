@@ -141,6 +141,70 @@ func (q *Queries) WatchIDs(ctx context.Context) ([]string, error) {
 	return items, nil
 }
 
+const watchPut = `-- name: WatchPut :exec
+INSERT INTO watch(id, session_id, project_id, payload) VALUES($1::text, $2::text, $3::text, $4::jsonb)
+ ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, project_id=excluded.project_id, payload=excluded.payload, updated_at=now()
+`
+
+type WatchPutParams struct {
+	ID        string
+	SessionID string
+	ProjectID *string
+	Payload   []byte
+}
+
+func (q *Queries) WatchPut(ctx context.Context, arg WatchPutParams) error {
+	_, err := q.db.Exec(ctx, watchPut,
+		arg.ID,
+		arg.SessionID,
+		arg.ProjectID,
+		arg.Payload,
+	)
+	return err
+}
+
+const watchRecordOf = `-- name: WatchRecordOf :one
+SELECT session_id, project_id, payload FROM watch WHERE id=$1
+`
+
+type WatchRecordOfRow struct {
+	SessionID string
+	ProjectID *string
+	Payload   []byte
+}
+
+// A watch row: session and project are columns, payload the other record fields (typed_records.go).
+func (q *Queries) WatchRecordOf(ctx context.Context, id string) (WatchRecordOfRow, error) {
+	row := q.db.QueryRow(ctx, watchRecordOf, id)
+	var i WatchRecordOfRow
+	err := row.Scan(&i.SessionID, &i.ProjectID, &i.Payload)
+	return i, err
+}
+
+const watchSession = `-- name: WatchSession :one
+SELECT project_id, task_id, directed_by, payload FROM session WHERE id=$1
+`
+
+type WatchSessionRow struct {
+	ProjectID  *string
+	TaskID     *string
+	DirectedBy *string
+	Payload    []byte
+}
+
+// The session fields a watch reads: its project, task, director and payload (deliveryId, focus).
+func (q *Queries) WatchSession(ctx context.Context, id string) (WatchSessionRow, error) {
+	row := q.db.QueryRow(ctx, watchSession, id)
+	var i WatchSessionRow
+	err := row.Scan(
+		&i.ProjectID,
+		&i.TaskID,
+		&i.DirectedBy,
+		&i.Payload,
+	)
+	return i, err
+}
+
 const watchSetError = `-- name: WatchSetError :exec
 UPDATE watch SET payload = payload || jsonb_build_object('lastError', $1::text) WHERE id = $2::text
 `

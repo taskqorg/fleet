@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,68 +21,176 @@ import (
 
 var watchKinds = []string{"task", "question", "execution", "host", "limits"}
 
-func watchSet(q *Request, b doc) (doc, error) {
-	sid, err := strArg(b, "sessionId", "sessionId", 0)
+// watchPayload: a watch row's payload, the record fields that are not columns (session and project are).
+type watchPayload struct {
+	Kinds          []string        `json:"kinds"`
+	Wakes          int64           `json:"wakes"`
+	LastWakeAt     json.RawMessage `json:"lastWakeAt,omitempty"`
+	Cursor         int64           `json:"cursor"`
+	TimerMs        *float64        `json:"timerMs,omitempty"`
+	NextWakeAt     *int64          `json:"nextWakeAt,omitempty"`
+	LimitsSignaled []string        `json:"limitsSignaled,omitempty"`
+	LastError      *string         `json:"lastError,omitempty"`
+}
+
+// watchRow: one watch, its columns and payload.
+type watchRow struct {
+	ID, SessionID string
+	ProjectID     *string
+	watchPayload
+}
+
+func (w watchRow) record() contract.WatchRecord {
+	return contract.WatchRecord{Id: w.ID, SessionId: w.SessionID, Kinds: w.Kinds, Wakes: w.Wakes, LastWakeAt: w.LastWakeAt, Cursor: w.Cursor,
+		TimerMs: w.TimerMs, NextWakeAt: w.NextWakeAt, LastError: w.LastError}
+}
+
+// watchOf: the watch of id, nil when there is none.
+func watchOf(q *Request, id string) (*watchRow, error) {
+	r, err := q.db().WatchRecordOf(q.ctx(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	s, err := get(q, sid, "session")
+	w := &watchRow{ID: id, SessionID: r.SessionID, ProjectID: r.ProjectID}
+	if err := json.Unmarshal(r.Payload, &w.watchPayload); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func watchPut(q *Request, w *watchRow) error {
+	return q.db().WatchPut(q.ctx(), db.WatchPutParams{ID: w.ID, SessionID: w.SessionID, ProjectID: w.ProjectID, Payload: jsonBytes(w.watchPayload)})
+}
+
+// watchSession: the session fields a watch reads; deliveryId and focus are payload fields (convTables "session").
+type watchSession struct {
+	ProjectID, TaskID, DirectedBy *string         `json:"-"`
+	DeliveryID                    any             `json:"deliveryId"`
+	Focus                         json.RawMessage `json:"focus"`
+}
+
+// watchSessionOf: the session sid, nil when it is not visible.
+func watchSessionOf(q *Request, sid string) (*watchSession, error) {
+	r, err := q.db().WatchSession(q.ctx(), sid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
-	} else if err := directs(q, s); err != nil {
+	}
+	s := &watchSession{}
+	if err := json.Unmarshal(r.Payload, s); err != nil {
 		return nil, err
 	}
-	if err := taskAllowsWork(q, firstString(s["deliveryId"], s["taskId"])); err != nil {
-		return nil, err
+	s.ProjectID, s.TaskID, s.DirectedBy = r.ProjectID, r.TaskID, r.DirectedBy
+	return s, nil
+}
+
+// task: the task the session works on (its delivery, else its task), "" for none.
+func (s *watchSession) task() string {
+	if s.TaskID != nil {
+		return firstString(s.DeliveryID, *s.TaskID)
 	}
-	kinds := strList(b["kinds"])
-	if xs, _ := b["kinds"].([]any); len(kinds) == 0 || len(kinds) != len(xs) {
-		return nil, fail(400, "Expected kinds: task, question, execution, host, limits")
+	return firstString(s.DeliveryID)
+}
+
+// directs: as directs (agent.go) for a session record: the caller may act on the session.
+func (s *watchSession) directs(q *Request) error {
+	if q.agent != "" || q.person == nil || fullAccess(q.person) || deref(s.DirectedBy) == q.person.Email {
+		return nil
 	}
-	for _, k := range kinds {
+	return fail(403, "Session is directed by someone else")
+}
+
+// focus: the projects of the session's focus, nil for every project (no focus, or projectIds "*"), as focusIDs (agent.go).
+func (s *watchSession) focus() []string {
+	raw := bytes.TrimSpace(s.Focus)
+	if len(raw) == 0 || raw[0] != '{' {
+		return nil
+	}
+	var f struct {
+		ProjectIDs json.RawMessage `json:"projectIds"`
+	}
+	json.Unmarshal(raw, &f)
+	var star string
+	if json.Unmarshal(f.ProjectIDs, &star) == nil && star == "*" {
+		return nil
+	}
+	out := []string{}
+	var xs []json.RawMessage
+	json.Unmarshal(f.ProjectIDs, &xs)
+	for _, x := range xs {
+		var id string
+		if string(x) != "null" && json.Unmarshal(x, &id) == nil {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func watchSet(q *Request, b *contract.WatchSetRequest) (contract.WatchRecord, error) {
+	sid := b.SessionId
+	if sid == "" {
+		return contract.WatchRecord{}, fail(400, "Expected sessionId")
+	}
+	s, err := watchSessionOf(q, sid)
+	if err == nil && s == nil {
+		err = errNotFound
+	}
+	if err != nil {
+		return contract.WatchRecord{}, err
+	} else if err := s.directs(q); err != nil {
+		return contract.WatchRecord{}, err
+	}
+	if err := taskAllowsWork(q, s.task()); err != nil {
+		return contract.WatchRecord{}, err
+	}
+	if len(b.Kinds) == 0 {
+		return contract.WatchRecord{}, fail(400, "Expected kinds: task, question, execution, host, limits")
+	}
+	for _, k := range b.Kinds {
 		if !slices.Contains(watchKinds, k) {
-			return nil, fail(400, "Unknown kind "+k+": use task, question, execution, host, limits")
+			return contract.WatchRecord{}, fail(400, "Unknown kind "+k+": use task, question, execution, host, limits")
 		}
 	}
-	old, err := maybe(q, "watch:"+sid, "watch")
+	old, err := watchOf(q, "watch:"+sid)
 	if err != nil {
-		return nil, err
+		return contract.WatchRecord{}, err
 	}
-	w := doc{"id": "watch:" + sid, "sessionId": sid, "projectId": s["projectId"], "kinds": kinds, "wakes": 0}
+	w := &watchRow{ID: "watch:" + sid, SessionID: sid, ProjectID: s.ProjectID, watchPayload: watchPayload{Kinds: b.Kinds}}
 	if old != nil {
-		w["wakes"], w["lastWakeAt"], w["cursor"] = old["wakes"], old["lastWakeAt"], old["cursor"]
-	}
-	if w["cursor"] == nil { // a new watch starts from now
-		if w["cursor"], err = head(q.ctx(), q.tx); err != nil {
-			return nil, err
+		w.Wakes, w.LastWakeAt, w.Cursor = old.Wakes, old.LastWakeAt, old.Cursor
+		if w.LastWakeAt == nil { // the record carried the old watch's missing last wake as null
+			w.LastWakeAt = json.RawMessage("null")
 		}
+	} else if w.Cursor, err = head(q.ctx(), q.tx); err != nil { // a new watch starts from now
+		return contract.WatchRecord{}, err
 	}
-	if t, ok := b["timerMs"]; ok && t != nil {
-		ms := num(t)
-		if ms <= 0 {
-			return nil, fail(400, "Expected timerMs > 0")
+	if t := b.TimerMs; t != nil {
+		if *t <= 0 {
+			return contract.WatchRecord{}, fail(400, "Expected timerMs > 0")
 		}
-		w["timerMs"], w["nextWakeAt"] = ms, time.Now().UnixMilli()+int64(ms)
+		next := time.Now().UnixMilli() + int64(*t)
+		w.TimerMs, w.NextWakeAt = t, &next
 	}
-	return w, put(q, "watch", w)
+	return w.record(), watchPut(q, w)
 }
 
 func init() {
-	op("watch_set", func(q *Request, b *contract.WatchSetRequest) (contract.WatchRecord, error) {
-		w, err := watchSet(q, docOf(b))
-		if err != nil {
-			return contract.WatchRecord{}, err
-		}
-		return asT[contract.WatchRecord](w)
-	})
+	op("watch_set", watchSet)
 	op("watch_stop", func(q *Request, b *contract.WatchStopRequest) (contract.WatchStopReply, error) {
 		sid := b.SessionId
 		if sid == "" {
 			return contract.WatchStopReply{}, fail(400, "Expected sessionId")
 		}
-		if s, err := get(q, sid, "session"); err != nil {
+		if s, err := watchSessionOf(q, sid); err != nil {
 			return contract.WatchStopReply{}, err
-		} else if err := directs(q, s); err != nil {
+		} else if s == nil {
+			return contract.WatchStopReply{}, errNotFound
+		} else if err := s.directs(q); err != nil {
 			return contract.WatchStopReply{}, err
 		}
 		return contract.WatchStopReply{SessionId: sid, Stopped: true}, q.db().DeleteWatch(q.ctx(), "watch:"+sid)
@@ -90,12 +199,12 @@ func init() {
 		if b.SessionId == "" {
 			return contract.WatchGetReply{}, fail(400, "Expected sessionId")
 		}
-		w, err := maybe(q, "watch:"+b.SessionId, "watch")
+		w, err := watchOf(q, "watch:"+b.SessionId)
 		if err != nil || w == nil {
 			return contract.WatchGetReply{}, err
 		}
-		x, err := asT[contract.WatchRecord](w)
-		return contract.WatchGetReply{Watch: &x}, err
+		x := w.record()
+		return contract.WatchGetReply{Watch: &x}, nil
 	})
 	onStart(func(ctx context.Context, a *App) {
 		every(ctx, "watch", envMs("FLEET_WATCH_TICK_MS", 15000), func(ctx context.Context) error { watchPass(ctx, a); return nil })
@@ -127,20 +236,21 @@ func watchPass(ctx context.Context, a *App) {
 }
 
 func watchOne(q *Request, wid string) error {
-	w, err := maybe(q, wid, "watch")
+	w, err := watchOf(q, wid)
 	if err != nil || w == nil {
 		return err
 	}
-	id := astr(w["sessionId"])
-	s, err := maybe(q, id, "session")
+	id := w.SessionID
+	s, err := watchSessionOf(q, id)
 	if err != nil {
 		return err
 	}
 	cancelled := false
-	if task := firstString(s["deliveryId"], s["taskId"]); task != "" {
-		cancelled, err = q.db().TaskCancelled(q.ctx(), task)
-		if err != nil {
-			return err
+	if s != nil {
+		if task := s.task(); task != "" {
+			if cancelled, err = q.db().TaskCancelled(q.ctx(), task); err != nil {
+				return err
+			}
 		}
 	}
 	if s == nil || cancelled {
@@ -150,7 +260,7 @@ func watchOne(q *Request, wid string) error {
 	if busy, err := q.db().WatchWakeQueued(q.ctx(), id); err != nil || busy {
 		return err
 	}
-	dir := q.peopleSnapshot().person(firstString(s["directedBy"], ownerEmail(q)))
+	dir := q.peopleSnapshot().person(firstString(deref(s.DirectedBy), ownerEmail(q)))
 	if dir == nil {
 		return fail(403, "Director of the watching session is not a person of this Fleet")
 	}
@@ -170,8 +280,8 @@ func watchOne(q *Request, wid string) error {
 	for _, c := range cs {
 		children[c] = true
 	}
-	kinds, focus := strList(w["kinds"]), focusIDs(s)
-	cursor := int64(num(w["cursor"]))
+	kinds, focus := w.Kinds, s.focus()
+	cursor := w.Cursor
 	start := cursor
 	parts, seen := []string{}, map[string]bool{}
 	for {
@@ -208,26 +318,35 @@ func watchOne(q *Request, wid string) error {
 	}
 	var limits []string
 	if slices.Contains(kinds, "limits") {
-		signals, keys, err := limitSignals(q, dir, strList(w["limitsSignaled"]))
+		signals, keys, err := limitSignals(q, dir, w.LimitsSignaled)
 		if err != nil {
 			log.Printf("watch %s: limits: %v", wid, err) // a limits read problem never blocks the other wakes
 		} else if len(signals) > 0 {
 			limits = signals
-			w["limitsSignaled"] = keys
+			w.LimitsSignaled = keys
 		}
 	}
 	nowMs := time.Now().UnixMilli()
-	timer := w["timerMs"] != nil && int64(num(w["nextWakeAt"])) <= nowMs
+	nextWakeAt := int64(0)
+	if w.NextWakeAt != nil {
+		nextWakeAt = *w.NextWakeAt
+	}
+	timer := w.TimerMs != nil && nextWakeAt <= nowMs
 	if len(parts) == 0 && len(limits) == 0 && !timer && cursor == start {
 		return nil // nothing to send or move: no write
 	}
-	w["cursor"] = cursor
+	w.Cursor = cursor
 	send := func(rid, text string) error {
-		if _, err := submitMessage(q, doc{"sessionId": id, "requestId": rid, "text": text}, "watch"); err != nil {
+		// submitMessage (agent.go) still takes the message as a map.
+		if _, err := submitMessage(q, docOf(watchMessage{SessionID: id, RequestID: rid, Text: text}), "watch"); err != nil {
 			return err
 		}
-		w["wakes"], w["lastWakeAt"] = num(w["wakes"])+1, nowMs
+		w.Wakes, w.LastWakeAt = w.Wakes+1, jsonBytes(nowMs)
 		return nil
+	}
+	rewake := func() {
+		next := nowMs + int64(*w.TimerMs)
+		w.NextWakeAt = &next
 	}
 	if len(parts) > 0 {
 		if err := send(fmt.Sprintf("watch:%s:%d", id, start), fmt.Sprintf("Fleet: %d changes in your focus: %s", len(parts), strings.Join(parts, "; "))); err != nil {
@@ -235,21 +354,28 @@ func watchOne(q *Request, wid string) error {
 		}
 	}
 	if len(limits) > 0 { // its own message: a limits signal is not a change in the focus
-		ks := strList(w["limitsSignaled"])
+		ks := w.LimitsSignaled
 		if err := send(fmt.Sprintf("limits:%s:%s", id, ks[len(ks)-1]), "Fleet: limits: "+strings.Join(limits, "; ")); err != nil {
 			return err
 		}
 	}
 	if timer && len(parts) > 0 { // the change wake also serves as the timer wake
-		w["nextWakeAt"] = nowMs + int64(num(w["timerMs"]))
-	} else if at := int64(num(w["nextWakeAt"])); timer {
-		if err := send(fmt.Sprintf("timer:%s:%d", id, at), "Fleet: watch timer; review your focus with task_page and questions_list"); err != nil {
+		rewake()
+	} else if timer {
+		if err := send(fmt.Sprintf("timer:%s:%d", id, nextWakeAt), "Fleet: watch timer; review your focus with task_page and questions_list"); err != nil {
 			return err
 		}
-		w["nextWakeAt"] = nowMs + int64(num(w["timerMs"]))
+		rewake()
 	}
-	delete(w, "lastError")
-	return put(q, "watch", w)
+	w.LastError = nil
+	return watchPut(q, w)
+}
+
+// watchMessage: the queued message of a watch wake.
+type watchMessage struct {
+	SessionID string `json:"sessionId"`
+	RequestID string `json:"requestId"`
+	Text      string `json:"text"`
 }
 
 // classify: one change by its current row; "" drops it (§5 table).

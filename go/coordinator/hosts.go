@@ -9,11 +9,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
+
+	"github.com/jackc/pgx/v5"
 
 	"fleet/contract"
 	"fleet/coordinator/db"
@@ -29,116 +34,181 @@ var (
 )
 
 func init() {
-	op("hosts_register", func(q *Request, b *contract.HostsRegisterRequest) (contract.HostWriteReply, error) {
-		out, err := hostsRegister(q, docOf(b))
-		return replyAs[contract.HostWriteReply](out, err)
-	})
-	op("hosts_update", func(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpdateReply, error) {
-		out, err := hostsUpdate(q, docOf(b))
-		return replyAs[contract.HostsUpdateReply](out, err)
-	})
-	op("hosts_rotate_secret", func(q *Request, b *contract.HostsRotateSecretRequest) (contract.HostWriteReply, error) {
-		out, err := hostsRotateSecret(q, docOf(b))
-		return replyAs[contract.HostWriteReply](out, err)
-	})
+	op("hosts_register", hostsRegister)
+	op("hosts_update", hostsUpdate)
+	op("hosts_rotate_secret", hostsRotateSecret)
 	op("hosts_list", func(q *Request, r *contract.HostsListRequest) (contract.HostsListReply, error) {
-		out, err := hostsList(q, r.IncludeRemoved != nil && *r.IncludeRemoved)
-		return replyAs[contract.HostsListReply](out, err)
+		return hostsListReply(q, r.IncludeRemoved != nil && *r.IncludeRemoved)
 	})
 	op("route_decisions", routeDecisions)
 }
 
-// hostList: every host with its bare id; removed hosts (tombstones, host_remove.go) are left out.
-func hostList(q *Request) ([]doc, error) {
-	rows, err := all(q, "host", nil)
-	out := []doc{}
-	for _, h := range rows {
-		if hostRemoved(h) {
-			continue
+// hostPayload: the fields of a host record kept in payload (typed_records.go), under their record names.
+type hostPayload struct {
+	Name       *string         `json:"name,omitempty"`
+	Platform   *string         `json:"platform,omitempty"`
+	Roles      []string        `json:"roles"`
+	Harnesses  json.RawMessage `json:"harnesses,omitempty"`
+	CreatedAt  *float64        `json:"createdAt,omitempty"`
+	AutoUpdate json.RawMessage `json:"autoUpdate,omitempty"`
+	RemovedAt  *float64        `json:"removedAt,omitempty"`
+}
+
+// hostRecord: a row of table host with its bare id. As JSON it is the host record as the record API shows it, the id
+// bare (hostList).
+type hostRecord struct {
+	ID                string  `json:"id"`
+	State             string  `json:"-"`
+	Holder            *string `json:"holder,omitempty"`
+	Intake            *string `json:"intake,omitempty"`
+	SecretHash        *string `json:"secretHash,omitempty"`
+	RemovedSecretHash *string `json:"removedSecretHash,omitempty"`
+	ProjectID         *string `json:"projectId,omitempty"`
+	hostPayload
+}
+
+func hostRecordOf(r db.HostRecordsRow) (hostRecord, error) {
+	h := hostRecord{ID: r.HostID, State: r.State, Holder: r.Holder, Intake: r.Intake, SecretHash: r.SecretHash, RemovedSecretHash: r.RemovedSecretHash, ProjectID: r.ProjectID}
+	if err := json.Unmarshal(r.Payload, &h.hostPayload); err != nil {
+		return h, fmt.Errorf("host %s payload: %w", r.HostID, err)
+	}
+	return h, nil
+}
+
+func (h hostRecord) removed() bool  { return h.State == "removed" }
+func (h hostRecord) holder() string { return deref(h.Holder) }
+func (h hostRecord) executes() bool { return len(h.Roles) == 0 } // runs agent work: no program-worker role
+func (h hostRecord) autoUpdate() string {
+	var s string
+	if json.Unmarshal(h.AutoUpdate, &s) == nil && s != "" {
+		return s
+	}
+	return "on"
+}
+
+// hostView: the host as the host operations answer it, without its secret's hash.
+func (h hostRecord) view() contract.HostRecord {
+	return contract.HostRecord{AutoUpdate: h.AutoUpdate, CreatedAt: valueOr(h.CreatedAt), Harnesses: h.Harnesses, Holder: h.Holder, Id: h.ID,
+		Intake: deref(h.Intake), Name: h.Name, Platform: h.Platform, Roles: h.Roles}
+}
+
+// valueOr: *p, or the zero value when p is nil.
+func valueOr[T any](p *T) T {
+	var zero T
+	if p == nil {
+		return zero
+	}
+	return *p
+}
+
+// hostRecords: every host record, removed ones (tombstones, host_remove.go) too, in record order.
+func hostRecords(q *Request) ([]hostRecord, error) {
+	rows, err := q.db().HostRecords(q.ctx())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]hostRecord, 0, len(rows))
+	for _, r := range rows {
+		h, err := hostRecordOf(r)
+		if err != nil {
+			return nil, err
 		}
-		h["id"] = h["hostId"]
-		delete(h, "hostId")
 		out = append(out, h)
+	}
+	return out, nil
+}
+
+// hostsLive: the hosts that are not removed.
+func hostsLive(q *Request) ([]hostRecord, error) {
+	all, err := hostRecords(q)
+	out := []hostRecord{}
+	for _, h := range all {
+		if !h.removed() {
+			out = append(out, h)
+		}
 	}
 	return out, err
 }
 
-func hostByID(q *Request, id any) (doc, error) {
-	hs, err := hostList(q)
-	for _, h := range hs {
-		if h["id"] == id {
-			return h, err
-		}
+// hostRecordByID: the host record of bare id, removed or not; nil when there is none.
+func hostRecordByID(q *Request, id string) (*hostRecord, error) {
+	r, err := q.db().HostRecordOf(q.ctx(), "host:"+id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
 	}
-	return nil, err
+	h, err := hostRecordOf(db.HostRecordsRow(r))
+	return &h, err
 }
 
-func saveHost(q *Request, h doc) error {
-	row := doc{}
-	for k, v := range h {
-		row[k] = v
+// liveHost: the host of bare id unless it is removed; nil when there is none.
+func liveHost(q *Request, id string) (*hostRecord, error) {
+	h, err := hostRecordByID(q, id)
+	if err != nil || h == nil || h.removed() {
+		return nil, err
 	}
-	row["id"], row["hostId"] = "host:"+astr(h["id"]), h["id"]
-	return put(q, "host", row)
-}
-
-func hostView(h doc) doc {
-	v := doc{}
-	for k, x := range h {
-		if k != "secretHash" {
-			v[k] = x
-		}
-	}
-	return v
+	return h, nil
 }
 
 func hostIDs(q *Request) ([]string, error) {
-	hs, err := hostList(q)
+	hs, err := hostsLive(q)
 	out := []string{}
 	for _, h := range hs {
-		out = append(out, astr(h["id"]))
+		out = append(out, h.ID)
 	}
 	return out, err
 }
 
 // executionHostIDs: hosts that run agent work (no program-worker role).
 func executionHostIDs(q *Request) ([]string, error) {
-	hs, err := hostList(q)
+	hs, err := hostsLive(q)
 	out := []string{}
 	for _, h := range hs {
-		if len(anys(h["roles"])) == 0 {
-			out = append(out, astr(h["id"]))
+		if h.executes() {
+			out = append(out, h.ID)
 		}
 	}
 	return out, err
 }
 
 func hostWithRole(q *Request, role string) (string, error) {
-	hs, err := hostList(q)
+	hs, err := hostsLive(q)
 	for _, h := range hs {
-		if inList(strs(h["roles"]), role) {
-			return astr(h["id"]), err
+		if slices.Contains(h.Roles, role) {
+			return h.ID, err
 		}
 	}
 	return "", err
 }
 
-// hostMaySee: a host held by the owner sees every project; another holder's host only the projects of the holder's grants.
-func (a *App) hostMaySee(h doc, projectID any) bool {
-	p, err := a.resolveAccess(context.Background(), astr(h["holder"]))
+// holderMaySee: a host held by the owner sees every project; another holder's host only the projects of the holder's grants.
+func (a *App) holderMaySee(holder, projectID string) bool {
+	p, err := a.resolveAccess(context.Background(), holder)
 	if err != nil || p == nil {
 		return false
 	}
 	if fullAccess(p) {
 		return true
 	}
-	id, _ := projectID.(string)
 	for _, g := range p.Grants {
-		if g.Kind == "project" && g.ID == id && id != "" {
+		if g.Kind == "project" && g.ID == projectID && projectID != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// holderMayRun: projectless work may use its director's own host, never another ordinary holder's host.
+func (a *App) holderMayRun(holder, projectID, director string) bool {
+	if a.holderMaySee(holder, projectID) {
+		return true
+	}
+	if projectID != "" || director == "" || holder != director {
+		return false
+	}
+	p, err := a.resolveAccess(context.Background(), director)
+	return err == nil && p != nil
 }
 
 func mintSecret() string {
@@ -147,51 +217,91 @@ func mintSecret() string {
 	return hex.EncodeToString(b)
 }
 
+// holderNotice: the question that tells a holder the owner changed a setting of their row.
+type holderNotice struct {
+	Kind    string   `json:"kind"`
+	Text    string   `json:"text"`
+	Options []string `json:"options"`
+	AskedBy string   `json:"askedBy"`
+	Data    struct {
+		Notice string `json:"notice"`
+	} `json:"data"`
+}
+
 // notifyHolder: the owner changed a setting of a row someone else holds; tell the holder with a question addressed to them.
 func notifyHolder(q *Request, holder, text string) error {
 	if q.person == nil || !fullAccess(q.person) || q.person.Email == holder {
 		return nil
 	}
-	id, err := askQuestion(q, doc{"kind": "operator_decision", "text": text, "options": []any{"ok"}, "askedBy": q.person.Email, "data": doc{"notice": "owner-override"}})
+	n := holderNotice{Kind: "operator_decision", Text: text, Options: []string{"ok"}, AskedBy: q.person.Email}
+	n.Data.Notice = "owner-override"
+	id, err := askQuestion(q, docOf(n)) // askQuestion (tasks.go) still takes the record as a map
 	if err != nil {
 		return err
 	}
 	return q.db().AddressQuestion(q.ctx(), db.AddressQuestionParams{Holder: holder, ID: id})
 }
 
-func validHarnesses(v any) bool {
-	m, ok := v.(map[string]any)
-	if !ok {
-		return false
-	}
-	for _, x := range m {
-		h, _ := x.(map[string]any)
-		if _, ok := h["allowed"].(bool); !ok {
-			return false
-		}
-	}
-	return true
+// hostChange: the setting-change record of a host setting (document kind setting-change, no project). Holder is left
+// out for a change of no host's row.
+type hostChange struct {
+	ID         string          `json:"id"`
+	Target     string          `json:"target"`
+	Holder     json.RawMessage `json:"holder,omitempty"`
+	Field      string          `json:"field"`
+	Previous   json.RawMessage `json:"previous,omitempty"`
+	Value      json.RawMessage `json:"value"`
+	Actor      string          `json:"actor"`
+	OnBehalfOf string          `json:"onBehalfOf,omitempty"`
+	At         int64           `json:"at"`
+	Note       *string         `json:"note,omitempty"`
 }
 
-func (q *Request) obj() doc {
-	if q.body == nil {
-		return doc{}
+// recordHostChange writes c with a new id and now; an agent's change acts for its director (fleet-pm-agent.md §1), as
+// put does for every setting change.
+func recordHostChange(q *Request, c hostChange) error {
+	c.ID, c.At = newID(), nowMs()
+	if q.agent != "" {
+		c.Actor, c.OnBehalfOf = q.agent, q.person.Email
 	}
-	var b doc
-	if decode(q.body, &b) != nil || b == nil {
-		return doc{}
+	return q.db().SettingChangeInsert(q.ctx(), db.SettingChangeInsertParams{ID: c.ID, Data: jsonBytes(c)})
+}
+
+// harnessPermissions: a host's harnesses setting, {<name>: {allowed}}; ok false when raw is not one.
+func harnessPermissions(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil || m == nil {
+		return nil, false
 	}
-	return b
+	for _, x := range m {
+		var h struct {
+			Allowed *bool `json:"allowed"`
+		}
+		if json.Unmarshal(x, &h) != nil || h.Allowed == nil {
+			return nil, false
+		}
+	}
+	return m, true
+}
+
+// given: a request field that is present and not null.
+func given(raw json.RawMessage) bool { return len(raw) > 0 && string(raw) != "null" }
+
+// sameJSON: a and b are the same JSON value (nil is null).
+func sameJSON(a, b json.RawMessage) bool {
+	var x, y any
+	json.Unmarshal(a, &x)
+	json.Unmarshal(b, &y)
+	return js(x) == js(y)
 }
 
 // secretOf: the hash to store, and the minted secret when the host did not bring its own hash.
-func secretOf(q *Request, b doc, self string) (hash, secret string, err error) {
-	if v, ok := b["secretSha256"]; ok && v != nil {
-		s, _ := v.(string)
-		if !hexHash.MatchString(s) {
+func secretOf(q *Request, own *string, self string) (hash, secret string, err error) {
+	if own != nil {
+		if !hexHash.MatchString(*own) {
 			return "", "", fail(400, "secretSha256 must be 64 hex characters")
 		}
-		hash = s
+		hash = *own
 	} else {
 		secret = mintSecret()
 		hash = secretHash(secret)
@@ -199,163 +309,196 @@ func secretOf(q *Request, b doc, self string) (hash, secret string, err error) {
 	if hash == secretHash(q.app.browserSecret) {
 		return "", "", fail(400, "A host secret must differ from the browser secret")
 	}
-	hs, err := hostList(q)
+	hs, err := hostsLive(q)
 	for _, h := range hs {
-		if h["id"] != self && h["secretHash"] == hash {
+		if h.ID != self && deref(h.SecretHash) == hash {
 			return "", "", fail(409, "Secret already used by another host")
 		}
 	}
 	return hash, secret, err
 }
 
-func hostsRegister(q *Request, b doc) (any, error) {
-	id := astr(b["id"])
-	if !hostID.MatchString(id) {
-		return nil, fail(400, "Expected host id")
+// wakeDispatchAfter: a host write changes what dispatch may place (as put of a host record does).
+func wakeDispatchAfter(q *Request) {
+	if q.app != nil {
+		afterCommit(q, func() { q.app.wakeDispatch() })
 	}
-	if h, err := hostByID(q, id); err != nil || h != nil {
+}
+
+func hostsRegister(q *Request, b *contract.HostsRegisterRequest) (contract.HostWriteReply, error) {
+	var out contract.HostWriteReply
+	id := b.Id
+	if !hostID.MatchString(id) {
+		return out, fail(400, "Expected host id")
+	}
+	if h, err := liveHost(q, id); err != nil || h != nil {
 		if err == nil {
 			err = fail(409, "Host exists")
 		}
-		return nil, err
+		return out, err
 	}
 	holder := q.person.Email
-	if s, ok := b["holder"].(string); ok {
-		holder = strings.ToLower(s)
+	if b.Holder != nil {
+		holder = strings.ToLower(*b.Holder)
 	}
 	if q.peopleSnapshot().person(holder) == nil {
-		return nil, fail(400, "Holder is not a person")
+		return out, fail(400, "Holder is not a person")
 	}
-	if v, ok := b["secretSha256"]; ok && v != nil && !hexHash.MatchString(astr(v)) {
-		return nil, fail(400, "secretSha256 must be 64 hex characters")
+	if b.SecretSha256 != nil && !hexHash.MatchString(*b.SecretSha256) {
+		return out, fail(400, "secretSha256 must be 64 hex characters")
 	}
-	roles := []any{}
-	if b["roles"] != nil {
-		rs, ok := b["roles"].([]any)
-		for _, r := range rs {
-			if !hostRoles.MatchString(astr(r)) {
-				ok = false
-			}
+	roles := []string{}
+	for _, r := range b.Roles {
+		if !hostRoles.MatchString(r) {
+			return out, fail(400, "roles: publication or inspector-for:<hostId>")
 		}
-		if !ok {
-			return nil, fail(400, "roles: publication or inspector-for:<hostId>")
-		}
-		roles = rs
+		roles = append(roles, r)
 	}
-	var harnesses any = doc{}
-	if b["harnesses"] != nil {
-		if !validHarnesses(b["harnesses"]) {
-			return nil, fail(400, "harnesses: {<name>: {allowed}}")
+	harnesses := json.RawMessage("{}")
+	if given(b.Harnesses) {
+		if _, ok := harnessPermissions(b.Harnesses); !ok {
+			return out, fail(400, "harnesses: {<name>: {allowed}}")
 		}
-		harnesses = b["harnesses"]
+		harnesses = b.Harnesses
 	}
-	hash, secret, err := secretOf(q, b, "")
+	hash, secret, err := secretOf(q, b.SecretSha256, "")
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	name, platform := id, "unknown"
-	if s, ok := b["name"].(string); ok {
-		name = s
+	if b.Name != nil {
+		name = *b.Name
 	}
-	if s, ok := b["platform"].(string); ok {
-		platform = s
+	if b.Platform != nil {
+		platform = *b.Platform
 	}
-	h := doc{"id": id, "name": name, "holder": holder, "platform": platform, "roles": roles, "secretHash": hash, "intake": "all", "harnesses": harnesses, "createdAt": nowMs()}
-	row := maps.Clone(h)
-	row["state"] = hostStateActive // the id of a removed host is registered again (host_states.go)
-	if err := saveHost(q, row); err != nil {
-		return nil, err
+	created := float64(nowMs())
+	h := hostRecord{ID: id, Holder: &holder, Intake: ptr("all"), SecretHash: &hash,
+		hostPayload: hostPayload{Name: &name, Platform: &platform, Roles: roles, Harnesses: harnesses, CreatedAt: &created}}
+	if err := q.db().HostRegister(q.ctx(), db.HostRegisterParams{ID: "host:" + id, HostID: id, Holder: h.Holder, Intake: h.Intake, SecretHash: h.SecretHash,
+		Payload: jsonBytes(h.hostPayload)}); err != nil {
+		return out, err
 	}
-	out := doc{"host": hostView(h)}
+	// The id of a removed host is registered again (host_states.go); a new row is already active.
+	if err := hostTransition(q, "host:"+id, hostStateActive); err != nil {
+		return out, err
+	}
+	wakeDispatchAfter(q)
+	out.Host = h.view()
 	if secret != "" {
-		out["secret"] = secret
+		out.Secret = &secret
 	}
 	return out, nil
 }
 
-func hostsUpdate(q *Request, b doc) (any, error) {
-	h, err := hostByID(q, b["id"])
+func hostsUpdate(q *Request, b *contract.HostsUpdateRequest) (contract.HostsUpdateReply, error) {
+	var out contract.HostsUpdateReply
+	h, err := liveHost(q, b.Id)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	if h == nil {
-		return nil, fail(404, "Unknown host")
+		return out, fail(404, "Unknown host")
 	}
-	if q.person == nil || (!fullAccess(q.person) && q.person.Email != h["holder"]) {
-		return nil, fail(403, "Only the holder or the owner changes this host")
+	if q.person == nil || (!fullAccess(q.person) && q.person.Email != h.holder()) {
+		return out, fail(403, "Only the holder or the owner changes this host")
 	}
-	next := doc{}
-	if v, ok := b["intake"]; ok && v != nil {
-		if v != "all" && v != "paused" {
-			return nil, fail(400, "intake: all or paused")
+	type setting struct {
+		field          string
+		previous, next json.RawMessage
+	}
+	var next []setting
+	if b.Intake != nil {
+		if *b.Intake != "all" && *b.Intake != "paused" {
+			return out, fail(400, "intake: all or paused")
 		}
-		next["intake"] = v
+		var prev json.RawMessage
+		if h.Intake != nil {
+			prev = jsonBytes(*h.Intake)
+		}
+		next = append(next, setting{"intake", prev, jsonBytes(*b.Intake)})
 	}
-	if v, ok := b["autoUpdate"]; ok && v != nil {
+	if given(b.AutoUpdate) {
+		var v any
+		json.Unmarshal(b.AutoUpdate, &v)
 		if !validAutoUpdate(v) {
-			return nil, fail(400, "autoUpdate: on, off or an RFC 3339 time ending in Z")
+			return out, fail(400, "autoUpdate: on, off or an RFC 3339 time ending in Z")
 		}
-		next["autoUpdate"] = v
+		next = append(next, setting{"autoUpdate", h.AutoUpdate, b.AutoUpdate})
 	}
-	if v, ok := b["harnesses"]; ok && v != nil {
-		if !validHarnesses(v) {
-			return nil, fail(400, "harnesses: {<name>: {allowed}}")
+	if given(b.Harnesses) {
+		add, ok := harnessPermissions(b.Harnesses)
+		if !ok {
+			return out, fail(400, "harnesses: {<name>: {allowed}}")
 		}
-		m := doc{}
-		if old, ok := h["harnesses"].(map[string]any); ok {
-			for k, x := range old {
-				m[k] = x
-			}
-		}
-		for k, x := range v.(map[string]any) {
-			m[k] = x
-		}
-		next["harnesses"] = m
+		m := map[string]json.RawMessage{}
+		json.Unmarshal(h.Harnesses, &m) // not an object: the given ones alone
+		maps.Copy(m, add)
+		next = append(next, setting{"harnesses", h.Harnesses, jsonBytes(m)})
 	}
 	changed := []string{}
-	for _, f := range []string{"intake", "autoUpdate", "harnesses"} {
-		v, ok := next[f]
-		if !ok || js(h[f]) == js(v) {
+	patch := map[string]json.RawMessage{}
+	var intake *string
+	for _, f := range next {
+		if f.field == "intake" {
+			intake = b.Intake
+		} else {
+			patch[f.field] = f.next
+		}
+		if sameJSON(f.previous, f.next) {
 			continue
 		}
-		changed = append(changed, f)
-		if err := put(q, "setting-change", doc{"id": newID(), "target": "host:" + astr(h["id"]), "holder": h["holder"], "field": f, "previous": h[f], "value": v, "actor": q.person.Email, "at": nowMs()}); err != nil {
-			return nil, err
+		changed = append(changed, f.field)
+		prev := f.previous
+		if prev == nil {
+			prev = json.RawMessage("null")
+		}
+		if err := recordHostChange(q, hostChange{Target: "host:" + h.ID, Holder: jsonBytes(h.Holder), Field: f.field, Previous: prev, Value: f.next, Actor: q.person.Email}); err != nil {
+			return out, err
 		}
 	}
 	if len(changed) > 0 {
-		if err := notifyHolder(q, astr(h["holder"]), fmt.Sprintf("The owner changed %s of your host %s.", strings.Join(changed, ", "), h["id"])); err != nil {
-			return nil, err
+		if err := notifyHolder(q, h.holder(), fmt.Sprintf("The owner changed %s of your host %s.", strings.Join(changed, ", "), h.ID)); err != nil {
+			return out, err
 		}
 	}
-	for k, v := range next {
-		h[k] = v
+	if err := q.db().HostPatch(q.ctx(), db.HostPatchParams{ID: "host:" + h.ID, Intake: intake, Patch: jsonBytes(patch)}); err != nil {
+		return out, err
 	}
-	if err := saveHost(q, h); err != nil {
-		return nil, err
+	wakeDispatchAfter(q)
+	if intake != nil {
+		h.Intake = intake
 	}
-	return doc{"host": hostView(h)}, nil
+	if v, ok := patch["autoUpdate"]; ok {
+		h.AutoUpdate = v
+	}
+	if v, ok := patch["harnesses"]; ok {
+		h.Harnesses = v
+	}
+	out.Host = h.view()
+	return out, nil
 }
 
-func hostsRotateSecret(q *Request, b doc) (any, error) {
-	h, err := hostByID(q, b["id"])
+func hostsRotateSecret(q *Request, b *contract.HostsRotateSecretRequest) (contract.HostWriteReply, error) {
+	var out contract.HostWriteReply
+	h, err := liveHost(q, b.Id)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	if h == nil {
-		return nil, fail(404, "Unknown host")
+		return out, fail(404, "Unknown host")
 	}
-	hash, secret, err := secretOf(q, b, astr(h["id"]))
+	hash, secret, err := secretOf(q, b.SecretSha256, h.ID)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	h["secretHash"] = hash
-	if err := saveHost(q, h); err != nil {
-		return nil, err
+	if err := q.db().HostSetSecret(q.ctx(), db.HostSetSecretParams{ID: "host:" + h.ID, SecretHash: &hash}); err != nil {
+		return out, err
 	}
-	out := doc{"host": hostView(h)}
+	wakeDispatchAfter(q)
+	out.Host = h.view()
 	if secret != "" {
-		out["secret"] = secret
+		out.Secret = &secret
 	}
 	return out, nil
 }
@@ -370,150 +513,179 @@ var hostHarnessTargets = sync.OnceValue(func() map[string]map[string]harnessrele
 	return out
 })
 
-func hostHarnessVersions(o doc, live bool) any {
-	assets := hostHarnessTargets()[astr(o["platform"])]
+// hostObservationPayload: the parts of a host observation (host_poll.go) the host list shows.
+type hostObservationPayload struct {
+	Platform        *string                       `json:"platform"`
+	Version         *string                       `json:"version"`
+	Capabilities    []string                      `json:"capabilities"`
+	HarnessVersions []contract.HostHarnessVersion `json:"harnessVersions"`
+	Problems        []contract.HostProblem        `json:"problems"`
+	PollError       *contract.HostPollError       `json:"pollError"`
+	Stores          json.RawMessage               `json:"stores"`
+	Update          json.RawMessage               `json:"update"`
+}
+
+type hostObservation struct {
+	ID         string
+	LastSeenAt *float64 // ms, as the record API shows last_seen_at
+	hostObservationPayload
+}
+
+func hostObservations(q *Request) ([]hostObservation, error) {
+	rows, err := q.db().HostObservations(q.ctx())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]hostObservation, 0, len(rows))
+	for _, r := range rows {
+		o := hostObservation{ID: r.ID}
+		if r.LastSeenAt != nil {
+			o.LastSeenAt = ptr(math.Round(float64(r.LastSeenAt.UnixMicro()) / 1000))
+		}
+		if err := json.Unmarshal(r.Payload, &o.hostObservationPayload); err != nil {
+			return nil, fmt.Errorf("host observation %s: %w", r.ID, err)
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+func hostHarnessVersions(o hostObservation, live bool) []contract.HostHarnessVersion {
+	assets := hostHarnessTargets()[deref(o.Platform)]
 	if len(assets) == 0 && live {
-		return o["harnessVersions"]
+		return o.HarnessVersions
 	}
 	if len(assets) == 0 {
 		return nil
 	}
-	observed := map[string]any{}
-	if rows, ok := o["harnessVersions"].([]any); live && ok {
-		for _, row := range rows {
-			v := mapOf(row)
-			observed[astr(v["harness"])] = v["observed"]
+	observed := map[string]*string{}
+	if live {
+		for _, v := range o.HarnessVersions {
+			observed[v.Harness] = v.Observed
 		}
 	}
-	rows := make([]doc, 0, len(assets))
+	rows := make([]contract.HostHarnessVersion, 0, len(assets))
 	for _, h := range contract.Vocabulary.Harnesses { // the harnesses Fleet ships a binary for (contracts/vocabulary.json)
 		if h.Assets {
-			rows = append(rows, doc{"harness": h.ID, "expected": assets[h.ID].Version, "observed": observed[h.ID]})
+			rows = append(rows, contract.HostHarnessVersion{Harness: h.ID, Expected: assets[h.ID].Version, Observed: observed[h.ID]})
 		}
 	}
 	return rows
 }
 
-func hostsList(q *Request, includeRemoved bool) (any, error) {
-	configured, err := hostIDs(q)
+func hostsListReply(q *Request, includeRemoved bool) (contract.HostsListReply, error) {
+	var reply contract.HostsListReply
+	records, err := hostRecords(q)
 	if err != nil {
-		return nil, err
+		return reply, err
 	}
-	observed, err := all(q, "host-observation", nil)
+	observed, err := hostObservations(q)
 	if err != nil {
-		return nil, err
+		return reply, err
 	}
-	tomb, err := all(q, "host", doc{"state": "removed"})
-	if err != nil {
-		return nil, err
+	live := map[string]hostRecord{}
+	removedAt := map[string]*float64{}
+	ids, configured := []string{}, []string{}
+	for _, r := range records {
+		if r.removed() {
+			removedAt[r.ID] = r.RemovedAt
+		} else {
+			live[r.ID] = r
+			ids, configured = append(ids, r.ID), append(configured, r.ID)
+		}
 	}
-	removedAt := map[string]any{}
-	for _, t := range tomb {
-		removedAt[astr(t["hostId"])] = t["removedAt"]
-	}
-	ids := append([]string{}, configured...)
 	for _, o := range observed {
-		if _, gone := removedAt[astr(o["id"])]; !inList(ids, astr(o["id"])) && !gone {
-			ids = append(ids, astr(o["id"]))
+		if _, gone := removedAt[o.ID]; !slices.Contains(ids, o.ID) && !gone {
+			ids = append(ids, o.ID)
 		}
 	}
 	if includeRemoved {
-		for _, t := range tomb {
-			if !inList(ids, astr(t["hostId"])) {
-				ids = append(ids, astr(t["hostId"]))
+		for _, r := range records {
+			if r.removed() && !slices.Contains(ids, r.ID) {
+				ids = append(ids, r.ID)
 			}
 		}
 	}
 	running, err := q.db().RunningByHostHarness(q.ctx())
 	if err != nil {
-		return nil, err
+		return reply, err
 	}
 	queued, err := q.db().PendingCommandsByHost(q.ctx())
 	if err != nil {
-		return nil, err
-	}
-	list, err := hostList(q)
-	if err != nil {
-		return nil, err
-	}
-	records := map[any]doc{}
-	for _, r := range list {
-		records[r["id"]] = r
+		return reply, err
 	}
 	now := nowMs()
-	out := []doc{}
+	out := []contract.HostRow{}
 	for _, id := range ids {
-		var o doc
-		for _, x := range observed {
-			if x["id"] == id {
-				o = x
+		var o *hostObservation
+		for i := range observed {
+			if observed[i].ID == id {
+				o = &observed[i]
 			}
 		}
-		by := doc{}
-		total := 0
+		by := map[string]int64{}
+		var total int64
 		for _, r := range running {
 			if r.HostID == id {
 				h := r.Harness
 				if h == "" {
 					h = "unknown"
 				}
-				n := int(r.N)
-				by[h], total = n, total+n
+				by[h], total = int64(r.N), total+int64(r.N)
 			}
 		}
-		n := 0
+		var n int64
 		for _, r := range queued {
 			if r.HostID == id {
-				n = int(r.N)
+				n = int64(r.N)
 			}
 		}
-		h := doc{"id": id, "configured": inList(configured, id), "platform": nil, "lastSeenAt": nil, "capabilities": []any{}, "problems": []any{},
-			"runningByHarness": by, "running": total, "slots": nil, "queued": n, "stores": "unknown", "storesReason": "not observed",
-			"version": nil, "autoUpdate": "on", "update": nil}
-		if r := records[id]; r != nil {
-			h["autoUpdate"] = autoUpdateOf(r)
+		h := contract.HostRow{Id: id, Configured: slices.Contains(configured, id), Capabilities: []string{}, Problems: []contract.HostProblem{},
+			RunningByHarness: by, Running: total, Queued: n, Stores: "unknown", StoresReason: ptr("not observed"), AutoUpdate: jsonBytes("on")}
+		if r, ok := live[id]; ok {
+			h.AutoUpdate = jsonBytes(r.autoUpdate())
 		}
 		if at, gone := removedAt[id]; gone {
-			h["removedAt"], h["configured"] = at, false
+			h.RemovedAt, h.Configured = at, false
 		}
 		if id == pds18Host() {
-			h["update"] = mergeUpdate(nil)
+			h.Update = jsonBytes(mergeUpdate(nil))
 		}
 		if o != nil {
-			seen := q.app.effectiveHostSeen(id, num(o["lastSeenAt"]))
-			var lastSeen any
+			seen := q.app.effectiveHostSeen(id, valueOr(o.LastSeenAt))
 			if seen > 0 {
-				lastSeen = seen
-			} else if o["lastSeenAt"] != nil {
-				lastSeen = o["lastSeenAt"]
-			}
-			h["platform"], h["lastSeenAt"], h["version"] = o["platform"], lastSeen, o["version"]
-			h["stores"], h["storesReason"] = hostStoreStatus(o["stores"], seen, now)
-			if id == pds18Host() {
-				h["update"] = mergeUpdate(o["update"])
+				h.LastSeenAt = &seen
 			} else {
-				h["update"] = o["update"]
+				h.LastSeenAt = o.LastSeenAt
 			}
-			if o["capabilities"] != nil {
-				h["capabilities"] = o["capabilities"]
+			h.Platform, h.Version = o.Platform, o.Version
+			stores, reason := hostStoreStatus(o.Stores, seen, now)
+			h.Stores, h.StoresReason = stores, &reason
+			if id == pds18Host() {
+				var polled any
+				json.Unmarshal(o.Update, &polled)
+				h.Update = jsonBytes(mergeUpdate(polled))
+			} else {
+				h.Update = o.Update
+			}
+			if o.Capabilities != nil {
+				h.Capabilities = o.Capabilities
 			}
 			polling := seen > 0 && float64(now)-seen < hostStaleMs
 			// The last failed poll, until a successful one (host_poll_health.go); like problems, only while the host
 			// polls: a host that stopped is offline, and an old failure would hide that.
-			if versions := hostHarnessVersions(o, polling && o["pollError"] == nil); versions != nil {
-				h["harnessVersions"] = versions
-			}
-			if polling && o["pollError"] != nil {
-				h["pollError"] = o["pollError"]
+			h.HarnessVersions = hostHarnessVersions(*o, polling && o.PollError == nil)
+			if polling && o.PollError != nil {
+				h.PollError = o.PollError
 			}
 			// A host that stopped polling shows no problems: its staleness is the signal.
-			if polling && o["problems"] != nil {
-				h["problems"] = o["problems"]
+			if polling && o.Problems != nil {
+				h.Problems = o.Problems
 			}
 		}
 		out = append(out, h)
 	}
-	return doc{"staleAfterMs": hostStaleMs, "serverNow": now, "hosts": out}, nil
+	return contract.HostsListReply{StaleAfterMs: hostStaleMs, ServerNow: now, Hosts: out}, nil
 }
 
 func routeDecisions(q *Request, r *contract.RouteDecisionsRequest) (contract.RouteDecisionsReply, error) {
@@ -534,19 +706,8 @@ func routeDecisions(q *Request, r *contract.RouteDecisionsRequest) (contract.Rou
 	return out, err
 }
 
-// Projectless work may use its director's own host, never another ordinary holder's host.
-func (a *App) hostMayRun(h doc, projectID any, director any) bool {
-	if a.hostMaySee(h, projectID) {
-		return true
-	}
-	if astr(projectID) != "" || astr(director) == "" || h["holder"] != director {
-		return false
-	}
-	p, err := a.resolveAccess(context.Background(), astr(director))
-	return err == nil && p != nil
-}
-
-// hostStoreStatus uses only checks reported by this host, never global store reachability.
+// hostStoreStatus uses only checks reported by this host, never global store reachability; reports is their JSON
+// (json.RawMessage as stored, or a value that encodes to it).
 func hostStoreStatus(reports any, seen float64, now int64) (string, string) {
 	if seen <= 0 {
 		return "unknown", "not observed"
@@ -554,18 +715,18 @@ func hostStoreStatus(reports any, seen float64, now int64) (string, string) {
 	if float64(now)-seen >= hostStaleMs {
 		return "unknown", "host observation stale"
 	}
-	list, ok := reports.([]any)
-	if !ok || len(list) == 0 {
+	var list []json.RawMessage
+	if json.Unmarshal(jsonBytes(reports), &list) != nil || len(list) == 0 {
 		return "unknown", "no store checks reported"
 	}
 	yes, no := false, false
 	for _, v := range list {
-		r, ok := v.(map[string]any)
-		if !ok {
+		var r map[string]json.RawMessage
+		if json.Unmarshal(v, &r) != nil || r == nil {
 			return "unknown", "invalid store check"
 		}
-		reachable, ok := r["reachable"].(bool)
-		if !ok {
+		var reachable bool
+		if x, ok := r["reachable"]; !ok || json.Unmarshal(x, &reachable) != nil || string(x) == "null" {
 			return "unknown", "missing reachability"
 		}
 		if reachable {

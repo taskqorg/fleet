@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"math"
 
 	"github.com/jackc/pgx/v5"
 
@@ -21,14 +22,16 @@ func init() {
 // execution. The holder or the owner may ask; Fleet sets no refresh interval.
 func subscriptionLimitsRefresh(q *Request, req *contract.SubscriptionLimitsRefreshRequest) (contract.SubscriptionLimitsRefreshReply, error) {
 	reply := contract.SubscriptionLimitsRefreshReply{Sent: []contract.LimitRefreshSent{}, Skipped: []contract.LimitRefreshSkipped{}}
-	accounts, err := all(q, "managed-account", nil)
+	accounts, err := accountsAll(q)
 	if err != nil {
 		return reply, err
 	}
-	mine := func(a doc) bool { return q.person == nil || fullAccess(q.person) || q.person.Email == a["holder"] }
-	var targets []doc
+	mine := func(a account) bool {
+		return q.person == nil || fullAccess(q.person) || a.Holder != nil && q.person.Email == *a.Holder
+	}
+	var targets []account
 	for _, a := range accounts {
-		if req.SubscriptionId != nil && a["id"] != *req.SubscriptionId {
+		if req.SubscriptionId != nil && a.ID != *req.SubscriptionId {
 			continue
 		}
 		if !mine(a) {
@@ -39,17 +42,20 @@ func subscriptionLimitsRefresh(q *Request, req *contract.SubscriptionLimitsRefre
 	if req.SubscriptionId != nil && len(targets) == 0 {
 		return reply, fail(404, "Unknown subscription")
 	}
-	obs, err := all(q, "host-observation", nil)
+	obs, err := q.db().AccountHostSeen(q.ctx())
 	if err != nil {
 		return reply, err
 	}
 	seen := map[string]float64{}
 	for _, o := range obs {
-		hid := astr(o["id"])
-		seen[hid] = q.app.effectiveHostSeen(hid, num(o["lastSeenAt"]))
+		var at float64
+		if o.LastSeenAt != nil {
+			at = math.Round(float64(o.LastSeenAt.UnixMicro()) / 1000)
+		}
+		seen[o.ID] = q.app.effectiveHostSeen(o.ID, at)
 	}
 	for _, a := range targets {
-		id := astr(a["id"])
+		id, harness := a.ID, deref(a.Harness)
 		// A read already on its way is the answer to a repeated refresh.
 		inflight, err := q.db().InflightLimitRead(q.ctx(), db.InflightLimitReadParams{Kind: string(contract.CommandKindAccountInspect), AccountID: id})
 		if err == nil {
@@ -67,38 +73,32 @@ func subscriptionLimitsRefresh(q *Request, req *contract.SubscriptionLimitsRefre
 		}
 		var host, binding, reason string
 		reason = "no binding on any host; connect the subscription first"
-		for _, b := range bindingsOf(a) {
-			h := astr(b["hostId"])
-			allowed, err := harnessAllowed(q, h, astr(a["harness"]))
+		for _, b := range a.Bindings {
+			h := deref(b.HostID)
+			allowed, err := harnessAllowed(q, h, harness)
 			switch {
 			case err != nil:
 				return reply, err
-			case b["readiness"] != "ready":
-				reason = "binding " + astr(b["binding"]) + " on " + h + " is not ready; login needed"
+			case deref(b.Readiness) != "ready":
+				reason = "binding " + deref(b.Binding) + " on " + h + " is not ready; login needed"
 				continue
 			case !allowed:
-				reason = astr(a["harness"]) + " is not allowed on host " + h
+				reason = harness + " is not allowed on host " + h
 				continue
 			case float64(nowMs())-seen[h] >= onlineMs:
 				reason = "host " + h + " is offline"
 				continue
 			}
-			host, binding = h, astr(b["binding"])
+			host, binding = h, deref(b.Binding)
 			break
 		}
 		if host == "" {
 			reply.Skipped = append(reply.Skipped, contract.LimitRefreshSkipped{SubscriptionId: id, Reason: reason})
 			continue
 		}
-		sid, eid, mode := newID(), newID(), "limits"
-		if err := put(q, "session", doc{"id": sid, "createdAt": nowMs(), "actor": "program-worker"}); err != nil {
-			return reply, err
-		}
-		if err := put(q, "execution", doc{"id": eid, "executionId": eid, "sessionId": sid, "hostId": host, "state": "preparing", "createdAt": nowMs(), "actor": "program-worker", "accountId": id}); err != nil {
-			return reply, err
-		}
-		if err := put(q, "command", doc{"id": newID(), "executionId": eid, "sessionId": sid, "hostId": host, "kind": string(contract.CommandKindAccountInspect), "status": "pending",
-			"payload": contract.AccountInspectPayload{AccountId: id, Harness: astr(a["harness"]), Binding: &binding, NativeHostId: &host, Mode: &mode}}); err != nil {
+		mode := "limits"
+		eid, err := accountInspectionJob(q, host, contract.AccountInspectPayload{AccountId: id, Harness: harness, Binding: &binding, NativeHostId: &host, Mode: &mode})
+		if err != nil {
 			return reply, err
 		}
 		reply.Sent = append(reply.Sent, contract.LimitRefreshSent{SubscriptionId: id, HostId: host, Binding: binding, ExecutionId: eid})

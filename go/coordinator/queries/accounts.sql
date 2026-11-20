@@ -25,3 +25,16 @@ SELECT host_id, execution_id, payload FROM command WHERE kind= @kind::text AND p
 -- name: AccountTakesWork :one
 -- A subscription, by id or name, that takes new work (intake all).
 SELECT EXISTS (SELECT 1 FROM managed_account WHERE intake='all' AND (id= @account::text OR name= @account::text));
+
+-- name: AccountRows :many
+-- Every subscription, in insertion order.
+SELECT * FROM managed_account ORDER BY seq;
+
+-- name: AccountHostSeen :many
+-- When each host was last seen, by its observation.
+SELECT id, last_seen_at FROM host_observation ORDER BY seq;
+
+-- name: AccountHostHarnessAllowed :one
+-- Whether a host that is not removed allows a harness (host setting harnesses.<harness>.allowed; only false refuses).
+SELECT coalesce(payload->'harnesses'->(sqlc.arg(harness)::text)->'allowed', 'true'::jsonb) <> 'false'::jsonb AS allowed
+ FROM host WHERE host_id= @host_id::text AND state<>'removed' ORDER BY seq LIMIT 1;

@@ -94,3 +94,32 @@ SELECT host_id::text AS host_id, count(*)::int AS n FROM command WHERE status='p
 
 -- name: RouteDecisionsOf :many
 SELECT execution_id, at, host_id, candidates, winner FROM route_decision WHERE execution_id=$1 ORDER BY at;
+
+-- name: HostRecords :many
+-- Every host record, removed ones too, in record order; payload holds the fields that are not columns (typed_records.go).
+SELECT host_id, holder, state, intake, secret_hash, removed_secret_hash, project_id, payload FROM host ORDER BY seq;
+
+-- name: HostRecordOf :one
+SELECT host_id, holder, state, intake, secret_hash, removed_secret_hash, project_id, payload FROM host WHERE id=$1;
+
+-- name: HostRegister :exec
+-- A registered host: a new row starts active; a removed one's row is written afresh (its state moves in host_states.go).
+INSERT INTO host(id, host_id, holder, intake, secret_hash, payload) VALUES(@id, @host_id, @holder, @intake, @secret_hash, @payload)
+ ON CONFLICT(id) DO UPDATE SET host_id=excluded.host_id, holder=excluded.holder, intake=excluded.intake, secret_hash=excluded.secret_hash,
+ removed_secret_hash=NULL, project_id=NULL, payload=excluded.payload, updated_at=now();
+
+-- name: HostPatch :exec
+-- hosts_update: intake when given, payload fields merged.
+UPDATE host SET intake=coalesce(sqlc.narg(intake)::text, intake), payload=payload || @patch::jsonb, updated_at=now() WHERE id= @id;
+
+-- name: HostSetSecret :exec
+UPDATE host SET secret_hash= @secret_hash, updated_at=now() WHERE id= @id;
+
+-- name: HostTombstone :exec
+-- hosts_remove: the secret hash moves to removed_secret_hash, harnesses go, removedAt is kept (host_remove.go).
+UPDATE host SET removed_secret_hash=secret_hash, secret_hash=NULL, payload=(payload - 'harnesses') || jsonb_build_object('removedAt', @removed_at::bigint),
+ updated_at=now() WHERE id= @id;
+
+-- name: HostObservations :many
+-- Every host observation in record order; payload holds what the host reported (host_poll.go).
+SELECT id, holder, last_seen_at, payload FROM host_observation ORDER BY seq;

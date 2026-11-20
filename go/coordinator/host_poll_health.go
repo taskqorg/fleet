@@ -9,12 +9,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"regexp"
 	"sync/atomic"
 
+	"github.com/jackc/pgx/v5"
+
+	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/errtrack"
 )
 
@@ -112,29 +117,35 @@ func (a *App) notePollFailure(ctx context.Context, host string, holder any, err 
 	var changed, observed bool
 	werr := runTx(ctx, a, nil, true, "host:"+host, func(wq *Request) error {
 		observed, changed = false, false
-		o, err := maybe(wq, host, "host-observation")
-		if err != nil {
+		raw, err := wq.db().HostPollErrorOf(wq.ctx(), host)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // never observed: no observation is made up for it (its existence means an observed host)
+		} else if err != nil {
 			return err
 		}
-		if o == nil {
-			return nil // never observed: no observation is made up for it (its existence means an observed host)
-		}
 		observed = true
-		prev := mapOf(o["pollError"])
+		var prev *contract.HostPollError
+		if json.Unmarshal(raw, &prev) != nil {
+			prev = nil // not a recorded failure: a new run
+		}
 		// A run of failures continues while they keep coming; a record left by a host that stopped polling while it
 		// failed (no success cleared it) starts a new run.
 		since = float64(now)
-		if s, at := num(prev["since"]), num(prev["at"]); s > 0 && float64(now)-at < hostPollRunGapMs {
-			since = s
+		var prevSince, prevAt float64
+		if prev != nil {
+			prevSince, prevAt = prev.Since, valueOr(prev.At)
 		}
-		changed = prev == nil || since != num(prev["since"]) || num(prev["status"]) != float64(f.status) || prev["reason"] != f.reason
+		if prevSince > 0 && float64(now)-prevAt < hostPollRunGapMs {
+			since = prevSince
+		}
+		changed = prev == nil || since != prevSince || prev.Status != int64(f.status) || prev.Reason != f.reason
 		at = float64(now)
-		if !changed && prev["message"] == f.message && float64(now)-num(prev["at"]) < hostPollAtEveryMs {
-			at = num(prev["at"]) // the stored one: the cache never runs ahead of the record
-			return nil           // unchanged and recent: no write, no change row
+		if !changed && prev.Message == f.message && float64(now)-prevAt < hostPollAtEveryMs {
+			at = prevAt // the stored one: the cache never runs ahead of the record
+			return nil  // unchanged and recent: no write, no change row
 		}
-		o["pollError"] = doc{"status": f.status, "reason": f.reason, "message": f.message, "since": since, "at": float64(now)}
-		return put(wq, "host-observation", o)
+		rec := contract.HostPollError{Status: int64(f.status), Reason: f.reason, Message: f.message, Since: since, At: ptr(float64(now))}
+		return wq.db().HostPollErrorSet(wq.ctx(), db.HostPollErrorSetParams{ID: host, PollError: jsonBytes(rec)})
 	})
 	if werr == nil && observed {
 		a.pollMu.Lock()
@@ -174,8 +185,10 @@ func (a *App) openPollProblem(ctx context.Context, host, reason string) {
 	held := false
 	if err := runTxLocks(ctx, a, nil, true, []string{GLOBAL, "host:" + host}, func(q *Request) error {
 		held = false
-		o, err := maybe(q, host, "host-observation")
-		if err != nil || o == nil || o["pollError"] == nil {
+		raw, err := q.db().HostPollErrorOf(q.ctx(), host)
+		if errors.Is(err, pgx.ErrNoRows) || err == nil && string(raw) == "null" {
+			return nil // no observation, or no failure recorded
+		} else if err != nil {
 			return err
 		}
 		if h, err := problemHeld(q, hostPollCause(host)); err != nil || h != nil {
@@ -183,7 +196,7 @@ func (a *App) openPollProblem(ctx context.Context, host, reason string) {
 			return err
 		}
 		held = true
-		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: doc{"hostId": host, "reason": reason}})
+		return problemAsk(q, "direct", Problem{Cause: hostPollCause(host), Text: text, Data: docOf(hostPollProblemData{host, reason})})
 	}); err != nil {
 		log.Printf("host %s poll problem: %v", host, err)
 		return
@@ -193,6 +206,12 @@ func (a *App) openPollProblem(ctx context.Context, host, reason string) {
 		a.heartbeatOf(host).pollProblem = true
 		a.pollMu.Unlock()
 	}
+}
+
+// hostPollProblemData: the poll problem's data (Problem.Data, problems.go, is still a map).
+type hostPollProblemData struct {
+	HostID string `json:"hostId"`
+	Reason string `json:"reason"`
 }
 
 // notePollSuccess clears a recorded failure and closes its problem. Free while the host is known clean; the first

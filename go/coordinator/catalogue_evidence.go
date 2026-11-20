@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
+
+	"fleet/coordinator/db"
 )
 
 func methodDigest(m doc) string {
@@ -29,26 +32,53 @@ func evidenceVariant(exp, method doc) doc {
 	return nil
 }
 
+// evidenceExperiment: an experiment row as evidence reads it; lab doc is the record the Lab helpers (lab.go,
+// lab_variant.go) still take as a map: the columns they read, jsonb decoded.
+type evidenceExperiment struct {
+	db.CatalogueExperimentsRow
+	lab doc
+}
+
+func evidenceExperiments(rows []db.CatalogueExperimentsRow) ([]evidenceExperiment, error) {
+	out := []evidenceExperiment{}
+	for _, r := range rows {
+		var examples, variants any
+		if err := json.Unmarshal(r.Examples, &examples); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(r.Variants, &variants); err != nil {
+			return nil, err
+		}
+		out = append(out, evidenceExperiment{r, doc{"id": r.ID, "pipeline_id": r.PipelineID, "examples": examples, "variants": variants}})
+	}
+	return out, nil
+}
+
 func methodAssessment(q *Request, project string, method doc) (doc, error) {
 	out := doc{"basis": "none", "score": nil, "costUsd": nil, "costBasis": "unavailable", "wallMsMedian": nil}
-	rows, err := queryRows(q, "SELECT * FROM experiment WHERE project_id=$1 AND state <> 'draft' ORDER BY created_at DESC,id DESC", project)
+	rows, err := q.db().CatalogueExperiments(q.ctx(), project)
 	if err != nil {
 		return nil, err
 	}
-	var chosen, variant doc
-	for _, exp := range rows {
-		v := evidenceVariant(exp, method)
+	exps, err := evidenceExperiments(rows)
+	if err != nil {
+		return nil, err
+	}
+	var chosen *evidenceExperiment
+	var variant doc
+	for i, exp := range exps {
+		v := evidenceVariant(exp.lab, method)
 		if v == nil {
 			continue
 		}
-		if exp["state"] == "running" || exp["state"] == "paused" {
+		if exp.State == "running" || exp.State == "paused" {
 			if chosen == nil && out["ongoingExperimentId"] == nil {
-				out["ongoingExperimentId"], out["ongoingState"] = exp["id"], exp["state"]
+				out["ongoingExperimentId"], out["ongoingState"] = exp.ID, exp.State
 			}
 			continue
 		}
-		if chosen == nil && (exp["state"] == "done" || exp["state"] == "stopped") {
-			chosen, variant = exp, v
+		if chosen == nil && (exp.State == "done" || exp.State == "stopped") {
+			chosen, variant = &exps[i], v
 		}
 	}
 	if chosen == nil {
@@ -61,13 +91,21 @@ func methodAssessment(q *Request, project string, method doc) (doc, error) {
 			out["wallMsMedian"] = w.WallMsMedian
 		}
 		if source := astr(method["sourceExperiment"]); source != "" {
-			sources, err := queryRows(q, "SELECT * FROM experiment WHERE id=$1 AND project_id=$2", source, project)
+			rows, err := q.db().CatalogueSourceExperiment(q.ctx(), db.CatalogueSourceExperimentParams{ID: source, ProjectID: project})
 			if err != nil {
 				return nil, err
 			}
-			if len(sources) > 0 {
+			sources := []db.CatalogueExperimentsRow{}
+			for _, r := range rows {
+				sources = append(sources, db.CatalogueExperimentsRow(r))
+			}
+			exps, err := evidenceExperiments(sources)
+			if err != nil {
+				return nil, err
+			}
+			if len(exps) > 0 {
 				out["sourceExperimentId"] = source
-				if evidenceVariant(sources[0], method) == nil {
+				if evidenceVariant(exps[0].lab, method) == nil {
 					out["reason"] = "Source experiment uses a different executable configuration (including Lab scoring bands when present)"
 				} else {
 					out["reason"] = "Source experiment has no terminal assessment"
@@ -76,34 +114,37 @@ func methodAssessment(q *Request, project string, method doc) (doc, error) {
 		}
 		return out, nil
 	}
-	out["basis"], out["experimentId"], out["variant"], out["state"], out["stopReason"] = "lab", chosen["id"], variant["label"], chosen["state"], chosen["stop_reason"]
-	out["configRef"], out["pipelineId"], out["at"] = variant["config_ref"], variantPipelineID(chosen, variant), chosen["created_at"]
+	var primary any // a score's evaluator compares to the primary evaluator, absent as nil
+	if chosen.PrimaryEvaluator != nil {
+		primary = *chosen.PrimaryEvaluator
+	}
+	out["basis"], out["experimentId"], out["variant"], out["state"], out["stopReason"] = "lab", chosen.ID, variant["label"], chosen.State, chosen.StopReason
+	out["configRef"], out["pipelineId"], out["at"] = variant["config_ref"], variantPipelineID(chosen.lab, variant), chosen.CreatedAt
 	split := "all"
-	if hasHeldOut(chosen) {
+	if hasHeldOut(chosen.lab) {
 		split = "held_out"
 	}
 	out["split"] = split
 	pins := map[string]bool{}
-	for _, x := range anys(chosen["examples"]) {
+	for _, x := range anys(chosen.lab["examples"]) {
 		p := mapOf(x)
 		if split == "all" || p["split"] == "held_out" {
 			pins[astr(p["id"])] = true
 		}
 	}
-	repeats, _ := intOK(chosen["repeats"])
-	expected := int64(len(pins)) * repeats
+	expected := int64(len(pins)) * int64(chosen.Repeats)
 	out["expectedCells"] = expected
-	runs, err := expRuns(q, astr(chosen["id"]))
+	runs, err := expRuns(q, chosen.ID)
 	if err != nil {
 		return nil, err
 	}
 	trials := expTrials(runs)
-	scores, err := scoresCurrent(q, astr(chosen["id"]))
+	scores, err := scoresCurrent(q, chosen.ID)
 	if err != nil {
 		return nil, err
 	}
-	cohort := scoredLatest(chosen, trials, scores, func(sc doc) bool {
-		return sc["evaluator"] == chosen["primary_evaluator"] && sc["form"] != "pick_best" && !(sc["form"] == "typed" && mapOf(sc["value"])["answer"] == "unscored")
+	cohort := scoredLatest(chosen.lab, trials, scores, func(sc doc) bool {
+		return sc["evaluator"] == primary && sc["form"] != "pick_best" && !(sc["form"] == "typed" && mapOf(sc["value"])["answer"] == "unscored")
 	})
 	version, form := "", ""
 	latest := float64(-1)
@@ -118,7 +159,7 @@ func methodAssessment(q *Request, project string, method doc) (doc, error) {
 			form = astr(st.score["form"])
 		}
 	}
-	out["evaluator"], out["evaluatorVersion"], out["scoreForm"] = chosen["primary_evaluator"], version, form
+	out["evaluator"], out["evaluatorVersion"], out["scoreForm"] = chosen.PrimaryEvaluator, version, form
 	sum := float64(0)
 	eligible := int64(0)
 	examples := map[string]bool{}
@@ -130,7 +171,7 @@ func methodAssessment(q *Request, project string, method doc) (doc, error) {
 		}
 	}
 	out["eligibleCells"], out["examples"], out["excludedCells"] = eligible, len(examples), expected-eligible
-	out["partial"] = eligible < expected || chosen["state"] != "done" || chosen["stop_reason"] != "complete"
+	out["partial"] = eligible < expected || chosen.State != "done" || deref(chosen.StopReason) != "complete"
 	if eligible > 0 {
 		out["score"] = sum / float64(eligible)
 	} else {
@@ -160,7 +201,7 @@ func methodAssessment(q *Request, project string, method doc) (doc, error) {
 		out["wallMsMedian"] = durations[(len(durations)-1)/2]
 	}
 	// Costs remain explicitly unavailable until the selected trials have attributable USD entries.
-	view, err := expGet(q, astr(chosen["id"]))
+	view, err := expGet(q, chosen.ID)
 	if err != nil {
 		return nil, err
 	}

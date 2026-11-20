@@ -5,6 +5,8 @@ package main
 // (contracts/vocabulary.json); the outside test view.test.ts compares both codecs on the same views.
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/url"
@@ -129,24 +131,49 @@ func sortProjects(ps []*string) []*string {
 	return out
 }
 
+// jsonKind: the first byte of a JSON value ('{', '[', '"', 't', 'f', 'n' or a digit), 0 for none.
+func jsonKind(raw json.RawMessage) byte {
+	if t := bytes.TrimSpace(raw); len(t) > 0 {
+		return t[0]
+	}
+	return 0
+}
+
+// jsonString: raw as a JSON string; ok is false for any other JSON type.
+func jsonString(raw json.RawMessage) (string, bool) {
+	var s string
+	if jsonKind(raw) != '"' || json.Unmarshal(raw, &s) != nil {
+		return "", false
+	}
+	return s, true
+}
+
 // viewProblem checks a view object from an agent: unknown keys and bad values are errors, never dropped.
 func viewProblem(v any) string {
-	o, ok := v.(map[string]any)
-	if !ok {
+	raw := json.RawMessage(jsonBytes(v))
+	var o map[string]json.RawMessage
+	if jsonKind(raw) != '{' || json.Unmarshal(raw, &o) != nil {
 		return "view must be an object"
 	}
-	name, _ := o["view"].(string)
+	name, _ := jsonString(o["view"])
 	if !slices.Contains(viewNames, name) {
 		return "view.view must be one of " + strings.Join(viewNames, ", ")
 	}
-	strs := func(x any) bool {
-		xs, ok := x.([]any)
+	// strs: a list of non-empty strings.
+	strs := func(x json.RawMessage) ([]string, bool) {
+		var xs []json.RawMessage
+		if jsonKind(x) != '[' || json.Unmarshal(x, &xs) != nil {
+			return nil, false
+		}
+		out := []string{}
 		for _, i := range xs {
-			if s, isStr := i.(string); !isStr || s == "" {
-				return false
+			if s, isStr := jsonString(i); !isStr || s == "" {
+				return nil, false
+			} else {
+				out = append(out, s)
 			}
 		}
-		return ok
+		return out, true
 	}
 	keys := slices.Sorted(maps.Keys(o))
 	for _, k := range keys {
@@ -154,13 +181,14 @@ func viewProblem(v any) string {
 		switch {
 		case k == "view":
 		case k == "focus":
-			if s, _ := x.(string); s == "" {
+			if s, _ := jsonString(x); s == "" {
 				return "focus must be a non-empty string"
 			}
 		case k == "extra":
-			m, ok := x.(map[string]any)
+			var m map[string]json.RawMessage
+			ok := jsonKind(x) == '{' && json.Unmarshal(x, &m) == nil
 			for _, i := range m {
-				if _, isStr := i.(string); !isStr {
+				if _, isStr := jsonString(i); !isStr {
 					ok = false
 				}
 			}
@@ -171,25 +199,26 @@ func viewProblem(v any) string {
 			return k + " is not a key of the " + name + " view"
 		case k == "state":
 			states := viewStates(name)
-			ok := strs(x)
-			for _, i := range anys(x) {
-				ok = ok && slices.Contains(states, i.(string))
+			xs, ok := strs(x)
+			for _, i := range xs {
+				ok = ok && slices.Contains(states, i)
 			}
 			if !ok {
 				return "state must be a list of: " + strings.Join(states, ", ")
 			}
 		case k == "group":
-			if s, _ := x.(string); !slices.Contains(viewOrder[name].groups, s) {
+			if s, _ := jsonString(x); !slices.Contains(viewOrder[name].groups, s) {
 				return "group must be one of " + strings.Join(viewOrder[name].groups, ", ")
 			}
 		case k == "sort":
-			if s, _ := x.(string); !slices.Contains(viewOrder[name].sorts, s) {
+			if s, _ := jsonString(x); !slices.Contains(viewOrder[name].sorts, s) {
 				return "sort must be one of " + strings.Join(viewOrder[name].sorts, ", ")
 			}
 		case k == "project":
-			xs, ok := x.([]any)
+			var xs []json.RawMessage
+			ok := jsonKind(x) == '[' && json.Unmarshal(x, &xs) == nil
 			for _, i := range xs {
-				if s, isStr := i.(string); i != nil && (!isStr || s == "") {
+				if s, isStr := jsonString(i); jsonKind(i) != 'n' && (!isStr || s == "") {
 					ok = false
 				}
 			}
@@ -197,15 +226,15 @@ func viewProblem(v any) string {
 				return "project must be a list of project ids or null"
 			}
 		case k == "sel":
-			if !strs(x) {
+			if _, ok := strs(x); !ok {
 				return "sel must be a list of ids"
 			}
 		case k == "q" || k == "preset":
-			if _, ok := x.(string); !ok {
+			if _, ok := jsonString(x); !ok {
 				return k + " must be a string"
 			}
 		case k == "archived":
-			if _, ok := x.(bool); !ok {
+			if t := string(bytes.TrimSpace(x)); t != "true" && t != "false" {
 				return "archived must be true or false"
 			}
 		}
@@ -213,23 +242,10 @@ func viewProblem(v any) string {
 	return ""
 }
 
-// viewOf converts a view object that passed viewProblem.
-func viewOf(o map[string]any) view {
-	v := view{View: astr(o["view"]), Focus: astr(o["focus"]), Group: astr(o["group"]), Preset: astr(o["preset"]), Q: astr(o["q"]), Sel: strs(o["sel"]), Sort: astr(o["sort"]), State: strs(o["state"])}
-	v.Archived, _ = o["archived"].(bool)
-	for _, p := range anys(o["project"]) {
-		if s, ok := p.(string); ok {
-			v.Project = append(v.Project, &s)
-		} else {
-			v.Project = append(v.Project, nil)
-		}
-	}
-	if m, ok := o["extra"].(map[string]any); ok {
-		v.Extra = map[string]string{}
-		for k, x := range m {
-			v.Extra[k] = x.(string)
-		}
-	}
+// viewOf converts a view object that passed viewProblem (its keys are the view's fields; a null project is "no project").
+func viewOf(raw json.RawMessage) view {
+	var v view
+	json.Unmarshal(raw, &v)
 	return v
 }
 
@@ -426,40 +442,34 @@ func formatView(v view) string {
 	return out
 }
 
-func viewLink(q *Request, b doc) (doc, error) {
-	v, hasView := b["view"]
-	u, hasURL := b["url"]
+func viewLink(r *contract.ViewLinkRequest) (contract.ViewLinkReply, error) {
+	hasView, hasURL := len(r.View) > 0, len(r.Url) > 0
 	if hasView == hasURL {
-		return nil, fail(400, "Expected exactly one of view or url")
+		return contract.ViewLinkReply{}, fail(400, "Expected exactly one of view or url")
 	}
 	if hasURL {
-		s, ok := u.(string)
+		s, ok := jsonString(r.Url)
 		if !ok {
-			return nil, fail(400, "Expected url")
+			return contract.ViewLinkReply{}, fail(400, "Expected url")
 		}
 		parsed, ok := parseView(s, browserOrigin)
 		if !ok {
-			return nil, fail(400, "Not a Fleet view URL")
+			return contract.ViewLinkReply{}, fail(400, "Not a Fleet view URL")
 		}
-		return doc{"view": parsed}, nil
+		return contract.ViewLinkReply{View: jsonBytes(parsed)}, nil
 	}
-	if p := viewProblem(v); p != "" {
-		return nil, fail(400, "Invalid view: "+p)
+	if p := viewProblem(r.View); p != "" {
+		return contract.ViewLinkReply{}, fail(400, "Invalid view: "+p)
 	}
-	path := formatView(viewOf(v.(map[string]any)))
-	var full any
+	path := formatView(viewOf(r.View))
+	out := contract.ViewLinkReply{Path: &path}
 	if o := originOf(must(url.Parse(browserOrigin))); o != "" {
-		full = o + path
+		full := o + path
+		out.Url = &full
 	}
-	return doc{"url": full, "path": path}, nil
+	return out, nil
 }
 
 func init() {
-	op("view_link", func(q *Request, b *contract.ViewLinkRequest) (contract.ViewLinkReply, error) {
-		out, err := viewLink(q, docOf(b))
-		if err != nil {
-			return contract.ViewLinkReply{}, err
-		}
-		return asT[contract.ViewLinkReply](out)
-	})
+	op("view_link", func(_ *Request, r *contract.ViewLinkRequest) (contract.ViewLinkReply, error) { return viewLink(r) })
 }

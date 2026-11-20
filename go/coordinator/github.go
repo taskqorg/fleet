@@ -83,13 +83,8 @@ func githubConnectionOf(q *Request, owner string) (name string, c doc, keyed boo
 		if err != nil || c == nil || gatewayURL() == "" || c["intake"] != "all" {
 			return c, false, err
 		}
-		ks, err := connKeys(q, n)
-		for _, k := range ks {
-			if k["state"] == "active" {
-				return c, true, err
-			}
-		}
-		return c, false, err
+		active, err := q.db().ConnHasActiveKey(q.ctx(), n)
+		return c, active, err
 	}
 	if n := "github-" + strings.ToLower(owner); connName.MatchString(n) {
 		if c, keyed, err = serves(n); err != nil || keyed {
@@ -110,7 +105,7 @@ func githubRead(ctx context.Context, a *App, project, tool string, args map[stri
 	}); err != nil {
 		return nil, false, fmt.Errorf("github connection of %s: %w", args["owner"], err)
 	}
-	path := astr(mapOf(providerTools("github")[tool])["path"])
+	path := gatewayProviders["github"].Tools[tool].Path
 	if path == "" {
 		return nil, keyed, fmt.Errorf("github has no tool %s", tool)
 	}
@@ -175,7 +170,7 @@ func githubReadKeyed(ctx context.Context, a *App, project, tool string, args map
 	if !keyed {
 		return nil, fmt.Errorf("no github key on connection %s", connection)
 	}
-	path := astr(mapOf(providerTools("github")[tool])["path"])
+	path := gatewayProviders["github"].Tools[tool].Path
 	if path == "" {
 		return nil, fmt.Errorf("github has no tool %s", tool)
 	}
@@ -226,10 +221,41 @@ type readToken struct {
 const readTokenTTL = 5 * time.Minute
 
 var (
-	readTokMu    sync.Mutex // guards the two maps, never held across a mint
+	readTokMu    sync.Mutex // guards the three maps, never held across a mint
 	readToks     = map[string]readToken{}
 	readTokLocks = map[string]*sync.Mutex{} // per connection and project, held across its mint
+	// readTokEnds: the executions of minted read tokens and when each is revoked (readTokensEnd).
+	readTokEnds = map[string]time.Time{}
 )
+
+func init() {
+	onStart(func(ctx context.Context, a *App) {
+		every(ctx, "read-tokens", 10*time.Second, func(ctx context.Context) error { return readTokensEnd(ctx, a) })
+	})
+}
+
+// readTokensEnd revokes the read tokens past their end and ingests their calls.
+func readTokensEnd(ctx context.Context, a *App) error {
+	readTokMu.Lock()
+	due := []string{}
+	for exec, at := range readTokEnds {
+		if time.Now().After(at) {
+			due = append(due, exec)
+			delete(readTokEnds, exec)
+		}
+	}
+	readTokMu.Unlock()
+	if len(due) == 0 {
+		return nil
+	}
+	for _, exec := range due {
+		if err := runTx(ctx, a, nil, true, "", func(q *Request) error { return revokeTokens(q, exec) }); err != nil {
+			log.Printf("revoke %s: %v", exec, err)
+		}
+	}
+	_, err := connIngestPass(ctx, a)
+	return err
+}
 
 func readTokenFor(ctx context.Context, a *App, connection, project string) (string, error) {
 	if !connName.MatchString(connection) {
@@ -254,7 +280,8 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	exec := connection + "-read:" + newID()
 	var token string
 	if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
-		m, err := mint(q, doc{"executionId": exec, "projectId": project, "step": true, "systemActor": "coordinator"}, []string{connection})
+		system := "coordinator"
+		m, err := mintFor(q, mintRun{ExecutionID: &exec, ProjectID: &project, Step: true, SystemActor: &system}, []string{connection})
 		if err == nil {
 			token, _ = m["token"].(string)
 		}
@@ -265,27 +292,24 @@ func readTokenFor(ctx context.Context, a *App, connection, project string) (stri
 	if token == "" {
 		return "", fmt.Errorf("%s: %w (not granted to %s, or intake closed)", connection, errConnUnavailable, project)
 	}
-	revoke := func() {
-		if err := runTx(context.Background(), a, nil, true, "", func(q *Request) error {
-			return revokeTokens(q, exec)
-		}); err != nil {
-			log.Printf("revoke %s: %v", exec, err)
-		}
-		if _, err := connIngestPass(context.Background(), a); err != nil {
+	// Revoked at its end whatever happens next (the read-tokens pass; a restart revokes it too: revokeSteps); its calls
+	// are ingested then. The gateway must see the token before the call; a failed snapshot revokes it at once.
+	// ponytail: an access or intake change reaches a cached token within readTokenTTL, not at the next read.
+	readTokMu.Lock()
+	readTokEnds[exec] = time.Now().Add(readTokenTTL + 5*time.Second)
+	readTokMu.Unlock()
+	if err := writeSnapshot(context.WithoutCancel(ctx), a); err != nil {
+		readTokMu.Lock()
+		readTokEnds[exec] = time.Time{}
+		readTokMu.Unlock()
+		if err := readTokensEnd(context.WithoutCancel(ctx), a); err != nil {
 			log.Printf("ingest %s: %v", exec, err)
 		}
-	}
-	// The gateway must see the token before the call; a failed snapshot revokes it at once.
-	if err := writeSnapshot(context.WithoutCancel(ctx), a); err != nil {
-		revoke()
 		return "", err
 	}
 	readTokMu.Lock()
 	readToks[key] = readToken{token, time.Now().Add(readTokenTTL)}
 	readTokMu.Unlock()
-	// Revoked at its end whatever happens next (a restart revokes it too: revokeSteps); its calls are ingested then.
-	// ponytail: an access or intake change reaches a cached token within readTokenTTL, not at the next read.
-	time.AfterFunc(readTokenTTL+5*time.Second, revoke)
 	return token, nil
 }
 
@@ -298,7 +322,7 @@ func githubGateway(ctx context.Context, a *App, connection, project, tool string
 	if err != nil {
 		return nil, err
 	}
-	line := gatewayCall(ctx, token, connection, tool, args, mapOf(providerTools("github")[tool])["idempotent"] == true)
+	line := gatewayCall(ctx, token, connection, tool, args, gatewayProviders["github"].Tools[tool].Idempotent)
 	if line.Outcome != contract.CallOutcomeOk {
 		return nil, fmt.Errorf("github %s: %s %d", tool, deref(line.ErrorCode), line.Status)
 	}

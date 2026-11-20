@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,8 +17,10 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/mcpserve"
 )
 
@@ -501,13 +504,13 @@ func init() {
 		if err != nil {
 			return contract.ProjectListReply{}, err
 		}
-		codes, err := rowsOf(q, "SELECT project_id, code FROM project_code WHERE current")
+		codes, err := q.db().ProjectsCurrentCodes(q.ctx())
 		if err != nil {
 			return contract.ProjectListReply{}, err
 		}
 		currentCode := map[string]string{}
 		for _, row := range codes {
-			currentCode[astr(row["project_id"])] = astr(row["code"])
+			currentCode[row.ProjectID] = row.Code
 		}
 		for _, id := range ids {
 			if q.person != nil && !mayAccessProjectID(q.person, id) {
@@ -564,16 +567,16 @@ func init() {
 		if r.RequestId == "" || r.Text == "" || len([]rune(r.Text)) > 2000 {
 			return contract.QuestionAskReply{}, fail(400, "Expected question text and requestId")
 		}
-		d, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE kind='operator_decision' AND project_id=$1 AND request_id=$2", r.ProjectId, r.RequestId)
+		found, err := q.db().ProjectsDecisionByRequest(q.ctx(), db.ProjectsDecisionByRequestParams{ProjectID: r.ProjectId, RequestID: r.RequestId})
 		if err != nil {
 			return contract.QuestionAskReply{}, err
 		}
-		if d != nil {
-			d = mapOf(d["v"])
-			if astr(d["text"]) != r.Text {
+		if len(found) > 0 {
+			d := projectQuestionOf(found[0])
+			if d.Text != r.Text {
 				return contract.QuestionAskReply{}, fail(409, "Question identity conflict")
 			}
-			return replyAs[contract.QuestionAskReply](d, nil)
+			return d, nil
 		}
 		v := doc{"id": newID(), "projectId": r.ProjectId, "requestId": r.RequestId, "text": r.Text, "state": "waiting", "createdAt": nowMs(), "actor": actor(q, "operator")}
 		_, err = askQuestion(q, doc{"id": v["id"], "kind": "operator_decision", "text": r.Text, "projectId": r.ProjectId, "askedBy": v["actor"], "requestId": r.RequestId, "askedAt": v["createdAt"]})
@@ -583,11 +586,11 @@ func init() {
 		if r.Answer == "" || len([]rune(r.Answer)) > 4000 {
 			return contract.QuestionAnswerReply{}, fail(400, "Expected answer")
 		}
-		pq, err := first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE id=$1 AND "+projectQuestion, r.QuestionId)
+		pq, err := q.db().ProjectsQuestionByID(q.ctx(), r.QuestionId)
 		if err != nil {
 			return contract.QuestionAnswerReply{}, err
 		}
-		if pq == nil {
+		if len(pq) == 0 {
 			var ids []any
 			if r.ArtifactIds != nil {
 				ids = []any{}
@@ -604,28 +607,34 @@ func init() {
 			}
 			return replyAs[contract.QuestionAnswerReply](doc{"id": a["id"], "state": a["state"], "answer": a["answer"]}, nil)
 		}
-		v := mapOf(pq["v"])
-		if astr(v["state"]) == "answered" {
-			if astr(v["answer"]) != r.Answer {
+		if v := projectQuestionOf(pq[0]); v.State == "answered" {
+			if deref(v.Answer) != r.Answer {
 				return contract.QuestionAnswerReply{}, fail(409, "Answer already recorded")
 			}
-			return replyAs[contract.QuestionAnswerReply](v, nil)
+			return recOf(v), nil
 		}
 		if _, err := answerQuestion(q, r.QuestionId, r.Answer, actor(q, "operator"), nil); err != nil {
 			return contract.QuestionAnswerReply{}, err
 		}
-		pq, err = first(q, "SELECT "+projectQuestionJSON+" AS v FROM question WHERE id=$1", r.QuestionId)
+		pq, err = q.db().ProjectsQuestionByID(q.ctx(), r.QuestionId)
 		if err != nil {
 			return contract.QuestionAnswerReply{}, err
 		}
-		return replyAs[contract.QuestionAnswerReply](mapOf(pq["v"]), nil)
+		if len(pq) == 0 {
+			return contract.QuestionAnswerReply{}, fail(404, "Unknown question")
+		}
+		return recOf(projectQuestionOf(pq[0])), nil
 	})
 	op("question_history", func(q *Request, r *contract.QuestionHistoryRequest) (contract.QuestionHistoryReply, error) {
 		if _, err := projectContext(q, r.ProjectId); err != nil {
 			return contract.QuestionHistoryReply{}, err
 		}
-		qs, err := rows(q, "SELECT "+projectQuestionJSON+" FROM question WHERE "+projectQuestion+" AND project_id=$1 ORDER BY seq", r.ProjectId)
-		return replyAs[contract.QuestionHistoryReply](doc{"questions": qs}, err)
+		qs, err := q.db().ProjectsQuestionHistory(q.ctx(), r.ProjectId)
+		out := contract.QuestionHistoryReply{Questions: []contract.ProjectQuestion{}}
+		for _, x := range qs {
+			out.Questions = append(out.Questions, projectQuestionOf(x))
+		}
+		return out, err
 	})
 	op("pipeline_get", func(q *Request, r *contract.PipelineGetRequest) (contract.PipelineGetReply, error) {
 		if r.RunId == "" || len(r.RunId) > 200 {
@@ -644,13 +653,13 @@ func init() {
 		if _, err := projectContext(q, r.ProjectId); err != nil {
 			return contract.PipelineHistoryReply{}, err
 		}
-		ids, err := rowsOf(q, "SELECT id FROM execution WHERE "+runRows+" AND data->>'projectId'=$1 ORDER BY seq", r.ProjectId)
+		ids, err := q.db().ProjectsPipelineRunIDs(q.ctx(), r.ProjectId)
 		if err != nil {
 			return contract.PipelineHistoryReply{}, err
 		}
 		runs := []doc{}
-		for _, x := range ids {
-			run, err := pipelineRun(q, astr(x["id"]))
+		for _, id := range ids {
+			run, err := pipelineRun(q, id)
 			if err != nil {
 				return contract.PipelineHistoryReply{}, err
 			}
@@ -782,13 +791,23 @@ func catalogueHead(q *Request) (doc, error) {
 	return c, nil
 }
 
-// projectQuestion: a project question (question_ask, or a key request) is an operator decision or secret question with
-// the asker's request id.
-const projectQuestion = "kind IN ('operator_decision','secret') AND request_id IS NOT NULL"
-
-// projectQuestionJSON: a project question (contract.ProjectQuestion) from its columns.
-const projectQuestionJSON = `jsonb_build_object('id',id,'projectId',project_id,'requestId',request_id,'text',text,'state',CASE WHEN state='open' THEN 'waiting' ELSE state::text END,
- 'createdAt',(extract(epoch FROM asked_at)*1000)::bigint,'actor',asked_by) || CASE WHEN state='answered' THEN jsonb_build_object('answer',answer,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'answeredBy',answered_by) ELSE '{}' END`
+// projectQuestionOf: a project question (queries/projects.sql) as the contract writes it: open is waiting; the answer,
+// its time and its author only once answered.
+func projectQuestionOf(x db.Question) contract.ProjectQuestion {
+	ms := func(t time.Time) int64 { return int64(math.Round(float64(t.UnixMicro()) / 1000)) }
+	v := contract.ProjectQuestion{Id: x.ID, ProjectId: deref(x.ProjectID), RequestId: deref(x.RequestID), Text: x.Text, State: string(x.State),
+		CreatedAt: ms(x.AskedAt), Actor: deref(x.AskedBy)}
+	if x.State == db.QuestionStateOpen {
+		v.State = "waiting"
+	}
+	if x.State == db.QuestionStateAnswered {
+		v.Answer, v.AnsweredBy = x.Answer, x.AnsweredBy
+		if x.AnsweredAt != nil {
+			v.AnsweredAt = ptr(ms(*x.AnsweredAt))
+		}
+	}
+	return v
+}
 
 // Startup exposure is independent of processor scheduling; source capture has no flag.
 var resourceReadsEnabled = os.Getenv("FLEET_RESOURCE_READS") == "on"
@@ -810,7 +829,7 @@ func resourceGate(q *Request) error {
 	if strings.TrimSpace(id) == "" {
 		return fail(400, "Expected projectId")
 	}
-	exists, err := has(q, `SELECT 1 FROM definition WHERE kind='project' AND id=$1 AND retired_at IS NULL`, id)
+	exists, err := q.db().ProjectsLiveDefinition(q.ctx(), id)
 	if err != nil {
 		return err
 	}

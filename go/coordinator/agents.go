@@ -4,17 +4,21 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // agentContent: the head of an agent definition, or the caller's draft.
-func agentContent(q *Request, id string, draft bool) (doc, string, error) {
+func agentContent(q *Request, id string, draft bool) (rawObject, string, error) {
+	var p rawObject
 	if draft {
 		d, err := draftOf(q, "agent", id)
 		if err != nil || d == nil {
@@ -23,7 +27,6 @@ func agentContent(q *Request, id string, draft bool) (doc, string, error) {
 			}
 			return nil, "", err
 		}
-		var p doc
 		if err := json.Unmarshal([]byte(d.Content), &p); err != nil {
 			return nil, "", err
 		}
@@ -37,11 +40,24 @@ func agentContent(q *Request, id string, draft bool) (doc, string, error) {
 		return nil, "", err
 	}
 	// The profile a session start would get: the same reader and validator.
-	p, err := readTrustedProfile(q, id)
+	trusted, err := readTrustedProfile(q, id)
 	if err != nil {
 		return nil, "", err
 	}
+	if err := json.Unmarshal(jsonBytes(trusted), &p); err != nil {
+		return nil, "", err
+	}
 	return p, "r" + strconv.FormatInt(h.Head, 10), nil
+}
+
+// agentProjectView: the project fields agentEffective reads. A role names a profile id, or an object with its profile;
+// a context file entry of the settings is its path.
+type agentProjectView struct {
+	Revision int64 `json:"revision"`
+	Settings struct {
+		Roles        map[string]json.RawMessage `json:"roles"`
+		ContextFiles []json.RawMessage          `json:"contextFiles"`
+	} `json:"settings"`
 }
 
 // agentEffective: what a session of this agent in the project receives, in layers. Fleet sends the profile as saved
@@ -60,19 +76,29 @@ func agentEffective(q *Request, r *contract.AgentEffectiveRequest) (contract.Age
 	if err != nil {
 		return out, err
 	}
-	s := mapOf(project["settings"])
-	projectRevision := "r" + strconv.FormatInt(int64(num(project["revision"])), 10)
+	var pv agentProjectView
+	jsonRoundTrip(project, &pv)
+	projectRevision := "r" + strconv.FormatInt(pv.Revision, 10)
 	roles := []string{}
-	for role, v := range mapOf(s["roles"]) {
-		if astr(v) == r.Id || astr(mapOf(v)["profile"]) == r.Id {
+	for role, v := range pv.Settings.Roles {
+		var name string
+		var obj struct {
+			Profile string `json:"profile"`
+		}
+		if json.Unmarshal(v, &name) != nil {
+			json.Unmarshal(v, &obj)
+		}
+		if name == r.Id || obj.Profile == r.Id {
 			roles = append(roles, "role:"+role)
 		}
 	}
 	sort.Strings(roles)
-	fields := sortedKeysOf(p)
+	fields := slices.Sorted(maps.Keys(p))
 	ctx := []string{}
-	for _, f := range anys(s["contextFiles"]) {
-		ctx = append(ctx, astr(f))
+	for _, f := range pv.Settings.ContextFiles {
+		var path string
+		json.Unmarshal(f, &path)
+		ctx = append(ctx, path)
 	}
 	out.Layers = []contract.EffectiveLayer{
 		{Name: contract.EffectiveLayerNameRole, Source: definitionPath("project", r.ProjectId), Revision: &projectRevision, Fields: roles},
@@ -95,49 +121,41 @@ func agentCompatibility(q *Request, r *contract.AgentCompatibilityRequest) (cont
 	if err != nil || hd == nil {
 		return out, err
 	}
-	rows, err := q.tx.Query(q.ctx(), `SELECT DISTINCT ON (coalesce(e.harness,'codex'),coalesce(e.harness_version,''),coalesce(e.model,''),coalesce(e.data->>'effort',''))
-	   coalesce(e.harness,'codex'),e.harness_version,coalesce(e.model,''),e.data->>'effort',e.state::text,e.problem,e.id,coalesce(e.ended_at,e.started_at,e.updated_at)::text,(d->>'revision')::int
-	 FROM execution e CROSS JOIN LATERAL jsonb_array_elements(e.definitions) d
-	 WHERE e.definitions @> $1 AND d->>'kind'='agent' AND d->>'id'=$2 AND coalesce(e.started_at,e.updated_at) >= now() - interval '30 days'
-	 ORDER BY coalesce(e.harness,'codex'),coalesce(e.harness_version,''),coalesce(e.model,''),coalesce(e.data->>'effort',''),e.seq DESC`,
-		jsonBytes([]map[string]string{{"kind": "agent", "id": r.Id}}), r.Id)
+	runs, err := q.db().AgentsCompatibilityRuns(q.ctx(), db.AgentsCompatibilityRunsParams{Defs: jsonBytes([]map[string]string{{"kind": "agent", "id": r.Id}}), ID: r.Id})
 	if err != nil {
 		return out, err
 	}
-	defer rows.Close()
+	headHarness, headModel, headEffort := firstString(head.text("harness"), "codex"), head.text("model"), head.text("effort")
 	seenHead := false
-	for rows.Next() {
-		var c contract.CompatibilityRow
-		var state, id, at string
-		var problem *string
-		var rev *int64
-		if err := rows.Scan(&c.Harness, &c.HarnessVersion, &c.Model, &c.Effort, &state, &problem, &id, &at, &rev); err != nil {
-			return out, err
-		}
-		c.Revision, c.Evidence = rev, &contract.RunSummary{ExecutionId: &id, State: state, At: at}
+	for _, x := range runs {
+		c := contract.CompatibilityRow{Harness: x.Harness, HarnessVersion: x.HarnessVersion, Model: x.Model}
+		json.Unmarshal(x.Effort, &c.Effort)
+		json.Unmarshal(x.Revision, &c.Revision)
+		id := x.ID
+		c.Evidence = &contract.RunSummary{ExecutionId: &id, State: x.State, At: x.At}
 		// Judged only on a run at the head revision; failed only for a harness or start problem (never incompatible
 		// without a run that says so).
-		atHead := rev != nil && *rev == hd.Head
+		atHead := c.Revision != nil && *c.Revision == hd.Head
 		switch {
-		case atHead && state == "succeeded":
+		case atHead && x.State == "succeeded":
 			c.State = contract.CompatibilityStateChecked
-		case atHead && state == "failed" && problem != nil && harnessProblem(*problem):
-			c.State, c.Error = contract.CompatibilityStateFailed, problem
+		case atHead && x.State == "failed" && x.Problem != nil && harnessProblem(*x.Problem):
+			c.State, c.Error = contract.CompatibilityStateFailed, x.Problem
 		default:
 			c.State = contract.CompatibilityStateUnchecked
 		}
-		if c.Harness == firstString(head["harness"], "codex") && c.Model == astr(head["model"]) && astr(c.Effort) == astr(head["effort"]) {
+		if c.Harness == headHarness && c.Model == headModel && deref(c.Effort) == headEffort {
 			seenHead = true
 		}
 		out.Rows = append(out.Rows, c)
 	}
-	if err := rows.Err(); err != nil {
-		return out, err
-	}
 	if !seenHead {
-		e := strPtr(head["effort"])
+		var e *string
+		if headEffort != "" {
+			e = &headEffort
+		}
 		h := hd.Head
-		out.Rows = append(out.Rows, contract.CompatibilityRow{Harness: firstString(head["harness"], "codex"), Model: astr(head["model"]), Effort: e, Revision: &h, State: contract.CompatibilityStateUnchecked})
+		out.Rows = append(out.Rows, contract.CompatibilityRow{Harness: headHarness, Model: headModel, Effort: e, Revision: &h, State: contract.CompatibilityStateUnchecked})
 	}
 	return out, nil
 }

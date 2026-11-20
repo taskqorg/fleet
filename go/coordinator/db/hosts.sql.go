@@ -154,6 +154,163 @@ func (q *Queries) HostMove(ctx context.Context, arg HostMoveParams) error {
 	return err
 }
 
+const hostObservations = `-- name: HostObservations :many
+SELECT id, holder, last_seen_at, payload FROM host_observation ORDER BY seq
+`
+
+type HostObservationsRow struct {
+	ID         string
+	Holder     *string
+	LastSeenAt *time.Time
+	Payload    []byte
+}
+
+// Every host observation in record order; payload holds what the host reported (host_poll.go).
+func (q *Queries) HostObservations(ctx context.Context) ([]HostObservationsRow, error) {
+	rows, err := q.db.Query(ctx, hostObservations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HostObservationsRow
+	for rows.Next() {
+		var i HostObservationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Holder,
+			&i.LastSeenAt,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const hostPatch = `-- name: HostPatch :exec
+UPDATE host SET intake=coalesce($1::text, intake), payload=payload || $2::jsonb, updated_at=now() WHERE id= $3
+`
+
+type HostPatchParams struct {
+	Intake *string
+	Patch  []byte
+	ID     string
+}
+
+// hosts_update: intake when given, payload fields merged.
+func (q *Queries) HostPatch(ctx context.Context, arg HostPatchParams) error {
+	_, err := q.db.Exec(ctx, hostPatch, arg.Intake, arg.Patch, arg.ID)
+	return err
+}
+
+const hostRecordOf = `-- name: HostRecordOf :one
+SELECT host_id, holder, state, intake, secret_hash, removed_secret_hash, project_id, payload FROM host WHERE id=$1
+`
+
+type HostRecordOfRow struct {
+	HostID            string
+	Holder            *string
+	State             string
+	Intake            *string
+	SecretHash        *string
+	RemovedSecretHash *string
+	ProjectID         *string
+	Payload           []byte
+}
+
+func (q *Queries) HostRecordOf(ctx context.Context, id string) (HostRecordOfRow, error) {
+	row := q.db.QueryRow(ctx, hostRecordOf, id)
+	var i HostRecordOfRow
+	err := row.Scan(
+		&i.HostID,
+		&i.Holder,
+		&i.State,
+		&i.Intake,
+		&i.SecretHash,
+		&i.RemovedSecretHash,
+		&i.ProjectID,
+		&i.Payload,
+	)
+	return i, err
+}
+
+const hostRecords = `-- name: HostRecords :many
+SELECT host_id, holder, state, intake, secret_hash, removed_secret_hash, project_id, payload FROM host ORDER BY seq
+`
+
+type HostRecordsRow struct {
+	HostID            string
+	Holder            *string
+	State             string
+	Intake            *string
+	SecretHash        *string
+	RemovedSecretHash *string
+	ProjectID         *string
+	Payload           []byte
+}
+
+// Every host record, removed ones too, in record order; payload holds the fields that are not columns (typed_records.go).
+func (q *Queries) HostRecords(ctx context.Context) ([]HostRecordsRow, error) {
+	rows, err := q.db.Query(ctx, hostRecords)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HostRecordsRow
+	for rows.Next() {
+		var i HostRecordsRow
+		if err := rows.Scan(
+			&i.HostID,
+			&i.Holder,
+			&i.State,
+			&i.Intake,
+			&i.SecretHash,
+			&i.RemovedSecretHash,
+			&i.ProjectID,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const hostRegister = `-- name: HostRegister :exec
+INSERT INTO host(id, host_id, holder, intake, secret_hash, payload) VALUES($1, $2, $3, $4, $5, $6)
+ ON CONFLICT(id) DO UPDATE SET host_id=excluded.host_id, holder=excluded.holder, intake=excluded.intake, secret_hash=excluded.secret_hash,
+ removed_secret_hash=NULL, project_id=NULL, payload=excluded.payload, updated_at=now()
+`
+
+type HostRegisterParams struct {
+	ID         string
+	HostID     string
+	Holder     *string
+	Intake     *string
+	SecretHash *string
+	Payload    []byte
+}
+
+// A registered host: a new row starts active; a removed one's row is written afresh (its state moves in host_states.go).
+func (q *Queries) HostRegister(ctx context.Context, arg HostRegisterParams) error {
+	_, err := q.db.Exec(ctx, hostRegister,
+		arg.ID,
+		arg.HostID,
+		arg.Holder,
+		arg.Intake,
+		arg.SecretHash,
+		arg.Payload,
+	)
+	return err
+}
+
 const hostRemoveCounts = `-- name: HostRemoveCounts :one
 SELECT
  (SELECT count(*) FROM execution WHERE host_id= $1::text AND state IN ('preparing','running','waiting'))::bigint AS running,
@@ -197,6 +354,20 @@ func (q *Queries) HostRemovedSecretCount(ctx context.Context, removedSecretHash 
 	return count, err
 }
 
+const hostSetSecret = `-- name: HostSetSecret :exec
+UPDATE host SET secret_hash= $1, updated_at=now() WHERE id= $2
+`
+
+type HostSetSecretParams struct {
+	SecretHash *string
+	ID         string
+}
+
+func (q *Queries) HostSetSecret(ctx context.Context, arg HostSetSecretParams) error {
+	_, err := q.db.Exec(ctx, hostSetSecret, arg.SecretHash, arg.ID)
+	return err
+}
+
 const hostStateOf = `-- name: HostStateOf :one
 
 SELECT state FROM host WHERE id=$1 FOR UPDATE
@@ -209,6 +380,22 @@ func (q *Queries) HostStateOf(ctx context.Context, id string) (string, error) {
 	var state string
 	err := row.Scan(&state)
 	return state, err
+}
+
+const hostTombstone = `-- name: HostTombstone :exec
+UPDATE host SET removed_secret_hash=secret_hash, secret_hash=NULL, payload=(payload - 'harnesses') || jsonb_build_object('removedAt', $1::bigint),
+ updated_at=now() WHERE id= $2
+`
+
+type HostTombstoneParams struct {
+	RemovedAt int64
+	ID        string
+}
+
+// hosts_remove: the secret hash moves to removed_secret_hash, harnesses go, removedAt is kept (host_remove.go).
+func (q *Queries) HostTombstone(ctx context.Context, arg HostTombstoneParams) error {
+	_, err := q.db.Exec(ctx, hostTombstone, arg.RemovedAt, arg.ID)
+	return err
 }
 
 const observationHasCapability = `-- name: ObservationHasCapability :one

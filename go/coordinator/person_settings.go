@@ -6,7 +6,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"maps"
 	"regexp"
 	"slices"
@@ -14,6 +16,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func init() {
@@ -53,14 +57,15 @@ func settingsEmail(q *Request, email *string) (string, error) {
 // personSettings: the stored document read as settings; order list and empty collections when unset.
 func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 	ps := contract.PersonSettings{Email: email, Order: contract.DispatchOrderList}
-	d, err := unscoped(q, func() (doc, error) { return maybe(q, "person-setting:"+email, "person-setting") })
+	raw, err := unscoped(q, func() ([]byte, error) { return q.db().PersonSettingPayload(q.ctx(), "person-setting:"+email) })
+	if errors.Is(err, pgx.ErrNoRows) {
+		raw, err = nil, nil
+	}
 	if err != nil {
 		return ps, err
 	}
-	if d != nil {
-		// ponytail: the document holds the settings fields as written; a JSON round trip reads them back typed.
-		raw, _ := json.Marshal(d)
-		// ponytail: only person_settings_set writes this document, through checked typed fields; a field that does not
+	if raw != nil {
+		// ponytail: only person_settings_set writes this payload, through checked typed fields; a field that does not
 		// read (a hand edit) stays at its default instead of locking the person out of get, set and dispatch.
 		_ = json.Unmarshal(raw, &ps)
 		ps.Email = email
@@ -93,6 +98,23 @@ func personSettings(q *Request, email string) (contract.PersonSettings, error) {
 		ps.NavCounters = map[string]string{}
 	}
 	return ps, nil
+}
+
+// personSettingPayload: the person-setting row's payload, the settings fields under their record names (email is the
+// row's column).
+type personSettingPayload struct {
+	Order        contract.DispatchOrder `json:"order"`
+	Pins         []string               `json:"pins"`
+	Views        []contract.SavedView   `json:"views"`
+	Focus        []string               `json:"focus"`
+	FocusPresets []contract.FocusPreset `json:"focusPresets"`
+	Ignored      []string               `json:"ignored"`
+	Widths       map[string]int64       `json:"widths"`
+	RowPins      map[string][]string    `json:"rowPins"`
+	NavCollapsed bool                   `json:"navCollapsed"`
+	NavCounters  map[string]string      `json:"navCounters"`
+	LastViews    map[string]string      `json:"lastViews"`
+	ListGroups   map[string][]string    `json:"listGroups"`
 }
 
 func orEmpty(xs []string) []string {
@@ -327,14 +349,15 @@ func personSettingsSet(q *Request, r *contract.PersonSettingsSetRequest) (contra
 			next.RowPins[r.RowPin.List] = ids
 		}
 	}
-	by := actor(q, "operator")
 	_, err = unscoped(q, func() (struct{}, error) {
-		if err := put(q, "person-setting", doc{"id": "person-setting:" + email, "email": email, "order": string(next.Order), "pins": next.Pins,
-			"views": next.Views, "focus": next.Focus, "focusPresets": next.FocusPresets, "ignored": next.Ignored, "widths": next.Widths, "rowPins": next.RowPins, "navCollapsed": next.NavCollapsed, "navCounters": next.NavCounters, "lastViews": next.LastViews, "listGroups": next.ListGroups}); err != nil {
+		payload := personSettingPayload{Order: next.Order, Pins: next.Pins, Views: next.Views, Focus: next.Focus, FocusPresets: next.FocusPresets,
+			Ignored: next.Ignored, Widths: next.Widths, RowPins: next.RowPins, NavCollapsed: next.NavCollapsed, NavCounters: next.NavCounters,
+			LastViews: next.LastViews, ListGroups: next.ListGroups}
+		if err := q.db().PersonSettingPut(q.ctx(), db.PersonSettingPutParams{ID: "person-setting:" + email, Email: email, Payload: jsonBytes(payload)}); err != nil {
 			return struct{}{}, err
 		}
 		change := func(field string, previous, value any) error {
-			return put(q, "setting-change", doc{"id": newID(), "target": "person:" + email, "holder": email, "field": field, "previous": previous, "value": value, "actor": by, "at": nowMs()})
+			return recordPeopleChange(q, peopleChange{Target: "person:" + email, Holder: email, Field: field, Previous: previous, Value: value})
 		}
 		if next.Order != prev.Order {
 			if err := change("order", string(prev.Order), string(next.Order)); err != nil {
@@ -372,7 +395,11 @@ func checkView(v contract.SavedView) error {
 	if p := viewProblem(view); p != "" {
 		return fail(400, "views: "+v.Name+": "+p)
 	}
-	if name, _ := view.(map[string]any)["view"].(string); name != v.List {
+	var head struct {
+		View any `json:"view"`
+	}
+	_ = json.Unmarshal(raw, &head)
+	if name, _ := head.View.(string); name != v.List {
 		return fail(400, "views: "+v.Name+": view.view must equal list "+v.List)
 	}
 	return nil
@@ -488,7 +515,8 @@ func checkPrefs(q *Request, r *contract.PersonSettingsSetRequest) error {
 func soonestReset(cs []*candidate, readings map[string][]Reading) {
 	key := func(c *candidate) float64 {
 		best := -1.0
-		list := readings[astr(c.Subscription["id"])]
+		id, _ := c.Subscription["id"].(string) // candidates (dispatch.go) still carry the subscription record as a map
+		list := readings[id]
 		for _, r := range list {
 			if r.Period == "weekly" && r.State == "known" && r.Pct != nil && *r.Pct >= 100 {
 				return -1 // the overall weekly limit is used up: a per-model window does not make it soon

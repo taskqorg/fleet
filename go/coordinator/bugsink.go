@@ -21,7 +21,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 const (
@@ -219,7 +222,10 @@ func tunnelEnvelope(body []byte, want sentryDSN, actorID string) (out []byte, it
 			}
 			payload = p
 		}
-		line, _ = json.Marshal(map[string]any{"type": kind, "length": len(payload)})
+		line, _ = json.Marshal(struct {
+			Length int    `json:"length"`
+			Type   string `json:"type"`
+		}{len(payload), kind})
 		buf.Write(line)
 		buf.WriteByte('\n')
 		buf.Write(payload)
@@ -299,13 +305,13 @@ func (a *App) bugsinkAlert(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fail(400, "Invalid alert body"))
 		return
 	}
-	reply := func(v doc) {
+	reply := func(v bugsinkAlertReply) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(v)
 	}
 	switch p.AlertReason {
 	case "TEST":
-		reply(doc{"ok": true, "test": true})
+		reply(bugsinkAlertReply{OK: true, Test: true})
 		return
 	case "NEW", "REGRESSED", "UNMUTED":
 	default:
@@ -328,7 +334,21 @@ func (a *App) bugsinkAlert(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	reply(doc{"ok": true, "asked": asked})
+	reply(bugsinkAlertReply{OK: true, Asked: &asked})
+}
+
+// bugsinkAlertReply: {ok, test} for a test alert, else {asked, ok}.
+type bugsinkAlertReply struct {
+	Asked *bool `json:"asked,omitempty"`
+	OK    bool  `json:"ok"`
+	Test  bool  `json:"test,omitempty"`
+}
+
+// bugsinkProblemData: the data of an issue's problem.
+type bugsinkProblemData struct {
+	AlertReason    string `json:"alertReason"`
+	BugsinkProject string `json:"bugsinkProject,omitempty"`
+	IssueID        string `json:"issueId"`
 }
 
 // bugsinkProblem opens the owner's needs-you problem for an issue: a new issue asks once while its problem holds the
@@ -347,10 +367,7 @@ func bugsinkProblem(q *Request, issue, project, reason string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	data := doc{"issueId": issue, "alertReason": reason}
-	if project != "" {
-		data["bugsinkProject"] = project
-	}
+	data := docOf(bugsinkProblemData{AlertReason: reason, BugsinkProject: project, IssueID: issue})
 	return true, problemAsk(q, "direct", Problem{Cause: cause, Text: bugsinkText(issue, project, reason), ProjectID: fleetProject, Data: data})
 }
 
@@ -378,21 +395,19 @@ func bugsinkFleetProject(q *Request, name string) (string, error) {
 	if name == "" {
 		return "", nil
 	}
-	row, err := first(q, `SELECT d.id FROM definition d JOIN definition_revision r ON r.kind=d.kind AND r.id=d.id AND r.revision=d.head
-		WHERE d.kind='project' AND d.retired_at IS NULL AND jsonb_typeof(r.content::jsonb #> '{settings,errors,bugsink}')='array'
-		AND (r.content::jsonb #> '{settings,errors,bugsink}') ? $1 ORDER BY d.id LIMIT 1`, name)
-	if err != nil || row == nil {
-		return "", err
+	id, err := q.db().BugsinkFleetProject(q.ctx(), name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
 	}
-	return astr(row["id"]), nil
+	return id, err
 }
 
 // bugsinkResolvedPass closes the problem of every issue Bugsink now reports resolved, or no longer has. Without the
 // bugsink connection (a gateway, intake, an active key) it does nothing: problems then close through their answers.
 func bugsinkResolvedPass(ctx context.Context, a *App) error {
-	var held []doc
+	var held []db.BugsinkHeldProblemsRow
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
-		held, err = queryRows(q, "SELECT cause,coalesce(project_id,'') AS project FROM question WHERE cause LIKE $1 AND state IN ('open','answered') ORDER BY seq", bugsinkCause+"%")
+		held, err = q.db().BugsinkHeldProblems(q.ctx(), bugsinkCause)
 		return err
 	}); err != nil || len(held) == 0 {
 		return err
@@ -402,8 +417,8 @@ func bugsinkResolvedPass(ctx context.Context, a *App) error {
 	}
 	var failed error
 	for _, h := range held {
-		cause := astr(h["cause"])
-		closed, err := bugsinkIssueClosed(ctx, a, astr(h["project"]), strings.TrimPrefix(cause, bugsinkCause))
+		cause := h.Cause
+		closed, err := bugsinkIssueClosed(ctx, a, h.Project, strings.TrimPrefix(cause, bugsinkCause))
 		if err != nil {
 			// A project the connection is not granted to: its problems close through their answers only.
 			if !strings.Contains(err.Error(), "connection-unavailable") {
@@ -427,7 +442,7 @@ var bugsinkIssueClosed = func(ctx context.Context, a *App, project, issue string
 	if err != nil {
 		return false, err
 	}
-	return issueClosed(gatewayCall(ctx, token, bugsinkConn, "issue_get", map[string]string{"issue": issue}, mapOf(providerTools(bugsinkConn)["issue_get"])["idempotent"] == true), issue)
+	return issueClosed(gatewayCall(ctx, token, bugsinkConn, "issue_get", map[string]string{"issue": issue}, gatewayProviders[bugsinkConn].Tools["issue_get"].Idempotent), issue)
 }
 
 // issueClosed reads an issue_get answer: resolved, or Bugsink's own 404 ({"detail": ...}, the REST framework's not
@@ -458,15 +473,8 @@ var bugsinkKeyed = func(ctx context.Context, a *App) (bool, error) {
 		return false, nil
 	}
 	ok := false
-	err := runTx(ctx, a, nil, false, "", func(q *Request) error {
-		c, err := maybe(q, "connection:"+bugsinkConn, "api-connection")
-		if err != nil || c == nil || c["intake"] != "all" {
-			return err
-		}
-		ks, err := connKeys(q, bugsinkConn)
-		for _, k := range ks {
-			ok = ok || k["state"] == "active"
-		}
+	err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
+		ok, err = q.db().ConnTakesCalls(q.ctx(), bugsinkConn)
 		return err
 	})
 	return ok, err

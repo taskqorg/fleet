@@ -30,3 +30,15 @@ SELECT coalesce(task_id, '')::text AS task_id FROM question WHERE id=$1 AND stat
 
 -- name: ExecutionWatchState :one
 SELECT (CASE WHEN state='failed' THEN 'failed' ELSE 'unknown' END)::text AS s FROM execution WHERE id=$1 AND (state='failed' OR observation='unconfirmed');
+
+-- name: WatchRecordOf :one
+-- A watch row: session and project are columns, payload the other record fields (typed_records.go).
+SELECT session_id, project_id, payload FROM watch WHERE id=$1;
+
+-- name: WatchPut :exec
+INSERT INTO watch(id, session_id, project_id, payload) VALUES(@id::text, @session_id::text, sqlc.narg(project_id)::text, @payload::jsonb)
+ ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, project_id=excluded.project_id, payload=excluded.payload, updated_at=now();
+
+-- name: WatchSession :one
+-- The session fields a watch reads: its project, task, director and payload (deliveryId, focus).
+SELECT project_id, task_id, directed_by, payload FROM session WHERE id=$1;

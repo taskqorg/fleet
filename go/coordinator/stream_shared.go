@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"fleet/coordinator/db"
 )
 
 const streamRingLimit = 4096
@@ -25,19 +27,11 @@ type streamFlight struct {
 func (b *Broadcast) runFeed(ctx context.Context, s *Store) {
 	var cursor int64
 	initialized := false
-	prune := time.NewTicker(time.Minute)
-	defer prune.Stop()
 	var timer <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-prune.C:
-			if err := b.pruneChanges(ctx, s); err != nil {
-				continue
-			}
-			b.signalFeed()
-			continue
 		case <-b.feedWake:
 			t := time.NewTimer(75 * time.Millisecond)
 			select {
@@ -191,23 +185,13 @@ func (b *Broadcast) readBatch(ctx context.Context, a *App, p *Person, cursor int
 		for i, c := range rows {
 			seqs[i] = c.Seq
 		}
-		rs, err := tx.Query(ctx, "SELECT seq FROM change WHERE seq=ANY($1)", seqs)
+		visible, err := db.New(tx).StreamVisibleSeqs(ctx, seqs)
 		if err != nil {
 			return err
 		}
-		allowed := map[int64]bool{}
-		for rs.Next() {
-			var seq int64
-			if err := rs.Scan(&seq); err != nil {
-				rs.Close()
-				return err
-			}
+		allowed := make(map[int64]bool, len(visible))
+		for _, seq := range visible {
 			allowed[seq] = true
-		}
-		err = rs.Err()
-		rs.Close()
-		if err != nil {
-			return err
 		}
 		// Preserve global XID order; hidden rows and their payload never leave this method.
 		for _, c := range rows {
@@ -237,12 +221,10 @@ func (b *Broadcast) readBatch(ctx context.Context, a *App, p *Person, cursor int
 	return batch
 }
 
-// pruneChanges only expires the reconnect log, never durable work or transcripts.
+// pruneChanges only expires the reconnect log, never durable work or transcripts; every minute (listen), then the feed
+// reads again.
 func (b *Broadcast) pruneChanges(ctx context.Context, s *Store) error {
-	err := s.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, "DELETE FROM change WHERE seq IN (SELECT seq FROM change WHERE at < now()-interval '24 hours' ORDER BY at LIMIT 10000)")
-		return err
-	})
+	err := s.Tx(ctx, nil, true, NOLOCK, func(tx pgx.Tx) error { return db.New(tx).StreamPruneChanges(ctx) })
 	if err != nil {
 		return err
 	}
@@ -251,5 +233,6 @@ func (b *Broadcast) pruneChanges(ctx context.Context, s *Store) error {
 	b.ring = nil
 	b.filtered = nil
 	b.mu.Unlock()
+	b.signalFeed()
 	return nil
 }

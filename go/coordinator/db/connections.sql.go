@@ -9,6 +9,349 @@ import (
 	"context"
 )
 
+const connCallParent = `-- name: ConnCallParent :one
+SELECT task_id, session_id, directed_by, pipeline_id, pipeline_revision, step_id, profile_id, profile_revision FROM execution WHERE id=$1
+`
+
+type ConnCallParentRow struct {
+	TaskID           *string
+	SessionID        *string
+	DirectedBy       *string
+	PipelineID       *string
+	PipelineRevision *int64
+	StepID           *string
+	ProfileID        *string
+	ProfileRevision  *int64
+}
+
+// The lineage a call row takes from the execution it was made for.
+func (q *Queries) ConnCallParent(ctx context.Context, id string) (ConnCallParentRow, error) {
+	row := q.db.QueryRow(ctx, connCallParent, id)
+	var i ConnCallParentRow
+	err := row.Scan(
+		&i.TaskID,
+		&i.SessionID,
+		&i.DirectedBy,
+		&i.PipelineID,
+		&i.PipelineRevision,
+		&i.StepID,
+		&i.ProfileID,
+		&i.ProfileRevision,
+	)
+	return i, err
+}
+
+const connCallPhases = `-- name: ConnCallPhases :many
+SELECT id, (CASE WHEN data->>'phase'='completed' AND data->'transfer'->>'direction'='upload' AND NOT data ? 'uploadAccounted'
+ THEN 'upload-unaccounted' ELSE coalesce(data->>'phase','') END)::text AS phase FROM execution WHERE id = ANY($1::text[])
+`
+
+type ConnCallPhasesRow struct {
+	ID    string
+	Phase string
+}
+
+// Call rows already recorded with their transfer phase (” for a one-line call; upload-unaccounted: a completed upload
+// whose usage is not accounted yet).
+func (q *Queries) ConnCallPhases(ctx context.Context, ids []string) ([]ConnCallPhasesRow, error) {
+	rows, err := q.db.Query(ctx, connCallPhases, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnCallPhasesRow
+	for rows.Next() {
+		var i ConnCallPhasesRow
+		if err := rows.Scan(&i.ID, &i.Phase); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const connCallProblem = `-- name: ConnCallProblem :exec
+UPDATE execution SET problem= $1::text WHERE id= $2::text AND problem IS NULL
+`
+
+type ConnCallProblemParams struct {
+	Problem string
+	ID      string
+}
+
+// A failed call's problem, unless one is recorded.
+func (q *Queries) ConnCallProblem(ctx context.Context, arg ConnCallProblemParams) error {
+	_, err := q.db.Exec(ctx, connCallProblem, arg.Problem, arg.ID)
+	return err
+}
+
+const connExecutionExists = `-- name: ConnExecutionExists :one
+SELECT EXISTS (SELECT 1 FROM execution WHERE id=$1)
+`
+
+func (q *Queries) ConnExecutionExists(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, connExecutionExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const connExecutionSession = `-- name: ConnExecutionSession :one
+SELECT session_id FROM execution WHERE id=$1
+`
+
+func (q *Queries) ConnExecutionSession(ctx context.Context, id string) (*string, error) {
+	row := q.db.QueryRow(ctx, connExecutionSession, id)
+	var session_id *string
+	err := row.Scan(&session_id)
+	return session_id, err
+}
+
+const connHasActiveKey = `-- name: ConnHasActiveKey :one
+SELECT EXISTS (SELECT 1 FROM connection_key WHERE connection_id= $1::text AND state='active')
+`
+
+// Whether connection name has an active key.
+func (q *Queries) ConnHasActiveKey(ctx context.Context, name string) (bool, error) {
+	row := q.db.QueryRow(ctx, connHasActiveKey, name)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const connHistory = `-- name: ConnHistory :many
+SELECT (data->>'target')::text AS target, data FROM document WHERE kind='setting-change' AND data->>'target' LIKE 'connection:%' ORDER BY seq
+`
+
+type ConnHistoryRow struct {
+	Target string
+	Data   []byte
+}
+
+// The setting changes of every connection, oldest first.
+func (q *Queries) ConnHistory(ctx context.Context) ([]ConnHistoryRow, error) {
+	rows, err := q.db.Query(ctx, connHistory)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnHistoryRow
+	for rows.Next() {
+		var i ConnHistoryRow
+		if err := rows.Scan(&i.Target, &i.Data); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const connKeyRecordedSince = `-- name: ConnKeyRecordedSince :one
+SELECT coalesce(sum((t.connection_cost->>'amount')::numeric),0)::float8 FROM execution e JOIN execution_totals t ON t.execution_id=e.id
+ WHERE e.kind='tool_run' AND e.data->>'keyFingerprint'= $1::text AND (e.data->>'startedAt')::bigint>= $2::bigint
+`
+
+type ConnKeyRecordedSinceParams struct {
+	Fingerprint string
+	Since       int64
+}
+
+// The cost recorded for a key's calls since a time (ms).
+func (q *Queries) ConnKeyRecordedSince(ctx context.Context, arg ConnKeyRecordedSinceParams) (float64, error) {
+	row := q.db.QueryRow(ctx, connKeyRecordedSince, arg.Fingerprint, arg.Since)
+	var column_1 float64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const connKeyRequest = `-- name: ConnKeyRequest :one
+SELECT state::text AS state, coalesce(answer,'')::text AS answer,
+ (CASE WHEN jsonb_typeof(options->'connection')='string' THEN options->>'connection' ELSE '' END)::text AS connection
+ FROM question WHERE id=$1 AND kind='secret'
+`
+
+type ConnKeyRequestRow struct {
+	State      string
+	Answer     string
+	Connection string
+}
+
+// A key request: its state, answer and the connection it names (” when it names none).
+func (q *Queries) ConnKeyRequest(ctx context.Context, id string) (ConnKeyRequestRow, error) {
+	row := q.db.QueryRow(ctx, connKeyRequest, id)
+	var i ConnKeyRequestRow
+	err := row.Scan(&i.State, &i.Answer, &i.Connection)
+	return i, err
+}
+
+const connKeyRequestByRequest = `-- name: ConnKeyRequestByRequest :one
+SELECT text, (jsonb_build_object('id',id,'projectId',project_id,'requestId',request_id,'text',text,'state',CASE WHEN state='open' THEN 'waiting' ELSE state::text END,
+ 'createdAt',(extract(epoch FROM asked_at)*1000)::bigint,'actor',asked_by) || CASE WHEN state='answered' THEN jsonb_build_object('answer',answer,'answeredAt',(extract(epoch FROM answered_at)*1000)::bigint,'answeredBy',answered_by) ELSE '{}' END)::jsonb AS question
+ FROM question WHERE kind='secret' AND project_id= $1::text AND request_id= $2::text LIMIT 1
+`
+
+type ConnKeyRequestByRequestParams struct {
+	ProjectID string
+	RequestID string
+}
+
+type ConnKeyRequestByRequestRow struct {
+	Text     string
+	Question []byte
+}
+
+// A project's key request by its request id, as the project's questions show it (projects.go projectQuestionJSON).
+func (q *Queries) ConnKeyRequestByRequest(ctx context.Context, arg ConnKeyRequestByRequestParams) (ConnKeyRequestByRequestRow, error) {
+	row := q.db.QueryRow(ctx, connKeyRequestByRequest, arg.ProjectID, arg.RequestID)
+	var i ConnKeyRequestByRequestRow
+	err := row.Scan(&i.Text, &i.Question)
+	return i, err
+}
+
+const connOpenKeyRequests = `-- name: ConnOpenKeyRequests :many
+SELECT id FROM question WHERE kind='secret' AND state='open' AND options->>'connection'= $1::text ORDER BY seq
+`
+
+// The open key requests of a connection.
+func (q *Queries) ConnOpenKeyRequests(ctx context.Context, connection string) ([]string, error) {
+	rows, err := q.db.Query(ctx, connOpenKeyRequests, connection)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const connPersonExists = `-- name: ConnPersonExists :one
+SELECT EXISTS (SELECT 1 FROM person WHERE email=$1)
+`
+
+func (q *Queries) ConnPersonExists(ctx context.Context, email string) (bool, error) {
+	row := q.db.QueryRow(ctx, connPersonExists, email)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const connRunState = `-- name: ConnRunState :one
+SELECT coalesce((SELECT state::text FROM execution WHERE id=$1 AND kind IN ('agent_run','host_job')),'')::text
+`
+
+// The state of an agent run or host job; ” when there is none.
+func (q *Queries) ConnRunState(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, connRunState, id)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const connSetUsageKey = `-- name: ConnSetUsageKey :exec
+UPDATE execution SET data=jsonb_set(data,'{usageKey}',to_jsonb($1::text)) WHERE id= $2::text
+`
+
+type ConnSetUsageKeyParams struct {
+	UsageKey string
+	ID       string
+}
+
+func (q *Queries) ConnSetUsageKey(ctx context.Context, arg ConnSetUsageKeyParams) error {
+	_, err := q.db.Exec(ctx, connSetUsageKey, arg.UsageKey, arg.ID)
+	return err
+}
+
+const connTakesCalls = `-- name: ConnTakesCalls :one
+SELECT EXISTS (SELECT 1 FROM api_connection c WHERE c.id='connection:' || $1::text AND c.payload->>'intake'='all'
+ AND EXISTS (SELECT 1 FROM connection_key k WHERE k.connection_id= $1::text AND k.state='active'))
+`
+
+// Whether connection name takes calls: its intake is all and it has an active key.
+func (q *Queries) ConnTakesCalls(ctx context.Context, name string) (bool, error) {
+	row := q.db.QueryRow(ctx, connTakesCalls, name)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const connTransferComplete = `-- name: ConnTransferComplete :execrows
+UPDATE execution SET problem= $1::text, data=data|| $2::jsonb,
+ ended_at=started_at+make_interval(secs => $3::bigint/1000.0) WHERE id= $4::text AND
+ (data->>'phase'='started' OR ($5::boolean AND data->>'phase'='completed' AND NOT data ? 'uploadAccounted'))
+`
+
+type ConnTransferCompleteParams struct {
+	Problem *string
+	Patch   []byte
+	Ms      int64
+	ID      string
+	Upload  bool
+}
+
+// A transfer's completion over its started row (or an upload's completed row not yet accounted): problem, the patch
+// and its end.
+func (q *Queries) ConnTransferComplete(ctx context.Context, arg ConnTransferCompleteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, connTransferComplete,
+		arg.Problem,
+		arg.Patch,
+		arg.Ms,
+		arg.ID,
+		arg.Upload,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const connTransferTotals = `-- name: ConnTransferTotals :exec
+UPDATE execution_totals SET wall_ms= $1::bigint,wall_ms_basis='measured',active_ms= $1::bigint,active_ms_basis='measured',computed_at=now()
+ WHERE execution_id= $2::text AND EXISTS (SELECT 1 FROM execution e WHERE e.id= $2::text AND e.started_at IS NOT NULL)
+`
+
+type ConnTransferTotalsParams struct {
+	Ms int64
+	ID string
+}
+
+// A completed transfer's measured wall and active time.
+func (q *Queries) ConnTransferTotals(ctx context.Context, arg ConnTransferTotalsParams) error {
+	_, err := q.db.Exec(ctx, connTransferTotals, arg.Ms, arg.ID)
+	return err
+}
+
+const connUsageKeyCount = `-- name: ConnUsageKeyCount :one
+SELECT count(*) FROM execution WHERE kind='tool_run' AND data->>'usageKey'= $1::text AND id<> $2::text
+`
+
+type ConnUsageKeyCountParams struct {
+	UsageKey string
+	ID       string
+}
+
+// Other call rows that already counted a usage key.
+func (q *Queries) ConnUsageKeyCount(ctx context.Context, arg ConnUsageKeyCountParams) (int64, error) {
+	row := q.db.QueryRow(ctx, connUsageKeyCount, arg.UsageKey, arg.ID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const connectionKeyMove = `-- name: ConnectionKeyMove :exec
 UPDATE connection_key SET state= $1, updated_at=now() WHERE id= $2
 `

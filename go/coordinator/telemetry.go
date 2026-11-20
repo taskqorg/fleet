@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -14,7 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/errtrack"
 	"fleet/obs"
 )
@@ -84,19 +88,7 @@ func startTelemetry(ctx context.Context, a *App) {
 		stopTelemetry = func() { cancel(); spanWriter.Wait(2 * time.Second) }
 		spanWriter.Run(wctx)
 		obs.SetSink(spanWriter.Add)
-		go func() {
-			for ctx.Err() == nil {
-				err := spanStore.Migrate(ctx)
-				if err == nil {
-					return
-				}
-				log.Printf("telemetry: span schema: %v", err)
-				select {
-				case <-ctx.Done():
-				case <-time.After(time.Minute):
-				}
-			}
-		}()
+		untilDone(ctx, "telemetry: span schema", time.Minute, spanStore.Migrate)
 	}
 }
 
@@ -163,22 +155,12 @@ func hostSpans(q *Request, b *contract.SpanBatchRequest) (any, error) {
 	}
 	execs := map[string]*run{}
 	if len(ids) > 0 {
-		rs, err := q.app.store.pool.Query(q.ctx(), "SELECT id,project_id,task_id,experiment_id,account_id FROM execution WHERE id = ANY($1) AND host_id=$2", ids, host)
+		rs, err := db.New(q.app.store.pool).TelemetryHostExecutions(q.ctx(), db.TelemetryHostExecutionsParams{Ids: ids, HostID: host})
 		if err != nil {
 			return nil, err // the host retries the batch
 		}
-		for rs.Next() {
-			var id string
-			r := &run{}
-			if err := rs.Scan(&id, &r.project, &r.task, &r.experiment, &r.account); err != nil {
-				rs.Close()
-				return nil, err
-			}
-			execs[id] = r
-		}
-		rs.Close()
-		if err := rs.Err(); err != nil {
-			return nil, err
+		for _, r := range rs {
+			execs[r.ID] = &run{r.ProjectID, r.TaskID, r.ExperimentID, r.AccountID}
 		}
 	}
 	var buf bytes.Buffer
@@ -380,11 +362,13 @@ func telemetryTrace(q *Request, r *contract.TelemetryTraceRequest) (contract.Tel
 			return out, fail(400, "Specify traceId or executionId, not both")
 		}
 		err := runTx(q.ctx(), q.app, q, false, "", func(tq *Request) error {
-			e, err := one(tq, "SELECT data FROM execution WHERE id=$1", deref(r.ExecutionId))
-			if err != nil {
+			tp, err := tq.db().TelemetryExecutionTraceparent(tq.ctx(), deref(r.ExecutionId))
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errNotFound
+			} else if err != nil {
 				return err
 			}
-			trace, _, ok := obs.ParseTraceparent(astr(e["traceparent"]))
+			trace, _, ok := obs.ParseTraceparent(tp)
 			if !ok {
 				return fail(409, "Execution trace context unavailable")
 			}

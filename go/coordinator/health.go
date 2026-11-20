@@ -14,25 +14,38 @@ import (
 // one round trip through the pool.
 var healthApp *App
 
+// healthReply: GET /api/health's body, fields in the byte order the map reply wrote them; a value not known is null.
+type healthReply struct {
+	AutoUpdate string  `json:"autoUpdate"`
+	Built      *string `json:"built"`
+	Commit     *string `json:"commit"`
+	CommitTime *string `json:"commitTime"`
+	Database   string  `json:"database"`
+	Dirty      *bool   `json:"dirty"`
+	Version    string  `json:"version"`
+}
+
 func init() {
 	onStart(func(_ context.Context, a *App) { healthApp = a })
 	publicRoute("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		out := map[string]any{"version": version, "autoUpdate": "on", "commit": nil, "commitTime": nil, "dirty": nil, "built": nil, "database": "unknown"}
+		out := healthReply{Version: version, AutoUpdate: "on", Database: "unknown"}
 		if bi, ok := debug.ReadBuildInfo(); ok {
 			for _, s := range bi.Settings {
 				switch s.Key {
 				case "vcs.revision":
-					out["commit"] = s.Value
+					out.Commit = &s.Value
 				case "vcs.time":
-					out["commitTime"] = s.Value
+					out.CommitTime = &s.Value
 				case "vcs.modified":
-					out["dirty"] = s.Value == "true"
+					dirty := s.Value == "true"
+					out.Dirty = &dirty
 				}
 			}
 		}
 		if exe, err := os.Executable(); err == nil {
 			if st, err := os.Stat(exe); err == nil {
-				out["built"] = st.ModTime().UTC().Format(time.RFC3339)
+				built := st.ModTime().UTC().Format(time.RFC3339)
+				out.Built = &built
 			}
 		}
 		code := 503 // still starting until startAll ran
@@ -41,9 +54,9 @@ func init() {
 			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 			defer cancel()
 			if a.store.pool.Ping(ctx) == nil {
-				out["database"], out["autoUpdate"] = "ok", a.ownAutoUpdate(ctx)
+				out.Database, out.AutoUpdate = "ok", a.ownAutoUpdate(ctx)
 			} else {
-				out["database"], code = "unreachable", 503
+				out.Database, code = "unreachable", 503
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")

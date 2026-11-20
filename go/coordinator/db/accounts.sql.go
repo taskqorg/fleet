@@ -10,6 +10,54 @@ import (
 	"time"
 )
 
+const accountHostHarnessAllowed = `-- name: AccountHostHarnessAllowed :one
+SELECT coalesce(payload->'harnesses'->($1::text)->'allowed', 'true'::jsonb) <> 'false'::jsonb AS allowed
+ FROM host WHERE host_id= $2::text AND state<>'removed' ORDER BY seq LIMIT 1
+`
+
+type AccountHostHarnessAllowedParams struct {
+	Harness string
+	HostID  string
+}
+
+// Whether a host that is not removed allows a harness (host setting harnesses.<harness>.allowed; only false refuses).
+func (q *Queries) AccountHostHarnessAllowed(ctx context.Context, arg AccountHostHarnessAllowedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, accountHostHarnessAllowed, arg.Harness, arg.HostID)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const accountHostSeen = `-- name: AccountHostSeen :many
+SELECT id, last_seen_at FROM host_observation ORDER BY seq
+`
+
+type AccountHostSeenRow struct {
+	ID         string
+	LastSeenAt *time.Time
+}
+
+// When each host was last seen, by its observation.
+func (q *Queries) AccountHostSeen(ctx context.Context) ([]AccountHostSeenRow, error) {
+	rows, err := q.db.Query(ctx, accountHostSeen)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AccountHostSeenRow
+	for rows.Next() {
+		var i AccountHostSeenRow
+		if err := rows.Scan(&i.ID, &i.LastSeenAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const accountInspectionExecution = `-- name: AccountInspectionExecution :one
 SELECT (e.data || jsonb_build_object('state', e.state, 'observation', e.observation))::jsonb AS record
  FROM execution e JOIN account_inspection i ON i.id=$1 AND e.id=i.execution_id
@@ -36,6 +84,43 @@ func (q *Queries) AccountNameTaken(ctx context.Context, name *string) (bool, err
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const accountRows = `-- name: AccountRows :many
+SELECT id, name, holder, intake, harness, provider, project_id, payload, seq, updated_at, tombstoned_at FROM managed_account ORDER BY seq
+`
+
+// Every subscription, in insertion order.
+func (q *Queries) AccountRows(ctx context.Context) ([]ManagedAccount, error) {
+	rows, err := q.db.Query(ctx, accountRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ManagedAccount
+	for rows.Next() {
+		var i ManagedAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Holder,
+			&i.Intake,
+			&i.Harness,
+			&i.Provider,
+			&i.ProjectID,
+			&i.Payload,
+			&i.Seq,
+			&i.UpdatedAt,
+			&i.TombstonedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const accountTakesWork = `-- name: AccountTakesWork :one
