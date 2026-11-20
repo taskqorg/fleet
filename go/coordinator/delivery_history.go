@@ -28,6 +28,9 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -81,41 +84,52 @@ func init() {
 
 // ---- storage ----
 
-// dhTables: the table of each record kind and its key column (the record id is "<kind>:<key>").
-var dhTables = map[string]struct{ table, key string }{
-	"delivery-pr": {"delivery_pr", "number"}, "delivery-run": {"delivery_run", "run_id"},
-	"delivery-release": {"delivery_release", "tag"}, "delivery-baseline": {"delivery_baseline", "name"},
-	"delivery-check": {"delivery_check", ""},
-}
-
+// dhPut stores one record of kind (its id is "<kind>:<key>", the key its table's unique column).
 func dhPut(q *Request, kind, id string, v any) error {
-	t, ok := dhTables[kind]
-	if !ok {
-		return fmt.Errorf("unknown delivery record kind %s", kind)
-	}
-	cols, vals, args := "id,payload,project_id", "$1,$2::jsonb,$3", []any{id, jsonBytes(v), ciProject}
-	if t.key != "" {
-		key := "$4::text"
-		if t.key == "number" || t.key == "run_id" {
-			key = "($4::text)::bigint"
+	d, payload := q.db(), jsonBytes(v)
+	key := strings.TrimPrefix(id, kind+":")
+	number := func() (int64, error) {
+		n, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("delivery record %s: %w", id, err)
 		}
-		cols, vals, args = cols+","+t.key, vals+","+key, append(args, strings.TrimPrefix(id, kind+":"))
+		return n, nil
 	}
-	// Equal data is not written again, so the change stream (kind delivery) carries only real changes.
-	return exec(q, "INSERT INTO "+t.table+"("+cols+") VALUES("+vals+") ON CONFLICT (id) DO UPDATE SET payload=EXCLUDED.payload,updated_at=now() WHERE "+
-		t.table+".payload IS DISTINCT FROM EXCLUDED.payload", args...)
+	switch kind {
+	case "delivery-pr":
+		n, err := number()
+		if err != nil {
+			return err
+		}
+		return d.DeliveryPrPut(q.ctx(), db.DeliveryPrPutParams{ID: id, Payload: payload, ProjectID: ciProject, Number: n})
+	case "delivery-run":
+		n, err := number()
+		if err != nil {
+			return err
+		}
+		return d.DeliveryRunPut(q.ctx(), db.DeliveryRunPutParams{ID: id, Payload: payload, ProjectID: ciProject, RunID: n})
+	case "delivery-release":
+		return d.DeliveryReleasePut(q.ctx(), db.DeliveryReleasePutParams{ID: id, Payload: payload, ProjectID: ciProject, Tag: key})
+	case "delivery-baseline":
+		return d.DeliveryBaselinePut(q.ctx(), db.DeliveryBaselinePutParams{ID: id, Payload: payload, ProjectID: ciProject, Name: key})
+	case "delivery-check":
+		return d.DeliveryCheckPut(q.ctx(), db.DeliveryCheckPutParams{ID: id, Payload: payload, ProjectID: ciProject})
+	}
+	return fmt.Errorf("unknown delivery record kind %s", kind)
 }
 
+// dhLoad: the records of kind in id order; one that does not decode as T is left out.
 func dhLoad[T any](q *Request, kind string) ([]T, error) {
-	t, ok := dhTables[kind]
-	if !ok {
+	read := map[string]func(context.Context) ([][]byte, error){"delivery-pr": q.db().DeliveryPrPayloads, "delivery-run": q.db().DeliveryRunPayloads,
+		"delivery-release": q.db().DeliveryReleasePayloads, "delivery-baseline": q.db().DeliveryBaselinePayloads}[kind]
+	if read == nil {
 		return nil, fmt.Errorf("unknown delivery record kind %s", kind)
 	}
-	rs, err := rows(q, "SELECT payload FROM "+t.table+" ORDER BY id")
+	rs, err := read(q.ctx())
 	out := []T{}
 	for _, r := range rs {
 		var v T
-		if json.Unmarshal(jsonBytes(r), &v) == nil {
+		if json.Unmarshal(r, &v) == nil {
 			out = append(out, v)
 		}
 	}
@@ -124,48 +138,44 @@ func dhLoad[T any](q *Request, kind string) ([]T, error) {
 
 func dhStateOf(q *Request) (dhState, error) {
 	st := dhState{UISeen: map[string]string{}, CiTried: map[string]string{}, CiRetry: map[string]int{}, CiError: map[string]string{}}
-	d, err := first(q, `SELECT coalesce(backfilled_from,'') AS backfilled_from, backfilled, coalesce(through,'') AS through, coalesce(pulls_updated,'') AS pulls_updated,
-	 coalesce(installs_from,'') AS installs_from, coalesce(refreshed_at,'') AS refreshed_at, coalesce(problem,'') AS problem, coalesce(checked_release,'') AS checked_release,
-	 coalesce(checked_at,'') AS checked_at FROM delivery_history_state`)
-	if err != nil {
+	d, err := q.db().DeliveryHistoryState(q.ctx())
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return st, err
 	}
-	if d != nil {
-		st.BackfilledFrom, st.Backfilled, st.Through, st.PullsUpdated = astr(d["backfilled_from"]), d["backfilled"] == true, astr(d["through"]), astr(d["pulls_updated"])
-		st.InstallsFrom, st.RefreshedAt, st.Problem = astr(d["installs_from"]), astr(d["refreshed_at"]), astr(d["problem"])
-		st.CheckedRelease, st.CheckedAt = astr(d["checked_release"]), astr(d["checked_at"])
-	}
-	seen, err := rowsOf(q, "SELECT version, seen_at FROM delivery_ui_seen")
+	st.BackfilledFrom, st.Backfilled, st.Through, st.PullsUpdated = d.BackfilledFrom, d.Backfilled, d.Through, d.PullsUpdated
+	st.InstallsFrom, st.RefreshedAt, st.Problem = d.InstallsFrom, d.RefreshedAt, d.Problem
+	st.CheckedRelease, st.CheckedAt = d.CheckedRelease, d.CheckedAt
+	seen, err := q.db().DeliveryUISeen(q.ctx())
 	if err != nil {
 		return st, err
 	}
 	for _, r := range seen {
-		st.UISeen[astr(r["version"])] = astr(r["seen_at"])
+		st.UISeen[r.Version] = r.SeenAt
 	}
-	runs, err := rowsOf(q, "SELECT payload, attempts, coalesce(last_error,'') AS last_error FROM delivery_run_read ORDER BY run_id")
+	runs, err := q.db().DeliveryRunReads(q.ctx())
 	if err != nil {
 		return st, err
 	}
 	for _, r := range runs {
 		var run dhRun
-		if json.Unmarshal(jsonBytes(r["payload"]), &run) == nil {
-			st.RetryRuns = append(st.RetryRuns, dhRetry{Run: run, Tries: int(num(r["attempts"])), Error: astr(r["last_error"])})
+		if json.Unmarshal(r.Payload, &run) == nil {
+			st.RetryRuns = append(st.RetryRuns, dhRetry{Run: run, Tries: int(r.Attempts), Error: r.LastError})
 		}
 	}
-	prs, err := rowsOf(q, "SELECT number, attempts, next_attempt_at, coalesce(last_error,'') AS last_error FROM delivery_pr WHERE attempts>0 OR next_attempt_at IS NOT NULL OR last_error IS NOT NULL")
+	prs, err := q.db().DeliveryPrRetries(q.ctx())
 	if err != nil {
 		return st, err
 	}
 	for _, r := range prs {
-		n := strconv.FormatInt(int64(num(r["number"])), 10)
-		if a := int(num(r["attempts"])); a > 0 {
-			st.CiRetry[n] = a
+		n := strconv.FormatInt(r.Number, 10)
+		if r.Attempts > 0 {
+			st.CiRetry[n] = int(r.Attempts)
 		}
-		if e := astr(r["last_error"]); e != "" {
-			st.CiError[n] = e // kept when the lookups were given up
+		if r.LastError != "" {
+			st.CiError[n] = r.LastError // kept when the lookups were given up
 		}
-		if t, err := time.Parse(time.RFC3339Nano, astr(r["next_attempt_at"])); err == nil {
-			st.CiTried[n] = t.Add(-time.Hour).UTC().Format(time.RFC3339) // a lookup is due an hour after the last
+		if r.NextAttemptAt != nil {
+			st.CiTried[n] = r.NextAttemptAt.Add(-time.Hour).UTC().Format(time.RFC3339) // a lookup is due an hour after the last
 		}
 	}
 	return st, nil
@@ -174,37 +184,37 @@ func dhStateOf(q *Request) (dhState, error) {
 // dhSave writes the pass's state: its row, the UI first seen, the runs to read again (the others go) and the PR CI
 // lookup state on the stored pull requests (the work kit's retry columns: attempts, next_attempt_at, last_error).
 func dhSave(q *Request, st dhState) error {
-	if err := exec(q, `INSERT INTO delivery_history_state(id,backfilled_from,backfilled,through,pulls_updated,installs_from,refreshed_at,problem,checked_release,checked_at,project_id)
-	 VALUES('delivery-history',nullif($1,''),$2,nullif($3,''),nullif($4,''),nullif($5,''),nullif($6,''),nullif($7,''),nullif($8,''),nullif($9,''),$10)
-	 ON CONFLICT (id) DO UPDATE SET backfilled_from=EXCLUDED.backfilled_from,backfilled=EXCLUDED.backfilled,through=EXCLUDED.through,pulls_updated=EXCLUDED.pulls_updated,
-	  installs_from=EXCLUDED.installs_from,refreshed_at=EXCLUDED.refreshed_at,problem=EXCLUDED.problem,checked_release=EXCLUDED.checked_release,checked_at=EXCLUDED.checked_at,updated_at=now()
-	 WHERE (delivery_history_state.backfilled_from,delivery_history_state.backfilled,delivery_history_state.through,delivery_history_state.pulls_updated,
-	  delivery_history_state.installs_from,delivery_history_state.refreshed_at,delivery_history_state.problem,delivery_history_state.checked_release,delivery_history_state.checked_at)
-	  IS DISTINCT FROM (EXCLUDED.backfilled_from,EXCLUDED.backfilled,EXCLUDED.through,EXCLUDED.pulls_updated,EXCLUDED.installs_from,EXCLUDED.refreshed_at,EXCLUDED.problem,
-	  EXCLUDED.checked_release,EXCLUDED.checked_at)`,
-		st.BackfilledFrom, st.Backfilled, st.Through, st.PullsUpdated, st.InstallsFrom, st.RefreshedAt, st.Problem, st.CheckedRelease, st.CheckedAt, ciProject); err != nil {
+	d := q.db()
+	if err := d.DeliveryHistoryStateSave(q.ctx(), db.DeliveryHistoryStateSaveParams{BackfilledFrom: st.BackfilledFrom, Backfilled: st.Backfilled,
+		Through: st.Through, PullsUpdated: st.PullsUpdated, InstallsFrom: st.InstallsFrom, RefreshedAt: st.RefreshedAt, Problem: st.Problem,
+		CheckedRelease: st.CheckedRelease, CheckedAt: st.CheckedAt, ProjectID: ciProject}); err != nil {
 		return err
 	}
-	versions, ats := []string{}, []string{}
+	type seen struct {
+		V string `json:"v"`
+		A string `json:"a"`
+	}
+	ui := []seen{}
 	for v, at := range st.UISeen {
-		versions, ats = append(versions, v), append(ats, at)
+		ui = append(ui, seen{v, at})
 	}
-	if err := exec(q, `INSERT INTO delivery_ui_seen(version,seen_at,project_id) SELECT v,a,$3 FROM unnest($1::text[],$2::text[]) x(v,a)
-	 ON CONFLICT (version) DO UPDATE SET seen_at=EXCLUDED.seen_at WHERE delivery_ui_seen.seen_at<>EXCLUDED.seen_at`, versions, ats, ciProject); err != nil {
+	if err := d.DeliveryUISeenSave(q.ctx(), db.DeliveryUISeenSaveParams{Seen: jsonBytes(ui), ProjectID: ciProject}); err != nil {
 		return err
 	}
-	ids, runs, tries, errs := []int64{}, []string{}, []int32{}, []string{}
+	type read struct {
+		I int64           `json:"i"`
+		P json.RawMessage `json:"p"`
+		T int             `json:"t"`
+		E string          `json:"e"`
+	}
+	ids, reads := []int64{}, []read{}
 	for _, x := range st.RetryRuns {
-		ids, runs, tries, errs = append(ids, x.Run.ID), append(runs, string(jsonBytes(x.Run))), append(tries, int32(x.Tries)), append(errs, x.Error)
+		ids, reads = append(ids, x.Run.ID), append(reads, read{x.Run.ID, jsonBytes(x.Run), x.Tries, x.Error})
 	}
-	if err := exec(q, "DELETE FROM delivery_run_read WHERE NOT run_id = ANY($1::bigint[])", ids); err != nil {
+	if err := d.DeliveryRunReadsKeep(q.ctx(), ids); err != nil {
 		return err
 	}
-	if err := exec(q, `INSERT INTO delivery_run_read(run_id,payload,attempts,next_attempt_at,last_error,project_id)
-	 SELECT DISTINCT ON (i) i,p::jsonb,t,now(),nullif(e,''),$5 FROM unnest($1::bigint[],$2::text[],$3::int[],$4::text[]) x(i,p,t,e) ORDER BY i
-	 ON CONFLICT (run_id) DO UPDATE SET payload=EXCLUDED.payload,attempts=EXCLUDED.attempts,next_attempt_at=EXCLUDED.next_attempt_at,last_error=EXCLUDED.last_error
-	 WHERE (delivery_run_read.payload,delivery_run_read.attempts,delivery_run_read.last_error) IS DISTINCT FROM (EXCLUDED.payload,EXCLUDED.attempts,EXCLUDED.last_error)`,
-		ids, runs, tries, errs, ciProject); err != nil {
+	if err := d.DeliveryRunReadsSave(q.ctx(), db.DeliveryRunReadsSaveParams{Reads: jsonBytes(reads), ProjectID: ciProject}); err != nil {
 		return err
 	}
 	keys := map[string]bool{}
@@ -217,37 +227,41 @@ func dhSave(q *Request, st dhState) error {
 	for n := range st.CiError {
 		keys[n] = true
 	}
-	nums, attempts, nexts, lasts := []int64{}, []int32{}, []*time.Time{}, []string{}
+	type lookup struct {
+		N int64  `json:"n"`
+		A int    `json:"a"`
+		T string `json:"t"` // the next lookup (RFC 3339), "" for none
+		E string `json:"e"`
+	}
+	prs := []lookup{}
 	for n := range keys {
 		pr, err := strconv.ParseInt(n, 10, 64)
 		if err != nil {
 			continue
 		}
-		var next *time.Time
+		next := ""
 		if t, err := time.Parse(time.RFC3339, st.CiTried[n]); err == nil {
-			next = ptr(t.Add(time.Hour))
+			next = t.Add(time.Hour).Format(time.RFC3339)
 		}
-		nums, attempts, nexts, lasts = append(nums, pr), append(attempts, int32(st.CiRetry[n])), append(nexts, next), append(lasts, st.CiError[n])
+		prs = append(prs, lookup{pr, st.CiRetry[n], next, st.CiError[n]})
 	}
-	return exec(q, `UPDATE delivery_pr p SET attempts=coalesce(x.a,0),next_attempt_at=x.t,last_error=nullif(x.e,'')
-	 FROM delivery_pr o LEFT JOIN unnest($1::bigint[],$2::int[],$3::timestamptz[],$4::text[]) x(n,a,t,e) ON x.n=o.number
-	 WHERE p.id=o.id AND (x.n IS NOT NULL OR o.attempts<>0 OR o.next_attempt_at IS NOT NULL OR o.last_error IS NOT NULL)
-	  AND (p.attempts,p.next_attempt_at,p.last_error) IS DISTINCT FROM (coalesce(x.a,0),x.t,nullif(x.e,''))`, nums, attempts, nexts, lasts)
+	return d.DeliveryPrRetrySave(q.ctx(), jsonBytes(prs))
 }
 
 func deliverySettingsOf(q *Request) (contract.DeliverySettings, error) {
-	s := deliveryDefaults
-	d, err := first(q, "SELECT ratio, min_samples, min_delta_ms, baseline FROM delivery_settings")
-	if d != nil {
-		s = contract.DeliverySettings{Ratio: num(d["ratio"]), MinSamples: int64(num(d["min_samples"])), MinDeltaMs: int64(num(d["min_delta_ms"])), Baseline: astr(d["baseline"])}
+	d, err := q.db().DeliverySettingsGet(q.ctx())
+	if errors.Is(err, pgx.ErrNoRows) {
+		return deliveryDefaults, nil
 	}
-	return s, err
+	if err != nil {
+		return deliveryDefaults, err
+	}
+	return contract.DeliverySettings{Ratio: d.Ratio, MinSamples: d.MinSamples, MinDeltaMs: d.MinDeltaMs, Baseline: d.Baseline}, nil
 }
 
 func deliverySettingsPut(q *Request, s contract.DeliverySettings) error {
-	return exec(q, `INSERT INTO delivery_settings(id,ratio,min_samples,min_delta_ms,baseline,project_id) VALUES('delivery-settings',$1,$2,$3,$4,$5)
-	 ON CONFLICT (id) DO UPDATE SET ratio=EXCLUDED.ratio,min_samples=EXCLUDED.min_samples,min_delta_ms=EXCLUDED.min_delta_ms,baseline=EXCLUDED.baseline,updated_at=now()`,
-		s.Ratio, s.MinSamples, s.MinDeltaMs, s.Baseline, ciProject)
+	return q.db().DeliverySettingsPut(q.ctx(), db.DeliverySettingsPutParams{Ratio: s.Ratio, MinSamples: s.MinSamples, MinDeltaMs: s.MinDeltaMs,
+		Baseline: s.Baseline, ProjectID: ciProject})
 }
 
 // ---- the pass ----
@@ -305,7 +319,7 @@ type dhRun struct {
 func deliveryHistoryPass(ctx context.Context, a *App) error {
 	var keyed bool
 	var st dhState
-	var obs []doc
+	var obs []db.DeliveryHostsSeenRow
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) (err error) {
 		if _, _, keyed, err = githubConnectionOf(q, ciOwner); err != nil {
 			return err
@@ -313,7 +327,7 @@ func deliveryHistoryPass(ctx context.Context, a *App) error {
 		if st, err = dhStateOf(q); err != nil {
 			return err
 		}
-		obs, err = all(q, "host-observation", nil)
+		obs, err = deliveryHostsSeen(q)
 		return err
 	}); err != nil {
 		return err
@@ -778,17 +792,30 @@ func uiSeenSnapshot() map[string]string {
 
 type hostVersion struct{ version, at string }
 
+// deliveryProblemData: what a delivery regression's owner problem records besides its cause and text.
+type deliveryProblemData struct {
+	Key        string   `json:"key"`
+	Metric     string   `json:"metric"`
+	BaselineMs int64    `json:"baselineMs"`
+	CurrentMs  int64    `json:"currentMs"`
+	Links      []string `json:"links"`
+}
+
+// deliveryHostsSeen: every host's observation as the delivery reads it (last seen in ms, executor version, update).
+func deliveryHostsSeen(q *Request) ([]db.DeliveryHostsSeenRow, error) {
+	return q.db().DeliveryHostsSeen(q.ctx())
+}
+
 // deliveryHostVersions: each host seen in the last hour with its executor version and when it got it (the healthy
 // update's time when it names that version, else now), plus "coordinator": this process.
-func deliveryHostVersions(obs []doc, now time.Time) map[string]hostVersion {
+func deliveryHostVersions(obs []db.DeliveryHostsSeenRow, now time.Time) map[string]hostVersion {
 	out := map[string]hostVersion{"coordinator": {version, coordinatorStarted.Format(time.RFC3339)}}
 	for _, o := range obs {
-		seen, _ := numOK(o["lastSeenAt"])
-		v := astr(o["version"])
-		if v == "" || now.UnixMilli()-int64(seen) > 3600_000 {
+		v := o.Version
+		if v == "" || now.UnixMilli()-int64(o.LastSeenMs) > 3600_000 {
 			continue
 		}
-		u, ok := decodeUpdate(o["update"])
+		u, ok := decodeUpdate(json.RawMessage(o.Update))
 		if !ok || u.Version != v || u.State != "ok" {
 			continue
 		}
@@ -796,7 +823,7 @@ func deliveryHostVersions(obs []doc, now time.Time) map[string]hostVersion {
 		if at == "" {
 			at = now.Format(time.RFC3339)
 		}
-		out[astr(o["id"])] = hostVersion{v, at}
+		out[o.ID] = hostVersion{v, at}
 	}
 	return out
 }
@@ -880,19 +907,19 @@ func deliveryInstalls(r *contract.DeliveryRelease, st dhState, hosts map[string]
 }
 
 // deliveryUpdateObservations retains actual version-specific updater results, including refusals.
-func deliveryUpdateObservations(r *contract.DeliveryRelease, obs []doc) {
+func deliveryUpdateObservations(r *contract.DeliveryRelease, obs []db.DeliveryHostsSeenRow) {
 	if strings.HasPrefix(r.Tag, "ui-") {
 		return
 	}
 	for _, o := range obs {
-		u, ok := decodeUpdate(o["update"])
+		u, ok := decodeUpdate(json.RawMessage(o.Update))
 		if !ok || u.Version != releaseVersionOf(r.Tag) || u.At == "" {
 			continue
 		}
 		if r.UpdateObservations == nil {
 			r.UpdateObservations = map[string]contract.UpdateResult{}
 		}
-		h := astr(o["id"])
+		h := o.ID
 		if old, ok := r.UpdateObservations[h]; !ok || old.At < u.At {
 			r.UpdateObservations[h] = u
 		}
@@ -1292,14 +1319,14 @@ func deliveryCheck(q *Request, prs []contract.DeliveryPr, runs []contract.Delive
 			text += " " + strings.Join(r.Links, " ")
 		}
 		ps = append(ps, Problem{Cause: "problem:delivery:" + r.Key + ":" + string(r.Metric), Text: text, Rule: "delivery-regression", ProjectID: ciProject,
-			Data: doc{"key": r.Key, "metric": r.Metric, "baselineMs": r.BaselineMs, "currentMs": r.CurrentMs, "links": r.Links}})
+			Data: docOf(deliveryProblemData{r.Key, string(r.Metric), r.BaselineMs, r.CurrentMs, r.Links})})
 	}
 	if err := problemsSync(q, "delivery", ps); err != nil {
 		return contract.DeliveryRegressionsReply{}, err
 	}
 	// A held question shows the latest numbers and range, not those of the check that opened it.
 	for _, p := range ps {
-		if err := exec(q, "UPDATE question SET text=$2,data=data||$3::jsonb WHERE cause=$1 AND state IN ('open','answered') AND text<>$2", p.Cause, p.Text, jsonBytes(p.Data)); err != nil {
+		if err := q.db().DeliveryProblemRefresh(q.ctx(), db.DeliveryProblemRefreshParams{Cause: &p.Cause, Text: p.Text, Data: jsonBytes(p.Data)}); err != nil {
 			return contract.DeliveryRegressionsReply{}, err
 		}
 	}
@@ -1453,7 +1480,7 @@ func deliveryBaselineSet(q *Request, r *contract.DeliveryBaselineSetRequest) (co
 	}
 	if r.Remove != nil {
 		name := strings.TrimSpace(*r.Remove)
-		if err := exec(q, "DELETE FROM delivery_baseline WHERE name=$1", name); err != nil {
+		if err := q.db().DeliveryBaselineDelete(q.ctx(), name); err != nil {
 			return contract.DeliveryBaselineReply{}, err
 		}
 		// The check must not compare with a snapshot that is gone while the settings still name it.
@@ -1472,11 +1499,11 @@ func deliveryBaselineSet(q *Request, r *contract.DeliveryBaselineSetRequest) (co
 			return contract.DeliveryBaselineReply{}, fail(400, "settings: ratio above 1, minSamples at least 1, minDeltaMs not negative")
 		}
 		if s.Baseline != "" {
-			d, err := first(q, "SELECT 1 AS x FROM delivery_baseline WHERE name=$1", s.Baseline)
+			known, err := q.db().DeliveryBaselineExists(q.ctx(), s.Baseline)
 			if err != nil {
 				return contract.DeliveryBaselineReply{}, err
 			}
-			if d == nil {
+			if !known {
 				return contract.DeliveryBaselineReply{}, fail(404, "Unknown baseline snapshot "+s.Baseline)
 			}
 		}
@@ -1515,13 +1542,13 @@ func deliveryRegressionsOp(q *Request, r *contract.DeliveryRegressionsRequest) (
 		})
 		return c, err
 	}
-	d, err := first(q, "SELECT payload FROM delivery_check")
-	if err != nil {
+	d, err := q.db().DeliveryCheckPayload(q.ctx())
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return contract.DeliveryRegressionsReply{}, err
 	}
-	if d != nil {
+	if err == nil {
 		var c contract.DeliveryRegressionsReply
-		if json.Unmarshal(jsonBytes(d["payload"]), &c) == nil {
+		if json.Unmarshal(d, &c) == nil {
 			return c, nil
 		}
 	}

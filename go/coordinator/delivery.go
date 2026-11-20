@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // deliveryState: the last pass, per repository (lower-case owner/name). A repository listed by several projects is read
@@ -58,8 +59,8 @@ func init() {
 		// exhaust the keyless budget.
 		// With a key a pass runs every minute (GitHub allows 5000 reads an hour); keyless ones keep FLEET_DELIVERY_KEYLESS_MS apart.
 		d := envMs("FLEET_DELIVERY_TICK_MS", 60*1000)
-		if d > 0 {
-			go deliveryPass(ctx, a) // the first read at start: a deploy every few minutes must not blank the page
+		if d > 0 { // the first read at start: a deploy every few minutes must not blank the page
+			untilDone(ctx, "delivery-first", d, func(ctx context.Context) error { deliveryPass(ctx, a); return nil })
 		}
 		every(ctx, "delivery", d, func(ctx context.Context) error { return deliveryPass(ctx, a) })
 	})
@@ -189,8 +190,8 @@ func deliveryPass(ctx context.Context, a *App) error {
 			return err
 		}
 		for _, id := range ids {
-			for _, r := range anys(projectSettingsOf(q, id)["repos"]) {
-				m := githubRemote.FindStringSubmatch(astr(mapOf(r)["remote"]))
+			for _, remote := range projectRemotes(q, id) {
+				m := githubRemote.FindStringSubmatch(remote)
 				if m == nil {
 					continue
 				}
@@ -200,7 +201,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 				}
 				// A keyed read is shown only to projects its connection is granted to: a project that merely lists a
 				// private repository must not see what another project's grant read. Keyless, only the public repository.
-				if k && !connAllowed(conn, doc{"projectId": id}) || !k && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
+				if k && !connAllowedFor(conn, mintRun{ProjectID: &id}) || !k && !strings.EqualFold(m[1]+"/"+m[2], githubPublicRepo) {
 					continue
 				}
 				keyed = keyed || k
@@ -228,10 +229,10 @@ func deliveryPass(ctx context.Context, a *App) error {
 	if byKey[strings.ToLower(githubPublicRepo)] != nil {
 		if rerr := runTx(ctx, a, nil, false, "", func(q *Request) error {
 			recordedUI = nil // a retried transaction starts over
-			rs, err := rows(q, "SELECT payload FROM delivery_release WHERE tag LIKE 'ui-%'")
+			rs, err := q.db().DeliveryUIReleasePayloads(q.ctx())
 			for _, r := range rs {
 				var x contract.DeliveryRelease
-				if json.Unmarshal(jsonBytes(r), &x) == nil && uiOnlyRelease(x.Tag) {
+				if json.Unmarshal(r, &x) == nil && uiOnlyRelease(x.Tag) {
 					recordedUI = append(recordedUI, ghRelease{Tag: x.Tag, Target: x.Target, Published: x.Published})
 				}
 			}
@@ -360,8 +361,7 @@ func deliveryPass(ctx context.Context, a *App) error {
 	if len(changed) > 0 {
 		if err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 			for id := range changed {
-				if err := exec(q, `INSERT INTO delivery_state(id,project_id,refreshed_at) VALUES($1,$2,$3)
-					ON CONFLICT (id) DO UPDATE SET refreshed_at=EXCLUDED.refreshed_at,updated_at=now()`, "delivery-state:"+id, id, next.refreshedAt); err != nil {
+				if err := q.db().DeliveryStatePut(q.ctx(), db.DeliveryStatePutParams{ID: "delivery-state:" + id, ProjectID: id, RefreshedAt: next.refreshedAt}); err != nil {
 					return err
 				}
 			}
@@ -569,14 +569,31 @@ func withReleases(read, recorded []ghRelease) []ghRelease {
 // liveHostVersions: the executor version of every host seen within the hour that reports one, the hosts a release
 // must reach to be installed (deliveryPass, the release card).
 func liveHostVersions(q *Request) ([]string, error) {
-	obs, err := all(q, "host-observation", nil)
+	obs, err := deliveryHostsSeen(q)
 	versions := []string{}
 	for _, o := range obs {
-		if seen := q.app.effectiveHostSeen(astr(o["id"]), num(o["lastSeenAt"])); nowMs()-int64(seen) < 3600_000 && astr(o["version"]) != "" {
-			versions = append(versions, astr(o["version"]))
+		if seen := q.app.effectiveHostSeen(o.ID, o.LastSeenMs); nowMs()-int64(seen) < 3600_000 && o.Version != "" {
+			versions = append(versions, o.Version)
 		}
 	}
 	return versions, err
+}
+
+// projectRemotes: the git remotes of a project's repositories (its settings' repos); one that is not a string is "".
+func projectRemotes(q *Request, id string) []string {
+	var settings struct {
+		Repos []struct {
+			Remote json.RawMessage `json:"remote"`
+		} `json:"repos"`
+	}
+	jsonRoundTrip(projectSettingsOf(q, id), &settings)
+	out := []string{}
+	for _, r := range settings.Repos {
+		var remote string
+		json.Unmarshal(r.Remote, &remote)
+		out = append(out, remote)
+	}
+	return out
 }
 
 // installed: every host runs version or newer (1.261112.31 compares part by part); no host known is not installed.
@@ -608,23 +625,22 @@ func deliverySamples(ctx context.Context, a *App, counts map[string]map[string]i
 	err := runTx(ctx, a, nil, true, "", func(q *Request) error {
 		for k, c := range counts { // per "<first project> <owner/repo>": one sample per repository
 			p, repo, _ := strings.Cut(k, " ")
-			if err := exec(q, "INSERT INTO delivery_sample(project_id,repo,at,payload) VALUES($1,$2,$3,$4::jsonb)", p, repo, now, jsonBytes(c)); err != nil {
+			if err := q.db().DeliverySampleAdd(q.ctx(), db.DeliverySampleAddParams{ProjectID: p, Repo: &repo, At: now, Payload: jsonBytes(c)}); err != nil {
 				return err
 			}
 		}
-		if err := exec(q, "DELETE FROM delivery_sample WHERE at < now() - interval '7 days'"); err != nil {
+		if err := q.db().DeliverySamplePrune(q.ctx()); err != nil {
 			return err
 		}
-		rs, err := rowsOf(q, "SELECT project_id, repo, at, payload FROM delivery_sample WHERE at >= $1 ORDER BY at, seq", now.Add(-24*time.Hour))
+		rs, err := q.db().DeliverySamples(q.ctx(), now.Add(-24*time.Hour))
 		for _, r := range rs {
 			var counts map[string]int64
-			if json.Unmarshal(jsonBytes(r["payload"]), &counts) != nil {
+			if json.Unmarshal(r.Payload, &counts) != nil {
 				continue
 			}
-			at, _ := time.Parse(time.RFC3339Nano, astr(r["at"]))
-			s := contract.DeliverySample{At: at.UTC().Format(time.RFC3339), ProjectId: astr(r["project_id"]), Counts: counts}
-			if repo := astr(r["repo"]); repo != "" {
-				s.Repo = &repo
+			s := contract.DeliverySample{At: r.At.UTC().Format(time.RFC3339), ProjectId: r.ProjectID, Counts: counts}
+			if r.Repo != nil && *r.Repo != "" {
+				s.Repo = r.Repo
 			}
 			out = append(out, s)
 		}
