@@ -1886,6 +1886,7 @@ ALTER TABLE execution_totals DISABLE TRIGGER USER;
 ALTER TABLE execution NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE execution_totals NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE document NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS event NO FORCE ROW LEVEL SECURITY; -- the events' table from migration 77, for a later replay of this pass
 SET LOCAL row_security=off;
 
 -- The trial's typed parent lineage is authoritative; profile names were incorrectly stored as variant labels.
@@ -1902,6 +1903,7 @@ WHERE e.kind IN ('agent_run','child_agent');
 ALTER TABLE execution FORCE ROW LEVEL SECURITY;
 ALTER TABLE execution_totals FORCE ROW LEVEL SECURITY;
 ALTER TABLE document FORCE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS event FORCE ROW LEVEL SECURITY;
 RESET row_security;
 ALTER TABLE execution ENABLE TRIGGER USER;
 ALTER TABLE execution_totals ENABLE TRIGGER USER;
