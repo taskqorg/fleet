@@ -57,7 +57,7 @@ func init() {
 	route("GET /api/results/{id}", resultBytes)
 	route("GET /api/results/{id}/preview", resultPreview)
 
-	operation("artifact_list", true, opArtifactList)
+	op("artifact_list", opArtifactList)
 	op("artifact_get", func(q *Request, r *contract.ArtifactGetRequest) (contract.ArtifactView, error) {
 		v, err := artifactGetView(withTx(q), q.app, truncate(r.ArtifactId, 200), "")
 		if err != nil {
@@ -120,36 +120,31 @@ func init() {
 	})
 	op("subscription_limits", subscriptionLimits)
 	// changes_since: the stream's read for the app's catch-up and polling fallback; no cursor is the head.
-	operation("changes_since", true, func(q *Request) (any, error) {
-		var b struct {
-			Cursor *float64 `json:"cursor"`
-			Limit  *float64 `json:"limit"`
-		}
-		decode(q.body, &b)
+	op("changes_since", func(q *Request, r *contract.ChangesSinceRequest) (contract.ChangesSinceReply, error) {
 		limit := 500
-		if b.Limit != nil {
-			limit = max(1, min(1000, int(*b.Limit)))
+		if r.Limit != nil {
+			limit = max(1, min(1000, int(*r.Limit)))
 		}
-		if b.Cursor == nil {
+		if r.Cursor == nil {
 			c, err := head(q.ctx(), q.tx)
-			return doc{"changes": []change{}, "cursor": c}, err
+			return contract.ChangesSinceReply{Changes: []contract.Change{}, Cursor: c}, err
 		}
-		if *b.Cursor < 0 || *b.Cursor != float64(int64(*b.Cursor)) {
-			return nil, fail(400, "Invalid cursor")
+		if *r.Cursor < 0 {
+			return contract.ChangesSinceReply{}, fail(400, "Invalid cursor")
 		}
-		cs, next, resync, held, err := since(q.ctx(), q.tx, int64(*b.Cursor), limit)
+		cs, next, resync, held, err := since(q.ctx(), q.tx, *r.Cursor, limit)
 		if err != nil {
-			return nil, err
+			return contract.ChangesSinceReply{}, err
 		}
-		if cs == nil {
-			cs = []change{}
+		out := contract.ChangesSinceReply{Changes: make([]contract.Change, 0, len(cs)), Cursor: next}
+		for _, c := range cs {
+			out.Changes = append(out.Changes, c.Change)
 		}
-		out := doc{"changes": cs, "cursor": next}
 		if resync {
-			out["resync"] = true
+			out.Resync = &resync
 		}
 		if held {
-			out["held"] = true
+			out.Held = &held
 		}
 		return out, nil
 	})
@@ -388,41 +383,32 @@ func hostArtifactList(q *Request, b *contract.HostArtifactListRequest) (any, err
 	return out, nil
 }
 
-func opArtifactList(q *Request) (any, error) {
-	var b struct {
-		ExecutionID, TaskID, MediaType, ProjectID, Q *string
-		States                                       []string
-		Since                                        *float64
-		ProjectIDs, ExcludeProjectIDs                []*string
-		Limit                                        *float64
-		Before                                       *float64
+// opArtifactList: artifact_list. projectIds and excludeProjectIds are read as sent: a null item is work outside projects,
+// which the typed list of strings cannot hold.
+func opArtifactList(q *Request, r *contract.ArtifactListRequest) (contract.ArtifactListReply, error) {
+	var ids struct {
+		ProjectIDs        []*string `json:"projectIds"`
+		ExcludeProjectIDs []*string `json:"excludeProjectIds"`
 	}
-	decode(q.body, &b)
-	f := listFilter{ExecutionID: b.ExecutionID, TaskID: b.TaskID, MediaType: b.MediaType, ProjectID: b.ProjectID, Q: b.Q, States: b.States, Since: b.Since, ProjectIDs: b.ProjectIDs, ExcludeProjectIDs: b.ExcludeProjectIDs}
-	if b.Limit != nil {
-		if *b.Limit <= 0 || *b.Limit != float64(int64(*b.Limit)) {
-			return nil, fail(400, "Expected positive integer limit")
-		}
-		l := int64(*b.Limit)
-		f.Limit = &l
-	}
-	if b.Before != nil && *b.Before == float64(int64(*b.Before)) {
-		v := int64(*b.Before)
-		f.Before = &v
+	json.Unmarshal(q.body, &ids)
+	f := listFilter{ExecutionID: r.ExecutionId, TaskID: r.TaskId, MediaType: r.MediaType, ProjectID: r.ProjectId, Q: r.Q, States: r.States, Since: r.Since,
+		ProjectIDs: ids.ProjectIDs, ExcludeProjectIDs: ids.ExcludeProjectIDs, Limit: r.Limit, Before: r.Before}
+	if r.Limit != nil && *r.Limit <= 0 {
+		return contract.ArtifactListReply{}, fail(400, "Expected positive integer limit")
 	}
 	rows, err := artifactList(withTx(q), q.app, f)
 	if err == nil {
 		err = withTaskCodes(q, rows)
 	}
 	if err != nil || f.Limit == nil {
-		return doc{"artifacts": rows}, err
+		return replyAs[contract.ArtifactListReply](doc{"artifacts": rows}, err)
 	}
 	var next any
 	if int64(len(rows)) > *f.Limit {
 		rows = rows[:*f.Limit]
 		next = rows[len(rows)-1]["seq"]
 	}
-	return doc{"artifacts": rows, "nextBefore": next}, nil
+	return replyAs[contract.ArtifactListReply](doc{"artifacts": rows, "nextBefore": next}, nil)
 }
 
 type readCloser = interface {

@@ -52,6 +52,9 @@ func (v *FocusPreset) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*FocusPreset) Closed() bool { return true }
+
 type FocusSetReply struct {
 	Focus     Focus  `json:"focus"`
 	SessionId string `json:"sessionId"`
@@ -69,6 +72,23 @@ func (v *FocusSetReply) Validate() error {
 type FocusSetRequest struct {
 	ProjectIds json.RawMessage `json:"projectIds"`
 	SessionId  string          `json:"sessionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v FocusSetRequest) MarshalJSON() ([]byte, error) {
+	type plain FocusSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *FocusSetRequest) UnmarshalJSON(b []byte) error {
+	type plain FocusSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -224,6 +244,23 @@ type MembershipList struct {
 	Group  *string     `json:"group,omitempty"`
 	Name   string      `json:"name"`
 	Sort   *string     `json:"sort,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v MembershipList) MarshalJSON() ([]byte, error) {
+	type plain MembershipList
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *MembershipList) UnmarshalJSON(b []byte) error {
+	type plain MembershipList
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -249,6 +286,9 @@ func (v *NavCount) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*NavCount) Closed() bool { return true }
+
 type NavCountsReply struct {
 	Focused  bool                `json:"focused"`
 	Sections map[string]NavCount `json:"sections"`
@@ -261,6 +301,9 @@ func (v *NavCountsReply) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*NavCountsReply) Closed() bool { return true }
 
 // NavCountsRequest: The navigation counters of the caller (an agent: its director) in one call: each section counts its counter view (person setting navCounters; defaults Tasks and Conversations Running, Delivery In flight, Results Last 24 h, Hosts Offline) with its list's own filters, split by the person's focus; ignored projects are never counted.
 type NavCountsRequest = map[string]json.RawMessage
@@ -293,6 +336,23 @@ func (v *PeopleSetReply) Validate() error {
 // PeopleSetRequest: Owner only: the whole people.json list, written atomically and reloaded.
 type PeopleSetRequest struct {
 	People json.RawMessage `json:"people"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v PeopleSetRequest) MarshalJSON() ([]byte, error) {
+	type plain PeopleSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *PeopleSetRequest) UnmarshalJSON(b []byte) error {
+	type plain PeopleSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -367,6 +427,9 @@ func (v *PersonSettings) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*PersonSettings) Closed() bool { return true }
+
 type PersonSettingsGetReply = PersonSettings
 
 type PersonSettingsGetRequest struct {
@@ -377,6 +440,9 @@ type PersonSettingsGetRequest struct {
 func (v *PersonSettingsGetRequest) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*PersonSettingsGetRequest) Closed() bool { return true }
 
 type PersonSettingsSetReply = PersonSettings
 
@@ -447,6 +513,9 @@ func (v *PersonSettingsSetRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*PersonSettingsSetRequest) Closed() bool { return true }
+
 type ProjectIgnore struct {
 	Ignored bool   `json:"ignored"`
 	Project string `json:"project"`
@@ -456,6 +525,9 @@ type ProjectIgnore struct {
 func (v *ProjectIgnore) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProjectIgnore) Closed() bool { return true }
 
 type RowPin struct {
 	Id     string `json:"id"`
@@ -467,6 +539,9 @@ type RowPin struct {
 func (v *RowPin) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*RowPin) Closed() bool { return true }
 
 type SavedView struct {
 	List string                     `json:"list"`
@@ -481,6 +556,9 @@ func (v *SavedView) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*SavedView) Closed() bool { return true }
 
 // SearchReply: Hits of every provider in registry order: a query of only T-, Q- and C- codes resolved (old codes too, with the current code), then tasks (an id or code starting with the text first), questions (open first, answered and withdrawn after), conversations, results, projects, hosts, agents, pipelines. Inside each kind hits in the focus come before all others, then that kind's order, then recently changed. Each word of the text narrows the hits.
 type SearchReply struct {
@@ -515,6 +593,9 @@ func (v *SearchRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*SearchRequest) Closed() bool { return true }
+
 // ViewLinkReply: For view: url and path; for url: the parsed view.
 type ViewLinkReply struct {
 	Path *string         `json:"path,omitempty"`
@@ -531,6 +612,23 @@ func (v *ViewLinkReply) Validate() error {
 type ViewLinkRequest struct {
 	Url  json.RawMessage `json:"url,omitempty"`
 	View json.RawMessage `json:"view,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ViewLinkRequest) MarshalJSON() ([]byte, error) {
+	type plain ViewLinkRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ViewLinkRequest) UnmarshalJSON(b []byte) error {
+	type plain ViewLinkRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -547,6 +645,9 @@ type ViewRef struct {
 func (v *ViewRef) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ViewRef) Closed() bool { return true }
 
 func init() {
 	for n, o := range map[string]Operation{

@@ -1150,20 +1150,29 @@ func total(c doc) float64 {
 	return t
 }
 
-func taskPage(q *Request, b doc) (any, error) {
-	f := mapOf(b["filter"])
+// taskPage: task_page. The filter is read as sent (f): a null projectId means work outside projects, which the typed
+// list of strings cannot hold.
+func taskPage(q *Request, r *contract.TaskPageRequest, f doc) (contract.TaskPageReply, error) {
+	out, err := taskPageDoc(q, r, f)
+	return replyAs[contract.TaskPageReply](out, err)
+}
+
+func taskPageDoc(q *Request, r *contract.TaskPageRequest, f doc) (doc, error) {
 	if f == nil {
 		f = doc{}
 	}
-	_, G, err := groupOf(b["group"])
+	_, G, err := groupOf(optAny(r.Group))
 	if err != nil {
 		return nil, err
 	}
-	S, err := taskSortOf(b["sort"])
+	S, err := taskSortOf(optAny(r.Sort))
 	if err != nil {
 		return nil, err
 	}
-	limit := pageLimit(b["limit"], 100)
+	limit := 100
+	if r.Limit != nil {
+		limit = pageLimit(float64(*r.Limit), 100)
+	}
 	p := []any{}
 	c, err := taskWhere(f, &p, true)
 	if err != nil {
@@ -1171,9 +1180,9 @@ func taskPage(q *Request, b doc) (any, error) {
 	}
 	// No grouping orders by the sort key alone, so the sort's own index serves it (a constant group key would not).
 	none := G.sql == taskGroups["none"].sql
-	if b["after"] != nil {
-		a, ok := b["after"].([]any)
-		if !ok || len(a) != 3 {
+	if r.After != nil {
+		var a []any
+		if json.Unmarshal(jsonBytes(r.After), &a) != nil || len(a) != 3 {
 			return nil, fail(400, "Invalid after")
 		}
 		if none {
@@ -1199,7 +1208,7 @@ func taskPage(q *Request, b doc) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	counts, groups, err := taskSummary(q, f, b["group"], b["groupCounts"] == true)
+	counts, groups, err := taskSummary(q, f, optAny(r.Group), r.GroupCounts != nil && *r.GroupCounts)
 	if err != nil {
 		return nil, err
 	}
@@ -1418,9 +1427,6 @@ func init() {
 	// setting-change audit row each. A cause is let go, so a problem still present is asked again by its source.
 	op("questions_withdraw", func(q *Request, r *contract.QuestionsWithdrawRequest) (contract.QuestionsWithdrawReply, error) {
 		out := contract.QuestionsWithdrawReply{Withdrawn: []string{}, Skipped: []contract.QuestionSkipped{}}
-		if err := ownerOnly(q, "Only the owner withdraws questions"); err != nil {
-			return out, err
-		}
 		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
 			return out, fail(400, "Expected reason")
 		}
@@ -1493,7 +1499,13 @@ func init() {
 	op("executions_list", func(q *Request, r *contract.ExecutionsListRequest) (contract.ExecutionsListReply, error) {
 		return executionsPage(q, *r)
 	})
-	gatedObjOp("task_page", true, func(q *Request) (any, error) { return taskPage(q, body(q)) })
+	op("task_page", func(q *Request, r *contract.TaskPageRequest) (contract.TaskPageReply, error) {
+		var raw struct {
+			Filter doc `json:"filter"`
+		}
+		json.Unmarshal(q.body, &raw)
+		return taskPage(q, r, raw.Filter)
+	})
 	op("task_derived_check", func(q *Request, _ *contract.TaskDerivedCheckRequest) (contract.TaskDerivedCheckReply, error) {
 		var n int64
 		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*)::int FROM task").Scan(&n); err != nil {

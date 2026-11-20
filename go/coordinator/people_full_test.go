@@ -18,7 +18,7 @@ func TestStarGrantIsOwnerEquivalent(t *testing.T) {
 	if fullAccess(&op) || scopeOf(&op) == nil {
 		t.Fatal("operator without star grant must stay scoped")
 	}
-	if connOwner(&Request{person: &p}) != nil || connOwner(&Request{person: &op}) == nil {
+	if declaredAuth(&Request{person: &p}, "connections_key_add") != nil || declaredAuth(&Request{person: &op}, "connections_key_add") == nil {
 		t.Fatal("star grant handles keys and personal tokens; a scoped operator does not")
 	}
 }

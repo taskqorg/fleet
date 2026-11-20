@@ -6,20 +6,61 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+type LabCellAction string
+
+const (
+	LabCellActionCancel      LabCellAction = "cancel"
+	LabCellActionRetry       LabCellAction = "retry"
+	LabCellActionRetrySuffix LabCellAction = "retry_suffix"
+)
+
+// LabCellActionValues lists every LabCellAction in schema order.
+var LabCellActionValues = []LabCellAction{LabCellActionCancel, LabCellActionRetry, LabCellActionRetrySuffix}
+
+// Valid: v is one of the schema's values.
+func (v LabCellAction) Valid() bool {
+	for _, x := range LabCellActionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
 // LabCellActionReply: An experiment view. Successful retry_suffix adds recovery:{sourceRunId:string,runId:string}, stable on replay. Recovered trials add recovery:{sourceRunId:string,reusedStepIds:string[]}; ordinary trials/actions omit it. See fleet-lab.md Local-suffix retry for identity/audit and provenance.
 type LabCellActionReply = map[string]json.RawMessage
 
-// LabCellActionRequest: action cancel, retry or retry_suffix. retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes. Other actions and unknown-field policy unchanged.
+// LabCellActionRequest: retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes.
 type LabCellActionRequest struct {
-	Action       string  `json:"action"`
-	Cell         string  `json:"cell"`
-	ExperimentId string  `json:"experimentId"`
-	RequestId    *string `json:"requestId,omitempty"`
-	SourceRunId  *string `json:"sourceRunId,omitempty"`
+	Action       LabCellAction `json:"action"`
+	Cell         string        `json:"cell"`
+	ExperimentId string        `json:"experimentId"`
+	RequestId    *string       `json:"requestId,omitempty"`
+	SourceRunId  *string       `json:"sourceRunId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabCellActionRequest) MarshalJSON() ([]byte, error) {
+	type plain LabCellActionRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabCellActionRequest) UnmarshalJSON(b []byte) error {
+	type plain LabCellActionRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabCellActionRequest) Validate() error {
+	if err := Check(&v.Action, "action"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -69,11 +110,48 @@ func (v *LabExampleGetReply) Validate() error {
 
 type LabExampleGetRequest struct {
 	ArtifactId string `json:"artifactId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExampleGetRequest) MarshalJSON() ([]byte, error) {
+	type plain LabExampleGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExampleGetRequest) UnmarshalJSON(b []byte) error {
+	type plain LabExampleGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExampleGetRequest) Validate() error {
 	return nil
+}
+
+type LabExampleState string
+
+const (
+	LabExampleStateApproved LabExampleState = "approved"
+	LabExampleStateProposed LabExampleState = "proposed"
+)
+
+// LabExampleStateValues lists every LabExampleState in schema order.
+var LabExampleStateValues = []LabExampleState{LabExampleStateApproved, LabExampleStateProposed}
+
+// Valid: v is one of the schema's values.
+func (v LabExampleState) Valid() bool {
+	for _, x := range LabExampleStateValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 type LabExamplesAddReply struct {
@@ -92,6 +170,23 @@ type LabExamplesAddRequest struct {
 	Approved  *bool           `json:"approved,omitempty"`
 	Examples  json.RawMessage `json:"examples"`
 	ProjectId *string         `json:"projectId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExamplesAddRequest) MarshalJSON() ([]byte, error) {
+	type plain LabExamplesAddRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExamplesAddRequest) UnmarshalJSON(b []byte) error {
+	type plain LabExamplesAddRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -115,25 +210,87 @@ func (v *LabExamplesListReply) Validate() error {
 }
 
 type LabExamplesListRequest struct {
-	State *string `json:"state,omitempty"`
+	State *LabExampleState `json:"state,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExamplesListRequest) MarshalJSON() ([]byte, error) {
+	type plain LabExamplesListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExamplesListRequest) UnmarshalJSON(b []byte) error {
+	type plain LabExamplesListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExamplesListRequest) Validate() error {
+	if v.State != nil {
+		if err := Check(v.State, "state"); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+type LabExperimentAction string
+
+const (
+	LabExperimentActionLaunch LabExperimentAction = "launch"
+	LabExperimentActionStop   LabExperimentAction = "stop"
+	LabExperimentActionResume LabExperimentAction = "resume"
+)
+
+// LabExperimentActionValues lists every LabExperimentAction in schema order.
+var LabExperimentActionValues = []LabExperimentAction{LabExperimentActionLaunch, LabExperimentActionStop, LabExperimentActionResume}
+
+// Valid: v is one of the schema's values.
+func (v LabExperimentAction) Valid() bool {
+	for _, x := range LabExperimentActionValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // LabExperimentActionReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
 type LabExperimentActionReply = map[string]json.RawMessage
 
-// LabExperimentActionRequest: action launch, stop or resume.
 type LabExperimentActionRequest struct {
-	Action       string `json:"action"`
-	ExperimentId string `json:"experimentId"`
+	Action       LabExperimentAction `json:"action"`
+	ExperimentId string              `json:"experimentId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExperimentActionRequest) MarshalJSON() ([]byte, error) {
+	type plain LabExperimentActionRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExperimentActionRequest) UnmarshalJSON(b []byte) error {
+	type plain LabExperimentActionRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentActionRequest) Validate() error {
+	if err := Check(&v.Action, "action"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -168,6 +325,9 @@ func (v *LabExperimentCreateRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabExperimentCreateRequest) Closed() bool { return true }
+
 // LabExperimentDecideReply: An experiment view (expView): record fields, state, variants, cells, trials, scores, spend and comparability.
 type LabExperimentDecideReply = map[string]json.RawMessage
 
@@ -181,6 +341,9 @@ type LabExperimentDecideRequest struct {
 func (v *LabExperimentDecideRequest) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabExperimentDecideRequest) Closed() bool { return true }
 
 // LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline. comparison: each non-baseline variant vs the first on the primary evaluator, {variant, baseline, evaluator, split, result: {n, mean, low, high, tooFew, examples}} (fleet-lab.md, Statistics). typed: per variant {variant, split, stats: [{tag, n, confident, correct, coverage, selectiveAccuracy, escalation}]}, the aggregate last with tag all.
 type LabExperimentGetReply struct {
@@ -221,6 +384,23 @@ type LabExperimentGetReply struct {
 	Trials             []LabTrialRecord `json:"trials"`
 	Typed              json.RawMessage  `json:"typed"`
 	Variants           json.RawMessage  `json:"variants"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExperimentGetReply) MarshalJSON() ([]byte, error) {
+	type plain LabExperimentGetReply
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExperimentGetReply) UnmarshalJSON(b []byte) error {
+	type plain LabExperimentGetReply
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -346,6 +526,23 @@ func (v *LabExperimentGetReply) Validate() error {
 
 type LabExperimentGetRequest struct {
 	ExperimentId string `json:"experimentId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExperimentGetRequest) MarshalJSON() ([]byte, error) {
+	type plain LabExperimentGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExperimentGetRequest) UnmarshalJSON(b []byte) error {
+	type plain LabExperimentGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -357,6 +554,23 @@ type LabExperimentNoteReply struct {
 	Id   *string `json:"id,omitempty"`
 	Kind *string `json:"kind,omitempty"`
 	Text *string `json:"text,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExperimentNoteReply) MarshalJSON() ([]byte, error) {
+	type plain LabExperimentNoteReply
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExperimentNoteReply) UnmarshalJSON(b []byte) error {
+	type plain LabExperimentNoteReply
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -365,17 +579,23 @@ func (v *LabExperimentNoteReply) Validate() error {
 }
 
 type LabExperimentNoteRequest struct {
-	ExperimentId string  `json:"experimentId"`
-	Field        *string `json:"field,omitempty"`
-	Kind         string  `json:"kind"`
-	Text         string  `json:"text"`
-	Value        *string `json:"value,omitempty"`
+	ExperimentId string      `json:"experimentId"`
+	Field        *string     `json:"field,omitempty"`
+	Kind         LabNoteKind `json:"kind"`
+	Text         string      `json:"text"`
+	Value        *string     `json:"value,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentNoteRequest) Validate() error {
+	if err := Check(&v.Kind, "kind"); err != nil {
+		return err
+	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabExperimentNoteRequest) Closed() bool { return true }
 
 type LabExperimentPromoteReply struct {
 	Catalogue      DefinitionRef   `json:"catalogue"`
@@ -432,6 +652,9 @@ func (v *LabLoopAllocator) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabLoopAllocator) Closed() bool { return true }
+
 type LabLoopAllocatorKind string
 
 const (
@@ -467,6 +690,9 @@ func (v *LabLoopGenerator) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabLoopGenerator) Closed() bool { return true }
+
 type LabLoopGeneratorKind string
 
 const (
@@ -497,6 +723,9 @@ func (v *LabLoopNoGain) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabLoopNoGain) Closed() bool { return true }
+
 // LabLoopStrategy: Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.
 type LabLoopStrategy struct {
 	Allocator     LabLoopAllocator `json:"allocator"`
@@ -519,6 +748,29 @@ func (v *LabLoopStrategy) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabLoopStrategy) Closed() bool { return true }
+
+type LabNoteKind string
+
+const (
+	LabNoteKindAmendment LabNoteKind = "amendment"
+	LabNoteKindNote      LabNoteKind = "note"
+)
+
+// LabNoteKindValues lists every LabNoteKind in schema order.
+var LabNoteKindValues = []LabNoteKind{LabNoteKindAmendment, LabNoteKindNote}
+
+// Valid: v is one of the schema's values.
+func (v LabNoteKind) Valid() bool {
+	for _, x := range LabNoteKindValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // LabPromoteReply: method: the promoted (or matching) catalogue method; catalogue: the catalogue revision a new method was saved as (source lab); cataloguePatch: null (a promote saves a revision); recommendation: the project's recommendation set to the method.
@@ -552,6 +804,23 @@ func (v *LabPromoteReply) Validate() error {
 type LabPromoteRequest struct {
 	ExperimentId string `json:"experimentId"`
 	Variant      string `json:"variant"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabPromoteRequest) MarshalJSON() ([]byte, error) {
+	type plain LabPromoteRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabPromoteRequest) UnmarshalJSON(b []byte) error {
+	type plain LabPromoteRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -563,17 +832,58 @@ func (v *LabPromoteRequest) Validate() error {
 type LabRatingCreateReply = map[string]json.RawMessage
 
 type LabRatingCreateRequest struct {
-	ExperimentId string   `json:"experimentId"`
-	Form         string   `json:"form"`
-	TrialIds     []string `json:"trialIds"`
+	ExperimentId string        `json:"experimentId"`
+	Form         LabRatingForm `json:"form"`
+	TrialIds     []string      `json:"trialIds"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabRatingCreateRequest) MarshalJSON() ([]byte, error) {
+	type plain LabRatingCreateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabRatingCreateRequest) UnmarshalJSON(b []byte) error {
+	type plain LabRatingCreateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabRatingCreateRequest) Validate() error {
+	if err := Check(&v.Form, "form"); err != nil {
+		return err
+	}
 	if v.TrialIds == nil {
 		return Missing("trialIds")
 	}
 	return nil
+}
+
+type LabRatingForm string
+
+const (
+	LabRatingFormPassFail LabRatingForm = "pass_fail"
+	LabRatingFormPickBest LabRatingForm = "pick_best"
+	LabRatingFormScale    LabRatingForm = "scale"
+)
+
+// LabRatingFormValues lists every LabRatingForm in schema order.
+var LabRatingFormValues = []LabRatingForm{LabRatingFormPassFail, LabRatingFormPickBest, LabRatingFormScale}
+
+// Valid: v is one of the schema's values.
+func (v LabRatingForm) Valid() bool {
+	for _, x := range LabRatingFormValues {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // LabRatingGetReply: A rating question for a person.
@@ -581,6 +891,23 @@ type LabRatingGetReply = map[string]json.RawMessage
 
 type LabRatingGetRequest struct {
 	QuestionId string `json:"questionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabRatingGetRequest) MarshalJSON() ([]byte, error) {
+	type plain LabRatingGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabRatingGetRequest) UnmarshalJSON(b []byte) error {
+	type plain LabRatingGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -601,6 +928,9 @@ func (v *LabRatingWithdrawRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabRatingWithdrawRequest) Closed() bool { return true }
+
 type LabRatingsListReply struct {
 	Ratings []map[string]json.RawMessage `json:"ratings"`
 }
@@ -616,6 +946,23 @@ func (v *LabRatingsListReply) Validate() error {
 type LabRatingsListRequest struct {
 	ExperimentId *string `json:"experimentId,omitempty"`
 	State        *string `json:"state,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabRatingsListRequest) MarshalJSON() ([]byte, error) {
+	type plain LabRatingsListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabRatingsListRequest) UnmarshalJSON(b []byte) error {
+	type plain LabRatingsListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -644,6 +991,23 @@ type LabScoreCorrectRequest struct {
 	Rationale *string         `json:"rationale,omitempty"`
 	ScoreId   string          `json:"scoreId"`
 	Value     json.RawMessage `json:"value"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabScoreCorrectRequest) MarshalJSON() ([]byte, error) {
+	type plain LabScoreCorrectRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabScoreCorrectRequest) UnmarshalJSON(b []byte) error {
+	type plain LabScoreCorrectRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -730,6 +1094,9 @@ func (v *LabTrialRecord) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*LabTrialRecord) Closed() bool { return true }
+
 type ProjectAssessmentRef struct {
 	ArtifactId      string `json:"artifactId"`
 	CheckId         string `json:"checkId"`
@@ -744,23 +1111,26 @@ func (v *ProjectAssessmentRef) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProjectAssessmentRef) Closed() bool { return true }
+
 func init() {
 	for n, o := range map[string]Operation{
-		"lab_cell_action":       {Read: false, Long: true, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "action cancel, retry or retry_suffix. retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes. Other actions and unknown-field policy unchanged.", InputSchema: json.RawMessage("{\"$comment\":\"action cancel, retry or retry_suffix. retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes. Other actions and unknown-field policy unchanged.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"cell\":{\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceRunId\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"cell\",\"action\"],\"type\":\"object\"}")},
+		"lab_cell_action":       {Read: false, Long: true, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "action cancel, retry or retry_suffix. retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes. Other actions and unknown-field policy unchanged.", InputSchema: json.RawMessage("{\"$comment\":\"retry_suffix requires non-whitespace experimentId/cell/sourceRunId/requestId; accepted strings retain exact bytes.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"enum\":[\"cancel\",\"retry\",\"retry_suffix\"],\"type\":\"string\"},\"cell\":{\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sourceRunId\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"cell\",\"action\"],\"type\":\"object\"}")},
 		"lab_compare_methods":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Create an unlaunched Lab experiment comparing catalogue methods of a project capability (projectId, capability, methods, useCase, baseline)", InputSchema: json.RawMessage("{\"properties\":{\"baseline\":{\"type\":\"string\"},\"capability\":{\"type\":\"string\"},\"methods\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"useCase\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"capability\",\"methods\"],\"type\":\"object\"}")},
 		"lab_example_get":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "architect", Agent: "tool", Description: "A Lab example (artifactId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"artifactId\":{\"type\":\"string\"}},\"required\":[\"artifactId\"],\"type\":\"object\"}")},
 		"lab_examples_add":      {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "Add Lab examples, optionally of a project and approved", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"approved\":{\"type\":\"boolean\"},\"examples\":{},\"projectId\":{\"type\":\"string\"}},\"required\":[\"examples\"],\"type\":\"object\"}")},
-		"lab_examples_list":     {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab examples, optionally by state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"lab_experiment_action": {Read: false, Long: true, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "action launch, stop or resume.", InputSchema: json.RawMessage("{\"$comment\":\"action launch, stop or resume.\",\"additionalProperties\":true,\"properties\":{\"action\":{\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"action\"],\"type\":\"object\"}")},
-		"lab_experiment_create": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "See fleet-lab.md, Experiment record.", InputSchema: json.RawMessage("{\"$comment\":\"See fleet-lab.md, Experiment record.\",\"additionalProperties\":true,\"properties\":{\"budgets\":{},\"decisionRule\":{},\"evaluators\":{},\"examples\":{},\"goal\":{\"type\":\"string\"},\"hypothesis\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"labGroup\":{},\"pipelineId\":{\"type\":\"string\"},\"primaryEvaluator\":{},\"projectId\":{\"type\":\"string\"},\"repeats\":{},\"strategy\":{\"$comment\":\"Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.\",\"additionalProperties\":false,\"properties\":{\"allocator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"full\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"generator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"list\",\"grid\",\"propose\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\",\"params\"],\"type\":\"object\"},\"max_iterations\":{\"minimum\":1,\"type\":\"integer\"},\"no_gain\":{\"additionalProperties\":false,\"properties\":{\"k\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"k\"],\"type\":\"object\"}},\"required\":[\"generator\",\"allocator\"],\"type\":\"object\"},\"variants\":{}},\"type\":\"object\"}")},
-		"lab_experiment_decide": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Decide a Lab experiment (experimentId, decision, reason)", InputSchema: json.RawMessage("{\"properties\":{\"decision\":{\"$comment\":\"adopt \\u003cvariant\\u003e | keep baseline | inconclusive (pending is the coordinator's, never a person's)\",\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"reason\":{\"$comment\":\"Required to override a decision already made; the override is an amendment.\",\"type\":\"string\"}},\"required\":[\"experimentId\",\"decision\"],\"type\":\"object\"}")},
+		"lab_examples_list":     {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab examples, optionally by state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"state\":{\"enum\":[\"approved\",\"proposed\"],\"type\":\"string\"}},\"type\":\"object\"}")},
+		"lab_experiment_action": {Read: false, Long: true, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "action launch, stop or resume.", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"action\":{\"enum\":[\"launch\",\"stop\",\"resume\"],\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"action\"],\"type\":\"object\"}")},
+		"lab_experiment_create": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "See fleet-lab.md, Experiment record.", InputSchema: json.RawMessage("{\"$comment\":\"See fleet-lab.md, Experiment record.\",\"additionalProperties\":false,\"properties\":{\"budgets\":{},\"decisionRule\":{},\"evaluators\":{},\"examples\":{},\"goal\":{\"type\":\"string\"},\"hypothesis\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"labGroup\":{},\"pipelineId\":{\"type\":\"string\"},\"primaryEvaluator\":{},\"projectId\":{\"type\":\"string\"},\"repeats\":{},\"strategy\":{\"$comment\":\"Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.\",\"additionalProperties\":false,\"properties\":{\"allocator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"full\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"generator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"list\",\"grid\",\"propose\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\",\"params\"],\"type\":\"object\"},\"max_iterations\":{\"minimum\":1,\"type\":\"integer\"},\"no_gain\":{\"additionalProperties\":false,\"properties\":{\"k\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"k\"],\"type\":\"object\"}},\"required\":[\"generator\",\"allocator\"],\"type\":\"object\"},\"variants\":{}},\"type\":\"object\"}")},
+		"lab_experiment_decide": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Decide a Lab experiment (experimentId, decision, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"decision\":{\"$comment\":\"adopt \\u003cvariant\\u003e | keep baseline | inconclusive (pending is the coordinator's, never a person's)\",\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"reason\":{\"$comment\":\"Required to override a decision already made; the override is an amendment.\",\"type\":\"string\"}},\"required\":[\"experimentId\",\"decision\"],\"type\":\"object\"}")},
 		"lab_experiment_get":    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab experiment (experimentId) with its variants, trials and scores", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\"],\"type\":\"object\"}")},
-		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"$comment\":\"amendment | note\",\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\"}")},
+		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\"}")},
 		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Lab experiments", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Promote a variant of a Lab experiment (experimentId, variant) to the catalogue recommendation", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"variant\"],\"type\":\"object\"}")},
-		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask for a human rating of Lab trials (experimentId, form, trialIds)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"form\":{\"type\":\"string\"},\"trialIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"experimentId\",\"form\",\"trialIds\"],\"type\":\"object\"}")},
+		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask for a human rating of Lab trials (experimentId, form, trialIds)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"form\":{\"enum\":[\"pass_fail\",\"pick_best\",\"scale\"],\"type\":\"string\"},\"trialIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"experimentId\",\"form\",\"trialIds\"],\"type\":\"object\"}")},
 		"lab_rating_get":        {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab rating question with its answers (questionId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\"],\"type\":\"object\"}")},
-		"lab_rating_withdraw":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Withdraw an open Lab rating question (questionId, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"questionId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"reason\"],\"type\":\"object\"}")},
+		"lab_rating_withdraw":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Withdraw an open Lab rating question (questionId, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"questionId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"reason\"],\"type\":\"object\"}")},
 		"lab_ratings_list":      {Read: true, Long: false, Errors: []int{404}, Auth: "architect", Agent: "tool", Description: "Lab rating questions, optionally of one experiment or state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"lab_registry":          {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "The Lab use-case registry", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"lab_score_correct":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Correct a Lab score (scoreId, value, rationale)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"rationale\":{\"type\":\"string\"},\"scoreId\":{\"type\":\"string\"},\"value\":{}},\"required\":[\"scoreId\",\"value\"],\"type\":\"object\"}")},

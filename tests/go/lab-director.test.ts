@@ -38,7 +38,7 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const e=await create();assert.equal(e.requestedBy,creator);await launch(e.id);
    const row=await until(async()=>agentRows(e.id)[0]);assert.equal(row.directedBy,creator);
    const session=await op('session_get',{sessionId:row.sessionId});assert.equal(session.directedBy,creator);
-   const run=ok(await request('/api/pipeline-runs/'+row.pipelineRunId,undefined));assert.equal(run.requestedBy.email,creator);
+   const run=await op('pipeline_get',{runId:row.pipelineRunId});assert.equal(run.requestedBy.email,creator);
    const commands=(await hostCall('/api/hosts/poll',poll)).commands;const command=commands.find((x:any)=>x.executionId===row.id);assert.ok(command,'fixture host claims native command without executing it');
    const lineage=JSON.parse(c.sql(`SELECT json_agg(json_build_object('kind',kind,'experiment',experiment_id,'variant',variant)) FROM execution WHERE id IN ('${row.pipelineRunId}','${row.pipelineStepId}','${row.id}')`));
    assert.equal(lineage.length,3);
@@ -71,7 +71,7 @@ test('Lab retains authenticated requester through background enqueue, revocation
    const next=structuredClone(content);next.settings.contextSources[0].revision='2'.repeat(40);
    await op('project_update',{projectId:id,requestId:'lab-pinned-update',baseRevision:1,content:next});
    assert.deepEqual(agentRows(e.id)[0].projectSnapshot.settings.contextSources,[source]);
-   const run=ok(await request('/api/pipeline-runs/'+row.pipelineRunId,undefined));assert.deepEqual(run.projectSnapshot.settings.contextSources,[source]);
+   const run=await op('pipeline_get',{runId:row.pipelineRunId});assert.deepEqual(run.projectSnapshot.settings.contextSources,[source]);
   });
   await t.test('project or architect-role revocation pauses; regrant permits explicit resume as the same person',async()=>{
    for(const field of ['grants','roles']){

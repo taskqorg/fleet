@@ -31,6 +31,9 @@ func (v *AnalyticsBucketRow) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*AnalyticsBucketRow) Closed() bool { return true }
+
 type AnalyticsDimension string
 
 const (
@@ -99,6 +102,9 @@ func (v *AnalyticsFilter) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*AnalyticsFilter) Closed() bool { return true }
+
 type AnalyticsMeasure string
 
 const (
@@ -158,6 +164,9 @@ func (v *AnalyticsQueryReply) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*AnalyticsQueryReply) Closed() bool { return true }
+
 type AnalyticsQueryRequest struct {
 	Dimensions []AnalyticsDimension `json:"dimensions,omitempty"`
 	Filters    *AnalyticsFilter     `json:"filters,omitempty"`
@@ -195,6 +204,9 @@ func (v *AnalyticsQueryRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*AnalyticsQueryRequest) Closed() bool { return true }
+
 type AnalyticsTotals struct {
 	Cost     []CostFigure              `json:"cost"`
 	Measures map[string]MeasuredNumber `json:"measures"`
@@ -216,6 +228,9 @@ func (v *AnalyticsTotals) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*AnalyticsTotals) Closed() bool { return true }
+
 // AnalyticsWindow: Required [from, to) bounds: epoch milliseconds (integer) or RFC 3339 / YYYY-MM-DD strings.
 type AnalyticsWindow struct {
 	From json.RawMessage `json:"from"`
@@ -232,6 +247,9 @@ func (v *AnalyticsWindow) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*AnalyticsWindow) Closed() bool { return true }
 
 func init() {
 	for n, o := range map[string]Operation{

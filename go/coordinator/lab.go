@@ -901,9 +901,6 @@ func expLaunch(q *Request, id string) error {
 
 // expNote: an append-only note, or an amendment that changes one record field and keeps its old and new value.
 func expNote(q *Request, b doc) (doc, error) {
-	if !keysOnly(b, "experimentId", "kind", "field", "value", "text") {
-		return nil, fail(400, "Expected experimentId, kind, field, value, text")
-	}
 	e, err := expLocked(q, astr(b["experimentId"]))
 	if err != nil {
 		return nil, err
@@ -953,9 +950,6 @@ func expNote(q *Request, b doc) (doc, error) {
 // expDecide: a person confirms or overrides the decision of a stopped or done experiment; an override needs a reason and
 // is an amendment.
 func expDecide(q *Request, b doc) (doc, error) {
-	if !keysOnly(b, "experimentId", "decision", "reason") {
-		return nil, fail(400, "Expected experimentId, decision, reason")
-	}
 	e, err := expLocked(q, astr(b["experimentId"]))
 	if err != nil {
 		return nil, err
@@ -1002,13 +996,11 @@ func expCreate(q *Request, b doc) (doc, error) {
 	if err := refreshRequestAccess(q); err != nil {
 		return nil, err
 	}
-	if err := q.app.guardOp(q, "lab_experiment_create", jsonBytes(b)); err != nil {
+	// The declared auth again, under the lock: a grant removed meanwhile refuses the creation.
+	if err := declaredAuth(q, "lab_experiment_create"); err != nil {
 		return nil, err
 	}
 
-	if !keysOnly(b, "kind", "projectId", "pipelineId", "examples", "variants", "repeats", "evaluators", "budgets", "primaryEvaluator", "strategy", "goal", "hypothesis", "decisionRule", "labGroup") {
-		return nil, fail(400, "Expected kind, projectId, pipelineId, examples, variants, repeats, evaluators, budgets, primaryEvaluator, strategy, goal, hypothesis, decisionRule, labGroup")
-	}
 	for _, k := range recordFields {
 		if _, ok := b[k].(string); b[k] != nil && !ok {
 			return nil, fail(400, k+" must be text")
@@ -2614,127 +2606,19 @@ func labRegistry() ([]any, error) {
 	return out, nil
 }
 
-func labIDArg(v any, what string) (string, error) {
-	s, ok := v.(string)
-	if !ok || s == "" || len(s) > 300 {
-		return "", fail(400, "Expected "+what)
+// optText: an optional request string as a query argument (nil when absent).
+func optText(s *string) any {
+	if s == nil {
+		return nil
 	}
-	return s, nil
+	return *s
 }
 
-// labShapes: each Lab operation's contract types (contracts/ops-<domain>.schema.json); registration fails without one.
-var labShapes = map[string]func(handler) handler{
-	"lab_compare_methods":   shaped[contract.LabCompareMethodsRequest, contract.LabCompareMethodsReply],
-	"lab_cell_action":       shaped[contract.LabCellActionRequest, contract.LabCellActionReply],
-	"lab_example_get":       shaped[contract.LabExampleGetRequest, contract.LabExampleGetReply],
-	"lab_examples_add":      shaped[contract.LabExamplesAddRequest, contract.LabExamplesAddReply],
-	"lab_examples_list":     shaped[contract.LabExamplesListRequest, contract.LabExamplesListReply],
-	"lab_experiment_action": shaped[contract.LabExperimentActionRequest, contract.LabExperimentActionReply],
-	"lab_experiment_create": shaped[contract.LabExperimentCreateRequest, contract.LabExperimentCreateReply],
-	"lab_experiment_decide": shaped[contract.LabExperimentDecideRequest, contract.LabExperimentDecideReply],
-	"lab_experiment_get":    shaped[contract.LabExperimentGetRequest, contract.LabExperimentGetReply],
-	"lab_experiment_note":   shaped[contract.LabExperimentNoteRequest, contract.LabExperimentNoteReply],
-	"lab_experiments_list":  shaped[contract.LabExperimentsListRequest, contract.LabExperimentsListReply],
-	"lab_promote":           shaped[contract.LabPromoteRequest, contract.LabPromoteReply],
-	"lab_rating_create":     shaped[contract.LabRatingCreateRequest, contract.LabRatingCreateReply],
-	"lab_rating_withdraw":   shaped[contract.LabRatingWithdrawRequest, contract.LabRatingWithdrawReply],
-	"lab_rating_get":        shaped[contract.LabRatingGetRequest, contract.LabRatingGetReply],
-	"lab_ratings_list":      shaped[contract.LabRatingsListRequest, contract.LabRatingsListReply],
-	"lab_registry":          shaped[contract.LabRegistryRequest, contract.LabRegistryReply],
-	"lab_score_correct":     shaped[contract.LabScoreCorrectRequest, contract.LabScoreCorrectReply],
-}
-
-// labOps: every Lab operation; the same names serve POST /api/ops/<name> and the /api/lab routes. Long operations run
-// their own transactions (q.tx nil); the rest run in the route's transaction.
-var labOps = map[string]struct {
-	long, read bool
-	h          func(q *Request, b doc) (any, error)
-}{
-	"lab_compare_methods": {false, false, func(q *Request, b doc) (any, error) { return labCompareMethods(q, b) }},
-	"lab_examples_add":    {false, false, func(q *Request, b doc) (any, error) { return labExamplesAdd(q, b) }},
-	"lab_examples_list":   {false, true, func(q *Request, b doc) (any, error) { return labExamplesList(q, b["state"]) }},
-	"lab_example_get": {false, true, func(q *Request, b doc) (any, error) {
-		id, err := labIDArg(b["artifactId"], "artifactId")
-		if err != nil {
-			return nil, err
-		}
-		return labExampleGet(q, id)
-	}},
-	"lab_experiment_create": {false, false, func(q *Request, b doc) (any, error) { return expCreate(q, b) }},
-	"lab_experiment_note":   {false, false, func(q *Request, b doc) (any, error) { return expNote(q, b) }},
-	"lab_experiment_decide": {false, false, func(q *Request, b doc) (any, error) { return expDecide(q, b) }},
-	"lab_experiments_list": {false, true, func(q *Request, b doc) (any, error) {
-		rs, err := queryRows(q, "SELECT * FROM experiment ORDER BY seq DESC")
-		out := []any{}
-		for _, r := range rs {
-			out = append(out, expView(r))
-		}
-		return doc{"experiments": out}, err
-	}},
-	"lab_experiment_get": {false, true, func(q *Request, b doc) (any, error) {
-		id, err := labIDArg(b["experimentId"], "experimentId")
-		if err != nil {
-			return nil, err
-		}
-		return expGet(q, id)
-	}},
-	"lab_experiment_action": {true, false, func(q *Request, b doc) (any, error) {
-		id, err := labIDArg(b["experimentId"], "experimentId")
-		if err != nil {
-			return nil, err
-		}
-		return expAction(q, id, astr(b["action"]))
-	}},
-	"lab_cell_action": {true, false, func(q *Request, b doc) (any, error) {
-		act := astr(b["action"])
-		if act != "cancel" && act != "retry" && act != "retry_suffix" {
-			return nil, fail(400, "action is cancel, retry or retry_suffix")
-		}
-		id, err := labIDArg(b["experimentId"], "experimentId")
-		if err != nil {
-			return nil, err
-		}
-		cell, err := labIDArg(b["cell"], "cell")
-		if err != nil {
-			return nil, err
-		}
-		if act == "retry_suffix" {
-			return expRetrySuffix(q, id, cell, b)
-		}
-		return expCellAction(q, id, cell, act)
-	}},
-	"lab_promote": {false, false, func(q *Request, b doc) (any, error) {
-		id, err := labIDArg(b["experimentId"], "experimentId")
-		if err != nil {
-			return nil, err
-		}
-		v, err := labIDArg(b["variant"], "variant")
-		if err != nil {
-			return nil, err
-		}
-		return expPromote(q, id, v)
-	}},
-	"lab_rating_create":   {false, false, func(q *Request, b doc) (any, error) { return expRate(q, b) }},
-	"lab_rating_withdraw": {false, false, func(q *Request, b doc) (any, error) { return labRatingWithdraw(q, b) }},
-	"lab_ratings_list":    {false, true, func(q *Request, b doc) (any, error) { return labRatings(q, b["experimentId"], b["state"]) }},
-	"lab_rating_get": {false, true, func(q *Request, b doc) (any, error) {
-		id, err := labIDArg(b["questionId"], "questionId")
-		if err != nil {
-			return nil, err
-		}
-		return labRating(q, id)
-	}},
-	"lab_score_correct": {false, false, func(q *Request, b doc) (any, error) {
-		id, err := labIDArg(b["scoreId"], "scoreId")
-		if err != nil {
-			return nil, err
-		}
-		return scoreCorrect(q, id, b)
-	}},
-	"lab_registry": {false, true, func(q *Request, b doc) (any, error) {
-		r, err := labRegistry()
-		return doc{"useCases": r}, err
-	}},
+func labIDArg(s, what string) error {
+	if s == "" || len(s) > 300 {
+		return fail(400, "Expected "+what)
+	}
+	return nil
 }
 
 // scoreCorrect: a correction keeps the trials, evaluator and form; only a current score can be corrected.
@@ -2781,98 +2665,103 @@ func scoreCorrect(q *Request, id string, b doc) (doc, error) {
 	return scoreView(rs[0]), nil
 }
 
-func runLabOp(name string, q *Request, b doc) (any, error) {
-	op := labOps[name]
-	if op.long || q.tx != nil {
-		return op.h(q, b)
-	}
-	var out any
-	err := q.app.store.Tx(q.ctx(), scopeOf(q.person), !op.read, "", func(tx pgx.Tx) error {
-		q.tx = tx
-		var err error
-		out, err = op.h(q, b)
-		return err
-	})
-	return out, err
-}
-
 func init() {
-	// /api/ops/lab_*: registered through the long dispatcher below, since an operation() always runs in a transaction.
-	for name, op := range labOps {
-		name, op := name, op
-		shape := labShapes[name]
-		if shape == nil {
-			panic("lab operation " + name + " has no contract types (labShapes)")
-		}
-		if op.long {
-			longOp(name, shape(func(q *Request) (any, error) {
-				b := body(q)
-				return runLabOp(name, q, b)
-			}))
-			continue
-		}
-		gatedOp(name, op.read, shape(func(q *Request) (any, error) {
-			b := body(q)
-			return op.h(q, b)
-		}))
-	}
-	r := func(pattern, name string, body func(q *Request) (doc, error)) {
-		gatedLongRoute(pattern, func(q *Request) (any, error) {
-			b, err := body(q)
-			if err != nil {
-				return nil, err
-			}
-			return runLabOp(name, q, b)
-		})
-	}
-	bodyOf := func(q *Request) (doc, error) { return body(q), nil }
-	none := func(q *Request) (doc, error) { return doc{}, nil }
-	r("POST /api/lab/examples", "lab_examples_add", bodyOf)
-	r("GET /api/lab/examples", "lab_examples_list", func(q *Request) (doc, error) {
-		b := doc{}
-		if s := q.r.URL.Query().Get("state"); s != "" {
-			b["state"] = s
-		}
-		return b, nil
+	// Lab operations (contracts/ops-lab.schema.json): lab_experiment_action and lab_cell_action are long and open their own
+	// transactions; the rest run in runOp's.
+	op("lab_compare_methods", func(q *Request, r *contract.LabCompareMethodsRequest) (contract.LabCompareMethodsReply, error) {
+		return replyAs[contract.LabCompareMethodsReply](labCompareMethods(q, docOf(r)))
 	})
-	r("GET /api/lab/examples/{id}", "lab_example_get", func(q *Request) (doc, error) { return doc{"artifactId": q.r.PathValue("id")}, nil })
-	r("POST /api/lab/experiments", "lab_experiment_create", bodyOf)
-	r("GET /api/lab/experiments", "lab_experiments_list", none)
-	r("GET /api/lab/experiments/{id}", "lab_experiment_get", func(q *Request) (doc, error) { return doc{"experimentId": q.r.PathValue("id")}, nil })
-	for _, a := range []string{"launch", "stop", "resume"} {
-		a := a
-		r("POST /api/lab/experiments/{id}/"+a, "lab_experiment_action", func(q *Request) (doc, error) { return doc{"experimentId": q.r.PathValue("id"), "action": a}, nil })
-	}
-	for _, a := range []string{"cancel", "retry", "retry_suffix"} {
-		a := a
-		r("POST /api/lab/experiments/{id}/cells/{cell}/"+a, "lab_cell_action", func(q *Request) (doc, error) {
-			b := doc{"experimentId": q.r.PathValue("id"), "cell": q.r.PathValue("cell"), "action": a}
-			if a == "retry_suffix" {
-				b["sourceRunId"], b["requestId"] = body(q)["sourceRunId"], body(q)["requestId"]
-			}
-			return b, nil
-		})
-	}
-	r("POST /api/lab/experiments/{id}/promote", "lab_promote", func(q *Request) (doc, error) {
-		return doc{"experimentId": q.r.PathValue("id"), "variant": body(q)["variant"]}, nil
+	op("lab_examples_add", func(q *Request, r *contract.LabExamplesAddRequest) (contract.LabExamplesAddReply, error) {
+		return replyAs[contract.LabExamplesAddReply](labExamplesAdd(q, docOf(r)))
 	})
-	r("POST /api/lab/ratings", "lab_rating_create", bodyOf)
-	r("GET /api/lab/ratings", "lab_ratings_list", func(q *Request) (doc, error) {
-		b := doc{}
-		for _, k := range []string{"experimentId", "state"} {
-			if v := q.r.URL.Query().Get(k); v != "" {
-				b[k] = v
-			}
+	op("lab_examples_list", func(q *Request, r *contract.LabExamplesListRequest) (contract.LabExamplesListReply, error) {
+		var state any
+		if r.State != nil {
+			state = string(*r.State)
 		}
-		return b, nil
+		return replyAs[contract.LabExamplesListReply](labExamplesList(q, state))
 	})
-	r("GET /api/lab/ratings/{id}", "lab_rating_get", func(q *Request) (doc, error) { return doc{"questionId": q.r.PathValue("id")}, nil })
-	r("POST /api/lab/scores/{id}/correct", "lab_score_correct", func(q *Request) (doc, error) {
-		b := body(q)
-		b["scoreId"] = q.r.PathValue("id")
-		return b, nil
+	op("lab_example_get", func(q *Request, r *contract.LabExampleGetRequest) (contract.LabExampleGetReply, error) {
+		if err := labIDArg(r.ArtifactId, "artifactId"); err != nil {
+			return contract.LabExampleGetReply{}, err
+		}
+		return replyAs[contract.LabExampleGetReply](labExampleGet(q, r.ArtifactId))
 	})
-	r("GET /api/lab/registry", "lab_registry", none)
+	op("lab_experiment_create", func(q *Request, r *contract.LabExperimentCreateRequest) (contract.LabExperimentCreateReply, error) {
+		return replyAs[contract.LabExperimentCreateReply](expCreate(q, docOf(r)))
+	})
+	op("lab_experiment_note", func(q *Request, r *contract.LabExperimentNoteRequest) (contract.LabExperimentNoteReply, error) {
+		return replyAs[contract.LabExperimentNoteReply](expNote(q, docOf(r)))
+	})
+	op("lab_experiment_decide", func(q *Request, r *contract.LabExperimentDecideRequest) (contract.LabExperimentDecideReply, error) {
+		return replyAs[contract.LabExperimentDecideReply](expDecide(q, docOf(r)))
+	})
+	op("lab_experiments_list", func(q *Request, _ *contract.LabExperimentsListRequest) (contract.LabExperimentsListReply, error) {
+		rs, err := queryRows(q, "SELECT * FROM experiment ORDER BY seq DESC")
+		out := []any{}
+		for _, r := range rs {
+			out = append(out, expView(r))
+		}
+		return replyAs[contract.LabExperimentsListReply](doc{"experiments": out}, err)
+	})
+	op("lab_experiment_get", func(q *Request, r *contract.LabExperimentGetRequest) (contract.LabExperimentGetReply, error) {
+		if err := labIDArg(r.ExperimentId, "experimentId"); err != nil {
+			return contract.LabExperimentGetReply{}, err
+		}
+		return replyAs[contract.LabExperimentGetReply](expGet(q, r.ExperimentId))
+	})
+	op("lab_experiment_action", func(q *Request, r *contract.LabExperimentActionRequest) (contract.LabExperimentActionReply, error) {
+		if err := labIDArg(r.ExperimentId, "experimentId"); err != nil {
+			return contract.LabExperimentActionReply{}, err
+		}
+		return replyAs[contract.LabExperimentActionReply](expAction(q, r.ExperimentId, string(r.Action)))
+	})
+	op("lab_cell_action", func(q *Request, r *contract.LabCellActionRequest) (contract.LabCellActionReply, error) {
+		if err := labIDArg(r.ExperimentId, "experimentId"); err != nil {
+			return nil, err
+		}
+		if err := labIDArg(r.Cell, "cell"); err != nil {
+			return nil, err
+		}
+		if r.Action == contract.LabCellActionRetrySuffix {
+			return replyAs[contract.LabCellActionReply](expRetrySuffix(q, r.ExperimentId, r.Cell, deref(r.SourceRunId), deref(r.RequestId)))
+		}
+		return replyAs[contract.LabCellActionReply](expCellAction(q, r.ExperimentId, r.Cell, string(r.Action)))
+	})
+	op("lab_promote", func(q *Request, r *contract.LabPromoteRequest) (contract.LabPromoteReply, error) {
+		if err := labIDArg(r.ExperimentId, "experimentId"); err != nil {
+			return contract.LabPromoteReply{}, err
+		}
+		if err := labIDArg(r.Variant, "variant"); err != nil {
+			return contract.LabPromoteReply{}, err
+		}
+		return replyAs[contract.LabPromoteReply](expPromote(q, r.ExperimentId, r.Variant))
+	})
+	op("lab_rating_create", func(q *Request, r *contract.LabRatingCreateRequest) (contract.LabRatingCreateReply, error) {
+		return replyAs[contract.LabRatingCreateReply](expRate(q, docOf(r)))
+	})
+	op("lab_rating_withdraw", func(q *Request, r *contract.LabRatingWithdrawRequest) (contract.LabRatingWithdrawReply, error) {
+		return replyAs[contract.LabRatingWithdrawReply](labRatingWithdraw(q, r.QuestionId, r.Reason))
+	})
+	op("lab_ratings_list", func(q *Request, r *contract.LabRatingsListRequest) (contract.LabRatingsListReply, error) {
+		return replyAs[contract.LabRatingsListReply](labRatings(q, optText(r.ExperimentId), optText(r.State)))
+	})
+	op("lab_rating_get", func(q *Request, r *contract.LabRatingGetRequest) (contract.LabRatingGetReply, error) {
+		if err := labIDArg(r.QuestionId, "questionId"); err != nil {
+			return contract.LabRatingGetReply{}, err
+		}
+		return replyAs[contract.LabRatingGetReply](labRating(q, r.QuestionId))
+	})
+	op("lab_score_correct", func(q *Request, r *contract.LabScoreCorrectRequest) (contract.LabScoreCorrectReply, error) {
+		if err := labIDArg(r.ScoreId, "scoreId"); err != nil {
+			return contract.LabScoreCorrectReply{}, err
+		}
+		return replyAs[contract.LabScoreCorrectReply](scoreCorrect(q, r.ScoreId, docOf(r)))
+	})
+	op("lab_registry", func(q *Request, _ *contract.LabRegistryRequest) (contract.LabRegistryReply, error) {
+		u, err := labRegistry()
+		return replyAs[contract.LabRegistryReply](doc{"useCases": u}, err)
+	})
 
 	onStart(func(ctx context.Context, a *App) {
 		go func() {
@@ -3105,16 +2994,11 @@ func exampleRef(id, version any) string {
 	return fmt.Sprintf("%v@%v", id, version)
 }
 
-func labRatingWithdraw(q *Request, b doc) (doc, error) {
-	if q.person != nil && !fullAccess(q.person) {
-		return nil, fail(403, "Only the owner withdraws Lab ratings")
-	}
-	id, err := labIDArg(b["questionId"], "questionId")
-	if err != nil {
+func labRatingWithdraw(q *Request, id, reason string) (doc, error) {
+	if err := labIDArg(id, "questionId"); err != nil {
 		return nil, err
 	}
-	reason, err := labStr(b["reason"], "withdrawal reason", 4000)
-	if err != nil {
+	if _, err := labStr(reason, "withdrawal reason", 4000); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(reason) == "" {

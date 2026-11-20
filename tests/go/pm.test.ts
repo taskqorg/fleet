@@ -316,7 +316,7 @@ test('PM provenance: internal timer/change/wake inputs keep Fleet sender through
     assert.equal(message.sentBy, 'Fleet'); assert.equal(message.source, kind === 'wake' ? 'wake' : 'watch');
     const session = await view(pm.sessionId);
     assert.equal(session.executions.find((e: any) => e.id === message.executionId).directedBy, MEMBER, 'system sender never replaces execution director');
-    const thread = ok(await call('GET', `/api/threads/session/${pm.sessionId}/entries?limit=100`, undefined, as(MEMBER)));
+    const thread = ok(await op('thread_entries', {key: {session: pm.sessionId}, limit: 100}, MEMBER));
     assert.equal(thread.entries.find((b: any) => b.markdown === message.text)?.by, 'Fleet', 'thread projection displays Fleet');
     const command = await eventually(async () => ok(await hostCall(MEMBER, '/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === message.executionId && c.kind === 'start'));
     const forbidden = await hostCall(MEMBER, '/api/hosts/agent-tools', {hostId: hosts.get(MEMBER)!.id, executionId: message.executionId, commandId: command.id, request: {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'people_set', arguments: {people: []}}}});

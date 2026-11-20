@@ -93,6 +93,9 @@ func (v *UseCase) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*UseCase) Closed() bool { return true }
+
 type UseCaseCheck struct {
 	Kind   string  `json:"kind"`
 	Metric *string `json:"metric,omitempty"`
@@ -103,6 +106,9 @@ type UseCaseCheck struct {
 func (v *UseCaseCheck) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*UseCaseCheck) Closed() bool { return true }
 
 type UseCaseSource struct {
 	Anchor string `json:"anchor"`
@@ -116,6 +122,9 @@ type UseCaseSource struct {
 func (v *UseCaseSource) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*UseCaseSource) Closed() bool { return true }
 
 type UseCaseStatus string
 

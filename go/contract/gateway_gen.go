@@ -262,12 +262,32 @@ func (v *GatewayLimits) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*GatewayLimits) Closed() bool { return true }
+
 // GatewayProvider: A provider catalogue entry (go/coordinator/providers.go); the gateway reads only these fields.
 type GatewayProvider struct {
 	BaseUrl   string                 `json:"baseUrl"`
 	KeyHeader *string                `json:"keyHeader,omitempty"`
 	Tools     map[string]GatewayTool `json:"tools"`
 	Usage     *GatewayUsageSource    `json:"usage,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v GatewayProvider) MarshalJSON() ([]byte, error) {
+	type plain GatewayProvider
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *GatewayProvider) UnmarshalJSON(b []byte) error {
+	type plain GatewayProvider
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -346,6 +366,23 @@ type GatewayTool struct {
 	UsageField      *string                    `json:"usageField,omitempty"`
 	UsageOnce       *string                    `json:"usageOnce,omitempty"`
 	UsageWhen       *GatewayUsageWhen          `json:"usageWhen,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v GatewayTool) MarshalJSON() ([]byte, error) {
+	type plain GatewayTool
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *GatewayTool) UnmarshalJSON(b []byte) error {
+	type plain GatewayTool
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).

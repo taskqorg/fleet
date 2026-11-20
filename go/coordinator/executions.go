@@ -203,7 +203,6 @@ func init() {
 	op("execution_stop", func(q *Request, r *contract.ExecutionStopRequest) (contract.ExecutionStopReply, error) {
 		return executionStop(q, r.ExecutionId)
 	})
-	route("POST /api/executions/{id}/stop", func(q *Request) (any, error) { return executionStop(q, q.r.PathValue("id")) })
 }
 
 // lockExecutionTask keeps execution writers in task-before-execution order.
@@ -498,10 +497,13 @@ func init() {
 	op("execution_differences", func(q *Request, r *contract.ExecutionDifferencesRequest) (contract.ExecutionDifferencesReply, error) {
 		return executionDifferences(q, r.ExecutionId, r.Previous)
 	})
-	gatedRoute("GET /api/executions/{id}/differences", func(q *Request) (any, error) {
+	route("GET /api/executions/{id}/differences", func(q *Request) (any, error) {
 		return executionDifferences(q, q.r.PathValue("id"), q.r.URL.Query().Get("previous"))
 	})
-	gatedRoute("GET /api/reconciliation", func(q *Request) (any, error) {
+	route("GET /api/reconciliation", func(q *Request) (any, error) {
+		if err := requireArchitect(q); err != nil {
+			return nil, err
+		}
 		r, err := first(q, "SELECT data FROM document WHERE kind='reconciliation' ORDER BY seq DESC LIMIT 1")
 		if err != nil {
 			return nil, err
@@ -520,9 +522,6 @@ var lostAfter = envMs("FLEET_LOST_AFTER_MS", int(time.Hour/time.Millisecond))
 func init() {
 	op("executions_abandon", func(q *Request, r *contract.ExecutionsAbandonRequest) (contract.ExecutionsAbandonReply, error) {
 		out := contract.ExecutionsAbandonReply{Abandoned: []string{}, Skipped: []contract.ExecutionSkipped{}}
-		if err := ownerOnly(q, "Only the owner abandons executions"); err != nil {
-			return out, err
-		}
 		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
 			return out, fail(400, "Expected reason")
 		}
@@ -563,9 +562,6 @@ func init() {
 	})
 	op("executions_dismiss", func(q *Request, r *contract.ExecutionsDismissRequest) (contract.ExecutionsDismissReply, error) {
 		out := contract.ExecutionsDismissReply{Dismissed: []string{}, Skipped: []contract.ExecutionSkipped{}}
-		if err := ownerOnly(q, "Only the owner dismisses execution problems"); err != nil {
-			return out, err
-		}
 		if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 4000 {
 			return out, fail(400, "Expected reason")
 		}

@@ -46,7 +46,7 @@
       "fileBytes": {"$comment": "Largest upload in bytes.", "type": "integer", "minimum": 1},
       "replyBytes": {"$comment": "Largest download in bytes.", "type": "integer", "minimum": 1},
       "stallMs": {"$comment": "Longest time without progress in either direction.", "type": "integer", "minimum": 1},
-      "answerMs": {"$comment": "Wait from the last byte sent to the provider's response headers (file tools).", "type": "integer", "minimum": 1}}},
+      "answerMs": {"$comment": "Wait from the last byte sent to the provider's response headers (file tools).", "type": "integer", "minimum": 1}}, "additionalProperties": false},
     "GatewayKey": {"type": "object", "required": ["id", "state"], "properties": {"id": {"type": "string"}, "state": {"type": "string"}, "enabledAt": {"type": "integer"}}},
     "GatewayRunToken": {"type": "object", "required": ["sha256", "executionId", "connections", "directedBy", "projectId", "experimentId"], "properties": {
       "sha256": {"type": "string"},

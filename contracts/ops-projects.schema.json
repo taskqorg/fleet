@@ -142,7 +142,8 @@
             "$ref": "#/$defs/ProjectContextFile"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "ProjectContextFile": {
       "type": "object",
@@ -157,7 +158,8 @@
         "text": {
           "type": "string"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "ProjectArchiveRequest": {
       "type": "object",

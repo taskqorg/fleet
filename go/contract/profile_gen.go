@@ -42,6 +42,9 @@ func (v *AntigravitySettings) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*AntigravitySettings) Closed() bool { return true }
+
 type ClaudeTool string
 
 const (
@@ -141,6 +144,9 @@ func (v *Profile) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*Profile) Closed() bool { return true }
+
 type ProfileHarness string
 
 const (
@@ -175,3 +181,6 @@ func (v *ProfileMcpGrant) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProfileMcpGrant) Closed() bool { return true }

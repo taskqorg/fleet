@@ -9,7 +9,7 @@
 // shell command run in that directory with FLEET_OUTPUT_DIR set to it, the same contract a Stage 3 script evaluator uses;
 // the directory of the node running this script is appended to PATH, so checks that call node work where node is not on
 // PATH (a systemd unit) and the caller's own PATH order still wins.
-// import posts to $FLEET_URL/api/lab/examples with the operator credential from $FLEET_TOKEN and the person e-mail from $FLEET_PERSON
+// import posts to $FLEET_URL/api/ops/lab_examples_add with the operator credential from $FLEET_TOKEN and the person e-mail from $FLEET_PERSON
 // (X-Fleet-Person, as the guard sets it), and sends $FLEET_ORIGIN (else
 // $FLEET_BROWSER_ORIGIN, the coordinator's own setting) as Origin when set (a coordinator with FLEET_BROWSER_PROXY_AUTH refuses a POST without its FLEET_BROWSER_ORIGIN);
 // --project ID sets the project.
@@ -47,7 +47,7 @@ export function checkExample(raw:any,useCases:Set<string>):string[]{let e:Exampl
 
 export async function importExamples(o:{url:string,token:string,origin?:string,person?:string,examples:any[],projectId?:string}){
  const headers:Record<string,string>={'content-type':'application/json',authorization:'Bearer '+o.token};if(o.origin)headers.origin=o.origin;if(o.person)headers['x-fleet-person']=o.person;
- const r=await fetch(o.url.replace(/\/$/,'')+'/api/lab/examples',{method:'POST',headers,body:JSON.stringify({examples:o.examples,projectId:o.projectId,approved:true})});
+ const r=await fetch(o.url.replace(/\/$/,'')+'/api/ops/lab_examples_add',{method:'POST',headers,body:JSON.stringify({examples:o.examples,projectId:o.projectId,approved:true})});
  const body=await r.text();if(!r.ok)throw Error(`import failed: ${r.status} ${body}`);return JSON.parse(body) as {examples:any[]}}
 
 async function main(argv:string[]){const [cmd,...rest]=argv,root=resolve(dirname(fileURLToPath(import.meta.url)),'..');

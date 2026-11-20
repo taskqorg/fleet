@@ -57,6 +57,9 @@ func (v *EntityCardRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*EntityCardRequest) Closed() bool { return true }
+
 // EntityCode: A human code (D17) and the entity it names; superseded: an alias of currentCode (a moved entity or a renamed project).
 type EntityCode struct {
 	Code        string `json:"code"`
@@ -161,6 +164,23 @@ func (v *EntityResolveManyReply) Validate() error {
 
 type EntityResolveManyRequest struct {
 	Text string `json:"text"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v EntityResolveManyRequest) MarshalJSON() ([]byte, error) {
+	type plain EntityResolveManyRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *EntityResolveManyRequest) UnmarshalJSON(b []byte) error {
+	type plain EntityResolveManyRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -173,6 +193,23 @@ type EntityResolveReply = EntityCode
 // EntityResolveRequest: Case-insensitive; unknown and forbidden codes both answer 404.
 type EntityResolveRequest struct {
 	Code string `json:"code"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v EntityResolveRequest) MarshalJSON() ([]byte, error) {
+	type plain EntityResolveRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *EntityResolveRequest) UnmarshalJSON(b []byte) error {
+	type plain EntityResolveRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -210,6 +247,9 @@ func (v *PreparedHeaderV1) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*PreparedHeaderV1) Closed() bool { return true }
+
 type PreparedItemCountsV1 struct {
 	Costs  int64 `json:"costs"`
 	Prices int64 `json:"prices"`
@@ -220,6 +260,9 @@ type PreparedItemCountsV1 struct {
 func (v *PreparedItemCountsV1) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*PreparedItemCountsV1) Closed() bool { return true }
 
 type PreparedToolsV1 struct {
 	Basis       ResourceBasis `json:"basis"`
@@ -237,6 +280,9 @@ func (v *PreparedToolsV1) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*PreparedToolsV1) Closed() bool { return true }
+
 type ProjectCodeSetReply struct {
 	Code      string `json:"code"`
 	ProjectId string `json:"projectId"`
@@ -251,6 +297,23 @@ func (v *ProjectCodeSetReply) Validate() error {
 type ProjectCodeSetRequest struct {
 	Code      string `json:"code"`
 	ProjectId string `json:"projectId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectCodeSetRequest) MarshalJSON() ([]byte, error) {
+	type plain ProjectCodeSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectCodeSetRequest) UnmarshalJSON(b []byte) error {
+	type plain ProjectCodeSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -268,6 +331,9 @@ type ProjectContextEntry struct {
 func (v *ProjectContextEntry) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProjectContextEntry) Closed() bool { return true }
 
 // ProjectContextReply: The project's context (projectContext): settings, roles, connections, rules, and optional resource summary.
 type ProjectContextReply struct {
@@ -336,6 +402,23 @@ func (v *ProjectContextReply) Validate() error {
 
 type ProjectContextRequest struct {
 	ProjectId string `json:"projectId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectContextRequest) MarshalJSON() ([]byte, error) {
+	type plain ProjectContextRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectContextRequest) UnmarshalJSON(b []byte) error {
+	type plain ProjectContextRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -384,6 +467,9 @@ func (v *ProjectDetailReply) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProjectDetailReply) Closed() bool { return true }
+
 type ProjectDetailRequest struct {
 	ProjectId string `json:"projectId"`
 }
@@ -392,6 +478,9 @@ type ProjectDetailRequest struct {
 func (v *ProjectDetailRequest) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProjectDetailRequest) Closed() bool { return true }
 
 type ProjectInitialAccess struct {
 	Member  *string `json:"member"`
@@ -403,6 +492,9 @@ type ProjectInitialAccess struct {
 func (v *ProjectInitialAccess) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProjectInitialAccess) Closed() bool { return true }
 
 type ProjectListReply struct {
 	Projects []map[string]json.RawMessage `json:"projects"`
@@ -453,6 +545,23 @@ func (v *ProjectReadinessReply) Validate() error {
 type ProjectReadinessRequest struct {
 	CallerSessionId *string `json:"callerSessionId,omitempty"`
 	ProjectId       *string `json:"projectId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ProjectReadinessRequest) MarshalJSON() ([]byte, error) {
+	type plain ProjectReadinessRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ProjectReadinessRequest) UnmarshalJSON(b []byte) error {
+	type plain ProjectReadinessRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -497,6 +606,9 @@ func (v *ProjectResourceItemsRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProjectResourceItemsRequest) Closed() bool { return true }
+
 type ProjectResourcesReply = json.RawMessage
 
 type ProjectResourcesRequest struct {
@@ -509,6 +621,9 @@ func (v *ProjectResourcesRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ProjectResourcesRequest) Closed() bool { return true }
+
 // QuestionAnswerReply: A project question (ProjectQuestion), or the answered question row for any other question.
 type QuestionAnswerReply = map[string]json.RawMessage
 
@@ -517,6 +632,23 @@ type QuestionAnswerRequest struct {
 	Answer      string   `json:"answer"`
 	ArtifactIds []string `json:"artifactIds,omitempty"`
 	QuestionId  string   `json:"questionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionAnswerRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionAnswerRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionAnswerRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionAnswerRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -530,6 +662,23 @@ type QuestionAskRequest struct {
 	ProjectId string `json:"projectId"`
 	RequestId string `json:"requestId"`
 	Text      string `json:"text"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionAskRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionAskRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionAskRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionAskRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -556,6 +705,23 @@ func (v *QuestionHistoryReply) Validate() error {
 
 type QuestionHistoryRequest struct {
 	ProjectId string `json:"projectId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionHistoryRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionHistoryRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionHistoryRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionHistoryRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -634,6 +800,23 @@ type QuestionsAnswerRequest struct {
 	Answer      string   `json:"answer"`
 	ArtifactIds []string `json:"artifactIds,omitempty"`
 	QuestionId  string   `json:"questionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionsAnswerRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionsAnswerRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionsAnswerRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionsAnswerRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -664,6 +847,23 @@ type QuestionsListRequest struct {
 	ProjectIds        []string `json:"projectIds,omitempty"`
 	State             *string  `json:"state,omitempty"`
 	TaskId            *string  `json:"taskId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionsListRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionsListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionsListRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionsListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -686,6 +886,23 @@ func (v *QuestionsReply) Validate() error {
 type QuestionsRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
 	State     *string `json:"state,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v QuestionsRequest) MarshalJSON() ([]byte, error) {
+	type plain QuestionsRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *QuestionsRequest) UnmarshalJSON(b []byte) error {
+	type plain QuestionsRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -728,6 +945,9 @@ func (v *QuestionsWithdrawRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*QuestionsWithdrawRequest) Closed() bool { return true }
+
 type ResourceAnchor string
 
 const (
@@ -763,6 +983,9 @@ func (v *ResourceAround) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceAround) Closed() bool { return true }
 
 type ResourceCategory string
 
@@ -831,6 +1054,9 @@ func (v *ResourceContributionV1) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceContributionV1) Closed() bool { return true }
+
 type ResourceCostItem struct {
 	Basis      ResourceBasis `json:"basis"`
 	Currency   *string       `json:"currency"`
@@ -850,6 +1076,9 @@ func (v *ResourceCostItem) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceCostItem) Closed() bool { return true }
+
 type ResourceCostKey struct {
 	Basis    ResourceBasis `json:"basis"`
 	Currency *string       `json:"currency"`
@@ -863,6 +1092,9 @@ func (v *ResourceCostKey) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceCostKey) Closed() bool { return true }
 
 type ResourceCostV1 struct {
 	Amount        *string              `json:"amount"`
@@ -887,6 +1119,9 @@ func (v *ResourceCostV1) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceCostV1) Closed() bool { return true }
 
 type ResourceDirection string
 
@@ -943,6 +1178,9 @@ func (v *ResourceGroup) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceGroup) Closed() bool { return true }
+
 type ResourceItem = json.RawMessage
 
 type ResourceItemsPage struct {
@@ -983,6 +1221,9 @@ func (v *ResourceItemsPage) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceItemsPage) Closed() bool { return true }
+
 type ResourceMethodComponentV1 struct {
 	Currency   *string `json:"currency"`
 	ObservedAt *int64  `json:"observedAt"`
@@ -996,6 +1237,9 @@ type ResourceMethodComponentV1 struct {
 func (v *ResourceMethodComponentV1) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceMethodComponentV1) Closed() bool { return true }
 
 type ResourceMethodV1 struct {
 	Components    []ResourceMethodComponentV1 `json:"components"`
@@ -1017,6 +1261,9 @@ func (v *ResourceMethodV1) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceMethodV1) Closed() bool { return true }
 
 type ResourceMetricNameV1 string
 
@@ -1068,6 +1315,9 @@ func (v *ResourceMetricV1) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceMetricV1) Closed() bool { return true }
+
 type ResourceNullKey = json.RawMessage
 
 type ResourceNullableErrorClass = json.RawMessage
@@ -1082,6 +1332,9 @@ type ResourcePackedToolKey struct {
 func (v *ResourcePackedToolKey) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourcePackedToolKey) Closed() bool { return true }
 
 type ResourcePreparingReply struct {
 	Kind      string           `json:"kind"`
@@ -1101,6 +1354,9 @@ func (v *ResourcePreparingReply) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourcePreparingReply) Closed() bool { return true }
+
 type ResourcePriceItem struct {
 	Group      ResourceGroup `json:"group"`
 	Kind       string        `json:"kind"`
@@ -1116,6 +1372,9 @@ func (v *ResourcePriceItem) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourcePriceItem) Closed() bool { return true }
+
 type ResourcePriceKey struct {
 	Kind       string `json:"kind"`
 	ObservedAt int64  `json:"observedAt"`
@@ -1127,6 +1386,9 @@ func (v *ResourcePriceKey) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourcePriceKey) Closed() bool { return true }
+
 type ResourcePriceRefV1 struct {
 	ObservedAt int64  `json:"observedAt"`
 	PriceId    string `json:"priceId"`
@@ -1136,6 +1398,9 @@ type ResourcePriceRefV1 struct {
 func (v *ResourcePriceRefV1) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourcePriceRefV1) Closed() bool { return true }
 
 type ResourceProgress struct {
 	ErrorClass      ResourceNullableErrorClass `json:"errorClass"`
@@ -1156,6 +1421,9 @@ func (v *ResourceProgress) Validate() error {
 	}
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceProgress) Closed() bool { return true }
 
 type ResourceProgressState string
 
@@ -1198,6 +1466,9 @@ func (v *ResourceReadyReply) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceReadyReply) Closed() bool { return true }
+
 type ResourceResolvedKey = json.RawMessage
 
 type ResourceSortKey = json.RawMessage
@@ -1221,6 +1492,9 @@ func (v *ResourceToolItem) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceToolItem) Closed() bool { return true }
+
 // ResourceToolKey: Preserve full admitted native tool names/connections, including values longer than 200 characters; positions remain subject to the HTTP body bound.
 type ResourceToolKey struct {
 	Connection *string `json:"connection"`
@@ -1233,6 +1507,9 @@ func (v *ResourceToolKey) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceToolKey) Closed() bool { return true }
+
 type ResourceToolV1 struct {
 	Calls      int64  `json:"calls"`
 	Connection string `json:"connection"`
@@ -1244,6 +1521,9 @@ type ResourceToolV1 struct {
 func (v *ResourceToolV1) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceToolV1) Closed() bool { return true }
 
 type ResourceUnchangedReply struct {
 	Kind      string           `json:"kind"`
@@ -1260,10 +1540,30 @@ func (v *ResourceUnchangedReply) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*ResourceUnchangedReply) Closed() bool { return true }
+
 type TaskCancelReply = TaskDetail
 
 type TaskCancelRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskCancelRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskCancelRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskCancelRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskCancelRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1283,6 +1583,23 @@ type TaskCreateRequest struct {
 	ProjectId              *string         `json:"projectId,omitempty"`
 	ResultDestination      *string         `json:"resultDestination,omitempty"`
 	Title                  string          `json:"title"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskCreateRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskCreateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskCreateRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskCreateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1436,6 +1753,23 @@ type TaskGetReply = TaskDetail
 
 type TaskGetRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskGetRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskGetRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1447,6 +1781,23 @@ type TaskHoldReply = TaskDetail
 
 type TaskHoldRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskHoldRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskHoldRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskHoldRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskHoldRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1520,6 +1871,23 @@ func (v *TaskListReply) Validate() error {
 type TaskListRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
 	State     *string `json:"state,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskListRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskListRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1569,6 +1937,23 @@ type TaskPageRequest struct {
 	GroupCounts *bool             `json:"groupCounts,omitempty"`
 	Limit       *int64            `json:"limit,omitempty"`
 	Sort        *string           `json:"sort,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskPageRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskPageRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskPageRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskPageRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1602,6 +1987,23 @@ type TaskReleaseReply = TaskDetail
 
 type TaskReleaseRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskReleaseRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskReleaseRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskReleaseRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskReleaseRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1616,6 +2018,23 @@ type TaskRequestAcceptanceRequest struct {
 	ArtifactIds []string `json:"artifactIds,omitempty"`
 	TaskId      string   `json:"taskId"`
 	Text        *string  `json:"text,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskRequestAcceptanceRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskRequestAcceptanceRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskRequestAcceptanceRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskRequestAcceptanceRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1653,6 +2072,23 @@ type TaskTakeReply = TaskDetail
 
 type TaskTakeRequest struct {
 	TaskId string `json:"taskId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskTakeRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskTakeRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskTakeRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskTakeRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1670,6 +2106,23 @@ type TaskUpdateRequest struct {
 	ResultDestination *string `json:"resultDestination,omitempty"`
 	TaskId            string  `json:"taskId"`
 	Title             *string `json:"title,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v TaskUpdateRequest) MarshalJSON() ([]byte, error) {
+	type plain TaskUpdateRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *TaskUpdateRequest) UnmarshalJSON(b []byte) error {
+	type plain TaskUpdateRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).

@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
@@ -59,12 +58,11 @@ func (k threadKey) view() doc {
 	return doc{"session": k.session}
 }
 
-func threadKeyOf(b doc) (threadKey, error) {
-	k := mapOf(b["key"])
-	if t := astr(k["task"]); t != "" {
+func threadKeyOf(k contract.ThreadKey) (threadKey, error) {
+	if t := deref(k.Task); t != "" {
 		return threadKey{task: t}, nil
 	}
-	if s := astr(k["session"]); s != "" {
+	if s := deref(k.Session); s != "" {
 		return threadKey{session: s}, nil
 	}
 	return threadKey{}, fail(400, "Expected key {task} or {session}")
@@ -424,12 +422,11 @@ func threadTotal(q *Request, m map[string]member, ids []string) (int64, error) {
 	return n, err
 }
 
-func positiveLimit(v any) (int, error) {
-	f, ok := v.(float64)
-	if !ok || f <= 0 || f != float64(int64(f)) || f > 1<<53 {
+func positiveLimit(v *int64) (int, error) {
+	if v == nil || *v <= 0 || *v > 1<<53 {
 		return 0, fail(400, "Expected positive integer limit")
 	}
-	return int(f), nil
+	return int(*v), nil
 }
 
 // keyOfSession: the thread a session shows: its attached or first task's, else its own.
@@ -446,17 +443,17 @@ func keyOfSession(q *Request, sid string) (threadKey, error) {
 
 func feedCursor(q *Request) (int64, error) { return head(q.ctx(), q.tx) }
 
-func threadEntries(q *Request, b doc) (doc, error) {
-	key, err := threadKeyOf(b)
+func threadEntries(q *Request, b *contract.ThreadEntriesRequest) (doc, error) {
+	key, err := threadKeyOf(b.Key)
 	if err != nil {
 		return nil, err
 	}
-	if b["resolve"] == true && key.session != "" {
+	if b.Resolve != nil && *b.Resolve && key.session != "" {
 		if key, err = keyOfSession(q, key.session); err != nil {
 			return nil, err
 		}
 	}
-	limit, err := positiveLimit(b["limit"])
+	limit, err := positiveLimit(b.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -465,8 +462,8 @@ func threadEntries(q *Request, b doc) (doc, error) {
 		return nil, err
 	}
 	given := 0
-	for _, k := range []string{"before", "after", "around"} {
-		if b[k] != nil {
+	for _, k := range []*string{b.Before, b.After, b.Around} {
+		if k != nil {
 			given++
 		}
 	}
@@ -476,8 +473,8 @@ func threadEntries(q *Request, b doc) (doc, error) {
 	var entries []doc
 	hasBefore, hasAfter, withTotal := false, false, false
 	switch {
-	case b["before"] != nil:
-		k, err := parseKey(b["before"])
+	case b.Before != nil:
+		k, err := parseKey(*b.Before)
 		if err != nil {
 			return nil, err
 		}
@@ -485,8 +482,8 @@ func threadEntries(q *Request, b doc) (doc, error) {
 			return nil, err
 		}
 		hasAfter = true
-	case b["after"] != nil:
-		k, err := parseKey(b["after"])
+	case b.After != nil:
+		k, err := parseKey(*b.After)
 		if err != nil {
 			return nil, err
 		}
@@ -494,8 +491,8 @@ func threadEntries(q *Request, b doc) (doc, error) {
 			return nil, err
 		}
 		hasBefore = true
-	case b["around"] != nil:
-		k, err := parseKey(b["around"])
+	case b.Around != nil:
+		k, err := parseKey(*b.Around)
 		if err != nil {
 			return nil, err
 		}
@@ -554,8 +551,8 @@ func eventRow(q *Request, sql string, args ...any) ([]trow, error) {
 	return out, err
 }
 
-func threadBlocks(q *Request, b doc) (doc, error) {
-	key, err := threadKeyOf(b)
+func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (doc, error) {
+	key, err := threadKeyOf(b.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -563,10 +560,7 @@ func threadBlocks(q *Request, b doc) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	named, ok := b["rows"].([]any)
-	if !ok {
-		return nil, fail(400, "Expected rows [{kind,id}]")
-	}
+
 	out, removed := []doc{}, []string{}
 	add := func(rs []trow) error {
 		for _, r := range rs {
@@ -578,9 +572,8 @@ func threadBlocks(q *Request, b doc) (doc, error) {
 		}
 		return nil
 	}
-	for _, x := range named {
-		c, _ := x.(map[string]any)
-		id, kind := astr(c["id"]), astr(c["kind"])
+	for _, c := range b.Rows {
+		id, kind := c.Id, string(c.Kind)
 		if id == "" || kind == "" {
 			continue
 		}
@@ -679,23 +672,22 @@ func jsOr(v any) string {
 	return js(v)
 }
 
-func threadSearch(q *Request, b doc) (doc, error) {
-	key, err := threadKeyOf(b)
+func threadSearch(q *Request, b *contract.ThreadSearchRequest) (doc, error) {
+	key, err := threadKeyOf(b.Key)
 	if err != nil {
 		return nil, err
 	}
-	limit, err := positiveLimit(b["limit"])
+	limit, err := positiveLimit(b.Limit)
 	if err != nil {
 		return nil, err
 	}
-	qs, _ := b["q"].(string)
-	qs = strings.TrimSpace(qs)
+	qs := strings.TrimSpace(b.Q)
 	if qs == "" {
 		return nil, fail(400, "Expected q")
 	}
 	var before *bkey
-	if b["before"] != nil {
-		k, err := parseKey(b["before"])
+	if b.Before != nil {
+		k, err := parseKey(*b.Before)
 		if err != nil {
 			return nil, err
 		}
@@ -934,150 +926,43 @@ func replyTextUpTo(q *Request, executionID string, maxRunes int) ([]string, erro
 	}
 }
 
-var pointRe = regexp.MustCompile(`^(\d+:\d+)(?:@(\d+))?$`)
-
-func pointOf(v string) (*point, error) {
-	if v == "" {
-		return nil, nil
-	}
-	m := pointRe.FindStringSubmatch(v)
-	if m == nil {
-		return nil, fail(400, "Expected seq:index@offset")
-	}
-	n, _ := strconv.Atoi(m[2])
-	return &point{m[1], n}, nil
-}
-
-func routeThreadKey(q *Request) (threadKey, error) {
-	switch q.r.PathValue("scope") {
-	case "task":
-		return threadKey{task: q.r.PathValue("id")}, nil
-	case "session":
-		return threadKey{session: q.r.PathValue("id")}, nil
-	}
-	return threadKey{}, fail(404, "Unknown thread scope")
-}
-
-func intQuery(q *Request, k string, def float64) (any, error) {
-	v := q.r.URL.Query().Get(k)
-	if !q.r.URL.Query().Has(k) {
-		return def, nil
-	}
-	n, err := strconv.ParseUint(v, 10, 53)
-	if err != nil {
-		return nil, fail(400, "Expected integer")
-	}
-	return float64(n), nil
-}
-
-func queryOrNil(q *Request, k string) any {
-	if !q.r.URL.Query().Has(k) {
-		return nil
-	}
-	return q.r.URL.Query().Get(k)
-}
-
 func init() {
-	threadOp := func(name string, f func(*Request, doc) (doc, error)) {
-		gatedObjOp(name, true, func(q *Request) (any, error) { return f(q, body(q)) })
-	}
-	threadOp("thread_entries", threadEntries)
-	threadOp("thread_blocks", threadBlocks)
-	threadOp("thread_search", threadSearch)
-	threadOp("thread_export", func(q *Request, b doc) (doc, error) {
-		key, err := threadKeyOf(b)
+	op("thread_entries", func(q *Request, r *contract.ThreadEntriesRequest) (contract.ThreadEntriesReply, error) {
+		return replyAs[contract.ThreadEntriesReply](threadEntries(q, r))
+	})
+	op("thread_blocks", func(q *Request, r *contract.ThreadBlocksRequest) (contract.ThreadBlocksReply, error) {
+		return replyAs[contract.ThreadBlocksReply](threadBlocks(q, r))
+	})
+	op("thread_search", func(q *Request, r *contract.ThreadSearchRequest) (contract.ThreadSearchReply, error) {
+		return replyAs[contract.ThreadSearchReply](threadSearch(q, r))
+	})
+	op("thread_export", func(q *Request, r *contract.ThreadExportRequest) (contract.ThreadExportReply, error) {
+		key, err := threadKeyOf(r.Key)
 		if err != nil {
-			return nil, err
+			return contract.ThreadExportReply{}, err
 		}
 		var from, to *point
-		for i, k := range []string{"from", "to"} {
-			if p := mapOf(b[k]); p != nil {
-				kk, err := parseKey(p["key"])
-				if err != nil {
-					return nil, err
-				}
-				pt := &point{kk.String(), int(num(p["offset"]))}
-				if i == 0 {
-					from = pt
-				} else {
-					to = pt
-				}
+		for i, p := range []*contract.ThreadPoint{r.From, r.To} {
+			if p == nil {
+				continue
+			}
+			kk, err := parseKey(p.Key)
+			if err != nil {
+				return contract.ThreadExportReply{}, err
+			}
+			pt := &point{key: kk.String()}
+			if p.Offset != nil {
+				pt.offset = int(*p.Offset)
+			}
+			if i == 0 {
+				from = pt
+			} else {
+				to = pt
 			}
 		}
 		var sb strings.Builder
-		err = exportPages(q, key, from, to, tzOf(b), func(s string) error { sb.WriteString(s); return nil })
-		return doc{"markdown": sb.String()}, err
-	})
-	gatedRoute("GET /api/threads/{scope}/{id}/entries", func(q *Request) (any, error) {
-		key, err := routeThreadKey(q)
-		if err != nil {
-			return nil, err
-		}
-		limit, err := intQuery(q, "limit", 100)
-		if err != nil {
-			return nil, err
-		}
-		return threadEntries(q, doc{"key": key.view(), "limit": limit, "before": queryOrNil(q, "before"), "after": queryOrNil(q, "after"), "around": queryOrNil(q, "around")})
-	})
-	gatedRoute("GET /api/threads/{scope}/{id}/blocks", func(q *Request) (any, error) {
-		key, err := routeThreadKey(q)
-		if err != nil {
-			return nil, err
-		}
-		rs := []any{}
-		for _, x := range strings.Split(q.r.URL.Query().Get("rows"), ",") {
-			if x == "" {
-				continue
-			}
-			k, id, _ := strings.Cut(x, ":")
-			rs = append(rs, map[string]any{"kind": k, "id": id})
-		}
-		return threadBlocks(q, doc{"key": key.view(), "rows": rs})
-	})
-	gatedRoute("GET /api/threads/{scope}/{id}/search", func(q *Request) (any, error) {
-		key, err := routeThreadKey(q)
-		if err != nil {
-			return nil, err
-		}
-		limit, err := intQuery(q, "limit", 50)
-		if err != nil {
-			return nil, err
-		}
-		return threadSearch(q, doc{"key": key.view(), "q": queryOrNil(q, "q"), "before": queryOrNil(q, "before"), "limit": limit})
-	})
-	// Export streams markdown page by page, each page in its own read snapshot.
-	gatedLongRoute("GET /api/threads/{scope}/{id}/export", func(q *Request) (any, error) {
-		key, err := routeThreadKey(q)
-		if err != nil {
-			return nil, err
-		}
-		from, err := pointOf(q.r.URL.Query().Get("from"))
-		if err != nil {
-			return nil, err
-		}
-		to, err := pointOf(q.r.URL.Query().Get("to"))
-		if err != nil {
-			return nil, err
-		}
-		if err := q.app.store.Tx(q.ctx(), scopeOf(q.person), false, "", func(tx pgx.Tx) error { // 404 before the stream starts
-			q.tx = tx
-			_, _, err := members(q, key)
-			return err
-		}); err != nil {
-			return nil, err
-		}
-		q.tx = nil
-		return raw(func(w http.ResponseWriter) error {
-			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-			fl, _ := w.(http.Flusher)
-			return exportPages(q, key, from, to, time.UTC, func(s string) error {
-				_, err := w.Write([]byte(s))
-				if fl != nil {
-					fl.Flush()
-				}
-				return err
-			})
-		}), nil
+		err = exportPages(q, key, from, to, tzOf(r.Tz), func(s string) error { sb.WriteString(s); return nil })
+		return contract.ThreadExportReply{Markdown: sb.String()}, err
 	})
 }
 
@@ -1136,8 +1021,8 @@ func exportPages(q *Request, key threadKey, from, to *point, loc *time.Location,
 }
 
 // tzOf: the reader's time zone for copied times (body "tz", an IANA name); UTC when absent or unknown.
-func tzOf(b doc) *time.Location {
-	if l, err := time.LoadLocation(astr(b["tz"])); err == nil && astr(b["tz"]) != "" {
+func tzOf(tz *string) *time.Location {
+	if l, err := time.LoadLocation(deref(tz)); err == nil && deref(tz) != "" {
 		return l
 	}
 	return time.UTC

@@ -71,7 +71,7 @@ export async function startCoordinator(o: {name?: string, env?: Record<string, s
     gone = new Promise(r => child.on('exit', () => { if (server === child) exited = true; r(); }));
     for (let i = 0; ; i++) {
       if (exited) { dropDb(); throw Error('coordinator exited before it served requests'); }
-      try { await fetch(base + '/api/profiles'); break; } catch { if (i > 600) { await stop(); throw Error('coordinator did not start in 60 s'); } await new Promise(r => setTimeout(r, 100)); }
+      try { await fetch(base + '/api/ops/me', {method: 'POST'}); break; } catch { if (i > 600) { await stop(); throw Error('coordinator did not start in 60 s'); } await new Promise(r => setTimeout(r, 100)); }
     }
   };
   // A crashed caller must not leave the coordinator running (it holds the caller's stdout open).

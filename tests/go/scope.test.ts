@@ -39,8 +39,8 @@ after(closeS3);
 
 test('S1 lists: a member lists only granted projects and their sessions; an outsider lists none (requirement: docs/designs/fleet-people-access.md grants; risk: row-level security or project settings leak another project)', async () => {
   const theirs = ok(await start(OWNER, OTHER)).sessionId, mine = ok(await start(MEMBER, MINE)).sessionId;
-  assert.deepEqual(ok(await call('GET', '/api/projects', undefined, as(MEMBER))).projects.map((p: any) => p.id), [MINE]);
-  assert.equal(ok(await call('GET', '/api/projects', undefined, as(OUTSIDER))).projects.length, 0);
+  assert.deepEqual(ok(await op('project_list', {}, MEMBER)).projects.map((p: any) => p.id), [MINE]);
+  assert.equal(ok(await op('project_list', {}, OUTSIDER)).projects.length, 0);
   const listed = (person: string) => op('sessions_list', {}, person).then(r => ok(r).sessions.map((s: any) => s.id ?? s.sessionId) as string[]);
   const m = await listed(MEMBER);
   assert.ok(m.includes(mine) && !m.includes(theirs), JSON.stringify(m));

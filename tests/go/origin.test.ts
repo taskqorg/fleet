@@ -33,8 +33,8 @@ test('O1 behind Access proxy auth a browser write must come from the configured 
     assert.equal((await call(c, 'POST', '/api/ops/questions_list', {origin: ORIGIN})).status, 200);
     assert.equal((await call(c, 'POST', '/api/sessions', {origin: 'https://evil.test'})).status, 403, 'the trial route table is checked too');
     // Reads need no Origin; a read naming another origin is refused.
-    assert.equal((await call(c, 'GET', '/api/profiles')).status, 200);
-    const read = await call(c, 'GET', '/api/profiles', {origin: 'https://evil.test'});
+    assert.equal((await call(c, 'GET', '/api/reconciliation')).status, 200);
+    const read = await call(c, 'GET', '/api/reconciliation', {origin: 'https://evil.test'});
     assert.deepEqual([read.status, read.body.message], [403, 'Origin rejected']);
     // A host carries its own secret and no person: no Origin rule applies.
     const secret = (await call(c, 'POST', '/api/ops/hosts_register', {origin: ORIGIN, body: {id: 'h-' + randomUUID().slice(0, 8)}})).body.secret;
@@ -106,7 +106,7 @@ test('G1 the person gate covers every route and operation, not only those regist
   const c = await startCoordinator({name: 'gate'});
   const OUT = 'outsider@trial.test', MEMBER = 'member@trial.test';
   try {
-    for (const [method, path] of [['GET', '/api/accounts'], ['POST', '/api/ops/transport_inspect'], ['POST', '/api/ops/artifact_rule_preview'], ['POST', '/api/recovery-tools']]) {
+    for (const [method, path] of [['POST', '/api/ops/connections_list'], ['POST', '/api/ops/transport_inspect'], ['POST', '/api/ops/artifact_rule_preview'], ['POST', '/api/recovery-tools']]) {
       const r = await call(c, method, path, {person: OUT});
       assert.deepEqual([r.status, r.body.message], [403, 'Architect role required'], method + ' ' + path);
     }

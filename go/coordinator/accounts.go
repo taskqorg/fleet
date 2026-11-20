@@ -14,26 +14,34 @@ import (
 var accountName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,79}$`)
 
 func init() {
-	operation("account_list", true, shaped[contract.AccountListRequest, contract.AccountListReply](accountList))
-	operation("account_create", false, shaped[contract.AccountCreateRequest, contract.AccountCreateReply](accountCreate))
-	operation("account_hosts", true, shaped[contract.AccountHostsRequest, contract.AccountHostsReply](accountHostsOp))
-	operation("account_discover", false, shaped[contract.AccountDiscoverRequest, contract.AccountInspection](func(q *Request) (any, error) { return accountInspect(q, q.obj(), true) }))
-	operation("account_connect", false, shaped[contract.AccountConnectRequest, contract.AccountInspection](func(q *Request) (any, error) { return accountInspect(q, q.obj(), false) }))
-	operation("account_login_handoff", true, shaped[contract.AccountLoginHandoffRequest, contract.AccountLoginHandoffReply](accountLoginHandoff))
-	operation("account_update", false, shaped[contract.AccountUpdateRequest, contract.AccountUpdateReply](accountUpdate))
+	op("account_list", func(q *Request, _ *contract.AccountListRequest) (contract.AccountListReply, error) {
+		return replyAs[contract.AccountListReply](accountList(q))
+	})
+	op("account_create", func(q *Request, r *contract.AccountCreateRequest) (contract.AccountCreateReply, error) {
+		return replyAs[contract.AccountCreateReply](accountCreate(q, r))
+	})
+	op("account_hosts", func(q *Request, r *contract.AccountHostsRequest) (contract.AccountHostsReply, error) {
+		return replyAs[contract.AccountHostsReply](accountHostsOp(q, r))
+	})
+	op("account_discover", func(q *Request, r *contract.AccountDiscoverRequest) (contract.AccountDiscoverReply, error) {
+		return replyAs[contract.AccountDiscoverReply](accountInspect(q, r.AccountId, deref(r.HostId), nil))
+	})
+	op("account_connect", func(q *Request, r *contract.AccountConnectRequest) (contract.AccountConnectReply, error) {
+		return replyAs[contract.AccountConnectReply](accountInspect(q, r.AccountId, deref(r.HostId), &r.Binding))
+	})
+	op("account_login_handoff", func(q *Request, r *contract.AccountLoginHandoffRequest) (contract.AccountLoginHandoffReply, error) {
+		return replyAs[contract.AccountLoginHandoffReply](accountLoginHandoff(q, r))
+	})
+	// The body as sent: switchPct and lowPct distinguish null (clear) from absent (keep).
+	op("account_update", func(q *Request, _ *contract.AccountUpdateRequest) (contract.AccountUpdateReply, error) {
+		return replyAs[contract.AccountUpdateReply](accountUpdateBody(q, body(q)))
+	})
 	route("POST /api/hosts/accounts", typed(func(q *Request, b *contract.AccountObservation) (any, error) {
 		if !q.app.hostMaySee(q.host, nil) {
 			return nil, fail(403, "Account observations need an owner-held host")
 		}
 		return accountReport(q, b, q.hostID())
 	}))
-	route("GET /api/accounts", accountList)
-	route("POST /api/accounts", accountCreate)
-	route("POST /api/accounts/{id}", func(q *Request) (any, error) {
-		b := q.obj()
-		b["accountId"] = q.r.PathValue("id")
-		return accountUpdateBody(q, b)
-	})
 }
 
 func defaultHostID(q *Request) string { return q.app.hostID }
@@ -189,11 +197,13 @@ func accountHosts(q *Request, harness string) ([]doc, error) {
 	return out, nil
 }
 
-func accountHostsOp(q *Request) (any, error) {
-	b := q.obj()
-	harness := astr(nonNil(b["harness"], "codex"))
-	if b["accountId"] != nil {
-		a, err := get(q, b["accountId"], "managed-account")
+func accountHostsOp(q *Request, r *contract.AccountHostsRequest) (any, error) {
+	harness := "codex"
+	if r.Harness != nil {
+		harness = *r.Harness
+	}
+	if r.AccountId != nil {
+		a, err := get(q, *r.AccountId, "managed-account")
 		if err != nil {
 			return nil, err
 		}
@@ -254,19 +264,12 @@ func accountList(q *Request) (any, error) {
 var loginCommands = map[string]string{"codex": "codex login --device-auth", "claude": "claude auth login --claudeai",
 	"antigravity": "agy acp --login (may replace the shared native principal; explicit review required)", "acp": "the bound agent's own login command"}
 
-func accountCreate(q *Request) (any, error) {
-	b := q.obj()
-	harness := astr(b["harness"])
-	ok := accountName.MatchString(astr(b["name"])) && inList([]string{"codex", "claude", "antigravity", "acp"}, harness)
-	for k := range b {
-		if !inList([]string{"name", "harness", "holder", "plan", "comment"}, k) {
-			ok = false
-		}
-	}
-	if !ok {
+func accountCreate(q *Request, r *contract.AccountCreateRequest) (any, error) {
+	harness := r.Harness
+	if !accountName.MatchString(r.Name) || !inList([]string{"codex", "claude", "antigravity", "acp"}, harness) {
 		return nil, fail(400, "Expected account name and harness")
 	}
-	same, err := rows(q, "SELECT data FROM document WHERE kind='managed-account' AND data->>'name'=$1", b["name"])
+	same, err := rows(q, "SELECT data FROM document WHERE kind='managed-account' AND data->>'name'=$1", r.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -275,15 +278,14 @@ func accountCreate(q *Request) (any, error) {
 	}
 	director := q.person.Email
 	holder := director
-	if s, ok := b["holder"].(string); ok {
-		holder = strings.ToLower(s)
+	if r.Holder != nil {
+		holder = strings.ToLower(*r.Holder)
 	}
 	if holder != director && !fullAccess(q.person) {
 		return nil, fail(403, "Only the owner creates a subscription for another person")
 	}
-	text := func(k string) string { s, _ := b[k].(string); return s }
-	a := doc{"id": newID(), "name": b["name"], "harness": harness, "holder": holder, "kind": "personal", "plan": text("plan"), "intake": "all",
-		"take": doc{"projects": []any{}}, "switchPct": nil, "comment": text("comment"), "createdAt": nowMs(), "bindings": []any{},
+	a := doc{"id": newID(), "name": r.Name, "harness": harness, "holder": holder, "kind": "personal", "plan": deref(r.Plan), "intake": "all",
+		"take": doc{"projects": []any{}}, "switchPct": nil, "comment": deref(r.Comment), "createdAt": nowMs(), "bindings": []any{},
 		"login": "Native login on the holder's host, under its protected binding environment: " + loginCommands[harness] + ". Never paste codes or tokens into Fleet. Inspect an existing authorized login first; creation does not authenticate."}
 	return a, put(q, "managed-account", a)
 }
@@ -292,22 +294,17 @@ func integrationHost(q *Request) (string, error) {
 	return hostWithRole(q, "inspector-for:"+defaultHostID(q))
 }
 
-// accountInspect: a read-only inspection command to the selected host or its inspector.
-func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
-	allowedKeys := []string{"accountId", "hostId", "binding"}
-	if catalogue {
-		allowedKeys = allowedKeys[:2]
-	}
-	for k := range b {
-		if !inList(allowedKeys, k) {
-			return nil, fail(400, "Only host/account/binding identifiers accepted")
-		}
-	}
-	a, err := get(q, b["accountId"], "managed-account")
+// accountInspect: a read-only inspection command to the selected host or its inspector; the native catalogue when
+// binding is nil (account_discover), else the status of that binding (account_connect). host "" is the default host.
+func accountInspect(q *Request, accountID, host string, wanted *string) (any, error) {
+	catalogue := wanted == nil
+	a, err := get(q, accountID, "managed-account")
 	if err != nil {
 		return nil, err
 	}
-	host := astr(nonNil(b["hostId"], defaultHostID(q)))
+	if host == "" {
+		host = defaultHostID(q)
+	}
 	hs, err := accountHosts(q, astr(a["harness"]))
 	if err != nil {
 		return nil, err
@@ -331,10 +328,10 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 	integ := firstString(h["inspector"], host)
 	var binding any
 	if !catalogue {
-		if !accountName.MatchString(astr(b["binding"])) {
+		if !accountName.MatchString(*wanted) {
 			return nil, fail(400, "Expected host-owned binding identifier")
 		}
-		binding = b["binding"]
+		binding = *wanted
 		others, err := all(q, "managed-account", nil)
 		if err != nil {
 			return nil, err
@@ -384,9 +381,9 @@ func accountInspect(q *Request, b doc, catalogue bool) (any, error) {
 
 var loginArgv = map[string]any{"codex": []any{"login", "--device-auth"}, "claude": []any{"auth", "login", "--claudeai"}, "antigravity": []any{"acp", "--login"}, "acp": nil}
 
-func accountLoginHandoff(q *Request) (any, error) {
-	b := q.obj()
-	a, err := get(q, b["accountId"], "managed-account")
+func accountLoginHandoff(q *Request, r *contract.AccountLoginHandoffRequest) (any, error) {
+	b := docOf(r)
+	a, err := get(q, r.AccountId, "managed-account")
 	if err != nil {
 		return nil, err
 	}
@@ -460,13 +457,12 @@ func accountLoginHandoff(q *Request) (any, error) {
 		"command": command, "requiredUserInteraction": interaction, "warning": warning, "quota": "unknown", "authChanged": false}, nil
 }
 
-func accountUpdate(q *Request) (any, error) { return accountUpdateBody(q, q.obj()) }
-
 func accountUpdateBody(q *Request, b doc) (any, error) {
 	a, err := get(q, b["accountId"], "managed-account")
 	if err != nil {
 		return nil, err
 	}
+	// Stricter than the declared holder:account rule, which an architect passes: only the holder or the owner changes it.
 	p := q.person
 	if p != nil && !fullAccess(p) && p.Email != a["holder"] {
 		return nil, fail(403, "Only the holder or the owner changes this subscription")

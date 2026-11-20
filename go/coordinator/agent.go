@@ -1683,20 +1683,27 @@ func agentTable(name string) bool {
 	return ok && contract.Operations[name].Agent == "bound:session"
 }
 
-// agentShapedOp: an agent tool whose handler still reads a map, checked against its contract types (shaped).
-func agentShapedOp[Req, Rep any](name string, read bool, h func(*Request, doc) (doc, error)) {
-	agentTool(name, read, shaped[Req, Rep](func(q *Request) (any, error) { return h(q, body(q)) }))
-}
-
-func agentTool(name string, read bool, f handler) { gatedObjOp(name, read, f) }
-
+// The session tools below decode strictly into their request types; their handlers then read the body as sent, since an
+// explicit null (clear the project, the account) and an absent key mean different things to them.
 func init() {
-	agentShapedOp[contract.SessionStartRequest, contract.SessionStartReply]("session_start", false, sessionStart)
-	agentShapedOp[contract.SessionTaskAttachRequest, contract.SessionTaskAttachReply]("session_task_attach", false, sessionAttach)
-	agentShapedOp[contract.ProjectReadinessRequest, contract.ProjectReadinessReply]("project_readiness", false, projectReadiness)
-	agentShapedOp[contract.SessionTransitionRequest, contract.SessionTransitionReply]("session_transition", false, sessionTransition)
-	agentShapedOp[contract.SessionForkRequest, contract.SessionForkReply]("session_fork", false, sessionFork)
-	agentShapedOp[contract.SessionResumeRequest, contract.SessionResumeReply]("session_resume", false, sessionResume)
+	op("session_start", func(q *Request, _ *contract.SessionStartRequest) (contract.SessionStartReply, error) {
+		return replyAs[contract.SessionStartReply](sessionStart(q, body(q)))
+	})
+	op("session_task_attach", func(q *Request, _ *contract.SessionTaskAttachRequest) (contract.SessionTaskAttachReply, error) {
+		return replyAs[contract.SessionTaskAttachReply](sessionAttach(q, body(q)))
+	})
+	op("project_readiness", func(q *Request, _ *contract.ProjectReadinessRequest) (contract.ProjectReadinessReply, error) {
+		return replyAs[contract.ProjectReadinessReply](projectReadiness(q, body(q)))
+	})
+	op("session_transition", func(q *Request, _ *contract.SessionTransitionRequest) (contract.SessionTransitionReply, error) {
+		return replyAs[contract.SessionTransitionReply](sessionTransition(q, body(q)))
+	})
+	op("session_fork", func(q *Request, _ *contract.SessionForkRequest) (contract.SessionForkReply, error) {
+		return replyAs[contract.SessionForkReply](sessionFork(q, body(q)))
+	})
+	op("session_resume", func(q *Request, _ *contract.SessionResumeRequest) (contract.SessionResumeReply, error) {
+		return replyAs[contract.SessionResumeReply](sessionResume(q, body(q)))
+	})
 	op("session_handoffs", func(q *Request, b *contract.SessionHandoffsRequest) (contract.SessionHandoffsReply, error) {
 		if b.SessionId == "" {
 			return contract.SessionHandoffsReply{}, fail(400, "Expected sessionId")
@@ -1704,7 +1711,9 @@ func init() {
 		hs, err := all(q, "handoff", doc{"sessionId": b.SessionId})
 		return contract.SessionHandoffsReply{Handoffs: recsOf(hs)}, err
 	})
-	agentShapedOp[contract.MessageSendRequest, contract.MessageSendReply]("message_send", false, submit)
+	op("message_send", func(q *Request, _ *contract.MessageSendRequest) (contract.MessageSendReply, error) {
+		return replyAs[contract.MessageSendReply](submit(q, body(q)))
+	})
 	op("queue_list", func(q *Request, b *contract.QueueListRequest) (contract.QueueListReply, error) {
 		ms, err := all(q, "queued-message", doc{"sessionId": nilIf(deref(b.SessionId))})
 		out := []doc{}
@@ -1717,8 +1726,12 @@ func init() {
 		}
 		return contract.QueueListReply{Queued: recsOf(out)}, err
 	})
-	agentShapedOp[contract.AskRequest, contract.AskReply]("ask", false, agentAsk)
-	agentShapedOp[contract.ReplyRequest, contract.ReplyReply]("reply", false, agentReply)
+	op("ask", func(q *Request, _ *contract.AskRequest) (contract.AskReply, error) {
+		return replyAs[contract.AskReply](agentAsk(q, body(q)))
+	})
+	op("reply", func(q *Request, _ *contract.ReplyRequest) (contract.ReplyReply, error) {
+		return replyAs[contract.ReplyReply](agentReply(q, body(q)))
+	})
 	op("questions", func(q *Request, b *contract.QuestionsRequest) (contract.QuestionsReply, error) {
 		qs, err := all(q, "question", doc{"sessionId": nilIf(deref(b.SessionId)), "state": nilIf(deref(b.State))})
 		return contract.QuestionsReply{Questions: recsOf(qs)}, err
@@ -1732,7 +1745,9 @@ func init() {
 		}
 		return asT[contract.FocusSetReply](out)
 	})
-	agentShapedOp[contract.ReconcileRequest, contract.ReconcileReply]("reconcile", false, func(q *Request, _ doc) (doc, error) { return agentReconcile(q) })
+	op("reconcile", func(q *Request, _ *contract.ReconcileRequest) (contract.ReconcileReply, error) {
+		return replyAs[contract.ReconcileReply](agentReconcile(q))
+	})
 
 	// /api/hosts/agent-tools: an executor's agent calls a tool (mcpserve); every call is bound to the calling execution's
 	// session and runs through runOp, under the director's person gate.
@@ -2035,7 +2050,8 @@ func focusSet(q *Request, b doc) (doc, error) {
 // §1. Secrets never enter a model's context: the host secret and gateway token operations return one.
 func agentDenied(name string) bool { return contract.Operations[name].Agent == "no" }
 
-// agentMay: an operation outside the agent table that the director's role may call (the architect gate of guardOp).
+// agentMay: an operation outside the agent table offered to the director: one whose declared auth is architect needs
+// the architect role; every other one is offered and runOp's declaredAuth decides.
 func agentMay(p *Person, name string) bool {
 	if !resourceOperationAdvertised(name) {
 		return false
@@ -2045,8 +2061,16 @@ func agentMay(p *Person, name string) bool {
 	}
 	_, op := operations[name]
 	_, long := longOperations[name]
-	// account_*: guardOp lets a holder manage their own subscription, so the tools stay offered and guardOp decides.
-	return (op || long) && (fullAccess(p) || hasRole(p, "architect") || !architectOps.MatchString(name) || strings.HasPrefix(name, "account_"))
+	switch auth := contract.Operations[name].Auth; {
+	case !op && !long:
+		return false
+	case fullAccess(p):
+		return true
+	case auth == "architect":
+		return hasRole(p, "architect")
+	}
+	// Owner, holder and project rules stay offered: runOp answers 403 or 404 for the object named.
+	return true
 }
 
 // agentTools: the agent table plus every operation the director may call, as published by tools/list.

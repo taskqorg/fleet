@@ -13,7 +13,7 @@ test('Account inspections retain legacy host work without widening actor/project
   };
   const op=(name:string,b:object={},person=owner)=>call('POST','/api/ops/'+name,b,person);
   const ok=(r:any)=>{assert.equal(r.status,200,JSON.stringify(r.body));return r.body;};
-  const read=(person:string)=>Promise.all([call('GET','/api/accounts',undefined,person),op('account_list',{},person)]);
+  const read=(person:string)=>Promise.all([op('account_list',{},person)]);
   const seed=(accountId:string,project:string,kind:string,executionAccount=accountId,executionProject=project)=>{
     const id=randomUUID(), executionId=randomUUID();
     const data={id:executionId,executionId,accountId:executionAccount,actor:'program-worker',state:'succeeded',error:{message:'foreign-canary-'+executionId}};
@@ -35,8 +35,7 @@ test('Account inspections retain legacy host work without widening actor/project
       assert.deepEqual(own.inspections.map((i:any)=>[i.id,i.state]).sort(),[[legacy.id,'failed'],[current.id,'failed']].sort(),'typed state wins over stale data.state');
       if(person===architect) assert.ok(!JSON.stringify(view).includes(hidden.executionId) && !JSON.stringify(view).includes(hidden.id));
     }
-    const [memberRoute,memberOp]=await read('member@trial.test');
-    assert.equal(memberRoute.status,403,'existing route architect gate is unchanged');
+    const [memberOp]=await read('member@trial.test');
     const memberView=ok(memberOp);assert.deepEqual(memberView.accounts.map((a:any)=>a.id),[memberAccount.id]);
     assert.equal(memberView.accounts[0].inspections[0].id,memberInspection.id);
     const outsider=ok(await op('account_list',{},'outsider@trial.test'));assert.deepEqual(outsider.accounts,[]);

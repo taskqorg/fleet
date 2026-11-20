@@ -22,7 +22,7 @@ test('Explicit task asks bind projectless PM questions with grants, stable ident
   assert.equal(detail.questions.find((x:any)=>x.id===idle).state,'withdrawn');assert.equal(detail.questions.find((x:any)=>x.id===ownerQuestion).state,'open');
   assert.equal(detail.openQuestions.find((x:any)=>x.id===q.id).text,b.question);assert.equal(detail.state,'waiting');assert.equal(detail.waitReason,'question');
   assert.equal(c.sql(`SELECT count(*) FROM change WHERE kind='question' AND id='${idle}' AND op='U'`).trim(),'1');
-  const thread=await fetch(c.base+'/api/threads/session/'+sessionId+'/entries?limit=30',{headers:{authorization:'Bearer '+c.secret,'x-fleet-person':person}});assert.equal(thread.status,200);const text=await thread.text();assert.ok(text.includes(q.id)&&text.includes(b.question));
+  const thread=await fetch(c.base+'/api/ops/thread_entries',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':person,'content-type':'application/json'},body:JSON.stringify({key:{session:sessionId},limit:30})});assert.equal(thread.status,200);const text=await thread.text();assert.ok(text.includes(q.id)&&text.includes(b.question));
   assert.equal((await call('/api/ops/ask',b,person)).id,q.id);
   await call('/api/ops/ask',{...b,taskId:other},person,409);
   const {taskId:omitted,...withoutTask}=b;await call('/api/ops/ask',withoutTask,person,409);

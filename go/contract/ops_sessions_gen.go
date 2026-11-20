@@ -15,6 +15,23 @@ type AskRequest struct {
 	RequestId   *string `json:"requestId,omitempty"`
 	Resume      *string `json:"resume,omitempty"`
 	TaskId      *string `json:"taskId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v AskRequest) MarshalJSON() ([]byte, error) {
+	type plain AskRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *AskRequest) UnmarshalJSON(b []byte) error {
+	type plain AskRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -111,6 +128,23 @@ func (v *ChangesSinceReply) Validate() error {
 type ChangesSinceRequest struct {
 	Cursor *int64 `json:"cursor,omitempty"`
 	Limit  *int64 `json:"limit,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ChangesSinceRequest) MarshalJSON() ([]byte, error) {
+	type plain ChangesSinceRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ChangesSinceRequest) UnmarshalJSON(b []byte) error {
+	type plain ChangesSinceRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -134,6 +168,9 @@ func (v *DirectSearchRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*DirectSearchRequest) Closed() bool { return true }
+
 // MessageSendReply: The execution the message started, or the queued message with queued: true and its position.
 type MessageSendReply = map[string]json.RawMessage
 
@@ -145,6 +182,23 @@ type MessageSendRequest struct {
 	Setup       json.RawMessage `json:"setup,omitempty"`
 	Source      json.RawMessage `json:"source,omitempty"`
 	Text        *string         `json:"text,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v MessageSendRequest) MarshalJSON() ([]byte, error) {
+	type plain MessageSendRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *MessageSendRequest) UnmarshalJSON(b []byte) error {
+	type plain MessageSendRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -206,6 +260,23 @@ func (v *RecommendationSetReply) Validate() error {
 type RecommendationSetRequest struct {
 	MethodId  string `json:"methodId"`
 	ProjectId string `json:"projectId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v RecommendationSetRequest) MarshalJSON() ([]byte, error) {
+	type plain RecommendationSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *RecommendationSetRequest) UnmarshalJSON(b []byte) error {
+	type plain RecommendationSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -219,6 +290,23 @@ type ReplyReply = map[string]json.RawMessage
 type ReplyRequest struct {
 	Answer     json.RawMessage `json:"answer,omitempty"`
 	QuestionId *string         `json:"questionId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ReplyRequest) MarshalJSON() ([]byte, error) {
+	type plain ReplyRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ReplyRequest) UnmarshalJSON(b []byte) error {
+	type plain ReplyRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -299,6 +387,23 @@ type SessionArchiveReply = map[string]json.RawMessage
 
 type SessionArchiveRequest struct {
 	SessionId string `json:"sessionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionArchiveRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionArchiveRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionArchiveRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionArchiveRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -319,6 +424,7 @@ func (v *SessionCreateReply) Validate() error {
 	return nil
 }
 
+// SessionCreateRequest: No fields: the session's director, access and linkage come from the caller.
 type SessionCreateRequest = map[string]json.RawMessage
 
 // SessionForkReply: sessionId: the new session.
@@ -343,6 +449,23 @@ type SessionForkRequest struct {
 	SessionId       *string `json:"sessionId,omitempty"`
 	Strategy        *string `json:"strategy,omitempty"`
 	Text            *string `json:"text,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionForkRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionForkRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionForkRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionForkRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -447,6 +570,23 @@ func (v *SessionGetReply) Validate() error {
 
 type SessionGetRequest struct {
 	SessionId string `json:"sessionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionGetRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionGetRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -468,6 +608,23 @@ func (v *SessionHandoffsReply) Validate() error {
 
 type SessionHandoffsRequest struct {
 	SessionId string `json:"sessionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionHandoffsRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionHandoffsRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionHandoffsRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionHandoffsRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -545,6 +702,23 @@ func (v *SessionPresetsReply) Validate() error {
 
 type SessionPresetsRequest struct {
 	ProjectId *string `json:"projectId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionPresetsRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionPresetsRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionPresetsRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionPresetsRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -579,6 +753,9 @@ func (v *SessionProfileRequest) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*SessionProfileRequest) Closed() bool { return true }
+
 type SessionRenameReply struct {
 	SessionId string `json:"sessionId"`
 	Title     string `json:"title"`
@@ -590,6 +767,9 @@ func (v *SessionRenameReply) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*SessionRenameReply) Closed() bool { return true }
+
 // SessionRenameRequest: The explicit title of a conversation; a person renames one they direct (403 otherwise; the owner any). A generated title (titleBy auto) never replaces it and is never written over it.
 type SessionRenameRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
@@ -600,6 +780,9 @@ type SessionRenameRequest struct {
 func (v *SessionRenameRequest) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*SessionRenameRequest) Closed() bool { return true }
 
 // SessionResumeReply: How the session continues: its harness, account and native session ids.
 type SessionResumeReply struct {
@@ -633,6 +816,23 @@ func (v *SessionResumeReply) Validate() error {
 
 type SessionResumeRequest struct {
 	SessionId *string `json:"sessionId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionResumeRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionResumeRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionResumeRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionResumeRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -677,6 +877,23 @@ type SessionStartRequest struct {
 	Setup             json.RawMessage `json:"setup,omitempty"`
 	TaskId            *string         `json:"taskId,omitempty"`
 	Text              *string         `json:"text,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionStartRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionStartRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionStartRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionStartRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -704,6 +921,23 @@ type SessionTaskAttachRequest struct {
 	BoundProject json.RawMessage `json:"boundProject,omitempty"`
 	SessionId    *string         `json:"sessionId,omitempty"`
 	TaskId       *string         `json:"taskId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionTaskAttachRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionTaskAttachRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionTaskAttachRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionTaskAttachRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -727,16 +961,20 @@ func (v *SessionTransitionReply) Validate() error {
 }
 
 type SessionTransitionRequest struct {
-	Account   *string `json:"account,omitempty"`
-	ProfileId *string `json:"profileId,omitempty"`
-	ProjectId *string `json:"projectId,omitempty"`
-	SessionId *string `json:"sessionId,omitempty"`
+	Account         *string `json:"account,omitempty"`
+	CallerSessionId *string `json:"callerSessionId,omitempty"`
+	ProfileId       *string `json:"profileId,omitempty"`
+	ProjectId       *string `json:"projectId,omitempty"`
+	SessionId       *string `json:"sessionId,omitempty"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *SessionTransitionRequest) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*SessionTransitionRequest) Closed() bool { return true }
 
 // SessionUnarchiveReply: teardownsWithdrawn: pending teardown commands of the session that were stopped before a host ran them.
 type SessionUnarchiveReply struct {
@@ -749,6 +987,9 @@ func (v *SessionUnarchiveReply) Validate() error {
 	return nil
 }
 
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*SessionUnarchiveReply) Closed() bool { return true }
+
 // SessionUnarchiveRequest: Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.
 type SessionUnarchiveRequest struct {
 	Reason    string `json:"reason"`
@@ -759,6 +1000,9 @@ type SessionUnarchiveRequest struct {
 func (v *SessionUnarchiveRequest) Validate() error {
 	return nil
 }
+
+// Closed: additionalProperties is false; a body key outside the schema is refused.
+func (*SessionUnarchiveRequest) Closed() bool { return true }
 
 // SessionsListReply: nextAfter: null on the last page, else the sort key to pass as after. Row sortKey: [group key, sort key, id]; rows carry activityAt (last change of the session, its messages and events, or the start or end of its executions) and executions (their count). groups: key, label and count of each group of the filtered list (none for group none).
 type SessionsListReply struct {
@@ -803,6 +1047,23 @@ type SessionsListRequest struct {
 	Group  *string           `json:"group,omitempty"`
 	Limit  *int64            `json:"limit,omitempty"`
 	Sort   *string           `json:"sort,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v SessionsListRequest) MarshalJSON() ([]byte, error) {
+	type plain SessionsListRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *SessionsListRequest) UnmarshalJSON(b []byte) error {
+	type plain SessionsListRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -925,6 +1186,23 @@ type ThreadEntriesRequest struct {
 	Key     ThreadKey `json:"key"`
 	Limit   *int64    `json:"limit,omitempty"`
 	Resolve *bool     `json:"resolve,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v ThreadEntriesRequest) MarshalJSON() ([]byte, error) {
+	type plain ThreadEntriesRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *ThreadEntriesRequest) UnmarshalJSON(b []byte) error {
+	type plain ThreadEntriesRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1059,6 +1337,23 @@ func (v *WatchGetReply) Validate() error {
 
 type WatchGetRequest struct {
 	SessionId string `json:"sessionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v WatchGetRequest) MarshalJSON() ([]byte, error) {
+	type plain WatchGetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *WatchGetRequest) UnmarshalJSON(b []byte) error {
+	type plain WatchGetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1094,6 +1389,23 @@ type WatchSetRequest struct {
 	Kinds     []string `json:"kinds"`
 	SessionId string   `json:"sessionId"`
 	TimerMs   *float64 `json:"timerMs,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v WatchSetRequest) MarshalJSON() ([]byte, error) {
+	type plain WatchSetRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *WatchSetRequest) UnmarshalJSON(b []byte) error {
+	type plain WatchSetRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1116,6 +1428,23 @@ func (v *WatchStopReply) Validate() error {
 
 type WatchStopRequest struct {
 	SessionId string `json:"sessionId"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v WatchStopRequest) MarshalJSON() ([]byte, error) {
+	type plain WatchStopRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *WatchStopRequest) UnmarshalJSON(b []byte) error {
+	type plain WatchStopRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1151,6 +1480,23 @@ type WorkerDoneRequest struct {
 	NativeSessionId *string         `json:"nativeSessionId,omitempty"`
 	Outcome         json.RawMessage `json:"outcome,omitempty"`
 	Summary         json.RawMessage `json:"summary,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v WorkerDoneRequest) MarshalJSON() ([]byte, error) {
+	type plain WorkerDoneRequest
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *WorkerDoneRequest) UnmarshalJSON(b []byte) error {
+	type plain WorkerDoneRequest
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -1173,22 +1519,22 @@ func init() {
 	for n, o := range map[string]Operation{
 		"ask":                 {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "bound:session", Description: "Ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"question\":{\"$comment\":\"Fresh ask text. Requires requestId; do not combine with resume.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"resume\":{\"$comment\":\"Existing question ID to read, never continuation prose. Do not combine with question or requestId.\",\"type\":\"string\"},\"taskId\":{\"$comment\":\"Fresh ask about this granted task; does not attach the PM session. Omit for a session-only question or bound-worker inference.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"changes_since":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).", InputSchema: json.RawMessage("{\"$comment\":\"No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).\",\"additionalProperties\":true,\"properties\":{\"cursor\":{\"type\":\"integer\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
-		"direct_search":       {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\"}")},
+		"direct_search":       {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\"}")},
 		"message_send":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Send a message; starts a turn, or queues/steers it while the session is busy. attachments: artifact ids of the session's project (artifact_save output or an operator upload); the receiving agent gets them as files under FLEET_INPUT_DIR/attachments, listed in its turn. A message with attachments is queued, never steered", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"delivery\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"setup\":{},\"source\":{},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"recommendation_set":  {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Set the recommended method of a project's capability (projectId, methodId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"methodId\"],\"type\":\"object\"}")},
 		"reply":               {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Answer a question; delivered to the asker as its next message", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{},\"questionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_archive":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Archive a session (sessionId): it leaves the lists and its worktree is torn down", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
-		"session_create":      {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "tool", Description: "Create a session", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"session_create":      {Read: false, Long: false, Errors: []int{409}, Auth: "person", Agent: "tool", Description: "Create a session", InputSchema: json.RawMessage("{\"$comment\":\"No fields: the session's director, access and linkage come from the caller.\",\"additionalProperties\":false,\"type\":\"object\"}")},
 		"session_fork":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Fork a session (native fork when the host supports it, else context transfer); the original stays unchanged, also for sessions stuck in unknown", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"callerSessionId\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"strategy\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"required\":[\"requestId\"],\"type\":\"object\"}")},
 		"session_get":         {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "A session (sessionId) with its executions and state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_handoffs":    {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:session", Description: "Context handoffs of a session with delivery state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},
 		"session_presets":     {Read: true, Long: false, Errors: []int{400, 404}, Auth: "person", Agent: "bound:session", Description: "Presets for starting a session in a project (projectId; a person may omit it for outside projects, an agent reads its own project): id, name, what it does, the role or profile it resolves to (a system profile when the project does not map the role; an agent starts only profiles its project maps), access read|write, branch, starter instruction; unavailable says why one cannot start. Start with session_start preset=<id>", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"projectId\":{\"$comment\":\"Absent: the system presets for a conversation outside projects.\",\"type\":\"string\"}},\"type\":\"object\"}")},
-		"session_profile":     {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Change a session's profile (sessionId, profileId, optional account and workingDirectory)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"workingDirectory\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"profileId\"],\"type\":\"object\"}")},
+		"session_profile":     {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "tool", Description: "Change a session's profile (sessionId, profileId, optional account and workingDirectory)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"workingDirectory\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"profileId\"],\"type\":\"object\"}")},
 		"session_rename":      {Read: false, Long: false, Errors: []int{400, 403, 404}, Auth: "person", Agent: "bound:session", Description: "Name a conversation (sessionId, default your own; title up to 200 characters, no UUID). An explicit title is kept: the generated title never replaces it", InputSchema: json.RawMessage("{\"$comment\":\"The explicit title of a conversation; a person renames one they direct (403 otherwise; the owner any). A generated title (titleBy auto) never replaces it and is never written over it.\",\"additionalProperties\":false,\"properties\":{\"sessionId\":{\"$comment\":\"Required from people; a host agent's call defaults to its own session.\",\"type\":\"string\"},\"title\":{\"$comment\":\"1 to 200 characters after whitespace is collapsed; no UUID (OR-38).\",\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}")},
 		"session_resume":      {Read: false, Long: false, Errors: []int{400}, Auth: "person", Agent: "bound:session", Description: "Native resume/fork argv and captured native sessions for a session", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_start":       {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Start a new session in a project: projectId, requestId, preset (an id from session_presets: its role or profile, access, branch and starter) or role (project roles map) or profileId, optional access read|write and branch true|false (override the preset; default write with a branch), account/hostId, taskId (the session works for that task of the project), text, attachments (artifact ids, as message_send), setup run|skip. The creator is woken when it finishes", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"access\":{\"$comment\":\"read: the agent may read and run read-only tools but not change files (StartPayload.readOnly); write: the profile's own grant.\",\"enum\":[\"read\",\"write\"],\"type\":\"string\"},\"account\":{\"type\":\"string\"},\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"branch\":{\"$comment\":\"false: no session branch (a detached worktree); default true, or the preset's.\",\"type\":\"boolean\"},\"callerExecutionId\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"hostId\":{\"type\":\"string\"},\"preset\":{\"$comment\":\"A preset id of session_presets for this project: its role or profile, access, branch and starter apply; explicit role, profileId, access and branch override it.\",\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"$comment\":\"Absent (people only): a conversation outside projects, with the system presets.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"role\":{\"type\":\"string\"},\"setup\":{},\"taskId\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_task_attach": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "person", Agent: "bound:session", Description: "Attach a taskless session to a task (sessionId, taskId): it joins the task thread; earlier turns join without copying", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"boundProject\":{},\"sessionId\":{\"type\":\"string\"},\"taskId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"session_transition":  {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"account\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"session_transition":  {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Select this session’s granted project checkout with projectId, or switch profileId/account (profileId defaults to current). A changed project selection during an active execution returns queued: end this turn; Fleet applies it and automatically starts the next execution to continue the request with frozen context. Focus is separate (focus_set). Other transitions return reuse|switch_model_in_session|restart_and_resume|create_with_handoff", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"account\":{\"type\":\"string\"},\"callerSessionId\":{\"type\":\"string\"},\"profileId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_unarchive":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.", InputSchema: json.RawMessage("{\"$comment\":\"Owner or full-access person. Returns an archived session to the lists; a setting-change row records the reason. A worktree already torn down is not restored; the next start prepares a new one.\",\"additionalProperties\":false,\"properties\":{\"reason\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\",\"reason\"],\"type\":\"object\"}")},
 		"sessions_list":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "after: the nextAfter of the previous page.", InputSchema: json.RawMessage("{\"$comment\":\"after: the nextAfter of the previous page.\",\"additionalProperties\":true,\"properties\":{\"after\":{\"items\":{},\"type\":\"array\"},\"filter\":{\"$comment\":\"The list filter of packages/view-url toPageParams; a null projectId is work outside projects; an empty projectId list is refused; archived applies to sessions only. A field a list does not implement is a 400.\",\"additionalProperties\":false,\"properties\":{\"archived\":{\"type\":\"boolean\"},\"excludeProjectId\":{\"$comment\":\"leave out rows of these projects (the app passes the person's ignored projects while the view names no project, OR-34); null (or '-', as in excludeProjectIds) is work outside projects; applied after projectId, so a project in both is left out. Agents see every project unless they pass it.\",\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"projectId\":{\"items\":{\"type\":[\"string\",\"null\"]},\"type\":\"array\"},\"search\":{\"$comment\":\"free text; tasks also take key:value terms agent:, host:, state:, project: (substring match)\",\"type\":\"string\"},\"state\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"type\":\"object\"},\"group\":{\"$comment\":\"project, state, agent or none; default project; state groups in attention order (waiting, failed, running, preparing, idle, succeeded, cancelled)\",\"type\":\"string\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"},\"sort\":{\"$comment\":\"order inside a group: last activity or creation, - before it is descending; default -activity (latest activity first)\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"thread_blocks":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "rows: changed records; the reply has their current blocks.", InputSchema: json.RawMessage("{\"$comment\":\"rows: changed records; the reply has their current blocks.\",\"properties\":{\"key\":{\"$comment\":\"Exactly one of task or session.\",\"properties\":{\"session\":{\"type\":\"string\"},\"task\":{\"type\":\"string\"}},\"type\":\"object\"},\"rows\":{\"items\":{\"properties\":{\"id\":{\"type\":\"string\"},\"kind\":{\"$comment\":\"The kinds the change triggers write (fleet_change and fleet_artifact_change in go/coordinator/schema.sql); a go test checks the triggers against this list.\",\"enum\":[\"api-connection\",\"artifact\",\"command\",\"connection-key\",\"definition\",\"delivery\",\"event\",\"execution\",\"experiment\",\"host\",\"managed-account\",\"project-recommendation\",\"question\",\"resource_summary\",\"score\",\"session\",\"setting-change\",\"task\"],\"type\":\"string\"}},\"required\":[\"kind\",\"id\"],\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"key\",\"rows\"],\"type\":\"object\"}")},

@@ -23,7 +23,7 @@ test('Two ordinary actors can own projectless sessions but cannot substitute for
  assert.equal((await request('/api/sessions/'+own.sessionId+'/messages',a,{requestId:randomUUID(),text:'own',directedBy:b})).status,400);
  const execution=ok(await request('/api/sessions/'+own.sessionId+'/messages',a,{requestId:randomUUID(),text:'Owned transcript canary'}));
  assert.equal(execution.directedBy,a);
- const ownHistory=ok(await request('/api/threads/session/'+own.sessionId+'/entries?limit=10',a));assert.ok(JSON.stringify(ownHistory).includes('Owned transcript canary'));
+ const ownHistory=ok(await request('/api/ops/thread_entries',a,{key:{session:own.sessionId},limit:10}));assert.ok(JSON.stringify(ownHistory).includes('Owned transcript canary'));
  assert.equal((await request('/api/executions/'+execution.id+'/events',b)).status,404);
  const lists=ok(await request('/api/ops/sessions_list',b,{}));assert.ok(!JSON.stringify(lists).includes(own.sessionId));
  const ownRead=ok(await request('/api/sessions/'+own.sessionId,a));assert.ok(JSON.stringify(ownRead).includes(execution.id));

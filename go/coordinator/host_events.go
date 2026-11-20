@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"sort"
 	"strings"
 
 	"fleet/contract"
@@ -26,19 +25,26 @@ func init() {
 		es, err := executionEventsOf(q, r.ExecutionId)
 		return contract.ExecutionEventsReply{Events: recsOf(es)}, err
 	})
-	// ponytail: the transport requests stay maps: transport_authorize signs its exact body (frameHash).
-	operation("transport_inspect", true, func(q *Request) (any, error) { return transportInspect(q, q.obj()) })
-	operation("transport_authorize", false, func(q *Request) (any, error) { return transportAuthorize(q, q.obj()) })
-	route("POST /api/recovery/{name}", func(q *Request) (any, error) {
-		switch q.r.PathValue("name") {
-		case "transport_inspect":
-			return transportInspect(q, q.obj())
-		case "transport_authorize":
-			return transportAuthorize(q, q.obj())
-		}
-		return nil, fail(404, "Unknown recovery operation")
+	op("transport_inspect", func(q *Request, r *contract.TransportInspectRequest) (contract.TransportInspectReply, error) {
+		return transportInspect(q, deref(r.ExecutionId))
 	})
-	route("POST /api/recovery-tools", recoveryTools)
+	op("transport_authorize", transportAuthorize)
+	// The recovery MCP server: the two transport operations through runOp (their declared architect rule); the role is
+	// checked first so initialize and tools/list are the architect's too.
+	longRoute("POST /api/recovery-tools", func(q *Request) (any, error) {
+		if err := requireArchitect(q); err != nil {
+			return nil, err
+		}
+		return q.app.mcp(q, "fleet-recovery", map[string]registeredOp{"transport_inspect": operations["transport_inspect"], "transport_authorize": operations["transport_authorize"]})
+	})
+}
+
+// requireArchitect: the architect role (or full access) for a route that is not an operation.
+func requireArchitect(q *Request) error {
+	if q.person != nil && !fullAccess(q.person) && !hasRole(q.person, "architect") {
+		return fail(403, "Architect role required")
+	}
+	return nil
 }
 
 func executionEvents(q *Request) (any, error) {
@@ -322,9 +328,9 @@ func eventProblem(kind string, d doc) string {
 	return ""
 }
 
-func transportInspect(q *Request, b doc) (contract.TransportInspectReply, error) {
+func transportInspect(q *Request, executionID string) (contract.TransportInspectReply, error) {
 	var rep contract.TransportInspectReply
-	e, err := get(q, b["executionId"], "execution")
+	e, err := get(q, executionID, "execution")
 	if err != nil {
 		return rep, err
 	}
@@ -362,19 +368,12 @@ func transportInspect(q *Request, b doc) (contract.TransportInspectReply, error)
 		Resend: "Owning host automatically resends its unchanged retained outbox; no native dispatch or program-effect replay"}, nil
 }
 
-func transportAuthorize(q *Request, b doc) (contract.TransportAuthorizeReply, error) {
+// transportAuthorize: the request is closed with four required keys; its signature is the hash of exactly those (frameHash).
+func transportAuthorize(q *Request, r *contract.TransportAuthorizeRequest) (contract.TransportAuthorizeReply, error) {
 	var rep contract.TransportAuthorizeReply
-	ks := []string{}
-	for k := range b {
-		ks = append(ks, k)
-	}
-	sort.Strings(ks)
-	rid, ok := b["requestId"].(string)
-	if strings.Join(ks, ",") != "conflictId,executionId,frameSha256,requestId" || !ok || rid == "" || len([]rune(rid)) > 200 {
-		return rep, fail(400, "Expected exact recovery identity")
-	}
-	xid, ok := b["executionId"].(string)
-	if !ok {
+	b := doc{"conflictId": r.ConflictId, "executionId": r.ExecutionId, "frameSha256": r.FrameSha256, "requestId": r.RequestId}
+	rid, xid := r.RequestId, r.ExecutionId
+	if rid == "" || len([]rune(rid)) > 200 {
 		return rep, fail(400, "Expected exact recovery identity")
 	}
 	// Authorization rewrites the execution's transport records, which host ingest writes too: take its scope as well.
@@ -402,7 +401,7 @@ func transportAuthorize(q *Request, b doc) (contract.TransportAuthorizeReply, er
 		if olds[0]["signature"] != frameHash(b) {
 			return rep, fail(409, "Recovery request conflict")
 		}
-		return transportInspect(q, b)
+		return transportInspect(q, xid)
 	}
 	if c["state"] == "blocked" {
 		top := -1.0
@@ -433,43 +432,5 @@ func transportAuthorize(q *Request, b doc) (contract.TransportAuthorizeReply, er
 		"actor": "operator-authority", "operation": "authorize-retained-transport", "at": nowMs(), "nativeEffectReplayed": false}); err != nil {
 		return rep, err
 	}
-	return transportInspect(q, b)
-}
-
-// recoveryTools: the recovery operations as an MCP server over HTTP.
-func recoveryTools(q *Request) (any, error) {
-	m := q.obj()
-	id := m["id"]
-	result := func(r any) doc { return doc{"jsonrpc": "2.0", "id": id, "result": r} }
-	switch m["method"] {
-	case "initialize":
-		return result(doc{"protocolVersion": "2025-06-18", "capabilities": doc{"tools": doc{}}, "serverInfo": doc{"name": "fleet-recovery", "version": "1"}}), nil
-	case "tools/list":
-		tools := []doc{}
-		for _, n := range []string{"transport_inspect", "transport_authorize"} {
-			tools = append(tools, doc{"name": n, "description": "Inspect/authorize retained transport; never rerun native work", "inputSchema": doc{"type": "object"}})
-		}
-		return result(doc{"tools": tools}), nil
-	}
-	p := mapOf(m["params"])
-	args := mapOf(p["arguments"])
-	if args == nil {
-		args = doc{}
-	}
-	var out any
-	var err error
-	switch {
-	case m["method"] != "tools/call":
-		err = fail(400, "Unknown recovery tool")
-	case p["name"] == "transport_inspect":
-		out, err = transportInspect(q, args)
-	case p["name"] == "transport_authorize":
-		out, err = transportAuthorize(q, args)
-	default:
-		err = fail(400, "Unknown recovery tool")
-	}
-	if err != nil {
-		return nil, err
-	}
-	return result(doc{"content": []doc{{"type": "text", "text": js(out)}}}), nil
+	return transportInspect(q, xid)
 }

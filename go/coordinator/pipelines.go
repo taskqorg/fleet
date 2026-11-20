@@ -1608,7 +1608,7 @@ func strOr(v any) string {
 
 func init() {
 	// Generic v2 run: an example (an approved example artifact, references withheld, or an inline example) and overrides.
-	gatedLongRoute("POST /api/pipelines/{id}/runs", func(q *Request) (any, error) {
+	longRoute("POST /api/pipelines/{id}/runs", func(q *Request) (any, error) {
 		var out doc
 		err := q.app.store.Tx(q.ctx(), scopeOf(q.person), true, "", func(tx pgx.Tx) error {
 			q.tx = tx
@@ -1819,51 +1819,17 @@ func runAnswerAfter(q *Request, id string) error {
 	return budgetAnswerAfter(q, jsonBytes(mapOf(row["data"])["budgetAsk"]), astr(row["answer"]), strPtr(row["answered_by"]))
 }
 
-// gatedOp: an operation behind the same person gate as every other operation.
-func gatedOp(name string, read bool, h handler) {
-	operation(name, read, func(q *Request) (any, error) {
-		if err := q.app.guardOp(q, name, q.body); err != nil {
-			return nil, err
-		}
-		return h(q)
-	})
-}
-
-// longOp: a long operation: run by runOp (POST /api/ops/<name> and the tools) without a surrounding transaction.
-func longOp(name string, h handler) {
-	gated := func(q *Request) (any, error) {
-		if err := q.app.guardOp(q, name, q.body); err != nil {
-			return nil, err
-		}
-		return h(q)
-	}
-	longOperations[name] = gated
-	operation(name, false, func(q *Request) (any, error) {
-		return nil, fail(500, "long operation "+name+" ran inside a transaction")
-	})
-}
-
 // runPipeline: the selected method's v2 pipeline with the query as the example ({query, prompt}); waits for the run.
-func runPipeline(q *Request, invocation string) (any, error) {
-	b := body(q)
-	if invocation == "direct" {
-		b["invocation"] = "direct"
-	}
-	rid, _ := b["requestId"].(string)
-	query, isStr := b["query"].(string)
-	_, methodOK := b["methodId"].(string)
-	if !keysOnly(b, "projectId", "requestId", "query", "methodId", "invocation") || rid == "" || len(rid) > 200 || !isStr || strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 2000 || b["methodId"] != nil && !methodOK {
+// inv is pipeline (pipeline_run) or direct (direct_search); methodID nil selects the project's recommended method.
+func runPipeline(q *Request, inv, projectID, rid, query string, methodID *string) (doc, error) {
+	if rid == "" || len(rid) > 200 || strings.TrimSpace(query) == "" || utf8.RuneCountInString(query) > 2000 {
 		return nil, fail(400, "Expected projectId, requestId, query and optional methodId")
-	}
-	inv := astr(b["invocation"])
-	if inv == "" {
-		inv = "pipeline"
 	}
 	var run doc
 	old := false
 	err := runTx(q.ctx(), q.app, q, true, "", func(q *Request) error {
-		signature := sha256hex([]byte(canonical(doc{"projectId": b["projectId"], "query": query, "methodId": b["methodId"], "invocation": inv})))
-		prev, err := runsWhere(q, "data->>'projectId'=$1 AND data->>'requestId'=$2", astr(b["projectId"]), rid)
+		signature := sha256hex([]byte(canonical(doc{"projectId": projectID, "query": query, "methodId": optText(methodID), "invocation": inv})))
+		prev, err := runsWhere(q, "data->>'projectId'=$1 AND data->>'requestId'=$2", projectID, rid)
 		if err != nil {
 			return err
 		}
@@ -1874,18 +1840,15 @@ func runPipeline(q *Request, invocation string) (any, error) {
 			run, old = prev[0], true
 			return nil
 		}
-		if inv != "direct" && inv != "pipeline" {
-			return fail(400, "Invalid invocation")
-		}
-		p, err := projectContext(q, astr(b["projectId"]))
+		p, err := projectContext(q, projectID)
 		if err != nil {
 			return err
 		}
-		c, err := catalogue(q, astr(b["projectId"]))
+		c, err := catalogue(q, projectID)
 		if err != nil {
 			return err
 		}
-		want := astr(b["methodId"])
+		want := deref(methodID)
 		source := c["recommendationSource"]
 		if want == "" {
 			want = astr(c["recommendedMethod"])
@@ -1901,7 +1864,7 @@ func runPipeline(q *Request, invocation string) (any, error) {
 		if method == nil {
 			return fail(400, "Selected method unavailable for project")
 		}
-		run, err = pipelineStart(q, doc{"file": method["pipeline"], "projectId": b["projectId"], "requestId": rid, "example": doc{"query": query, "prompt": query},
+		run, err = pipelineStart(q, doc{"file": method["pipeline"], "projectId": projectID, "requestId": rid, "example": doc{"query": query, "prompt": query},
 			"requestedBy": requester(q), "extra": doc{"signature": signature, "invocation": inv, "selectedMethod": method["id"], "selectionSource": source, "context": p}})
 		return err
 	})
@@ -1926,20 +1889,12 @@ func projectIDPtr(v any) *string {
 }
 
 func init() {
-	for _, inv := range []string{"pipeline", "direct"} {
-		inv := inv
-		name := map[string]string{"pipeline": "pipeline_run", "direct": "direct_search"}[inv]
-		var h handler = func(q *Request) (any, error) { return runPipeline(q, inv) }
-		if inv == "pipeline" {
-			h = shaped[contract.PipelineRunRequest, contract.PipelineRunReply](h)
-		} else {
-			h = shaped[contract.DirectSearchRequest, contract.DirectSearchReply](h)
-		}
-		longOp(name, h)
-		projectOps[name] = registeredOp{h: h}
-	}
-	gatedLongRoute("POST /api/pipeline-runs", func(q *Request) (any, error) { return runPipeline(q, "pipeline") })
-
+	op("pipeline_run", func(q *Request, r *contract.PipelineRunRequest) (contract.PipelineRunReply, error) {
+		return replyAs[contract.PipelineRunReply](runPipeline(q, "pipeline", r.ProjectId, r.RequestId, r.Query, r.MethodId))
+	})
+	op("direct_search", func(q *Request, r *contract.DirectSearchRequest) (contract.DirectSearchReply, error) {
+		return replyAs[contract.DirectSearchReply](runPipeline(q, "direct", r.ProjectId, r.RequestId, r.Query, r.MethodId))
+	})
 }
 
 // profileSkills: the SKILL.md texts of a profile's skills (config/skills/<id>/SKILL.md), as an execution payload carries them.

@@ -95,7 +95,7 @@ test('A5 stopping work no host has taken settles it as stopped with its stop com
   t.after(async () => { ok(await op('hosts_update', {id: 'trial-host', intake: 'all'})); });
   const {sessionId, executionId} = await queued();
   assert.equal((await execution(sessionId, executionId)).hostId ?? null, null, 'no host took it');
-  const c = ok(await call('POST', `/api/executions/${executionId}/stop`, {}, owner));
+  const c = ok(await op('execution_stop', {executionId: executionId}));
   assert.equal(c.kind, 'stop'); assert.equal(c.status, 'stopped');
   const e = await execution(sessionId, executionId);
   assert.equal(e.state, 'cancelled'); assert.equal(e.stopDetail, 'stopped before dispatch');
@@ -115,7 +115,7 @@ test('A5b a stop racing the dispatch claim is never overwritten: a stop that set
     const raced = await Promise.all(Array.from({length: 10}, async () => {
       const q = await queued();
       await new Promise(r => setTimeout(r, Math.random() * 30));
-      return {...q, stop: ok(await call('POST', `/api/executions/${q.executionId}/stop`, {}, owner))};
+      return {...q, stop: ok(await op('execution_stop', {executionId: q.executionId}))};
     }));
     // A poll returns once the dispatch pass of these messages has ended: a claim that lost the race has committed.
     ok(await h('/api/hosts/poll', poll));
@@ -469,7 +469,7 @@ test('A14 control acknowledgement does not confirm an uncertain execution; only 
     const receipt = (commandId: string, status: string, id = executionId) => h('/api/hosts/receipts', {commandId, executionId: id, status});
     ok(await receipt(start.id, 'started'));
     if (initiallyUnknown) ok(await receipt(start.id, 'unknown'));
-    const stop = ok(await call('POST', `/api/executions/${executionId}/stop`, {}, owner));
+    const stop = ok(await op('execution_stop', {executionId: executionId}));
     ok(await receipt(stop.id, 'accepted'));
     assert.deepEqual([(await execution(sessionId, executionId)).state, (await execution(sessionId, executionId)).observation], ['running', initiallyUnknown ? 'unconfirmed' : 'confirmed']);
     ok(await receipt(stop.id, 'unknown'));
@@ -512,7 +512,7 @@ test('A15 control receipts preserve completed execution history and do not confi
     ok(await receipt(steer.id, status));
     assert.deepEqual([(await execution(sessionId, executionId)).state, (await execution(sessionId, executionId)).observation], ['running', 'unconfirmed']);
   }
-  const stop = ok(await call('POST', `/api/executions/${executionId}/stop`, {}, owner));
+  const stop = ok(await op('execution_stop', {executionId: executionId}));
   ok(await receipt(start.id, 'completed'));
   const ended = await execution(sessionId, executionId);
   for (const status of ['accepted', 'unknown']) {
