@@ -5,14 +5,14 @@ package main
 // {id, zone, bucket, endpoint, localEndpoint, keyFile, capacityBytes, backingPath, requiresLogon}.
 
 import (
-	"fleet/contract"
 	"math"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"fleet/contract"
 )
 
 func storeConfig() M {
@@ -126,8 +126,7 @@ func storeReachable(cfg M) bool {
 	if u == "" {
 		return false
 	}
-	c := &http.Client{Timeout: 2 * time.Second, CheckRedirect: noRedirect}
-	r, err := c.Get(u)
+	r, err := httpClient(2 * time.Second).Get(u)
 	if err != nil {
 		return false
 	}

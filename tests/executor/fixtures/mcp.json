@@ -92,7 +92,7 @@
             "capabilities": {
               "tools": {}
             },
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "serverInfo": {
               "name": "fleet-design-rules",
               "version": "1.0.0"
@@ -106,7 +106,7 @@
             "capabilities": {
               "tools": {}
             },
-            "protocolVersion": "custom",
+            "protocolVersion": "2025-06-18",
             "serverInfo": {
               "name": "fleet-design-rules",
               "version": "1.0.0"
@@ -143,15 +143,15 @@
         {
           "error": {
             "code": -32601,
-            "message": "Unsupported method, tool or arguments"
+            "message": "method not found"
           },
           "id": 1,
           "jsonrpc": "2.0"
         },
         {
           "error": {
-            "code": -32601,
-            "message": "Unsupported method, tool or arguments"
+            "code": -32602,
+            "message": "Unsupported tool or arguments"
           },
           "id": 1,
           "jsonrpc": "2.0"
@@ -178,8 +178,8 @@
         },
         {
           "error": {
-            "code": -32601,
-            "message": "Unsupported method, tool or arguments"
+            "code": -32602,
+            "message": "Unsupported tool or arguments"
           },
           "id": 1,
           "jsonrpc": "2.0"
@@ -358,7 +358,7 @@
             "capabilities": {
               "tools": {}
             },
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "serverInfo": {
               "name": "fleet-delegation",
               "version": "1"
@@ -372,7 +372,7 @@
             "capabilities": {
               "tools": {}
             },
-            "protocolVersion": "custom",
+            "protocolVersion": "2025-06-18",
             "serverInfo": {
               "name": "fleet-delegation",
               "version": "1"
@@ -705,8 +705,8 @@
         },
         {
           "error": {
-            "code": -32602,
-            "message": "Unsupported method"
+            "code": -32601,
+            "message": "method not found"
           },
           "id": 1,
           "jsonrpc": "2.0"
@@ -1479,7 +1479,7 @@
             "capabilities": {
               "tools": {}
             },
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-06-18",
             "serverInfo": {
               "name": "fleet-delegation",
               "version": "1"
@@ -1493,7 +1493,7 @@
             "capabilities": {
               "tools": {}
             },
-            "protocolVersion": "custom",
+            "protocolVersion": "2025-06-18",
             "serverInfo": {
               "name": "fleet-delegation",
               "version": "1"
@@ -2185,8 +2185,8 @@
         },
         {
           "error": {
-            "code": -32602,
-            "message": "Unsupported method"
+            "code": -32601,
+            "message": "method not found"
           },
           "id": 1,
           "jsonrpc": "2.0"

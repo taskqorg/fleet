@@ -1,11 +1,12 @@
-// Executor telemetry (docs/designs/fleet-telemetry.md): spans go to <data>/spans/current.jsonl and are shipped to
-// POST /api/hosts/spans; one host.heartbeat check span per minute with host readings, and one process.reading per Fleet
+// Executor telemetry (docs/designs/fleet-telemetry.md): spans go to <data>/spans/current.jsonl and leave through the
+// outbox to POST /api/hosts/spans; one host.heartbeat check span per minute with host readings, and one process.reading per Fleet
 // process under it; one execution span per finished run with the CPU and peak memory of its process tree.
 package main
 
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -36,11 +37,11 @@ var (
 	spanDir string
 )
 
-func startTelemetry(root, url, token, host string) {
+func startTelemetry(root string, db *sql.DB, host string) {
 	obs.Service, obs.HostID, obs.Version = "executor", host, version
 	// Unexpected errors and panics go to Bugsink (docs/designs/fleet-error-tracking.md): FLEET_BUGSINK_DSN, else the
 	// release default; none, no events.
-	if err := errtrack.Start(bugsinkDSN(), "executor", host, version); err != nil {
+	if err := errtrack.Start(errtrack.DSN(), "executor", host, version); err != nil {
 		log.Printf("error tracking off: %v", err)
 	}
 	spanDir = filepath.Join(root, "spans")
@@ -48,14 +49,14 @@ func startTelemetry(root, url, token, host string) {
 		return
 	}
 	obs.SetSink(appendSpan)
-	go func() {
+	errtrack.Go("telemetry.minute", func() {
 		prev := map[int]float64{}
 		for t := time.Now(); ; t = time.Now() {
 			heartbeat(root, prev)
-			shipSpans(url, token)
+			queueSpans(db)
 			time.Sleep(time.Until(t.Add(time.Minute)))
 		}
-	}()
+	})
 }
 
 // appendSpan: the sink. One line per span; a failed write loses the span (help, never block).
@@ -74,11 +75,11 @@ func appendSpan(s *obs.Span) {
 	f.Close()
 }
 
-// shipSpans: current.jsonl becomes a pending file; each pending file goes in batches of up to 1000 with a stable batch
-// id (a retried batch is deduplicated by the coordinator), and is removed when every batch was accepted. A file the
-// coordinator refuses for good (a 4xx other than 401 and 429, or an unreadable line) becomes failed-*.jsonl: kept for a
-// look, never retried, so it does not hold back the files after it.
-func shipSpans(url, token string) {
+// queueSpans: current.jsonl becomes a pending file; each pending file is queued in the outbox as batches of up to 1000
+// spans with a stable batch id (a retried batch is deduplicated by the coordinator), and removed in the same
+// transaction. The outbox delivers them like every other row; a batch the coordinator refuses for good goes to
+// outbox_failed. A file with a line longer than the buffer becomes failed-*.jsonl: kept for a look, never queued.
+func queueSpans(db *sql.DB) {
 	spanMu.Lock()
 	cur := filepath.Join(spanDir, "current.jsonl")
 	if st, err := os.Stat(cur); err == nil && st.Size() > 0 {
@@ -88,47 +89,43 @@ func shipSpans(url, token string) {
 	files, _ := filepath.Glob(filepath.Join(spanDir, "pending-*.jsonl"))
 	sort.Strings(files)
 	for _, f := range files {
-		switch shipFile(url, token, f) {
-		case shipRetry:
-			return // the coordinator or the store is down: retry next minute
-		case shipRefused:
+		batches, err := spanBatches(f)
+		if err != nil {
 			os.Rename(f, filepath.Join(spanDir, "failed-"+strings.TrimPrefix(filepath.Base(f), "pending-")))
-		default:
-			os.Remove(f)
+			continue
 		}
+		if (dbExec{db}).tx(func(x execer) error {
+			for _, b := range batches {
+				if err := queue(x, spansRoute, b); err != nil {
+					return err
+				}
+			}
+			return nil
+		}) != nil {
+			return // the journal is busy or failing: the file waits for the next minute
+		}
+		os.Remove(f)
 	}
 }
 
-const (
-	shipDone = iota
-	shipRetry
-	shipRefused
-)
+const spansRoute = "/api/hosts/spans"
 
-func shipFile(url, token, file string) int {
+func spanBatches(file string) ([]contract.SpanBatchRequest, error) {
 	fh, err := os.Open(file)
 	if err != nil {
-		return shipRetry
+		return nil, err
 	}
 	defer fh.Close()
 	sc := bufio.NewScanner(fh)
 	sc.Buffer(make([]byte, 1<<16), 1<<22)
 	base := strings.TrimSuffix(filepath.Base(file), ".jsonl")
+	var out []contract.SpanBatchRequest
 	var batch []json.RawMessage
-	n := 0
-	send := func() int {
-		if len(batch) == 0 {
-			return shipDone
+	cut := func() {
+		if len(batch) > 0 {
+			out = append(out, contract.SpanBatchRequest{BatchId: base + "-" + strconv.Itoa(len(out)), Spans: batch})
+			batch = nil
 		}
-		a := send(url, token, "/api/hosts/spans", contract.SpanBatchRequest{BatchId: base + "-" + strconv.Itoa(n), Spans: batch})
-		batch, n = nil, n+1
-		switch a.kind {
-		case answerOK:
-			return shipDone
-		case answerReject:
-			return shipRefused
-		}
-		return shipRetry
 	}
 	for sc.Scan() {
 		if !json.Valid(sc.Bytes()) {
@@ -136,15 +133,14 @@ func shipFile(url, token, file string) int {
 		}
 		batch = append(batch, append(json.RawMessage(nil), sc.Bytes()...))
 		if len(batch) == 1000 {
-			if r := send(); r != shipDone {
-				return r
-			}
+			cut()
 		}
 	}
-	if sc.Err() != nil {
-		return shipRefused // a line longer than the buffer: the file is kept as failed
+	if err := sc.Err(); err != nil {
+		return nil, err
 	}
-	return send()
+	cut()
+	return out, nil
 }
 
 // heartbeat writes host.heartbeat with host readings and, as its children, one process.reading per running Fleet
@@ -251,7 +247,7 @@ func executionSpan(execution string, l *live) {
 		s.Fail("timeout")
 	case l.stopped:
 		s.Outcome = obs.Cancelled
-	case l.state == nil || !l.state.Success() || l.cleanupUnknown:
+	case l.state() == nil || !l.state().Success() || l.cleanupUnknown:
 		s.Fail("internal")
 	}
 	s.End(nil)

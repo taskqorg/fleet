@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fleet/contract"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fleet/contract"
+	"fleet/update/updatesignal"
 )
 
 // Self-update (docs/designs/fleet-self-update.md, sections 4 and 5): the executor's version, release defaults for its
@@ -51,7 +53,6 @@ func defaultSecretFile() string {
 // releaseDefaults: config/executor-defaults.json of the running release, read once.
 var releaseDefaults = sync.OnceValue(func() (d struct {
 	StoreEndpointHosts []string `json:"storeEndpointHosts"`
-	BugsinkDSN         string   `json:"bugsinkDsn"`
 }) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -74,26 +75,9 @@ func storeEndpointHosts() []string {
 	return releaseDefaults().StoreEndpointHosts
 }
 
-// bugsinkDSN: FLEET_BUGSINK_DSN, else the release default (the fleet-executor Bugsink project); set but empty turns
-// error tracking off. A DSN is not a secret.
-func bugsinkDSN() string {
-	if v, ok := os.LookupEnv("FLEET_BUGSINK_DSN"); ok {
-		return v
-	}
-	return releaseDefaults().BugsinkDSN
-}
-
-// updateSignal is update.json; written only when a value other than at changes, durably (temp file, then rename).
-type updateSignal struct {
-	RestartTarget *string `json:"restartTarget,omitempty"`
-	HostID        string  `json:"hostId"`
-	Target        *string `json:"target"`
-	AutoUpdate    string  `json:"autoUpdate"`
-	Running       string  `json:"running"`
-	PollOk        bool    `json:"pollOk"`
-	PollError     string  `json:"pollError,omitempty"`
-	At            string  `json:"at"`
-}
+// updateSignal is update.json (package updatesignal, the type fleet-update reads); written only when a value other than at
+// changes, durably (temp file, then rename).
+type updateSignal = updatesignal.Signal
 
 var lastSignal *updateSignal
 var signalMu sync.Mutex

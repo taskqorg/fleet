@@ -14,9 +14,13 @@ import (
 func resetRetryRows(t *testing.T) {
 	t.Helper()
 	clear := func() {
-		retryMu.Lock()
-		retryRows = map[int64]*edgeState{}
-		retryMu.Unlock()
+		holdMu.Lock()
+		for k := range holds {
+			if strings.HasPrefix(k, "row ") {
+				delete(holds, k)
+			}
+		}
+		holdMu.Unlock()
 	}
 	clear()
 	heldOnly.Store(false)
@@ -184,9 +188,11 @@ func TestUnreachableCoordinatorStopsFlush(t *testing.T) {
 	if count(db, "outbox") != 3 || !heldOnly.Load() {
 		t.Fatalf("pending=%d heldOnly=%v, want every row kept and the long interval", count(db, "outbox"), heldOnly.Load())
 	}
-	retryMu.Lock()
-	defer retryMu.Unlock()
-	if len(retryRows) != 0 {
-		t.Fatalf("an unreachable coordinator put rows into backoff: %v", retryRows)
+	holdMu.Lock()
+	defer holdMu.Unlock()
+	for k := range holds {
+		if strings.HasPrefix(k, "row ") {
+			t.Fatalf("an unreachable coordinator put rows into backoff: %v", holds)
+		}
 	}
 }

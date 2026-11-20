@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"fleet/contract"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"fleet/contract"
 )
 
 type seen struct {
@@ -170,9 +171,9 @@ func TestRedirectHoldsOnlyItsRouteAndExecution(t *testing.T) {
 	if enc(byExecution) != enc(want) || count(db, "outbox") != 3 || count(db, "outbox_failed") != 0 {
 		t.Fatalf("got %v, left %d", s.rows, count(db, "outbox"))
 	}
-	edgeMu.Lock()
-	attempts := edges["/api/hosts/artifacts/declare"].attempts
-	edgeMu.Unlock()
+	holdMu.Lock()
+	attempts := holds["/api/hosts/artifacts/declare"].attempts
+	holdMu.Unlock()
 	if attempts != 0 {
 		t.Fatalf("edge attempts %d: answers asked together count as one attempt", attempts)
 	}

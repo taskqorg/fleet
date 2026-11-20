@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fleet/executor/supervise"
 )
 
 var ffmpegVersion = sync.OnceValue(func() string {
@@ -94,22 +96,16 @@ var unshareWorks = sync.OnceValue(func() bool {
 func runPreview(c *exec.Cmd) error {
 	var se strings.Builder
 	c.Stderr = &se
-	if err := c.Start(); err != nil {
+	p, err := supervise.Spawn(supervise.Spec{Cmd: c, Deadline: time.Duration(setting("FLEET_PREVIEW_TIMEOUT_SECONDS", 120)) * time.Second})
+	if err != nil {
 		return err
 	}
-	done := make(chan error, 1)
-	go func() { done <- c.Wait() }()
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("ffmpeg exit %d", c.ProcessState.ExitCode())
-		}
-		return nil
-	case <-time.After(time.Duration(setting("FLEET_PREVIEW_TIMEOUT_SECONDS", 120)) * time.Second):
-		c.Process.Kill()
-		<-done
+	if err := p.Wait(); p.TimedOut() {
 		return fmt.Errorf("ffmpeg time limit")
+	} else if err != nil {
+		return fmt.Errorf("ffmpeg exit %d", c.ProcessState.ExitCode())
 	}
+	return nil
 }
 
 // buildPreviews builds the previews of a stored upload and queues them for upload.

@@ -6,8 +6,11 @@ package errtrack
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -99,4 +102,40 @@ func Flush(d time.Duration) {
 	if enabled.Load() {
 		sentry.Flush(d)
 	}
+}
+
+// Go is the one way a Fleet service starts a goroutine: fn runs in it, and a panic is sent (tagged span=name) before it
+// is raised again, so it still ends the process as an unrecovered panic does (the service manager restarts it).
+func Go(name string, fn func()) {
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				Panic(p, map[string]string{"span": name})
+				panic(p)
+			}
+		}()
+		fn()
+	}()
+}
+
+// DSN: FLEET_BUGSINK_DSN when set (set but empty turns error tracking off), else bugsinkDsn of
+// config/executor-defaults.json next to the running binary (the release defaults of an executor host), else none.
+func DSN() string {
+	if v, ok := os.LookupEnv("FLEET_BUGSINK_DSN"); ok {
+		return v
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	var d struct {
+		BugsinkDSN string `json:"bugsinkDsn"`
+	}
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(exe), "config", "executor-defaults.json")); err == nil {
+		json.Unmarshal(b, &d)
+	}
+	return d.BugsinkDSN
 }

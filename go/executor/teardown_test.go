@@ -111,7 +111,7 @@ func TestTransitionFailureRetainsProcessClosedStderr(t *testing.T) {
 	close(done)
 	lines := make(chan string)
 	close(lines)
-	l := &live{cmd: cmd, state: cmd.ProcessState, exited: done, eof: true, lines: lines, command: M{"id": "c1", "sessionId": "s1", "executionId": "x1", "kind": "start", "payload": payload}, owned: map[int]string{}, journaled: map[int]bool{}, cpu: map[int]float64{}}
+	l := &live{cmd: cmd, exited: done, eof: true, lines: lines, command: M{"id": "c1", "sessionId": "s1", "executionId": "x1", "kind": "start", "payload": payload}, owned: map[int]string{}, journaled: map[int]bool{}, cpu: map[int]float64{}}
 	if _, err := e.tickOne("x1", l); err != nil {
 		t.Fatal(err)
 	}

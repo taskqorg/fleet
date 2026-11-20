@@ -9,6 +9,7 @@ import {join} from 'node:path';
 import {createInterface} from 'node:readline';
 import {DatabaseSync} from 'node:sqlite';
 import {executorBinary} from './executor-binary.ts';
+import {wakeAll} from './wake.ts';
 
 function normalize(value:any,root:string):any {
  if(typeof value==='string')return value.replaceAll(root,'<root>').replace(/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/g,'<uuid>');
@@ -46,6 +47,7 @@ test('L4 captured MCP exchanges and journal effects match the Rust subcommands',
     db.prepare('UPDATE delegation_requests SET response=? WHERE response IS NULL').run(JSON.stringify(context._response??{childExecutionId:'child',result:{content:[{type:'text',text:'reply'}]}}));
     db.prepare('UPDATE transfers SET state=?,response=? WHERE response IS NULL').run(context._transferState??'done',JSON.stringify(context._transferResponse??{artifactId:'artifact',state:'done'}));
     db.exec('COMMIT');
+    wakeAll(root);
    }catch(error){responderError=error;try{db.exec('ROLLBACK')}catch{}}
   },5);
   try{

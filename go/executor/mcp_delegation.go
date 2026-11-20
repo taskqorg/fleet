@@ -5,7 +5,6 @@ package main
 // Behaviour reference: the stdio exchanges in tests/executor/fixtures/mcp.json (docs/designs/fleet-stack.md L4).
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -13,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"slices"
 	"strings"
@@ -21,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"fleet/contract"
+	"fleet/mcpserve"
 )
 
 //go:embed mcp-tools.json
@@ -157,57 +156,52 @@ func dbe(err error) error {
 	return dbError{err}
 }
 
-// wait polls the host's reply for key; nil after seconds.
+// wait returns the host's reply for key once the executor settles it (wake.go), nil after seconds.
 func wait(db *sql.DB, table, key string, seconds int, artifact bool) (any, error) {
 	end := time.Now().Add(time.Duration(seconds) * time.Second)
-	q := "SELECT response,'' FROM delegation_requests WHERE id=?"
-	pause := 50 * time.Millisecond
-	if table == "transfers" {
-		q, pause = "SELECT response,state FROM transfers WHERE id=?", 100*time.Millisecond
-	}
-	for time.Now().Before(end) {
-		var raw sql.NullString
-		var state string
-		err := db.QueryRow(q, key).Scan(&raw, &state)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, dbe(err)
+	w := listen(db, key) // before the first read: a reply written after it signals this FIFO
+	defer w.close()
+	for {
+		v, ok, err := reply(db, table, key, artifact)
+		if ok || err != nil {
+			return v, err
 		}
-		if err == nil && raw.String != "" {
-			v, err := dec(raw.String)
-			if err != nil {
-				return nil, unreadReply{err} // the stored reply does not decode: the request was made, its outcome unknown
-			}
-			if table != "transfers" || state == "failed" || (artifact && has(v, "artifactId")) || (!artifact && state == "done") {
-				return v, nil
-			}
+		if !w.wait(end) {
+			v, _, err := reply(db, table, key, artifact) // the last look at the deadline: a lost signal costs only latency
+			return v, err
 		}
-		time.Sleep(pause)
 	}
-	return nil, nil
 }
 
-func delegation(req, ctx any, db *sql.DB) (any, error) {
-	method := jStr(jAt(req, "method"))
-	p := jAt(req, "params")
-	switch method {
-	case "initialize":
-		pv := any("2024-11-05")
-		if has(p, "protocolVersion") {
-			pv = jAt(p, "protocolVersion")
-		}
-		return M{"protocolVersion": pv, "capabilities": M{"tools": M{}}, "serverInfo": M{"name": "fleet-delegation", "version": "1"}}, nil
-	case "ping":
-		return M{}, nil
-	case "tools/list":
-		return mcpTools(ctx), nil
+// reply reads key's stored reply: ok once it is the one the caller waits for.
+func reply(db *sql.DB, table, key string, artifact bool) (any, bool, error) {
+	q := "SELECT response,'' FROM delegation_requests WHERE id=?"
+	if table == "transfers" {
+		q = "SELECT response,state FROM transfers WHERE id=?"
 	}
-	name := jStr(jAt(p, "name"))
-	if method != "tools/call" {
-		return nil, errors.New("Unsupported method")
+	var raw sql.NullString
+	var state string
+	err := db.QueryRow(q, key).Scan(&raw, &state)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, false, dbe(err)
 	}
-	q := any(M{})
-	if truth(jAt(p, "arguments")) {
-		q = jAt(p, "arguments")
+	if err != nil || raw.String == "" {
+		return nil, false, nil
+	}
+	v, err := dec(raw.String)
+	if err != nil {
+		return nil, false, unreadReply{err} // the stored reply does not decode: the request was made, its outcome unknown
+	}
+	if table != "transfers" || state == "failed" || (artifact && has(v, "artifactId")) || (!artifact && state == "done") {
+		return v, true, nil
+	}
+	return nil, false, nil
+}
+
+// delegationCall answers one tools/call of the delegation server.
+func delegationCall(name string, q, ctx any, db *sql.DB) (any, error) {
+	if !truth(q) {
+		q = M{}
 	}
 	if name == "agent_tool_result" {
 		key := jStr(q, "requestKey")
@@ -415,27 +409,16 @@ func journalOnce(db *sql.DB, key, body, route string) error {
 	return dbe(err)
 }
 
-func designRules(req, ctx any) (any, error) {
-	p := jAt(req, "params")
-	switch jStr(jAt(req, "method")) {
-	case "initialize":
-		pv := any("2024-11-05")
-		if has(p, "protocolVersion") {
-			pv = jAt(p, "protocolVersion")
-		}
-		return M{"protocolVersion": pv, "capabilities": M{"tools": M{}}, "serverInfo": M{"name": "fleet-design-rules", "version": "1.0.0"}}, nil
-	case "ping":
-		return M{}, nil
-	case "tools/list":
-		return M{"tools": []any{M{"name": "get_design_rules", "description": "Read project website design rules.",
-			"inputSchema": M{"type": "object", "properties": M{}, "additionalProperties": false},
-			"annotations": M{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true}}}}, nil
-	case "tools/call":
-		if a, ok := jAt(p, "arguments").(M); jAt(p, "name") == "get_design_rules" && (!has(p, "arguments") || ok && len(a) == 0) {
-			return mcpText(ctx, &no), nil
-		}
+var designRulesTools = []any{M{"name": "get_design_rules", "description": "Read project website design rules.",
+	"inputSchema": M{"type": "object", "properties": M{}, "additionalProperties": false},
+	"annotations": M{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true}}}
+
+// designRulesCall answers get_design_rules with no arguments: the server's context.
+func designRulesCall(name string, args, ctx any) (any, error) {
+	if a, ok := args.(M); name == "get_design_rules" && (args == nil || ok && len(a) == 0) {
+		return mcpText(ctx, &no), nil
 	}
-	return nil, errors.New("Unsupported method, tool or arguments")
+	return nil, errors.New("Unsupported tool or arguments")
 }
 
 func mcpRun(args []string) error {
@@ -548,46 +531,19 @@ func mcpRun(args []string) error {
 	default:
 		return errors.New("unknown MCP server")
 	}
-	in := bufio.NewReader(os.Stdin)
-	out := bufio.NewWriter(os.Stdout)
-	for {
-		raw, err := in.ReadString('\n')
-		if raw == "" && err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-		req, perr := dec(raw)
-		if perr != nil {
-			fmt.Fprintln(out, enc(M{"jsonrpc": "2.0", "id": nil, "error": M{"code": -32700, "message": "Parse error"}}))
-			out.Flush()
-			continue
-		}
-		if !has(req, "id") {
-			continue
-		}
-		var result any
-		if db != nil {
-			result, err = delegation(req, ctx, db)
-		} else if server == "project-forge" {
-			result, err = forge(req, ctx)
-		} else {
-			result, err = designRules(req, ctx)
-		}
-		reply := M{"jsonrpc": "2.0", "id": jAt(req, "id")}
-		if err != nil {
-			code := -32602
-			if server == "design-rules" {
-				code = -32601
-			}
-			reply["error"] = M{"code": code, "message": strings.TrimSpace(err.Error())}
-		} else {
-			reply["result"] = result
-		}
-		fmt.Fprintln(out, enc(reply))
-		out.Flush()
+	srv := mcpserve.Stdio{Name: "fleet-design-rules", Version: "1.0.0", Tools: func() any { return designRulesTools },
+		Call: func(name string, args json.RawMessage) (any, error) { return designRulesCall(name, decRaw(args), ctx) }}
+	switch server {
+	case "delegation":
+		srv = mcpserve.Stdio{Name: "fleet-delegation", Version: "1", Tools: func() any { return mcpTools(ctx)["tools"] },
+			Call: func(name string, args json.RawMessage) (any, error) {
+				return delegationCall(name, decRaw(args), ctx, db)
+			}}
+	case "project-forge":
+		srv = mcpserve.Stdio{Name: "fleet-project-forge", Version: "1", Tools: func() any { return forgeTools },
+			Call: func(name string, args json.RawMessage) (any, error) { return forgeCall(name, decRaw(args), ctx) }}
 	}
+	return srv.Serve(os.Stdin, os.Stdout)
 }
 
 // operationsOf: the start command's fleetOperations list carried in the server context.

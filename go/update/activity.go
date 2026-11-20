@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"fleet/update/updatesignal"
 )
 
 // Guard both readiness and command admission; an idle snapshot alone races new work.
@@ -25,7 +27,7 @@ func (u *updater) executorActivity(signal string) func(string) (func(), error) {
 			return nil, err
 		}
 		var s signalFile
-		if !readJSON(signal, &s) || (s.Running != target && (s.Target != target || s.RestartTarget != target)) || u.held(s.AutoUpdate) {
+		if !readJSON(signal, &s) || (s.Running != target && (updatesignal.Str(s.Target) != target || updatesignal.Str(s.RestartTarget) != target)) || u.held(s.AutoUpdate) {
 			f.Close()
 			return nil, nil
 		}

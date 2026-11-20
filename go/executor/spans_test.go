@@ -20,7 +20,7 @@ func TestPsTime(t *testing.T) {
 	}
 }
 
-// A heartbeat writes host readings; shipping posts them as one batch and removes the file once accepted.
+// A heartbeat writes host readings; they leave through the outbox as one batch, and the file is removed once queued.
 func TestHeartbeatShips(t *testing.T) {
 	root := t.TempDir()
 	spanDir = filepath.Join(root, "spans")
@@ -41,12 +41,8 @@ func TestHeartbeatShips(t *testing.T) {
 	if hb.MemFree == nil || hb.DiskFree == nil || hb.Load1 == nil || hb.Attrs["fleet.cpus"] == "" || hb.Kind != "check" {
 		t.Fatalf("heartbeat %s", b)
 	}
-	got, fail := 0, true
+	got := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if fail {
-			http.Error(w, "down", 503)
-			return
-		}
 		var req struct {
 			BatchId string
 			Spans   []json.RawMessage
@@ -56,13 +52,12 @@ func TestHeartbeatShips(t *testing.T) {
 		w.Write([]byte(`{"accepted":1,"skipped":0}`))
 	}))
 	defer srv.Close()
-	shipSpans(srv.URL, "t")
-	if left, _ := filepath.Glob(filepath.Join(spanDir, "pending-*")); len(left) != 1 {
-		t.Fatal("a refused batch keeps its file", left)
+	db := journal(t)
+	queueSpans(db)
+	if left, _ := filepath.Glob(filepath.Join(spanDir, "*")); len(left) != 0 || count(db, "outbox") != 1 {
+		t.Fatal("the batch is queued and its file removed", left)
 	}
-	fail = false
-	shipSpans(srv.URL, "t")
-	if left, _ := filepath.Glob(filepath.Join(spanDir, "*")); len(left) != 0 || got == 0 {
-		t.Fatal(left, got)
+	if err := flush(db, srv.URL, "t", "host"); err != nil || got == 0 || count(db, "outbox") != 0 {
+		t.Fatal(err, got)
 	}
 }

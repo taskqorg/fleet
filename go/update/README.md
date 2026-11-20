@@ -10,6 +10,7 @@
 - `fleet-update pds18` updates the coordinator side, PDS18 executor, and UI independently.
 - `fleet-update install-local <verified-stage> <releases>` prepares the managed CLI cache and switches the local release under the same lock as auto-update.
 - `fleet-update selftest` verifies the compiled-in Ed25519 release-key setup.
+- `update.json` is one type, [`updatesignal.Signal`](updatesignal/updatesignal.go), which the executor writes and `fleet-update` reads.
 - Linux and macOS trigger helpers write a path watcher for the executor's `update.json` target signal when the matching existing service definition is present.
 
 ## Invariants
@@ -23,6 +24,8 @@
 - Cached release metadata is returned only after validation. UI state remains independent from native rollout state ([update.go: `getCached`](update.go), [ui.go: `cycleUI`](ui.go)).
 
 ## Side effects
+
+- Unexpected errors and panics go to Bugsink through [`errtrack`](../errtrack/README.md) with `errtrack.DSN()`, tagged `service` fleet-update.
 
 - Downloads release metadata and archives, writes cached metadata and update state, installs release trees and symlinks, restarts services, and prunes obsolete releases ([update.go: `fetch`, `install`, `pruneReleases`](update.go)).
 - Executor mode may write the target-file trigger unit through `runExecutor` and `ensureTrigger` ([main.go](main.go), [trigger.go: `triggerFor`](trigger.go)).

@@ -7,9 +7,14 @@
 package main
 
 import (
+	"time"
+
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"fleet/errtrack"
+	"fleet/obs"
+	"fleet/update/updatesignal"
 	"fmt"
 	"log"
 	"os"
@@ -33,7 +38,21 @@ const repoURL = "https://github.com/taskqorg/fleet.git"
 
 func main() {
 	log.SetFlags(0)
+	// Unexpected errors and panics go to Bugsink (docs/designs/fleet-error-tracking.md), as in the coordinator.
+	host, _ := os.Hostname()
+	obs.Service, obs.HostID, obs.Version = "fleet-update", host, version
+	if err := errtrack.Start(errtrack.DSN(), "fleet-update", host, version); err != nil {
+		log.Print("fleet-update: error tracking off: ", err)
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			errtrack.Panic(p, map[string]string{"span": "main"})
+			panic(p)
+		}
+	}()
 	if err := run(os.Args[1:]); err != nil {
+		errtrack.Capture(err, map[string]string{"span": "main"})
+		errtrack.Flush(2 * time.Second)
 		log.Print("fleet-update: ", err)
 		os.Exit(1)
 	}
@@ -142,7 +161,7 @@ func (u *updater) runExecutor() error {
 		log.Print("no update.json yet: the executor has not polled")
 		return nil
 	}
-	if res := u.cycle(p, in.AutoUpdate, func() string { return in.Target }); res != nil {
+	if res := u.cycle(p, in.AutoUpdate, func() string { return updatesignal.Str(in.Target) }); res != nil {
 		st.Last = res
 		return writeJSON(stateFile, st, 0o600)
 	}

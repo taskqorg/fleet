@@ -17,7 +17,7 @@ func TestProjectToolPendingRecovery(t *testing.T) {
 			ctx := M{"hostId": "host", "commandId": "command", "executionId": "execution", "projectId": "fixture"}
 			call := func(name string, args M, context M) any {
 				t.Helper()
-				r, err := delegation(M{"method": "tools/call", "params": M{"name": name, "arguments": args}}, context, db)
+				r, err := delegationCall(name, args, context, db)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -103,8 +103,10 @@ func TestProjectToolPendingRecovery(t *testing.T) {
 func TestChildSubmissionTimeoutUnchanged(t *testing.T) {
 	db := journal(t)
 	ctx := M{"hostId": "host", "commandId": "command", "executionId": "execution", "projectId": "fixture", "profiles": []any{"reviewer"}}
-	req := M{"method": "tools/call", "params": M{"name": "request_child", "arguments": M{"requestId": "child", "profileId": "reviewer", "input": "review"}}}
-	pending, err := delegation(req, ctx, db)
+	child := func() (any, error) {
+		return delegationCall("request_child", M{"requestId": "child", "profileId": "reviewer", "input": "review"}, ctx, db)
+	}
+	pending, err := child()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +123,7 @@ func TestChildSubmissionTimeoutUnchanged(t *testing.T) {
 	if err := flush(db, server.URL, "token", "host"); err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := delegation(req, ctx, db)
+	accepted, err := child()
 	if err != nil || jStr(decM(jStr(jArr(accepted, "content")[0], "text")), "status") != "accepted" {
 		t.Fatal(accepted, err)
 	}

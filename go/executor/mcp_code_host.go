@@ -20,6 +20,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"fleet/errtrack"
+	"fleet/executor/supervise"
 )
 
 // sh runs one command for the code: bash -c in the worktree or cwd, under the execution's shell policy, with the code
@@ -94,57 +97,36 @@ func (s *codeServer) sh(rt *codeRuntime, args any) (any, M) {
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// The group is killed when the command exits. ponytail: 1 s for a child that left the group (setsid) and keeps the
 	// output open; then the output is closed and the call returns.
 	cmd.WaitDelay = time.Second
+	var deadline time.Duration
+	if ms, ok := num(jAt(args, "timeoutMs")); ok && ms > 0 && ms < 1e12 { // beyond 30 years: no timeout, not an overflow
+		deadline = time.Duration(ms * float64(time.Millisecond))
+	}
 	s.mu.Lock()
 	if s.closed || rt != nil && (rt.stopped || rt.gone) { // a reset or a dead runtime: nobody gets the result
 		s.mu.Unlock()
 		return nil, callError("error", "job-ended", "the runtime was reset or the code server is stopping")
 	}
-	if err := cmd.Start(); err != nil {
+	// What the command left running in its group is killed when it exits, before the reap (supervise.Spawn).
+	p, err := supervise.Spawn(supervise.Spec{Cmd: cmd, Deadline: deadline, KillLeftovers: true})
+	if err != nil {
 		s.mu.Unlock()
 		return nil, callError("error", "sh-start", err.Error())
 	}
-	p := &shProc{cmd: cmd}
 	s.procs[p] = true
 	s.mu.Unlock()
-	if ms, ok := num(jAt(args, "timeoutMs")); ok && ms > 0 && ms < 1e12 { // beyond 30 years: no timeout, not an overflow
-		t := time.AfterFunc(time.Duration(ms*float64(time.Millisecond)), p.timeout)
-		defer t.Stop()
-	}
-	// Until cmd.Wait reaps it, the exited leader stays a zombie, so its PID and process group id cannot be reused: what
-	// the command left running in its group is killed before then, never another command's group. Without waitid the
-	// group is not killed: a kill after the reap could hit another group.
-	if waitExited(cmd.Process.Pid) {
-		p.mu.Lock()
-		p.exited = true // a timeout from here on comes too late: the command had ended
-		p.mu.Unlock()
-		p.kill()
-		p.reap()
-	} else {
-		// No waitid: Wait blocks while the command runs, so a timeout, reset or shutdown can still kill it, through the
-		// leader only (os.Process refuses a reaped one), never a group id that may be reused.
-		p.mu.Lock()
-		p.leaderOnly = true
-		p.mu.Unlock()
-		p.cmd.Wait()
-		p.mu.Lock()
-		p.exited, p.reaped = true, true
-		p.mu.Unlock()
-	}
+	p.Wait()
 	s.mu.Lock()
 	delete(s.procs, p)
 	s.mu.Unlock()
 	r := M{"code": nil, "stdout": stdout.String(), "stderr": stderr.String()}
 	if st, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && st.Signaled() {
 		r["signal"] = st.Signal().String()
-		p.mu.Lock()
-		if p.timedOut { // a command that ended by itself just before the timer is no timeout
+		if p.TimedOut() { // a command that ended by itself just before the timer is no timeout
 			r["timedOut"] = true
 		}
-		p.mu.Unlock()
 	} else {
 		r["code"] = cmd.ProcessState.ExitCode()
 	}
@@ -159,10 +141,10 @@ func codeShellGuardian(args []string) error {
 	lease := os.NewFile(3, "shell lifetime")
 	defer lease.Close()
 	syscall.CloseOnExec(3)
-	go func() {
+	errtrack.Go("code-shell.lease", func() {
 		io.Copy(io.Discard, lease)
 		syscall.Kill(-os.Getpid(), syscall.SIGKILL)
-	}()
+	})
 	cmd := exec.Command(args[1], args[2:]...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if args[0] == "seccomp" {
@@ -171,7 +153,12 @@ func codeShellGuardian(args []string) error {
 		syscall.CloseOnExec(4)
 		cmd.ExtraFiles = []*os.File{filter}
 	}
-	if err := cmd.Run(); err != nil {
+	// The shell stays in this guardian's group, which the lease's end kills.
+	proc, err := supervise.Spawn(supervise.Spec{Cmd: cmd, SameGroup: true})
+	if err == nil {
+		err = proc.Wait()
+	}
+	if err != nil {
 		if _, ok := err.(*exec.ExitError); !ok {
 			return err
 		}
@@ -185,49 +172,6 @@ func codeShellGuardian(args []string) error {
 		os.Exit(cmd.ProcessState.ExitCode())
 	}
 	return nil
-}
-
-// shProc is one running sh command. Its group is killed only while the leader is unreaped.
-type shProc struct {
-	cmd                      *exec.Cmd
-	mu                       sync.Mutex
-	exited, reaped, timedOut bool
-	leaderOnly               bool
-}
-
-// timeout kills a command whose leader still runs and marks it timed out, in one step with that check.
-func (p *shProc) timeout() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.exited && !p.reaped {
-		p.timedOut = true
-		p.signal()
-	}
-}
-
-// signal kills the group, or only the leader when the group id could be reused (no waitid). The caller holds p.mu.
-func (p *shProc) signal() {
-	if p.leaderOnly {
-		p.cmd.Process.Kill()
-	} else {
-		syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-	}
-}
-
-// kill kills the command's process group unless the leader was already reaped.
-func (p *shProc) kill() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.reaped {
-		p.signal()
-	}
-}
-
-func (p *shProc) reap() {
-	p.mu.Lock()
-	p.reaped = true // set before the reap: a kill after this could hit a reused process group id
-	p.mu.Unlock()
-	p.cmd.Wait()
 }
 
 // shellEnv is a command's environment: the code server's, without the run token, gateway URL, Access file and MCP owner
