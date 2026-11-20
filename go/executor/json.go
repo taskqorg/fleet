@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -157,15 +158,16 @@ func decRaw(raw json.RawMessage) any {
 	return v
 }
 
-// exactKeys refuses a JSON text in which one object names a key twice, or names two keys that differ only in case: a
-// typed read (encoding/json matches field names case-insensitively, last duplicate wins) and another reader of the same
-// bytes could then see different values.
-func exactKeys(raw []byte) error {
+// exactKeys refuses a JSON text in which one object names two keys equal under Unicode case folding (strings.EqualFold,
+// which also folds 'ſ' to 's' and 'K' to 'k' as encoding/json does), or a key that folds to one of names without being
+// spelled exactly so: a typed read (encoding/json matches field names case-insensitively, last duplicate wins) and
+// another reader of the same bytes could then see different values.
+func exactKeys(raw []byte, names ...string) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	type frame struct {
 		object bool
 		key    bool // the next token in an object is a key
-		seen   map[string]bool
+		seen   []string
 	}
 	var stack []*frame
 	for {
@@ -182,11 +184,12 @@ func exactKeys(raw []byte) error {
 		}
 		if top != nil && top.object && top.key {
 			if k, ok := t.(string); ok {
-				f := strings.ToLower(k)
-				if top.seen[f] {
-					return errors.New("duplicate or case-variant key: " + k)
+				for _, x := range append(top.seen, names...) {
+					if strings.EqualFold(x, k) && (x != k || slices.Contains(top.seen, k)) {
+						return errors.New("duplicate or case-variant key: " + k)
+					}
 				}
-				top.seen[f] = true
+				top.seen = append(top.seen, k)
 				top.key = false
 				continue
 			}
@@ -196,7 +199,7 @@ func exactKeys(raw []byte) error {
 		}
 		switch t {
 		case json.Delim('{'):
-			stack = append(stack, &frame{object: true, key: true, seen: map[string]bool{}})
+			stack = append(stack, &frame{object: true, key: true})
 		case json.Delim('['):
 			stack = append(stack, &frame{})
 		case json.Delim('}'), json.Delim(']'):

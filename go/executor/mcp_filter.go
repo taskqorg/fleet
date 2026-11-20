@@ -74,7 +74,7 @@ func filterMCP(input io.Reader, output io.Writer, upstream io.Writer, replies io
 		}
 		// A key repeated in one object, or spelled in another case, could be read one way here and another way upstream.
 		var value any
-		if exactKeys(raw) != nil || json.Unmarshal(raw, &value) != nil {
+		if exactKeys(raw, "id", "method", "params", "name", "arguments", "relative_path") != nil || json.Unmarshal(raw, &value) != nil {
 			return errors.New("Invalid MCP request")
 		}
 		request := typed[mcpRequest](value)

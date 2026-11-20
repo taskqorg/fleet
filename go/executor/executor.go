@@ -881,6 +881,24 @@ func (e *executor) run(c M) error {
 		var tp contract.ProjectPayload
 		if typedErr == nil && cmd.Teardown.Payload != nil {
 			tp = *cmd.Teardown.Payload
+		} else if typedErr != nil {
+			// The payload does not fit: its project and working directory still locate the worktree; branch and
+			// deleteBranch are left unset, so no branch is deleted.
+			loose := typed[struct {
+				Project jsonValue `json:"project"`
+				Rest    struct {
+					WorkingDirectory jsonValue `json:"workingDirectory"`
+				}
+			}](c["payload"])
+			if m, ok := loose.Project.V.(M); ok {
+				tp.Project = map[string]json.RawMessage{}
+				for k, v := range m {
+					tp.Project[k] = json.RawMessage(enc(v))
+				}
+			}
+			if wd, ok := loose.Rest.WorkingDirectory.V.(string); ok {
+				tp.Rest = map[string]json.RawMessage{"workingDirectory": json.RawMessage(enc(wd))}
+			}
 		}
 		key := workspaceKey(cmd)
 		dir := e.commandDir(session, key)
@@ -1971,9 +1989,8 @@ func (e *executor) tickOne(execution string, l *live) (bool, error) {
 			}
 			// A harness may repeat its native identity on every event. Publish the first
 			// observation and changes so ordinary event traffic can batch in the outbox.
-			if n := str0(typed[struct {
-				Session *string `json:"session"`
-			}](projection).Session); n != "" && (!l.nativeObserved || n != l.native) {
+			n, _ := projection["session"].(string) // the in-memory projection Blocks built, not received JSON
+			if n != "" && (!l.nativeObserved || n != l.native) {
 				sid, err := idOf(l.command, "sessionId")
 				if err != nil {
 					return false, err
