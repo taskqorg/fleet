@@ -15,7 +15,7 @@ const imported = await fetch(origin + '/api/ops/lab_examples_add', { method: 'PO
 const importedBody = await imported.json() as { examples: { artifactId: string }[]; message?: string };
 assert.equal(imported.status, 200, JSON.stringify(importedBody));
 const exampleId = importedBody.examples[0].artifactId;
-const counts = () => seed.rows("SELECT (SELECT count(*) FROM execution) AS executions,(SELECT count(*) FROM document WHERE kind='command') AS commands,(SELECT count(*) FROM document WHERE kind='pipeline-run') AS runs")[0];
+const counts = () => seed.rows("SELECT (SELECT count(*) FROM execution) AS executions,(SELECT count(*) FROM command) AS commands,(SELECT count(*) FROM document WHERE kind='pipeline-run') AS runs")[0];
 const before = counts();
 const browser = await chromium.launch();
 try {

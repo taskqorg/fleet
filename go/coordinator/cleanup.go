@@ -78,21 +78,63 @@ var referenceMap = []objectRef{
 	{table: "execution", column: "profile_id", mode: refNone},
 	{table: "execution", column: "pipeline_id", mode: refNone},
 	{table: "execution", column: "step_id", mode: refNone},
-	{table: "document", column: "id", kind: "session", mode: refOwn},
+	{table: "document", column: "id", mode: refNone},
 	{table: "document", column: "project_id", kind: "project", mode: refOwn},
-	// Events, commands, run tokens, conflicts. A session's transcript (messages, queued messages, transitions, handoffs)
-	// belongs to the session: a task's runs in a live session leave its turns in place. execution_ref and session_ref are
-	// data->>'executionId' and data->>'sessionId' as indexed columns (migration 70): a JSON path cannot be an index
-	// condition under row-level security (not leakproof), so every check of it read and detoasted every document.
-	{table: "document", column: "execution_ref", kind: "execution", mode: refOwn, guard: "kind NOT IN ('message','queued-message','session-transition','handoff')"},
-	{table: "document", column: "session_ref", kind: "session", mode: refOwn},                                                                      // messages, transitions, queued messages
-	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'", guard: "kind IN ('session','run-token')"}, // the sessions and tokens of a run's steps
-	// A session working for a task outlives it (session and task lifecycles are separate): the reference goes stale.
+	// Run tokens, conflicts, legacy artifacts, watches. execution_ref and session_ref are data->>'executionId' and
+	// data->>'sessionId' as indexed columns (migration 70): a JSON path cannot be an index condition under row-level
+	// security (not leakproof), so every check of it read and detoasted every document.
+	{table: "document", column: "execution_ref", kind: "execution", mode: refOwn},
+	{table: "document", column: "session_ref", kind: "session", mode: refOwn},
+	{table: "document", column: "data", kind: "execution", mode: refOwn, expr: "data->>'pipelineRunId'", guard: "kind='run-token'"}, // the tokens of a run's steps
 	{table: "document", column: "data", kind: "task", mode: refNone, expr: "data->>'taskId'"},
 	{table: "document", column: "data", kind: "host", mode: refKeep, expr: "data->>'hostId'"},
-	{table: "document", column: "data", kind: "execution", mode: refKeep, expr: "data->>'createdByExecutionId'", guard: "kind='session'"},
-	{table: "document", column: "data", kind: "session", mode: refKeep, expr: "data->>'createdBySessionId'", guard: "kind='session'"},
-	{table: "document", column: "data", kind: "session", mode: refKeep, expr: "data->>'sourceSessionId'", guard: "kind IN ('session','session-fork')"},
+	// Conversations (migration 77). A session working for a task outlives it (session and task lifecycles are separate):
+	// the reference goes stale. A session's transcript (messages, queued messages, transitions, handoffs) belongs to the
+	// session: a task's runs in a live session leave its turns in place; events and commands go with their execution too.
+	{table: "session", column: "id", kind: "session", mode: refOwn},
+	{table: "session", column: "project_id", kind: "project", mode: refOwn},
+	{table: "session", column: "pipeline_run_id", kind: "execution", mode: refOwn}, // the sessions of a run's steps
+	{table: "session", column: "task_id", kind: "task", mode: refNone},
+	{table: "session", column: "host_id", kind: "host", mode: refKeep},
+	{table: "session", column: "parent_execution_id", kind: "execution", mode: refNone},
+	{table: "session", column: "created_by_execution_id", kind: "execution", mode: refKeep},
+	{table: "session", column: "created_by_session_id", kind: "session", mode: refKeep},
+	{table: "session", column: "source_session_id", kind: "session", mode: refKeep},
+	{table: "message", column: "id", mode: refNone},
+	{table: "message", column: "session_id", kind: "session", mode: refOwn},
+	{table: "message", column: "project_id", kind: "project", mode: refOwn},
+	{table: "message", column: "execution_id", kind: "execution", mode: refNone},
+	{table: "message", column: "request_id", mode: refNone},
+	{table: "event", column: "id", mode: refNone},
+	{table: "event", column: "execution_id", kind: "execution", mode: refOwn},
+	{table: "event", column: "session_id", kind: "session", mode: refOwn},
+	{table: "event", column: "project_id", kind: "project", mode: refOwn},
+	{table: "queued_message", column: "id", mode: refNone},
+	{table: "queued_message", column: "session_id", kind: "session", mode: refOwn},
+	{table: "queued_message", column: "project_id", kind: "project", mode: refOwn},
+	{table: "queued_message", column: "task_id", kind: "task", mode: refNone},
+	{table: "queued_message", column: "execution_id", kind: "execution", mode: refNone},
+	{table: "queued_message", column: "steer_command_id", mode: refNone},
+	{table: "queued_message", column: "request_id", mode: refNone},
+	{table: "command", column: "id", mode: refNone},
+	{table: "command", column: "execution_id", kind: "execution", mode: refOwn},
+	{table: "command", column: "session_id", kind: "session", mode: refOwn},
+	{table: "command", column: "project_id", kind: "project", mode: refOwn},
+	{table: "command", column: "host_id", kind: "host", mode: refKeep},
+	{table: "handoff", column: "id", mode: refNone},
+	{table: "handoff", column: "session_id", kind: "session", mode: refOwn},
+	{table: "handoff", column: "project_id", kind: "project", mode: refOwn},
+	{table: "session_fork", column: "id", mode: refNone},
+	{table: "session_fork", column: "session_id", kind: "session", mode: refOwn},
+	{table: "session_fork", column: "source_session_id", kind: "session", mode: refKeep},
+	{table: "session_fork", column: "project_id", kind: "project", mode: refOwn},
+	{table: "session_fork", column: "request_id", mode: refNone},
+	{table: "session_transition", column: "id", mode: refNone},
+	{table: "session_transition", column: "session_id", kind: "session", mode: refOwn},
+	{table: "session_transition", column: "project_id", kind: "project", mode: refOwn},
+	{table: "worker_done", column: "id", mode: refNone},
+	{table: "worker_done", column: "execution_id", kind: "execution", mode: refOwn},
+	{table: "worker_done", column: "project_id", kind: "project", mode: refOwn},
 	{table: "document", column: "data", kind: "execution", mode: refKeep, expr: "data->>'continuationExecutionId'", guard: "kind='delegation'"},
 	{table: "agent_tool_receipt", column: "id", mode: refNone},
 	{table: "agent_tool_receipt", column: "execution_id", kind: "execution", mode: refOwn},
@@ -204,18 +246,20 @@ var referenceMap = []objectRef{
 // objectTables: the tables whose rows are objects of a kind; the cascade of a root is closed over their refOwn columns.
 var objectTables = []struct{ kind, table, filter string }{
 	{"task", "task", ""}, {"execution", "execution", ""}, {"experiment", "experiment", ""},
-	{"session", "document", "kind='session'"}, {"question", "question", ""}, {"artifact", "artifact", ""},
+	{"session", "session", ""}, {"question", "question", ""}, {"artifact", "artifact", ""},
 }
 
 // tombstoned: the tables with a tombstoned_at column (migration 67).
-var tombstoned = []string{"execution", "task", "experiment", "question", "artifact", "document", "score", "experiment_note"}
+var tombstoned = []string{"execution", "task", "experiment", "question", "artifact", "document", "score", "experiment_note",
+	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done"}
 
 // keptRows: rows that neither go with an object nor keep one: audit records outlive what they describe (the journal of M0).
 var keptRows = map[string]string{"document": "kind NOT IN ('setting-change','transport-audit','purge-task')"}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
 var purgeOrder = []string{"score", "experiment_note", "artifact_copy", "artifact", "question", "execution_totals", "route_decision",
-	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "document", "execution",
+	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "document", "message", "event",
+	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "session", "execution",
 	"resource_work", "resource_work_scope", "task_dependency", "task_derived", "task", "entity_code", "experiment", "budget",
 	"project_write_request", "purged_hash", "artifact_rule_confirmation", "resource_project_summary", "resource_metric",
 	"resource_extreme", "resource_tool", "resource_cost", "resource_price_ref", "resource_build", "resource_repair_scope"}
@@ -321,14 +365,14 @@ func (c *cascade) counts(q *Request) ([]contract.KindCount, int64, error) {
 func (c *cascade) blockedBy(q *Request) (string, error) {
 	// An open session working for a task depends on it (an archived one outlives it; the reference goes stale).
 	if len(c.sets["task"]) > 0 {
-		row, err := first(q, `SELECT id FROM document WHERE kind='session' AND data->>'taskId'=ANY($1) AND NOT data ? 'archivedAt'
+		row, err := first(q, `SELECT id FROM session WHERE task_id=ANY($1) AND archived_at IS NULL
 		  AND tombstoned_at IS NULL AND NOT id=ANY($2::text[]) AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) LIMIT 1`,
 			c.sets["task"], nonNilStrs(c.sets["session"]))
 		if err != nil {
 			return "", err
 		}
 		if row != nil {
-			return "document.data->>'taskId' by open session " + astr(row["id"]) + " (archive it first)", nil
+			return "session.task_id by open session " + astr(row["id"]) + " (archive it first)", nil
 		}
 	}
 	// Executions of the cascade that belong to live work outside it stay with that work: runs of a live task (delete
@@ -406,7 +450,7 @@ func deleteRoot(q *Request, kind contract.DeleteKind, id string) error {
 	case contract.DeleteKindTask:
 		live, gone = "SELECT 1 FROM task WHERE id=$1", "SELECT 1 FROM task WHERE id=$1 AND tombstoned_at IS NOT NULL"
 	case contract.DeleteKindSession:
-		live, gone = "SELECT 1 FROM document WHERE kind='session' AND id=$1", "SELECT 1 FROM document WHERE kind='session' AND id=$1 AND tombstoned_at IS NOT NULL"
+		live, gone = "SELECT 1 FROM session WHERE id=$1", "SELECT 1 FROM session WHERE id=$1 AND tombstoned_at IS NOT NULL"
 	}
 	if err := showDeleted(q); err != nil {
 		return err
@@ -548,7 +592,7 @@ func tombstone(q *Request, c *cascade, out *contract.ObjectDeleteReply) error {
 		return err
 	}
 	// Messages still waiting for a turn never start one (host receipts see deleted rows and promote queued messages).
-	if err := exec(q, `UPDATE document SET data=data||'{"state":"deleted"}', updated_at=now() WHERE kind='queued-message' AND session_ref=ANY($1) AND data->>'state' IN ('queued','steering')`, c.sets["session"]); err != nil {
+	if err := exec(q, `UPDATE queued_message SET state='deleted', updated_at=now() WHERE session_id=ANY($1) AND state IN ('queued','steering')`, c.sets["session"]); err != nil {
 		return err
 	}
 	teardowns := int64(0)
@@ -655,8 +699,8 @@ func purgeRoots(q *Request, kind contract.PurgeKind) ([]string, error) {
 		sql = "SELECT id FROM task WHERE tombstoned_at IS NOT NULL AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) ORDER BY tombstoned_at,id"
 	case contract.PurgeKindSession:
 		// A trial step's session goes with its experiment (its pipeline run is a trial), not as a root of its own.
-		sql = `SELECT id FROM document d WHERE kind='session' AND tombstoned_at IS NOT NULL
-		  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.id=d.data->>'pipelineRunId' AND r.experiment_id IS NOT NULL)
+		sql = `SELECT id FROM session d WHERE tombstoned_at IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.id=d.pipeline_run_id AND r.experiment_id IS NOT NULL)
 		  AND (project_id IS NULL OR NOT project_id=ANY(fleet_deleted_projects())) ORDER BY tombstoned_at,id`
 	}
 	rs, err := queryRows(q, sql)
@@ -724,12 +768,12 @@ func purgeCascade(q *Request, c *cascade) error {
 
 // pendingCommands: the unfinished commands of executions ($1) and whether their host is gone: removed, or unknown
 // (neither the default host $2 nor a host record nor an observation), as knownHost decides.
-const pendingCommands = `SELECT c.id, c.data->>'kind' AS kind, c.data->>'hostId' AS host,
+const pendingCommands = `SELECT c.id, c.kind, c.host_id AS host,
  (h.data->>'state' IS NOT DISTINCT FROM 'removed' AND h.id IS NOT NULL
-  OR (h.id IS NULL AND c.data->>'hostId' IS DISTINCT FROM $2
-   AND NOT EXISTS (SELECT 1 FROM document o WHERE o.kind='host-observation' AND o.id=c.data->>'hostId'))) AS dead
- FROM document c LEFT JOIN document h ON h.kind='host' AND h.id='host:'||(c.data->>'hostId')
- WHERE c.kind='command' AND c.execution_ref=ANY($1) AND c.data->>'status'='pending' ORDER BY c.seq`
+  OR (h.id IS NULL AND c.host_id IS DISTINCT FROM $2
+   AND NOT EXISTS (SELECT 1 FROM document o WHERE o.kind='host-observation' AND o.id=c.host_id))) AS dead
+ FROM command c LEFT JOIN document h ON h.kind='host' AND h.id='host:'||c.host_id
+ WHERE c.execution_id=ANY($1) AND c.status='pending' ORDER BY c.seq`
 
 // purgeRootTx: one tombstoned root in its own transaction: blocked (a live row keeps it) or purged.
 func purgeRootTx(q *Request, kind contract.PurgeKind, id string, preview bool) (rows []contract.KindCount, bytes int64, blocked string, err error) {

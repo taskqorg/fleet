@@ -81,8 +81,8 @@ test('search finds conversations, results, agents and pipelines; the focus leads
     INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,state) VALUES('art-rocket','hello-world','prod','x',2,'text/plain','rocket-report.txt','stored'),('art-gone','hello-world','prod','y',2,'text/plain','rocket-gone.txt','stored');
     SET fleet.deleted='on'; UPDATE artifact SET tombstoned_at=now() WHERE id='art-gone';`);
   const sess = (await op('session_create', {})).sessionId;
-  c.sql(`UPDATE document SET project_id='hello-world' WHERE kind='session' AND id='${sess}';
-    INSERT INTO document(kind,id,data) VALUES('message','m-rocket','{"sessionId":"${sess}","text":"Rocket launch checklist"}');
+  c.sql(`UPDATE session SET project_id='hello-world' WHERE id='${sess}';
+    INSERT INTO message(id,session_id,text) VALUES('m-rocket','${sess}','Rocket launch checklist');
     INSERT INTO execution(id,kind,state,session_id,harness,data) VALUES('e-rocket','agent_run','running','${sess}','claude','{}');`);
   const kinds = (r: any, kind: string) => r.hits.filter((h: any) => h.kind === kind);
   // Without a focus: recently changed first; every task counts.
@@ -119,7 +119,7 @@ test('search finds conversations, results, agents and pipelines; the focus leads
   c.sql(`INSERT INTO task(id,project_id,title) VALUES('rocketx-1','other','Prefix only')`);
   assert.equal(kinds(await search({query: 'rocket', limit: 1, projectIds: ['hello-world']}), 'task')[0].id, 'rocket-0');
   // A code jump finds an archived conversation, which its list leaves out: the count is the list's own (0).
-  c.sql(`UPDATE document SET data=data||'{"archivedAt":1}' WHERE kind='session' AND id='${sess}'`);
+  c.sql(`UPDATE session SET archived_at=to_timestamp(0.001) WHERE id='${sess}'`);
   const archived = await search({query: conv.code, projectIds: ['hello-world']});
   assert.equal(kinds(archived, 'conversation')[0]?.id, sess);
   assert.equal(archived.counts.conversation, 0);
@@ -156,9 +156,9 @@ test('search gives a conversation found by words its title does not show a snipp
     const d: any = await r.json(); assert.equal(r.status, 200, name + ' ' + JSON.stringify(d)); return d;
   };
   const deep = (await op('session_create', {})).sessionId, near = (await op('session_create', {})).sessionId;
-  c.sql(`INSERT INTO document(kind,id,data) VALUES
-    ('message','m-deep','{"sessionId":"${deep}","text":"You are a worker agent. Follow AGENTS.md fully and read every contract before you start.\\n\\nTask: check the zeppelin fuel valves, then report the result with links to the run, the pull request and the deploy."}'),
-    ('message','m-near','{"sessionId":"${near}","text":"Zeppelin valves checklist"}')`);
+  c.sql(`INSERT INTO message(id,session_id,text) VALUES
+    ('m-deep','${deep}',E'You are a worker agent. Follow AGENTS.md fully and read every contract before you start.\\n\\nTask: check the zeppelin fuel valves, then report the result with links to the run, the pull request and the deploy.'),
+    ('m-near','${near}','Zeppelin valves checklist')`);
   const hits = (await op('search', {query: 'zeppelin'})).hits.filter((h: any) => h.kind === 'conversation');
   const d = hits.find((h: any) => h.id === deep), n = hits.find((h: any) => h.id === near);
   assert.ok(d && n, JSON.stringify(hits));

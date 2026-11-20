@@ -333,7 +333,7 @@ func submitMessage(q *Request, b doc, source string) (doc, error) {
 }
 
 // agentPromote starts the oldest queued message of every idle session (call after an execution ends).
-// It acquires canonical session:<id> locks in order to serialize with concurrent POST /api/sessions/{id}/messages.
+// It acquires canonical session:<id> locks in order to serialize with concurrent message_send calls.
 func agentPromote(q *Request) error {
 	queued, err := all(q, "queued-message", doc{"state": "queued"})
 	if err != nil || len(queued) == 0 {
@@ -1231,7 +1231,7 @@ func executionStatus(q *Request, r *contract.ExecutionStatusRequest) (contract.E
 	}
 	// Host events carry no project: read them unscoped, the execution itself was read in the person's scope above.
 	readiness, err := unscoped(q, func() ([]doc, error) {
-		return rows(q, "SELECT data->'data' FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='readiness' ORDER BY seq", eid)
+		return rows(q, "SELECT payload->'data' FROM event WHERE NOT delta AND execution_id=$1 AND type='readiness' ORDER BY seq", eid)
 	})
 	if err != nil {
 		return rep, err
@@ -1367,7 +1367,7 @@ func sessionView(q *Request, sid string) (doc, error) {
 	if out["questions"], err = all(q, "question", doc{"sessionId": sid}); err != nil {
 		return nil, err
 	}
-	if out["handoffs"], err = rows(q, "SELECT data - 'text' FROM document WHERE kind='handoff' AND data->>'sessionId'=$1 ORDER BY seq", sid); err != nil {
+	if out["handoffs"], err = rows(q, "SELECT "+convTables["handoff"].record()+" - 'text' FROM handoff WHERE session_id=$1 ORDER BY seq", sid); err != nil {
 		return nil, err
 	}
 	if out["transitions"], err = all(q, "session-transition", doc{"sessionId": sid}); err != nil {
@@ -1493,7 +1493,7 @@ func sessionAttach(q *Request, b doc) (doc, error) {
 			(p.kind='pipeline_run' AND e.data->>'pipelineRunId'=p.id)
 		)))
 	) OR EXISTS (
-		SELECT 1 FROM document WHERE kind='queued-message' AND session_ref=$1 AND data->>'state' IN ('queued','steering')
+		SELECT 1 FROM queued_message WHERE session_id=$1 AND state IN ('queued','steering')
 	)`, sid)
 	})
 	if err != nil {
@@ -1711,7 +1711,10 @@ func init() {
 		hs, err := all(q, "handoff", doc{"sessionId": b.SessionId})
 		return contract.SessionHandoffsReply{Handoffs: recsOf(hs)}, err
 	})
-	op("message_send", func(q *Request, _ *contract.MessageSendRequest) (contract.MessageSendReply, error) {
+	op("message_send", func(q *Request, r *contract.MessageSendRequest) (contract.MessageSendReply, error) {
+		if len([]rune(deref(r.RequestId))) > 200 || len([]rune(deref(r.Text))) > 32000 {
+			return contract.MessageSendReply{}, fail(400, "Invalid text")
+		}
 		return replyAs[contract.MessageSendReply](submit(q, body(q)))
 	})
 	op("queue_list", func(q *Request, b *contract.QueueListRequest) (contract.QueueListReply, error) {

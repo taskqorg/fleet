@@ -141,15 +141,15 @@ func cardQuestion(q *Request, id string) (*contract.EntityCardReply, error) {
 
 // cardConversation: one session with the sessions_list columns, read for this session only (sessionBase reads all).
 func cardConversation(q *Request, id string) (*contract.EntityCardReply, error) {
-	r, err := first(q, `SELECT d.id,d.code,d.project_id,d.data->'agentConfig'->>'id' AS profile,t.code AS task_code,
-	 coalesce(last.state,'idle') AS state,coalesce(last.harness,d.data->'agentConfig'->>'harness') AS harness,
-	 (SELECT m.data->>'text' FROM document m WHERE m.session_ref=d.id AND m.kind='message' ORDER BY m.seq LIMIT 1) AS first_message,
-	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM document a WHERE a.session_ref=d.id AND a.kind IN ('message','event')),ex.last_at) AS activity_at,
+	r, err := first(q, `SELECT d.id,d.code,d.project_id,d.payload->'agentConfig'->>'id' AS profile,t.code AS task_code,
+	 coalesce(last.state,'idle') AS state,coalesce(last.harness,d.payload->'agentConfig'->>'harness') AS harness,
+	 (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message,
+	 greatest(d.updated_at,(SELECT max(a.updated_at) FROM message a WHERE a.session_id=d.id),(SELECT max(a.updated_at) FROM event a WHERE a.session_id=d.id AND NOT a.delta),ex.last_at) AS activity_at,
 	 ex.n AS runs,(SELECT count(*) FROM question x WHERE x.session_id=d.id AND x.state='open') AS open_questions
-	 FROM document d LEFT JOIN task t ON t.id=d.data->>'taskId'
+	 FROM session d LEFT JOIN task t ON t.id=d.task_id
 	 LEFT JOIN LATERAL (SELECT e.state::text AS state,e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) last ON true
 	 LEFT JOIN LATERAL (SELECT count(*) AS n,max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true
-	 WHERE d.kind='session' AND d.id=$1`, id)
+	 WHERE d.id=$1`, id)
 	if r == nil || err != nil {
 		return nil, err
 	}
@@ -165,7 +165,7 @@ var executionKindLabel = map[string]string{"agent_run": "Agent run", "pipeline_r
 func cardExecution(q *Request, id string) (*contract.EntityCardReply, error) {
 	r, err := first(q, `SELECT e.id,e.kind::text AS kind,e.state::text AS state,e.project_id,e.task_id,e.session_id,e.experiment_id,e.host_id,e.harness,e.model,e.problem,
 	 e.started_at,e.ended_at,e.updated_at,extract(epoch FROM e.ended_at-e.started_at) AS secs,t.code AS task_code,t.title AS task_title,s.code AS session_code
-	 FROM execution e LEFT JOIN task t ON t.id=e.task_id LEFT JOIN document s ON s.kind='session' AND s.id=e.session_id WHERE e.id=$1`, id)
+	 FROM execution e LEFT JOIN task t ON t.id=e.task_id LEFT JOIN session s ON s.id=e.session_id WHERE e.id=$1`, id)
 	if r == nil || err != nil || astr(r["experiment_id"]) != "" && !architect(q) { // a Lab trial is the architect's, as its experiment
 		return nil, err
 	}

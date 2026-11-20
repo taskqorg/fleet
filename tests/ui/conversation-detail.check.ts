@@ -164,7 +164,7 @@ export async function checkConversationDetail(browser: Browser, origin: string, 
   // The list row follows the change feed; a fresh read of the list shows the stored title either way.
   const listed = () => until(async () => await p.locator('.vl-row .row-link', { hasText: 'MCP startup exits' }).count() === 1);
   check(await listed() || (await p.reload(), await listed()), 'Rename shows in the list row');
-  const stored = seed.rows(`SELECT data->>'title' AS title, data->>'titleBy' AS by FROM document WHERE id='${S}'`)[0];
+  const stored = seed.rows(`SELECT title, title_by AS by FROM session WHERE id='${S}'`)[0];
   check(stored?.title === 'MCP startup exits' && stored?.by === 'owner@trial.test', `Rename stores the title by the person (${JSON.stringify(stored)})`);
   if (shots) { await p.goto(`${origin}/conversations`); await p.waitForTimeout(500); await p.screenshot({ path: `${shots}/conv-titles.png` }); }
   await context.close();

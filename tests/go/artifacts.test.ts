@@ -33,8 +33,8 @@ async function host(id: string) {
 test('Artifact write protocol and result bytes (artifacts.ts reserve/parts/commit/verified, GET /api/results Range). Requirement: docs/designs/fleet-data-foundation.md results. Risk: an executor upload never becomes a readable result, or a Range read returns the wrong bytes.', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
   ok(await h('/api/hosts/stores', {store: {id: 'trial-store', bucket: 'fleet', endpoint: `http://127.0.0.1:${s3port}`, accessKeyId: 'k', secretAccessKey: 's'}}));
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}, owner));
-  const execution = ok(await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'}, owner));
+  const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}, owner));
+  const execution = ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'}, owner));
   ok(await h('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}));
   const bytes = Buffer.from('hello artifact bytes\n'), sha256 = createHash('sha256').update(bytes).digest('hex');
   const r = ok(await h('/api/hosts/artifacts/reserve', {executionId: execution.id, name: 'out/hello.txt', mediaType: 'text/plain', size: bytes.length, sha256}));
@@ -61,8 +61,8 @@ test('Artifact write protocol and result bytes (artifacts.ts reserve/parts/commi
 
 test('Agent artifact listing pages (artifact_routes.go hostArtifactList). Requirement: one artifact_list call never returns an unbounded reply; the agent pages on with nextCursor. Risk: a project of many artifacts returns one ~220k-character reply, over the harness tool-output limit (Lab trial 2026-11-17).', {timeout: 60_000}, async () => {
   const h = await host('trial-host');
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}, owner));
-  const execution = ok(await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'many'}, owner));
+  const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}, owner));
+  const execution = ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'many'}, owner));
   ok(await h('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}));
   const ids: string[] = [];
   for (let i = 0; i < 51; i++) {

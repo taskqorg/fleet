@@ -182,29 +182,15 @@ type MessageSendRequest struct {
 	Setup       json.RawMessage `json:"setup,omitempty"`
 	Source      json.RawMessage `json:"source,omitempty"`
 	Text        *string         `json:"text,omitempty"`
-	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
-	Rest map[string]json.RawMessage `json:"-"`
-}
-
-func (v MessageSendRequest) MarshalJSON() ([]byte, error) {
-	type plain MessageSendRequest
-	return marshalRest(plain(v), v.Rest)
-}
-
-func (v *MessageSendRequest) UnmarshalJSON(b []byte) error {
-	type plain MessageSendRequest
-	var rest map[string]json.RawMessage
-	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
-		return err
-	}
-	v.Rest = rest
-	return nil
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *MessageSendRequest) Validate() error {
 	return nil
 }
+
+// Closed: unevaluatedProperties is false; a request key outside the schema is refused.
+func (*MessageSendRequest) Closed() bool { return true }
 
 // QuestionBlock: options: the stored options as they are (a list of labels for agent questions).
 type QuestionBlock struct {
@@ -1508,7 +1494,7 @@ func init() {
 		"ask":                 {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "person", Agent: "bound:session", Description: "Ask a fresh question with question + requestId and taskId for an existing-task blocker (without attaching the PM session), or read its answer with resume=<questionId> alone; never combine these modes or put continuation prose in resume", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"executionId\":{\"type\":\"string\"},\"question\":{\"$comment\":\"Fresh ask text. Requires requestId; do not combine with resume.\",\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"resume\":{\"$comment\":\"Existing question ID to read, never continuation prose. Do not combine with question or requestId.\",\"type\":\"string\"},\"taskId\":{\"$comment\":\"Fresh ask about this granted task; does not attach the PM session. Omit for a session-only question or bound-worker inference.\",\"type\":\"string\"}},\"type\":\"object\"}")},
 		"changes_since":       {Read: true, Long: false, Errors: []int{400}, Auth: "person", Agent: "tool", Description: "No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).", InputSchema: json.RawMessage("{\"$comment\":\"No cursor: the head, with no changes. limit is clamped to 1..1000 (default 500).\",\"additionalProperties\":true,\"properties\":{\"cursor\":{\"type\":\"integer\"},\"limit\":{\"minimum\":1,\"type\":\"integer\"}},\"type\":\"object\"}")},
 		"direct_search":       {Read: false, Long: true, Errors: []int{}, Auth: "project:projectId", Agent: "tool", Description: "Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.", InputSchema: json.RawMessage("{\"$comment\":\"Runs the project's method for a capability (pipeline_run) or a direct search; idempotent by requestId.\",\"additionalProperties\":false,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"requestId\",\"query\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
-		"message_send":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Send a message; starts a turn, or queues/steers it while the session is busy. attachments: artifact ids of the session's project (artifact_save output or an operator upload); the receiving agent gets them as files under FLEET_INPUT_DIR/attachments, listed in its turn. A message with attachments is queued, never steered", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"delivery\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"setup\":{},\"source\":{},\"text\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"message_send":        {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Send a message; starts a turn, or queues/steers it while the session is busy. attachments: artifact ids of the session's project (artifact_save output or an operator upload); the receiving agent gets them as files under FLEET_INPUT_DIR/attachments, listed in its turn. A message with attachments is queued, never steered", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"attachments\":{\"$comment\":\"Artifact ids (artifact_upload_begin, artifact_save) of the session project; the executor stages them under FLEET_INPUT_DIR/attachments and lists them in the turn.\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"delivery\":{\"type\":\"string\"},\"requestId\":{\"type\":\"string\"},\"sessionId\":{\"type\":\"string\"},\"setup\":{},\"source\":{},\"text\":{\"type\":\"string\"}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"recommendation_set":  {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "project:projectId", Agent: "tool", Description: "Set the recommended method of a project's capability (projectId, methodId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"methodId\":{\"type\":\"string\"},\"projectId\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"methodId\"],\"type\":\"object\"}")},
 		"reply":               {Read: false, Long: false, Errors: []int{400, 409}, Auth: "person", Agent: "bound:session", Description: "Answer a question; delivered to the asker as its next message", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"answer\":{},\"questionId\":{\"type\":\"string\"}},\"type\":\"object\"}")},
 		"session_archive":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "person", Agent: "tool", Description: "Archive a session (sessionId): it leaves the lists and its worktree is torn down", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"required\":[\"sessionId\"],\"type\":\"object\"}")},

@@ -31,7 +31,7 @@ test('O1 behind Access proxy auth a browser write must come from the configured 
     const cross = await call(c, 'POST', '/api/ops/questions_list', {origin: 'https://evil.test'});
     assert.deepEqual([cross.status, cross.body.message], [403, 'Origin required']);
     assert.equal((await call(c, 'POST', '/api/ops/questions_list', {origin: ORIGIN})).status, 200);
-    assert.equal((await call(c, 'POST', '/api/sessions', {origin: 'https://evil.test'})).status, 403, 'the trial route table is checked too');
+    assert.equal((await call(c, 'POST', '/api/ops/session_create', {origin: 'https://evil.test'})).status, 403, 'the trial route table is checked too');
     // Reads need no Origin; a read naming another origin is refused.
     assert.equal((await call(c, 'GET', '/api/reconciliation')).status, 200);
     const read = await call(c, 'GET', '/api/reconciliation', {origin: 'https://evil.test'});

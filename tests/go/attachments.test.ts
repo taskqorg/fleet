@@ -43,7 +43,7 @@ async function upload(bytes: Buffer, name: string, mediaType: string, at: {sessi
 }
 
 test('An operator upload becomes a stored attachment artifact, part by part and resumable (requirement: docs/designs/fleet-conversations.md Attachments, server; risk: a pasted file never reaches the store, a retried part duplicates bytes, a part out of order corrupts the file, or a failed finish cannot be retried)', {timeout: 60_000}, async () => {
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}));
+  const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}));
   // Two parts: a full part on the grid and a short last one; the last bytes mark the end.
   const bytes = Buffer.alloc((8 << 20) + 4096, 7); bytes.write('heliotrope', bytes.length - 10);
   const begun = ok(await op('artifact_upload_begin', {name: '../notes/\nword.bin', size: bytes.length, mediaType: 'application/octet-stream', sessionId}));
@@ -72,7 +72,7 @@ test('An operator upload becomes a stored attachment artifact, part by part and 
 });
 
 test('Concurrent parts of one upload: one multipart upload, each part once, one artifact (requirement: docs/designs/fleet-conversations.md Attachments, concurrent finishes record one artifact; risk: racing retries orphan store multipart uploads, record a part twice, or store two artifacts)', {timeout: 60_000}, async () => {
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}));
+  const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}));
   const bytes = Buffer.alloc((8 << 20) + 777, 3); bytes.write('race', 0);
   const open = uploads.size;
   const begun = ok(await op('artifact_upload_begin', {name: 'race.bin', size: bytes.length, sessionId}));
@@ -95,14 +95,14 @@ test('Concurrent parts of one upload: one multipart upload, each part once, one 
 test('Uploads follow the project grant (requirement: docs/designs/fleet-conversations.md Attachments, access is the session project grant; risk: a person uploads into, or attaches files of, a project outside their grant)', async () => {
   assert.equal((await op('artifact_upload_begin', {name: 'x.txt', size: 1, projectId: 'hello-world'}, outsider)).status, 404);
   assert.equal((await op('artifact_upload_begin', {name: 'x.txt', size: 1}, outsider)).status, 404, 'no project needs the architect role');
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}));
+  const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}));
   assert.equal((await op('artifact_upload_begin', {name: 'x.txt', size: 1, sessionId}, outsider)).status, 404, 'an unseen session is unknown');
   const other = ok((await upload(Buffer.from('other project'), 'o.txt', 'text/plain', {projectId: 'hello-world'})).last);
   const sent = await op('message_send', {sessionId, requestId: randomUUID(), text: 'see file', attachments: [other.id]});
   assert.equal(sent.status, 400, 'a file of another project is not attached'); assert.match(sent.body.message, /another project/);
   assert.equal((await op('message_send', {sessionId, requestId: randomUUID(), text: 'x', attachments: ['nope']})).status, 400);
   const mine = ok((await upload(Buffer.from('mine'), 'm.txt', 'text/plain', {sessionId})).last);
-  const {sessionId: other2} = ok(await call('POST', '/api/sessions', {}));
+  const {sessionId: other2} = ok(await call('POST', '/api/ops/session_create', {}));
   const cross = await op('message_send', {sessionId: other2, requestId: randomUUID(), text: 'x', attachments: [mine.id]});
   assert.equal(cross.status, 400, "an upload of one conversation is not sent in another"); assert.match(cross.body.message, /another conversation/);
   // A repeated request answers what was sent, even when its file is gone meanwhile (a lost reply is retried).
@@ -117,7 +117,7 @@ test('Uploads follow the project grant (requirement: docs/designs/fleet-conversa
 });
 
 test('message_send with attachments: the message and the start command carry them, the host may read them, the thread shows them (requirement: docs/designs/fleet-conversations.md Attachments, delivery and transcript; risk: the agent never receives the files, or the operator cannot see what was sent)', {timeout: 30_000}, async () => {
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}));
+  const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}));
   const text = ok((await upload(Buffer.from('word: heliotrope'), 'note.txt', 'text/plain', {sessionId})).last);
   const png = ok((await upload(Buffer.from('89504e470d0a1a0a', 'hex'), 'dot.png', 'image/png')).last);
   ok(await h('/api/hosts/poll', old)); // the host runs an executor from before attachments
@@ -149,7 +149,7 @@ test('message_send with attachments: the message and the start command carry the
 });
 
 test('An agent attaches its own stored output through the MCP message_send tool (requirement: docs/designs/fleet-conversations.md Attachments, agents send attachments through MCP; risk: only people can pass files to another session)', {timeout: 30_000}, async () => {
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}));
+  const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}));
   const e = ok(await op('message_send', {sessionId, requestId: randomUUID(), text: 'make a file'}));
   ok(await h('/api/hosts/poll', poll));
   const bytes = Buffer.from('agent output\n'), sha256 = createHash('sha256').update(bytes).digest('hex');
@@ -159,7 +159,7 @@ test('An agent attaches its own stored output through the MCP message_send tool 
   const c = ok(await h('/api/hosts/artifacts/commit', {artifactId: r.artifactId, parts: [{partNumber: 1, etag: put.headers.get('etag')}]}));
   const staged = Buffer.from(await (await fetch(c.verify.url)).arrayBuffer());
   ok(await h('/api/hosts/artifacts/verified', {artifactId: r.artifactId, storeId: c.verify.storeId, sha256: createHash('sha256').update(staged).digest('hex')}));
-  const {sessionId: other} = ok(await call('POST', '/api/sessions', {}));
+  const {sessionId: other} = ok(await call('POST', '/api/ops/session_create', {}));
   const sent = ok(await call('POST', '/api/tools', {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'message_send', arguments: {sessionId: other, requestId: randomUUID(), text: 'here is the report', attachments: [r.artifactId]}}}));
   assert.ok(!sent.result.isError, JSON.stringify(sent));
   const got = ok(await op('session_get', {sessionId: other}));

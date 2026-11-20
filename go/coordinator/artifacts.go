@@ -836,7 +836,7 @@ func artifactCommit(q *Request, b *contract.ArtifactCommitRequest) (any, error) 
 	if b.HostId == s.HostID {
 		return contract.ArtifactStateReply{State: "verifying", Verify: &verify}, nil
 	}
-	open, err := oneCtx(ctx, a, "SELECT 1 AS x FROM document WHERE kind='command' AND data->>'kind'='artifact-verify' AND data->>'hostId'=$1 AND data->>'status' IN ('pending','accepted','started') AND data->'payload'->>'artifactId'=$2 AND data->'payload'->>'storeId'=$3 LIMIT 1", s.HostID, x.ID, s.ID)
+	open, err := oneCtx(ctx, a, "SELECT 1 AS x FROM command WHERE kind='artifact-verify' AND host_id=$1 AND status IN ('pending','accepted','started') AND payload->'payload'->>'artifactId'=$2 AND payload->'payload'->>'storeId'=$3 LIMIT 1", s.HostID, x.ID, s.ID)
 	if err != nil {
 		return nil, err
 	}

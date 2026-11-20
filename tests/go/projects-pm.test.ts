@@ -18,8 +18,8 @@ async function call(path:string,body:object,person=owner){const r=await fetch(BA
 test('Native projectless PM discovers project tools, creates/focuses project, edits and creates linked Held task', {timeout:60_000},async()=>{
  const hostId='pm-project-host';const host=await call('/api/ops/hosts_register',{id:hostId,holder:member});
  const poll=async()=>{const r=await fetch(BASE+'/api/hosts/poll',{method:'POST',headers:{authorization:'Bearer '+host.secret,'content-type':'application/json'},body:JSON.stringify({platform:'darwin',capabilities:[],stores:[],problems:[]})});assert.equal(r.status,200);return r.json() as Promise<any>;};
- await poll();const session=await call('/api/sessions',{},member);await call(`/api/sessions/${session.sessionId}/profile`,{profileId:'pm'},member);
- const execution=await call(`/api/sessions/${session.sessionId}/messages`,{requestId:randomUUID(),text:'Manage a trial project'},member);
+ await poll();const session=await call('/api/ops/session_create',{},member);await call('/api/ops/session_profile', {sessionId: session.sessionId, profileId:'pm'},member);
+ const execution=await call('/api/ops/message_send', {sessionId: session.sessionId, requestId:randomUUID(),text:'Manage a trial project'},member);
  const commands=(await poll()).commands;const command=commands.find((c:any)=>c.executionId===execution.id&&c.kind==='start');assert.ok(command,'start command exists without launching vendor');
  assert.ok(command.payload.fleetOperations.some((o:any)=>o.name==='project_create'));
  const root=mkdtempSync(join(tmpdir(),'fleet-project-mcp-'));const journal=join(root,'journal.sqlite');const db=new DatabaseSync(journal);

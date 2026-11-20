@@ -29,7 +29,7 @@ export async function checkConversationsList(browser: Browser, origin: string, s
       const at = `now()-interval '${hours} hours'`;
       // The last one inserted (x0) gives the conversation its state.
       if (state) for (let i = id === 'cl-1' ? 2 : 0; i >= 0; i--) seed.sql(`INSERT INTO execution(id,kind,state,project_id,session_id,host_id,harness,started_at) VALUES('${id}-x${i}','agent_run','${i ? 'succeeded' : state}',${project ? `'${project}'` : 'NULL'},'${id}','pds18','${harness}',${at}-interval '${i} minutes')`);
-      seed.sql(`UPDATE document SET updated_at=${at} WHERE id IN ('${id}','${id}-m')`);
+      seed.sql(`UPDATE session SET updated_at=${at} WHERE id='${id}'`); seed.sql(`UPDATE message SET updated_at=${at} WHERE id='${id}-m'`);
     }
   });
   seed.question({ kind: 'agent_question', text: 'Keep the old layout as a fallback?', options: ['yes', 'no'], executionId: 'cl-2-x0', sessionId: 'cl-2', askedBy: 'agent' });

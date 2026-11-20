@@ -47,7 +47,7 @@ func TestHostReadProjectOperationSkipsGlobal(t *testing.T) {
 		t.Fatalf("create session = %d %v", c, sess)
 	}
 	sid := sess["sessionId"].(string)
-	c, msg := env.callJSON(t, "POST", "/api/sessions/"+sid+"/messages", doc{"requestId": "req-proj-read", "text": "go"}, env.ownerHeaders())
+	c, msg := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sid, "requestId": "req-proj-read", "text": "go"}, env.ownerHeaders())
 	if c != 200 {
 		t.Fatalf("first message = %d %v", c, msg)
 	}

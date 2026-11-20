@@ -305,7 +305,7 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 		return false
 	}
 	if deref(b.CommandId) != "" {
-		if r, err := oneCtx(ctx, a, "SELECT data FROM document WHERE kind='command' AND id=$1", deref(b.CommandId)); err == nil && r != nil {
+		if r, err := oneCtx(ctx, a, "SELECT "+convTables["command"].record()+" AS data FROM command WHERE id=$1", deref(b.CommandId)); err == nil && r != nil {
 			c, _ := r["data"].(map[string]any)
 			st, _ := c["status"].(string)
 			if c["hostId"] == hostID && (st == "pending" || st == "accepted" || st == "started") && names(c, x) {
@@ -324,7 +324,7 @@ func hostMayRead(q *Request, b *contract.HostArtifactGetRequest) (*Artifact, err
 		if x.ExecutionID != nil && *x.ExecutionID == e.ID || e.ProjectID != nil && x.ProjectID != nil && *e.ProjectID == *x.ProjectID {
 			return x, nil
 		}
-		cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT data FROM document WHERE kind='command' AND data->>'executionId'=$1 AND data->>'hostId'=$2 AND data->>'kind' IN ('start','script')", e.ID, hostID)
+		cs, err := rowsCtx(ctx, conn(ctx, a), "SELECT "+convTables["command"].record()+" AS data FROM command WHERE execution_id=$1 AND host_id=$2 AND kind IN ('start','script') ORDER BY seq", e.ID, hostID)
 		if err != nil {
 			return nil, err
 		}
@@ -604,8 +604,8 @@ type Reading struct {
 // latestReadings: the latest limit_reading per (subscription, period); one whose resetsAt has passed is unknown.
 func latestReadings(ctx context.Context, a *App) (map[string][]Reading, error) {
 	rs, err := conn(ctx, a).Query(ctx, `SELECT DISTINCT ON (x.account_id, r->>'period') x.account_id, x.host_id, r, d.updated_at
-   FROM document d JOIN execution x ON x.id = d.data->>'executionId' CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.data->'data'->'readings','[]'::jsonb)) r
-   WHERE d.kind='event' AND d.data->>'type'='limit_reading' AND x.account_id IS NOT NULL
+   FROM event d JOIN execution x ON x.id = d.execution_id CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) r
+   WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL
    ORDER BY x.account_id, r->>'period', d.seq DESC`)
 	if err != nil {
 		return nil, err

@@ -257,7 +257,7 @@ func searchQuestions(q *Request, s searchQuery, limit int) ([]contract.Found, er
 	return questionHits(rs), err
 }
 
-const sessionHitCols = sessionBase + " SELECT x.id,x.code,x.title,x.first_message,x.state,x.project_id," + sessionAgent + " AS agent,x.activity_at AS at FROM x"
+var sessionHitCols = sessionBase + " SELECT x.id,x.code,x.title,x.first_message,x.state,x.project_id," + sessionAgent + " AS agent,x.activity_at AS at FROM x"
 
 // sessionHits: conversation hits; words (the query's free text) give each the snippet of its first message around them.
 func sessionHits(rs []doc, words string) []contract.Found {
@@ -403,7 +403,7 @@ func searchCodes(q *Request, s searchQuery, limit int) ([]contract.Found, error)
 	if err != nil {
 		return nil, err
 	}
-	cs, err := rowsOf(q, sessionHitCols+" WHERE x.id=ANY($1) AND coalesce(x.data->>'actor','')<>'program-worker'", sessions) // host command sessions are no conversations
+	cs, err := rowsOf(q, sessionHitCols+" WHERE x.id=ANY($1) AND coalesce(x.actor,'')<>'program-worker'", sessions) // host command sessions are no conversations
 	if err != nil {
 		return nil, err
 	}

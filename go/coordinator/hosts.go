@@ -420,7 +420,7 @@ func hostsList(q *Request, includeRemoved bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	queued, err := queryRows(q, "SELECT data->>'hostId' AS host_id,count(*)::int AS n FROM document WHERE kind='command' AND data->>'status'='pending' GROUP BY 1")
+	queued, err := queryRows(q, "SELECT host_id,count(*)::int AS n FROM command WHERE status='pending' AND host_id IS NOT NULL GROUP BY 1")
 	if err != nil {
 		return nil, err
 	}

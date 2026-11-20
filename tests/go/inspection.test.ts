@@ -12,8 +12,8 @@ async function call(method: string, path: string, body?: unknown) {
   return {status: r.status, body: parsed};
 }
 async function queued() {
-  const sessionId = (await call('POST', '/api/sessions', {})).body.sessionId as string;
-  const e = await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+  const sessionId = (await call('POST', '/api/ops/session_create', {})).body.sessionId as string;
+  const e = await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
   assert.equal(e.status, 200, JSON.stringify(e.body));
   return {sessionId, executionId: e.body.id as string};
 }

@@ -128,7 +128,7 @@ func (a *App) dispatchPass(ctx context.Context, explicit bool) error {
 	var pipelinePending bool
 	if err := runTx(ctx, a, nil, false, "", func(q *Request) error {
 		rs, err := queryRows(q, `SELECT DISTINCT sid FROM (
-			SELECT data->>'sessionId' AS sid FROM document WHERE kind='queued-message' AND data->>'state'='queued'
+			SELECT session_id AS sid FROM queued_message WHERE state='queued'
 			UNION ALL
 			SELECT session_id AS sid FROM execution WHERE host_id IS NULL AND state='preparing' AND kind='agent_run' AND session_id IS NOT NULL
 		) x WHERE coalesce(sid,'')<>''`)

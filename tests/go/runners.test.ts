@@ -69,10 +69,10 @@ test('R3 the lost sweep ends a host job its host stopped reporting while the hos
 test('R4 agent-run tokens come from the harness usage report: the last result of a Claude run, a Codex turn without its cached input counted twice (requirement: Runners shows agent tokens; risk: token totals stay empty or double-count cached input)', async () => {
   const c = await startCoordinator({name: 'runners4'});
   try {
-    const ev = (id: string, eid: string, seq: number, lifecycle: string, u: unknown) => `('event','${id}',jsonb_build_object('id','${id}','executionId','${eid}','seq',${seq},'data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','${lifecycle}','nativeUsage','${JSON.stringify(u)}'::jsonb))))`;
+    const ev = (id: string, eid: string, seq: number, lifecycle: string, u: unknown) => `('${id}','${eid}',${seq},jsonb_build_object('data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','${lifecycle}','nativeUsage','${JSON.stringify(u)}'::jsonb))))`;
     c.sql(`INSERT INTO execution(id,kind,state) VALUES ('t-claude','agent_run','succeeded'),('t-codex','agent_run','succeeded'),('t-none','agent_run','succeeded'),('t-bad','agent_run','succeeded'),('t-app','agent_run','succeeded');
       INSERT INTO execution_totals(execution_id) VALUES ('t-claude'),('t-codex'),('t-none'),('t-bad'),('t-app');
-      INSERT INTO document(kind,id,data) VALUES
+      INSERT INTO event(id,execution_id,event_seq,payload) VALUES
       ${ev('e1', 't-claude', 1, 'result', {input_tokens: 1, output_tokens: 1})},
       ${ev('e2', 't-claude', 2, 'result', {input_tokens: 4, output_tokens: 489, cache_read_input_tokens: 17492, cache_creation_input_tokens: 2015})},
       ${ev('e3', 't-codex', 1, 'turn.completed', {input_tokens: 1000, cached_input_tokens: 800, output_tokens: 50})},
@@ -100,9 +100,9 @@ test('R5 runs are priced by the model their harness reports; a run on a subscrip
       ('p-api','agent_run','succeeded','h1','opus',NULL,now()-interval '2 minutes',now()-interval '1 minute'),
       ('p-sub','agent_run','succeeded','h1','opus','acct-1',now()-interval '2 minutes',now()-interval '1 minute');
       INSERT INTO execution_totals(execution_id,tokens_input,tokens_output) VALUES ('p-api',1000000,100000),('p-sub',1000000,100000);
-      INSERT INTO document(kind,id,data) VALUES
-      ('event','m1',jsonb_build_object('id','m1','executionId','p-api','seq',1,'data',jsonb_build_object('model','claude-opus-5-5'))),
-      ('event','m2',jsonb_build_object('id','m2','executionId','p-sub','seq',1,'data',jsonb_build_object('model','claude-opus-5-5')));
+      INSERT INTO event(id,execution_id,event_seq,payload) VALUES
+      ('m1','p-api',1,jsonb_build_object('data',jsonb_build_object('model','claude-opus-5-5'))),
+      ('m2','p-sub',1,jsonb_build_object('data',jsonb_build_object('model','claude-opus-5-5')));
       SELECT fleet_write_model(id) FROM execution WHERE id LIKE 'p-%';`);
     const b = await call('executions_runners', {});
     const cost = (id: string) => b.runs.find((r: any) => r.id === id).cost[0];

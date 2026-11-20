@@ -56,7 +56,7 @@ func executionEventsOf(q *Request, id string) ([]doc, error) {
 	if _, err := get(q, id, "execution"); err != nil {
 		return nil, err
 	}
-	return rows(q, "SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND (data->>'type') IS DISTINCT FROM 'execution.ended' ORDER BY (data->'seq')::numeric, seq", id)
+	return rows(q, "SELECT "+convTables["event"].record()+" FROM event WHERE NOT delta AND execution_id=$1 AND type IS DISTINCT FROM 'execution.ended' ORDER BY event_seq, seq", id)
 }
 
 // frameHash: sha256 of the canonical JSON of a value.
@@ -66,7 +66,7 @@ func frameHash(v any) string {
 }
 
 func eventsWhere(q *Request, f doc) ([]doc, error) {
-	return rows(q, "SELECT data FROM document WHERE kind IN ('event','event-delta') AND data @> $1 ORDER BY seq", js(f))
+	return convAll(q, &convTable{table: "event", cols: convEventCols}, f) // both kinds
 }
 
 func eventKind(v doc) string {

@@ -16,8 +16,8 @@ test('scaled definition usage preserves all edge kinds, cycles, duplicate paths,
    SELECT 'pipeline','scaled-usage',i,'{"name":"scaled-usage","steps":[]}'::jsonb,'sha-'||i,'editor','person','owner@trial.test','fixture',now() FROM generate_series(1,2)i;
    INSERT INTO execution(id,kind,state,project_id,definitions,started_at)
    SELECT 'scale-root-'||i,'pipeline_run','succeeded','desiign',jsonb_build_array(jsonb_build_object('kind','pipeline','id','scaled-usage','revision',1+i%2)),now() FROM generate_series(1,400)i;
-   INSERT INTO document(id,kind,project_id,data)
-   SELECT 'scale-session-'||i,'session','desiign',jsonb_build_object('parentExecutionId','scale-root-'||i) FROM generate_series(1,400)i;
+   INSERT INTO session(id,project_id,parent_execution_id)
+   SELECT 'scale-session-'||i,'desiign','scale-root-'||i FROM generate_series(1,400)i;
    INSERT INTO execution(id,kind,state,project_id,parent_execution_id,delegation,session_id,data,started_at)
    SELECT 'scale-leaf-'||i||'-'||m,CASE WHEN m=4 THEN 'tool_run'::execution_kind ELSE 'agent_run'::execution_kind END,'succeeded','desiign',
     CASE WHEN m=1 THEN 'scale-root-'||i WHEN m=5 THEN 'scale-leaf-'||i||'-1' END,

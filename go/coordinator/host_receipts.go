@@ -7,6 +7,7 @@ package main
 
 import (
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -240,7 +241,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	if txHasLock(q.tx, GLOBAL) {
 		rs, err := queryRows(q, `SELECT DISTINCT sid FROM (
 		 SELECT session_id AS sid FROM execution WHERE id=$1
-		 UNION SELECT s.data->>'createdBySessionId' FROM execution e JOIN document s ON s.id=e.session_id AND s.kind='session' WHERE e.id=$1
+		 UNION SELECT s.created_by_session_id FROM execution e JOIN session s ON s.id=e.session_id WHERE e.id=$1
 		 ) x WHERE coalesce(sid,'')<>''`, b.ExecutionId)
 		if err != nil {
 			return nil, "", err
@@ -338,9 +339,7 @@ func (a *App) statusReceiptIn(q *Request, b *contract.Receipt) (any, string, err
 	// Once an execution is terminal, withheld pending work no longer owns
 	// a delivery or cleanup obligation. Keep started commands for late receipts.
 	if e["taskStopRequested"] == true && terminal(e) {
-		if err := exec(q, `UPDATE document SET data=data||'{"status":"stopped"}'::jsonb,updated_at=now()
-			WHERE kind='command' AND execution_ref=$1 AND data->>'status'='pending'
-			AND data->>'kind'=ANY($2)`, b.ExecutionId, stopWithheldKinds); err != nil {
+		if _, err := commandStop(q, commandStopFilter{executionID: &b.ExecutionId, statuses: []db.CommandStatus{db.CommandStatusPending}, kinds: stopWithheldKinds}); err != nil {
 			return nil, "", err
 		}
 	}

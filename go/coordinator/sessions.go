@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeeded", "failed", "cancelled"}
@@ -17,29 +18,23 @@ var sessionStates = []string{"idle", "preparing", "running", "waiting", "succeed
 // sessionState: a session's state, its latest execution's (idle without one); nav_counts.go navSessionBase shares it.
 const sessionState = `coalesce((SELECT e.state::text FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1),'idle')`
 
-// Aggregate visible history once: under RLS, JSON sessionId predicates cannot become index conditions.
-// Correlating these document scans per session makes retained history multiply the list's work.
-// activity_at: the latest change of the session, its messages and events, or the start or end of its executions (the
-// default sort). Not execution.updated_at: host receipts touch it on every observation, which is not conversation activity.
-const sessionBase = `WITH session_messages AS MATERIALIZED (
- SELECT DISTINCT ON (data->>'sessionId') data->>'sessionId' AS session_id, data->>'text' AS first_message
- FROM document WHERE kind='message' ORDER BY data->>'sessionId',seq
-), session_activity AS MATERIALIZED (
- SELECT data->>'sessionId' AS session_id,max(updated_at) AS last_at
- FROM document WHERE kind IN ('message','event') GROUP BY data->>'sessionId'
-), x AS (SELECT d.id, d.code, d.data, d.project_id, d.seq, nullif(d.data->>'title','') AS title,
+// sessionBase: every session as a list row. The first message and the activity are read per session by its indexed
+// session_id (migration 77): activity_at is the latest change of the session, its messages and events, or the start or
+// end of its executions (the default sort). Not execution.updated_at: host receipts touch it on every observation,
+// which is not conversation activity.
+var sessionBase = `WITH x AS (SELECT d.id, d.code, ` + convTables["session"].record() + ` AS data, d.project_id, d.seq, nullif(d.title,'') AS title,
+ d.archived_at, d.actor, d.host_id, d.payload->'agentConfig'->>'harness' AS agent_harness,
  ` + sessionState + ` AS state,
  (SELECT e.harness FROM execution e WHERE e.session_id=d.id ORDER BY e.seq DESC LIMIT 1) AS harness,
- m.first_message,
- greatest(d.updated_at,ex.last_at,a.last_at) AS activity_at,
+ (SELECT m.text FROM message m WHERE m.session_id=d.id ORDER BY m.seq LIMIT 1) AS first_message,
+ greatest(d.updated_at,ex.last_at,(SELECT max(m.updated_at) FROM message m WHERE m.session_id=d.id),(SELECT max(v.updated_at) FROM event v WHERE v.session_id=d.id AND NOT v.delta)) AS activity_at,
  coalesce(ex.n,0) AS executions,
  (SELECT count(*) FROM question q WHERE q.session_id=d.id AND q.state='open') AS open_questions
- FROM document d LEFT JOIN session_messages m ON m.session_id=d.id LEFT JOIN session_activity a ON a.session_id=d.id
- LEFT JOIN LATERAL (SELECT count(*) AS n,max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true
- WHERE d.kind='session')`
+ FROM session d
+ LEFT JOIN LATERAL (SELECT count(*) AS n,max(greatest(e.started_at,e.ended_at)) AS last_at FROM execution e WHERE e.session_id=d.id) ex ON true)`
 
 // sessionAgent: the harness of the last execution, else the configured one (the row's harness mark and the agent group).
-const sessionAgent = "coalesce(x.harness,x.data->'agentConfig'->>'harness')"
+const sessionAgent = "coalesce(x.harness,x.agent_harness)"
 
 // sessionGroups: the first sort key (sessions_list group). Byte order (COLLATE "C") so the client's key comparison
 // (app/src/lists.ts compareKeys) places a live row where the server would. State groups follow attention order.
@@ -92,9 +87,9 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 	}
 	// Host command sessions (program-worker: pipeline script steps, readiness checks, host tools) hold one host job and
 	// no conversation; Runners and executions list them, the Conversations list does not.
-	c := []string{"NOT (x.data ? 'archivedAt')", "coalesce(x.data->>'actor','')<>'program-worker'"}
+	c := []string{"x.archived_at IS NULL", "coalesce(x.actor,'')<>'program-worker'"}
 	if f["archived"] == true {
-		c[0] = "x.data ? 'archivedAt'"
+		c[0] = "x.archived_at IS NOT NULL"
 	}
 	c, err := projectWhere(f, p, "x.project_id", c)
 	if err != nil {
@@ -113,7 +108,7 @@ func sessionWhere(f doc, p *[]any, withState bool) ([]string, error) {
 		c = append(c, fmt.Sprintf("x.state=ANY($%d)", len(*p)))
 	}
 	if s, ok := f["search"].(string); ok { // the list search syntax (search.go searchWhere)
-		c = append(c, searchWhere(s, p, []string{"x.title", "x.first_message", "x.id", "x.code"}, map[string]string{"agent": sessionAgent, "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.data->>'hostId')", "project": "x.project_id", "state": "x.state"}, withState)...)
+		c = append(c, searchWhere(s, p, []string{"x.title", "x.first_message", "x.id", "x.code"}, map[string]string{"agent": sessionAgent, "host": "coalesce((SELECT e.host_id FROM execution e WHERE e.session_id=x.id ORDER BY e.seq DESC LIMIT 1),x.host_id)", "project": "x.project_id", "state": "x.state"}, withState)...)
 	}
 	return c, nil
 }
@@ -266,7 +261,7 @@ func sessionGet(q *Request, sid string) (doc, error) {
 		s[k] = x
 	}
 	s["sessionId"] = sid
-	c, err := first(q, "SELECT code FROM document WHERE id=$1 AND kind='session'", sid)
+	c, err := first(q, "SELECT code FROM session WHERE id=$1", sid)
 	if err != nil {
 		return nil, err
 	}
@@ -490,58 +485,6 @@ func sessionArg(sid string) (string, error) {
 }
 
 func init() {
-	route("POST /api/sessions", func(q *Request) (any, error) {
-		if len(body(q)) > 0 {
-			return nil, errSessionCreateKeys
-		}
-		return sessionCreate(q)
-	})
-	route("GET /api/sessions/{id}", func(q *Request) (any, error) { return sessionGet(q, q.r.PathValue("id")) })
-	route("POST /api/sessions/{id}/profile", func(q *Request) (any, error) { return sessionProfile(q, q.r.PathValue("id"), body(q)) })
-	// POST /api/sessions/{id}/messages: exactly requestId and text (optional delivery); one execution per requestId.
-	longRoute("POST /api/sessions/{id}/messages", func(q *Request) (any, error) {
-		sid := q.r.PathValue("id")
-		var b map[string]json.RawMessage
-		if json.Unmarshal(q.body, &b) != nil || b == nil {
-			return nil, fail(400, "Expected requestId, text and optional delivery")
-		}
-		_, r := b["requestId"]
-		_, t := b["text"]
-		for k := range b {
-			if k != "requestId" && k != "text" && k != "delivery" {
-				r = false
-			}
-		}
-		if !r || !t {
-			return nil, fail(400, "Expected requestId, text and optional delivery")
-		}
-		v := body(q)
-		for k, max := range map[string]int{"requestId": 200, "text": 32000} {
-			if x, ok := v[k].(string); !ok || x == "" || len([]rune(x)) > max {
-				return nil, fail(400, "Invalid text")
-			}
-		}
-		var out doc
-		if err := runTx(q.ctx(), q.app, q, true, "session:"+sid, func(q *Request) error {
-			s, err := get(q, sid, "session")
-			if err != nil {
-				return err
-			}
-			out, err = submit(q, doc{"sessionId": s["id"], "requestId": v["requestId"], "text": v["text"], "delivery": v["delivery"]})
-			if err != nil {
-				return err
-			}
-			onEnd(q.tx, func(committed bool) {
-				if committed {
-					q.app.wakeDispatch()
-				}
-			})
-			return nil
-		}); err != nil {
-			return nil, err
-		}
-		return out, nil
-	})
 	route("GET /api/executions/{id}/delegations", func(q *Request) (any, error) {
 		id := q.r.PathValue("id")
 		if _, err := get(q, id, "execution"); err != nil {
@@ -697,4 +640,298 @@ func sessionUnarchive(q *Request, r *contract.SessionUnarchiveRequest) (contract
 		return none, err
 	}
 	return contract.SessionUnarchiveReply{SessionId: sid, TeardownsWithdrawn: int64(len(pending))}, nil
+}
+
+// Conversation records (migration 77, docs/designs/fleet-standard.md S1): the kinds a conversation is made of live in
+// their own tables. A record field a query filters, joins, orders or a state machine owns is a column; payload holds the
+// record's other fields. all/get/put (records.go) serve these kinds through convTables, so a caller still reads and
+// writes the record shape while each field has one column. A field whose value does not have its column's type stays
+// in payload.
+type convCol struct{ field, col, typ string } // typ: text, bool, int, count (int, absent as 0), ms (epoch ms as timestamptz)
+
+type convTable struct {
+	table string
+	cols  []convCol
+	// keep: the columns a put never overwrites while the project stays (their own writers update them in place: the
+	// session title fields of session_rename and the title pass). A command's status is commandTransition's (commandPut).
+	keep []string
+	// delta: the table holds two kinds (event and event-delta), told apart by the delta column.
+	delta *bool
+}
+
+var convFalse, convTrue = false, true
+
+var convTables = map[string]*convTable{
+	"session": {table: "session", cols: []convCol{{"projectId", "project_id", "text"}, {"taskId", "task_id", "text"}, {"hostId", "host_id", "text"},
+		{"actor", "actor", "text"}, {"directedBy", "directed_by", "text"}, {"directorAccessRevokedAt", "director_access_revoked_at", "ms"},
+		{"parentExecutionId", "parent_execution_id", "text"}, {"createdByExecutionId", "created_by_execution_id", "text"},
+		{"createdBySessionId", "created_by_session_id", "text"}, {"sourceSessionId", "source_session_id", "text"},
+		{"pipelineRunId", "pipeline_run_id", "text"}, {"createdAt", "created_at", "ms"}, {"archivedAt", "archived_at", "ms"},
+		{"title", "title", "text"}, {"titleBy", "title_by", "text"}, {"titleCall", "title_call", "text"},
+		{"titleAttemptAt", "title_attempt_at", "ms"}, {"titleAttempts", "title_attempts", "count"}, {"titleUnknownCall", "title_unknown_call", "text"}},
+		keep: []string{"title", "title_by", "title_call", "title_attempt_at", "title_attempts", "title_unknown_call"}},
+	"message": {table: "message", cols: []convCol{{"sessionId", "session_id", "text"}, {"executionId", "execution_id", "text"}, {"projectId", "project_id", "text"},
+		{"requestId", "request_id", "text"}, {"text", "text", "text"}, {"sentBy", "sent_by", "text"}, {"source", "source", "text"}}},
+	"event":       {table: "event", cols: convEventCols, delta: &convFalse},
+	"event-delta": {table: "event", cols: convEventCols, delta: &convTrue},
+	"queued-message": {table: "queued_message", cols: []convCol{{"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"}, {"taskId", "task_id", "text"},
+		{"requestId", "request_id", "text"}, {"text", "text", "text"}, {"state", "state", "text"}, {"executionId", "execution_id", "text"},
+		{"steerCommandId", "steer_command_id", "text"}, {"sentBy", "sent_by", "text"}, {"source", "source", "text"}, {"createdAt", "created_at", "ms"}}},
+	"command": {table: "command", cols: []convCol{{"executionId", "execution_id", "text"}, {"sessionId", "session_id", "text"}, {"hostId", "host_id", "text"},
+		{"projectId", "project_id", "text"}, {"kind", "kind", "text"}, {"status", "status", "status"}, {"stopDetail", "stop_detail", "text"},
+		{"handedOut", "handed_out", "bool"}, {"traceparent", "traceparent", "text"}}},
+	"handoff":            {table: "handoff", cols: []convCol{{"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"}, {"state", "state", "text"}}},
+	"session-fork":       {table: "session_fork", cols: []convCol{{"sessionId", "session_id", "text"}, {"sourceSessionId", "source_session_id", "text"}, {"projectId", "project_id", "text"}, {"requestId", "request_id", "text"}}},
+	"session-transition": {table: "session_transition", cols: []convCol{{"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"}}},
+	"worker-done":        {table: "worker_done", cols: []convCol{{"executionId", "execution_id", "text"}, {"projectId", "project_id", "text"}}},
+}
+
+var convEventCols = []convCol{{"executionId", "execution_id", "text"}, {"sessionId", "session_id", "text"}, {"projectId", "project_id", "text"},
+	{"seq", "event_seq", "int"}, {"type", "type", "text"}, {"timestamp", "at", "ms"}}
+
+// record: the SQL expression of a row as its record.
+func (t *convTable) record() string {
+	parts := []string{"'id',id"}
+	for _, c := range t.cols {
+		x := c.col
+		switch c.typ {
+		case "ms":
+			x = "(extract(epoch FROM " + c.col + ")*1000)::bigint"
+		case "count":
+			x = "nullif(" + c.col + ",0)"
+		case "status":
+			x = c.col + "::text"
+		}
+		parts = append(parts, "'"+c.field+"',"+x)
+	}
+	return "(payload||jsonb_strip_nulls(jsonb_build_object(" + strings.Join(parts, ",") + ")))"
+}
+
+func (t *convTable) kindWhere() string {
+	if t.delta == nil {
+		return "true"
+	}
+	if *t.delta {
+		return "delta"
+	}
+	return "NOT delta"
+}
+
+// colValue: v as the column's parameter, ok false when v does not have the column's type.
+func (c convCol) value(v any) (any, bool) {
+	switch c.typ {
+	case "text", "status":
+		s, ok := v.(string)
+		return s, ok
+	case "bool":
+		b, ok := v.(bool)
+		return b, ok
+	case "int", "count", "ms":
+		var f float64
+		switch n := v.(type) {
+		case float64:
+			f = n
+		case int64:
+			f = float64(n)
+		case int:
+			f = float64(n)
+		case json.Number:
+			x, err := n.Float64()
+			if err != nil {
+				return nil, false
+			}
+			f = x
+		default:
+			return nil, false
+		}
+		if c.typ == "ms" {
+			return f, true
+		}
+		if f != float64(int64(f)) {
+			return nil, false
+		}
+		return int64(f), true
+	}
+	return nil, false
+}
+
+func (c convCol) param(n int) string {
+	p := fmt.Sprintf("$%d", n)
+	switch c.typ {
+	case "ms":
+		return "to_timestamp(" + p + "::float8/1000)"
+	case "int":
+		return p + "::bigint"
+	case "count":
+		return "coalesce(" + p + "::int,0)"
+	case "bool":
+		return p + "::boolean"
+	case "status":
+		return p + "::command_status"
+	}
+	return p + "::text"
+}
+
+func convAll(q *Request, t *convTable, f doc) ([]doc, error) {
+	where, args := []string{t.kindWhere()}, []any{}
+	rest := doc{}
+	for _, k := range sortedKeysOf(f) {
+		if k == "id" {
+			args = append(args, f[k])
+			where = append(where, fmt.Sprintf("id=$%d::text", len(args)))
+			continue
+		}
+		c, found := t.col(k)
+		if !found {
+			rest[k] = f[k]
+			continue
+		}
+		v, ok := c.value(f[k])
+		if !ok {
+			return []doc{}, nil // no column value equals a value of another type
+		}
+		args = append(args, v)
+		where = append(where, c.col+"="+c.param(len(args)))
+	}
+	if len(rest) > 0 {
+		args = append(args, js(rest))
+		where = append(where, fmt.Sprintf("payload @> $%d::jsonb", len(args)))
+	}
+	return rows(q, "SELECT "+t.record()+" FROM "+t.table+" WHERE "+strings.Join(where, " AND ")+" ORDER BY seq", args...)
+}
+
+func (t *convTable) col(field string) (convCol, bool) {
+	for _, c := range t.cols {
+		if c.field == field {
+			return c, true
+		}
+	}
+	return convCol{}, false
+}
+
+func convGet(q *Request, t *convTable, id string, forUpdate bool) (doc, error) {
+	lock := ""
+	if forUpdate {
+		lock = " FOR UPDATE"
+	}
+	return one(q, "SELECT "+t.record()+" FROM "+t.table+" WHERE id=$1 AND "+t.kindWhere()+lock, id)
+}
+
+// convPut writes a record: every column from its field (absent: NULL), payload from the other fields. A put of an
+// existing row keeps the keep columns while the project stays (a new project clears the session title fields, as a
+// title belongs to its project's conversation); a command's status moves only through commandTransition.
+func convPut(q *Request, kind string, t *convTable, v doc) error {
+	id, _ := v["id"].(string)
+	if id == "" {
+		return fmt.Errorf("%s record without an id", kind)
+	}
+	cols, vals, args := []string{"id"}, []string{"$1::text"}, []any{id}
+	rest := doc{}
+	for k, x := range v {
+		if _, found := t.col(k); !found && k != "id" {
+			rest[k] = x
+		}
+	}
+	for _, c := range t.cols {
+		x, given := v[c.field]
+		if !given || x == nil {
+			cols, vals = append(cols, c.col), append(vals, "NULL")
+			if c.typ == "count" {
+				vals[len(vals)-1] = "0"
+			}
+			continue
+		}
+		p, ok := c.value(x)
+		if !ok {
+			rest[c.field] = x
+			cols, vals = append(cols, c.col), append(vals, "NULL")
+			if c.typ == "count" {
+				vals[len(vals)-1] = "0"
+			}
+			continue
+		}
+		args = append(args, p)
+		cols, vals = append(cols, c.col), append(vals, c.param(len(args)))
+	}
+	args = append(args, js(rest))
+	cols, vals = append(cols, "payload"), append(vals, fmt.Sprintf("$%d::jsonb", len(args)))
+	if t.delta != nil {
+		cols, vals = append(cols, "delta"), append(vals, fmt.Sprint(*t.delta))
+	}
+	sets := []string{"payload=excluded.payload", "updated_at=now()"}
+	for _, c := range cols[1:] {
+		switch {
+		case c == "payload" || c == "delta":
+		case slices.Contains(t.keep, c):
+			reset := "NULL"
+			if c == "title_attempts" {
+				reset = "0"
+			}
+			sets = append(sets, fmt.Sprintf("%s=CASE WHEN %s.project_id IS NOT DISTINCT FROM excluded.project_id THEN %s.%s ELSE %s END", c, t.table, t.table, c, reset))
+		default:
+			sets = append(sets, c+"=excluded."+c)
+		}
+	}
+	guard := ""
+	if t.delta != nil {
+		guard = " WHERE " + t.table + ".delta=excluded.delta"
+	}
+	if t.table == "command" {
+		return commandPut(q, t, v, rest)
+	}
+	if _, err := q.tx.Exec(q.ctx(), "INSERT INTO "+t.table+"("+strings.Join(cols, ",")+") VALUES("+strings.Join(vals, ",")+") ON CONFLICT(id) DO UPDATE SET "+strings.Join(sets, ",")+guard, args...); err != nil {
+		return err
+	}
+	if kind == "queued-message" && q.app != nil {
+		afterCommit(q, func() { q.app.wakeDispatch() })
+	}
+	return nil
+}
+
+// commandPut: a command record through its state owner (commands.go): a new command is created with its status, an
+// existing one keeps its status unless the record names another, which commandTransition moves it to.
+func commandPut(q *Request, t *convTable, v doc, rest doc) error {
+	id, _ := v["id"].(string)
+	text := func(field string) *string {
+		if c, ok := t.col(field); ok {
+			if x, ok := c.value(v[field]); ok {
+				s := x.(string)
+				return &s
+			}
+		}
+		return nil
+	}
+	kind, status := text("kind"), text("status")
+	if kind == nil {
+		return fmt.Errorf("command %s without a kind", id)
+	}
+	prev, err := commandStatus(q, id)
+	if err != nil {
+		return err
+	}
+	if status == nil {
+		p := firstString(prev, "pending")
+		status = &p
+	}
+	if _, ok := commandTransitions[*status]; !ok {
+		return fmt.Errorf("command %s: unknown status %q", id, *status)
+	}
+	var handed *bool
+	if b, ok := v["handedOut"].(bool); ok {
+		handed = &b
+	}
+	if err := commandCreate(q, db.CommandUpsertParams{ID: id, ExecutionID: text("executionId"), SessionID: text("sessionId"), HostID: text("hostId"),
+		ProjectID: text("projectId"), Kind: *kind, Status: db.CommandStatus(*status), StopDetail: text("stopDetail"), HandedOut: handed,
+		Traceparent: text("traceparent"), Payload: jsonBytes(rest)}); err != nil {
+		return err
+	}
+	if prev != "" && prev != *status {
+		if err := commandTransition(q, id, *status, text("stopDetail")); err != nil {
+			return err
+		}
+	}
+	if hid := text("hostId"); *status == "pending" && hid != nil && q.app != nil {
+		afterCommit(q, func() { q.app.wakeHost(*hid) })
+	}
+	return nil
 }

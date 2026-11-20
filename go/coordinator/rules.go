@@ -256,8 +256,8 @@ func stateRules(ctx context.Context, a *App) ([]contract.Finding, map[string]boo
 			}
 			out = append(out, f)
 		}
-		stuck, err := queryRows(q, `SELECT e.id,e.project_id,e.host_id,extract(epoch FROM now()-coalesce((SELECT max(d.updated_at) FROM document d WHERE d.kind='event'
-			AND d.data->>'executionId'=e.id AND d.data->>'type' <> 'resource.observation'), e.started_at))::float8 AS idle
+		stuck, err := queryRows(q, `SELECT e.id,e.project_id,e.host_id,extract(epoch FROM now()-coalesce((SELECT max(d.updated_at) FROM event d WHERE NOT d.delta
+			AND d.execution_id=e.id AND d.type <> 'resource.observation'), e.started_at))::float8 AS idle
 			FROM execution e WHERE e.state='running' AND e.observation='confirmed' AND NOT coalesce((e.data->>'stopRequested')::boolean,false) AND e.started_at < now() - make_interval(secs => $1)`, ruleStuck.Seconds())
 		if err != nil {
 			return err

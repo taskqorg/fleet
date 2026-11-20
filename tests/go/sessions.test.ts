@@ -14,8 +14,8 @@ async function call(method: string, path: string, body?: unknown, person = OWNER
 }
 const ok = (r: {status: number, body: any}) => { assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
 const op = (name: string, b: unknown, person = OWNER) => call('POST', '/api/ops/' + name, b, person);
-const session = async () => ok(await call('POST', '/api/sessions', {})).sessionId as string;
-const send = (sid: string, text: string, requestId = randomUUID()) => call('POST', `/api/sessions/${sid}/messages`, {requestId, text});
+const session = async () => ok(await call('POST', '/api/ops/session_create', {})).sessionId as string;
+const send = (sid: string, text: string, requestId = randomUUID()) => call('POST', '/api/ops/message_send', {sessionId: sid, requestId, text});
 
 test('B1 queue: a message to a busy session is queued in order, never refused or started twice (requirement: docs/designs/fleet-conversations.md queue; risk: a second message starts a parallel run or is lost)', async () => {
   // Risk: a second turn starts while one runs (two executions on one native session) or the message is lost.
@@ -24,7 +24,7 @@ test('B1 queue: a message to a busy session is queued in order, never refused or
   const second = ok(await send(sid, 'two')), third = ok(await send(sid, 'three'));
   assert.equal(first.state, 'preparing');
   assert.deepEqual([second.queued, second.position, third.position], [true, 1, 2]);
-  const s = ok(await call('GET', '/api/sessions/' + sid));
+  const s = ok(await call('POST', '/api/ops/session_get', {sessionId: sid}));
   assert.equal(s.executions.length, 1);
   assert.deepEqual(s.queued.map((q: any) => q.text), ['two', 'three']);
 });
@@ -35,7 +35,7 @@ test('B2 idempotent submit: a repeated requestId returns the same execution; oth
   const a = ok(await send(sid, 'hello', rid)), b = ok(await send(sid, 'hello', rid));
   assert.equal(a.id, b.id);
   assert.equal((await send(sid, 'other', rid)).status, 409);
-  assert.equal((await call('POST', `/api/sessions/${sid}/messages`, {requestId: randomUUID(), text: 'x', extra: 1})).status, 400);
+  assert.equal((await call('POST', '/api/ops/message_send', {sessionId: sid, requestId: randomUUID(), text: 'x', extra: 1})).status, 400);
 });
 
 test('B3 grants: a person without a project grant sees no project and cannot read it (requirement: docs/designs/fleet-people-access.md grants; risk: a person reads a project without its grant)', async () => {
@@ -85,7 +85,7 @@ test('B6 ask and reply: an answer reaches the asking session as its next message
   const r = ok(await op('reply', {questionId: q.id, answer: 'blue'}));
   assert.equal(r.state, 'answered');
   assert.ok(r.delivery.queueId, 'the asker is busy: the reply is queued');
-  const s = ok(await call('GET', '/api/sessions/' + sid));
+  const s = ok(await call('POST', '/api/ops/session_get', {sessionId: sid}));
   assert.match(s.queued[0].text, /blue/);
   assert.equal((await op('reply', {questionId: q.id, answer: 'red'})).status, 409);
 });
@@ -112,7 +112,7 @@ test('B6b the web answer to an agent question (questions_answer) is delivered to
   const e = ok(await send(sid, 'start'));
   const q = ok(await op('ask', {executionId: e.id, requestId: 'q-web', question: 'Which colour?'}));
   ok(await op('questions_answer', {questionId: q.id, answer: 'blue'}));
-  const s = ok(await call('GET', '/api/sessions/' + sid));
+  const s = ok(await call('POST', '/api/ops/session_get', {sessionId: sid}));
   assert.equal(s.questions.find((x: any) => x.id === q.id).state, 'answered');
   assert.match(s.queued[0].text, /blue/);
 });

@@ -25,11 +25,11 @@ async function host(id: string) {
 }
 const poll = {platform: 'darwin', capabilities: [], stores: [], problems: []};
 async function queued() {
-  const {sessionId} = ok(await call('POST', '/api/sessions', {}, owner));
-  const e = ok(await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'}, owner));
+  const {sessionId} = ok(await call('POST', '/api/ops/session_create', {}, owner));
+  const e = ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'}, owner));
   return {sessionId, executionId: e.id as string};
 }
-const execution = async (sessionId: string, id: string) => ok(await call('GET', `/api/sessions/${sessionId}`, undefined, owner)).executions.find((x: any) => x.id === id);
+const execution = async (sessionId: string, id: string) => ok(await call('POST', '/api/ops/session_get', {sessionId: sessionId}, owner)).executions.find((x: any) => x.id === id);
 
 test('A1 a paused host takes no work: the execution waits with the skip reason and one stall question, and starts once intake is open (requirement: docs/work-allocation.md holder settings; risk: dispatch ignores a holder setting or never releases its question)', {timeout: 30_000}, async () => {
   const h = await host('trial-host');
@@ -67,7 +67,7 @@ test('A3 a start receipt binds the native session; another native id for it is 4
   const command = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId);
   const receipt = (status: string, extra = {}) => h('/api/hosts/receipts', {commandId: command.id, executionId, status, ...extra});
   ok(await receipt('started', {nativeSessionId: 'native-1'}));
-  assert.equal(ok(await call('GET', `/api/sessions/${sessionId}`, undefined, owner)).nativeSessionId, 'native-1');
+  assert.equal(ok(await call('POST', '/api/ops/session_get', {sessionId: sessionId}, owner)).nativeSessionId, 'native-1');
   assert.equal((await receipt('completed', {nativeSessionId: 'native-2'})).status, 409);
   ok(await receipt('completed', {nativeSessionId: 'native-1'}));
   const e = await execution(sessionId, executionId);
@@ -355,9 +355,9 @@ test('A6 hosts: a duplicate id is 409, a host secret never shows, the list carri
 });
 
 test('A9 an execution record has one state vocabulary and its real kind and harness: a claude run stores harness claude, a receipt "unknown" keeps the state and marks it unconfirmed (requirement: docs/designs/fleet-data-foundation.md §7 one execution record, C9, C10; risk: every run reported as codex, two state vocabularies disagree)', {timeout: 30_000}, async () => {
-  const claude = ok(await call('POST', '/api/sessions', {}, owner)).sessionId;
-  ok(await call('POST', `/api/sessions/${claude}/profile`, {profileId: 'claude-worker'}, owner));
-  ok(await call('POST', `/api/sessions/${claude}/messages`, {requestId: randomUUID(), text: 'hello'}, owner));
+  const claude = ok(await call('POST', '/api/ops/session_create', {}, owner)).sessionId;
+  ok(await call('POST', '/api/ops/session_profile', {sessionId: claude, profileId: 'claude-worker'}, owner));
+  ok(await call('POST', '/api/ops/message_send', {sessionId: claude, requestId: randomUUID(), text: 'hello'}, owner));
   const [row] = ok(await op('executions_list', {sessionId: claude})).executions;
   assert.deepEqual([row.kind, row.harness, row.state], ['agent_run', 'claude', 'preparing']);
   const h = await host('trial-host');
@@ -504,7 +504,7 @@ test('A15 control receipts preserve completed execution history and do not confi
   const receipt = (id: string, status: string) => h('/api/hosts/receipts', {commandId: id, executionId, status});
   ok(await receipt(start.id, 'started'));
   ok(await h('/api/hosts/poll', {...poll, capabilities: ['steer']}));
-  ok(await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'steer without proof of process health', delivery: 'steer'}, owner));
+  ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'steer without proof of process health', delivery: 'steer'}, owner));
   const steer = ok(await h('/api/hosts/poll', poll)).commands.find((c: any) => c.executionId === executionId && c.kind === 'steer');
   assert.ok(steer);
   ok(await receipt(start.id, 'unknown'));

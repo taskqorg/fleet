@@ -167,7 +167,7 @@ func cancelTaskWork(q *Request, id string) error {
 	linked, err := queryRows(q, `WITH roots AS (
 		SELECT id,kind FROM execution r
 		WHERE r.task_id=$1 OR (r.task_id IS NULL AND EXISTS (
-			SELECT 1 FROM document s WHERE s.kind='session' AND s.id=r.session_id AND s.data->>'taskId'=$1
+			SELECT 1 FROM session s WHERE s.id=r.session_id AND s.task_id=$1
 		))
 	)
 	SELECT e.id,e.kind FROM execution e
@@ -219,16 +219,16 @@ func cancelTaskWork(q *Request, id string) error {
 			return err
 		}
 	}
-	if err := exec(q, `UPDATE document m SET data=m.data||'{"state":"cancelled"}'::jsonb,updated_at=now()
-		WHERE m.kind='queued-message' AND m.data->>'state' IN ('queued','steering')
+	if err := exec(q, `UPDATE queued_message m SET state='cancelled',updated_at=now()
+		WHERE m.state IN ('queued','steering')
 		AND m.tombstoned_at IS NULL
-		AND (m.data->>'taskId'=$1 OR (m.data->>'taskId' IS NULL AND EXISTS (
-			SELECT 1 FROM document s WHERE s.kind='session' AND s.id=m.session_ref AND s.data->>'taskId'=$1
+		AND (m.task_id=$1 OR (m.task_id IS NULL AND EXISTS (
+			SELECT 1 FROM session s WHERE s.id=m.session_id AND s.task_id=$1
 		)))`, id); err != nil {
 		return err
 	}
-	return exec(q, `DELETE FROM document w USING document s
-		WHERE w.kind='watch' AND s.kind='session' AND s.id=w.session_ref AND s.data->>'taskId'=$1`, id)
+	return exec(q, `DELETE FROM document w USING session s
+		WHERE w.kind='watch' AND s.id=w.session_ref AND s.task_id=$1`, id)
 }
 
 // settleTask moves an open task toward target through the transitions whose guards hold now.
@@ -345,8 +345,8 @@ const idleTaskSQL = `FROM task t LEFT JOIN LATERAL (SELECT x.id, x.state, x.sess
 	  ORDER BY x.ended_at DESC NULLS LAST, x.seq DESC LIMIT 1) l ON true
 	WHERE t.state='in_progress'
 	AND NOT EXISTS (SELECT 1 FROM execution x WHERE x.task_id=t.id AND x.kind<>'child_agent' AND x.state NOT IN ('succeeded','failed','cancelled'))
-	AND NOT EXISTS (SELECT 1 FROM document qm JOIN document ss ON ss.kind='session' AND ss.id=qm.data->>'sessionId'
- WHERE qm.kind='queued-message' AND qm.data->>'state' IN ('queued','steering') AND ss.data->>'taskId'=t.id::text)
+	AND NOT EXISTS (SELECT 1 FROM queued_message qm JOIN session ss ON ss.id=qm.session_id
+ WHERE qm.state IN ('queued','steering') AND ss.task_id=t.id::text)
 AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='open')
 	AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.kind='acceptance' AND qq.answer='rejected' AND qq.answered_at >= coalesce(l.ended_at, '-infinity'))`
 
@@ -1472,7 +1472,7 @@ func init() {
 		}
 		// An agent's question is answered by delivering the reply to its session (agent tool reply); recording the
 		// answer alone left the asker without it.
-		if aq, err := first(q, "SELECT coalesce(q.project_id,s.data->>'projectId') AS project_id FROM question q LEFT JOIN document s ON s.kind='session' AND s.id=q.session_id WHERE q.id=$1 AND q.kind='agent_question'", id); err != nil {
+		if aq, err := first(q, "SELECT coalesce(q.project_id,s.project_id) AS project_id FROM question q LEFT JOIN session s ON s.id=q.session_id WHERE q.id=$1 AND q.kind='agent_question'", id); err != nil {
 			return none, err
 		} else if aq != nil {
 			// The reply reaches another session: the person must have that session's project, as for any project op.

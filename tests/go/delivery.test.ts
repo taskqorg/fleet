@@ -17,9 +17,9 @@ test('W1 accepting a task sends one teardown with deleteBranch for its finished 
     const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
     const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'delivered'});
     const taskId = task.id ?? task.taskId;
-    const {sessionId} = await call('/api/sessions', {});
-    c.sql(`UPDATE document SET data=data||'{"projectId":"hello-world","workingDirectory":"/tmp/original-workspace"}' WHERE kind='session' AND id='${sessionId}'`);
-    const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+    const {sessionId} = await call('/api/ops/session_create', {});
+    c.sql(`UPDATE session SET project_id='hello-world',payload=payload||'{"workingDirectory":"/tmp/original-workspace"}' WHERE id='${sessionId}'`);
+    const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
     c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'`);
     // R3; Save after enqueue cannot rewrite launch context or cleanup of the original workspace.
     const before = await call('/api/ops/project_context', {projectId:'hello-world'});
@@ -32,7 +32,7 @@ test('W1 accepting a task sends one teardown with deleteBranch for its finished 
     assert.ok(!command.payload.instructions.includes('LATER PROJECT CANARY'));
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'completed'}, secret, null);
-    c.sql(`UPDATE document SET data=data||'{"workingDirectory":"/tmp/unrelated-checkout"}' WHERE kind='session' AND id='${sessionId}'`);
+    c.sql(`UPDATE session SET payload=payload||'{"workingDirectory":"/tmp/unrelated-checkout"}' WHERE id='${sessionId}'`);
     c.sql(`UPDATE task SET state='in_progress' WHERE id='${taskId}'`);
     const question = await call('/api/ops/task_request_acceptance', {taskId});
     await call('/api/ops/question_answer', {questionId: question.id, answer: 'accepted'});

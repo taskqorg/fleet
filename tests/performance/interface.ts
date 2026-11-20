@@ -310,7 +310,7 @@ export async function serve(o: { out: string; history: number; projects: number;
       c.sql(`UPDATE execution SET host_id=${literal(hostID)},data=jsonb_build_object('hostId',${literal(hostID)}) WHERE id=${literal(ids[0] + '-marker')}`);
       for (let i = 0; i < o.longEvents; i += 500) { const events = Array.from({ length: Math.min(500, o.longEvents - i) }, () => usage(++native!.seq)); await ingest(events); }
       await ingest([usage(2), usage(1)]); // identical retained IDs/bodies, reordered; no new usage.
-      const proof = JSON.parse(c.sql(`SELECT json_build_object('input',t.tokens_input,'state',e.state,'cpu',t.cpu_ms,'api',t.api_ms,'wall',t.wall_ms,'events',(SELECT count(*) FROM document WHERE kind='event' AND data->>'executionId'=e.id)) FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.id=${literal(ids[0] + '-marker')}`));
+      const proof = JSON.parse(c.sql(`SELECT json_build_object('input',t.tokens_input,'state',e.state,'cpu',t.cpu_ms,'api',t.api_ms,'wall',t.wall_ms,'events',(SELECT count(*) FROM event WHERE NOT delta AND execution_id=e.id)) FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.id=${literal(ids[0] + '-marker')}`));
       assert.equal(proof.input, o.longEvents); assert.equal(proof.events, o.longEvents); assert.equal(proof.state, 'running'); assert.equal(proof.cpu, null); assert.equal(proof.api, null); assert.equal(proof.wall, null);
       writeFileSync(resolve(o.out, 'long-native.json'), JSON.stringify(proof, null, 2));
     }

@@ -22,7 +22,7 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   // 'stray' has rows but no project definition; NULL is work outside projects.
   c.sql(`INSERT INTO task(id,project_id,title,state) VALUES ('t-a1','alpha','A','queued'),('t-a2','alpha','B','in_progress'),('t-a3','alpha','C','completed'),
       ('t-b1','beta','D','queued'),('t-b2','beta','E','failed'),('t-m1','muted','F','queued'),('t-s1','stray','G','waiting'),('t-n1',NULL,'H','queued');
-    INSERT INTO document(kind,id,project_id,data) VALUES ('session','s-a1','alpha','{}'),('session','s-b1','beta','{}'),('session','s-m1','muted','{}'),('session','s-n1',NULL,'{}'),('session','s-idle','alpha','{}');
+    INSERT INTO session(id,project_id) VALUES ('s-a1','alpha'),('s-b1','beta'),('s-m1','muted'),('s-n1',NULL),('s-idle','alpha');
     INSERT INTO execution(id,kind,state,project_id,session_id,data) VALUES ('e-a1','agent_run','running','alpha','s-a1','{}'),('e-b1','agent_run','failed','beta','s-b1','{}'),
       ('e-m1','agent_run','running','muted','s-m1','{}'),('e-n1','agent_run','waiting',NULL,'s-n1','{}');
     INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,state,created_at) VALUES ('a-a1','alpha','prod','1',1,'text/plain','a.txt','stored',now()),
@@ -102,7 +102,7 @@ test('nav_counts: counter views by person setting, the focus split, ignored proj
   c.sql(`INSERT INTO task(id,project_id,title,state,pause_reason) VALUES ('t-x-q','alpha','x','queued',NULL),('t-x-i','alpha','x','in_progress',NULL),
       ('t-x-w','alpha','x','waiting',NULL),('t-x-h','alpha','x','paused','held'),('t-x-p','alpha','x','paused',NULL),('t-x-c','alpha','x','completed',NULL),
       ('t-x-f','alpha','x','failed',NULL),('t-x-x','alpha','x','cancelled',NULL);
-    INSERT INTO document(kind,id,project_id,data) SELECT 'session','s-x-'||s,'alpha','{}' FROM unnest(ARRAY['preparing','running','waiting','succeeded','failed','cancelled']) s;
+    INSERT INTO session(id,project_id) SELECT 's-x-'||s,'alpha' FROM unnest(ARRAY['preparing','running','waiting','succeeded','failed','cancelled']) s;
     INSERT INTO execution(id,kind,state,project_id,session_id,data) SELECT 'e-x-'||s,'agent_run',s::execution_state,'alpha','s-x-'||s,'{}' FROM unnest(ARRAY['preparing','running','waiting','succeeded','failed','cancelled']) s;`);
   for (const list of ['tasks', 'conversations', 'delivery'] as const) for (const v of SYSTEM_VIEWS[list]) {
     await op('person_settings_set', {navCounters: {[list]: v.name}});

@@ -38,9 +38,9 @@ async function agent(person: string, start: object) {
   let s: any;
   if ('projectId' in start) s = ok(await op('session_start', {requestId: randomUUID(), text: 'pm turn', ...start}, person));
   else { // a session with no project: the person's own create, the PM profile, a first message
-    const sessionId = ok(await call('POST', '/api/sessions', {}, as(person))).sessionId;
-    ok(await call('POST', `/api/sessions/${sessionId}/profile`, {profileId: 'pm'}, as(person)));
-    s = {sessionId, executionId: ok(await call('POST', `/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'pm turn'}, as(person))).id};
+    const sessionId = ok(await call('POST', '/api/ops/session_create', {}, as(person))).sessionId;
+    ok(await call('POST', '/api/ops/session_profile', {sessionId: sessionId, profileId: 'pm'}, as(person)));
+    s = {sessionId, executionId: ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'pm turn'}, as(person))).id};
   }
   const {commands} = ok(await hostCall(person, '/api/hosts/poll', poll));
   const c = commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
@@ -81,7 +81,7 @@ test('PM3 focus: a focused PM starts workers in its focus projects only, and foc
   ok(await pm.tool('focus_set', {projectIds: [PROJECT]}));
   const child = ok(await pm.tool('session_start', {requestId: randomUUID(), role: 'worker'}));
   assert.equal(child.projectId, PROJECT, 'one focus project is the default');
-  const s = ok(await call('GET', '/api/sessions/' + child.sessionId, undefined, as(OWNER)));
+  const s = ok(await call('POST', '/api/ops/session_get', {sessionId: child.sessionId}, as(OWNER)));
   assert.equal(s.directedBy, MEMBER, 'the child keeps the PM\'s director');
   ok(await pm.tool('focus_set', {projectIds: '*'}));
   assert.equal((await pm.tool('session_start', {requestId: randomUUID(), role: 'worker'})).status, 400, 'several projects: projectId required');
@@ -141,7 +141,7 @@ test('PM6 audit: an agent setting change records the execution as actor and its 
 });
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const queuedTexts = async (sessionId: string) => ok(await call('GET', '/api/sessions/' + sessionId, undefined, as(OWNER))).queued.map((m: any) => m.text as string);
+const queuedTexts = async (sessionId: string) => ok(await call('POST', '/api/ops/session_get', {sessionId: sessionId}, as(OWNER))).queued.map((m: any) => m.text as string);
 
 test('PM7 watch: foreign changes in focus wake the PM with one message, its own changes never do, and the timer wakes it (requirement: docs/designs/fleet-pm-agent.md; risk: a PM misses a question, or loops on its own edits)', {timeout: 30_000}, async () => {
   const pm = await agent(OWNER, {});
@@ -277,7 +277,7 @@ test('PM11 an agent call without projectId gets its session project, for any ope
 
 
 test('PM provenance: internal timer/change/wake inputs keep Fleet sender through idle and queued delivery (requirement: fleet.md R5 and people authority; risk: system notifications impersonate the owner or queued inputs borrow authority)', {timeout: 60_000}, async () => {
-  const view = async (sid: string) => ok(await call('GET', '/api/sessions/' + sid, undefined, as(MEMBER)));
+  const view = async (sid: string) => ok(await call('POST', '/api/ops/session_get', {sessionId: sid}, as(MEMBER)));
   const eventually = async (read: () => Promise<any>) => {
     for (let i = 0; i < 100; i++) { const result = await read(); if (result) return result; await sleep(50); }
     assert.fail('provenance observation did not arrive');
@@ -368,7 +368,7 @@ test('PM project transition applies after the active turn with checkout rules an
  assert.equal((await pm.tool('session_transition',{projectId:'missing-project'})).status,403);
  const selected=ok(await pm.tool('session_transition',{projectId:PROJECT}));
  assert.equal(selected.transition,'queued');
- const before=ok(await call('GET','/api/sessions/'+pm.sessionId,undefined,as(OWNER)));
+ const before=ok(await call('POST', '/api/ops/session_get', {sessionId: pm.sessionId},as(OWNER)));
  assert.equal(before.executions[0].dispatch.projectId,null);
  ok(await hostCall(OWNER,'/api/hosts/receipts',{executionId:pm.executionId,commandId:pm.commandId,status:'completed',nativeSessionId:'old-projectless-native'}));
 
@@ -381,14 +381,14 @@ test('PM project transition applies after the active turn with checkout rules an
  assert.ok(next.payload.project);
  assert.ok(!next.payload.nativeSessionId);
  assert.match(next.payload.text,/Current request:/);
- const after=ok(await call('GET','/api/sessions/'+pm.sessionId,undefined,as(OWNER)));
+ const after=ok(await call('POST', '/api/ops/session_get', {sessionId: pm.sessionId},as(OWNER)));
  assert.deepEqual(after.executions.find((e:any)=>e.id===pm.executionId).dispatch,before.executions[0].dispatch);
  let current=next;
  for(const projectId of [OTHER,PROJECT]) {
   ok(await hostCall(OWNER,'/api/hosts/receipts',{executionId:current.executionId,commandId:current.id,status:'completed',nativeSessionId:'native-'+projectId}));
   const transition=ok(await op('session_transition',{sessionId:pm.sessionId,projectId}));
   assert.equal(transition.transition,'create_with_handoff');
-  ok(await call('POST',`/api/sessions/${pm.sessionId}/messages`,{requestId:randomUUID(),text:'continue'},as(OWNER)));
+  ok(await call('POST','/api/ops/message_send', {sessionId: pm.sessionId, requestId:randomUUID(),text:'continue'},as(OWNER)));
   const oldHost=ok(await hostCall(OWNER,'/api/hosts/poll',{...poll,capabilities:[]}));
   assert.ok(!oldHost.commands.some((c:any)=>c.payload?.workspaceKey),'old hosts cannot claim keyed cleanup or start');
   const polled=ok(await hostCall(OWNER,'/api/hosts/poll',poll)).commands;

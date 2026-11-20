@@ -12,6 +12,53 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type CommandStatus string
+
+const (
+	CommandStatusPending   CommandStatus = "pending"
+	CommandStatusAccepted  CommandStatus = "accepted"
+	CommandStatusStarted   CommandStatus = "started"
+	CommandStatusCompleted CommandStatus = "completed"
+	CommandStatusFailed    CommandStatus = "failed"
+	CommandStatusStopped   CommandStatus = "stopped"
+	CommandStatusUnknown   CommandStatus = "unknown"
+)
+
+func (e *CommandStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = CommandStatus(s)
+	case string:
+		*e = CommandStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for CommandStatus: %T", src)
+	}
+	return nil
+}
+
+type NullCommandStatus struct {
+	CommandStatus CommandStatus
+	Valid         bool // Valid is true if CommandStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullCommandStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.CommandStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.CommandStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullCommandStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.CommandStatus), nil
+}
+
 type ExecutionKind string
 
 const (
@@ -440,6 +487,23 @@ type CodeCounter struct {
 	Next    int64
 }
 
+type Command struct {
+	ID           string
+	ExecutionID  *string
+	SessionID    *string
+	HostID       *string
+	ProjectID    *string
+	Kind         string
+	Status       CommandStatus
+	StopDetail   *string
+	HandedOut    *bool
+	Traceparent  *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
 type Definition struct {
 	Kind                   string
 	ID                     string
@@ -492,7 +556,6 @@ type Document struct {
 	ProjectID    *string
 	Seq          int64
 	UpdatedAt    time.Time
-	Code         *string
 	TombstonedAt *time.Time
 	ExecutionRef *string
 	SessionRef   *string
@@ -505,6 +568,21 @@ type EntityCode struct {
 	ProjectID    *string
 	IssuedAt     time.Time
 	SupersededBy *string
+}
+
+type Event struct {
+	ID           string
+	Delta        bool
+	ExecutionID  *string
+	SessionID    *string
+	ProjectID    *string
+	EventSeq     *int64
+	Type         *string
+	At           *time.Time
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type Execution struct {
@@ -631,6 +709,17 @@ type ExperimentNote struct {
 	TombstonedAt *time.Time
 }
 
+type Handoff struct {
+	ID           string
+	SessionID    string
+	ProjectID    *string
+	State        *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
 type HostSetting struct {
 	HostID     string
 	Key        string
@@ -639,6 +728,21 @@ type HostSetting struct {
 	UpdatedAt  time.Time
 	AppliedAt  *time.Time
 	ApplyError *string
+}
+
+type Message struct {
+	ID           string
+	SessionID    string
+	ExecutionID  *string
+	ProjectID    *string
+	RequestID    *string
+	Text         *string
+	SentBy       *string
+	Source       *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }
 
 type Person struct {
@@ -716,6 +820,25 @@ type Question struct {
 	RequestID    *string
 	Code         *string
 	TombstonedAt *time.Time
+}
+
+type QueuedMessage struct {
+	ID             string
+	SessionID      string
+	ProjectID      *string
+	TaskID         *string
+	RequestID      *string
+	Text           *string
+	State          *string
+	ExecutionID    *string
+	SteerCommandID *string
+	SentBy         *string
+	Source         *string
+	CreatedAt      *time.Time
+	Payload        []byte
+	Seq            int64
+	UpdatedAt      time.Time
+	TombstonedAt   *time.Time
 }
 
 type ResourceBuild struct {
@@ -881,6 +1004,56 @@ type Score struct {
 	TombstonedAt      *time.Time
 }
 
+type Session struct {
+	ID                      string
+	Code                    *string
+	ProjectID               *string
+	TaskID                  *string
+	HostID                  *string
+	Actor                   *string
+	DirectedBy              *string
+	DirectorAccessRevokedAt *time.Time
+	ParentExecutionID       *string
+	CreatedByExecutionID    *string
+	CreatedBySessionID      *string
+	SourceSessionID         *string
+	PipelineRunID           *string
+	CreatedAt               *time.Time
+	ArchivedAt              *time.Time
+	Title                   *string
+	TitleBy                 *string
+	TitleCall               *string
+	TitleAttemptAt          *time.Time
+	TitleAttempts           int32
+	TitleUnknownCall        *string
+	Payload                 []byte
+	Seq                     int64
+	UpdatedAt               time.Time
+	TombstonedAt            *time.Time
+}
+
+type SessionFork struct {
+	ID              string
+	SessionID       string
+	SourceSessionID string
+	ProjectID       *string
+	RequestID       *string
+	Payload         []byte
+	Seq             int64
+	UpdatedAt       time.Time
+	TombstonedAt    *time.Time
+}
+
+type SessionTransition struct {
+	ID           string
+	SessionID    string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
+}
+
 type Store struct {
 	ID                    string
 	Kind                  string
@@ -967,4 +1140,14 @@ type WakeOutbox struct {
 	Channel   string
 	Payload   string
 	CreatedAt time.Time
+}
+
+type WorkerDone struct {
+	ID           string
+	ExecutionID  *string
+	ProjectID    *string
+	Payload      []byte
+	Seq          int64
+	UpdatedAt    time.Time
+	TombstonedAt *time.Time
 }

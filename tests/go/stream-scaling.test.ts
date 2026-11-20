@@ -21,18 +21,18 @@ test('PR6 indexed chunks close, retry, reorder and restart without transcript lo
   const chunks=Array.from({length:200},(_,i)=>chunk(i));
   assert.equal((await ingest([...chunks].reverse())).status,200);
   assert.equal((await ingest(chunks)).status,200);
-  assert.equal(c.sql("SELECT count(*) FROM document WHERE kind='event-delta' AND data->>'executionId'='pr6-ex'").trim(),'200');
+  assert.equal(c.sql("SELECT count(*) FROM event WHERE delta AND execution_id='pr6-ex'").trim(),'200');
   const final=chunks.map((_,i)=>i+',').join('');
   const close={id:'close',seq:201,type:'item.completed',timestamp:2,data:{fleetNormalized:{closes:['text:1'],blocks:[{kind:'text',markdown:final}]}}};
   assert.equal((await ingest([close])).status,200);
-  assert.equal(c.sql("SELECT count(*) FROM document WHERE kind='event-delta' AND data->>'executionId'='pr6-ex'").trim(),'0');
+  assert.equal(c.sql("SELECT count(*) FROM event WHERE delta AND execution_id='pr6-ex'").trim(),'0');
   assert.equal(c.sql("SELECT count(*) FROM closed_delta_identity WHERE execution_id='pr6-ex'").trim(),'200');
   assert.equal((await ingest(chunks)).status,200);
   assert.equal((await ingest([{...chunk(1),timestamp:999}])).status,409);
   assert.equal((await ingest([{...chunk(1),id:'collision'}])).status,409);
   // A late chunk for an already closed block is compacted in its own commit.
   assert.equal((await ingest([chunk(202)])).status,200);
-  assert.equal(c.sql("SELECT count(*) FROM document WHERE kind='event-delta' AND data->>'executionId'='pr6-ex'").trim(),'0');
+  assert.equal(c.sql("SELECT count(*) FROM event WHERE delta AND execution_id='pr6-ex'").trim(),'0');
   await c.restart();
   assert.equal((await ingest(chunks)).status,200);
   const r=await fetch(c.base+'/api/executions/pr6-ex/events',{headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test'}});

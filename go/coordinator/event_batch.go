@@ -14,7 +14,7 @@ func eventBatchSnapshot(q *Request, executionID string, evs []any) (map[string]d
 		ids = append(ids, "event:"+executionID+":"+astr(ev["id"]))
 		seqs = append(seqs, seq)
 	}
-	existing, err := rows(q, `SELECT data FROM document WHERE kind IN ('event','event-delta') AND data->>'executionId'=$1 AND ((data->>'seq')::bigint=ANY($2) OR id=ANY($3))`, executionID, seqs, ids)
+	existing, err := rows(q, "SELECT "+convTables["event"].record()+" FROM event WHERE execution_id=$1 AND (event_seq=ANY($2) OR id=ANY($3))", executionID, seqs, ids)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -39,7 +39,7 @@ func eventBatchSnapshot(q *Request, executionID string, evs []any) (map[string]d
 func cleanupClosedDeltas(q *Request, executionID string) error {
 	// The complete closing event is authoritative. Hash the full normalized chunk
 	// before removing its text; hashes preserve exact retry/conflict semantics.
-	chunks, err := rows(q, `SELECT d.data FROM document d WHERE d.kind='event-delta' AND d.data->>'executionId'=$1 AND EXISTS(SELECT 1 FROM document c WHERE c.kind='event' AND c.data->>'executionId'=$1 AND c.data->'data'->'fleetNormalized'->'closes' ? (d.data->'data'->'fleetNormalized'->>'deltaOf'))`, executionID)
+	chunks, err := rows(q, "SELECT "+convTables["event-delta"].record()+` FROM event d WHERE d.delta AND d.execution_id=$1 AND EXISTS(SELECT 1 FROM event c WHERE NOT c.delta AND c.execution_id=$1 AND c.payload->'data'->'fleetNormalized'->'closes' ? (d.payload->'data'->'fleetNormalized'->>'deltaOf'))`, executionID)
 	if err != nil {
 		return err
 	}
@@ -56,12 +56,18 @@ func cleanupClosedDeltas(q *Request, executionID string) error {
 	if err := exec(q, `INSERT INTO closed_delta_identity(id,execution_id,event_seq,digest,event_type) SELECT i,$1,s,h,t FROM unnest($2::text[],$3::bigint[],$4::text[],$5::text[]) AS x(i,s,h,t) ON CONFLICT(id) DO NOTHING`, executionID, ids, seqs, hashes, types); err != nil {
 		return err
 	}
-	return exec(q, "DELETE FROM document WHERE kind='event-delta' AND id=ANY($1)", ids)
+	return exec(q, "DELETE FROM event WHERE delta AND id=ANY($1)", ids)
 }
 
+// putEventBatch inserts a host's new events in one statement (an event already stored stays as it is).
 func putEventBatch(q *Request, prepared []preparedEvent) error {
-	kinds, ids, payloads, projects := []string{}, []string{}, []string{}, []*string{}
+	var ids, executions, sessions, projects, types []*string
+	var deltas []bool
+	var seqs []*int64
+	var ats []*float64
+	var payloads []string
 	seen := map[string]bool{}
+	t := convTables["event"]
 	for _, p := range prepared {
 		v := p.value
 		id := astr(v["id"])
@@ -69,13 +75,48 @@ func putEventBatch(q *Request, prepared []preparedEvent) error {
 			continue
 		}
 		seen[id] = true
-		kinds = append(kinds, eventKind(v))
-		ids = append(ids, id)
-		payloads = append(payloads, js(v))
-		projects = append(projects, strPtr(v["projectId"]))
+		rest := doc{}
+		for k, x := range v {
+			if _, found := t.col(k); !found && k != "id" {
+				rest[k] = x
+			}
+		}
+		text := func(field string) *string {
+			c, _ := t.col(field)
+			if x, ok := c.value(v[field]); ok {
+				s := x.(string)
+				return &s
+			} else if v[field] != nil {
+				rest[field] = v[field]
+			}
+			return nil
+		}
+		c, _ := t.col("seq")
+		var seq *int64
+		if x, ok := c.value(v["seq"]); ok {
+			n := x.(int64)
+			seq = &n
+		} else if v["seq"] != nil {
+			rest["seq"] = v["seq"]
+		}
+		c, _ = t.col("timestamp")
+		var at *float64
+		if x, ok := c.value(v["timestamp"]); ok {
+			f := x.(float64)
+			at = &f
+		} else if v["timestamp"] != nil {
+			rest["timestamp"] = v["timestamp"]
+		}
+		ids = append(ids, &id)
+		deltas = append(deltas, eventKind(v) == "event-delta")
+		executions, sessions, projects, types = append(executions, text("executionId")), append(sessions, text("sessionId")), append(projects, text("projectId")), append(types, text("type"))
+		seqs, ats = append(seqs, seq), append(ats, at)
+		payloads = append(payloads, js(rest))
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	return exec(q, `INSERT INTO document(kind,id,data,project_id) SELECT k,i,d::jsonb,p FROM unnest($1::text[],$2::text[],$3::text[],$4::text[]) AS x(k,i,d,p) ON CONFLICT(id) DO NOTHING`, kinds, ids, payloads, projects)
+	return exec(q, `INSERT INTO event(id,delta,execution_id,session_id,project_id,event_seq,type,at,payload)
+	 SELECT i,d,e,s,p,n,t,to_timestamp(a/1000),pl::jsonb FROM unnest($1::text[],$2::boolean[],$3::text[],$4::text[],$5::text[],$6::bigint[],$7::text[],$8::float8[],$9::text[]) AS x(i,d,e,s,p,n,t,a,pl)
+	 ON CONFLICT(id) DO NOTHING`, ids, deltas, executions, sessions, projects, seqs, types, ats, payloads)
 }

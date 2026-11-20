@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -12,28 +11,29 @@ import (
 
 // titleFixture: conversations as the list sees them: a first message and a finished first reply (s-done), the same with
 // a title a person set (s-named), one whose reply is still running (s-running), one whose call fails (s-fail), a host
-// command session (s-host) and a pipeline script session from before migration 73 (s-legacy) beside a pipeline agent
+// command session (s-host) and a pipeline script session as migration 73 marked it (s-legacy) beside a pipeline agent
 // session with a message (s-agent).
 const titleFixture = `
-INSERT INTO document(kind,id,data) VALUES
- ('session','s-done','{"id":"s-done","createdAt":1}'),
- ('session','s-named','{"id":"s-named","createdAt":1,"title":"Chosen by a person","titleBy":"owner@trial.test"}'),
- ('session','s-running','{"id":"s-running","createdAt":1}'),
- ('session','s-child','{"id":"s-child","createdAt":1}'),
- ('session','s-long','{"id":"s-long","createdAt":1}'),
- ('session','s-arch','{"id":"s-arch","createdAt":1,"archivedAt":1}'),
- ('session','s-fail','{"id":"s-fail","createdAt":1}'),
- ('session','s-host','{"id":"s-host","createdAt":1,"actor":"program-worker"}'),
- ('session','s-legacy','{"id":"s-legacy","createdAt":1,"pipelineRunId":"r1"}'),
- ('session','s-agent','{"id":"s-agent","createdAt":1,"pipelineRunId":"r1"}'),
- ('message','m-done','{"id":"m-done","sessionId":"s-done","text":"# STANDING RULES\nFix the login redirect loop"}'),
- ('message','m-named','{"id":"m-named","sessionId":"s-named","text":"Something else"}'),
- ('message','m-running','{"id":"m-running","sessionId":"s-running","text":"Still going"}'),
- ('message','m-child','{"id":"m-child","sessionId":"s-child","text":"Child ended first"}'),
- ('message','m-long','{"id":"m-long","sessionId":"s-long","text":"Long steered run"}'),
- ('message','m-arch','{"id":"m-arch","sessionId":"s-arch","text":"Archived one"}'),
- ('message','m-fail','{"id":"m-fail","sessionId":"s-fail","text":"FAIL this one"}'),
- ('message','m-agent','{"id":"m-agent","sessionId":"s-agent","text":"Review the step output"}');
+INSERT INTO session(id,created_at,title,title_by,archived_at,actor,pipeline_run_id) VALUES
+ ('s-done',to_timestamp(0.001),NULL,NULL,NULL,NULL,NULL),
+ ('s-named',to_timestamp(0.001),'Chosen by a person','owner@trial.test',NULL,NULL,NULL),
+ ('s-running',to_timestamp(0.001),NULL,NULL,NULL,NULL,NULL),
+ ('s-child',to_timestamp(0.001),NULL,NULL,NULL,NULL,NULL),
+ ('s-long',to_timestamp(0.001),NULL,NULL,NULL,NULL,NULL),
+ ('s-arch',to_timestamp(0.001),NULL,NULL,to_timestamp(0.001),NULL,NULL),
+ ('s-fail',to_timestamp(0.001),NULL,NULL,NULL,NULL,NULL),
+ ('s-host',to_timestamp(0.001),NULL,NULL,NULL,'program-worker',NULL),
+ ('s-legacy',to_timestamp(0.001),NULL,NULL,NULL,'program-worker','r1'),
+ ('s-agent',to_timestamp(0.001),NULL,NULL,NULL,NULL,'r1');
+INSERT INTO message(id,session_id,text) VALUES
+ ('m-done','s-done',E'# STANDING RULES\nFix the login redirect loop'),
+ ('m-named','s-named','Something else'),
+ ('m-running','s-running','Still going'),
+ ('m-child','s-child','Child ended first'),
+ ('m-long','s-long','Long steered run'),
+ ('m-arch','s-arch','Archived one'),
+ ('m-fail','s-fail','FAIL this one'),
+ ('m-agent','s-agent','Review the step output');
 INSERT INTO execution(id,kind,state,session_id,started_at,ended_at,data) VALUES
  ('e-done','agent_run','succeeded','s-done',now()-interval '2 min',now()-interval '1 min','{"id":"e-done"}'),
  ('e-named','agent_run','succeeded','s-named',now()-interval '2 min',now()-interval '1 min','{"id":"e-named"}'),
@@ -51,19 +51,10 @@ INSERT INTO execution(id,kind,state,session_id,started_at,ended_at,data) VALUES
 func insertTitleReplies(t *testing.T, e *testCoordEnv, ids string) {
 	t.Helper()
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
-	 INSERT INTO document(kind,id,project_id,data)
-	 SELECT 'event', e.id||'-reply', e.project_id,
-	  jsonb_build_object('executionId',e.id,'data','{"fleetNormalized":{"blocks":[{"kind":"text","markdown":"First agent reply"}]}}'::jsonb)
+	 INSERT INTO event(id,execution_id,project_id,payload)
+	 SELECT e.id||'-reply', e.id, e.project_id,
+	  jsonb_build_object('data','{"fleetNormalized":{"blocks":[{"kind":"text","markdown":"First agent reply"}]}}'::jsonb)
 	 FROM execution e WHERE e.id IN (`+ids+`)`)
-}
-
-func migrationBody(t *testing.T, version string) string {
-	t.Helper()
-	m := regexp.MustCompile(`(?s)\n-- migration ` + version + `:.*?(\n-- migration \d+|$)`).FindString(schemaSQL)
-	if m == "" {
-		t.Fatalf("migration %s not found", version)
-	}
-	return strings.TrimSuffix(regexp.MustCompile(`\n-- migration \d+$`).ReplaceAllString(m, ""), "\n")
 }
 
 // Requirement: fleet-conversations.md, Titles: a conversation gets a short title from a small model after its first reply,
@@ -76,7 +67,6 @@ func TestSessionTitles(t *testing.T) {
 	e := openTestCoordinator(t, false)
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", titleFixture)
 	insertTitleReplies(t, e, "'e-done','e-named','e-running','e-long','e-child-sub','e-fail','e-agent','e-arch'")
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", migrationBody(t, "73"))
 	owner := e.ownerHeaders()
 
 	var mu sync.Mutex
@@ -145,16 +135,16 @@ func TestSessionTitles(t *testing.T) {
 	if code != 200 || s["titleBy"] != "auto" || s["titleCall"] != "call:c-#" {
 		t.Fatalf("session_get %d titleBy %v titleCall %v", code, s["titleBy"], s["titleCall"])
 	}
-	if got := psqlLines(t, e, `SELECT coalesce(data->>'title','-')||'|'||(data ? 'titleAttemptAt') FROM document WHERE id='s-fail'`); len(got) != 1 || got[0] != "-|true" {
+	if got := psqlLines(t, e, `SELECT coalesce(title,'-')||'|'||(title_attempt_at IS NOT NULL) FROM session WHERE id='s-fail'`); len(got) != 1 || got[0] != "-|true" {
 		t.Fatalf("failed call: %v", got)
 	}
-	// A writer that read the session before the title and puts it back keeps the title (putDocument).
+	// A writer that read the session before the title and puts it back keeps the title (convPut).
 	if err := runTx(e.ctx, e.app, nil, true, NOLOCK, func(q *Request) error {
 		return put(q, "session", doc{"id": "s-done", "createdAt": 1, "workingDirectory": "/w"})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := psqlLines(t, e, `SELECT (data->>'title')||'|'||(data->>'titleBy')||'|'||(data->>'workingDirectory') FROM document WHERE id='s-done'`); len(got) != 1 || got[0] != "Fix the login redirect loop|auto|/w" {
+	if got := psqlLines(t, e, `SELECT title||'|'||title_by||'|'||(payload->>'workingDirectory') FROM session WHERE id='s-done'`); len(got) != 1 || got[0] != "Fix the login redirect loop|auto|/w" {
 		t.Fatalf("stale put lost the title: %v", got)
 	}
 
@@ -175,9 +165,9 @@ func TestSessionTitles(t *testing.T) {
 		t.Fatalf("unknown session %d", code)
 	}
 	// A person renames only a conversation they direct, even one they can read.
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `INSERT INTO document(kind,id,data,project_id) VALUES
-	 ('session','s-theirs','{"id":"s-theirs","projectId":"desiign","directedBy":"owner@trial.test"}','desiign'),
-	 ('session','s-mine','{"id":"s-mine","projectId":"desiign","directedBy":"member@trial.test"}','desiign')`)
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `INSERT INTO session(id,project_id,directed_by) VALUES
+	 ('s-theirs','desiign','owner@trial.test'),
+	 ('s-mine','desiign','member@trial.test')`)
 	member := map[string]string{"Authorization": owner["Authorization"], "X-Fleet-Person": "member@trial.test"}
 	if code, b := e.callJSON(t, "POST", "/api/ops/session_rename", doc{"sessionId": "s-theirs", "title": "Mine now"}, member); code != 403 {
 		t.Fatalf("rename of another's conversation %d %v", code, b)
@@ -189,11 +179,11 @@ func TestSessionTitles(t *testing.T) {
 	if code != 200 || r["title"] != "Login redirect" || r["titleBy"] != testOwnerEmail {
 		t.Fatalf("session_rename %d %v", code, r)
 	}
-	if got := psqlLines(t, e, `SELECT (data->>'title')||'|'||(data ? 'titleAttemptAt')||'|'||(data->>'titleBy') FROM document WHERE id='s-fail'`); len(got) != 1 || got[0] != "Login redirect|false|"+testOwnerEmail {
+	if got := psqlLines(t, e, `SELECT title||'|'||(title_attempt_at IS NOT NULL)||'|'||title_by FROM session WHERE id='s-fail'`); len(got) != 1 || got[0] != "Login redirect|false|"+testOwnerEmail {
 		t.Fatalf("renamed session %v", got)
 	}
 	// Even with the retry due, a renamed session is never asked for again.
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET data=data||'{"titleAttemptAt":1}' WHERE id='s-fail'`)
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE session SET title_attempt_at=to_timestamp(0.001) WHERE id='s-fail'`)
 	if err := sessionTitlePass(e.ctx, e.app); err != nil {
 		t.Fatal(err)
 	}
@@ -203,15 +193,13 @@ func TestSessionTitles(t *testing.T) {
 
 	// A failed first run with no reply does not win. A session moved after its first message does not send it to the new project.
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `
-	 INSERT INTO document(kind,id,project_id,data) VALUES
-	 ('session','s-resumed',NULL,'{"id":"s-resumed"}'),
-	 ('message','m-resumed',NULL,'{"sessionId":"s-resumed","text":"Resumed execution"}'),
-	 ('session','s-moved','prj-new','{"id":"s-moved","projectId":"prj-new"}'),
-	 ('session','s-native','prj-new','{"id":"s-native","projectId":"prj-new"}'),
-	 ('message','m-native','prj-new','{"sessionId":"s-native","text":"Native event scope"}'),
-	 ('session','s-foreign-run','prj-new','{"id":"s-foreign-run","projectId":"prj-new"}'),
-	 ('message','m-foreign-run','prj-new','{"sessionId":"s-foreign-run","text":"Foreign run scope"}'),
-	 ('message','m-moved','prj-old','{"sessionId":"s-moved","text":"Old project text"}');
+	 INSERT INTO session(id,project_id) VALUES
+	 ('s-resumed',NULL),('s-moved','prj-new'),('s-native','prj-new'),('s-foreign-run','prj-new');
+	 INSERT INTO message(id,session_id,project_id,text) VALUES
+	 ('m-resumed','s-resumed',NULL,'Resumed execution'),
+	 ('m-native','s-native','prj-new','Native event scope'),
+	 ('m-foreign-run','s-foreign-run','prj-new','Foreign run scope'),
+	 ('m-moved','s-moved','prj-old','Old project text');
 	 INSERT INTO execution(id,kind,state,session_id,project_id,started_at,ended_at,data) VALUES
 	 ('e-resumed-failed','agent_run','failed','s-resumed',NULL,now()-interval '3 min',now(),'{}'),
 	 ('e-resumed-success','agent_run','succeeded','s-resumed',NULL,now()-interval '1 min',now(),'{}'),
@@ -219,7 +207,7 @@ func TestSessionTitles(t *testing.T) {
 	 ('e-native','agent_run','succeeded','s-native','prj-new',now()-interval '2 min',now(),'{}'),
 	 ('e-foreign-run','agent_run','succeeded','s-foreign-run','prj-old',now()-interval '2 min',now(),'{}')`)
 	insertTitleReplies(t, e, "'e-resumed-success','e-moved','e-native','e-foreign-run'")
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET project_id=NULL WHERE id IN ('e-native-reply','e-foreign-run-reply')`)
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE event SET project_id=NULL WHERE id IN ('e-native-reply','e-foreign-run-reply')`)
 	if err := sessionTitlePass(e.ctx, e.app); err != nil {
 		t.Fatal(err)
 	}
@@ -228,9 +216,8 @@ func TestSessionTitles(t *testing.T) {
 	}
 
 	// A failure the same for every session (the model unreachable) stops the batch after one call and uses no try.
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `INSERT INTO document(kind,id,data) VALUES
-	 ('session','s-o1','{"id":"s-o1"}'),('session','s-o2','{"id":"s-o2"}'),
-	 ('message','m-o1','{"id":"m-o1","sessionId":"s-o1","text":"Outage one"}'),('message','m-o2','{"id":"m-o2","sessionId":"s-o2","text":"Outage two"}');
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `INSERT INTO session(id) VALUES ('s-o1'),('s-o2');
+	 INSERT INTO message(id,session_id,text) VALUES ('m-o1','s-o1','Outage one'),('m-o2','s-o2','Outage two');
 	 INSERT INTO execution(id,kind,state,session_id,started_at,ended_at,data) VALUES
 	 ('e-o1','agent_run','succeeded','s-o1',now()-interval '2 min',now(),'{"id":"e-o1"}'),('e-o2','agent_run','succeeded','s-o2',now()-interval '2 min',now(),'{"id":"e-o2"}')`)
 	insertTitleReplies(t, e, "'e-o1','e-o2'")
@@ -243,7 +230,7 @@ func TestSessionTitles(t *testing.T) {
 		t.Fatalf("outage: %d calls, pass error %v", outage, err)
 	}
 	// The session that met it waits titleRetryShared (not titleRetry); the other is not marked; neither uses a try.
-	if got := psqlLines(t, e, `SELECT id||'|'||coalesce(data->>'titleAttempts','0')||'|'||coalesce(((data->>'titleAttemptAt')::bigint < (extract(epoch FROM now())*1000)::bigint-3000000)::text,'unmarked') FROM document WHERE id IN ('s-o1','s-o2') ORDER BY id`); strings.Join(got, ",") != "s-o1|0|unmarked,s-o2|0|true" {
+	if got := psqlLines(t, e, `SELECT id||'|'||title_attempts||'|'||coalesce((title_attempt_at < now()-interval '3000000 milliseconds')::text,'unmarked') FROM session WHERE id IN ('s-o1','s-o2') ORDER BY id`); strings.Join(got, ",") != "s-o1|0|unmarked,s-o2|0|true" {
 		t.Fatalf("an outage: %v", got)
 	}
 	sessionTitleCall = func(context.Context, *App, string, string) (string, string, error) {
@@ -252,7 +239,7 @@ func TestSessionTitles(t *testing.T) {
 	if err := sessionTitlePass(e.ctx, e.app); !errors.Is(err, errTitleUnknown) {
 		t.Fatalf("unknown call: %v", err)
 	}
-	if got := psqlLines(t, e, `SELECT data->>'titleUnknownCall' FROM document WHERE id='s-o1'`); len(got) != 1 || got[0] != "uncertain-call" {
+	if got := psqlLines(t, e, `SELECT title_unknown_call FROM session WHERE id='s-o1'`); len(got) != 1 || got[0] != "uncertain-call" {
 		t.Fatalf("unknown call receipt: %v", got)
 	}
 	if err := sessionTitlePass(e.ctx, e.app); err != nil {

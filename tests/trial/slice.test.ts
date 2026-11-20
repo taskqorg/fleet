@@ -33,7 +33,7 @@ async function host(id: string) {
   return (path: string, body: unknown, headers: Record<string, string> = {}) => call('POST', path, body, {authorization: 'Bearer ' + secret, ...headers});
 }
 // The coordinator's default host is trial-host (FLEET_HOST_ID in run.ts): its poll claims a queued execution.
-const session = async () => ok(await browser('POST', '/api/sessions', {})).sessionId as string;
+const session = async () => ok(await browser('POST', '/api/ops/session_create', {})).sessionId as string;
 async function started() {
   const h = await host('trial-host');
   // Receipt/event transport fixtures use explicit placement; asynchronous dispatch may choose either registered host.
@@ -62,11 +62,11 @@ async function stream(person: string, cursor?: number) {
 }
 
 test('SL1 browser requests need the Bearer browser secret and a known person (risk: authorization header parsed loosely)', async () => {
-  assert.equal((await call('GET', '/api/sessions/x')).status, 401, 'no credentials');
-  assert.equal((await call('GET', '/api/sessions/x', undefined, {authorization: 'Basic ' + SECRET, 'x-fleet-person': OWNER})).status, 401, 'another scheme');
-  assert.equal((await call('GET', '/api/sessions/x', undefined, {authorization: 'Bearer ' + SECRET.slice(0, -1), 'x-fleet-person': OWNER})).status, 401, 'a prefix of the secret');
-  assert.equal((await call('GET', '/api/sessions/x', undefined, {authorization: 'Bearer ' + SECRET})).status, 401, 'no person');
-  assert.equal((await call('GET', '/api/sessions/x', undefined, as('nobody@trial.test'))).status, 403, 'unknown person');
+  assert.equal((await call('POST', '/api/ops/session_get', {sessionId: 'x'})).status, 401, 'no credentials');
+  assert.equal((await call('POST', '/api/ops/session_get', {sessionId: 'x'}, {authorization: 'Basic ' + SECRET, 'x-fleet-person': OWNER})).status, 401, 'another scheme');
+  assert.equal((await call('POST', '/api/ops/session_get', {sessionId: 'x'}, {authorization: 'Bearer ' + SECRET.slice(0, -1), 'x-fleet-person': OWNER})).status, 401, 'a prefix of the secret');
+  assert.equal((await call('POST', '/api/ops/session_get', {sessionId: 'x'}, {authorization: 'Bearer ' + SECRET})).status, 401, 'no person');
+  assert.equal((await call('POST', '/api/ops/session_get', {sessionId: 'x'}, as('nobody@trial.test'))).status, 403, 'unknown person');
 });
 
 test('SL2 host requests are answered 401 for an unknown secret, never a redirect, and carry no person or foreign host (risk: executor outbox drops rows on any other 4xx; host impersonation)', async () => {
@@ -83,21 +83,21 @@ test('SL2 host requests are answered 401 for an unknown secret, never a redirect
 
 test('SL3 a created session reads back; an unknown one is 404 (risk: session row not committed or wrong shape)', async () => {
   const id = await session();
-  const s = ok(await browser('GET', `/api/sessions/${id}`));
+  const s = ok(await browser('POST', '/api/ops/session_get', {sessionId: id}));
   assert.equal(s.sessionId, id); assert.equal(s.directedBy, OWNER);
   assert.deepEqual([s.messages, s.executions], [[], []]);
-  assert.equal((await browser('GET', `/api/sessions/${randomUUID()}`)).status, 404);
+  assert.equal((await browser('POST', '/api/ops/session_get', {sessionId: randomUUID()})).status, 404);
 });
 
 test('SL4 a message queues one execution with no host yet; a repeated requestId returns the same execution; a bad body changes nothing (risk: duplicate work on client retry)', async () => {
   const id = await session();
-  const e = ok(await browser('POST', `/api/sessions/${id}/messages`, {requestId: 'r1', text: 'hello'}));
+  const e = ok(await browser('POST', '/api/ops/message_send', {sessionId: id, requestId: 'r1', text: 'hello'}));
   assert.equal(e.state, 'preparing'); assert.equal(e.hostId ?? null, null, 'the host is chosen at a poll'); assert.equal(e.sessionId, id);
-  assert.equal(ok(await browser('POST', `/api/sessions/${id}/messages`, {requestId: 'r1', text: 'hello'})).id, e.id);
+  assert.equal(ok(await browser('POST', '/api/ops/message_send', {sessionId: id, requestId: 'r1', text: 'hello'})).id, e.id);
   for (const bad of [{text: 'x'}, {requestId: 'r2'}, {requestId: 'r2', text: ''}, {requestId: 'r2', text: 'x', extra: 1}, []])
-    assert.equal((await browser('POST', `/api/sessions/${id}/messages`, bad)).status, 400, JSON.stringify(bad));
-  assert.equal((await browser('POST', `/api/sessions/${randomUUID()}/messages`, {requestId: 'r1', text: 'x'})).status, 404);
-  const s = ok(await browser('GET', `/api/sessions/${id}`));
+    assert.equal((await browser('POST', '/api/ops/message_send', Array.isArray(bad) ? bad : {sessionId: id, ...bad})).status, 400, JSON.stringify(bad));
+  assert.equal((await browser('POST', '/api/ops/message_send', {sessionId: randomUUID(), requestId: 'r1', text: 'x'})).status, 404);
+  const s = ok(await browser('POST', '/api/ops/session_get', {sessionId: id}));
   assert.deepEqual(s.executions.map((x: any) => x.id), [e.id]);
   assert.deepEqual(s.messages.map((m: any) => [m.requestId, m.text, m.executionId]), [['r1', 'hello', e.id]]);
 });
@@ -115,7 +115,7 @@ test('SL5 a poll of the default host claims a queued execution and delivers its 
 test('SL6 receipts move the execution forward only; a repeated terminal receipt is a no-op; a foreign command is 403 (risk: outbox retries and reordering corrupt state)', async () => {
   const {h, sessionId, executionId, commandId} = await started();
   const receipt = (status: string, extra: object = {}) => h('/api/hosts/receipts', {commandId, executionId, status, ...extra});
-  const state = async () => ok(await browser('GET', `/api/sessions/${sessionId}`)).executions.find((x: any) => x.id === executionId).state;
+  const state = async () => ok(await browser('POST', '/api/ops/session_get', {sessionId: sessionId})).executions.find((x: any) => x.id === executionId).state;
   ok(await receipt('accepted')); ok(await receipt('started')); assert.equal(await state(), 'running');
   assert.equal((await receipt('accepted')).status, 409, 'regression');
   assert.equal((await receipt('bogus')).status, 400, 'invalid status');
@@ -173,7 +173,7 @@ test('SL9 a person without grants sees no owner row, by read or by stream (risk:
   const s = await stream(OUTSIDER);
   assert.ok(await s.until(e => e.some(x => x.event === 'ready')));
   const id = await session();
-  assert.equal((await browser('GET', `/api/sessions/${id}`, undefined, OUTSIDER)).status, 404);
+  assert.equal((await browser('POST', '/api/ops/session_get', {sessionId: id}, OUTSIDER)).status, 404);
   const owner = await stream(OWNER, 0);
   assert.ok(await owner.until(e => e.some(x => x.data?.id === id)), 'the owner sees the change');
   owner.close();
@@ -184,14 +184,14 @@ test('SL9 a person without grants sees no owner row, by read or by stream (risk:
 
 test('SL10 concurrent messages: sessions written at once each get their execution, one requestId sent at once gives one, none fails (risk: transaction and lock layer under concurrency)', async () => {
   const ids = await Promise.all(Array.from({length: 16}, () => session()));
-  const distinct = await Promise.all(ids.map((id, i) => browser('POST', `/api/sessions/${id}/messages`, {requestId: 'd' + i, text: 'm' + i})));
+  const distinct = await Promise.all(ids.map((id, i) => browser('POST', '/api/ops/message_send', {sessionId: id, requestId: 'd' + i, text: 'm' + i})));
   assert.deepEqual(distinct.map(r => r.status), distinct.map(() => 200));
   assert.equal(new Set(distinct.map(r => r.body.id)).size, 16);
   const id = await session();
-  const same = await Promise.all(Array.from({length: 8}, () => browser('POST', `/api/sessions/${id}/messages`, {requestId: 'same', text: 'x'})));
+  const same = await Promise.all(Array.from({length: 8}, () => browser('POST', '/api/ops/message_send', {sessionId: id, requestId: 'same', text: 'x'})));
   assert.deepEqual(same.map(r => r.status), same.map(() => 200));
   assert.equal(new Set(same.map(r => r.body.id)).size, 1);
-  const s = ok(await browser('GET', `/api/sessions/${id}`));
+  const s = ok(await browser('POST', '/api/ops/session_get', {sessionId: id}));
   assert.equal(s.executions.length, 1); assert.equal(s.messages.length, 1);
 });
 

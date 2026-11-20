@@ -52,6 +52,9 @@ func all(q *Request, kind string, filter doc) ([]doc, error) {
 			f[k] = v
 		}
 	}
+	if t := convTables[kind]; t != nil {
+		return convAll(q, t, f)
+	}
 	switch kind {
 	case "execution":
 		return rows(q, "SELECT "+execJSON+" FROM execution WHERE "+execKinds+" AND data @> $1 ORDER BY seq", js(f))
@@ -69,6 +72,9 @@ func get(q *Request, anyID any, kind string) (doc, error) {
 	if id == "" {
 		return nil, errNotFound
 	}
+	if t := convTables[kind]; t != nil {
+		return convGet(q, t, id, false)
+	}
 	switch kind {
 	case "execution":
 		return getExecution(q, id)
@@ -83,6 +89,9 @@ func get(q *Request, anyID any, kind string) (doc, error) {
 func getForUpdate(q *Request, id, kind string) (doc, error) {
 	if id == "" {
 		return nil, errNotFound
+	}
+	if t := convTables[kind]; t != nil {
+		return convGet(q, t, id, true)
 	}
 	return one(q, "SELECT data FROM document WHERE id=$1 AND kind=$2 FOR UPDATE", id, kind)
 }
@@ -121,6 +130,9 @@ func put(q *Request, kind string, v doc) error {
 			return fail(409, fmt.Sprint("Delegation child execution not found: ", v["childExecutionId"]))
 		}
 		return err
+	}
+	if t := convTables[kind]; t != nil {
+		return convPut(q, kind, t, v)
 	}
 	return putDocument(q, kind, v)
 }
@@ -403,13 +415,13 @@ func writeTotals(q *Request, id string) error {
 	if err := exec(q, "SELECT fleet_write_native_observations($1)", id); err != nil {
 		return err
 	}
-	if err := exec(q, `UPDATE execution_totals SET rate_limit_last=r.data->'data',rate_limit_last_basis='measured' FROM (SELECT data FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id=$1`, id); err != nil {
+	if err := exec(q, `UPDATE execution_totals SET rate_limit_last=r.payload->'data',rate_limit_last_basis='measured' FROM (SELECT payload FROM event WHERE NOT delta AND execution_id=$1 AND type='limit_reading' ORDER BY seq DESC LIMIT 1) r WHERE execution_id=$1`, id); err != nil {
 		return err
 	}
 	return exec(q, `WITH pc AS (
-	 SELECT data->'data'->'resources' AS r
-	 FROM document
-	 WHERE kind='event' AND data->>'executionId'=$1 AND data->>'type'='process.closed'
+	 SELECT payload->'data'->'resources' AS r
+	 FROM event
+	 WHERE NOT delta AND execution_id=$1 AND type='process.closed'
 	 ORDER BY seq DESC LIMIT 1
 	), parsed AS (
 	 SELECT
@@ -456,8 +468,8 @@ func writeTotals(q *Request, id string) error {
 
 // writeEnded: the end of an agent run in its thread, one event with a fixed id.
 func writeEnded(q *Request, id string) error {
-	return exec(q, `INSERT INTO document(kind,id,data,project_id) SELECT 'event','ended:'||id,jsonb_build_object('id','ended:'||id,'executionId',id,'sessionId',session_id,'type','execution.ended',
-	 'timestamp',(extract(epoch FROM coalesce(ended_at,now()))*1000)::bigint,'data',jsonb_build_object('fleetNormalized',jsonb_build_object('blocks','[]'::jsonb))),project_id
+	return exec(q, `INSERT INTO event(id,execution_id,session_id,project_id,type,at,payload) SELECT 'ended:'||id,id,session_id,project_id,'execution.ended',
+	 coalesce(ended_at,now()),jsonb_build_object('data',jsonb_build_object('fleetNormalized',jsonb_build_object('blocks','[]'::jsonb)))
 	 FROM execution WHERE id=$1 AND kind='agent_run' ON CONFLICT(id) DO NOTHING`, id)
 }
 
@@ -586,26 +598,10 @@ func putDocument(q *Request, kind string, v doc) error {
 	if p, ok := v["projectId"].(string); ok {
 		project = p
 	}
-	upsert := "excluded.data"
-	if kind == "session" {
-		// The title fields belong to session_rename and the title pass (session_titles.go), which update them in place; a
-		// writer that read the session before them and puts it back keeps the stored ones.
-		upsert = sessionTitleKeep
-	}
-	_, err := q.tx.Exec(q.ctx(), "INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data="+upsert+",project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind", kind, v["id"], b, project)
+	_, err := q.tx.Exec(q.ctx(), "INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind", kind, v["id"], b, project)
 	if err == nil && q.app != nil {
 		switch kind {
-		case "command":
-			if astr(v["status"]) == "pending" {
-				if hid := astr(v["hostId"]); hid != "" {
-					onEnd(q.tx, func(committed bool) {
-						if committed {
-							q.app.wakeHost(hid)
-						}
-					})
-				}
-			}
-		case "host", "managed-account", "queued-message":
+		case "host", "managed-account":
 			onEnd(q.tx, func(committed bool) {
 				if committed {
 					q.app.wakeDispatch()
