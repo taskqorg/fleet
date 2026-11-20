@@ -42,8 +42,11 @@ async function agent(person: string, start: object) {
     ok(await call('POST', '/api/ops/session_profile', {sessionId: sessionId, profileId: 'pm'}, as(person)));
     s = {sessionId, executionId: ok(await call('POST', '/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'pm turn'}, as(person))).id};
   }
-  const {commands} = ok(await hostCall(person, '/api/hosts/poll', poll));
-  const c = commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
+  // As an executor does, the host polls again until the start comes: one poll may hand it out a round later (a busy
+  // execution row is withheld until the next poll, host_poll.go pollReadyCommand).
+  let c: any;
+  for (let path = '/api/hosts/poll', end = Date.now() + 10_000; !c && Date.now() < end; path = '/api/hosts/poll?wait=1s')
+    c = ok(await hostCall(person, path, poll)).commands.find((x: any) => x.executionId === s.executionId && x.kind === 'start');
   assert.ok(c, 'the host claims the start command');
   const rpc = (request: object) => hostCall(person, '/api/hosts/agent-tools', {hostId, executionId: s.executionId, commandId: c.id, request: {jsonrpc: '2.0', id: 1, ...request}});
   const tool = async (name: string, args: object = {}): Promise<Reply> => {
