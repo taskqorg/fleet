@@ -4,7 +4,6 @@ import (
 	"context"
 	"fleet/contract"
 	"github.com/jackc/pgx/v5"
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -13,9 +12,9 @@ import (
 // Requirement: resource lineage preserves accounting and transaction settings;
 // risk: native task creation times out compiling JIT or leaks settings after failure.
 func TestTaskResourceJITPostgres(t *testing.T) {
-	url := os.Getenv("FLEET_JIT_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("run through tests/go/analytics-jit.test.ts isolated PostgreSQL harness")
+	url, ok := outsideFixtureURL(t, "FLEET_JIT_TEST_DATABASE_URL", "tests/go/analytics-jit.test.ts")
+	if !ok {
+		return
 	}
 	ctx := context.Background()
 	c, err := pgx.Connect(ctx, url)

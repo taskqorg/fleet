@@ -235,7 +235,9 @@ Go rules:
 
 Pull requests reach `main` only through the GitHub merge queue. A worker runs `/code-review` before it opens its pull request and enables auto-merge on it after the `code-review` status; the orchestrator can take any pull request out of the queue. Branches are rebased on `main`, never merged with it, and are not stacked ([delivery pipeline](docs/designs/fleet-delivery-pipeline.md#8-workers-merge-and-watch-their-own-pull-requests)).
 
-The full fallback merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && test -z "$(git status --porcelain)" && go vet ./... && CGO_ENABLED=1 go test -race ./...) && pnpm test`. CI splits it into the jobs `go`, `app` and `browser` and builds the outside-test coordinator with `-race`.
+The full fallback merge-gate command is `pnpm install --frozen-lockfile && pnpm run build && (cd go && go generate ./... && test -z "$(git status --porcelain)" && go vet ./... && FLEET_REQUIRE_PG=1 FLEET_PG_FIXTURES=outside CGO_ENABLED=1 go test -race ./...) && pnpm test`. CI splits it into the jobs `go`, `app` and `browser` and builds the outside-test coordinator with `-race`.
+
+`FLEET_REQUIRE_PG=1` fails a PostgreSQL Go test that would skip; `FLEET_PG_FIXTURES=outside` leaves the Go halves of outside tests to `pnpm test` ([coordinator verification](go/coordinator/README.md#verification)).
 
 `pnpm run build` runs `app:build` (typecheck and bundle) and `go:build` (the four Go binaries in `go/bin/`). `pnpm test` runs the app unit tests and `tests/go/run.sh`: the binary on a fresh database of a local PostgreSQL server (server programs on `PATH`, `tests/harness.ts`), with `tests/trial` and `tests/go` over HTTP.
 

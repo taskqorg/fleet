@@ -10,7 +10,6 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"os"
 	"reflect"
 	"slices"
 	"sort"
@@ -202,9 +201,9 @@ func TestResourceLegacyReasoningAPI(t *testing.T) {
 // risk: double counting, dropped work/checkpoints, stale owners or repricing on reconstruction.
 // Invoked by tests/go/project-resources.test.ts on its isolated PostgreSQL fixture.
 func TestResourcePostgres(t *testing.T) {
-	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
-	if url == "" {
-		t.Skip("isolated PostgreSQL fixture provided by tests/go/project-resources.test.ts")
+	url, ok := outsideFixtureURL(t, "FLEET_RESOURCE_TEST_URL", "tests/go/project-resources.test.ts")
+	if !ok {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -727,9 +726,9 @@ func TestResourcePostgres(t *testing.T) {
 // Requirement: both bound-project enumerations apply to every new read before cursor/anchor
 // interpretation. Risk: the generic host path exposes a foreign allowed project or loses binding.
 func TestResourceAPIBoundPaths(t *testing.T) {
-	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
-	if url == "" {
-		t.Skip("isolated API fixture")
+	url, ok := outsideFixtureURL(t, "FLEET_RESOURCE_TEST_URL", "tests/go/project-resource-api.test.ts")
+	if !ok {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -769,9 +768,9 @@ func TestResourceAPIBoundPaths(t *testing.T) {
 // Requirement: batched metric statements preserve atomic replacement on SQL failure and
 // actual backend loss; risk: partial support/publication commits or retries double count.
 func TestResourceMetricBatchPostgres(t *testing.T) {
-	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
-	if url == "" {
-		t.Skip("isolated PostgreSQL fixture")
+	url, ok := outsideFixtureURL(t, "FLEET_RESOURCE_TEST_URL", "tests/go/project-resources.test.ts")
+	if !ok {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -887,9 +886,9 @@ func TestResourceMetricBatchPostgres(t *testing.T) {
 // Requirement: no-op elimination preserves zero/missing coverage, support multiplicity
 // and last-reference removal; risk: numeric zero hides an item or drops extrema/reasons.
 func TestResourceNoopSupportPostgres(t *testing.T) {
-	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
-	if url == "" {
-		t.Skip("isolated PostgreSQL fixture")
+	url, ok := outsideFixtureURL(t, "FLEET_RESOURCE_TEST_URL", "tests/go/project-resources.test.ts")
+	if !ok {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1304,9 +1303,9 @@ func TestResourceNoopSupportPostgres(t *testing.T) {
 // Requirement: one bounded project cohort commits exact independent leaves atomically;
 // risk: failed members consume healthy claims, late facts disappear, or publication assumes one leaf.
 func TestResourceCohortPostgres(t *testing.T) {
-	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
-	if url == "" {
-		t.Skip("isolated PostgreSQL fixture")
+	url, ok := outsideFixtureURL(t, "FLEET_RESOURCE_TEST_URL", "tests/go/project-resources.test.ts")
+	if !ok {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -1742,9 +1741,9 @@ func (c *resourceLostCommitConn) Read(dst []byte) (int, error) {
 // Requirement: bounded selected-ID hints preserve every scope exclusion under FORCE RLS;
 // risk: correlated scope scans amplify backlog, or missing/moving data authorizes an unsafe cohort.
 func TestResourceBatchHintsPostgres(t *testing.T) {
-	url := os.Getenv("FLEET_RESOURCE_TEST_URL")
-	if url == "" {
-		t.Skip("isolated PostgreSQL fixture")
+	url, ok := outsideFixtureURL(t, "FLEET_RESOURCE_TEST_URL", "tests/go/project-resources.test.ts")
+	if !ok {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

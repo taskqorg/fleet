@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +14,9 @@ import (
 // Requirement: durable hints retain canonical identities across failed claims, backend loss
 // and concurrent delivery; risk: lost source wakeup, transient precommit delivery or RLS leak.
 func TestWakeOutboxPostgres(t *testing.T) {
-	url := os.Getenv("FLEET_WAKE_TEST_URL")
-	if url == "" {
-		t.Skip("isolated wake-outbox fixture")
+	url, ok := outsideFixtureURL(t, "FLEET_WAKE_TEST_URL", "tests/go/wake-outbox.test.ts")
+	if !ok {
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -35,7 +35,8 @@ case "$part:$mode" in
     FLEET_EXECUTOR_BIN="$bin/fleet-executor" node --test tests/executor/mcp-replay.test.ts tests/executor/artifact-tools.test.ts ;;
   # -race needs cgo on Linux; release binaries stay CGO_ENABLED=0 (deploy/build-release.sh).
   unit:build) (cd go && CGO_ENABLED=1 go test -race -count=1 -run '^$' ./...) ;;
-  unit:test) (cd go && CGO_ENABLED=1 go test -race -count=1 ./...) ;;
+  # Every PostgreSQL unit test must run (FLEET_REQUIRE_PG); the Go halves of outside tests run in the outside parts.
+  unit:test) (cd go && FLEET_REQUIRE_PG=1 FLEET_PG_FIXTURES=outside CGO_ENABLED=1 go test -race -count=1 ./...) ;;
   outside-*:build) (cd go && CGO_ENABLED=1 go build -race -o "$bin/fleet-coordinator" ./coordinator) ;;
   outside-*:test)
     "$self" "$part" build
