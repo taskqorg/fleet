@@ -1594,5 +1594,6 @@ func TestDownloadEmptyFileProviderStalls(t *testing.T) {
 	}
 	data, err := io.ReadAll(response.Body)
 	response.Body.Close()
+	gw.halt() // The client can finish reading before the download handler appends its completed line.
 	expect(t, []any{response.StatusCode, len(data), err == nil, field(lastLine(t, gw), "transfer", "sha256")}, []any{200, 0, true, shaHex(nil)}, "empty file")
 }
