@@ -82,10 +82,11 @@ eight servers.
 from server-sent `touches`; lists stay on `useListPage`. No raw `op()` reads in views, no `any`.
 Contract list rows are closed types. One JSON source for presets, view grammar and harness lists.
 
-**S10 Enforcement.** `go/coordinator/DESIGN_RULES.md` lists S1–S9; `design_rules_test.go` scans the
-source (go/parser) and fails on: SQL literals, `map[string]any` from the database, state-column writes
-outside the owner, `go func`/tickers outside `background.go`/the kit, raw op registration, `cause=`
-writes outside `problems.go`. A legacy allowlist names the files not yet moved; it only shrinks.
+**S10 Enforcement.** `go/coordinator/DESIGN_RULES.md` lists S1–S10; `design_rules_test.go` scans the
+coordinator source (go/parser) and fails on SQL literals (`R-SQL`), map accessors and `map[string]any`
+(`R-MAP`), goroutines, sleeps and tickers (`R-GO`) and raw op registration (`R-OP`). A legacy allowlist
+names the files not yet moved; it only shrinks. Not built: checks for state-column writes outside the
+owner, `cause=` writes outside `problems.go`, and exemptions for `background.go` and the kit (stage 1).
 
 ## How the work runs
 

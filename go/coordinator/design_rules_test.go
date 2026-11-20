@@ -23,6 +23,8 @@ var designSQLStarts = []string{"select", "insert", "update", "delete", "with"}
 
 var designMapCalls = map[string]bool{"astr": true, "anys": true, "mapOf": true}
 
+var designTimeCalls = map[string]bool{"NewTicker": true, "Tick": true, "Sleep": true, "AfterFunc": true}
+
 var designOpCalls = map[string]bool{"gatedOp": true, "gatedObjOp": true, "shaped": true, "operation": true, "agentTool": true}
 
 // designRuleHits returns rule ID -> positions of its violations in one file.
@@ -39,10 +41,11 @@ func designRuleHits(f *ast.File) map[string][]token.Pos {
 			if err != nil {
 				break
 			}
-			// A keyword followed by more text: "select ... from", not a lone word.
-			if fields := strings.Fields(s); len(fields) > 1 {
+			// A keyword followed by more text ("select ... from"), or an upper-case keyword and a space
+			// ("SELECT " + cols); a lone word such as "update" or the HTTP method "DELETE" is not SQL.
+			if fields := strings.Fields(strings.TrimLeft(strings.TrimSpace(s), "(")); len(fields) > 0 {
 				for _, kw := range designSQLStarts {
-					if strings.EqualFold(fields[0], kw) {
+					if strings.EqualFold(fields[0], kw) && (len(fields) > 1 || fields[0] == strings.ToUpper(kw) && strings.HasSuffix(s, " ")) {
 						add("R-SQL", x)
 					}
 				}
@@ -64,7 +67,7 @@ func designRuleHits(f *ast.File) map[string][]token.Pos {
 				}
 			}
 			if sel, ok := fun.(*ast.SelectorExpr); ok {
-				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" && (sel.Sel.Name == "NewTicker" || sel.Sel.Name == "Sleep") {
+				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" && designTimeCalls[sel.Sel.Name] {
 					add("R-GO", x)
 				}
 			}
@@ -75,7 +78,8 @@ func designRuleHits(f *ast.File) map[string][]token.Pos {
 		case *ast.MapType:
 			k, kok := x.Key.(*ast.Ident)
 			v, vok := x.Value.(*ast.Ident)
-			if kok && vok && k.Name == "string" && v.Name == "any" {
+			iface, iok := x.Value.(*ast.InterfaceType)
+			if kok && k.Name == "string" && (vok && v.Name == "any" || iok && len(iface.Methods.List) == 0) {
 				add("R-MAP", x)
 			}
 		case *ast.GoStmt:
@@ -178,7 +182,7 @@ var designRulesLegacy = map[string]map[string]bool{
 	"event_batch.go":         {"R-MAP": true, "R-SQL": true},
 	"execution_trace.go":     {"R-MAP": true, "R-SQL": true},
 	"executions.go":          {"R-GO": true, "R-MAP": true, "R-OP": true, "R-SQL": true},
-	"github.go":              {"R-MAP": true},
+	"github.go":              {"R-GO": true, "R-MAP": true},
 	"health.go":              {"R-MAP": true},
 	"host_events.go":         {"R-MAP": true, "R-OP": true, "R-SQL": true},
 	"host_poll.go":           {"R-MAP": true, "R-SQL": true},

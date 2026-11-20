@@ -41,8 +41,15 @@ type outsideRun struct {
 
 var outsideRuns sync.Map // outside test file -> *outsideRun
 
+// coordinatorBuild builds go/bin/fleet-coordinator once per test process for every owner file.
+var coordinatorBuild struct {
+	once sync.Once
+	out  string
+	err  error
+}
+
 // outsideFixtureURL returns the database URL that file (tests/go/<name>.test.ts, the owner of this test's fixture)
-// passes in env. Without it the test runs that file instead, once per test process: it builds go/bin/fleet-coordinator,
+// passes in env. Without it the test runs that file instead, once per test process: it builds go/bin/fleet-coordinator (once),
 // runs `node tests/go/run-files.ts 1 <file>` and passes when the file passed and names this test; ok false then
 // means the test is done.
 func outsideFixtureURL(t *testing.T, env, file string) (url string, ok bool) {
@@ -52,6 +59,12 @@ func outsideFixtureURL(t *testing.T, env, file string) (url string, ok bool) {
 	}
 	if os.Getenv("FLEET_PG_FIXTURES") == "outside" {
 		t.Skipf("fixture half of %s, run there (FLEET_PG_FIXTURES=outside): node tests/go/run-files.ts 1 %s", file, file)
+	}
+	if os.Geteuid() == 0 {
+		pgUnavailable(t, "fixture half of %s: initdb cannot run as root", file)
+	}
+	if _, err := findPostgresBinDir(); err != nil {
+		pgUnavailable(t, "fixture half of %s: %v", file, err)
 	}
 	v, _ := outsideRuns.LoadOrStore(file, &outsideRun{})
 	r := v.(*outsideRun)
@@ -82,11 +95,17 @@ func runOutsideFile(file string) (string, error) {
 		}
 	}
 	// The binary the outside tests start (tests/go/run-files.ts), built from this checkout as pnpm run go:build does.
-	build := osexec.Command(goBin, "build", "-trimpath", "-o", "bin/fleet-coordinator", "./coordinator")
-	build.Dir = ".."
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		return string(out), fmt.Errorf("go build ./coordinator: %w", err)
+	coordinatorBuild.once.Do(func() {
+		build := osexec.Command(goBin, "build", "-trimpath", "-o", "bin/fleet-coordinator", "./coordinator")
+		build.Dir = ".."
+		build.Env = append(os.Environ(), "CGO_ENABLED=0")
+		out, err := build.CombinedOutput()
+		if err != nil {
+			coordinatorBuild.out, coordinatorBuild.err = string(out), fmt.Errorf("go build ./coordinator: %w", err)
+		}
+	})
+	if coordinatorBuild.err != nil {
+		return coordinatorBuild.out, coordinatorBuild.err
 	}
 	run := osexec.Command(node, "tests/go/run-files.ts", "1", file)
 	run.Dir = filepath.Join("..", "..")
