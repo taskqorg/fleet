@@ -65,8 +65,9 @@ func restDecode(b []byte, v any, rest *recordRest) error {
 			(*rest)[k] = raw
 			continue
 		}
+		// A zero value, and an empty list or object, which omitempty would drop on encode, stay as stored.
 		x := reflect.New(t)
-		if json.Unmarshal(raw, x.Interface()) != nil || x.Elem().IsZero() {
+		if json.Unmarshal(raw, x.Interface()) != nil || x.Elem().IsZero() || restEmpty(x.Elem()) {
 			(*rest)[k] = raw
 		}
 	}
@@ -76,6 +77,14 @@ func restDecode(b []byte, v any, rest *recordRest) error {
 		}
 	}
 	return nil
+}
+
+// restEmpty: an empty, non-nil slice or map (through pointers).
+func restEmpty(v reflect.Value) bool {
+	for v.Kind() == reflect.Pointer && !v.IsNil() {
+		v = v.Elem()
+	}
+	return (v.Kind() == reflect.Slice || v.Kind() == reflect.Map) && !v.IsNil() && v.Len() == 0
 }
 
 // restEncode: v's fields, then the stored fields v does not write.
