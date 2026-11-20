@@ -48,10 +48,10 @@ test('Out-of-order process.closed and terminal receipt converge on execution_tot
       ('ex-pc-first','agent_run','running','confirmed',NULL,'${sessionId}','h-tot','claude',to_timestamp(${startedMs}/1000.0),'${OWNER}',jsonb_build_object('id','ex-pc-first','sessionId','${sessionId}','hostId','h-tot','startedAt',${startedMs})),
       ('ex-rc-first','agent_run','running','confirmed',NULL,'${sessionId}','h-tot','claude',to_timestamp(${startedMs}/1000.0),'${OWNER}',jsonb_build_object('id','ex-rc-first','sessionId','${sessionId}','hostId','h-tot','startedAt',${startedMs})),
       ('ex-pre-pr1','agent_run','running','confirmed',NULL,'${sessionId}','h-tot','claude',to_timestamp(${startedMs}/1000.0),'${OWNER}',jsonb_build_object('id','ex-pre-pr1','sessionId','${sessionId}','hostId','h-tot','startedAt',${startedMs}));
-      INSERT INTO document(kind,id,project_id,data) VALUES
-      ('command','cmd-pc-first',NULL,jsonb_build_object('id','cmd-pc-first','kind','start','executionId','ex-pc-first','sessionId','${sessionId}','hostId','h-tot','status','started')),
-      ('command','cmd-rc-first',NULL,jsonb_build_object('id','cmd-rc-first','kind','start','executionId','ex-rc-first','sessionId','${sessionId}','hostId','h-tot','status','started')),
-      ('command','cmd-pre-pr1',NULL,jsonb_build_object('id','cmd-pre-pr1','kind','start','executionId','ex-pre-pr1','sessionId','${sessionId}','hostId','h-tot','status','started'));`);
+      INSERT INTO command(id,project_id,kind,execution_id,session_id,host_id,status) VALUES
+      ('cmd-pc-first',NULL,'start','ex-pc-first','${sessionId}','h-tot','started'),
+      ('cmd-rc-first',NULL,'start','ex-rc-first','${sessionId}','h-tot','started'),
+      ('cmd-pre-pr1',NULL,'start','ex-pre-pr1','${sessionId}','h-tot','started');`);
 
     const summary = {
       cpuMs: 420,
@@ -144,14 +144,14 @@ test('3-tier fleet_write_tokens precedence deduplicates interrupted Claude assis
   try {
     c.sql(`INSERT INTO execution(id,kind,state) VALUES ('t-tier3','agent_run','failed'),('t-tier2','agent_run','succeeded');
       INSERT INTO execution_totals(execution_id) VALUES ('t-tier3'),('t-tier2');
-      INSERT INTO document(kind,id,data) VALUES
+      INSERT INTO event(id,execution_id,event_seq,payload) VALUES
       -- t-tier3: no result/usage.observation, two partial frames of msg-1 (latest wins) + one frame of msg-2
-      ('event','ev-m1a',jsonb_build_object('id','ev-m1a','executionId','t-tier3','seq',1,'data',jsonb_build_object('type','assistant','message',jsonb_build_object('id','msg-1','usage',jsonb_build_object('input_tokens',10,'output_tokens',5))))),
-      ('event','ev-m1b',jsonb_build_object('id','ev-m1b','executionId','t-tier3','seq',2,'data',jsonb_build_object('type','assistant','message',jsonb_build_object('id','msg-1','usage',jsonb_build_object('input_tokens',10,'output_tokens',25,'cache_read_input_tokens',40))))),
-      ('event','ev-m2',jsonb_build_object('id','ev-m2','executionId','t-tier3','seq',3,'data',jsonb_build_object('type','assistant','message',jsonb_build_object('id','msg-2','usage',jsonb_build_object('input_tokens',7,'output_tokens',12,'cache_creation_input_tokens',100))))),
+      ('ev-m1a','t-tier3',1,jsonb_build_object('data',jsonb_build_object('type','assistant','message',jsonb_build_object('id','msg-1','usage',jsonb_build_object('input_tokens',10,'output_tokens',5))))),
+      ('ev-m1b','t-tier3',2,jsonb_build_object('data',jsonb_build_object('type','assistant','message',jsonb_build_object('id','msg-1','usage',jsonb_build_object('input_tokens',10,'output_tokens',25,'cache_read_input_tokens',40))))),
+      ('ev-m2','t-tier3',3,jsonb_build_object('data',jsonb_build_object('type','assistant','message',jsonb_build_object('id','msg-2','usage',jsonb_build_object('input_tokens',7,'output_tokens',12,'cache_creation_input_tokens',100))))),
       -- t-tier2: has assistant events AND result event; result must win without summing assistant messages
-      ('event','ev-2a',jsonb_build_object('id','ev-2a','executionId','t-tier2','seq',1,'data',jsonb_build_object('type','assistant','message',jsonb_build_object('id','msg-9','usage',jsonb_build_object('input_tokens',500,'output_tokens',500))))),
-      ('event','ev-2r',jsonb_build_object('id','ev-2r','executionId','t-tier2','seq',2,'data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','result','nativeUsage',jsonb_build_object('input_tokens',11,'output_tokens',22,'cache_read_input_tokens',33,'cache_creation_input_tokens',44)))));
+      ('ev-2a','t-tier2',1,jsonb_build_object('data',jsonb_build_object('type','assistant','message',jsonb_build_object('id','msg-9','usage',jsonb_build_object('input_tokens',500,'output_tokens',500))))),
+      ('ev-2r','t-tier2',2,jsonb_build_object('data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','result','nativeUsage',jsonb_build_object('input_tokens',11,'output_tokens',22,'cache_read_input_tokens',33,'cache_creation_input_tokens',44)))));
       SELECT fleet_write_tokens(id) FROM execution;`);
 
     const row = (id: string) =>
@@ -160,8 +160,8 @@ test('3-tier fleet_write_tokens precedence deduplicates interrupted Claude assis
     assert.equal(row('t-tier2'), '11,22,33,44,measured', 'Tier 2 result overrides Tier 3 assistant frames');
 
     // Now add a Tier 1 usage.observation event to t-tier2: Tier 1 must override Tier 2.
-    c.sql(`INSERT INTO document(kind,id,data) VALUES
-      ('event','ev-2obs',jsonb_build_object('id','ev-2obs','executionId','t-tier2','seq',3,'data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','usage.observation','nativeUsage',jsonb_build_object('last',jsonb_build_object('inputTokens',90,'cachedInputTokens',20,'outputTokens',9),'total',jsonb_build_object('inputTokens',9999))))));
+    c.sql(`INSERT INTO event(id,execution_id,event_seq,payload) VALUES
+      ('ev-2obs','t-tier2',3,jsonb_build_object('data',jsonb_build_object('fleetNormalized',jsonb_build_object('lifecycle','usage.observation','nativeUsage',jsonb_build_object('last',jsonb_build_object('inputTokens',90,'cachedInputTokens',20,'outputTokens',9),'total',jsonb_build_object('inputTokens',9999))))));
       SELECT fleet_write_tokens('t-tier2');`);
     assert.equal(row('t-tier2'), '70,9,20,measured', 'Tier 1 usage.observation overrides Tier 2 result');
   } finally {
@@ -206,8 +206,8 @@ test('Container exclusions, task_view.totals, tool_run change suppression, connR
       ('p-step-1','pipeline_step','succeeded','desiign','p-run-1','${memSessId}','${taskId}',NULL,'release-pipe',4,'gen',NULL,NULL,'${OWNER}','{}'::jsonb),
       ('leaf-agent-1','agent_run','running','desiign','p-step-1','${memSessId}','${taskId}','h-task','release-pipe',4,'gen','coder',9,'${OWNER}',jsonb_build_object('id','leaf-agent-1','hostId','h-task','sessionId','${memSessId}','projectId','desiign','directedBy','${OWNER}')),
       ('projless-agent','agent_run','succeeded',NULL,NULL,'${memSessId}',NULL,NULL,'release-pipe',2,'plan','pm',3,'${MEMBER}','{}'::jsonb);
-      INSERT INTO document(kind,id,project_id,data) VALUES
-      ('command','cmd-leaf-1','desiign',jsonb_build_object('id','cmd-leaf-1','kind','start','executionId','leaf-agent-1','sessionId','${memSessId}','hostId','h-task','status','started'));
+      INSERT INTO command(id,project_id,kind,execution_id,session_id,host_id,status) VALUES
+      ('cmd-leaf-1','desiign','start','leaf-agent-1','${memSessId}','h-task','started');
       INSERT INTO execution_totals(execution_id,project_id,directed_by,billing_basis,tokens_input,wall_ms,wall_ms_basis,cpu_ms,cpu_ms_basis,peak_memory_bytes,peak_memory_bytes_basis,turn_count,turn_count_basis) VALUES
       ('leaf-agent-1','desiign','${OWNER}','metered',50,1200,'measured',300,'measured',2048,'measured',2,'measured'),
       ('projless-agent',NULL,'${MEMBER}','metered',88,600,'measured',100,'measured',1024,'measured',1,'measured');`);

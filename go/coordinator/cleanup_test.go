@@ -125,11 +125,11 @@ INSERT INTO definition(kind,id,path,head,project_id) VALUES ('project','acc','co
 INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,actor_kind,message) VALUES
  ('project','acc',1,'{"settings":{"id":"acc","name":"Acc","contextFiles":[]},"contextFiles":[]}','x','editor','person','t'),('project','keep',1,'{"settings":{"id":"keep","name":"Keep","contextFiles":[]},"contextFiles":[]}','y','editor','person','t');
 INSERT INTO task(id,title,project_id) VALUES ('t1','acceptance task','acc'),('t2','live task','keep');
-INSERT INTO document(kind,id,data,project_id) VALUES ('session','s1','{"id":"s1","projectId":"acc"}','acc'),
- ('event','event:e1:x','{"id":"event:e1:x","executionId":"e1","seq":0,"type":"x"}','acc');
+INSERT INTO session(id,project_id) VALUES ('s1','acc');
 INSERT INTO execution(id,kind,state,project_id,task_id,session_id,data) VALUES
  ('e1','agent_run','succeeded','acc','t1','s1','{"id":"e1","sessionId":"s1"}'),
  ('e2','agent_run','running','acc','t1','s1','{"id":"e2","sessionId":"s1","hostId":"h-del"}');
+INSERT INTO event(id,execution_id,project_id,event_seq,type) VALUES ('event:e1:x','e1','acc',0,'x');
 UPDATE execution SET host_id='h-del' WHERE id='e2';
 INSERT INTO execution_totals(execution_id,project_id) VALUES ('e1','acc');
 INSERT INTO question(id,kind,text,project_id,task_id,state) VALUES ('q1','operator_decision','decide','acc','t1','open');
@@ -163,7 +163,9 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 	}
 	for _, sql := range []string{"SELECT count(*) FROM task WHERE project_id='acc'", "SELECT count(*) FROM execution WHERE project_id='acc'",
 		"SELECT count(*) FROM question WHERE project_id='acc'", "SELECT count(*) FROM artifact WHERE project_id='acc'",
-		"SELECT count(*) FROM document WHERE project_id='acc'", "SELECT count(*) FROM execution_totals WHERE project_id='acc'",
+		"SELECT count(*) FROM document WHERE project_id='acc'", "SELECT count(*) FROM session WHERE project_id='acc'",
+		"SELECT count(*) FROM event WHERE project_id='acc'", "SELECT count(*) FROM command WHERE project_id='acc'",
+		"SELECT count(*) FROM execution_totals WHERE project_id='acc'",
 		"SELECT count(*) FROM definition WHERE kind='project' AND id='acc' AND retired_at IS NULL"} {
 		if n := appCount(t, e, false, sql); n != 0 {
 			t.Errorf("deleted rows still read: %s = %d", sql, n)
@@ -226,8 +228,8 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 		t.Fatalf("a second experiment delete: %d", c)
 	}
 	// A host reports for the deleted trial after the delete: the row is born tombstoned.
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `SET fleet.deleted = 'on'; INSERT INTO document(kind,id,data,project_id) VALUES ('event','event:r1:late','{"id":"event:r1:late","executionId":"r1","seq":1,"type":"x"}','keep')`)
-	if n := appCount(t, e, false, "SELECT count(*) FROM document WHERE id='event:r1:late'"); n != 0 {
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `SET fleet.deleted = 'on'; INSERT INTO event(id,execution_id,project_id,event_seq,type) VALUES ('event:r1:late','r1','keep',1,'x')`)
+	if n := appCount(t, e, false, "SELECT count(*) FROM event WHERE id='event:r1:late'"); n != 0 {
 		t.Fatalf("a late row of a deleted trial is read")
 	}
 	// A row written later that names a tombstoned trial keeps it at purge (design test 4).
@@ -240,8 +242,8 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 		t.Fatalf("a project with pending commands is purgeable, or no reason given: %d %v", c, p)
 	}
 	// The host settles them; a command for a host that is gone (removed, then purged) never is, and does not keep it.
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET data=data||'{"status":"completed"}' WHERE kind='command' AND data->>'executionId'='e2';
-INSERT INTO document(kind,id,data) VALUES ('command','c-ghost','{"id":"c-ghost","kind":"teardown","executionId":"e2","hostId":"h-ghost","status":"pending"}')`)
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE command SET status='completed' WHERE execution_id='e2';
+INSERT INTO command(id,kind,execution_id,host_id,status) VALUES ('c-ghost','teardown','e2','h-ghost','pending')`)
 	c, p := call("system_purge", doc{"preview": true}, owner)
 	removed, kept := map[string][]string{}, map[string][]string{}
 	for _, x := range anys(p["removed"]) {
@@ -277,12 +279,12 @@ INSERT INTO document(kind,id,data) VALUES ('command','c-ghost','{"id":"c-ghost",
 	if c != 200 || purged["purged"] != true || num(purged["retryLater"]) != 0 {
 		t.Fatalf("purge = %d %v", c, purged)
 	}
-	for _, tbl := range []string{"task", "execution", "question", "artifact", "document", "execution_totals", "task_derived", "entity_code"} {
+	for _, tbl := range []string{"task", "execution", "question", "artifact", "document", "session", "message", "event", "command", "execution_totals", "task_derived", "entity_code"} {
 		if n := psqlLines(t, e, "SELECT count(*) FROM "+tbl+" WHERE project_id='acc'"); n[0] != "0" {
 			t.Errorf("purged project rows left in %s: %v", tbl, n)
 		}
 	}
-	if n := psqlLines(t, e, "SELECT count(*) FROM document WHERE id='c-ghost'"); n[0] != "0" {
+	if n := psqlLines(t, e, "SELECT count(*) FROM command WHERE id='c-ghost'"); n[0] != "0" {
 		t.Fatalf("the dead host's command stays")
 	}
 	if n := psqlLines(t, e, "SELECT count(*) FROM definition WHERE kind='project' AND id='acc' AND purged_at IS NOT NULL AND deleted_at IS NOT NULL"); n[0] != "1" {
@@ -387,9 +389,8 @@ INSERT INTO definition_revision(kind,id,revision,content,content_sha,source,acto
  ('project','keep',1,'{"settings":{"id":"keep","name":"Keep","contextFiles":[]},"contextFiles":[]}','y','editor','person','t');
 INSERT INTO task(id,title,project_id,state) VALUES ('t1','old task','keep','completed'),('t2','live task','keep','queued'),('t3','needed task','keep','completed');
 INSERT INTO task_dependency(task_id,depends_on_task_id,project_id) VALUES ('t2','t3','keep');
-INSERT INTO document(kind,id,data,project_id) VALUES ('session','s1','{"id":"s1","projectId":"keep","taskId":"t1"}','keep'),
- ('session','s2','{"id":"s2","projectId":"keep"}','keep'), ('session','s3','{"id":"s3","projectId":"keep","sourceSessionId":"s2"}','keep'),
- ('message','m1','{"id":"m1","sessionId":"s1","text":"hi"}','keep');
+INSERT INTO session(id,project_id,task_id,source_session_id) VALUES ('s1','keep','t1',NULL), ('s2','keep',NULL,NULL), ('s3','keep',NULL,'s2');
+INSERT INTO message(id,session_id,text,project_id) VALUES ('m1','s1','hi','keep');
 INSERT INTO execution(id,kind,state,project_id,task_id,session_id,data) VALUES ('e1','agent_run','succeeded','keep','t1','s1','{"id":"e1","sessionId":"s1"}');
 INSERT INTO question(id,kind,text,project_id,task_id,state) VALUES ('q1','operator_decision','decide','keep','t1','answered');
 INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execution_id,task_id,state) VALUES ('a1','keep','prod','h1',4,'text/plain','n','e1','t1','stored');`)
@@ -408,7 +409,7 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execu
 	if c, b := call(doc{"kind": "task", "id": "t1", "preview": true}); c != 409 || !strings.Contains(astr(b["message"]), "open session s1") {
 		t.Fatalf("a task an open session works for = %d %v", c, b)
 	}
-	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE document SET data=data||'{"archivedAt":1}' WHERE id='s1'`)
+	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", `UPDATE session SET archived_at=to_timestamp(0.001) WHERE id='s1'`)
 	c, b := call(doc{"kind": "task", "id": "t1", "preview": false})
 	if want := map[string]float64{"task": 1, "execution": 1, "question": 1, "artifact": 1, "artifact.bytes": 4}; c != 200 || !mapsEqual(kindCounts(b["affected"]), want) {
 		t.Fatalf("task delete = %d %v", c, b)
@@ -417,7 +418,7 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execu
 	if c != 200 || !mapsEqual(kindCounts(b["affected"]), map[string]float64{"session": 1}) {
 		t.Fatalf("session delete once its task went = %d %v", c, b)
 	}
-	if n := appCount(t, e, false, "SELECT count(*) FROM document WHERE id IN ('s1','m1')"); n != 0 {
+	if n := appCount(t, e, false, "SELECT (SELECT count(*) FROM session WHERE id='s1')+(SELECT count(*) FROM message WHERE id='m1')"); n != 0 {
 		t.Fatalf("the deleted session or its message is still read: %d", n)
 	}
 	if n := appCount(t, e, false, "SELECT count(*) FROM task WHERE id IN ('t2','t3')"); n != 2 {
@@ -432,7 +433,7 @@ INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,execu
 		t.Fatalf("purge = %d %v", c, p)
 	}
 	for _, sql := range []string{"SELECT count(*) FROM task WHERE id='t1'", "SELECT count(*) FROM execution WHERE id='e1'", "SELECT count(*) FROM question WHERE id='q1'",
-		"SELECT count(*) FROM artifact WHERE id='a1'", "SELECT count(*) FROM document WHERE id IN ('s1','m1')"} {
+		"SELECT count(*) FROM artifact WHERE id='a1'", "SELECT (SELECT count(*) FROM session WHERE id='s1')+(SELECT count(*) FROM message WHERE id='m1')"} {
 		if n := psqlLines(t, e, sql); n[0] != "0" {
 			t.Errorf("purge left %s = %v", sql, n)
 		}

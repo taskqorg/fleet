@@ -34,9 +34,9 @@ const lit = (v: unknown) => v === null ? 'NULL' : typeof v === 'number' ? String
 for (const name of ['codex-6a55ab8b', 'claude-127d6fd7', 'lost-receipt-d89cc199']) {
   const fx = JSON.parse(readFileSync(new URL(`fixtures/conversations/${name}.json`, import.meta.url), 'utf8')), e = fx.execution;
   seed.bulk(() => {
-    seed.sql(`INSERT INTO document(kind,id,data) VALUES('session',${lit(e.session_id)},${lit({ id: e.session_id, createdAt: Date.now() })}) ON CONFLICT DO NOTHING`);
+    seed.sql(`INSERT INTO session(id,created_at) VALUES(${lit(e.session_id)},now()) ON CONFLICT DO NOTHING`);
     seed.sql(`INSERT INTO execution(id,kind,state,session_id,harness,model,config_ref,seq) VALUES(${lit(e.id)},'agent_run',${lit(e.state)},${lit(e.session_id)},${lit(e.harness)},${lit(e.model)},${lit({ effort: e.effort })},${e.seq})`);
-    for (const d of fx.documents) seed.sql(`INSERT INTO document(kind,id,data,seq) VALUES(${lit(d.kind)},${lit(d.data.id)},${lit(d.data)},${d.seq})`);
+    for (const d of fx.documents) seed.put(d.kind, d.data, d.seq);
   });
 }
 // A long thread: two running executions of one session, N turns of operator message, agent reply and tool call, one open question.
@@ -185,8 +185,8 @@ try {
   const x2 = boundaryFor('x2');
   for (let i = 0; i < 20 && !(await x2.count()); i++) { await vl.evaluate(e => { e.scrollTop = 0; }); await p.waitForTimeout(300); }
   await x2.getByRole('button', { name: 'Stop' }).click();
-  check(await until(async () => seed.rows("SELECT 1 FROM document WHERE kind='command' AND data->>'executionId'='x2' AND data->>'kind'='stop'").length === 1), 'Stop on one boundary sends a stop for that execution');
-  check(seed.rows("SELECT 1 FROM document WHERE kind='command' AND data->>'executionId'='x1' AND data->>'kind'='stop'").length === 0, 'the other execution gets no stop');
+  check(await until(async () => seed.rows("SELECT 1 FROM command WHERE execution_id='x2' AND kind='stop'").length === 1), 'Stop on one boundary sends a stop for that execution');
+  check(seed.rows("SELECT 1 FROM command WHERE execution_id='x1' AND kind='stop'").length === 0, 'the other execution gets no stop');
   // Task thread: a session of a task shows the whole task; Shift+click selects across rows and Cmd+C copies their markdown.
   await p.goto(`${origin}/conversations/task-a`);
   check(await until(async () => await visible(p, 'Alpha reply') && await visible(p, 'Bravo reply')), 'a task session shows both sessions of the task');
@@ -213,9 +213,9 @@ try {
   await p.getByRole('button', { name: 'Actions' }).click();
   const items = (await p.locator('[role=menu] [role=menuitem]').allTextContents()).map(t => t.trim());
   check(items.join('|') === 'Rename|Retry last message|Switch profile or model|Hand off to another agent|Fork' && await p.locator('[role=menu] [role=menuitem] .icon').count() === 5, 'action menu includes Rename and preserves its existing actions and icons');
-  const before = seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").length;
+  const before = seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").length;
   await p.getByRole('menuitem', { name: 'Retry last message' }).click();
-  check(await until(async () => seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").length === before + 1 && seed.rows("SELECT data->>'text' AS text FROM document WHERE kind='message' AND data->>'sessionId'='task-a' ORDER BY seq").at(-1).text === 'Alpha question'), 'Retry sends the last operator message again');
+  check(await until(async () => seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").length === before + 1 && seed.rows("SELECT text FROM message WHERE session_id='task-a' ORDER BY seq").at(-1).text === 'Alpha question'), 'Retry sends the last operator message again');
   await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Switch profile or model' }).click();
   check(await until(async () => await p.locator('[role=group][aria-label=Profile] button').count() > 0), 'Switch opens an inline panel with profiles');
   await p.getByRole('button', { name: 'Actions' }).click(); await p.getByRole('menuitem', { name: 'Fork' }).click();

@@ -29,10 +29,11 @@ test('retained Lab descendants and native observations remain correctly attribut
    ev('native-partial',1,'usage.observation',{last:{reasoningOutputTokens:3}}),
    ev('native-partial',2,'usage.observation',{last:{inputTokens:20}}),
    ev('native-api',1,'result',{}, {duration_api_ms:125,duration_ms:999})];
-  for(const e of events)c.sql(`INSERT INTO document(kind,id,project_id,data) VALUES('event',${lit(e.id)},'desiign',${lit(e)}::jsonb)`);
-  // Reapply the exact upgrade projection, twice, to populated history rather than an empty schema.
+  for(const e of events)c.sql(`INSERT INTO event(id,execution_id,project_id,event_seq,type,payload) VALUES(${lit(e.id)},${lit(e.executionId)},'desiign',${e.seq},${lit(e.type)},${lit({data:e.data})}::jsonb)`);
+  // Reapply the upgrade's repair pass, twice, to populated history rather than an empty schema. Its function body of
+  // migration 54 read events from document; the current one (migration 77) reads the event table, so the pass runs it.
   const migration=readFileSync('go/coordinator/schema.sql','utf8').split('-- migration 54:')[1].split('-- migration 55:')[0];
-  const projection=migration.slice(migration.indexOf('CREATE OR REPLACE FUNCTION'));
+  const projection=migration.slice(migration.indexOf('-- Owner-only upgrade'));
   c.sql('BEGIN;'+projection+'COMMIT;');c.sql('BEGIN;'+projection+'COMMIT;');
   const rows=JSON.parse(c.sql(`SELECT json_agg(json_build_object('id',e.id,'reasoning',tokens_reasoning,'api',api_ms)) FROM execution e LEFT JOIN execution_totals t ON t.execution_id=e.id WHERE e.id LIKE 'native-%'`));
   const byId=new Map<string,any>(rows.map((r:any)=>[r.id,r]));
@@ -41,7 +42,7 @@ test('retained Lab descendants and native observations remain correctly attribut
   assert.equal(byId.get('native-partial').reasoning,null,'missing call data is not a measured partial sum');
   assert.equal(byId.get('native-api').api,125,'API duration is not duration_ms');
   assert.equal(c.sql("SELECT coalesce(experiment_id,'none') FROM execution WHERE id='foreign-native'").trim(),'none');
-  assert.equal(c.sql("SELECT bool_and(relforcerowsecurity) FROM pg_class WHERE relname IN ('execution','execution_totals','document')").trim(),'t');
+  assert.equal(c.sql("SELECT bool_and(relforcerowsecurity) FROM pg_class WHERE relname IN ('execution','execution_totals','document','event')").trim(),'t');
   const r=await fetch(c.base+'/api/ops/analytics_query',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify({window:{from:new Date(Date.now()-120000).toISOString(),to:new Date(Date.now()+120000).toISOString()},dimensions:['variant','kind'],filters:{experiment:['comparison-test']},measures:['executions','tokens_reasoning','api_ms']})});
   const q:any=await r.json();assert.equal(r.status,200,JSON.stringify(q));
   const zero=q.rows.find((r:any)=>r.dimensions.variant==='ordinary');

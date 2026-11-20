@@ -311,6 +311,7 @@ func designStateOwners() []designOwner {
 		{"resource_build", "resource_states.go", []string{"phase", "scan_done", "after_execution_id", "generation", "DELETE"}},
 		{"resource_project_summary", "resource_states.go", []string{"ready", "epoch"}},
 		{"resource_metadata_repair", "resource_states.go", []string{"done", "after_execution_id", "DELETE"}},
+		{"command", "commands.go", []string{"status", "stop_detail"}},
 	}
 	for _, q := range kitQueues {
 		out = append(out, designOwner{q.Retry.Table, "work_kit.go", []string{"attempts", "next_attempt_at", "last_error"}})
@@ -498,6 +499,15 @@ func TestDesignTransitions(t *testing.T) {
 	}
 	check("build", buildTransitions, phases, string(m[1]), "clearing")
 	check("repair", repairTransitions, []string{"enumerating", "done", "deleted"}, "enumerating")
+	cm := regexp.MustCompile(`CREATE TYPE command_status AS ENUM \(([^)]*)\)`).FindSubmatch(schema)
+	if cm == nil {
+		t.Fatal("command_status enum not found in schema.sql")
+	}
+	var statuses []string
+	for _, p := range strings.Split(string(cm[1]), ",") {
+		statuses = append(statuses, strings.Trim(strings.TrimSpace(p), "'"))
+	}
+	check("command", commandTransitions, statuses, "pending")
 	src, err := os.ReadFile("resource_states.go")
 	if err != nil {
 		t.Fatal(err)
@@ -664,7 +674,6 @@ var designRulesLegacy = map[string]map[string]bool{
 	"runners_ci.go":          {"R-GO": true, "R-MAP": true},
 	"s3.go":                  {"R-GO": true},
 	"search.go":              {"R-MAP": true, "R-SQL": true},
-	"session_titles.go":      {"R-MAP": true, "R-SQL": true},
 	"sessions.go":            {"R-MAP": true, "R-SQL": true},
 	"store.go":               {"R-MAP": true, "R-SQL": true},
 	"stream.go":              {"R-GO": true, "R-SQL": true},

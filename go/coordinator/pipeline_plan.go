@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fmt"
 	"path"
 	"slices"
@@ -95,7 +96,9 @@ func pipelineDispatchKind(kind any) bool {
 
 // stopPipelineCommand settles a still pending command that will never be handed off, with the reason.
 func stopPipelineCommand(q *Request, command doc, reason string) error {
-	return exec(q, `UPDATE document SET data=data||jsonb_build_object('status','stopped','stopDetail',$2::text), updated_at=now() WHERE kind='command' AND id=$1 AND data->>'status'='pending'`, command["id"], reason)
+	id, _ := command["id"].(string)
+	_, err := commandStop(q, commandStopFilter{id: &id, statuses: []db.CommandStatus{db.CommandStatusPending}, detail: &reason})
+	return err
 }
 
 type pipelineWriteKey struct {

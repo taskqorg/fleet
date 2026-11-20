@@ -52,9 +52,9 @@ test('K1 tasks and questions carry T-/Q- codes per project; codes resolve, a ren
     assert.deepEqual(c.sql(`SELECT fleet_project_code('fleet'), fleet_project_code('a1b2c3'), fleet_project_code('added'), fleet_project_code('fleet')`).trim().split('|'), ['FLT', 'P2', 'P3', 'FLT'], 'derived codes, hex-like ids included');
 
     assert.deepEqual(c.sql(`SELECT fleet_project_code('hello-world-alt'), fleet_project_code('desiign')`).trim().split('|'), ['HWA', 'DSG']);
-    c.sql(`INSERT INTO document(kind,id,data,project_id) VALUES('session','sess-codes','{"id":"sess-codes"}','fleet-hello-world')`);
-    c.sql(`INSERT INTO document(kind,id,data,project_id) VALUES('session','sess-codes','{"id":"sess-codes","x":1}','fleet-hello-world') ON CONFLICT(id) DO UPDATE SET data=excluded.data`);
-    assert.equal(c.sql(`SELECT code FROM document WHERE id='sess-codes'`).trim(), 'C-FHW-1', 'a conversation gets a C- code once, also through upserts');
+    c.sql(`INSERT INTO session(id,project_id) VALUES('sess-codes','fleet-hello-world')`);
+    c.sql(`INSERT INTO session(id,project_id,payload) VALUES('sess-codes','fleet-hello-world','{"x":1}') ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`);
+    assert.equal(c.sql(`SELECT code FROM session WHERE id='sess-codes'`).trim(), 'C-FHW-1', 'a conversation gets a C- code once, also through upserts');
     assert.equal((await op('entity_resolve', {code: 'c-fhw-1'})).id, 'sess-codes');
     assert.equal((await op('session_get', {sessionId: 'sess-codes'})).code, 'C-FHW-1');
 

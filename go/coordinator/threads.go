@@ -79,7 +79,7 @@ func members(q *Request, key threadKey) (map[string]member, []string, error) {
 	var rs []doc
 	var err error
 	if key.task != "" {
-		rs, err = rowsOf(q, `WITH attached AS (SELECT id AS session_id FROM document WHERE kind='session' AND data->>'taskId'=$1),
+		rs, err = rowsOf(q, `WITH attached AS (SELECT id AS session_id FROM session WHERE task_id=$1),
 		 first_task AS (SELECT DISTINCT ON (session_id) session_id,task_id FROM execution WHERE task_id IS NOT NULL AND session_id IN (SELECT session_id FROM execution WHERE task_id=$1) ORDER BY session_id,seq)
 		 SELECT `+cols+` FROM execution WHERE kind='agent_run' AND (task_id=$1 OR (task_id IS NULL AND (session_id IN (SELECT session_id FROM first_task WHERE task_id=$1) OR session_id IN (SELECT session_id FROM attached)))) ORDER BY seq`, key.task)
 	} else {
@@ -91,7 +91,7 @@ func members(q *Request, key threadKey) (map[string]member, []string, error) {
 	if len(rs) == 0 {
 		var ok bool
 		if key.session != "" {
-			ok, err = has(q, "SELECT 1 FROM document WHERE kind='session' AND id=$1", key.session)
+			ok, err = has(q, "SELECT 1 FROM session WHERE id=$1", key.session)
 		} else {
 			ok, err = has(q, "SELECT 1 FROM task WHERE id=$1", key.task)
 		}
@@ -201,7 +201,12 @@ func questionBlock(qu doc, seq int64) doc {
 	return blockDoc(b)
 }
 
-const rowExpr = `jsonb_build_object('id',id,'executionId',data->>'executionId','type',data->>'type','text',data->'text','blocks',data->'data'->'fleetNormalized'->'blocks','deltaOf',data->'data'->'fleetNormalized'->'deltaOf','closes',data->'data'->'fleetNormalized'->'closes','at',updated_at,'sentBy',data->>'sentBy','attachments',data->'attachments')`
+// messageRow, eventRow: a thread row of a message or an event (migration 77 tables).
+const messageRowExpr = `jsonb_build_object('id',id,'executionId',execution_id,'type',NULL,'text',to_jsonb(text),'blocks',NULL,'deltaOf',NULL,'closes',NULL,'at',updated_at,'sentBy',sent_by,'attachments',payload->'attachments')`
+const eventRowExpr = `jsonb_build_object('id',id,'executionId',execution_id,'type',type,'text',payload->'text','blocks',payload->'data'->'fleetNormalized'->'blocks','deltaOf',payload->'data'->'fleetNormalized'->'deltaOf','closes',payload->'data'->'fleetNormalized'->'closes','at',updated_at,'sentBy',payload->>'sentBy','attachments',payload->'attachments')`
+
+// threadSearchText: the text of an event a thread search matches (its blocks' text, names and tool input and output).
+const threadSearchText = `(SELECT string_agg(concat_ws(' ',b->>'markdown',b->>'name',(b->'input')::text,(b->'output')::text),' ') FROM jsonb_array_elements(coalesce(payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb)) b)`
 
 type trow struct {
 	seq int64
@@ -209,24 +214,30 @@ type trow struct {
 	v   doc
 }
 
-func threadRows(q *Request, ids []string, dir, from string, limit int, extra string, params ...any) ([]trow, error) {
+// threadRows: the rows of executions ids from seq from in direction dir; like (a search, ILIKE pattern) keeps only the
+// messages and events whose text matches.
+func threadRows(q *Request, ids []string, dir, from string, limit int, like ...any) ([]trow, error) {
 	order := "ASC"
 	if dir == "<" {
 		order = "DESC"
 	}
-	off := ""
-	if extra != "" {
-		off = " AND false"
+	off, msg, ev := "", "", ""
+	if len(like) > 0 {
+		off, msg, ev = " AND false", " AND text ILIKE $4", " AND "+threadSearchText+" ILIKE $4"
+	}
+	window := func(src, table, cond string) string {
+		return `SELECT d.seq,d.src,d.v FROM unnest($1::text[]) m(id),
+	  LATERAL (SELECT seq,'` + src + `' AS src,` + map[string]string{"message": messageRowExpr, "event": eventRowExpr}[table] + ` AS v FROM ` + table + ` WHERE execution_id=m.id AND seq ` + dir + `= $2::bigint` + cond + `
+	   ORDER BY seq ` + order + ` LIMIT $3) d`
 	}
 	sql := `SELECT seq,src,v FROM (
-	 SELECT d.seq,d.src,d.v FROM unnest($1::text[]) m(id),unnest(ARRAY['message','event','event-delta']) k(kind),
-	  LATERAL (SELECT seq,kind AS src,` + rowExpr + ` AS v FROM document WHERE document.kind=k.kind AND data->>'executionId'=m.id AND seq ` + dir + `= $2::bigint
-	   AND (document.kind='message' OR (document.kind='event' AND (data->>'type'='execution.ended' OR jsonb_array_length(coalesce(data->'data'->'fleetNormalized'->'blocks','[]'::jsonb))>0)) OR (document.kind='event-delta' AND data->'data'->'fleetNormalized'->>'opens'='true'))` + extra + `
-	   ORDER BY seq ` + order + ` LIMIT $3) d
+	 ` + window("message", "message", msg) + `
+	 UNION ALL ` + window("event", "event", ` AND NOT delta AND (type='execution.ended' OR jsonb_array_length(coalesce(payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb))>0)`+ev) + `
+	 UNION ALL ` + window("event-delta", "event", ` AND delta AND payload->'data'->'fleetNormalized'->>'opens'='true'`+off) + `
 	 UNION ALL SELECT seq,'question',to_jsonb(q)-'data' FROM question q WHERE execution_id=ANY($1) AND seq ` + dir + `= $2::bigint` + off + `
 	 UNION ALL SELECT seq,'execution',jsonb_build_object('id',id) FROM execution WHERE id=ANY($1) AND seq ` + dir + `= $2::bigint` + off + `
 	) x ORDER BY seq ` + order + ` LIMIT $3`
-	rs, err := rowsOf(q, sql, append([]any{ids, from, limit}, params...)...)
+	rs, err := rowsOf(q, sql, append([]any{ids, from, limit}, like...)...)
 	out := []trow{}
 	for _, r := range rs {
 		out = append(out, trow{int64(num(r["seq"])), astr(r["src"]), mapOf(r["v"])})
@@ -236,11 +247,11 @@ func threadRows(q *Request, ids []string, dir, from string, limit int, extra str
 
 // stream: the text of an open stream (event-delta rows of one deltaOf); "", false once an event closes it.
 func streamText(q *Request, executionID, id string) (string, bool, error) {
-	closed, err := has(q, "SELECT 1 FROM document WHERE kind='event' AND data->>'executionId'=$1 AND data->'data'->'fleetNormalized'->'closes' ? $2", executionID, id)
+	closed, err := has(q, "SELECT 1 FROM event WHERE NOT delta AND execution_id=$1 AND payload->'data'->'fleetNormalized'->'closes' ? $2", executionID, id)
 	if err != nil || closed {
 		return "", false, err
 	}
-	parts, err := rowsOf(q, "SELECT data->'data'->'fleetNormalized'->'blocks' AS b FROM document WHERE kind='event-delta' AND data->>'executionId'=$1 AND data->'data'->'fleetNormalized'->>'deltaOf'=$2 ORDER BY seq", executionID, id)
+	parts, err := rowsOf(q, "SELECT payload->'data'->'fleetNormalized'->'blocks' AS b FROM event WHERE delta AND execution_id=$1 AND payload->'data'->'fleetNormalized'->>'deltaOf'=$2 ORDER BY seq", executionID, id)
 	var sb strings.Builder
 	for _, p := range parts {
 		bs, _ := p["b"].([]any)
@@ -360,7 +371,7 @@ func side(q *Request, m map[string]member, ids []string, dir string, from *bkey,
 		return c > 0
 	}
 	for {
-		batch, err := threadRows(q, ids, dir, cursor, limit+1, "")
+		batch, err := threadRows(q, ids, dir, cursor, limit+1)
 		if err != nil {
 			return nil, false, err
 		}
@@ -404,14 +415,14 @@ func side(q *Request, m map[string]member, ids []string, dir string, from *bkey,
 
 func threadTotal(q *Request, m map[string]member, ids []string) (int64, error) {
 	var n int64
-	if err := q.tx.QueryRow(q.ctx(), `SELECT (SELECT count(*) FROM document WHERE kind='message' AND data->>'executionId'=ANY($1))
-	 +(SELECT coalesce(sum(jsonb_array_length(coalesce(data->'data'->'fleetNormalized'->'blocks','[]'::jsonb))),0) FROM document WHERE kind='event' AND data->>'executionId'=ANY($1))
+	if err := q.tx.QueryRow(q.ctx(), `SELECT (SELECT count(*) FROM message WHERE execution_id=ANY($1))
+	 +(SELECT coalesce(sum(jsonb_array_length(coalesce(payload->'data'->'fleetNormalized'->'blocks','[]'::jsonb))),0) FROM event WHERE NOT delta AND execution_id=ANY($1))
 	 +(SELECT count(*) FROM question WHERE execution_id=ANY($1))
-	 +(SELECT count(*) FROM document WHERE kind='event' AND data->>'type'='execution.ended' AND data->>'executionId'=ANY($1) AND EXISTS(SELECT 1 FROM artifact a WHERE a.execution_id=data->>'executionId' AND a.state='stored'))`, ids).Scan(&n); err != nil {
+	 +(SELECT count(*) FROM event v WHERE NOT v.delta AND v.type='execution.ended' AND v.execution_id=ANY($1) AND EXISTS(SELECT 1 FROM artifact a WHERE a.execution_id=v.execution_id AND a.state='stored'))`, ids).Scan(&n); err != nil {
 		return 0, err
 	}
 	n += int64(len(m))
-	ss, err := rowsOf(q, "SELECT data->>'executionId' AS e,data->'data'->'fleetNormalized'->>'deltaOf' AS id FROM document WHERE kind='event-delta' AND data->>'executionId'=ANY($1) AND data->'data'->'fleetNormalized'->>'opens'='true'", ids)
+	ss, err := rowsOf(q, "SELECT execution_id AS e,payload->'data'->'fleetNormalized'->>'deltaOf' AS id FROM event WHERE delta AND execution_id=ANY($1) AND payload->'data'->'fleetNormalized'->>'opens'='true'", ids)
 	for _, x := range ss {
 		if _, open, err := streamText(q, astr(x["e"]), astr(x["id"])); err != nil {
 			return 0, err
@@ -431,7 +442,7 @@ func positiveLimit(v *int64) (int, error) {
 
 // keyOfSession: the thread a session shows: its attached or first task's, else its own.
 func keyOfSession(q *Request, sid string) (threadKey, error) {
-	t, err := first(q, "SELECT coalesce((SELECT data->>'taskId' FROM document WHERE kind='session' AND id=$1),(SELECT task_id FROM execution WHERE session_id=$1 AND task_id IS NOT NULL ORDER BY seq LIMIT 1)) AS t", sid)
+	t, err := first(q, "SELECT coalesce((SELECT task_id FROM session WHERE id=$1),(SELECT task_id FROM execution WHERE session_id=$1 AND task_id IS NOT NULL ORDER BY seq LIMIT 1)) AS t", sid)
 	if err != nil {
 		return threadKey{}, err
 	}
@@ -542,8 +553,13 @@ func threadEntries(q *Request, b *contract.ThreadEntriesRequest) (doc, error) {
 	return out, err
 }
 
-func eventRow(q *Request, sql string, args ...any) ([]trow, error) {
-	rs, err := rowsOf(q, "SELECT seq,kind AS src,"+rowExpr+" AS v FROM document WHERE "+sql, args...)
+// eventRow: the thread rows of the events (and, with messages, the messages) where sql holds.
+func eventRow(q *Request, messages bool, sql string, args ...any) ([]trow, error) {
+	src := "SELECT seq,CASE WHEN delta THEN 'event-delta' ELSE 'event' END AS src," + eventRowExpr + " AS v FROM event WHERE " + sql
+	if messages {
+		src += " UNION ALL SELECT seq,'message' AS src," + messageRowExpr + " AS v FROM message WHERE " + sql
+	}
+	rs, err := rowsOf(q, src, args...)
 	out := []trow{}
 	for _, r := range rs {
 		out = append(out, trow{int64(num(r["seq"])), astr(r["src"]), mapOf(r["v"])})
@@ -597,7 +613,7 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (doc, error) {
 			}
 			if e := astr(r["e"]); e != "" {
 				if _, ok := m[e]; ok {
-					rs, err := eventRow(q, "id=$1 AND kind='event'", "ended:"+e)
+					rs, err := eventRow(q, false, "id=$1 AND NOT delta", "ended:"+e)
 					if err != nil {
 						return nil, err
 					}
@@ -607,13 +623,13 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (doc, error) {
 				}
 			}
 		case "event":
-			rs, err := eventRow(q, "id=$1 AND kind IN ('event','message','event-delta') AND data->>'executionId'=ANY($2)", id, ids)
+			rs, err := eventRow(q, true, "id=$1 AND execution_id=ANY($2)", id, ids)
 			if err != nil {
 				return nil, err
 			}
 			for _, d := range rs {
 				if d.src == "event-delta" {
-					f, err := eventRow(q, "kind='event-delta' AND data->>'executionId'=$1 AND data->'data'->'fleetNormalized'->>'deltaOf'=$2 AND data->'data'->'fleetNormalized'->>'opens'='true'", d.v["executionId"], d.v["deltaOf"])
+					f, err := eventRow(q, false, "delta AND execution_id=$1 AND payload->'data'->'fleetNormalized'->>'deltaOf'=$2 AND payload->'data'->'fleetNormalized'->>'opens'='true'", d.v["executionId"], d.v["deltaOf"])
 					if err != nil {
 						return nil, err
 					}
@@ -624,7 +640,7 @@ func threadBlocks(q *Request, b *contract.ThreadBlocksRequest) (doc, error) {
 				}
 				closes, _ := d.v["closes"].([]any)
 				for _, cid := range closes {
-					os, err := rowsOf(q, "SELECT seq FROM document WHERE kind='event-delta' AND data->>'executionId'=$1 AND data->'data'->'fleetNormalized'->>'deltaOf'=$2 AND data->'data'->'fleetNormalized'->>'opens'='true'", d.v["executionId"], cid)
+					os, err := rowsOf(q, "SELECT seq FROM event WHERE delta AND execution_id=$1 AND payload->'data'->'fleetNormalized'->>'deltaOf'=$2 AND payload->'data'->'fleetNormalized'->>'opens'='true'", d.v["executionId"], cid)
 					if err != nil {
 						return nil, err
 					}
@@ -703,10 +719,9 @@ func threadSearch(q *Request, b *contract.ThreadSearchRequest) (doc, error) {
 	if before != nil {
 		cursor = strconv.FormatInt(before.seq, 10)
 	}
-	extra := ` AND document.kind<>'event-delta' AND (CASE WHEN document.kind='message' THEN data->>'text' ELSE (SELECT string_agg(concat_ws(' ',b->>'markdown',b->>'name',(b->'input')::text,(b->'output')::text),' ') FROM jsonb_array_elements(coalesce(data->'data'->'fleetNormalized'->'blocks','[]'::jsonb)) b) END) ILIKE $4`
 	hits, seen := []doc{}, map[string]bool{}
 	for {
-		batch, err := threadRows(q, ids, "<", cursor, limit+1, extra, like)
+		batch, err := threadRows(q, ids, "<", cursor, limit+1, like)
 		if err != nil {
 			return nil, err
 		}

@@ -1886,6 +1886,7 @@ ALTER TABLE execution_totals DISABLE TRIGGER USER;
 ALTER TABLE execution NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE execution_totals NO FORCE ROW LEVEL SECURITY;
 ALTER TABLE document NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS event NO FORCE ROW LEVEL SECURITY; -- the events' table from migration 77, for a later replay of this pass
 SET LOCAL row_security=off;
 
 -- The trial's typed parent lineage is authoritative; profile names were incorrectly stored as variant labels.
@@ -1902,6 +1903,7 @@ WHERE e.kind IN ('agent_run','child_agent');
 ALTER TABLE execution FORCE ROW LEVEL SECURITY;
 ALTER TABLE execution_totals FORCE ROW LEVEL SECURITY;
 ALTER TABLE document FORCE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS event FORCE ROW LEVEL SECURITY;
 RESET row_security;
 ALTER TABLE execution ENABLE TRIGGER USER;
 ALTER TABLE execution_totals ENABLE TRIGGER USER;
@@ -2792,3 +2794,698 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
  PERFORM set_config('fleet.project_ids',coalesce(old_scope,''),true); RAISE;
 END $$;
+
+-- migration 77: conversations out of the document table (docs/designs/fleet-standard.md S1, stage 4). Sessions,
+-- messages, events (event-delta is an event with delta), queued messages, host commands, handoffs, session forks,
+-- session transitions and worker-done reports become tables. Each record field a query filters, joins, orders or a state
+-- machine owns is a column; payload holds the record's other fields (an event's data, a command's payload). seq keeps
+-- the document sequence, so a thread's messages and events keep their order. The change feed keeps its kinds (session,
+-- event, command); visibility is fleet_visible(project_id) with the same live and projectless-director policies.
+SELECT set_config('fleet.project_ids', '*', true), set_config('fleet.deleted', 'on', true);
+CREATE TYPE command_status AS ENUM ('pending', 'accepted', 'started', 'completed', 'failed', 'stopped', 'unknown');
+CREATE TABLE session(
+ id text PRIMARY KEY,
+ code text UNIQUE,
+ project_id text NULL,
+ task_id text NULL,
+ host_id text NULL,
+ actor text NULL,
+ directed_by text NULL,
+ director_access_revoked_at timestamptz NULL,
+ parent_execution_id text NULL,
+ created_by_execution_id text NULL,
+ created_by_session_id text NULL,
+ source_session_id text NULL,
+ pipeline_run_id text NULL,
+ created_at timestamptz NULL,
+ archived_at timestamptz NULL,
+ title text NULL,
+ title_by text NULL,
+ title_call text NULL,
+ title_attempt_at timestamptz NULL,
+ title_attempts integer NOT NULL DEFAULT 0 CHECK (title_attempts >= 0),
+ title_unknown_call text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX session_seq ON session(seq);
+CREATE INDEX session_project ON session(project_id, seq);
+CREATE INDEX session_task ON session(task_id) WHERE task_id IS NOT NULL;
+CREATE INDEX session_created_by_session ON session(created_by_session_id) WHERE created_by_session_id IS NOT NULL;
+CREATE INDEX session_parent_execution ON session(parent_execution_id) WHERE parent_execution_id IS NOT NULL;
+CREATE INDEX session_created_by_execution ON session(created_by_execution_id) WHERE created_by_execution_id IS NOT NULL;
+CREATE INDEX session_pipeline_run ON session(pipeline_run_id) WHERE pipeline_run_id IS NOT NULL;
+CREATE INDEX session_host ON session(host_id) WHERE host_id IS NOT NULL;
+CREATE INDEX session_untitled ON session(seq) WHERE title IS NULL AND archived_at IS NULL;
+CREATE TABLE message(
+ id text PRIMARY KEY,
+ session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ execution_id text NULL,
+ project_id text NULL,
+ request_id text NULL,
+ text text NULL,
+ sent_by text NULL,
+ source text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX message_session ON message(session_id, seq);
+CREATE INDEX message_execution ON message(execution_id, seq) WHERE execution_id IS NOT NULL;
+CREATE INDEX message_activity ON message(session_id, updated_at);
+CREATE INDEX message_request ON message(session_id, request_id);
+CREATE TABLE event(
+ id text PRIMARY KEY,
+ delta boolean NOT NULL DEFAULT false,
+ execution_id text NULL REFERENCES execution(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ session_id text NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ event_seq bigint NULL,
+ type text NULL,
+ at timestamptz NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX event_execution ON event(execution_id, seq);
+CREATE INDEX event_sequence ON event(execution_id, event_seq);
+CREATE INDEX event_session ON event(session_id, seq) WHERE session_id IS NOT NULL;
+CREATE INDEX event_activity ON event(session_id, updated_at) WHERE NOT delta;
+CREATE INDEX event_type ON event(execution_id, type) WHERE NOT delta;
+CREATE INDEX event_limit_reading ON event(seq) WHERE type = 'limit_reading' AND NOT delta;
+CREATE INDEX event_delta_block ON event(execution_id, (payload->'data'->'fleetNormalized'->>'deltaOf'), seq) WHERE delta;
+CREATE TABLE queued_message(
+ id text PRIMARY KEY,
+ session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ task_id text NULL,
+ request_id text NULL,
+ text text NULL,
+ state text NULL,
+ execution_id text NULL,
+ steer_command_id text NULL,
+ sent_by text NULL,
+ source text NULL,
+ created_at timestamptz NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX queued_message_session ON queued_message(session_id, seq);
+CREATE INDEX queued_message_open ON queued_message(state, seq) WHERE state IN ('queued', 'steering');
+CREATE INDEX queued_message_steer ON queued_message(steer_command_id) WHERE steer_command_id IS NOT NULL;
+CREATE TABLE command(
+ id text PRIMARY KEY,
+ -- No foreign key to execution: a command may outlive its execution, and the poll stops it with that refusal.
+ execution_id text NULL,
+ session_id text NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ host_id text NULL,
+ project_id text NULL,
+ kind text NOT NULL,
+ status command_status NOT NULL DEFAULT 'pending',
+ stop_detail text NULL,
+ handed_out boolean NULL,
+ traceparent text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX command_pending ON command(host_id, seq) WHERE status = 'pending';
+CREATE INDEX command_execution ON command(execution_id, kind) WHERE execution_id IS NOT NULL;
+CREATE INDEX command_session ON command(session_id, kind) WHERE session_id IS NOT NULL;
+CREATE INDEX command_host ON command(host_id) WHERE host_id IS NOT NULL;
+CREATE TABLE handoff(
+ id text PRIMARY KEY,
+ session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ state text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX handoff_session ON handoff(session_id, seq);
+CREATE INDEX handoff_sent ON handoff(seq) WHERE state = 'sent';
+CREATE TABLE session_fork(
+ id text PRIMARY KEY,
+ session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ source_session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ request_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX session_fork_source ON session_fork(source_session_id, request_id);
+CREATE INDEX session_fork_session ON session_fork(session_id);
+CREATE TABLE session_transition(
+ id text PRIMARY KEY,
+ session_id text NOT NULL REFERENCES session(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX session_transition_session ON session_transition(session_id, seq);
+CREATE TABLE worker_done(
+ id text PRIMARY KEY,
+ execution_id text NULL REFERENCES execution(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+ project_id text NULL,
+ payload jsonb NOT NULL DEFAULT '{}',
+ seq bigint NOT NULL DEFAULT nextval('document_seq_seq'),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ tombstoned_at timestamptz NULL
+);
+CREATE INDEX worker_done_execution ON worker_done(execution_id) WHERE execution_id IS NOT NULL;
+CREATE FUNCTION pg_temp.str(v jsonb) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'string' THEN v #>> '{}' END $$;
+CREATE FUNCTION pg_temp.ms(v jsonb) RETURNS timestamptz LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'number' THEN to_timestamp((v #>> '{}')::float8 / 1000) END $$;
+-- rest: the fields of d without a column: a field named in cols moves to its column when its JSON type is the column's
+-- ('' any type, null always), otherwise it stays.
+CREATE FUNCTION pg_temp.rest(d jsonb, cols jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+ SELECT coalesce(jsonb_object_agg(k, v), '{}') FROM jsonb_each(d) e(k, v)
+ WHERE NOT (cols ? k AND (cols->>k = '' OR jsonb_typeof(v) IN (cols->>k, 'null')))
+$$;
+CREATE FUNCTION pg_temp.num(v jsonb) RETURNS bigint LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN jsonb_typeof(v) = 'number' THEN round((v #>> '{}')::numeric)::bigint END $$;
+INSERT INTO session(id, code, project_id, task_id, host_id, actor, directed_by, director_access_revoked_at, parent_execution_id,
+ created_by_execution_id, created_by_session_id, source_session_id, pipeline_run_id, created_at, archived_at, title, title_by,
+ title_call, title_attempt_at, title_attempts, title_unknown_call, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, d.code, d.project_id, pg_temp.str(d.data->'taskId'), pg_temp.str(d.data->'hostId'), pg_temp.str(d.data->'actor'),
+ pg_temp.str(d.data->'directedBy'), pg_temp.ms(d.data->'directorAccessRevokedAt'), pg_temp.str(d.data->'parentExecutionId'),
+ pg_temp.str(d.data->'createdByExecutionId'), pg_temp.str(d.data->'createdBySessionId'), pg_temp.str(d.data->'sourceSessionId'),
+ pg_temp.str(d.data->'pipelineRunId'), pg_temp.ms(d.data->'createdAt'), pg_temp.ms(d.data->'archivedAt'), pg_temp.str(d.data->'title'),
+ pg_temp.str(d.data->'titleBy'), pg_temp.str(d.data->'titleCall'), pg_temp.ms(d.data->'titleAttemptAt'),
+ greatest(coalesce(pg_temp.num(d.data->'titleAttempts'), 0), 0), pg_temp.str(d.data->'titleUnknownCall'),
+ pg_temp.rest(d.data, '{"id":"","projectId":"","taskId":"string","hostId":"string","actor":"string","directedBy":"string","directorAccessRevokedAt":"number","parentExecutionId":"string","createdByExecutionId":"string","createdBySessionId":"string","sourceSessionId":"string","pipelineRunId":"string","createdAt":"number","archivedAt":"number","title":"string","titleBy":"string","titleCall":"string","titleAttemptAt":"number","titleAttempts":"number","titleUnknownCall":"string"}'),
+ d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'session';
+INSERT INTO message(id, session_id, execution_id, project_id, request_id, text, sent_by, source, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, d.session_ref, pg_temp.str(d.data->'executionId'), d.project_id, pg_temp.str(d.data->'requestId'), pg_temp.str(d.data->'text'),
+ pg_temp.str(d.data->'sentBy'), pg_temp.str(d.data->'source'),
+ pg_temp.rest(d.data, '{"id":"","sessionId":"","executionId":"string","projectId":"","requestId":"string","text":"string","sentBy":"string","source":"string"}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'message' AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.session_ref);
+INSERT INTO event(id, delta, execution_id, session_id, project_id, event_seq, type, at, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, d.kind = 'event-delta', (SELECT e.id FROM execution e WHERE e.id = d.execution_ref), (SELECT s.id FROM session s WHERE s.id = d.session_ref),
+ d.project_id, pg_temp.num(d.data->'seq'), pg_temp.str(d.data->'type'), pg_temp.ms(d.data->'timestamp'),
+ pg_temp.rest(d.data, '{"id":"","executionId":"","sessionId":"","projectId":"","seq":"number","type":"string","timestamp":"number"}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind IN ('event', 'event-delta');
+INSERT INTO queued_message(id, session_id, project_id, task_id, request_id, text, state, execution_id, steer_command_id, sent_by, source, created_at, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, d.session_ref, d.project_id, pg_temp.str(d.data->'taskId'), pg_temp.str(d.data->'requestId'), pg_temp.str(d.data->'text'),
+ pg_temp.str(d.data->'state'), pg_temp.str(d.data->'executionId'), pg_temp.str(d.data->'steerCommandId'), pg_temp.str(d.data->'sentBy'),
+ pg_temp.str(d.data->'source'), pg_temp.ms(d.data->'createdAt'),
+ pg_temp.rest(d.data, '{"id":"","sessionId":"","projectId":"","taskId":"string","requestId":"string","text":"string","state":"string","executionId":"string","steerCommandId":"string","sentBy":"string","source":"string","createdAt":"number"}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'queued-message' AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.session_ref);
+INSERT INTO command(id, execution_id, session_id, host_id, project_id, kind, status, stop_detail, handed_out, traceparent, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, (SELECT e.id FROM execution e WHERE e.id = d.execution_ref), (SELECT s.id FROM session s WHERE s.id = d.session_ref),
+ pg_temp.str(d.data->'hostId'), d.project_id, coalesce(pg_temp.str(d.data->'kind'), ''),
+ CASE WHEN d.data->>'status' IN ('pending', 'accepted', 'started', 'completed', 'failed', 'stopped', 'unknown') THEN (d.data->>'status')::command_status ELSE 'stopped' END,
+ pg_temp.str(d.data->'stopDetail'), CASE WHEN jsonb_typeof(d.data->'handedOut') = 'boolean' THEN (d.data->>'handedOut')::boolean END,
+ pg_temp.str(d.data->'traceparent'),
+ pg_temp.rest(d.data, '{"id":"","executionId":"","sessionId":"","hostId":"string","projectId":"","kind":"string","status":"","stopDetail":"string","handedOut":"boolean","traceparent":"string"}'), d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'command';
+INSERT INTO handoff(id, session_id, project_id, state, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, d.session_ref, d.project_id, pg_temp.str(d.data->'state'), d.data - '{id,sessionId,projectId,state}'::text[], d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'handoff' AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.session_ref);
+INSERT INTO session_fork(id, session_id, source_session_id, project_id, request_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, d.session_ref, d.data->>'sourceSessionId', d.project_id, pg_temp.str(d.data->'requestId'),
+ d.data - '{id,sessionId,sourceSessionId,projectId,requestId}'::text[], d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'session-fork' AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.session_ref)
+ AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.data->>'sourceSessionId');
+INSERT INTO session_transition(id, session_id, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, d.session_ref, d.project_id, d.data - '{id,sessionId,projectId}'::text[], d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'session-transition' AND EXISTS (SELECT 1 FROM session s WHERE s.id = d.session_ref);
+INSERT INTO worker_done(id, execution_id, project_id, payload, seq, updated_at, tombstoned_at)
+SELECT d.id, (SELECT e.id FROM execution e WHERE e.id = d.execution_ref), d.project_id, d.data - '{id,executionId,projectId}'::text[], d.seq, d.updated_at, d.tombstoned_at
+FROM document d WHERE d.kind = 'worker-done';
+-- The copies' deferred foreign keys are checked now: a pending check would block the ALTER TABLEs below.
+SET CONSTRAINTS ALL IMMEDIATE;
+ALTER TABLE document DISABLE TRIGGER document_change;
+DELETE FROM document WHERE kind IN ('session', 'message', 'event', 'event-delta', 'queued-message', 'command', 'handoff', 'session-fork', 'session-transition', 'worker-done');
+ALTER TABLE document ENABLE TRIGGER document_change;
+DROP INDEX document_limit_reading, document_event_sequence, document_delta_block;
+DROP TRIGGER session_director_immutable ON document;
+DROP TRIGGER document_zcode ON document;
+ALTER TABLE document DROP COLUMN code;
+ALTER TABLE document ADD CONSTRAINT document_moved_kind CHECK (kind NOT IN ('session', 'message', 'event', 'event-delta', 'queued-message', 'command', 'handoff', 'session-fork', 'session-transition', 'worker-done'));
+DO $$ DECLARE t text; BEGIN
+ FOREACH t IN ARRAY ARRAY['session','message','event','queued_message','command','handoff','session_fork','session_transition','worker_done'] LOOP
+  EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+  EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+  EXECUTE format('CREATE POLICY project_scope ON %I USING (fleet_visible(project_id))', t);
+  EXECUTE format('CREATE POLICY live ON %I AS RESTRICTIVE FOR SELECT USING (fleet_show_deleted() OR (tombstoned_at IS NULL'
+   ' AND (project_id IS NULL OR NOT project_id = ANY ((SELECT fleet_deleted_projects())::text[]))))', t);
+ END LOOP;
+END $$;
+CREATE OR REPLACE FUNCTION fleet_own_projectless_session(sid text) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE prev text := current_setting('fleet.project_ids',true); who text := current_setting('fleet.person',true); allowed boolean;
+BEGIN
+ IF coalesce(who,'')='' OR sid IS NULL THEN RETURN false; END IF;
+ PERFORM set_config('fleet.project_ids','*',true);
+ SELECT EXISTS(SELECT 1 FROM session WHERE id=sid AND project_id IS NULL AND directed_by=who AND director_access_revoked_at IS NULL) INTO allowed;
+ PERFORM set_config('fleet.project_ids',coalesce(prev,''),true); RETURN allowed;
+END $$;
+CREATE POLICY directed_session ON session USING (project_id IS NULL AND directed_by=current_setting('fleet.person',true) AND director_access_revoked_at IS NULL);
+CREATE POLICY directed_session ON message USING (project_id IS NULL AND fleet_own_projectless_session(session_id));
+CREATE POLICY directed_session ON event USING (project_id IS NULL AND fleet_own_projectless_session(session_id));
+CREATE POLICY directed_session ON queued_message USING (project_id IS NULL AND fleet_own_projectless_session(session_id));
+CREATE POLICY directed_session ON handoff USING (project_id IS NULL AND fleet_own_projectless_session(session_id));
+CREATE POLICY directed_session ON session_transition USING (project_id IS NULL AND fleet_own_projectless_session(session_id));
+CREATE POLICY directed_session ON session_fork USING (project_id IS NULL AND fleet_own_projectless_session(session_id) AND fleet_own_projectless_session(source_session_id));
+DROP POLICY directed_session ON document;
+CREATE OR REPLACE FUNCTION fleet_session_director_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF OLD.directed_by IS NOT NULL AND OLD.directed_by IS DISTINCT FROM NEW.directed_by THEN RAISE EXCEPTION 'session director is immutable'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER session_director_immutable BEFORE UPDATE ON session FOR EACH ROW EXECUTE FUNCTION fleet_session_director_immutable();
+CREATE OR REPLACE FUNCTION fleet_entity_code() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE t text := CASE TG_TABLE_NAME WHEN 'task' THEN 'T' WHEN 'session' THEN 'C' ELSE 'Q' END; prev text;
+BEGIN
+ IF TG_OP = 'INSERT' THEN
+  prev := current_setting('fleet.project_ids', true);
+  PERFORM set_config('fleet.project_ids', '*', true);
+  IF t = 'C' AND EXISTS(SELECT 1 FROM session WHERE id=NEW.id) THEN NEW.code := NULL; ELSE NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id); END IF;
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ ELSIF NEW.code IS NOT NULL AND NEW.code IS DISTINCT FROM OLD.code THEN
+  RAISE EXCEPTION 'codes are issued, never written (set code to NULL to reissue)';
+ ELSIF NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.code IS NULL THEN
+  IF NEW.project_id IS NOT DISTINCT FROM OLD.project_id THEN NEW.updated_at := OLD.updated_at; END IF; -- a reissue is not a change of the row
+  NEW.code := fleet_issue_code(t, NEW.project_id, NEW.id);
+  prev := current_setting('fleet.project_ids', true);
+  PERFORM set_config('fleet.project_ids', '*', true);
+  UPDATE entity_code SET superseded_by=NEW.code, project_id=nullif(NEW.project_id, '') WHERE entity_id=NEW.id AND type=t AND code<>NEW.code;
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ END IF;
+ RETURN NEW;
+END $$;
+-- A session is written by upsert: a conflicting insert of an existing row issues nothing (it becomes an update).
+CREATE TRIGGER session_zcode BEFORE INSERT OR UPDATE OF project_id, code ON session FOR EACH ROW EXECUTE FUNCTION fleet_entity_code();
+CREATE OR REPLACE FUNCTION fleet_project_code_set(p_project text, p_code text) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE r record; prev text := current_setting('fleet.project_ids', true);
+BEGIN
+ PERFORM pg_advisory_xact_lock(hashtext('fleet_project_code'));
+ IF EXISTS(SELECT 1 FROM project_code WHERE code=p_code AND project_id=p_project AND current) THEN RETURN p_code; END IF;
+ IF EXISTS(SELECT 1 FROM project_code WHERE code=p_code) THEN RAISE EXCEPTION 'project code % was used', p_code USING ERRCODE='23505'; END IF;
+ UPDATE project_code SET current=false WHERE project_id=p_project AND current;
+ INSERT INTO project_code(code, project_id) VALUES(p_code, p_project);
+ PERFORM set_config('fleet.project_ids', '*', true); -- every row of the project, whatever the caller's scope (the op checked the project)
+ FOR r IN SELECT id FROM task WHERE project_id=p_project ORDER BY created_at, id LOOP UPDATE task SET code=NULL WHERE id=r.id; END LOOP;
+ FOR r IN SELECT id FROM question WHERE project_id=p_project ORDER BY asked_at, id LOOP UPDATE question SET code=NULL WHERE id=r.id; END LOOP;
+ FOR r IN SELECT id FROM session WHERE project_id=p_project ORDER BY seq LOOP UPDATE session SET code=NULL WHERE id=r.id; END LOOP;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN p_code;
+END $$;
+-- A row a host's own call writes later for a tombstoned execution or session is born tombstoned (migration 67): the
+-- first argument names the execution column, the second (when given) the session column.
+CREATE OR REPLACE FUNCTION fleet_inherit_tombstone() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE e text; s text; BEGIN
+ IF NEW.tombstoned_at IS NOT NULL OR NOT fleet_show_deleted() THEN RETURN NEW; END IF;
+ IF TG_TABLE_NAME = 'document' THEN
+  IF NEW.kind IN ('setting-change', 'transport-audit', 'purge-task') THEN RETURN NEW; END IF; -- audit outlives the object
+  e := NEW.data->>'executionId'; s := NEW.data->>'sessionId';
+ ELSE
+  e := to_jsonb(NEW)->>TG_ARGV[0];
+  IF TG_NARGS > 1 THEN s := to_jsonb(NEW)->>TG_ARGV[1]; END IF;
+ END IF;
+ IF e IS NULL AND s IS NOT NULL AND EXISTS (SELECT 1 FROM session WHERE id = s AND tombstoned_at IS NOT NULL) THEN
+  NEW.tombstoned_at := now(); RETURN NEW;
+ END IF;
+ IF e IS NOT NULL AND EXISTS (SELECT 1 FROM execution WHERE id = e AND tombstoned_at IS NOT NULL) THEN NEW.tombstoned_at := now(); END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER message_tombstone BEFORE INSERT ON message FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE TRIGGER event_tombstone BEFORE INSERT ON event FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE TRIGGER queued_message_tombstone BEFORE INSERT ON queued_message FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE TRIGGER command_tombstone BEFORE INSERT ON command FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE TRIGGER handoff_tombstone BEFORE INSERT ON handoff FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE TRIGGER session_fork_tombstone BEFORE INSERT ON session_fork FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE TRIGGER session_transition_tombstone BEFORE INSERT ON session_transition FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');
+CREATE TRIGGER worker_done_tombstone BEFORE INSERT ON worker_done FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id');
+-- The change feed: the same kinds as from the document rows (a session; its messages and events as 'event'; a command
+-- with its host and session).
+CREATE OR REPLACE FUNCTION fleet_change() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE r record; k text; i text; t text; s text; h text; w text; ek text; st text; BEGIN IF TG_OP = 'DELETE' THEN r := OLD; ELSE r := NEW; END IF; IF TG_TABLE_NAME = 'document' THEN IF r.kind = 'setting-change' THEN st := nullif(r.data->>'target', ''); END IF; IF r.kind = 'host-observation' AND TG_OP = 'UPDATE' AND (OLD.data - 'lastSeenAt') = (NEW.data - 'lastSeenAt') THEN RETURN NULL; END IF; IF r.kind = 'host-observation' THEN k := 'host'; h := r.id; ELSIF r.kind = 'artifact' THEN k := 'artifact'; s := r.data->>'sessionId'; SELECT e.task_id INTO t FROM execution e WHERE e.id = r.data->>'executionId'; ELSIF r.kind IN ('managed-account', 'api-connection', 'connection-key', 'setting-change', 'project-recommendation') THEN k := r.kind; w := r.data->>'holder'; ELSIF r.kind IN ('delivery-state', 'delivery-pr', 'delivery-run', 'delivery-release', 'delivery-check') THEN k := 'delivery'; ELSE RETURN NULL; END IF; i := r.id; ELSIF TG_TABLE_NAME = 'session' THEN k := 'session'; i := r.id; s := r.id; ELSIF TG_TABLE_NAME IN ('message', 'event') THEN k := 'event'; i := r.id; s := r.session_id; ELSIF TG_TABLE_NAME = 'command' THEN k := 'command'; i := r.id; h := r.host_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'task' THEN k := 'task'; i := r.id; t := r.id; ELSIF TG_TABLE_NAME = 'task_derived' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'task_dependency' THEN k := 'task'; i := r.task_id; t := r.task_id; ELSIF TG_TABLE_NAME = 'execution' THEN IF r.kind = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.id; t := r.task_id; s := r.session_id; h := r.host_id; ELSIF TG_TABLE_NAME = 'execution_totals' THEN SELECT e.kind::text, e.task_id, e.session_id, e.host_id INTO ek, t, s, h FROM execution e WHERE e.id = r.execution_id; IF ek = 'tool_run' THEN RETURN NULL; END IF; k := 'execution'; i := r.execution_id; ELSIF TG_TABLE_NAME = 'question' THEN k := 'question'; i := r.id; t := r.task_id; s := r.session_id; ELSIF TG_TABLE_NAME = 'experiment' THEN k := 'experiment'; i := r.id; ELSIF TG_TABLE_NAME = 'score' THEN k := 'score'; i := r.id; ELSIF TG_TABLE_NAME = 'definition' THEN k := 'definition'; i := r.kind || '/' || r.id; END IF; INSERT INTO change(kind, id, task_id, session_id, host_id, project_id, op, actor, holder, setting_target) VALUES (k, i, t, s, h, r.project_id, left(TG_OP, 1), nullif(current_setting('fleet.actor', true), ''), w, st); PERFORM fleet_enqueue_wake('fleet_change', ''); RETURN NULL; END $$;
+CREATE TRIGGER session_change AFTER INSERT OR UPDATE OR DELETE ON session FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER message_change AFTER INSERT OR UPDATE OR DELETE ON message FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER event_change AFTER INSERT OR UPDATE OR DELETE ON event FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE TRIGGER command_change AFTER INSERT OR UPDATE OR DELETE ON command FOR EACH ROW EXECUTE FUNCTION fleet_change();
+CREATE OR REPLACE FUNCTION fleet_session_hidden_lineage_count(sid text)
+ RETURNS bigint
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ prev text := current_setting('fleet.project_ids', true);
+ vis_n bigint := 0;
+ all_n bigint := 0;
+ pass_n int;
+ cur_n bigint;
+BEGIN
+ IF coalesce(sid, '') = '' OR NOT EXISTS (SELECT 1 FROM session WHERE id = sid) THEN
+  RETURN 0;
+ END IF;
+ BEGIN
+  FOR pass_n IN 0..1 LOOP
+   IF pass_n = 1 THEN
+    PERFORM set_config('fleet.project_ids', '*', true);
+   END IF;
+   WITH RECURSIVE
+    own_execs AS (
+     SELECT e.id, e.session_id
+     FROM execution e
+     WHERE e.kind <> 'child_agent'
+       AND e.delegation IS NULL
+       AND (e.session_id = sid OR (e.kind = 'tool_run' AND e.parent_execution_id IN (SELECT id FROM execution WHERE session_id = sid AND kind <> 'child_agent' AND delegation IS NULL)))
+    ),
+    del_seed AS (
+     SELECT e.id, e.session_id, (e.delegation IS NOT NULL) AS follow_session
+     FROM execution e
+     WHERE (e.parent_execution_id IN (SELECT id FROM own_execs) AND (e.kind = 'child_agent' OR e.delegation IS NOT NULL))
+        OR (e.delegation IS NOT NULL AND (e.delegation->>'parentSessionId' = sid OR e.delegation->>'parentExecutionId' IN (SELECT id FROM own_execs)))
+     UNION
+     SELECT e.id, e.session_id, true AS follow_session
+     FROM execution e
+     JOIN session s ON s.id = e.session_id
+     WHERE e.session_id <> sid
+       AND (
+         s.parent_execution_id IN (SELECT id FROM own_execs)
+         OR (s.created_by_execution_id IN (SELECT id FROM own_execs) AND coalesce(nullif(s.task_id, ''), '') = '')
+         OR (s.created_by_session_id = sid AND coalesce(nullif(s.task_id, ''), '') = '')
+       )
+    ),
+    del_tree AS (
+     SELECT id, session_id, follow_session FROM del_seed
+     UNION
+     SELECT e.id, e.session_id, (dt.follow_session OR e.delegation IS NOT NULL) AS follow_session
+     FROM execution e
+     JOIN del_tree dt ON e.parent_execution_id = dt.id
+        OR (dt.follow_session AND e.session_id IS NOT NULL AND dt.session_id IS NOT NULL AND e.session_id = dt.session_id AND e.session_id <> sid AND e.task_id IS NULL)
+        OR (e.delegation IS NOT NULL AND e.delegation->>'parentExecutionId' = dt.id)
+    ),
+    primary_task AS (
+     SELECT nullif(task_id, '') AS task_id FROM session WHERE id = sid
+    ),
+    spawned_tasks AS (
+     SELECT t.id
+     FROM task t
+     WHERE t.id IS DISTINCT FROM (SELECT task_id FROM primary_task)
+       AND (
+         t.created_by_session_id = sid
+         OR t.created_by_execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
+         OR t.created_by_session_id IN (SELECT session_id FROM del_tree WHERE session_id IS NOT NULL)
+       )
+    ),
+    spawned_task_ids AS MATERIALIZED (SELECT id FROM spawned_tasks),
+    spawned_sessions AS MATERIALIZED (
+     SELECT d.id AS session_id
+     FROM spawned_task_ids st
+     JOIN session d ON d.task_id = st.id
+    ),
+    spawned_runs AS MATERIALIZED (
+     SELECT e.id FROM spawned_task_ids st JOIN execution e ON e.task_id = st.id
+     UNION
+     SELECT e.id FROM spawned_sessions ss JOIN execution e ON e.task_id IS NULL AND e.session_id = ss.session_id
+    ),
+    spawned_execs AS (
+     SELECT id AS exec_id FROM spawned_runs
+     UNION
+     SELECT e.id AS exec_id FROM spawned_runs sr JOIN execution e ON e.kind = 'tool_run' AND e.parent_execution_id = sr.id
+    )
+   SELECT (SELECT count(DISTINCT id)::bigint FROM spawned_tasks)
+        + (SELECT count(DISTINCT d.id)::bigint
+           FROM del_tree d
+           JOIN execution e ON e.id = d.id
+           LEFT JOIN execution_totals t ON t.execution_id = e.id
+           WHERE d.id NOT IN (SELECT exec_id FROM spawned_execs)
+             AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+             AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL))
+   INTO cur_n;
+   IF pass_n = 0 THEN
+    vis_n := coalesce(cur_n, 0);
+   ELSE
+    all_n := coalesce(cur_n, 0);
+   END IF;
+  END LOOP;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN greatest(0::bigint, all_n - vis_n);
+END $function$
+;
+CREATE OR REPLACE FUNCTION fleet_task_hidden_lineage_count(tid text)
+ RETURNS bigint
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+ prev text := current_setting('fleet.project_ids', true);
+ vis_n bigint := 0;
+ all_n bigint := 0;
+ pass_n int;
+ cur_n bigint;
+BEGIN
+ IF coalesce(tid, '') = '' OR NOT EXISTS (SELECT 1 FROM task WHERE id = tid) THEN
+  RETURN 0;
+ END IF;
+ BEGIN
+  FOR pass_n IN 0..1 LOOP
+   IF pass_n = 1 THEN
+    PERFORM set_config('fleet.project_ids', '*', true);
+   END IF;
+   WITH RECURSIVE
+    candidate_sessions AS (
+     SELECT DISTINCT session_id FROM execution WHERE task_id = tid AND session_id IS NOT NULL
+    ),
+    first_task AS (
+     SELECT DISTINCT ON (e.session_id) e.session_id, e.task_id
+     FROM execution e
+     WHERE e.task_id IS NOT NULL AND e.session_id IN (SELECT session_id FROM candidate_sessions)
+     ORDER BY e.session_id, e.seq
+    ),
+    direct_sessions AS (
+     SELECT id AS session_id FROM session
+     WHERE (task_id = tid OR (coalesce(nullif(task_id, ''), '') = '' AND id IN (SELECT session_id FROM first_task WHERE task_id = tid)))
+       AND parent_execution_id IS NULL
+    ),
+    own_execs AS (
+     SELECT e.id, e.session_id
+     FROM execution e
+     WHERE e.kind <> 'child_agent'
+       AND e.delegation IS NULL
+       AND (
+         e.task_id = tid
+         OR (e.task_id IS NULL AND e.session_id IN (SELECT session_id FROM direct_sessions))
+         OR (e.kind = 'tool_run' AND e.parent_execution_id IN (
+            SELECT p.id FROM execution p
+            WHERE p.kind <> 'child_agent'
+              AND p.delegation IS NULL
+              AND (p.task_id = tid OR (p.task_id IS NULL AND p.session_id IN (SELECT session_id FROM direct_sessions)))
+         ))
+       )
+    ),
+    del_seed AS (
+     SELECT e.id, e.session_id, (e.delegation IS NOT NULL) AS follow_session
+     FROM execution e
+     WHERE (e.parent_execution_id IN (SELECT id FROM own_execs) AND (e.kind = 'child_agent' OR e.delegation IS NOT NULL))
+        OR (e.delegation IS NOT NULL AND (e.delegation->>'parentExecutionId' IN (SELECT id FROM own_execs) OR e.delegation->>'parentSessionId' IN (SELECT session_id FROM direct_sessions)))
+     UNION
+     SELECT e.id, e.session_id, true AS follow_session
+     FROM execution e
+     JOIN session s ON s.id = e.session_id
+     WHERE s.parent_execution_id IN (SELECT id FROM own_execs)
+        OR (s.created_by_execution_id IN (SELECT id FROM own_execs) AND coalesce(nullif(s.task_id, ''), '') = '')
+        OR (s.created_by_session_id IN (SELECT session_id FROM direct_sessions) AND coalesce(nullif(s.task_id, ''), '') = '')
+    ),
+    del_tree AS (
+     SELECT id, session_id, follow_session FROM del_seed
+     UNION
+     SELECT e.id, e.session_id, (dt.follow_session OR e.delegation IS NOT NULL) AS follow_session
+     FROM execution e
+     JOIN del_tree dt ON e.parent_execution_id = dt.id
+        OR (dt.follow_session AND e.session_id IS NOT NULL AND dt.session_id IS NOT NULL AND e.session_id = dt.session_id AND e.session_id NOT IN (SELECT session_id FROM direct_sessions) AND e.task_id IS NULL)
+        OR (e.delegation IS NOT NULL AND e.delegation->>'parentExecutionId' = dt.id)
+    ),
+    spawned_tasks AS (
+     SELECT t.id
+     FROM task t
+     WHERE t.id <> tid
+       AND (
+         t.created_by_execution_id IN (SELECT id FROM own_execs UNION SELECT id FROM del_tree)
+         OR t.created_by_session_id IN (
+          SELECT session_id FROM direct_sessions
+          UNION SELECT session_id FROM own_execs WHERE session_id IS NOT NULL
+          UNION SELECT session_id FROM del_tree WHERE session_id IS NOT NULL
+         )
+       )
+    ),
+    spawned_task_ids AS MATERIALIZED (SELECT id FROM spawned_tasks),
+    spawned_sessions AS MATERIALIZED (
+     SELECT d.id AS session_id
+     FROM spawned_task_ids st
+     JOIN session d ON d.task_id = st.id
+    ),
+    spawned_runs AS MATERIALIZED (
+     SELECT e.id FROM spawned_task_ids st JOIN execution e ON e.task_id = st.id
+     UNION
+     SELECT e.id FROM spawned_sessions ss JOIN execution e ON e.task_id IS NULL AND e.session_id = ss.session_id
+    ),
+    spawned_execs AS (
+     SELECT id AS exec_id FROM spawned_runs
+     UNION
+     SELECT e.id AS exec_id FROM spawned_runs sr JOIN execution e ON e.kind = 'tool_run' AND e.parent_execution_id = sr.id
+    )
+   SELECT (SELECT count(DISTINCT id)::bigint FROM spawned_tasks)
+        + (SELECT count(DISTINCT d.id)::bigint
+           FROM del_tree d
+           JOIN execution e ON e.id = d.id
+           LEFT JOIN execution_totals t ON t.execution_id = e.id
+           WHERE d.id NOT IN (SELECT exec_id FROM spawned_execs)
+             AND e.kind NOT IN ('pipeline_run', 'pipeline_step')
+             AND NOT (e.kind = 'child_agent' AND t.execution_id IS NULL))
+   INTO cur_n;
+   IF pass_n = 0 THEN
+    vis_n := coalesce(cur_n, 0);
+   ELSE
+    all_n := coalesce(cur_n, 0);
+   END IF;
+  END LOOP;
+ EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+  RAISE;
+ END;
+ PERFORM set_config('fleet.project_ids', coalesce(prev, ''), true);
+ RETURN greatest(0::bigint, all_n - vis_n);
+END $function$
+;
+CREATE OR REPLACE FUNCTION fleet_write_model(eid text)
+ RETURNS void
+ LANGUAGE sql
+AS $function$
+ UPDATE execution_totals SET model=(SELECT payload->'data'->>'model' FROM event WHERE NOT delta AND execution_id=eid
+  AND jsonb_typeof(payload->'data'->'model')='string' ORDER BY seq DESC LIMIT 1) WHERE execution_id=eid
+$function$
+;
+CREATE OR REPLACE FUNCTION fleet_write_native_observations(eid text)
+ RETURNS void
+ LANGUAGE sql
+AS $function$
+ WITH doc_evs AS MATERIALIZED (
+  SELECT payload AS data, seq
+  FROM event
+  WHERE NOT delta AND execution_id=eid
+ ),
+ evs AS (
+  SELECT data->'data'->'fleetNormalized'->>'lifecycle' AS lc, data->'data'->'fleetNormalized'->'nativeUsage' AS u, seq
+  FROM doc_evs WHERE jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object'
+ ),
+ calls AS (SELECT u->'last' AS u FROM evs WHERE lc='usage.observation' AND jsonb_typeof(u->'last')='object'),
+ rep AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE lc IN ('result','turn.completed') AND NOT EXISTS (SELECT 1 FROM calls) ORDER BY seq DESC LIMIT 1
+ ),
+ inc_native AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE coalesce(lc,'') NOT IN ('usage.observation','result','turn.completed')
+   AND NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+ ),
+ inc_assistant AS (
+  SELECT DISTINCT ON (mid) mu AS u FROM (
+   SELECT
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->>'id', d.data->'data'->'message'->>'id', d.seq::text) AS mid,
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->'usage', d.data->'data'->'message'->'usage') AS mu,
+    d.seq
+   FROM doc_evs d
+   WHERE NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+    AND coalesce(d.data->'data'->'fleetNormalized'->>'lifecycle', d.data->'data'->>'type')='assistant'
+    AND jsonb_typeof(d.data->'data'->'fleetNormalized'->'nativeUsage') IS DISTINCT FROM 'object'
+  ) m WHERE jsonb_typeof(mu)='object' ORDER BY mid, seq DESC
+ ),
+ rows AS (
+  SELECT fleet_token_count(coalesce(u->'reasoning_output_tokens',u->'reasoningOutputTokens',u->'thought_tokens',u->'thoughtTokens',u->'output_tokens_details'->'reasoning_tokens')) AS reasoning
+  FROM (SELECT u FROM calls UNION ALL SELECT u FROM rep UNION ALL SELECT u FROM inc_native UNION ALL SELECT u FROM inc_assistant) x
+ ), n AS (
+  SELECT CASE WHEN count(*)=count(reasoning) THEN sum(reasoning) END AS reasoning FROM rows
+ )
+ UPDATE execution_totals SET tokens_reasoning=n.reasoning,
+  tokens_reasoning_basis=CASE WHEN n.reasoning IS NULL THEN 'unavailable' ELSE 'measured' END
+ FROM n WHERE execution_id=eid;
+ WITH report AS (
+  SELECT fleet_token_count(coalesce(payload#>'{data,fleetNormalized,native,duration_api_ms}',payload#>'{data,duration_api_ms}',payload#>'{data,native,duration_api_ms}')) AS ms
+  FROM event WHERE NOT delta AND execution_id=eid
+   AND coalesce(payload#>>'{data,fleetNormalized,lifecycle}',type)='result'
+  ORDER BY seq DESC LIMIT 1
+ ) UPDATE execution_totals SET api_ms=report.ms,
+  api_ms_basis=CASE WHEN report.ms IS NULL THEN 'unavailable' ELSE 'measured' END
+ FROM report WHERE execution_id=eid
+$function$
+;
+CREATE OR REPLACE FUNCTION fleet_write_tokens(eid text)
+ RETURNS void
+ LANGUAGE sql
+AS $function$
+ WITH doc_evs AS MATERIALIZED (
+  SELECT payload AS data, seq
+  FROM event
+  WHERE NOT delta AND execution_id=eid
+ ),
+ evs AS (
+  SELECT data->'data'->'fleetNormalized'->>'lifecycle' AS lc, data->'data'->'fleetNormalized'->'nativeUsage' AS u, seq
+  FROM doc_evs WHERE jsonb_typeof(data->'data'->'fleetNormalized'->'nativeUsage')='object'
+ ),
+ calls AS (SELECT u->'last' AS u FROM evs WHERE lc='usage.observation' AND jsonb_typeof(u->'last')='object'),
+ rep AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE lc IN ('result','turn.completed') AND NOT EXISTS (SELECT 1 FROM calls) ORDER BY seq DESC LIMIT 1
+ ),
+ inc_native AS (
+  SELECT CASE WHEN jsonb_typeof(u->'last')='object' THEN u->'last' ELSE u END AS u FROM evs
+  WHERE coalesce(lc,'') NOT IN ('usage.observation','result','turn.completed')
+   AND NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+ ),
+ inc_assistant AS (
+  SELECT DISTINCT ON (mid) mu AS u FROM (
+   SELECT
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->>'id', d.data->'data'->'message'->>'id', d.seq::text) AS mid,
+    coalesce(d.data->'data'->'fleetNormalized'->'message'->'usage', d.data->'data'->'message'->'usage') AS mu,
+    d.seq
+   FROM doc_evs d
+   WHERE NOT EXISTS (SELECT 1 FROM calls) AND NOT EXISTS (SELECT 1 FROM rep)
+    AND coalesce(d.data->'data'->'fleetNormalized'->>'lifecycle', d.data->'data'->>'type')='assistant'
+    AND jsonb_typeof(d.data->'data'->'fleetNormalized'->'nativeUsage') IS DISTINCT FROM 'object'
+  ) m WHERE jsonb_typeof(mu)='object' ORDER BY mid, seq DESC
+ ),
+ rows AS (
+  SELECT
+   fleet_token_count(coalesce(u->'input_tokens',u->'inputTokens')) AS input,
+   fleet_token_count(coalesce(u->'output_tokens',u->'outputTokens')) AS output,
+   fleet_token_count(coalesce(u->'cache_read_input_tokens',u->'cached_input_tokens',u->'cachedInputTokens',u->'cachedReadTokens',u->'cache_read_tokens')) AS cache_read,
+   fleet_token_count(coalesce(u->'cache_creation_input_tokens',u->'cacheWriteInputTokens',u->'cachedWriteTokens',u->'cache_write_tokens')) AS cache_write,
+   (u ? 'cached_input_tokens' OR u ? 'cachedInputTokens') AS input_has_cache
+  FROM (SELECT u FROM calls UNION ALL SELECT u FROM rep UNION ALL SELECT u FROM inc_native UNION ALL SELECT u FROM inc_assistant) x
+ ),
+ n AS (
+  SELECT
+   sum(CASE WHEN input_has_cache AND input IS NOT NULL THEN greatest(0, input - coalesce(cache_read,0)) ELSE input END) AS input,
+   sum(output) AS output, sum(cache_read) AS cache_read, sum(cache_write) AS cache_write
+  FROM rows
+ )
+ UPDATE execution_totals SET
+  tokens_input=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.input ELSE execution_totals.tokens_input END,
+  tokens_input_basis=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN CASE WHEN n.input IS NULL THEN 'unavailable' ELSE 'measured' END ELSE execution_totals.tokens_input_basis END,
+  tokens_output=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.output ELSE execution_totals.tokens_output END,
+  tokens_output_basis=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN CASE WHEN n.output IS NULL THEN 'unavailable' ELSE 'measured' END ELSE execution_totals.tokens_output_basis END,
+  tokens_cache_read=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.cache_read ELSE execution_totals.tokens_cache_read END,
+  tokens_cache_read_basis=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN CASE WHEN n.cache_read IS NULL THEN 'unavailable' ELSE 'measured' END ELSE execution_totals.tokens_cache_read_basis END,
+  tokens_cache_write=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN n.cache_write ELSE execution_totals.tokens_cache_write END,
+  tokens_cache_write_basis=CASE WHEN coalesce(n.input,n.output,n.cache_read,n.cache_write) IS NOT NULL THEN CASE WHEN n.cache_write IS NULL THEN 'unavailable' ELSE 'measured' END ELSE execution_totals.tokens_cache_write_basis END
+ FROM n WHERE execution_id=eid
+$function$
+;

@@ -51,7 +51,7 @@ test('Coding requirements select an eligible host and retain the ordinary coding
   assert.ok(pmCommand,'excluded native PM needs no coding prerequisites');
   assert.equal(pmCommand.payload.agentConfig.id,'pm');
   for(const status of ['started','completed']) ok(await call('/api/hosts/receipts',{executionId:pm.executionId,commandId:pmCommand.id,status,nativeSessionId:'invented-pds-pm'},secret));
-  const resumed=ok(await call(`/api/sessions/${pm.sessionId}/messages`,{requestId:randomUUID(),text:'Continue native PM fixture.'}));
+  const resumed=ok(await call('/api/ops/message_send', {sessionId: pm.sessionId, requestId:randomUUID(),text:'Continue native PM fixture.'}));
   const resumedCommand=ok(await poll([])).commands.find((x:any)=>x.executionId===resumed.id);
   assert.ok(resumedCommand);assert.equal(resumedCommand.payload.nativeSessionId,'invented-pds-pm');assert.equal(resumedCommand.payload.account,pmCommand.payload.account);
   const scoped=ok(await op('session_start',{projectId:excluded.id,role:'worker',hostId:host,requestId:randomUUID(),text:'Coding fixture.'}));

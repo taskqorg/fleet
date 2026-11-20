@@ -23,6 +23,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"fleet/contract"
+
+	"fleet/coordinator/db"
 )
 
 var (
@@ -496,8 +498,8 @@ func pipelineStart(q *Request, o doc) (doc, error) {
 	// Caller lineage is server-derived, never a pipeline parameter.
 	if strings.HasPrefix(q.agent, "execution:") {
 		source := strings.TrimPrefix(q.agent, "execution:")
-		parent, e := first(q, `SELECT e.project_id,coalesce(e.task_id,s.data->>'taskId') AS task_id,e.session_id,e.directed_by
-			FROM execution e LEFT JOIN document s ON s.kind='session' AND s.id=e.session_id WHERE e.id=$1`, source)
+		parent, e := first(q, `SELECT e.project_id,coalesce(e.task_id,s.task_id) AS task_id,e.session_id,e.directed_by
+			FROM execution e LEFT JOIN session s ON s.id=e.session_id WHERE e.id=$1`, source)
 		if e != nil {
 			return nil, e
 		}
@@ -737,7 +739,7 @@ func pipelineCancelIn(q *Request, runID string) (string, doc, error) {
 			own = astr(step["executionId"])
 			step["observation"], run["observation"] = "unconfirmed", "unconfirmed"
 		} else if native := astr(step["executionId"]); native != "" {
-			if err := exec(q, "UPDATE document SET data=data||'{\"status\":\"stopped\"}'::jsonb WHERE kind='command' AND data->>'executionId'=$1 AND data->>'status'='pending'", native); err != nil {
+			if _, err := commandStop(q, commandStopFilter{executionID: &native, statuses: []db.CommandStatus{db.CommandStatusPending}}); err != nil {
 				return "", nil, err
 			}
 			if err := exec(q, "UPDATE execution SET state='cancelled',ended_at=now() WHERE id=$1 AND state IN ('preparing','waiting')", native); err != nil {
@@ -1400,7 +1402,7 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 			dispatch := mapOf(pipelinePlanEntry(run, i)["dispatch"])
 			dispatch["nativeExecutionId"] = execID
 			if kind == "script" {
-				command, err := first(q, "SELECT data FROM document WHERE kind='command' AND data->>'executionId'=$1 AND data->>'kind'='script'", execID)
+				command, err := first(q, "SELECT "+convTables["command"].record()+" AS data FROM command WHERE execution_id=$1 AND kind='script' ORDER BY seq", execID)
 				if err != nil {
 					return err
 				}

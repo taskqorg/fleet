@@ -273,10 +273,10 @@ test('R4 task_get, session_get, threads, definition_usage, executions_runners, p
         ('task-1', 'TASK-1', 'desiign', 'Primary Task', 'in_progress', NULL),
         ('task-2', 'TASK-2', 'desiign', 'Spawned Task', 'completed', 'ex-own');
 
-      INSERT INTO document(id, kind, project_id, data) VALUES
-        ('sess-1', 'session', 'desiign', '{"id":"sess-1","projectId":"desiign","taskId":"task-1"}'::jsonb),
-        ('sess-del', 'session', 'desiign', '{"id":"sess-del","projectId":"desiign","parentExecutionId":"ex-own"}'::jsonb),
-        ('sess-spawn', 'session', 'desiign', '{"id":"sess-spawn","projectId":"desiign","taskId":"task-2"}'::jsonb);
+      INSERT INTO session(id, project_id, task_id, parent_execution_id) VALUES
+        ('sess-1', 'desiign', 'task-1', NULL),
+        ('sess-del', 'desiign', NULL, 'ex-own'),
+        ('sess-spawn', 'desiign', 'task-2', NULL);
 
       -- Pre-attachment turn in sess-1 (task_id IS NULL), overlapping own run + child tool_run, child_agent, delegated session run, spawned task run.
       -- Pipeline container ex-pipe (pinned pipe-1 rev 1) + leaf ex-own + draft run ex-draft (draft: true).
@@ -385,11 +385,10 @@ test('R5 empty-string dimensions normalize to unknown, api-connection metadata r
 
     c.sql(`
       INSERT INTO document(id, kind, data) VALUES
-        ('connection:priv', 'api-connection', '{"id":"connection:priv","provider":"openai","holder":"owner@trial.test","secret":"top-secret-key"}'::jsonb),
-        ('sess-own', 'session', '{"id":"sess-own","projectId":"desiign","taskId":"t-main"}'::jsonb),
-        ('sess-hid', 'session', '{"id":"sess-hid","projectId":"secret-proj","taskId":"t-spawn"}'::jsonb);
-      UPDATE document SET project_id = 'desiign' WHERE id = 'sess-own';
-      UPDATE document SET project_id = 'secret-proj' WHERE id = 'sess-hid';
+        ('connection:priv', 'api-connection', '{"id":"connection:priv","provider":"openai","holder":"owner@trial.test","secret":"top-secret-key"}'::jsonb);
+      INSERT INTO session(id, project_id, task_id) VALUES
+        ('sess-own', 'desiign', 't-main'),
+        ('sess-hid', 'secret-proj', 't-spawn');
 
       INSERT INTO price_entry(id, subject, unit, price, currency, source, observed_at, effective_from, created_by) VALUES
         ('p-gpt-in', 'gpt-5', 'input_tokens', 0.01, 'USD', 'owner', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'owner@trial.test'),

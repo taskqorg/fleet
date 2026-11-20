@@ -1494,10 +1494,9 @@ const taskLineageCTEs = `WITH RECURSIVE
   ORDER BY e.session_id, e.seq
  ),
  direct_sessions AS (
-  SELECT id AS session_id FROM document
-  WHERE kind = 'session'
-    AND (data->>'taskId' = $1 OR (coalesce(nullif(data->>'taskId', ''), '') = '' AND id IN (SELECT session_id FROM first_task WHERE task_id = $1)))
-    AND NOT (data ? 'parentExecutionId')
+  SELECT id AS session_id FROM session
+  WHERE (task_id = $1 OR (coalesce(nullif(task_id, ''), '') = '' AND id IN (SELECT session_id FROM first_task WHERE task_id = $1)))
+    AND parent_execution_id IS NULL
  ),
  own_execs AS (
   SELECT e.id, e.session_id
@@ -1523,10 +1522,10 @@ const taskLineageCTEs = `WITH RECURSIVE
   UNION
   SELECT e.id, e.session_id, true AS follow_session
   FROM execution e
-  JOIN document s ON s.kind = 'session' AND s.id = e.session_id
-  WHERE s.data->>'parentExecutionId' IN (SELECT id FROM own_execs)
-     OR (s.data->>'createdByExecutionId' IN (SELECT id FROM own_execs) AND coalesce(nullif(s.data->>'taskId', ''), '') = '')
-     OR (s.data->>'createdBySessionId' IN (SELECT session_id FROM direct_sessions) AND coalesce(nullif(s.data->>'taskId', ''), '') = '')
+  JOIN session s ON s.id = e.session_id
+  WHERE s.parent_execution_id IN (SELECT id FROM own_execs)
+     OR (s.created_by_execution_id IN (SELECT id FROM own_execs) AND coalesce(nullif(s.task_id, ''), '') = '')
+     OR (s.created_by_session_id IN (SELECT session_id FROM direct_sessions) AND coalesce(nullif(s.task_id, ''), '') = '')
  ),
  del_tree AS (
   SELECT id, session_id, follow_session FROM del_seed
@@ -1552,7 +1551,7 @@ const taskLineageCTEs = `WITH RECURSIVE
  )` + spawnedExecsCTEs
 
 // spawnedExecsCTEs: the executions of the spawned tasks (usually none), joined from those tasks: executions through
-// indexed column equalities, their sessions by one scan of the session documents (under row-level security a JSON path
+// indexed column equalities, their sessions by session.task_id (indexed; under row-level security a JSON path
 // is never an index condition, migration 70), and only when a spawned task exists. One join of every execution with every task under an OR condition was planned as a nested loop over
 // both tables once statistics were current: 40 s for one task of a 20000-task store, under the global write lock
 // when task_update returns the task.
@@ -1561,7 +1560,7 @@ const spawnedExecsCTEs = `,
  spawned_sessions AS MATERIALIZED (
   SELECT st.id AS task_id, d.id AS session_id
   FROM spawned_task_ids st
-  JOIN document d ON d.kind = 'session' AND d.data->>'taskId' = st.id
+  JOIN session d ON d.task_id = st.id
  ),
  spawned_runs AS MATERIALIZED (
   SELECT st.id AS task_id, e.id
@@ -1701,12 +1700,12 @@ const sessionLineageCTEs = `WITH RECURSIVE
   UNION
   SELECT e.id, e.session_id, true AS follow_session
   FROM execution e
-  JOIN document s ON s.kind = 'session' AND s.id = e.session_id
+  JOIN session s ON s.id = e.session_id
   WHERE e.session_id <> $1
     AND (
-      s.data->>'parentExecutionId' IN (SELECT id FROM own_execs)
-      OR (s.data->>'createdByExecutionId' IN (SELECT id FROM own_execs) AND coalesce(nullif(s.data->>'taskId', ''), '') = '')
-      OR (s.data->>'createdBySessionId' = $1 AND coalesce(nullif(s.data->>'taskId', ''), '') = '')
+      s.parent_execution_id IN (SELECT id FROM own_execs)
+      OR (s.created_by_execution_id IN (SELECT id FROM own_execs) AND coalesce(nullif(s.task_id, ''), '') = '')
+      OR (s.created_by_session_id = $1 AND coalesce(nullif(s.task_id, ''), '') = '')
     )
  ),
  del_tree AS (
@@ -1719,7 +1718,7 @@ const sessionLineageCTEs = `WITH RECURSIVE
      OR (e.delegation IS NOT NULL AND e.delegation->>'parentExecutionId' = dt.id)
  ),
  primary_task AS (
-  SELECT nullif(data->>'taskId', '') AS task_id FROM document WHERE kind = 'session' AND id = $1
+  SELECT nullif(task_id, '') AS task_id FROM session WHERE id = $1
  ),
  spawned_tasks AS (
   SELECT t.id, t.code, t.title, t.state::text AS state, t.project_id, t.seq
@@ -1865,11 +1864,11 @@ func definitionUsageResources(q *Request, kind, id string, days int64) (map[stri
  edges AS MATERIALIZED (
   SELECT DISTINCT c.id AS child_id, p.parent_id
   FROM execution c
-  LEFT JOIN document s ON s.kind = 'session' AND s.id = c.session_id
+  LEFT JOIN session s ON s.id = c.session_id
   CROSS JOIN LATERAL (VALUES
    (c.parent_execution_id),
    (CASE WHEN c.delegation IS NOT NULL THEN c.delegation->>'parentExecutionId' END),
-   (s.data->>'parentExecutionId'),
+   (s.parent_execution_id),
    (CASE WHEN c.kind = 'tool_run' THEN c.data->>'pipelineRunId' END)
   ) p(parent_id)
   WHERE p.parent_id IS NOT NULL

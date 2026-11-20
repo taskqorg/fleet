@@ -8,6 +8,8 @@ import (
 	"fmt"
 
 	"fleet/contract"
+
+	"fleet/coordinator/db"
 )
 
 func init() {
@@ -21,7 +23,7 @@ func hostRemoveCounts(q *Request, id string) (contract.HostsRemoveReply, error) 
 	r := contract.HostsRemoveReply{Id: id}
 	row, err := first(q, `SELECT
 	(SELECT count(*) FROM execution WHERE host_id=$1 AND state IN ('preparing','running','waiting'))::int AS running,
-	(SELECT count(*) FROM document WHERE kind='session' AND data->>'hostId'=$1 AND data->>'archivedAt' IS NULL)::int AS sessions,
+	(SELECT count(*) FROM session WHERE host_id=$1 AND archived_at IS NULL)::int AS sessions,
 	(SELECT count(DISTINCT c.artifact_id) FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=$1 AND c.state='verified'
 	  AND NOT EXISTS (SELECT 1 FROM artifact_copy o JOIN store t ON t.id=o.store_id WHERE o.artifact_id=c.artifact_id AND o.state='verified' AND t.host_id<>$1))::int AS lonely`, id)
 	if err != nil {
@@ -84,7 +86,8 @@ func hostsRemove(q *Request, b *contract.HostsRemoveRequest) (contract.HostsRemo
 		return none, err
 	}
 	// Commands the host will never fetch (teardown, readiness, stops of finished runs) are settled.
-	if err := exec(q, "UPDATE document SET data=data||'{\"status\":\"stopped\",\"stopDetail\":\"host-removed\"}', updated_at=now() WHERE kind='command' AND data->>'hostId'=$1 AND data->>'status'='pending'", b.Id); err != nil {
+	removedDetail := "host-removed"
+	if _, err := commandStop(q, commandStopFilter{hostID: &b.Id, statuses: []db.CommandStatus{db.CommandStatusPending}, detail: &removedDetail}); err != nil {
 		return none, err
 	}
 	// Artifacts whose only verified copy was on this host's stores are lost (data foundation tombstone rules): the
@@ -121,8 +124,8 @@ func purgeableHosts(q *Request) (gone []string, kept []contract.PurgeReason, err
 	WHEN EXISTS (SELECT 1 FROM execution e WHERE e.host_id=d.data->>'hostId') THEN 'execution.host_id'
 	WHEN EXISTS (SELECT 1 FROM artifact_copy c JOIN store s ON s.id=c.store_id WHERE s.host_id=d.data->>'hostId' AND c.state<>'deleted') THEN 'artifact_copy on its store'
 	WHEN EXISTS (SELECT 1 FROM route_decision r WHERE r.host_id=d.data->>'hostId') THEN 'route_decision.host_id'
-	WHEN EXISTS (SELECT 1 FROM document x WHERE x.kind='session' AND x.data->>'hostId'=d.data->>'hostId') THEN 'document.data->>''hostId'' by session'
-	WHEN EXISTS (SELECT 1 FROM document x WHERE x.kind='command' AND x.data->>'hostId'=d.data->>'hostId') THEN 'document.data->>''hostId'' by command' END AS referenced
+	WHEN EXISTS (SELECT 1 FROM session x WHERE x.host_id=d.data->>'hostId') THEN 'session.host_id'
+	WHEN EXISTS (SELECT 1 FROM command x WHERE x.host_id=d.data->>'hostId') THEN 'command.host_id' END AS referenced
 	FROM document d WHERE d.kind='host' AND d.data->>'state'='removed' ORDER BY d.seq`)
 	if err != nil {
 		return nil, nil, err

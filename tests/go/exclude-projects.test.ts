@@ -16,7 +16,7 @@ test('excludeProjectId(s) leave out only the named projects in task_page, sessio
   const op = async (name: string, body: object) => { const r = await call(name, body); assert.equal(r.status, 200, name + ' ' + JSON.stringify(r.d)); return r.d; };
   // keep and muted; 'stray' has rows but no project definition (the case an allow-list of known projects lost).
   c.sql(`INSERT INTO task(id,project_id,title) VALUES ('t-keep','keep','A'),('t-muted','muted','B'),('t-stray','stray','C'),('t-free',NULL,'D');
-    INSERT INTO document(kind,id,project_id,data) VALUES ('session','s-keep','keep','{}'),('session','s-muted','muted','{}'),('session','s-stray','stray','{}'),('session','s-free',NULL,'{}');
+    INSERT INTO session(id,project_id) VALUES ('s-keep','keep'),('s-muted','muted'),('s-stray','stray'),('s-free',NULL);
     INSERT INTO question(id,kind,project_id,text) VALUES ('q-keep','operator_decision','keep','a'),('q-muted','operator_decision','muted','b'),('q-stray','operator_decision','stray','c'),('q-free','operator_decision',NULL,'d');
     INSERT INTO execution(id,kind,state,project_id,data) VALUES ('e-keep','agent_run','succeeded','keep','{}'),('e-muted','agent_run','succeeded','muted','{}'),('e-stray','agent_run','succeeded','stray','{}'),('e-free','agent_run','succeeded',NULL,'{}');
     INSERT INTO artifact(id,project_id,scope,content_hash,size,media_type,name,state) VALUES ('a-keep','keep','prod','k',1,'text/plain','k.txt','stored'),('a-muted','muted','prod','m',1,'text/plain','m.txt','stored'),('a-stray','stray','prod','s',1,'text/plain','s.txt','stored'),('a-free',NULL,'prod','f',1,'text/plain','f.txt','stored');`);

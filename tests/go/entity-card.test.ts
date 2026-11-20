@@ -47,7 +47,7 @@ test('entity_card: every kind by code or kind and id, within the caller\'s grant
   assert.equal(x.state, 'draft'); assert.equal(x.title, 'Is the card useful?'); assert.equal(x.path, '/lab/x-card');
   // Conversation by code, with its first message as the title.
   const sid = (await op('session_create', {})).sessionId;
-  c.sql(`INSERT INTO document(kind,id,data) VALUES('message','m-card','{"sessionId":"${sid}","text":"Plan   the entity card"}')`);
+  c.sql(`INSERT INTO message(id,session_id,text) VALUES('m-card','${sid}','Plan   the entity card')`);
   const sc = (await op('sessions_list', {})).sessions.find((s: any) => s.id === sid).code;
   const conv = await card({code: sc});
   assert.equal(conv.kind, 'conversation'); assert.equal(conv.id, sid); assert.equal(conv.title, 'Plan the entity card'); assert.equal(conv.state, 'idle'); assert.equal(conv.atLabel, 'active');

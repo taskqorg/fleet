@@ -138,18 +138,19 @@ test('prepared operations: auth, progress, configuration independence, C-order w
   env.FLEET_RESOURCE_PROCESSOR='off';await c.restart();
   // Both generic and host-agent paths must bind before interpreting foreign cursors/anchors.
   const host=(await op('hosts_register',{id:'api-host',holder:member}));
-  const sid='api-session';c.sql(`INSERT INTO document(id,kind,project_id,data) VALUES('${sid}','session','desiign','{"id":"api-session","projectId":"desiign"}');
+  const sid='api-session';c.sql(`INSERT INTO session(id,project_id) VALUES('${sid}','desiign');
    INSERT INTO execution(id,kind,state,project_id,session_id,host_id,directed_by,data) VALUES('api-agent','agent_run','running','desiign','${sid}','api-host','${member}',jsonb_build_object('id','api-agent','hostId','api-host','sessionId','${sid}','projectId','desiign','directedBy','${member}'));
-   INSERT INTO document(id,kind,project_id,data) VALUES('api-command','command','desiign','{"id":"api-command","executionId":"api-agent","hostId":"api-host"}');`);
+   INSERT INTO command(id,kind,project_id,execution_id,host_id) VALUES('api-command','','desiign','api-agent','api-host');`);
   const agent=async(name:string,args:object,expected=200)=>{const r=await request('/api/hosts/agent-tools',{hostId:'api-host',executionId:'api-agent',commandId:'api-command',request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}}},member,host.secret);assert.equal(r.status,expected,JSON.stringify(r.body));return r.status===200?JSON.parse(r.body.result.content[0].text):r.body;};
-  c.sql(`INSERT INTO document(id,kind,data) VALUES('api-unbound-session','session','{"id":"api-unbound-session","directedBy":"${member}"}'),('api-unbound-command','command','{"id":"api-unbound-command","executionId":"api-unbound-agent","hostId":"api-host"}');
+  c.sql(`INSERT INTO session(id,directed_by) VALUES('api-unbound-session','${member}');
+   INSERT INTO command(id,kind,execution_id,host_id) VALUES('api-unbound-command','','api-unbound-agent','api-host');
    INSERT INTO execution(id,kind,state,session_id,host_id,directed_by,data) VALUES('api-unbound-agent','agent_run','running','api-unbound-session','api-host','${member}',jsonb_build_object('id','api-unbound-agent','hostId','api-host','sessionId','api-unbound-session','directedBy','${member}'));`);
   for(const name of operations){const r=await request('/api/hosts/agent-tools',{hostId:'api-host',executionId:'api-unbound-agent',commandId:'api-unbound-command',request:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:{category:'tools'}}}},member,host.secret);assert.equal(r.status,400,JSON.stringify(r.body));}
   for(const name of operations){
    const b=await agent(name,{category:'tools'});assert.equal(b.projectId??b.id,'desiign');
    await agent(name,{projectId:'hello-world',category:'bogus',cursor:'bad'},404);
   }
-  c.sql("UPDATE document SET data=data||'{\"focus\":{\"projectIds\":[\"desiign\"]}}'::jsonb WHERE id='api-session'; UPDATE definition_revision SET content=jsonb_set(content::jsonb,'{settings,roles}','42')::text WHERE kind='project' AND id='desiign'");
+  c.sql("UPDATE session SET payload=payload||'{\"focus\":{\"projectIds\":[\"desiign\"]}}'::jsonb WHERE id='api-session'; UPDATE definition_revision SET content=jsonb_set(content::jsonb,'{settings,roles}','42')::text WHERE kind='project' AND id='desiign'");
   assert.equal((await agent('project_resources',{})).kind,'ready');
   assert.ok((await agent('project_resource_items',{category:'tools'})).items.length>0);
   await agent('project_detail',{},500);

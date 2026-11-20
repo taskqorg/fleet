@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -208,8 +209,8 @@ func init() {
 // lockExecutionTask keeps execution writers in task-before-execution order.
 func lockExecutionTask(q *Request, id string) error {
 	return exec(q, `SELECT 1 FROM task WHERE id=(
-		SELECT coalesce(e.task_id,s.data->>'taskId') FROM execution e
-		LEFT JOIN document s ON s.id=e.session_id AND s.kind='session' WHERE e.id=$1
+		SELECT coalesce(e.task_id,s.task_id) FROM execution e
+		LEFT JOIN session s ON s.id=e.session_id WHERE e.id=$1
 	) FOR NO KEY UPDATE`, id)
 }
 
@@ -258,9 +259,9 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 	}
 	neverHandedOut := false
 	if taskCancellation && known && e["state"] == "preparing" {
-		neverHandedOut, err = has(q, `SELECT 1 FROM document
-			WHERE kind='command' AND execution_ref=$1 AND data->>'kind' IN ('start','script')
-			AND data->>'status'='pending' AND data->'handedOut'='false'::jsonb`, id)
+		neverHandedOut, err = has(q, `SELECT 1 FROM command
+			WHERE execution_id=$1 AND kind IN ('start','script')
+			AND status='pending' AND handed_out=false`, id)
 		if err != nil {
 			return rep, err
 		}
@@ -533,7 +534,7 @@ func init() {
 				return out, fail(400, "Expected execution ids")
 			}
 		}
-		sessRows, err := queryRows(q, "SELECT DISTINCT s FROM (SELECT e.session_id AS s FROM execution e WHERE e.id=ANY($1) UNION SELECT s.data->>'createdBySessionId' AS s FROM execution e JOIN document s ON s.kind='session' AND s.id=e.session_id WHERE e.id=ANY($1)) x WHERE coalesce(s,'')<>''", r.Ids)
+		sessRows, err := queryRows(q, "SELECT DISTINCT s FROM (SELECT e.session_id AS s FROM execution e WHERE e.id=ANY($1) UNION SELECT s.created_by_session_id AS s FROM execution e JOIN session s ON s.id=e.session_id WHERE e.id=ANY($1)) x WHERE coalesce(s,'')<>''", r.Ids)
 		if err != nil {
 			return out, err
 		}
@@ -611,8 +612,8 @@ func init() {
 				// so a confirmed one that went silent was dropped by an executor restart. ponytail: a host job meant to run
 				// longer than lostAfter needs a progress receipt or its own limit.
 				const lostCond = `state IN ('preparing','running','waiting') AND (
-				 (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM document c
-				  WHERE c.kind='command' AND c.data->>'executionId'=execution.id AND c.data->>'kind'='stop' AND c.data->>'status' IN ('pending','unknown'))))
+				 (kind IN ('agent_run','host_job') AND (observation='unconfirmed' OR (coalesce((data->>'stopRequested')::boolean,false) AND EXISTS (SELECT 1 FROM command c
+				  WHERE c.execution_id=execution.id AND c.kind='stop' AND c.status IN ('pending','unknown'))))
 				  AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1))
 				 OR (kind='host_job' AND state='running' AND observation='confirmed' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => $1)
 				  AND EXISTS (SELECT 1 FROM document h WHERE h.kind='host-observation' AND h.id=execution.host_id
@@ -689,7 +690,8 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 	if terminal(e) {
 		return astr(e["state"]), nil
 	}
-	if err := exec(q, `UPDATE document SET data=data||'{"status":"stopped","stopDetail":"abandoned"}', updated_at=now() WHERE kind='command' AND data->>'executionId'=$1 AND data->>'status' IN ('pending','unknown')`, id); err != nil {
+	abandoned := "abandoned"
+	if _, err := commandStop(q, commandStopFilter{executionID: &id, statuses: []db.CommandStatus{db.CommandStatusPending, db.CommandStatusUnknown}, detail: &abandoned}); err != nil {
 		return "", err
 	}
 	prev := astr(e["state"])

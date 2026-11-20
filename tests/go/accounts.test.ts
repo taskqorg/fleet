@@ -74,8 +74,8 @@ test('Selected execution hosts inspect their own account through authenticated c
    if(platform==='linux') {
     // Requirement: automatic account selection survives native continuation; risk: resume falls back to another HOME.
     ok(await op('hosts_update',{id:'account-win32',intake:'paused'}));
-    const session=ok(await call('/api/sessions',{}));
-    const send=()=>call(`/api/sessions/${session.sessionId}/messages`,{requestId:randomUUID(),text:'continue'});
+    const session=ok(await call('/api/ops/session_create',{}));
+    const send=()=>call('/api/ops/message_send', {sessionId: session.sessionId, requestId:randomUUID(),text:'continue'});
     const first=ok(await send());
     const start=ok(await call('/api/hosts/poll',poll,secret)).commands.find((x:any)=>x.executionId===first.id);
     assert.equal(start.payload.account,'fixture-codex');

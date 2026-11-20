@@ -33,7 +33,7 @@ test('Explicit task asks bind projectless PM questions with grants, stable ident
   const inferred=await call('/api/ops/ask',{executionId:bound,requestId:'inferred',question:'Bound worker question'},person);assert.equal(inferred.taskId,task);
   await call('/api/ops/ask',{executionId:bound,taskId:other,requestId:'conflict',question:'Wrong task'},person,409);
   await call('/api/ops/ask',{executionId:bound,taskId:denied,requestId:'project-conflict',question:'Wrong project'},'owner@trial.test',409);
-  assert.equal(c.sql(`SELECT data->>'taskId' FROM document WHERE id='${sessionId}'`).trim(),'','PM session remains unattached');
+  assert.equal(c.sql(`SELECT task_id FROM session WHERE id='${sessionId}'`).trim(),'','PM session remains unattached');
  } finally {await c.stop();}
 });
 
@@ -45,8 +45,8 @@ test('Registration refresh preserves runtime causes before a failed terminal rec
  try {
   const {secret}=await call('/api/ops/hosts_register',{id:'trial-host'});
   const task=await call('/api/ops/task_create',{projectId:'hello-world',title:'failure cause'});
-  const {sessionId}=await call('/api/sessions',{});c.sql(`UPDATE document SET data=data||jsonb_build_object('taskId','${task.id}') WHERE id='${sessionId}'`);
-  const e=await call(`/api/sessions/${sessionId}/messages`,{requestId:randomUUID(),text:'fixture'});
+  const {sessionId}=await call('/api/ops/session_create',{});c.sql(`UPDATE session SET task_id='${task.id}' WHERE id='${sessionId}'`);
+  const e=await call('/api/ops/message_send', {sessionId: sessionId, requestId:randomUUID(),text:'fixture'});
   // Exercise a genuine registration refresh: unchanged heartbeats intentionally skip reconciliation.
   let refresh=false;
   const poll=()=>call('/api/hosts/poll',{platform:'darwin',capabilities:(refresh=!refresh)?['script']:[],stores:[],problems:[]},secret,null);

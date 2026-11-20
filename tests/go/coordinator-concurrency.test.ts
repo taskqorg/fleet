@@ -36,10 +36,10 @@ test('C1 concurrent host polls, non-terminal receipts, and session message appen
   const cmdHost = await registerHost('c1-rcpt-host');
   ok(await cmdHost('/api/hosts/poll', pollBody()));
 
-  const s1 = ok(await call('POST', '/api/sessions', {}, owner)).sessionId as string;
-  const s2 = ok(await call('POST', '/api/sessions', {}, owner)).sessionId as string;
-  const e1 = ok(await call('POST', `/api/sessions/${s1}/messages`, {requestId: randomUUID(), text: 'first'}, owner));
-  const e2 = ok(await call('POST', `/api/sessions/${s2}/messages`, {requestId: randomUUID(), text: 'second'}, owner));
+  const s1 = ok(await call('POST', '/api/ops/session_create', {}, owner)).sessionId as string;
+  const s2 = ok(await call('POST', '/api/ops/session_create', {}, owner)).sessionId as string;
+  const e1 = ok(await call('POST', '/api/ops/message_send', {sessionId: s1, requestId: randomUUID(), text: 'first'}, owner));
+  const e2 = ok(await call('POST', '/api/ops/message_send', {sessionId: s2, requestId: randomUUID(), text: 'second'}, owner));
 
   // An immediate poll waits for the dispatch generation requested by both message commits.
   // A long poll can return the first unacknowledged command repeatedly before dispatch claims the second.
@@ -49,13 +49,13 @@ test('C1 concurrent host polls, non-terminal receipts, and session message appen
   assert.ok(c1 && c2, `expected start commands for both executions, got ${JSON.stringify(cmds)}`);
 
   const pollHosts = await Promise.all(Array.from({length: 30}, (_, i) => registerHost(`c1-h-${i}`)));
-  const msgSessions = await Promise.all(Array.from({length: 5}, async () => ok(await call('POST', '/api/sessions', {}, owner)).sessionId as string));
+  const msgSessions = await Promise.all(Array.from({length: 5}, async () => ok(await call('POST', '/api/ops/session_create', {}, owner)).sessionId as string));
 
   await Promise.all([
     ...pollHosts.map(async h => ok(await h('/api/hosts/poll', pollBody(['codex'])))),
     (async () => ok(await cmdHost('/api/hosts/receipts', {commandId: c1.id, executionId: e1.id, status: 'accepted'})))(),
     (async () => ok(await cmdHost('/api/hosts/receipts', {commandId: c2.id, executionId: e2.id, status: 'started'})))(),
-    ...msgSessions.map(async (sid, idx) => ok(await call('POST', `/api/sessions/${sid}/messages`, {requestId: randomUUID(), text: `msg-${idx}`}, owner))),
+    ...msgSessions.map(async (sid, idx) => ok(await call('POST', '/api/ops/message_send', {sessionId: sid, requestId: randomUUID(), text: `msg-${idx}`}, owner))),
     (async () => ok(await op('hosts_list')))(),
   ]);
 });
@@ -149,7 +149,7 @@ test('C4 concurrent started/completed receipts retain terminal state (requiremen
     assert.equal(results[1].status, 200, JSON.stringify(results[1].body));
     assert.ok([200, 409].includes(results[0].status), JSON.stringify(results[0]));
     assert.equal((await receipt('started')).status, 409, 'terminal command rejects late started receipt');
-    const detail = ok(await call('GET', `/api/sessions/${s.sessionId}`, undefined, owner));
+    const detail = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, owner));
     assert.equal(detail.executions.find((e: any) => e.id === s.executionId)?.state, 'succeeded');
   }
 });

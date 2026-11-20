@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/errtrack"
 )
 
@@ -267,11 +268,11 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 			removed = true
 			return nil
 		}
-		var cnt int
-		if err := rq.tx.QueryRow(rq.ctx(), "SELECT count(*),coalesce(bool_or(e.data ? 'pipelineRunId' AND c.data->>'kind'=ANY($2)),false) FROM document c LEFT JOIN execution e ON e.id=c.data->>'executionId' WHERE c.kind='command' AND c.data->>'hostId'=$1 AND c.data->>'status'='pending'", host, pipelineDispatchKinds).Scan(&cnt, &pipelinePending); err != nil {
+		n, err := rq.db().CommandsPendingCount(rq.ctx(), db.CommandsPendingCountParams{Kinds: pipelineDispatchKinds, HostID: &host})
+		if err != nil {
 			return err
 		}
-		hasPending = cnt > 0
+		hasPending, pipelinePending = n.N > 0, n.Pipeline
 		return nil
 	}); err != nil {
 		return nil, err
@@ -300,7 +301,7 @@ func (a *App) pollReadyCommands(ctx context.Context, host string, caps []string)
 		if hostDoc == nil {
 			hostDoc = doc{"hostId": host}
 		}
-		pending, err := rows(wq, "SELECT data FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'status'='pending' ORDER BY seq", host)
+		pending, err := all(wq, "command", doc{"hostId": host, "status": "pending"})
 		if err != nil {
 			return err
 		}
@@ -423,8 +424,7 @@ func (a *App) pollReadyCommand(wq *Request, hostDoc, c doc) (doc, error) {
 		return nil, err
 	}
 	if c["handedOut"] == false {
-		if err := exec(wq, `UPDATE document SET data=data||'{"handedOut":true}'::jsonb,updated_at=now()
-			WHERE kind='command' AND id=$1`, c["id"]); err != nil {
+		if err := wq.db().CommandHandOut(wq.ctx(), astr(c["id"])); err != nil {
 			return nil, err
 		}
 	}

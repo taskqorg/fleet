@@ -258,7 +258,7 @@ func (a *App) setPeople(ctx context.Context, raw []byte, strict bool) (skipped [
 		if _, err := tx.Exec(ctx, `UPDATE definition SET initial_member_revoked_at=now(),access_version=access_version+1 WHERE kind='project' AND initial_member IS NOT NULL AND initial_member_revoked_at IS NULL AND NOT(initial_member=ANY($1))`, emails); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE document SET data=data||jsonb_build_object('directorAccessRevokedAt',extract(epoch from now())*1000) WHERE kind='session' AND project_id IS NULL AND data ? 'directedBy' AND NOT(data ? 'directorAccessRevokedAt') AND NOT(data->>'directedBy'=ANY($1))`, emails); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE session SET director_access_revoked_at=now() WHERE project_id IS NULL AND directed_by IS NOT NULL AND director_access_revoked_at IS NULL AND NOT(directed_by=ANY($1))`, emails); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE execution SET data=data||jsonb_build_object('directorAccessRevokedAt',extract(epoch from now())*1000) WHERE project_id IS NULL AND session_id IS NULL AND directed_by IS NOT NULL AND NOT(data ? 'directorAccessRevokedAt') AND NOT(directed_by=ANY($1))`, emails); err != nil {

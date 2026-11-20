@@ -508,7 +508,7 @@ func TestConcurrentHostPollsReceiptsMessagesNoGlobalContention(t *testing.T) {
 			t.Fatalf("create session %d = %d %v", idx, c, sessBody)
 		}
 		sid := sessBody["sessionId"].(string)
-		c, msgBody := env.callJSON(t, "POST", "/api/sessions/"+sid+"/messages", doc{"requestId": fmt.Sprintf("req-rcpt-%d", idx), "text": "go"}, env.ownerHeaders())
+		c, msgBody := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sid, "requestId": fmt.Sprintf("req-rcpt-%d", idx), "text": "go"}, env.ownerHeaders())
 		if c != 200 {
 			t.Fatalf("first message %d = %d %v", idx, c, msgBody)
 		}
@@ -596,7 +596,7 @@ func TestConcurrentHostPollsReceiptsMessagesNoGlobalContention(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, b := env.callJSON(t, "POST", "/api/sessions/"+sessIDs[i]+"/messages", doc{
+			c, b := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sessIDs[i], 
 				"requestId": fmt.Sprintf("req-conc-%d", i), "text": "hello under global lock",
 			}, env.ownerHeaders())
 			if c != 200 {
@@ -628,7 +628,7 @@ func TestConcurrentHostPollsReceiptsMessagesNoGlobalContention(t *testing.T) {
 
 func eCreateSession(t *testing.T, env *testCoordEnv) (int, map[string]any) {
 	t.Helper()
-	return env.callJSON(t, "POST", "/api/sessions", doc{}, env.ownerHeaders())
+	return env.callJSON(t, "POST", "/api/ops/session_create", doc{}, env.ownerHeaders())
 }
 
 // Requirement: PR5 long-poll wait parameter clamping (< executor 35s client timeout), immediate return for queued commands, and instant channel wakeup.
@@ -674,7 +674,7 @@ func TestHostLongPollImmediateAndWakeup(t *testing.T) {
 	if sc != 200 {
 		t.Fatalf("create session = %d %v", sc, sb)
 	}
-	mc, mb := env.callJSON(t, "POST", "/api/sessions/"+sb["sessionId"].(string)+"/messages", doc{"requestId": "lp-req-1", "text": "wake host"}, env.ownerHeaders())
+	mc, mb := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sb["sessionId"].(string), "requestId": "lp-req-1", "text": "wake host"}, env.ownerHeaders())
 	if mc != 200 {
 		t.Fatalf("message = %d %v", mc, mb)
 	}
@@ -693,7 +693,7 @@ func TestHostLongPollImmediateAndWakeup(t *testing.T) {
 	if sc2 != 200 {
 		t.Fatal(sc2)
 	}
-	mc2, _ := env.callJSON(t, "POST", "/api/sessions/"+sb2["sessionId"].(string)+"/messages", doc{"requestId": "lp-req-2", "text": "pending already"}, env.ownerHeaders())
+	mc2, _ := env.callJSON(t, "POST", "/api/ops/message_send", doc{"sessionId": sb2["sessionId"].(string), "requestId": "lp-req-2", "text": "pending already"}, env.ownerHeaders())
 	if mc2 != 200 {
 		t.Fatal(mc2)
 	}

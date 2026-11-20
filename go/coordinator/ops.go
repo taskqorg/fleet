@@ -38,7 +38,11 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt)
 		return h(&sub)
 	}
 	var out any
-	err := a.store.Tx(q.ctx(), scopeOf(q.person), !reg.read, "", func(tx pgx.Tx) error {
+	lock := ""
+	if l := opLocks[name]; l != nil {
+		lock = l(b)
+	}
+	err := a.store.Tx(q.ctx(), scopeOf(q.person), !reg.read, lock, func(tx pgx.Tx) error {
 		sub.tx = tx
 		err := authorizeOp(&sub, name)
 		if err != nil {
@@ -62,6 +66,18 @@ func (a *App) runOp(q *Request, name string, b json.RawMessage, rc *toolReceipt)
 		a.wakeDispatch()
 	}
 	return out, err
+}
+
+// opLocks: the entity lock of a write operation that does not take GLOBAL (lockRank). message_send takes its session's
+// lock, so messages, host polls and receipts of other sessions run in parallel; an empty session id keeps GLOBAL and
+// the operation's own check refuses it.
+var opLocks = map[string]func(b json.RawMessage) string{
+	"message_send": func(b json.RawMessage) string {
+		if sid := jsonPathString(b, "sessionId"); sid != "" {
+			return "session:" + sid
+		}
+		return ""
+	},
 }
 
 // opGates: a check of an operation that runs after its auth and before its body is decoded (prepared reads off: 503).

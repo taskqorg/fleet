@@ -148,7 +148,7 @@ func watchOne(q *Request, wid string) error {
 		return exec(q, "DELETE FROM document WHERE kind='watch' AND id=$1", wid)
 	}
 	// PM busy: a wake still queued covers everything; keep the cursor (step 6).
-	if busy, err := has(q, "SELECT 1 FROM document WHERE kind='queued-message' AND data->>'sessionId'=$1 AND data->>'state'='queued' AND (data->>'requestId' LIKE 'watch:%' OR data->>'requestId' LIKE 'timer:%')", id); err != nil || busy {
+	if busy, err := has(q, "SELECT 1 FROM queued_message WHERE session_id=$1 AND state='queued' AND (request_id LIKE 'watch:%' OR request_id LIKE 'timer:%')", id); err != nil || busy {
 		return err
 	}
 	dir := q.peopleSnapshot().person(firstString(s["directedBy"], ownerEmail(q)))
@@ -164,7 +164,7 @@ func watchOne(q *Request, wid string) error {
 		own["execution:"+astr(e["id"])] = true
 	}
 	children := map[string]bool{}
-	cs, err := rowsOf(q, "SELECT id FROM document WHERE kind='session' AND data->>'createdBySessionId'=$1", id)
+	cs, err := rowsOf(q, "SELECT id FROM session WHERE created_by_session_id=$1", id)
 	if err != nil {
 		return err
 	}

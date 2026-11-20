@@ -43,8 +43,8 @@ func subscriptionLimitsRefresh(q *Request, req *contract.SubscriptionLimitsRefre
 	for _, a := range targets {
 		id := astr(a["id"])
 		// A read already on its way is the answer to a repeated refresh.
-		inflight, err := rowsCtx(q.ctx(), q.tx, `SELECT data FROM document WHERE kind='command' AND data->>'kind'=$1 AND data->'payload'->>'mode'='limits'
-		   AND data->'payload'->>'accountId'=$2 AND coalesce(data->>'status','pending') NOT IN ('completed','failed','stopped','unknown') LIMIT 1`, string(contract.CommandKindAccountInspect), id)
+		inflight, err := rowsCtx(q.ctx(), q.tx, `SELECT `+convTables["command"].record()+` AS data FROM command WHERE kind=$1 AND payload->'payload'->>'mode'='limits'
+		   AND payload->'payload'->>'accountId'=$2 AND status IN ('pending','accepted','started') LIMIT 1`, string(contract.CommandKindAccountInspect), id)
 		if err != nil {
 			return reply, err
 		}

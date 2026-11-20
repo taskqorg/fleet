@@ -9,27 +9,27 @@ const ok=(r:{status:number,body:any})=>{assert.equal(r.status,200,JSON.stringify
 test('Two ordinary actors can own projectless sessions but cannot substitute foreign identity/session/execution',async()=>{
  assert.equal((await request('/api/ops/session_create',a,{directedBy:b})).status,400);
  const own=ok(await request('/api/ops/session_create',a,{})),foreign=ok(await request('/api/ops/session_create',b,{}));
- assert.equal(ok(await request('/api/sessions/'+own.sessionId,a)).directedBy,a);
+ assert.equal(ok(await request('/api/ops/session_get',a,{sessionId:own.sessionId})).directedBy,a);
  for(const [who,sid]of[[a,foreign.sessionId],[b,own.sessionId]]){
-  assert.equal((await request('/api/sessions/'+sid,who)).status,404);
-  assert.equal((await request('/api/sessions/'+sid+'/profile',who,{profileId:'pm'})).status,404);
-  assert.equal((await request('/api/sessions/'+sid+'/messages',who,{requestId:randomUUID(),text:'foreign'})).status,404);
+  assert.equal((await request('/api/ops/session_get',who,{sessionId:sid})).status,404);
+  assert.equal((await request('/api/ops/session_profile',who,{sessionId:sid,profileId:'pm'})).status,404);
+  assert.equal((await request('/api/ops/message_send',who,{sessionId:sid,requestId:randomUUID(),text:'foreign'})).status,404);
   assert.equal((await request('/api/ops/session_fork',who,{sessionId:sid,requestId:randomUUID()})).status,404);
  }
  const fork=ok(await request('/api/ops/session_fork',a,{sessionId:own.sessionId,requestId:randomUUID(),strategy:'context'}));
- assert.equal(ok(await request('/api/sessions/'+fork.sessionId,a)).directedBy,a);
- assert.equal((await request('/api/sessions/'+fork.sessionId,b)).status,404);
- ok(await request('/api/sessions/'+own.sessionId+'/profile',a,{profileId:'pm'}));
- assert.equal((await request('/api/sessions/'+own.sessionId+'/messages',a,{requestId:randomUUID(),text:'own',directedBy:b})).status,400);
- const execution=ok(await request('/api/sessions/'+own.sessionId+'/messages',a,{requestId:randomUUID(),text:'Owned transcript canary'}));
+ assert.equal(ok(await request('/api/ops/session_get',a,{sessionId:fork.sessionId})).directedBy,a);
+ assert.equal((await request('/api/ops/session_get',b,{sessionId:fork.sessionId})).status,404);
+ ok(await request('/api/ops/session_profile',a,{sessionId:own.sessionId,profileId:'pm'}));
+ assert.equal((await request('/api/ops/message_send',a,{sessionId:own.sessionId,requestId:randomUUID(),text:'own',directedBy:b})).status,400);
+ const execution=ok(await request('/api/ops/message_send',a,{sessionId:own.sessionId,requestId:randomUUID(),text:'Owned transcript canary'}));
  assert.equal(execution.directedBy,a);
  const ownHistory=ok(await request('/api/ops/thread_entries',a,{key:{session:own.sessionId},limit:10}));assert.ok(JSON.stringify(ownHistory).includes('Owned transcript canary'));
  assert.equal((await request('/api/executions/'+execution.id+'/events',b)).status,404);
  const lists=ok(await request('/api/ops/sessions_list',b,{}));assert.ok(!JSON.stringify(lists).includes(own.sessionId));
- const ownRead=ok(await request('/api/sessions/'+own.sessionId,a));assert.ok(JSON.stringify(ownRead).includes(execution.id));
+ const ownRead=ok(await request('/api/ops/session_get',a,{sessionId:own.sessionId}));assert.ok(JSON.stringify(ownRead).includes(execution.id));
  const people=ok(await request('/api/ops/people_list',owner,{})).people;
  ok(await request('/api/ops/people_set',owner,{people:people.filter((p:any)=>p.email!==a)}));
- assert.equal((await request('/api/sessions/'+own.sessionId,a)).status,403);
- ok(await request('/api/ops/people_set',owner,{people}));assert.equal((await request('/api/sessions/'+own.sessionId,a)).status,404);
- assert.equal((await request('/api/sessions/'+own.sessionId,owner)).status,200,'privileged history stays available');
+ assert.equal((await request('/api/ops/session_get',a,{sessionId:own.sessionId})).status,403);
+ ok(await request('/api/ops/people_set',owner,{people}));assert.equal((await request('/api/ops/session_get',a,{sessionId:own.sessionId})).status,404);
+ assert.equal((await request('/api/ops/session_get',owner,{sessionId:own.sessionId})).status,200,'privileged history stays available');
 });

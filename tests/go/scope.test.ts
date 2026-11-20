@@ -45,7 +45,7 @@ test('S1 lists: a member lists only granted projects and their sessions; an outs
   const m = await listed(MEMBER);
   assert.ok(m.includes(mine) && !m.includes(theirs), JSON.stringify(m));
   assert.ok(!(await listed(OUTSIDER)).some(id => id === mine || id === theirs));
-  assert.equal((await call('GET', '/api/sessions/' + theirs, undefined, as(MEMBER))).status, 404);
+  assert.equal((await call('POST', '/api/ops/session_get', {sessionId: theirs}, as(MEMBER))).status, 404);
 });
 
 test('S2 dispatch: a member\'s message picks the owner-held host and a take-rule subscription, and the host claims it; readiness runs too (requirement: docs/designs/fleet-people-access.md grants; risk: knownHost, eligible account placement or readiness rows run in the person\'s scope: 400 Unknown host, no account, 403)', async () => {
@@ -74,7 +74,7 @@ test('S2b questions_withdraw, executions_abandon and executions_dismiss: owner o
   const command = commands.find((c: any) => c.executionId === s.executionId && c.kind === 'start');
   assert.ok(command, 'the host claims the member run');
   // Taken work: the run takes the owner's subscription, so dispatch makes the owner its director (takenFrom: the member).
-  const taken = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
+  const taken = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
   assert.deepEqual([taken.directedBy, taken.takenFrom], [OWNER, MEMBER]);
   const calls: [string, object][] = [
     ['questions_withdraw', {ids: [randomUUID()], reason: 'x'}],
@@ -86,7 +86,7 @@ test('S2b questions_withdraw, executions_abandon and executions_dismiss: owner o
     assert.equal(agent.status, 403, `${name} as the member's agent: ${JSON.stringify(agent.body)}`);
     assert.match(agent.body.message, /Only the owner/);
   }
-  const e = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
+  const e = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
   assert.notEqual(e.state, 'failed', 'the run was not abandoned');
   assert.deepEqual(ok(await op('executions_abandon', {ids: [s.executionId], reason: 'owner'})).abandoned, [s.executionId]);
 });
@@ -95,13 +95,13 @@ test('S3a questions: a person cannot answer an agent question of a project they 
   const s = ok(await start(MEMBER, MINE));
   const q = ok(await op('ask', {executionId: s.executionId, requestId: 'scope-qa', question: 'Which colour?'}));
   assert.equal((await op('questions_answer', {questionId: q.id, answer: 'red'}, OUTSIDER)).status, 404);
-  const got = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(MEMBER)));
+  const got = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(MEMBER)));
   assert.equal(got.questions.find((x: any) => x.id === q.id).state, 'open', 'the outsider changed nothing');
   // A member of another project: the agent question row has no project of its own, only its session has one.
   const t = ok(await start(OWNER, OTHER));
   const tq = ok(await op('ask', {executionId: t.executionId, requestId: 'scope-qa2', question: 'Which colour?'}));
   assert.equal((await op('questions_answer', {questionId: tq.id, answer: 'red'}, MEMBER)).status, 404);
-  assert.equal(ok(await call('GET', '/api/sessions/' + t.sessionId, undefined, as(OWNER))).questions.find((x: any) => x.id === tq.id).state, 'open');
+  assert.equal(ok(await call('POST', '/api/ops/session_get', {sessionId: t.sessionId}, as(OWNER))).questions.find((x: any) => x.id === tq.id).state, 'open');
 });
 
 // Expected to fail: defect found by this file. agentReply (agent.go) writes the answered question back with put(), whose
@@ -112,7 +112,7 @@ test('S3b questions: a member answers an agent question of their project and the
   const r = await op('questions_answer', {questionId: q.id, answer: 'blue'}, MEMBER);
   assert.notEqual(r.status, 404, 'the member has the session\'s project (1cc53b7)');
   ok(r);
-  const got = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(MEMBER)));
+  const got = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(MEMBER)));
   assert.equal(got.questions.find((x: any) => x.id === q.id).state, 'answered');
   assert.ok(got.queued.some((m: any) => /blue/.test(m.text)), 'the answer reaches the asking session');
 });
@@ -170,9 +170,9 @@ test('S7 owner-only and director-only: people_set stays the owner\'s, its audit 
 
 test('S-SESS session routes: a member cannot message or re-profile a session of a project they cannot see (404), and may drive one in a granted project directed by someone else (requirement: fleet-people-access.md director and project scope; risk: cross-project session change; a director-only rule the spec does not set)', async () => {
   const theirs = ok(await start(OWNER, OTHER)).sessionId, shared = ok(await start(OWNER, MINE)).sessionId;
-  assert.equal((await call('POST', `/api/sessions/${theirs}/messages`, {requestId: randomUUID(), text: 'x'}, as(MEMBER))).status, 404);
-  assert.equal((await call('POST', `/api/sessions/${theirs}/profile`, {profileId: 'pm'}, as(MEMBER))).status, 404);
-  ok(await call('POST', `/api/sessions/${shared}/messages`, {requestId: randomUUID(), text: 'x'}, as(MEMBER)));
+  assert.equal((await call('POST', '/api/ops/message_send', {sessionId: theirs, requestId: randomUUID(), text: 'x'}, as(MEMBER))).status, 404);
+  assert.equal((await call('POST', '/api/ops/session_profile', {sessionId: theirs, profileId: 'pm'}, as(MEMBER))).status, 404);
+  ok(await call('POST', '/api/ops/message_send', {sessionId: shared, requestId: randomUUID(), text: 'x'}, as(MEMBER)));
 });
 
 test('S9 a director with grant * takes the owner\'s subscription without a take rule, and the execution keeps who directed it (requirement: development owner rule 2026-11-11, agents may do every owner-only operation; risk: site-agents cannot run Claude on owner-mac, or a take hides the real director)', async () => {
@@ -183,7 +183,7 @@ test('S9 a director with grant * takes the owner\'s subscription without a take 
   const s = ok(await op('session_start', {requestId: randomUUID(), text: 'star turn', projectId: OTHER, profileId: 'pm', hostId: 'trial-host', account: 'star-sub'}, AGENTS));
   const {commands} = ok(await h('/api/hosts/poll', poll));
   assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'the owner-held subscription runs work directed by grant *');
-  const e = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
+  const e = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
   assert.equal(e.takenFrom, AGENTS, 'the real director stays on the execution');
 });
 
@@ -195,6 +195,6 @@ test('S10 a director with grant * and no subscription or host of its own is plac
   const s = ok(await op('session_start', {requestId: randomUUID(), text: 'star turn', projectId: OTHER, profileId: 'pm'}, AGENTS));
   const {commands} = ok(await h('/api/hosts/poll', poll));
   assert.ok(commands.some((c: any) => c.executionId === s.executionId && c.kind === 'start'), 'placement takes an owner subscription for grant *');
-  const e = ok(await call('GET', '/api/sessions/' + s.sessionId, undefined, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
+  const e = ok(await call('POST', '/api/ops/session_get', {sessionId: s.sessionId}, as(OWNER))).executions.find((x: any) => x.id === s.executionId);
   assert.equal(e.takenFrom, AGENTS);
 });

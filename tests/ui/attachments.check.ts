@@ -82,10 +82,10 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     await shoot('composer-uploading');
     await composer.getByRole('button', { name: 'Send' }).click();
     await p.waitForTimeout(300);
-    assert.equal(seed.rows(`SELECT 1 FROM document WHERE kind='message' AND data->>'sessionId'='${S}'`).length, 0, 'Send waits for the uploads');
+    assert.equal(seed.rows(`SELECT 1 FROM message WHERE session_id='${S}'`).length, 0, 'Send waits for the uploads');
     release();
-    assert.ok(await until(async () => seed.rows(`SELECT 1 FROM document WHERE kind='message' AND data->>'sessionId'='${S}'`).length === 1), 'the message is sent once the files are stored');
-    const [message] = seed.rows(`SELECT data FROM document WHERE kind='message' AND data->>'sessionId'='${S}'`);
+    assert.ok(await until(async () => seed.rows(`SELECT 1 FROM message WHERE session_id='${S}'`).length === 1), 'the message is sent once the files are stored');
+    const [message] = seed.rows(`SELECT payload AS data, execution_id FROM message WHERE session_id='${S}'`);
     assert.deepEqual(message.data.attachments.map((a: any) => [a.name, a.mediaType]), [['screenshot.png', 'image/png'], ['note.txt', 'text/plain']]);
     assert.ok(await until(async () => await chips.count() === 0), 'the chips leave the composer after the send');
     assert.equal(await composer.locator('textarea').inputValue(), '', 'the text leaves with the send');
@@ -95,7 +95,7 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     assert.ok(await until(async () => await row.locator('.msg-files .att').count() === 2), 'the sent message shows its two files: ' + await p.locator('.transcript, [data-ui=detail]').first().innerText().catch(e => String(e)));
     assert.equal(await row.locator('.msg-files img.att-thumb').count(), 1, 'the image as a thumbnail');
     assert.ok(await until(async () => await row.locator('img.att-thumb').evaluate(i => (i as HTMLImageElement).naturalWidth > 0)), 'the thumbnail loads from the store');
-    const execution = message.data.executionId;
+    const execution = message.execution_id;
     seed.sql(`UPDATE execution SET state='running', started_at=now() WHERE id='${execution}'`);
     seed.put('event', { id: 'att-reply', sessionId: S, executionId: execution, type: 'item.completed', seq: 1, data: { fleetNormalized: { blocks: [{ kind: 'text', role: 'agent', markdown: 'Reading the files.' }] } } });
     await p.reload(); await row.waitFor();
@@ -104,7 +104,7 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await shoot('composer-running');
     await stop.click();
-    assert.ok(await until(async () => seed.rows(`SELECT 1 FROM document WHERE kind='command' AND data->>'executionId'='${execution}' AND data->>'kind'='stop'`).length === 1), 'Stop sends a stop for the running execution');
+    assert.ok(await until(async () => seed.rows(`SELECT 1 FROM command WHERE execution_id='${execution}' AND kind='stop'`).length === 1), 'Stop sends a stop for the running execution');
     await composer.getByPlaceholder('Steer').fill('and one more thing');
     assert.equal(await composer.getByRole('button', { name: 'Send' }).count(), 1, 'typed text turns Stop into Send');
     await composer.getByPlaceholder('Steer').fill('');
@@ -143,7 +143,7 @@ export async function checkAttachments(browser: Browser, origin: string, seed: R
     await form.locator('[data-ui=composer]').getByRole('button', { name: 'Send' }).click();
     await p.waitForURL(u => /^\/conversations\/[0-9a-f-]{36}$/.test(new URL(u).pathname), { timeout: 15000 });
     const started = new URL(p.url()).pathname.split('/').pop()!;
-    const [first] = seed.rows(`SELECT data FROM document WHERE kind='message' AND data->>'sessionId'='${started}'`);
+    const [first] = seed.rows(`SELECT payload AS data FROM message WHERE session_id='${started}'`);
     assert.deepEqual(first?.data.attachments?.map((x: any) => x.name), ['chosen.txt', 'start.png', 'start.txt'], 'session_start carries the files into the first message');
     assert.ok(await until(async () => await p.locator('.th-text.operator .msg-files .att').count() === 3, 15000), 'the started conversation shows them');
     await shoot('new-conversation-started');

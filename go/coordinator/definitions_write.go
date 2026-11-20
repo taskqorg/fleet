@@ -504,7 +504,7 @@ func definitionDelete(q *Request, r *contract.DefinitionDeleteRequest) (contract
 	// An open session whose profile it is would take no further turn.
 	var sessions int64
 	if r.Kind == contract.DefinitionKindAgent {
-		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM document WHERE kind='session' AND data->'agentConfig'->>'id'=$1 AND NOT data ? 'archivedAt' AND tombstoned_at IS NULL", r.Id).Scan(&sessions); err != nil {
+		if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM session WHERE payload->'agentConfig'->>'id'=$1 AND archived_at IS NULL AND tombstoned_at IS NULL", r.Id).Scan(&sessions); err != nil {
 			return out, err
 		}
 	}

@@ -152,8 +152,8 @@ func (a *App) delegationReady(q *Request, e doc) (bool, error) {
 		return false, err
 	}
 	cancelled, err := has(q, `SELECT 1 FROM execution p
-		LEFT JOIN document s ON s.kind='session' AND s.id=p.session_id
-		JOIN task t ON t.id=coalesce(p.task_id,s.data->>'taskId')
+		LEFT JOIN session s ON s.id=p.session_id
+		JOIN task t ON t.id=coalesce(p.task_id,s.task_id)
 		WHERE p.id=$1 AND t.state='cancelled'`, parent["id"])
 	if err != nil || cancelled {
 		return false, err

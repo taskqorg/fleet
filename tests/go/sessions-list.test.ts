@@ -16,17 +16,17 @@ test('sessions_list and membership with production-shaped RLS history retain tit
   const mine = (await op('session_create', {})).sessionId;
   const theirs = (await op('session_create', {}, outsider)).sessionId;
   // Similar fanout to the incident (1658 sessions, 9495 events); no native work is launched.
-  c.sql(`INSERT INTO document(kind,id,project_id,data)
-    SELECT 'session','list-'||i,'desiign',jsonb_build_object('createdAt',i,'agentConfig',jsonb_build_object('harness','codex')) || CASE WHEN i=1599 THEN '{"archivedAt":1}'::jsonb ELSE '{}'::jsonb END FROM generate_series(0,1599) i;
-    INSERT INTO document(kind,id,project_id,data) VALUES
-      ('session','list-foreign','hidden-project','{}'),
-      ('message','list-foreign-message','hidden-project','{"sessionId":"list-0","text":"Foreign title canary"}'),
-      ('message','list-first','desiign','{"sessionId":"list-0","text":"Needle first title"}'),
-      ('message','list-second','desiign','{"sessionId":"list-0","text":"Later message is not the title"}');
-    INSERT INTO document(kind,id,project_id,data)
-    SELECT 'event','list-event-'||i,'desiign',jsonb_build_object('sessionId','list-'||(i%1600),'payload',repeat(md5(i::text),32)) FROM generate_series(1,9500) i;
-    INSERT INTO document(kind,id,project_id,data) VALUES ('event','list-last','desiign','{"sessionId":"list-0"}');
-    ANALYZE document;`);
+  c.sql(`INSERT INTO session(id,project_id,created_at,archived_at,payload)
+    SELECT 'list-'||i,'desiign',to_timestamp(i/1000.0),CASE WHEN i=1599 THEN to_timestamp(0.001) END,jsonb_build_object('agentConfig',jsonb_build_object('harness','codex')) FROM generate_series(0,1599) i;
+    INSERT INTO session(id,project_id) VALUES ('list-foreign','hidden-project');
+    INSERT INTO message(id,session_id,project_id,text) VALUES
+      ('list-foreign-message','list-0','hidden-project','Foreign title canary'),
+      ('list-first','list-0','desiign','Needle first title'),
+      ('list-second','list-0','desiign','Later message is not the title');
+    INSERT INTO event(id,session_id,project_id,payload)
+    SELECT 'list-event-'||i,'list-'||(i%1600),'desiign',jsonb_build_object('payload',repeat(md5(i::text),32)) FROM generate_series(1,9500) i;
+    INSERT INTO event(id,session_id,project_id) VALUES ('list-last','list-0','desiign');
+    ANALYZE session; ANALYZE message; ANALYZE event;`);
   const title = await op('sessions_list', {filter: {search: 'Needle'}});
   assert.equal(title.total, 1); assert.equal(title.sessions[0].id, 'list-0'); assert.equal(title.sessions[0].title, 'Needle first title');
   const page = await op('sessions_list', {limit: 3});
@@ -63,13 +63,13 @@ test('sessions_list groups, sorts and pages by last activity; membership answers
   const op = async (name: string, body: object) => { const r = await send(name, body); const d: any = await r.json(); assert.equal(r.status, 200, JSON.stringify(d)); return d; };
   // Activity is the latest of the session document, its messages and events, and the start or end of its executions;
   // not an execution's updated_at, which host receipts move.
-  c.sql(`INSERT INTO document(kind,id,project_id,data,updated_at) VALUES
-      ('session','g-a','alpha','{"agentConfig":{"harness":"codex"}}','2026-11-01T10:00:00Z'),
-      ('session','g-b','beta','{}','2026-11-01T11:00:00Z'),
-      ('session','g-c','alpha','{}','2026-11-01T09:00:00Z'),
-      ('session','g-d',NULL,'{}','2026-11-01T08:00:00Z'),
-      ('session','g-e','beta','{}','2026-11-01T07:00:00Z');
-    INSERT INTO document(kind,id,project_id,data,updated_at) VALUES ('message','g-e-m','beta','{"sessionId":"g-e","text":"latest"}','2026-11-01T13:00:00Z');
+  c.sql(`INSERT INTO session(id,project_id,payload,updated_at) VALUES
+      ('g-a','alpha','{"agentConfig":{"harness":"codex"}}','2026-11-01T10:00:00Z'),
+      ('g-b','beta','{}','2026-11-01T11:00:00Z'),
+      ('g-c','alpha','{}','2026-11-01T09:00:00Z'),
+      ('g-d',NULL,'{}','2026-11-01T08:00:00Z'),
+      ('g-e','beta','{}','2026-11-01T07:00:00Z');
+    INSERT INTO message(id,session_id,project_id,text,updated_at) VALUES ('g-e-m','g-e','beta','latest','2026-11-01T13:00:00Z');
     INSERT INTO execution(id,kind,state,project_id,session_id,harness,started_at,updated_at) VALUES ('g-c-x','agent_run','waiting','alpha','g-c','claude','2026-11-01T12:00:00Z','2026-11-01T14:00:00Z');`);
   const ids = (r: any) => r.sessions.map((s: any) => s.id);
   const all = async (body: object) => {

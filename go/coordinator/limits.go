@@ -45,8 +45,8 @@ type limitObs struct {
 // limitHistory: every limit_reading since `since`, per subscription and period, oldest first.
 func limitHistory(ctx context.Context, a *App, since int64) (map[string]map[string][]limitObs, error) {
 	rs, err := conn(ctx, a).Query(ctx, `SELECT x.account_id, r, d.updated_at
-   FROM document d JOIN execution x ON x.id = d.data->>'executionId' CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.data->'data'->'readings','[]'::jsonb)) r
-   WHERE d.kind='event' AND d.data->>'type'='limit_reading' AND x.account_id IS NOT NULL AND d.updated_at >= $1
+   FROM event d JOIN execution x ON x.id = d.execution_id CROSS JOIN LATERAL jsonb_array_elements(coalesce(d.payload->'data'->'readings','[]'::jsonb)) r
+   WHERE NOT d.delta AND d.type='limit_reading' AND x.account_id IS NOT NULL AND d.updated_at >= $1
    ORDER BY d.updated_at, d.seq`, time.UnixMilli(since))
 	if err != nil {
 		return nil, err

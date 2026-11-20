@@ -20,8 +20,8 @@ test('G1 every declared artifact reaches the completion gate, also past 10,000 (
   try {
     const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
     const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'needs a txt', completionRequirements: {artifacts: ['*.txt']}});
-    const {sessionId} = await call('/api/sessions', {});
-    const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+    const {sessionId} = await call('/api/ops/session_create', {});
+    const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
     c.sql(`UPDATE execution SET task_id='${task.id ?? task.taskId}' WHERE id='${e.id}'`);
     const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
     const command = commands.find((x: any) => x.executionId === e.id);
@@ -46,8 +46,8 @@ test('G2 a completed run whose declared outputs are not stored yet waits, unrese
   };
   try {
     const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
-    const {sessionId} = await call('/api/sessions', {});
-    const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+    const {sessionId} = await call('/api/ops/session_create', {});
+    const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
     const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
     const command = commands.find((x: any) => x.executionId === e.id);
     await call('/api/hosts/receipts', {commandId: command.id, executionId: e.id, status: 'started'}, secret, null);
@@ -73,8 +73,8 @@ test('G3 a task whose last execution succeeds asks for acceptance (requirement: 
     const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
     const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'answer only'});
     const taskId = task.id ?? task.taskId;
-    const {sessionId} = await call('/api/sessions', {});
-    const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+    const {sessionId} = await call('/api/ops/session_create', {});
+    const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
     c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'; UPDATE task SET state='in_progress' WHERE id='${taskId}'`);
     const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
     const command = commands.find((x: any) => x.executionId === e.id);
@@ -104,11 +104,11 @@ test('G4 a task whose run fails asks the operator, a new run withdraws it, fail 
     const {secret} = await call('/api/ops/hosts_register', {id: 'trial-host'});
     const task = await call('/api/ops/task_create', {projectId: 'hello-world', title: 'answer only'});
     const taskId = task.id ?? task.taskId;
-    const {sessionId} = await call('/api/sessions', {});
+    const {sessionId} = await call('/api/ops/session_create', {});
     // A task-bound session: each new run carries the task from its creation, as a worker session does.
-    c.sql(`UPDATE document SET data=data||jsonb_build_object('taskId','${taskId}') WHERE id='${sessionId}'`);
+    c.sql(`UPDATE session SET task_id='${taskId}' WHERE id='${sessionId}'`);
     const run = async (status: string) => {
-      const e = await call(`/api/sessions/${sessionId}/messages`, {requestId: randomUUID(), text: 'hello'});
+      const e = await call('/api/ops/message_send', {sessionId: sessionId, requestId: randomUUID(), text: 'hello'});
       c.sql(`UPDATE execution SET task_id='${taskId}' WHERE id='${e.id}'`);
       await call('/api/ops/task_get', {taskId});
       const {commands} = await call('/api/hosts/poll', {platform: 'darwin', capabilities: [], stores: [], problems: []}, secret, null);
@@ -179,7 +179,7 @@ test('Ask rejects mixed modes and persists idempotent fresh questions (requireme
     const result = await r.json(); assert.equal(r.status, status, JSON.stringify(result)); return result;
   };
   try {
-    const {sessionId} = await (await fetch(c.base + '/api/sessions', {method:'POST', headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:'{}'})).json();
+    const {sessionId} = await (await fetch(c.base + '/api/ops/session_create', {method:'POST', headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:'{}'})).json();
     assert.ok(sessionId);
     const executionId = randomUUID(), requestId = randomUUID();
     c.sql(`INSERT INTO execution(id,kind,state,session_id,project_id,data) VALUES('${executionId}','agent_run','running','${sessionId}','hello-world','{"id":"${executionId}","sessionId":"${sessionId}"}')`);
@@ -251,9 +251,9 @@ test('Late failed work report reconciles the canonical task bound through its se
     const {secret}=await call('/api/ops/hosts_register',{id:'trial-host'});
     const task=await call('/api/ops/task_create',{projectId:'hello-world',title:'missing deliverable'});
     const taskId=task.id??task.taskId;
-    const {sessionId}=await call('/api/sessions',{});
-    c.sql(`UPDATE document SET data=data||jsonb_build_object('taskId','${taskId}') WHERE id='${sessionId}'`);
-    const e=await call(`/api/sessions/${sessionId}/messages`,{requestId:randomUUID(),text:'finish process without required deliverable'});
+    const {sessionId}=await call('/api/ops/session_create',{});
+    c.sql(`UPDATE session SET task_id='${taskId}' WHERE id='${sessionId}'`);
+    const e=await call('/api/ops/message_send', {sessionId: sessionId, requestId:randomUUID(),text:'finish process without required deliverable'});
     assert.equal(c.sql(`SELECT task_id FROM execution WHERE id='${e.id}'`).trim(),taskId);
     assert.equal(c.sql(`SELECT data ? 'taskId' FROM execution WHERE id='${e.id}'`).trim(),'f','the canonical session binding does not require a JSON taskId alias');
     const {commands}=await call('/api/hosts/poll',{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
@@ -282,19 +282,19 @@ test('self-delivery queued continuation retains the canonical task and suppresse
     const {secret}=await call('/api/ops/hosts_register',{id:'trial-host'});
     const task=await call('/api/ops/task_create',{projectId:'hello-world',title:'self-delivery checkpoint'});
     const tid=task.id??task.taskId;
-    const {sessionId}=await call('/api/sessions',{});
+    const {sessionId}=await call('/api/ops/session_create',{});
     await call('/api/ops/session_task_attach',{sessionId,taskId:tid});
-    const e=await call(`/api/sessions/${sessionId}/messages`,{requestId:randomUUID(),text:'deliver'});
+    const e=await call('/api/ops/message_send', {sessionId: sessionId, requestId:randomUUID(),text:'deliver'});
     c.sql(`UPDATE task SET state='in_progress' WHERE id='${tid}'`);
     const poll=()=>call('/api/hosts/poll',{platform:'darwin',capabilities:[],stores:[],problems:[]},secret,null);
     const command=(await poll()).commands.find((x:any)=>x.executionId===e.id);
     await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'started'},secret,null);
     const request={requestId:randomUUID(),text:'Checkpoint stored; verify landing after executor replacement'};
-    const queue=await call(`/api/sessions/${sessionId}/messages`,request);
+    const queue=await call('/api/ops/message_send',{sessionId:sessionId,...request});
     assert.equal(queue.queued,true);
-    const queuedTask=c.sql(`SELECT data->>'taskId' FROM document WHERE kind='queued-message' AND data->>'requestId'='${request.requestId}'`).trim();assert.equal(queuedTask,tid);
+    const queuedTask=c.sql(`SELECT task_id FROM queued_message WHERE request_id='${request.requestId}'`).trim();assert.equal(queuedTask,tid);
     await c.restart();
-    assert.equal((await call(`/api/sessions/${sessionId}/messages`,request)).queued,true,'idempotent retained queue');
+    assert.equal((await call('/api/ops/message_send',{sessionId:sessionId,...request})).queued,true,'idempotent retained queue');
     await call('/api/hosts/receipts',{commandId:command.id,executionId:e.id,status:'completed'},secret,null);
     const acceptance=()=>c.sql(`SELECT count(*) FROM question WHERE task_id='${tid}' AND kind='acceptance' AND state='open'`).trim();
     assert.equal(acceptance(),'0','no intermediate acceptance before or after promotion');

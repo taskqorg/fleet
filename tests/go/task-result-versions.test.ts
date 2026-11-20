@@ -63,7 +63,7 @@ test('Task result content versions resist replay and preserve explicit lineage a
   select([chosen]);assert.equal((await get(accepted)).latestResult.artifactId,chosen);
   const unrelated=artifact(execution(task()),hash(70));select([unrelated]);assert.equal((await get(accepted)).latestResult,null,'owner cannot select another task publication');
   const childRun=execution(accepted),childArtifact=artifact(childRun,hash(72)),childSession=randomUUID();
-  c.sql(`INSERT INTO document(id,kind,project_id,data) VALUES('${childSession}','session','hello-world','${JSON.stringify({taskId:accepted})}');UPDATE execution SET task_id=NULL,session_id='${childSession}' WHERE id='${childRun}'`);
+  c.sql(`INSERT INTO session(id,project_id,task_id) VALUES('${childSession}','hello-world','${accepted}');UPDATE execution SET task_id=NULL,session_id='${childSession}' WHERE id='${childRun}'`);
   select([childArtifact]);assert.equal((await get(accepted)).latestResult.artifactId,childArtifact,'attached child session results retain lineage without direct execution task binding');
   const historical=legacy(acceptedRun,hash(71),'prod');select([historical]);assert.equal((await get(accepted)).latestResult.id,historical,'accepted legacy document remains readable');
   const alias=randomUUID();c.sql(`UPDATE artifact SET legacy_id='${alias}' WHERE id='${chosen}'`);select([alias]);assert.equal((await get(accepted)).latestResult.artifactId,chosen,'canonical legacy alias resolves');

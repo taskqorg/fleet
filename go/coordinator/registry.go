@@ -17,7 +17,7 @@ import (
 )
 
 // Route registry: the one router. Domain files call these from init(); patterns are net/http ServeMux patterns
-// ("GET /api/sessions/{id}", read with q.r.PathValue).
+// ("GET /api/executions/{id}/delegations", read with q.r.PathValue).
 //   route        one transaction around the handler: GET a read snapshot, otherwise one GLOBAL write.
 //   longRoute    no surrounding transaction (q.tx nil); the handler opens its own through q.app.store.Tx.
 //   publicRoute  matched before the credential check; a plain http.HandlerFunc.

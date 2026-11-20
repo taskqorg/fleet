@@ -240,7 +240,7 @@ func projectArchive(q *Request, r *contract.ProjectArchiveRequest) (contract.Pro
 func projectArchiveDoc(q *Request, id string) (doc, error) {
 	rows, err := queryRows(q, `SELECT kind,count(*) AS n,min(id) AS example FROM (
 	  SELECT 'task' AS kind,id FROM task WHERE project_id=$1 AND state::text=ANY($2)
-	  UNION ALL SELECT 'session',id FROM document WHERE project_id=$1 AND kind='session' AND NOT data ? 'archivedAt'
+	  UNION ALL SELECT 'session',id FROM session WHERE project_id=$1 AND archived_at IS NULL
 	  UNION ALL SELECT 'execution',id FROM execution WHERE project_id=$1 AND kind::text<>'pipeline_step' AND state IN ('preparing','running','waiting')) o GROUP BY kind ORDER BY kind`, id, slices.Collect(maps.Keys(openTask)))
 	if err != nil {
 		return nil, err
@@ -445,7 +445,7 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 			if !slices.Contains(strs(o["gitConnections"]), c) {
 				continue
 			}
-			if dup, err := has(q, "SELECT 1 FROM document WHERE kind='command' AND data->>'hostId'=$1 AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=$2", host, c); err != nil || dup {
+			if dup, err := has(q, "SELECT 1 FROM command WHERE host_id=$1 AND kind='connection-remove' AND status='pending' AND payload->'payload'->>'connection'=$2", host, c); err != nil || dup {
 				if err != nil {
 					return nil, err
 				}
@@ -475,7 +475,7 @@ func withdrawConnectionRemovals(q *Request, conns []string) error {
 	if len(conns) == 0 {
 		return nil
 	}
-	cmds, err := queryRows(q, `SELECT data FROM document WHERE kind='command' AND data->>'kind'='connection-remove' AND data->>'status'='pending' AND data->'payload'->>'connection'=ANY($1)`, conns)
+	cmds, err := queryRows(q, `SELECT `+convTables["command"].record()+` AS data FROM command WHERE kind='connection-remove' AND status='pending' AND payload->'payload'->>'connection'=ANY($1) ORDER BY seq`, conns)
 	if err != nil {
 		return err
 	}
