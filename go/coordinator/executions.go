@@ -296,25 +296,6 @@ func requestExecutionStop(q *Request, id string, taskCancellation bool) (contrac
 		Kind: astr(c["kind"]), Payload: recOf(c["payload"]), Status: astr(c["status"]), Stop: out}, nil
 }
 
-// blockedConnections: connections whose stop budget is reached; the gateway refuses their calls.
-func blockedConnections(q *Request) (map[string]bool, error) {
-	rs, err := queryRows(q, `SELECT id,scope,scope_id,unit,"limit"::float8 AS limit,period,action FROM budget WHERE scope='connection' AND action='stop'`)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]bool{}
-	for _, r := range rs {
-		v, _, err := spend(q, r)
-		if err != nil {
-			return nil, err
-		}
-		if f, ok := v.(float64); ok && f >= num(r["limit"]) {
-			out[astr(r["scope_id"])] = true
-		}
-	}
-	return out, nil
-}
-
 // declaredNames: the declared artifact names, each once, in declaration order; non-strings are not names.
 func declaredNames(declared []string) []string {
 	out, seen := []string{}, map[string]bool{}

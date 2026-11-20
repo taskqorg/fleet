@@ -661,7 +661,7 @@ func (a *App) rankCandidates(q *Request, e doc, k *dispatchContext) ([]*candidat
 			c.Warnings = append(c.Warnings, "two personal subscriptions of one holder in one order list (provider rate-limit terms)")
 		}
 	}
-	reached, err := budgetsReached(q, e)
+	reached, err := budgetsReached(q, astr(mapOf(e["dispatch"])["projectId"]), astr(e["directedBy"]))
 	if err != nil {
 		return nil, err
 	}

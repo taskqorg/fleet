@@ -249,11 +249,13 @@ Coordinator, shared Go/runtime/contracts/config, new tests, selector changes and
 
 [Selected-gate qualification](docs/designs/fleet-delivery-pipeline.md#selected-gate-qualification) defines the narrow rollout and rollback. Native archives, migrations, provenance and signing remain checked before publication.
 
-The full gate runs in CI on the pull request, never on the owner’s Mac: several agents work there at once, and each full run takes about 1.5 cores and 1 GB per test file. Locally run only the build of what you changed and the test files that cover it (`node <test file>`); push and read the CI result for everything else.
+The full gate runs in CI on the pull request, never on the owner’s Mac: several agents work there at once, and each full run takes about 1.5 cores and 1 GB per test file. Locally run only the build and the checks the task names, each set once ([owner directive](AGENTS.md)); push and read the CI result for everything else.
 
 The full gate has a diagnostic elapsed-time budget of 180 s on an idle Mac (arm64), including setup, build and tests. Exceeding it calls for diagnosis; it is never a timeout or a skip rule.
 
-Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/1fc3716cc0971f8ca11f313d383db09751ffc132/engineering/testing.md). CI fails on an outside test in `tests/go/` that misses either name and reports other tests as warnings.
+Each persistent test names the requirement and the risk it protects; follow [specq Testing](https://github.com/taskqorg/specq/blob/1fc3716cc0971f8ca11f313d383db09751ffc132/engineering/testing.md).
+
+A worker adds a test only when its task asks for one; otherwise at most one invariant check where a check is needed. This project rule takes precedence over the specq rule to keep a regression check for non-trivial logic. CI fails on an outside test in `tests/go/` that misses either name and reports other tests as warnings.
 
 ## Linked detail
 

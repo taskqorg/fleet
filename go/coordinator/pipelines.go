@@ -1805,7 +1805,7 @@ func runAnswerChecks(q *Request, question doc, answer string) error {
 	if err := keyAnswerCheck(q, question, answer); err != nil {
 		return err
 	}
-	return budgetAnswerCheck(question, answer, q.person)
+	return budgetAnswerCheck(q, jsonBytes(mapOf(question["data"])["budgetAsk"]), answer)
 }
 
 func runAnswerAfter(q *Request, id string) error {
@@ -1816,7 +1816,7 @@ func runAnswerAfter(q *Request, id string) error {
 	if err := labAnswerAfter(q, row); err != nil {
 		return err
 	}
-	return budgetAnswerAfter(q, row)
+	return budgetAnswerAfter(q, jsonBytes(mapOf(row["data"])["budgetAsk"]), astr(row["answer"]), strPtr(row["answered_by"]))
 }
 
 // gatedOp: an operation behind the same person gate as every other operation.

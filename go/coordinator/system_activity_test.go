@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // Requirement: docs/designs/fleet-analytics.md, System activity: a prepared project summary leaves Fleet's own calls
@@ -153,15 +154,15 @@ func TestSystemActivityLeftOutOfProjectWork(t *testing.T) {
 		t.Fatalf("connection dimension with system include: %d executions, %d failed", n, f)
 	}
 	if err := runTx(ctx, e.app, nil, false, "", func(q *Request) error {
-		v, _, err := spend(q, map[string]any{"scope": "project", "scope_id": p1, "unit": "wall_ms"})
-		if err == nil && v != 10.0 {
+		v, _, err := spend(q, db.Budget{Scope: "project", ScopeID: p1, Unit: "wall_ms"})
+		if err == nil && (v == nil || *v != 10.0) {
 			err = fmt.Errorf("project wall_ms spend %v, want 10 (the agent's call, not the coordinator's reads)", v)
 		}
 		if err != nil {
 			return err
 		}
-		calls, _, err := spend(q, map[string]any{"scope": "connection", "scope_id": "github", "unit": "calls"})
-		if err == nil && calls != 3.0 {
+		calls, _, err := spend(q, db.Budget{Scope: "connection", ScopeID: "github", Unit: "calls"})
+		if err == nil && (calls == nil || *calls != 3.0) {
 			err = fmt.Errorf("github connection calls %v, want 3 (every call on it)", calls)
 		}
 		return err

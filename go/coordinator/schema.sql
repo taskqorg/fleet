@@ -2711,3 +2711,29 @@ ALTER TABLE resource_metadata_repair ADD COLUMN attempts integer NOT NULL DEFAUL
 -- Work attempts counted under the old 1 s cap start the new ramp, so no row starts at the maximum pause or asks at once.
 SELECT set_config('fleet.project_ids', '*', true);
 UPDATE resource_work SET attempts = 0, next_attempt_at = least(next_attempt_at, clock_timestamp()) WHERE attempts > 0;
+
+-- migration 75: one visibility function (docs/designs/fleet-standard.md S1). fleet_visible(project_id) is the project
+-- scope test every project_scope policy repeated: the coordinator's '*' scope, or a project id in fleet.project_ids (a
+-- row with no project is visible to the scope that lists ''). A plain STABLE SQL function, so the planner inlines it and
+-- each policy plans as before. Every policy holding the copied expression is rewritten to call it, other terms kept;
+-- the rewrite fails the migration when any copy is left.
+CREATE OR REPLACE FUNCTION fleet_visible(p_project text) RETURNS boolean LANGUAGE sql STABLE PARALLEL SAFE AS $$
+ SELECT current_setting('fleet.project_ids', true) = '*' OR coalesce(p_project, '') = ANY (string_to_array(current_setting('fleet.project_ids', true), ','))
+$$;
+DO $$
+DECLARE
+ copy constant text := $c$(current_setting('fleet.project_ids'::text, true) = '*'::text) OR (COALESCE(project_id, ''::text) = ANY (string_to_array(current_setting('fleet.project_ids'::text, true), ','::text)))$c$;
+ p record;
+BEGIN
+ FOR p IN SELECT tablename, policyname, qual, with_check FROM pg_policies WHERE schemaname = 'public' AND (strpos(qual, copy) > 0 OR strpos(with_check, copy) > 0) LOOP
+  IF p.qual IS NOT NULL THEN
+   EXECUTE format('ALTER POLICY %I ON %I USING (%s)', p.policyname, p.tablename, replace(p.qual, copy, 'fleet_visible(project_id)'));
+  END IF;
+  IF p.with_check IS NOT NULL THEN
+   EXECUTE format('ALTER POLICY %I ON %I WITH CHECK (%s)', p.policyname, p.tablename, replace(p.with_check, copy, 'fleet_visible(project_id)'));
+  END IF;
+ END LOOP;
+ IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND (qual ILIKE '%coalesce(project_id%' OR with_check ILIKE '%coalesce(project_id%')) THEN
+  RAISE EXCEPTION 'migration 75: a policy still copies the project scope expression';
+ END IF;
+END $$;

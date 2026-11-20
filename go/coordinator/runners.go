@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 )
 
 // runnerAt: when an execution ran (end, else start, else the start a gateway call carries in data, else last seen).
@@ -36,7 +37,7 @@ func isRunnerSubscription(r doc) bool {
 
 // runnerCost: the cost of one run's usages. A run on a subscription login (account_id / subscription billing_basis) costs no metered money: its
 // figures say basis "subscription", the list-price equivalent of what it used (fleet-analytics.md bases).
-func runnerCost(prices []doc, subscription bool, us []usage) []contract.CostFigure {
+func runnerCost(prices []db.PriceEntry, subscription bool, us []usage) []contract.CostFigure {
 	out := estimateCost(prices, us)
 	if subscription {
 		note := subscriptionCostNote
