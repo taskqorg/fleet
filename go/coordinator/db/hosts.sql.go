@@ -118,49 +118,14 @@ func (q *Queries) FailArtifactsOnlyOnHost(ctx context.Context, hostID string) er
 }
 
 const hostAutoUpdate = `-- name: HostAutoUpdate :one
-SELECT payload->>'autoUpdate' FROM host WHERE id=$1
+SELECT (payload->>'autoUpdate')::text FROM host WHERE id=$1
 `
 
-func (q *Queries) HostAutoUpdate(ctx context.Context, id string) (interface{}, error) {
+func (q *Queries) HostAutoUpdate(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, hostAutoUpdate, id)
-	var column_1 interface{}
+	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
-}
-
-const hostBySecret = `-- name: HostBySecret :one
-SELECT h.id, h.host_id, h.holder, h.state, h.intake, h.secret_hash, h.removed_secret_hash, h.project_id, h.payload
- FROM host h JOIN person p ON p.email=h.holder WHERE h.secret_hash=$1
-`
-
-type HostBySecretRow struct {
-	ID                string
-	HostID            string
-	Holder            *string
-	State             string
-	Intake            *string
-	SecretHash        *string
-	RemovedSecretHash *string
-	ProjectID         *string
-	Payload           []byte
-}
-
-// The host a poll secret belongs to, while its holder is a person.
-func (q *Queries) HostBySecret(ctx context.Context, secretHash *string) (HostBySecretRow, error) {
-	row := q.db.QueryRow(ctx, hostBySecret, secretHash)
-	var i HostBySecretRow
-	err := row.Scan(
-		&i.ID,
-		&i.HostID,
-		&i.Holder,
-		&i.State,
-		&i.Intake,
-		&i.SecretHash,
-		&i.RemovedSecretHash,
-		&i.ProjectID,
-		&i.Payload,
-	)
-	return i, err
 }
 
 const hostKnown = `-- name: HostKnown :one
@@ -187,40 +152,6 @@ type HostMoveParams struct {
 func (q *Queries) HostMove(ctx context.Context, arg HostMoveParams) error {
 	_, err := q.db.Exec(ctx, hostMove, arg.State, arg.ID)
 	return err
-}
-
-const hostRecordByHostID = `-- name: HostRecordByHostID :one
-SELECT id, host_id, holder, state, intake, secret_hash, removed_secret_hash, project_id, payload FROM host WHERE host_id=$1
-`
-
-type HostRecordByHostIDRow struct {
-	ID                string
-	HostID            string
-	Holder            *string
-	State             string
-	Intake            *string
-	SecretHash        *string
-	RemovedSecretHash *string
-	ProjectID         *string
-	Payload           []byte
-}
-
-// A host's record as all/get show it (convTables "host"), removed or not.
-func (q *Queries) HostRecordByHostID(ctx context.Context, hostID string) (HostRecordByHostIDRow, error) {
-	row := q.db.QueryRow(ctx, hostRecordByHostID, hostID)
-	var i HostRecordByHostIDRow
-	err := row.Scan(
-		&i.ID,
-		&i.HostID,
-		&i.Holder,
-		&i.State,
-		&i.Intake,
-		&i.SecretHash,
-		&i.RemovedSecretHash,
-		&i.ProjectID,
-		&i.Payload,
-	)
-	return i, err
 }
 
 const hostRemoveCounts = `-- name: HostRemoveCounts :one

@@ -609,7 +609,7 @@ func init() {
 				  AND coalesce(to_timestamp((data->>'updatedAt')::float8/1000), started_at, updated_at) < now() - make_interval(secs => $1))
 				 OR (kind='host_job' AND state='running' AND observation='confirmed' AND coalesce(last_seen_at, started_at, updated_at) < now() - make_interval(secs => $1)
 				  AND EXISTS (SELECT 1 FROM host_observation h WHERE h.id=execution.host_id
-				   AND (h.data->>'lastSeenAt')::float8 > (extract(epoch FROM now()) - 300) * 1000))
+				   AND h.last_seen_at > now() - interval '300 seconds'))
 				 OR (kind='pipeline_step' AND observation='unconfirmed' AND coalesce(started_at, updated_at) < now() - make_interval(secs => $1)
 				  AND NOT EXISTS (SELECT 1 FROM execution r WHERE r.kind='pipeline_run' AND r.id=coalesce(execution.parent_execution_id,split_part(execution.id,':step:',1)))))`
 				rs, err := queryRows(q, "SELECT id FROM execution WHERE "+lostCond, lostAfter.Seconds())

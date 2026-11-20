@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -121,14 +122,14 @@ func (a *App) ownAutoUpdate(ctx context.Context) string {
 		return "on"
 	}
 	defer tx.Rollback(ctx)
-	var s *string
 	if _, err := tx.Exec(ctx, "SELECT set_config('fleet.project_ids','*',true)"); err != nil {
 		return "on"
 	}
-	if err := tx.QueryRow(ctx, "SELECT payload->>'autoUpdate' FROM host WHERE id=$1", "host:"+host).Scan(&s); err != nil || s == nil {
+	s, err := db.New(tx).HostAutoUpdate(ctx, "host:"+host) // no host, or no autoUpdate (NULL): on
+	if err != nil {
 		return "on"
 	}
-	return *s
+	return s
 }
 
 // pds18StateFile is written by fleet-update on PDS18; the coordinator merges it into its own host's row.

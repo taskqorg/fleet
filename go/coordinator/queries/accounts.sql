@@ -21,3 +21,7 @@ SELECT x.account_id::text AS account_id, r.value::jsonb AS reading, d.updated_at
 -- A limits read already on its way for a subscription.
 SELECT host_id, execution_id, payload FROM command WHERE kind= @kind::text AND payload->'payload'->>'mode'='limits'
  AND payload->'payload'->>'accountId'= @account_id::text AND status IN ('pending','accepted','started') LIMIT 1;
+
+-- name: AccountTakesWork :one
+-- A subscription, by id or name, that takes new work (intake all).
+SELECT EXISTS (SELECT 1 FROM managed_account WHERE intake='all' AND (id= @account::text OR name= @account::text));

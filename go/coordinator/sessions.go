@@ -861,21 +861,21 @@ func convPut(q *Request, kind string, t *convTable, v doc) error {
 		if prevState, err = t.state.of(q, id); err != nil {
 			return err
 		}
-		wantState, _ = v[t.state.field].(string)
-		if c, _ := t.col(t.state.field); wantState == "" && c.typ == "hoststate" {
-			wantState = hostStateActive
-		}
+		wantState, _ = v[t.state.field].(string) // a record without its state keeps the stored one
 	}
 	cols, vals, args := []string{"id"}, []string{"$1::text"}, []any{id}
 	for _, c := range t.cols {
 		x, given := v[c.field]
+		if t.state != nil && c.col == t.state.col {
+			if _, ok := x.(string); !ok { // a new row without a state starts in the column's default state
+				cols, vals = append(cols, c.col), append(vals, "DEFAULT")
+				continue
+			}
+		}
 		if !given || x == nil {
 			cols, vals = append(cols, c.col), append(vals, "NULL")
 			if c.typ == "count" {
 				vals[len(vals)-1] = "0"
-			}
-			if c.typ == "hoststate" {
-				vals[len(vals)-1] = "'" + hostStateActive + "'"
 			}
 			continue
 		}

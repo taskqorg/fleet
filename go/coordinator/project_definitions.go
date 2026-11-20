@@ -426,13 +426,13 @@ func removeUnusedConnections(q *Request, conns []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	removed, err := queryRows(q, "SELECT host_id AS id FROM host WHERE state='removed'")
+	removed, err := q.db().RemovedHostIDs(q.ctx())
 	if err != nil {
 		return nil, err
 	}
 	live := []doc{} // a removed host never fetches a removal
 	for _, o := range obs {
-		if !slices.ContainsFunc(removed, func(r doc) bool { return r["id"] == o["id"] }) {
+		if !slices.Contains(removed, astr(o["id"])) {
 			live = append(live, o)
 		}
 	}

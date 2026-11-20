@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fleet/coordinator/db"
 	"fmt"
 	"log"
 	"net"
@@ -467,8 +468,8 @@ func (a *App) removedHostSecret(ctx context.Context, secret string) (bool, error
 	if secret == "" {
 		return false, nil
 	}
-	var n int
-	err := a.store.readPool.QueryRow(ctx, "SELECT count(*) FROM host WHERE removed_secret_hash=$1", secretHash(secret)).Scan(&n)
+	h := secretHash(secret)
+	n, err := db.New(a.store.readPool).HostRemovedSecretCount(ctx, &h)
 	return n > 0, err
 }
 

@@ -3633,7 +3633,7 @@ CREATE INDEX account_inspection_account ON account_inspection(account_id, seq);
 CREATE INDEX account_inspection_execution ON account_inspection(execution_id) WHERE execution_id IS NOT NULL;
 CREATE INDEX account_check_account ON account_check(account_id, host_id, binding);
 CREATE INDEX account_catalogue_host ON account_catalogue(host_id, harness);
-CREATE INDEX connection_key_connection ON connection_key(connection_id, added_at, seq);
+CREATE INDEX connection_key_connection ON connection_key(connection_id, seq);
 CREATE INDEX run_token_execution ON run_token(execution_id) WHERE execution_id IS NOT NULL;
 CREATE INDEX run_token_pipeline_run ON run_token(pipeline_run_id) WHERE pipeline_run_id IS NOT NULL;
 CREATE INDEX run_token_open ON run_token(seq) WHERE revoked_at IS NULL;

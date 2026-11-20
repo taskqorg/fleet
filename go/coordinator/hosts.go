@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"sync"
@@ -260,7 +261,9 @@ func hostsRegister(q *Request, b doc) (any, error) {
 		platform = s
 	}
 	h := doc{"id": id, "name": name, "holder": holder, "platform": platform, "roles": roles, "secretHash": hash, "intake": "all", "harnesses": harnesses, "createdAt": nowMs()}
-	if err := saveHost(q, h); err != nil {
+	row := maps.Clone(h)
+	row["state"] = hostStateActive // the id of a removed host is registered again (host_states.go)
+	if err := saveHost(q, row); err != nil {
 		return nil, err
 	}
 	out := doc{"host": hostView(h)}

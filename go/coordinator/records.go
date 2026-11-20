@@ -609,16 +609,6 @@ func putDocument(q *Request, kind string, v doc) error {
 		project = p
 	}
 	_, err := q.tx.Exec(q.ctx(), "INSERT INTO document(kind,id,data,project_id) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET data=excluded.data,project_id=excluded.project_id,updated_at=now() WHERE document.kind=excluded.kind", kind, v["id"], b, project)
-	if err == nil && q.app != nil {
-		switch kind {
-		case "host", "managed-account":
-			onEnd(q.tx, func(committed bool) {
-				if committed {
-					q.app.wakeDispatch()
-				}
-			})
-		}
-	}
 	return err
 }
 

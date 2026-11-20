@@ -2194,7 +2194,7 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 			}
 		}
 		if acct, ok := a["account"]; ok {
-			if ok, err := has(q, "SELECT 1 FROM managed_account WHERE intake='all' AND (id=$1 OR name=$1)", fmt.Sprint(acct)); err != nil || !ok {
+			if ok, err := q.db().AccountTakesWork(q.ctx(), fmt.Sprint(acct)); err != nil || !ok {
 				if err == nil {
 					err = fail(403, "Account not available")
 				}
@@ -2231,7 +2231,7 @@ func boundArguments(q *Request, name string, a doc, executionID string) (doc, er
 		}
 		// ponytail: the account must be a registered managed account; its binding readiness on this host is the accounts area's resolve.
 		if acct, ok := a["account"]; ok && acct != nil {
-			if ok, err := has(q, "SELECT 1 FROM managed_account WHERE intake='all' AND (id=$1 OR name=$1)", fmt.Sprint(acct)); err != nil || !ok {
+			if ok, err := q.db().AccountTakesWork(q.ctx(), fmt.Sprint(acct)); err != nil || !ok {
 				if err == nil {
 					err = fail(403, "Account not available")
 				}

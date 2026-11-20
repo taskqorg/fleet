@@ -38,6 +38,18 @@ func (q *Queries) AccountNameTaken(ctx context.Context, name *string) (bool, err
 	return exists, err
 }
 
+const accountTakesWork = `-- name: AccountTakesWork :one
+SELECT EXISTS (SELECT 1 FROM managed_account WHERE intake='all' AND (id= $1::text OR name= $1::text))
+`
+
+// A subscription, by id or name, that takes new work (intake all).
+func (q *Queries) AccountTakesWork(ctx context.Context, account string) (bool, error) {
+	row := q.db.QueryRow(ctx, accountTakesWork, account)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const inflightLimitRead = `-- name: InflightLimitRead :one
 SELECT host_id, execution_id, payload FROM command WHERE kind= $1::text AND payload->'payload'->>'mode'='limits'
  AND payload->'payload'->>'accountId'= $2::text AND status IN ('pending','accepted','started') LIMIT 1

@@ -7,10 +7,6 @@ SELECT state FROM host WHERE id=$1 FOR UPDATE;
 -- name: HostMove :exec
 UPDATE host SET state= @state, updated_at=now() WHERE id= @id;
 
--- name: HostRecordByHostID :one
--- A host's record as all/get show it (convTables "host"), removed or not.
-SELECT id, host_id, holder, state, intake, secret_hash, removed_secret_hash, project_id, payload FROM host WHERE host_id=$1;
-
 -- name: RemovedHostIDs :many
 SELECT host_id FROM host WHERE state='removed' ORDER BY seq;
 
@@ -24,13 +20,8 @@ SELECT EXISTS (SELECT 1 FROM host WHERE host_id= @host_id::text UNION ALL SELECT
 -- name: HostRemovedSecretCount :one
 SELECT count(*) FROM host WHERE removed_secret_hash=$1;
 
--- name: HostBySecret :one
--- The host a poll secret belongs to, while its holder is a person.
-SELECT h.id, h.host_id, h.holder, h.state, h.intake, h.secret_hash, h.removed_secret_hash, h.project_id, h.payload
- FROM host h JOIN person p ON p.email=h.holder WHERE h.secret_hash=$1;
-
 -- name: HostAutoUpdate :one
-SELECT payload->>'autoUpdate' FROM host WHERE id=$1;
+SELECT (payload->>'autoUpdate')::text FROM host WHERE id=$1;
 
 -- name: DispatchableHostIDs :many
 -- Hosts that take work: not removed, intake not paused.
