@@ -581,7 +581,8 @@ func init() {
 	})
 	op("session_unarchive", sessionUnarchive)
 	op("sessions_list", func(q *Request, r *contract.SessionsListRequest) (contract.SessionsListReply, error) {
-		return replyAs[contract.SessionsListReply](sessionsPage(q, docOf(r)))
+		// Read as sent: a null projectId item means sessions outside projects, which the typed list cannot hold.
+		return replyAs[contract.SessionsListReply](sessionsPage(q, body(q)))
 	})
 	op("list_membership", func(q *Request, b *contract.ListMembershipRequest) (contract.ListMembershipReply, error) {
 		out, err := listMembership(q, b)
@@ -600,11 +601,18 @@ func listMembership(q *Request, b *contract.ListMembershipRequest) (doc, error) 
 		return nil, fail(400, "Expected one or two lists")
 	}
 	ids := b.Ids
+	// Each filter read as sent: a null projectId item means rows outside projects, which the typed list cannot hold.
+	var raw struct {
+		Lists []struct {
+			Filter doc `json:"filter"`
+		} `json:"lists"`
+	}
+	json.Unmarshal(q.body, &raw)
 	out := []doc{}
-	for _, l := range b.Lists {
+	for i, l := range b.Lists {
 		f := doc{}
-		if l.Filter != nil {
-			f = docOf(l.Filter)
+		if i < len(raw.Lists) && raw.Lists[i].Filter != nil {
+			f = raw.Lists[i].Filter
 		}
 		group, sort := optAny(l.Group), optAny(l.Sort)
 		switch l.Name {

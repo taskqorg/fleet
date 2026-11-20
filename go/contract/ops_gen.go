@@ -377,9 +377,9 @@ func (v *ListFilter) Validate() error {
 func (*ListFilter) Closed() bool { return true }
 
 type ListGroup struct {
-	Count int64  `json:"count"`
-	Key   string `json:"key"`
-	Label string `json:"label"`
+	Count int64   `json:"count"`
+	Key   string  `json:"key"`
+	Label *string `json:"label"`
 }
 
 // Validate: the schema's required fields and enums (see Check).

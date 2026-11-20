@@ -45,7 +45,7 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 	if err != nil {
 		return nil, err
 	}
-	payload := sha256Text(js(w.request))
+	payload := sha256Text(js(body(q))) // the body as sent, keys sorted: a retry matches its stored request
 	var prior []byte
 	var digest string
 	err = q.tx.QueryRow(q.ctx(), "SELECT payload_sha,result FROM project_write_request WHERE directing_email=$1 AND operation=$2 AND request_id=$3", q.person.Email, op, w.requestID).Scan(&digest, &prior)
@@ -199,6 +199,9 @@ func projectWrite(q *Request, create bool, w projectWriteArgs) (doc, error) {
 }
 
 func projectInitialRevoke(q *Request, r *contract.ProjectInitialAccessRevokeRequest) (contract.ProjectInitialAccessRevokeReply, error) {
+	if !q.person.Owner { // the owner only, stricter than the declared owner rule (full access)
+		return contract.ProjectInitialAccessRevokeReply{}, fail(403, "Only the owner administers access")
+	}
 	out, err := projectInitialRevokeDoc(q, r.ProjectId, r.BaseAccessVersion)
 	return replyAs[contract.ProjectInitialAccessRevokeReply](out, err)
 }
