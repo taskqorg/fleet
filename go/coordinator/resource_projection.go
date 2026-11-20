@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fleet/contract"
+	"fleet/coordinator/db"
 	"fleet/obs"
 	"github.com/jackc/pgx/v5"
 )
@@ -31,49 +32,7 @@ var errResourceScope = errors.New("resource scope expanded")
 var errResourceOwnership = errors.New("ownership_mismatch")
 var errResourceClearing = fmt.Errorf("resource build clearing: %w", errKitSkip)
 
-// resourceSourceSQL reads source, classification, old contribution and retained valuation in ONE
-// statement snapshot. Only work rows are claimed; no source row is locked by replacement.
-var resourceSourceSQL = `WITH leaf AS MATERIALIZED (` + resourceBaseLeavesSQL() + ` WHERE e.id=$1)
- SELECT jsonb_build_object(
- 'leaf',(SELECT to_jsonb(l) || jsonb_build_object(
-  'started_ms',CASE WHEN l.started_at IS NOT NULL THEN (extract(epoch FROM l.started_at)*1000)::bigint END,
-  'ended_ms',CASE WHEN l.ended_at IS NOT NULL THEN (extract(epoch FROM l.ended_at)*1000)::bigint END,
-  'turn_count',t.turn_count,'turn_count_basis',t.turn_count_basis,'cpu_missing_reason',t.cpu_missing_reason,
-  'memory_missing_reason',t.memory_missing_reason,'history_incomplete',coalesce(t.history_incomplete,0))
-  FROM leaf l LEFT JOIN execution_totals t ON t.execution_id=l.id),
- 'fingerprint',(SELECT jsonb_build_array(resource_execution_facts(e),
-  to_jsonb(t)-ARRAY['computed_at','rate_limit_last','rate_limit_last_basis'],l.provider,l.is_sub)
-  FROM execution e JOIN leaf l ON l.id=e.id LEFT JOIN execution_totals t ON t.execution_id=e.id),
- 'scopes',(SELECT coalesce(jsonb_agg(p ORDER BY p COLLATE "C"),'[]') FROM (SELECT project_id p FROM execution WHERE id=$1 UNION SELECT project_id FROM execution_totals WHERE execution_id=$1 UNION SELECT project_id FROM resource_contribution WHERE execution_id=$1 UNION SELECT ws.project_id FROM resource_work_scope ws JOIN resource_work w USING(work_id) WHERE w.execution_id=$1) scopes WHERE p IS NOT NULL),
- 'valuationInput',EXISTS(SELECT 1 FROM leaf l WHERE l.leaf_at IS NOT NULL AND (
-  (nullif(l.model,'') IS NOT NULL AND l.model NOT LIKE '%-latest' AND coalesce(l.tokens_input,l.tokens_output,l.tokens_cache_read,l.tokens_cache_write) IS NOT NULL)
-  OR l.direct_amount IS NOT NULL OR (l.conn_amount IS NOT NULL AND nullif(l.conn_unit,'') IS NOT NULL))),
- 'mismatch',EXISTS(SELECT 1 FROM execution e JOIN execution_totals t ON t.execution_id=e.id WHERE e.id=$1 AND e.project_id IS DISTINCT FROM t.project_id),
- 'old',(SELECT to_jsonb(c) FROM resource_contribution c WHERE c.execution_id=$1),
- 'valuation',(SELECT method FROM resource_valuation WHERE execution_id=$1),
- 'candidates',coalesce((SELECT jsonb_agg(jsonb_build_object('subject',u.subject,'unit',u.unit,
-  'priceId',p.id,'rate',p.price::text,'currency',p.currency,'observedAt',(extract(epoch FROM p.observed_at)*1000)::bigint)
-  ORDER BY u.subject COLLATE "C",u.unit COLLATE "C") FROM leaf l
-  CROSS JOIN LATERAL (VALUES(coalesce(l.model,''),'input_tokens'),(coalesce(l.model,''),'output_tokens'),
-   (coalesce(l.model,''),'cache_read_tokens'),(coalesce(l.model,''),'cache_write_tokens'),(l.conn_subject,coalesce(l.conn_unit,''))) u(subject,unit)
-  LEFT JOIN LATERAL (SELECT id,price,currency,observed_at FROM price_entry p
-   WHERE p.subject=u.subject AND p.unit=u.unit AND p.effective_from<=l.leaf_at
-    AND NOT EXISTS(SELECT 1 FROM resource_valuation WHERE execution_id=$1)
-   ORDER BY p.effective_from DESC,p.seq DESC LIMIT 1) p ON true),'[]'))`
-
-// The maintenance reader uses direct non-secret metadata joins so classification shares the
-// parent statement snapshot; the legacy SECURITY DEFINER SPI helper can take fresh snapshots.
-func resourceBaseLeavesSQL() string {
-	s := strings.ReplaceAll(analyticsBaseLeavesSelect, "::float8", "::numeric")
-	return strings.Replace(s, `SELECT m.provider, m.is_api_conn
-  FROM fleet_exec_conn_meta(e.data->>'connection', e.account_id) m
-  WHERE e.data ? 'connection' OR e.account_id IS NOT NULL`,
-		`SELECT coalesce(
-   (SELECT coalesce(provider,payload->>'provider') FROM api_connection WHERE id='connection:'||(e.data->>'connection')),
-   (SELECT coalesce(provider,payload->>'provider') FROM api_connection WHERE id=e.account_id)) AS provider,
-   EXISTS(SELECT 1 FROM api_connection WHERE id=e.account_id) AS is_api_conn`, 1)
-}
-
+// resourceSnapshot: one source snapshot as ResourceClaimSnapshot reads it (queries/resources.sql).
 type resourceSnapshot struct {
 	Leaf           json.RawMessage `json:"leaf"`
 	Fingerprint    json.RawMessage `json:"fingerprint"`
@@ -95,8 +54,8 @@ func resourceSHA(v any) string {
 	return hex.EncodeToString(h[:])
 }
 
-// resourceLeaf: one source leaf as resourceSourceSQL reads it (analyticsBaseLeavesSelect with exact numerics, plus the
-// totals fields it adds). A number stays its exact decimal text; a missing value is nil.
+// resourceLeaf: one source leaf as ResourceClaimSnapshot reads it (the analytics leaf projection with exact numerics,
+// plus the totals fields it adds). A number stays its exact decimal text; a missing value is nil.
 type resourceLeaf struct {
 	ProjectID           *string            `json:"project_id"`
 	Kind                string             `json:"kind"`
@@ -492,28 +451,8 @@ func resourceValueCosts(c *contract.ResourceContributionV1, l *resourceLeaf, m c
 	return nil
 }
 
-const resourceScopesSQL = `SELECT p FROM (
- SELECT project_id p FROM execution WHERE id=$1 UNION SELECT project_id FROM execution_totals WHERE execution_id=$1
- UNION SELECT project_id FROM resource_contribution WHERE execution_id=$1
- UNION SELECT s.project_id FROM resource_work_scope s JOIN resource_work w USING(work_id) WHERE w.execution_id=$1
- ) v WHERE p IS NOT NULL ORDER BY p COLLATE "C"`
-
 func resourceScopes(q *Request, id string) ([]string, error) {
-	rs, err := q.tx.Query(q.ctx(), resourceScopesSQL, id)
-	if err != nil {
-		return nil, err
-	}
-	return pgx.CollectRows(rs, pgx.RowTo[string])
-}
-
-// Materialization claims only work rows due at $2 (the kit's clock) before evaluating the source in this same
-// statement snapshot. Later work is neither observed as claimed nor deleted.
-func resourceClaimSnapshotSQL() string {
-	return `WITH claimed AS MATERIALIZED (
- SELECT work_id FROM resource_work WHERE execution_id=$1 AND next_attempt_at<=$2
- ORDER BY work_id FOR UPDATE SKIP LOCKED)
- SELECT (SELECT coalesce(array_agg(work_id::text ORDER BY work_id),'{}'::text[]) FROM claimed),
- CASE WHEN EXISTS(SELECT 1 FROM claimed) THEN (` + resourceSourceSQL + `) ELSE NULL END`
+	return q.db().ResourceScopes(q.ctx(), id)
 }
 
 func resourceCheckLocks(q *Request, projects []string) error {
@@ -525,10 +464,10 @@ func resourceCheckLocks(q *Request, projects []string) error {
 	return nil
 }
 func resourceEnsureProject(q *Request, p string) error {
-	if err := exec(q, `INSERT INTO resource_build(project_id) VALUES($1) ON CONFLICT DO NOTHING`, p); err != nil {
+	if err := q.db().ResourceEnsureBuild(q.ctx(), p); err != nil {
 		return err
 	}
-	return exec(q, `INSERT INTO resource_project_summary(project_id,build_generation) SELECT project_id,generation FROM resource_build WHERE project_id=$1 ON CONFLICT DO NOTHING`, p)
+	return q.db().ResourceEnsureSummary(q.ctx(), p)
 }
 
 type resourceReplacement struct {
@@ -542,13 +481,14 @@ type resourceReplacement struct {
 
 func resourcePrepareReplacement(q *Request, id string, projects []string, now time.Time) (*resourceReplacement, error) {
 	w := &resourceReplacement{id: id, projects: projects}
-	var raw []byte
-	e := q.tx.QueryRow(q.ctx(), resourceClaimSnapshotSQL(), id, now).Scan(&w.claimed, &raw)
+	// The claim and the source are one statement snapshot; due means due at the kit's clock now.
+	row, e := q.db().ResourceClaimSnapshot(q.ctx(), db.ResourceClaimSnapshotParams{ExecutionID: id, Now: now})
+	w.claimed = row.Claimed
 	if e != nil || len(w.claimed) == 0 {
 		return w, e
 	}
 	var s resourceSnapshot
-	if e = json.Unmarshal(raw, &s); e != nil {
+	if e = json.Unmarshal(row.Snapshot, &s); e != nil {
 		return w, e
 	}
 	c, m, e := resourceContribution(id, s)
@@ -577,8 +517,9 @@ func resourceLockSummaries(q *Request, projects []string) error {
 	var e error
 	for _, p := range projects {
 		var phase string
-		lockSummary := func() error {
-			return q.tx.QueryRow(q.ctx(), `SELECT b.phase FROM resource_build b JOIN resource_project_summary s USING(project_id) WHERE b.project_id=$1 FOR UPDATE OF s`, p).Scan(&phase)
+		lockSummary := func() (err error) {
+			phase, err = q.db().ResourceLockSummary(q.ctx(), p)
+			return err
 		}
 		e = lockSummary()
 		if errors.Is(e, pgx.ErrNoRows) {
@@ -637,16 +578,15 @@ func resourceApplyReplacement(q *Request, w *resourceReplacement, deltas map[str
 		}
 		if sourceExists {
 			if c.Included && s.ValuationInput {
-				if e = exec(q, `INSERT INTO resource_valuation(execution_id,method_sha,method) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, id, msha, jsonBytes(m)); e != nil {
+				if e = q.db().ResourceFreezeValuation(q.ctx(), db.ResourceFreezeValuationParams{ExecutionID: id, MethodSha: msha, Method: jsonBytes(m)}); e != nil {
 					return nil, e
 				}
 			}
-			if e = exec(q, `INSERT INTO resource_contribution(execution_id,project_id,source_sha,included,facts,method,method_sha) VALUES($1,$2,$3,$4,$5,$6,$7)
-      ON CONFLICT(execution_id) DO UPDATE SET project_id=excluded.project_id,source_sha=excluded.source_sha,included=excluded.included,facts=excluded.facts,method=excluded.method,method_sha=excluded.method_sha,updated_at=clock_timestamp()`, id, c.ProjectId, sha, c.Included, jsonBytes(c), jsonBytes(m), msha); e != nil {
+			if e = q.db().ResourceContributionPut(q.ctx(), db.ResourceContributionPutParams{ExecutionID: id, ProjectID: c.ProjectId, SourceSha: sha, Included: c.Included, Facts: jsonBytes(c), Method: jsonBytes(m), MethodSha: msha}); e != nil {
 				return nil, e
 			}
 		} else {
-			if e = exec(q, `DELETE FROM resource_contribution WHERE execution_id=$1`, id); e != nil {
+			if e = q.db().ResourceContributionDelete(q.ctx(), id); e != nil {
 				return nil, e
 			}
 		}
@@ -659,7 +599,7 @@ func resourceApplyReplacement(q *Request, w *resourceReplacement, deltas map[str
 		}
 
 	}
-	if err := exec(q, `DELETE FROM resource_work WHERE work_id=ANY($1::uuid[])`, w.claimed); err != nil {
+	if err := q.db().ResourceWorkConsume(q.ctx(), w.claimed); err != nil {
 		return nil, err
 	}
 	return changed, nil
@@ -746,23 +686,6 @@ func resourceReplace(ctx context.Context, a *App, id string) error {
 // costs a lock set, scope hint, summary lock, publication and COMMIT, which dominated burst publication age at 16.
 const resourceCohortSize = 100
 
-// The selected-ID union avoids repeating an unrelated pending-scope scan per leaf.
-const resourceBatchHintsSQL = `WITH candidates AS MATERIALIZED (
- SELECT id,project_id FROM execution WHERE id=ANY($1::text[]) AND project_id IS NOT NULL AND project_id<>''
-), selected_work AS MATERIALIZED (
- SELECT work_id,execution_id FROM resource_work WHERE execution_id=ANY($1::text[])
-), selected_work_scopes AS MATERIALIZED (
- SELECT work_id,project_id FROM resource_work_scope WHERE work_id=ANY(ARRAY(SELECT work_id FROM selected_work))
-), scopes AS (
- SELECT id,project_id FROM candidates
- UNION SELECT execution_id,project_id FROM execution_totals WHERE execution_id=ANY($1::text[])
- UNION SELECT execution_id,project_id FROM resource_contribution WHERE execution_id=ANY($1::text[])
- UNION SELECT w.execution_id,s.project_id FROM selected_work w JOIN selected_work_scopes s USING(work_id)
-), merged AS MATERIALIZED (
- SELECT id,min(project_id) project_id,count(DISTINCT project_id) scope_count FROM scopes WHERE project_id IS NOT NULL GROUP BY id
-)
-SELECT c.id,c.project_id FROM candidates c JOIN merged m USING(id) WHERE m.scope_count=1 AND m.project_id=c.project_id`
-
 // resourceBatchHintsQ: only a scheduling hint (locked per-leaf snapshots stay authoritative): the selected executions
 // whose every known scope is their one current project.
 func resourceBatchHintsQ(q *Request, ids []string) (map[string]string, error) {
@@ -770,19 +693,11 @@ func resourceBatchHintsQ(q *Request, ids []string) (map[string]string, error) {
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rs, err := q.tx.Query(q.ctx(), resourceBatchHintsSQL, ids)
-	if err != nil {
-		return nil, err
+	rows, err := q.db().ResourceBatchHints(q.ctx(), ids)
+	for _, r := range rows {
+		out[r.ID] = r.ProjectID
 	}
-	defer rs.Close()
-	for rs.Next() {
-		var id, p string
-		if err = rs.Scan(&id, &p); err != nil {
-			return nil, err
-		}
-		out[id] = p
-	}
-	return out, rs.Err()
+	return out, err
 }
 
 // resourceWorkClaimsQ: claims of the given executions with their attempts and cohort hint.
@@ -792,22 +707,12 @@ func resourceWorkClaimsQ(q *Request, ids []string) ([]*kitClaim, error) {
 		return nil, err
 	}
 	attempts := map[string]int{}
-	rs, err := q.tx.Query(q.ctx(), `SELECT execution_id,max(attempts) FROM resource_work WHERE execution_id=ANY($1::text[]) GROUP BY 1`, ids)
+	rows, err := q.db().ResourceWorkAttempts(q.ctx(), ids)
 	if err != nil {
 		return nil, err
 	}
-	for rs.Next() {
-		var id string
-		var n int
-		if err = rs.Scan(&id, &n); err != nil {
-			rs.Close()
-			return nil, err
-		}
-		attempts[id] = n
-	}
-	rs.Close()
-	if err = rs.Err(); err != nil {
-		return nil, err
+	for _, r := range rows {
+		attempts[r.ExecutionID] = int(r.Attempts)
 	}
 	cs := make([]*kitClaim, len(ids))
 	for i, id := range ids {
@@ -932,8 +837,8 @@ func resourceRepairOwnership(q *Request, c *kitClaim, cause error) error {
 	} else if err != nil {
 		return err
 	}
-	var parent *string
-	if err = q.tx.QueryRow(q.ctx(), `SELECT project_id FROM execution WHERE id=$1 FOR UPDATE`, c.Key).Scan(&parent); errors.Is(err, pgx.ErrNoRows) {
+	parent, err := q.db().ResourceExecutionLock(q.ctx(), c.Key)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	} else if err != nil {
 		return err
@@ -944,7 +849,7 @@ func resourceRepairOwnership(q *Request, c *kitClaim, cause error) error {
 	if resourceCheckLocks(q, projects) != nil {
 		return nil
 	}
-	return exec(q, `UPDATE execution_totals SET project_id=$2 WHERE execution_id=$1 AND project_id IS DISTINCT FROM $2`, c.Key, parent)
+	return q.db().ResourceTotalsFollowParent(q.ctx(), db.ResourceTotalsFollowParentParams{ExecutionID: c.Key, ProjectID: parent})
 }
 
 // resourcePreparedHeader reads only fixed-size metric support and indexed extremes. Detail support
@@ -953,63 +858,59 @@ func resourcePreparedHeader(q *Request, p string) (out contract.PreparedHeaderV1
 	empty := emptyResourceSummary()
 	h := contract.PreparedHeaderV1{Tokens: empty.Tokens, Durations: empty.Durations, PeakMemoryBytes: empty.PeakMemoryBytes, Tools: contract.PreparedToolsV1{Basis: contract.ResourceBasisUnavailable}}
 	var other int64
-	batch := &pgx.Batch{}
-	batch.Queue(`SELECT executions,other_calls,tool_count,cost_count,price_count FROM resource_project_summary WHERE project_id=$1`, p)
-	batch.Queue(`SELECT metric::text,basis,present_count,expected_count,sum_value::text FROM resource_metric WHERE project_id=$1 ORDER BY metric,basis`, p)
-	batch.Queue(`SELECT
- (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='start' ORDER BY value LIMIT 1),
- (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='end' ORDER BY value DESC LIMIT 1),
- (SELECT value FROM resource_extreme WHERE project_id=$1 AND metric='peakMemory' ORDER BY value DESC LIMIT 1)`, p)
-	results := q.tx.SendBatch(q.ctx(), batch)
-	// Closing consumes even unread results; a late SQL error must precede publication.
-	defer func() {
-		if err := results.Close(); resultErr == nil {
-			resultErr = err
-		}
-	}()
-	if err := results.QueryRow().Scan(&h.Executions, &other, &h.ItemCounts.Tools, &h.ItemCounts.Costs, &h.ItemCounts.Prices); err != nil {
-		return h, err
-	}
-	if other > 0 {
-		h.Tools.Other = &other
-	}
+	// One round trip; a late SQL error must precede publication.
+	w, bq := newResourceBatch(q)
+	summary := bq.ResourceHeaderSummary(q.ctx(), []string{p})
+	metrics := bq.ResourceHeaderMetrics(q.ctx(), []string{p})
+	extremes := bq.ResourceHeaderExtremes(q.ctx(), []string{p})
 	type measure struct {
 		present, expected int64
 		sum               string
 		bases             []contract.ResourceBasis
 	}
 	ms := map[string]*measure{}
-	rs, err := results.Query()
-	if err != nil {
+	ext := map[string]int64{}
+	w.read(func() (err error) {
+		summary.QueryRow(func(_ int, s db.ResourceHeaderSummaryRow, e error) {
+			h.Executions, other, h.ItemCounts.Tools, h.ItemCounts.Costs, h.ItemCounts.Prices, err = s.Executions, s.OtherCalls, s.ToolCount, s.CostCount, s.PriceCount, e
+		})
+		return err
+	})
+	w.read(func() (err error) {
+		metrics.Query(func(_ int, rows []db.ResourceHeaderMetricsRow, e error) {
+			err = e
+			for _, r := range rows {
+				v := ms[r.Metric]
+				if v == nil {
+					v = &measure{sum: "0"}
+					ms[r.Metric] = v
+				}
+				v.present += r.PresentCount
+				v.expected += r.ExpectedCount
+				if v.sum, e = decimalArithmetic(v.sum, r.SumValue, false); e != nil && err == nil {
+					err = e
+				}
+				if r.PresentCount > 0 || r.ExpectedCount > 0 {
+					v.bases = append(v.bases, contract.ResourceBasis(r.Basis))
+				}
+			}
+		})
+		return err
+	})
+	w.read(func() (err error) {
+		extremes.Query(func(_ int, rows []db.ResourceHeaderExtremesRow, e error) {
+			err = e
+			for _, r := range rows {
+				ext[r.Metric] = r.Value
+			}
+		})
+		return err
+	})
+	if err := w.send(q.ctx()); err != nil {
 		return h, err
 	}
-	for rs.Next() {
-		var name, basis, sum string
-		var present, expected int64
-		if err = rs.Scan(&name, &basis, &present, &expected, &sum); err != nil {
-			rs.Close()
-			return h, err
-		}
-		v := ms[name]
-		if v == nil {
-			v = &measure{sum: "0"}
-			ms[name] = v
-		}
-		v.present += present
-		v.expected += expected
-		v.sum, err = decimalArithmetic(v.sum, sum, false)
-		if err != nil {
-			rs.Close()
-			return h, err
-		}
-		if present > 0 || expected > 0 {
-			v.bases = append(v.bases, contract.ResourceBasis(basis))
-		}
-	}
-	err = rs.Err()
-	rs.Close()
-	if err != nil {
-		return h, err
+	if other > 0 {
+		h.Tools.Other = &other
 	}
 	var conversionErr error
 	value := func(k string) *int64 {
@@ -1072,10 +973,13 @@ func resourcePreparedHeader(q *Request, p string) (out contract.PreparedHeaderV1
 		h.Durations.MeasuredCpuRuns = m.present
 	}
 	h.Durations.Basis = basis("wallMs")
-	var start, end, memory *int64
-	if err = results.QueryRow().Scan(&start, &end, &memory); err != nil {
-		return h, err
+	extreme := func(k string) *int64 {
+		if v, ok := ext[k]; ok {
+			return &v
+		}
+		return nil
 	}
+	start, end, memory := extreme("start"), extreme("end"), extreme("peakMemory")
 	if start != nil && end != nil && *end >= *start {
 		h.Durations.ElapsedMs = ptr(*end - *start)
 	}
@@ -1112,12 +1016,8 @@ func resourcePublish(q *Request, p string) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	var version string
-	// The enqueue column is PostgreSQL void; deliberately skip its codec.
-	err = q.tx.QueryRow(q.ctx(), `WITH published AS (
- UPDATE resource_project_summary SET header=$2,revision=revision+1,published_at=clock_timestamp()
- WHERE project_id=$1 RETURNING project_id,epoch,revision)
- SELECT epoch::text||':'||revision::text,fleet_enqueue_wake('fleet_resource_summary',project_id) FROM published`, p, jsonBytes(h)).Scan(&version, nil)
+	published, err := q.db().ResourcePublish(q.ctx(), db.ResourcePublishParams{ProjectID: p, Header: jsonBytes(h)})
+	version := published.Version
 	if err == nil {
 		publishSpan.Set("fleet.resource.publication_version", version)
 		obs.From(q.ctx()).Set("fleet.resource.publication_version", version)
@@ -1150,13 +1050,7 @@ func resourceRebuild(ctx context.Context, a *App, p string) error {
 
 func resourceSeedWork(q *Request, ids []string, origin string, generation, repair *string) error {
 	// One SQL statement seeds identities AND all known old/current project scopes.
-	return exec(q, `WITH seeded AS (
- INSERT INTO resource_work(execution_id,origin,build_generation,repair_id)
- SELECT unnest($1::text[]),$2,$3::uuid,$4::uuid ON CONFLICT ON CONSTRAINT resource_work_source_key DO UPDATE SET execution_id=excluded.execution_id RETURNING work_id,execution_id,first_pending_at)
- INSERT INTO resource_work_scope(work_id,project_id,first_pending_at)
- SELECT w.work_id,v.project_id,w.first_pending_at FROM seeded w CROSS JOIN LATERAL (
- SELECT project_id FROM execution WHERE id=w.execution_id UNION SELECT project_id FROM resource_contribution WHERE execution_id=w.execution_id) v
- WHERE v.project_id IS NOT NULL ON CONFLICT DO NOTHING`, ids, origin, generation, repair)
+	return q.db().ResourceSeedWork(q.ctx(), db.ResourceSeedWorkParams{Ids: ids, Origin: origin, Generation: generation, Repair: repair})
 }
 
 // resourceRepairStep (repair queue): one transition of a metadata repair (repairTransition).
@@ -1193,59 +1087,31 @@ var resourceProcessorOn = os.Getenv("FLEET_RESOURCE_PROCESSOR") == "on"
 
 // Projects are discovered from the configuration catalogue, never by rescanning execution history.
 func resourceBuildsDue(q *Request, now time.Time, limit int) ([]*kitClaim, error) {
-	rs, err := q.tx.Query(q.ctx(), `SELECT key,attempts,generation,updated_at FROM (
- SELECT id AS key,0 AS attempts,NULL::text AS generation,NULL::timestamptz AS updated_at FROM definition d WHERE kind='project' AND NOT EXISTS(SELECT 1 FROM resource_build b WHERE b.project_id=d.id)
- UNION ALL SELECT project_id,attempts,generation::text,updated_at FROM resource_build WHERE NOT ready AND next_attempt_at<=$1) due
- ORDER BY updated_at NULLS FIRST,key COLLATE "C" LIMIT $2`, now, limit)
-	if err != nil {
-		return nil, err
+	rows, err := q.db().ResourceBuildsDue(q.ctx(), db.ResourceBuildsDueParams{Now: now, Max: int32(limit)})
+	cs := make([]*kitClaim, len(rows))
+	for i, r := range rows {
+		cs[i] = &kitClaim{Key: r.Key, Attempts: int(r.Attempts), Guard: []any{r.Generation, r.UpdatedAt}}
 	}
-	return pgx.CollectRows(rs, func(r pgx.CollectableRow) (*kitClaim, error) {
-		var c kitClaim
-		var generation *string
-		var updated *time.Time
-		err := r.Scan(&c.Key, &c.Attempts, &generation, &updated)
-		c.Guard = []any{generation, updated}
-		return &c, err
-	})
+	return cs, err
 }
 
 // A repair whose enumeration is done waits until its seeded work drains.
 func resourceRepairsDue(q *Request, now time.Time, limit int) ([]*kitClaim, error) {
-	rs, err := q.tx.Query(q.ctx(), `SELECT repair_id::text,attempts,after_execution_id,done FROM resource_metadata_repair r WHERE next_attempt_at<=$1
- AND (NOT done OR NOT EXISTS(SELECT 1 FROM resource_work w WHERE w.repair_id=r.repair_id)) ORDER BY next_attempt_at,created_at LIMIT $2`, now, limit)
-	if err != nil {
-		return nil, err
+	rows, err := q.db().ResourceRepairsDue(q.ctx(), db.ResourceRepairsDueParams{Now: now, Max: int32(limit)})
+	cs := make([]*kitClaim, len(rows))
+	for i, r := range rows {
+		cs[i] = &kitClaim{Key: r.RepairID, Attempts: int(r.Attempts), Guard: []any{r.AfterExecutionID, r.Done}}
 	}
-	return pgx.CollectRows(rs, func(r pgx.CollectableRow) (*kitClaim, error) {
-		var c kitClaim
-		var after *string
-		var done bool
-		err := r.Scan(&c.Key, &c.Attempts, &after, &done)
-		c.Guard = []any{after, done}
-		return &c, err
-	})
+	return cs, err
 }
 
 // An execution is one item: a paused execution (a failed row still waiting) is no candidate, even through a new due
 // row, and when it is picked every failed row is due, so a success consumes them all. Executions with a clearing scope
 // yield, so they cannot occupy every slot.
-const resourceCandidatesSQL = `SELECT execution_id FROM (SELECT execution_id,next_attempt_at,first_pending_at FROM resource_work candidate
- WHERE next_attempt_at<=$1
- AND NOT EXISTS(SELECT 1 FROM resource_work paused WHERE paused.execution_id=candidate.execution_id AND paused.attempts>0 AND paused.next_attempt_at>$1)
- AND (NOT EXISTS(SELECT 1 FROM resource_build WHERE phase='clearing') OR NOT EXISTS(
-  SELECT 1 FROM resource_work blocked JOIN resource_work_scope scope USING(work_id)
-  JOIN resource_build build ON build.project_id=scope.project_id
-  WHERE blocked.execution_id=candidate.execution_id AND build.phase='clearing'))
- ORDER BY next_attempt_at,first_pending_at,work_id LIMIT $2) candidates
- GROUP BY execution_id ORDER BY min(next_attempt_at),min(first_pending_at),execution_id`
-
 func resourceWorkDue(q *Request, now time.Time, limit int) ([]*kitClaim, error) {
-	rs, err := q.tx.Query(q.ctx(), resourceCandidatesSQL, now, limit)
-	if err != nil {
-		return nil, err
-	}
-	ids, err := pgx.CollectRows(rs, pgx.RowTo[string])
+	// An execution is one item: a paused execution (a failed row still waiting) is no candidate; executions with a
+	// clearing scope yield (ResourceCandidates).
+	ids, err := q.db().ResourceCandidates(q.ctx(), db.ResourceCandidatesParams{Now: now, Max: int32(limit)})
 	if err != nil || len(ids) == 0 {
 		return nil, err
 	}
@@ -1271,34 +1137,30 @@ type resourcePreparedState struct {
 
 func resourceReadPrepared(q *Request, p string) (resourcePreparedState, error) {
 	var out resourcePreparedState
-	var header []byte
+	d := q.db()
 	// First enforce the caller's ordinary project RLS. Only after that authorized row is read
 	// may the maintenance-only progress check widen scope, without returning any source facts.
-	err := q.tx.QueryRow(q.ctx(), `SELECT s.header,s.epoch::text,s.revision::text,s.ready,transaction_timestamp(),s.published_at,b.last_error
- FROM resource_project_summary s JOIN resource_build b USING(project_id) WHERE s.project_id=$1`, p).Scan(&header, &out.Epoch, &out.Revision, &out.Ready, &out.ValidatedAt, &out.PublishedAt, &out.ErrorClass)
+	s, err := d.ResourcePrepared(q.ctx(), p)
 	if errors.Is(err, pgx.ErrNoRows) {
 		out.Pending = true
 		// No epoch exists yet, but validation still describes this read snapshot.
-		err = q.tx.QueryRow(q.ctx(), `SELECT transaction_timestamp()`).Scan(&out.ValidatedAt)
+		out.ValidatedAt, err = d.ResourceValidatedAt(q.ctx())
 		return out, err
 	}
 	if err != nil {
 		return out, err
 	}
+	header := s.Header
+	out.Epoch, out.Revision, out.Ready, out.ValidatedAt, out.PublishedAt, out.ErrorClass = s.Epoch, s.Revision, s.Ready, s.ValidatedAt, s.PublishedAt, s.LastError
 	// The caller's Store read transaction is REPEATABLE READ: both statements describe exactly
 	// the same snapshot, even if a processor/source commits between them.
 	_, err = unscoped(q, func() (bool, error) {
-		var workError *string
-		e := q.tx.QueryRow(q.ctx(), `SELECT
-   EXISTS(SELECT 1 FROM resource_work_scope WHERE project_id=$1)
-    OR EXISTS(SELECT 1 FROM resource_repair_scope WHERE project_id=$1)
-    OR EXISTS(SELECT 1 FROM resource_metadata_repair WHERE NOT done),
-   (SELECT min(at) FROM (
-    (SELECT first_pending_at at FROM resource_work_scope WHERE project_id=$1 AND first_pending_at IS NOT NULL ORDER BY first_pending_at LIMIT 1)
-    UNION ALL SELECT min(w.first_pending_at) FROM resource_work_scope ws JOIN resource_work w USING(work_id) WHERE ws.project_id=$1 AND ws.first_pending_at IS NULL
-    UNION ALL SELECT min(r.created_at) FROM resource_metadata_repair r WHERE NOT done OR EXISTS(SELECT 1 FROM resource_repair_scope rs WHERE rs.repair_id=r.repair_id AND rs.project_id=$1)) ages),
-   coalesce((SELECT w.last_error FROM resource_work w WHERE w.last_error IS NOT NULL AND EXISTS(SELECT 1 FROM resource_work_scope ws WHERE ws.work_id=w.work_id AND ws.project_id=$1) ORDER BY w.first_pending_at,w.work_id LIMIT 1),
-    (SELECT r.last_error FROM resource_metadata_repair r WHERE r.last_error IS NOT NULL AND (NOT done OR EXISTS(SELECT 1 FROM resource_repair_scope rs WHERE rs.repair_id=r.repair_id AND rs.project_id=$1)) ORDER BY r.created_at,r.repair_id LIMIT 1))`, p).Scan(&out.Pending, &out.OldestPendingAt, &workError)
+		r, e := d.ResourcePreparedProgress(q.ctx(), p)
+		out.Pending, out.OldestPendingAt = r.Pending, r.OldestPendingAt
+		workError := r.WorkError
+		if workError == nil {
+			workError = r.RepairError
+		}
 		if out.ErrorClass == nil {
 			out.ErrorClass = workError
 		}
@@ -1349,11 +1211,8 @@ type resourceItemCursor struct {
 	Key           contract.ResourceSortKey  `json:"key"`
 }
 
-type resourceItemQuery struct {
-	table, tuple, key, item string
-	where                   string
-	args                    []any
-}
+// resourceItemQuery: the selected rows of one item table (sqlResourceItems, sql_builder.go).
+type resourceItemQuery struct{ sqlItems }
 
 func resourceStrictJSON(raw []byte, v any) error {
 	// encoding/json accepts null into non-pointer scalars as their zero value. A client
@@ -1452,57 +1311,11 @@ func resourceKeyValues(raw contract.ResourceSortKey, category contract.ResourceC
 	return nil, fail(400, "Invalid resource category")
 }
 func resourceItemsQuery(r *contract.ProjectResourceItemsRequest, query string) resourceItemQuery {
-	q := resourceItemQuery{where: "project_id=$1", args: []any{r.ProjectId}}
-	switch r.Category {
-	case "tools":
-		q.table = "resource_tool"
-		q.tuple = `(name COLLATE "C",connection COLLATE "C")`
-		q.key = `jsonb_build_object('kind','tool','name',name,'connection',nullif(connection,''))`
-		q.item = q.key + ` || jsonb_build_object('calls',calls,'errors',errors)`
-		if query != "" {
-			q.where += ` AND strpos(lower(name),lower($2))>0`
-			q.args = append(q.args, query)
-		}
-	case "costs":
-		q.table = "resource_cost"
-		q.tuple = `(currency COLLATE "C",basis COLLATE "C")`
-		q.key = `jsonb_build_object('kind','cost','currency',nullif(currency,''),'basis',basis)`
-		q.item = q.key + ` || jsonb_build_object('value',value,'usages',usages,'note',CASE WHEN basis='subscription' THEN 'Subscription list-price equivalent' END,'reason',CASE WHEN basis='unavailable' THEN 'No recorded valuation' END,'priceCount',(SELECT count(*) FROM resource_price_ref p WHERE p.project_id=resource_cost.project_id AND p.currency=resource_cost.currency AND p.basis=resource_cost.basis))`
-	case "prices":
-		q.table = "resource_price_ref"
-		q.tuple = `(price_id COLLATE "C",observed_at)`
-		q.key = `jsonb_build_object('kind','price','priceId',price_id,'observedAt',observed_at)`
-		q.item = q.key + ` || jsonb_build_object('group',jsonb_build_object('currency',nullif(currency,''),'basis',basis))`
-		currency := ""
-		if r.Group.Currency != nil {
-			currency = *r.Group.Currency
-		}
-		q.where += ` AND currency=$2 AND basis=$3`
-		q.args = append(q.args, currency, string(r.Group.Basis))
-	}
-	return q
+	return resourceItemQuery{sqlResourceItems(r.Category, r.ProjectId, query, r.Group)}
 }
-func (s resourceItemQuery) position(values []any, comparison string) (string, []any) {
-	args := slices.Clone(s.args)
-	predicate := s.where
-	if values != nil {
-		a := len(args) + 1
-		args = append(args, values...)
-		predicate += fmt.Sprintf(" AND %s %s ($%d,$%d)", s.tuple, comparison, a, a+1)
-	}
-	return predicate, args
-}
-func (s resourceItemQuery) page(q *Request, values []any, comparison string, descending bool, limit int64) ([]contract.ResourceSortKey, []contract.ResourceItem, error) {
-	where, args := s.position(values, comparison)
-	direction := "ASC"
-	if descending {
-		direction = "DESC"
-	}
-	// Direction applies independently to both tuple elements (ORDER BY tuple DESC would not
-	// use the two-column C-order index). The tuple itself is used only for comparisons.
-	order := strings.TrimSuffix(strings.TrimPrefix(s.tuple, "("), ")")
-	order = strings.ReplaceAll(order, ",", " "+direction+",") + " " + direction
-	rs, err := q.tx.Query(q.ctx(), "SELECT "+s.key+","+s.item+" FROM "+s.table+" WHERE "+where+" ORDER BY "+order+" LIMIT "+strconv.FormatInt(limit, 10), args...)
+func (s resourceItemQuery) page(q *Request, values []any, comparison sqlComparison, descending bool, limit int64) ([]contract.ResourceSortKey, []contract.ResourceItem, error) {
+	sql, args := s.sqlItems.page(values, comparison, descending, limit)
+	rs, err := q.tx.Query(q.ctx(), sql, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1519,13 +1332,13 @@ func (s resourceItemQuery) page(q *Request, values []any, comparison string, des
 	}
 	return keys, items, rs.Err()
 }
-func (s resourceItemQuery) exists(q *Request, key contract.ResourceSortKey, category contract.ResourceCategory, comparison string) (bool, error) {
+func (s resourceItemQuery) exists(q *Request, key contract.ResourceSortKey, category contract.ResourceCategory, comparison sqlComparison) (bool, error) {
 	values, err := resourceKeyValues(key, category)
 	if err != nil {
 		return false, err
 	}
-	where, args := s.position(values, comparison)
-	return has(q, "SELECT 1 FROM "+s.table+" WHERE "+where+" LIMIT 1", args...)
+	sql, args := s.one(values, comparison)
+	return has(q, sql, args...)
 }
 
 // Identifiers and versions only; a publication version on a failed parent is
@@ -1574,7 +1387,7 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 	var values []any
 	var err error
 	descending := r.Anchor != nil && *r.Anchor == "end"
-	comparison := ">"
+	comparison := sqlAfter
 	var anchor contract.ResourceSortKey
 	if r.Cursor != nil {
 		cursorVersion := 1
@@ -1614,7 +1427,7 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 		descending = r.Around.Direction == "atOrBefore"
 	}
 	if descending {
-		comparison = "<"
+		comparison = sqlBefore
 	}
 	s, err := resourceReadPrepared(q, r.ProjectId)
 	if err != nil {
@@ -1629,13 +1442,13 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 	}
 	iq := resourceItemsQuery(r, query)
 	if r.Around != nil {
-		inclusive := comparison + "="
+		inclusive := comparison.inclusive()
 		keys, _, e := iq.page(q, values, inclusive, descending, 1)
 		if e != nil {
 			return nil, e
 		}
 		if len(keys) == 0 {
-			keys, _, e = iq.page(q, values, map[bool]string{true: ">=", false: "<="}[descending], !descending, 1)
+			keys, _, e = iq.page(q, values, map[bool]sqlComparison{true: sqlAtOrAfter, false: sqlAtOrBefore}[descending], !descending, 1)
 			if e != nil {
 				return nil, e
 			}
@@ -1673,7 +1486,8 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 		total = s.Header.ItemCounts.Prices
 	}
 	if query != "" || r.Category == "prices" {
-		if err = q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM "+iq.table+" WHERE "+iq.where, iq.args...).Scan(&total); err != nil {
+		sql, args := iq.count()
+		if err = q.tx.QueryRow(q.ctx(), sql, args...).Scan(&total); err != nil {
 			return nil, err
 		}
 	}
@@ -1715,7 +1529,7 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 		return &token, nil
 	}
 	if len(keys) > 0 {
-		more, e := iq.exists(q, keys[len(keys)-1], r.Category, ">")
+		more, e := iq.exists(q, keys[len(keys)-1], r.Category, sqlAfter)
 		if e != nil {
 			return nil, e
 		}
@@ -1725,7 +1539,7 @@ func resourceReadItems(q *Request, r *contract.ProjectResourceItemsRequest) (con
 				return nil, err
 			}
 		}
-		more, e = iq.exists(q, keys[0], r.Category, "<")
+		more, e = iq.exists(q, keys[0], r.Category, sqlBefore)
 		if e != nil {
 			return nil, e
 		}

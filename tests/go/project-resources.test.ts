@@ -48,6 +48,10 @@ test('prepared resource processor qualifies against isolated PostgreSQL; off res
     IF mode='gate' THEN PERFORM pg_advisory_xact_lock(hashtextextended('fixture:cohort',0)); END IF;
     RETURN NEW; END $$;
    CREATE TRIGGER resource_fixture_cohort_fault BEFORE INSERT OR UPDATE ON resource_contribution FOR EACH ROW EXECUTE FUNCTION resource_fixture_cohort_fault();`);
+  // A gate inside the claim statement's source part: its facts wait while a test holds fixture:resource-read.
+  c.sql(`ALTER FUNCTION resource_execution_facts(execution) RENAME TO resource_fixture_execution_facts;
+   CREATE FUNCTION resource_execution_facts(r execution) RETURNS jsonb LANGUAGE plpgsql AS $$ BEGIN
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('fixture:resource-read',0)); RETURN resource_fixture_execution_facts(r); END $$;`);
   const db=c.sql('SELECT current_database()').trim();
   const pg=process.env.FLEET_TRIAL_PGDATA||join(homedir(),'.cache/fleet-trial/pg');
   const url=`postgresql://fleet_app@/${db}?host=${encodeURIComponent(pg)}&port=${process.env.FLEET_TRIAL_PGPORT||'54329'}`;

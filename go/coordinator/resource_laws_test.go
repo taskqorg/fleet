@@ -711,10 +711,11 @@ func (e *lawEnv) checkExactlyOnce() {
 		var raw []byte
 		var stored, method, frozen *string
 		err := e.st.Tx(e.ctx, nil, false, NOLOCK, func(tx pgx.Tx) error {
-			if err := tx.QueryRow(e.ctx, `SELECT (`+resourceSourceSQL+`)`, id).Scan(&raw); err != nil {
+			var err error
+			if raw, err = lawSource(e.ctx, tx, id); err != nil {
 				return err
 			}
-			err := tx.QueryRow(e.ctx, `SELECT c.source_sha,c.method_sha,v.method_sha FROM resource_contribution c LEFT JOIN resource_valuation v USING(execution_id) WHERE c.execution_id=$1`, id).Scan(&stored, &method, &frozen)
+			err = tx.QueryRow(e.ctx, `SELECT c.source_sha,c.method_sha,v.method_sha FROM resource_contribution c LEFT JOIN resource_valuation v USING(execution_id) WHERE c.execution_id=$1`, id).Scan(&stored, &method, &frozen)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
