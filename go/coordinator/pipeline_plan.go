@@ -359,7 +359,7 @@ func handoffPipelineCommand(q *Request, execution, command doc) (bool, error) {
 	if run == nil {
 		return false, stopPipelineCommand(q, command, "pipeline run removed")
 	}
-	if terminalTyped[astr(run["state"])] {
+	if executionEnds(astr(run["state"])) {
 		return false, stopPipelineCommand(q, command, "pipeline run ended")
 	}
 	index := pipelineStepIndex(run, astr(execution["pipelineStepId"]))

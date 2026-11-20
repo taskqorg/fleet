@@ -87,7 +87,8 @@ coordinator source (go/parser) and fails on SQL literals (`R-SQL`), map accessor
 (`R-MAP`), goroutines, sleeps and tickers (`R-GO`) and raw op registration (`R-OP`). A legacy allowlist
 names the files not yet moved; it only shrinks. A short owner list names what one file owns (the work kit: its
 loop and the retry-column writes). State-column writes outside the owner are checked for the machines on the kit
-(stage 7); not built: `cause=` writes outside `problems.go` and the `background.go` exemption.
+(stage 7), as are `execution`, `question` and `experiment` state and `question.cause` (owned by `problems.go`); not built: the
+`background.go` exemption.
 
 ## How the work runs
 

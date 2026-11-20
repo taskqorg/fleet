@@ -297,15 +297,23 @@ func putRun(q *Request, run doc) error {
 	dir := nilIf(firstString(run["directedBy"], mapOf(run["requestedBy"])["email"]))
 	taskID := nilIf(firstString(run["deliveryId"], run["taskId"]))
 	sessID := nilIf(astr(run["sessionId"]))
-	if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,started_at,ended_at,data,config_ref,experiment_id,variant,task_id,session_id,directed_by,pipeline_id,pipeline_revision,parent_execution_id)
-	 VALUES($1,'pipeline_run',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-	 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data || CASE WHEN execution.data ? 'projectAssessments' THEN jsonb_build_object('projectAssessments',execution.data->'projectAssessments') ELSE '{}'::jsonb END,
-	  config_ref=CASE WHEN execution.variant IS NULL THEN excluded.config_ref ELSE execution.config_ref END,
-	  experiment_id=coalesce(execution.experiment_id,excluded.experiment_id),variant=coalesce(execution.variant,excluded.variant),
-	  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
-	  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),parent_execution_id=coalesce(execution.parent_execution_id,excluded.parent_execution_id)`,
-		run["id"], state, obs, projectOrNil(run["projectId"]), msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"], taskID, sessID, dir, pipeID, pipeRev, run["parentExecutionId"]); err != nil {
+	inserted, err := executionInsert(q, executionRow(doc{"id": run["id"], "kind": "pipeline_run", "state": state, "observation": obs, "projectId": run["projectId"],
+		"startedAt": run["startedAt"], "endedAt": run["finishedAt"], "data": rest, "configRef": cfg, "experimentId": run["experimentId"], "variant": run["variant"],
+		"taskId": taskID, "sessionId": sessID, "directedBy": dir, "pipelineId": pipeID, "pipelineRevision": pipeRev, "parentExecutionId": run["parentExecutionId"]}))
+	if err != nil {
 		return err
+	}
+	if !inserted {
+		if err := exec(q, `UPDATE execution SET observation=$2,project_id=$3,started_at=$4,ended_at=$5,data=$6::jsonb || CASE WHEN data ? 'projectAssessments' THEN jsonb_build_object('projectAssessments',data->'projectAssessments') ELSE '{}'::jsonb END,
+		  config_ref=CASE WHEN variant IS NULL THEN $7 ELSE config_ref END,experiment_id=coalesce(experiment_id,$8),variant=coalesce(variant,$9),
+		  task_id=coalesce(task_id,$10),session_id=coalesce(session_id,$11),directed_by=coalesce($12,directed_by),
+		  pipeline_id=coalesce($13,pipeline_id),pipeline_revision=coalesce($14,pipeline_revision),parent_execution_id=coalesce(parent_execution_id,$15) WHERE id=$1`,
+			run["id"], obs, projectOrNil(run["projectId"]), msTime(run["startedAt"]), msTime(run["finishedAt"]), jsonBytes(rest), jsonBytes(cfg), run["experimentId"], run["variant"], taskID, sessID, dir, pipeID, pipeRev, run["parentExecutionId"]); err != nil {
+			return err
+		}
+		if _, err := executionTransition(q, astr(run["id"]), executionEvent{To: state, KeepEnd: true}); err != nil {
+			return err
+		}
 	}
 	if run["definitions"] != nil {
 		if err := exec(q, `UPDATE execution SET definitions=$2,pipeline_id=coalesce($3,pipeline_id),pipeline_revision=coalesce($4,pipeline_revision) WHERE id=$1`,
@@ -333,14 +341,23 @@ func putRun(q *Request, run doc) error {
 		if st == "succeeded" || st == "failed" || st == "cancelled" {
 			ended = msTime(s["finishedAt"])
 		}
-		if err := exec(q, `INSERT INTO execution(id,kind,state,observation,project_id,parent_execution_id,started_at,ended_at,data,task_id,session_id,directed_by,pipeline_id,pipeline_revision,step_id,experiment_id,variant)
-		 VALUES($1,'pipeline_step',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-		 ON CONFLICT(id) DO UPDATE SET state=excluded.state,observation=excluded.observation,project_id=excluded.project_id,started_at=excluded.started_at,ended_at=excluded.ended_at,data=excluded.data,
-		  task_id=coalesce(execution.task_id,excluded.task_id),session_id=coalesce(execution.session_id,excluded.session_id),directed_by=coalesce(excluded.directed_by,execution.directed_by),
-		  experiment_id=excluded.experiment_id,variant=excluded.variant,
-		  pipeline_id=coalesce(excluded.pipeline_id,execution.pipeline_id),pipeline_revision=coalesce(excluded.pipeline_revision,execution.pipeline_revision),step_id=coalesce(excluded.step_id,execution.step_id),
-		  problem=CASE WHEN excluded.state='succeeded' THEN NULL ELSE execution.problem END`,
-			stepRow(run, i), st, sobs, projectOrNil(run["projectId"]), run["id"], msTime(s["startedAt"]), ended, jsonBytes(data), taskID, sessID, dir, pipeID, pipeRev, nilIf(astr(s["id"])), run["experimentId"], run["variant"]); err != nil {
+		row := stepRow(run, i)
+		inserted, err := executionInsert(q, executionRow(doc{"id": row, "kind": "pipeline_step", "state": st, "observation": sobs, "projectId": run["projectId"], "parentExecutionId": run["id"],
+			"startedAt": s["startedAt"], "endedAt": ended, "data": data, "taskId": taskID, "sessionId": sessID, "directedBy": dir, "pipelineId": pipeID, "pipelineRevision": pipeRev,
+			"stepId": nilIf(astr(s["id"])), "experimentId": run["experimentId"], "variant": run["variant"]}))
+		if err != nil {
+			return err
+		}
+		if inserted {
+			continue
+		}
+		if err := exec(q, `UPDATE execution SET observation=$2,project_id=$3,started_at=$4,ended_at=$5,data=$6,
+		  task_id=coalesce(task_id,$7),session_id=coalesce(session_id,$8),directed_by=coalesce($9,directed_by),experiment_id=$10,variant=$11,
+		  pipeline_id=coalesce($12,pipeline_id),pipeline_revision=coalesce($13,pipeline_revision),step_id=coalesce($14,step_id) WHERE id=$1`,
+			row, sobs, projectOrNil(run["projectId"]), msTime(s["startedAt"]), ended, jsonBytes(data), taskID, sessID, dir, run["experimentId"], run["variant"], pipeID, pipeRev, nilIf(astr(s["id"]))); err != nil {
+			return err
+		}
+		if _, err := executionTransition(q, row, executionEvent{To: st, KeepEnd: true}); err != nil {
 			return err
 		}
 	}
@@ -441,7 +458,7 @@ const runRows = "kind='pipeline_run' AND data ? 'pipelineId'"
 // runState: the typed state and observation of a run or step record; unconfirmed only when the record says so.
 func runState(r doc) (string, string, error) {
 	state, obs := firstString(r["state"], "preparing"), "confirmed"
-	if _, ok := stateOrder[state]; !ok {
+	if _, ok := executionTransitions[state]; !ok {
 		return "", "", fmt.Errorf("pipeline record %v: unknown state %q", r["id"], state)
 	}
 	if unconfirmed(r) {
@@ -742,7 +759,7 @@ func pipelineCancelIn(q *Request, runID string) (string, doc, error) {
 			if _, err := commandStop(q, commandStopFilter{executionID: &native, statuses: []db.CommandStatus{db.CommandStatusPending}}); err != nil {
 				return "", nil, err
 			}
-			if err := exec(q, "UPDATE execution SET state='cancelled',ended_at=now() WHERE id=$1 AND state IN ('preparing','waiting')", native); err != nil {
+			if _, err := executionTransition(q, native, executionEvent{To: "cancelled", From: []string{"preparing", "waiting"}}); err != nil && !errors.Is(err, errNotFound) {
 				return "", nil, err
 			}
 		}
@@ -1219,12 +1236,13 @@ func runStep(ctx context.Context, a *App, run doc, i int) (bool, error) {
 	// script; a job it had started under the step (the coordinator's own publication job) ends with it.
 	if kind != "api" && kind != "agent" && kind != "script" {
 		return false, tx(func(q *Request) error {
-			jobs, err := queryRows(q, "UPDATE execution SET state='failed',ended_at=now(),problem='step:unknown-kind' WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting') RETURNING id", row)
+			jobs, err := queryRows(q, "SELECT id FROM execution WHERE parent_execution_id=$1 AND state IN ('preparing','running','waiting') ORDER BY id FOR UPDATE", row)
 			if err != nil {
 				return err
 			}
+			problem := "step:unknown-kind"
 			for _, j := range jobs {
-				if err := writeTotals(q, astr(j["id"])); err != nil {
+				if _, err := executionTransition(q, astr(j["id"]), executionEvent{To: "failed", Problem: &problem}); err != nil {
 					return err
 				}
 			}

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"regexp"
 	"sort"
@@ -49,13 +48,6 @@ func executionLabContext(q *Request, parent, project string, experiment, variant
 
 // createExecution inserts a typed row unless its id or request_id exists; true when this call inserted one.
 func createExecution(q *Request, v doc) (bool, error) {
-	if v["state"] == nil {
-		v["state"] = "preparing"
-	}
-	var cfg any
-	if v["configRef"] != nil {
-		cfg = js(v["configRef"])
-	}
 	experiment, variant, err := executionLabContext(q, astr(v["parentExecutionId"]), astr(v["projectId"]), v["experimentId"], v["variant"])
 	if err != nil {
 		return false, err
@@ -64,11 +56,54 @@ func createExecution(q *Request, v doc) (bool, error) {
 	if traceErr != nil {
 		return false, traceErr
 	}
-	tag, err := q.tx.Exec(q.ctx(), `INSERT INTO execution(id,kind,state,project_id,task_id,parent_execution_id,session_id,host_id,harness,model,config_ref,data,experiment_id,variant,account_id,request_id,directed_by,pipeline_id,pipeline_revision,step_id,profile_id,profile_revision)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) ON CONFLICT DO NOTHING`,
-		v["id"], v["kind"], v["state"], projectOrNil(v["projectId"]), v["taskId"], v["parentExecutionId"], v["sessionId"], v["hostId"], v["harness"], v["model"], cfg, js(data), experiment, variant, v["accountId"], v["requestId"],
-		v["directedBy"], v["pipelineId"], v["pipelineRevision"], v["stepId"], v["profileId"], v["profileRevision"])
-	return err == nil && tag.RowsAffected() > 0, err
+	row := executionRow(v)
+	row.ExperimentID, row.Variant, row.Data = strPtr(experiment), strPtr(variant), jsonBytes(data)
+	return executionInsert(q, row)
+}
+
+// executionRow: the insert of an execution record's fields (id, kind, state, observation, projectId, taskId,
+// experimentId, variant, parentExecutionId, sessionId, accountId, hostId, harness, model, configRef, startedAt, endedAt
+// as a time or milliseconds, data, directedBy, profileId, profileRevision, pipelineId, pipelineRevision, stepId,
+// requestId, systemActor, definitions); JSON fields are encoded, nil is NULL.
+func executionRow(v doc) db.ExecutionInsertParams {
+	r := db.ExecutionInsertParams{ID: astr(v["id"]), Kind: db.ExecutionKind(astr(v["kind"])), State: db.ExecutionState(astr(v["state"])),
+		ProjectID: strPtr(projectOrNil(v["projectId"])), TaskID: strPtr(v["taskId"]), ExperimentID: strPtr(v["experimentId"]), Variant: strPtr(v["variant"]),
+		ParentExecutionID: strPtr(v["parentExecutionId"]), SessionID: strPtr(v["sessionId"]), AccountID: strPtr(v["accountId"]), HostID: strPtr(v["hostId"]),
+		Harness: strPtr(v["harness"]), Model: strPtr(v["model"]), StartedAt: nullTime(v["startedAt"]), EndedAt: nullTime(v["endedAt"]),
+		DirectedBy: strPtr(v["directedBy"]), ProfileID: strPtr(v["profileId"]), ProfileRevision: nullInt(v["profileRevision"]), PipelineID: strPtr(v["pipelineId"]),
+		PipelineRevision: nullInt(v["pipelineRevision"]), StepID: strPtr(v["stepId"]), RequestID: strPtr(v["requestId"]), SystemActor: strPtr(v["systemActor"])}
+	if o := astr(v["observation"]); o != "" {
+		obs := db.Observation(o)
+		r.Observation = &obs
+	}
+	if v["configRef"] != nil {
+		r.ConfigRef = jsonBytes(v["configRef"])
+	}
+	if v["data"] != nil {
+		r.Data = jsonBytes(v["data"])
+	}
+	if v["definitions"] != nil {
+		r.Definitions = jsonBytes(v["definitions"])
+	}
+	return r
+}
+
+func nullInt(v any) *int64 {
+	if p, ok := v.(*int64); ok {
+		return p
+	}
+	if n, ok := intOK(v); ok {
+		return &n
+	}
+	return nil
+}
+
+// nullTime: a time, or milliseconds since the epoch, as a nullable timestamp.
+func nullTime(v any) *time.Time {
+	if t, ok := executionTime(v).(time.Time); ok {
+		return &t
+	}
+	return nil
 }
 
 func markObservation(q *Request, id any, observation string) error {
@@ -118,40 +153,6 @@ func executionEnded(q *Request, id any) (bool, error) {
 	return x, err
 }
 
-var stateOrder = map[string]int{"preparing": 0, "waiting": 1, "running": 1, "succeeded": 2, "failed": 2, "cancelled": 2}
-
-// transition moves a typed state forward only.
-func transition(q *Request, id, state string) (doc, error) {
-	if _, ok := stateOrder[state]; !ok {
-		return nil, fail(400, "Unknown execution state "+state)
-	}
-	cur, err := previousState(q, id)
-	if err != nil {
-		return nil, err
-	}
-	if cur == "" {
-		return nil, errNotFound
-	}
-	if cur == state {
-		return doc{"state": cur}, nil
-	}
-	if terminalTyped[cur] || stateOrder[state] < stateOrder[cur] {
-		return nil, fail(409, fmt.Sprintf("Execution %s cannot become %s", cur, state))
-	}
-	if err := exec(q, `UPDATE execution SET state=$2,problem=CASE WHEN $2::execution_state='succeeded' THEN NULL ELSE problem END,ended_at=CASE WHEN $3 THEN coalesce(ended_at,now()) ELSE ended_at END,started_at=CASE WHEN $2::execution_state IN ('running','waiting') THEN coalesce(started_at,now()) ELSE started_at END WHERE id=$1`, id, state, terminalTyped[state]); err != nil {
-		return nil, err
-	}
-	if terminalTyped[state] {
-		if err := writeTotals(q, id); err != nil {
-			return nil, err
-		}
-		if err := writeEnded(q, id); err != nil {
-			return nil, err
-		}
-	}
-	return doc{"state": state}, nil
-}
-
 // detectProblems refreshes registration problems on open executions without replacing retained runtime causes.
 func detectProblems(q *Request, hosts []string, environments map[string][]string) error {
 	return exec(q, `WITH found AS (SELECT e.id,CASE
@@ -186,15 +187,6 @@ func inList(xs []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func previousState(q *Request, id any) (string, error) {
-	var s string
-	err := q.tx.QueryRow(q.ctx(), "SELECT state::text FROM execution WHERE id=$1", id).Scan(&s)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	}
-	return s, err
 }
 
 // Execution seams: execution_stop, budget-blocked connections, the budget answer hook, the artifact gate on
@@ -580,7 +572,7 @@ func init() {
 			if err != nil {
 				return out, err
 			}
-			if row == nil || !terminalTyped[astr(row["state"])] || row["problem"] == nil || row["dismissed"] == true {
+			if row == nil || !executionEnds(astr(row["state"])) || row["problem"] == nil || row["dismissed"] == true {
 				state := "unknown"
 				if row != nil {
 					state = astr(row["state"])
@@ -672,10 +664,10 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 		if !orphan {
 			return "unknown", nil
 		}
-		if terminalTyped[astr(row["state"])] {
+		if executionEnds(astr(row["state"])) {
 			return astr(row["state"]), nil
 		}
-		if _, err := transition(q, id, "failed"); err != nil {
+		if _, err := executionTransition(q, id, executionEvent{To: "failed"}); err != nil {
 			return "", err
 		}
 		if err := exec(q, `UPDATE execution SET problem='unknown:abandoned',observation='unconfirmed',data=data||jsonb_build_object('stopDetail','abandoned','error','abandoned: '||$2::text) WHERE id=$1`, id, reason); err != nil {
@@ -720,5 +712,9 @@ func executionAbandon(q *Request, id, reason, by string) (string, error) {
 		}
 	}
 	// Its open questions have no living asker any more.
-	return "", exec(q, "UPDATE question SET state='withdrawn',cause=NULL WHERE execution_id=$1 AND state='open'", id)
+	var asked []string
+	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(array_agg(id),'{}') FROM question WHERE execution_id=$1 AND state='open'", id).Scan(&asked); err != nil {
+		return "", err
+	}
+	return "", questionsWithdraw(q, asked)
 }

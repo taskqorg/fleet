@@ -187,10 +187,7 @@ func cancelTaskWork(q *Request, id string) error {
 			if pipelineFormatUnsupported(err) {
 				// A historical plan cannot run. Its retained native executions
 				// are handled below without decoding or resuming the old plan.
-				if err := exec(q, "UPDATE execution SET state='cancelled',observation='unconfirmed',ended_at=now() WHERE id=$1", eid); err != nil {
-					return err
-				}
-				if err := writeTotals(q, eid); err != nil {
+				if _, err := executionTransition(q, eid, executionEvent{To: "cancelled", Observation: "unconfirmed"}); err != nil {
 					return err
 				}
 				continue
@@ -359,9 +356,13 @@ AND NOT EXISTS (SELECT 1 FROM question qq WHERE qq.task_id=t.id AND qq.state='op
 // resume, and for every task at coordinator start (settleIdleTasks). Reports whether it asked.
 func settleIdleTask(q *Request, id string) (bool, error) {
 	// A newer failed run supersedes an unanswered success prompt; history remains queryable.
-	if err := exec(q, `UPDATE question qq SET state='withdrawn' WHERE qq.task_id=$1 AND qq.kind='acceptance' AND qq.state='open' AND coalesce(qq.data->>'earlierResult','false')<>'true'
+	var superseded []string
+	if err := q.tx.QueryRow(q.ctx(), `SELECT coalesce(array_agg(qq.id),'{}') FROM question qq WHERE qq.task_id=$1 AND qq.kind='acceptance' AND qq.state='open' AND coalesce(qq.data->>'earlierResult','false')<>'true'
 	 AND EXISTS (SELECT 1 FROM execution x WHERE x.id=(SELECT e.id FROM execution e WHERE e.task_id=$1 AND e.kind<>'child_agent' ORDER BY e.seq DESC LIMIT 1)
-	 AND (x.state IN ('failed','cancelled') OR x.data->'report'->>'outcome'='failed'))`, id); err != nil {
+	 AND (x.state IN ('failed','cancelled') OR x.data->'report'->>'outcome'='failed'))`, id).Scan(&superseded); err != nil {
+		return false, err
+	}
+	if err := questionsWithdraw(q, superseded); err != nil {
 		return false, err
 	}
 	t, err := first(q, `SELECT t.*, l.id AS latest_id, l.state::text AS latest, l.session_id AS latest_session, l.data->'report' AS report,
@@ -420,7 +421,11 @@ const idleFail, idleAccept = "fail task", "accept earlier result"
 
 // withdrawIdleDecision: a new run of the task answers settleIdleTask's decision by itself.
 func withdrawIdleDecision(q *Request, id string) error {
-	return exec(q, "UPDATE question SET state='withdrawn' WHERE task_id=$1 AND state='open' AND data->>'idle'='true'", id)
+	var idle []string
+	if err := q.tx.QueryRow(q.ctx(), "SELECT coalesce(array_agg(id),'{}') FROM question WHERE task_id=$1 AND state='open' AND data->>'idle'='true'", id).Scan(&idle); err != nil {
+		return err
+	}
+	return questionsWithdraw(q, idle)
 }
 
 // acceptanceExecution validates the selected work, independently of who requests or answers acceptance.
@@ -519,11 +524,11 @@ func answerQuestion(q *Request, id, answer, by string, artifactIDs []any) (doc, 
 	if err := runAnswerChecks(q, qu, answer); err != nil { // Lab and budget answers
 		return nil, err
 	}
-	tag, err := q.tx.Exec(q.ctx(), "UPDATE question SET answer=$2,answered_by=$3,answered_at=now(),state='answered' WHERE id=$1 AND state='open'", id, answer, by)
+	moved, err := questionTransition(q, id, questionEvent{To: "answered", Answer: answer, AnsweredBy: &by, AnsweredNow: true})
 	if err != nil {
 		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
+	if !moved {
 		now, _ := first(q, "SELECT * FROM question WHERE id=$1", id)
 		if astr(now["state"]) == "answered" && astr(now["answer"]) == answer {
 			return now, nil
@@ -1450,7 +1455,7 @@ func init() {
 				continue
 			}
 			w := doc{"reason": r.Reason, "actor": actor(q, "operator"), "at": nowMs()} // as lab_rating_withdraw records it
-			if err := exec(q, "UPDATE question SET state='withdrawn',cause=NULL,data=coalesce(data,'{}'::jsonb)||jsonb_build_object('withdrawal',$2::jsonb) WHERE id=$1", id, jsonBytes(w)); err != nil {
+			if _, err := questionTransition(q, id, questionEvent{To: "withdrawn", Withdrawal: jsonBytes(w)}); err != nil {
 				return out, err
 			}
 			if err := put(q, "setting-change", doc{"id": newID(), "target": "question:" + id, "projectId": row["project_id"], "field": "state", "previous": "open", "value": "withdrawn", "reason": r.Reason, "actor": actor(q, "operator"), "at": nowMs()}); err != nil {

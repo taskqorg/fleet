@@ -189,21 +189,13 @@ func decodeUpdate(v any) (contract.UpdateResult, bool) {
 func updateQuestion(q *Request, host string, holder any, r contract.UpdateResult) error {
 	switch r.State {
 	case contract.UpdateStateOk:
-		return exec(q, "UPDATE question SET state='withdrawn',cause=NULL WHERE state='open' AND cause LIKE $1", "update:"+host+":%")
+		return problemsClosePrefix(q, "update:"+host+":")
 	case contract.UpdateStateRefused, contract.UpdateStateFailed:
 	case contract.UpdateStateError:
 		if r.Error == nil || !strings.HasPrefix(*r.Error, "managed CLI ") {
 			return nil
 		}
 	default:
-		return nil
-	}
-	cause := "update:" + host + ":" + r.Version
-	var n int
-	if err := q.tx.QueryRow(q.ctx(), "SELECT count(*) FROM question WHERE cause=$1 AND state IN ('open','answered')", cause).Scan(&n); err != nil {
-		return err
-	}
-	if n > 0 {
 		return nil
 	}
 	reason := ""
@@ -216,7 +208,7 @@ func updateQuestion(q *Request, host string, holder any, r contract.UpdateResult
 	} else if reason == "unhealthy" {
 		what = "rolled back"
 	}
-	return openCauseQuestion(q, cause, holder, nil, host+": update to "+r.Version+" "+what+" ("+reason+").")
+	return problemRaise(q, "", Problem{Cause: "update:" + host + ":" + r.Version, Text: host + ": update to " + r.Version + " " + what + " (" + reason + ").", AddressedTo: astr(holder), Options: []any{"ok"}})
 }
 
 func ptr[T any](v T) *T { return &v }

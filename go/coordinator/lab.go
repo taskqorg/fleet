@@ -1781,7 +1781,8 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 				if reason.code == "requester:access-revoked" {
 					state = "paused"
 				}
-				return exec(q, "UPDATE experiment SET state=$2,stop_reason=$3 WHERE id=$1", id, state, reason.code)
+				_, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: &reason.code})
+				return err
 			}
 			return err
 		}
@@ -1835,7 +1836,10 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 			}
 		}
 		if changed || state != "running" {
-			if err := exec(q, "UPDATE experiment SET budgets=$2,state=$3,stop_reason=coalesce($4,stop_reason) WHERE id=$1", id, jsonBytes(budgets), state, reason); err != nil {
+			if err := exec(q, "UPDATE experiment SET budgets=$2 WHERE id=$1", id, jsonBytes(budgets)); err != nil {
+				return err
+			}
+			if _, err := experimentTransition(q, id, experimentEvent{To: state, StopReason: strPtr(reason)}); err != nil {
 				return err
 			}
 		}
@@ -1892,7 +1896,9 @@ func labReconcile(ctx context.Context, a *App, id string) error {
 				}
 				return loopAdvance(q, exp, trials, runs, fresh, s, &launched)
 			}
-			return exec(q, "UPDATE experiment SET state='done',stop_reason='complete' WHERE id=$1 AND state='running'", id)
+			complete := "complete"
+			_, err = experimentTransition(q, id, experimentEvent{To: "done", From: []string{"running"}, StopReason: &complete})
+			return err
 		}
 		return nil
 	})
@@ -1928,19 +1934,8 @@ func labReconcileWhere(ctx context.Context, a *App, states string, skipBusy bool
 func labReconcileRunning(ctx context.Context, a *App) { labReconcileWhere(ctx, a, "running", true) }
 
 func expSetState(q *Request, id string, from []string, to string, reason any) error {
-	rs, err := queryRows(q, "UPDATE experiment SET state=$2,stop_reason=coalesce($3,stop_reason) WHERE id=$1 AND state=ANY($4) RETURNING id", id, to, reason, from)
-	if err != nil {
-		return err
-	}
-	if len(rs) == 0 {
-		e, err := expRow(q, id)
-		if err != nil {
-			return err
-		}
-		return fail(409, fmt.Sprintf("Experiment is %v", e["state"]))
-	}
-	// A budget question answered by the buttons instead is withdrawn, so a late answer never moves a later pause.
-	return exec(q, "UPDATE question SET state='withdrawn' WHERE state='open' AND kind='operator_decision' AND data->>'experimentId'=$1", id)
+	_, err := experimentTransition(q, id, experimentEvent{To: to, From: from, Strict: true, StopReason: strPtr(reason)})
+	return err
 }
 
 func labReadTx(q *Request, fn func(q *Request) error) error {
@@ -2057,7 +2052,7 @@ func expCellAction(q *Request, id, cell, action string) (doc, error) {
 			if err := pipelineRecoveryFence(q, latest[cell]); err != nil {
 				return err
 			}
-			if err := exec(q, "UPDATE experiment SET state='running' WHERE id=$1 AND state='done'", id); err != nil {
+			if _, err := experimentTransition(q, id, experimentEvent{To: "running", From: []string{"done"}}); err != nil {
 				return err
 			}
 			rep, _ := intOK(c["repeat"])
@@ -2337,7 +2332,11 @@ func labAnswerAfter(q *Request, question doc) error {
 		if answer == "resume" {
 			to = "running"
 		}
-		if err := exec(q, "UPDATE experiment SET state=$2,stop_reason=CASE WHEN $2='stopped' THEN 'owner' ELSE stop_reason END WHERE id=$1 AND state='paused'", d["experimentId"], to); err != nil {
+		var owner *string
+		if to == "stopped" {
+			owner = ptr("owner")
+		}
+		if _, err := experimentTransition(q, astr(d["experimentId"]), experimentEvent{To: to, From: []string{"paused"}, StopReason: owner}); err != nil && !errors.Is(err, errNotFound) {
 			return err
 		}
 		eid = astr(d["experimentId"])
@@ -2345,10 +2344,7 @@ func labAnswerAfter(q *Request, question doc) error {
 		return nil
 	}
 	a := q.app
-	go func() {
-		time.Sleep(50 * time.Millisecond) // after the answer committed
-		labReconcile(context.Background(), a, eid)
-	}()
+	afterCommit(q, func() { go labReconcile(context.Background(), a, eid) })
 	return nil
 }
 
@@ -3017,7 +3013,7 @@ func labRatingWithdraw(q *Request, id, reason string) (doc, error) {
 	}
 	if row["state"] == "open" {
 		withdrawal := doc{"reason": reason, "actor": actor(q, "operator"), "at": nowMs()}
-		if err := exec(q, "UPDATE question SET state='withdrawn',data=coalesce(data,'{}'::jsonb)||jsonb_build_object('withdrawal',$2::jsonb) WHERE id=$1 AND state='open'", id, jsonBytes(withdrawal)); err != nil {
+		if _, err := questionTransition(q, id, questionEvent{To: "withdrawn", Withdrawal: jsonBytes(withdrawal)}); err != nil {
 			return nil, err
 		}
 	}
