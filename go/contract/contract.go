@@ -5,6 +5,7 @@ package contract
 import (
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -24,6 +25,7 @@ import (
 //go:generate go run ../gen ../../contracts/ops-tasks.schema.json contract ops_tasks_gen.go
 //go:generate go run ../gen ../../contracts/ops-telemetry.schema.json contract ops_telemetry_gen.go
 //go:generate go run ../gen ../../contracts/profile.schema.json contract profile_gen.go
+//go:generate go run ../gen ../../contracts/vocabulary.json contract vocabulary_gen.go
 
 // Operation is one entry of an "operations" list in contracts/ops-<domain>.schema.json: a read snapshot or a write, long (no surrounding
 // transaction), the status codes its handler returns besides 401, 403 and 500, who may call it (Auth: person, project:<path>
@@ -34,7 +36,26 @@ type Operation struct {
 	Read, Long               bool
 	Errors                   []int
 	Auth, Agent, Description string
-	InputSchema              json.RawMessage
+	// Changes: the change kinds that can alter its reply, "<kind>" or "<kind>:<id prefix>"; each change row the feed
+	// sends names the operations it touches (Change.touches), so the app rereads without predicates of its own.
+	Changes     []string
+	InputSchema json.RawMessage
+}
+
+// Touches: the operations whose declared Changes match a change of this kind and id, sorted.
+func Touches(kind, id string) []string {
+	out := []string{}
+	for n, o := range Operations {
+		for _, c := range o.Changes {
+			k, prefix, _ := strings.Cut(c, ":")
+			if k == kind && strings.HasPrefix(id, prefix) {
+				out = append(out, n)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Operations: every coordinator operation; each name has <Name>Request and <Name>Reply. The generated init of each

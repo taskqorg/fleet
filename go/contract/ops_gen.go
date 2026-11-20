@@ -393,36 +393,8 @@ func (v *ListGroup) Validate() error {
 	return nil
 }
 
-// ListRow: A task or session row of a list page; sortKey positions it (strings and numbers).
-type ListRow struct {
-	Id      string            `json:"id"`
-	SortKey []json.RawMessage `json:"sortKey"`
-	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
-	Rest map[string]json.RawMessage `json:"-"`
-}
-
-func (v ListRow) MarshalJSON() ([]byte, error) {
-	type plain ListRow
-	return marshalRest(plain(v), v.Rest)
-}
-
-func (v *ListRow) UnmarshalJSON(b []byte) error {
-	type plain ListRow
-	var rest map[string]json.RawMessage
-	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
-		return err
-	}
-	v.Rest = rest
-	return nil
-}
-
-// Validate: the schema's required fields and enums (see Check).
-func (v *ListRow) Validate() error {
-	if v.SortKey == nil {
-		return Missing("sortKey")
-	}
-	return nil
-}
+// ListRow: A task or session row of a list page.
+type ListRow = json.RawMessage
 
 type MeasuredInt struct {
 	Basis   ResourceBasis `json:"basis"`
@@ -599,6 +571,43 @@ func (v *ScopedResourceRollup) Validate() error {
 	return nil
 }
 
+// SessionRow: A row of sessions_list and list_membership (sessions.go sessionRow); title: the stored or generated title, else the first message; createdAt and archivedAt in ms.
+type SessionRow struct {
+	ActivityAt    *string       `json:"activityAt"`
+	ArchivedAt    *float64      `json:"archivedAt"`
+	Code          *string       `json:"code"`
+	CreatedAt     *float64      `json:"createdAt"`
+	Executions    int64         `json:"executions"`
+	Harness       *string       `json:"harness"`
+	Id            string        `json:"id"`
+	OpenQuestions int64         `json:"openQuestions"`
+	ProfileId     *string       `json:"profileId"`
+	ProjectId     *string       `json:"projectId"`
+	SortKey       []SortKeyPart `json:"sortKey"`
+	State         string        `json:"state"`
+	Title         *string       `json:"title"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *SessionRow) Validate() error {
+	if v.SortKey == nil {
+		return Missing("sortKey")
+	}
+	for i := range v.SortKey {
+		if err := Check(&v.SortKey[i], "sortKey"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type SortKeyNumber = float64
+
+// SortKeyPart: One part of a list sort key (group key, sort value, id).
+type SortKeyPart = json.RawMessage
+
+type SortKeyText = string
+
 type SpawnedTaskRef struct {
 	Code      *string         `json:"code,omitempty"`
 	ProjectId *string         `json:"projectId,omitempty"`
@@ -646,6 +655,41 @@ func (v SystemActivity) Valid() bool {
 		}
 	}
 	return false
+}
+
+// TaskRow: A row of task_page and list_membership (tasks.go taskListRow); sortKey: [group key, sort key, id]. state is a list state (held included).
+type TaskRow struct {
+	Agent         *string       `json:"agent"`
+	Code          *string       `json:"code"`
+	CreatedAt     string        `json:"createdAt"`
+	Executions    int64         `json:"executions"`
+	Host          *string       `json:"host"`
+	Id            string        `json:"id"`
+	LastAgent     *string       `json:"lastAgent"`
+	OpenQuestions int64         `json:"openQuestions"`
+	PauseReason   *string       `json:"pauseReason"`
+	Priority      string        `json:"priority"`
+	ProjectId     *string       `json:"projectId"`
+	SortKey       []SortKeyPart `json:"sortKey"`
+	StartedAt     *string       `json:"startedAt"`
+	State         string        `json:"state"`
+	StateAt       *string       `json:"stateAt"`
+	Title         string        `json:"title"`
+	UpdatedAt     string        `json:"updatedAt"`
+	WaitReason    *string       `json:"waitReason"`
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *TaskRow) Validate() error {
+	if v.SortKey == nil {
+		return Missing("sortKey")
+	}
+	for i := range v.SortKey {
+		if err := Check(&v.SortKey[i], "sortKey"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type TokenBreakdown struct {

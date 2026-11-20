@@ -3,8 +3,8 @@
   "$comment": "Coordinator operations of the artifacts domain; the rules are in ops.schema.json $comment and contracts/README.md.",
   "operations": {
     "artifact_copy_retry": {"read": false, "errors": [400,403,409], "auth": "architect", "agent": "tool", "description": "Operator only."},
-    "artifact_get": {"read": true, "errors": [400,404], "auth": "person", "agent": "tool", "description": "One artifact by artifactId: its record, copies and download state"},
-    "artifact_list": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "description": "Artifacts by execution, task, project, media type, text, state or time, newest first, paged with before and limit"},
+    "artifact_get": {"read": true, "errors": [400,404], "auth": "person", "agent": "tool", "changes": ["artifact"], "description": "One artifact by artifactId: its record, copies and download state"},
+    "artifact_list": {"read": true, "errors": [400], "auth": "person", "agent": "tool", "changes": ["artifact", "task"], "description": "Artifacts by execution, task, project, media type, text, state or time, newest first, paged with before and limit"},
     "artifact_purge": {"read": false, "errors": [400,403], "auth": "architect", "agent": "tool", "description": "Operator only."},
     "artifact_rule_confirm": {"read": false, "errors": [400,403,404], "auth": "architect", "agent": "tool", "description": "Operator only. ruleHash: the preview's hash; a changed rule is 409."},
     "artifact_rule_preview": {"read": true, "errors": [400,403], "auth": "architect", "agent": "tool", "description": "Operator only. rule: a retention rule of the project settings."},

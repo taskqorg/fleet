@@ -6,6 +6,155 @@ import "encoding/json"
 
 var _ json.RawMessage
 
+type LabAgreement struct {
+	ByVersion []LabAgreementRow `json:"byVersion,omitempty"`
+	Compared  *float64          `json:"compared,omitempty"`
+	Matched   *float64          `json:"matched,omitempty"`
+	Percent   *float64          `json:"percent,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabAgreement) MarshalJSON() ([]byte, error) {
+	type plain LabAgreement
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabAgreement) UnmarshalJSON(b []byte) error {
+	type plain LabAgreement
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabAgreement) Validate() error {
+	for i := range v.ByVersion {
+		if err := Check(&v.ByVersion[i], "byVersion"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type LabAgreementRow struct {
+	Compared *float64 `json:"compared,omitempty"`
+	Matched  *float64 `json:"matched,omitempty"`
+	Percent  *float64 `json:"percent,omitempty"`
+	Version  *string  `json:"version,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabAgreementRow) MarshalJSON() ([]byte, error) {
+	type plain LabAgreementRow
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabAgreementRow) UnmarshalJSON(b []byte) error {
+	type plain LabAgreementRow
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabAgreementRow) Validate() error {
+	return nil
+}
+
+type LabBudget struct {
+	Action  *string         `json:"action,omitempty"`
+	FiredAt json.RawMessage `json:"firedAt,omitempty"`
+	Limit   *float64        `json:"limit,omitempty"`
+	Unit    *string         `json:"unit,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabBudget) MarshalJSON() ([]byte, error) {
+	type plain LabBudget
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabBudget) UnmarshalJSON(b []byte) error {
+	type plain LabBudget
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabBudget) Validate() error {
+	return nil
+}
+
+type LabCatalogueRef struct {
+	Id       *string  `json:"id,omitempty"`
+	Revision *float64 `json:"revision,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabCatalogueRef) MarshalJSON() ([]byte, error) {
+	type plain LabCatalogueRef
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabCatalogueRef) UnmarshalJSON(b []byte) error {
+	type plain LabCatalogueRef
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabCatalogueRef) Validate() error {
+	return nil
+}
+
+// LabCell: One example x variant cell: its trial keys (example|variant|repeat) and score summary.
+type LabCell struct {
+	Example *string                    `json:"example,omitempty"`
+	Summary map[string]LabScoreSummary `json:"summary,omitempty"`
+	Trials  []string                   `json:"trials,omitempty"`
+	Variant *string                    `json:"variant,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabCell) MarshalJSON() ([]byte, error) {
+	type plain LabCell
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabCell) UnmarshalJSON(b []byte) error {
+	type plain LabCell
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabCell) Validate() error {
+	return nil
+}
+
 type LabCellAction string
 
 const (
@@ -86,6 +235,165 @@ func (v *LabCompareMethodsRequest) Validate() error {
 	if v.Methods == nil {
 		return Missing("methods")
 	}
+	return nil
+}
+
+type LabComparison struct {
+	Baseline         string              `json:"baseline"`
+	Evaluator        string              `json:"evaluator"`
+	EvaluatorVersion json.RawMessage     `json:"evaluatorVersion,omitempty"`
+	Reason           *string             `json:"reason"`
+	Result           LabComparisonResult `json:"result"`
+	Split            string              `json:"split"`
+	Variant          string              `json:"variant"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabComparison) MarshalJSON() ([]byte, error) {
+	type plain LabComparison
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabComparison) UnmarshalJSON(b []byte) error {
+	type plain LabComparison
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabComparison) Validate() error {
+	if err := Check(&v.Result, "result"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type LabComparisonResult struct {
+	Examples []json.RawMessage `json:"examples"`
+	High     *float64          `json:"high"`
+	Low      *float64          `json:"low"`
+	Mean     *float64          `json:"mean"`
+	N        float64           `json:"n"`
+	TooFew   bool              `json:"tooFew"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabComparisonResult) MarshalJSON() ([]byte, error) {
+	type plain LabComparisonResult
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabComparisonResult) UnmarshalJSON(b []byte) error {
+	type plain LabComparisonResult
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabComparisonResult) Validate() error {
+	if v.Examples == nil {
+		return Missing("examples")
+	}
+	return nil
+}
+
+type LabConfounders struct {
+	Harnesses []string        `json:"harnesses,omitempty"`
+	Hosts     []string        `json:"hosts,omitempty"`
+	Models    []string        `json:"models,omitempty"`
+	WebRoute  json.RawMessage `json:"webRoute,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabConfounders) MarshalJSON() ([]byte, error) {
+	type plain LabConfounders
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabConfounders) UnmarshalJSON(b []byte) error {
+	type plain LabConfounders
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabConfounders) Validate() error {
+	return nil
+}
+
+// LabExample: A pinned example of an experiment.
+type LabExample struct {
+	ArtifactId *string `json:"artifact_id,omitempty"`
+	Id         *string `json:"id,omitempty"`
+	Split      *string `json:"split,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExample) MarshalJSON() ([]byte, error) {
+	type plain LabExample
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExample) UnmarshalJSON(b []byte) error {
+	type plain LabExample
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExample) Validate() error {
+	return nil
+}
+
+type LabExampleEntry struct {
+	ApprovedAt json.RawMessage `json:"approvedAt,omitempty"`
+	ArtifactId string          `json:"artifactId"`
+	CreatedAt  json.RawMessage `json:"createdAt,omitempty"`
+	Hash       *string         `json:"hash,omitempty"`
+	Name       string          `json:"name"`
+	ProjectId  *string         `json:"projectId,omitempty"`
+	State      string          `json:"state"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExampleEntry) MarshalJSON() ([]byte, error) {
+	type plain LabExampleEntry
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExampleEntry) UnmarshalJSON(b []byte) error {
+	type plain LabExampleEntry
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExampleEntry) Validate() error {
 	return nil
 }
 
@@ -198,13 +506,18 @@ func (v *LabExamplesAddRequest) Validate() error {
 }
 
 type LabExamplesListReply struct {
-	Examples []map[string]json.RawMessage `json:"examples"`
+	Examples []LabExampleEntry `json:"examples"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExamplesListReply) Validate() error {
 	if v.Examples == nil {
 		return Missing("examples")
+	}
+	for i := range v.Examples {
+		if err := Check(&v.Examples[i], "examples"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -347,43 +660,43 @@ func (*LabExperimentDecideRequest) Closed() bool { return true }
 
 // LabExperimentGetReply: An experiment view (expView). Planned with the definition editors: baseline and vsBaseline. comparison: each non-baseline variant vs the first on the primary evaluator, {variant, baseline, evaluator, split, result: {n, mean, low, high, tooFew, examples}} (fleet-lab.md, Statistics). typed: per variant {variant, split, stats: [{tag, n, confident, correct, coverage, selectiveAccuracy, escalation}]}, the aggregate last with tag all.
 type LabExperimentGetReply struct {
-	Agreement          json.RawMessage  `json:"agreement"`
-	Budgets            json.RawMessage  `json:"budgets"`
-	Cells              json.RawMessage  `json:"cells"`
-	Comparison         json.RawMessage  `json:"comparison"`
-	CreatedAt          json.RawMessage  `json:"createdAt"`
-	DecidedAt          json.RawMessage  `json:"decidedAt"`
-	DecidedBy          json.RawMessage  `json:"decidedBy"`
-	Decision           json.RawMessage  `json:"decision"`
-	DecisionReason     json.RawMessage  `json:"decisionReason"`
-	DecisionRule       json.RawMessage  `json:"decisionRule"`
-	Evaluators         json.RawMessage  `json:"evaluators"`
-	Examples           json.RawMessage  `json:"examples"`
-	Goal               json.RawMessage  `json:"goal"`
-	Hypothesis         json.RawMessage  `json:"hypothesis"`
-	Id                 json.RawMessage  `json:"id"`
-	Judges             json.RawMessage  `json:"judges"`
-	Kind               json.RawMessage  `json:"kind"`
-	LabGroup           json.RawMessage  `json:"labGroup"`
-	LaunchedAt         json.RawMessage  `json:"launchedAt"`
-	Notes              json.RawMessage  `json:"notes"`
-	Pairwise           json.RawMessage  `json:"pairwise"`
-	PipelineId         json.RawMessage  `json:"pipelineId"`
-	PrimaryEvaluator   json.RawMessage  `json:"primaryEvaluator"`
-	Priority           json.RawMessage  `json:"priority"`
-	ProjectId          json.RawMessage  `json:"projectId"`
-	Repeats            json.RawMessage  `json:"repeats"`
-	RequestedBy        json.RawMessage  `json:"requestedBy"`
-	RequesterRemovedAt json.RawMessage  `json:"requesterRemovedAt"`
-	Scores             json.RawMessage  `json:"scores"`
-	Spend              json.RawMessage  `json:"spend"`
-	State              json.RawMessage  `json:"state"`
-	StopReason         json.RawMessage  `json:"stopReason"`
-	Strategies         json.RawMessage  `json:"strategies"`
-	Strategy           json.RawMessage  `json:"strategy"`
-	Trials             []LabTrialRecord `json:"trials"`
-	Typed              json.RawMessage  `json:"typed"`
-	Variants           json.RawMessage  `json:"variants"`
+	Agreement          LabAgreement      `json:"agreement"`
+	Budgets            []LabBudget       `json:"budgets"`
+	Cells              []LabCell         `json:"cells"`
+	Comparison         []LabComparison   `json:"comparison"`
+	CreatedAt          string            `json:"createdAt"`
+	DecidedAt          *string           `json:"decidedAt"`
+	DecidedBy          *string           `json:"decidedBy"`
+	Decision           *string           `json:"decision"`
+	DecisionReason     *string           `json:"decisionReason"`
+	DecisionRule       *string           `json:"decisionRule"`
+	Evaluators         []json.RawMessage `json:"evaluators"`
+	Examples           []LabExample      `json:"examples"`
+	Goal               *string           `json:"goal"`
+	Hypothesis         *string           `json:"hypothesis"`
+	Id                 string            `json:"id"`
+	Judges             []json.RawMessage `json:"judges"`
+	Kind               string            `json:"kind"`
+	LabGroup           *string           `json:"labGroup"`
+	LaunchedAt         *string           `json:"launchedAt"`
+	Notes              []json.RawMessage `json:"notes"`
+	Pairwise           []LabPairwise     `json:"pairwise"`
+	PipelineId         string            `json:"pipelineId"`
+	PrimaryEvaluator   *string           `json:"primaryEvaluator"`
+	Priority           LabPriority       `json:"priority"`
+	ProjectId          string            `json:"projectId"`
+	Repeats            float64           `json:"repeats"`
+	RequestedBy        *string           `json:"requestedBy"`
+	RequesterRemovedAt *string           `json:"requesterRemovedAt"`
+	Scores             []LabScore        `json:"scores"`
+	Spend              LabSpend          `json:"spend"`
+	State              string            `json:"state"`
+	StopReason         *string           `json:"stopReason"`
+	Strategies         []LabStrategyRun  `json:"strategies"`
+	Strategy           json.RawMessage   `json:"strategy"`
+	Trials             []LabTrialRecord  `json:"trials"`
+	Typed              []LabTypedBlock   `json:"typed"`
+	Variants           []LabVariant      `json:"variants"`
 	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
 	Rest map[string]json.RawMessage `json:"-"`
 }
@@ -405,35 +718,32 @@ func (v *LabExperimentGetReply) UnmarshalJSON(b []byte) error {
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabExperimentGetReply) Validate() error {
-	if v.Agreement == nil {
-		return Missing("agreement")
+	if err := Check(&v.Agreement, "agreement"); err != nil {
+		return err
 	}
 	if v.Budgets == nil {
 		return Missing("budgets")
 	}
+	for i := range v.Budgets {
+		if err := Check(&v.Budgets[i], "budgets"); err != nil {
+			return err
+		}
+	}
 	if v.Cells == nil {
 		return Missing("cells")
+	}
+	for i := range v.Cells {
+		if err := Check(&v.Cells[i], "cells"); err != nil {
+			return err
+		}
 	}
 	if v.Comparison == nil {
 		return Missing("comparison")
 	}
-	if v.CreatedAt == nil {
-		return Missing("createdAt")
-	}
-	if v.DecidedAt == nil {
-		return Missing("decidedAt")
-	}
-	if v.DecidedBy == nil {
-		return Missing("decidedBy")
-	}
-	if v.Decision == nil {
-		return Missing("decision")
-	}
-	if v.DecisionReason == nil {
-		return Missing("decisionReason")
-	}
-	if v.DecisionRule == nil {
-		return Missing("decisionRule")
+	for i := range v.Comparison {
+		if err := Check(&v.Comparison[i], "comparison"); err != nil {
+			return err
+		}
 	}
 	if v.Evaluators == nil {
 		return Missing("evaluators")
@@ -441,26 +751,13 @@ func (v *LabExperimentGetReply) Validate() error {
 	if v.Examples == nil {
 		return Missing("examples")
 	}
-	if v.Goal == nil {
-		return Missing("goal")
-	}
-	if v.Hypothesis == nil {
-		return Missing("hypothesis")
-	}
-	if v.Id == nil {
-		return Missing("id")
+	for i := range v.Examples {
+		if err := Check(&v.Examples[i], "examples"); err != nil {
+			return err
+		}
 	}
 	if v.Judges == nil {
 		return Missing("judges")
-	}
-	if v.Kind == nil {
-		return Missing("kind")
-	}
-	if v.LabGroup == nil {
-		return Missing("labGroup")
-	}
-	if v.LaunchedAt == nil {
-		return Missing("launchedAt")
 	}
 	if v.Notes == nil {
 		return Missing("notes")
@@ -468,41 +765,32 @@ func (v *LabExperimentGetReply) Validate() error {
 	if v.Pairwise == nil {
 		return Missing("pairwise")
 	}
-	if v.PipelineId == nil {
-		return Missing("pipelineId")
+	for i := range v.Pairwise {
+		if err := Check(&v.Pairwise[i], "pairwise"); err != nil {
+			return err
+		}
 	}
-	if v.PrimaryEvaluator == nil {
-		return Missing("primaryEvaluator")
-	}
-	if v.Priority == nil {
-		return Missing("priority")
-	}
-	if v.ProjectId == nil {
-		return Missing("projectId")
-	}
-	if v.Repeats == nil {
-		return Missing("repeats")
-	}
-	if v.RequestedBy == nil {
-		return Missing("requestedBy")
-	}
-	if v.RequesterRemovedAt == nil {
-		return Missing("requesterRemovedAt")
+	if err := Check(&v.Priority, "priority"); err != nil {
+		return err
 	}
 	if v.Scores == nil {
 		return Missing("scores")
 	}
-	if v.Spend == nil {
-		return Missing("spend")
+	for i := range v.Scores {
+		if err := Check(&v.Scores[i], "scores"); err != nil {
+			return err
+		}
 	}
-	if v.State == nil {
-		return Missing("state")
-	}
-	if v.StopReason == nil {
-		return Missing("stopReason")
+	if err := Check(&v.Spend, "spend"); err != nil {
+		return err
 	}
 	if v.Strategies == nil {
 		return Missing("strategies")
+	}
+	for i := range v.Strategies {
+		if err := Check(&v.Strategies[i], "strategies"); err != nil {
+			return err
+		}
 	}
 	if v.Strategy == nil {
 		return Missing("strategy")
@@ -518,8 +806,18 @@ func (v *LabExperimentGetReply) Validate() error {
 	if v.Typed == nil {
 		return Missing("typed")
 	}
+	for i := range v.Typed {
+		if err := Check(&v.Typed[i], "typed"); err != nil {
+			return err
+		}
+	}
 	if v.Variants == nil {
 		return Missing("variants")
+	}
+	for i := range v.Variants {
+		if err := Check(&v.Variants[i], "variants"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -625,8 +923,89 @@ func (v *LabExperimentPromoteRequest) Validate() error {
 	return nil
 }
 
+// LabExperimentRecord: An experiment's record (expView).
+type LabExperimentRecord struct {
+	Budgets            []LabBudget       `json:"budgets"`
+	CreatedAt          string            `json:"createdAt"`
+	DecidedAt          *string           `json:"decidedAt"`
+	DecidedBy          *string           `json:"decidedBy"`
+	Decision           *string           `json:"decision"`
+	DecisionReason     *string           `json:"decisionReason"`
+	DecisionRule       *string           `json:"decisionRule"`
+	Evaluators         []json.RawMessage `json:"evaluators"`
+	Examples           []LabExample      `json:"examples"`
+	Goal               *string           `json:"goal"`
+	Hypothesis         *string           `json:"hypothesis"`
+	Id                 string            `json:"id"`
+	Kind               string            `json:"kind"`
+	LabGroup           *string           `json:"labGroup"`
+	LaunchedAt         *string           `json:"launchedAt"`
+	PipelineId         string            `json:"pipelineId"`
+	PrimaryEvaluator   *string           `json:"primaryEvaluator"`
+	ProjectId          string            `json:"projectId"`
+	Repeats            float64           `json:"repeats"`
+	RequestedBy        *string           `json:"requestedBy"`
+	RequesterRemovedAt *string           `json:"requesterRemovedAt"`
+	State              string            `json:"state"`
+	StopReason         *string           `json:"stopReason"`
+	Strategy           json.RawMessage   `json:"strategy"`
+	Variants           []LabVariant      `json:"variants"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabExperimentRecord) MarshalJSON() ([]byte, error) {
+	type plain LabExperimentRecord
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabExperimentRecord) UnmarshalJSON(b []byte) error {
+	type plain LabExperimentRecord
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabExperimentRecord) Validate() error {
+	if v.Budgets == nil {
+		return Missing("budgets")
+	}
+	for i := range v.Budgets {
+		if err := Check(&v.Budgets[i], "budgets"); err != nil {
+			return err
+		}
+	}
+	if v.Evaluators == nil {
+		return Missing("evaluators")
+	}
+	if v.Examples == nil {
+		return Missing("examples")
+	}
+	for i := range v.Examples {
+		if err := Check(&v.Examples[i], "examples"); err != nil {
+			return err
+		}
+	}
+	if v.Strategy == nil {
+		return Missing("strategy")
+	}
+	if v.Variants == nil {
+		return Missing("variants")
+	}
+	for i := range v.Variants {
+		if err := Check(&v.Variants[i], "variants"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type LabExperimentsListReply struct {
-	Experiments []map[string]json.RawMessage `json:"experiments"`
+	Experiments []LabExperimentRecord `json:"experiments"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -634,10 +1013,69 @@ func (v *LabExperimentsListReply) Validate() error {
 	if v.Experiments == nil {
 		return Missing("experiments")
 	}
+	for i := range v.Experiments {
+		if err := Check(&v.Experiments[i], "experiments"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 type LabExperimentsListRequest = map[string]json.RawMessage
+
+type LabFile struct {
+	ArtifactId string `json:"artifactId"`
+	Path       string `json:"path"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabFile) MarshalJSON() ([]byte, error) {
+	type plain LabFile
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabFile) UnmarshalJSON(b []byte) error {
+	type plain LabFile
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabFile) Validate() error {
+	return nil
+}
+
+// LabJudgeOutput: A judge or strategy run's result value, as it is.
+type LabJudgeOutput struct {
+	Reason *string `json:"reason,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabJudgeOutput) MarshalJSON() ([]byte, error) {
+	type plain LabJudgeOutput
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabJudgeOutput) UnmarshalJSON(b []byte) error {
+	type plain LabJudgeOutput
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabJudgeOutput) Validate() error {
+	return nil
+}
 
 type LabLoopAllocator struct {
 	Kind   LabLoopAllocatorKind       `json:"kind"`
@@ -741,6 +1179,34 @@ func (v *LabLoopStrategy) Validate() error {
 	return nil
 }
 
+type LabMeasure struct {
+	Basis      string   `json:"basis"`
+	Unmeasured *float64 `json:"unmeasured,omitempty"`
+	Value      float64  `json:"value"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabMeasure) MarshalJSON() ([]byte, error) {
+	type plain LabMeasure
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabMeasure) UnmarshalJSON(b []byte) error {
+	type plain LabMeasure
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabMeasure) Validate() error {
+	return nil
+}
+
 type LabNoteKind string
 
 const (
@@ -761,13 +1227,68 @@ func (v LabNoteKind) Valid() bool {
 	return false
 }
 
+type LabPairwise struct {
+	Group  *string  `json:"group,omitempty"`
+	Reason *string  `json:"reason,omitempty"`
+	RunIds []string `json:"runIds,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabPairwise) MarshalJSON() ([]byte, error) {
+	type plain LabPairwise
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabPairwise) UnmarshalJSON(b []byte) error {
+	type plain LabPairwise
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPairwise) Validate() error {
+	return nil
+}
+
+type LabPriority struct {
+	Note  *string `json:"note,omitempty"`
+	Value *string `json:"value,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabPriority) MarshalJSON() ([]byte, error) {
+	type plain LabPriority
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabPriority) UnmarshalJSON(b []byte) error {
+	type plain LabPriority
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPriority) Validate() error {
+	return nil
+}
+
 // LabPromoteReply: method: the promoted (or matching) catalogue method; catalogue: the catalogue revision a new method was saved as (source lab); cataloguePatch: null (a promote saves a revision); recommendation: the project's recommendation set to the method.
 type LabPromoteReply struct {
-	Catalogue      *DefinitionRef  `json:"catalogue,omitempty"`
-	CataloguePatch json.RawMessage `json:"cataloguePatch"`
-	Method         json.RawMessage `json:"method"`
-	Note           *string         `json:"note,omitempty"`
-	Recommendation json.RawMessage `json:"recommendation"`
+	Catalogue      *DefinitionRef    `json:"catalogue,omitempty"`
+	CataloguePatch json.RawMessage   `json:"cataloguePatch"`
+	Method         LabPromotedMethod `json:"method"`
+	Note           *string           `json:"note,omitempty"`
+	Recommendation json.RawMessage   `json:"recommendation"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -780,8 +1301,8 @@ func (v *LabPromoteReply) Validate() error {
 	if v.CataloguePatch == nil {
 		return Missing("cataloguePatch")
 	}
-	if v.Method == nil {
-		return Missing("method")
+	if err := Check(&v.Method, "method"); err != nil {
+		return err
 	}
 	if v.Recommendation == nil {
 		return Missing("recommendation")
@@ -816,8 +1337,111 @@ func (v *LabPromoteRequest) Validate() error {
 	return nil
 }
 
+// LabPromotedMethod: The promoted (or matching) catalogue method.
+type LabPromotedMethod struct {
+	Id *string `json:"id,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabPromotedMethod) MarshalJSON() ([]byte, error) {
+	type plain LabPromotedMethod
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabPromotedMethod) UnmarshalJSON(b []byte) error {
+	type plain LabPromotedMethod
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabPromotedMethod) Validate() error {
+	return nil
+}
+
+// LabRating: A rating question (labRating): outputs in the seeded order, labelled A, B, ...; never the variant.
+type LabRating struct {
+	Answer            json.RawMessage `json:"answer"`
+	ExampleArtifactId *string         `json:"exampleArtifactId"`
+	ExperimentId      *string         `json:"experimentId"`
+	Form              *string         `json:"form"`
+	Id                string          `json:"id"`
+	Items             []LabRatingItem `json:"items"`
+	Kind              string          `json:"kind"`
+	State             string          `json:"state"`
+	Text              string          `json:"text"`
+	Withdrawal        *LabWithdrawal  `json:"withdrawal,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabRating) MarshalJSON() ([]byte, error) {
+	type plain LabRating
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabRating) UnmarshalJSON(b []byte) error {
+	type plain LabRating
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRating) Validate() error {
+	if v.Answer == nil {
+		return Missing("answer")
+	}
+	if v.Items == nil {
+		return Missing("items")
+	}
+	for i := range v.Items {
+		if err := Check(&v.Items[i], "items"); err != nil {
+			return err
+		}
+	}
+	if v.Withdrawal != nil {
+		if err := Check(v.Withdrawal, "withdrawal"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // LabRatingCreateReply: A rating question for a person.
-type LabRatingCreateReply = map[string]json.RawMessage
+type LabRatingCreateReply struct {
+	Id *string `json:"id,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabRatingCreateReply) MarshalJSON() ([]byte, error) {
+	type plain LabRatingCreateReply
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabRatingCreateReply) UnmarshalJSON(b []byte) error {
+	type plain LabRatingCreateReply
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRatingCreateReply) Validate() error {
+	return nil
+}
 
 type LabRatingCreateRequest struct {
 	ExperimentId string        `json:"experimentId"`
@@ -903,6 +1527,42 @@ func (v *LabRatingGetRequest) Validate() error {
 	return nil
 }
 
+type LabRatingItem struct {
+	Files   []LabFile `json:"files"`
+	Label   string    `json:"label"`
+	TrialId *string   `json:"trialId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabRatingItem) MarshalJSON() ([]byte, error) {
+	type plain LabRatingItem
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabRatingItem) UnmarshalJSON(b []byte) error {
+	type plain LabRatingItem
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRatingItem) Validate() error {
+	if v.Files == nil {
+		return Missing("files")
+	}
+	for i := range v.Files {
+		if err := Check(&v.Files[i], "files"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // LabRatingWithdrawReply: Withdrawn Lab rating, with original trial references and no answer/score.
 type LabRatingWithdrawReply = map[string]json.RawMessage
 
@@ -917,13 +1577,18 @@ func (v *LabRatingWithdrawRequest) Validate() error {
 }
 
 type LabRatingsListReply struct {
-	Ratings []map[string]json.RawMessage `json:"ratings"`
+	Ratings []LabRating `json:"ratings"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
 func (v *LabRatingsListReply) Validate() error {
 	if v.Ratings == nil {
 		return Missing("ratings")
+	}
+	for i := range v.Ratings {
+		if err := Check(&v.Ratings[i], "ratings"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -955,8 +1620,35 @@ func (v *LabRatingsListRequest) Validate() error {
 	return nil
 }
 
+type LabRecovery struct {
+	ReusedStepIds []string `json:"reusedStepIds,omitempty"`
+	SourceRunId   *string  `json:"sourceRunId,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabRecovery) MarshalJSON() ([]byte, error) {
+	type plain LabRecovery
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabRecovery) UnmarshalJSON(b []byte) error {
+	type plain LabRecovery
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabRecovery) Validate() error {
+	return nil
+}
+
 type LabRegistryReply struct {
-	UseCases []map[string]json.RawMessage `json:"useCases"`
+	UseCases []LabUseCaseEntry `json:"useCases"`
 }
 
 // Validate: the schema's required fields and enums (see Check).
@@ -964,10 +1656,49 @@ func (v *LabRegistryReply) Validate() error {
 	if v.UseCases == nil {
 		return Missing("useCases")
 	}
+	for i := range v.UseCases {
+		if err := Check(&v.UseCases[i], "useCases"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 type LabRegistryRequest = map[string]json.RawMessage
+
+// LabScore: A current score (scoreView); value as the form stores it.
+type LabScore struct {
+	Evaluator        *string         `json:"evaluator,omitempty"`
+	EvaluatorVersion *string         `json:"evaluatorVersion,omitempty"`
+	ExperimentId     *string         `json:"experimentId,omitempty"`
+	Form             *string         `json:"form,omitempty"`
+	Id               *string         `json:"id,omitempty"`
+	Rationale        *string         `json:"rationale,omitempty"`
+	TrialIds         []string        `json:"trialIds,omitempty"`
+	Value            json.RawMessage `json:"value,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabScore) MarshalJSON() ([]byte, error) {
+	type plain LabScore
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabScore) UnmarshalJSON(b []byte) error {
+	type plain LabScore
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabScore) Validate() error {
+	return nil
+}
 
 // LabScoreCorrectReply: The correcting score row.
 type LabScoreCorrectReply = map[string]json.RawMessage
@@ -1003,22 +1734,160 @@ func (v *LabScoreCorrectRequest) Validate() error {
 	return nil
 }
 
+// LabScoreSummary: One evaluator's summary over a cell's or variant's comparable trials (summarize): wins for pick_best, passed for pass_fail, mean/min/max otherwise.
+type LabScoreSummary struct {
+	Form   *string  `json:"form,omitempty"`
+	Max    *float64 `json:"max,omitempty"`
+	Mean   *float64 `json:"mean,omitempty"`
+	Min    *float64 `json:"min,omitempty"`
+	N      *float64 `json:"n,omitempty"`
+	Passed *float64 `json:"passed,omitempty"`
+	Wins   *float64 `json:"wins,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabScoreSummary) MarshalJSON() ([]byte, error) {
+	type plain LabScoreSummary
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabScoreSummary) UnmarshalJSON(b []byte) error {
+	type plain LabScoreSummary
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabScoreSummary) Validate() error {
+	return nil
+}
+
+type LabSpend struct {
+	Calls   LabMeasure `json:"calls"`
+	Credits LabMeasure `json:"credits"`
+	Trials  LabMeasure `json:"trials"`
+	WallMs  LabMeasure `json:"wall_ms"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabSpend) MarshalJSON() ([]byte, error) {
+	type plain LabSpend
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabSpend) UnmarshalJSON(b []byte) error {
+	type plain LabSpend
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabSpend) Validate() error {
+	if err := Check(&v.Calls, "calls"); err != nil {
+		return err
+	}
+	if err := Check(&v.Credits, "credits"); err != nil {
+		return err
+	}
+	if err := Check(&v.Trials, "trials"); err != nil {
+		return err
+	}
+	if err := Check(&v.WallMs, "wall_ms"); err != nil {
+		return err
+	}
+	return nil
+}
+
+type LabStrategyRun struct {
+	Id        *string         `json:"id,omitempty"`
+	Iteration json.RawMessage `json:"iteration,omitempty"`
+	Output    *LabJudgeOutput `json:"output,omitempty"`
+	Problem   json.RawMessage `json:"problem,omitempty"`
+	State     *string         `json:"state,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabStrategyRun) MarshalJSON() ([]byte, error) {
+	type plain LabStrategyRun
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabStrategyRun) UnmarshalJSON(b []byte) error {
+	type plain LabStrategyRun
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabStrategyRun) Validate() error {
+	if v.Output != nil {
+		if err := Check(v.Output, "output"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type LabTrialCell struct {
+	Attempt *float64 `json:"attempt,omitempty"`
+	Example *string  `json:"example,omitempty"`
+	Repeat  *float64 `json:"repeat,omitempty"`
+	Variant *string  `json:"variant,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabTrialCell) MarshalJSON() ([]byte, error) {
+	type plain LabTrialCell
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabTrialCell) UnmarshalJSON(b []byte) error {
+	type plain LabTrialCell
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabTrialCell) Validate() error {
+	return nil
+}
+
 type LabTrialRecord struct {
 	CanonicalResult    *PipelineCanonicalResult `json:"canonicalResult,omitempty"`
-	Cell               json.RawMessage          `json:"cell"`
+	Cell               LabTrialCell             `json:"cell"`
 	Comparable         bool                     `json:"comparable"`
-	Confounders        json.RawMessage          `json:"confounders"`
+	Confounders        LabConfounders           `json:"confounders"`
 	Cost               []CostFigure             `json:"cost"`
-	DurationMs         json.RawMessage          `json:"durationMs"`
+	DurationMs         *float64                 `json:"durationMs"`
 	FinishedAt         json.RawMessage          `json:"finishedAt"`
 	Id                 string                   `json:"id"`
 	Observation        PipelineObservation      `json:"observation"`
 	PlanSummary        PipelinePlanSummary      `json:"planSummary"`
 	Problem            json.RawMessage          `json:"problem"`
 	ProjectAssessments []ProjectAssessmentRef   `json:"projectAssessments,omitempty"`
-	Recovery           json.RawMessage          `json:"recovery,omitempty"`
-	Scores             []json.RawMessage        `json:"scores"`
-	Spend              json.RawMessage          `json:"spend"`
+	Recovery           *LabRecovery             `json:"recovery,omitempty"`
+	Scores             []LabScore               `json:"scores"`
+	Spend              LabTrialSpend            `json:"spend"`
 	StartedAt          json.RawMessage          `json:"startedAt"`
 	State              ExecutionState           `json:"state"`
 }
@@ -1030,11 +1899,11 @@ func (v *LabTrialRecord) Validate() error {
 			return err
 		}
 	}
-	if v.Cell == nil {
-		return Missing("cell")
+	if err := Check(&v.Cell, "cell"); err != nil {
+		return err
 	}
-	if v.Confounders == nil {
-		return Missing("confounders")
+	if err := Check(&v.Confounders, "confounders"); err != nil {
+		return err
 	}
 	if v.Cost == nil {
 		return Missing("cost")
@@ -1043,9 +1912,6 @@ func (v *LabTrialRecord) Validate() error {
 		if err := Check(&v.Cost[i], "cost"); err != nil {
 			return err
 		}
-	}
-	if v.DurationMs == nil {
-		return Missing("durationMs")
 	}
 	if v.FinishedAt == nil {
 		return Missing("finishedAt")
@@ -1064,11 +1930,21 @@ func (v *LabTrialRecord) Validate() error {
 			return err
 		}
 	}
+	if v.Recovery != nil {
+		if err := Check(v.Recovery, "recovery"); err != nil {
+			return err
+		}
+	}
 	if v.Scores == nil {
 		return Missing("scores")
 	}
-	if v.Spend == nil {
-		return Missing("spend")
+	for i := range v.Scores {
+		if err := Check(&v.Scores[i], "scores"); err != nil {
+			return err
+		}
+	}
+	if err := Check(&v.Spend, "spend"); err != nil {
+		return err
 	}
 	if v.StartedAt == nil {
 		return Missing("startedAt")
@@ -1076,6 +1952,211 @@ func (v *LabTrialRecord) Validate() error {
 	if err := Check(&v.State, "state"); err != nil {
 		return err
 	}
+	return nil
+}
+
+type LabTrialSpend struct {
+	Basis   *string  `json:"basis,omitempty"`
+	Calls   *float64 `json:"calls,omitempty"`
+	Credits *float64 `json:"credits,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabTrialSpend) MarshalJSON() ([]byte, error) {
+	type plain LabTrialSpend
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabTrialSpend) UnmarshalJSON(b []byte) error {
+	type plain LabTrialSpend
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabTrialSpend) Validate() error {
+	return nil
+}
+
+type LabTypedBlock struct {
+	Split   string         `json:"split"`
+	Stats   []LabTypedStat `json:"stats"`
+	Variant string         `json:"variant"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabTypedBlock) MarshalJSON() ([]byte, error) {
+	type plain LabTypedBlock
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabTypedBlock) UnmarshalJSON(b []byte) error {
+	type plain LabTypedBlock
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabTypedBlock) Validate() error {
+	if v.Stats == nil {
+		return Missing("stats")
+	}
+	for i := range v.Stats {
+		if err := Check(&v.Stats[i], "stats"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type LabTypedStat struct {
+	Aggregate         bool     `json:"aggregate"`
+	Confident         float64  `json:"confident"`
+	Correct           float64  `json:"correct"`
+	Coverage          float64  `json:"coverage"`
+	Escalation        float64  `json:"escalation"`
+	N                 float64  `json:"n"`
+	SelectiveAccuracy *float64 `json:"selectiveAccuracy"`
+	Tag               string   `json:"tag"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabTypedStat) MarshalJSON() ([]byte, error) {
+	type plain LabTypedStat
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabTypedStat) UnmarshalJSON(b []byte) error {
+	type plain LabTypedStat
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabTypedStat) Validate() error {
+	return nil
+}
+
+// LabUseCaseEntry: A registry entry as lab_registry lists it (status defaults to current).
+type LabUseCaseEntry struct {
+	Checks       []json.RawMessage `json:"checks"`
+	Goal         string            `json:"goal"`
+	Id           string            `json:"id"`
+	LabFit       string            `json:"lab_fit"`
+	MapsTo       []string          `json:"maps_to"`
+	Maturity     string            `json:"maturity"`
+	Source       UseCaseSource     `json:"source"`
+	SourceStatus string            `json:"source_status"`
+	Status       string            `json:"status"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabUseCaseEntry) MarshalJSON() ([]byte, error) {
+	type plain LabUseCaseEntry
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabUseCaseEntry) UnmarshalJSON(b []byte) error {
+	type plain LabUseCaseEntry
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabUseCaseEntry) Validate() error {
+	if v.Checks == nil {
+		return Missing("checks")
+	}
+	if v.MapsTo == nil {
+		return Missing("maps_to")
+	}
+	if err := Check(&v.Source, "source"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// LabVariant: A variant as stored; lab_experiment_get adds summary.
+type LabVariant struct {
+	CatalogueConfigRef *string                    `json:"catalogueConfigRef,omitempty"`
+	CatalogueRef       *LabCatalogueRef           `json:"catalogueRef,omitempty"`
+	ConfigRef          *string                    `json:"config_ref,omitempty"`
+	Label              *string                    `json:"label,omitempty"`
+	PipelineId         *string                    `json:"pipelineId,omitempty"`
+	ProposalLabel      *string                    `json:"proposalLabel,omitempty"`
+	Summary            map[string]LabScoreSummary `json:"summary,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabVariant) MarshalJSON() ([]byte, error) {
+	type plain LabVariant
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabVariant) UnmarshalJSON(b []byte) error {
+	type plain LabVariant
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabVariant) Validate() error {
+	if v.CatalogueRef != nil {
+		if err := Check(v.CatalogueRef, "catalogueRef"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type LabWithdrawal struct {
+	Reason *string `json:"reason,omitempty"`
+	// Rest: the keys the schema does not name (additionalProperties: true), kept through decode and encode.
+	Rest map[string]json.RawMessage `json:"-"`
+}
+
+func (v LabWithdrawal) MarshalJSON() ([]byte, error) {
+	type plain LabWithdrawal
+	return marshalRest(plain(v), v.Rest)
+}
+
+func (v *LabWithdrawal) UnmarshalJSON(b []byte) error {
+	type plain LabWithdrawal
+	var rest map[string]json.RawMessage
+	if err := unmarshalRest(b, (*plain)(v), &rest); err != nil {
+		return err
+	}
+	v.Rest = rest
+	return nil
+}
+
+// Validate: the schema's required fields and enums (see Check).
+func (v *LabWithdrawal) Validate() error {
 	return nil
 }
 
@@ -1099,19 +2180,19 @@ func init() {
 		"lab_compare_methods":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "Create an unlaunched Lab experiment comparing catalogue methods of a project capability (projectId, capability, methods, useCase, baseline)", InputSchema: json.RawMessage("{\"properties\":{\"baseline\":{\"type\":\"string\"},\"capability\":{\"type\":\"string\"},\"methods\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"projectId\":{\"type\":\"string\"},\"useCase\":{\"type\":\"string\"}},\"required\":[\"projectId\",\"capability\",\"methods\"],\"type\":\"object\"}")},
 		"lab_example_get":       {Read: true, Long: false, Errors: []int{400, 404, 409, 503}, Auth: "architect", Agent: "tool", Description: "A Lab example (artifactId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"artifactId\":{\"type\":\"string\"}},\"required\":[\"artifactId\"],\"type\":\"object\"}")},
 		"lab_examples_add":      {Read: false, Long: false, Errors: []int{400, 403, 409}, Auth: "architect", Agent: "tool", Description: "Add Lab examples, optionally of a project and approved", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"approved\":{\"type\":\"boolean\"},\"examples\":{},\"projectId\":{\"type\":\"string\"}},\"required\":[\"examples\"],\"type\":\"object\"}")},
-		"lab_examples_list":     {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab examples, optionally by state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"state\":{\"enum\":[\"approved\",\"proposed\"],\"type\":\"string\"}},\"type\":\"object\"}")},
+		"lab_examples_list":     {Read: true, Long: false, Errors: []int{400}, Auth: "architect", Agent: "tool", Description: "Lab examples, optionally by state", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"state\":{\"enum\":[\"approved\",\"proposed\"],\"type\":\"string\"}},\"type\":\"object\"}")},
 		"lab_experiment_action": {Read: false, Long: true, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "action launch, stop or resume.", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"action\":{\"enum\":[\"launch\",\"stop\",\"resume\"],\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"action\"],\"type\":\"object\"}")},
 		"lab_experiment_create": {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "architect", Agent: "tool", Description: "See fleet-lab.md, Experiment record.", InputSchema: json.RawMessage("{\"$comment\":\"See fleet-lab.md, Experiment record.\",\"additionalProperties\":false,\"properties\":{\"budgets\":{},\"decisionRule\":{},\"evaluators\":{},\"examples\":{},\"goal\":{\"type\":\"string\"},\"hypothesis\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\"},\"labGroup\":{},\"pipelineId\":{\"type\":\"string\"},\"primaryEvaluator\":{},\"projectId\":{\"type\":\"string\"},\"repeats\":{},\"strategy\":{\"$comment\":\"Explicit loop configuration; no default k or iteration ceiling. Internal owner override authority is resolved by the server, never supplied here.\",\"additionalProperties\":false,\"properties\":{\"allocator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"full\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"generator\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"enum\":[\"list\",\"grid\",\"propose\"],\"type\":\"string\"},\"params\":{\"additionalProperties\":true,\"type\":\"object\"}},\"required\":[\"kind\",\"params\"],\"type\":\"object\"},\"max_iterations\":{\"minimum\":1,\"type\":\"integer\"},\"no_gain\":{\"additionalProperties\":false,\"properties\":{\"k\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"k\"],\"type\":\"object\"}},\"required\":[\"generator\",\"allocator\"],\"type\":\"object\"},\"variants\":{}},\"type\":\"object\",\"unevaluatedProperties\":false}")},
 		"lab_experiment_decide": {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Decide a Lab experiment (experimentId, decision, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"decision\":{\"$comment\":\"adopt \\u003cvariant\\u003e | keep baseline | inconclusive (pending is the coordinator's, never a person's)\",\"type\":\"string\"},\"experimentId\":{\"type\":\"string\"},\"reason\":{\"$comment\":\"Required to override a decision already made; the override is an amendment.\",\"type\":\"string\"}},\"required\":[\"experimentId\",\"decision\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
-		"lab_experiment_get":    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab experiment (experimentId) with its variants, trials and scores", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\"],\"type\":\"object\"}")},
+		"lab_experiment_get":    {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab experiment (experimentId) with its variants, trials and scores", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"}},\"required\":[\"experimentId\"],\"type\":\"object\"}")},
 		"lab_experiment_note":   {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Add a note to a Lab experiment (experimentId, kind, text, optional field and value)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"field\":{\"$comment\":\"Amendment only: goal, hypothesis, decisionRule, labGroup or primaryEvaluator.\",\"type\":\"string\"},\"kind\":{\"enum\":[\"amendment\",\"note\"],\"type\":\"string\"},\"text\":{\"type\":\"string\"},\"value\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"experimentId\",\"kind\",\"text\"],\"type\":\"object\",\"unevaluatedProperties\":false}")},
-		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Lab experiments", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"lab_experiments_list":  {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "Lab experiments", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"lab_promote":           {Read: false, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "Promote a variant of a Lab experiment (experimentId, variant) to the catalogue recommendation", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"variant\":{\"type\":\"string\"}},\"required\":[\"experimentId\",\"variant\"],\"type\":\"object\"}")},
 		"lab_rating_create":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Ask for a human rating of Lab trials (experimentId, form, trialIds)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"form\":{\"enum\":[\"pass_fail\",\"pick_best\",\"scale\"],\"type\":\"string\"},\"trialIds\":{\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"required\":[\"experimentId\",\"form\",\"trialIds\"],\"type\":\"object\"}")},
 		"lab_rating_get":        {Read: true, Long: false, Errors: []int{400, 404}, Auth: "architect", Agent: "tool", Description: "A Lab rating question with its answers (questionId)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"questionId\":{\"type\":\"string\"}},\"required\":[\"questionId\"],\"type\":\"object\"}")},
 		"lab_rating_withdraw":   {Read: false, Long: false, Errors: []int{400, 403, 404, 409}, Auth: "owner", Agent: "tool", Description: "Withdraw an open Lab rating question (questionId, reason)", InputSchema: json.RawMessage("{\"additionalProperties\":false,\"properties\":{\"questionId\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}},\"required\":[\"questionId\",\"reason\"],\"type\":\"object\"}")},
-		"lab_ratings_list":      {Read: true, Long: false, Errors: []int{404}, Auth: "architect", Agent: "tool", Description: "Lab rating questions, optionally of one experiment or state", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
-		"lab_registry":          {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "The Lab use-case registry", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
+		"lab_ratings_list":      {Read: true, Long: false, Errors: []int{404}, Auth: "architect", Agent: "tool", Description: "Lab rating questions, optionally of one experiment or state", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"experimentId\":{\"type\":\"string\"},\"state\":{\"type\":\"string\"}},\"type\":\"object\"}")},
+		"lab_registry":          {Read: true, Long: false, Errors: []int{}, Auth: "architect", Agent: "tool", Description: "The Lab use-case registry", Changes: []string{"experiment", "score", "question", "execution"}, InputSchema: json.RawMessage("{\"additionalProperties\":true,\"type\":\"object\"}")},
 		"lab_score_correct":     {Read: false, Long: false, Errors: []int{400, 404, 409}, Auth: "architect", Agent: "tool", Description: "Correct a Lab score (scoreId, value, rationale)", InputSchema: json.RawMessage("{\"additionalProperties\":true,\"properties\":{\"rationale\":{\"type\":\"string\"},\"scoreId\":{\"type\":\"string\"},\"value\":{}},\"required\":[\"scoreId\",\"value\"],\"type\":\"object\"}")},
 	} {
 		addOperation(n, o)
