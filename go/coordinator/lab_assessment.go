@@ -76,12 +76,6 @@ type labCanonicalInputs struct {
 	} `json:"canonicalResult"`
 }
 
-// labCheckResult: the assessment fields of a script check result (runChecks, then materializeLabAssessments).
-type labCheckResult struct {
-	Assessments        []labAssessmentCapture `json:"assessments"`
-	ProjectAssessments []labAssessmentRef     `json:"projectAssessments"`
-}
-
 // captureLabAssessment accepts one fixed, regular, contained JSON file. The
 // bytes are retained before scratch cleanup; exit status is a separate fact.
 func captureLabAssessment(dir string) (*labAssessmentCapture, error) {
@@ -141,7 +135,7 @@ func labFileBindings(files []labFile) []labFileBinding {
 	return bindings
 }
 
-func labEvaluatorIdentity(checks []any, files []labFile) string {
+func labEvaluatorIdentity(checks []labCheck, files []labFile) string {
 	members := []labFileBinding{}
 	for _, f := range files {
 		if f.path == "tools/program.py" || f.path == "contracts.json" {
@@ -150,7 +144,7 @@ func labEvaluatorIdentity(checks []any, files []labFile) string {
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].Path < members[j].Path })
 	evaluator := []any{struct {
-		Checks []any `json:"checks"`
+		Checks []labCheck `json:"checks"`
 	}{checks}}
 	for _, m := range members {
 		evaluator = append(evaluator, m)
@@ -158,15 +152,14 @@ func labEvaluatorIdentity(checks []any, files []labFile) string {
 	return sha256hex([]byte(canonical(evaluator)))
 }
 
-func labAssessmentInputs(trial doc, checks []any, files []labFile) (string, string) {
+func labAssessmentInputs(trial doc, checks []labCheck, files []labFile) (string, string) {
 	return labEvaluatorIdentity(checks, files), sha256hex([]byte(canonical(labFileBindings(files))))
 }
 
 // Upload before opening the linking transaction. A storage failure cannot make
 // the script check score durable; an unlinked object is ordinary retained data.
-func materializeLabAssessments(ctx context.Context, a *App, trial doc, result doc, evaluator, input string) error {
+func materializeLabAssessments(ctx context.Context, a *App, trial doc, r *labCheckRun, evaluator, input string) error {
 	t, _ := asT[labAssessTrial](trial)
-	r, _ := asT[labCheckResult](result)
 	refs := []labAssessmentRef{}
 	for _, capture := range r.Assessments {
 		name := filepath.ToSlash(filepath.Join("assessments", t.ID, capture.CheckID, evaluator, input+".json"))
@@ -180,17 +173,11 @@ func materializeLabAssessments(ctx context.Context, a *App, trial doc, result do
 		refs = append(refs, labAssessmentRef{CheckID: capture.CheckID, SchemaID: capture.SchemaID, ArtifactID: id, Sha256: hash, EvaluatorSha256: evaluator, InputSha256: input})
 	}
 	sort.Slice(refs, func(i, j int) bool { return canonical(refs[i]) < canonical(refs[j]) })
-	linked := []any{}
-	for _, ref := range refs {
-		linked = append(linked, ref)
-	}
-	result["projectAssessments"] = linked
-	delete(result, "assessments")
+	r.ProjectAssessments, r.Assessments = refs, nil
 	return nil
 }
 
-func linkLabAssessments(q *Request, trial doc, result doc) error {
-	r, _ := asT[labCheckResult](result)
+func linkLabAssessments(q *Request, trial doc, r *labCheckRun) error {
 	refs := r.ProjectAssessments
 	if len(refs) == 0 {
 		return nil
@@ -218,7 +205,7 @@ func linkLabAssessments(q *Request, trial doc, result doc) error {
 		return err
 	}
 	_, latest := expLatest(expTrials(runs))
-	if latest[cellKey(t.Cell.Example, t.Cell.Variant, t.Cell.Repeat)]["id"] != trial["id"] {
+	if l := latest[t.Cell.key()]; l == nil || l.ID != t.ID {
 		return fail(409, "Assessment attempt was superseded")
 	}
 	existing := append([]labAssessmentRef{}, run.ProjectAssessments...)
@@ -253,13 +240,13 @@ func linkLabAssessments(q *Request, trial doc, result doc) error {
 	return q.db().LabTrialAssessmentsSet(q.ctx(), db.LabTrialAssessmentsSetParams{ID: t.ID, Assessments: jsonBytes(existing)})
 }
 
-func labAssessmentSnapshot(trial, example doc) labAssessmentSnap {
+func labAssessmentSnapshot(trial doc, example labExample) labAssessmentSnap {
 	t, _ := asT[labAssessTrial](trial)
-	return labAssessmentSnap{ExampleSha256: sha256hex([]byte(canonical(example))), PlanRevision: t.Plan.Revision, CanonicalResult: t.CanonicalResult, Usage: t.Usage, DurationMs: t.DurationMs}
+	return labAssessmentSnap{ExampleSha256: sha256hex([]byte(canonical(rawValue(jsonBytes(example))))), PlanRevision: t.Plan.Revision, CanonicalResult: t.CanonicalResult, Usage: t.Usage, DurationMs: t.DurationMs}
 }
 
-func validateLabAssessmentSnapshot(q *Request, trial, example, result doc) error {
-	if !same(result["assessmentSnapshot"], labAssessmentSnapshot(trial, example)) {
+func validateLabAssessmentSnapshot(q *Request, trial doc, example labExample, result *labCheckRun) error {
+	if result.AssessmentSnapshot == nil || !same(*result.AssessmentSnapshot, labAssessmentSnapshot(trial, example)) {
 		return fail(409, "Assessment evaluator or input snapshot changed")
 	}
 	// The output and every input artifact are immutable identities. Availability

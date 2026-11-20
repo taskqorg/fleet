@@ -8,6 +8,30 @@ import (
 	"testing"
 )
 
+// labExpOf, labRunsOf, labScoresOf: fixtures given as maps (an experiment row's columns, run records, score views) as the
+// Lab reads them.
+func labExpOf(d doc) *labExperiment {
+	e, _ := asT[labExperiment](d)
+	return &e
+}
+
+func labRunsOf(ds []doc) []*labRun {
+	out := []*labRun{}
+	for _, d := range ds {
+		out = append(out, labRunFacts(d))
+	}
+	return out
+}
+
+func labScoresOf(ds []doc) []labScore {
+	out := []labScore{}
+	for _, d := range ds {
+		s, _ := asT[labScore](d)
+		out = append(out, s)
+	}
+	return out
+}
+
 func TestLoopNoGainUsesTuneRepeatNoise(t *testing.T) {
 	// Requirement: UC9 stops only on measured tune no_gain; risk: held-out leakage or missing scores becoming zero.
 	exp := doc{"variants": []any{doc{"label": "base"}, doc{"label": "next", "iteration": 1}}, "examples": []any{doc{"id": "tune", "split": "tune"}, doc{"id": "held", "split": "held_out"}}, "repeats": 2, "primary_evaluator": "judge:scale:scale"}
@@ -21,22 +45,22 @@ func TestLoopNoGainUsesTuneRepeatNoise(t *testing.T) {
 	}
 	trials = append(trials, doc{"id": "held", "state": "succeeded", "cell": doc{"example": "held", "variant": "base", "repeat": 0}})
 	scores = append(scores, doc{"evaluator": "judge:scale:scale", "form": "scale", "trialIds": []any{"held"}, "value": 5})
-	if done, available := loopNoGain(exp, trials, scores, 2); !available || !done {
+	if done, available := loopNoGain(labExpOf(exp), labRunsOf(trials), labScoresOf(scores), 2); !available || !done {
 		t.Fatalf("no_gain: %v %v", done, available)
 	}
 	scores[0]["value"], scores[1]["value"] = 1, 3
 	scores[2]["value"], scores[3]["value"] = 4, 4
-	if done, available := loopNoGain(exp, trials, scores, 2); !available || !done {
+	if done, available := loopNoGain(labExpOf(exp), labRunsOf(trials), labScoresOf(scores), 2); !available || !done {
 		t.Fatal("baseline repeat range ignored")
 	}
 	scores[2]["value"], scores[3]["value"] = 5, 5
-	if done, available := loopNoGain(exp, trials, scores, 2); !available || done {
+	if done, available := loopNoGain(labExpOf(exp), labRunsOf(trials), labScoresOf(scores), 2); !available || done {
 		t.Fatalf("gain ignored: %v %v", done, available)
 	}
-	if done, available := loopNoGain(exp, trials, scores[1:], 2); available || done {
+	if done, available := loopNoGain(labExpOf(exp), labRunsOf(trials), labScoresOf(scores[1:]), 2); available || done {
 		t.Fatal("missing baseline score treated as measured")
 	}
-	if loopBestVariant(exp, trials, scores[1:]) != nil {
+	if loopBestVariant(labExpOf(exp), labRunsOf(trials), labScoresOf(scores[1:])) != nil {
 		t.Fatal("keep_best accepted partial evidence")
 	}
 

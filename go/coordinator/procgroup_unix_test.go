@@ -21,7 +21,7 @@ func TestRunChecksCancelKillsChildren(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := runChecks(ctx, []any{doc{"id": "orphan", "run": "sleep 1000 & echo $! > " + pidFile + "; wait"}}, nil)
+		_, err := runChecks(ctx, []labCheck{{ID: "orphan", Run: "sleep 1000 & echo $! > " + pidFile + "; wait"}}, nil)
 		done <- err
 	}()
 	var pid int

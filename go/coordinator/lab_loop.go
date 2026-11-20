@@ -7,6 +7,7 @@ import (
 	"math"
 	"slices"
 
+	"fleet/contract"
 	"fleet/coordinator/db"
 )
 
@@ -45,7 +46,6 @@ func rawObjectOr(raw json.RawMessage) map[string]json.RawMessage {
 	}
 	return map[string]json.RawMessage{}
 }
-
 
 // rawSet: m has key k with a value other than null.
 func rawSet(m map[string]json.RawMessage, k string) bool {
@@ -134,8 +134,7 @@ func loopStrategy(q *Request, raw any) (map[string]json.RawMessage, error) {
 	return s, nil
 }
 
-func loopIteration(exp doc) int64 {
-	e, _ := asT[labExp](exp)
+func loopIteration(e *labExperiment) int64 {
 	n := int64(0)
 	for _, v := range e.Variants {
 		if v.Iteration > n {
@@ -173,19 +172,23 @@ type labLoopVariant struct {
 }
 
 // loopVariants: the experiment's variants and the proposed ones, validated and labelled for iteration.
-func loopVariants(exp doc, proposed []any, iteration int64) ([]json.RawMessage, error) {
-	e, _ := asT[struct {
-		PipelineID string            `json:"pipeline_id"`
-		Variants   []json.RawMessage `json:"variants"`
-		Strategy   struct {
-			OwnerOverrides bool `json:"ownerOverrides"`
-		} `json:"strategy"`
-	}](exp)
+func loopVariants(e *labExperiment, proposed []any, iteration int64) ([]json.RawMessage, error) {
+	var s labLoopState
+	json.Unmarshal(e.Strategy, &s)
 	ps := []labProposal{}
 	for _, x := range proposed {
 		ps = append(ps, labProposalOf(x))
 	}
-	return loopVariantsOf(labLoopBase{PipelineID: e.PipelineID, Variants: e.Variants, OwnerOverrides: e.Strategy.OwnerOverrides}, ps, iteration)
+	return loopVariantsOf(labLoopBase{PipelineID: e.PipelineID, Variants: e.storedVariants(), OwnerOverrides: s.OwnerOverrides}, ps, iteration)
+}
+
+// storedVariants: the experiment's variants as stored, each its JSON.
+func (e *labExperiment) storedVariants() []json.RawMessage {
+	out := []json.RawMessage{}
+	for _, v := range e.Variants {
+		out = append(out, jsonBytes(v))
+	}
+	return out
 }
 
 func loopVariantsOf(base labLoopBase, proposed []labProposal, iteration int64) ([]json.RawMessage, error) {
@@ -243,25 +246,24 @@ func loopVariantsOf(base labLoopBase, proposed []labProposal, iteration int64) (
 }
 
 // no_gain compares tune means against the original baseline's repeat range; missing evidence is never zero.
-func loopNoGain(exp doc, trials, scores []doc, k int64) (bool, bool) {
-	e, _ := asT[labExp](exp)
+func loopNoGain(e *labExperiment, trials []*labRun, scores []labScore, k int64) (bool, bool) {
 	if len(e.Variants) == 0 {
 		return false, false
 	}
 	baseline := e.Variants[0].Label
 	byVariant := map[string][]float64{}
 	byRepeat := map[string][]float64{}
-	for _, s := range scoredLatest(exp, trials, scores, func(s doc) bool { return s["evaluator"] == exp["primary_evaluator"] }) {
+	for _, s := range scoredLatest(e, trials, scores, e.primaryScore) {
 		if s.split != "tune" {
 			continue
 		}
-		if f, _ := asT[labScoreForm](s.score); f.unscored() {
+		if s.score.unscored() {
 			continue
 		}
 		value := scoreNumber(s.score)
 		byVariant[s.variant] = append(byVariant[s.variant], value)
 		if s.variant == baseline {
-			r := fmt.Sprint(labRunHeadOf(s.trial).Cell.Repeat)
+			r := fmt.Sprint(s.trial.cell().Repeat)
 			byRepeat[r] = append(byRepeat[r], value)
 		}
 	}
@@ -287,7 +289,7 @@ func loopNoGain(exp doc, trials, scores []doc, k int64) (bool, bool) {
 	}
 	base := mean(byVariant[baseline])
 	streak := int64(0)
-	for iteration := int64(0); iteration <= loopIteration(exp); iteration++ {
+	for iteration := int64(0); iteration <= loopIteration(e); iteration++ {
 		best := math.Inf(-1)
 		for _, v := range e.Variants {
 			if v.Iteration != iteration {
@@ -332,19 +334,6 @@ type labLoopGenerator struct {
 	} `json:"params"`
 }
 
-// labLoopRun: the fields of a Lab run the loop advance reads (strategy runs and the trials' steps).
-type labLoopRun struct {
-	ID           string `json:"id"`
-	LoopStrategy *struct {
-		Iteration *int64 `json:"iteration"`
-	} `json:"loopStrategy"`
-	Steps []struct {
-		ID          string `json:"id"`
-		ExecutionID string `json:"executionId"`
-		State       any    `json:"state"`
-	} `json:"steps"`
-}
-
 // labLoopOutput: the fields of a strategy run's output the advance reads.
 type labLoopOutput struct {
 	Action   string          `json:"action"`
@@ -378,23 +367,24 @@ type labStrategyInput struct {
 
 // labLoopSnapshot: what a strategy run reads of its experiment (snapshot.json); keys in canonical order.
 type labLoopSnapshot struct {
-	Allocator         json.RawMessage `json:"allocator"`
-	Budgets           any             `json:"budgets"`
-	ExperimentID      any             `json:"experimentId"`
-	Generator         json.RawMessage `json:"generator"`
-	Iteration         int64           `json:"iteration"`
-	LosingTranscripts []labLosing     `json:"losingTranscripts"`
-	PrimaryEvaluator  any             `json:"primaryEvaluator"`
-	Scores            []any           `json:"scores"`
-	Spend             doc             `json:"spend"`
-	Variants          any             `json:"variants"`
+	Allocator         json.RawMessage   `json:"allocator"`
+	Budgets           any               `json:"budgets"`
+	ExperimentID      any               `json:"experimentId"`
+	Generator         json.RawMessage   `json:"generator"`
+	Iteration         int64             `json:"iteration"`
+	LosingTranscripts []labLosing       `json:"losingTranscripts"`
+	PrimaryEvaluator  any               `json:"primaryEvaluator"`
+	Scores            []labScore        `json:"scores"`
+	Spend             contract.LabSpend `json:"spend"`
+	Variants          any               `json:"variants"`
 }
 
-func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, launched *[]string) error {
-	e, _ := asT[labExp](exp)
-	s, _ := asT[labLoopState](exp["strategy"])
-	generator, _ := asT[labLoopGenerator](s.Generator)
-	iteration := loopIteration(exp)
+func loopAdvance(q *Request, e *labExperiment, trials, runs []*labRun, scores []labScore, spend contract.LabSpend, launched *[]string) error {
+	var s labLoopState
+	json.Unmarshal(e.Strategy, &s)
+	var generator labLoopGenerator
+	json.Unmarshal(s.Generator, &generator)
+	iteration := loopIteration(e)
 	stop := func(reason string) error {
 		_, err := experimentTransition(q, e.ID, experimentEvent{To: "done", From: []string{"running"}, StopReason: &reason})
 		return err
@@ -406,11 +396,11 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 	if s.MaxIterations != nil && iteration+1 >= *s.MaxIterations {
 		return stop("max_iterations")
 	}
-	if !loopPrimaryComplete(exp, trials, scores) {
+	if !loopPrimaryComplete(e, trials, scores) {
 		return halt("primary-score-unavailable")
 	}
 	if s.NoGain != nil {
-		done, available := loopNoGain(exp, trials, scores, s.NoGain.K)
+		done, available := loopNoGain(e, trials, scores, s.NoGain.K)
 		if !available {
 			return halt("primary-score-unavailable")
 		}
@@ -418,9 +408,9 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 			return stop("no_gain")
 		}
 	}
-	var strategyRun doc
+	var strategyRun *labRun
 	for _, r := range runs {
-		if st := labLoopRunOf(r).LoopStrategy; st != nil && st.Iteration != nil && *st.Iteration == iteration {
+		if st := r.LoopStrategy; st != nil && st.Iteration != nil && *st.Iteration == iteration {
 			strategyRun = r
 		}
 	}
@@ -430,31 +420,30 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 			pipeline = "lab-strategy-propose"
 		}
 		// Held-out results remain in history but never steer proposal generation.
-		tuneTrials := map[any]bool{}
+		tuneTrials := map[string]bool{}
 		for _, t := range trials {
-			pin := findPin(exp, labRunHeadOf(t).Cell.Example)
-			if pin["split"] == "tune" {
-				tuneTrials[t["id"]] = true
+			if pin := e.pin(t.cell().Example); pin != nil && pin.Split == "tune" {
+				tuneTrials[t.ID] = true
 			}
 		}
-		tuneScores := []any{}
+		tuneScores := []labScore{}
 		for _, score := range scores {
-			if tuneTrials[firstTrial(score)] {
+			if tuneTrials[score.first()] {
 				tuneScores = append(tuneScores, score)
 			}
 		}
-		snapshot := labLoopSnapshot{ExperimentID: exp["id"], Iteration: iteration, Variants: exp["variants"], Scores: tuneScores, PrimaryEvaluator: exp["primary_evaluator"],
-			Generator: s.Generator, Allocator: s.Allocator, Spend: spend, Budgets: exp["budgets"], LosingTranscripts: []labLosing{}}
+		snapshot := labLoopSnapshot{ExperimentID: e.ID, Iteration: iteration, Variants: listOrEmpty(e.Variants), Scores: tuneScores, PrimaryEvaluator: e.PrimaryEvaluator,
+			Generator: s.Generator, Allocator: s.Allocator, Spend: spend, Budgets: listOrEmpty(e.Budgets), LosingTranscripts: []labLosing{}}
 		inputs := []labStrategyInput{}
 		if generator.Kind == "propose" {
-			best := loopBestVariant(exp, trials, scores)
+			best := loopBestVariant(e, trials, scores)
 			order, latest := expLatest(trials)
 			for _, key := range order {
 				t := latest[key]
-				if !tuneTrials[t["id"]] || best != nil && labRunHeadOf(t).Cell.Variant == best.Label {
+				if !tuneTrials[t.ID] || best != nil && t.cell().Variant == best.Label {
 					continue
 				}
-				run := labLoopRunOf(t)
+				run := t
 				for _, st := range run.Steps {
 					if st.ExecutionID == "" {
 						continue
@@ -479,8 +468,9 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 			return halt("strategy:unauthorized-overrides")
 		}
 		next := iteration
-		id, err := expInsertLabRun(q, exp, "loop:"+sha256hex(jsonBytes([]any{exp["id"], iteration})), pipeline+".json", labStrategyExample(inputs),
-			&labVariant{Overrides: rawValue(jsonBytes(ov)), ConfigRef: sha256hex(jsonBytes(exp["strategy"]))}, labRunExtra{LoopIteration: &next})
+		id, err := labStartRun(q, e, labRunStart{RequestID: "loop:" + sha256hex(jsonBytes([]any{e.ID, iteration})), File: pipeline + ".json",
+			Example: labStrategyExample{Inputs: inputs}, Variant: &labVariant{Overrides: rawValue(jsonBytes(ov)), ConfigRef: sha256hex(jsonBytes(rawValue(e.Strategy)))},
+			Extra: labRunExtra{LoopStrategy: &labLoopMark{Iteration: &next}}})
 		if err != nil {
 			return err
 		}
@@ -489,15 +479,17 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 		}
 		return nil
 	}
-	if !terminal(strategyRun) {
+	if !strategyRun.terminal() {
 		return nil
 	}
 	if !comparable(strategyRun) {
-		return halt("strategy:" + strOr(strategyRun["problem"]))
+		problem, _ := rawValue(strategyRun.Problem).(string)
+		return halt("strategy:" + problem)
 	}
-	output := judgeOutput(strategyRun)
-	out, _ := asT[labLoopOutput](output)
-	if !keysOnly(output, "action", "variants", "reason") || output["reason"] == nil {
+	output, _ := labRawObject(strategyRun.outputObject())
+	var out labLoopOutput
+	json.Unmarshal(strategyRun.outputObject(), &out)
+	if !rawKeysOnly(output, "action", "variants", "reason") || !rawSet(output, "reason") {
 		return halt("strategy:invalid-output")
 	}
 	if out.Action == "stop" {
@@ -513,7 +505,7 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 		proposed = append(proposed, labProposalOf(x))
 	}
 	if generator.Params.KeepBest {
-		best := loopBestVariant(exp, trials, scores)
+		best := loopBestVariant(e, trials, scores)
 		if best == nil {
 			return halt("strategy:best-unavailable")
 		}
@@ -521,32 +513,28 @@ func loopAdvance(q *Request, exp doc, trials, runs, scores []doc, spend doc, lau
 			proposed[i].Overrides = jsonBytes(loopMergeOverrides(rawObjectOr(rawOf(best.Overrides)), rawObjectOr(v.Overrides)))
 		}
 	}
-	e2, _ := asT[struct {
-		Variants []json.RawMessage `json:"variants"`
-	}](exp)
-	variants, err := loopVariantsOf(labLoopBase{PipelineID: e.PipelineID, Variants: e2.Variants, OwnerOverrides: s.OwnerOverrides}, proposed, iteration+1)
+	variants, err := loopVariantsOf(labLoopBase{PipelineID: e.PipelineID, Variants: e.storedVariants(), OwnerOverrides: s.OwnerOverrides}, proposed, iteration+1)
 	if err != nil {
 		return halt("strategy:" + err.Error())
 	}
 	return q.db().LabVariantsSetRunning(q.ctx(), db.LabVariantsSetRunningParams{ID: e.ID, Variants: jsonBytes(variants)})
 }
 
-func labLoopRunOf(run doc) labLoopRun {
-	r, _ := asT[labLoopRun](run)
-	return r
+// primaryScore: s is a score of the primary evaluator.
+func (e *labExperiment) primaryScore(s labScore) bool {
+	return e.PrimaryEvaluator != nil && s.Evaluator == *e.PrimaryEvaluator
 }
 
-func loopBestVariant(exp doc, trials, scores []doc) *labVariant {
-	if !loopPrimaryComplete(exp, trials, scores) {
+func loopBestVariant(e *labExperiment, trials []*labRun, scores []labScore) *labVariant {
+	if !loopPrimaryComplete(e, trials, scores) {
 		return nil
 	}
 	values := map[string][]float64{}
-	for _, s := range scoredLatest(exp, trials, scores, func(s doc) bool { return s["evaluator"] == exp["primary_evaluator"] }) {
+	for _, s := range scoredLatest(e, trials, scores, e.primaryScore) {
 		if s.split == "tune" {
 			values[s.variant] = append(values[s.variant], scoreNumber(s.score))
 		}
 	}
-	e, _ := asT[labExp](exp)
 	var best *labVariant
 	max := math.Inf(-1)
 	for i, v := range e.Variants {
@@ -590,15 +578,14 @@ func loopMergeOverrides(base, extra map[string]json.RawMessage) map[string]json.
 	return out
 }
 
-func loopPrimaryComplete(exp doc, trials, scores []doc) bool {
-	e, _ := asT[labExp](exp)
+func loopPrimaryComplete(e *labExperiment, trials []*labRun, scores []labScore) bool {
 	tune := e.tune()
 	if tune == 0 || e.Repeats < 1 {
 		return false
 	}
 	counts := map[string]int{}
-	for _, s := range scoredLatest(exp, trials, scores, func(s doc) bool { return s["evaluator"] == exp["primary_evaluator"] }) {
-		if f, _ := asT[labScoreForm](s.score); s.split != "tune" || f.unscored() {
+	for _, s := range scoredLatest(e, trials, scores, e.primaryScore) {
+		if s.split != "tune" || s.score.unscored() {
 			continue
 		}
 		counts[s.variant]++

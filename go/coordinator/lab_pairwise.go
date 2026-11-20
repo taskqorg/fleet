@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -15,22 +16,15 @@ type labJudgeAnswer struct {
 	Rationale any `json:"rationale"`
 }
 
-func judgeAnswer(run doc) labJudgeAnswer {
-	a, _ := asT[labJudgeAnswer](pipelineResultValue(run))
+func judgeAnswer(run *labRun) labJudgeAnswer {
+	var a labJudgeAnswer
+	json.Unmarshal(run.output(), &a)
 	return a
 }
 
-// labGroupTrial: a trial of a pairwise group with its decoded head.
-type labGroupTrial struct {
-	run  doc
-	head labRunHead
-}
-
 // Pairwise judges retain both orders; a position-dependent answer never becomes a score.
-func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []doc, launched *[]string) (bool, error) {
-	e, _ := asT[labExp](exp)
-	ev, _ := asT[labEvaluator](evaluator)
-	groups, complete := pairwiseGroups(exp, trials)
+func pairwiseEvaluate(q *Request, e *labExperiment, ev labEvaluator, trials, runs []*labRun, current []labScore, launched *[]string) (bool, error) {
+	groups, complete := pairwiseGroups(e, trials)
 	keys := []string{}
 	for k := range groups {
 		keys = append(keys, k)
@@ -40,31 +34,28 @@ func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []do
 		if len(groups[key]) < 2 {
 			continue
 		}
-		group := []labGroupTrial{}
-		for _, t := range groups[key] {
-			group = append(group, labGroupTrial{t, labRunHeadOf(t)})
-		}
+		group := append([]*labRun{}, groups[key]...)
 		sort.Slice(group, func(i, j int) bool {
-			return sha256hex([]byte(e.ID+group[i].head.ID)) < sha256hex([]byte(e.ID+group[j].head.ID))
+			return sha256hex([]byte(e.ID+group[i].ID)) < sha256hex([]byte(e.ID+group[j].ID))
 		})
 		ids := []string{}
 		for _, t := range group {
-			ids = append(ids, t.head.ID)
+			ids = append(ids, t.ID)
 		}
 		name := ev.name()
-		gid := sha256hex(jsonBytes([]any{key, ids, evaluator["overrides"]}))
+		gid := sha256hex(jsonBytes([]any{key, ids, ev.Overrides}))
 		found := false
-		for _, s := range current {
-			if sc, _ := asT[labScoreHead](s); sc.Evaluator == name && canonical(sc.TrialIDs) == canonical(ids) {
+		for _, sc := range current {
+			if sc.Evaluator == name && canonical(sc.TrialIDs) == canonical(ids) {
 				found = true
 			}
 		}
 		if found {
 			continue
 		}
-		pair := []doc{nil, nil}
+		pair := []*labRun{nil, nil}
 		for _, r := range runs {
-			j := labRunHeadOf(r).Judge
+			j := r.Judge
 			if j != nil && j.Evaluator == name && j.GroupID == gid && j.Order != nil && *j.Order >= 0 && *j.Order < 2 {
 				pair[*j.Order] = r
 			}
@@ -77,7 +68,7 @@ func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []do
 			if e.State != "running" {
 				continue
 			}
-			ordered := append([]labGroupTrial{}, group...)
+			ordered := append([]*labRun{}, group...)
 			if order == 1 {
 				for i, j := 0, len(ordered)-1; i < j; i, j = i+1, j-1 {
 					ordered[i], ordered[j] = ordered[j], ordered[i]
@@ -86,11 +77,11 @@ func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []do
 			inputs := []labExampleInput{}
 			candidates := []string{}
 			for _, t := range ordered {
-				full, _, err := exampleOf(q, findPin(exp, t.head.Cell.Example))
+				full, err := exampleOf(q, e.pin(t.cell().Example))
 				if err != nil {
 					return false, err
 				}
-				files, err := trialFiles(q, t.run, full)
+				files, err := trialFiles(q, t, full)
 				if err != nil {
 					return false, err
 				}
@@ -98,22 +89,22 @@ func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []do
 					if strings.HasSuffix(strings.ToLower(f.path), ".glb") {
 						continue
 					}
-					aid, err := saveArtifact(q, t.run, t.head.ID, "judge/"+f.path, f.bytes, http.DetectContentType(f.bytes))
+					aid, err := saveArtifact(q, t.rec, t.ID, "judge/"+f.path, f.bytes, http.DetectContentType(f.bytes))
 					if err != nil {
 						return false, err
 					}
-					inputs = append(inputs, labExampleInput{ArtifactID: aid, Path: "example/trial/" + t.head.ID + "/" + f.path})
+					inputs = append(inputs, labExampleInput{ArtifactID: aid, Path: "example/trial/" + t.ID + "/" + f.path})
 				}
-				candidates = append(candidates, t.head.ID)
+				candidates = append(candidates, t.ID)
 			}
-			full, _, err := exampleOf(q, findPin(exp, group[0].head.Cell.Example))
+			full, err := exampleOf(q, e.pin(group[0].cell().Example))
 			if err != nil {
 				return false, err
 			}
-			variant := &labVariant{Overrides: evaluator["overrides"], ConfigRef: sha256hex(jsonBytes(evaluator["overrides"]))}
 			n := order
-			rid, err := expInsertLabRun(q, exp, "lab:"+sha256hex(jsonBytes([]any{exp["id"], name, gid, order})), ev.Ref+".json", labJudgeExample(full["prompt"], candidates), variant,
-				labRunExtra{ExampleInputs: inputs, Judge: &labJudge{Evaluator: name, GroupID: gid, TrialIDs: ids, Order: &n}})
+			rid, err := labStartRun(q, e, labRunStart{RequestID: "lab:" + sha256hex(jsonBytes([]any{e.ID, name, gid, order})), File: ev.Ref + ".json",
+				Example: labJudgeExample{Prompt: full.Prompt, Candidates: candidates}, Variant: &labVariant{Overrides: ev.Overrides, ConfigRef: sha256hex(jsonBytes(ev.Overrides))},
+				Extra: labRunExtra{ExampleInputs: jsonBytes(inputs), Judge: &labJudge{Evaluator: name, GroupID: gid, TrialIDs: ids, Order: &n}}})
 			if err != nil {
 				return false, err
 			}
@@ -124,12 +115,11 @@ func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []do
 		if pair[0] == nil || pair[1] == nil {
 			continue
 		}
-		if !terminal(pair[0]) || !terminal(pair[1]) {
+		if !pair[0].terminal() || !pair[1].terminal() {
 			complete = false
 			continue
 		}
-		heads := []labRunHead{labRunHeadOf(pair[0]), labRunHeadOf(pair[1])}
-		if heads[0].State != "succeeded" || heads[1].State != "succeeded" {
+		if pair[0].State != "succeeded" || pair[1].State != "succeeded" {
 			continue
 		}
 		candidates := []any{}
@@ -143,10 +133,10 @@ func pairwiseEvaluate(q *Request, exp, evaluator doc, trials, runs, current []do
 		if a.Value != b.Value {
 			continue
 		} // Both run outputs retain the evidence; the view names order dependence.
-		version := sha256hex(jsonBytes([]any{pair[0]["definitionSha256"], evaluator["overrides"]}))[:16]
+		version := sha256hex(jsonBytes([]any{pair[0].DefinitionSha256, ev.Overrides}))[:16]
 		rationale := fmt.Sprintf("Both orders agree. %v; %v", a.Rationale, b.Rationale)
 		_, err := scoreInsert(q, labNewScore{ExperimentID: e.ID, ProjectID: e.ProjectID, TrialIDs: ids, Evaluator: name, EvaluatorVersion: version, Form: "pick_best", Value: a.Value,
-			SourceExecutionID: &heads[0].ID, Rationale: &rationale})
+			SourceExecutionID: &pair[0].ID, Rationale: &rationale})
 		if err != nil {
 			return false, err
 		}
@@ -164,18 +154,17 @@ func sameTrialSet(a, b []string) bool {
 	return canonical(x) == canonical(y)
 }
 
-func agreement(scores []doc) doc {
+func agreement(scores []labScore) labAgreement {
 	out := agreementBase(scores)
-	versions := map[string][]doc{}
-	humans := []doc{}
-	for _, s := range scores {
-		sc, _ := asT[labScoreHead](s)
+	versions := map[string][]labScore{}
+	humans := []labScore{}
+	for _, sc := range scores {
 		if strings.HasPrefix(sc.Evaluator, "human:") {
-			humans = append(humans, s)
+			humans = append(humans, sc)
 		}
 		if strings.HasPrefix(sc.Evaluator, "judge:") {
 			k := sc.Evaluator + "@" + sc.EvaluatorVersion
-			versions[k] = append(versions[k], s)
+			versions[k] = append(versions[k], sc)
 		}
 	}
 	keys := []string{}
@@ -183,20 +172,18 @@ func agreement(scores []doc) doc {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	rows := []any{}
+	out.ByVersion = []labAgreementRow{}
 	for _, k := range keys {
-		row := agreementBase(append(append([]doc{}, humans...), versions[k]...))
-		row["version"] = k
-		rows = append(rows, row)
+		row := agreementBase(append(append([]labScore{}, humans...), versions[k]...))
+		out.ByVersion = append(out.ByVersion, labAgreementRow{Compared: row.Compared, Matched: row.Matched, Percent: row.Percent, Version: k})
 	}
-	out["byVersion"] = rows
 	return out
 }
 
-func pairwiseView(runs []doc) []contract.LabPairwise {
-	groups := map[string][]doc{}
+func pairwiseView(runs []*labRun) []contract.LabPairwise {
+	groups := map[string][]*labRun{}
 	for _, r := range runs {
-		if j := labRunHeadOf(r).Judge; j != nil && j.GroupID != "" {
+		if j := r.Judge; j != nil && j.GroupID != "" {
 			key := j.Evaluator + ":" + j.GroupID
 			groups[key] = append(groups[key], r)
 		}
@@ -210,11 +197,11 @@ func pairwiseView(runs []doc) []contract.LabPairwise {
 	for _, k := range keys {
 		rs := groups[k]
 		reason := "pending"
-		if len(rs) == 2 && terminal(rs[0]) && terminal(rs[1]) {
+		if len(rs) == 2 && rs[0].terminal() && rs[1].terminal() {
 			reason = "invalid-output"
 			a, b := judgeAnswer(rs[0]), judgeAnswer(rs[1])
 			ids := []any{}
-			for _, id := range labRunHeadOf(rs[0]).Judge.TrialIDs {
+			for _, id := range rs[0].Judge.TrialIDs {
 				ids = append(ids, id)
 			}
 			if checkValue("pick_best", a.Value, ids) == nil && checkValue("pick_best", b.Value, ids) == nil {
@@ -226,7 +213,7 @@ func pairwiseView(runs []doc) []contract.LabPairwise {
 		}
 		ids := []string{}
 		for _, r := range rs {
-			ids = append(ids, labRunHeadOf(r).ID)
+			ids = append(ids, r.ID)
 		}
 		group := k
 		out = append(out, contract.LabPairwise{Group: &group, Reason: &reason, RunIds: ids})
@@ -235,28 +222,27 @@ func pairwiseView(runs []doc) []contract.LabPairwise {
 }
 
 // A comparison is bound to the latest attempt of every variant in the completed group.
-func pairwiseGroups(exp doc, trials []doc) (map[string][]doc, bool) {
-	e, _ := asT[labExp](exp)
-	latest := map[string]doc{}
+func pairwiseGroups(e *labExperiment, trials []*labRun) (map[string][]*labRun, bool) {
+	latest := map[string]*labRun{}
 	attempts := map[string]int64{}
 	for _, t := range trials {
-		c := labRunHeadOf(t).Cell
+		c := t.cell()
 		k := canonical([]any{c.Iteration, c.Example, c.Variant, c.Repeat})
 		if a, seen := attempts[k]; !seen || c.Attempt > a {
 			latest[k], attempts[k] = t, c.Attempt
 		}
 	}
-	groups := map[string][]doc{}
+	groups := map[string][]*labRun{}
 	iterations := map[string]int64{}
 	for _, t := range latest {
-		c := labRunHeadOf(t).Cell
+		c := t.cell()
 		k := canonical([]any{c.Iteration, c.Example, c.Repeat})
 		groups[k] = append(groups[k], t)
 		if c.Iteration != nil {
 			iterations[k] = *c.Iteration
 		}
 	}
-	ready := map[string][]doc{}
+	ready := map[string][]*labRun{}
 	complete := true
 	for k, g := range groups {
 		expected := 0
@@ -267,7 +253,7 @@ func pairwiseGroups(exp doc, trials []doc) (map[string][]doc, bool) {
 		}
 		done := len(g) == expected
 		for _, t := range g {
-			done = done && terminal(t)
+			done = done && t.terminal()
 		}
 		if !done {
 			complete = false

@@ -1,15 +1,32 @@
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
 
-// labVariant: one experiment variant as stored in experiment.variants (expCreate, loopVariants, lab_compare_methods).
+	"fleet/coordinator/db"
+)
+
+// labVariant: one experiment variant as stored in experiment.variants (expCreate, loopVariants, lab_compare_methods);
+// every stored key has its field, so a variant written back keeps them.
 type labVariant struct {
-	Label         string `json:"label"`
-	PipelineID    string `json:"pipelineId,omitempty"`
-	Iteration     int64  `json:"iteration,omitempty"`
-	ProposalLabel string `json:"proposalLabel,omitempty"`
-	Overrides     any    `json:"overrides"`
-	ConfigRef     any    `json:"config_ref,omitempty"`
+	Label              string          `json:"label"`
+	PipelineID         string          `json:"pipelineId,omitempty"`
+	Iteration          int64           `json:"iteration,omitempty"`
+	ProposalLabel      string          `json:"proposalLabel,omitempty"`
+	Overrides          any             `json:"overrides"`
+	ConfigRef          string          `json:"config_ref,omitempty"`
+	CatalogueConfigRef string          `json:"catalogueConfigRef,omitempty"`
+	MethodID           string          `json:"methodId,omitempty"`
+	CatalogueRef       json.RawMessage `json:"catalogueRef,omitempty"`
+}
+
+// bands: the variant's bands override (bandsOf reads it); nil when it has none.
+func (v labVariant) bands() any {
+	o, _ := asT[struct {
+		Bands any `json:"bands"`
+	}](v.Overrides)
+	return o.Bands
 }
 
 // labCell: a trial's place in its experiment (expLaunchTrial); an older cell has no iteration.
@@ -21,18 +38,15 @@ type labCell struct {
 	Attempt   int64  `json:"attempt"`
 }
 
-// labExpPipeline: the experiment row's outer pipeline.
-type labExpPipeline struct {
-	PipelineID string `json:"pipeline_id"`
-}
+// key: the cell's key (cellKey) without its attempt.
+func (c labCell) key() string { return cellKey(c.Example, c.Variant, c.Repeat) }
 
 // Legacy experiments keep their outer pipeline; new variants retain their own selection.
-func variantPipelineID(exp, variant doc) string {
-	if v, _ := asT[labVariant](variant); v.PipelineID != "" {
-		return v.PipelineID
+func variantPipelineID(exp *labExperiment, variant *labVariant) string {
+	if variant != nil && variant.PipelineID != "" {
+		return variant.PipelineID
 	}
-	e, _ := asT[labExpPipeline](exp)
-	return e.PipelineID
+	return exp.PipelineID
 }
 
 // labConfigIdentity: what a variant's config digest covers; its fields are in canonical (sorted) key order.
@@ -57,35 +71,96 @@ func labConfigDigestOf(pipeline string, overrides any) string {
 	return sha256hex([]byte(canonical(labConfigIdentity{Overrides: overrides, Pipeline: pipeline})))
 }
 
-// labVariantOf: a stored variant map as its struct; nil stays nil.
-func labVariantOf(d doc) *labVariant {
-	if d == nil {
-		return nil
-	}
-	v, _ := asT[labVariant](d)
-	return &v
+// labExperiment: an experiment row as the Lab reads it: its columns, the JSON ones decoded once (expOf). The JSON names
+// are the row's columns.
+type labExperiment struct {
+	ID                 string          `json:"id"`
+	ProjectID          string          `json:"project_id"`
+	Kind               string          `json:"kind"`
+	PipelineID         string          `json:"pipeline_id"`
+	Examples           []labPin        `json:"examples"`
+	Variants           []labVariant    `json:"variants"`
+	Repeats            int64           `json:"repeats"`
+	Evaluators         []labEvaluator  `json:"evaluators"`
+	PrimaryEvaluator   *string         `json:"primary_evaluator"`
+	Strategy           json.RawMessage `json:"strategy"`
+	Budgets            []labBudget     `json:"budgets"`
+	State              string          `json:"state"`
+	StopReason         *string         `json:"stop_reason"`
+	CreatedAt          time.Time       `json:"created_at"`
+	Goal               *string         `json:"goal"`
+	Hypothesis         *string         `json:"hypothesis"`
+	DecisionRule       *string         `json:"decision_rule"`
+	LabGroup           *string         `json:"lab_group"`
+	Decision           *string         `json:"decision"`
+	DecisionReason     *string         `json:"decision_reason"`
+	DecidedBy          *string         `json:"decided_by"`
+	DecidedAt          *time.Time      `json:"decided_at"`
+	LaunchedAt         *time.Time      `json:"launched_at"`
+	RequestedBy        *string         `json:"requested_by"`
+	RequesterRemovedAt *time.Time      `json:"requester_removed_at"`
 }
 
-// labExp: the fields of an experiment row (expRow) the evaluation reads.
-type labExp struct {
-	ID               string       `json:"id"`
-	ProjectID        string       `json:"project_id"`
-	PipelineID       string       `json:"pipeline_id"`
-	State            string       `json:"state"`
-	PrimaryEvaluator string       `json:"primary_evaluator"`
-	Repeats          int64        `json:"repeats"`
-	Variants         []labVariant `json:"variants"`
-	Examples         []labPin     `json:"examples"`
+// expOf: an experiment row with its JSON columns decoded.
+func expOf(e db.Experiment) (*labExperiment, error) {
+	x := &labExperiment{ID: e.ID, ProjectID: e.ProjectID, Kind: e.Kind, PipelineID: e.PipelineID, Repeats: int64(e.Repeats), PrimaryEvaluator: e.PrimaryEvaluator,
+		Strategy: e.Strategy, State: e.State, StopReason: e.StopReason, CreatedAt: e.CreatedAt, Goal: e.Goal, Hypothesis: e.Hypothesis, DecisionRule: e.DecisionRule,
+		LabGroup: e.LabGroup, Decision: e.Decision, DecisionReason: e.DecisionReason, DecidedBy: e.DecidedBy, DecidedAt: e.DecidedAt, LaunchedAt: e.LaunchedAt,
+		RequestedBy: e.RequestedBy, RequesterRemovedAt: e.RequesterRemovedAt}
+	for _, c := range []struct {
+		b []byte
+		v any
+	}{{e.Examples, &x.Examples}, {e.Variants, &x.Variants}, {e.Evaluators, &x.Evaluators}, {e.Budgets, &x.Budgets}} {
+		if len(c.b) > 0 {
+			if err := json.Unmarshal(c.b, c.v); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return x, nil
+}
+
+// primary: the primary evaluator's name, "" when the experiment has none.
+func (e *labExperiment) primary() string { return deref(e.PrimaryEvaluator) }
+
+// pin: the pinned example id, nil when the experiment pins none such.
+func (e *labExperiment) pin(id string) *labPin {
+	for i := range e.Examples {
+		if e.Examples[i].ID == id {
+			return &e.Examples[i]
+		}
+	}
+	return nil
+}
+
+// variant: the variant labelled label, nil when there is none.
+func (e *labExperiment) variant(label string) *labVariant {
+	for i := range e.Variants {
+		if e.Variants[i].Label == label {
+			return &e.Variants[i]
+		}
+	}
+	return nil
 }
 
 // labPin: an example pinned by an experiment (expCreate).
 type labPin struct {
-	ID    string `json:"id"`
-	Split string `json:"split"`
+	ID         string `json:"id"`
+	ArtifactID string `json:"artifact_id"`
+	Hash       string `json:"hash"`
+	Split      string `json:"split"`
+}
+
+// labBudget: one experiment budget as stored in experiment.budgets; firedAt is set once it fires.
+type labBudget struct {
+	Unit    string  `json:"unit"`
+	Limit   float64 `json:"limit"`
+	Action  string  `json:"action"`
+	FiredAt *int64  `json:"firedAt,omitempty"`
 }
 
 // tune: how many of the experiment's examples are tune examples.
-func (e labExp) tune() int {
+func (e *labExperiment) tune() int {
 	n := 0
 	for _, p := range e.Examples {
 		if p.Split == "tune" {
@@ -95,17 +170,6 @@ func (e labExp) tune() int {
 	return n
 }
 
-// labScoreForm: a score's form and, for a typed score, its answer.
-type labScoreForm struct {
-	Form  string `json:"form"`
-	Value struct {
-		Answer string `json:"answer"`
-	} `json:"value"`
-}
-
-// unscored: a typed score that could not score its trial (it counts in no statistic).
-func (s labScoreForm) unscored() bool { return s.Form == "typed" && s.Value.Answer == "unscored" }
-
 // labJudge: what a judge run judges (its run's judge field).
 type labJudge struct {
 	Evaluator string   `json:"evaluator"`
@@ -113,26 +177,6 @@ type labJudge struct {
 	TrialID   string   `json:"trialId,omitempty"`
 	TrialIDs  []string `json:"trialIds,omitempty"`
 	Order     *int64   `json:"order,omitempty"`
-}
-
-// labRunHead: the fields of a Lab run (getRun) the evaluation reads.
-type labRunHead struct {
-	ID    string    `json:"id"`
-	State string    `json:"state"`
-	Cell  labCell   `json:"cell"`
-	Judge *labJudge `json:"judge"`
-}
-
-func labRunHeadOf(run doc) labRunHead {
-	h, _ := asT[labRunHead](run)
-	return h
-}
-
-// labScoreHead: the fields of a score view (scoreView) the evaluation reads.
-type labScoreHead struct {
-	Evaluator        string   `json:"evaluator"`
-	EvaluatorVersion string   `json:"evaluatorVersion"`
-	TrialIDs         []string `json:"trialIds"`
 }
 
 // labExampleInput: an artifact a Lab run reads as an example input file.
@@ -144,30 +188,33 @@ type labExampleInput struct {
 // labRunExtra: what a Lab run records besides its pipeline input (expInsertRun); pipelineStart copies each set field
 // into the run.
 type labRunExtra struct {
-	Cell          *labCell
-	Judge         *labJudge
-	ExampleInputs []labExampleInput
-	LoopIteration *int64
+	Cell          *labCell        `json:"cell,omitempty"`
+	Judge         *labJudge       `json:"judge,omitempty"`
+	ExampleInputs json.RawMessage `json:"exampleInputs,omitempty"`
+	LoopStrategy  *labLoopMark    `json:"loopStrategy,omitempty"`
+	Recovery      *labRecovery    `json:"recovery,omitempty"`
+	Priority      string          `json:"priority"`
 }
 
-// labCellOf: a trial run's cell.
-func labCellOf(run doc) labCell {
-	c, _ := asT[labCell](run["cell"])
-	return c
+// labLoopMark: a loop strategy run's iteration (its run's loopStrategy field).
+type labLoopMark struct {
+	Iteration *int64 `json:"iteration"`
 }
 
-// labScore: the fields of a score view (scoreView) the statistics read; the value stays as stored.
+// labScore: a score as the Lab reads and shows it (scoreView): the value stays as stored.
 type labScore struct {
-	Evaluator        string          `json:"evaluator"`
-	EvaluatorVersion string          `json:"evaluatorVersion"`
-	Form             string          `json:"form"`
-	TrialIDs         []string        `json:"trialIds"`
-	Value            json.RawMessage `json:"value"`
-}
-
-func labScoreOf(s doc) labScore {
-	sc, _ := asT[labScore](s)
-	return sc
+	ID                string          `json:"id"`
+	ExperimentID      string          `json:"experimentId"`
+	TrialIDs          []string        `json:"trialIds"`
+	Evaluator         string          `json:"evaluator"`
+	EvaluatorVersion  string          `json:"evaluatorVersion"`
+	Form              string          `json:"form"`
+	Value             json.RawMessage `json:"value"`
+	SourceExecutionID *string         `json:"sourceExecutionId"`
+	QuestionID        *string         `json:"questionId"`
+	Rationale         *string         `json:"rationale"`
+	ReplacesScoreID   *string         `json:"replacesScoreId"`
+	CreatedAt         time.Time       `json:"createdAt"`
 }
 
 // typed: a typed score's value (an object; anything else, or a field that is not text, reads empty).
@@ -183,9 +230,23 @@ func (s labScore) typed() (v struct {
 	return v
 }
 
+// unscored: a typed score that could not score its trial (it counts in no statistic).
+func (s labScore) unscored() bool { return s.Form == "typed" && s.typed().Answer == "unscored" }
+
 // text: the value when it is text, else "".
 func (s labScore) text() string {
 	var t string
 	json.Unmarshal(s.Value, &t)
 	return t
+}
+
+// value: the value decoded.
+func (s labScore) value() any { return rawValue(s.Value) }
+
+// first: the score's first trial, "" when it has none.
+func (s labScore) first() string {
+	if len(s.TrialIDs) > 0 {
+		return s.TrialIDs[0]
+	}
+	return ""
 }
