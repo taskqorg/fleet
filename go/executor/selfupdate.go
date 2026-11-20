@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"fleet/contract"
-	"fleet/update/updatesignal"
 )
 
 // Self-update (docs/designs/fleet-self-update.md, sections 4 and 5): the executor's version, release defaults for its
@@ -75,15 +74,15 @@ func storeEndpointHosts() []string {
 	return releaseDefaults().StoreEndpointHosts
 }
 
-// updateSignal is update.json (package updatesignal, the type fleet-update reads); written only when a value other than at
-// changes, durably (temp file, then rename).
-type updateSignal = updatesignal.Signal
+// updateSignal is update.json (contracts/host-files.schema.json, the type fleet-update reads); written only when a value
+// other than at changes, durably (temp file, then rename).
+type updateSignal = contract.UpdateSignal
 
 var lastSignal *updateSignal
 var signalMu sync.Mutex
 
 func writeUpdateSignal(root string, s updateSignal) error {
-	if l := lastSignal; l != nil && l.HostID == s.HostID && l.AutoUpdate == s.AutoUpdate && l.Running == s.Running && l.PollOk == s.PollOk && l.PollError == s.PollError && sameTarget(l.RestartTarget, s.RestartTarget) &&
+	if l := lastSignal; l != nil && l.HostId == s.HostId && l.AutoUpdate == s.AutoUpdate && l.Running == s.Running && l.PollOk == s.PollOk && sameStr(l.PollError, s.PollError) && sameStr(l.RestartTarget, s.RestartTarget) &&
 		(l.Target == nil) == (s.Target == nil) && (l.Target == nil || *l.Target == *s.Target) {
 		return nil
 	}
@@ -127,11 +126,18 @@ func pollSignal(a answer) (ok bool, perr string) {
 	return false, "http-" + strconv.Itoa(a.status)
 }
 
+// pollFields: pollSignal as the pollOk and pollError fields of update.json (pollError absent on success).
+func pollFields(a answer) (bool, *string) {
+	ok, perr := pollSignal(a)
+	if perr == "" {
+		return ok, nil
+	}
+	return ok, &perr
+}
+
 // lastUpdate: last of <data dir>/update/update-state.json (written by fleet-update), nil when absent.
 func lastUpdate(root string) *contract.UpdateResult {
-	var st struct {
-		Last *contract.UpdateResult `json:"last"`
-	}
+	var st contract.UpdateStateFile
 	b, err := os.ReadFile(filepath.Join(root, "update", "update-state.json"))
 	if err != nil || json.Unmarshal(b, &st) != nil {
 		return nil
@@ -153,4 +159,4 @@ func selftest([]string) error {
 	return nil
 }
 
-func sameTarget(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+func sameStr(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }

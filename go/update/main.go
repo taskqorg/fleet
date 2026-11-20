@@ -12,9 +12,9 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"fleet/contract"
 	"fleet/errtrack"
 	"fleet/obs"
-	"fleet/update/updatesignal"
 	"fmt"
 	"log"
 	"os"
@@ -161,7 +161,7 @@ func (u *updater) runExecutor() error {
 		log.Print("no update.json yet: the executor has not polled")
 		return nil
 	}
-	if res := u.cycle(p, in.AutoUpdate, func() string { return updatesignal.Str(in.Target) }); res != nil {
+	if res := u.cycle(p, in.AutoUpdate, func() string { return str(in.Target) }); res != nil {
 		st.Last = res
 		return writeJSON(stateFile, st, 0o600)
 	}
@@ -180,13 +180,13 @@ func (u *updater) runPDS18() error {
 	defer unlock()
 	u.cacheDir = s
 	stateFile := filepath.Join(s, "pds18-state.json")
-	st := pds18State{Coordinator: &State{}, Executor: &State{}}
+	var st contract.Pds18StateFile
 	readJSON(stateFile, &st)
 	const execSignal = "/home/fleet-agent/.local/state/fleet/executor/update/update.json"
 	var sig signalFile
 	hostChanged := false
-	if readJSON(execSignal, &sig) && sig.HostID != "" && sig.HostID != st.HostID {
-		st.HostID, hostChanged = sig.HostID, true // the coordinator shows these results on that host's row
+	if readJSON(execSignal, &sig) && sig.HostId != "" && sig.HostId != str(st.HostId) {
+		st.HostId, hostChanged = &sig.HostId, true // the coordinator shows these results on that host's row
 	}
 	stage := filepath.Join(s, "stage")
 	os.RemoveAll(stage)
@@ -204,14 +204,14 @@ func (u *updater) runPDS18() error {
 		return err
 	}
 	defer execR.Close()
-	pruneDumps("/backup/fleet/pre-deploy", coordR, st.Coordinator)
+	pruneDumps("/backup/fleet/pre-deploy", coordR, &st.Coordinator)
 	coord := &part{r: coordR, name: "coordinator", root: coordRoot, stage: stage, dump: true, app: "dist/app",
 		bins:    []string{"fleet-coordinator", "fleet-gateway", "fleet-executor", "fleet-update"},
 		restart: command("systemctl", "--user", "-M", "fleet@", "restart", "fleet", "fleet-gateway", "fleet-access-guard"),
-		health:  u.coordinatorHealth, st: st.Coordinator}
+		health:  u.coordinatorHealth, st: &st.Coordinator}
 	exec := &part{r: execR, name: "executor", root: execRoot, stage: stage, bins: []string{"fleet-executor"},
 		activity: u.executorActivity(execSignal), restart: command("systemctl", "--user", "-M", "fleet-agent@", "restart", "fleet-executor"),
-		health: u.executorHealth(execSignal), st: st.Executor}
+		health: u.executorHealth(execSignal), st: &st.Executor}
 	_, autoUpdate := u.coordinatorSelf()
 	save := func() error { return writeJSON(stateFile, st, 0o644) }
 	if r := u.cycle(coord, autoUpdate, u.latest); r != nil {
@@ -247,13 +247,6 @@ func (u *updater) runPDS18() error {
 		return save()
 	}
 	return nil
-}
-
-// pds18State is /var/lib/fleet-update/pds18-state.json, read by the coordinator for the PDS18 executor's host row.
-type pds18State struct {
-	HostID      string `json:"hostId,omitempty"`
-	Coordinator *State `json:"coordinator"`
-	Executor    *State `json:"executor"`
 }
 
 // installUpdater copies the verified fleet-update to the root-owned path the root unit runs.

@@ -41,7 +41,7 @@ func TestUpdateSignalWrittenOnChange(t *testing.T) {
 	if _, err := os.Stat(file); err == nil {
 		t.Fatal("rewritten without a change")
 	}
-	s.PollOk, s.PollError = false, "network"
+	s.PollOk, s.PollError = pollFields(answer{kind: answerRetry})
 	writeUpdateSignal(root, s)
 	if _, err := os.Stat(file); err != nil {
 		t.Fatal("not written on change")

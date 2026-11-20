@@ -158,7 +158,7 @@ func TestBadSignatureRefused(t *testing.T) {
 	f := newFixture(t)
 	f.release("1.261111.0", 0)
 	f.files["/download/v1.261111.0/SHA256SUMS.sig"][0] ^= 1
-	if r := f.run("1.261111.0"); r.State != "refused" || r.Error != "provenance" || f.current() != "" {
+	if r := f.run("1.261111.0"); r.State != "refused" || str(r.Error) != "provenance" || f.current() != "" {
 		t.Fatalf("%+v", r)
 	}
 	if r := f.run("1.261111.0"); r != nil {
@@ -186,7 +186,7 @@ func TestDigestMismatchRetriedOnce(t *testing.T) {
 		}
 		return nil
 	}
-	if r := f.run("1.261111.1"); r.State != "refused" || r.Error != "checksum" {
+	if r := f.run("1.261111.1"); r.State != "refused" || str(r.Error) != "checksum" {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -201,7 +201,7 @@ func TestTransientError(t *testing.T) {
 func TestSelftestRefused(t *testing.T) {
 	f := newFixture(t)
 	f.release("1.261111.0", 1)
-	if r := f.run("1.261111.0"); r.State != "refused" || r.Error != "selftest" || f.current() != "" {
+	if r := f.run("1.261111.0"); r.State != "refused" || str(r.Error) != "selftest" || f.current() != "" {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -213,7 +213,7 @@ func TestThreeStartsRollBack(t *testing.T) {
 	f.run("1.261111.0")
 	f.restarts = 0
 	f.health["1.261111.1"] = down
-	if r := f.run("1.261111.1"); r.State != "refused" || r.Error != "unhealthy" || f.current() != "1.261111.0" {
+	if r := f.run("1.261111.1"); r.State != "refused" || str(r.Error) != "unhealthy" || f.current() != "1.261111.0" {
 		t.Fatalf("%+v current %q", r, f.current())
 	}
 	if f.restarts != 4 { // three starts plus the restart of previous
@@ -529,7 +529,7 @@ func TestManagedCLIRelease(t *testing.T) {
 		t.Fatalf("rollback to %s, downloads %d", f.current(), requests)
 	}
 	f.release(refused, 0, lock(strings.Repeat("0", 64)))
-	if r := f.run(refused); r.State != "refused" || !strings.Contains(r.Error, "harness-checksum: codex") || f.current() != first {
+	if r := f.run(refused); r.State != "refused" || !strings.Contains(str(r.Error), "harness-checksum: codex") || f.current() != first {
 		t.Fatalf("corrupt CLI update: %+v, current %s", r, f.current())
 	}
 	if requests != 5 {
@@ -544,7 +544,7 @@ func TestManagedCLIRelease(t *testing.T) {
 	}
 	const damaged = "1.261111.4"
 	f.release(damaged, 0, lock(sha))
-	if r := f.run(damaged); r.State != "refused" || !strings.Contains(r.Error, "harness-cache: codex") || f.current() != first {
+	if r := f.run(damaged); r.State != "refused" || !strings.Contains(str(r.Error), "harness-cache: codex") || f.current() != first {
 		t.Fatalf("damaged retained cache: %+v, current %s", r, f.current())
 	}
 }

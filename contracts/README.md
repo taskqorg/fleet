@@ -17,6 +17,10 @@ JSON Schema contracts shared by the coordinator, the app, the executor and the g
   the fixed capability names a host reports, and `contract.MissingCapability` is the one gate dispatch and poll apply.
 * `lab-registry.schema.json`: Lab use-case registry entries (`config/lab/use-cases/*.json`, `UseCase`); the coordinator's
   `useCases()` validates every entry and its `maps_to` targets (docs/designs/fleet-asset-pipelines.md §3).
+* `host-files.schema.json`: the files an executor host and `fleet-update` share on disk (docs/designs/fleet-self-update.md
+  section 4): `UpdateSignal` (`update.json`, written by the executor), `UpdateStateFile` (`update-state.json`, written by
+  `fleet-update`; the executor sends its `last`) and `Pds18StateFile` (`pds18-state.json`, read by the coordinator). Hosts
+  run mixed versions during a self-update, so their shapes change only compatibly. No app code reads them.
 * `gateway.schema.json`: the fleet-gateway seam (docs/designs/fleet-connections.md section 3): the snapshot the
   coordinator writes and the gateway reads, and the call line the gateway spools and the coordinator ingests.
 * `ops-<domain>.schema.json` (accounts, analytics, artifacts, definitions, executions, lab, people, projects, sessions, tasks, telemetry) and `ops.schema.json`: the coordinator operations (`POST /api/ops/<name>`, and the agents' MCP tools of the same names), split by domain so lanes that change different domains edit different files. A type that only one domain's operations reach lives in that domain's file; `OpError`, `ChangeKind`, types two domains share and types no operation reaches live in `ops.schema.json`; a reference across files is `<file>.schema.json#/$defs/<Name>`. A name is in one file only (built or planned); `gen-ts.mjs` fails otherwise. A new operation goes into the file of its name's first word:

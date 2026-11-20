@@ -2506,18 +2506,18 @@ func (e *executor) pollWait(ctx context.Context, wait time.Duration) (*pollReply
 	}
 	signalMu.Lock()
 	defer signalMu.Unlock()
-	sig := updateSignal{HostID: e.host, Running: version, AutoUpdate: "on"}
+	sig := updateSignal{HostId: e.host, Running: version, AutoUpdate: "on"}
 	if lastSignal != nil {
 		sig.Target, sig.AutoUpdate = lastSignal.Target, lastSignal.AutoUpdate
 	}
-	sig.PollOk, sig.PollError = pollSignal(a)
+	sig.PollOk, sig.PollError = pollFields(a)
 	var reply *pollReply
 	if a.kind == answerOK {
 		var err error
 		reply, err = decodePoll(a.value)
 		if err != nil {
 			a.kind, a.text = answerRetry, "invalid poll reply: "+err.Error()
-			sig.PollOk, sig.PollError = pollSignal(a)
+			sig.PollOk, sig.PollError = pollFields(a)
 		} else {
 			sig.Target = reply.Target
 			if reply.AutoUpdate != nil {
