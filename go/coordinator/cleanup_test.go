@@ -25,10 +25,10 @@ UNION SELECT k.table_name||'.'||k.column_name FROM information_schema.table_cons
  JOIN information_schema.key_column_usage k ON k.constraint_schema=tc.constraint_schema AND k.constraint_name=tc.constraint_name
  WHERE tc.constraint_type='FOREIGN KEY' AND tc.table_schema='public' ORDER BY 1`
 
-func unmappedColumns(cols []string) []string {
+func unmappedColumns(refs []objectRef, cols []string) []string {
 	out := []string{}
 	for _, c := range cols {
-		if !slices.ContainsFunc(referenceMap, func(r objectRef) bool { return r.table+"."+r.column == c }) {
+		if !slices.ContainsFunc(refs, func(r objectRef) bool { return r.table+"."+r.column == c }) {
 			out = append(out, c)
 		}
 	}
@@ -53,12 +53,19 @@ func TestReferenceMapCoversSchema(t *testing.T) {
 	if len(cols) < 50 {
 		t.Fatalf("schema columns not read: %v", cols)
 	}
-	if u := unmappedColumns(cols); len(u) > 0 {
+	var refs []objectRef
+	if err := e.ownerStore.Tx(e.ctx, nil, false, "", func(tx pgx.Tx) (err error) {
+		refs, err = references(backgroundRequest(e.ctx, nil, tx))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if u := unmappedColumns(refs, cols); len(u) > 0 {
 		t.Fatalf("columns missing from referenceMap (cleanup.go): %v", u)
 	}
 	all := psqlLines(t, e, "SELECT table_name||'.'||column_name FROM information_schema.columns WHERE table_schema='public'")
 	ownTables := map[string]bool{}
-	for _, r := range referenceMap {
+	for _, r := range refs {
 		if !slices.Contains(all, r.table+"."+r.column) {
 			t.Errorf("referenceMap names %s.%s, which the schema does not have", r.table, r.column)
 		}
@@ -81,7 +88,7 @@ func TestReferenceMapCoversSchema(t *testing.T) {
 	}
 	// The failure the test exists for: a new project column nobody listed.
 	runTestPSQL(t, e.binDir, e.sockDir, e.pgPort, e.dbName, "postgres", "ALTER TABLE task ADD COLUMN foo_project_id text")
-	if u := unmappedColumns(psqlLines(t, e, schemaRefColumns)); !slices.Equal(u, []string{"task.foo_project_id"}) {
+	if u := unmappedColumns(refs, psqlLines(t, e, schemaRefColumns)); !slices.Equal(u, []string{"task.foo_project_id"}) {
 		t.Fatalf("an unlisted column must be reported, got %v", u)
 	}
 }
@@ -163,7 +170,7 @@ INSERT INTO question(id,kind,text,project_id,state,options) VALUES ('qr','rating
 	}
 	for _, sql := range []string{"SELECT count(*) FROM task WHERE project_id='acc'", "SELECT count(*) FROM execution WHERE project_id='acc'",
 		"SELECT count(*) FROM question WHERE project_id='acc'", "SELECT count(*) FROM artifact WHERE project_id='acc'",
-		"SELECT count(*) FROM document WHERE project_id='acc'", "SELECT count(*) FROM session WHERE project_id='acc'",
+		"SELECT count(*) FROM session WHERE project_id='acc'",
 		"SELECT count(*) FROM event WHERE project_id='acc'", "SELECT count(*) FROM command WHERE project_id='acc'",
 		"SELECT count(*) FROM execution_totals WHERE project_id='acc'",
 		"SELECT count(*) FROM definition WHERE kind='project' AND id='acc' AND retired_at IS NULL"} {
@@ -279,7 +286,7 @@ INSERT INTO command(id,kind,execution_id,host_id,status) VALUES ('c-ghost','tear
 	if c != 200 || purged["purged"] != true || num(purged["retryLater"]) != 0 {
 		t.Fatalf("purge = %d %v", c, purged)
 	}
-	for _, tbl := range []string{"task", "execution", "question", "artifact", "document", "session", "message", "event", "command", "execution_totals", "task_derived", "entity_code"} {
+	for _, tbl := range []string{"task", "execution", "question", "artifact", "session", "message", "event", "command", "execution_totals", "task_derived", "entity_code"} {
 		if n := psqlLines(t, e, "SELECT count(*) FROM "+tbl+" WHERE project_id='acc'"); n[0] != "0" {
 			t.Errorf("purged project rows left in %s: %v", tbl, n)
 		}

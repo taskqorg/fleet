@@ -42,7 +42,7 @@ test('retained Lab descendants and native observations remain correctly attribut
   assert.equal(byId.get('native-partial').reasoning,null,'missing call data is not a measured partial sum');
   assert.equal(byId.get('native-api').api,125,'API duration is not duration_ms');
   assert.equal(c.sql("SELECT coalesce(experiment_id,'none') FROM execution WHERE id='foreign-native'").trim(),'none');
-  assert.equal(c.sql("SELECT bool_and(relforcerowsecurity) FROM pg_class WHERE relname IN ('execution','execution_totals','document','event')").trim(),'t');
+  assert.equal(c.sql("SELECT bool_and(relforcerowsecurity) FROM pg_class WHERE relname IN ('execution','execution_totals','event')").trim(),'t');
   const r=await fetch(c.base+'/api/ops/analytics_query',{method:'POST',headers:{authorization:'Bearer '+c.secret,'x-fleet-person':'owner@trial.test','content-type':'application/json'},body:JSON.stringify({window:{from:new Date(Date.now()-120000).toISOString(),to:new Date(Date.now()+120000).toISOString()},dimensions:['variant','kind'],filters:{experiment:['comparison-test']},measures:['executions','tokens_reasoning','api_ms']})});
   const q:any=await r.json();assert.equal(r.status,200,JSON.stringify(q));
   const zero=q.rows.find((r:any)=>r.dimensions.variant==='ordinary');

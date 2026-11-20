@@ -46,10 +46,6 @@ CREATE OR REPLACE TRIGGER delivery_run_change AFTER INSERT OR DELETE OR UPDATE O
 -- delivery_state
 CREATE OR REPLACE TRIGGER delivery_state_change AFTER INSERT OR DELETE OR UPDATE ON delivery_state FOR EACH ROW EXECUTE FUNCTION fleet_change();
 
--- document
-CREATE OR REPLACE TRIGGER document_change AFTER INSERT OR DELETE OR UPDATE ON document FOR EACH ROW EXECUTE FUNCTION fleet_change();
-CREATE OR REPLACE TRIGGER document_tombstone BEFORE INSERT ON document FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone();
-
 -- event
 CREATE OR REPLACE TRIGGER event_change AFTER INSERT OR DELETE OR UPDATE ON event FOR EACH ROW EXECUTE FUNCTION fleet_change();
 CREATE OR REPLACE TRIGGER event_tombstone BEFORE INSERT ON event FOR EACH ROW EXECUTE FUNCTION fleet_inherit_tombstone('execution_id', 'session_id');

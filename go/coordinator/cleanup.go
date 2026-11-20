@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"fleet/contract"
@@ -63,7 +64,8 @@ func (r objectRef) match(param string) string {
 	return m
 }
 
-// referenceMap: every column of schema.sql that names an object, and every *_id column (TestReferenceMapCoversSchema).
+// referenceMap: every column of schema.sql that names an object, and every *_id column (TestReferenceMapCoversSchema),
+// except the foreign keys whose reference referenceKeys derives; an entry for a key column overrides its derivation.
 var referenceMap = []objectRef{
 	{table: "execution", column: "id", kind: "execution", mode: refOwn},
 	{table: "execution", column: "project_id", kind: "project", mode: refOwn},
@@ -78,15 +80,6 @@ var referenceMap = []objectRef{
 	{table: "execution", column: "profile_id", mode: refNone},
 	{table: "execution", column: "pipeline_id", mode: refNone},
 	{table: "execution", column: "step_id", mode: refNone},
-	{table: "document", column: "id", mode: refNone},
-	{table: "document", column: "project_id", kind: "project", mode: refOwn},
-	// Run tokens, conflicts, legacy artifacts, watches. execution_ref and session_ref are data->>'executionId' and
-	// data->>'sessionId' as indexed columns (migration 70): a JSON path cannot be an index condition under row-level
-	// security (not leakproof), so every check of it read and detoasted every document.
-	{table: "document", column: "execution_ref", kind: "execution", mode: refOwn},
-	{table: "document", column: "session_ref", kind: "session", mode: refOwn},
-	{table: "document", column: "data", kind: "task", mode: refNone, expr: "data->>'taskId'"},
-	{table: "document", column: "data", kind: "host", mode: refKeep, expr: "data->>'hostId'"},
 	// Hosts, subscriptions, connections and tokens (migration 78). A run token goes with its execution and with the run
 	// whose step it was minted for; an inspection with its execution; a watch with its session.
 	{table: "host", column: "id", mode: refNone},
@@ -95,17 +88,14 @@ var referenceMap = []objectRef{
 	{table: "host_observation", column: "id", mode: refNone},
 	{table: "host_observation", column: "project_id", kind: "project", mode: refOwn},
 	{table: "watch", column: "id", mode: refNone},
-	{table: "watch", column: "session_id", kind: "session", mode: refOwn},
 	{table: "watch", column: "project_id", kind: "project", mode: refOwn},
 	{table: "managed_account", column: "id", mode: refNone},
 	{table: "managed_account", column: "project_id", kind: "project", mode: refOwn},
 	{table: "account_inspection", column: "id", mode: refNone},
-	{table: "account_inspection", column: "account_id", mode: refNone}, // a subscription (foreign key, ON DELETE CASCADE)
 	{table: "account_inspection", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "account_inspection", column: "host_id", kind: "host", mode: refKeep},
 	{table: "account_inspection", column: "project_id", kind: "project", mode: refOwn},
 	{table: "account_check", column: "id", mode: refNone},
-	{table: "account_check", column: "account_id", mode: refNone},
 	{table: "account_check", column: "host_id", kind: "host", mode: refKeep},
 	{table: "account_check", column: "project_id", kind: "project", mode: refOwn},
 	{table: "account_catalogue", column: "id", mode: refNone},
@@ -114,7 +104,6 @@ var referenceMap = []objectRef{
 	{table: "api_connection", column: "id", mode: refNone},
 	{table: "api_connection", column: "project_id", kind: "project", mode: refOwn},
 	{table: "connection_key", column: "id", mode: refNone},
-	{table: "connection_key", column: "connection_id", mode: refNone}, // its connection (foreign key, ON DELETE CASCADE)
 	{table: "connection_key", column: "project_id", kind: "project", mode: refOwn},
 	{table: "run_token", column: "id", mode: refNone},
 	{table: "run_token", column: "execution_id", kind: "execution", mode: refOwn},
@@ -135,16 +124,12 @@ var referenceMap = []objectRef{
 	{table: "session", column: "created_by_session_id", kind: "session", mode: refKeep},
 	{table: "session", column: "source_session_id", kind: "session", mode: refKeep},
 	{table: "message", column: "id", mode: refNone},
-	{table: "message", column: "session_id", kind: "session", mode: refOwn},
 	{table: "message", column: "project_id", kind: "project", mode: refOwn},
 	{table: "message", column: "execution_id", kind: "execution", mode: refNone},
 	{table: "message", column: "request_id", mode: refNone},
 	{table: "event", column: "id", mode: refNone},
-	{table: "event", column: "execution_id", kind: "execution", mode: refOwn},
-	{table: "event", column: "session_id", kind: "session", mode: refOwn},
 	{table: "event", column: "project_id", kind: "project", mode: refOwn},
 	{table: "queued_message", column: "id", mode: refNone},
-	{table: "queued_message", column: "session_id", kind: "session", mode: refOwn},
 	{table: "queued_message", column: "project_id", kind: "project", mode: refOwn},
 	{table: "queued_message", column: "task_id", kind: "task", mode: refNone},
 	{table: "queued_message", column: "execution_id", kind: "execution", mode: refNone},
@@ -152,22 +137,17 @@ var referenceMap = []objectRef{
 	{table: "queued_message", column: "request_id", mode: refNone},
 	{table: "command", column: "id", mode: refNone},
 	{table: "command", column: "execution_id", kind: "execution", mode: refOwn},
-	{table: "command", column: "session_id", kind: "session", mode: refOwn},
 	{table: "command", column: "project_id", kind: "project", mode: refOwn},
 	{table: "command", column: "host_id", kind: "host", mode: refKeep},
 	{table: "handoff", column: "id", mode: refNone},
-	{table: "handoff", column: "session_id", kind: "session", mode: refOwn},
 	{table: "handoff", column: "project_id", kind: "project", mode: refOwn},
 	{table: "session_fork", column: "id", mode: refNone},
-	{table: "session_fork", column: "session_id", kind: "session", mode: refOwn},
 	{table: "session_fork", column: "source_session_id", kind: "session", mode: refKeep},
 	{table: "session_fork", column: "project_id", kind: "project", mode: refOwn},
 	{table: "session_fork", column: "request_id", mode: refNone},
 	{table: "session_transition", column: "id", mode: refNone},
-	{table: "session_transition", column: "session_id", kind: "session", mode: refOwn},
 	{table: "session_transition", column: "project_id", kind: "project", mode: refOwn},
 	{table: "worker_done", column: "id", mode: refNone},
-	{table: "worker_done", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "worker_done", column: "project_id", kind: "project", mode: refOwn},
 	{table: "agent_tool_receipt", column: "id", mode: refNone},
 	{table: "agent_tool_receipt", column: "execution_id", kind: "execution", mode: refOwn},
@@ -181,7 +161,6 @@ var referenceMap = []objectRef{
 	{table: "artifact", column: "legacy_id", mode: refNone},
 	{table: "artifact_copy", column: "artifact_id", kind: "artifact", mode: refOwn},
 	{table: "artifact_copy", column: "project_id", kind: "project", mode: refOwn},
-	{table: "artifact_copy", column: "store_id", mode: refNone}, // a store goes with its removed host (host purge)
 	{table: "artifact_copy", column: "upload_id", mode: refNone},
 	{table: "artifact_rule_confirmation", column: "project_id", kind: "project", mode: refOwn},
 	{table: "budget", column: "id", mode: refNone},
@@ -193,12 +172,9 @@ var referenceMap = []objectRef{
 	{table: "change", column: "host_id", mode: refNone},
 	{table: "change", column: "project_id", mode: refNone},
 	{table: "closed_delta_identity", column: "id", mode: refNone},
-	{table: "closed_delta_identity", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "definition", column: "id", mode: refNone}, // a purged project keeps its definition row: its id is never reused
 	{table: "definition", column: "project_id", mode: refNone},
 	{table: "definition_draft", column: "id", mode: refNone},
-	{table: "definition_revision", column: "id", mode: refNone},
-	{table: "definition_revision", column: "kind", mode: refNone}, // with id, its definition
 	{table: "entity_code", column: "entity_id", kind: "task", mode: refOwn},
 	{table: "entity_code", column: "entity_id", kind: "question", mode: refOwn},
 	{table: "entity_code", column: "entity_id", kind: "session", mode: refOwn},
@@ -213,7 +189,6 @@ var referenceMap = []objectRef{
 	{table: "experiment_note", column: "project_id", kind: "project", mode: refOwn},
 	{table: "host_setting", column: "host_id", kind: "host", mode: refKeep},
 	{table: "person_grant", column: "object_id", mode: refNone}, // the people file's projection, reloaded from the file
-	{table: "person_grant", column: "email", mode: refNone},
 	{table: "price_entry", column: "id", mode: refNone},
 	{table: "project_code", column: "project_id", mode: refNone}, // codes are never reused
 	{table: "project_write_request", column: "request_id", mode: refNone},
@@ -240,7 +215,6 @@ var referenceMap = []objectRef{
 	{table: "resource_price_ref", column: "project_id", kind: "project", mode: refOwn},
 	{table: "resource_price_ref", column: "price_id", mode: refNone},
 	{table: "resource_project_summary", column: "project_id", kind: "project", mode: refOwn},
-	{table: "resource_repair_scope", column: "repair_id", mode: refNone},
 	{table: "resource_repair_scope", column: "project_id", kind: "project", mode: refOwn},
 	{table: "resource_tool", column: "project_id", kind: "project", mode: refOwn},
 	// An execution's removal is captured as resource work (migration 55); the processor retracts its contribution.
@@ -248,7 +222,6 @@ var referenceMap = []objectRef{
 	{table: "resource_work", column: "work_id", mode: refNone},
 	{table: "resource_work", column: "execution_id", kind: "execution", mode: refWithProject},
 	{table: "resource_work", column: "repair_id", mode: refNone},
-	{table: "resource_work_scope", column: "work_id", mode: refNone},
 	{table: "resource_work_scope", column: "project_id", kind: "project", mode: refOwn},
 	{table: "route_decision", column: "id", mode: refNone},
 	{table: "route_decision", column: "execution_id", kind: "execution", mode: refOwn},
@@ -258,9 +231,6 @@ var referenceMap = []objectRef{
 	{table: "score", column: "experiment_id", kind: "experiment", mode: refOwn},
 	{table: "score", column: "project_id", kind: "project", mode: refOwn},
 	{table: "score", column: "trial_ids", kind: "execution", mode: refKeep, array: true},
-	{table: "score", column: "source_execution_id", kind: "execution", mode: refKeep},
-	{table: "score", column: "question_id", kind: "question", mode: refKeep},
-	{table: "score", column: "replaces_score_id", mode: refNone}, // a score of the same experiment
 	{table: "store", column: "id", mode: refNone},
 	{table: "store", column: "host_id", kind: "host", mode: refKeep},
 	{table: "task", column: "id", kind: "task", mode: refOwn},
@@ -269,9 +239,7 @@ var referenceMap = []objectRef{
 	{table: "task", column: "created_by_session_id", kind: "session", mode: refKeep},
 	{table: "task", column: "created_by_execution_id", kind: "execution", mode: refKeep},
 	{table: "task_dependency", column: "task_id", kind: "task", mode: refOwn},
-	{table: "task_dependency", column: "depends_on_task_id", kind: "task", mode: refKeep},
 	{table: "task_dependency", column: "project_id", kind: "project", mode: refOwn},
-	{table: "task_derived", column: "task_id", kind: "task", mode: refOwn},
 	{table: "task_derived", column: "project_id", kind: "project", mode: refOwn},
 	{table: "wake_outbox", column: "wake_id", mode: refNone},
 	// Work kit rows (pipeline_work.go, delegation_work.go): they go with their run or experiment by foreign key; a
@@ -283,7 +251,6 @@ var referenceMap = []objectRef{
 	// (its step, the executions, command, host and claim of its dispatch, its step's native execution, output artifact
 	// and provider job) are evidence of the run, not references.
 	{table: "pipeline_run", column: "run_id", mode: refNone},
-	{table: "pipeline_step", column: "run_id", mode: refNone},
 	{table: "pipeline_step", column: "step_id", mode: refNone},
 	{table: "pipeline_step", column: "ref_execution_id", mode: refNone},
 	{table: "pipeline_step", column: "ref_source_run_id", mode: refNone},
@@ -311,13 +278,11 @@ var referenceMap = []objectRef{
 	{table: "transport_conflict", column: "host_id", kind: "host", mode: refKeep},
 	{table: "transport_conflict", column: "original_event_id", mode: refNone},
 	{table: "transport_conflict", column: "collision_event_id", mode: refNone},
-	{table: "problem_dismissal", column: "execution_id", kind: "execution", mode: refOwn},
 	{table: "problem_dismissal", column: "project_id", kind: "project", mode: refOwn},
 	{table: "project_recommendation", column: "id", mode: refNone},
 	{table: "project_recommendation", column: "project_id", kind: "project", mode: refOwn},
 	{table: "project_recommendation", column: "method_id", mode: refNone}, // a catalogue method
 	{table: "upload", column: "id", mode: refNone},
-	{table: "upload", column: "session_id", kind: "session", mode: refOwn},
 	{table: "upload", column: "project_id", kind: "project", mode: refOwn},
 	{table: "upload", column: "artifact_id", kind: "artifact", mode: refNone}, // the artifact a finished upload stored
 	{table: "delivery_state", column: "id", mode: refNone},
@@ -354,7 +319,7 @@ var objectTables = []struct{ kind, table, filter string }{
 }
 
 // tombstoned: the tables with a tombstoned_at column (migration 67).
-var tombstoned = append([]string{"execution", "task", "experiment", "question", "artifact", "document", "score", "experiment_note",
+var tombstoned = append([]string{"execution", "task", "experiment", "question", "artifact", "score", "experiment_note",
 	"session", "message", "event", "queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done",
 	"host", "host_observation", "watch", "managed_account", "account_inspection", "account_check", "account_catalogue", "api_connection",
 	"connection_key", "run_token", "person_setting", "upload", "problem_dismissal", "project_recommendation", "transport_conflict"}, deliveryTables...)
@@ -365,7 +330,7 @@ var keptRows = map[string]string{}
 
 // purgeOrder: the tables system_purge deletes from, referencing rows before the rows they reference (foreign keys).
 var purgeOrder = append([]string{"score", "experiment_note", "artifact_copy", "artifact", "question", "execution_totals", "route_decision",
-	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "document", "problem_dismissal",
+	"agent_tool_receipt", "closed_delta_identity", "resource_valuation", "resource_contribution", "problem_dismissal",
 	"transport_conflict", "upload", "project_recommendation", "watch", "run_token", "account_inspection", "account_check", "account_catalogue",
 	"connection_key", "api_connection", "managed_account", "host_observation", "host", "person_setting", "message", "event",
 	"queued_message", "command", "handoff", "session_fork", "session_transition", "worker_done", "session", "execution",
@@ -377,6 +342,47 @@ var purgeOrder = append([]string{"score", "experiment_note", "artifact_copy", "a
 type cascade struct {
 	kind, id string
 	sets     map[string][]string
+	refs     []objectRef // references(): referenceMap with the derived foreign keys
+}
+
+// referenceKeys: the references of the schema's foreign keys, read once. A key to an object table (objectTables) names
+// that object: its row goes with it under ON DELETE CASCADE (refOwn) and keeps it otherwise (refKeep); a key to any
+// other table names no object (refNone: the row follows its parent by the key). A referenceMap entry for the same
+// column wins.
+var referenceKeys struct {
+	mu   sync.Mutex
+	refs []objectRef
+}
+
+// references: referenceMap and the foreign keys it does not list.
+func references(q *Request) ([]objectRef, error) {
+	referenceKeys.mu.Lock()
+	defer referenceKeys.mu.Unlock()
+	if referenceKeys.refs != nil {
+		return referenceKeys.refs, nil
+	}
+	keys, err := q.db().ReferenceKeys(q.ctx())
+	if err != nil {
+		return nil, err
+	}
+	refs := slices.Clone(referenceMap)
+	for _, k := range keys {
+		if slices.ContainsFunc(refs, func(r objectRef) bool { return r.table == k.Child && r.column == k.Col }) {
+			continue
+		}
+		r := objectRef{table: k.Child, column: k.Col, mode: refNone}
+		for _, o := range objectTables {
+			if o.table == k.Parent {
+				r.kind, r.mode = o.kind, refKeep
+				if k.Cascades {
+					r.mode = refOwn
+				}
+			}
+		}
+		refs = append(refs, r)
+	}
+	referenceKeys.refs = refs
+	return refs, nil
 }
 
 // args builds one SQL predicate's parameters: one text[] per kind.
@@ -402,7 +408,7 @@ func (a *args) of(kind string) string {
 // goesWith: the predicate of rows of table that belong to the cascade, "false" when none can.
 func (c *cascade) goesWith(table string, a *args) string {
 	conds := []string{}
-	for _, r := range referenceMap {
+	for _, r := range c.refs {
 		if r.table == table && (r.mode == refOwn || (r.mode == refWithProject && c.kind == "project")) && len(c.sets[r.kind]) > 0 {
 			conds = append(conds, r.match(a.of(r.kind)))
 		}
@@ -423,7 +429,11 @@ func andFilter(filter, where string) string {
 // cascadeOf: the root and every object that goes with it, closed over the refOwn columns of objectTables. The caller's
 // transaction decides what is visible: delete reads live rows, purge reads with fleet.deleted on.
 func cascadeOf(q *Request, kind, id string) (*cascade, error) {
-	c := &cascade{kind: kind, id: id, sets: map[string][]string{kind: {id}}}
+	refs, err := references(q)
+	if err != nil {
+		return nil, err
+	}
+	c := &cascade{kind: kind, id: id, sets: map[string][]string{kind: {id}}, refs: refs}
 	for grew := true; grew; {
 		grew = false
 		for _, o := range objectTables {
@@ -508,7 +518,7 @@ func (c *cascade) blockedBy(q *Request) (string, error) {
 		}
 	}
 	tables, refs := []string{}, map[string][]objectRef{}
-	for _, r := range referenceMap {
+	for _, r := range c.refs {
 		if r.mode != refKeep || len(c.sets[r.kind]) == 0 {
 			continue
 		}
@@ -532,11 +542,8 @@ func (c *cascade) blockedBy(q *Request) (string, error) {
 			return "", err
 		}
 		if row != nil {
-			r, by := refs[t][int(num(row["ref"]))], t
-			if t == "document" {
-				by = astr(row["rkind"])
-			}
-			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, convFieldOf(t, r.sql()), by, astr(row["rid"]))), nil
+			r := refs[t][int(num(row["ref"]))]
+			return strings.TrimSpace(fmt.Sprintf("%s.%s by %s %s", t, convFieldOf(t, r.sql()), t, astr(row["rid"]))), nil
 		}
 	}
 	return "", nil

@@ -740,18 +740,6 @@ type DeliveryUiSeen struct {
 	TombstonedAt *time.Time
 }
 
-type Document struct {
-	Kind         string
-	ID           string
-	Data         []byte
-	ProjectID    *string
-	Seq          int64
-	UpdatedAt    time.Time
-	TombstonedAt *time.Time
-	ExecutionRef *string
-	SessionRef   *string
-}
-
 type EntityCode struct {
 	Code         string
 	EntityID     string

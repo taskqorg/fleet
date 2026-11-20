@@ -332,17 +332,6 @@ CREATE TABLE delivery_ui_seen (
   "project_id" text NOT NULL,
   "tombstoned_at" timestamp with time zone
 );
-CREATE TABLE document (
-  "kind" text NOT NULL,
-  "id" text NOT NULL,
-  "data" jsonb NOT NULL,
-  "project_id" text,
-  "seq" bigint NOT NULL,
-  "updated_at" timestamp with time zone NOT NULL,
-  "tombstoned_at" timestamp with time zone,
-  "execution_ref" text,
-  "session_ref" text
-);
 CREATE TABLE entity_code (
   "code" text NOT NULL,
   "entity_id" text NOT NULL,

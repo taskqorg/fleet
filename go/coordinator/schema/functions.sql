@@ -107,13 +107,8 @@ CREATE OR REPLACE FUNCTION public.fleet_inherit_tombstone()
  LANGUAGE plpgsql
 AS $function$ DECLARE e text; s text; BEGIN
  IF NEW.tombstoned_at IS NOT NULL OR NOT fleet_show_deleted() THEN RETURN NEW; END IF;
- IF TG_TABLE_NAME = 'document' THEN
-  IF NEW.kind IN ('setting-change', 'transport-audit', 'purge-task') THEN RETURN NEW; END IF; -- audit outlives the object
-  e := NEW.data->>'executionId'; s := NEW.data->>'sessionId';
- ELSE
-  e := to_jsonb(NEW)->>TG_ARGV[0];
-  IF TG_NARGS > 1 THEN s := to_jsonb(NEW)->>TG_ARGV[1]; END IF;
- END IF;
+ e := to_jsonb(NEW)->>TG_ARGV[0];
+ IF TG_NARGS > 1 THEN s := to_jsonb(NEW)->>TG_ARGV[1]; END IF;
  IF e IS NULL AND s IS NOT NULL AND EXISTS (SELECT 1 FROM session WHERE id = s AND tombstoned_at IS NOT NULL) THEN
   NEW.tombstoned_at := now(); RETURN NEW;
  END IF;

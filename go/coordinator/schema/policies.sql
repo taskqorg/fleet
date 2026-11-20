@@ -166,13 +166,6 @@ CREATE POLICY live ON delivery_ui_seen AS RESTRICTIVE FOR SELECT TO public USING
 DROP POLICY IF EXISTS project_scope ON delivery_ui_seen;
 CREATE POLICY project_scope ON delivery_ui_seen FOR ALL TO public USING (fleet_visible(project_id));
 
--- document
-ALTER TABLE document ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS live ON document;
-CREATE POLICY live ON document AS RESTRICTIVE FOR SELECT TO public USING ((fleet_show_deleted() OR ((tombstoned_at IS NULL) AND ((project_id IS NULL) OR (NOT (project_id = ANY (( SELECT fleet_deleted_projects() AS fleet_deleted_projects)::text[]))) OR (kind = ANY (ARRAY['setting-change'::text, 'transport-audit'::text]))))));
-DROP POLICY IF EXISTS project_scope ON document;
-CREATE POLICY project_scope ON document FOR ALL TO public USING (fleet_visible(project_id));
-
 -- entity_code
 ALTER TABLE entity_code ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS live ON entity_code;
