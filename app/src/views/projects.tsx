@@ -238,7 +238,8 @@ function ProjectEditor({ id, onSaved }: { id?: string; onSaved: (id: string) => 
     if (now && now.revision >= revision) { resolve(now); return; }
     readback.current = { revision, resolve, reject }; doc.reload();
   });
-  const load = () => { if (current && !saving.current) apply(current); doc.reload(); };
+  // The latest answer, never the one of the render a save started in (its finally runs this after the save).
+  const load = () => { const now = currentRef.current; if (now && !saving.current) apply(now); doc.reload(); };
   const setting = (key: string, value: unknown) => setBundle(b => ({ ...b, settings: { ...b.settings, [key]: value } }));
   const field = (label: string, value: string, save: (s: string) => void) => (
     <TextField help="Save project applies the complete version." label={label} value={value} onChange={save} />
